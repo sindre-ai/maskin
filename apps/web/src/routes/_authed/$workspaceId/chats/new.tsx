@@ -8,6 +8,7 @@ import type { MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
 import { useWorkspace } from '@/lib/workspace-context'
+import { NEW_CONVERSATION_PLACEHOLDER_TITLE } from '@maskin/shared'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Command } from 'cmdk'
 import { Search, X } from 'lucide-react'
@@ -51,11 +52,6 @@ interface Participant {
 	id: string
 	name: string
 	type: string
-}
-
-function deriveTitle(participants: Participant[], firstMessage: string): string {
-	if (participants.length > 0) return participants.map((p) => p.name).join(', ')
-	return firstMessage.slice(0, 60)
 }
 
 function NewConversationPage() {
@@ -136,6 +132,14 @@ function NewConversationPage() {
 			// Sent as structured metadata (rendered as chips by MessageBubble)
 			// rather than inlined into the message text.
 			const metadata: MessageMetadata = {}
+			if (selection.files.length > 0) {
+				metadata.attachments = selection.files.map((f) => ({
+					file_id: f.fileId,
+					name: f.name,
+					mime_type: f.mimeType ?? 'application/octet-stream',
+					size_bytes: f.sizeBytes,
+				}))
+			}
 			if (objects.length > 0) {
 				metadata.context_objects = objects.map((o) => ({
 					id: o.id,
@@ -152,7 +156,7 @@ function NewConversationPage() {
 
 			try {
 				const conversation = await createConversation.mutateAsync({
-					title: deriveTitle(allParticipants, content),
+					title: NEW_CONVERSATION_PLACEHOLDER_TITLE,
 					participant_actor_ids: allParticipants.map((p) => p.id),
 					initial_message: content,
 					...(Object.keys(metadata).length > 0 ? { initial_message_metadata: metadata } : {}),

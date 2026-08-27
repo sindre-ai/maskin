@@ -3,7 +3,7 @@ import { LoopActivity } from '@/components/loops/loop-activity'
 import { LoopChanges } from '@/components/loops/loop-changes'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
 import { LoopFlow } from '@/components/loops/loop-flow'
-import { LOOP_PILL_STYLES } from '@/components/loops/loop-pill'
+import { LOOP_PILL_STYLES, isLiveLoopPill } from '@/components/loops/loop-pill'
 import {
 	LoopProposedEdit,
 	type PlanDiffRow,
@@ -44,17 +44,21 @@ import { toast } from 'sonner'
 const LOOP_MEMBERSHIP_RELATIONSHIP_TYPE = 'in_loop'
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/$loopId')({
-	component: LoopDetailPage,
+	component: LoopDetailRoute,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
 interface ProposedEdit {
+	/** What the operator just said — the clause, shown on the card. */
 	utterance: string
 	rows: PlanDiffRow[]
 	nextPlan: LoopPlan
+	/** The full sentence `nextPlan` was parsed from (source + clause), persisted
+	 *  alongside the plan so the next refinement builds on it. */
+	nextSource: string
 }
 
-function LoopDetailPage() {
+function LoopDetailRoute() {
 	const { loopId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
 	const {
@@ -95,24 +99,46 @@ function LoopDetailPage() {
 	// wrote to `metadata.plan`. Loops without one (marketplace installs, MCP
 	// creations) return false and fall through to the chat hand-off.
 	const storedPlan = readStoredPlan(object?.metadata)
+	// The sentence the stored plan was parsed from, written alongside it by
+	// `/loops/new`.
+	const planSource =
+		typeof object?.metadata?.plan_source === 'string' ? object.metadata.plan_source : null
 	const statusChains = (workspace.settings as { statuses?: Record<string, string[]> } | undefined)
 		?.statuses
 	const handleUtterance = useCallback(
 		(utterance: string) => {
 			if (!storedPlan) return false
-			const nextPlan = parseLoopDescription(utterance, { statusChains })
+			// A refinement is a clause, not a restatement — "Ask me before anything
+			// ships" parsed on its own describes a different loop entirely (it names
+			// no object type, so the parser falls back to Task). Append it to the
+			// source sentence and re-read the whole thing, the same way the builder's
+			// own refine chips extend the utterance rather than replacing it.
+			const nextSource = planSource
+				? `${planSource.trim().replace(/[.!?]+$/, '')} ${utterance.trim()}`
+				: utterance
+			const nextPlan = parseLoopDescription(nextSource, { statusChains })
 			const rows = diffLoopPlans(storedPlan, nextPlan)
 			if (rows.length === 0) return false
-			setProposedEdit({ utterance, rows, nextPlan })
+			setProposedEdit({ utterance, rows, nextPlan, nextSource })
 			return true
 		},
-		[storedPlan, statusChains],
+		[storedPlan, statusChains, planSource],
 	)
 
 	const applyProposedEdit = useCallback(() => {
 		if (!proposedEdit) return
 		updateObject.mutate(
-			{ id: loopId, data: { metadata: { plan: JSON.stringify(proposedEdit.nextPlan) } } },
+			{
+				id: loopId,
+				data: {
+					metadata: {
+						plan: JSON.stringify(proposedEdit.nextPlan),
+						// Keep the source in step with the plan, so the next refinement
+						// builds on this one rather than on the original sentence.
+						plan_source: proposedEdit.nextSource,
+					},
+				},
+			},
 			{
 				onSuccess: () => {
 					setProposedEdit(null)
@@ -166,10 +192,16 @@ function LoopDetailPage() {
 	const isPreFirstRun = childIds.length === 0 && (activityEvents?.length ?? 0) === 0
 	const hasChanges = (events ?? []).some((e) => e.entityId === loopId)
 
+	// Resuming returns the loop to `learning`, the lowest live rung of the
+	// autonomy ladder, matching every server-side creation path
+	// (installed-loops.ts, workspace-bootstrap.ts): a loop that has been paused
+	// re-earns trust rather than snapping back to full autonomy. The trigger
+	// re-enable is handled server-side by the status hook in
+	// PATCH /api/objects/:id, so this only writes the status.
 	const togglePause = () =>
 		updateObject.mutate({
 			id: loop.id,
-			data: { status: isPaused ? 'running' : 'paused' },
+			data: { status: isPaused ? 'learning' : 'paused' },
 		})
 
 	return (
@@ -190,7 +222,7 @@ function LoopDetailPage() {
 								className={cn(
 									'size-1.5 rounded-full',
 									pill.dot,
-									loop.pill === 'running' && 'animate-pulse',
+									isLiveLoopPill(loop.pill) && 'animate-pulse',
 								)}
 							/>
 							{pill.label}

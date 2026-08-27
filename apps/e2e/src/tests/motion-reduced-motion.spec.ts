@@ -75,7 +75,10 @@ test.describe('motion — prefers-reduced-motion guard', () => {
 			// not always-zero.
 			await page.emulateMedia({ reducedMotion: 'no-preference' })
 			await page.goto(path)
-			await page.waitForLoadState('networkidle')
+			await page.waitForLoadState('load')
+			// SSE keeps a connection open indefinitely, so 'networkidle' never fires — see
+			// the same pattern in visual.spec.ts / typography.spec.ts.
+			await page.waitForTimeout(300)
 			await expect(page.locator('body')).toBeVisible()
 
 			const baseline = await probeReducedMotionMs(page)

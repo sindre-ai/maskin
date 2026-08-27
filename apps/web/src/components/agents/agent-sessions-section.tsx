@@ -3,10 +3,10 @@ import { RelativeTime } from '@/components/shared/relative-time'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import {
+	useActorSessions,
 	useCreateSession,
 	usePauseSession,
 	useResumeSession,
-	useWorkspaceSessions,
 } from '@/hooks/use-sessions'
 import type { ActorResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -153,14 +153,13 @@ function sortSessions(a: SessionResponse, b: SessionResponse): number {
 
 export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()
-	const { data: sessions, isLoading } = useWorkspaceSessions(workspaceId, { paged: false })
+	const { data: sessions, isLoading } = useActorSessions(agent.id, workspaceId)
 	const [detailSession, setDetailSession] = useState<SessionResponse | null>(null)
 	const [showAll, setShowAll] = useState(false)
 
 	const agentSessions = useMemo(() => {
-		const list = (sessions ?? []).filter((s) => s.actorId === agent.id)
-		return list.sort(sortSessions)
-	}, [sessions, agent.id])
+		return [...(sessions ?? [])].sort(sortSessions)
+	}, [sessions])
 
 	// A long-lived agent accumulates hundreds of runs; the newest few answer
 	// "what is it doing" without burying every section below them (mockup 2427).

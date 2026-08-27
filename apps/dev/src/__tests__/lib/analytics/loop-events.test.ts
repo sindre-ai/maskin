@@ -58,7 +58,23 @@ describe('trackLoopInstalled', () => {
 			actor_id: 'actor-1',
 			component_type_count: 3,
 			component_types: ['actor', 'trigger', 'integration'],
+			source: 'catalogue',
 		})
+	})
+
+	it("emits source 'detail' when the install came from the loop detail page", async () => {
+		await trackLoopInstalled({
+			loopId: 'loop-1',
+			loopSlug: 'customer-continuous-discovery',
+			loopVersion: '1.0.0',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			provisioned: { actors: 1, triggers: 0, skills: 0, integrations: 0 },
+			source: 'detail',
+		})
+
+		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
+		expect(props.source).toBe('detail')
 	})
 
 	it('reports component_type_count 0 with an empty component_types array for an item-less install', async () => {

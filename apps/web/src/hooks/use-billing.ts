@@ -1,46 +1,41 @@
+import { type BillingBuyCreditsInput, type BillingCheckoutInput, api } from '@/lib/api'
+import { queryKeys } from '@/lib/query-keys'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { toast } from 'sonner'
-import { api } from '../lib/api'
-import { queryKeys } from '../lib/query-keys'
 
-export function useBillingSummary(workspaceId: string) {
+/**
+ * Subscription state + tokens used this period for a workspace.
+ *
+ * Shared between the Settings → LLM subscription row and the usage-state banner
+ * (Task be5d94b7) — both surface the same numbers, so they read from the same
+ * hook to stay in lockstep when the webhook flips a plan or a session burns
+ * tokens.
+ */
+export function useBillingUsage(workspaceId: string) {
 	return useQuery({
-		queryKey: queryKeys.billing.summary(workspaceId),
-		queryFn: () => api.billing.summary(workspaceId),
+		queryKey: queryKeys.billing.usage(workspaceId),
+		queryFn: () => api.billing.usage(workspaceId),
+		enabled: Boolean(workspaceId),
+		staleTime: 10_000,
 	})
 }
 
-export function useStartCheckout(workspaceId: string) {
+export function useStripeCheckout(workspaceId: string) {
 	return useMutation({
-		mutationFn: (invoiceEmail?: string) => api.billing.startCheckout(workspaceId, invoiceEmail),
+		mutationFn: (input: BillingCheckoutInput) => api.billing.checkout(workspaceId, input),
 	})
 }
 
-export function useCompleteCheckout(workspaceId: string) {
+export function useBuyCredits(workspaceId: string) {
+	return useMutation({
+		mutationFn: (input: BillingBuyCreditsInput) => api.billing.buyCredits(workspaceId, input),
+	})
+}
+
+export function useBillingCancel(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
-		mutationFn: ({
-			paymentIntentId,
-			invoiceEmail,
-		}: { paymentIntentId: string; invoiceEmail?: string }) =>
-			api.billing.complete(workspaceId, paymentIntentId, invoiceEmail),
-		onSuccess: () => {
-			toast.success('Payment confirmed — plan activated')
-			queryClient.invalidateQueries({ queryKey: queryKeys.billing.all(workspaceId) })
-		},
-	})
-}
-
-export function useOpenPortal(workspaceId: string) {
-	return useMutation({
-		mutationFn: () => api.billing.portal(workspaceId),
-		onSuccess: (data) => {
-			window.location.href = data.url
-		},
-		// A silent `manage` failure looks broken — surface why (e.g. no Stripe
-		// customer yet) instead of doing nothing.
-		onError: (err) => {
-			toast.error(err instanceof Error ? err.message : 'Could not open the Stripe portal')
-		},
+		mutationFn: () => api.billing.cancel(workspaceId),
+		onSuccess: () =>
+			queryClient.invalidateQueries({ queryKey: queryKeys.billing.usage(workspaceId) }),
 	})
 }

@@ -10,44 +10,28 @@ import {
 	SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { useChatUnreadCount } from '@/hooks/use-chat-unread'
-import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useUnread } from '@/hooks/use-subscriptions'
+import {
+	CHATS_ROUTE,
+	CORE_NAV_ITEMS,
+	FOR_YOU_ROUTE,
+	type NavItemDef,
+	OBJECTS_NAV_ITEM,
+	useHasObjectsNavItem,
+} from '@/lib/nav-items'
 import { useWorkspace } from '@/lib/workspace-context'
-import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
-import { Layers, MessageSquare, RefreshCw, Store, Zap } from 'lucide-react'
+import { Store } from 'lucide-react'
 import { useMemo } from 'react'
 import { NavUser } from './nav-user'
 import { SidebarActivity } from './sidebar-activity'
-import { SidebarNavItem, type SidebarNavItemDef } from './sidebar-nav-item'
-import { SidebarReleaseCard } from './sidebar-release-card'
+import { SidebarNavItem } from './sidebar-nav-item'
 import { WorkspaceSwitcher } from './workspace-switcher'
 
-const FOR_YOU_ROUTE = '/$workspaceId' as const
-const CHATS_ROUTE = '/$workspaceId/chats' as const
-
-// v2 nav inventory — mockup `navDefs` (For you, Chats, Loops, Objects) and
-// `navSecondaryDefs` (Marketplace). Agents and Triggers are deliberately absent:
-// Agents is reached through the working-agents card in the footer, triggers
-// through the "Not tied to a loop" group on Loops. Both routes stay mounted, so
-// deep links and bookmarks keep resolving.
-//
-// `key` is the stable analytics identifier for `nav_item_clicked` — never rename
-// after ship without coordinating with the PostHog query in the parent bet
-// (`metadata.posthog_query`).
-const coreNavItems: SidebarNavItemDef[] = [
-	{ key: 'for-you', label: 'For you', to: FOR_YOU_ROUTE, exact: true, icon: Zap },
-	{ key: 'chats', label: 'Chats', to: CHATS_ROUTE, icon: MessageSquare },
-	{ key: 'loops', label: 'Loops', to: '/$workspaceId/loops', icon: RefreshCw },
-]
-
-const objectsNavItem: SidebarNavItemDef = {
-	key: 'objects',
-	label: 'Objects',
-	to: '/$workspaceId/objects',
-	icon: Layers,
-}
-
-const marketplaceItem: SidebarNavItemDef = {
+// `navSecondaryDefs` (Marketplace) from the mockup. Agents and Triggers are
+// deliberately absent: Agents is reached through the working-agents card in
+// the footer, triggers through the "Not tied to a loop" group on Loops. Both
+// routes stay mounted, so deep links and bookmarks keep resolving.
+const marketplaceItem: NavItemDef = {
 	key: 'marketplace',
 	label: 'Marketplace',
 	to: '/$workspaceId/marketplace',
@@ -56,16 +40,15 @@ const marketplaceItem: SidebarNavItemDef = {
 
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	const { workspaceId } = useWorkspace()
-	const enabledModules = useEnabledModules()
+	const hasObjectTypes = useHasObjectsNavItem()
 	const { data: unread } = useUnread(workspaceId)
 	const unreadCount = unread?.items.length ?? 0
 	const chatUnread = useChatUnreadCount(workspaceId)
 
-	const navItems = useMemo(() => {
-		// Objects only earns a nav slot once the workspace has object types to show.
-		const hasObjectTypes = getEnabledObjectTypeTabs(enabledModules).length > 0
-		return hasObjectTypes ? [...coreNavItems, objectsNavItem] : coreNavItems
-	}, [enabledModules])
+	const navItems = useMemo(
+		() => (hasObjectTypes ? [...CORE_NAV_ITEMS, OBJECTS_NAV_ITEM] : CORE_NAV_ITEMS),
+		[hasObjectTypes],
+	)
 
 	return (
 		<Sidebar collapsible="icon" {...props}>
@@ -78,7 +61,12 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 					<div className="min-w-0 flex-1">
 						<WorkspaceSwitcher />
 					</div>
+					{/* Named for what it does here, not the generic primitive label —
+					    the SidebarRail is also in the tree and also toggles, and two
+					    controls sharing one accessible name is ambiguous to a screen
+					    reader (and to any role-based query). */}
 					<SidebarTrigger
+						aria-label="Collapse sidebar"
 						title="Collapse sidebar"
 						className="size-7 shrink-0 text-muted-foreground hover:text-foreground group-data-[collapsible=icon]:hidden"
 					/>
@@ -116,7 +104,6 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 				<SidebarMenu>
 					<SidebarNavItem item={marketplaceItem} source="footer" />
 				</SidebarMenu>
-				<SidebarReleaseCard />
 				<SidebarActivity workspaceId={workspaceId} />
 				<NavUser />
 			</SidebarFooter>

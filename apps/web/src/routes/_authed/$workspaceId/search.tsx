@@ -1,10 +1,13 @@
 import { PageHeader } from '@/components/layout/page-header'
+import { LegacySearchPage } from '@/components/search/legacy/search-page'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FilterTabs } from '@/components/shared/filter-tabs'
+import { QueryStateError } from '@/components/shared/query-state'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
 import {
 	SEARCH_GROUPS,
@@ -53,7 +56,7 @@ interface SearchParams {
 }
 
 export const Route = createFileRoute('/_authed/$workspaceId/search')({
-	component: SearchView,
+	component: SearchRoute,
 	validateSearch: (search: Record<string, unknown>): SearchParams => ({
 		q: typeof search.q === 'string' ? search.q : undefined,
 		type: typeof search.type === 'string' ? search.type : undefined,
@@ -62,6 +65,13 @@ export const Route = createFileRoute('/_authed/$workspaceId/search')({
 			typeof search.group === 'string' && GROUP_VALUES.has(search.group) ? search.group : undefined,
 	}),
 })
+
+// `new-design` boundary for the cross-entity search view: the v2 page below, or
+// the pre-v2 one vendored under `components/search/legacy/`. The route's
+// `validateSearch` is deliberately shared — flags govern the visual layer only.
+function SearchRoute() {
+	return useFeatureFlag('new-design') ? <SearchView /> : <LegacySearchPage />
+}
 
 function SearchView() {
 	const { workspaceId, workspace } = useWorkspace()
@@ -143,11 +153,14 @@ function SearchView() {
 		setRecentSearches(getRecentSearches(workspaceId).slice(0, 4))
 	}, [query, workspaceId])
 
-	const { rows, countsByGroup, total, isPending } = useWorkspaceSearch(workspaceId, {
-		q: query,
-		type: search.type,
-		status: search.status,
-	})
+	const { rows, countsByGroup, total, isPending, isError, isPartial } = useWorkspaceSearch(
+		workspaceId,
+		{
+			q: query,
+			type: search.type,
+			status: search.status,
+		},
+	)
 
 	// Recents (empty-query state) resolved against the objects list cache.
 	const { data: objects = [] } = useObjects(workspaceId)
@@ -260,6 +273,9 @@ function SearchView() {
 	// "Searching…" only while a query is committed and no results have arrived
 	// yet. Otherwise the loading branch flashes the no-match state.
 	const searchRequested = hasQuery && isPending
+	// A failed search never resolves, so it must not fall through to the
+	// "Searching…" branch — that would spin forever with no way out.
+	const searchFailed = hasQuery && isError
 	// The Type/Status selectors only ever narrow objects, so they stay out of
 	// the way while another group is pinned.
 	const showObjectFilters = !activeGroup || activeGroup === 'objects'
@@ -308,7 +324,16 @@ function SearchView() {
 							variant="pill"
 							tabs={groupChips}
 							value={search.group}
-							onChange={(group) => updateSearch({ group })}
+							// Type/Status only narrow objects and are hidden while another
+							// group is pinned — so clear them on the way out, or they'd keep
+							// filtering the counts from a control the user can't see.
+							onChange={(group) =>
+								updateSearch(
+									group && group !== 'objects'
+										? { group, type: undefined, status: undefined }
+										: { group },
+								)
+							}
 							className="min-w-0 max-sm:[&>button]:min-h-11"
 						/>
 						<p className="ml-auto min-w-0 max-w-full truncate text-[11.5px] text-muted-foreground">
@@ -339,6 +364,14 @@ function SearchView() {
 							/>
 						</div>
 					) : null}
+
+					{/* Some groups failed to load, so the counts above understate the
+					    truth. Say so rather than presenting a confident total. */}
+					{isPartial && !isError ? (
+						<p className="text-[11.5px] text-muted-foreground">
+							Some results couldn't be loaded, so these counts may be incomplete.
+						</p>
+					) : null}
 				</div>
 			) : null}
 
@@ -352,6 +385,13 @@ function SearchView() {
 						onRecentObjectClick={openObject}
 						onOpenPalette={() => setPaletteOpen(true)}
 					/>
+				) : searchFailed ? (
+					<div className="px-3 py-6 md:px-5">
+						<QueryStateError
+							title="Couldn't run that search"
+							error={new Error('Try again in a moment.')}
+						/>
+					</div>
 				) : searchRequested ? (
 					<div className="px-3 py-10 text-center text-[13px] text-muted-foreground md:px-5">
 						Searching…

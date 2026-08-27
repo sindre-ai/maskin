@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { PLATFORM_MCP_PRESET, WORKSPACE_COACH_DEFAULT } from '@maskin/shared'
+import { PlanCapExceededError } from '../../lib/llm-routing'
+import { DEFAULT_AGENT_IDS } from '../../services/workspace-bootstrap'
 import { buildActor, buildCreateActorBody, buildSession, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createSessionTestApp, createTestApp } from '../setup'
@@ -87,12 +89,23 @@ describe('Actors Routes', () => {
 			const actor = buildActor({ type: 'human' })
 			const coach = buildActor({ type: 'agent', name: 'Workspace Coach', isSystem: true })
 			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
+			// provisionWorkspace seeds the FULL default roster in-transaction, one
+			// actor insert + one workspaceMembers insert per DEFAULT_AGENT_IDS
+			// entry, in that order. The queue must cover every one of them: if it
+			// runs dry mid-roster the seed throws SeedAgentError, the transaction
+			// rolls back, and signup returns 201 with no workspace — which still
+			// satisfies a naive status assertion, so the queue length is what
+			// actually keeps this test honest.
 			mockResults.insertQueue = [
 				[actor], // human actor insert (already has apiKey via generateApiKey)
 				[{ id: randomUUID(), name: 'ws' }], // workspaces insert
 				[{}], // owner workspaceMembers insert
-				[coach], // Workspace Coach actor insert — must carry apiKey
-				[{}], // Workspace Coach workspaceMembers insert
+				[coach], // workspace_coach actor insert — must carry apiKey
+				[{}], // workspace_coach workspaceMembers insert
+				...DEFAULT_AGENT_IDS.slice(1).flatMap((agentId) => [
+					[buildActor({ type: 'agent', name: agentId, isSystem: false })],
+					[{}],
+				]),
 			]
 
 			const res = await app.request(
@@ -100,6 +113,14 @@ describe('Actors Routes', () => {
 			)
 
 			expect(res.status).toBe(201)
+			// The workspace must have actually been provisioned — a rolled-back
+			// transaction surfaces here as a missing id plus the failure flag.
+			const body = (await res.clone().json()) as {
+				workspace_id?: string
+				workspace_provisioning_failed?: boolean
+			}
+			expect(body.workspace_id).toBeDefined()
+			expect(body.workspace_provisioning_failed).toBeUndefined()
 			// inserts: [actor, workspace, owner-member, coach, coach-member]
 			const coachInsert = calls.inserts[3] as { apiKey?: string; isSystem?: boolean }
 			expect(coachInsert.isSystem).toBe(true)
@@ -1062,6 +1083,38 @@ describe('Actors Routes', () => {
 
 	describe('POST /api/actors/:id/run', () => {
 		const wsId = randomUUID()
+
+		it('propagates a plan-cap rejection instead of flattening it to 400', async () => {
+			// Regression: the handler's catch turned every createSession failure into
+			// `400 BAD_REQUEST` with a bare message, discarding the PLAN_CAP_EXCEEDED
+			// code and plan/used/cap context. The client could then only toast the raw
+			// string instead of the typed upgrade CTA. The error must escape the
+			// handler so app-factory's onError can emit the structured 402 (that
+			// mapping is covered in error-handling.test.ts).
+			const agent = buildActor({ type: 'agent', agentState: 'idle' })
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[], // no live session
+				[], // no paused session
+			]
+			sessionManager.createSession.mockRejectedValueOnce(
+				new PlanCapExceededError({
+					plan: 'trial',
+					used: 600,
+					cap: 500,
+					periodEnd: null,
+				}),
+			)
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/run`, {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).not.toBe(400)
+		})
 
 		it('starts a fresh session when no paused or running session exists', async () => {
 			const agent = buildActor({ type: 'agent', agentState: 'idle' })

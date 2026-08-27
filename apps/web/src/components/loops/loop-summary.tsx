@@ -22,16 +22,18 @@ export function loopSummarySentenceText(sentence: LoopSummarySentence): string {
 }
 
 // The "read it in four sentences" contract at the top of loop detail. Each
-// sentence is built purely from real loop data (guarantee, entry/close
+// sentence is built purely from real loop data (content, entry/close
 // conditions, live counts) with conservative fallbacks so an under-specified
 // loop still reads cleanly and always produces exactly four sentences.
 export function buildLoopSummarySentences(loop: LoopSummaryType): LoopSummarySentence[] {
 	const sentences: LoopSummarySentence[] = []
 
-	const guarantee = loop.guarantee?.trim()
+	// #1396 renamed the loop's promise field `guarantee` -> `content`, for
+	// consistency with the rest of the object API.
+	const promise = loop.content?.trim()
 	sentences.push(
-		guarantee && guarantee.length > 0
-			? [em(guarantee)]
+		promise && promise.length > 0
+			? [em(promise)]
 			: [em(loop.name ?? 'This loop'), seg(' keeps the workspace moving on its own.')],
 	)
 
@@ -45,24 +47,12 @@ export function buildLoopSummarySentences(loop: LoopSummaryType): LoopSummarySen
 	const close = loop.closeCondition?.trim()
 	if (close && close.length > 0) {
 		sentences.push([seg('A cycle closes when '), em(lowerFirst(close)), seg('.')])
-	} else if (loop.humanDecisionPoints && loop.humanDecisionPoints > 0) {
-		const n = loop.humanDecisionPoints
-		sentences.push([
-			seg('It stops for you at '),
-			em(`${n} decision point${n === 1 ? '' : 's'}`),
-			seg('.'),
-		])
 	} else {
 		sentences.push([seg('Cycles close once their work is done.')])
 	}
 
 	if (loop.pill === 'waiting_on_you') {
-		const n = loop.humanDecisionPoints
-		sentences.push([
-			seg('Right now it is '),
-			em('waiting on you'),
-			seg(n && n > 0 ? `, with ${n} decision point${n === 1 ? '' : 's'} open.` : '.'),
-		])
+		sentences.push([seg('Right now it is '), em('waiting on you'), seg('.')])
 	} else if (loop.pill === 'paused') {
 		sentences.push([seg('Right now it is '), em('paused'), seg('.')])
 	} else if (loop.inProgressCount > 0) {

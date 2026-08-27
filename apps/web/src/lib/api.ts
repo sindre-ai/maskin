@@ -21,8 +21,19 @@ export type {
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
+export interface PlanCapContext {
+	plan: string
+	used: number
+	cap: number
+	period_end: number | null
+}
+
 export class ApiError extends Error {
 	fieldErrors: Record<string, string[]>
+	/** Structured error code from the backend's `{ error: { code, ... } }` body, e.g. `PLAN_CAP_EXCEEDED`. */
+	code?: string
+	/** Populated when `code === 'PLAN_CAP_EXCEEDED'` — the plan/used/cap/reset context for a typed upgrade CTA. */
+	planCapContext?: PlanCapContext
 
 	constructor(
 		public status: number,
@@ -81,16 +92,27 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
 		let fieldErrors: Record<string, string[]> | undefined
 		let message: string
+		let code: string | undefined
+		let planCapContext: PlanCapContext | undefined
 
 		if (typeof data.error === 'object' && data.error?.code) {
 			// Structured error format: { error: { code, message, details?, suggestion? } }
 			message = data.error.message
+			code = data.error.code
 			if (data.error.details && Array.isArray(data.error.details)) {
 				fieldErrors = {}
 				for (const detail of data.error.details) {
 					const field = detail.field || '_root'
 					if (!fieldErrors[field]) fieldErrors[field] = []
 					fieldErrors[field].push(detail.message)
+				}
+			}
+			if (code === 'PLAN_CAP_EXCEEDED') {
+				planCapContext = {
+					plan: data.error.plan,
+					used: data.error.used,
+					cap: data.error.cap,
+					period_end: data.error.period_end ?? null,
 				}
 			}
 		} else if (typeof data.error === 'string') {
@@ -100,7 +122,10 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			message = data.error?.message || res.statusText
 		}
 
-		throw new ApiError(res.status, message, fieldErrors)
+		const err = new ApiError(res.status, message, fieldErrors)
+		err.code = code
+		err.planCapContext = planCapContext
+		throw err
 	}
 
 	return res.json()
@@ -321,10 +346,15 @@ export const api = {
 					body: { role },
 				}),
 			remove: (workspaceId: string, actorId: string) =>
-				request<{ removed: boolean }>(`/workspaces/${workspaceId}/members/${actorId}`, {
+				request<{ removed: true }>(`/workspaces/${workspaceId}/members/${actorId}`, {
 					method: 'DELETE',
 				}),
 		},
+		transferOwnership: (workspaceId: string, newOwnerActorId: string) =>
+			request<WorkspaceResponse>(`/workspaces/${workspaceId}/transfer-ownership`, {
+				method: 'POST',
+				body: { new_owner_actor_id: newOwnerActorId },
+			}),
 	},
 
 	relationships: {
@@ -391,6 +421,14 @@ export const api = {
 		disconnect: (id: string, workspaceId: string) =>
 			request<{ deleted: boolean }>(`/integrations/${id}`, {
 				method: 'DELETE',
+				workspaceId,
+			}),
+		githubLinkable: (workspaceId: string) =>
+			request<LinkableGithubInstallation[]>('/integrations/github/linkable', { workspaceId }),
+		githubLink: (workspaceId: string, installationId: string) =>
+			request<IntegrationResponse>('/integrations/github/link', {
+				method: 'POST',
+				body: { installation_id: installationId },
 				workspaceId,
 			}),
 		slackConversations: (id: string, workspaceId: string, types?: string[]) => {
@@ -549,21 +587,22 @@ export const api = {
 	},
 
 	billing: {
-		summary: (workspaceId: string) => request<BillingSummaryResponse>('/billing', { workspaceId }),
-		startCheckout: (workspaceId: string, invoiceEmail?: string) =>
+		checkout: (workspaceId: string, body: BillingCheckoutInput) =>
 			request<BillingCheckoutResponse>('/billing/checkout', {
 				method: 'POST',
-				body: invoiceEmail ? { invoiceEmail } : {},
+				body,
 				workspaceId,
 			}),
-		complete: (workspaceId: string, paymentIntentId: string, invoiceEmail?: string) =>
-			request<BillingSummaryResponse>('/billing/complete', {
+		buyCredits: (workspaceId: string, body: BillingBuyCreditsInput) =>
+			request<BillingCheckoutResponse>('/billing/credits/checkout', {
 				method: 'POST',
-				body: invoiceEmail ? { paymentIntentId, invoiceEmail } : { paymentIntentId },
+				body,
 				workspaceId,
 			}),
-		portal: (workspaceId: string) =>
-			request<{ url: string }>('/billing/portal', { method: 'POST', workspaceId }),
+		usage: (workspaceId: string) =>
+			request<BillingUsageResponse>('/billing/usage', { workspaceId }),
+		cancel: (workspaceId: string) =>
+			request<{ ok: true }>('/billing/cancel', { method: 'POST', workspaceId }),
 	},
 
 	marketplaceLoops: {
@@ -668,6 +707,12 @@ export const api = {
 				workspaceId,
 			})
 		},
+	},
+
+	featureFlags: {
+		// Per-actor, not per-workspace — no workspaceId. The backend resolves the
+		// booleans; the tester actor id list never reaches the browser.
+		get: () => request<{ flags: Record<string, boolean> }>('/feature-flags'),
 	},
 
 	userDisplaySettings: {
@@ -814,6 +859,22 @@ export const api = {
 				body: data,
 				workspaceId,
 			}),
+		editMessage: (id: string, workspaceId: string, messageId: number, data: EditMessageInput) =>
+			request<MessageResponse>(`/conversations/${id}/messages/${messageId}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		// agentId scopes the retry to one agent ("Redo this response"); omitted,
+		// every participant re-evaluates ("Ask agents to respond again").
+		retryMessage: (id: string, workspaceId: string, messageId: number, agentId?: string) =>
+			request<{ retried: boolean }>(
+				`/conversations/${id}/messages/${messageId}/retry${agentId ? `?agent_id=${agentId}` : ''}`,
+				{
+					method: 'POST',
+					workspaceId,
+				},
+			),
 		updateMe: (id: string, workspaceId: string, data: UpdateConversationParticipantStateInput) =>
 			request<ConversationParticipantStateResponse>(`/conversations/${id}/me`, {
 				method: 'PATCH',
@@ -895,6 +956,40 @@ export interface ClaudeOAuthImportInput {
 	scopes?: string[]
 	slot?: ClaudeOAuthSlot
 	nickname?: string
+}
+
+export type BillingPlan = 'trial' | 'pro' | 'team' | 'byollm'
+export type BillingStatus = 'active' | 'past_due' | 'canceled' | 'incomplete'
+
+export interface BillingCheckoutInput {
+	plan: 'pro' | 'team'
+	success_url: string
+	cancel_url: string
+}
+
+export interface BillingCheckoutResponse {
+	url: string
+	session_id: string
+}
+
+export interface BillingBuyCreditsInput {
+	amount_usd_cents: number
+	success_url: string
+	cancel_url: string
+}
+
+export interface BillingUsageResponse {
+	plan: BillingPlan
+	status: BillingStatus
+	// Actual dollar cost incurred this period, in USD cents — see
+	// apps/dev/src/routes/billing.ts.
+	usd_cents_used: number
+	hard_cap_usd_cents: number | null
+	period_start: number | null
+	period_resets_in_ms: number | null
+	stripe_customer_id: string | null
+	stripe_subscription_id: string | null
+	credit_balance_cents: number
 }
 
 // Types derived from backend response schemas
@@ -1065,6 +1160,10 @@ export interface WorkspaceResponse {
 	id: string
 	name: string
 	settings: Record<string, unknown>
+	byollmAllowed: boolean
+	// Single accountable human payer for this workspace's plan — read-only,
+	// server-set. See apps/dev/src/lib/workspace-capacity.ts.
+	billingOwnerId: string | null
 	createdBy: string | null
 	createdAt: string | null
 	updatedAt: string | null
@@ -1147,6 +1246,14 @@ export interface IntegrationResponse {
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
+}
+
+/** A GitHub App installation the current actor can bind to this workspace,
+ *  because they already reach it from one of their workspaces. */
+export interface LinkableGithubInstallation {
+	installationId: string
+	ownerLogin: string | null
+	alreadyLinked: boolean
 }
 
 export interface ProviderEventDefinition {
@@ -1335,6 +1442,9 @@ export interface ConversationListItemResponse {
 	archived: boolean
 	unread_count: number
 	snippet: string | null
+	/** Who wrote `snippet` — the list row prefixes the preview with their name. */
+	snippet_actor_id: string | null
+	snippet_actor_name: string | null
 	participants: ConversationParticipantResponse[]
 }
 
@@ -1381,11 +1491,74 @@ export interface MessageContextNotification {
 	title?: string
 }
 
+export interface MessageFinalOutput {
+	dedupe_key: string
+	/** The chat message whose turn produced this output, when resolvable. */
+	message_id?: number | null
+	is_error?: boolean
+	subtype?: string
+	truncated?: boolean
+	/** Reply was recovered from the turn's log because `result` came back blank. */
+	recovered?: boolean
+	/**
+	 * How a failed turn was read: 'transient' means the model API blipped and
+	 * the turn was replayed, 'permanent' means no replay would have helped.
+	 * Mirrors messageFinalOutputSchema in packages/shared.
+	 */
+	error_kind?: 'transient' | 'permanent'
+	/** Replays spent before giving up on a transient failure. */
+	retries?: number
+	/**
+	 * Why a transient failure was reported instead of replayed. 'unanswered' is
+	 * the one kind with no `result` envelope behind it — see
+	 * finalOutputsFromSession in use-conversation-activity.ts.
+	 */
+	retry?: 'unavailable' | 'undeliverable' | 'unanswered'
+}
+
+export interface MessageQuestionOption {
+	label: string
+	description?: string
+}
+
+export interface MessageQuestionItem {
+	question: string
+	header: string
+	multi_select: boolean
+	options: MessageQuestionOption[]
+}
+
+/** An agent's AskUserQuestion, surfaced into chat as selectable options. */
+export interface MessageQuestion {
+	session_id: string
+	questions: MessageQuestionItem[]
+}
+
+/** Which options the human picked, posted back on their reply message. */
+export interface MessageQuestionAnswer {
+	question_message_id: number
+	answers: Array<{ header: string; selected: string[] }>
+}
+
 export interface MessageMetadata {
 	attachments?: MessageAttachment[]
 	mentions?: string[]
 	context_objects?: MessageContextObject[]
 	context_notifications?: MessageContextNotification[]
+	/**
+	 * Backend-owned; stripped from anything a client sends. 'final_output'
+	 * marks an agent's automatically-posted end-of-turn reply, as opposed to
+	 * one it posted mid-turn via the post_conversation_message MCP tool.
+	 */
+	source?: 'final_output'
+	final_output?: MessageFinalOutput
+	/**
+	 * Backend-owned; stripped from anything a client sends, so a forged message
+	 * cannot put an official-looking prompt in an agent's mouth.
+	 */
+	question?: MessageQuestion
+	/** Client-supplied: pairs a human's reply back to the question it answers. */
+	question_answer?: MessageQuestionAnswer
 }
 
 export interface MessageResponse {
@@ -1399,6 +1572,11 @@ export interface MessageResponse {
 	metadata: MessageMetadata | null
 	sessionId: string | null
 	createdAt: string | null
+	editedAt: string | null
+}
+
+export interface EditMessageInput {
+	content: string
 }
 
 export interface MessagesListResponse {
@@ -1700,37 +1878,4 @@ interface InstalledLoopForkResponse {
 	installedAt: string | null
 	updatedAt: string | null
 	detached: { actors: number; triggers: number; skills: number; integrations: number }
-}
-
-export interface BillingPlanResponse {
-	planId: string
-	planLabel: string | null
-	status: string
-	priceCents: number | null
-	currency: string
-	nextChargeAt: string | null
-}
-
-export interface BillingInvoiceResponse {
-	id: string
-	description: string
-	amountCents: number
-	currency: string
-	status: string
-	billedAt: string
-}
-
-export interface BillingSummaryResponse {
-	configured: boolean
-	testMode: boolean
-	publishableKey: string | null
-	plan: BillingPlanResponse
-	invoiceEmail: string | null
-	invoices: BillingInvoiceResponse[]
-}
-
-export interface BillingCheckoutResponse {
-	clientSecret: string
-	testMode: boolean
-	plan: BillingPlanResponse
 }

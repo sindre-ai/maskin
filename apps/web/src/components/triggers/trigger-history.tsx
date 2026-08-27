@@ -3,6 +3,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { cn } from '@/lib/cn'
+import { isTriggerChange } from '@/lib/triggers'
 import { formatEventDescription } from '@maskin/shared'
 import { useMemo } from 'react'
 
@@ -43,7 +44,7 @@ export function TriggerHistory({
 	const changes = useMemo(
 		() =>
 			[...(events ?? [])]
-				.filter((e) => e.entityId === triggerId)
+				.filter((e) => isTriggerChange(e, triggerId))
 				.sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''))
 				.slice(-MAX_CHANGES),
 		[events, triggerId],

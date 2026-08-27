@@ -664,11 +664,6 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				workspaceId={workspaceId}
 				open={menuOpen}
 				onOpenChange={setMenuOpen}
-				statuses={statuses}
-				members={members}
-				currentDriverId={object.driver ?? null}
-				onStatusChange={handleAuxStatusChange}
-				onDriverChange={handleUpdateDriver}
 			/>
 		</>
 	)
@@ -781,7 +776,7 @@ export function DeleteConfirmDialog({
 		</Dialog>
 	)
 }
-function StickyBetIdentity({
+export function StickyBetIdentity({
 	title,
 	status,
 	onScrollBack,

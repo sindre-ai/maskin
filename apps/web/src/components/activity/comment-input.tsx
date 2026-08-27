@@ -210,16 +210,20 @@ export function CommentInput({
 		}, []),
 	)
 
-	const insertAtCursor = useCallback((snippet: string) => {
+	// `trailingSpace` exists for the "@" opener: the mention dropdown stays open
+	// only while the text after the "@" contains no space (see handleInput), so
+	// seeding "@ " would close it on the very first keystroke.
+	const insertAtCursor = useCallback((snippet: string, { trailingSpace = true } = {}) => {
 		const textarea = inputRef.current
 		setContent((prev) => {
 			const pos = textarea?.selectionStart ?? prev.length
 			const before = prev.slice(0, pos)
 			const after = prev.slice(pos)
 			const spacer = before.length > 0 && !/\s$/.test(before) ? ' ' : ''
-			const next = `${before}${spacer}${snippet} ${after}`
+			const tail = trailingSpace ? ' ' : ''
+			const next = `${before}${spacer}${snippet}${tail}${after}`
 			requestAnimationFrame(() => {
-				const caret = before.length + spacer.length + snippet.length + 1
+				const caret = before.length + spacer.length + snippet.length + tail.length
 				textarea?.focus()
 				textarea?.setSelectionRange(caret, caret)
 			})
@@ -244,7 +248,7 @@ export function CommentInput({
 	// Opens the @-mention flow the textarea already owns instead of a parallel
 	// picker — one mention path, one dropdown.
 	const startMention = useCallback(() => {
-		insertAtCursor('@')
+		insertAtCursor('@', { trailingSpace: false })
 		setShowMentions(true)
 		setMentionFilter('')
 		setSelectedIndex(0)
@@ -300,37 +304,50 @@ export function CommentInput({
 
 		const metadata = buildMetadata()
 
+		const postDirectly = () => {
+			createComment.mutate(
+				{
+					entity_id: objectId,
+					content: trimmed,
+					mentions: activeMentions.length > 0 ? activeMentions : undefined,
+					parent_event_id: parentEventId,
+					...(metadata ? { metadata } : {}),
+				},
+				{
+					onSuccess: () => {
+						resetComposer()
+						onSubmitted?.()
+					},
+				},
+			)
+		}
+
 		if (hasAttachments) {
 			// Hand the submission to the pending-comments queue. Uploads (if still
 			// in flight) and the final POST will continue in the background even
 			// if the user navigates away from this page. The queue carries the
 			// same metadata the direct path sends, so an attachment and a
 			// decision can ride one comment.
-			draft.submit({
+			const outcome = draft.submit({
 				content: trimmed,
 				mentions: activeMentions,
 				...(metadata ? { metadata } : {}),
 			})
+			// The queue has nothing to send — the entry was never created, or every
+			// attachment was removed between the `hasAttachments` read and this
+			// click. It also deletes the entry in that second case, so there is no
+			// queued row left to render a failure on. Post directly rather than
+			// resetting the composer, which would clear the comment as if it sent.
+			if (outcome === 'no-attachments') {
+				postDirectly()
+				return
+			}
 			resetComposer()
 			onSubmitted?.()
 			return
 		}
 
-		createComment.mutate(
-			{
-				entity_id: objectId,
-				content: trimmed,
-				mentions: activeMentions.length > 0 ? activeMentions : undefined,
-				parent_event_id: parentEventId,
-				...(metadata ? { metadata } : {}),
-			},
-			{
-				onSuccess: () => {
-					resetComposer()
-					onSubmitted?.()
-				},
-			},
-		)
+		postDirectly()
 	}, [
 		content,
 		mentions,

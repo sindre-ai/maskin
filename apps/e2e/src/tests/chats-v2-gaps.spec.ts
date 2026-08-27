@@ -46,9 +46,10 @@ test.describe('Chats v2 — list affordances', () => {
 		const list = page.getByTestId('conversation-list')
 		await expect(list).toBeVisible({ timeout: 15_000 })
 
-		// One page of history: the terminal line, never a permanent spinner label.
-		await expect(list.getByText(/That's the whole history/)).toBeVisible({ timeout: 15_000 })
+		// One page of history: the list just ends — no scroll affordance and no
+		// permanent spinner label left behind.
 		await expect(list.getByText('Loading older conversations…')).toHaveCount(0)
+		await expect(list.getByText('Older conversations load as you scroll')).toHaveCount(0)
 	})
 })
 
@@ -71,13 +72,20 @@ test.describe('Chats v2 — agent data-viz card', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
-			await expect(page.getByTestId('thread-messages')).toBeVisible({ timeout: 15_000 })
+			const thread = page.getByTestId('thread-messages')
+			await expect(thread).toBeVisible({ timeout: 15_000 })
 
+			// Scoped to the thread: at iPad widths the conversation list is on
+			// screen too, and its preview snippet repeats the raw message body.
 			// The fenced spec becomes the bounded visual, not a literal code block.
-			await expect(page.getByText('Drop-off concentrates on step two.')).toBeVisible({
+			// Scoped to the transcript: the left pane's row snippet is the raw
+			// message, caption JSON and all, so a page-wide match resolves to two
+			// elements at every viewport wide enough to show the list.
+			const transcript = page.getByTestId('thread-messages')
+			await expect(transcript.getByText('Drop-off concentrates on step two.')).toBeVisible({
 				timeout: 15_000,
 			})
-			await expect(page.getByText('"type": "bar"')).toHaveCount(0)
+			await expect(transcript.getByText('"type": "bar"')).toHaveCount(0)
 
 			const overflow = await page.evaluate(() => {
 				const el = document.scrollingElement
@@ -105,10 +113,12 @@ test.describe('Chats v2 — turn this into an object', () => {
 			await composer.click()
 			await composer.pressSequentially('/')
 
-			const menu = page.getByLabel('Turn this into an object')
+			// getByRole, not getByLabel: the menu carries its accessible name as
+			// `aria-label`, and getByLabel does not match a role="menu" element.
+			const menu = page.getByRole('menu', { name: 'Turn this into an object' })
 			await expect(menu).toBeVisible({ timeout: 10_000 })
-			await expect(menu.getByRole('button', { name: /Bets/ })).toBeVisible()
-			await expect(menu.getByRole('button', { name: /Insights/ })).toBeVisible()
+			await expect(menu.getByRole('menuitem', { name: /Bets/ })).toBeVisible()
+			await expect(menu.getByRole('menuitem', { name: /Insights/ })).toBeVisible()
 
 			await page.keyboard.press('Escape')
 			await expect(menu).toHaveCount(0)

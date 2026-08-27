@@ -3,7 +3,7 @@ import './extensions'
 import path from 'node:path'
 import { serve } from '@hono/node-server'
 import { createDb, syncAgentServersFromEnv } from '@maskin/db'
-import { sessions } from '@maskin/db/schema'
+import { actors, sessions } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
@@ -135,7 +135,12 @@ logger.info('Orphan thread detector started')
 // through the queue instead of spawning a local Docker container; outside
 // production the queue stays inert (every tick parks at no-capacity backoff)
 // so local-dev keeps its Docker-based session-manager path unchanged.
-const sessionDispatchQueue = new SessionDispatchQueue(db, async () => ({ kind: 'no_capacity' }))
+const sessionDispatchQueue = new SessionDispatchQueue(db, async () => ({ kind: 'no_capacity' }), {
+	// Dispatch exhaustion is otherwise invisible to the user watching the
+	// session: the log stream just stops. This puts the reason, and the
+	// "start a new session" recovery, into the transcript itself.
+	appendSystemLog: (sessionId, content) => sessionManager.insertSystemLog(sessionId, content),
+})
 if (process.env.NODE_ENV === 'production') {
 	const dispatcher = new SessionDispatcher({
 		db,
@@ -143,6 +148,20 @@ if (process.env.NODE_ENV === 'production') {
 			const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
 			if (!session) return null
 			if (session.status !== 'starting' && session.status !== 'pending') return null
+			// The session's actor can be hard-deleted between enqueue and dispatch
+			// (deleting an actor, uninstalling a loop, or a loop version push all
+			// remove agents and their sessions). buildLaunchSpec would throw for
+			// that, and the dispatcher classifies ANY throw as a transient failure
+			// — so a permanently undispatchable session burned all 5 attempts with
+			// backoff before erroring out (Sentry MASKIN-DEV-4, "buildStartRequest
+			// threw: Agent not found or not an agent type"). Returning null instead
+			// routes it straight to permanent_failure on the first attempt.
+			const [agent] = await db
+				.select({ type: actors.type })
+				.from(actors)
+				.where(eq(actors.id, session.actorId))
+				.limit(1)
+			if (!agent || agent.type !== 'agent') return null
 			const spec = await sessionManager.buildLaunchSpec(session)
 			return {
 				sessionId: session.id,
@@ -163,15 +182,25 @@ if (process.env.NODE_ENV === 'production') {
 		// forever on stdin, never receiving the user's opening message.
 		seedInteractiveTurn: async (sessionId) => {
 			const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
-			if (!session || !session.interactive || session.actionPrompt.trim().length === 0) return
-			const seedTurnMessageId = (
-				session.config as { conversation?: { message_id?: number } } | null
-			)?.conversation?.message_id
-			await sessionManager.writeInput(
-				sessionId,
-				{ type: 'user', message: { role: 'user', content: session.actionPrompt } },
-				undefined,
-				seedTurnMessageId,
+			if (!session || !session.interactive) return
+			if (session.actionPrompt.trim().length > 0) {
+				const seedTurnMessageId = (
+					session.config as { conversation?: { message_id?: number } } | null
+				)?.conversation?.message_id
+				await sessionManager.writeInput(
+					sessionId,
+					{ type: 'user', message: { role: 'user', content: session.actionPrompt } },
+					undefined,
+					seedTurnMessageId,
+				)
+			}
+			// After the seed turn: deliver chat messages that arrived while the
+			// sandbox was booting (buffered by the conversation responder).
+			await sessionManager.drainPendingConversationTurns(sessionId).catch((err) =>
+				logger.error('Failed to drain buffered conversation turns after remote dispatch', {
+					sessionId,
+					error: String(err),
+				}),
 			)
 		},
 	})
@@ -182,20 +211,42 @@ if (process.env.NODE_ENV === 'production') {
 sessionDispatchQueue.start()
 logger.info('Session dispatch queue started')
 
-const shutdown = (signal: string) => {
+let shuttingDown = false
+const shutdown = async (signal: string) => {
+	// A second signal while the first is still settling is an operator asking
+	// harder, not asking twice. The first gets the graceful path; the second
+	// exits now — otherwise a replay wedged on a hung write leaves SIGKILL as
+	// the only way out.
+	if (shuttingDown) {
+		logger.warn(`Received ${signal} while already shutting down; exiting now`)
+		process.exit(1)
+	}
+	shuttingDown = true
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	notifyBridge.stop?.()
+	// A turn replay in backoff holds the human's message and nothing else does:
+	// its state is in-process, so exiting mid-backoff drops the turn silently.
+	// Bounded inside, so a wedged replay cannot block the exit.
+	try {
+		await sessionManager.turnFinalizer.settleForShutdown()
+	} catch (err) {
+		// Documented as never throwing, but an unhandled rejection here would
+		// skip the exit below and hang the shutdown on a technicality.
+		logger.error(
+			`Failed to settle in-flight turn replays: ${err instanceof Error ? err.message : String(err)}`,
+		)
+	}
 	process.exit(0)
 }
-process.on('SIGTERM', () => shutdown('SIGTERM'))
-process.on('SIGINT', () => shutdown('SIGINT'))
+process.on('SIGTERM', () => void shutdown('SIGTERM'))
+process.on('SIGINT', () => void shutdown('SIGINT'))
 
 logger.info(`Starting server on port ${port}`)
 
 let bootstrap: DevBootstrapResult | null = null
 try {
-	bootstrap = await maybeBootstrapDev(db, agentStorage)
+	bootstrap = await maybeBootstrapDev(db, agentStorage, sessionManager)
 	if (bootstrap) {
 		logger.info('Dev bootstrap created default actor + workspace', {
 			actorEmail: bootstrap.actorEmail,

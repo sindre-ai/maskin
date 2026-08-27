@@ -18,25 +18,23 @@ import type {
 // this narrowly swallows only Argos-originated rejections and preserves
 // normal crash-on-unhandled-rejection behavior for anything else.
 //
-// Detection can't rely on the stack path `@argos-ci`: by the time the
-// rejection surfaces here Node has formatted the stack with short basenames
-// (`api-client index.js`, `core index.js`), so the package prefix is gone.
-// Match on @argos-ci/api-client's own error class name (`APIError`) and the
-// product's well-known message markers as well.
+// Detection relies on the stack containing the package path (`@argos-ci/api-client`'s
+// `throwAPIError()` constructs the error, so its frame is always present) plus a
+// specific, verbatim phrase from the real observed message as a fallback for cases
+// where the stack is unavailable (e.g. a rejection value that isn't a real Error).
+// Note: @argos-ci/api-client's `APIError` class never sets `this.name` (it just calls
+// `super(message)`), so `reason.name` is always the generic `'Error'` — matching on
+// `.name` can't distinguish it from any other error and was removed.
 const ARGOS_MESSAGE_MARKERS = [
-	'screenshot capacity',
-	'Free Plan',
+	'screenshot capacity included in your Free Plan',
 	'Argos repository token',
-	'Argos',
 ]
 function isArgosError(reason: unknown): boolean {
 	if (!(reason instanceof Error)) return false
 	const message = reason.message ?? ''
 	const stack = reason.stack ?? ''
 	return (
-		reason.name === 'APIError' ||
-		stack.includes('@argos-ci') ||
-		ARGOS_MESSAGE_MARKERS.some((marker) => message.includes(marker))
+		stack.includes('@argos-ci') || ARGOS_MESSAGE_MARKERS.some((marker) => message.includes(marker))
 	)
 }
 process.on('unhandledRejection', (reason) => {
@@ -48,6 +46,20 @@ process.on('unhandledRejection', (reason) => {
 		return
 	}
 	console.error('Unhandled promise rejection:', reason)
+	process.exitCode = 1
+})
+
+// Belt-and-suspenders for the same class of bug: if the orphaned promise
+// surfaces as an uncaughtException instead of an unhandledRejection (the two
+// are easy to conflate when reasoning about a bundled, minified dependency),
+// apply the identical Argos-only filter so this can't reintroduce the crash
+// under a different Node event name.
+process.on('uncaughtException', (error) => {
+	if (isArgosError(error)) {
+		console.error('[argos] uncaught exception from Argos upload, continuing without upload:', error)
+		return
+	}
+	console.error('Uncaught exception:', error)
 	process.exitCode = 1
 })
 
@@ -85,5 +97,15 @@ export default class SafeArgosReporter implements Reporter {
 		} catch (error) {
 			console.error('[argos] upload failed, continuing without Argos upload:', error)
 		}
+		// Belt-and-suspenders beyond the try/catch above and the process-level
+		// handlers up top: @argos-ci/core's upload() has been observed to reject
+		// via a promise that isn't part of the chain awaited by
+		// ArgosReporter.onEnd() (see the file-level comment), so the rejection
+		// can surface after this function has already returned normally —
+		// too late for either guard to intercept it. Pinning the exit code to
+		// Playwright's own verdict here means a late/stray Argos rejection can
+		// no longer flip a shard that actually passed into a CI failure, no
+		// matter which async path it takes.
+		process.exitCode = result.status === 'passed' ? 0 : 1
 	}
 }

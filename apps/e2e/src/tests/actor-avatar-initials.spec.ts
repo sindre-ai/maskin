@@ -33,9 +33,13 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+			// The object title is a static <h1> on the v2 detail shell — wait on it
+			// to know the object has loaded.
 			await expect(
 				page.getByRole('heading', { level: 1, name: 'Bet for actor-avatar initials' }),
-			).toBeVisible({ timeout: 20000 })
+			).toBeVisible({
+				timeout: 20000,
+			})
 
 			// AC: initials render in the avatar slot with the account name.
 			const actorName = await page.evaluate(() => {
@@ -62,7 +66,9 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 			await page.reload()
 			await expect(
 				page.getByRole('heading', { level: 1, name: 'Bet for actor-avatar initials' }),
-			).toBeVisible({ timeout: 20000 })
+			).toBeVisible({
+				timeout: 20000,
+			})
 			const secondColor = await page
 				.locator('main .rounded-full[title^="E2E "]')
 				.first()

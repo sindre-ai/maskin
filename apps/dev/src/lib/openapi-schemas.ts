@@ -88,6 +88,12 @@ export const actorResponseSchema = z.object({
 export const actorWithKeySchema = actorResponseSchema.extend({
 	api_key: z.string(),
 	workspace_id: z.string().uuid().optional(),
+	// Set only on the signup path, and only when auto-provisioning was
+	// attempted and failed. The actor row is already committed by then, so
+	// signup still returns 201 with a usable api_key — but the caller needs to
+	// distinguish "no workspace because none was asked for" from "no workspace
+	// because provisioning broke", which a bare missing `workspace_id` cannot.
+	workspace_provisioning_failed: z.boolean().optional(),
 })
 
 export const actorWithRoleSchema = actorListItemSchema.extend({
@@ -99,6 +105,11 @@ export const workspaceResponseSchema = z.object({
 	name: z.string(),
 	settings: jsonbField.transform((v) => v ?? {}),
 	onboardingEnabled: z.boolean(),
+	byollmAllowed: z.boolean(),
+	// Single accountable human payer for this workspace's plan — read-only,
+	// server-set. See apps/dev/src/lib/workspace-capacity.ts. Nullable during
+	// the migration window before every row is backfilled.
+	billingOwnerId: z.string().uuid().nullable(),
 	createdBy: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
@@ -127,6 +138,14 @@ export const eventResponseSchema = z.object({
 	data: jsonbField,
 	createdAt: z.string().nullable(),
 	description: z.string().optional(),
+})
+
+// The 201 body of POST /api/events. Identical to a plain event, plus a
+// best-effort warning when some @mention ids matched no actor — the comment
+// still posts, but those people/agents were never notified.
+export const createCommentResponseSchema = eventResponseSchema.extend({
+	unresolved_mentions: z.array(z.string().uuid()).optional(),
+	warning: z.string().optional(),
 })
 
 export const fileSummarySchema = z.object({
@@ -241,11 +260,16 @@ export const conversationListItemResponseSchema = z.object({
 	archived: z.boolean(),
 	unread_count: z.number(),
 	snippet: z.string().nullable(),
+	// Who wrote the snippet. The list row prefixes the preview with the sender
+	// ("Forge: …", "You: …") — without it a row of agent chatter reads as if
+	// the viewer said it.
+	snippet_actor_id: z.string().uuid().nullable(),
+	snippet_actor_name: z.string().nullable(),
 	participants: z.array(conversationParticipantResponseSchema),
 })
 
 export const conversationDetailResponseSchema = conversationListItemResponseSchema
-	.omit({ snippet: true })
+	.omit({ snippet: true, snippet_actor_id: true, snippet_actor_name: true })
 	.extend({
 		last_read_message_id: z.number().nullable(),
 	})
@@ -267,6 +291,7 @@ export const messageResponseSchema = z.object({
 	metadata: jsonbField,
 	sessionId: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
+	editedAt: z.string().nullable(),
 })
 
 export const sessionLogResponseSchema = z.object({

@@ -57,6 +57,8 @@ export const queryKeys = {
 	integrations: {
 		all: (workspaceId: string) => ['integrations', workspaceId] as const,
 		providers: () => ['integrations', 'providers'] as const,
+		githubLinkable: (workspaceId: string) =>
+			['integrations', workspaceId, 'github', 'linkable'] as const,
 		slackConversations: (integrationId: string, types: string[]) =>
 			['integrations', integrationId, 'slack', 'conversations', [...types].sort()] as const,
 		slackUsers: (integrationId: string) =>
@@ -87,6 +89,8 @@ export const queryKeys = {
 		logs: (sessionId: string) => ['sessions', sessionId, 'logs'] as const,
 		byActor: (workspaceId: string, actorId: string) =>
 			['sessions', workspaceId, 'actor', actorId, 'running'] as const,
+		byActorAll: (workspaceId: string, actorId: string) =>
+			['sessions', workspaceId, 'actor', actorId, 'all'] as const,
 		byActorAllInfinite: (workspaceId: string, actorId: string) =>
 			['sessions', workspaceId, 'actor', actorId, 'all', 'infinite'] as const,
 		byMentionObject: (workspaceId: string, objectId: string) =>
@@ -120,7 +124,7 @@ export const queryKeys = {
 	},
 	billing: {
 		all: (workspaceId: string) => ['billing', workspaceId] as const,
-		summary: (workspaceId: string) => ['billing', workspaceId, 'summary'] as const,
+		usage: (workspaceId: string) => ['billing', workspaceId, 'usage'] as const,
 	},
 	subscriptions: {
 		subscribers: (entityType: string, entityId: string) =>

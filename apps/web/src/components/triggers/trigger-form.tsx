@@ -27,10 +27,12 @@ import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { describeCronSchedule, parseCronExpression } from '@/lib/cron'
-import type { SafeJsonValue } from '@maskin/shared'
+import { isTriggerChange } from '@/lib/triggers'
+import type { SafeJsonValue, conditionOperatorSchema } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { Bell, Clock, Plus, X, Zap } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { z } from 'zod'
 import {
 	EMPTY_SLACK_FILTER_STATE,
 	type SlackFilterState,
@@ -43,17 +45,31 @@ import { TriggerHistory } from './trigger-history'
 
 // --- Types ---
 
-type ConditionOperator =
-	| 'equals'
-	| 'not_equals'
-	| 'greater_than'
-	| 'less_than'
-	| 'before'
-	| 'after'
-	| 'within_days'
-	| 'is_set'
-	| 'is_not_set'
-	| 'contains'
+/** Derived from the shared enum rather than re-declared: a hand-maintained copy
+ *  had already drifted (it was missing `in` / `not_in`), and combined with an
+ *  unchecked cast on load that silently rewrote MCP-created conditions the form
+ *  couldn't represent. */
+type ConditionOperator = z.infer<typeof conditionOperatorSchema>
+
+/** The subset this form offers in its operator dropdowns. A condition whose
+ *  operator falls outside it can't be edited here without being rewritten, so
+ *  it is preserved untouched instead — see `initialConditions`. */
+const EDITABLE_OPERATORS = [
+	'equals',
+	'not_equals',
+	'greater_than',
+	'less_than',
+	'before',
+	'after',
+	'within_days',
+	'is_set',
+	'is_not_set',
+	'contains',
+] as const satisfies readonly ConditionOperator[]
+
+function isEditableOperator(value: unknown): value is ConditionOperator {
+	return EDITABLE_OPERATORS.includes(value as (typeof EDITABLE_OPERATORS)[number])
+}
 
 interface FieldDefinition {
 	name: string
@@ -273,7 +289,9 @@ export function TriggerForm({
 	agents: { id: string; name: string }[]
 	initialValues?: TriggerResponse
 	onAutoCreate?: (payload: TriggerFormPayload) => void
-	onSave?: (payload: TriggerFormPayload) => void
+	/** Return a promise to have the auto-save indicator wait on the real outcome
+	 *  rather than reporting success the moment the request is issued. */
+	onSave?: (payload: TriggerFormPayload) => unknown
 	onToggleEnabled?: () => void
 	/** Debounced autosave state, lifted so the shared top nav can render the
 	 *  `✓ Saved` marker in the header row (mockup 1586). */
@@ -394,15 +412,31 @@ export function TriggerForm({
 	const isSlackFilterCondition = (c: { field: string }) =>
 		isSlackEntityType(initialEntityType) && slackFilterFields.has(c.field)
 
+	const editableConditionsRaw = initialConditionsRaw.filter(
+		(c) => !isSlackFilterCondition(c) && isEditableOperator(c.operator),
+	)
+
+	// Conditions this form has no editor for — `in` / `not_in` are valid per
+	// `conditionOperatorSchema` and the backend evaluates them, but no dropdown
+	// offers them. They're held aside verbatim and re-emitted by `buildPayload`,
+	// so autosaving an unrelated field can't silently drop a condition that was
+	// set through MCP or the API.
+	// Held in state (never set) so the reference is stable — it feeds
+	// `buildPayload`, and a fresh array each render would reset the auto-save
+	// debounce on every keystroke.
+	const [preservedConditions] = useState(() =>
+		initialConditionsRaw.filter(
+			(c) => !isSlackFilterCondition(c) && !isEditableOperator(c.operator),
+		),
+	)
+
 	const [conditions, setConditions] = useState<ConditionRow[]>(() =>
-		initialConditionsRaw
-			.filter((c) => !isSlackFilterCondition(c))
-			.map((c) => ({
-				id: crypto.randomUUID(),
-				field: c.field,
-				operator: c.operator as ConditionOperator,
-				value: (c.value ?? '') as SafeJsonValue,
-			})),
+		editableConditionsRaw.map((c) => ({
+			id: crypto.randomUUID(),
+			field: c.field,
+			operator: c.operator as ConditionOperator,
+			value: (c.value ?? '') as SafeJsonValue,
+		})),
 	)
 
 	const [slackFilterState, setSlackFilterState] = useState<SlackFilterState>(() =>
@@ -502,7 +536,7 @@ export function TriggerForm({
 		const slackConditions = isSlackEntityType(entityType)
 			? slackFiltersToConditions(entityType, slackFilterState)
 			: []
-		const allConditions = [...userConditions, ...slackConditions]
+		const allConditions = [...userConditions, ...slackConditions, ...preservedConditions]
 
 		const config =
 			type === 'cron'
@@ -534,6 +568,7 @@ export function TriggerForm({
 		scheduledDate,
 		scheduledTime,
 		conditions,
+		preservedConditions,
 		slackFilterState,
 		buildCronExpression,
 		entityType,
@@ -552,12 +587,16 @@ export function TriggerForm({
 	}, [isValid, onAutoCreate, buildPayload])
 
 	// --- Debounced auto-save for edits ---
-	const { showSaved: showSaving } = useAutoSave({
+	const { showSaved: showSaving, error: autoSaveError } = useAutoSave({
 		isActive: isCreated,
 		isValid: !!isValid,
 		buildPayload,
 		onSave,
 	})
+
+	// A failed auto-save has no other surface — the caller's `error` prop covers
+	// create/update mutations it drives itself, not the debounced save.
+	const shownError = error ?? autoSaveError
 
 	useEffect(() => {
 		onSavedChange?.(showSaving)
@@ -660,9 +699,11 @@ export function TriggerForm({
 	// Suggestion chips are the zero state of the language bar: they only stand
 	// in for a transcript that isn't there yet (mockup 1821–1827). Shares the
 	// `events.byEntity` cache entry TriggerHistory already reads, so gating on
-	// it costs no extra request.
+	// it costs no extra request — and shares its predicate, so the chips stand
+	// down exactly when CHANGES appears, not when the trigger's own `created`
+	// event lands.
 	const { data: triggerEvents } = useEntityEvents(workspaceId, triggerId ?? '')
-	const hasChanges = (triggerEvents ?? []).some((e) => e.entityId === triggerId)
+	const hasChanges = (triggerEvents ?? []).some((e) => isTriggerChange(e, triggerId ?? ''))
 
 	const handleUtterance = useCallback(
 		async (_content: string) => {
@@ -1094,9 +1135,9 @@ export function TriggerForm({
 				</div>
 			)}
 
-			{error && (
+			{shownError && (
 				<div className="mt-4 rounded-lg bg-error/10 px-3 py-2 text-sm text-error">
-					{error.message || 'Something went wrong'}
+					{shownError.message || 'Something went wrong'}
 				</div>
 			)}
 

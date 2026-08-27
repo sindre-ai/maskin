@@ -12,6 +12,10 @@ const LEGACY_SESSION_WORKSPACE_PREFIX = 'agent-workspaces'
 
 export const SESSION_SKELETON_DIRS = ['workspace', 'skills', 'learnings', 'memory'] as const
 
+// Temporary name for the snapshot archive while it is staged inside sessionDir
+// for extraction. Removed in a `finally` before the caller ever sees the dir.
+const PULL_ARCHIVE_NAME = '.maskin-pull.tar.gz'
+
 // Whitelist on sessionId before it reaches an S3 key or a `tar` arg list.
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 
@@ -81,18 +85,24 @@ export async function pullSessionWorkspace(
 	if (resolvedKey) {
 		const buf = await storage.get(resolvedKey)
 		archiveBytes = buf.length
-		const stage = await mkdtemp(join(tmpdir(), 'maskin-agent-pull-'))
-		const archivePath = join(stage, 'workspace.tar.gz')
+		// The archive is staged INSIDE sessionDir and tar is run with `cwd: sessionDir`,
+		// so neither the archive operand nor the extraction directory is ever passed as
+		// an absolute path. GNU tar on Windows mangles both: it misreads an absolute
+		// `C:\...` archive argument as a `host:path` remote spec (rsh to a host named
+		// "C"), and it garbles an absolute `-C` argument into an unopenable path.
+		const archivePath = join(sessionDir, PULL_ARCHIVE_NAME)
 		try {
 			await writeFile(archivePath, buf)
 			// --strip-components=1 normalises two archive formats:
 			// - agent-server snapshots: entries rooted at `.` (e.g. `./workspace/…`)
 			// - Docker copyFrom snapshots: entries rooted at `agent` (e.g. `agent/workspace/…`)
 			// In both cases stripping one component lands files at `sessionDir/workspace/…`.
-			await execFile('tar', ['-xzf', archivePath, '-C', sessionDir, '--strip-components=1'])
+			await execFile('tar', ['-xzf', PULL_ARCHIVE_NAME, '--strip-components=1'], {
+				cwd: sessionDir,
+			})
 			restored = true
 		} finally {
-			await rm(stage, { recursive: true, force: true })
+			await rm(archivePath, { force: true })
 		}
 	}
 
@@ -118,8 +128,14 @@ export type PushSessionWorkspaceOptions = {
 	sleep?: (ms: number) => Promise<void>
 }
 
-const DEFAULT_PUSH_RETRIES = 3
+// 5 attempts with exponential backoff (2s, 4s, 8s, 16s — ~30s total) rather
+// than the previous 3 attempts with linear delay (2s, 4s — ~6s). SeaweedFS
+// answers `ServiceUnavailable` for tens of seconds while a volume server is
+// rebalancing or restarting, which outlasted the old budget and forced an
+// otherwise-successful agent run to exit non-zero (Sentry MASKIN-AGENT-SERVER-3).
+const DEFAULT_PUSH_RETRIES = 5
 const DEFAULT_PUSH_RETRY_DELAY_MS = 2_000
+const MAX_PUSH_RETRY_DELAY_MS = 16_000
 
 function defaultSleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms))
@@ -160,7 +176,7 @@ export async function pushSessionWorkspace(
 		// `-C sessionDir` + `.` packs entries relative to sessionDir with a leading
 		// `.` component (e.g. `./workspace/…`). pullSessionWorkspace uses
 		// --strip-components=1 which strips that `.`, landing files at newDir/*.
-		await execFile('tar', ['-C', sessionDir, '-czf', archivePath, '.'])
+		await execFile('tar', ['-C', sessionDir, '-czf', 'workspace.tar.gz', '.'], { cwd: stage })
 		const buf = await readFile(archivePath)
 
 		let lastErr: unknown
@@ -170,7 +186,9 @@ export async function pushSessionWorkspace(
 				return { archiveBytes: buf.length }
 			} catch (err) {
 				lastErr = err
-				if (attempt < retries) await sleep(retryDelayMs * attempt)
+				if (attempt < retries) {
+					await sleep(Math.min(retryDelayMs * 2 ** (attempt - 1), MAX_PUSH_RETRY_DELAY_MS))
+				}
 			}
 		}
 		throw lastErr

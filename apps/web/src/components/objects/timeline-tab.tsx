@@ -9,13 +9,15 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useObjectGraph } from '@/hooks/use-objects'
+import { useMarkRead } from '@/hooks/use-subscriptions'
 import type { ActorListItem, EventResponse, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { OBJECT_DIFF_FIELDS, findChange, getChangesFromEventData } from '@maskin/shared'
 import { formatEventDescription } from '@maskin/shared'
 import { ArrowDown, ChevronDown } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 /**
  * One row of the merged activity stream (mockup 1176–1355). Comments and events
@@ -39,6 +41,7 @@ type TimelineEntry =
 			chipTone: ChipTone
 			isStatusChange: boolean
 			newStatus: string | null
+			prevStatus: string | null
 			reference?: { verb: string; objectId: string; object?: ObjectResponse }
 	  }
 
@@ -166,6 +169,14 @@ function newStatusOf(event: EventResponse): string | null {
 	return typeof value === 'string' ? value : null
 }
 
+/** The status the object moved AWAY from — i.e. the one everything older than
+ *  this event sat in. Drives the phase divider below the change. */
+function prevStatusOf(event: EventResponse): string | null {
+	const changes = getChangesFromEventData(event.data, OBJECT_DIFF_FIELDS)
+	const value = findChange(changes, 'status')?.old
+	return typeof value === 'string' ? value : null
+}
+
 export function TimelineTab({ object }: { object: ObjectResponse }) {
 	const { workspaceId } = useWorkspace()
 	const {
@@ -229,6 +240,7 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 				chipTone: chip.tone,
 				isStatusChange: event.action === 'status_changed',
 				newStatus: event.action === 'status_changed' ? newStatusOf(event) : null,
+				prevStatus: event.action === 'status_changed' ? prevStatusOf(event) : null,
 				reference: reference
 					? { ...reference, object: objectsById.get(reference.objectId) }
 					: undefined,
@@ -249,6 +261,7 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 				chipTone: 'link',
 				isStatusChange: false,
 				newStatus: null,
+				prevStatus: null,
 				reference: {
 					verb: relationshipVerb(rel.type, direction),
 					objectId: linkedId,
@@ -309,6 +322,32 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 		[events, unreadCount],
 	)
 	const [unreadDismissed, setUnreadDismissed] = useState(false)
+	// High-water mark for mark-read: the newest comment event in the stream,
+	// matching the server's tracking (see `object-activity.tsx`).
+	const latestCommentEventId = useMemo(() => {
+		let max = 0
+		for (const e of events ?? []) {
+			if (e.action === 'commented' && e.id > max) max = e.id
+		}
+		return max
+	}, [events])
+	const markRead = useMarkRead(workspaceId)
+	// Dismissing the divider is a local, immediate affordance; the mutation is
+	// what actually clears the badge and the For You feed. Without it the
+	// divider would reappear on the next mount.
+	const handleMarkRead = useCallback(() => {
+		setUnreadDismissed(true)
+		if (latestCommentEventId <= 0) return
+		markRead.mutate(
+			{ entityType: 'object', entityId: object.id, lastEventId: latestCommentEventId },
+			{
+				onError: () => {
+					setUnreadDismissed(false)
+					toast.error('Failed to mark as read')
+				},
+			},
+		)
+	}, [markRead, object.id, latestCommentEventId])
 	const firstUnreadId = useMemo(() => {
 		if (unreadEventIds.size === 0) return null
 		let min: number | null = null
@@ -355,12 +394,22 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 		for (const entry of visible) {
 			out[out.length - 1]?.rows.push(entry)
 			if (entry.kind === 'event' && entry.isStatusChange) {
-				// Everything older than this change sat in the status it moved from;
-				// the entry itself carries the new status and closes the phase above.
+				// `visible` runs newest-first, so this change CLOSES the phase we
+				// have been filling and OPENS the older one below it. The phase
+				// above sat in the status the object moved to (`newStatus`) and
+				// began at this event's timestamp; everything older than the
+				// change sat in the status it moved from (`prevStatus`), and when
+				// that phase began is only known once we reach the next (older)
+				// change — hence `startedAt: null` until then.
+				const closing = out[out.length - 1]
+				if (closing) {
+					closing.startedAt = entry.time
+					if (entry.newStatus) closing.status = entry.newStatus
+				}
 				out.push({
 					key: `phase-${entry.key}`,
-					status: entry.newStatus ?? object.status,
-					startedAt: entry.time,
+					status: entry.prevStatus ?? object.status,
+					startedAt: null,
 					rows: [],
 				})
 			}
@@ -385,7 +434,7 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 	const renderEntry = (entry: TimelineEntry) => {
 		const divider =
 			showUnreadDivider && entry.kind === 'comment' && entry.event.id === firstUnreadId ? (
-				<UnreadDivider count={unreadCount} onMarkRead={() => setUnreadDismissed(true)} />
+				<UnreadDivider count={unreadCount} onMarkRead={handleMarkRead} />
 			) : null
 		return (
 			<li key={entry.key} className="list-none">

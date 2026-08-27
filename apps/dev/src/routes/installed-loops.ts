@@ -54,6 +54,12 @@ import {
 	rewriteWiring,
 	sourceItemIdOf,
 } from '../services/loop-provisioning'
+import {
+	type CapturedLiveSession,
+	captureLiveSessions,
+	stopCapturedSandboxes,
+} from '../services/session-cleanup'
+import type { SessionManager } from '../services/session-manager'
 import { autoSubscribe } from '../services/subscriptions'
 
 type Env = {
@@ -61,6 +67,7 @@ type Env = {
 		db: Database
 		actorId: string
 		agentStorage: AgentStorageManager
+		sessionManager: SessionManager
 	}
 }
 
@@ -83,10 +90,9 @@ class SkillNameConflictError extends Error {
 const installLoopBodySchema = z.object({
 	loopId: z.string().uuid(),
 	workspaceId: z.string().uuid(),
-	// Which marketplace surface started the install. Only the detail view sends
-	// `'detail'` — the catalog surface omits it, keeping the two populations
-	// distinguishable on `loop_installed`. Never derived server-side from any
-	// layout/URL heuristic; it is set exclusively at the detail call site.
+	// Which marketplace surface the install was started from. Absent means the
+	// catalogue card; the loop detail page sends `'detail'`. Analytics only —
+	// it changes nothing about what gets provisioned.
 	source: z.enum(['detail']).optional(),
 })
 
@@ -214,9 +220,9 @@ app.openapi(listInstalledLoopsRoute, async (c) => {
 // in packages/db/src/schema.ts. `metadata.trigger_ids` is seeded with every
 // trigger this install provisions so `GET /api/loops` picks up the right
 // agents (it derives `agentIds` from each trigger's `targetActorId`).
-// `entry_condition` / `close_condition` / `human_decision_points` are
-// deliberately left unset — a marketplace install has no authored pipeline
-// definition, only the running process.
+// `entry_condition` / `close_condition` are deliberately left unset — a
+// marketplace install has no authored pipeline definition, only the running
+// process.
 const installLoopRoute = createRoute({
 	method: 'post',
 	path: '/',
@@ -516,7 +522,11 @@ app.openapi(installLoopRoute, async (c) => {
 					type: 'loop',
 					title: loop.name,
 					content: loop.description,
-					status: 'running',
+					// Marketplace templates are pre-vetted, but the loop is still new to
+					// this workspace's data — start it at `learning` rather than
+					// `fully_autonomous` so its first runs get a look before it's fully
+					// trusted here.
+					status: 'learning',
 					createdBy: actorId,
 					metadata: {
 						installed_from_marketplace_loop_id: loopId,
@@ -911,6 +921,12 @@ app.openapi(uninstallLoopRoute, async (c) => {
 	// failed post-commit delete is inert — see workspace-skills.ts's DELETE route).
 	let removedSkillIds: string[] = []
 	let removedLoopObject = false
+	// Live sessions belonging to the agents this uninstall deletes. Captured
+	// inside the tx (only there is the kept-vs-deleted actor split known) and
+	// stopped after it commits — see session-cleanup.ts. Without this their
+	// sandboxes keep running as agents the user just uninstalled, holding
+	// agent-server capacity until the 2h timeout.
+	let strandedSessions: CapturedLiveSession[] = []
 
 	await db.transaction(async (tx) => {
 		if (keepProvisionedItems) {
@@ -1038,6 +1054,8 @@ app.openapi(uninstallLoopRoute, async (c) => {
 			}
 
 			if (actorIds.length > 0) {
+				strandedSessions = await captureLiveSessions(tx, actorIds)
+
 				// Delete triggers that target or were created by provisioned actors.
 				// The metadata-based delete above only removed marketplace-managed triggers;
 				// user-created triggers pointing at the same agents must also go before
@@ -1181,6 +1199,8 @@ app.openapi(uninstallLoopRoute, async (c) => {
 			},
 		})
 	})
+
+	await stopCapturedSandboxes(db, strandedSessions)
 
 	for (const skillId of removedSkillIds) {
 		try {

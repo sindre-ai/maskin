@@ -111,6 +111,14 @@
 	--color-ask-surface: var(--ask-surface);
 	--color-ask-border: var(--ask-border);
 
+	/* The quieter half of a two-pane split (the chats index column). */
+	--color-surface-sunken: var(--surface-sunken);
+
+	/* Today's brief — the one deliberately inverted surface in the light feed. */
+	--color-brief-surface: var(--brief-surface);
+	--color-brief-surface-hover: var(--brief-surface-hover);
+	--color-brief-foreground: var(--brief-foreground);
+
 	/* Semantic */
 	--color-success: var(--success);
 	--color-warning: var(--warning);
@@ -299,6 +307,19 @@
 	--ask-surface: #fffdf7;
 	--ask-border: #f0e6d2;
 
+	/* The index column of a two-pane screen — the chats list beside an open
+	   thread. One notch off --background so the pane reads as the quieter half
+	   of the split without becoming a card (mockup 273's `#fcfcfd`). Distinct
+	   from --sidebar, which is the app-wide nav rail. */
+	--surface-sunken: #fcfcfd;
+
+	/* Today's brief card — zinc-700, the mockup's one inverted block in the
+	   light feed (Feed v4 line 108). Dark mode drops it to zinc-800 so it still
+	   reads as a raised block rather than a hole in the page. */
+	--brief-surface: #3f3f46;
+	--brief-surface-hover: #52525b;
+	--brief-foreground: #fafafa;
+
 	/* Semantic */
 	--success: #16a34a;
 	--warning: #b45309;
@@ -423,6 +444,14 @@
 	/* v2 ask banner — warm parchment surface, dark derived by cooling the warm ramp one stop. */
 	--ask-surface: #1c1a14;
 	--ask-border: #3a2d1e;
+
+	/* Dark keeps the same relationship — one notch off --background (#09090b),
+	   still below --card so the split reads the same way round. */
+	--surface-sunken: #0c0c0e;
+
+	--brief-surface: #27272a;
+	--brief-surface-hover: #3f3f46;
+	--brief-foreground: #fafafa;
 
 	--success: #4ade80;
 	--warning: #fbbf24;

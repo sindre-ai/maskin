@@ -28,18 +28,25 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/keys')({
 
 function KeysPage() {
 	const { workspace, workspaceId } = useWorkspace()
+	const byollmAllowed = Boolean(workspace.byollmAllowed)
 
 	return (
-		<div className="max-w-lg space-y-6">
-			<ClaudeOAuthSection workspaceId={workspaceId} />
+		<div className="space-y-6">
+			{byollmAllowed ? (
+				<div className="max-w-lg space-y-6">
+					<div className="border-t border-border pt-6">
+						<ClaudeOAuthSection workspaceId={workspaceId} />
+					</div>
 
-			<div className="border-t border-border pt-6">
-				<LLMKeysEditor workspace={workspace} workspaceId={workspaceId} />
-			</div>
+					<div className="border-t border-border pt-6">
+						<LLMKeysEditor workspace={workspace} workspaceId={workspaceId} />
+					</div>
 
-			<div className="border-t border-border pt-6">
-				<CustomLlmEditor workspace={workspace} workspaceId={workspaceId} />
-			</div>
+					<div className="border-t border-border pt-6">
+						<CustomLlmEditor workspace={workspace} workspaceId={workspaceId} />
+					</div>
+				</div>
+			) : null}
 		</div>
 	)
 }
@@ -653,9 +660,7 @@ function CustomLlmEditor({
 						onCheckedChange={setEnabled}
 						disabled={!canEnable && !enabled}
 					/>
-					<span className="text-sm text-foreground">
-						{enabled ? 'Enabled — used for all sessions' : 'Disabled'}
-					</span>
+					<span className="text-sm text-foreground">{enabled ? 'Enabled' : 'Disabled'}</span>
 				</div>
 
 				<div>

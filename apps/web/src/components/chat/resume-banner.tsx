@@ -11,6 +11,7 @@ const STALE_AFTER_MS = 12 * 60 * 60 * 1000
 const MAX_LINES = 3
 
 interface ResumeBannerProps {
+	conversationId: string
 	messages: MessageResponse[]
 	lastReadMessageId: number | null
 }
@@ -26,16 +27,35 @@ function firstLine(content: string): string {
  * fetched: everything newer than your `last_read_message_id`, shown only when
  * the last thing you *did* read is old enough that you've genuinely been gone.
  */
-export function ResumeBanner({ messages, lastReadMessageId }: ResumeBannerProps) {
+export function ResumeBanner({ conversationId, messages, lastReadMessageId }: ResumeBannerProps) {
 	const self = getStoredActor()
-	// Latch the read cursor from the first render: `$conversationId.tsx` marks
-	// the thread read on open, so reading it live would make the banner vanish
-	// a beat after it appeared.
-	const latchedRef = useRef<{ set: boolean; value: number | null }>({ set: false, value: null })
-	if (!latchedRef.current.set && messages.length > 0) {
-		latchedRef.current = { set: true, value: lastReadMessageId }
+	// Latch the read cursor the first time we actually have one:
+	// `$conversationId.tsx` marks the thread read on open, so reading it live
+	// would make the banner vanish a beat after it appeared.
+	//
+	// The cursor and `messages` come from two independent queries
+	// (`useConversation` / `useConversationMessages` — see `thread-messages.tsx`),
+	// so latching merely on `messages.length > 0` stored `null` whenever the
+	// messages resolved first and suppressed the banner for the whole mount.
+	// Waiting for a non-null cursor costs nothing: a null cursor means the
+	// reader has never read this thread, which is not "picking back up" anyway.
+	//
+	// The latch is keyed by conversation because `ThreadMessages` is mounted
+	// without a `key`, so the router reuses this instance when only the
+	// `$conversationId` param changes. Message ids are globally sequential, so a
+	// cursor carried over from the previous thread fails deterministically:
+	// recent → old suppresses the banner entirely (nothing is `> cursor`), and
+	// old → recent resolves `lastRead` to a message from the other conversation.
+	// Keying here rather than relying on a `key` at the call site keeps the
+	// invariant next to the state that depends on it.
+	const latchedRef = useRef<{ conversationId: string; cursor: number } | null>(null)
+	if (latchedRef.current?.conversationId !== conversationId) {
+		latchedRef.current = null
 	}
-	const cursor = latchedRef.current.value
+	if (latchedRef.current === null && messages.length > 0 && lastReadMessageId !== null) {
+		latchedRef.current = { conversationId, cursor: lastReadMessageId }
+	}
+	const cursor = latchedRef.current?.cursor ?? null
 
 	if (cursor === null) return null
 

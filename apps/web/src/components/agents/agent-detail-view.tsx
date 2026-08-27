@@ -10,7 +10,7 @@ import { AgentToolsSection } from '@/components/agents/agent-tools-section'
 import { AgentUsageBlock } from '@/components/agents/agent-usage-block'
 import { PageHeader } from '@/components/layout/page-header'
 import { useAgentPause, useAgentRun } from '@/hooks/use-actors'
-import { useWorkspaceSessions } from '@/hooks/use-sessions'
+import { useActorSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, groupSessionsByAgent } from '@/lib/agent-status'
 import type { ActorResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -19,7 +19,7 @@ import { toast } from 'sonner'
 
 export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()
-	const { data: sessions } = useWorkspaceSessions(workspaceId, { paged: false })
+	const { data: sessions } = useActorSessions(agent.id, workspaceId)
 	const run = useAgentRun(workspaceId)
 	const pause = useAgentPause(workspaceId)
 
@@ -41,6 +41,7 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 			isRunPending={run.isPending}
 			isPausePending={pause.isPending}
 			runLabel={portrait === 'paused' ? 'Resume' : 'Run'}
+			density="nav"
 		/>
 	)
 

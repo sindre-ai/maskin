@@ -3,7 +3,7 @@ import { RelativeTime } from '@/components/shared/relative-time'
 import type { ActorListItem, LoopSummary } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
-import { LOOP_PILL_STYLES } from './loop-pill'
+import { LOOP_PILL_STYLES, isLiveLoopPill } from './loop-pill'
 
 // Plain-language "what happened last" line, derived purely from the loop's live
 // state (no fixtures). The read schema carries no per-activity feed, so this
@@ -11,22 +11,20 @@ import { LOOP_PILL_STYLES } from './loop-pill'
 // much of the loop's work is still moving through it.
 function lastActivityText(loop: LoopSummary): string {
 	switch (loop.pill) {
-		case 'waiting_on_you': {
-			const n = loop.humanDecisionPoints
-			return n && n > 0
-				? `Waiting on you — ${n} decision point${n === 1 ? '' : 's'} open`
-				: 'Waiting on you'
-		}
+		case 'waiting_on_you':
+			return 'Waiting on you'
 		case 'paused':
 			return 'Paused — not running'
-		case 'archived':
-			return 'Archived'
+		case 'draft':
+			return 'Draft — not live yet'
 		default:
 			if (loop.inProgressCount > 0)
 				return `${loop.inProgressCount} item${loop.inProgressCount === 1 ? '' : 's'} in progress`
 			if (loop.closedCount > 0)
 				return `${loop.closedCount} item${loop.closedCount === 1 ? '' : 's'} completed`
-			return 'Running'
+			// Live but idle: name the rung of the autonomy ladder it sits on
+			// rather than a generic "Running", which no longer exists.
+			return LOOP_PILL_STYLES[loop.pill].label
 	}
 }
 
@@ -59,15 +57,15 @@ export function LoopRow({
 				className={cn(
 					'mx-1 h-2 w-2 shrink-0 rounded-full',
 					pill.dot,
-					loop.pill === 'running' && 'animate-pulse',
+					isLiveLoopPill(loop.pill) && 'animate-pulse',
 				)}
 			/>
 			<div className="min-w-0 flex-1 leading-[1.35]">
 				<p className="truncate text-sm font-bold tracking-[-0.01em] text-foreground">
 					{loop.name ?? 'Untitled loop'}
 				</p>
-				{loop.guarantee && (
-					<p className="mt-0.5 truncate text-xs text-muted-foreground">{loop.guarantee}</p>
+				{loop.content && (
+					<p className="mt-0.5 truncate text-xs text-muted-foreground">{loop.content}</p>
 				)}
 				{(activity || loop.updatedAt) && (
 					<div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">

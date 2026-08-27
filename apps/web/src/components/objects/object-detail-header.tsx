@@ -1,7 +1,8 @@
 import { Button } from '@/components/ui/button'
 import type { MemberResponse, ObjectResponse } from '@/lib/api'
 import { PanelRight } from 'lucide-react'
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
+import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { OwnerSelect, StatusSelect } from './property-selects'
@@ -9,10 +10,6 @@ import { OwnerSelect, StatusSelect } from './property-selects'
 interface ObjectDetailHeaderProps {
 	object: ObjectResponse
 	workspaceId: string
-	statuses: string[]
-	members: MemberResponse[]
-	onStatusChange: (status: string) => void
-	onDriverChange: (driver: string | null) => void
 	onDeleteRequest: () => void
 	onArchiveRequest?: () => void
 	/** Opens/closes the properties drawer (mockup 1037). Rendered only when the
@@ -35,10 +32,6 @@ interface ObjectDetailHeaderProps {
 export function ObjectDetailHeader({
 	object,
 	workspaceId,
-	statuses,
-	members,
-	onStatusChange,
-	onDriverChange,
 	onDeleteRequest,
 	onArchiveRequest,
 	onTogglePropertiesRequest,
@@ -47,7 +40,19 @@ export function ObjectDetailHeader({
 	const [menuOpen, setMenuOpen] = useState(false)
 
 	return (
-		<div className="flex flex-none flex-wrap items-center justify-end gap-2 border-b border-border pb-3">
+		// The properties sidebar renders its own SubscribeToggle with the same
+		// aria-label, so this hook gives tests a way to target the header copy.
+		<div
+			data-object-detail-header
+			className="flex flex-none flex-wrap items-center justify-end gap-2 border-b border-border pb-3"
+		>
+			<SubscribeToggle
+				workspaceId={workspaceId}
+				entityType="object"
+				entityId={object.id}
+				isSubscribed={object.is_subscribed}
+				className="mr-1"
+			/>
 			{onTogglePropertiesRequest && (
 				<Button
 					variant="outline"
@@ -67,11 +72,6 @@ export function ObjectDetailHeader({
 				workspaceId={workspaceId}
 				open={menuOpen}
 				onOpenChange={setMenuOpen}
-				statuses={statuses}
-				members={members}
-				currentDriverId={object.driver ?? null}
-				onStatusChange={onStatusChange}
-				onDriverChange={onDriverChange}
 			/>
 		</div>
 	)
@@ -89,13 +89,32 @@ export function ObjectDetailIdentity({
 	members,
 	onStatusChange,
 	onDriverChange,
+	onTitleChange,
 }: {
 	object: ObjectResponse
 	statuses: string[]
 	members: MemberResponse[]
 	onStatusChange: (status: string) => void
 	onDriverChange: (driver: string | null) => void
+	/** Commits a renamed title on blur. Omitted by read-only hosts (the MCP-app
+	 *  embed), which keeps the plain `h1`. */
+	onTitleChange?: (title: string) => void
 }) {
+	const [titleDraft, setTitleDraft] = useState(object.title ?? '')
+	// Reset the draft when the route swaps to a different object — this instance
+	// is reused across param changes, so the useState initializer alone would
+	// leave the textarea stuck on the previous title. Same guard the retired
+	// document used.
+	const [trackedObjectId, setTrackedObjectId] = useState(object.id)
+	if (trackedObjectId !== object.id) {
+		setTrackedObjectId(object.id)
+		setTitleDraft(object.title ?? '')
+	}
+
+	const handleTitleBlur = useCallback(() => {
+		if (onTitleChange && titleDraft !== (object.title ?? '')) onTitleChange(titleDraft)
+	}, [titleDraft, object.title, onTitleChange])
+
 	return (
 		<div className="mb-3">
 			<div className="mb-2.5 flex flex-wrap items-center gap-2">
@@ -119,9 +138,32 @@ export function ObjectDetailIdentity({
 				/>
 			</div>
 
-			<h1 className="text-[clamp(20px,2.4vw,25px)] font-bold leading-tight tracking-[-0.02em] text-foreground">
-				{object.title ?? 'Untitled'}
-			</h1>
+			{onTitleChange ? (
+				<textarea
+					value={titleDraft}
+					aria-label="Object title"
+					onChange={(e) => {
+						setTitleDraft(e.target.value)
+						e.target.style.height = 'auto'
+						e.target.style.height = `${e.target.scrollHeight}px`
+					}}
+					onBlur={handleTitleBlur}
+					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+					placeholder="Untitled"
+					rows={1}
+					className="w-full resize-none overflow-hidden border-none bg-transparent p-0 text-[clamp(20px,2.4vw,25px)] font-bold leading-tight tracking-[-0.02em] text-foreground outline-none focus:outline-none"
+					ref={(el) => {
+						if (el) {
+							el.style.height = 'auto'
+							el.style.height = `${el.scrollHeight}px`
+						}
+					}}
+				/>
+			) : (
+				<h1 className="text-[clamp(20px,2.4vw,25px)] font-bold leading-tight tracking-[-0.02em] text-foreground">
+					{object.title ?? 'Untitled'}
+				</h1>
+			)}
 		</div>
 	)
 }

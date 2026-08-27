@@ -85,17 +85,7 @@ export const workspaceSettingsSchema = z.object({
 		// `archived` is a silent terminal — intentionally NOT in TERMINAL_BET_STATUSES
 		// (packages/shared/src/schemas/objects.ts) so archive doesn't fire retro or
 		// notification fan-out. Add other terminal states there, not archived.
-		bet: [
-			'signal',
-			'qualified',
-			'define',
-			'active',
-			'live',
-			'succeeded',
-			'failed',
-			'paused',
-			'archived',
-		],
+		bet: ['signal', 'define', 'active', 'live', 'succeeded', 'failed', 'paused', 'archived'],
 		task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
 		commitment: ['holding', 'at-risk', 'breached'],
 		loop: [...LOOP_STATUSES],
@@ -158,6 +148,39 @@ export const workspaceSettingsSchema = z.object({
 			small_fast_model: z.string().nullable().optional(),
 		})
 		.optional(),
+	// Maskin-funded LLM subscription. When `plan` is `pro` or `team` the
+	// session routes through Maskin's OpenRouter account (Deepseek v4 Flash),
+	// and usage is attributed to the current billing period via
+	// `sessions.config.llm_route = 'maskin_plan'`. Mutually exclusive with
+	// `custom_llm` / Claude OAuth / workspace `llm_keys.anthropic` at the
+	// write layer; the router enforces the precedence at read time.
+	// `period_start`, `period_end`, and `hard_cap_usd_cents` are written by the
+	// Stripe webhook; `status` mirrors the Stripe subscription status string.
+	// `period_end` is the Stripe `current_period_end` — surfaced on the
+	// `PLAN_CAP_EXCEEDED` error so the frontend can show a reset ETA.
+	billing: z
+		.object({
+			plan: z.enum(['trial', 'pro', 'team', 'byollm']),
+			stripe_customer_id: z.string().nullable().optional(),
+			stripe_subscription_id: z.string().nullable().optional(),
+			period_start: z.number().nullable().optional(),
+			period_end: z.number().nullable().optional(),
+			// Included-usage cap for the period, in USD cents. Different agents
+			// can run different model tiers with different $/token ratios, so the
+			// cap (and the usage compared against it) is tracked in actual dollar
+			// cost rather than a token count — see lib/llm-routing.ts.
+			hard_cap_usd_cents: z.number().nullable().optional(),
+			status: z.enum(['active', 'past_due', 'canceled', 'incomplete']).optional(),
+			// Prepaid usage-credits balance, in USD cents. Depletes as
+			// `maskin_plan` usage crosses the plan's included cap
+			// (lib/credit-billing.ts); topped up via
+			// `POST /billing/credits/checkout` + the Stripe webhook's
+			// `mode: 'payment'` branch. Persists across plan downgrades — it's
+			// the customer's money, not forfeited — but is only spendable while
+			// `canUseCreditBalance()` (pro/team + status active) is true.
+			credit_balance_cents: z.number().int().nonnegative().optional(),
+		})
+		.optional(),
 	// North Star onboarding prompt answer — stored when a user submits the
 	// "What's your product's North Star metric?" card on the For You page.
 	north_star_metric: z.string().optional(),
@@ -201,10 +224,27 @@ export const updateWorkspaceSchema = z.object({
 	settings: workspaceSettingsSchema.partial().optional(),
 })
 
-export const updateWorkspaceAdminSchema = z.object({
-	onboarding_enabled: z.boolean(),
-})
+export const updateWorkspaceAdminSchema = z
+	.object({
+		onboarding_enabled: z.boolean().optional(),
+		// Entitlement to BYO LLM credentials (Claude OAuth, custom_llm, llm_keys).
+		// Defaults to false for every workspace; only ops-flagged exceptions may
+		// bypass the Maskin-provided LLM plan. See PR #970.
+		byollm_allowed: z.boolean().optional(),
+	})
+	.refine((v) => v.onboarding_enabled !== undefined || v.byollm_allowed !== undefined, {
+		message: 'At least one of onboarding_enabled or byollm_allowed must be provided',
+	})
 
 export const workspaceParamsSchema = z.object({
 	id: z.string().uuid(),
+})
+
+// Body for POST /api/workspaces/:id/transfer-ownership. The new owner must
+// already be an existing HUMAN member of the workspace — transfer never
+// creates a new membership and never targets an agent. See
+// apps/dev/src/lib/workspace-capacity.ts for the ownership-cap semantics this
+// route enforces against the new owner.
+export const transferBillingOwnershipSchema = z.object({
+	new_owner_actor_id: z.string().uuid(),
 })

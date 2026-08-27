@@ -216,8 +216,16 @@ vi.mock('@/lib/query-keys', () => ({
 
 import { Route } from '@/routes/_authed/$workspaceId/objects/index'
 
+// The v2 Objects page sits behind `new-design`; these specs cover that branch,
+// so they drive the flag on through the test-only localStorage override. The
+// pre-v2 branch is covered by its own spec.
+beforeEach(() => {
+	localStorage.setItem('ff:new-design', 'on')
+})
+
 const RouteOptions = Route as unknown as { component: React.FC }
-const ObjectsPage = RouteOptions.component
+const ObjectsPageComponent = RouteOptions.component
+const ObjectsPage = ObjectsPageComponent
 
 function renderRoute() {
 	return render(<ObjectsPage />)

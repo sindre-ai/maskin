@@ -247,7 +247,10 @@ describe('Skills — Workspace Skills section', () => {
 		await user.click(screen.getByRole('button', { name: 'Attach workspace skill' }))
 		await user.click(screen.getByText('deploy'))
 
-		expect(mockAttach).toHaveBeenCalledWith('skill-abc')
+		expect(mockAttach).toHaveBeenCalledWith(
+			'skill-abc',
+			expect.objectContaining({ onError: expect.any(Function) }),
+		)
 		expect(mockDetach).not.toHaveBeenCalled()
 	})
 
@@ -273,7 +276,10 @@ describe('Skills — Workspace Skills section', () => {
 		const matches = screen.getAllByText('deploy')
 		await user.click(matches[matches.length - 1])
 
-		expect(mockDetach).toHaveBeenCalledWith('skill-abc')
+		expect(mockDetach).toHaveBeenCalledWith(
+			'skill-abc',
+			expect.objectContaining({ onError: expect.any(Function) }),
+		)
 		expect(mockAttach).not.toHaveBeenCalled()
 	})
 
@@ -373,7 +379,10 @@ describe('Skills — Workspace Skills section', () => {
 
 		await user.click(screen.getByRole('button', { name: 'Remove deploy' }))
 
-		expect(mockDetach).toHaveBeenCalledWith('skill-abc')
+		expect(mockDetach).toHaveBeenCalledWith(
+			'skill-abc',
+			expect.objectContaining({ onError: expect.any(Function) }),
+		)
 	})
 
 	it('renders a folder badge with file count on a folder-skill row', () => {

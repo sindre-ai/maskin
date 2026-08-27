@@ -7,9 +7,12 @@ import { Hono } from 'hono'
 import { stream } from 'hono/streaming'
 import { z } from 'zod'
 import { bearerAuth } from './lib/auth'
+import { resolveBuildInfo } from './lib/build-info'
 import { type AgentServerEnv, parseEnv } from './lib/env'
 import { logger } from './lib/logger'
+import { startMetricsServer } from './lib/metrics'
 import { Sentry } from './lib/sentry'
+import { StallTracker } from './lib/stall-tracker'
 import { ImageWarmer } from './services/image-warmer'
 import { InputQueue } from './services/input-queue'
 import {
@@ -147,6 +150,14 @@ export type AppDeps = {
 	 * it with a reconcile pass).
 	 */
 	sessionPreviewState?: SessionPreviewState
+	/**
+	 * Feeds the `maskin_sessions_stalled` gauges (see lib/stall-tracker.ts).
+	 * Shared with `main()` for the same reason as the maps above: the metrics
+	 * registry lives out there, and reconcileOnBoot must register the sessions
+	 * it reattaches so they are counted as UNOBSERVED rather than silently
+	 * omitted. Omitted -> buildApp creates its own, which tests can ignore.
+	 */
+	stallTracker?: StallTracker
 }
 
 /**
@@ -177,7 +188,14 @@ export type SessionPreviewState = Map<
 	}
 >
 
-const LOG_FLUSH_INTERVAL_MS = 2_000
+// How long a session's stdout sits in this box's buffer before being POSTed
+// to apps/dev's /agent-server-reconcile ingest route. This is the DOMINANT
+// term in end-to-end chat latency: the web client polls session_logs from the
+// DB, so nothing can appear in the transcript until this flush lands. Keep it
+// at or below the web client's active poll interval (ACTIVE_POLL_MS in
+// apps/web/src/hooks/use-session-activity-logs.ts) — raising it there without
+// raising it here just adds dead time.
+const LOG_FLUSH_INTERVAL_MS = 1_000
 const LOG_FLUSH_MAX_LINES = 100
 
 // Comfortably under the log-ingest route's per-line cap (currently 1MB, see
@@ -285,11 +303,32 @@ async function monitorSession(
 	let logBuffer: Array<{ stream: 'stdout' | 'stderr'; content: string }> = []
 	let flushTimer: NodeJS.Timeout | null = null
 
-	const LOG_FLUSH_RETRIES = 3
-	const LOG_FLUSH_RETRY_DELAY_MS = 2_000
+	// 6 attempts with exponential backoff (2s, 4s, 8s, 16s, 16s — capped) give a
+	// worst-case retry window of ~46s. This is deliberately longer than the flat
+	// 3-attempts/2s (~4s total) it replaces: that budget was too short to survive
+	// the ~27-30s zero-healthy-backend gaps seen during Maskin API rolling
+	// deploys (Sentry MASKIN-AGENT-SERVER-1; see also the 2026-08-14 session
+	// freeze incident), which dropped real log batches on every affected session.
+	const LOG_FLUSH_RETRIES = 6
+	const LOG_FLUSH_RETRY_BASE_DELAY_MS = 2_000
+	const LOG_FLUSH_RETRY_MAX_DELAY_MS = 16_000
+
+	// Set when Maskin tells us this session is permanently un-ingestable (410 —
+	// the `sessions` row was hard-deleted while the sandbox was still alive).
+	// Retrying, or even buffering, is pointless from that moment on: every
+	// subsequent batch fails the same foreign-key check. Without this latch a
+	// single orphaned session burns 6 retries per batch for the rest of the
+	// sandbox's life — the storm behind Sentry MASKIN-DEV-5 / MASKIN-AGENT-SERVER-1.
+	let logDeliveryAbandoned = false
+
+	// Statuses where a retry provably cannot change the outcome: a malformed or
+	// oversized batch, or a route/session that is gone. 410 is handled ahead of
+	// this as a terminal latch. Auth statuses are deliberately absent — see the
+	// comment at the check below.
+	const NON_RETRYABLE_LOG_STATUSES = new Set([400, 404, 413, 422])
 
 	const flushLogs = async (): Promise<void> => {
-		if (!maskinBaseUrl || logBuffer.length === 0) {
+		if (!maskinBaseUrl || logDeliveryAbandoned || logBuffer.length === 0) {
 			logBuffer = []
 			return
 		}
@@ -307,6 +346,31 @@ async function monitorSession(
 						body: JSON.stringify({ logs: batch }),
 					},
 				)
+				// 410 Gone: the session no longer exists in Maskin's DB. Terminal —
+				// stop streaming for this session entirely rather than retrying.
+				if (res.status === 410) {
+					logDeliveryAbandoned = true
+					logger.warn('Maskin reports session is gone — abandoning log delivery', {
+						sessionId,
+						droppedLines: batch.length,
+					})
+					return
+				}
+				// A closed set of 4xx responses are client-side faults that repeat
+				// identically on retry, so they get dropped rather than burning the
+				// budget. Everything else — 5xx, 408, 429, and critically 401/403 —
+				// stays retryable: an AGENT_SERVER_SECRET rotation or a mid-deploy
+				// config gap produces auth failures in exactly the ~30s window this
+				// budget was widened to survive (see session-manager.ts's
+				// "secret rotation race").
+				if (!res.ok && NON_RETRYABLE_LOG_STATUSES.has(res.status)) {
+					logger.error('Maskin rejected log batch as non-retryable, batch dropped', {
+						sessionId,
+						status: res.status,
+						droppedLines: batch.length,
+					})
+					return
+				}
 				if (!res.ok) {
 					throw new Error(`Maskin log ingest responded with ${res.status}`)
 				}
@@ -334,7 +398,11 @@ async function monitorSession(
 					error: String(err),
 				})
 				if (attempt < LOG_FLUSH_RETRIES) {
-					await sleep(LOG_FLUSH_RETRY_DELAY_MS)
+					const delay = Math.min(
+						LOG_FLUSH_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+						LOG_FLUSH_RETRY_MAX_DELAY_MS,
+					)
+					await sleep(delay)
 				}
 			}
 		}
@@ -408,12 +476,20 @@ async function monitorSession(
 	}
 
 	if (maskinBaseUrl) {
-		// Retry up to 3 times with a 5s gap. Cleanup (deleteSessionDir + removeSandbox)
-		// only runs after a successful report so the sandbox is never silently orphaned:
-		// if we clean up before reporting, there is nothing left to retry with and the
-		// session row in apps/dev stays `running` until the 2-hour watchdog reaper fires.
-		const REPORT_RETRIES = 3
-		const REPORT_RETRY_DELAY_MS = 5_000
+		// 6 attempts with exponential backoff (5s, 10s, 20s, 40s, 40s — capped)
+		// give a worst-case retry window of ~115s. This replaces a flat
+		// 3-attempts/5s budget (~10s total) that was too short to survive the
+		// ~27-30s zero-healthy-backend gaps seen during Maskin API rolling
+		// deploys (Sentry MASKIN-AGENT-SERVER-2; see also the flushLogs retry
+		// budget above and the 2026-08-14 session freeze incident) — a session
+		// whose report fell in that window silently orphaned as `running` until
+		// the 2-hour watchdog reaper caught it. Cleanup (deleteSessionDir +
+		// removeSandbox) only runs after a successful report so the sandbox is
+		// never silently orphaned: if we clean up before reporting, there is
+		// nothing left to retry with.
+		const REPORT_RETRIES = 6
+		const REPORT_RETRY_BASE_DELAY_MS = 5_000
+		const REPORT_RETRY_MAX_DELAY_MS = 40_000
 		let reported = false
 		for (let attempt = 1; attempt <= REPORT_RETRIES; attempt++) {
 			try {
@@ -449,7 +525,11 @@ async function monitorSession(
 					error: String(err),
 				})
 				if (attempt < REPORT_RETRIES) {
-					await sleep(REPORT_RETRY_DELAY_MS)
+					const delay = Math.min(
+						REPORT_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+						REPORT_RETRY_MAX_DELAY_MS,
+					)
+					await sleep(delay)
 				}
 			}
 		}
@@ -509,11 +589,36 @@ export function buildApp(deps: AppDeps): Hono {
 		)
 		return c.json({ error: 'internal_error' }, 500)
 	})
-	const inputQueue = new InputQueue()
+	// Interactive-turn delivery is the one path where a silent failure looks
+	// exactly like a quiet conversation, so every state change is logged. Volume
+	// is a handful of lines per turn and nothing at all while idle.
+	const stallTracker =
+		deps.stallTracker ?? new StallTracker({ thresholdMs: deps.env.AGENT_SERVER_STALL_THRESHOLD_MS })
+	const inputQueue = new InputQueue((event, data) => {
+		logger.info(`input: ${event}`, data)
+		// `stream registered` is the ONLY place the guest's acked high-water mark
+		// is observable — it arrives as the `after` query param on every
+		// (re)connect and nothing else in this process sees it. A rising value
+		// here is the only proof a turn actually reached the CLI, which is
+		// exactly the split between the `undelivered` and `no_output` arms.
+		if (event === 'stream registered' && typeof data.ackedThrough === 'number') {
+			stallTracker.turnAcked(String(data.sessionId), data.ackedThrough)
+		}
+	})
 	// Connects the /sessions/:id/logs/ingest endpoint to monitorSession's buffer.
 	// Injectable via deps so main()'s boot-time reconcile pass can reattach
 	// monitorSession for sandboxes that survived a restart (see AppDeps.sessionLogRouters).
 	const sessionLogRouters = deps.sessionLogRouters ?? new Map<string, (line: string) => void>()
+	/**
+	 * Highest output-line sequence stored per session, for /logs/batch.
+	 *
+	 * Deliberately not cleared when a session's router is removed: the guest may
+	 * still be retrying its final batches after the agent exited, and resetting
+	 * to 0 would ack from the start of a sequence space the guest has long since
+	 * moved past — the same stale-mark hazard the input side's epoch guards
+	 * against. Cleared with the rest of the session's state on completion.
+	 */
+	const sessionLogSeqs = new Map<string, number>()
 	// Receives exit codes from the /sessions/:id/complete and /sessions/:id/stop
 	// endpoints for monitorSession. Injectable via deps (see AppDeps.sessionExitCodes).
 	const sessionExitCodes = deps.sessionExitCodes ?? new Map<string, number>()
@@ -563,37 +668,178 @@ export function buildApp(deps: AppDeps): Hono {
 
 	// GET /sessions/:id/input/stream — VM polls here to receive newline-delimited
 	// JSON user turns for interactive sessions.
+	//
+	// `?after=<seq>` is the VM's high-water mark: the seq of the last turn it
+	// actually fed to the CLI. It acknowledges everything up to that point and
+	// asks for whatever followed. Turns are retained until acked, so a write
+	// that silently vanished into a half-open socket is redelivered here rather
+	// than lost (see InputQueue's class comment). A VM that has consumed
+	// nothing sends 0, or omits it entirely.
+	//
+	// Each line goes out wrapped as {"maskin_seq":N,"turn":<envelope>} so the
+	// VM can track what it consumed. input-stream.js unwraps it and writes only
+	// the inner envelope to the CLI's stdin, which must carry NDJSON turns and
+	// nothing else.
 	app.get('/sessions/:id/input/stream', async (c) => {
 		const { id } = c.req.param()
 		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
+		const rawAfter = Number(c.req.query('after'))
+		const after = Number.isFinite(rawAfter) && rawAfter > 0 ? Math.floor(rawAfter) : 0
+		const epoch = c.req.query('epoch')
 		return stream(c, async (s) => {
 			let resolveStream!: () => void
 			const done = new Promise<void>((resolve) => {
 				resolveStream = resolve
 			})
-			const unregister = await inputQueue.registerStream(id, async (line) => {
+			const openedAt = Date.now()
+			let closeReason = 'handler returned'
+			const unregister = await inputQueue.registerStream(
+				id,
+				async (line, seq) => {
+					try {
+						await s.write(
+							`${JSON.stringify({
+								maskin_epoch: inputQueue.epoch,
+								maskin_seq: seq,
+								turn: line.trimEnd(),
+							})}\n`,
+						)
+						return true
+					} catch {
+						closeReason = 'turn write failed'
+						resolveStream()
+						return false
+					}
+				},
+				after,
+				epoch,
+			)
+			// Between turns this stream carries nothing for however long the
+			// human takes to reply — minutes-long silences that NAT/proxy
+			// idle-timeouts reap. A bare newline every 30s keeps the connection
+			// warm and, crucially, gives the VM something to miss: input-stream.js
+			// re-dials when no byte arrives for 90s (three missed heartbeats),
+			// which is how a silently blackholed connection gets noticed at all.
+			//
+			// It is NOT a delivery guarantee. A write into a half-open socket
+			// succeeds against the kernel buffer while nothing reaches the guest,
+			// so neither this heartbeat nor the turn writes above can confirm
+			// arrival — only the VM's `after` ack can. That is why turns survive
+			// a "successful" write.
+			const heartbeat = setInterval(async () => {
 				try {
-					await s.write(line)
-					return true
+					await s.write('\n')
 				} catch {
 					resolveStream()
-					return false
 				}
-			})
+			}, 30_000)
 			c.req.raw.signal.addEventListener('abort', () => {
+				closeReason = 'client aborted'
 				unregister()
 				resolveStream()
 			})
 			await done
+			clearInterval(heartbeat)
 			unregister()
+			// How long the guest held this connection, and why it ended. A guest
+			// that is re-dialling on its idle timer produces a steady series of
+			// ~90s connections; one that never appears again after its first is
+			// not re-dialling at all, which no other signal distinguishes.
+			logger.info('input: stream closed', {
+				sessionId: id,
+				reason: closeReason,
+				heldMs: Date.now() - openedAt,
+			})
 		})
 	})
 
-	// POST /sessions/:id/logs/ingest — agent-run.sh streams all agent output here
-	// over a single long-lived chunked POST (`curl -T -`). We read the request
-	// body as it arrives and push each newline-delimited line into the session's
-	// log buffer immediately, so monitorSession forwards them to the Maskin
-	// backend live (~2s batches) instead of all at once at session end.
+	// POST /sessions/:id/logs/batch — output-stream.js ships the agent's output
+	// here in bounded, acknowledged batches.
+	//
+	// This replaced a single long-lived chunked upload that could not survive
+	// microsandbox's egress proxy: when the proxy's guest-side leg died the
+	// upload never EOFed and never errored, so the guest blocked in a write
+	// forever and the agent's reply never left the VM. The user saw silence
+	// even though the agent had answered (wedges of 2026-08-21..24).
+	//
+	// `from` is the sequence of the first line in `lines`. The response carries
+	// the highest sequence stored, and the guest only forgets lines that come
+	// back acked — so a batch that vanishes into a half-open socket is simply
+	// resent. Retries are expected and must be idempotent: anything at or below
+	// what we have already stored is skipped rather than appended twice.
+	app.post('/sessions/:id/logs/batch', async (c) => {
+		const { id } = c.req.param()
+		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
+
+		let body: unknown
+		try {
+			body = await c.req.json()
+		} catch {
+			return c.json({ error: 'Invalid JSON' }, 400)
+		}
+		const from = Number((body as Record<string, unknown>)?.from)
+		const lines = (body as Record<string, unknown>)?.lines
+		if (!Number.isFinite(from) || from < 1 || !Array.isArray(lines)) {
+			return c.json({ error: 'Expected { from: number, lines: string[] }' }, 400)
+		}
+
+		const push = sessionLogRouters.get(id)
+
+		// No record of this session's sequence at all. That is the normal state
+		// after an agent-server restart, where the reconcile pass reattaches a
+		// live session whose guest is already at sequence N — and it is not a
+		// gap we can complain about, because we have stored nothing that a wrong
+		// answer here could discard. Adopt the guest's position. Refusing
+		// instead (the previous behaviour) left both sides stuck forever: the
+		// server acking 0, the guest already past it, neither able to move.
+		const known = sessionLogSeqs.has(id)
+		let stored = known ? (sessionLogSeqs.get(id) ?? 0) : from - 1
+
+		// The guest declares a resync when its buffer overflowed and it dropped
+		// the oldest lines. Those lines no longer exist anywhere, so waiting for
+		// them is waiting forever. Accept the new floor and record the hole in
+		// the transcript rather than leaving a silent discontinuity.
+		if (body && (body as Record<string, unknown>).resync === true && from > stored + 1) {
+			const droppedRaw = Number((body as Record<string, unknown>).dropped)
+			const droppedCount =
+				Number.isFinite(droppedRaw) && droppedRaw > 0 ? droppedRaw : from - stored - 1
+			logger.warn('output: guest resynced after dropping lines', {
+				sessionId: id,
+				storedThrough: stored,
+				resumingFrom: from,
+				dropped: droppedCount,
+			})
+			push?.(
+				`[system] output-stream: ${droppedCount} line(s) of agent output were dropped here — the agent-server was unreachable for long enough to overflow the guest's buffer`,
+			)
+			stored = from - 1
+		}
+
+		let ack = stored
+		for (let i = 0; i < lines.length; i++) {
+			const seq = from + i
+			// Already stored on an earlier attempt whose ack never made it back.
+			if (seq <= stored) continue
+			// A gap the guest has NOT declared means an earlier batch is still
+			// outstanding; acking past it would let the guest discard lines we
+			// never received. Stop and let it resend from where we actually are.
+			if (seq > ack + 1) break
+			const line = lines[i]
+			if (typeof line !== 'string') break
+			push?.(line)
+			// Agent output, and only agent output. /logs/ingest is deliberately not
+			// wired here — see StallTracker.outputObserved.
+			stallTracker.outputObserved(id, line)
+			ack = seq
+		}
+		sessionLogSeqs.set(id, ack)
+		return c.json({ ack })
+	})
+
+	// POST /sessions/:id/logs/ingest — legacy unacked path, still used by
+	// input-stream.js for its own one-shot diagnostic lines (which are cheap to
+	// lose and must never block on an ack). Agent output no longer flows here;
+	// see /logs/batch above.
 	app.post('/sessions/:id/logs/ingest', async (c) => {
 		const { id } = c.req.param()
 		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
@@ -1013,6 +1259,11 @@ export function buildApp(deps: AppDeps): Hono {
 			// push workspace to S3 → delete local dir → drain input queue.
 			// Register session in sessionLogRouters synchronously (before first await)
 			// so ingest calls from the forthcoming exec don't miss.
+			// Only interactive sessions take user turns, so only they can show the
+			// input-pending/output-absent asymmetry. INTERACTIVE=1 is set by
+			// apps/dev's session-manager and arrives in body.env.
+			stallTracker.trackSession(body.sessionId, { interactive: sessionEnv.INTERACTIVE === '1' })
+
 			void monitorSession(
 				body.sessionId,
 				sessionDir,
@@ -1044,6 +1295,8 @@ export function buildApp(deps: AppDeps): Hono {
 				})
 				.finally(() => {
 					inputQueue.drainSession(body.sessionId)
+					stallTracker.endSession(body.sessionId)
+					sessionLogSeqs.delete(body.sessionId)
 					sessionPreviewState.delete(body.sessionId)
 				})
 
@@ -1100,7 +1353,8 @@ export function buildApp(deps: AppDeps): Hono {
 			type: 'user',
 			message: { role: 'user', content: (body as Record<string, unknown>).content as string },
 		}
-		await inputQueue.enqueue(id, `${JSON.stringify(payload)}\n`)
+		const seq = await inputQueue.enqueue(id, `${JSON.stringify(payload)}\n`)
+		stallTracker.turnEnqueued(id, seq)
 		return c.json({ ok: true })
 	})
 
@@ -1177,6 +1431,12 @@ export type ReconcileOnBootDeps = {
 	 */
 	sessionPreviewState?: SessionPreviewState
 	fetchImpl?: typeof fetch
+	/**
+	 * Same tracker buildApp feeds — see AppDeps.stallTracker. Sessions
+	 * reattached here are registered as `reattached`, which counts them as
+	 * unobserved rather than healthy.
+	 */
+	stallTracker?: StallTracker
 }
 
 /**
@@ -1330,6 +1590,12 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 			})
 		}
 
+		// Reattached, NOT healthy. This process has no turn history for it, so it
+		// is excluded from every stall arm and counted by
+		// maskin_sessions_unobserved instead — a stall that was firing before a
+		// restart must not read as resolved just because we forgot about it.
+		deps.stallTracker?.trackSession(name, { interactive: false, reattached: true })
+
 		void monitorSession(
 			name,
 			sessionDir,
@@ -1351,6 +1617,7 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 			})
 			.finally(() => {
 				deps.sessionPreviewState?.delete(name)
+				deps.stallTracker?.endSession(name)
 			})
 	}
 
@@ -1429,6 +1696,7 @@ async function main(): Promise<void> {
 	const sessionLogRouters = new Map<string, (line: string) => void>()
 	const sessionExitCodes = new Map<string, number>()
 	const sessionPreviewState: SessionPreviewState = new Map()
+	const stallTracker = new StallTracker({ thresholdMs: env.AGENT_SERVER_STALL_THRESHOLD_MS })
 	const drainState = { draining: false }
 	// Starts false so POST /sessions 503s until reconcileOnBoot below finishes —
 	// see AppDeps.readyState for why that gate has to be closed before any new
@@ -1443,12 +1711,32 @@ async function main(): Promise<void> {
 		sessionLogRouters,
 		sessionExitCodes,
 		sessionPreviewState,
+		stallTracker,
 		drainState,
 		readyState,
 	})
 
+	// Resolved once, logged once, and handed to the metrics registry. Logging it
+	// at boot means the "which commit" answer is also in Loki, so a box whose
+	// scrape is broken is still identifiable from its journal.
+	const buildInfo = resolveBuildInfo()
+	logger.info('agent-server build', buildInfo)
+
 	const server = serve({ fetch: app.fetch, port: env.PORT, hostname: '0.0.0.0' }, ({ port }) => {
 		logger.info('agent-server listening', { port })
+	})
+
+	// Metrics listener — SEPARATE from the main one, and bound to LOOPBACK.
+	// Both of those decisions, and the reason a bind failure here must never be
+	// fatal, live in startMetricsServer / METRICS_HOSTNAME in lib/metrics.ts.
+	// METRICS_PORT=0 disables it entirely (local dev, or a box with no
+	// collector).
+	const metricsServer = startMetricsServer({
+		port: env.METRICS_PORT,
+		buildInfo,
+		stallTracker,
+		serve,
+		onError: (err) => Sentry.captureException(err),
 	})
 
 	// The HTTP listener above accepts connections immediately (health checks,
@@ -1464,6 +1752,7 @@ async function main(): Promise<void> {
 		sessionLogRouters,
 		sessionExitCodes,
 		sessionPreviewState,
+		stallTracker,
 	})
 		.catch((err) => {
 			logger.error('reconcile-on-boot failed unexpectedly', { error: String(err) })
@@ -1486,6 +1775,7 @@ async function main(): Promise<void> {
 				logger.error('image warmer shutdown failed', { error: String(err) })
 			})
 		}
+		metricsServer?.close()
 		server.close(() => process.exit(0))
 		// Hard-stop after 10s if the server doesn't close cleanly (libkrun hangs
 		// have shown up here in the past).

@@ -33,6 +33,8 @@ import {
 import { slackWebhookFanOut } from './providers/slack/fan-out'
 import { probeSlackTierOnInstall } from './providers/slack/tier-cache'
 import { slackEventNormalizer } from './providers/slack/webhooks'
+import { ubersuggestAuth } from './providers/ubersuggest/auth'
+import { config as ubersuggestConfig } from './providers/ubersuggest/config'
 
 const providers = new Map<string, ResolvedProvider>()
 
@@ -100,6 +102,11 @@ providers.set('posthog', {
 
 providers.set('skjald', {
 	config: skjaldConfig,
+})
+
+providers.set('ubersuggest', {
+	config: ubersuggestConfig,
+	customAuth: ubersuggestAuth,
 })
 
 // ── Public API ─────────────────────────────────────────────────────────────

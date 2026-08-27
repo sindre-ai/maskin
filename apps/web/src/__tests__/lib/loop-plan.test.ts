@@ -139,6 +139,37 @@ describe('parseLoopDescription — workspace status-chain composite', () => {
 	})
 })
 
+describe('parseLoopDescription — proposed states stay inside the type chain', () => {
+	it('drops a cue-word state the type chain cannot hold', () => {
+		// 'triage' is a feedback state, not a task state. Proposing it would put a
+		// status on the card that the workspace can never actually set.
+		const plan = parseLoopDescription('when a task is created, have an agent triage it')
+		const states = plan.triggers[0].thenWrites.map((w) => w.state).filter(Boolean)
+		expect(states).not.toContain('triage')
+	})
+
+	it('falls back to a plain create when every proposed state is rejected', () => {
+		const plan = parseLoopDescription('when a task is created, have an agent triage it')
+		expect(plan.triggers[0].thenWrites).toEqual([{ act: 'create', type: 'task' }])
+		expect(plan.triggers[0].whenChip?.state).toBeUndefined()
+	})
+
+	it('keeps a cue-word state the type chain does hold', () => {
+		const plan = parseLoopDescription(AC_EXAMPLE)
+		const states = plan.triggers[0].thenWrites.map((w) => w.state)
+		expect(states).toContain('triage')
+	})
+
+	it('honours a workspace chain that removes a state from the base chain', () => {
+		// The base feedback chain has 'triage'; this workspace's does not.
+		const plan = parseLoopDescription(AC_EXAMPLE, {
+			statusChains: { feedback: ['new', 'reviewed', 'done'] },
+		})
+		const states = plan.triggers[0].thenWrites.map((w) => w.state).filter(Boolean)
+		expect(states).not.toContain('triage')
+	})
+})
+
 describe('parseLoopDescription — determinism and no side effects', () => {
 	it('returns an identical plan for the same input', () => {
 		const a = parseLoopDescription(AC_EXAMPLE)
@@ -253,5 +284,39 @@ describe('parseLoopDescription — live reading and read-only types', () => {
 		// A passing mention ("customer feedback") must not invent a type.
 		const passing = parseLoopDescription(AC_EXAMPLE)
 		expect(passing.objectTypes.some((t) => t.readOnly)).toBe(false)
+	})
+})
+
+// The three sentences `/loops/new` offers as tappable examples. They are the
+// first thing most operators try, so each one must produce a drawable plan.
+const EXAMPLE_SENTENCES = [
+	'Notify me weekly with a summary of new customer feedback, and triage anything at risk.',
+	'Have a triage agent review every new feedback item when it comes in.',
+	'Track bets and tell me before anything goes at risk or needs a rescue.',
+]
+
+describe('parseLoopDescription — the builder\u2019s own example sentences', () => {
+	it.each(EXAMPLE_SENTENCES)('draws a loop for %s', (sentence) => {
+		const plan = parseLoopDescription(sentence)
+		// `needsClarifying` in the route: no trigger and no stop point means the
+		// sentence can't be drawn at all.
+		expect(plan.triggers.length > 0 || plan.stopForOperator !== null).toBe(true)
+	})
+
+	it('matches a plural noun against the singular vocabulary', () => {
+		// "bets" used to miss the `bet` keyword entirely and fall through to Task.
+		expect(parseLoopDescription(EXAMPLE_SENTENCES[2]).objectTypes[0].name).toBe('Bet')
+	})
+
+	it('does not swallow the sentence into the agent name', () => {
+		// An unbounded capture ran from "Notify" to the trailing "triage", naming an
+		// agent "Me Weekly With A Summary Of New Customer Feedback And".
+		for (const agent of parseLoopDescription(EXAMPLE_SENTENCES[0]).agents) {
+			expect(agent.name.split(/\s+/).length).toBeLessThanOrEqual(3)
+		}
+	})
+
+	it('strips the article from a named agent', () => {
+		expect(parseLoopDescription(EXAMPLE_SENTENCES[1]).agents[0].name).toBe('Triage agent')
 	})
 })

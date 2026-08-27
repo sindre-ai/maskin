@@ -1,4 +1,6 @@
 import { EmptyState } from '@/components/shared/empty-state'
+import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import { Button } from '@/components/ui/button'
 import { useObjectGraph, useObjects } from '@/hooks/use-objects'
 import { useCreateRelationship, useDeleteRelationship } from '@/hooks/use-relationships'
@@ -20,7 +22,12 @@ const DEFAULT_RELATIONSHIP_TYPES = ['informs', 'breaks_into', 'blocks', 'relates
  */
 export function RelatedTab({ object }: { object: ObjectResponse }) {
 	const { workspaceId, workspace } = useWorkspace()
-	const { data: graph } = useObjectGraph(workspaceId, object.id)
+	const {
+		data: graph,
+		isLoading: isGraphLoading,
+		isError: isGraphError,
+		error: graphError,
+	} = useObjectGraph(workspaceId, object.id)
 	const { data: allObjects } = useObjects(workspaceId)
 	const createRelationship = useCreateRelationship(workspaceId, object.id)
 	const deleteRelationship = useDeleteRelationship(workspaceId, object.id)
@@ -55,7 +62,11 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 	return (
 		<div className="w-full min-w-0">
 			<div className="mb-3 flex items-center justify-between gap-2">
-				<h3 className="eyebrow">Related ({count})</h3>
+				{/* The count is a claim about the graph too — omit it until the
+				    fetch resolves rather than asserting a confident 0. */}
+				<h3 className="eyebrow">
+					{isGraphLoading || isGraphError ? 'Related' : `Related (${count})`}
+				</h3>
 				{count > 0 && (
 					<Button
 						variant="ghost"
@@ -82,7 +93,15 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 				/>
 			)}
 
-			{count === 0 ? (
+			{/* Loading → error → empty, matching TimelineTab. "No related objects
+			    yet" is a claim about the object, so it may only be made once the
+			    graph has resolved — a pending or failed fetch has the same empty
+			    `resolved` array and must not read as one. */}
+			{isGraphLoading ? (
+				<ListSkeleton rows={3} />
+			) : isGraphError ? (
+				<QueryStateError title="Couldn't load related objects" error={graphError} />
+			) : count === 0 ? (
 				<EmptyState
 					title="No related objects yet"
 					description="Link this object to a related insight, bet, or task to build its graph."

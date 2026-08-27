@@ -30,6 +30,12 @@ describe('rewriteWiring', () => {
 		expect(rewriteWiring(snap, new Map())).toEqual(snap)
 	})
 
+	it('rewrites top-level string values whose value is a known source id', () => {
+		const map = new Map([[SRC_1, LOCAL_1]])
+		const out = rewriteWiring({ targetActorId: SRC_1, name: 'unchanged' }, map)
+		expect(out).toEqual({ targetActorId: LOCAL_1, name: 'unchanged' })
+	})
+
 	it('rewrites recursively through nested objects and arrays', () => {
 		const map = new Map([
 			[SRC_1, LOCAL_1],
@@ -95,6 +101,23 @@ describe('buildActorInsert', () => {
 		)
 		expect(fromPublisherKey.apiKey).toMatch(/^ank_/)
 		expect(fromPublisherKey.apiKey).not.toBe('ank_publisherleak')
+	})
+
+	it("expands the snapshot's browser capability into a real MCP entry", () => {
+		// Publishing strips mcpServers (secrets), leaving only tools.browser.
+		// Without this expansion the installed agent has no @playwright/mcp and
+		// session-manager.ts never provisions a Chromium sidecar for it.
+		const out = buildActorInsert(
+			{ name: 'Event Producer', tools: { browser: true } },
+			{ installed_loop_id: 'i' },
+			null,
+		)
+		expect(JSON.stringify(out.tools)).toContain('${BROWSER_CDP_URL}')
+	})
+
+	it('leaves tools alone for actors without the browser capability', () => {
+		const out = buildActorInsert({ name: 'A', tools: {} }, { installed_loop_id: 'i' }, null)
+		expect(out.tools).toEqual({})
 	})
 })
 

@@ -17,11 +17,12 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { ObjectAskBanner } from './object-ask-banner'
 import { ObjectDetailBody } from './object-detail-body'
 import { getAsk } from './object-detail-fixtures'
 import { ObjectDetailHeader, ObjectDetailIdentity } from './object-detail-header'
-import { DeleteConfirmDialog } from './object-document'
+import { DeleteConfirmDialog, StickyBetIdentity } from './object-document'
 import { ObjectPropertiesSidebar } from './object-properties-sidebar'
 import { PropertiesSidebarProvider, SIDEBAR_WIDTH } from './properties-sidebar-provider'
 import { RelatedTab } from './related-tab'
@@ -163,15 +164,60 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	// Carried over from the retired ObjectDocument surface: the object page
 	// used to emit scroll_to_top from its body render path. The shell replaces
 	// that body renderer, so the emitter mounts here to keep the telemetry.
+	// The shell publishes `scrollLocked`, so the layout's `[data-scroll-root]`
+	// is `overflow-hidden` and this region is the only live scroller — the
+	// emitter has to be pointed at it explicitly.
+	const scrollRegionRef = useRef<HTMLDivElement>(null)
 	useScrollToTopEmitter({
 		enabled: object.type === 'bet',
 		objectSubtype: object.type,
 		objectId: object.id,
+		scrollRootRef: scrollRegionRef,
 	})
+
+	// Bet-scoped sticky nav, carried over from the retired ObjectDocument: once
+	// the hero identity row leaves the viewport the shared nav row sprouts a
+	// compact title + status chip, so the object's identity is never absent
+	// from the screen. `threshold: 0` matches "the hero scrolled off".
+	const heroIdentityRef = useRef<HTMLDivElement>(null)
+	const [heroVisible, setHeroVisible] = useState(true)
+	useEffect(() => {
+		if (object.type !== 'bet') return
+		const el = heroIdentityRef.current
+		if (!el || typeof IntersectionObserver === 'undefined') return
+		const observer = new IntersectionObserver(([entry]) => setHeroVisible(entry.isIntersecting), {
+			threshold: 0,
+		})
+		observer.observe(el)
+		return () => observer.disconnect()
+	}, [object.type])
+
+	const scrollBackToHero = useCallback(() => {
+		const target = heroIdentityRef.current
+		if (!target) return
+		target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+		// Focus lands on the hero's status trigger once the smooth scroll
+		// settles — the header chip is read-only, editing happens in the hero.
+		window.setTimeout(() => {
+			document.querySelector<HTMLElement>('[data-hero-status-trigger]')?.focus()
+		}, 400)
+	}, [])
+
+	const stickyIdentity =
+		object.type === 'bet' && !heroVisible ? (
+			<StickyBetIdentity
+				title={object.title ?? 'Untitled'}
+				status={object.status}
+				onScrollBack={scrollBackToHero}
+			/>
+		) : null
 
 	const handleUpdateStatus = useCallback(
 		(status: string) => {
-			updateObject.mutate({ id: object.id, data: { status } })
+			updateObject.mutate(
+				{ id: object.id, data: { status } },
+				{ onError: () => toast.error('Could not update status') },
+			)
 		},
 		[object.id, updateObject],
 	)
@@ -180,15 +226,39 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	// stamps the prior status for the archived-row treatment downstream.
 	const handleArchive = useCallback(() => {
 		if (object.type !== 'bet' || object.status === 'archived') return
-		updateObject.mutate({
-			id: object.id,
-			data: { status: 'archived', metadata: { previous_status: object.status } },
-		})
+		updateObject.mutate(
+			{
+				id: object.id,
+				data: { status: 'archived', metadata: { previous_status: object.status } },
+			},
+			{ onError: () => toast.error('Could not archive this bet') },
+		)
 	}, [object.id, object.status, object.type, updateObject])
+
+	// Body edits commit through the same `updateObject` mutation as status and
+	// owner, and toast on failure for the same reason — `useUpdateObject` rolls
+	// its optimistic patch back silently, so without a toast a failed save reads
+	// as the text reverting on its own.
+	//
+	// The title is deliberately not editable here: the v2 shell renders it as a
+	// static `h1` under the identity row, so `ObjectDetailIdentity` is mounted
+	// without `onTitleChange`.
+	const handleUpdateContent = useCallback(
+		(content: string) => {
+			updateObject.mutate(
+				{ id: object.id, data: { content } },
+				{ onError: () => toast.error('Could not save your changes') },
+			)
+		},
+		[object.id, updateObject],
+	)
 
 	const handleUpdateDriver = useCallback(
 		(driver: string | null) => {
-			updateObject.mutate({ id: object.id, data: { driver } })
+			updateObject.mutate(
+				{ id: object.id, data: { driver } },
+				{ onError: () => toast.error('Could not update owner') },
+			)
 		},
 		[object.id, updateObject],
 	)
@@ -231,15 +301,11 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 
 	return (
 		<>
-			<PageHeader contentPush={contentPush} scrollLocked />
+			<PageHeader contentPush={contentPush} stickyIdentity={stickyIdentity} scrollLocked />
 			<div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
 				<ObjectDetailHeader
 					object={object}
 					workspaceId={workspaceId}
-					statuses={statuses}
-					members={members ?? []}
-					onStatusChange={handleUpdateStatus}
-					onDriverChange={handleUpdateDriver}
 					onDeleteRequest={() => setConfirmDelete(true)}
 					onArchiveRequest={object.type === 'bet' ? handleArchive : undefined}
 					onTogglePropertiesRequest={handleToggleSidebar}
@@ -248,15 +314,21 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 
 				{/* The document owns the only scroll region on this screen, so the
 				    bar above stays put and the composer can pin to its bottom. */}
-				<div className="min-h-0 flex-1 overflow-y-auto">
+				<div
+					ref={scrollRegionRef}
+					data-detail-scroll-region
+					className="min-h-0 flex-1 overflow-y-auto"
+				>
 					<div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col pt-5">
-						<ObjectDetailIdentity
-							object={object}
-							statuses={statuses}
-							members={members ?? []}
-							onStatusChange={handleUpdateStatus}
-							onDriverChange={handleUpdateDriver}
-						/>
+						<div ref={heroIdentityRef}>
+							<ObjectDetailIdentity
+								object={object}
+								statuses={statuses}
+								members={members ?? []}
+								onStatusChange={handleUpdateStatus}
+								onDriverChange={handleUpdateDriver}
+							/>
+						</div>
 
 						{askText && (
 							<ObjectAskBanner
@@ -268,7 +340,11 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 							/>
 						)}
 
-						<ObjectDetailBody object={object} />
+						<ObjectDetailBody
+							object={object}
+							workspaceId={workspaceId}
+							onContentChange={handleUpdateContent}
+						/>
 
 						{/* One Activity heading + rule + a 2-way segmented control
 						    (mockup 1138–1143). TabsList/TabsTrigger stay at their

@@ -480,6 +480,73 @@ describe('Events Routes', () => {
 			}
 		})
 
+		it('reports unresolved mention ids back to the caller and points them at list_actors', async () => {
+			const objectId = randomUUID()
+			const realId = randomUUID()
+			const ghostId = randomUUID()
+			const commentEvent = buildEvent({
+				workspaceId: wsId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'Hey @real @ghost', mentions: [realId, ghostId] },
+			})
+			const { app, mockResults } = createSessionTestApp(eventsRoutes, '/api/events')
+			mockResults.selectQueue = [
+				[{ workspaceId: wsId }],
+				// Only the real actor comes back — the ghost id matches no row.
+				[{ id: realId, type: 'human', name: 'Alice' }],
+			]
+			mockResults.insert = [commentEvent]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{ entity_id: objectId, content: 'Hey @real @ghost', mentions: [realId, ghostId] },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.unresolved_mentions).toEqual([ghostId])
+			expect(body.warning).toContain(ghostId)
+			expect(body.warning).toContain('list_actors')
+		})
+
+		it('omits the unresolved-mention warning when every mention resolves', async () => {
+			const objectId = randomUUID()
+			const realId = randomUUID()
+			const commentEvent = buildEvent({
+				workspaceId: wsId,
+				action: 'commented',
+				entityType: 'object',
+				entityId: objectId,
+				data: { content: 'Hey @real', mentions: [realId] },
+			})
+			const { app, mockResults } = createSessionTestApp(eventsRoutes, '/api/events')
+			mockResults.selectQueue = [
+				[{ workspaceId: wsId }],
+				[{ id: realId, type: 'human', name: 'Alice' }],
+			]
+			mockResults.insert = [commentEvent]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{ entity_id: objectId, content: 'Hey @real', mentions: [realId] },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.unresolved_mentions).toBeUndefined()
+			expect(body.warning).toBeUndefined()
+		})
+
 		it('does not auto-subscribe the commenter under the mentioned source even if they self-mention', async () => {
 			const objectId = randomUUID()
 			const selfId = randomUUID()
