@@ -1,4 +1,4 @@
-import type { LinkableGithubInstallation } from '@/lib/api'
+import type { GithubPendingSelection, LinkableGithubInstallation } from '@/lib/api'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
@@ -10,11 +10,19 @@ const mockUseProviders = vi.fn()
 const mockConnect = vi.fn()
 const mockDisconnect = vi.fn()
 
+/** Search params the route sees. The page reads `?select_github=<id>` to decide
+ *  whether to open the post-authorization org picker. */
+const mockSearch = vi.fn<() => Record<string, string | undefined>>(() => ({}))
+
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: Record<string, unknown>) => options,
+		createFileRoute: () => (options: Record<string, unknown>) => ({
+			...options,
+			useSearch: () => mockSearch(),
+			fullPath: '/_authed/$workspaceId/settings/integrations',
+		}),
 	}
 })
 
@@ -27,6 +35,14 @@ const mockUseLinkableGithub = vi.fn<
 >(() => ({ data: [], isLoading: false }))
 const mockLinkGithub = vi.fn()
 
+const mockUseGithubPendingSelection = vi.fn<
+	() => {
+		data: GithubPendingSelection | undefined
+		isLoading: boolean
+	}
+>(() => ({ data: undefined, isLoading: false }))
+const mockSelectGithub = vi.fn()
+
 vi.mock('@/hooks/use-integrations', () => ({
 	useIntegrations: (...args: unknown[]) => mockUseIntegrations(...args),
 	useProviders: () => mockUseProviders(),
@@ -37,6 +53,9 @@ vi.mock('@/hooks/use-integrations', () => ({
 	// Tests that exercise it override mockUseLinkableGithub.
 	useLinkableGithubInstallations: () => mockUseLinkableGithub(),
 	useLinkGithubInstallation: () => ({ mutate: mockLinkGithub, isPending: false }),
+	// Default: no selection pending, so the post-authorization picker stays shut.
+	useGithubPendingSelection: () => mockUseGithubPendingSelection(),
+	useSelectGithubInstallation: () => ({ mutate: mockSelectGithub, isPending: false }),
 }))
 
 vi.mock('@/components/shared/empty-state', () => ({
@@ -58,6 +77,10 @@ const IntegrationsPage = (Route as unknown as { component: React.FC }).component
 describe('IntegrationsPage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		// clearAllMocks keeps implementations, so reset the ones whose return
+		// value a single test overrides — otherwise ordering leaks state.
+		mockSearch.mockReturnValue({})
+		mockUseGithubPendingSelection.mockReturnValue({ data: undefined, isLoading: false })
 	})
 
 	it('shows loading state', () => {
@@ -371,5 +394,66 @@ describe('IntegrationsPage', () => {
 		render(<IntegrationsPage />)
 
 		expect(screen.queryByRole('button', { name: /Add existing/ })).not.toBeInTheDocument()
+	})
+
+	// Post-authorization org picker. GitHub installs its App once per org, so
+	// Connect goes through user authorization; when the authorizing user can
+	// reach several installations the callback sends them back here with
+	// ?select_github=<pending row id> to choose one.
+	describe('choosing an org after GitHub user authorization', () => {
+		const PENDING_ID = '00000000-0000-4000-8000-0000000000aa'
+
+		function seedPageWithSelection() {
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({
+				data: [{ name: 'github', displayName: 'GitHub', authType: 'oauth2_custom', events: [] }],
+				isLoading: false,
+			})
+			mockSearch.mockReturnValue({ select_github: PENDING_ID })
+			mockUseGithubPendingSelection.mockReturnValue({
+				data: {
+					integrationId: PENDING_ID,
+					installations: [
+						{ installationId: '146523409', ownerLogin: 'sindre-ai' },
+						{ installationId: '154364583', ownerLogin: 'vaerksted-ai' },
+					],
+				},
+				isLoading: false,
+			})
+		}
+
+		it('lists every authorized organization when a selection is pending', () => {
+			seedPageWithSelection()
+			render(<IntegrationsPage />)
+
+			expect(screen.getByText('Choose a GitHub organization')).toBeInTheDocument()
+			expect(screen.getByText('sindre-ai')).toBeInTheDocument()
+			expect(screen.getByText('vaerksted-ai')).toBeInTheDocument()
+		})
+
+		it('submits the chosen installation with the pending row id', async () => {
+			seedPageWithSelection()
+			render(<IntegrationsPage />)
+
+			const connectButtons = screen.getAllByRole('button', { name: 'Connect' })
+			await userEvent.click(connectButtons[0])
+
+			expect(mockSelectGithub).toHaveBeenCalledWith(
+				{ integrationId: PENDING_ID, installationId: '146523409' },
+				expect.anything(),
+			)
+		})
+
+		it('stays shut when no selection is pending', () => {
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({
+				data: [{ name: 'github', displayName: 'GitHub', authType: 'oauth2_custom', events: [] }],
+				isLoading: false,
+			})
+			mockSearch.mockReturnValue({})
+			render(<IntegrationsPage />)
+
+			expect(screen.queryByText('Choose a GitHub organization')).not.toBeInTheDocument()
+		})
 	})
 })

@@ -59,6 +59,8 @@ export const queryKeys = {
 		providers: () => ['integrations', 'providers'] as const,
 		githubLinkable: (workspaceId: string) =>
 			['integrations', workspaceId, 'github', 'linkable'] as const,
+		githubPendingSelection: (workspaceId: string, integrationId: string) =>
+			['integrations', workspaceId, 'github', 'pending-selection', integrationId] as const,
 		slackConversations: (integrationId: string, types: string[]) =>
 			['integrations', integrationId, 'slack', 'conversations', [...types].sort()] as const,
 		slackUsers: (integrationId: string) =>
