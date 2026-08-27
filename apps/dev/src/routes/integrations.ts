@@ -1322,14 +1322,32 @@ app.openapi(githubTokenRoute, (async (c) => {
 					// The same installation can be bound to other workspaces
 					// (POST /github/link). Rotate their cached id too, so a
 					// workspace that only consumes webhooks isn't left holding a
-					// dead id until it happens to mint a token itself.
-					await propagateRecoveredInstallationId(db, {
-						sourceIntegrationId: integration.id,
-						actorId,
-						expectedOldInstallationId: oldInstallationId,
-						newInstallationId: result.installationId,
-						repo: recoveryRepo,
-					})
+					// dead id until it happens to mint a token itself. Keyed on
+					// this row's `external_id`, not on `oldInstallationId` — the
+					// latter tracks the credentials blob, which rotates while
+					// `external_id` stays at its original value.
+					//
+					// Second boundary around an already best-effort helper: the
+					// token is minted and persisted by this point, so nothing a
+					// sibling write does may turn this call into a failure.
+					if (integration.externalId) {
+						try {
+							await propagateRecoveredInstallationId(db, {
+								sourceIntegrationId: integration.id,
+								sourceExternalId: integration.externalId,
+								actorId,
+								expectedOldInstallationId: oldInstallationId,
+								newInstallationId: result.installationId,
+								repo: recoveryRepo,
+							})
+						} catch (propagateErr) {
+							logger.warn('Failed to propagate recovered installation id to siblings', {
+								integrationId: integration.id,
+								externalId: integration.externalId,
+								error: propagateErr instanceof Error ? propagateErr.message : String(propagateErr),
+							})
+						}
+					}
 				}
 				logger.info('Recovered GitHub App installation id mid-session', {
 					integrationId: integration.id,

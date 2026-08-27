@@ -108,39 +108,65 @@ export async function persistRecoveredInstallationId(
  * id until they independently 404 and recover, which for a workspace that only
  * reads webhooks may be never.
  *
- * Keyed on `external_id`, which the recovery path deliberately leaves at the old
- * value — webhook routing matches on it, and GitHub keeps delivering under the
- * id its payloads carry. Best-effort: failures are logged, never thrown, so a
- * sibling write can't fail an already-successful token mint.
+ * Keyed on the *source row's own* `external_id`, which the recovery path
+ * deliberately leaves at its original value — webhook routing matches on it, and
+ * GitHub keeps delivering under the id its payloads carry. It must not be keyed
+ * on `expectedOldInstallationId`: that comes from the credentials blob, which
+ * `persistRecoveredInstallationId` rotates while `external_id` stays put, so the
+ * two diverge after the first recovery and every later rotation would match no
+ * siblings at all. Best-effort: failures are logged, never thrown, so a sibling
+ * write can't fail an already-successful token mint.
  */
 export async function propagateRecoveredInstallationId(
 	db: Database,
 	input: {
 		/** The row already rotated by persistRecoveredInstallationId — skipped. */
 		sourceIntegrationId: string
+		/** The source row's `external_id` — stable across rotations, unlike credentials. */
+		sourceExternalId: string
 		actorId: string
 		expectedOldInstallationId: string
 		newInstallationId: string
 		repo: string
 	},
 ): Promise<{ updatedIntegrationIds: string[] }> {
-	const { sourceIntegrationId, actorId, expectedOldInstallationId, newInstallationId, repo } = input
+	const {
+		sourceIntegrationId,
+		sourceExternalId,
+		actorId,
+		expectedOldInstallationId,
+		newInstallationId,
+		repo,
+	} = input
 
-	const siblings = await db
-		.select({
-			id: integrations.id,
-			workspaceId: integrations.workspaceId,
-			credentials: integrations.credentials,
+	// The lookup itself sits inside the best-effort boundary too. It used to run
+	// outside it, so a transient DB error here escaped into the token route's
+	// catch and turned an already-minted, perfectly valid token into a 400.
+	let siblings: { id: string; workspaceId: string; credentials: string }[]
+	try {
+		siblings = await db
+			.select({
+				id: integrations.id,
+				workspaceId: integrations.workspaceId,
+				credentials: integrations.credentials,
+			})
+			.from(integrations)
+			.where(
+				and(
+					eq(integrations.provider, 'github'),
+					eq(integrations.externalId, sourceExternalId),
+					eq(integrations.status, 'active'),
+					ne(integrations.id, sourceIntegrationId),
+				),
+			)
+	} catch (err) {
+		logger.warn('Failed to load sibling integrations for installation id propagation', {
+			sourceIntegrationId,
+			sourceExternalId,
+			error: err instanceof Error ? err.message : String(err),
 		})
-		.from(integrations)
-		.where(
-			and(
-				eq(integrations.provider, 'github'),
-				eq(integrations.externalId, expectedOldInstallationId),
-				eq(integrations.status, 'active'),
-				ne(integrations.id, sourceIntegrationId),
-			),
-		)
+		return { updatedIntegrationIds: [] }
+	}
 
 	const updatedIntegrationIds: string[] = []
 	for (const sibling of siblings) {

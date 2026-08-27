@@ -45,7 +45,7 @@ async function seedInstallation(
 	workspaceId: string,
 	actorId: string,
 	installationId: string,
-	overrides: { status?: string; ownerLogin?: string } = {},
+	overrides: { status?: string; ownerLogin?: string; credentialInstallationId?: string } = {},
 ) {
 	const [row] = await db
 		.insert(integrations)
@@ -54,7 +54,14 @@ async function seedInstallation(
 			provider: 'github',
 			status: overrides.status ?? 'active',
 			externalId: installationId,
-			credentials: encrypt(JSON.stringify({ installation_id: installationId })),
+			// `external_id` and the cached credential id start equal but drift
+			// apart: recovery rotates the credentials and deliberately leaves
+			// `external_id` alone, so tests must be able to set them separately.
+			credentials: encrypt(
+				JSON.stringify({
+					installation_id: overrides.credentialInstallationId ?? installationId,
+				}),
+			),
 			config: {
 				system_actor_id: actorId,
 				...(overrides.ownerLogin ? { owner_login: overrides.ownerLogin } : {}),
@@ -296,6 +303,7 @@ describe('GitHub App installation shared across workspaces', () => {
 
 		const result = await propagateRecoveredInstallationId(db, {
 			sourceIntegrationId: source.id,
+			sourceExternalId: oldId,
 			actorId,
 			expectedOldInstallationId: oldId,
 			newInstallationId: newId,
@@ -320,5 +328,45 @@ describe('GitHub App installation shared across workspaces', () => {
 			.where(eq(integrations.id, unrelated.id))
 		const unrelatedCreds: StoredCredentials = JSON.parse(decrypt(unrelatedRow.credentials))
 		expect(unrelatedCreds.installation_id).toBe(unrelatedId)
+	})
+
+	it('propagates on a second rotation, after external_id and credentials have diverged', async () => {
+		// Regression: the sibling lookup used to key on the *credential* id. That
+		// works exactly once. `persistRecoveredInstallationId` rotates credentials
+		// and never touches `external_id`, so on the next reinstall the two no
+		// longer agree, the lookup matched nothing, and every sibling was stranded
+		// on a dead id — silently, since an empty result set logs nothing. A
+		// webhook-only workspace would never repair itself.
+		const actorId = getTestActorId()
+		const originalId = newInstallationId()
+		const rotatedOnceId = newInstallationId()
+		const rotatedTwiceId = newInstallationId()
+		const wsA = await insertWorkspace(db, actorId)
+		const wsB = await insertWorkspace(db, actorId)
+
+		// Post-first-rotation state: external_id still original, credentials moved on.
+		const source = await seedInstallation(wsA.id, actorId, originalId, {
+			credentialInstallationId: rotatedOnceId,
+		})
+		const sibling = await seedInstallation(wsB.id, actorId, originalId, {
+			credentialInstallationId: rotatedOnceId,
+		})
+
+		const result = await propagateRecoveredInstallationId(db, {
+			sourceIntegrationId: source.id,
+			sourceExternalId: originalId,
+			actorId,
+			expectedOldInstallationId: rotatedOnceId,
+			newInstallationId: rotatedTwiceId,
+			repo: 'acme-org/widget',
+		})
+
+		expect(result.updatedIntegrationIds).toEqual([sibling.id])
+
+		const [siblingRow] = await db.select().from(integrations).where(eq(integrations.id, sibling.id))
+		const siblingCreds: StoredCredentials = JSON.parse(decrypt(siblingRow.credentials))
+		expect(siblingCreds.installation_id).toBe(rotatedTwiceId)
+		// external_id stays put — webhook routing still matches what GitHub sends.
+		expect(siblingRow.externalId).toBe(originalId)
 	})
 })
