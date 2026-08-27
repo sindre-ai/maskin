@@ -1,4 +1,3 @@
-import faroUploader from '@grafana/faro-rollup-plugin'
 import tailwindcss from '@tailwindcss/vite'
 import { TanStackRouterVite } from '@tanstack/router-plugin/vite'
 import react from '@vitejs/plugin-react'
@@ -20,14 +19,42 @@ const faroSourcemapUpload = {
 }
 const uploadConfigured = Object.values(faroSourcemapUpload).every(Boolean)
 
-export default defineConfig({
+// `@grafana/faro-rollup-plugin` is imported lazily, and ONLY when the upload is
+// configured, because it is not loadable on the Node version we build on:
+//
+//   faro-rollup-plugin -> @grafana/faro-bundlers-shared -> undici@^8.1.0
+//
+// and undici 8 declares `engines.node >= 22.19.0`. CI and apps/dev/Dockerfile
+// both run Node 20 (`FROM node:20-alpine`), where requiring it dies at import
+// time with `webidl.util.markAsUncloneable is not a function`. A top-level
+// import therefore breaks *every* build — including the production image —
+// whether or not source-map upload is switched on. Behind this gate, a build
+// with no upload credentials never loads it at all.
+//
+// This does mean enabling the upload requires Node >= 22 for the build. That
+// is asserted below rather than left to a cryptic undici stack trace.
+const NODE_MAJOR = Number(process.versions.node.split('.')[0])
+if (uploadConfigured && NODE_MAJOR < 22) {
+	throw new Error(
+		[
+			'Faro source-map upload is configured but requires Node >= 22 to build',
+			'(@grafana/faro-rollup-plugin depends on undici@8, engines.node >= 22.19.0);',
+			`this build is running Node ${process.versions.node}.`,
+			'Either upgrade the builder (apps/dev/Dockerfile is FROM node:20-alpine)',
+			'or unset FARO_SOURCEMAP_ENDPOINT / FARO_APP_ID / FARO_STACK_ID / FARO_API_KEY',
+			'to build without source maps.',
+		].join(' '),
+	)
+}
+
+export default defineConfig(async () => ({
 	plugins: [
 		TanStackRouterVite({ quoteStyle: 'single' }),
 		react(),
 		tailwindcss(),
 		...(uploadConfigured
 			? [
-					faroUploader({
+					(await import('@grafana/faro-rollup-plugin')).default({
 						// biome-ignore lint/style/noNonNullAssertion: guarded by uploadConfigured
 						endpoint: faroSourcemapUpload.endpoint!,
 						// biome-ignore lint/style/noNonNullAssertion: guarded by uploadConfigured
@@ -79,4 +106,4 @@ export default defineConfig({
 			},
 		},
 	},
-})
+}))
