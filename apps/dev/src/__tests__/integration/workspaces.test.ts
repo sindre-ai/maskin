@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
+	events,
 	actors,
 	agentSkills,
 	objects,
@@ -562,6 +563,200 @@ describe('Workspaces Integration', () => {
 			// The rejection is a no-op, not a partial write.
 			const members = await memberActorIdsFor(ws.id)
 			expect(members).not.toContain(overflow.id)
+		})
+	})
+
+	// Every guard on this route depends on DB semantics a mocked db cannot
+	// express — a FOR UPDATE re-read, a COUNT over the owner rows, and an audit
+	// insert that has to share the update's transaction. The mocked unit tests
+	// in __tests__/routes/workspaces.test.ts cover request shape only.
+	describe('PATCH /api/workspaces/:id/members/:actorId', () => {
+		/** Creates a pro workspace owned by the test actor, plus one extra human member. */
+		async function workspaceWithMember() {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Role Change' }),
+			)
+			const ws = await createRes.json()
+			await setWorkspacePlan(db, ws.id, 'pro')
+			const member = await insertActor(db, { name: 'Member', email: `${randomUUID()}@test.com` })
+			await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {
+					actor_id: member.id,
+					role: 'member',
+				}),
+			)
+			return { app, ws, member }
+		}
+
+		function setRole(workspaceId: string, actorId: string, role: string) {
+			return db
+				.update(workspaceMembers)
+				.set({ role })
+				.where(
+					and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+				)
+		}
+
+		function roleOf(workspaceId: string, actorId: string) {
+			return db
+				.select({ role: workspaceMembers.role })
+				.from(workspaceMembers)
+				.where(
+					and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+				)
+				.limit(1)
+				.then((rows) => rows[0]?.role)
+		}
+
+		it('promotes a member to admin and writes the audit event in the same transaction', async () => {
+			const { app, ws, member } = await workspaceWithMember()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${member.id}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(await roleOf(ws.id, member.id)).toBe('admin')
+
+			// The audit row is the half most easily dropped — it lives inside the
+			// transaction, so a rollback must take it with the role change.
+			const audit = await db
+				.select({ action: events.action, data: events.data })
+				.from(events)
+				.where(and(eq(events.entityType, 'workspace_member'), eq(events.entityId, member.id)))
+			expect(audit).toHaveLength(1)
+			expect(audit[0].action).toBe('updated')
+			expect(audit[0].data).toMatchObject({ role: { from: 'member', to: 'admin' } })
+		})
+
+		it('refuses to demote the last owner and leaves the role untouched', async () => {
+			const { app, ws, member } = await workspaceWithMember()
+			// Hand the sole ownership to `member` and drop the caller to admin —
+			// the caller can't reach this branch by targeting themselves (that is a
+			// separate 400), so the only route in is an admin demoting the owner.
+			await setRole(ws.id, member.id, 'owner')
+			await setRole(ws.id, getTestActorId(), 'admin')
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${member.id}`, { role: 'member' }),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toMatch(/last owner/i)
+			expect(await roleOf(ws.id, member.id)).toBe('owner')
+
+			// A rejected demotion must not leave an audit row behind.
+			const audit = await db
+				.select({ id: events.id })
+				.from(events)
+				.where(and(eq(events.entityType, 'workspace_member'), eq(events.entityId, member.id)))
+			expect(audit).toHaveLength(0)
+		})
+
+		it('refuses to change the billing owner, so billing_owner_id can never point at a non-owner', async () => {
+			const { app, ws, member } = await workspaceWithMember()
+			await db
+				.update(workspacesTable)
+				.set({ billingOwnerId: member.id })
+				.where(eq(workspacesTable.id, ws.id))
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${member.id}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(400)
+			expect(await roleOf(ws.id, member.id)).toBe('member')
+		})
+
+		it('rejects a plain member changing someone else’s role with 403', async () => {
+			const { app, ws, member } = await workspaceWithMember()
+			await setRole(ws.id, getTestActorId(), 'member')
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${member.id}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(403)
+			expect(await roleOf(ws.id, member.id)).toBe('member')
+		})
+
+		it('rejects targeting yourself with 400', async () => {
+			const { app, ws } = await workspaceWithMember()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${getTestActorId()}`, {
+					role: 'admin',
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			expect(await roleOf(ws.id, getTestActorId())).toBe('owner')
+		})
+
+		it('returns 404 for an actor who is not a member of this workspace', async () => {
+			const { app, ws } = await workspaceWithMember()
+			const stranger = await insertActor(db, { email: `${randomUUID()}@test.com` })
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${stranger.id}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
+
+	// Regression cover for the merge this PR widened. `applyModuleDefaults()` in
+	// workspace-bootstrap previously folded in only `display_names` and
+	// `statuses`, silently discarding the `field_definitions` and
+	// `relationship_types` that crm/knowledge/work all declare — so every
+	// workspace was created missing them. Asserting on the persisted row (not the
+	// response body) is the point: the drop happened on the way into the DB.
+	describe('module default settings applied at creation', () => {
+		it('persists field_definitions and relationship_types from every enabled module', async () => {
+			const app = createApp()
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Module Defaults' }),
+			)
+			expect(res.status).toBe(201)
+			const ws = await res.json()
+
+			const [row] = await db
+				.select({ settings: workspacesTable.settings })
+				.from(workspacesTable)
+				.where(eq(workspacesTable.id, ws.id))
+				.limit(1)
+			const settings = row?.settings as {
+				enabled_modules?: string[]
+				display_names?: Record<string, string>
+				field_definitions?: Record<string, unknown[]>
+				relationship_types?: string[]
+			}
+
+			// Guards the premise: without crm enabled the assertions below would
+			// pass vacuously against a workspace that never had those types.
+			expect(settings.enabled_modules).toEqual(expect.arrayContaining(['work', 'knowledge', 'crm']))
+
+			// crm and knowledge each contribute field definitions — the key that
+			// used to be dropped entirely.
+			expect(Object.keys(settings.field_definitions ?? {})).toEqual(
+				expect.arrayContaining(['contact', 'company', 'knowledge']),
+			)
+			expect(settings.field_definitions?.contact?.length).toBeGreaterThan(0)
+
+			// relationship_types is unioned across modules rather than overwritten,
+			// so crm's entries survive alongside knowledge's.
+			expect(settings.relationship_types).toEqual(
+				expect.arrayContaining(['works_at', 'decision_maker_at']),
+			)
+			// Unioned, not duplicated.
+			expect(new Set(settings.relationship_types).size).toBe(settings.relationship_types?.length)
+
+			// The keys that already worked must keep working.
+			expect(Object.keys(settings.display_names ?? {})).toEqual(
+				expect.arrayContaining(['contact', 'company']),
+			)
 		})
 	})
 

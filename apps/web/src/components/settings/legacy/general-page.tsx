@@ -14,7 +14,7 @@ import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { cn } from '@/lib/cn'
 import { type Theme, useTheme } from '@/lib/theme'
 import { useWorkspace } from '@/lib/workspace-context'
-import { getAllWebModules, getWebModule } from '@maskin/module-sdk'
+import { getAllWebModules, getWebModule, mergeModuleDefaultSettings } from '@maskin/module-sdk'
 
 import { Monitor, Moon, Sun, Trash2 } from 'lucide-react'
 import { useState } from 'react'
@@ -149,25 +149,13 @@ function ExtensionsSection() {
 
 	const enableModule = (moduleId: string) => {
 		const next = [...enabledModules, moduleId]
-		let mergedSettings: Record<string, unknown> = { ...settings, enabled_modules: next }
-
-		const mod = getWebModule(moduleId)
-		const defaults = mod?.defaultSettings
-		if (defaults) {
-			const currentDisplayNames = (settings?.display_names as Record<string, string>) ?? {}
-			const currentStatuses = (settings?.statuses as Record<string, string[]>) ?? {}
-			mergedSettings = {
-				...mergedSettings,
-				display_names: {
-					...defaults.display_names,
-					...currentDisplayNames,
-				},
-				statuses: {
-					...defaults.statuses,
-					...currentStatuses,
-				},
-			}
-		}
+		// Must stay the shared helper, not a local merge: a flag is a visual-layer
+		// switch, so both branches have to persist an identical settings row. The
+		// inline version this replaced dropped `field_definitions` and
+		// `relationship_types`, which crm/knowledge/work all define.
+		const mergedSettings = mergeModuleDefaultSettings({ ...settings, enabled_modules: next }, [
+			getWebModule(moduleId)?.defaultSettings,
+		])
 
 		updateWorkspace.mutate(
 			{ settings: mergedSettings },
