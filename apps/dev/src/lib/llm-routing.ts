@@ -41,6 +41,17 @@ export type LlmRoute =
  */
 const MASKIN_PLAN_ROUTED_PLANS = new Set(['pro', 'team', 'trial'])
 
+/**
+ * True when Maskin funds this workspace's LLM usage. Every route that reaches
+ * for `MASKIN_FALLBACK_OPENROUTER_KEY` on a workspace's behalf must be gated
+ * on this — a `byollm` workspace pays for its own credentials by definition,
+ * so silently spending Maskin's OpenRouter account for it is both a billing
+ * leak and a violation of the entitlement the customer bought.
+ */
+function isMaskinPlanRouted(billing: WorkspaceSettings['billing']): boolean {
+	return MASKIN_PLAN_ROUTED_PLANS.has(billing?.plan ?? 'trial')
+}
+
 export interface LlmRoutingResult {
 	route: LlmRoute
 	/** Env vars to merge into the container environment. */
@@ -336,8 +347,7 @@ function buildMaskinPlanEnv(
 	billing: WorkspaceSettings['billing'],
 	fallback: FallbackConfig,
 ): Record<string, string> | null {
-	const plan = billing?.plan ?? 'trial'
-	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return null
+	if (!isMaskinPlanRouted(billing)) return null
 	if (!fallback.apiKey) return null
 	return {
 		ANTHROPIC_BASE_URL: fallback.baseUrl ?? 'https://openrouter.ai/api',
@@ -805,6 +815,12 @@ export function resolveChatCredentials(params: {
 		return { provider: 'anthropic', apiKey: wsAnthropic, model: DEFAULT_CHAT_MODEL.anthropic }
 	}
 
+	// System fallback — Maskin's own funded OpenRouter account. Only workspaces
+	// whose plan Maskin funds may draw on it. A `byollm` workspace brings its
+	// own credentials; if none of the routes above matched, it has none
+	// configured, and the correct answer is "no chat-callable credential"
+	// rather than quietly billing Maskin.
+	if (!isMaskinPlanRouted(wsSettings.billing)) return null
 	const fallback = readFallbackConfig()
 	if (!fallback.apiKey) return null
 	return {
