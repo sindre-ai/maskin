@@ -46,7 +46,15 @@ export function initFaro(): void {
 			...(import.meta.env.VITE_FARO_APP_KEY ? { apiKey: import.meta.env.VITE_FARO_APP_KEY } : {}),
 			app: {
 				name: FARO_APP_NAME,
-				version: import.meta.env.VITE_MASKIN_COMMIT_SHA || 'dev',
+				// The deployed commit, supplied as a build arg by docker-compose.prod.yml
+				// from Coolify's SOURCE_COMMIT — the build cannot derive it itself
+				// (.git is in .dockerignore). This is what distinguishes one release
+				// from another in Grafana; it is NOT what matches a stack trace to its
+				// source map — that is the bundle id keyed by FARO_APP_NAME, below.
+				// "unknown" mirrors apps/agent-server/src/lib/build-info.ts: an
+				// unidentifiable build must still boot, and "unknown" in Grafana is
+				// itself the useful signal.
+				version: import.meta.env.VITE_MASKIN_COMMIT_SHA || 'unknown',
 				environment: import.meta.env.MODE,
 			},
 			// Chosen deliberately rather than taking `getWebInstrumentations()`

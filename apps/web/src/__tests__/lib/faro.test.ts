@@ -109,6 +109,23 @@ describe('initFaro gating', () => {
 	})
 })
 
+describe('app version', () => {
+	// docker-compose.prod.yml passes Coolify's SOURCE_COMMIT in as this build
+	// arg. Until it did, every production build reported the same version, so
+	// releases were indistinguishable in Grafana.
+	it('reports the build-arg commit sha as the app version', () => {
+		vi.stubEnv('VITE_MASKIN_COMMIT_SHA', 'abc123def')
+
+		expect(initWithForceEnable().app?.version).toBe('abc123def')
+	})
+
+	it('reports "unknown" rather than a plausible-looking version when the sha is absent', () => {
+		vi.stubEnv('VITE_MASKIN_COMMIT_SHA', '')
+
+		expect(initWithForceEnable().app?.version).toBe('unknown')
+	})
+})
+
 describe('instrumentation selection', () => {
 	it('registers exactly the four chosen instrumentations', () => {
 		const names = initWithForceEnable().instrumentations?.map((i) => i.constructor.name)

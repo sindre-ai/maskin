@@ -59,7 +59,11 @@ ENV VITE_POSTHOG_KEY=$VITE_POSTHOG_KEY
 ENV VITE_POSTHOG_HOST=$VITE_POSTHOG_HOST
 # Grafana Faro. VITE_FARO_URL carries the app key and is public by design (it
 # ships in the bundle, like a Sentry DSN). VITE_MASKIN_COMMIT_SHA becomes the
-# app version, which is what ties a stack trace to its uploaded source map.
+# app version, which is what distinguishes one release from another in Grafana.
+# It is supplied by docker-compose.prod.yml from Coolify's SOURCE_COMMIT; left
+# empty the bundle reports version "unknown". (What ties a stack trace to its
+# uploaded source map is a different thing entirely — the bundle id the rollup
+# plugin stamps under a global keyed by appName. See apps/web/vite.config.ts.)
 ARG VITE_FARO_URL=""
 ARG VITE_FARO_APP_KEY=""
 ARG VITE_MASKIN_COMMIT_SHA=""
