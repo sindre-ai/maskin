@@ -23,3 +23,6 @@ coverage/
 # This repo is open source and multi-tenant; see
 # observability/deployment.local.md.example.
 *.local.md
+
+# Eval run artifacts (apps/evals) — regenerated per run, never committed
+apps/evals/results/

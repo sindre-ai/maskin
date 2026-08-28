@@ -12,6 +12,7 @@
 		"test": "turbo test --concurrency=4",
 		"test:integration": "turbo test:integration",
 		"test:e2e": "turbo test:e2e",
+		"eval": "turbo eval",
 		"lint": "biome check . && node scripts/verify-billing-cap-literals.mjs",
 		"lint:fix": "biome check --write .",
 		"verify:billing-caps": "node scripts/verify-billing-cap-literals.mjs",

@@ -20,6 +20,7 @@ COPY extensions/work/package.json extensions/work/package.json
 COPY apps/dev/package.json apps/dev/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY apps/e2e/package.json apps/e2e/package.json
+COPY apps/evals/package.json apps/evals/package.json
 
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
