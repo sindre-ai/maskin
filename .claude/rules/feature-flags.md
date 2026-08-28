@@ -57,6 +57,7 @@ a sibling `legacy/` directory that dies with the flag:
 |---|---|
 | `objects/index.tsx` | `components/objects/legacy/` |
 | `objects/$objectId.tsx` | `components/objects/legacy/` |
+| `chats/new.tsx` | `components/chat/legacy/new-conversation-page.tsx` |
 | `search.tsx` | `components/search/legacy/` |
 | `marketplace/index.tsx` | `components/marketplace/legacy/` |
 | `marketplace/$loopId/index.tsx` | `components/marketplace/legacy/` |
@@ -68,10 +69,13 @@ a sibling `legacy/` directory that dies with the flag:
 | `settings/billing.tsx` | no pre-v2 route — redirects to `settings/keys` |
 | `settings/extensions.tsx` | no pre-v2 route — redirects to `settings` |
 
-Note what is *not* behind it: the routes' `validateSearch`, the shared filter and
-grouping helpers, `useWorkspaceSearch`, the marketplace hooks, and the additive
-`ObjectReference` `pill` variant and `item-type-label` helpers. Both branches run
-on the same search schema and the same data layer, per the rule below.
+Note what is *not* behind it: the routes' `validateSearch` (including `chats/new`'s
+`objectIds`, so an "Ask an agent" link resolves on both branches), the shared filter
+and grouping helpers, `useWorkspaceSearch`, the marketplace hooks, the additive
+`ObjectReference` `pill` variant and `item-type-label` helpers, and the additive
+`Select` `chip` / `Tabs` `segmented` variants and `MarkdownContent`'s `doc` size —
+each defaults to the pre-v2 rendering, so the primitive is unchanged for the branch
+that doesn't ask for the new one. Both branches run on the same search schema and the same data layer, per the rule below.
 
 **One route component = one boundary.** `new-design` has more than two read sites
 because it governs more than two pages, and a page is the highest point at which

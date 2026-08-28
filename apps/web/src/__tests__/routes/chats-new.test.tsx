@@ -86,6 +86,9 @@ const FORGE = { id: 'forge-1', name: 'Forge', type: 'agent', description: 'Ships
 
 describe('New chat', () => {
 	beforeEach(() => {
+		// These specs drive the v2 New chat page; the route is a `new-design`
+		// boundary, so the flag has to be on for it to render.
+		localStorage.setItem('ff:new-design', 'on')
 		vi.clearAllMocks()
 		mockSearch.mockReturnValue({})
 		mockActors.mockReturnValue([CHIEF, FORGE])
