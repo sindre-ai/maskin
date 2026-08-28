@@ -339,6 +339,7 @@ export class ToolBrokerClient {
 					url: entry.displayUrl ?? null,
 					authMethods: (entry.authMethods ?? []).map((method) => ({
 						id: method.id,
+						template: method.template ?? method.id,
 						label: method.label,
 						kind:
 							method.kind === 'none' || method.kind === 'oauth'
@@ -369,6 +370,13 @@ export class ToolBrokerClient {
 						endpoint: input.url,
 						transport: 'remote',
 						remoteTransport: 'auto',
+						// Declaring oauth2 HERE is what makes the backend probe the
+						// endpoint's protected-resource metadata and build a template that
+						// knows the provider's discovery URL. Registering bare and bolting
+						// an auth template on afterwards produces a template with no
+						// discovery config, and scopes are resolved from that config at
+						// authorize time — so the request goes out with no scope at all.
+						auth: { kind: 'oauth2' },
 					}
 				: // The url variant keys the value as `url`; only the blob variant uses
 					// `value`. Sending `value` here fails with a bare "Missing key".
@@ -381,15 +389,6 @@ export class ToolBrokerClient {
 			// from the workspace and the name, so a 409 means exactly this integration
 			// is already present. Reporting an error would make a retry look broken.
 			if (!(error instanceof ToolBrokerHttpError) || error.status !== 409) throw error
-		}
-
-		// Registering an MCP server does not tell the backend how to authenticate
-		// against it — it records "no authentication" until told otherwise, so a
-		// provider that actually needs OAuth would be offered a Connect button that
-		// cannot work. Probing settles it, and a provider with no OAuth metadata
-		// simply stays as-is.
-		if (input.kind === 'mcp') {
-			await this.discoverMcpAuth(apiKey, slug, input.url)
 		}
 
 		return { slug }
@@ -449,28 +448,6 @@ export class ToolBrokerClient {
 					scope: entry.owner === 'user' ? ('personal' as const) : ('workspace' as const),
 				}))
 		)
-	}
-
-	/**
-	 * Tell the backend an MCP server needs OAuth, when its metadata says so.
-	 *
-	 * Best effort: a server with no OAuth metadata throws from the probe, which
-	 * just means it needs no auth — not a failure worth surfacing to whoever was
-	 * adding it.
-	 */
-	private async discoverMcpAuth(apiKey: string, slug: string, url: string): Promise<void> {
-		try {
-			const metadata = await this.probeOAuth(apiKey, url)
-			if (!metadata.authorizationUrl) return
-			await this.request({
-				method: 'POST',
-				path: `/api/mcp/servers/${encodeURIComponent(slug)}/auth`,
-				token: apiKey,
-				body: { authenticationTemplate: [{ kind: 'oauth2' }] },
-			})
-		} catch {
-			// No OAuth metadata: leave the server as no-auth.
-		}
 	}
 
 	// -- oauth ---------------------------------------------------------------
@@ -549,6 +526,14 @@ export class ToolBrokerClient {
 			client: string
 			integrationSlug: string
 			redirectUri: string
+			/**
+			 * The integration's OWN oauth template id, from its authMethods.
+			 *
+			 * Not a constant: the backend generates this per integration, and passing
+			 * an id it does not have is accepted silently and yields an authorize URL
+			 * with no scope — a credential that authenticates and can do nothing.
+			 */
+			template: string
 			scope?: 'workspace' | 'personal'
 			connectionName?: string
 		},
@@ -570,7 +555,7 @@ export class ToolBrokerClient {
 				owner,
 				name: input.connectionName ?? (owner === 'user' ? 'personal' : 'shared'),
 				integration: input.integrationSlug,
-				template: 'oauth2',
+				template: input.template,
 				redirectUri: input.redirectUri,
 			},
 		})
@@ -636,7 +621,7 @@ interface RawIntegration {
 	kind?: string
 	canRemove?: boolean
 	displayUrl?: string
-	authMethods?: Array<{ id: string; label: string; kind: string }>
+	authMethods?: Array<{ id: string; template?: string; label: string; kind: string }>
 }
 
 interface RawConnection {

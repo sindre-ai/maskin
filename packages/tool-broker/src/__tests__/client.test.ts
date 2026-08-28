@@ -390,30 +390,26 @@ describe('addIntegrationByUrl', () => {
 		expect(body.name).toBe('Example')
 	})
 
-	it('marks an MCP server as OAuth when its metadata says so', async () => {
-		// Registering alone records "no authentication", so a provider that needs
-		// OAuth would be offered a Connect button that cannot work.
-		const { impl, calls } = stubFetch({
-			'/api/mcp/servers': () => json({}),
-			'/api/oauth/probe': () =>
-				json({
-					authorizationUrl: 'https://example.com/authorize',
-					tokenUrl: 'https://example.com/token',
-				}),
-		})
+	it('declares oauth2 at registration rather than bolting it on afterwards', async () => {
+		// This is what makes the backend probe the endpoint's protected-resource
+		// metadata and build a template that knows the provider's discovery URL.
+		// Registering bare and attaching an auth template afterwards yields a
+		// template with no discovery config, and scopes are resolved from that
+		// config at authorize time — so the flow goes out with no scope at all and
+		// mints a credential that authenticates and can read nothing.
+		const { impl, calls } = stubFetch({ '/api/mcp/servers': () => json({}) })
 
 		await makeClient(impl).addIntegrationByUrl('key', {
 			workspaceId: WORKSPACE,
-			url: 'https://example.com/mcp',
+			url: 'https://mcp.example.com/mcp',
 			kind: 'mcp',
 			name: 'Example',
 		})
 
-		const authCall = calls.find((c) => c.url.includes('/auth'))
-		expect(
-			(authCall?.body as { authenticationTemplate: Array<{ kind: string }> })
-				.authenticationTemplate,
-		).toEqual([{ kind: 'oauth2' }])
+		const register = calls.find((c) => c.url.includes('/api/mcp/servers'))
+		expect((register?.body as { auth: unknown }).auth).toEqual({ kind: 'oauth2' })
+		// And no separate auth call: the declaration above replaces it.
+		expect(calls.filter((c) => c.url.endsWith('/auth'))).toEqual([])
 	})
 })
 
@@ -463,5 +459,31 @@ describe('display names', () => {
 
 		const [integration] = await makeClient(impl).listIntegrations('key', WORKSPACE)
 		expect(integration?.name).toBe('linear')
+	})
+})
+
+describe('startOAuth template', () => {
+	it("uses the integration's own template id, never a constant", async () => {
+		// The backend generates this id per integration and accepts a wrong one
+		// SILENTLY, answering with an authorize URL that carries no scope. Passing
+		// a hardcoded "oauth2" against an integration whose template is
+		// "custom_r4o22w" is what produced a connected-but-useless credential.
+		const { impl, calls } = stubFetch({
+			'/api/oauth/start': () =>
+				json({
+					status: 'redirect',
+					authorizationUrl: 'https://p.example.com/a?scope=read',
+					state: 's',
+				}),
+		})
+
+		await makeClient(impl).startOAuth('key', {
+			client: 'dcr-x',
+			integrationSlug: 'w0123_example',
+			redirectUri: 'https://app.example.com/cb',
+			template: 'custom_r4o22w',
+		})
+
+		expect((calls.at(-1)?.body as { template: string }).template).toBe('custom_r4o22w')
 	})
 })

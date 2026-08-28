@@ -23,6 +23,14 @@ export interface BrokerIntegration {
 
 export interface BrokerAuthMethod {
 	readonly id: string
+	/**
+	 * The template id to pass when starting a flow with this method.
+	 *
+	 * Backend-generated per integration — never a fixed string like "oauth2".
+	 * Passing an id the integration does not have is accepted silently and
+	 * produces an authorize URL with no scope.
+	 */
+	readonly template: string
 	readonly label: string
 	/** `none` needs no credential; `api_key` takes a secret; `oauth` is Phase 2. */
 	readonly kind: 'none' | 'api_key' | 'oauth' | 'other'

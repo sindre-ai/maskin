@@ -291,12 +291,17 @@ app.openapi(connectRoute, async (c) => {
 			const redirectUri = callbackUrl(origin)
 
 			let clientId: string
+			let metadata: Awaited<ReturnType<typeof resolveOAuthClient>>['metadata']
 			try {
-				;({ clientId } = await resolveOAuthClient(provisioned.client, provisioned.apiKey, {
-					integrationSlug: slug,
-					endpointUrl: target.url,
-					redirectUri,
-				}))
+				;({ clientId, metadata } = await resolveOAuthClient(
+					provisioned.client,
+					provisioned.apiKey,
+					{
+						integrationSlug: slug,
+						endpointUrl: target.url,
+						redirectUri,
+					},
+				))
 			} catch (error) {
 				if (error instanceof OAuthNotSupportedError) {
 					return c.json({ error: { message: error.message } }, 400)
@@ -304,12 +309,46 @@ app.openapi(connectRoute, async (c) => {
 				throw error
 			}
 
+			// The integration's OWN oauth template, never a constant. The backend
+			// generates the id per integration and accepts a wrong one silently,
+			// answering with an authorize URL that carries no scope.
+			const oauthMethod = target.authMethods.find((method) => method.kind === 'oauth')
+			if (!oauthMethod) {
+				return c.json({ error: { message: 'This integration does not offer OAuth' } }, 400)
+			}
+
 			const started = await provisioned.client.startOAuth(provisioned.apiKey, {
 				client: clientId,
 				integrationSlug: slug,
 				redirectUri,
+				template: oauthMethod.template,
 				scope: body.scope,
 			})
+
+			// A scope-less authorize request against a provider that advertises
+			// scopes mints a credential that authenticates and can do nothing —
+			// the connection reports healthy while its tool catalogue stays empty.
+			// Refusing here beats letting someone discover it from an agent that
+			// silently found no tools.
+			if (started.status === 'redirect' && metadata.scopesSupported?.length) {
+				const requested = new URL(started.authorizationUrl).searchParams.get('scope')
+				if (!requested) {
+					logger.error('Refusing an OAuth flow that would request no scopes', {
+						workspaceId,
+						slug,
+						advertised: metadata.scopesSupported,
+					})
+					return c.json(
+						{
+							error: {
+								message:
+									'This integration advertises scopes but the authorization request carried none. Connecting would produce a credential that cannot read anything.',
+							},
+						},
+						400,
+					)
+				}
+			}
 
 			// Already holding a usable credential: nothing to authorise.
 			if (started.status === 'connected') {
