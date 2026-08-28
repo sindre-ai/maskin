@@ -133,6 +133,8 @@ describe('ObjectDetailIdentity', () => {
 			{ wrapper: makeWrapper() },
 		)
 
+		// Click-to-edit: the heading is a real <h1> until you ask to rename.
+		await user.click(screen.getByRole('heading', { level: 1, name: 'Old Title' }))
 		const input = screen.getByRole('textbox', { name: 'Object title' })
 		await user.clear(input)
 		await user.type(input, 'New Title')
@@ -150,6 +152,7 @@ describe('ObjectDetailIdentity', () => {
 			{ wrapper: makeWrapper() },
 		)
 
+		await user.click(screen.getByRole('heading', { level: 1, name: 'Unchanged' }))
 		await user.click(screen.getByRole('textbox', { name: 'Object title' }))
 		await user.tab()
 
@@ -166,6 +169,7 @@ describe('ObjectDetailIdentity', () => {
 			{ wrapper: makeWrapper() },
 		)
 
+		await user.click(screen.getByRole('heading', { level: 1, name: 'First' }))
 		const input = screen.getByRole('textbox', { name: 'Object title' })
 		await user.clear(input)
 		await user.type(input, 'Edited but never blurred')
@@ -174,7 +178,12 @@ describe('ObjectDetailIdentity', () => {
 			<ObjectDetailIdentity {...identityProps} object={second} onTitleChange={onTitleChange} />,
 		)
 
-		expect(screen.getByRole('textbox', { name: 'Object title' })).toHaveValue('Second')
+		// The swap drops back to the heading carrying the new object's title — the
+		// abandoned draft must not follow it across, or blur would rename obj-b to
+		// what was typed for obj-a.
+		expect(screen.getByRole('heading', { level: 1, name: 'Second' })).toBeInTheDocument()
+		expect(screen.queryByRole('textbox', { name: 'Object title' })).toBeNull()
+		expect(onTitleChange).not.toHaveBeenCalled()
 	})
 
 	it('status dropdown offers the workspace statuses as checked options', async () => {

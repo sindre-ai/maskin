@@ -480,8 +480,12 @@ describe('TimelineTab', () => {
 
 		// Newest phase first: active (current) → define → scope. Each status
 		// appears exactly once; the pre-fix code rendered active, active, define.
+		// Scoped to the dividers themselves: v2 status_changed rows also carry a
+		// status badge with the same word, so an unscoped text query interleaves
+		// them with the phase labels.
 		const labels = screen
 			.getAllByText(/^(active|define|scope)$/)
+			.filter((el) => el.closest('button[aria-expanded]'))
 			.map((el) => el.textContent?.trim())
 		expect(labels).toEqual(['active', 'define', 'scope'])
 	})

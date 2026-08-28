@@ -90,15 +90,16 @@ describe('New conversation page — attachments', () => {
 		const user = userEvent.setup()
 		const { container } = render(<NewConversationPage />, { wrapper: createWorkspaceWrapper() })
 
-		await user.click(screen.getByLabelText('Add people or agents'))
-		await user.click(await screen.findByText('Builder'))
+		// The redesigned page opens already addressed to the workspace's first
+		// agent, so there is no recipient to pick before attaching.
+		await screen.findByRole('button', { name: /Talking to Builder/ })
 
 		const input = getFileInput(container)
 		const pdf = new File(['%PDF-1.4'], 'report.pdf', { type: 'application/pdf' })
 		fireEvent.change(input, { target: { files: [pdf] } })
 		await waitFor(() => expect(mockUploadFile).toHaveBeenCalledTimes(1))
 
-		await user.type(screen.getByPlaceholderText('Message this conversation'), 'hello')
+		await user.type(screen.getByLabelText('Message this conversation'), 'hello')
 		await user.click(screen.getByRole('button', { name: 'Send message' }))
 
 		await waitFor(() => expect(mockCreateConversationMutateAsync).toHaveBeenCalledTimes(1))

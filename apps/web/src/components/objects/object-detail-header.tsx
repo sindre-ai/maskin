@@ -126,6 +126,17 @@ export function ObjectDetailIdentity({
 		if (!editingTitle) setTitleDraft(object.title ?? '')
 	}, [object.title, editingTitle])
 
+	// A route swap reuses this instance, and the effect above deliberately holds
+	// the draft while you are typing — so without this an in-flight edit would
+	// survive the swap and blur would commit the previous object's text onto the
+	// new one. Leaving edit mode as well means the swap lands on the heading.
+	const [trackedObjectId, setTrackedObjectId] = useState(object.id)
+	if (trackedObjectId !== object.id) {
+		setTrackedObjectId(object.id)
+		setTitleDraft(object.title ?? '')
+		setEditingTitle(false)
+	}
+
 	const commitTitle = () => {
 		setEditingTitle(false)
 		const next = titleDraft.trim()

@@ -130,13 +130,15 @@ describe('RelatedTab', () => {
 			isError: false,
 		} as never)
 
-		render(<RelatedTab object={buildObjectResponse({ id: 'obj-1' })} />, {
+		const { container } = render(<RelatedTab object={buildObjectResponse({ id: 'obj-1' })} />, {
 			wrapper: createWorkspaceWrapper(),
 		})
 
-		expect(screen.queryByText('No related objects yet')).toBeNull()
-		// The count is withheld too rather than asserting a confident 0.
-		expect(screen.getByText('Related')).toBeInTheDocument()
+		expect(screen.queryByText(/No related objects yet/)).toBeNull()
+		// The v2 tab has no "Related (N)" heading of its own — the count lives in
+		// the segmented control above it — so the skeleton is what marks the
+		// pending state here.
+		expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
 	})
 
 	it('surfaces an error when the graph fetch fails, not the empty state', () => {
