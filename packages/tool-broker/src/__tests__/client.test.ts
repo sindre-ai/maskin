@@ -304,6 +304,7 @@ describe('connect', () => {
 
 		await makeClient(impl).connect('key', {
 			integrationSlug: 'slug',
+			template: 'none',
 			auth: { type: 'none' },
 		})
 
@@ -321,6 +322,7 @@ describe('connect', () => {
 
 		await makeClient(impl).connect('key', {
 			integrationSlug: 'slug',
+			template: 'apikey-0',
 			auth: { type: 'api_key', value: 'secret-value' },
 			scope: 'personal',
 		})
@@ -485,5 +487,53 @@ describe('startOAuth template', () => {
 		})
 
 		expect((calls.at(-1)?.body as { template: string }).template).toBe('custom_r4o22w')
+	})
+})
+
+describe('auth kind mapping', () => {
+	it('recognises the backend spelling of an api-key method', async () => {
+		// The backend spells it `apikey`. Mapping only `api_key` classified every
+		// key-authenticated integration as "other", and the UI then offered it as
+		// no-auth — a connect that cannot work.
+		const slug = workspaceScopedSlug(WORKSPACE, 'petstore')
+		const { impl } = stubFetch({
+			'/api/integrations': () =>
+				json([
+					{
+						slug,
+						name: 'Petstore',
+						kind: 'openapi',
+						authMethods: [
+							{ id: 'apikey-0', template: 'apikey-0', label: 'API key', kind: 'apikey' },
+						],
+					},
+				]),
+		})
+
+		const [integration] = await makeClient(impl).listIntegrations('key', WORKSPACE)
+		expect(integration?.authMethods[0]?.kind).toBe('api_key')
+		// And the generated template id survives, since connect needs it.
+		expect(integration?.authMethods[0]?.template).toBe('apikey-0')
+	})
+})
+
+describe('connect template', () => {
+	it("uses the integration's own template rather than the auth kind", async () => {
+		// Same trap as the OAuth template: an api-key template is `apikey-0`, and
+		// passing the literal `api_key` is accepted silently.
+		const { impl, calls } = stubFetch({
+			'/api/connections': () =>
+				json({ owner: 'org', name: 'shared', integration: 'w0123_petstore', address: 'a' }),
+		})
+
+		await makeClient(impl).connect('key', {
+			integrationSlug: 'w0123_petstore',
+			template: 'apikey-0',
+			auth: { type: 'api_key', value: 'secret' },
+		})
+
+		const body = calls.at(-1)?.body as Record<string, unknown>
+		expect(body.template).toBe('apikey-0')
+		expect(body.value).toBe('secret')
 	})
 })

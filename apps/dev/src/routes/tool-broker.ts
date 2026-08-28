@@ -384,8 +384,24 @@ app.openapi(connectRoute, async (c) => {
 			return c.json({ authorizationUrl: started.authorizationUrl }, 200)
 		}
 
+		// The integration's own template id for the requested auth kind — the
+		// backend generates these (an api-key template is `apikey-0`) and accepts
+		// a wrong one silently, the same trap as the OAuth template.
+		const wanted = body.auth.type === 'none' ? 'none' : 'api_key'
+		const integrations = await provisioned.client.listIntegrations(provisioned.apiKey, workspaceId)
+		const method = integrations
+			.find((integration) => integration.slug === slug)
+			?.authMethods.find((m) => m.kind === wanted)
+		if (!method) {
+			return c.json(
+				{ error: { message: `This integration does not support ${wanted} authentication` } },
+				400,
+			)
+		}
+
 		const connection = await provisioned.client.connect(provisioned.apiKey, {
 			integrationSlug: slug,
+			template: method.template,
 			auth: body.auth,
 			scope: body.scope,
 		})

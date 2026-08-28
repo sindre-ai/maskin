@@ -92,12 +92,18 @@ function IntegrationRow({
 	const connect = useConnectToolBrokerIntegration(workspaceId)
 	const disconnect = useDisconnectToolBrokerIntegration(workspaceId)
 
-	// OAuth first when the provider offers it: it is the only one that yields a
-	// real user-scoped credential. The ellipsis on the label warns that the click
-	// leaves Maskin for the provider's consent screen.
-	const auth: { type: 'oauth' } | { type: 'none' } = integration.authKinds.includes('oauth')
-		? { type: 'oauth' }
-		: { type: 'none' }
+	const [keyDialogOpen, setKeyDialogOpen] = useState(false)
+
+	// Three shapes, in preference order. OAuth first where offered: it is the only
+	// one that yields a real user-scoped credential. An api-key integration needs
+	// a secret from the user, so it opens a dialog rather than connecting on click.
+	const authKind: 'oauth' | 'api_key' | 'none' = integration.authKinds.includes('oauth')
+		? 'oauth'
+		: integration.authKinds.includes('api_key')
+			? 'api_key'
+			: 'none'
+
+	const connectLabel = authKind === 'none' ? 'Connect' : 'Connect…'
 
 	return (
 		<li className="flex items-center justify-between gap-3 rounded-md border border-border p-3">
@@ -126,13 +132,92 @@ function IntegrationRow({
 					<Button
 						size="sm"
 						disabled={connect.isPending}
-						onClick={() => connect.mutate({ slug: integration.slug, auth })}
+						onClick={() => {
+							if (authKind === 'api_key') {
+								setKeyDialogOpen(true)
+								return
+							}
+							connect.mutate({ slug: integration.slug, auth: { type: authKind } })
+						}}
 					>
-						{auth.type === 'oauth' ? 'Connect…' : 'Connect'}
+						{connectLabel}
 					</Button>
 				)}
 			</div>
+
+			<ApiKeyDialog
+				open={keyDialogOpen}
+				onOpenChange={setKeyDialogOpen}
+				integrationName={integration.name}
+				pending={connect.isPending}
+				onSubmit={(value) =>
+					connect.mutate(
+						{ slug: integration.slug, auth: { type: 'api_key', value } },
+						{ onSuccess: () => setKeyDialogOpen(false) },
+					)
+				}
+			/>
 		</li>
+	)
+}
+
+function ApiKeyDialog({
+	open,
+	onOpenChange,
+	integrationName,
+	pending,
+	onSubmit,
+}: {
+	open: boolean
+	onOpenChange: (open: boolean) => void
+	integrationName: string
+	pending: boolean
+	onSubmit: (value: string) => void
+}) {
+	const [value, setValue] = useState('')
+
+	return (
+		<Dialog
+			open={open}
+			onOpenChange={(next) => {
+				// Never leave a secret sitting in state after the dialog closes.
+				if (!next) setValue('')
+				onOpenChange(next)
+			}}
+		>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>Connect {integrationName}</DialogTitle>
+					<DialogDescription>
+						This integration authenticates with an API key. It is sent straight to the integration
+						service and is never stored by Maskin.
+					</DialogDescription>
+				</DialogHeader>
+
+				<div className="space-y-1.5">
+					<Label htmlFor="tool-broker-api-key">API key</Label>
+					<Input
+						id="tool-broker-api-key"
+						type="password"
+						value={value}
+						onChange={(event) => setValue(event.target.value)}
+						autoComplete="off"
+						onKeyDown={(event) => {
+							if (event.key === 'Enter' && value.trim()) onSubmit(value.trim())
+						}}
+					/>
+				</div>
+
+				<DialogFooter>
+					<Button variant="outline" onClick={() => onOpenChange(false)}>
+						Cancel
+					</Button>
+					<Button onClick={() => onSubmit(value.trim())} disabled={!value.trim() || pending}>
+						{pending ? 'Connecting…' : 'Connect'}
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	)
 }
 

@@ -35,6 +35,15 @@ const INTEGRATIONS = [
 		authKinds: ['none'] as const,
 	},
 	{
+		slug: 'w0123_keyed',
+		name: 'keyed-service',
+		kind: 'openapi' as const,
+		removable: true,
+		url: 'https://api.example.com/openapi.json',
+		connected: false,
+		authKinds: ['api_key'] as const,
+	},
+	{
 		slug: 'w0123_linear',
 		name: 'linear',
 		kind: 'mcp' as const,
@@ -101,7 +110,7 @@ test.describe('tool-broker section', () => {
 				timeout: 10000,
 			})
 			await expect(section(page).getByText('deepwiki')).toBeVisible()
-			await expect(section(page).getByText('petstore')).toBeVisible()
+			await expect(section(page).getByText('petstore', { exact: true })).toBeVisible()
 
 			// The distinction that matters: present in the workspace is not the same
 			// as usable. One row offers Disconnect, the other offers Connect.
@@ -174,6 +183,40 @@ test.describe('tool-broker section', () => {
 
 		await expect.poll(() => connectBody?.auth?.type, { timeout: 10000 }).toBe('oauth')
 		await expect.poll(() => page.url(), { timeout: 10000 }).toContain('mcp.linear.app')
+	})
+
+	test('asks for a secret before connecting an api-key integration', async ({ page, account }) => {
+		await stubBroker(page, { configured: true, available: true, integrations: INTEGRATIONS })
+
+		let connectBody: { auth?: { type?: string; value?: string } } | null = null
+		await page.route('**/api/tool-broker/integrations/*/connect', async (route) => {
+			connectBody = route.request().postDataJSON()
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ address: 'tools.x.org.shared' }),
+			})
+		})
+
+		await gotoIntegrations(page, account.workspaceId)
+
+		await section(page)
+			.getByRole('listitem')
+			.filter({ hasText: 'keyed-service' })
+			.getByRole('button', { name: 'Connect…' })
+			.click()
+
+		const dialog = page.getByRole('dialog')
+		await expect(dialog).toBeVisible()
+		// A secret must not be a plain text field.
+		const field = dialog.getByLabel('API key')
+		await expect(field).toHaveAttribute('type', 'password')
+		await field.fill('sk-test-123')
+		await dialog.getByRole('button', { name: 'Connect', exact: true }).click()
+
+		await expect.poll(() => connectBody?.auth?.type, { timeout: 10000 }).toBe('api_key')
+		expect(connectBody?.auth?.value).toBe('sk-test-123')
+		await expect(dialog).toBeHidden()
 	})
 
 	test('infers an OpenAPI spec from the URL and tells the user', async ({ page, account }) => {

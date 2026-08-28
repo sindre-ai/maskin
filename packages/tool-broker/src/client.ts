@@ -341,10 +341,13 @@ export class ToolBrokerClient {
 						id: method.id,
 						template: method.template ?? method.id,
 						label: method.label,
+						// The backend spells this `apikey`, not `api_key` — mapping only the
+						// underscored form silently classified every key-authenticated
+						// integration as "other", which the UI then offered as no-auth.
 						kind:
 							method.kind === 'none' || method.kind === 'oauth'
 								? method.kind
-								: method.kind === 'api_key'
+								: method.kind === 'apikey' || method.kind === 'api_key'
 									? 'api_key'
 									: 'other',
 					})),
@@ -399,6 +402,14 @@ export class ToolBrokerClient {
 		apiKey: string,
 		input: {
 			integrationSlug: string
+			/**
+			 * The integration's OWN template id, from its authMethods.
+			 *
+			 * Generated per integration — an api-key template is `apikey-0`, not
+			 * `api_key` — and a wrong id is accepted without complaint, exactly as
+			 * it is for OAuth. Never a constant.
+			 */
+			template: string
 			auth: BrokerAuthInput
 			/** `workspace` shares with the whole workspace; `personal` stays private. */
 			scope?: 'workspace' | 'personal'
@@ -414,7 +425,7 @@ export class ToolBrokerClient {
 				owner,
 				name,
 				integration: input.integrationSlug,
-				template: input.auth.type === 'none' ? 'none' : 'api_key',
+				template: input.template,
 				// The backend requires EXACTLY ONE credential origin (`value`,
 				// `values` or `from`) even when the template needs no secret —
 				// omitting it fails with "Expected exactly one credential origin"

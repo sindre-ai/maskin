@@ -18,8 +18,29 @@ const routes = (await import('../../routes/tool-broker')).default
 
 const WORKSPACE = '11111111-2222-3333-4444-555555555555'
 
+// Connect resolves the integration's own template id from this list, so the
+// default stub has to carry authMethods — a wrong or missing template is the
+// bug class these routes exist to avoid.
+const INTEGRATION_WITH_METHODS = (slug: string) => ({
+	slug,
+	name: slug,
+	kind: 'mcp' as const,
+	removable: true,
+	url: 'https://mcp.example.com/mcp',
+	authMethods: [
+		{ id: 'none', template: 'none', label: 'None', kind: 'none' as const },
+		{ id: 'apikey-0', template: 'apikey-0', label: 'API key', kind: 'api_key' as const },
+	],
+})
+
 const makeClient = (overrides: Record<string, unknown> = {}) => ({
-	listIntegrations: vi.fn().mockResolvedValue([]),
+	listIntegrations: vi
+		.fn()
+		.mockResolvedValue([
+			INTEGRATION_WITH_METHODS('w_linear'),
+			INTEGRATION_WITH_METHODS('w_stripe'),
+			INTEGRATION_WITH_METHODS('w_x'),
+		]),
 	listConnections: vi.fn().mockResolvedValue([]),
 	addIntegrationByUrl: vi.fn().mockResolvedValue({ slug: 'w-slug' }),
 	connect: vi.fn().mockResolvedValue({ address: 'tools.x.org.shared', scope: 'workspace' }),
@@ -208,13 +229,16 @@ describe('POST /api/tool-broker/integrations/:slug/connect', () => {
 			'key',
 			expect.objectContaining({
 				auth: { type: 'api_key', value: 'sk-test' },
+				// Resolved from the integration, not the literal auth kind.
+				template: 'apikey-0',
 			}),
 		)
 	})
 
 	it('rejects an unknown auth type', async () => {
 		const { app } = createTestApp(routes, '/api/tool-broker')
-		const res = await app.request(post('/integrations/w_x/connect', { auth: { type: 'oauth' } }))
+		// 'oauth' is a supported type now, so this needs a genuinely unknown one.
+		const res = await app.request(post('/integrations/w_x/connect', { auth: { type: 'saml' } }))
 		expect(res.status).toBe(400)
 	})
 })
