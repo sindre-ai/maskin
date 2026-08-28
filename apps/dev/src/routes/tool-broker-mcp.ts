@@ -56,8 +56,11 @@ app.post('/', async (c) => {
 		return c.json({ error: { message: 'Invalid or expired tool broker session token' } }, 401)
 	}
 
-	const baseUrl = process.env.TOOL_BROKER_URL
-	if (!baseUrl) {
+	// The workspace's own instance when it has one, else the default. Today every
+	// row is NULL and this is the default for all of them; the indirection exists
+	// so an instance per workspace is an orchestration change, not a migration.
+	const defaultBaseUrl = process.env.TOOL_BROKER_URL
+	if (!defaultBaseUrl) {
 		// Config, not flag, is the kill switch: with no URL this path does not
 		// exist at all.
 		return c.json({ error: { message: 'Tool broker is not configured' } }, 404)
@@ -125,6 +128,9 @@ app.post('/', async (c) => {
 	// continues rather than restarting.
 	const sessionId = c.req.header('mcp-session-id')
 	if (sessionId) upstreamHeaders['mcp-session-id'] = sessionId
+
+	// The workspace's own instance when it has one, else the default.
+	const baseUrl = provisioned.endpointUrl ?? defaultBaseUrl
 
 	let upstream: Response
 	try {

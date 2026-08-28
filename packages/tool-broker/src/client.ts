@@ -27,6 +27,26 @@ import {
 // This is why `provisionActor` is the only method taking admin credentials and
 // every other method takes an `apiKey`.
 //
+// THE INVARIANT: A PER-ACTOR API KEY MUST NEVER LEAVE MASKIN'S BACKEND.
+//
+// This is the trust boundary the whole design rests on, and it is stronger than
+// it looks like it needs to be. Measured against a live instance: the backend's
+// ROOT /mcp endpoint is NOT toolkit-scoped. A key holder there can enumerate and
+// CALL every org-owned connection on the instance, across every workspace — a
+// user with no relationship to a workspace successfully invoked its tools using
+// its OAuth credential. Toolkit membership globs constrain the TOOLKIT endpoint
+// only; they are not a boundary against a key.
+//
+// So the containment is the boundary. Keys are encrypted at rest, spent
+// server-side, and never placed in a response body, a log line, a container
+// environment, or MCP_SERVERS_JSON — containers get a short-lived token scoped
+// to one workspace instead. See tool-broker-key-containment.test.ts, which pins
+// each of those.
+//
+// The exposure is narrower than "any authenticated user" in one respect worth
+// stating: connections.list never returns credential VALUES, and no Maskin user
+// ever holds a broker key. The risk is a leaked key, not a curious user.
+//
 // WHAT WE DELIBERATELY DO NOT DO: we never persist a per-actor password. A
 // password mints a full session, which would reach the account and admin planes
 // for that user — a strictly larger capability than the API key carries. The

@@ -1319,6 +1319,12 @@ export const workspaceToolBrokers = pgTable(
 		// broker I/O. A hint for the agent preamble only — never an authorisation
 		// input, since toolkit membership is what actually admits a tool.
 		connectedNames: jsonb('connected_names').notNull().default([]),
+		// Which broker instance holds this workspace's toolkit. NULL means the
+		// default from TOOL_BROKER_URL. One instance is one tenant, so a hosted
+		// deployment that needs vendor-enforced isolation runs an instance per
+		// workspace — this column is what keeps that an orchestration change
+		// rather than a migration.
+		endpointUrl: text('endpoint_url'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
