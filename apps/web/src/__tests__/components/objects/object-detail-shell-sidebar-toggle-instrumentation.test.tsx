@@ -182,6 +182,19 @@ describe('ObjectDetailShell sidebar_toggle instrumentation', () => {
 		})
 	})
 
+	// AltGr reports as Ctrl+Alt on Windows, and `\` is an AltGr product on the
+	// Nordic, German, Polish and Turkish layouts — so a user typing a literal
+	// backslash must not toggle the drawer (nor lose the character to
+	// `preventDefault()`).
+	it('does not fire when AltGr produces the backslash rather than the chord', async () => {
+		const user = userEvent.setup()
+		renderShell('obj-altgr')
+
+		await user.keyboard('{Control>}{Alt>}{Shift>}\\{/Shift}{/Alt}{/Control}')
+
+		expect(trackSidebarToggleMock).not.toHaveBeenCalled()
+	})
+
 	it('persists the collapsed bit so the toggle survives a remount', async () => {
 		const user = userEvent.setup()
 		const { unmount } = renderShell('obj-persist')

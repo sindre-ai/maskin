@@ -133,7 +133,13 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
 			// Shift makes the backslash a pipe on most layouts — accept both.
-			if (!((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === '\\' || e.key === '|'))) return
+			// `!altKey` for the same reason the nav chord needs it: AltGr sets
+			// `ctrlKey` on Windows, and both characters are AltGr products on the
+			// layouts where `\` is not a bare key.
+			if (
+				!((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && (e.key === '\\' || e.key === '|'))
+			)
+				return
 			const target = e.target as HTMLElement | null
 			if (target) {
 				const tag = target.tagName

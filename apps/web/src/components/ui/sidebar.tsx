@@ -103,10 +103,16 @@ const SidebarProvider = React.forwardRef<
 		// Adds a keyboard shortcut to toggle the sidebar.
 		React.useEffect(() => {
 			const handleKeyDown = (event: KeyboardEvent) => {
+				// `!altKey` is load-bearing, not defensive: Windows synthesises
+				// `ctrlKey` for AltGr, and `\` is an AltGr product on the Nordic,
+				// German, Polish and Turkish layouts. Without this, typing a literal
+				// backslash into the document editor would be swallowed by
+				// `preventDefault()` and toggle the nav instead.
 				if (
 					event.key === SIDEBAR_KEYBOARD_SHORTCUT &&
 					(event.metaKey || event.ctrlKey) &&
-					!event.shiftKey
+					!event.shiftKey &&
+					!event.altKey
 				) {
 					event.preventDefault()
 					toggleSidebar()
