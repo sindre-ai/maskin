@@ -1,12 +1,17 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, workspaceToolBrokers } from '@maskin/db'
+import { events, toolBrokerCatalog, workspaceToolBrokers } from '@maskin/db'
 import { resolveWebAppBaseUrl } from '@maskin/shared'
 import { ToolBrokerUnavailableError } from '@maskin/tool-broker'
-import { eq } from 'drizzle-orm'
+import { and, asc, eq, ilike, or } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { resolvePublicOrigin } from '../lib/public-origin'
+import {
+	CatalogCollapseError,
+	CatalogNormalisationError,
+	syncCatalog,
+} from '../lib/tool-broker/catalog-sync'
 import {
 	OAuthNotSupportedError,
 	bindOAuthFlow,
@@ -604,6 +609,153 @@ app.openapi(oauthCallbackRoute, async (c) => {
 			settingsUrl(binding.workspaceId, { tool_broker_error: 'exchange_failed' }),
 			302,
 		)
+	}
+})
+
+// ---------------------------------------------------------------------------
+// Catalogue.
+//
+// Maskin never fetches the catalogue's source. A job outside this repo does
+// that, normalises every record, and pushes the result at the ingest route
+// below — which is why no upstream hostname appears anywhere in this codebase
+// or in any browser request.
+// ---------------------------------------------------------------------------
+
+const catalogEntrySchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	description: z.string().nullable(),
+	domain: z.string(),
+	iconPath: z.string().nullable(),
+	connectKind: z.enum(['mcp', 'openapi']),
+	endpointUrl: z.string(),
+	authKind: z.enum(['none', 'api_key', 'oauth2']),
+	supportsDcr: z.boolean(),
+})
+
+const browseRoute = createRoute({
+	method: 'get',
+	path: '/catalog',
+	tags: ['Tool Broker'],
+	summary: 'Browse the integration catalogue',
+	request: {
+		query: z.object({
+			q: z.string().optional(),
+			limit: z.string().optional(),
+		}),
+	},
+	responses: {
+		200: {
+			description: 'Catalogue entries',
+			content: {
+				'application/json': {
+					schema: z.object({ entries: z.array(catalogEntrySchema), total: z.number() }),
+				},
+			},
+		},
+	},
+})
+
+app.openapi(browseRoute, async (c) => {
+	const { q, limit } = c.req.valid('query')
+
+	// Number() yields NaN for junk and NaN propagates into SQL, so parse safely
+	// and bound it — see .claude/rules/input-validation.md.
+	const parsed = Number(limit)
+	const take = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 100) : 50
+
+	const term = q?.trim()
+	const where = term
+		? and(
+				eq(toolBrokerCatalog.status, 'active'),
+				or(
+					ilike(toolBrokerCatalog.name, `%${term}%`),
+					ilike(toolBrokerCatalog.domain, `%${term}%`),
+				),
+			)
+		: eq(toolBrokerCatalog.status, 'active')
+
+	const rows = await c
+		.get('db')
+		.select()
+		.from(toolBrokerCatalog)
+		.where(where)
+		.orderBy(asc(toolBrokerCatalog.name))
+		.limit(take)
+
+	return c.json(
+		{
+			entries: rows.map((row) => ({
+				id: row.id,
+				name: row.name,
+				description: row.description,
+				domain: row.domain,
+				iconPath: row.iconPath,
+				connectKind: row.connectKind as 'mcp' | 'openapi',
+				endpointUrl: row.endpointUrl,
+				authKind: row.authKind as 'none' | 'api_key' | 'oauth2',
+				supportsDcr: row.supportsDcr,
+			})),
+			total: rows.length,
+		},
+		200,
+	)
+})
+
+const syncRoute = createRoute({
+	method: 'post',
+	path: '/catalog/sync',
+	tags: ['Tool Broker'],
+	summary: 'Replace the catalogue with a normalised set of entries',
+	description:
+		'Called by the out-of-repo sync job. Entries must already be normalised — anything upstream-shaped is rejected rather than stripped.',
+	request: {
+		body: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						entries: z.array(
+							z.object({
+								name: z.string().min(1),
+								description: z.string().nullish(),
+								domain: z.string().min(1),
+								iconPath: z.string().nullish(),
+								connectKind: z.enum(['mcp', 'openapi']),
+								endpointUrl: z.string().min(1),
+								authKind: z.enum(['none', 'api_key', 'oauth2']),
+								supportsDcr: z.boolean().optional(),
+								credentialSetup: z.string().nullish(),
+								verifiedAt: z.string().nullish(),
+							}),
+						),
+					}),
+				},
+			},
+		},
+	},
+	responses: {
+		200: { description: 'Synced' },
+		400: { description: 'An entry was not normalised' },
+		409: { description: 'Refused: the sync would have emptied the catalogue' },
+	},
+})
+
+app.openapi(syncRoute, async (c) => {
+	const { entries } = c.req.valid('json')
+
+	try {
+		const result = await syncCatalog(c.get('db'), entries)
+		return c.json(result, 200)
+	} catch (error) {
+		if (error instanceof CatalogNormalisationError) {
+			return c.json({ error: { message: error.message, field: error.field } }, 400)
+		}
+		if (error instanceof CatalogCollapseError) {
+			// Louder than a 400: this means the source is probably broken, and the
+			// catalogue was deliberately left untouched.
+			return c.json({ error: { message: error.message } }, 409)
+		}
+		throw error
 	}
 })
 

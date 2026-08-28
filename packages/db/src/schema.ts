@@ -1378,3 +1378,40 @@ export type WorkspaceToolBroker = typeof workspaceToolBrokers.$inferSelect
 export type NewWorkspaceToolBroker = typeof workspaceToolBrokers.$inferInsert
 export type ToolBrokerActor = typeof toolBrokerActors.$inferSelect
 export type NewToolBrokerActor = typeof toolBrokerActors.$inferInsert
+
+// The browsable integration catalogue. Wholly Maskin-owned and normalised at
+// ingest: our id, our description, our icon path. Nothing upstream-shaped is
+// stored, because anything here can reach an API response or a page — and the
+// catalogue's source must not be discoverable from either.
+//
+// `domain` and `endpointUrl` describe the THIRD-PARTY PROVIDER and are meant to
+// be here; they are what a workspace connects to.
+export const toolBrokerCatalog = pgTable(
+	'tool_broker_catalog',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		name: text('name').notNull(),
+		description: text('description'),
+		domain: text('domain').notNull(),
+		/** Key in OUR storage, never a URL — a DB CHECK enforces it. */
+		iconPath: text('icon_path'),
+		connectKind: text('connect_kind').notNull(),
+		endpointUrl: text('endpoint_url').notNull(),
+		authKind: text('auth_kind').notNull(),
+		/** Whether the provider self-registers an OAuth client, so connecting it
+		 *  needs no per-vendor setup from us. ~98% of measured entries do. */
+		supportsDcr: boolean('supports_dcr').notNull().default(false),
+		credentialSetup: text('credential_setup'),
+		verifiedAt: timestamp('verified_at', { withTimezone: true }),
+		status: text('status').notNull().default('active'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('tool_broker_catalog_endpoint_uniq').on(t.endpointUrl),
+		index('tool_broker_catalog_active_name_idx').on(t.status, t.name),
+	],
+)
+
+export type ToolBrokerCatalogEntry = typeof toolBrokerCatalog.$inferSelect
+export type NewToolBrokerCatalogEntry = typeof toolBrokerCatalog.$inferInsert
