@@ -26,6 +26,14 @@ export const FLAGS = {
 	 * been through testing — see `.claude/rules/feature-flags.md`.
 	 */
 	NEW_DESIGN: 'new-design',
+	/**
+	 * The tool-broker integrations section on the settings page. Gates the UI
+	 * only: the backend path is gated by config instead — with TOOL_BROKER_URL
+	 * unset the routes and the session injection do not exist, so a user without
+	 * the flag hits an identical backend either way. See the recorded exception in
+	 * `.claude/rules/feature-flags.md`.
+	 */
+	TOOL_BROKER: 'tool-broker',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

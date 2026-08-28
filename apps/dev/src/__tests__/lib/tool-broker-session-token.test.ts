@@ -4,6 +4,12 @@ import {
 	verifyToolBrokerSessionToken,
 } from '../../lib/tool-broker/session-token'
 
+// process.env.X = undefined sets the STRING "undefined", which is truthy and
+// would make every "feature is off" assertion below pass for the wrong reason.
+// Biome's noDelete autofix suggests exactly that, so the property is removed
+// through Reflect instead — same semantics, no lint suppression.
+const unsetEnv = (key: string) => Reflect.deleteProperty(process.env, key)
+
 const SECRET = 'a'.repeat(48)
 const CLAIMS = { sessionId: 'sess-1', workspaceId: 'ws-1', actorId: 'actor-1' }
 
@@ -13,7 +19,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.useRealTimers()
-	delete process.env.TOOL_BROKER_SESSION_SECRET
+	unsetEnv('TOOL_BROKER_SESSION_SECRET')
 })
 
 describe('tool broker session token', () => {

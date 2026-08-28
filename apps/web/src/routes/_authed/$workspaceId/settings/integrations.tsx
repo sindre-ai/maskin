@@ -1,3 +1,4 @@
+import { ToolBrokerSection } from '@/components/integrations/tool-broker-section'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
@@ -11,6 +12,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	useCompleteIntegration,
 	useConnectIntegration,
@@ -42,6 +44,10 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/integration
 
 function IntegrationsPage() {
 	const { workspaceId } = useWorkspace()
+	// The one read site for this flag. It gates a whole added section; the
+	// provider list below is untouched either way, which is what makes the change
+	// additive rather than a rewrite.
+	const toolBrokerEnabled = useFeatureFlag('tool-broker')
 	const { data: integrations, isLoading: integrationsLoading } = useIntegrations(workspaceId)
 	const { data: providers, isLoading: providersLoading } = useProviders()
 
@@ -79,7 +85,8 @@ function IntegrationsPage() {
 	}
 
 	return (
-		<div>
+		<div className="space-y-6">
+			{toolBrokerEnabled ? <ToolBrokerSection workspaceId={workspaceId} /> : null}
 			{isLoading ? (
 				<ListSkeleton />
 			) : !providers?.length ? (

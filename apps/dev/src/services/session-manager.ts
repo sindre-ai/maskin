@@ -57,7 +57,6 @@ import { debitCreditForSession } from '../lib/credit-billing'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { isEnterprise } from '../lib/enterprise'
 import { frontendBaseUrl } from '../lib/file-urls'
-import { resolveToolBrokerInjection } from '../lib/tool-broker/session-injection'
 import { buildAgentGitIdentity } from '../lib/git-identity'
 import {
 	GITHUB_PREFLIGHT_SLACK_CHANNEL,
@@ -98,6 +97,7 @@ import {
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { detectUnhealthyMcpServers, formatUnhealthyMcpWarning } from '../lib/mcp-health'
+import { resolveToolBrokerInjection } from '../lib/tool-broker/session-injection'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import {
 	AgentServerAuthError,

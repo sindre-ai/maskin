@@ -36,8 +36,15 @@ describe('parseFeatureFlagConfig', () => {
 describe('resolveFlags', () => {
 	it('resolves the live registry — new-design is on for a listed tester', () => {
 		const c = config({ FF_TESTER_FEATURES: FLAGS.NEW_DESIGN, FF_TESTER_ACTOR_IDS: TESTER })
-		expect(resolveFlags(TESTER, c)).toEqual({ [FLAGS.NEW_DESIGN]: true })
-		expect(resolveFlags(NON_TESTER, c)).toEqual({ [FLAGS.NEW_DESIGN]: false })
+		// Asserted per flag rather than on the whole object: registering an
+		// unrelated flag must not fail this test, which is what a whole-registry
+		// toEqual did every time a flag was added.
+		expect(resolveFlags(TESTER, c)[FLAGS.NEW_DESIGN]).toBe(true)
+		expect(resolveFlags(NON_TESTER, c)[FLAGS.NEW_DESIGN]).toBe(false)
+		// Every registered id still resolves to a boolean, none missing.
+		for (const id of Object.values(FLAGS)) {
+			expect(typeof resolveFlags(TESTER, c)[id]).toBe('boolean')
+		}
 	})
 
 	it('is false for every flag when the env is empty', () => {

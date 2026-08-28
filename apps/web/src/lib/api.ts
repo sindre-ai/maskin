@@ -419,6 +419,25 @@ export const api = {
 			}),
 	},
 
+	toolBroker: {
+		list: (workspaceId: string) => request<ToolBrokerListResponse>('/tool-broker', { workspaceId }),
+		add: (workspaceId: string, body: { url: string; kind: 'mcp' | 'openapi'; name?: string }) =>
+			request<{ slug: string }>('/tool-broker/integrations', { method: 'POST', body, workspaceId }),
+		connect: (
+			workspaceId: string,
+			slug: string,
+			auth: { type: 'none' } | { type: 'api_key'; value: string },
+		) =>
+			request<{ address: string }>(
+				`/tool-broker/integrations/${encodeURIComponent(slug)}/connect`,
+				{ method: 'POST', body: { auth }, workspaceId },
+			),
+		disconnect: (workspaceId: string, slug: string) =>
+			request<{ success: boolean }>(`/tool-broker/integrations/${encodeURIComponent(slug)}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+	},
 	integrations: {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
@@ -1270,6 +1289,26 @@ export interface UpdateTriggerInput {
 	action_prompt?: string
 	target_actor_id?: string
 	enabled?: boolean
+}
+
+/** One integration reachable through the tool broker. */
+export interface ToolBrokerIntegration {
+	slug: string
+	name: string
+	kind: 'mcp' | 'openapi'
+	removable: boolean
+	url: string | null
+	/** Available to the workspace is not the same as usable — an unconnected
+	 *  integration has no callable tools. */
+	connected: boolean
+}
+
+export interface ToolBrokerListResponse {
+	/** False when the backend is not configured for this deployment at all. */
+	configured: boolean
+	/** False when it is configured but currently unreachable. */
+	available: boolean
+	integrations: ToolBrokerIntegration[]
 }
 
 export interface IntegrationResponse {

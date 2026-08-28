@@ -4,6 +4,12 @@ import {
 	resolveToolBrokerInjection,
 } from '../../lib/tool-broker/session-injection'
 
+// process.env.X = undefined sets the STRING "undefined", which is truthy and
+// would make every "feature is off" assertion below pass for the wrong reason.
+// Biome's noDelete autofix suggests exactly that, so the property is removed
+// through Reflect instead — same semantics, no lint suppression.
+const unsetEnv = (key: string) => Reflect.deleteProperty(process.env, key)
+
 const WORKSPACE = '80c5991d-d328-49f2-adad-1c2d86c08f28'
 const ACTOR = 'f06b724e-618a-4111-914d-5554062fe155'
 
@@ -37,8 +43,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-	delete process.env.TOOL_BROKER_URL
-	delete process.env.TOOL_BROKER_SESSION_SECRET
+	unsetEnv('TOOL_BROKER_URL')
+	unsetEnv('TOOL_BROKER_SESSION_SECRET')
 	vi.restoreAllMocks()
 })
 
@@ -47,7 +53,7 @@ describe('the off switch', () => {
 		// Config, not the feature flag, is what makes the backend path exist. With
 		// no URL a session must be byte-identical to one launched before this
 		// feature was written.
-		delete process.env.TOOL_BROKER_URL
+		unsetEnv('TOOL_BROKER_URL')
 		expect(await resolve(makeDb(provisionedRow))).toBeNull()
 	})
 
@@ -55,7 +61,7 @@ describe('the off switch', () => {
 		// Minting a token without a secret would either throw during launch or, if
 		// it defaulted, produce a forgeable token. Neither is acceptable, so the
 		// feature simply does not engage.
-		delete process.env.TOOL_BROKER_SESSION_SECRET
+		unsetEnv('TOOL_BROKER_SESSION_SECRET')
 		expect(await resolve(makeDb(provisionedRow))).toBeNull()
 	})
 
@@ -64,7 +70,7 @@ describe('the off switch', () => {
 	})
 
 	it('does not touch the database when the feature is unconfigured', async () => {
-		delete process.env.TOOL_BROKER_URL
+		unsetEnv('TOOL_BROKER_URL')
 		const select = vi.fn()
 		await resolve({ select } as never)
 		// Cheap gate first: an unconfigured deployment pays nothing per launch.

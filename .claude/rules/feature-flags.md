@@ -91,6 +91,14 @@ a user with the flag off still hits the same backend. If a design change
 genuinely requires a breaking backend change, raise it rather than wrapping it
 in a flag.
 
+**Recorded exception — `tool-broker`.** Its backend path is gated by *config*,
+not by the flag: with `TOOL_BROKER_URL` unset the routes, the client and the
+session injection do not exist, so every user without that config hits an
+identical backend whether or not they hold the flag. The flag gates only the
+settings section. Verified by a test asserting the session-launch resolver
+returns null — and performs no database read at all — when the config is absent.
+Do not read this as licence to flag a backend change that is live for everyone.
+
 ## Test-only override
 
 `localStorage['ff:<flagId>'] = 'on' | 'off'` beats the server response. This
