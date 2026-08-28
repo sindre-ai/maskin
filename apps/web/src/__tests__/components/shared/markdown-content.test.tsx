@@ -200,6 +200,34 @@ describe('MarkdownContent', () => {
 		Range.prototype.getBoundingClientRect = originalRect
 	})
 
+	it('toggles a marker from the keyboard shortcut', () => {
+		const source = 'Ship the retry now.'
+		render(<MarkdownContent content={source} size="doc" editable onChange={vi.fn()} />)
+
+		fireEvent.click(screen.getByText(source))
+		const field = screen.getByRole('textbox') as HTMLTextAreaElement
+		field.setSelectionRange(9, 14)
+		fireEvent.keyDown(field, { key: 'b', ctrlKey: true })
+
+		expect(field.value).toBe('Ship the **retry** now.')
+	})
+
+	// AltGr is Ctrl+Alt on Windows, so the Nordic/German `AltGr+E` (€) reaches the
+	// handler with ctrlKey set. Swallowing it would replace the character the user
+	// typed with a code-marker toggle, mid-sentence.
+	it('ignores an AltGr chord that carries ctrlKey', () => {
+		const source = 'Ship the retry now.'
+		render(<MarkdownContent content={source} size="doc" editable onChange={vi.fn()} />)
+
+		fireEvent.click(screen.getByText(source))
+		const field = screen.getByRole('textbox') as HTMLTextAreaElement
+		field.setSelectionRange(9, 14)
+		const handled = fireEvent.keyDown(field, { key: 'e', ctrlKey: true, altKey: true })
+
+		expect(field.value).toBe(source)
+		expect(handled).toBe(true) // not preventDefault'd — the character still lands
+	})
+
 	// Reading is not editing: a selection in the rendered prose must stay quiet.
 	it('raises the toolbar only while the body is being edited', async () => {
 		const source = 'Ship the retry now.'

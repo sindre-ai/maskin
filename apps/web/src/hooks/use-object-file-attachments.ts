@@ -1,5 +1,6 @@
 import { useCreateFile } from '@/hooks/use-files'
 import { useCreateRelationship } from '@/hooks/use-relationships'
+import { api } from '@/lib/api'
 import { readFileAsBase64 } from '@/lib/file-utils'
 import { useCallback, useState } from 'react'
 import { toast } from 'sonner'
@@ -29,31 +30,47 @@ export function useObjectFileAttachments({
 	const upload = useCallback(
 		async (incoming: File[]) => {
 			setIsUploading(true)
+			const failed: string[] = []
 			try {
 				for (const file of incoming) {
-					const content = await readFileAsBase64(file)
-					const created = await createFile.mutateAsync({
-						name: file.name,
-						mime_type: file.type || 'application/octet-stream',
-						content,
-						encoding: 'base64',
-					})
-					await createRelationship.mutateAsync({
-						source_type: objectType,
-						source_id: objectId,
-						target_type: 'file',
-						target_id: created.id,
-						type: ATTACHED_REL_TYPE,
-					})
-					toast.success(`Uploaded ${file.name}`)
+					// Each file is isolated: one failure must not silently strand the
+					// files behind it in the selection, which is what a single try/catch
+					// around the whole loop did.
+					let createdId: string | null = null
+					try {
+						const content = await readFileAsBase64(file)
+						const created = await createFile.mutateAsync({
+							name: file.name,
+							mime_type: file.type || 'application/octet-stream',
+							content,
+							encoding: 'base64',
+						})
+						createdId = created.id
+						await createRelationship.mutateAsync({
+							source_type: objectType,
+							source_id: objectId,
+							target_type: 'file',
+							target_id: created.id,
+							type: ATTACHED_REL_TYPE,
+						})
+						toast.success(`Uploaded ${file.name}`)
+					} catch {
+						failed.push(file.name)
+						// The row exists but nothing points at it — an upload the user
+						// was told failed would otherwise sit in the workspace, attached
+						// to nothing and counting against storage. Compensate directly:
+						// there is no cache to reconcile for a file that never appeared.
+						if (createdId) await api.files.delete(workspaceId, createdId).catch(() => {})
+					}
 				}
-			} catch (err) {
-				toast.error(err instanceof Error ? err.message : 'Failed to upload file')
+				if (failed.length === 1) toast.error(`Failed to upload ${failed[0]}`)
+				else if (failed.length > 1)
+					toast.error(`Failed to upload ${failed.length} files: ${failed.join(', ')}`)
 			} finally {
 				setIsUploading(false)
 			}
 		},
-		[createFile, createRelationship, objectId, objectType],
+		[createFile, createRelationship, objectId, objectType, workspaceId],
 	)
 
 	return { upload, isUploading }

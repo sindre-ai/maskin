@@ -465,6 +465,12 @@ export function MarkdownContent({
 				e.currentTarget.blur()
 				return
 			}
+			// AltGr is Ctrl+Alt on Windows/Linux, so `AltGr+E` (`€` on the Nordic,
+			// German, Polish and Turkish layouts) arrives here with `ctrlKey` set.
+			// Without this the character never lands and the selection gets wrapped
+			// in backticks instead. Same guard as the panel chords in
+			// `ui/sidebar.tsx` and `objects/object-detail-shell.tsx`.
+			if (e.altKey) return
 			const marker = SHORTCUT_MARKERS[e.key.toLowerCase()]
 			if (!marker) return
 			e.preventDefault()
