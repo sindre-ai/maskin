@@ -1331,6 +1331,29 @@ export const workspaceToolBrokers = pgTable(
 	(t) => [uniqueIndex('workspace_tool_brokers_workspace_uniq').on(t.workspaceId)],
 )
 
+// BLOCKING DEPENDENCY — read before implementing actor deletion or workspace-
+// member removal.
+//
+// The FK below cascades, so deleting an actor drops this row and Maskin forgets
+// the mapping. The broker user it pointed at stays alive, and so does its API
+// key. That key is not narrow: the broker's root MCP endpoint is not
+// toolkit-scoped, so a live orphaned key can call every org-owned connection on
+// the instance, across every workspace.
+//
+// Deprovisioning must therefore ship IN THE SAME CHANGE as actor deletion or
+// member removal — not afterwards. It is not reachable today only because
+// neither operation exists.
+//
+// The revocation call is `POST /api/auth/admin/remove-user` with an admin
+// session. Removing the org member alone does NOT revoke the key: it still
+// authenticates, because sessions are pinned to the boot organization
+// regardless of membership. That was measured, not assumed.
+//
+// Open question, to be answered with key rotation rather than now: what happens
+// to `owner:'org'` connections when their creating subject is removed. If
+// rotation turns out to be deprovision-plus-reprovision, that answer decides
+// whether rotating one actor's key can wipe a workspace's shared integrations.
+//
 // A Maskin actor's identity on the tool broker. `apiKey` is encrypted at rest
 // with the same helper the integration credentials use; it is the ONLY broker
 // credential we persist. The per-actor password used to mint it is generated,
