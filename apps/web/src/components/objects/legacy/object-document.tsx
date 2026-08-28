@@ -6,7 +6,6 @@ import { ActionBanner } from '@/components/activity/action-banner'
 import { ObjectActivity } from '@/components/activity/object-activity'
 import { PageHeader } from '@/components/layout/page-header'
 import { AuxiliaryActionMenu } from '@/components/objects/auxiliary-action-menu'
-import { CommitmentCard } from '@/components/objects/commitment-card'
 import { LinkedObjects } from '@/components/objects/linked-objects'
 import {
 	PropertiesSidebarProvider,
@@ -266,10 +265,6 @@ export function ObjectDocumentView({
 						workspaceId={workspaceId}
 						variant="banner"
 					/>
-				)}
-
-				{object.type === 'commitment' && (
-					<CommitmentCard object={object} workspaceId={workspaceId} />
 				)}
 			</div>
 

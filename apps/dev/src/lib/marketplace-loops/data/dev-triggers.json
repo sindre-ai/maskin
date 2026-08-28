@@ -859,18 +859,6 @@
 		"targetActorId": "d625cf31-fb6c-45df-a8c2-e2823d6053ae",
 		"enabled": true
 	},
-	"8b68c8af-8652-42ef-a47a-e9ad7a86a34a": {
-		"id": "8b68c8af-8652-42ef-a47a-e9ad7a86a34a",
-		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",
-		"name": "Daily Loop Health Scan",
-		"type": "cron",
-		"config": {
-			"expression": "0 8 * * *"
-		},
-		"actionPrompt": "**Daily Loop health scan.** Load the `loop-health-scan` skill via `get_workspace_skill` and follow it in full — it owns the enumeration, source-bet walk, cadence-window evaluation, `metadata.last_breach_at` stamping, status transitions to `at-risk`/`breached`, and the one-insight-per-moved-Loop rule. Loops are the standing-commitment object type sibling to bets (statuses `holding | at-risk | breached`, metadata `floor, cadence, source_bet_id, last_breach_at`; provenance via a `derived_from` edge). Read Loops with `list_objects(type='loop')` — never `metadata_eq`. Every Loop `holding` and no floor missed → exit silently. In-product only; do not create notifications, do not Slack.",
-		"targetActorId": "9b4820ab-3d00-4e15-b737-8adf7f94d15c",
-		"enabled": true
-	},
 	"a908b082-7b8c-4eb4-b4cb-b77470a1358f": {
 		"id": "a908b082-7b8c-4eb4-b4cb-b77470a1358f",
 		"workspaceId": "fe944fe6-7b45-478c-afc7-b889cea63c08",

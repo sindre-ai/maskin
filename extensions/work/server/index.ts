@@ -1,20 +1,6 @@
 import type { FieldDefinition, ModuleDefinition } from '@maskin/module-sdk'
 import { MODULE_ID, MODULE_NAME } from '../shared.js'
 
-// The former `loop` object type — standing commitments graduated from
-// succeeded bets — was renamed to `commitment` in T1 of bet/loops-first-class
-// so the `loop` name could be reused for the new pipeline concept below.
-// Fields and statuses are unchanged from the pre-rename shape, only the type
-// name moved. Data migration lives in
-// `packages/db/drizzle/0050_rename_loop_to_commitment.sql`.
-const COMMITMENT_STATUSES = ['holding', 'at-risk', 'breached']
-const COMMITMENT_FIELDS: FieldDefinition[] = [
-	{ name: 'floor', type: 'text' },
-	{ name: 'cadence', type: 'text' },
-	{ name: 'source_bet_id', type: 'text' },
-	{ name: 'last_breach_at', type: 'date' },
-]
-
 // The `loop` type: a named, iterative multi-agent process wrapping triggers +
 // agents + a pipeline of object states. `status` is a graduated-trust ladder
 // (draft → learning → supervised → fully_autonomous), not an on/off toggle;
@@ -54,13 +40,6 @@ const workExtension: ModuleDefinition = {
 			defaultStatuses: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
 		},
 		{
-			type: 'commitment',
-			label: 'Commitment',
-			icon: 'shield',
-			defaultStatuses: COMMITMENT_STATUSES,
-			defaultFields: COMMITMENT_FIELDS,
-		},
-		{
 			type: 'loop',
 			label: 'Loop',
 			icon: 'repeat',
@@ -73,18 +52,15 @@ const workExtension: ModuleDefinition = {
 			insight: 'Insight',
 			bet: 'Bet',
 			task: 'Task',
-			commitment: 'Commitment',
 			loop: 'Loop',
 		},
 		statuses: {
 			insight: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
 			bet: ['signal', 'define', 'active', 'live', 'succeeded', 'failed', 'paused'],
 			task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
-			commitment: COMMITMENT_STATUSES,
 			loop: LOOP_STATUSES,
 		},
 		field_definitions: {
-			commitment: COMMITMENT_FIELDS,
 			loop: LOOP_FIELDS,
 		},
 	},

@@ -77,7 +77,6 @@ export const workspaceSettingsSchema = z.object({
 		insight: 'Insight',
 		bet: 'Bet',
 		task: 'Task',
-		commitment: 'Commitment',
 		loop: 'Loop',
 	}),
 	statuses: z.record(z.array(z.string())).default({
@@ -87,7 +86,6 @@ export const workspaceSettingsSchema = z.object({
 		// notification fan-out. Add other terminal states there, not archived.
 		bet: ['signal', 'define', 'active', 'live', 'succeeded', 'failed', 'paused', 'archived'],
 		task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
-		commitment: ['holding', 'at-risk', 'breached'],
 		loop: [...LOOP_STATUSES],
 	}),
 	field_definitions: z.record(z.array(fieldDefinitionSchema)).default({
