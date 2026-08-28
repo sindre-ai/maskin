@@ -35,7 +35,15 @@ Cover at minimum:
 pnpm test:integration -- --run
 ```
 
-This requires `DATABASE_URL` to be set to the running compose Postgres (available when the stack is up via `pnpm dev`). The CI gate runs the same tests automatically — the in-session run is optional fast feedback.
+This requires `DATABASE_URL` to point at the **`maskin_test`** database on the running compose Postgres — the same one CI uses (`.github/workflows/ci.yml`):
+
+```
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/maskin_test pnpm test:integration -- --run
+```
+
+**Never point it at the `maskin` dev database.** `global-setup.ts` runs `DROP SCHEMA public CASCADE` on whatever it is given, so doing so destroys your local workspaces, actors and connected credentials with no warning and no undo.
+
+The CI gate runs the same tests automatically — the in-session run is optional fast feedback.
 
 **CI is the hard gate.** The `integration-tests` job in CI runs these tests against `postgres:16-alpine` on every PR. A PR where the integration test suite fails cannot be considered done.
 

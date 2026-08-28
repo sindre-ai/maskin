@@ -33,7 +33,9 @@ describe('GET /api/feature-flags', () => {
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ flags: { [FLAGS.NEW_DESIGN]: false } })
+		expect(((await res.json()) as { flags: Record<string, boolean> }).flags[FLAGS.NEW_DESIGN]).toBe(
+			false,
+		)
 	})
 
 	it('turns a registered flag on for a listed tester', async () => {
@@ -41,7 +43,9 @@ describe('GET /api/feature-flags', () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({ flags: { [FLAGS.NEW_DESIGN]: true } })
+		expect(((await res.json()) as { flags: Record<string, boolean> }).flags[FLAGS.NEW_DESIGN]).toBe(
+			true,
+		)
 	})
 
 	it('never invents a flag from an unregistered id in FF_TESTER_FEATURES', async () => {
@@ -49,7 +53,11 @@ describe('GET /api/feature-flags', () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({ flags: { [FLAGS.NEW_DESIGN]: false } })
+		// The whole object matters here: the point is that no EXTRA key appears.
+		// Built from the registry so adding a flag keeps this honest instead of
+		// turning it into a failing literal.
+		const allFalse = Object.fromEntries(Object.values(FLAGS).map((id) => [id, false]))
+		expect(await res.json()).toEqual({ flags: allFalse })
 	})
 
 	it('sets Cache-Control: no-store so a rollback is not defeated by a stale cache', async () => {

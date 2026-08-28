@@ -80,6 +80,7 @@ import {
 	providerInfoSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
+import { resolvePublicOrigin } from '../lib/public-origin'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { IntegrationConfig } from '../lib/types'
 
@@ -2922,29 +2923,6 @@ function clearOAuthNonceCookie(c: Context<Env>, providerName: string): void {
 		path: '/api/integrations',
 		maxAge: 0,
 	})
-}
-
-/** Build the OAuth redirect URI, using CORS_ORIGIN when set to prevent header injection */
-// In production, use the configured origin to prevent X-Forwarded-Host injection
-function resolvePublicOrigin(
-	requestUrl: string,
-	headers: Record<string, string | undefined>,
-): string {
-	const corsOrigin = process.env.CORS_ORIGIN
-	if (corsOrigin) {
-		return (corsOrigin.split(',')[0] ?? corsOrigin).trim().replace(/\/$/, '')
-	}
-
-	// Fallback for local development
-	const forwardedHost = headers['x-forwarded-host']
-	const forwardedProto = headers['x-forwarded-proto']
-
-	if (forwardedHost) {
-		const proto = forwardedProto ?? 'https'
-		return `${proto}://${forwardedHost}`
-	}
-
-	return new URL(requestUrl).origin
 }
 
 function buildRedirectUri(

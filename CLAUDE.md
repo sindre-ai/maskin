@@ -227,6 +227,8 @@ promoting it, so the config can't become a graveyard of undeleted code.
   call site for one flag means the boundary is wrong.
 - Flags are for the **visual layer only**. Never flag data-layer, API, or
   migration changes — a user with the flag off hits the same backend.
+  One recorded exception, `tool-broker`, whose backend is gated by config
+  (`TOOL_BROKER_URL`) rather than by the flag — see `.claude/rules/feature-flags.md`.
 - Resolution happens server-side (`GET /api/feature-flags`); the tester actor
   ids never reach the browser.
 
