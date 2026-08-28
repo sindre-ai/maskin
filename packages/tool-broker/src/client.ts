@@ -358,7 +358,14 @@ export class ToolBrokerClient {
 					// `value`. Sending `value` here fails with a bare "Missing key".
 					{ slug, name: slug, spec: { kind: 'url', url: input.url } }
 
-		await this.request({ method: 'POST', path, token: apiKey, body })
+		try {
+			await this.request({ method: 'POST', path, token: apiKey, body })
+		} catch (error) {
+			// Adding the same URL twice is a no-op, not a failure: the slug is derived
+			// from the workspace and the name, so a 409 means exactly this integration
+			// is already present. Reporting an error would make a retry look broken.
+			if (!(error instanceof ToolBrokerHttpError) || error.status !== 409) throw error
+		}
 		return { slug }
 	}
 

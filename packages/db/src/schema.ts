@@ -1315,6 +1315,10 @@ export const workspaceToolBrokers = pgTable(
 		toolkitSlug: text('toolkit_slug').notNull(),
 		toolkitId: text('toolkit_id').notNull(),
 		status: text('status').notNull().default('active'),
+		// Display names of connected integrations, cached so session launch needs no
+		// broker I/O. A hint for the agent preamble only — never an authorisation
+		// input, since toolkit membership is what actually admits a tool.
+		connectedNames: jsonb('connected_names').notNull().default([]),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},

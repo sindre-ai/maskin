@@ -1,4 +1,5 @@
 import {
+	events,
 	actors,
 	toolBrokerActors,
 	workspaceMembers,
@@ -128,5 +129,51 @@ describe('tool_broker_actors', () => {
 			.from(toolBrokerActors)
 			.where(eq(toolBrokerActors.actorId, actor.id))
 		expect(rows).toHaveLength(0)
+	})
+})
+
+describe('events audit rows', () => {
+	// The mocked route tests cannot catch this: entity_id is a uuid column, and a
+	// mock DB accepts any string. Writing an integration slug there fails only
+	// against real Postgres — which is exactly how it was found, by running the
+	// route rather than by reading it.
+	it('rejects a non-uuid entity id, so a slug can never be used as one', async () => {
+		const ws = await newWorkspace()
+
+		await expect(
+			db.insert(events).values({
+				workspaceId: ws.id,
+				actorId: getTestActorId(),
+				action: 'created',
+				entityType: 'workspace_tool_broker',
+				entityId: 'w0123_deepwiki' as unknown as string,
+				data: {},
+			}),
+		).rejects.toThrow()
+	})
+
+	it('accepts the provisioning row id, which is what the routes use', async () => {
+		const ws = await newWorkspace()
+		const [row] = await db
+			.insert(workspaceToolBrokers)
+			.values({ workspaceId: ws.id, toolkitSlug: 'tk-a', toolkitId: 'id-a' })
+			.returning()
+		if (!row) throw new Error('failed to insert provisioning row')
+
+		const [event] = await db
+			.insert(events)
+			.values({
+				workspaceId: ws.id,
+				actorId: getTestActorId(),
+				action: 'updated',
+				entityType: 'workspace_tool_broker',
+				entityId: row.id,
+				data: { slug: 'w0123_deepwiki', connected: true },
+			})
+			.returning()
+
+		expect(event?.entityId).toBe(row.id)
+		// The slug still has to be recoverable from the audit trail.
+		expect((event?.data as { slug?: string })?.slug).toBe('w0123_deepwiki')
 	})
 })

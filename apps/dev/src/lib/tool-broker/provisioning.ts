@@ -41,6 +41,8 @@ export const getToolBrokerClient = (): ToolBrokerClient | null => {
 }
 
 export interface ProvisionedWorkspace {
+	/** The `workspace_tool_brokers` row id — a real uuid, usable as an events entityId. */
+	readonly rowId: string
 	readonly toolkitId: string
 	readonly toolkitSlug: string
 }
@@ -64,7 +66,11 @@ export const ensureWorkspaceToolkit = async (
 		.where(eq(workspaceToolBrokers.workspaceId, input.workspaceId))
 		.limit(1)
 	if (existing[0]) {
-		return { toolkitId: existing[0].toolkitId, toolkitSlug: existing[0].toolkitSlug }
+		return {
+			rowId: existing[0].id,
+			toolkitId: existing[0].toolkitId,
+			toolkitSlug: existing[0].toolkitSlug,
+		}
 	}
 
 	const [workspace] = await db
@@ -104,7 +110,7 @@ export const ensureWorkspaceToolkit = async (
 		data: { toolkitSlug: row.toolkitSlug },
 	})
 
-	return { toolkitId: row.toolkitId, toolkitSlug: row.toolkitSlug }
+	return { rowId: row.id, toolkitId: row.toolkitId, toolkitSlug: row.toolkitSlug }
 }
 
 /**

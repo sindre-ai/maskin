@@ -57,6 +57,7 @@ import { debitCreditForSession } from '../lib/credit-billing'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { isEnterprise } from '../lib/enterprise'
 import { frontendBaseUrl } from '../lib/file-urls'
+import { resolveToolBrokerInjection } from '../lib/tool-broker/session-injection'
 import { buildAgentGitIdentity } from '../lib/git-identity'
 import {
 	GITHUB_PREFLIGHT_SLACK_CHANNEL,
@@ -1604,7 +1605,24 @@ export class SessionManager extends EventEmitter {
 		const conversationPreamble = sessionConfig.conversation
 			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\n'
 			: ''
-		const resolvedSystemPrompt = `${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}`
+		// Tool broker. One gate for both halves — the MCP entry and the preamble that
+		// tells the agent it exists. Null means the feature is off for this session
+		// and nothing below it changes, so the config stays byte-identical to what it
+		// would have been before this feature existed.
+		//
+		// Claude Code only: code mode is a TypeScript sandbox and the preamble is
+		// written against Claude Code's tool-calling, so other runtimes get nothing.
+		const toolBroker =
+			((sessionConfig.runtime as string) ?? 'claude-code') === 'claude-code'
+				? await resolveToolBrokerInjection(this.db, {
+						sessionId: session.id,
+						workspaceId: session.workspaceId,
+						actorId: agent.id,
+						internalApiUrl: process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000',
+					})
+				: null
+
+		const resolvedSystemPrompt = `${conversationPreamble}${toolBroker?.preamble ?? ''}${agent.systemPrompt ?? 'You are a helpful AI agent.'}`
 
 		// Committer identity for anything the agent commits. agent-run.sh falls
 		// back to a generic `Maskin Agent <agent@maskin.io>` when these are
@@ -1958,6 +1976,7 @@ export class SessionManager extends EventEmitter {
 		const RESERVED_ENV_KEYS = new Set([
 			'SESSION_ID',
 			'AGENT_RUNTIME',
+			'TOOL_BROKER_SESSION_TOKEN',
 			'SYSTEM_PROMPT',
 			'ACTION_PROMPT',
 			'INTERACTIVE',
@@ -2005,6 +2024,14 @@ export class SessionManager extends EventEmitter {
 		// Session-level MCP config (convert array → { mcpServers: { ... } } format), merged
 		// with auto-injected workspace MCPs and per-org GitHub MCPs. Keys are namespaced so
 		// the sources can't collide (github-<owner>, integration-<provider>, session-mcp-N).
+		// Additive: one more namespaced key alongside github-<owner> and
+		// integration-<provider>. Points at our own proxy, never at the broker, so
+		// the per-actor broker key stays server-side.
+		if (toolBroker) {
+			envVars.TOOL_BROKER_SESSION_TOKEN = toolBroker.sessionToken
+			autoInjectedMcpServers['tool-broker'] = toolBroker.mcpServer
+		}
+
 		const mcps = sessionConfig.mcps as Array<Record<string, unknown>> | undefined
 		const sessionMcpServers: Record<string, unknown> = { ...autoInjectedMcpServers }
 		if (mcps?.length) {

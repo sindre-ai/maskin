@@ -31,7 +31,11 @@ const makeClient = (overrides: Record<string, unknown> = {}) => ({
 const provisionedWith = (client: ReturnType<typeof makeClient>) => ({
 	client,
 	apiKey: 'key',
-	toolkit: { toolkitId: 'tk-1', toolkitSlug: 'tk-slug' },
+	toolkit: {
+		rowId: '00000000-0000-4000-8000-000000000001',
+		toolkitId: 'tk-1',
+		toolkitSlug: 'tk-slug',
+	},
 })
 
 const post = (path: string, body: unknown) =>

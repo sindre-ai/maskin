@@ -13,7 +13,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.useRealTimers()
-	process.env.TOOL_BROKER_SESSION_SECRET = undefined
+	delete process.env.TOOL_BROKER_SESSION_SECRET
 })
 
 describe('tool broker session token', () => {

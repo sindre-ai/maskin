@@ -189,9 +189,11 @@ app.openapi(addRoute, async (c) => {
 			workspaceId,
 			actorId,
 			action: 'created',
-			entityType: 'tool_broker_integration',
-			entityId: slug,
-			data: { kind: body.kind, host: url.hostname },
+			// entity_id is a uuid column, and an integration slug is not one — the
+			// provisioning row is the closest real entity, so the slug rides in data.
+			entityType: 'workspace_tool_broker',
+			entityId: provisioned.toolkit.rowId,
+			data: { slug, kind: body.kind, host: url.hostname },
 		})
 
 		return c.json({ slug }, 200)
@@ -265,10 +267,12 @@ app.openapi(connectRoute, async (c) => {
 			workspaceId,
 			actorId,
 			action: 'updated',
-			entityType: 'tool_broker_integration',
-			entityId: slug,
-			data: { connected: true, scope: connection.scope },
+			entityType: 'workspace_tool_broker',
+			entityId: provisioned.toolkit.rowId,
+			data: { slug, connected: true, scope: connection.scope },
 		})
+
+		await refreshConnectedNames(db, provisioned, workspaceId)
 
 		return c.json({ address: connection.address }, 200)
 	} catch (error) {
@@ -328,10 +332,12 @@ app.openapi(disconnectRoute, async (c) => {
 			workspaceId,
 			actorId,
 			action: 'updated',
-			entityType: 'tool_broker_integration',
-			entityId: slug,
-			data: { connected: false },
+			entityType: 'workspace_tool_broker',
+			entityId: provisioned.toolkit.rowId,
+			data: { slug, connected: false },
 		})
+
+		await refreshConnectedNames(db, provisioned, workspaceId)
 
 		return c.json({ success: true }, 200)
 	} catch (error) {
@@ -341,5 +347,38 @@ app.openapi(disconnectRoute, async (c) => {
 		throw error
 	}
 })
+
+/**
+ * Refresh the cached integration names used by the session-launch preamble.
+ *
+ * Best-effort by design: the cache is a prompt hint, never an authorisation
+ * input, so a failure here must not fail the connect that already succeeded.
+ * Worst case the preamble names one integration too many or too few until the
+ * next connect refreshes it.
+ */
+const refreshConnectedNames = async (
+	db: Database,
+	provisioned: Awaited<ReturnType<typeof ensureProvisioned>>,
+	workspaceId: string,
+): Promise<void> => {
+	if (!provisioned) return
+	try {
+		const [integrations, connections] = await Promise.all([
+			provisioned.client.listIntegrations(provisioned.apiKey, workspaceId),
+			provisioned.client.listConnections(provisioned.apiKey, workspaceId),
+		])
+		const connected = new Set(connections.map((connection) => connection.integrationSlug))
+		const names = integrations.filter((i) => connected.has(i.slug)).map((i) => i.name)
+		await db
+			.update(workspaceToolBrokers)
+			.set({ connectedNames: names, updatedAt: new Date() })
+			.where(eq(workspaceToolBrokers.workspaceId, workspaceId))
+	} catch (error) {
+		logger.warn('Failed to refresh cached tool broker integration names', {
+			workspaceId,
+			error: error instanceof Error ? error.message : String(error),
+		})
+	}
+}
 
 export default app
