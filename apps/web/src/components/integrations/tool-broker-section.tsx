@@ -92,6 +92,13 @@ function IntegrationRow({
 	const connect = useConnectToolBrokerIntegration(workspaceId)
 	const disconnect = useDisconnectToolBrokerIntegration(workspaceId)
 
+	// OAuth first when the provider offers it: it is the only one that yields a
+	// real user-scoped credential. The ellipsis on the label warns that the click
+	// leaves Maskin for the provider's consent screen.
+	const auth: { type: 'oauth' } | { type: 'none' } = integration.authKinds.includes('oauth')
+		? { type: 'oauth' }
+		: { type: 'none' }
+
 	return (
 		<li className="flex items-center justify-between gap-3 rounded-md border border-border p-3">
 			<div className="min-w-0">
@@ -119,9 +126,9 @@ function IntegrationRow({
 					<Button
 						size="sm"
 						disabled={connect.isPending}
-						onClick={() => connect.mutate({ slug: integration.slug, auth: { type: 'none' } })}
+						onClick={() => connect.mutate({ slug: integration.slug, auth })}
 					>
-						Connect
+						{auth.type === 'oauth' ? 'Connect…' : 'Connect'}
 					</Button>
 				)}
 			</div>

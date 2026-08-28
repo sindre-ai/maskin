@@ -366,19 +366,54 @@ describe('addIntegrationByUrl', () => {
 		expect(body.spec).toEqual({ kind: 'url', url: 'https://example.com/openapi.json' })
 	})
 
-	it('sends an MCP server as an endpoint', async () => {
-		const { impl, calls } = stubFetch({ '/api/mcp/servers': () => json({}) })
+	it('sends an MCP server as an endpoint, under its human name', async () => {
+		const { impl, calls } = stubFetch({
+			'/api/mcp/servers': () => json({}),
+			// Auth discovery runs after registering; a server with no OAuth
+			// metadata just leaves it as no-auth.
+			'/api/oauth/probe': () => new Response('no metadata', { status: 404 }),
+		})
 
 		await makeClient(impl).addIntegrationByUrl('key', {
 			workspaceId: WORKSPACE,
 			url: 'https://example.com/mcp',
 			kind: 'mcp',
-			name: 'example',
+			name: 'Example',
 		})
 
-		const body = calls.at(-1)?.body as Record<string, unknown>
+		const register = calls.find((c) => c.url.includes('/api/mcp/servers'))
+		const body = register?.body as Record<string, unknown>
 		expect(body.endpoint).toBe('https://example.com/mcp')
-		expect(body.slug).toBe(workspaceScopedSlug(WORKSPACE, 'example'))
+		expect(body.slug).toBe(workspaceScopedSlug(WORKSPACE, 'Example'))
+		// The slug carries the workspace prefix and is unreadable; the display
+		// name must be what the user typed.
+		expect(body.name).toBe('Example')
+	})
+
+	it('marks an MCP server as OAuth when its metadata says so', async () => {
+		// Registering alone records "no authentication", so a provider that needs
+		// OAuth would be offered a Connect button that cannot work.
+		const { impl, calls } = stubFetch({
+			'/api/mcp/servers': () => json({}),
+			'/api/oauth/probe': () =>
+				json({
+					authorizationUrl: 'https://example.com/authorize',
+					tokenUrl: 'https://example.com/token',
+				}),
+		})
+
+		await makeClient(impl).addIntegrationByUrl('key', {
+			workspaceId: WORKSPACE,
+			url: 'https://example.com/mcp',
+			kind: 'mcp',
+			name: 'Example',
+		})
+
+		const authCall = calls.find((c) => c.url.includes('/auth'))
+		expect(
+			(authCall?.body as { authenticationTemplate: Array<{ kind: string }> })
+				.authenticationTemplate,
+		).toEqual([{ kind: 'oauth2' }])
 	})
 })
 
@@ -404,5 +439,29 @@ describe('Origin header', () => {
 		await makeClient(impl).listIntegrations('key', WORKSPACE)
 
 		expect(seen).toEqual(['http://broker.local'])
+	})
+})
+
+describe('display names', () => {
+	it('prefers the stored name over the prefixed slug', async () => {
+		const slug = workspaceScopedSlug(WORKSPACE, 'linear')
+		const { impl } = stubFetch({
+			'/api/integrations': () => json([{ slug, name: 'Linear', kind: 'mcp', authMethods: [] }]),
+		})
+
+		const [integration] = await makeClient(impl).listIntegrations('key', WORKSPACE)
+		expect(integration?.name).toBe('Linear')
+	})
+
+	it('falls back to the de-prefixed slug when the backend echoes the slug', async () => {
+		// Anything registered without a name comes back with the slug as its name,
+		// and the slug carries a 32-hex workspace prefix nobody wants to read.
+		const slug = workspaceScopedSlug(WORKSPACE, 'linear')
+		const { impl } = stubFetch({
+			'/api/integrations': () => json([{ slug, name: slug, kind: 'mcp', authMethods: [] }]),
+		})
+
+		const [integration] = await makeClient(impl).listIntegrations('key', WORKSPACE)
+		expect(integration?.name).toBe('linear')
 	})
 })

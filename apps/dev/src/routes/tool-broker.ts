@@ -1,10 +1,20 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, workspaceToolBrokers } from '@maskin/db'
+import { resolveWebAppBaseUrl } from '@maskin/shared'
 import { ToolBrokerUnavailableError } from '@maskin/tool-broker'
 import { eq } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
+import { resolvePublicOrigin } from '../lib/public-origin'
+import {
+	OAuthNotSupportedError,
+	bindOAuthFlow,
+	callbackUrl,
+	clearOAuthBinding,
+	readOAuthBinding,
+	resolveOAuthClient,
+} from '../lib/tool-broker/oauth'
 import { ensureProvisioned, getToolBrokerClient } from '../lib/tool-broker/provisioning'
 
 // ---------------------------------------------------------------------------
@@ -34,6 +44,8 @@ const integrationSchema = z.object({
 	removable: z.boolean(),
 	url: z.string().nullable(),
 	connected: z.boolean(),
+	/** How this integration can be authenticated. Drives which action the UI offers. */
+	authKinds: z.array(z.enum(['none', 'api_key', 'oauth', 'other'])),
 })
 
 const listResponseSchema = z.object({
@@ -113,6 +125,7 @@ app.openapi(listRoute, async (c) => {
 					// Available to the workspace is not the same as usable: an
 					// integration with no connection has no callable tools.
 					connected: connectedSlugs.has(integration.slug),
+					authKinds: integration.authMethods.map((method) => method.kind),
 				})),
 			},
 			200,
@@ -219,6 +232,7 @@ const connectRoute = createRoute({
 						auth: z.discriminatedUnion('type', [
 							z.object({ type: z.literal('none') }),
 							z.object({ type: z.literal('api_key'), value: z.string().min(1) }),
+							z.object({ type: z.literal('oauth') }),
 						]),
 						scope: z.enum(['workspace', 'personal']).optional(),
 					}),
@@ -228,9 +242,17 @@ const connectRoute = createRoute({
 	},
 	responses: {
 		200: {
-			description: 'Connected',
-			content: { 'application/json': { schema: z.object({ address: z.string() }) } },
+			description: 'Connected, or an authorization URL to send the user to',
+			content: {
+				'application/json': {
+					schema: z.object({
+						address: z.string().optional(),
+						authorizationUrl: z.string().optional(),
+					}),
+				},
+			},
 		},
+		400: { description: 'This integration cannot be connected automatically' },
 		404: { description: 'Not provisioned' },
 		503: { description: 'Tool broker unavailable' },
 	},
@@ -248,6 +270,71 @@ app.openapi(connectRoute, async (c) => {
 	try {
 		const provisioned = await ensureProvisioned(db, { workspaceId, actorId })
 		if (!provisioned) return c.json({ error: { message: 'Tool broker is not configured' } }, 503)
+
+		// OAuth needs the user's browser, so this branch answers with a URL rather
+		// than a finished connection. Everything after the redirect happens in the
+		// callback below.
+		if (body.auth.type === 'oauth') {
+			const integrations = await provisioned.client.listIntegrations(
+				provisioned.apiKey,
+				workspaceId,
+			)
+			const target = integrations.find((integration) => integration.slug === slug)
+			if (!target?.url) {
+				return c.json(
+					{ error: { message: 'This integration has no endpoint to authenticate against' } },
+					400,
+				)
+			}
+
+			const origin = resolvePublicOrigin(c.req.url, c.req.header())
+			const redirectUri = callbackUrl(origin)
+
+			let clientId: string
+			try {
+				;({ clientId } = await resolveOAuthClient(provisioned.client, provisioned.apiKey, {
+					integrationSlug: slug,
+					endpointUrl: target.url,
+					redirectUri,
+				}))
+			} catch (error) {
+				if (error instanceof OAuthNotSupportedError) {
+					return c.json({ error: { message: error.message } }, 400)
+				}
+				throw error
+			}
+
+			const started = await provisioned.client.startOAuth(provisioned.apiKey, {
+				client: clientId,
+				integrationSlug: slug,
+				redirectUri,
+				scope: body.scope,
+			})
+
+			// Already holding a usable credential: nothing to authorise.
+			if (started.status === 'connected') {
+				await provisioned.client.admitIntegration(provisioned.apiKey, {
+					toolkitId: provisioned.toolkit.toolkitId,
+					integrationSlug: slug,
+				})
+				await refreshConnectedNames(db, provisioned, workspaceId)
+				return c.json({ address: started.connection.address }, 200)
+			}
+
+			bindOAuthFlow(
+				c,
+				{
+					workspaceId,
+					actorId,
+					integrationSlug: slug,
+					brokerState: started.state,
+					scope: body.scope ?? 'workspace',
+				},
+				origin.startsWith('https://'),
+			)
+
+			return c.json({ authorizationUrl: started.authorizationUrl }, 200)
+		}
 
 		const connection = await provisioned.client.connect(provisioned.apiKey, {
 			integrationSlug: slug,
@@ -345,6 +432,109 @@ app.openapi(disconnectRoute, async (c) => {
 			return c.json({ error: { message: 'Tool broker is unavailable' } }, 503)
 		}
 		throw error
+	}
+})
+
+// ---------------------------------------------------------------------------
+// OAuth callback.
+//
+// A top-level browser navigation from the provider, so it carries no API key —
+// it is on the auth allowlist and authenticates by the encrypted binding cookie
+// instead. It always redirects back to settings rather than rendering JSON: the
+// user is looking at a browser tab, not calling an API.
+// ---------------------------------------------------------------------------
+const oauthCallbackRoute = createRoute({
+	method: 'get',
+	path: '/oauth/callback',
+	tags: ['Tool Broker'],
+	summary: 'OAuth redirect target for tool-broker integrations',
+	request: {
+		query: z.object({
+			state: z.string().optional(),
+			code: z.string().optional(),
+			error: z.string().optional(),
+			error_description: z.string().optional(),
+		}),
+	},
+	responses: { 302: { description: 'Redirect back to settings' } },
+})
+
+app.openapi(oauthCallbackRoute, async (c) => {
+	const { state, code, error } = c.req.valid('query')
+	const origin = resolvePublicOrigin(c.req.url, c.req.header())
+	const secure = origin.startsWith('https://')
+
+	const settingsUrl = (workspaceId: string, params: Record<string, string>) => {
+		const base = `${resolveWebAppBaseUrl()}/${workspaceId}/settings/integrations`
+		const query = new URLSearchParams(params).toString()
+		return query ? `${base}?${query}` : base
+	}
+
+	const binding = state ? readOAuthBinding(c, state) : null
+	// Consume the binding whatever happens next, so one state cannot be replayed.
+	clearOAuthBinding(c, secure)
+
+	// `state` is tested alongside the binding so it narrows for completeOAuth
+	// below. readOAuthBinding already refuses a mismatch; this is the type half.
+	if (!state || !binding) {
+		// No workspace to send them back to, so the web root is the best we can do.
+		return c.redirect(`${resolveWebAppBaseUrl()}/?tool_broker_error=invalid_state`, 302)
+	}
+
+	// The user declined, or the provider refused. Their choice is not an error to
+	// shout about — send them back with a quiet marker.
+	if (error || !code) {
+		return c.redirect(
+			settingsUrl(binding.workspaceId, { tool_broker_error: error ?? 'no_code' }),
+			302,
+		)
+	}
+
+	try {
+		const provisioned = await ensureProvisioned(c.get('db'), {
+			workspaceId: binding.workspaceId,
+			actorId: binding.actorId,
+		})
+		if (!provisioned) {
+			return c.redirect(
+				settingsUrl(binding.workspaceId, { tool_broker_error: 'not_configured' }),
+				302,
+			)
+		}
+
+		await provisioned.client.completeOAuth(provisioned.apiKey, { state, code })
+
+		// Same as every other connect: the toolkit is default-deny, so the
+		// credential alone leaves the tools unreachable.
+		await provisioned.client.admitIntegration(provisioned.apiKey, {
+			toolkitId: provisioned.toolkit.toolkitId,
+			integrationSlug: binding.integrationSlug,
+		})
+
+		await c
+			.get('db')
+			.insert(events)
+			.values({
+				workspaceId: binding.workspaceId,
+				actorId: binding.actorId,
+				action: 'updated',
+				entityType: 'workspace_tool_broker',
+				entityId: provisioned.toolkit.rowId,
+				data: { slug: binding.integrationSlug, connected: true, via: 'oauth' },
+			})
+
+		await refreshConnectedNames(c.get('db'), provisioned, binding.workspaceId)
+
+		return c.redirect(settingsUrl(binding.workspaceId, { tool_broker_connected: '1' }), 302)
+	} catch (err) {
+		logger.warn('Tool broker OAuth callback failed', {
+			workspaceId: binding.workspaceId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.redirect(
+			settingsUrl(binding.workspaceId, { tool_broker_error: 'exchange_failed' }),
+			302,
+		)
 	}
 })
 

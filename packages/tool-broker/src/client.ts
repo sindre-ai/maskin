@@ -2,6 +2,7 @@ import {
 	type BrokerAuthInput,
 	type BrokerConnection,
 	type BrokerIntegration,
+	type OAuthMetadata,
 	type ProvisionedActor,
 	ToolBrokerAuthError,
 	ToolBrokerHttpError,
@@ -326,7 +327,13 @@ export class ToolBrokerClient {
 				.filter((entry) => entry.slug.startsWith(prefix))
 				.map((entry) => ({
 					slug: entry.slug,
-					name: displayNameFromSlug(workspaceId, entry.slug),
+					// The backend echoes the slug as the name for anything registered
+					// without one, and the slug carries the workspace prefix — so fall back
+					// to the de-prefixed slug rather than showing that.
+					name:
+						entry.name && entry.name !== entry.slug
+							? entry.name
+							: displayNameFromSlug(workspaceId, entry.slug),
 					kind: entry.kind === 'openapi' ? 'openapi' : 'mcp',
 					removable: entry.canRemove !== false,
 					url: entry.displayUrl ?? null,
@@ -350,10 +357,19 @@ export class ToolBrokerClient {
 		input: { workspaceId: string; url: string; kind: 'mcp' | 'openapi'; name?: string },
 	): Promise<{ slug: string }> {
 		const slug = workspaceScopedSlug(input.workspaceId, input.name ?? hostnameOf(input.url))
+		const displayName = input.name?.trim() || hostnameOf(input.url)
 		const path = input.kind === 'mcp' ? '/api/mcp/servers' : '/api/openapi/specs'
 		const body =
 			input.kind === 'mcp'
-				? { slug, name: slug, endpoint: input.url, transport: 'remote', remoteTransport: 'auto' }
+				? {
+						slug,
+						// The human name, not the slug: the slug carries the workspace prefix
+						// and is not something anyone wants to read.
+						name: displayName,
+						endpoint: input.url,
+						transport: 'remote',
+						remoteTransport: 'auto',
+					}
 				: // The url variant keys the value as `url`; only the blob variant uses
 					// `value`. Sending `value` here fails with a bare "Missing key".
 					{ slug, name: slug, spec: { kind: 'url', url: input.url } }
@@ -366,6 +382,16 @@ export class ToolBrokerClient {
 			// is already present. Reporting an error would make a retry look broken.
 			if (!(error instanceof ToolBrokerHttpError) || error.status !== 409) throw error
 		}
+
+		// Registering an MCP server does not tell the backend how to authenticate
+		// against it — it records "no authentication" until told otherwise, so a
+		// provider that actually needs OAuth would be offered a Connect button that
+		// cannot work. Probing settles it, and a provider with no OAuth metadata
+		// simply stays as-is.
+		if (input.kind === 'mcp') {
+			await this.discoverMcpAuth(apiKey, slug, input.url)
+		}
+
 		return { slug }
 	}
 
@@ -423,6 +449,164 @@ export class ToolBrokerClient {
 					scope: entry.owner === 'user' ? ('personal' as const) : ('workspace' as const),
 				}))
 		)
+	}
+
+	/**
+	 * Tell the backend an MCP server needs OAuth, when its metadata says so.
+	 *
+	 * Best effort: a server with no OAuth metadata throws from the probe, which
+	 * just means it needs no auth — not a failure worth surfacing to whoever was
+	 * adding it.
+	 */
+	private async discoverMcpAuth(apiKey: string, slug: string, url: string): Promise<void> {
+		try {
+			const metadata = await this.probeOAuth(apiKey, url)
+			if (!metadata.authorizationUrl) return
+			await this.request({
+				method: 'POST',
+				path: `/api/mcp/servers/${encodeURIComponent(slug)}/auth`,
+				token: apiKey,
+				body: { authenticationTemplate: [{ kind: 'oauth2' }] },
+			})
+		} catch {
+			// No OAuth metadata: leave the server as no-auth.
+		}
+	}
+
+	// -- oauth ---------------------------------------------------------------
+
+	/**
+	 * Discover a provider's OAuth metadata from its endpoint URL.
+	 *
+	 * A `registrationEndpoint` in the answer is the interesting case: it means the
+	 * provider supports Dynamic Client Registration, so we can mint a client with
+	 * no pre-registered app and no secret. Verified against a real provider, whose
+	 * metadata also advertises `"none"` as a token-endpoint auth method.
+	 */
+	async probeOAuth(apiKey: string, url: string): Promise<OAuthMetadata> {
+		return this.request<OAuthMetadata>({
+			method: 'POST',
+			path: '/api/oauth/probe',
+			token: apiKey,
+			body: { url },
+		})
+	}
+
+	/**
+	 * Register an OAuth client dynamically, returning its id.
+	 *
+	 * Idempotent in practice: registering the same provider twice returns the
+	 * existing client rather than minting a second one, so this is safe to call
+	 * on every connect attempt instead of tracking registration state ourselves.
+	 */
+	async registerOAuthClient(
+		apiKey: string,
+		input: {
+			slug: string
+			metadata: OAuthMetadata
+			redirectUri: string
+			clientName: string
+		},
+	): Promise<string> {
+		const { metadata } = input
+		if (!metadata.registrationEndpoint) {
+			throw new ToolBrokerHttpError(400, '', 'This provider does not support dynamic registration')
+		}
+		const result = await this.request<{ client: string }>({
+			method: 'POST',
+			path: '/api/oauth/clients/register-dynamic',
+			token: apiKey,
+			body: {
+				owner: 'org',
+				slug: input.slug,
+				issuer: metadata.issuer ?? undefined,
+				registrationEndpoint: metadata.registrationEndpoint,
+				authorizationUrl: metadata.authorizationUrl,
+				tokenUrl: metadata.tokenUrl,
+				resource: metadata.resource ?? undefined,
+				scopes: metadata.scopesSupported ?? [],
+				tokenEndpointAuthMethodsSupported: metadata.tokenEndpointAuthMethodsSupported,
+				clientName: input.clientName,
+				redirectUri: input.redirectUri,
+			},
+		})
+		return result.client
+	}
+
+	/**
+	 * Begin an authorization-code flow.
+	 *
+	 * `redirectUri` is OUR callback, not the backend's — which is what keeps the
+	 * backend entirely server-side: the browser only ever visits the provider and
+	 * then comes back to us, and we finish the exchange over the wire.
+	 *
+	 * Returns `connected` without a redirect when a usable credential already
+	 * exists, so callers must handle both branches.
+	 */
+	async startOAuth(
+		apiKey: string,
+		input: {
+			client: string
+			integrationSlug: string
+			redirectUri: string
+			scope?: 'workspace' | 'personal'
+			connectionName?: string
+		},
+	): Promise<
+		| { status: 'redirect'; authorizationUrl: string; state: string }
+		| { status: 'connected'; connection: BrokerConnection }
+	> {
+		const owner = input.scope === 'personal' ? 'user' : 'org'
+		const result = await this.request<
+			| { status: 'redirect'; authorizationUrl: string; state: string }
+			| { status: 'connected'; connection: RawConnection }
+		>({
+			method: 'POST',
+			path: '/api/oauth/start',
+			token: apiKey,
+			body: {
+				client: input.client,
+				clientOwner: 'org',
+				owner,
+				name: input.connectionName ?? (owner === 'user' ? 'personal' : 'shared'),
+				integration: input.integrationSlug,
+				template: 'oauth2',
+				redirectUri: input.redirectUri,
+			},
+		})
+
+		// Keep the backend's row shape private: callers see Maskin vocabulary.
+		if (result.status === 'connected') {
+			return {
+				status: 'connected',
+				connection: {
+					address: result.connection.address,
+					integrationSlug: result.connection.integration,
+					name: result.connection.name,
+					scope: result.connection.owner === 'user' ? 'personal' : 'workspace',
+				},
+			}
+		}
+		return result
+	}
+
+	/** Exchange the authorization code, server to server. */
+	async completeOAuth(
+		apiKey: string,
+		input: { state: string; code: string },
+	): Promise<BrokerConnection> {
+		const raw = await this.request<RawConnection>({
+			method: 'POST',
+			path: '/api/oauth/complete',
+			token: apiKey,
+			body: { state: input.state, code: input.code },
+		})
+		return {
+			address: raw.address,
+			integrationSlug: raw.integration,
+			name: raw.name,
+			scope: raw.owner === 'user' ? 'personal' : 'workspace',
+		}
 	}
 
 	async disconnect(

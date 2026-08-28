@@ -23,6 +23,7 @@ const INTEGRATIONS = [
 		removable: true,
 		url: 'https://mcp.example.com/mcp',
 		connected: true,
+		authKinds: ['none'] as const,
 	},
 	{
 		slug: 'w0123_petstore',
@@ -31,6 +32,16 @@ const INTEGRATIONS = [
 		removable: true,
 		url: 'https://api.example.com/openapi.json',
 		connected: false,
+		authKinds: ['none'] as const,
+	},
+	{
+		slug: 'w0123_linear',
+		name: 'linear',
+		kind: 'mcp' as const,
+		removable: true,
+		url: 'https://mcp.linear.app/mcp',
+		connected: false,
+		authKinds: ['oauth'] as const,
 	},
 ]
 
@@ -134,6 +145,37 @@ test.describe('tool-broker section', () => {
 		})
 	}
 
+	test('sends the user to the provider for an OAuth integration', async ({ page, account }) => {
+		await stubBroker(page, { configured: true, available: true, integrations: INTEGRATIONS })
+
+		let connectBody: { auth?: { type?: string } } | null = null
+		await page.route('**/api/tool-broker/integrations/*/connect', async (route) => {
+			connectBody = route.request().postDataJSON()
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				// The OAuth branch answers with a URL instead of a connection.
+				body: JSON.stringify({ authorizationUrl: 'https://mcp.linear.app/authorize?client_id=x' }),
+			})
+		})
+		// Stop the real navigation; asserting we tried is the point.
+		await page.route('https://mcp.linear.app/**', (route) =>
+			route.fulfill({ status: 200, contentType: 'text/html', body: '<html>consent</html>' }),
+		)
+
+		await gotoIntegrations(page, account.workspaceId)
+
+		// The ellipsis is the affordance: this click leaves Maskin.
+		await section(page)
+			.getByRole('listitem')
+			.filter({ hasText: 'linear' })
+			.getByRole('button', { name: 'Connect…' })
+			.click()
+
+		await expect.poll(() => connectBody?.auth?.type, { timeout: 10000 }).toBe('oauth')
+		await expect.poll(() => page.url(), { timeout: 10000 }).toContain('mcp.linear.app')
+	})
+
 	test('infers an OpenAPI spec from the URL and tells the user', async ({ page, account }) => {
 		await stubBroker(page, { configured: true, available: true, integrations: [] })
 		await gotoIntegrations(page, account.workspaceId)
@@ -157,7 +199,14 @@ test.describe('tool-broker section', () => {
 			await expect(heading).toBeVisible({ timeout: 10000 })
 			// Semantic tokens only, so the state text must stay legible in both —
 			// this is the `text-accent`-invisible-in-light-mode class of bug.
-			await expect(section(page).getByText('Not connected')).toBeVisible()
+			// Scoped to one row: several rows are unconnected, so an unscoped text
+			// locator is a strict-mode violation.
+			await expect(
+				section(page)
+					.getByRole('listitem')
+					.filter({ hasText: 'petstore' })
+					.getByText('Not connected'),
+			).toBeVisible()
 		}
 	})
 

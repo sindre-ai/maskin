@@ -426,9 +426,9 @@ export const api = {
 		connect: (
 			workspaceId: string,
 			slug: string,
-			auth: { type: 'none' } | { type: 'api_key'; value: string },
+			auth: { type: 'none' } | { type: 'api_key'; value: string } | { type: 'oauth' },
 		) =>
-			request<{ address: string }>(
+			request<{ address?: string; authorizationUrl?: string }>(
 				`/tool-broker/integrations/${encodeURIComponent(slug)}/connect`,
 				{ method: 'POST', body: { auth }, workspaceId },
 			),
@@ -1301,6 +1301,8 @@ export interface ToolBrokerIntegration {
 	/** Available to the workspace is not the same as usable — an unconnected
 	 *  integration has no callable tools. */
 	connected: boolean
+	/** How it can be authenticated; drives which action the row offers. */
+	authKinds: Array<'none' | 'api_key' | 'oauth' | 'other'>
 }
 
 export interface ToolBrokerListResponse {

@@ -56,9 +56,23 @@ export interface ProvisionedActor {
 	readonly apiKey: string
 }
 
+/** OAuth metadata discovered from a provider's endpoint. */
+export interface OAuthMetadata {
+	readonly issuer: string | null
+	readonly authorizationUrl: string
+	readonly tokenUrl: string
+	readonly resource: string | null
+	readonly scopesSupported: readonly string[] | null
+	/** Present when the provider supports Dynamic Client Registration — the case
+	 *  that needs no pre-registered app and no client secret. */
+	readonly registrationEndpoint: string | null
+	readonly tokenEndpointAuthMethodsSupported?: readonly string[]
+}
+
 export type BrokerAuthInput =
 	| { readonly type: 'none' }
 	| { readonly type: 'api_key'; readonly value: string }
+	| { readonly type: 'oauth' }
 
 /** The credential was rejected — a stale or revoked API key, or bad admin login. */
 export class ToolBrokerAuthError extends Error {

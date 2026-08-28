@@ -12,6 +12,7 @@ export {
 	type BrokerAuthMethod,
 	type BrokerConnection,
 	type BrokerIntegration,
+	type OAuthMetadata,
 	type ProvisionedActor,
 	ToolBrokerAuthError,
 	ToolBrokerHttpError,

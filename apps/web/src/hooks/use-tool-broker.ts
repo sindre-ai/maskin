@@ -33,9 +33,17 @@ export function useConnectToolBrokerIntegration(workspaceId: string) {
 		mutationFn: ({
 			slug,
 			auth,
-		}: { slug: string; auth: { type: 'none' } | { type: 'api_key'; value: string } }) =>
-			api.toolBroker.connect(workspaceId, slug, auth),
-		onSuccess: () => {
+		}: {
+			slug: string
+			auth: { type: 'none' } | { type: 'api_key'; value: string } | { type: 'oauth' }
+		}) => api.toolBroker.connect(workspaceId, slug, auth),
+		onSuccess: (result) => {
+			// OAuth hands back a URL instead of a finished connection: the user has
+			// to approve at the provider, and comes back through our callback.
+			if (result.authorizationUrl) {
+				window.location.href = result.authorizationUrl
+				return
+			}
 			toast.success('Integration connected')
 			queryClient.invalidateQueries({ queryKey: queryKeys.toolBroker.all(workspaceId) })
 		},

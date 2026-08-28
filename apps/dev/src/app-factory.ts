@@ -270,6 +270,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		// actor: it verifies a scoped session token itself rather than an `ank_`
 		// API key, so the API-key middleware would reject every legitimate call.
 		if (path === '/api/tool-broker/mcp') return next()
+		// The OAuth callback is a top-level browser navigation from the provider, so
+		// it carries no API key. It authenticates by its own encrypted binding
+		// cookie, which also names the workspace and actor it belongs to.
+		if (path === '/api/tool-broker/oauth/callback') return next()
 
 		return auth(c, next)
 	})
