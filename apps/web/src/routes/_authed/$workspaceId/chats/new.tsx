@@ -182,8 +182,17 @@ function NewConversationPage() {
 				setError(err.message)
 				throw err
 			}
-			const objects = seedObject ? [seedObject] : selection.objects
-			const notifications = seedNotification ? [seedNotification] : selection.notifications
+			// The seeds from ?objectId= / ?notificationId= are additions to whatever the
+			// composer holds, not replacements: a user who arrives via "Ask an agent" and
+			// then attaches more objects must not have those silently dropped.
+			const objects =
+				seedObject && !selection.objects.some((o) => o.id === seedObject.id)
+					? [seedObject, ...selection.objects]
+					: selection.objects
+			const notifications =
+				seedNotification && !selection.notifications.some((n) => n.id === seedNotification.id)
+					? [seedNotification, ...selection.notifications]
+					: selection.notifications
 
 			// Sent as structured metadata (rendered as chips by MessageBubble)
 			// rather than inlined into the message text.

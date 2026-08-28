@@ -52,6 +52,24 @@ describe('MarkdownContent', () => {
 		expect(onChange).toHaveBeenCalledWith('updated')
 	})
 
+	// Regression: the save is optimistic and rolls back silently, so if blur closed
+	// the editor unconditionally a rejected write destroyed the user's rewrite with
+	// no way to recover it.
+	it('reopens the editor with the draft intact when the save rejects', async () => {
+		const user = userEvent.setup()
+		const onChange = vi.fn().mockRejectedValue(new Error('save failed'))
+		render(<MarkdownContent content="original" editable onChange={onChange} />)
+
+		await user.click(screen.getByText('original'))
+		await user.clear(screen.getByRole('textbox'))
+		await user.type(screen.getByRole('textbox'), 'a long rewrite')
+		await user.tab()
+
+		expect(onChange).toHaveBeenCalledWith('a long rewrite')
+		const restored = await screen.findByRole('textbox')
+		expect(restored).toHaveValue('a long rewrite')
+	})
+
 	it('does not call onChange when content unchanged', async () => {
 		const user = userEvent.setup()
 		const onChange = vi.fn()

@@ -23,7 +23,9 @@ export function ObjectDetailBody({
 	workspaceId: string
 	/** Wire this to make the document body editable in place, the way the
 	 *  pre-v2 surface did. Omitted by read-only hosts (the MCP-app embed). */
-	onContentChange?: (content: string) => void
+	// Passed straight to MarkdownContent#onChange: may return a promise whose
+	// rejection reopens the editor with the draft intact.
+	onContentChange?: (content: string) => unknown
 }) {
 	const fold = getDocumentFold(object)
 	const evidence = getEvidence(object)

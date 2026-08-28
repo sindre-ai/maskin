@@ -112,7 +112,9 @@ export function ObjectDetailIdentity({
 	onDriverChange: (driver: string | null) => void
 	/** Wire this to make the title editable in place. Omitted by read-only
 	 *  hosts (the MCP-app embed), which keeps the plain heading. */
-	onTitleChange?: (title: string) => void
+	// May return a promise. If it rejects, the field is reopened with the
+	// user's draft intact rather than silently reverting to the old title.
+	onTitleChange?: (title: string) => unknown
 }) {
 	const Icon = typeIcons[object.type]
 	const typeColor = getTypeColor(object.type)
@@ -140,8 +142,17 @@ export function ObjectDetailIdentity({
 	const commitTitle = () => {
 		setEditingTitle(false)
 		const next = titleDraft.trim()
-		if (next && next !== object.title) onTitleChange?.(next)
-		else setTitleDraft(object.title ?? '')
+		if (!next || next === object.title) {
+			setTitleDraft(object.title ?? '')
+			return
+		}
+		const result = onTitleChange?.(next)
+		if (result && typeof (result as Promise<unknown>).then === 'function') {
+			void (result as Promise<unknown>).catch(() => {
+				setTitleDraft(next)
+				setEditingTitle(true)
+			})
+		}
 	}
 
 	return (

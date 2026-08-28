@@ -221,6 +221,43 @@ describe('BulkActionBar', () => {
 		expect(screen.queryByRole('button', { name: /Select all/ })).not.toBeInTheDocument()
 	})
 
+	// Regression: Radix renders picker content as div/button, not INPUT/SELECT, and
+	// its typeahead does not stop propagation. Typing "e" to reach "evaluating" in
+	// the bar's own status picker must not fire an unconfirmed bulk archive.
+	it('does not fire "a" or "e" while a Radix popup holds focus', () => {
+		const onSelectAll = vi.fn()
+		const onArchive = vi.fn()
+		renderBar({ selectedCount: 3, totalCount: 12, onSelectAll, onArchive })
+
+		const popup = document.createElement('div')
+		popup.setAttribute('data-radix-popper-content-wrapper', '')
+		const item = document.createElement('div')
+		item.setAttribute('role', 'option')
+		popup.appendChild(item)
+		document.body.appendChild(popup)
+
+		act(() => {
+			item.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }))
+			item.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', bubbles: true }))
+		})
+
+		expect(onSelectAll).not.toHaveBeenCalled()
+		expect(onArchive).not.toHaveBeenCalled()
+		popup.remove()
+	})
+
+	it('does not archive on Shift+E or on an auto-repeated key', () => {
+		const onArchive = vi.fn()
+		renderBar({ selectedCount: 3, totalCount: 12, onArchive })
+
+		act(() => {
+			window.dispatchEvent(new KeyboardEvent('keydown', { key: 'E', shiftKey: true }))
+			window.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', repeat: true }))
+		})
+
+		expect(onArchive).not.toHaveBeenCalled()
+	})
+
 	it('selects all on "a" and archives on "e"', () => {
 		const onSelectAll = vi.fn()
 		const onArchive = vi.fn()

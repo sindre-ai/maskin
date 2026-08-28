@@ -208,22 +208,28 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	// status and owner, and toast on failure for the same reason —
 	// `useUpdateObject` rolls its optimistic patch back silently, so without a
 	// toast a failed save reads as the text reverting on its own.
+	// These return the mutation promise so the editor can reopen with the draft
+	// intact when the write fails, rather than dropping the user's text.
 	const handleUpdateTitle = useCallback(
-		(title: string) => {
-			updateObject.mutate(
-				{ id: object.id, data: { title } },
-				{ onError: () => toast.error('Could not save your changes') },
-			)
+		async (title: string) => {
+			try {
+				await updateObject.mutateAsync({ id: object.id, data: { title } })
+			} catch (err) {
+				toast.error('Could not save your changes')
+				throw err
+			}
 		},
 		[object.id, updateObject],
 	)
 
 	const handleUpdateContent = useCallback(
-		(content: string) => {
-			updateObject.mutate(
-				{ id: object.id, data: { content } },
-				{ onError: () => toast.error('Could not save your changes') },
-			)
+		async (content: string) => {
+			try {
+				await updateObject.mutateAsync({ id: object.id, data: { content } })
+			} catch (err) {
+				toast.error('Could not save your changes')
+				throw err
+			}
 		},
 		[object.id, updateObject],
 	)

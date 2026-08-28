@@ -301,7 +301,9 @@ export function MarkdownContent({
 	editorLabel,
 }: {
 	content: string
-	onChange?: (value: string) => void
+	// May return a promise. If it rejects, the editor is reopened with the
+	// user's draft intact: a failed save must never discard typed text.
+	onChange?: (value: string) => unknown
 	editable?: boolean
 	className?: string
 	/** `doc` is the v2 document scale a detail page's body renders at (mockup
@@ -339,8 +341,16 @@ export function MarkdownContent({
 
 	const handleBlur = useCallback(() => {
 		setEditing(false)
-		if (draft !== content) {
-			onChange?.(draft)
+		if (draft === content) return
+		const result = onChange?.(draft)
+		if (result && typeof (result as Promise<unknown>).then === 'function') {
+			// The save is optimistic and rolls back silently on failure. Reopen the
+			// editor with the draft still in it so a rejected write cannot destroy a
+			// long rewrite the user can no longer reach.
+			void (result as Promise<unknown>).catch(() => {
+				setDraft(draft)
+				setEditing(true)
+			})
 		}
 	}, [draft, content, onChange])
 

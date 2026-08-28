@@ -173,6 +173,23 @@ describe('New chat', () => {
 		)
 	})
 
+	// Regression: ?objectId= used to *replace* the composer's selection rather than
+	// join it, so objects attached after arriving via "Ask an agent" rendered as
+	// chips and were then dropped from the request with no error.
+	it('keeps composer-attached objects alongside the ?objectId= seed', async () => {
+		mockSearch.mockReturnValue({ objectId: 'obj-seed', objectIds: 'obj-1' })
+		mockReferencedObjects.mockReturnValue([{ id: 'obj-1', title: 'Retry window', type: 'bet' }])
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+
+		await user.type(screen.getByLabelText('Message this conversation'), 'What links these?{Enter}')
+
+		const sent = mockCreateConversation.mock.calls[0][0]
+		const ids = sent.initial_message_metadata.context_objects.map((o: { id: string }) => o.id)
+		expect(ids).toContain('obj-1')
+		expect(ids).toContain('obj-seed')
+	})
+
 	it('titles the conversation from the first message, not the agent', async () => {
 		const user = userEvent.setup()
 		render(<NewChatPage />)
