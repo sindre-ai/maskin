@@ -802,14 +802,17 @@ export class InteractiveTurnFinalizer {
 
 	/**
 	 * Persist one piece of turn output to whichever surface this session talks
-	 * on. Returns false when the write was suppressed as a duplicate.
+	 * on.
 	 *
 	 * The two branches differ in how duplicates are caught. Chat leans on the
 	 * `messages_final_output_dedupe_uniq` partial index; comments have no such
 	 * index (and should not grow one on `events`, a table nothing else dedupes),
-	 * so the check is an explicit scoped read over the thread. Both are backed
-	 * by the in-process `seen` cache in the callers — this is the layer that
-	 * survives a restart.
+	 * so the check is an explicit scoped read over the thread. Both sit under
+	 * the in-process `seen` cache in the callers; unlike that cache, these
+	 * DB-level checks survive a process restart.
+	 *
+	 * Returns false when nothing was written — no sink, a duplicate dedupe key,
+	 * or the agent already posted this turn's reply itself.
 	 */
 	private async writeTurnOutput(
 		sessionId: string,
@@ -851,10 +854,21 @@ export class InteractiveTurnFinalizer {
 		// The agent may have already posted this turn's reply itself via the
 		// create_comment MCP tool. Chat tolerates that duplication; a comment
 		// thread does not — the same text twice under a human's question reads
-		// as a malfunction. `message_id` is the comment event that opened this
-		// turn, so "commented since then" is exactly the right test.
-		const turnStartEventId = finalOutput.message_id
-		if (typeof turnStartEventId === 'number') {
+		// as a malfunction.
+		//
+		// The test is on the comment's *content*, not merely on "this actor
+		// commented since the turn started". The seed prompt explicitly invites
+		// create_comment for an interim progress note ("working on it…"), and an
+		// existence-only test would read that note as the reply and silently drop
+		// the actual answer — leaving the human on the progress note forever.
+		//
+		// `message_id` (the comment event that opened this turn) narrows the scan
+		// when present, but is NOT required: resolveTurnMessageId returns null
+		// whenever the turn carried no maskin_message_id envelope, and gating the
+		// whole check on a number would skip it exactly then, re-admitting the
+		// double-post this guard exists to prevent.
+		{
+			const turnStartEventId = finalOutput.message_id
 			const [own] = await this.db
 				.select({ id: events.id })
 				.from(events)
@@ -862,13 +876,14 @@ export class InteractiveTurnFinalizer {
 					and(
 						inThread(sink.threadRootEventId),
 						eq(events.actorId, gate.actorId),
-						gt(events.id, turnStartEventId),
+						sql`${events.data}->>'content' = ${content}`,
+						...(typeof turnStartEventId === 'number' ? [gt(events.id, turnStartEventId)] : []),
 					),
 				)
 				.limit(1)
 			if (own) {
 				logger.info(
-					`Session ${sessionId} already commented in thread ${sink.threadRootEventId} during this turn; not auto-posting its final output`,
+					`Session ${sessionId} already posted this turn's reply in thread ${sink.threadRootEventId}; not auto-posting its final output`,
 				)
 				return false
 			}

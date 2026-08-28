@@ -20,7 +20,7 @@
  */
 import type { Database } from '@maskin/db'
 import { events, actors, commentPendingTurns } from '@maskin/db/schema'
-import { and, asc, eq, lte, or, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import type { SessionManager } from './session-manager'
 
@@ -194,10 +194,15 @@ async function spawnOrJoinCommentThreadSession(
 			},
 			createdBy: commenterActorId,
 		})
-		// The seed prompt inlines thread history up to and including this comment,
-		// so any turn still buffered for this pair from a previous, dead session is
-		// already covered. Clear those rows so the post-boot drain doesn't
-		// re-deliver them as duplicates.
+		// Clear the buffered turns this seed prompt actually covers, so the
+		// post-boot drain doesn't re-deliver them as duplicates.
+		//
+		// Scoped to the exact comment ids the seed inlined — the history window
+		// plus the triggering comment — NOT `<= commentEventId`. History is capped
+		// at SEED_HISTORY_LIMIT, so on a long thread an id-range delete would
+		// destroy buffered turns that never made it into the prompt, losing a
+		// human's comment with nothing left to recover it from.
+		const seedCoveredEventIds = [...new Set([...history.map((h) => h.id), commentEventId])]
 		try {
 			await db
 				.delete(commentPendingTurns)
@@ -205,7 +210,7 @@ async function spawnOrJoinCommentThreadSession(
 					and(
 						eq(commentPendingTurns.threadRootEventId, threadRootEventId),
 						eq(commentPendingTurns.actorId, agentId),
-						lte(commentPendingTurns.commentEventId, commentEventId),
+						inArray(commentPendingTurns.commentEventId, seedCoveredEventIds),
 					),
 				)
 		} catch (err) {
@@ -341,6 +346,8 @@ export function isCommentThreadSessionRaceViolation(err: unknown): boolean {
 }
 
 export interface ThreadHistoryEntry {
+	/** `events.id` of the comment, so callers can tell what the seed covered. */
+	id: number
 	actorName: string
 	content: string
 }
@@ -377,9 +384,14 @@ async function loadThreadHistory(
 					),
 				),
 			)
-			.orderBy(asc(events.id))
+			// Newest-first + LIMIT, then reversed below: the window has to be the
+			// *most recent* SEED_HISTORY_LIMIT comments. `asc` + LIMIT would return
+			// the thread's opening exchange and silently drop everything since,
+			// seeding a respawned session with stale context on any long thread.
+			.orderBy(desc(events.id))
 			.limit(SEED_HISTORY_LIMIT)
-		return rows.map((r) => ({
+		return rows.reverse().map((r) => ({
+			id: r.id,
 			actorName: r.name ?? 'Unknown',
 			content: String((r.data as { content?: unknown } | null)?.content ?? ''),
 		}))

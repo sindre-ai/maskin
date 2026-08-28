@@ -317,6 +317,79 @@ describe('comment thread session reuse', () => {
 		expect(prompts[1]).toContain('follow-up question')
 	})
 
+	it('seeds a long thread with its most recent comments, not its opening ones', async () => {
+		// Regression: loadThreadHistory used `asc(events.id)` + LIMIT, which
+		// returns the thread's OLDEST comments. Past the 20-comment window a
+		// respawned session was seeded with the opening exchange and nothing
+		// since, so the agent answered a stale question while believing it had
+		// the full thread.
+		const root = await comment('opening question')
+		await db.update(sessions).set({ status: 'completed' }).where(eq(sessions.actorId, agentId))
+
+		// 24 replies, comfortably past SEED_HISTORY_LIMIT (20).
+		for (let i = 1; i <= 24; i++) {
+			await postComment(db, {
+				workspaceId,
+				actorId: humanId,
+				entityId: objectId,
+				parentEventId: root.id,
+				content: `filler ${i}`,
+			})
+		}
+		await comment('the latest question', root.id)
+
+		const prompts = sessionManager.createSession.mock.calls.map(
+			(c) => (c[1] as { actionPrompt: string }).actionPrompt,
+		)
+		const seed = prompts[prompts.length - 1] ?? ''
+		expect(seed).toContain('filler 24')
+		expect(seed).toContain('the latest question')
+		// The window slid: the opening comment is now outside it.
+		expect(seed).not.toContain('opening question')
+	})
+
+	it('clears only the buffered turns the seed prompt actually inlined', async () => {
+		// Regression: the cleanup deleted every parked turn with
+		// `commentEventId <= this comment`, on the assumption that the seed
+		// covered them all. History is capped at SEED_HISTORY_LIMIT, so on a long
+		// thread that destroyed buffered turns the prompt never mentioned —
+		// losing a human's comment outright.
+		const root = await comment('opening question')
+		const buffered = await postComment(db, {
+			workspaceId,
+			actorId: humanId,
+			entityId: objectId,
+			parentEventId: root.id,
+			content: 'buffered while booting',
+		})
+		await db.insert(commentPendingTurns).values({
+			threadRootEventId: root.id,
+			actorId: agentId,
+			commentEventId: buffered.comment.id,
+			payload: { type: 'user', message: { role: 'user', content: 'buffered while booting' } },
+		})
+		// Push the buffered comment out of the seed window.
+		for (let i = 1; i <= 24; i++) {
+			await postComment(db, {
+				workspaceId,
+				actorId: humanId,
+				entityId: objectId,
+				parentEventId: root.id,
+				content: `filler ${i}`,
+			})
+		}
+		await db.update(sessions).set({ status: 'completed' }).where(eq(sessions.actorId, agentId))
+
+		await comment('respawn trigger', root.id)
+
+		// Not inlined in the seed prompt, so it must survive for the drain.
+		const left = await db
+			.select()
+			.from(commentPendingTurns)
+			.where(eq(commentPendingTurns.threadRootEventId, root.id))
+		expect(left.map((r) => r.commentEventId)).toEqual([buffered.comment.id])
+	})
+
 	it('records the auto-posted reply as a threaded comment event', async () => {
 		// Proves the sink the finalizer writes through: postComment with a
 		// parentEventId lands in the thread, which is what makes an agent's

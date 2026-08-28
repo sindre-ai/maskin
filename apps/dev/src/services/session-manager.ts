@@ -39,6 +39,7 @@ import {
 	inArray,
 	isNotNull,
 	isNull,
+	like,
 	lt,
 	ne,
 	notInArray,
@@ -3332,35 +3333,64 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * True when the newest real message in this session's conversation was
-	 * authored by someone other than the session's agent — the agent was asked
-	 * something and never replied. A conversation session dying in that state
-	 * is a mid-turn interruption, not a conversation that naturally went idle:
-	 * it must close as `timeout`, the status use-conversation-activity.ts keys
-	 * its "send another message to continue" notice on. Closing it as
-	 * `completed` would erase the only signal the waiting user gets.
+	 * True when this session was handed a turn it never finished — it was asked
+	 * something and never replied. A session dying in that state is a mid-turn
+	 * interruption, not one that naturally went idle: it must close as
+	 * `timeout`, the status use-conversation-activity.ts keys its "send another
+	 * message to continue" notice on. Closing it as `completed` would erase the
+	 * only signal the waiting user gets.
+	 *
+	 * The two interactive flavours answer the question differently — chat off
+	 * `messages`, comment threads off this session's own log stream. See the
+	 * comment-thread branch for why the thread-shaped test does not transfer.
 	 */
 	private async hasUnansweredConversationTurn(
 		session: typeof sessions.$inferSelect,
 	): Promise<boolean> {
-		// Comment-thread sessions: the equivalent of "newest message isn't mine"
-		// is "newest comment in the thread isn't mine". Same wedged-mid-turn
-		// signal, read off the events table instead of messages.
+		// Comment-thread sessions are read off this session's own log stream, NOT
+		// off "is the newest comment in the thread mine?". That thread-shaped
+		// test looks like the chat one but is wrong here in two common cases:
+		//
+		//  - Silence is a designed outcome. The seed prompts tell the agent that
+		//    "silence is a valid outcome and nothing will be posted", so a turn
+		//    the agent correctly declines leaves the human's comment newest
+		//    forever — the session would read as wedged on every watchdog pass
+		//    and pin its container until the 2h hard timeout.
+		//  - Threads are multi-agent. Another agent's reply is the newest comment
+		//    but says nothing about whether *this* agent finished its turn.
+		//
+		// The real question is whether this session was handed a turn it never
+		// closed. `writeInput` persists every delivered turn as a stdout row
+		// carrying `maskin_message_id`, and the CLI emits a stream-json `result`
+		// envelope at the end of EVERY turn (including a silent one), so a
+		// delivered turn newer than the last `result` is exactly the wedged case.
 		if (session.commentThreadRootEventId !== null) {
-			const root = session.commentThreadRootEventId
-			const [newest] = await this.db
-				.select({ actorId: events.actorId })
-				.from(events)
+			const [lastDelivered] = await this.db
+				.select({ id: sessionLogs.id })
+				.from(sessionLogs)
 				.where(
 					and(
-						eq(events.workspaceId, session.workspaceId),
-						eq(events.action, 'commented'),
-						or(eq(events.id, root), sql`${events.data}->>'parentEventId' = ${String(root)}`),
+						eq(sessionLogs.sessionId, session.id),
+						eq(sessionLogs.stream, 'stdout'),
+						like(sessionLogs.content, '%maskin_message_id%'),
 					),
 				)
-				.orderBy(desc(events.id))
+				.orderBy(desc(sessionLogs.id))
 				.limit(1)
-			return newest !== undefined && newest.actorId !== session.actorId
+			if (!lastDelivered) return false
+			const [lastResult] = await this.db
+				.select({ id: sessionLogs.id })
+				.from(sessionLogs)
+				.where(
+					and(
+						eq(sessionLogs.sessionId, session.id),
+						eq(sessionLogs.stream, 'stdout'),
+						like(sessionLogs.content, '%"type":"result"%'),
+					),
+				)
+				.orderBy(desc(sessionLogs.id))
+				.limit(1)
+			return lastResult === undefined || lastResult.id < lastDelivered.id
 		}
 		if (!session.conversationId) return false
 		const [newest] = await this.db
@@ -3522,7 +3552,7 @@ export class SessionManager extends EventEmitter {
 			// surface that (see hasUnansweredConversationTurn).
 			if (
 				session.interactive &&
-				session.conversationId !== null &&
+				(session.conversationId !== null || session.commentThreadRootEventId !== null) &&
 				!(await this.hasUnansweredConversationTurn(session))
 			) {
 				logger.info(`Idle chat session reached timeout, completing: ${session.id}`)
@@ -3658,7 +3688,7 @@ export class SessionManager extends EventEmitter {
 			// (never a silent skip — this reaper is these sessions' only backstop).
 			if (
 				session.interactive &&
-				session.conversationId !== null &&
+				(session.conversationId !== null || session.commentThreadRootEventId !== null) &&
 				!(await this.hasUnansweredConversationTurn(session))
 			) {
 				await this.completeIdleChatSession(session).catch((err) =>
