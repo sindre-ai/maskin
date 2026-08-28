@@ -267,10 +267,22 @@ async function spawnOrJoinCommentThreadSession(
 				error: String(err),
 			})
 			// The "winner" is itself dead — mark it failed so it stops blocking the
-			// unique index for the *next* comment.
+			// unique index for the *next* comment. If this fails the zombie keeps
+			// satisfying the index and every later comment in the thread lands
+			// right back here, so it has to be visible in the logs.
 			await sessionManager
 				.markSessionFailedAfterContainerLoss(winner.id, winner.workspaceId)
-				.catch(() => undefined)
+				.catch((markErr: unknown) =>
+					logger.error(
+						'Failed to mark dead race-winner comment-thread session as failed — thread may be wedged',
+						{
+							agentId,
+							threadRootEventId,
+							sessionId: winner.id,
+							error: String(markErr),
+						},
+					),
+				)
 		})
 }
 

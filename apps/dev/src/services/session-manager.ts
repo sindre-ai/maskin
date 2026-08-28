@@ -55,6 +55,7 @@ import {
 	recordRuntimeClaudeOAuthFailover,
 } from '../lib/claude-failover'
 import { getValidOAuthToken } from '../lib/claude-oauth'
+import { postComment } from '../lib/comments'
 import { debitCreditForSession } from '../lib/credit-billing'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { isEnterprise } from '../lib/enterprise'
@@ -797,6 +798,72 @@ export class SessionManager extends EventEmitter {
 		}
 	}
 
+	/**
+	 * Discards the comment turns buffered against a session that failed on its
+	 * way up, and tells the humans in the thread that their comments were not
+	 * delivered.
+	 *
+	 * Buffered rows are only ever written while a session is booting, and the
+	 * sole drain is the post-boot hook. A session that fails before reaching
+	 * `running` therefore strands them forever: nothing replies, the mention
+	 * notification is never resolved, and the only trace is an `info` line
+	 * saying the turn was buffered. The next comment in the thread would
+	 * eventually flush the backlog — but that makes recovery depend on the
+	 * human noticing the silence, so we surface it here instead.
+	 *
+	 * Deliberately NOT called for a session that died after it was running:
+	 * there the responder respawns immediately and the fresh session's boot
+	 * drain delivers the rows.
+	 *
+	 * Never throws — this runs inside failure handling that must complete.
+	 */
+	private async releaseBufferedCommentTurnsOnBootFailure(
+		session: typeof sessions.$inferSelect,
+		reason: string,
+	): Promise<void> {
+		if (!session.interactive || session.commentThreadRootEventId === null) return
+		try {
+			const stranded = await this.db
+				.delete(commentPendingTurns)
+				.where(
+					and(
+						eq(commentPendingTurns.threadRootEventId, session.commentThreadRootEventId),
+						eq(commentPendingTurns.actorId, session.actorId),
+					),
+				)
+				.returning({ commentEventId: commentPendingTurns.commentEventId })
+			if (stranded.length === 0) return
+
+			logger.error('Comment-thread session failed while booting — buffered turns discarded', {
+				sessionId: session.id,
+				threadRootEventId: session.commentThreadRootEventId,
+				actorId: session.actorId,
+				discardedCommentEventIds: stranded.map((t) => t.commentEventId),
+				reason,
+			})
+
+			const objectId = (session.config as { comment_thread?: { object_id?: string } } | null)
+				?.comment_thread?.object_id
+			if (!objectId) return
+
+			await postComment(this.db, {
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				entityId: objectId,
+				parentEventId: session.commentThreadRootEventId,
+				content:
+					stranded.length === 1
+						? "I couldn't start a session to answer that comment, so it went unanswered. Comment again to retry."
+						: `I couldn't start a session, so ${stranded.length} comments in this thread went unanswered. Comment again to retry.`,
+			})
+		} catch (err) {
+			logger.error('Failed to release buffered comment turns after boot failure', {
+				sessionId: session.id,
+				error: String(err),
+			})
+		}
+	}
+
 	async startSession(sessionId: string): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -866,6 +933,7 @@ export class SessionManager extends EventEmitter {
 					entityId: sessionId,
 					data: { error: `Enqueue failed: ${message}` },
 				})
+				await this.releaseBufferedCommentTurnsOnBootFailure(session, `Enqueue failed: ${message}`)
 				throw err
 			}
 			return
@@ -1055,6 +1123,8 @@ export class SessionManager extends EventEmitter {
 					...(launchFailureReason ? { reason_code: launchFailureReason.reason_code } : {}),
 				},
 			})
+
+			await this.releaseBufferedCommentTurnsOnBootFailure(session, message)
 
 			if (launchFailureReason) {
 				await this.insertSystemLog(sessionId, launchFailureReason.human_message).catch((logErr) =>
@@ -1395,7 +1465,7 @@ export class SessionManager extends EventEmitter {
 	 */
 	async markSessionFailedAfterContainerLoss(sessionId: string, workspaceId: string): Promise<void> {
 		const [existing] = await this.db
-			.select({ startedAt: sessions.startedAt, createdAt: sessions.createdAt })
+			.select()
 			.from(sessions)
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
@@ -1447,6 +1517,13 @@ export class SessionManager extends EventEmitter {
 		await this.cleanupSession(sessionId).catch(() => {})
 
 		logger.warn('Session marked failed after container loss', { sessionId })
+
+		// Only when the session never reached `running`: turns buffered against a
+		// session that did run are picked up by the responder's immediate respawn,
+		// so discarding them here would lose a live thread's comments.
+		if (existing && existing.startedAt === null) {
+			await this.releaseBufferedCommentTurnsOnBootFailure(existing, 'container lost before start')
+		}
 
 		await this.drainQueue(workspaceId).catch((err) =>
 			logger.error('Failed to drain queue after container-loss cleanup', { error: String(err) }),
@@ -3360,8 +3437,9 @@ export class SessionManager extends EventEmitter {
 		//    but says nothing about whether *this* agent finished its turn.
 		//
 		// The real question is whether this session was handed a turn it never
-		// closed. `writeInput` persists every delivered turn as a stdout row
-		// carrying `maskin_message_id`, and the CLI emits a stream-json `result`
+		// closed. Every comment-thread turn is delivered with the comment's event
+		// id, so `writeInput` persists it as a stdout row carrying
+		// `maskin_message_id` (it only writes that key when an id is passed), and the CLI emits a stream-json `result`
 		// envelope at the end of EVERY turn (including a silent one), so a
 		// delivered turn newer than the last `result` is exactly the wedged case.
 		if (session.commentThreadRootEventId !== null) {
@@ -3377,7 +3455,24 @@ export class SessionManager extends EventEmitter {
 				)
 				.orderBy(desc(sessionLogs.id))
 				.limit(1)
-			if (!lastDelivered) return false
+			if (!lastDelivered) {
+				// No delivered turn at all. This is not an idle session — it is the
+				// seed-turn-never-landed failure recorded in
+				// .claude/rules/known-pitfalls.md ("Interactive Sessions Dispatched
+				// to a Remote Agent-Server Never Received Their First Turn"): the
+				// container booted and nothing was ever written to its stdin.
+				// Returning false here would close it as `completed`, which is the
+				// status the frontend uses to suppress the "send another message to
+				// continue" notice — so the human's comment would be dropped under a
+				// green checkmark. Report it as unanswered so it closes as `timeout`
+				// and stays visible.
+				logger.error('Comment-thread session has no delivered turn — seed turn never landed', {
+					sessionId: session.id,
+					threadRootEventId: session.commentThreadRootEventId,
+					actorId: session.actorId,
+				})
+				return true
+			}
 			const [lastResult] = await this.db
 				.select({ id: sessionLogs.id })
 				.from(sessionLogs)
