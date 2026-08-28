@@ -34,8 +34,20 @@ export interface ToolBrokerOAuthBinding {
 	workspaceId: string
 	actorId: string
 	integrationSlug: string
-	/** The backend's own state, echoed back by the provider. */
+	/**
+	 * The state AS IT APPEARS IN THE AUTHORIZE URL — an envelope the backend
+	 * wraps around its own state — which is what the provider echoes back and
+	 * therefore what we compare against.
+	 */
 	brokerState: string
+	/**
+	 * The backend's RAW state, as its start response returned it.
+	 *
+	 * These are two different strings and each is only accepted in one place:
+	 * comparing against the raw value fails every callback, and completing with
+	 * the envelope answers 404 because the backend cannot find that state.
+	 */
+	completeState: string
 	scope: 'workspace' | 'personal'
 	ts: number
 	nonce: string

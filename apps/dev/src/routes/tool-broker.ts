@@ -321,13 +321,22 @@ app.openapi(connectRoute, async (c) => {
 				return c.json({ address: started.connection.address }, 200)
 			}
 
+			// Bind the state AS IT APPEARS IN THE AUTHORIZE URL, not the one the
+			// start response returns. The backend wraps its own state into an
+			// envelope before putting it in the URL — `base64({state, orgSlug})` —
+			// and the provider echoes that envelope back verbatim. Binding the
+			// unwrapped value compares two different strings at callback time and
+			// fails every flow with invalid_state.
+			const urlState = new URL(started.authorizationUrl).searchParams.get('state') ?? started.state
+
 			bindOAuthFlow(
 				c,
 				{
 					workspaceId,
 					actorId,
 					integrationSlug: slug,
-					brokerState: started.state,
+					brokerState: urlState,
+					completeState: started.state,
 					scope: body.scope ?? 'workspace',
 				},
 				origin.startsWith('https://'),
@@ -465,7 +474,7 @@ app.openapi(oauthCallbackRoute, async (c) => {
 	const secure = origin.startsWith('https://')
 
 	const settingsUrl = (workspaceId: string, params: Record<string, string>) => {
-		const base = `${resolveWebAppBaseUrl()}/${workspaceId}/settings/integrations`
+		const base = `${resolveWebAppBaseUrl(process.env)}/${workspaceId}/settings/integrations`
 		const query = new URLSearchParams(params).toString()
 		return query ? `${base}?${query}` : base
 	}
@@ -478,7 +487,7 @@ app.openapi(oauthCallbackRoute, async (c) => {
 	// below. readOAuthBinding already refuses a mismatch; this is the type half.
 	if (!state || !binding) {
 		// No workspace to send them back to, so the web root is the best we can do.
-		return c.redirect(`${resolveWebAppBaseUrl()}/?tool_broker_error=invalid_state`, 302)
+		return c.redirect(`${resolveWebAppBaseUrl(process.env)}/?tool_broker_error=invalid_state`, 302)
 	}
 
 	// The user declined, or the provider refused. Their choice is not an error to
@@ -502,7 +511,12 @@ app.openapi(oauthCallbackRoute, async (c) => {
 			)
 		}
 
-		await provisioned.client.completeOAuth(provisioned.apiKey, { state, code })
+		// The RAW state, not the one the provider echoed: the backend looks its
+		// flow up by the unwrapped value and 404s on the envelope.
+		await provisioned.client.completeOAuth(provisioned.apiKey, {
+			state: binding.completeState,
+			code,
+		})
 
 		// Same as every other connect: the toolkit is default-deny, so the
 		// credential alone leaves the tools unreachable.

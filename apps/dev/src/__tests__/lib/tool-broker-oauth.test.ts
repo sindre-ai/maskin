@@ -143,3 +143,34 @@ describe('oauth state binding', () => {
 		expect(readOAuthBinding(context('tb_oauth=not-a-real-payload'), 'broker-state-abc')).toBeNull()
 	})
 })
+
+describe('which state gets bound', () => {
+	// The backend's start response returns its RAW state, but the authorize URL
+	// carries that state wrapped in an envelope — base64({state, orgSlug}) — and
+	// the provider echoes the envelope back verbatim. Binding the raw value
+	// compares two different strings at callback time, so every real flow fails
+	// with invalid_state while every unit test that fabricates both sides passes.
+	// This is what that mistake looked like, captured from a live callback.
+	const RAW = 'TGOFaFFfs3j4E2-uw_d2VWg7DCk2Iuy3VvmNXR00vR4'
+	const WRAPPED = Buffer.from(JSON.stringify({ state: RAW, orgSlug: 'default' })).toString(
+		'base64url',
+	)
+	const authorizationUrl = `https://mcp.example.com/authorize?client_id=x&state=${WRAPPED}`
+
+	it('takes the state from the authorize URL, not the start response', () => {
+		const fromUrl = new URL(authorizationUrl).searchParams.get('state')
+
+		expect(fromUrl).toBe(WRAPPED)
+		// The two are genuinely different — this is the whole bug.
+		expect(fromUrl).not.toBe(RAW)
+	})
+
+	it('matches what the provider sends back', () => {
+		const bound = new URL(authorizationUrl).searchParams.get('state') ?? ''
+		// The provider echoes the URL's state parameter unchanged.
+		const returnedByProvider = WRAPPED
+
+		expect(bound).toBe(returnedByProvider)
+		expect(JSON.parse(Buffer.from(bound, 'base64url').toString()).state).toBe(RAW)
+	})
+})
