@@ -16,6 +16,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
+import { routeCommentToAgent } from '../services/comment-responder'
 import type { SessionManager } from '../services/session-manager'
 import { autoSubscribe } from '../services/subscriptions'
 
@@ -297,38 +298,38 @@ app.openapi(createCommentRoute, (async (c) => {
 		})
 	}
 
-	// Fire-and-forget: spawn an agent session per @mentioned agent so the agent
-	// can read the comment and reply. Session creation happens after the
-	// transaction commits so a failure here doesn't roll back the comment or
-	// notifications — stuck pending sessions are recovered by the watchdog.
+	// The comment's thread root: a reply attaches to its root, a top-level
+	// comment is its own root. This is the reuse key — every comment sharing a
+	// root talks to the same live agent session.
+	const threadRootEventId = parentEventId ?? comment.id
+
+	// Fire-and-forget: route the comment to each @mentioned agent. Routing
+	// reuses the agent's live interactive session for this thread when one
+	// exists and only spawns a container otherwise, so consecutive comments
+	// continue one conversation instead of restarting the agent. Runs after
+	// the transaction commits so a failure here can't roll back the comment or
+	// its notifications; stuck pending sessions are recovered by the watchdog.
 	for (const mention of agentMentions) {
-		sessionManager
-			.createSession(workspaceId, {
-				actorId: mention.agentId,
-				actionPrompt: buildMentionPrompt({
-					objectId: body.entity_id,
-					commenterActorId: actorId,
-					content: body.content,
-					notificationId: mention.notificationId,
-				}),
-				config: {
-					mention: {
-						object_id: body.entity_id,
-						commenter_actor_id: actorId,
-						notification_id: mention.notificationId,
-						comment_event_id: comment.id,
-					},
-				},
-				createdBy: actorId,
-			})
-			.catch((err) =>
-				logger.error('Failed to create session for @mentioned agent', {
-					agentId: mention.agentId,
-					objectId: body.entity_id,
-					notificationId: mention.notificationId,
-					error: String(err),
-				}),
-			)
+		routeCommentToAgent({
+			db,
+			sessionManager,
+			workspaceId,
+			agentId: mention.agentId,
+			objectId: body.entity_id,
+			threadRootEventId,
+			commentEventId: comment.id,
+			commenterActorId: actorId,
+			content: body.content,
+			kind: 'mention',
+			notificationId: mention.notificationId,
+		}).catch((err) =>
+			logger.error('Failed to route comment to @mentioned agent', {
+				agentId: mention.agentId,
+				objectId: body.entity_id,
+				notificationId: mention.notificationId,
+				error: String(err),
+			}),
+		)
 	}
 
 	// Thread-scoped auto-replies: when this comment is a reply, also fire a
@@ -436,31 +437,6 @@ async function resolveRootParentEventId(
 		current = nextId
 	}
 	return { parentEventId: undefined, opActorId: null }
-}
-
-function buildMentionPrompt(ctx: {
-	objectId: string
-	commenterActorId: string
-	content: string
-	notificationId: string
-}): string {
-	return [
-		'You were @mentioned in a comment on an object. Read the comment and the object context, then decide what the right response is. The response can be any combination of:',
-		'  - taking an action (updating the object, creating related work, running a tool, kicking off another session, etc.)',
-		'  - posting a comment reply (to answer, discuss, acknowledge, or report what you did)',
-		'  - doing nothing, if no response is warranted',
-		'',
-		"Let the context guide you — what is being asked explicitly, what's implied by the thread, and what would actually be useful. Action and comment aren't mutually exclusive: it's often right to do the work and post a short comment about it, or to comment first and then act, or just one or the other. Pick whatever genuinely fits.",
-		'',
-		`Object ID: ${ctx.objectId}`,
-		`Commenter actor ID: ${ctx.commenterActorId}`,
-		'Comment content:',
-		'"""',
-		ctx.content,
-		'"""',
-		'',
-		`Once you have done whatever you decided to do (including if that's nothing), mark notification ${ctx.notificationId} as resolved.`,
-	].join('\n')
 }
 
 // Cap on consecutive agent-authored comments at the tail of a thread. Once a
@@ -571,55 +547,26 @@ async function spawnThreadReplySessions(ctx: {
 	)
 
 	for (const agentId of threadReplyAgentIds) {
-		ctx.sessionManager
-			.createSession(ctx.workspaceId, {
-				actorId: agentId,
-				actionPrompt: buildThreadReplyPrompt({
-					objectId: ctx.objectId,
-					commenterActorId: ctx.actorId,
-					content: ctx.newCommentContent,
-					threadRootEventId: ctx.threadRootEventId,
-				}),
-				config: {
-					thread_reply: {
-						object_id: ctx.objectId,
-						comment_event_id: ctx.newCommentEventId,
-						thread_root_event_id: ctx.threadRootEventId,
-						commenter_actor_id: ctx.actorId,
-					},
-				},
-				createdBy: ctx.actorId,
-			})
-			.catch((err) =>
-				logger.error('Failed to create thread-reply session', {
-					agentId,
-					objectId: ctx.objectId,
-					threadRootEventId: ctx.threadRootEventId,
-					error: String(err),
-				}),
-			)
+		routeCommentToAgent({
+			db: ctx.db,
+			sessionManager: ctx.sessionManager,
+			workspaceId: ctx.workspaceId,
+			agentId,
+			objectId: ctx.objectId,
+			threadRootEventId: ctx.threadRootEventId,
+			commentEventId: ctx.newCommentEventId,
+			commenterActorId: ctx.actorId,
+			content: ctx.newCommentContent,
+			kind: 'thread_reply',
+		}).catch((err) =>
+			logger.error('Failed to route thread reply to agent', {
+				agentId,
+				objectId: ctx.objectId,
+				threadRootEventId: ctx.threadRootEventId,
+				error: String(err),
+			}),
+		)
 	}
-}
-
-function buildThreadReplyPrompt(ctx: {
-	objectId: string
-	commenterActorId: string
-	content: string
-	threadRootEventId: number
-}): string {
-	return [
-		'A new comment was added to a comment thread you previously participated in. You were NOT @mentioned — you are being notified because you commented or were @mentioned earlier in this thread.',
-		'',
-		'Read the thread context (use the MCP tools to fetch comments on this object) and assess whether a reply from you adds value. If a reply is helpful, post it as a reply in the same thread. If not, take no action — silence is a valid outcome.',
-		'',
-		`Object ID: ${ctx.objectId}`,
-		`Thread root comment event ID: ${ctx.threadRootEventId}`,
-		`Commenter actor ID: ${ctx.commenterActorId}`,
-		'New comment content:',
-		'"""',
-		ctx.content,
-		'"""',
-	].join('\n')
 }
 
 export default app

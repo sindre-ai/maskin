@@ -231,6 +231,13 @@ export function createMockSessionManager(overrides?: Record<string, unknown>) {
 		pauseSession: vi.fn(),
 		resumeSession: vi.fn(),
 		writeInput: vi.fn(),
+		markSessionFailedAfterContainerLoss: vi.fn(),
+		// Comment-thread session reuse (services/comment-responder.ts). Default
+		// to "no live session for this thread" so the spawn path is what a route
+		// test exercises unless it overrides these.
+		findCommentThreadSessionAnyActive: vi.fn().mockResolvedValue(null),
+		findActiveCommentThreadSession: vi.fn().mockResolvedValue(null),
+		drainPendingCommentTurns: vi.fn().mockResolvedValue(undefined),
 		on: vi.fn(),
 		off: vi.fn(),
 		...overrides,

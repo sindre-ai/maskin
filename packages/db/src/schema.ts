@@ -279,6 +279,15 @@ export const sessions = pgTable(
 		conversationId: uuid('conversation_id').references((): AnyPgColumn => conversations.id, {
 			onDelete: 'set null',
 		}),
+		// Denormalized from config.comment_thread.thread_root_event_id — the
+		// comment-thread analogue of `conversationId` above, so the comment
+		// router's "does a running interactive session already exist for this
+		// (thread root, agent)?" lookup uses an indexed column instead of a
+		// JSONB path scan. No FK to `events`: adding one would need a
+		// validating scan of `sessions` plus a lock on `events`, and comment
+		// events are never deleted. `events.id` is a global bigserial, so the
+		// root id alone identifies the thread — no object_id column needed.
+		commentThreadRootEventId: bigint('comment_thread_root_event_id', { mode: 'number' }),
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
@@ -324,6 +333,19 @@ export const sessions = pgTable(
 		// window between two near-simultaneous replies from the same agent.
 		uniqueIndex('sessions_conversation_actor_active_uniq')
 			.on(t.conversationId, t.actorId)
+			.where(sql`${t.interactive} = true AND ${t.status} IN ('pending','starting','running')`),
+		// Backs the comment router's "is there already a running interactive
+		// session for this (thread root, agent)?" lookup.
+		index('sessions_comment_thread_actor_idx')
+			.on(t.commentThreadRootEventId, t.actorId)
+			.where(sql`${t.commentThreadRootEventId} IS NOT NULL`),
+		// Comment-thread analogue of sessions_conversation_actor_active_uniq:
+		// at most one interactive session may be actively spawning/running for
+		// a given (thread root, agent) pair. Authoritative guard, not an
+		// optimization — routeCommentToAgent's lookup-then-insert races two
+		// near-simultaneous comments in the same thread.
+		uniqueIndex('sessions_comment_thread_actor_active_uniq')
+			.on(t.commentThreadRootEventId, t.actorId)
 			.where(sql`${t.interactive} = true AND ${t.status} IN ('pending','starting','running')`),
 		// Backs the session-log retention sweep. Interactive sessions are excluded
 		// from the index entirely — their logs are never pruned, so a chat keeps
@@ -520,6 +542,47 @@ export const conversationPendingTurns = pgTable(
 )
 
 export type ConversationPendingTurn = typeof conversationPendingTurns.$inferSelect
+
+// Comment-thread analogue of conversationPendingTurns. A comment that arrives
+// while the (thread root, agent) interactive session is still booting
+// (pending/starting/queued) is buffered here by routeCommentToAgent instead of
+// being dropped, and drained via writeInput once the session's stdin attaches
+// — see SessionManager.drainPendingCommentTurns. Rows are claimed with
+// DELETE ... RETURNING so concurrent drains can't double-deliver.
+//
+// A separate table rather than nullable columns on conversationPendingTurns:
+// that table's conversation_id is uuid NOT NULL and participates in its only
+// unique index, so generalizing it would mean rebuilding an index live chat
+// depends on for no functional gain.
+export const commentPendingTurns = pgTable(
+	'comment_pending_turns',
+	{
+		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		// events.id of the thread's root `commented` event. No FK — see the
+		// note on sessions.commentThreadRootEventId.
+		threadRootEventId: bigint('thread_root_event_id', { mode: 'number' }).notNull(),
+		// The agent the turn is addressed to (not the comment's author).
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		// events.id of the comment that produced this turn.
+		commentEventId: bigint('comment_event_id', { mode: 'number' }).notNull(),
+		// The exact stream-json user envelope to deliver via writeInput.
+		payload: jsonb('payload').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// Idempotency: one buffered turn per (thread root, agent, comment) —
+		// doubles as the (thread root, agent) drain-lookup index.
+		uniqueIndex('comment_pending_turns_root_actor_comment_uniq').on(
+			t.threadRootEventId,
+			t.actorId,
+			t.commentEventId,
+		),
+	],
+)
+
+export type CommentPendingTurn = typeof commentPendingTurns.$inferSelect
 
 // ── Agent Files ────────────────────────────────────────────────────────────
 

@@ -10,6 +10,7 @@ import type { SessionLogResponse, SessionResponse } from '@/lib/api'
 import { type ChatEvent, parseChatLine } from '@/lib/chat-stream'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
+import type { SessionCommentThreadContext } from '@maskin/shared'
 import {
 	CheckCircle2,
 	ChevronDown,
@@ -77,9 +78,18 @@ function ActiveCard({
 	const preview = useMemo(() => getLatestActivityPreview(logs ?? []), [logs])
 	const activities = useMemo(() => extractSemanticActivities(logs ?? []), [logs])
 
+	// A comment-thread session stays running between comments by design — it is
+	// the same agent listening for the human's next reply, not a job that stalled.
+	// Say so, or an idle card reads as "stuck" and invites a pointless Stop.
+	const isThreadSession = Boolean(
+		(session.config as { comment_thread?: SessionCommentThreadContext } | null)?.comment_thread,
+	)
 	const label = idle
-		? `${actor?.name ?? 'Agent'} is waiting`
+		? isThreadSession
+			? `${actor?.name ?? 'Agent'} is listening in this thread`
+			: `${actor?.name ?? 'Agent'} is waiting`
 		: `${actor?.name ?? 'Agent'} is working`
+	const stopLabel = isThreadSession ? 'End thread session' : 'Stop session'
 
 	return (
 		<div className="rounded-md border border-border bg-secondary/30 animate-in fade-in slide-in-from-bottom-1 duration-200">
@@ -102,8 +112,8 @@ function ActiveCard({
 						}}
 						disabled={stopMutation.isPending}
 						className="rounded p-1 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-50"
-						aria-label="Stop session"
-						title="Stop session"
+						aria-label={stopLabel}
+						title={stopLabel}
 					>
 						{stopMutation.isPending ? (
 							<Loader2 size={12} className="animate-spin" />
