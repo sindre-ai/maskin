@@ -22,7 +22,7 @@ import { ObjectAskBanner } from './object-ask-banner'
 import { ObjectDetailBody } from './object-detail-body'
 import { getAsk } from './object-detail-fixtures'
 import { ObjectDetailBarActions, ObjectDetailIdentity } from './object-detail-header'
-import { DeleteConfirmDialog, StickyBetIdentity } from './object-document'
+import { DeleteConfirmDialog } from './object-document'
 import { ObjectPropertiesSidebar } from './object-properties-sidebar'
 import { PropertiesSidebarProvider, SIDEBAR_WIDTH } from './properties-sidebar-provider'
 import { RelatedTab } from './related-tab'
@@ -204,43 +204,6 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 		)
 	}, [object.id, object.status, object.type, updateObject])
 
-	// Bet-scoped sticky nav: once the hero identity row leaves the viewport the
-	// shared nav row sprouts a compact title + status chip, so the object's
-	// identity is never absent from the screen. `threshold: 0` matches "the hero
-	// scrolled off".
-	const heroIdentityRef = useRef<HTMLDivElement>(null)
-	const [heroVisible, setHeroVisible] = useState(true)
-	useEffect(() => {
-		if (object.type !== 'bet') return
-		const el = heroIdentityRef.current
-		if (!el || typeof IntersectionObserver === 'undefined') return
-		const observer = new IntersectionObserver(([entry]) => setHeroVisible(entry.isIntersecting), {
-			threshold: 0,
-		})
-		observer.observe(el)
-		return () => observer.disconnect()
-	}, [object.type])
-
-	const scrollBackToHero = useCallback(() => {
-		const target = heroIdentityRef.current
-		if (!target) return
-		target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-		// Focus lands on the hero's status trigger once the smooth scroll
-		// settles — the header chip is read-only, editing happens in the hero.
-		window.setTimeout(() => {
-			document.querySelector<HTMLElement>('[data-hero-status-trigger]')?.focus()
-		}, 400)
-	}, [])
-
-	const stickyIdentity =
-		object.type === 'bet' && !heroVisible ? (
-			<StickyBetIdentity
-				title={object.title ?? 'Untitled'}
-				status={object.status}
-				onScrollBack={scrollBackToHero}
-			/>
-		) : null
-
 	// Title and body edits commit through the same `updateObject` mutation as
 	// status and owner, and toast on failure for the same reason —
 	// `useUpdateObject` rolls its optimistic patch back silently, so without a
@@ -329,7 +292,6 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 					/>
 				}
 				contentPush={contentPush}
-				stickyIdentity={stickyIdentity}
 				scrollLocked
 			/>
 			<div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
@@ -344,16 +306,14 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 					    the viewport while the document is short, without giving up the
 					    sticky behaviour once it grows past one screen. */}
 					<div className="mx-auto flex min-h-full w-full min-w-0 max-w-[680px] flex-col">
-						<div ref={heroIdentityRef}>
-							<ObjectDetailIdentity
-								object={object}
-								statuses={statuses}
-								members={members ?? []}
-								onStatusChange={handleUpdateStatus}
-								onDriverChange={handleUpdateDriver}
-								onTitleChange={handleUpdateTitle}
-							/>
-						</div>
+						<ObjectDetailIdentity
+							object={object}
+							statuses={statuses}
+							members={members ?? []}
+							onStatusChange={handleUpdateStatus}
+							onDriverChange={handleUpdateDriver}
+							onTitleChange={handleUpdateTitle}
+						/>
 
 						{askText && (
 							<ObjectAskBanner
