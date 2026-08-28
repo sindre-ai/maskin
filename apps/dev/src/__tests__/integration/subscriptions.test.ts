@@ -1220,9 +1220,9 @@ describe('Subscriptions Integration', () => {
 			unreadAfterBirth.items.find((i: { entity_id: string }) => i.entity_id === loop.id),
 		).toBeUndefined()
 
-		// A transition up the trust ladder: no `status_changed` arm left either.
+		// A transition to another loop status: no `status_changed` arm left either.
 		const patchRes = await appA.request(
-			jsonRequest('PATCH', `/api/objects/${loop.id}`, { status: 'supervised' }, headersA),
+			jsonRequest('PATCH', `/api/objects/${loop.id}`, { status: 'waiting' }, headersA),
 		)
 		expect(patchRes.status).toBe(200)
 
