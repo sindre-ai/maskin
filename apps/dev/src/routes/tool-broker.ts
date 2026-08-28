@@ -2,6 +2,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, toolBrokerCatalog, workspaceToolBrokers } from '@maskin/db'
 import { resolveWebAppBaseUrl } from '@maskin/shared'
+import type { StorageProvider } from '@maskin/storage'
 import { ToolBrokerUnavailableError } from '@maskin/tool-broker'
 import { and, asc, eq, ilike, or } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
@@ -37,6 +38,7 @@ type Env = {
 	Variables: {
 		db: Database
 		actorId: string
+		storageProvider: StorageProvider
 	}
 }
 
@@ -759,8 +761,114 @@ app.openapi(syncRoute, async (c) => {
 	}
 })
 
+// ---------------------------------------------------------------------------
+// Catalogue icons.
+//
+// Self-hosted on purpose, and this pair of routes is the whole reason the
+// catalogue can show a logo at all. An upstream icon URL rendered in a page puts
+// the catalogue source's hostname in every browser request and in the DOM — a
+// leak that no scan of our source can catch, because the string never appears
+// there. So the sync job downloads each icon and PUTs the bytes here; the
+// browser only ever talks to us.
+// ---------------------------------------------------------------------------
+
+/** Storage key for a provider's icon. Domain-keyed, so a re-sync overwrites. */
+const iconKey = (domain: string): string => `tool-broker/icons/${domain}`
+
+/** Domains come from an external feed; only this shape becomes a storage key. */
+const SAFE_DOMAIN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i
+
+/** What a browser may be handed back. Anything else is not an icon. */
+const ICON_TYPES = new Set([
+	'image/png',
+	'image/jpeg',
+	'image/svg+xml',
+	'image/webp',
+	'image/x-icon',
+])
+
+const MAX_ICON_BYTES = 512 * 1024
+
+const uploadIconRoute = createRoute({
+	method: 'put',
+	path: '/catalog/icons/{domain}',
+	tags: ['Tool Broker'],
+	summary: 'Store a catalogue icon, so the browser never fetches it from elsewhere',
+	request: { params: z.object({ domain: z.string() }) },
+	responses: {
+		200: {
+			description: 'Stored',
+			content: { 'application/json': { schema: z.object({ path: z.string() }) } },
+		},
+		400: { description: 'Not a usable icon' },
+	},
+})
+
+app.openapi(uploadIconRoute, async (c) => {
+	const { domain } = c.req.valid('param')
+	// A domain from an external feed must never be able to steer a storage key.
+	if (!SAFE_DOMAIN.test(domain)) {
+		return c.json({ error: { message: 'Invalid domain' } }, 400)
+	}
+
+	const contentType = (c.req.header('Content-Type') ?? '').split(';')[0]?.trim() ?? ''
+	if (!ICON_TYPES.has(contentType)) {
+		return c.json({ error: { message: `Unsupported icon type: ${contentType || 'none'}` } }, 400)
+	}
+
+	const bytes = Buffer.from(await c.req.arrayBuffer())
+	if (bytes.length === 0) return c.json({ error: { message: 'Empty body' } }, 400)
+	if (bytes.length > MAX_ICON_BYTES) {
+		return c.json({ error: { message: 'Icon too large' } }, 400)
+	}
+
+	const key = iconKey(domain)
+	await c.get('storageProvider').put(key, bytes)
+	await c.get('storageProvider').put(`${key}.type`, Buffer.from(contentType))
+
+	// The stored KEY, never a URL — what the catalogue column accepts.
+	return c.json({ path: key }, 200)
+})
+
+const getIconRoute = createRoute({
+	method: 'get',
+	path: '/catalog/icons/{domain}',
+	tags: ['Tool Broker'],
+	summary: 'Serve a catalogue icon from our own domain',
+	request: { params: z.object({ domain: z.string() }) },
+	responses: { 200: { description: 'The icon' }, 404: { description: 'No icon stored' } },
+})
+
+app.openapi(getIconRoute, async (c) => {
+	const { domain } = c.req.valid('param')
+	if (!SAFE_DOMAIN.test(domain)) return c.json({ error: { message: 'Invalid domain' } }, 400)
+
+	const storage = c.get('storageProvider')
+	const key = iconKey(domain)
+	try {
+		const bytes = await storage.get(key)
+		let contentType = 'image/png'
+		try {
+			contentType = (await storage.get(`${key}.type`)).toString() || contentType
+		} catch {
+			// Type marker missing: fall back rather than refusing to serve.
+		}
+		// Buffer is a Node type; hand fetch a plain view of the same bytes.
+		return new Response(new Uint8Array(bytes), {
+			headers: {
+				'Content-Type': contentType,
+				// Icons change rarely and are re-keyed by domain on re-sync.
+				'Cache-Control': 'public, max-age=86400',
+			},
+		})
+	} catch {
+		return c.json({ error: { message: 'No icon stored' } }, 404)
+	}
+})
+
 /**
- * Refresh the cached integration names used by the session-launch preamble.
+ * Refresh the cached integration names
+ used by the session-launch preamble.
  *
  * Best-effort by design: the cache is a prompt hint, never an authorisation
  * input, so a failure here must not fail the connect that already succeeded.

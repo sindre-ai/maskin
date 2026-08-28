@@ -1,3 +1,4 @@
+import { OpenAPIHono } from '@hono/zod-openapi'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The provisioning layer talks to a live backend, so it is stubbed here; its own
@@ -240,5 +241,101 @@ describe('POST /api/tool-broker/integrations/:slug/connect', () => {
 		// 'oauth' is a supported type now, so this needs a genuinely unknown one.
 		const res = await app.request(post('/integrations/w_x/connect', { auth: { type: 'saml' } }))
 		expect(res.status).toBe(400)
+	})
+})
+
+describe('catalogue icons', () => {
+	// Icons are self-hosted so a browser never fetches one from the catalogue's
+	// source — an upstream icon URL in the DOM leaks that hostname on every page
+	// view, invisibly to any scan of our code.
+	let storage: { put: ReturnType<typeof vi.fn>; get: ReturnType<typeof vi.fn> }
+
+	// Built by hand rather than via createTestApp: storageProvider has to be set
+	// by middleware registered BEFORE the routes, or the handlers never see it.
+	const appWithStorage = () => {
+		storage = { put: vi.fn().mockResolvedValue(undefined), get: vi.fn() }
+		const app = new OpenAPIHono()
+		app.use('*', async (c, next) => {
+			c.set('db', {} as never)
+			c.set('actorId', 'test-actor-id')
+			c.set('storageProvider', storage as never)
+			await next()
+		})
+		app.route('/api/tool-broker', routes as never)
+		return app
+	}
+
+	const putIcon = (domain: string, body: string, contentType = 'image/png') =>
+		new Request(`http://localhost/api/tool-broker/catalog/icons/${domain}`, {
+			method: 'PUT',
+			headers: { 'Content-Type': contentType },
+			body,
+		})
+
+	it('stores an icon under a domain-keyed path and returns the key, not a URL', async () => {
+		const app = appWithStorage()
+		const res = await app.request(putIcon('linear.app', 'fake-png-bytes'))
+
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as { path: string }
+		expect(body.path).toBe('tool-broker/icons/linear.app')
+		// A URL here would be refused by the catalogue column, so returning one
+		// would make the sync job's job impossible.
+		expect(body.path).not.toMatch(/^[a-z]+:/i)
+		expect(storage.put).toHaveBeenCalled()
+	})
+
+	it.each([
+		['..%2F..%2Fetc%2Fpasswd', 'encoded path traversal'],
+		['not%20a%20domain', 'spaces'],
+		['localhost', 'no dot, so not a domain'],
+	])('refuses %j (%s) rather than letting it steer a storage key', async (domain) => {
+		const app = appWithStorage()
+		const res = await app.request(putIcon(domain, 'bytes'))
+
+		// 400 from the domain check, or 404 when the shape does not even route —
+		// both are refusals, and neither writes anything.
+		expect([400, 404]).toContain(res.status)
+		expect(storage.put).not.toHaveBeenCalled()
+	})
+
+	it('refuses a non-image content type', async () => {
+		// Otherwise this is a general-purpose file drop that serves back whatever
+		// was uploaded, under our own origin.
+		const app = appWithStorage()
+		const res = await app.request(putIcon('linear.app', '<script>alert(1)</script>', 'text/html'))
+
+		expect(res.status).toBe(400)
+		expect(storage.put).not.toHaveBeenCalled()
+	})
+
+	it('refuses an empty body', async () => {
+		const app = appWithStorage()
+		const res = await app.request(putIcon('linear.app', ''))
+		expect(res.status).toBe(400)
+	})
+
+	it('serves a stored icon from our own origin', async () => {
+		const app = appWithStorage()
+		storage.get.mockImplementation(async (key: string) =>
+			key.endsWith('.type') ? Buffer.from('image/svg+xml') : Buffer.from('bytes'),
+		)
+
+		const res = await app.request(
+			new Request('http://localhost/api/tool-broker/catalog/icons/linear.app'),
+		)
+
+		expect(res.status).toBe(200)
+		expect(res.headers.get('Content-Type')).toBe('image/svg+xml')
+	})
+
+	it('404s for an icon that was never stored', async () => {
+		const app = appWithStorage()
+		storage.get.mockRejectedValue(new Error('not found'))
+
+		const res = await app.request(
+			new Request('http://localhost/api/tool-broker/catalog/icons/unknown.example'),
+		)
+		expect(res.status).toBe(404)
 	})
 })
