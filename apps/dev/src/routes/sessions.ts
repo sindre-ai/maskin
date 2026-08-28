@@ -132,11 +132,13 @@ app.openapi(listSessionsRoute, (async (c) => {
 	if (query.status) conditions.push(eq(sessions.status, query.status))
 	if (query.actor_id) conditions.push(eq(sessions.actorId, query.actor_id))
 	if (query.mention_object_id) {
-		// Match both @mention-triggered sessions and thread-reply auto-trigger
-		// sessions for this object so the UI can attach a live activity card
-		// under either kind of triggering comment in a single query.
+		// Match @mention-triggered, thread-reply auto-trigger, and comment-thread
+		// interactive sessions for this object so the UI can attach a live
+		// activity card under the triggering thread in a single query. The
+		// `mention` / `thread_reply` arms also cover sessions created before
+		// comment sessions became interactive, which carry no `comment_thread`.
 		conditions.push(
-			sql`(${sessions.config}->'mention'->>'object_id' = ${query.mention_object_id} OR ${sessions.config}->'thread_reply'->>'object_id' = ${query.mention_object_id})`,
+			sql`(${sessions.config}->'mention'->>'object_id' = ${query.mention_object_id} OR ${sessions.config}->'thread_reply'->>'object_id' = ${query.mention_object_id} OR ${sessions.config}->'comment_thread'->>'object_id' = ${query.mention_object_id})`,
 		)
 	}
 	if (query.conversation_id) {

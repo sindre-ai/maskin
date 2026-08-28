@@ -274,14 +274,6 @@ export function ActivityComment({
 				</div>
 			)}
 
-			{mentionSessions.length > 0 && (
-				<div className="ml-7 mt-1 space-y-1">
-					{mentionSessions.map((session) => (
-						<MentionSessionCard key={session.id} session={session} workspaceId={workspaceId} />
-					))}
-				</div>
-			)}
-
 			{collapsed && (
 				<button
 					type="button"
@@ -311,6 +303,17 @@ export function ActivityComment({
 								onReply={idx === replies.length - 1 ? handleReply : undefined}
 							/>
 						</div>
+					))}
+				</div>
+			)}
+
+			{/* One card per agent holding a live session on this THREAD — placed
+			    after the replies, at the end of the thread, because the session
+			    spans every comment in it rather than belonging to any one. */}
+			{mentionSessions.length > 0 && (
+				<div className="ml-7 mt-1 space-y-1">
+					{mentionSessions.map((session) => (
+						<MentionSessionCard key={session.id} session={session} workspaceId={workspaceId} />
 					))}
 				</div>
 			)}

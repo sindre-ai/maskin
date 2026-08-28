@@ -12,6 +12,7 @@ import {
 	events,
 	actors,
 	agentServers,
+	commentPendingTurns,
 	conversationPendingTurns,
 	integrations,
 	messages,
@@ -464,6 +465,9 @@ export class SessionManager extends EventEmitter {
 		const interactive = config.interactive === true
 		const conversationId =
 			(config.conversation as { conversation_id?: string } | undefined)?.conversation_id ?? null
+		const commentThreadRootEventId =
+			(config.comment_thread as { thread_root_event_id?: number } | undefined)
+				?.thread_root_event_id ?? null
 
 		// Pre-flight billing cap. Only enforced when no BYO credentials are
 		// present — BYO routes (OAuth, custom_llm, api_key) take precedence over
@@ -506,6 +510,7 @@ export class SessionManager extends EventEmitter {
 				config,
 				interactive,
 				conversationId,
+				commentThreadRootEventId,
 				createdBy: params.createdBy,
 				sourceSessionId: params.sourceSessionId,
 			})
@@ -660,6 +665,128 @@ export class SessionManager extends EventEmitter {
 					.onConflictDoNothing()
 					.catch((reinsertErr: unknown) =>
 						logger.error('Failed to re-park undelivered conversation turns', {
+							sessionId,
+							error: String(reinsertErr),
+						}),
+					)
+				break
+			}
+		}
+	}
+
+	/**
+	 * Comment-thread analogue of findActiveConversationSession: the running
+	 * interactive session for a (thread root, agent) pair — i.e. one that can
+	 * accept a writeInput() call right now. Fast path only; the DB's
+	 * sessions_comment_thread_actor_active_uniq partial unique index is the
+	 * authoritative guard against double-spawn.
+	 */
+	async findActiveCommentThreadSession(
+		threadRootEventId: number,
+		actorId: string,
+	): Promise<typeof sessions.$inferSelect | null> {
+		const [row] = await this.db
+			.select()
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.commentThreadRootEventId, threadRootEventId),
+					eq(sessions.actorId, actorId),
+					eq(sessions.interactive, true),
+					eq(sessions.status, 'running'),
+				),
+			)
+			.limit(1)
+		return row ?? null
+	}
+
+	/**
+	 * Like findActiveCommentThreadSession, but also matches sessions still on
+	 * their way up (pending/starting/queued). Used by routeCommentToAgent to
+	 * decide between "write now" (running), "buffer the turn until stdin
+	 * attaches" (booting), and "spawn fresh" (none).
+	 */
+	async findCommentThreadSessionAnyActive(
+		threadRootEventId: number,
+		actorId: string,
+	): Promise<typeof sessions.$inferSelect | null> {
+		const [row] = await this.db
+			.select()
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.commentThreadRootEventId, threadRootEventId),
+					eq(sessions.actorId, actorId),
+					eq(sessions.interactive, true),
+					inArray(sessions.status, ['pending', 'starting', 'queued', 'running']),
+				),
+			)
+			.limit(1)
+		return row ?? null
+	}
+
+	/**
+	 * Comment-thread analogue of drainPendingConversationTurns — delivers every
+	 * turn buffered in comment_pending_turns for this session's (thread root,
+	 * agent) pair. Same claim-with-DELETE-RETURNING and re-park-on-failure
+	 * semantics; see that method for the reasoning.
+	 */
+	async drainPendingCommentTurns(sessionId: string): Promise<void> {
+		const [session] = await this.db
+			.select({
+				interactive: sessions.interactive,
+				commentThreadRootEventId: sessions.commentThreadRootEventId,
+				actorId: sessions.actorId,
+			})
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		if (!session?.interactive || session.commentThreadRootEventId === null) return
+
+		const claimed = await this.db
+			.delete(commentPendingTurns)
+			.where(
+				and(
+					eq(commentPendingTurns.threadRootEventId, session.commentThreadRootEventId),
+					eq(commentPendingTurns.actorId, session.actorId),
+				),
+			)
+			.returning()
+		if (claimed.length === 0) return
+
+		claimed.sort((a, b) => a.commentEventId - b.commentEventId)
+		logger.info(`Draining ${claimed.length} buffered comment turn(s)`, {
+			sessionId,
+			threadRootEventId: session.commentThreadRootEventId,
+		})
+		for (let i = 0; i < claimed.length; i++) {
+			const turn = claimed[i] as (typeof claimed)[number]
+			try {
+				await this.writeInput(
+					sessionId,
+					turn.payload as StreamJsonUserMessage,
+					undefined,
+					turn.commentEventId,
+				)
+			} catch (err) {
+				logger.error('Failed to deliver buffered comment turn — re-parking remainder', {
+					sessionId,
+					commentEventId: turn.commentEventId,
+					error: String(err),
+				})
+				await this.db
+					.insert(commentPendingTurns)
+					.values(
+						claimed.slice(i).map((t) => ({
+							threadRootEventId: t.threadRootEventId,
+							actorId: t.actorId,
+							commentEventId: t.commentEventId,
+							payload: t.payload,
+						})),
+					)
+					.onConflictDoNothing()
+					.catch((reinsertErr: unknown) =>
+						logger.error('Failed to re-park undelivered comment turns', {
 							sessionId,
 							error: String(reinsertErr),
 						}),
@@ -856,6 +983,15 @@ export class SessionManager extends EventEmitter {
 			if (session.interactive && session.conversationId) {
 				await this.drainPendingConversationTurns(sessionId).catch((err) =>
 					logger.error('Failed to drain buffered conversation turns after start', {
+						sessionId,
+						error: String(err),
+					}),
+				)
+			}
+			// Same, for comments that landed in the thread while it was booting.
+			if (session.interactive && session.commentThreadRootEventId !== null) {
+				await this.drainPendingCommentTurns(sessionId).catch((err) =>
+					logger.error('Failed to drain buffered comment turns after start', {
 						sessionId,
 						error: String(err),
 					}),
@@ -2288,9 +2424,12 @@ export class SessionManager extends EventEmitter {
 				// way — the conversation-responder uses it to inject full
 				// conversation history, since interactive sessions get no
 				// ACTION_PROMPT env var at all.
-				const seedTurnMessageId = (
-					session.config as { conversation?: { message_id?: number } } | null
-				)?.conversation?.message_id
+				const cfg = session.config as {
+					conversation?: { message_id?: number }
+					comment_thread?: { seed_comment_event_id?: number }
+				} | null
+				const seedTurnMessageId =
+					cfg?.conversation?.message_id ?? cfg?.comment_thread?.seed_comment_event_id
 				await this.writeInput(
 					session.id,
 					{
@@ -3204,6 +3343,25 @@ export class SessionManager extends EventEmitter {
 	private async hasUnansweredConversationTurn(
 		session: typeof sessions.$inferSelect,
 	): Promise<boolean> {
+		// Comment-thread sessions: the equivalent of "newest message isn't mine"
+		// is "newest comment in the thread isn't mine". Same wedged-mid-turn
+		// signal, read off the events table instead of messages.
+		if (session.commentThreadRootEventId !== null) {
+			const root = session.commentThreadRootEventId
+			const [newest] = await this.db
+				.select({ actorId: events.actorId })
+				.from(events)
+				.where(
+					and(
+						eq(events.workspaceId, session.workspaceId),
+						eq(events.action, 'commented'),
+						or(eq(events.id, root), sql`${events.data}->>'parentEventId' = ${String(root)}`),
+					),
+				)
+				.orderBy(desc(events.id))
+				.limit(1)
+			return newest !== undefined && newest.actorId !== session.actorId
+		}
 		if (!session.conversationId) return false
 		const [newest] = await this.db
 			.select({ actorId: messages.actorId })
@@ -3243,6 +3401,7 @@ export class SessionManager extends EventEmitter {
 
 		logger.info(`Completing idle chat session: ${session.id}`, {
 			conversationId: session.conversationId,
+			commentThreadRootEventId: session.commentThreadRootEventId,
 		})
 
 		// Push learnings before destroying the container (local path only — a
@@ -3541,7 +3700,11 @@ export class SessionManager extends EventEmitter {
 				and(
 					eq(sessions.status, 'running'),
 					eq(sessions.interactive, true),
-					isNotNull(sessions.conversationId),
+					// Both flavours of interactive session: chat (conversationId) and
+					// comment threads (commentThreadRootEventId). Without the second,
+					// a comment-thread session would pin its container until the 2h
+					// hard timeout instead of closing gracefully.
+					or(isNotNull(sessions.conversationId), isNotNull(sessions.commentThreadRootEventId)),
 					// Sessions younger than the idle window can't be idle-closed yet.
 					lt(sessions.startedAt, chatIdleCutoff),
 				),

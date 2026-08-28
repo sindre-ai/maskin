@@ -16,6 +16,7 @@ import type {
 import { cn } from '@/lib/cn'
 import { usePendingCommentsForObject } from '@/lib/pending-comments-context'
 import {
+	type SessionCommentThreadContext,
 	type SessionMentionContext,
 	type SessionThreadReplyContext,
 	formatStatusTransitionShort,
@@ -160,19 +161,30 @@ export function ObjectActivity({
 	}
 
 	const { data: mentionSessions } = useMentionSessionsForObject(workspaceId, object.id)
-	const sessionsByComment = useMemo(() => {
+	// Keyed on the THREAD, not on a single comment: an agent now holds one
+	// long-lived interactive session per comment thread, and every comment in
+	// that thread is a turn inside it (services/comment-responder.ts).
+	//
+	// The mention / thread_reply fallbacks cover sessions created before that
+	// change, which carry no comment_thread block. They were one-shot and
+	// single-comment, and a top-level comment is its own thread root, so the
+	// fallback lands on the same key for the common case.
+	const sessionsByThreadRoot = useMemo(() => {
 		const map = new Map<number, SessionResponse[]>()
 		for (const session of mentionSessions ?? []) {
 			const config = session.config as {
+				comment_thread?: SessionCommentThreadContext
 				mention?: SessionMentionContext
 				thread_reply?: SessionThreadReplyContext
 			} | null
-			const commentEventId =
-				config?.mention?.comment_event_id ?? config?.thread_reply?.comment_event_id
-			if (commentEventId === undefined) continue
-			const existing = map.get(commentEventId) ?? []
+			const threadRootEventId =
+				config?.comment_thread?.thread_root_event_id ??
+				config?.thread_reply?.thread_root_event_id ??
+				config?.mention?.comment_event_id
+			if (threadRootEventId === undefined) continue
+			const existing = map.get(threadRootEventId) ?? []
 			existing.push(session)
-			map.set(commentEventId, existing)
+			map.set(threadRootEventId, existing)
 		}
 		return map
 	}, [mentionSessions])
@@ -379,7 +391,7 @@ export function ObjectActivity({
 													replies={repliesByParent.get(event.id) ?? []}
 													workspaceId={workspaceId}
 													objectId={object.id}
-													mentionSessions={sessionsByComment.get(event.id) ?? []}
+													mentionSessions={sessionsByThreadRoot.get(event.id) ?? []}
 													isUnread={unreadEventIds.has(event.id)}
 												/>
 											) : (

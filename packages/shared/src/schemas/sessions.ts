@@ -90,6 +90,20 @@ export const sessionThreadReplyContextSchema = z.object({
 })
 export type SessionThreadReplyContext = z.infer<typeof sessionThreadReplyContextSchema>
 
+// Set internally by the comment router (services/comment-responder.ts) on the
+// long-lived interactive session an agent holds for one comment thread. Unlike
+// the two context blocks above — which name the single comment that triggered
+// a one-shot session — this names the THREAD, because one session now serves
+// every comment in it. It is what the UI keys a thread's activity card on.
+export const sessionCommentThreadContextSchema = z.object({
+	object_id: z.string().uuid(),
+	/** `events.id` of the thread root. A top-level comment is its own root. */
+	thread_root_event_id: z.number().int().positive(),
+	/** The comment that caused the session to be spawned. */
+	seed_comment_event_id: z.number().int().positive(),
+})
+export type SessionCommentThreadContext = z.infer<typeof sessionCommentThreadContextSchema>
+
 // Set internally by the conversations route (and by the conversation-responder
 // service) when an agent participant spawns a one-shot session to reply to a
 // new message in a conversation it's a member of. Lets the UI find in-flight

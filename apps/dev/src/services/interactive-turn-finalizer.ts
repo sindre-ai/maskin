@@ -1,8 +1,15 @@
 import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
-import { sessionLogs, sessions } from '@maskin/db/schema'
-import { MESSAGE_MAX_LENGTH, parseResultLine, scanTurnLine, splitLines } from '@maskin/shared'
-import { and, desc, eq, like, lte } from 'drizzle-orm'
+import { events, sessionLogs, sessions } from '@maskin/db/schema'
+import {
+	MESSAGE_MAX_LENGTH,
+	type MessageFinalOutput,
+	parseResultLine,
+	scanTurnLine,
+	splitLines,
+} from '@maskin/shared'
+import { and, desc, eq, gt, like, lte, or, sql } from 'drizzle-orm'
+import { postComment } from '../lib/comments'
 import { logger } from '../lib/logger'
 import { classifyTurnError } from '../lib/turn-error-classifier'
 import type { StreamJsonUserMessage } from './container-manager'
@@ -131,15 +138,24 @@ const permanentErrorMessage = (detail: string): string =>
 type ReplayWatchdog = {
 	timer: NodeJS.Timeout
 	gate: SessionGate
-	conversationId: string
 	dedupeKey: string
 	/** The failing turn's log id: only a result NEWER than this can stand it down. */
 	armedAfterLogId: number
 }
 
+/**
+ * Where a closing turn's output goes. Interactive sessions come in two
+ * flavours — chat (a conversation) and object comment threads — and every
+ * posting path in this service is identical apart from this one decision, so
+ * it is resolved once in loadGate rather than branched at each call site.
+ */
+export type TurnSink =
+	| { kind: 'conversation'; conversationId: string }
+	| { kind: 'comment'; objectId: string; threadRootEventId: number }
+
 type SessionGate = {
 	interactive: boolean
-	conversationId: string | null
+	sink: TurnSink | null
 	actorId: string
 	workspaceId: string
 }
@@ -286,9 +302,9 @@ export class InteractiveTurnFinalizer {
 		const gate = await this.loadGate(sessionId)
 		if (!gate) return
 		if (!gate.interactive) return
-		if (!gate.conversationId) {
+		if (!gate.sink) {
 			logger.warn(
-				`Interactive session ${sessionId} produced final output before a conversation was attached; dropping this turn's reply`,
+				`Interactive session ${sessionId} produced final output before a conversation or comment thread was attached; dropping this turn's reply`,
 			)
 			return
 		}
@@ -306,7 +322,7 @@ export class InteractiveTurnFinalizer {
 		// leaves them to re-send by hand, so try to replay the turn first and
 		// fall back to something they can actually read.
 		if (result.isError) {
-			await this.handleFailedTurn(sessionId, gate, gate.conversationId, result, logId)
+			await this.handleFailedTurn(sessionId, gate, result, logId)
 			return
 		}
 
@@ -341,7 +357,6 @@ export class InteractiveTurnFinalizer {
 		await this.postTurnMessage(
 			sessionId,
 			gate,
-			gate.conversationId,
 			result,
 			logId,
 			text,
@@ -358,7 +373,6 @@ export class InteractiveTurnFinalizer {
 	private async postTurnMessage(
 		sessionId: string,
 		gate: SessionGate,
-		conversationId: string,
 		result: ReturnType<typeof parseResultLine> & object,
 		logId: number,
 		text: string,
@@ -371,23 +385,13 @@ export class InteractiveTurnFinalizer {
 		const content = truncated ? text.slice(0, MESSAGE_MAX_LENGTH) : text
 		const turnMessageId = await this.resolveTurnMessageId(sessionId, logId)
 
-		const created = await insertConversationMessage(this.db, {
-			conversationId,
-			workspaceId: gate.workspaceId,
-			actorId: gate.actorId,
-			content,
-			metadata: {
-				source: 'final_output',
-				final_output: {
-					dedupe_key: dedupeKey,
-					message_id: turnMessageId,
-					...extraMetadata,
-					...(result.isError ? { is_error: true } : {}),
-					...(result.subtype ? { subtype: result.subtype } : {}),
-					...(truncated ? { truncated: true } : {}),
-				},
-			},
-			sessionId,
+		const created = await this.writeTurnOutput(sessionId, gate, content, {
+			dedupe_key: dedupeKey,
+			message_id: turnMessageId,
+			...extraMetadata,
+			...(result.isError ? { is_error: true } : {}),
+			...(result.subtype ? { subtype: result.subtype } : {}),
+			...(truncated ? { truncated: true } : {}),
 		})
 
 		this.rememberKey(dedupeKey)
@@ -414,7 +418,6 @@ export class InteractiveTurnFinalizer {
 	private async handleFailedTurn(
 		sessionId: string,
 		gate: SessionGate,
-		conversationId: string,
 		result: ReturnType<typeof parseResultLine> & object,
 		logId: number,
 	): Promise<void> {
@@ -432,17 +435,9 @@ export class InteractiveTurnFinalizer {
 			logger.warn(
 				`Interactive session ${sessionId} turn failed permanently (log ${logId}): ${detail}`,
 			)
-			await this.postTurnMessage(
-				sessionId,
-				gate,
-				conversationId,
-				result,
-				logId,
-				permanentErrorMessage(detail),
-				{
-					error_kind: 'permanent',
-				},
-			)
+			await this.postTurnMessage(sessionId, gate, result, logId, permanentErrorMessage(detail), {
+				error_kind: 'permanent',
+			})
 			return
 		}
 
@@ -453,18 +448,10 @@ export class InteractiveTurnFinalizer {
 			logger.warn(
 				`Interactive session ${sessionId} hit a transient turn failure that cannot be replayed (log ${logId}): ${detail}`,
 			)
-			await this.postTurnMessage(
-				sessionId,
-				gate,
-				conversationId,
-				result,
-				logId,
-				RETRY_UNAVAILABLE_MESSAGE,
-				{
-					error_kind: 'transient',
-					retry: 'unavailable',
-				},
-			)
+			await this.postTurnMessage(sessionId, gate, result, logId, RETRY_UNAVAILABLE_MESSAGE, {
+				error_kind: 'transient',
+				retry: 'unavailable',
+			})
 			return
 		}
 
@@ -479,18 +466,10 @@ export class InteractiveTurnFinalizer {
 				`Interactive session ${sessionId} exhausted ${MAX_TURN_RETRIES} turn replays (log ${logId}): ${detail}`,
 			)
 			this.retryCounts.delete(retryKey)
-			await this.postTurnMessage(
-				sessionId,
-				gate,
-				conversationId,
-				result,
-				logId,
-				RETRY_EXHAUSTED_MESSAGE,
-				{
-					error_kind: 'transient',
-					retries: spent,
-				},
-			)
+			await this.postTurnMessage(sessionId, gate, result, logId, RETRY_EXHAUSTED_MESSAGE, {
+				error_kind: 'transient',
+				retries: spent,
+			})
 			return
 		}
 
@@ -522,7 +501,7 @@ export class InteractiveTurnFinalizer {
 			// Both are covered by arming here: the clock is generous enough
 			// (REPLAY_ANSWER_TIMEOUT_MS) that folding the backoff into it cannot
 			// make it fire on a turn that is merely slow.
-			this.armReplayWatchdog(sessionId, gate, conversationId, dedupeKey, logId)
+			this.armReplayWatchdog(sessionId, gate, dedupeKey, logId)
 			try {
 				await this.delay(backoffMs)
 				await this.retryTurn?.(sessionId, payload)
@@ -542,7 +521,6 @@ export class InteractiveTurnFinalizer {
 				await this.postRetryNotice(
 					sessionId,
 					gate,
-					conversationId,
 					dedupeKey,
 					'undeliverable',
 					RETRY_UNDELIVERABLE_MESSAGE,
@@ -563,26 +541,15 @@ export class InteractiveTurnFinalizer {
 	private async postRetryNotice(
 		sessionId: string,
 		gate: SessionGate,
-		conversationId: string,
 		dedupeKey: string,
 		reason: 'undeliverable' | 'unanswered',
 		content: string,
 	): Promise<void> {
 		try {
-			const created = await insertConversationMessage(this.db, {
-				conversationId,
-				workspaceId: gate.workspaceId,
-				actorId: gate.actorId,
-				content,
-				metadata: {
-					source: 'final_output',
-					final_output: {
-						dedupe_key: `${dedupeKey}-${reason}`,
-						error_kind: 'transient',
-						retry: reason,
-					},
-				},
-				sessionId,
+			const created = await this.writeTurnOutput(sessionId, gate, content, {
+				dedupe_key: `${dedupeKey}-${reason}`,
+				error_kind: 'transient',
+				retry: reason,
 			})
 			if (!created) {
 				// Suppressed by the unique index. Benign on a re-delivered log
@@ -608,7 +575,6 @@ export class InteractiveTurnFinalizer {
 	private armReplayWatchdog(
 		sessionId: string,
 		gate: SessionGate,
-		conversationId: string,
 		dedupeKey: string,
 		armedAfterLogId: number,
 	): void {
@@ -620,7 +586,6 @@ export class InteractiveTurnFinalizer {
 		this.replayWatchdogs.set(sessionId, {
 			timer,
 			gate,
-			conversationId,
 			dedupeKey,
 			armedAfterLogId,
 		})
@@ -646,7 +611,6 @@ export class InteractiveTurnFinalizer {
 		await this.postRetryNotice(
 			sessionId,
 			watchdog.gate,
-			watchdog.conversationId,
 			watchdog.dedupeKey,
 			'unanswered',
 			RETRY_UNANSWERED_MESSAGE,
@@ -797,6 +761,8 @@ export class InteractiveTurnFinalizer {
 			.select({
 				interactive: sessions.interactive,
 				conversationId: sessions.conversationId,
+				commentThreadRootEventId: sessions.commentThreadRootEventId,
+				config: sessions.config,
 				actorId: sessions.actorId,
 				workspaceId: sessions.workspaceId,
 			})
@@ -811,9 +777,112 @@ export class InteractiveTurnFinalizer {
 			return null
 		}
 
-		if (row.interactive && !row.conversationId) return row
-		this.gates.set(sessionId, row)
-		return row
+		const objectId = (row.config as { comment_thread?: { object_id?: string } } | null)
+			?.comment_thread?.object_id
+		const sink: TurnSink | null = row.conversationId
+			? { kind: 'conversation', conversationId: row.conversationId }
+			: row.commentThreadRootEventId !== null && objectId
+				? {
+						kind: 'comment',
+						objectId,
+						threadRootEventId: row.commentThreadRootEventId,
+					}
+				: null
+		const gate: SessionGate = {
+			interactive: row.interactive,
+			sink,
+			actorId: row.actorId,
+			workspaceId: row.workspaceId,
+		}
+
+		if (gate.interactive && !gate.sink) return gate
+		this.gates.set(sessionId, gate)
+		return gate
+	}
+
+	/**
+	 * Persist one piece of turn output to whichever surface this session talks
+	 * on. Returns false when the write was suppressed as a duplicate.
+	 *
+	 * The two branches differ in how duplicates are caught. Chat leans on the
+	 * `messages_final_output_dedupe_uniq` partial index; comments have no such
+	 * index (and should not grow one on `events`, a table nothing else dedupes),
+	 * so the check is an explicit scoped read over the thread. Both are backed
+	 * by the in-process `seen` cache in the callers — this is the layer that
+	 * survives a restart.
+	 */
+	private async writeTurnOutput(
+		sessionId: string,
+		gate: SessionGate,
+		content: string,
+		finalOutput: MessageFinalOutput,
+	): Promise<boolean> {
+		const sink = gate.sink
+		if (!sink) return false
+
+		if (sink.kind === 'conversation') {
+			const created = await insertConversationMessage(this.db, {
+				conversationId: sink.conversationId,
+				workspaceId: gate.workspaceId,
+				actorId: gate.actorId,
+				content,
+				metadata: { source: 'final_output', final_output: finalOutput },
+				sessionId,
+			})
+			return created !== null
+		}
+
+		const dedupeKey = finalOutput.dedupe_key
+		{
+			const [dupe] = await this.db
+				.select({ id: events.id })
+				.from(events)
+				.where(
+					and(
+						inThread(sink.threadRootEventId),
+						eq(events.actorId, gate.actorId),
+						sql`${events.data}->'metadata'->'final_output'->>'dedupe_key' = ${dedupeKey}`,
+					),
+				)
+				.limit(1)
+			if (dupe) return false
+		}
+
+		// The agent may have already posted this turn's reply itself via the
+		// create_comment MCP tool. Chat tolerates that duplication; a comment
+		// thread does not — the same text twice under a human's question reads
+		// as a malfunction. `message_id` is the comment event that opened this
+		// turn, so "commented since then" is exactly the right test.
+		const turnStartEventId = finalOutput.message_id
+		if (typeof turnStartEventId === 'number') {
+			const [own] = await this.db
+				.select({ id: events.id })
+				.from(events)
+				.where(
+					and(
+						inThread(sink.threadRootEventId),
+						eq(events.actorId, gate.actorId),
+						gt(events.id, turnStartEventId),
+					),
+				)
+				.limit(1)
+			if (own) {
+				logger.info(
+					`Session ${sessionId} already commented in thread ${sink.threadRootEventId} during this turn; not auto-posting its final output`,
+				)
+				return false
+			}
+		}
+
+		await postComment(this.db, {
+			workspaceId: gate.workspaceId,
+			actorId: gate.actorId,
+			entityId: sink.objectId,
+			parentEventId: sink.threadRootEventId,
+			content,
+			metadata: { source: 'final_output', session_id: sessionId, final_output: finalOutput },
+		})
+		return true
 	}
 
 	/**
@@ -938,4 +1007,20 @@ export class InteractiveTurnFinalizer {
 		}
 		this.seen.add(dedupeKey)
 	}
+}
+
+/**
+ * Matches every `commented` event in one thread: the root itself plus its
+ * direct replies (comment threading is one level deep). Text comparison rather
+ * than `(data->>'parentEventId')::int` — the cast throws on any row holding a
+ * non-numeric value there, which would take the whole query down.
+ */
+function inThread(threadRootEventId: number) {
+	return and(
+		eq(events.action, 'commented'),
+		or(
+			eq(events.id, threadRootEventId),
+			sql`${events.data}->>'parentEventId' = ${String(threadRootEventId)}`,
+		),
+	)
 }

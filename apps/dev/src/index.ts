@@ -184,9 +184,12 @@ if (process.env.NODE_ENV === 'production') {
 			const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
 			if (!session || !session.interactive) return
 			if (session.actionPrompt.trim().length > 0) {
-				const seedTurnMessageId = (
-					session.config as { conversation?: { message_id?: number } } | null
-				)?.conversation?.message_id
+				const cfg = session.config as {
+					conversation?: { message_id?: number }
+					comment_thread?: { seed_comment_event_id?: number }
+				} | null
+				const seedTurnMessageId =
+					cfg?.conversation?.message_id ?? cfg?.comment_thread?.seed_comment_event_id
 				await sessionManager.writeInput(
 					sessionId,
 					{ type: 'user', message: { role: 'user', content: session.actionPrompt } },
@@ -198,6 +201,13 @@ if (process.env.NODE_ENV === 'production') {
 			// sandbox was booting (buffered by the conversation responder).
 			await sessionManager.drainPendingConversationTurns(sessionId).catch((err) =>
 				logger.error('Failed to drain buffered conversation turns after remote dispatch', {
+					sessionId,
+					error: String(err),
+				}),
+			)
+			// Same, for comments that landed in the thread while it was booting.
+			await sessionManager.drainPendingCommentTurns(sessionId).catch((err) =>
+				logger.error('Failed to drain buffered comment turns after remote dispatch', {
 					sessionId,
 					error: String(err),
 				}),
