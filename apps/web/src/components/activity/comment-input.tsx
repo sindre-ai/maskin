@@ -333,7 +333,10 @@ export function CommentInput({
 
 	const handleSubmit = useCallback(() => {
 		const trimmed = content.trim()
-		if (!trimmed && references.length === 0) return
+		// References ride along with a comment, they are not a comment on their
+		// own: `createCommentSchema.content` is `.min(1)`, so posting chips with
+		// an empty body is a guaranteed 400. Same rule as decision chips.
+		if (!trimmed) return
 		if (content.length > COMMENT_MAX_LENGTH) return
 
 		// Reconcile mentions: only include actors whose @Name is still in the text
@@ -400,7 +403,6 @@ export function CommentInput({
 		draft,
 		buildMetadata,
 		resetComposer,
-		references.length,
 	])
 
 	const handleFilesPicked = useCallback(
@@ -552,9 +554,7 @@ export function CommentInput({
 				size="icon"
 				variant="ghost"
 				className="h-7 w-7 shrink-0 rounded-full"
-				disabled={
-					(!content.trim() && references.length === 0) || createComment.isPending || overLimit
-				}
+				disabled={!content.trim() || createComment.isPending || overLimit}
 				title={isUploadingAny ? 'Send (uploads continue in background)' : 'Send'}
 				aria-label="Send comment"
 				onClick={handleSubmit}

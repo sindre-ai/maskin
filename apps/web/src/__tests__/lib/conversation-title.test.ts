@@ -39,6 +39,37 @@ describe('deriveConversationTitle', () => {
 		expect(long.startsWith(title.slice(0, -1))).toBe(true)
 	})
 
+	it('does not treat a decimal point as the end of a sentence', () => {
+		expect(deriveConversationTitle('Ship 3.5 to the beta cohort by Friday', 'Relay')).toBe(
+			'Ship 3.5 to the beta cohort by Friday',
+		)
+	})
+
+	it('does not cut inside a URL', () => {
+		expect(deriveConversationTitle('Check https://acme.com/dash for the drop', 'Relay')).toBe(
+			'Check https://acme.com/dash for the drop',
+		)
+	})
+
+	it('keeps the message when the first "sentence" is only an abbreviation', () => {
+		expect(deriveConversationTitle('Dr. Ruiz wants the Q3 numbers', 'Relay')).toBe(
+			'Dr. Ruiz wants the Q3 numbers',
+		)
+		expect(deriveConversationTitle('e.g. why did signups dip?', 'Relay')).toBe(
+			'e.g. why did signups dip?',
+		)
+	})
+
+	it('still ends the sentence on a digit when the terminator is a real one', () => {
+		expect(deriveConversationTitle('We shipped v3. Now what?', 'Relay')).toBe('We shipped v3.')
+	})
+
+	it('cuts mid-word when a word boundary would leave a stub', () => {
+		const long = `Reindex ${'x'.repeat(120)}`
+		const title = deriveConversationTitle(long, 'Relay')
+		expect(title).toBe(`${long.slice(0, 72)}…`)
+	})
+
 	it('falls back to the whole message when it opens with punctuation', () => {
 		expect(deriveConversationTitle('?!', 'Chief of Staff')).toBe('?!')
 	})
