@@ -4,7 +4,6 @@ import { cn } from '@/lib/cn'
 import { ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 import { MarkdownContent } from '../shared/markdown-content'
-import { CommitmentCard } from './commitment-card'
 import { formatValue } from './metadata-badges'
 import { getDocumentFold, getEvidence } from './object-detail-fixtures'
 import { ObjectEvidenceBlock } from './object-evidence-block'
@@ -26,11 +25,6 @@ export function ObjectDetailBody({
 
 	return (
 		<div className="space-y-8">
-			{/* Commitments lead with their card (floor, cadence, source bet, last
-			    breach) — the generic key/value rows below can't carry the source-bet
-			    link or the status chip. Carried over from the retired document. */}
-			{object.type === 'commitment' && <CommitmentCard object={object} workspaceId={workspaceId} />}
-
 			{/* Editable when the host wires a commit handler — an empty body still
 			    renders the editor so a new object can be written into, which a
 			    truthy-content guard alone would make impossible. */}
@@ -89,15 +83,10 @@ function DocumentFold({ fold }: { fold: { title: string; markdown: string } }) {
 }
 
 // Public (non-underscore) metadata entries render as the body's key/value rows.
-// `_`-prefixed keys are fixture/private keys (ask, evidence, fold) and stay out,
-// as do the commitment keys the card above already spells out.
-const COMMITMENT_CARD_KEYS = new Set(['floor', 'cadence', 'source_bet_id', 'last_breach_at'])
+// `_`-prefixed keys are fixture/private keys (ask, evidence, fold) and stay out.
 
 function kvEntries(object: ObjectResponse): [string, unknown][] {
 	const metadata = object.metadata
 	if (!metadata) return []
-	return Object.entries(metadata).filter(
-		([key]) =>
-			!key.startsWith('_') && !(object.type === 'commitment' && COMMITMENT_CARD_KEYS.has(key)),
-	)
+	return Object.entries(metadata).filter(([key]) => !key.startsWith('_'))
 }
