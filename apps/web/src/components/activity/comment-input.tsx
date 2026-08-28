@@ -338,6 +338,12 @@ export function CommentInput({
 		// an empty body is a guaranteed 400. Same rule as decision chips.
 		if (!trimmed) return
 		if (content.length > COMMENT_MAX_LENGTH) return
+		// The Send button is already disabled while a POST is in flight; Enter has
+		// to obey the same rule. The composer deliberately keeps its text until
+		// the POST succeeds (so a rejected one is not lost), which means a slow
+		// round trip looks exactly like a keypress that did nothing — and the
+		// second Enter posts the same comment twice.
+		if (createComment.isPending) return
 
 		// Reconcile mentions: only include actors whose @Name is still in the text
 		const activeMentions = mentions.filter((id) => {

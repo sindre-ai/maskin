@@ -279,6 +279,20 @@ describe('CommentInput', () => {
 		expect(screen.getByRole('button', { name: /send/i })).toBeDisabled()
 	})
 
+	// The Send button has always been disabled while a POST is in flight; Enter
+	// went straight through. Since the composer keeps its text until the POST
+	// succeeds, a slow round trip looks like a keypress that did nothing, and
+	// the impatient second Enter posted the same comment twice.
+	it('does NOT submit on Enter while a post is in flight', async () => {
+		const user = userEvent.setup()
+		mockIsPending = true
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		const textarea = screen.getByPlaceholderText('Write a comment... Use @ to mention an agent')
+		await user.type(textarea, 'Impatient user{Enter}')
+		expect(mockMutate).not.toHaveBeenCalled()
+	})
+
 	it('submits on Enter key', async () => {
 		const user = userEvent.setup()
 		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
