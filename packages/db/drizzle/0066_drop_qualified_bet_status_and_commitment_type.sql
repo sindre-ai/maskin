@@ -1,11 +1,15 @@
 -- Retire two concepts that were added by mistake and never earned their place:
 --
---   1. `qualified` as a **bet** status. It was never in the code's default bet
---      list (`packages/shared/src/schemas/workspaces.ts`, `extensions/work/*`),
---      which has always been
---      signal | define | active | live | succeeded | failed | paused | archived.
---      It only ever existed as stored `settings.statuses.bet` data on a handful
---      of workspaces, so this migration is the only way to remove it.
+--   1. `qualified` as a **bet** status. It was added to the code's default bet
+--      list by #936 (`92645a7f4`, 2026-07-01) and removed again by #1439
+--      (`69c7e1124`) seven weeks later. The current default is
+--      signal | define | active | live | succeeded | failed | paused
+--      (`packages/shared/src/schemas/workspaces.ts` also appends `archived`;
+--      the two `extensions/work/*` lists stop at `paused`).
+--      Editing that default does not rewrite `settings.statuses.bet` on
+--      workspaces that already exist, so `qualified` survives as stored data on
+--      every workspace created between those two PRs — which is why this
+--      migration is the only thing that can remove it.
 --
 --   2. The `commitment` object type — the "standing commitment graduated from a
 --      succeeded bet" concept (statuses holding | at-risk | breached, metadata
@@ -13,8 +17,8 @@
 --      renamed to `commitment` by `0050_rename_loop_to_commitment.sql`, and now
 --      removed outright along with every code path that consumed it (work
 --      extension registration, workspace-briefing composer section, the
---      Strategist's graduation skill, the Daily Commitment Health Scan trigger,
---      and the frontend CommitmentCard).
+--      Strategist's `graduate-succeeded-bet-to-loop` skill, the `Daily Loop
+--      Health Scan` trigger, and the frontend CommitmentCard).
 --
 -- IMPORTANT — what this migration deliberately does NOT touch:
 --   * `qualified` on any type other than `bet`. It is a legitimate CRM stage on
