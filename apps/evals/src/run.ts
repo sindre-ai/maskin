@@ -76,7 +76,10 @@ function parseArgs(argv: string[]): Options {
 	// smaller default rather than inheriting a number chosen for the cheap case.
 	const repeat = Math.max(1, Math.floor(num('repeat', 3)))
 	return {
-		model: flag('model') ?? process.env.EVAL_MODEL ?? 'claude-opus-5',
+		// `||`, not `??`: CI passes EVAL_MODEL: ${{ vars.EVAL_MODEL }}, and an
+		// undefined repository variable renders as the empty string - set, not
+		// unset - which `??` would happily pass through as the model name.
+		model: flag('model') || process.env.EVAL_MODEL || 'claude-opus-5',
 		repeat,
 		trajectoryRepeat: Math.max(1, Math.floor(num('trajectory-repeat', Math.min(repeat, 2)))),
 		outDir: flag('out') ?? join(process.cwd(), 'results'),
@@ -318,6 +321,25 @@ async function main(): Promise<void> {
 		console.error(
 			`\npass ratio ${report.passRatio.toFixed(3)} is below the --min gate of ${opts.minPassRatio}`,
 		)
+		process.exitCode = 1
+	}
+
+	// A second, independent gate: any case that failed *every* attempt fails
+	// the run outright, whatever the aggregate says.
+	//
+	// The aggregate alone cannot express "this case must work". The suite is
+	// mostly cheap routing attempts, so one case going to zero is a small
+	// fraction of the total: with the default --repeat 3 and
+	// --trajectory-repeat 2, the single trajectory case failing both attempts
+	// still leaves 27/29 = 0.93, comfortably above the 0.9 default. That case
+	// is the one asserting a loop can actually be built end to end - precisely
+	// the failure we would least want to ship green.
+	const dead = report.cases.filter((c) => c.attempts > 0 && c.passes === 0)
+	if (dead.length > 0) {
+		const lines = dead
+			.map((c) => `  ${c.id} (0/${c.attempts}) - ${c.failures[0]?.reason ?? 'no reason recorded'}`)
+			.join('\n')
+		console.error(`\n${dead.length} case(s) failed every attempt:\n${lines}`)
 		process.exitCode = 1
 	}
 }

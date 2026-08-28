@@ -11,7 +11,9 @@
 export const DEFAULT_BASE_URL = 'http://localhost:3000'
 
 export function apiBaseUrl(): string {
-	return process.env.MASKIN_API_URL ?? DEFAULT_BASE_URL
+	// `||` for the same reason as run.ts's model default: an env var set to
+	// the empty string is set, and `??` would return it.
+	return process.env.MASKIN_API_URL || DEFAULT_BASE_URL
 }
 
 export class ApiError extends Error {
