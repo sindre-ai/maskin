@@ -11,11 +11,11 @@ A workspace member has just built a loop that needs to read from an external ser
 
 ## Design system reuse
 
-- **Reuses:** `<Card>`, `<Button>` (primary / secondary / ghost / outline / destructive + `sm`), `<Input>`, `<Label>`, `<Badge>` (status colour tokens, plus the `brand` variant for OAuth/BYO chips), `<Tabs>` (pill variant, per `mcp-connection.tsx`), `<Sheet>`, `<Dialog>` (via `<ResponsiveDialog>`), `<Checkbox>`, `<RadioGroup>`, `<Table>` for the Installed list, `<Skeleton>`, `<Spinner>`, `<Tooltip>`, `<Breadcrumb>`, `<Sidebar>`. Neutral scale + `--brand` indigo + status badge tokens from `apps/web/src/app.css`. Row-with-status-dot pattern is copied verbatim from the Keychain prototype's landing list. The wizard shape (stepper + card body + footer) mirrors `SkjaldConnectDialog` and the Keychain OAuth wizard. **Health rows are a composition, not a new atomic:** `<Badge variant="status">` (existing) + inline `<Button size="sm">` for the fix action, laid out with the same `.warn-rule` / `.danger-rule` left-rules Keychain already ships. The load-bearing design decision is co-location of state + fix; the atomic components already exist.
+- **Reuses:** `<Card>`, `<Button>` (primary / secondary / ghost / outline / destructive + `sm`), `<Input>`, `<Label>`, `<Badge>` (status colour tokens, plus the `brand` variant for OAuth/BYO chips), `<Tabs>` (pill variant, per `mcp-connection.tsx`), `<Sheet>`, `<Dialog>` (via `<ResponsiveDialog>`), `<Checkbox>`, `<RadioGroup>`, `<Table>` for the Installed list, `<Skeleton>`, `<Spinner>`, `<Tooltip>`, `<Breadcrumb>`, `<Sidebar>`. Neutral scale + `--brand` indigo + status badge tokens from `apps/web/src/app.css`. Row-with-status-dot pattern is copied verbatim from the Keychain prototype's landing list. The wizard shape (stepper + card body + footer) mirrors `SkjaldConnectDialog` and the Keychain OAuth wizard. **Health rows are a composition, not a new atomic:** `<Badge variant="status">` (existing) + inline `<Button size="sm">` for the fix action, laid out with the same `.warn-rule` / `.danger-rule` left-rules Keychain already ships. The load-bearing design decision is co-location of state + fix; the atomic components already exist. **Catalogue cards show tool count as a plain `<Badge>` numeric (`{n} tools`)** — the coloured meter appears only on decision-point surfaces (Inspect header, BYO Preview), see `<ToolCountMeter>` below.
 - **Extends:** `<Badge>` gains one usage-only variant — `outline` for the numeric step badges in the loop-builder step column (styling exists in the token set, no new prop). `<Card>` picks up a **catalogue-card hover pattern** (border + shadow lift, click-anywhere navigate) shared with `settings/integrations.tsx` `ProviderRow` — this hover state exists in the Keychain landing rows already; here it graduates from list-row to card-grid. `<Tabs>` grows a **danger-count chip** (small tinted count next to a tab, used by the Health tab when items need attention). No new prop; count-chip is a slot.
 - **New patterns:** two, each with a one-line "why the existing patterns fail this job".
   - **`<TrustGrade>`** — the Glama-style A–F letter grade. Renders as a rounded, colour-mapped mono badge with a tooltip that decomposes the score into ownership, maintenance, and reliability sub-scores. **Why new:** `<Badge>` is single-token; a grade is a composite of three signals, and the sub-score tooltip is the whole point. The SEO research ([knowledge 3d6e6826](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/3d6e6826-e4c6-4099-833f-5136614cc946)) is unambiguous: ownership tiers are the emerging trust currency and the grade is what a buyer skims for. This is UI-load-bearing.
-  - **`<ToolCountMeter>`** — a compact bar+count that shifts from success-green to warning-amber to destructive-red as tool count crosses 50 / 200. Sits next to every MCP card and inside every install/inspect header. **Why new:** the deferred-tool-loading insight ([347146b3](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/347146b3-1db9-45b1-ac07-d522c70a19bd)) makes tool count a first-class token-cost signal. A raw number in `<Badge>` doesn't communicate that 213 tools is a *lot* the way a coloured meter does. The meter is the visual anchor for the deferred-load story the Registry has to tell.
+  - **`<ToolCountMeter>`** — a compact bar+count that shifts from success-green to warning-amber to destructive-red as tool count crosses 50 / 200. **Scope: Inspect header + BYO Preview card ONLY — NOT on catalogue cards, NOT on the Installed table (trimmed 2026-08-29 per CPO — aesthetic-for-orientation on browsing surfaces, load-bearing only at decision-point).** Catalogue cards and the Installed table fall back to a plain `<Badge>` numeric (`{n} tools`). **Why new (at the reduced scope):** the deferred-tool-loading insight ([347146b3](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/347146b3-1db9-45b1-ac07-d522c70a19bd)) makes tool count a first-class token-cost signal *at the point of installation/BYO commit*. Inspect and BYO Preview are where the user is actually making the load-cost decision — a coloured ramp there communicates "213 tools is a lot" in a way a plain number does not. On the browse grid, that same ramp was orientation, not decision-support, so it inflated the design-system cost without carrying a won/lost criterion.
   - ~~**`<HealthPulse>`**~~ — **trimmed after Developer feasibility check (2026-08-29).** Health rows now compose from existing `<Badge variant="status">` + inline `<Button size="sm">`; the co-location of state + fix is a layout pattern applied inside the row, not an atomic component. The 2.5s opacity pulse animation is aesthetic, not load-bearing — dropped. Screen-reader semantics (state + fix in same live region) survive via `role="status"` on the row container.
 - **Reused verbatim from Keychain prototype:** the `.scope-rule` indigo left-rule, the `.warn-rule` amber left-rule, the `.danger-rule` red left-rule, the wizard stepper, the OAuth-in-a-new-tab loading state, the fail-closed messaging, the sidebar layout + tablet rail. Nothing in this prototype invents chrome that Keychain has already established.
 
@@ -32,7 +32,7 @@ The three surfaces the bet demands + the health surface, mapped to the ten views
 ## States (per screen)
 
 ### 1. Browse (`browse`)
-- **Default:** Filter toolbar at the top; curation trust rule; a 3-column card grid (2 on tablet, 1 on mobile); an "advanced results" fold below grade B. Every card is `<a>`, click-anywhere navigates to Inspect. Install button on cards is a nested `<button>` that intercepts the click and jumps straight into the install wizard.
+- **Default:** Filter toolbar at the top; curation trust rule; a 3-column card grid (2 on tablet, 1 on mobile); an "advanced results" fold below grade B. Every card is `<a>`, click-anywhere navigates to Inspect. Install button on cards is a nested `<button>` that intercepts the click and jumps straight into the install wizard. **Tool count on the card is rendered as a plain `<Badge>` numeric (`{n} tools`) — no coloured meter here; that lives on Inspect.**
 - **Hover:** Card border → `--border-hover`, `box-shadow: var(--shadow-md)`; cursor pointer.
 - **Focus:** Card outline `2px var(--brand)` offset 2px; keyboard nav via Tab.
 - **Loading:** `<Skeleton>` card grid (6 cards); toolbar stays interactive; sync-status in top-right shows "syncing…" with spinner.
@@ -41,7 +41,7 @@ The three surfaces the bet demands + the health surface, mapped to the ten views
 - **Success (post-install toast):** `<Toast variant="success">` "Linear installed. 24 tools available to your loops." for 5 s; the new row highlights on the Installed view when navigated to.
 
 ### 1c. Inspect (`inspect`)
-- **Default:** Header with logo · name · large `<TrustGrade>` · ownership tier · endpoint URL · last-verified time. Primary CTA "Install for this workspace" with a `~90 sec incl. OAuth` sub-label so the 2-min Won criterion is visible on the surface. Two-column body: left = Requirements card + Tools card (with tool-cluster preview); right = Trust sub-scores card + Auth card + Community card.
+- **Default:** Header with logo · name · large `<TrustGrade>` · ownership tier · endpoint URL · last-verified time · **`<ToolCountMeter>` (coloured ramp — this is the primary decision-point surface for the meter).** Primary CTA "Install for this workspace" with a `~90 sec incl. OAuth` sub-label so the 2-min Won criterion is visible on the surface. Two-column body: left = Requirements card + Tools card (with tool-cluster preview); right = Trust sub-scores card + Auth card + Community card.
 - **Hover / focus:** Standard.
 - **Loading:** Both column cards `<Skeleton>`; header remains.
 - **Error:** MCP-unreachable falls back to cached metadata + a warn-rule "Live capability check failed 12 min ago — showing last-known state."
@@ -60,7 +60,7 @@ Stepper: `Confirm ✓ · Credential · Agent scope`. Prototype shows step 2.
 
 ### 2b. Install — BYO (`install-byo`)
 Stepper: `Endpoint · Auth · Preview + scope`.
-- **Default:** Endpoint URL input + Discover button; display name input; auth-method 4-way radio grid (None public / Bearer / API key header / OAuth 2.1); capability preview card that renders `tools/list` response as `<tool-chip>` cluster + server-info + capabilities chips.
+- **Default:** Endpoint URL input + Discover button; display name input; auth-method 4-way radio grid (None public / Bearer / API key header / OAuth 2.1); capability preview card that renders `tools/list` response as `<tool-chip>` cluster + server-info + capabilities chips **+ `<ToolCountMeter>` inline in the preview header (second decision-point surface — this is where BYO users see the load-cost of the endpoint they just discovered).**
 - **Hover / focus:** Standard.
 - **Loading:** Discover button spinner-in-place; preview card `<Skeleton>` while `initialize` + `tools/list` round-trip. Timeout at 8 s → error state.
 - **Error (endpoint):** Named cases inline under the URL field — `ENOTFOUND` ("we can't resolve this hostname"), `ECONNREFUSED` ("nothing is listening"), `TLS handshake failed`, `initialize returned {status}` ("this doesn't look like an MCP server"). Never a raw stack trace.
@@ -69,7 +69,7 @@ Stepper: `Endpoint · Auth · Preview + scope`.
 - **Success:** Route to Agent scope (same step-3 as curated).
 
 ### 3. Installed (`installed`)
-- **Default:** Full-width table, columns: MCP · Tools · Loops using · Health · Trust · caret. Unhealthy rows carry a warn/danger left-rule, and the health cell exposes the inline fix button.
+- **Default:** Full-width table, columns: MCP · Tools · Loops using · Health · Trust · caret. **`Tools` column renders as plain `<Badge>` numeric (`{n} tools`) — the coloured meter is not on this surface (the user has already committed to installing; load-cost decision was made upstream).** Unhealthy rows carry a warn/danger left-rule, and the health cell exposes the inline fix button.
 - **Hover:** Row bg → `--muted`; unhealthy rules stay visible.
 - **Focus:** Row is `<a>`; 2 px `--brand` outline offset.
 - **Loading:** 6-row `<Skeleton>`.
@@ -78,7 +78,7 @@ Stepper: `Endpoint · Auth · Preview + scope`.
 - **Success:** Post-install toast + row highlight on the newly-added row (same fade as Keychain).
 
 ### 4. Per-loop activation (`loop-activation`)
-- **Default:** Loop-builder chrome with 4 vertically-stacked steps; step 2 expanded showing the "MCPs active in this step" panel. Panel header carries "N tools loaded · Nk tokens" so the deferred-load story is legible without hover. Each row: checkbox · MCP icon + name · loaded-tools summary · Pick tools button. Rows for installed-but-off MCPs render dimmed. Rows for unhealthy MCPs disable the checkbox and surface a "Health →" button pointing to view 5. Terminal row: "Install another MCP…" deep-links into browse and returns here.
+- **Default:** Loop-builder chrome with 4 vertically-stacked steps; step 2 expanded showing the "MCPs active in this step" panel. Panel header carries "N tools loaded · Nk tokens" as plain text so the deferred-load story is legible without hover (this is a plain-text token-cost read-out, not the `<ToolCountMeter>` atomic). Each row: checkbox · MCP icon + name · loaded-tools summary · Pick tools button. Rows for installed-but-off MCPs render dimmed. Rows for unhealthy MCPs disable the checkbox and surface a "Health →" button pointing to view 5. Terminal row: "Install another MCP…" deep-links into browse and returns here.
 - **Hover:** Row bg → `--muted`; active rows tint further.
 - **Focus:** Checkbox native focus; row keyboard-navigable via j/k or arrows (reuses `useKeyboardShortcuts` from `command-palette.tsx`).
 - **Loading:** Panel `<Skeleton>` rows while the workspace's installed MCPs list resolves.
@@ -136,6 +136,7 @@ Every visible string in the prototype. If you see one in the built feature that 
 ### Card
 - Card CTA: `Install` (when not installed) · `Inspect →` (when installed)
 - Card status: `Installed` (badge, `active` colour) · `Not installed` (pulse, muted)
+- Card tool count: `{n} tools` (plain `<Badge>` — no coloured meter on cards)
 - Reliability suffix: `{n}% 30d`
 
 ### No results
@@ -150,6 +151,7 @@ Every visible string in the prototype. If you see one in the built feature that 
 - Requirements card title: `Before you install`
 - Requirements items: `1 credential — {service} {method} token — Stored in your Keychain. Fail-closed by default — no agent can read it until you assign one.` · `1 agent scope — pick during install — Which of your workspace agents can read this credential. Configurable later.` · `Per-loop activation — you pick tools when you build the loop — Nothing is active in any loop until you turn it on in that loop's step. Zero context bloat by default.`
 - Tools card title: `Tools exposed` · body: `Loaded per loop, not per session. Full descriptions in the loop-step picker.`
+- Header meter tooltip: `{n} tools — deferred-loaded per loop, {token-est} tokens per loop-step. Green ≤50 · Amber 51–200 · Red >200.`
 - Side cards: `Trust grade` (with `Verified by Maskin · updated daily`) · `Auth` (with the auth-method chip + a one-line explanation) · `Community` (with `Installs (Maskin)`, `Source`, `Also listed on`)
 
 ### Install — curated (wizard step 2)
@@ -177,7 +179,7 @@ Every visible string in the prototype. If you see one in the built feature that 
 - Auth options: `None (public) — No credentials sent. Anyone who has the URL can call this MCP.` · `Bearer token — Static token sent in Authorization.` · `API key header — Custom header name — you configure the header + value.` · `OAuth 2.1 — Authorization-code + PKCE. You'll paste client ID/secret next.`
 - Preview title: `Server responded — capability preview`
 - Preview body: `This is what tools/list returned. Nothing is stored until you save.`
-- Preview eyebrow: `Tools · showing {n} of {m}`
+- Preview eyebrow: `Tools · showing {n} of {m}` (coloured `<ToolCountMeter>` renders alongside — same tooltip copy as Inspect)
 - Tool-count warn title: `{n} tools is a lot.`
 - Tool-count warn body: `Maskin loads MCP schemas per loop-run, not per session — so this is safe to install. But your loop-step picker will show {n} candidates; use search there.`
 - Server-info section: `Server info` · `Capabilities`
@@ -186,6 +188,7 @@ Every visible string in the prototype. If you see one in the built feature that 
 ### Installed
 - Page description: `{n} MCPs installed in this workspace. None are running until a loop activates them.`
 - Table headers: `MCP` · `Tools` · `Loops using` · `Health` · `Trust`
+- Tools column render: `{n} tools` (plain `<Badge>` — no coloured meter on this surface)
 - Trailing hint: `Installed MCPs are not automatically active in every loop. Open a loop step and pick which MCPs it needs.`
 - Row loops-using placeholder when >2: `+{n}`
 
@@ -239,7 +242,7 @@ Every visible string in the prototype. If you see one in the built feature that 
 - **Keyboard:** Catalogue is arrow-up/down navigable within the grid, `Enter` opens inspect, `n` opens Paste endpoint, `/` focuses search. Loop-activation panel: `j`/`k` for row nav, `Space` toggles the checkbox, `Escape` collapses (in sheet variant). BYO wizard: `⌘Enter` fires Discover from the URL field. Health page: `r` on a focused row triggers reconnect/retry (mirrors Gmail-style keyboard actions).
 - **Accessibility:**
   - `<TrustGrade>` has an `aria-label` including the full sub-scores (e.g. `A grade — ownership: verified by Maskin, maintenance: last commit 3 days ago, reliability last 30 days: 98.1%`). Grade colour alone never carries the meaning.
-  - `<ToolCountMeter>` has a tooltip announcing `{n} tools — deferred-loaded per loop, {token-est} tokens per loop-step`. Screen readers read the number, not "warning meter".
+  - `<ToolCountMeter>` has a tooltip announcing `{n} tools — deferred-loaded per loop, {token-est} tokens per loop-step`. Screen readers read the number, not "warning meter". Meter now appears on Inspect header and BYO Preview only — catalogue cards and the Installed table use plain `<Badge>` (`{n} tools`) with no meter semantics to announce.
   - Health row container uses `role="status"` and wraps the `<Badge variant="status">` + inline `<Button size="sm">` so screen-readers announce state + fix together. When Reconnect enters its pending state the button's `aria-live="polite"` label transitions announce progress (`Opening Notion…` → `Waiting for Notion to redirect back…`).
   - Every catalogue card is `<a>` with a meaningful href — never a `div` with `onClick`.
   - Every unhealthy row's diagnostic checklist is a `<ul>` with `role="list"` and `aria-labelledby` on each item.
@@ -263,3 +266,4 @@ Every visible string in the prototype. If you see one in the built feature that 
 4. **Per-loop activation UX inside the Rails-like loop builder — is the current loop-builder amenable to inline panels?** *Resolved 2026-08-29 by Developer:* Vertical step-cards, decisively. Evidence: `components/loops/loop-flow.tsx` renders a vertical `<StepRow>` stack; `components/loops/loop-plan-card.tsx` stacks TRIGGERS with WHEN/THEN/ASKS per step; `routes/_authed/$workspaceId/loops/new.tsx` is language-first → plan card, no canvas; `apps/web/package.json` has no react-flow / xyflow / dagre (dnd-kit only, for sortable steps). **Panel affordance for MCP activation:** inline collapsible chip row inside the step card, aligned with how ASKS renders — no side sheet.
 5. **First-use failure rate — do we have the instrumentation today?** *Resolved 2026-08-29 by Architect:* Ships in PR #1. All five events named + payload-shaped in spec §9, with `mcp_registry_connection_failed {failure_reason, is_first_use}` as the load-bearing event that backs the 20% Lost ceiling in-product. Health row reads directly from those events — no new emitter surface.
 6. **Auth-expired detection latency.** *Resolved 2026-08-29 by Architect:* Lazy for v1 — detect on the next tool call (401 → surface Reconnect via Health row). Proactive detection needs OAuth-shaped token refresh; bundle with the OAuth 2.1 v1.5 follow-on. Prototype's "detected 4 h ago" timestamps become "detected on last tool call" copy; sparkline still shows first-use failure trend against the 20% ceiling regardless.
+7. **`<ToolCountMeter>` scope.** *Resolved 2026-08-29 by CPO:* Decision-point surfaces only — Inspect header + BYO Preview card. Trimmed off catalogue cards and the Installed table, which now render tool count as plain `<Badge>` numeric. Rationale: the coloured ramp is load-bearing when the user is about to commit to installing (Inspect / BYO Preview), aesthetic-for-orientation when they're browsing or scanning what they've already installed. Cutting it back reduces the design-system cost from two atomics-in-primary-surface to one (`<TrustGrade>` remains everywhere it was; `<ToolCountMeter>` narrows).
