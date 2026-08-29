@@ -335,7 +335,7 @@
         <a class="nav-item"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a7 7 0 0 1 14 0v1"/></svg>Agents</a>
         <a class="nav-item"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>Search</a>
         <div class="mt-4 px-4"><span class="eyebrow">Settings</span></div>
-        <a class="nav-item"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg>General</a>
+        <a class="nav-item"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>General</a>
         <a class="nav-item active"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg><span class="flex-1">MCP Registry</span><span class="badge badge-brand">4</span></a>
         <a class="nav-item"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2 15 8"/><path d="m17 6 4 4"/><path d="M11 12a5 5 0 1 1-7.07 7.07L2 21l3-3a5 5 0 0 1 6-6z"/></svg>Keychain</a>
         <a class="nav-item"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="m4 12 8-8 8 8"/></svg>Billing</a>
@@ -350,6 +350,7 @@
     </aside>
 
     <main class="min-w-0">
+      <!-- header -->
       <div class="border-b border-[var(--border)]">
         <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4 sm:py-6">
           <nav class="text-xs text-[var(--muted-foreground)] mb-2 hidden sm:flex items-center gap-1.5">
@@ -379,6 +380,7 @@
         </div>
       </div>
 
+      <!-- top tabs: catalogue vs installed -->
       <div class="border-b border-[var(--border)] bg-[var(--surface-sunken)]">
         <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-2 flex items-center gap-3">
           <div class="tabs-pill">
@@ -395,6 +397,7 @@
         </div>
       </div>
 
+      <!-- filters toolbar -->
       <div class="border-b border-[var(--border)]">
         <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-3 flex items-center gap-2 flex-wrap">
           <div class="relative flex-1 min-w-[220px] max-w-md">
@@ -402,14 +405,28 @@
             <input class="input pl-8" placeholder="Search Notion, Slack, Linear, github.com/…" />
             <span class="hidden sm:inline-flex kbd absolute right-2 top-1/2 -translate-y-1/2">/</span>
           </div>
-          <button class="btn btn-outline btn-sm">Service <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
-          <button class="btn btn-outline btn-sm">Auth type <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
-          <button class="btn btn-outline btn-sm">Tool count <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+          <button class="btn btn-outline btn-sm">
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M6 12h12"/><path d="M10 18h4"/></svg>
+            Service
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <button class="btn btn-outline btn-sm">
+            Auth type
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <button class="btn btn-outline btn-sm">
+            Tool count
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
           <div class="ml-auto flex items-center gap-2">
             <span class="eyebrow hidden sm:inline">Sort</span>
-            <button class="btn btn-outline btn-sm">Trust grade <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+            <button class="btn btn-outline btn-sm">
+              Trust grade
+              <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
           </div>
         </div>
+        <!-- active filter chips row -->
         <div class="max-w-[1080px] mx-auto px-4 sm:px-6 pb-3 flex items-center gap-2 flex-wrap">
           <span class="eyebrow">Filters</span>
           <span class="chip chip-active">Auth: OAuth <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></span>
@@ -419,6 +436,7 @@
         </div>
       </div>
 
+      <!-- curated call-out (why-curated) -->
       <div class="max-w-[1080px] mx-auto px-4 sm:px-6 pt-4">
         <div class="scope-rule rounded-lg p-3 flex items-start gap-3">
           <svg class="icon flex-shrink-0 mt-0.5" style="color: var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v6c0 5 4 9 9 9s9-4 9-9V7l-9-5z"/><path d="m9 12 2 2 4-4"/></svg>
@@ -433,22 +451,32 @@
         </div>
       </div>
 
+      <!-- catalogue grid -->
       <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4">
         <div class="catalog-grid">
+          <!-- CARD 1 · Notion (installed, A grade, AAA-verified) -->
           <div class="card catalog-card" data-view-link="inspect" tabindex="0">
             <div class="flex items-start justify-between gap-2">
               <div class="flex items-center gap-2.5">
                 <div class="svc-icon">Nt</div>
                 <div>
                   <div class="text-sm font-semibold">Notion</div>
-                  <div class="tier tier-aaa"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v6c0 5 4 9 9 9s9-4 9-9V7l-9-5z"/></svg>AAA · verified by Maskin</div>
+                  <div class="tier tier-aaa">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v6c0 5 4 9 9 9s9-4 9-9V7l-9-5z"/></svg>
+                    AAA · verified by Maskin
+                  </div>
                 </div>
               </div>
               <div class="grade grade-A" title="A · ownership AAA · maintenance daily · quality 99%">A</div>
             </div>
-            <p class="text-xs text-[var(--muted-foreground)] leading-relaxed">Read + write Notion pages, databases, comments. Search by property. Auth via OAuth.</p>
+            <p class="text-xs text-[var(--muted-foreground)] leading-relaxed">
+              Read + write Notion pages, databases, comments. Search by property. Auth via OAuth.
+            </p>
             <div class="flex items-center gap-3 text-[11px] text-[var(--muted-foreground)]">
-              <div class="meter" title="17 tools — deferred-loaded per loop"><span class="meter-bar"><span class="meter-fill" style="width: 22%"></span></span><span class="meter-count">17</span> tools</div>
+              <div class="meter" title="17 tools — deferred-loaded per loop">
+                <span class="meter-bar"><span class="meter-fill" style="width: 22%"></span></span>
+                <span class="meter-count">17</span> tools
+              </div>
               <span>·</span>
               <span class="pulse pulse-healthy"><span class="status-dot status-dot-active pulse-dot"></span>99.4% 30d</span>
             </div>
@@ -458,20 +486,29 @@
             </div>
           </div>
 
+          <!-- CARD 2 · Linear (not installed, A grade, Official) -->
           <div class="card catalog-card" data-view-link="inspect" tabindex="0">
             <div class="flex items-start justify-between gap-2">
               <div class="flex items-center gap-2.5">
                 <div class="svc-icon">Ln</div>
                 <div>
                   <div class="text-sm font-semibold">Linear</div>
-                  <div class="tier tier-official"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Official · published by Linear</div>
+                  <div class="tier tier-official">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                    Official · published by Linear
+                  </div>
                 </div>
               </div>
               <div class="grade grade-A" title="A · ownership Official · maintenance weekly · quality 98%">A</div>
             </div>
-            <p class="text-xs text-[var(--muted-foreground)] leading-relaxed">Issues, projects, cycles, comments. OAuth via Linear's official MCP endpoint. Rate-limited.</p>
+            <p class="text-xs text-[var(--muted-foreground)] leading-relaxed">
+              Issues, projects, cycles, comments. OAuth via Linear's official MCP endpoint. Rate-limited.
+            </p>
             <div class="flex items-center gap-3 text-[11px] text-[var(--muted-foreground)]">
-              <div class="meter"><span class="meter-bar"><span class="meter-fill" style="width: 32%"></span></span><span class="meter-count">24</span> tools</div>
+              <div class="meter">
+                <span class="meter-bar"><span class="meter-fill" style="width: 32%"></span></span>
+                <span class="meter-count">24</span> tools
+              </div>
               <span>·</span>
               <span class="pulse"><span class="status-dot status-dot-idle"></span>Not installed</span>
             </div>
@@ -481,20 +518,29 @@
             </div>
           </div>
 
+          <!-- CARD 3 · Slack (Official, B grade — tool count higher) -->
           <div class="card catalog-card" data-view-link="inspect" tabindex="0">
             <div class="flex items-start justify-between gap-2">
               <div class="flex items-center gap-2.5">
                 <div class="svc-icon">Sl</div>
                 <div>
                   <div class="text-sm font-semibold">Slack</div>
-                  <div class="tier tier-official"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Official · published by Slack</div>
+                  <div class="tier tier-official">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                    Official · published by Slack
+                  </div>
                 </div>
               </div>
               <div class="grade grade-B" title="B · ownership Official · maintenance monthly · quality 96%">B</div>
             </div>
-            <p class="text-xs text-[var(--muted-foreground)] leading-relaxed">DMs, channels, users, files, reactions. Broad surface — pick tool subset per loop.</p>
+            <p class="text-xs text-[var(--muted-foreground)] leading-relaxed">
+              DMs, channels, users, files, reactions. Broad surface — pick tool subset per loop.
+            </p>
             <div class="flex items-center gap-3 text-[11px] text-[var(--muted-foreground)]">
-              <div class="meter" title="127 tools — activate per loop to keep context lean"><span class="meter-bar"><span class="meter-fill meter-fill-warn" style="width: 68%"></span></span><span class="meter-count">127</span> tools</div>
+              <div class="meter" title="127 tools — activate per loop to keep context lean">
+                <span class="meter-bar"><span class="meter-fill meter-fill-warn" style="width: 68%"></span></span>
+                <span class="meter-count">127</span> tools
+              </div>
               <span>·</span>
               <span class="pulse"><span class="status-dot status-dot-idle"></span>Not installed</span>
             </div>
@@ -504,20 +550,29 @@
             </div>
           </div>
 
+          <!-- CARD 4 · GitHub (installed, A grade, AAA-verified) -->
           <div class="card catalog-card" data-view-link="inspect" tabindex="0">
             <div class="flex items-start justify-between gap-2">
               <div class="flex items-center gap-2.5">
                 <div class="svc-icon">Gh</div>
                 <div>
                   <div class="text-sm font-semibold">GitHub</div>
-                  <div class="tier tier-aaa"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v6c0 5 4 9 9 9s9-4 9-9V7l-9-5z"/></svg>AAA · verified by Maskin</div>
+                  <div class="tier tier-aaa">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v6c0 5 4 9 9 9s9-4 9-9V7l-9-5z"/></svg>
+                    AAA · verified by Maskin
+                  </div>
                 </div>
               </div>
               <div class="grade grade-A" title="A · ownership AAA · maintenance daily · quality 99%">A</div>
             </div>
-            <p class="text-xs text-[var(--muted-foreground)] leading-relaxed">Repos, PRs, issues, actions, releases. Fine-grained PAT or OAuth app.</p>
+            <p class="text-xs text-[var(--muted-foreground)] leading-relaxed">
+              Repos, PRs, issues, actions, releases. Fine-grained PAT or OAuth app.
+            </p>
             <div class="flex items-center gap-3 text-[11px] text-[var(--muted-foreground)]">
-              <div class="meter"><span class="meter-bar"><span class="meter-fill" style="width: 55%"></span></span><span class="meter-count">42</span> tools</div>
+              <div class="meter">
+                <span class="meter-bar"><span class="meter-fill" style="width: 55%"></span></span>
+                <span class="meter-count">42</span> tools
+              </div>
               <span>·</span>
               <span class="pulse pulse-healthy"><span class="status-dot status-dot-active pulse-dot"></span>99.9% 30d</span>
             </div>
@@ -528,6 +583,7 @@
           </div>
         </div>
 
+        <!-- collapsed "advanced" divider -->
         <div class="mt-6 pt-4 border-t border-dashed border-[var(--border)] text-xs text-[var(--muted-foreground)] flex items-center gap-3">
           <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4"/><path d="M12 16h.01"/><circle cx="12" cy="12" r="10"/></svg>
           <span>69 more MCPs below grade B — <a class="underline">show advanced results</a>. Unverified sources may expose broken tools or leak auth.</span>
@@ -537,8 +593,1113 @@
   </div>
 </section>
 
-<!-- Views 1b–5 (browse-empty, inspect, install-curated, install-byo, installed, loop-activation, loop-empty, health) render at prototype URL; see SPEC.md for full state coverage. To keep this file within GitHub API single-file limits the full source lives at prototypes/mcp-registry-v1/index.html and includes all ten views inlined. -->
+<!-- ============ VIEW 1b · BROWSE (no results) ============ -->
+<section class="view" data-view="browse-empty">
+  <div class="app">
+    <aside class="sidebar-full h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3"><div class="px-4 pb-2 flex items-center gap-2"><div class="w-7 h-7 rounded-md bg-[var(--primary)] flex items-center justify-center text-[var(--primary-foreground)] text-xs font-bold">M</div><span class="text-sm font-semibold">Maskin</span></div></aside>
+    <aside class="sidebar-rail h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3"></aside>
+    <main class="min-w-0">
+      <div class="border-b border-[var(--border)]">
+        <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4 sm:py-6 flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight">MCP Registry</h1>
+            <p class="text-sm text-[var(--muted-foreground)] mt-1 max-w-2xl">Nothing matches “stripe billing v3” in the curated catalogue.</p>
+          </div>
+        </div>
+      </div>
 
+      <div class="max-w-[720px] mx-auto px-4 sm:px-6 py-16">
+        <div class="text-center">
+          <div class="mx-auto w-14 h-14 rounded-2xl bg-[var(--muted)] flex items-center justify-center mb-4">
+            <svg class="icon icon-lg text-[var(--muted-foreground)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          </div>
+          <h2 class="text-lg font-semibold">No curated MCPs match “stripe billing v3”</h2>
+          <p class="text-sm text-[var(--muted-foreground)] mt-1 max-w-md mx-auto">
+            The community may already have one — we just haven't tested it. You have three paths.
+          </p>
+        </div>
+
+        <div class="mt-6 grid gap-3 sm:grid-cols-3">
+          <button class="card p-4 text-left hover:border-[var(--border-hover)]" data-view-link="browse">
+            <svg class="icon mb-2" style="color: var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <div class="text-sm font-medium">Search unverified</div>
+            <div class="text-xs text-[var(--muted-foreground)] mt-1">See MCPs below grade B. May be broken or malicious.</div>
+          </button>
+          <button class="card p-4 text-left hover:border-[var(--border-hover)]" data-view-link="install-byo">
+            <svg class="icon mb-2" style="color: var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            <div class="text-sm font-medium">Paste endpoint</div>
+            <div class="text-xs text-[var(--muted-foreground)] mt-1">If you have the MCP's URL, connect it directly. BYO.</div>
+          </button>
+          <button class="card p-4 text-left hover:border-[var(--border-hover)]">
+            <svg class="icon mb-2" style="color: var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16"/><path d="m12 4 8 8-8 8"/></svg>
+            <div class="text-sm font-medium">Request curation</div>
+            <div class="text-xs text-[var(--muted-foreground)] mt-1">Tell us what's missing. We publish a queue.</div>
+          </button>
+        </div>
+
+        <div class="mt-8 danger-rule rounded-lg p-3 text-xs">
+          <div class="font-medium text-[var(--foreground)]">Heads-up before you install an unverified MCP</div>
+          <p class="text-[var(--muted-foreground)] mt-1">
+            The Queen's University study (2025) found ~66% of community MCPs have critical-level code issues — from tool descriptions
+            that prompt-inject, to auth flows that leak tokens. Use BYO for endpoints you own or trust; use unverified only in throwaway loops.
+          </p>
+        </div>
+      </div>
+    </main>
+  </div>
+</section>
+
+<!-- ============ VIEW 1c · INSPECT (MCP detail sheet — Linear picked) ============ -->
+<section class="view" data-view="inspect">
+  <div class="app">
+    <aside class="sidebar-full h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3"><div class="px-4 pb-2 flex items-center gap-2"><div class="w-7 h-7 rounded-md bg-[var(--primary)] flex items-center justify-center text-[var(--primary-foreground)] text-xs font-bold">M</div><span class="text-sm font-semibold">Maskin</span></div></aside>
+    <aside class="sidebar-rail h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3"></aside>
+    <main class="min-w-0">
+      <div class="border-b border-[var(--border)]">
+        <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-3 flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
+          <a data-view-link="browse" class="hover:underline">MCP Registry</a>
+          <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+          <span>Catalogue</span>
+          <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+          <span class="text-[var(--foreground)]">Linear</span>
+        </div>
+      </div>
+
+      <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-6">
+        <!-- header -->
+        <div class="flex items-start gap-4">
+          <div class="svc-icon svc-icon-lg">Ln</div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-3 flex-wrap">
+              <h1 class="text-2xl font-semibold tracking-tight">Linear</h1>
+              <div class="grade grade-lg grade-A" title="A · ownership Official · maintenance weekly · quality 98%">A</div>
+              <div class="tier tier-official">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                Official · published by Linear
+              </div>
+            </div>
+            <p class="text-sm text-[var(--muted-foreground)] mt-1 max-w-2xl">
+              Issues, projects, cycles, comments — Linear's official MCP endpoint. Rate-limited to 200 req/min per token.
+            </p>
+            <div class="flex items-center gap-2 mt-2 flex-wrap text-[11px] text-[var(--muted-foreground)]">
+              <span class="font-mono">mcp.linear.app/v1</span>
+              <span>·</span>
+              <span>Published 2026-06-14</span>
+              <span>·</span>
+              <span>Last verified 4 min ago</span>
+            </div>
+          </div>
+          <div class="flex flex-col items-end gap-2 flex-shrink-0">
+            <button class="btn btn-primary" data-view-link="install-curated">
+              <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+              Install for this workspace
+            </button>
+            <span class="text-[11px] text-[var(--muted-foreground)]">~90 sec incl. OAuth</span>
+          </div>
+        </div>
+
+        <!-- content grid -->
+        <div class="grid gap-4 mt-6" style="grid-template-columns: 1fr 320px;">
+          <!-- left: tools + requirements -->
+          <div class="space-y-4">
+            <!-- Requirements card -->
+            <div class="card">
+              <div class="p-4 border-b border-[var(--border)]">
+                <div class="text-sm font-semibold">Before you install</div>
+                <div class="text-xs text-[var(--muted-foreground)] mt-0.5">What Linear needs, and what Maskin will do with it.</div>
+              </div>
+              <div class="p-4 space-y-3">
+                <div class="flex items-start gap-3">
+                  <div class="w-6 h-6 rounded-md bg-[var(--brand-subtle)] flex items-center justify-center flex-shrink-0">
+                    <svg class="icon icon-sm" style="color: var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2 15 8"/><path d="m17 6 4 4"/><path d="M11 12a5 5 0 1 1-7.07 7.07L2 21l3-3a5 5 0 0 1 6-6z"/></svg>
+                  </div>
+                  <div class="flex-1">
+                    <div class="text-sm font-medium">1 credential — Linear OAuth token</div>
+                    <div class="text-xs text-[var(--muted-foreground)]">Stored in your Keychain. Fail-closed by default — no agent can read it until you assign one.</div>
+                  </div>
+                </div>
+                <div class="flex items-start gap-3">
+                  <div class="w-6 h-6 rounded-md bg-[var(--brand-subtle)] flex items-center justify-center flex-shrink-0">
+                    <svg class="icon icon-sm" style="color: var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a7 7 0 0 1 14 0v1"/></svg>
+                  </div>
+                  <div class="flex-1">
+                    <div class="text-sm font-medium">1 agent scope — pick during install</div>
+                    <div class="text-xs text-[var(--muted-foreground)]">Which of your workspace agents can read this credential. Configurable later.</div>
+                  </div>
+                </div>
+                <div class="flex items-start gap-3">
+                  <div class="w-6 h-6 rounded-md bg-[var(--brand-subtle)] flex items-center justify-center flex-shrink-0">
+                    <svg class="icon icon-sm" style="color: var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h20"/><path d="M12 2v20"/></svg>
+                  </div>
+                  <div class="flex-1">
+                    <div class="text-sm font-medium">Per-loop activation — you pick tools when you build the loop</div>
+                    <div class="text-xs text-[var(--muted-foreground)]">Nothing is active in any loop until you turn it on in that loop's step. Zero context bloat by default.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tools card -->
+            <div class="card">
+              <div class="p-4 border-b border-[var(--border)] flex items-center justify-between gap-2">
+                <div>
+                  <div class="text-sm font-semibold">Tools exposed</div>
+                  <div class="text-xs text-[var(--muted-foreground)] mt-0.5">Loaded per loop, not per session. Full descriptions in the loop-step picker.</div>
+                </div>
+                <div class="meter">
+                  <span class="meter-bar"><span class="meter-fill" style="width: 32%"></span></span>
+                  <span class="meter-count">24</span> tools
+                </div>
+              </div>
+              <div class="p-4">
+                <div class="tool-cluster">
+                  <span class="tool-chip">issue.create</span>
+                  <span class="tool-chip">issue.update</span>
+                  <span class="tool-chip">issue.search</span>
+                  <span class="tool-chip">issue.comment</span>
+                  <span class="tool-chip">issue.transition</span>
+                  <span class="tool-chip">project.list</span>
+                  <span class="tool-chip">project.get</span>
+                  <span class="tool-chip">cycle.list</span>
+                  <span class="tool-chip">cycle.get</span>
+                  <span class="tool-chip">team.list</span>
+                  <span class="tool-chip">team.members</span>
+                  <span class="tool-chip">user.me</span>
+                  <span class="tool-chip">user.search</span>
+                  <span class="tool-chip">label.list</span>
+                  <span class="tool-chip">label.create</span>
+                  <span class="tool-chip">workflow.list</span>
+                  <span class="tool-chip">document.list</span>
+                  <span class="tool-chip">document.get</span>
+                  <span class="tool-chip">attachment.upload</span>
+                  <span class="tool-chip">roadmap.list</span>
+                  <span class="tool-chip">roadmap.get</span>
+                  <span class="tool-chip">initiative.list</span>
+                  <span class="tool-chip">reaction.add</span>
+                  <span class="tool-chip">notification.list</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- right: side cards -->
+          <div class="space-y-4">
+            <!-- Trust card -->
+            <div class="card p-4">
+              <div class="text-sm font-semibold">Trust grade</div>
+              <div class="flex items-center gap-3 mt-2">
+                <div class="grade grade-lg grade-A">A</div>
+                <div class="flex-1 text-xs">
+                  <div class="text-[var(--foreground)] font-medium">Verified by Maskin · updated daily</div>
+                  <div class="text-[var(--muted-foreground)]">Weighted sum of the three sub-scores.</div>
+                </div>
+              </div>
+              <div class="mt-3 space-y-2 text-xs">
+                <div class="flex items-center justify-between">
+                  <span class="text-[var(--muted-foreground)]">Ownership</span>
+                  <span class="flex items-center gap-1.5"><span class="status-dot status-dot-active"></span>Official</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-[var(--muted-foreground)]">Maintenance</span>
+                  <span class="flex items-center gap-1.5"><span class="status-dot status-dot-active"></span>Last commit 3d</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-[var(--muted-foreground)]">Reliability 30d</span>
+                  <span class="flex items-center gap-1.5 font-mono"><span class="status-dot status-dot-active"></span>98.1%</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Auth card -->
+            <div class="card p-4">
+              <div class="text-sm font-semibold">Auth</div>
+              <div class="mt-2 space-y-1.5 text-xs">
+                <div class="flex items-center gap-2"><span class="chip">OAuth 2.1</span></div>
+                <div class="text-[var(--muted-foreground)]">Standard OAuth authorization-code + PKCE. Refresh tokens supported. Maskin's shared client — you don't need to register your own OAuth app.</div>
+              </div>
+            </div>
+
+            <!-- Community card -->
+            <div class="card p-4">
+              <div class="text-sm font-semibold">Community</div>
+              <div class="mt-2 space-y-1.5 text-xs">
+                <div class="flex items-center justify-between"><span class="text-[var(--muted-foreground)]">Installs (Maskin)</span><span class="font-mono">1,384</span></div>
+                <div class="flex items-center justify-between"><span class="text-[var(--muted-foreground)]">Source</span><a class="font-mono">github.com/linear/mcp</a></div>
+                <div class="flex items-center justify-between"><span class="text-[var(--muted-foreground)]">Also listed on</span><span>Glama · PulseMCP</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</section>
+
+<!-- ============ VIEW 2a · INSTALL FLOW (curated MCP: Linear) ============ -->
+<section class="view" data-view="install-curated">
+  <div class="app">
+    <aside class="sidebar-full h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3"></aside>
+    <aside class="sidebar-rail h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3"></aside>
+    <main class="min-w-0">
+      <!-- header + stepper -->
+      <div class="border-b border-[var(--border)]">
+        <div class="max-w-[880px] mx-auto px-4 sm:px-6 py-4">
+          <div class="flex items-center gap-2 text-xs text-[var(--muted-foreground)] mb-2">
+            <a data-view-link="browse" class="hover:underline">MCP Registry</a>
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            <a data-view-link="inspect" class="hover:underline">Linear</a>
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            <span class="text-[var(--foreground)]">Install</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="svc-icon">Ln</div>
+            <div>
+              <h1 class="text-xl font-semibold tracking-tight">Install Linear</h1>
+              <p class="text-xs text-[var(--muted-foreground)]">3 steps · ~90 seconds. Nothing is live in a loop until you activate it there.</p>
+            </div>
+          </div>
+          <div class="mt-4 stepper text-xs">
+            <div class="step-done"><span class="step-num">✓</span><span class="font-medium">Confirm</span></div>
+            <span class="step-sep">→</span>
+            <div class="step-current"><span class="step-num">2</span><span class="font-medium">Credential</span></div>
+            <span class="step-sep">→</span>
+            <div class="step-todo"><span class="step-num">3</span><span class="text-[var(--muted-foreground)]">Agent scope</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- step 2 body -->
+      <div class="max-w-[720px] mx-auto px-4 sm:px-6 py-6">
+        <div class="scope-rule rounded-lg p-3 mb-4 text-sm">
+          <div class="font-medium">Linear needs one credential — a Linear OAuth token.</div>
+          <div class="text-xs text-[var(--muted-foreground)] mt-0.5">Maskin runs the OAuth dance. The resulting token is stored in your Keychain, encrypted at rest, and never shown after this screen.</div>
+        </div>
+
+        <!-- credential card: existing or new -->
+        <div class="card">
+          <div class="p-4 border-b border-[var(--border)] flex items-center justify-between">
+            <div>
+              <div class="text-sm font-semibold">Credential</div>
+              <div class="text-xs text-[var(--muted-foreground)] mt-0.5">Pick one from your Keychain, or add a new one now.</div>
+            </div>
+            <a class="text-xs underline">Manage in Keychain →</a>
+          </div>
+
+          <div class="divide-border">
+            <label class="p-4 flex items-center gap-3 cursor-pointer hover:bg-[var(--muted)]">
+              <input type="radio" name="cred" class="w-4 h-4 accent-[var(--brand)]" />
+              <div class="svc-icon svc-icon-sm">Ln</div>
+              <div class="flex-1">
+                <div class="text-sm font-medium">Linear · Sindre AI <span class="badge badge-brand ml-1">Existing</span></div>
+                <div class="text-xs text-[var(--muted-foreground)] font-mono">tk_••••••••••••2FaZ · used by 2 agents</div>
+              </div>
+              <span class="badge badge-active">Connected</span>
+            </label>
+
+            <label class="p-4 flex items-center gap-3 cursor-pointer bg-[var(--brand-subtle)]">
+              <input type="radio" name="cred" class="w-4 h-4 accent-[var(--brand)]" checked />
+              <div class="w-6 h-6 rounded-md bg-[var(--card)] border border-[var(--border)] flex items-center justify-center flex-shrink-0">
+                <svg class="icon icon-sm" style="color: var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+              </div>
+              <div class="flex-1">
+                <div class="text-sm font-medium">Add a new Linear credential</div>
+                <div class="text-xs text-[var(--brand-subtle-foreground)]">Opens Linear in a new tab, comes back automatically.</div>
+              </div>
+              <button class="btn btn-primary btn-sm">
+                <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M17 4v5h-5"/></svg>
+                Authorize with Linear
+              </button>
+            </label>
+          </div>
+        </div>
+
+        <!-- state: loading (illustrative, hidden default) -->
+        <div class="card mt-4 p-4 text-sm flex items-center gap-3" data-state-hidden>
+          <svg class="icon animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+          <div class="flex-1">
+            <div class="font-medium">Waiting for Linear to redirect back…</div>
+            <div class="text-xs text-[var(--muted-foreground)]">A new tab has opened. Complete the sign-in there and you'll return here automatically.</div>
+          </div>
+        </div>
+
+        <!-- info: what we're about to store -->
+        <details class="mt-4 card p-4 text-xs">
+          <summary class="cursor-pointer text-sm font-medium">What Maskin stores after authorization</summary>
+          <ul class="mt-3 space-y-2 text-[var(--muted-foreground)]">
+            <li class="flex gap-2"><svg class="icon icon-sm flex-shrink-0 mt-0.5" style="color:var(--success)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Encrypted access + refresh tokens, envelope-encrypted per-workspace (AWS KMS).</li>
+            <li class="flex gap-2"><svg class="icon icon-sm flex-shrink-0 mt-0.5" style="color:var(--success)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Your Linear account name and workspace ID, so agents can call as you.</li>
+            <li class="flex gap-2"><svg class="icon icon-sm flex-shrink-0 mt-0.5" style="color:var(--success)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>OAuth scopes granted, so the loop-step picker can hide tools you didn't authorise.</li>
+            <li class="flex gap-2"><svg class="icon icon-sm flex-shrink-0 mt-0.5" style="color:var(--destructive)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>No plaintext of the token after this screen. No access without a scoped agent read.</li>
+          </ul>
+        </details>
+
+        <!-- footer -->
+        <div class="mt-6 flex items-center justify-between gap-2">
+          <button class="btn btn-ghost" data-view-link="inspect">← Back</button>
+          <div class="flex items-center gap-2">
+            <button class="btn btn-outline">Cancel</button>
+            <button class="btn btn-primary">Continue to scope →</button>
+          </div>
+        </div>
+
+        <!-- installed state: success card (also illustrative — the flow returns here after step 3) -->
+        <div class="success-rule rounded-lg p-3 mt-6 text-sm hidden">
+          <div class="font-medium">Linear is installed. 12 tools available to your loops.</div>
+          <div class="text-xs text-[var(--muted-foreground)] mt-0.5">Time-to-connection: 1 min 37 s.</div>
+        </div>
+      </div>
+    </main>
+  </div>
+</section>
+
+<!-- ============ VIEW 2b · INSTALL BYO (paste endpoint, capability preview) ============ -->
+<section class="view" data-view="install-byo">
+  <div class="app">
+    <aside class="sidebar-full h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3"></aside>
+    <aside class="sidebar-rail h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3"></aside>
+    <main class="min-w-0">
+      <div class="border-b border-[var(--border)]">
+        <div class="max-w-[880px] mx-auto px-4 sm:px-6 py-4">
+          <div class="flex items-center gap-2 text-xs text-[var(--muted-foreground)] mb-2">
+            <a data-view-link="browse" class="hover:underline">MCP Registry</a>
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            <span class="text-[var(--foreground)]">Install by URL</span>
+          </div>
+          <h1 class="text-xl font-semibold tracking-tight">Connect any MCP endpoint</h1>
+          <p class="text-xs text-[var(--muted-foreground)] mt-1 max-w-2xl">Paste the MCP server's URL. We'll discover its tools, show you what it exposes, then ask for credentials.</p>
+
+          <div class="mt-4 stepper text-xs">
+            <div class="step-current"><span class="step-num">1</span><span class="font-medium">Endpoint</span></div>
+            <span class="step-sep">→</span>
+            <div class="step-todo"><span class="step-num">2</span><span class="text-[var(--muted-foreground)]">Auth</span></div>
+            <span class="step-sep">→</span>
+            <div class="step-todo"><span class="step-num">3</span><span class="text-[var(--muted-foreground)]">Preview + scope</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="max-w-[720px] mx-auto px-4 sm:px-6 py-6 space-y-4">
+        <!-- endpoint form -->
+        <div class="card p-4 space-y-3">
+          <div>
+            <label class="text-xs font-medium">Endpoint URL</label>
+            <div class="mt-1 flex gap-2">
+              <input class="input flex-1 font-mono" value="https://mcp.internal.acme.co/v1" />
+              <button class="btn btn-outline">
+                <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                Discover
+              </button>
+            </div>
+            <div class="mt-1 text-[11px] text-[var(--muted-foreground)]">HTTPS only. We'll call <span class="font-mono">initialize</span> then <span class="font-mono">tools/list</span> to preview capabilities before storing anything.</div>
+          </div>
+
+          <div>
+            <label class="text-xs font-medium">Display name</label>
+            <input class="input mt-1" placeholder="e.g. Acme Internal API" />
+            <div class="mt-1 text-[11px] text-[var(--muted-foreground)]">What loop-builders will see in the tool picker.</div>
+          </div>
+        </div>
+
+        <!-- auth-method picker -->
+        <div class="card p-4">
+          <div class="text-sm font-semibold">Authentication</div>
+          <div class="text-xs text-[var(--muted-foreground)] mt-0.5">How Maskin authenticates to this MCP. Credentials go into your Keychain — nothing is stored inline on the MCP row itself.</div>
+          <div class="mt-3 grid gap-2 sm:grid-cols-2">
+            <label class="card p-3 cursor-pointer border-[color:color-mix(in_oklab,var(--brand)_35%,transparent)] bg-[var(--brand-subtle)]">
+              <div class="flex items-center gap-2">
+                <input type="radio" name="auth" class="w-4 h-4 accent-[var(--brand)]" checked />
+                <span class="text-sm font-medium">None (public)</span>
+              </div>
+              <div class="text-[11px] text-[var(--muted-foreground)] mt-1">No credentials sent. Anyone who has the URL can call this MCP.</div>
+            </label>
+            <label class="card p-3 cursor-pointer hover:border-[var(--border-hover)]">
+              <div class="flex items-center gap-2">
+                <input type="radio" name="auth" class="w-4 h-4 accent-[var(--brand)]" />
+                <span class="text-sm font-medium">Bearer token</span>
+              </div>
+              <div class="text-[11px] text-[var(--muted-foreground)] mt-1">Static token sent in <span class="font-mono">Authorization</span>.</div>
+            </label>
+            <label class="card p-3 cursor-pointer hover:border-[var(--border-hover)]">
+              <div class="flex items-center gap-2">
+                <input type="radio" name="auth" class="w-4 h-4 accent-[var(--brand)]" />
+                <span class="text-sm font-medium">API key header</span>
+              </div>
+              <div class="text-[11px] text-[var(--muted-foreground)] mt-1">Custom header name — you configure the header + value.</div>
+            </label>
+            <label class="card p-3 cursor-pointer hover:border-[var(--border-hover)]">
+              <div class="flex items-center gap-2">
+                <input type="radio" name="auth" class="w-4 h-4 accent-[var(--brand)]" />
+                <span class="text-sm font-medium">OAuth 2.1</span>
+              </div>
+              <div class="text-[11px] text-[var(--muted-foreground)] mt-1">Authorization-code + PKCE. You'll paste client ID/secret next.</div>
+            </label>
+          </div>
+        </div>
+
+        <!-- capability preview -->
+        <div class="card">
+          <div class="p-4 border-b border-[var(--border)] flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-semibold flex items-center gap-2">
+                <svg class="icon icon-sm" style="color:var(--success)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                Server responded — capability preview
+              </div>
+              <div class="text-xs text-[var(--muted-foreground)] mt-0.5">This is what <span class="font-mono">tools/list</span> returned. Nothing is stored until you save.</div>
+            </div>
+            <div class="meter">
+              <span class="meter-bar"><span class="meter-fill meter-fill-warn" style="width: 78%"></span></span>
+              <span class="meter-count">213</span> tools
+            </div>
+          </div>
+          <div class="p-4 space-y-3">
+            <div class="warn-rule rounded-md p-2.5 text-xs flex items-start gap-2">
+              <svg class="icon icon-sm flex-shrink-0 mt-0.5" style="color:var(--warning)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4"/><path d="M12 16h.01"/><circle cx="12" cy="12" r="10"/></svg>
+              <div>
+                <div class="font-medium text-[var(--foreground)]">213 tools is a lot.</div>
+                <div class="text-[var(--muted-foreground)]">Maskin loads MCP schemas per loop-run, not per session — so this is safe to install. But your loop-step picker will show 213 candidates; use search there.</div>
+              </div>
+            </div>
+            <div>
+              <div class="eyebrow mb-2">Tools · showing 12 of 213</div>
+              <div class="tool-cluster">
+                <span class="tool-chip">orders.create</span>
+                <span class="tool-chip">orders.list</span>
+                <span class="tool-chip">orders.refund</span>
+                <span class="tool-chip">customers.get</span>
+                <span class="tool-chip">customers.upsert</span>
+                <span class="tool-chip">invoices.send</span>
+                <span class="tool-chip">warehouse.pick</span>
+                <span class="tool-chip">warehouse.pack</span>
+                <span class="tool-chip">shipment.track</span>
+                <span class="tool-chip">returns.create</span>
+                <span class="tool-chip">audit.query</span>
+                <span class="tool-chip">audit.export</span>
+                <span class="chip">+ 201 more</span>
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-4 text-xs pt-3 border-t border-[var(--border)]">
+              <div>
+                <div class="eyebrow mb-1">Server info</div>
+                <div class="font-mono">acme-mcp v3.4.1</div>
+                <div class="text-[var(--muted-foreground)] mt-0.5">MCP spec 2026-06-18 · Streamable HTTP</div>
+              </div>
+              <div>
+                <div class="eyebrow mb-1">Capabilities</div>
+                <div class="flex flex-wrap gap-1">
+                  <span class="chip">tools</span>
+                  <span class="chip">resources</span>
+                  <span class="chip">prompts</span>
+                  <span class="chip">progress</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between gap-2 pt-2">
+          <button class="btn btn-ghost" data-view-link="browse">← Cancel</button>
+          <button class="btn btn-primary">Install as “Acme Internal API” →</button>
+        </div>
+      </div>
+    </main>
+  </div>
+</section>
+
+<!-- ============ VIEW 3 · INSTALLED (workspace-scoped MCPs) ============ -->
+<section class="view" data-view="installed">
+  <div class="app">
+    <aside class="sidebar-full h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3"></aside>
+    <aside class="sidebar-rail h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3"></aside>
+    <main class="min-w-0">
+      <div class="border-b border-[var(--border)]">
+        <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4 sm:py-6 flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight">MCP Registry</h1>
+            <p class="text-sm text-[var(--muted-foreground)] mt-1 max-w-2xl">4 MCPs installed in this workspace. None are running until a loop activates them.</p>
+          </div>
+          <button class="btn btn-primary" data-view-link="browse">
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            Install another
+          </button>
+        </div>
+      </div>
+
+      <div class="border-b border-[var(--border)] bg-[var(--surface-sunken)]">
+        <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-2 flex items-center gap-3">
+          <div class="tabs-pill">
+            <button aria-selected="false" data-view-link="browse">Catalogue</button>
+            <button aria-selected="true">Installed <span class="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-[var(--muted)]">4</span></button>
+            <button aria-selected="false" data-view-link="health">Health</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4">
+        <div class="card overflow-hidden">
+          <!-- header row -->
+          <div class="hidden sm:grid px-4 py-2 text-[10px] uppercase tracking-wider text-[var(--muted-foreground)] border-b border-[var(--border)] bg-[var(--surface-sunken)]" style="grid-template-columns: 1.4fr 100px 1fr 140px 100px 60px">
+            <div>MCP</div>
+            <div>Tools</div>
+            <div>Loops using</div>
+            <div>Health</div>
+            <div>Trust</div>
+            <div></div>
+          </div>
+
+          <!-- row: Notion (healthy) -->
+          <a class="grid px-4 py-3 items-center border-b border-[var(--border)] hover:bg-[var(--muted)] gap-3" style="grid-template-columns: 1.4fr 100px 1fr 140px 100px 60px" data-view-link="inspect">
+            <div class="flex items-center gap-2.5">
+              <div class="svc-icon svc-icon-sm">Nt</div>
+              <div>
+                <div class="text-sm font-medium">Notion</div>
+                <div class="text-[11px] text-[var(--muted-foreground)] font-mono">mcp.notion.com/v1</div>
+              </div>
+            </div>
+            <div class="text-sm font-mono">17</div>
+            <div class="flex items-center gap-1 flex-wrap">
+              <span class="chip">Sales · Sindre AI</span>
+              <span class="chip">Weekly digest</span>
+            </div>
+            <div><span class="pulse pulse-healthy"><span class="status-dot status-dot-active pulse-dot"></span>Healthy</span></div>
+            <div><span class="grade grade-A">A</span></div>
+            <div class="text-right text-[var(--muted-foreground)]"><svg class="icon icon-sm inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></div>
+          </a>
+
+          <!-- row: GitHub (healthy) -->
+          <a class="grid px-4 py-3 items-center border-b border-[var(--border)] hover:bg-[var(--muted)] gap-3" style="grid-template-columns: 1.4fr 100px 1fr 140px 100px 60px" data-view-link="inspect">
+            <div class="flex items-center gap-2.5">
+              <div class="svc-icon svc-icon-sm">Gh</div>
+              <div>
+                <div class="text-sm font-medium">GitHub</div>
+                <div class="text-[11px] text-[var(--muted-foreground)] font-mono">api.github.com/mcp</div>
+              </div>
+            </div>
+            <div class="text-sm font-mono">42</div>
+            <div class="flex items-center gap-1 flex-wrap">
+              <span class="chip">Design PR watcher</span>
+              <span class="chip">+2</span>
+            </div>
+            <div><span class="pulse pulse-healthy"><span class="status-dot status-dot-active pulse-dot"></span>Healthy</span></div>
+            <div><span class="grade grade-A">A</span></div>
+            <div class="text-right text-[var(--muted-foreground)]"><svg class="icon icon-sm inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></div>
+          </a>
+
+          <!-- row: Stripe (auth-failed) -->
+          <a class="grid px-4 py-3 items-center border-b border-[var(--border)] hover:bg-[var(--muted)] gap-3 warn-rule" style="grid-template-columns: 1.4fr 100px 1fr 140px 100px 60px" data-view-link="health">
+            <div class="flex items-center gap-2.5">
+              <div class="svc-icon svc-icon-sm">St</div>
+              <div>
+                <div class="text-sm font-medium">Stripe</div>
+                <div class="text-[11px] text-[var(--muted-foreground)] font-mono">mcp.stripe.com/v1</div>
+              </div>
+            </div>
+            <div class="text-sm font-mono">31</div>
+            <div class="flex items-center gap-1 flex-wrap">
+              <span class="chip">MRR watcher</span>
+            </div>
+            <div>
+              <span class="pulse"><span class="status-dot status-dot-error"></span>Auth expired</span>
+              <button class="btn btn-outline btn-sm mt-1" onclick="event.stopPropagation(); event.preventDefault(); switchView('health')">Reconnect</button>
+            </div>
+            <div><span class="grade grade-B">B</span></div>
+            <div class="text-right text-[var(--muted-foreground)]"><svg class="icon icon-sm inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></div>
+          </a>
+
+          <!-- row: BYO Acme (server down) -->
+          <a class="grid px-4 py-3 items-center hover:bg-[var(--muted)] gap-3 danger-rule" style="grid-template-columns: 1.4fr 100px 1fr 140px 100px 60px" data-view-link="health">
+            <div class="flex items-center gap-2.5">
+              <div class="svc-icon svc-icon-sm">Ac</div>
+              <div>
+                <div class="text-sm font-medium">Acme Internal API <span class="badge badge-brand ml-1">BYO</span></div>
+                <div class="text-[11px] text-[var(--muted-foreground)] font-mono">mcp.internal.acme.co/v1</div>
+              </div>
+            </div>
+            <div class="text-sm font-mono">213</div>
+            <div class="flex items-center gap-1 flex-wrap">
+              <span class="chip">Fulfilment loop</span>
+              <span class="chip">Returns triage</span>
+            </div>
+            <div>
+              <span class="pulse"><span class="status-dot status-dot-error"></span>Server down</span>
+              <div class="text-[11px] text-[var(--muted-foreground)] mt-0.5">Started 4 min ago</div>
+            </div>
+            <div><span class="badge badge-outline">—</span></div>
+            <div class="text-right text-[var(--muted-foreground)]"><svg class="icon icon-sm inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></div>
+          </a>
+        </div>
+
+        <div class="mt-4 text-xs text-[var(--muted-foreground)] flex items-center gap-2">
+          <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4"/><path d="M12 16h.01"/><circle cx="12" cy="12" r="10"/></svg>
+          <span>Installed MCPs are not automatically active in every loop. Open a loop step and pick which MCPs it needs.</span>
+        </div>
+      </div>
+    </main>
+  </div>
+</section>
+
+<!-- ============ VIEW 4 · LOOP ACTIVATION (per-loop MCP tool activation) ============ -->
+<section class="view" data-view="loop-activation">
+  <div class="app">
+    <aside class="sidebar-full h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3"></aside>
+    <aside class="sidebar-rail h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3"></aside>
+    <main class="min-w-0">
+      <!-- loop builder chrome -->
+      <div class="border-b border-[var(--border)]">
+        <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4 sm:py-5">
+          <div class="flex items-center gap-2 text-xs text-[var(--muted-foreground)] mb-2">
+            <span>Loops</span>
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            <span class="text-[var(--foreground)]">Weekly digest</span>
+          </div>
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h1 class="text-xl font-semibold tracking-tight">Weekly digest</h1>
+              <p class="text-xs text-[var(--muted-foreground)] mt-1">Every Monday · pulls last week's PRs + Notion changes + Linear issues, drafts a summary for the founder.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="badge badge-active">Live</span>
+              <button class="btn btn-outline btn-sm">Test run</button>
+              <button class="btn btn-primary btn-sm">Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- two-column: loop steps + right-hand context -->
+      <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4 grid gap-4" style="grid-template-columns: 1fr 320px;">
+        <!-- LEFT — steps -->
+        <div class="space-y-3">
+          <div class="loop-step">
+            <div class="flex items-center gap-2">
+              <span class="badge badge-outline">1</span>
+              <div class="text-sm font-medium">Trigger</div>
+              <div class="ml-auto text-xs text-[var(--muted-foreground)]">Cron · Mon 09:00 CET</div>
+            </div>
+          </div>
+
+          <!-- STEP 2 (current, expanded) -->
+          <div class="loop-step loop-step-active">
+            <div class="flex items-center gap-2">
+              <span class="badge badge-brand">2</span>
+              <div class="text-sm font-medium">Gather</div>
+              <span class="chip">Sindre AI · Weekly agent</span>
+              <div class="ml-auto text-xs text-[var(--muted-foreground)]">3 MCPs active</div>
+            </div>
+
+            <p class="text-xs text-[var(--muted-foreground)] mt-2">Pull last week's activity from the sources this loop needs.</p>
+
+            <!-- MCP activation panel (the load-bearing surface) -->
+            <div class="mt-3 border border-[var(--border)] rounded-lg overflow-hidden">
+              <div class="px-3 py-2 flex items-center justify-between bg-[var(--surface-sunken)] border-b border-[var(--border)]">
+                <div class="flex items-center gap-2">
+                  <svg class="icon icon-sm text-[var(--muted-foreground)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+                  <span class="text-xs font-medium">MCPs active in this step</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-[11px] text-[var(--muted-foreground)] font-mono">37 tools loaded · 12k tokens</span>
+                  <button class="btn btn-ghost btn-sm">Advanced</button>
+                </div>
+              </div>
+
+              <div class="p-2 space-y-0.5">
+                <!-- Notion (on) -->
+                <div class="mcp-activate mcp-activate-on">
+                  <input type="checkbox" checked class="w-4 h-4 accent-[var(--brand)]" />
+                  <div class="flex items-center gap-2 min-w-0">
+                    <div class="svc-icon svc-icon-sm">Nt</div>
+                    <div class="min-w-0">
+                      <div class="text-sm font-medium flex items-center gap-1.5">Notion <span class="text-[11px] text-[var(--muted-foreground)] font-mono">7 of 17 tools</span></div>
+                      <div class="text-[11px] text-[var(--brand-subtle-foreground)] truncate">page.search · page.get · database.query · page.children · comment.list · page.blocks · search.recent</div>
+                    </div>
+                  </div>
+                  <button class="btn btn-outline btn-sm">Pick tools</button>
+                </div>
+
+                <!-- GitHub (on) -->
+                <div class="mcp-activate mcp-activate-on">
+                  <input type="checkbox" checked class="w-4 h-4 accent-[var(--brand)]" />
+                  <div class="flex items-center gap-2 min-w-0">
+                    <div class="svc-icon svc-icon-sm">Gh</div>
+                    <div class="min-w-0">
+                      <div class="text-sm font-medium flex items-center gap-1.5">GitHub <span class="text-[11px] text-[var(--muted-foreground)] font-mono">4 of 42 tools</span></div>
+                      <div class="text-[11px] text-[var(--brand-subtle-foreground)] truncate">pulls.list · pulls.get · commits.list · issues.list</div>
+                    </div>
+                  </div>
+                  <button class="btn btn-outline btn-sm">Pick tools</button>
+                </div>
+
+                <!-- Linear (on, all tools) -->
+                <div class="mcp-activate mcp-activate-on">
+                  <input type="checkbox" checked class="w-4 h-4 accent-[var(--brand)]" />
+                  <div class="flex items-center gap-2 min-w-0">
+                    <div class="svc-icon svc-icon-sm">Ln</div>
+                    <div class="min-w-0">
+                      <div class="text-sm font-medium flex items-center gap-1.5">Linear <span class="text-[11px] text-[var(--muted-foreground)] font-mono">all 24 tools</span></div>
+                      <div class="text-[11px] text-[var(--brand-subtle-foreground)]">Every tool this MCP exposes will be loaded.</div>
+                    </div>
+                  </div>
+                  <button class="btn btn-outline btn-sm">Pick tools</button>
+                </div>
+
+                <!-- Stripe (installed but off in this loop) -->
+                <div class="mcp-activate">
+                  <input type="checkbox" class="w-4 h-4 accent-[var(--brand)]" />
+                  <div class="flex items-center gap-2 min-w-0 opacity-70">
+                    <div class="svc-icon svc-icon-sm">St</div>
+                    <div class="min-w-0">
+                      <div class="text-sm font-medium flex items-center gap-1.5">Stripe <span class="text-[11px] text-[var(--muted-foreground)]">off · installed workspace-wide</span></div>
+                      <div class="text-[11px] text-[var(--muted-foreground)]">31 tools available. Not loaded — this step doesn't need them.</div>
+                    </div>
+                  </div>
+                  <span class="text-[11px] text-[var(--muted-foreground)]">Toggle on</span>
+                </div>
+
+                <!-- Acme (installed but server down) -->
+                <div class="mcp-activate">
+                  <input type="checkbox" class="w-4 h-4 accent-[var(--brand)]" disabled />
+                  <div class="flex items-center gap-2 min-w-0 opacity-70">
+                    <div class="svc-icon svc-icon-sm">Ac</div>
+                    <div class="min-w-0">
+                      <div class="text-sm font-medium flex items-center gap-1.5">Acme Internal API <span class="badge badge-failed" style="height:1rem;font-size:.625rem">Server down</span></div>
+                      <div class="text-[11px] text-[var(--muted-foreground)]">Fix connection in Health before activating.</div>
+                    </div>
+                  </div>
+                  <button class="btn btn-outline btn-sm" onclick="switchView('health')">Health →</button>
+                </div>
+
+                <!-- Add more (install-from-loop deep-link) -->
+                <div class="mcp-activate border-t border-dashed border-[var(--border)] mt-1 pt-2" onclick="switchView('browse')" style="cursor:pointer">
+                  <svg class="icon icon-sm text-[var(--muted-foreground)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                  <div class="text-sm text-[var(--muted-foreground)]">Install another MCP…</div>
+                  <span class="text-[11px] text-[var(--muted-foreground)]">Opens Registry, comes back here</span>
+                </div>
+              </div>
+
+              <!-- token cost + discipline footer -->
+              <div class="px-3 py-2 border-t border-[var(--border)] bg-[var(--surface-sunken)] flex items-center justify-between text-[11px] text-[var(--muted-foreground)]">
+                <span>Only the checked tools are loaded when this step runs — deferred load keeps context lean.</span>
+                <a class="underline">How this works →</a>
+              </div>
+            </div>
+
+            <!-- prompt field placeholder -->
+            <div class="mt-3">
+              <div class="eyebrow mb-1">Prompt</div>
+              <div class="border border-[var(--border)] rounded-md p-3 text-xs text-[var(--muted-foreground)] font-mono min-h-16">Summarise last week's PRs (github), Notion page updates, and Linear issue progress for {founder}. Group by initiative.</div>
+            </div>
+          </div>
+
+          <div class="loop-step">
+            <div class="flex items-center gap-2">
+              <span class="badge badge-outline">3</span>
+              <div class="text-sm font-medium">Draft</div>
+              <span class="chip">Writer agent</span>
+              <div class="ml-auto text-xs text-[var(--muted-foreground)]">0 MCPs · pure LLM</div>
+            </div>
+          </div>
+
+          <div class="loop-step">
+            <div class="flex items-center gap-2">
+              <span class="badge badge-outline">4</span>
+              <div class="text-sm font-medium">Deliver</div>
+              <span class="chip">Slack MCP</span>
+              <div class="ml-auto text-xs text-[var(--muted-foreground)]">1 MCP · 2 tools</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT — token guidance -->
+        <div class="space-y-3">
+          <div class="card p-4">
+            <div class="text-sm font-semibold flex items-center gap-2">
+              <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+              Context budget · step 2
+            </div>
+            <div class="mt-3">
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-[var(--muted-foreground)]">Tool schemas</span>
+                <span class="font-mono">12,340 tok</span>
+              </div>
+              <div class="meter-bar mt-1"><span class="meter-fill" style="width: 24%"></span></div>
+              <div class="text-[11px] text-[var(--muted-foreground)] mt-1">24% of 50k soft budget · deferred-load enabled</div>
+            </div>
+            <div class="mt-3 text-xs text-[var(--muted-foreground)] leading-relaxed">
+              If you turned on <em>every</em> installed MCP with all tools, this step would load <span class="font-mono text-[var(--foreground)]">98,240 tok</span> of schemas before the prompt.
+              Per-loop activation keeps you at 12k.
+            </div>
+          </div>
+
+          <div class="card p-4">
+            <div class="text-sm font-semibold">Agent scope check</div>
+            <div class="mt-2 text-xs text-[var(--muted-foreground)]">Sindre AI · Weekly agent</div>
+            <div class="mt-2 space-y-1.5 text-xs">
+              <div class="flex items-center gap-1.5"><span class="status-dot status-dot-active"></span>Notion · read/write scoped</div>
+              <div class="flex items-center gap-1.5"><span class="status-dot status-dot-active"></span>GitHub · read scoped</div>
+              <div class="flex items-center gap-1.5"><span class="status-dot status-dot-active"></span>Linear · read/write scoped</div>
+            </div>
+            <a class="text-xs underline mt-3 inline-block">Manage in Keychain →</a>
+          </div>
+
+          <div class="scope-rule rounded-lg p-3 text-xs">
+            <div class="font-medium">You can install from here.</div>
+            <div class="text-[var(--muted-foreground)] mt-0.5">Clicking "Install another MCP…" opens the Registry and returns you to this step with the new MCP available.</div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</section>
+
+<!-- ============ VIEW 4b · LOOP with ZERO active MCPs (normal state, not a mistake) ============ -->
+<section class="view" data-view="loop-empty">
+  <div class="app">
+    <aside class="sidebar-full h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3"></aside>
+    <aside class="sidebar-rail h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3"></aside>
+    <main class="min-w-0">
+      <div class="border-b border-[var(--border)]">
+        <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4">
+          <div class="flex items-center gap-2 text-xs text-[var(--muted-foreground)] mb-2">
+            <span>Loops</span>
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            <span class="text-[var(--foreground)]">Draft — copy polish</span>
+          </div>
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h1 class="text-xl font-semibold tracking-tight">Draft — copy polish</h1>
+              <p class="text-xs text-[var(--muted-foreground)] mt-1">Rewrites a marketing paragraph. Doesn't touch any external service.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="max-w-[720px] mx-auto px-4 sm:px-6 py-4">
+        <div class="loop-step loop-step-active">
+          <div class="flex items-center gap-2">
+            <span class="badge badge-brand">2</span>
+            <div class="text-sm font-medium">Rewrite</div>
+            <span class="chip">Copy agent</span>
+            <div class="ml-auto text-xs text-[var(--muted-foreground)]">0 MCPs active</div>
+          </div>
+
+          <div class="mt-3 border border-[var(--border)] rounded-lg overflow-hidden">
+            <div class="px-3 py-2 flex items-center justify-between bg-[var(--surface-sunken)] border-b border-[var(--border)]">
+              <div class="flex items-center gap-2">
+                <svg class="icon icon-sm text-[var(--muted-foreground)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+                <span class="text-xs font-medium">MCPs active in this step</span>
+              </div>
+              <span class="text-[11px] text-[var(--muted-foreground)] font-mono">0 tools loaded</span>
+            </div>
+
+            <!-- explicit zero state (not framed as an error) -->
+            <div class="p-8 text-center">
+              <div class="mx-auto w-12 h-12 rounded-xl bg-[var(--muted)] flex items-center justify-center mb-3">
+                <svg class="icon icon-lg text-[var(--muted-foreground)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4"/><path d="M12 18v4"/><path d="m4.93 4.93 2.83 2.83"/><path d="m16.24 16.24 2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="m4.93 19.07 2.83-2.83"/><path d="m16.24 7.76 2.83-2.83"/></svg>
+              </div>
+              <div class="text-sm font-medium">No MCPs active in this step — pure LLM</div>
+              <p class="text-xs text-[var(--muted-foreground)] mt-1 max-w-xs mx-auto">
+                This is a normal state. This step doesn't need to reach any external service, so nothing is loaded.
+                Turn one on if you want the model to look things up.
+              </p>
+              <div class="mt-4 flex items-center justify-center gap-2">
+                <button class="btn btn-outline btn-sm" data-view-link="loop-activation">Turn one on</button>
+                <button class="btn btn-ghost btn-sm" data-view-link="browse">Install something new</button>
+              </div>
+            </div>
+
+            <div class="px-3 py-2 border-t border-[var(--border)] bg-[var(--surface-sunken)] text-[11px] text-[var(--muted-foreground)] flex items-center gap-1.5">
+              <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4"/><path d="M12 16h.01"/><circle cx="12" cy="12" r="10"/></svg>
+              <span>A loop step with zero MCPs is valid — it just runs the model with the prompt.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</section>
+
+<!-- ============ VIEW 5 · HEALTH (connection health surface for one MCP + reconnect) ============ -->
+<section class="view" data-view="health">
+  <div class="app">
+    <aside class="sidebar-full h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3"></aside>
+    <aside class="sidebar-rail h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3"></aside>
+    <main class="min-w-0">
+      <div class="border-b border-[var(--border)]">
+        <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4">
+          <div class="flex items-center gap-2 text-xs text-[var(--muted-foreground)] mb-2">
+            <a data-view-link="browse" class="hover:underline">MCP Registry</a>
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            <a data-view-link="installed" class="hover:underline">Installed</a>
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            <span class="text-[var(--foreground)]">Health</span>
+          </div>
+          <h1 class="text-xl font-semibold tracking-tight">Connection health</h1>
+          <p class="text-xs text-[var(--muted-foreground)] mt-1">One row per installed MCP. Anything that isn't <span class="pulse inline-flex" style="display:inline-flex"><span class="status-dot status-dot-active"></span>healthy</span> gets a fix.</p>
+        </div>
+      </div>
+
+      <div class="border-b border-[var(--border)] bg-[var(--surface-sunken)]">
+        <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-2 flex items-center gap-3">
+          <div class="tabs-pill">
+            <button aria-selected="false" data-view-link="browse">Catalogue</button>
+            <button aria-selected="false" data-view-link="installed">Installed</button>
+            <button aria-selected="true">Health <span class="ml-1 text-[10px] px-1.5 py-0.5 rounded" style="background: var(--st-failed-bg); color: var(--st-failed-text)">2</span></button>
+          </div>
+          <div class="ml-auto text-[11px] text-[var(--muted-foreground)] font-mono">Auto-checked every 60 s · last check 12 s ago</div>
+        </div>
+      </div>
+
+      <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4 space-y-4">
+        <!-- summary strip -->
+        <div class="grid gap-3 sm:grid-cols-4">
+          <div class="card p-3">
+            <div class="eyebrow">Healthy</div>
+            <div class="text-2xl font-semibold mt-1 flex items-center gap-2"><span class="status-dot status-dot-active"></span>2</div>
+          </div>
+          <div class="card p-3">
+            <div class="eyebrow">Auth failed</div>
+            <div class="text-2xl font-semibold mt-1 flex items-center gap-2" style="color: var(--warning)"><span class="status-dot status-dot-warn"></span>1</div>
+          </div>
+          <div class="card p-3">
+            <div class="eyebrow">Server down</div>
+            <div class="text-2xl font-semibold mt-1 flex items-center gap-2" style="color: var(--destructive)"><span class="status-dot status-dot-error"></span>1</div>
+          </div>
+          <div class="card p-3">
+            <div class="eyebrow">First-use fails · 30d</div>
+            <div class="text-2xl font-semibold mt-1 font-mono">3.1%</div>
+            <div class="text-[11px] text-[var(--muted-foreground)] mt-0.5">Well under the 20% ceiling.</div>
+          </div>
+        </div>
+
+        <!-- unhealthy items first -->
+        <div class="card">
+          <div class="p-3 border-b border-[var(--border)] flex items-center gap-2">
+            <span class="eyebrow">Needs attention</span>
+            <span class="text-[11px] text-[var(--muted-foreground)]">2 of 4 installed MCPs</span>
+          </div>
+
+          <!-- Stripe: auth-failed with reconnect inline -->
+          <div class="warn-rule p-4 border-b border-[var(--border)]">
+            <div class="flex items-start gap-3">
+              <div class="svc-icon">St</div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <div class="text-sm font-semibold">Stripe</div>
+                  <span class="badge badge-processing">Auth expired</span>
+                  <span class="text-[11px] text-[var(--muted-foreground)]">Detected 4 h ago · OAuth refresh returned <span class="font-mono">401 invalid_grant</span></span>
+                </div>
+                <p class="text-xs text-[var(--muted-foreground)] mt-1">
+                  Your Stripe OAuth token was revoked (probably by rotating it in Stripe's dashboard). The credential still exists in your Keychain — you just need to re-authorise.
+                </p>
+                <!-- affected loops -->
+                <div class="mt-2 flex items-center gap-1 flex-wrap text-xs">
+                  <span class="text-[var(--muted-foreground)]">Affects:</span>
+                  <span class="chip">MRR watcher</span>
+                  <span class="text-[var(--muted-foreground)]">— currently paused, will resume on reconnect.</span>
+                </div>
+              </div>
+              <div class="flex flex-col gap-2">
+                <button class="btn btn-primary btn-sm">
+                  <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                  Reconnect
+                </button>
+                <button class="btn btn-ghost btn-sm">Pause loops</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Acme: server-down with diagnostic -->
+          <div class="danger-rule p-4">
+            <div class="flex items-start gap-3">
+              <div class="svc-icon">Ac</div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <div class="text-sm font-semibold">Acme Internal API</div>
+                  <span class="badge badge-brand">BYO</span>
+                  <span class="badge badge-failed">Server down</span>
+                  <span class="text-[11px] text-[var(--muted-foreground)]">Since 4 min ago · <span class="font-mono">connect ECONNREFUSED</span></span>
+                </div>
+                <p class="text-xs text-[var(--muted-foreground)] mt-1">
+                  Maskin can't reach <span class="font-mono">mcp.internal.acme.co/v1</span>. The endpoint isn't responding to <span class="font-mono">initialize</span>.
+                </p>
+                <!-- diagnostic checklist -->
+                <ul class="mt-2 space-y-1 text-xs">
+                  <li class="flex items-center gap-2"><svg class="icon icon-sm" style="color:var(--success)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>DNS resolves</li>
+                  <li class="flex items-center gap-2"><svg class="icon icon-sm" style="color:var(--success)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>TLS handshake completes</li>
+                  <li class="flex items-center gap-2"><svg class="icon icon-sm" style="color:var(--destructive)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg><span>HTTP responds — got <span class="font-mono">502 Bad Gateway</span> on 5 of last 5 checks</span></li>
+                </ul>
+                <div class="mt-2 flex items-center gap-1 flex-wrap text-xs">
+                  <span class="text-[var(--muted-foreground)]">Affects:</span>
+                  <span class="chip">Fulfilment loop</span>
+                  <span class="chip">Returns triage</span>
+                  <span class="text-[var(--muted-foreground)]">— will retry with backoff until healthy.</span>
+                </div>
+              </div>
+              <div class="flex flex-col gap-2">
+                <button class="btn btn-outline btn-sm">
+                  <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v5h5"/></svg>
+                  Retry now
+                </button>
+                <button class="btn btn-ghost btn-sm">Ping history</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- healthy items collapsed -->
+        <details class="card">
+          <summary class="p-3 cursor-pointer flex items-center gap-2 text-sm">
+            <span class="eyebrow">Healthy</span>
+            <span class="text-[11px] text-[var(--muted-foreground)]">2 MCPs · click to expand</span>
+          </summary>
+          <div class="divide-border">
+            <div class="p-3 flex items-center gap-3">
+              <div class="svc-icon svc-icon-sm">Nt</div>
+              <div class="flex-1">
+                <div class="text-sm font-medium">Notion</div>
+                <div class="text-[11px] text-[var(--muted-foreground)]">Last check 12 s ago · 60 checks last hour · p50 latency 148 ms</div>
+              </div>
+              <span class="pulse pulse-healthy"><span class="status-dot status-dot-active pulse-dot"></span>Healthy</span>
+            </div>
+            <div class="p-3 flex items-center gap-3">
+              <div class="svc-icon svc-icon-sm">Gh</div>
+              <div class="flex-1">
+                <div class="text-sm font-medium">GitHub</div>
+                <div class="text-[11px] text-[var(--muted-foreground)]">Last check 12 s ago · 60 checks last hour · p50 latency 89 ms</div>
+              </div>
+              <span class="pulse pulse-healthy"><span class="status-dot status-dot-active pulse-dot"></span>Healthy</span>
+            </div>
+          </div>
+        </details>
+
+        <!-- first-use failure trend chart placeholder -->
+        <div class="card p-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-sm font-semibold">First-use failure rate</div>
+              <div class="text-xs text-[var(--muted-foreground)]">Percentage of new installs where the first tool call errors. The Lost criterion is 20%.</div>
+            </div>
+            <div class="text-right">
+              <div class="text-2xl font-semibold font-mono">3.1%</div>
+              <div class="text-[11px]" style="color: var(--success)">Well below ceiling</div>
+            </div>
+          </div>
+          <!-- sparkline (SVG static) -->
+          <svg viewBox="0 0 400 60" class="w-full h-14 mt-3" preserveAspectRatio="none">
+            <polyline points="0,45 30,48 60,42 90,44 120,40 150,38 180,42 210,36 240,34 270,32 300,30 330,28 360,26 400,28" fill="none" stroke="var(--brand)" stroke-width="1.5" />
+            <polyline points="0,12 400,12" fill="none" stroke="var(--destructive)" stroke-width="1" stroke-dasharray="4 3" opacity=".5" />
+            <text x="8" y="10" font-size="9" fill="var(--muted-foreground)" font-family="var(--font-mono)">20% ceiling</text>
+          </svg>
+        </div>
+      </div>
+    </main>
+  </div>
+</section>
+
+<!-- =============================================================
+     Overlay + modals (unused in this prototype — Keychain modals
+     live in that prototype's PR. Reconnect flow reuses Keychain's
+     add-oauth modal at runtime; not re-mocked here to avoid drift.)
+     ============================================================= -->
 <div id="overlay" class="overlay" data-open="false"></div>
 
 <script>
@@ -546,10 +1707,13 @@
   const stateLabel = document.getElementById('state-label');
   const states = ['default','hover','focus','loading','error','empty','success'];
   let stateIdx = 0;
+
   function switchView(name) {
     document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.dataset.view === name));
     document.querySelectorAll('[data-view]').forEach(btn => {
-      if (btn.tagName === 'BUTTON' && btn.dataset.view) btn.setAttribute('aria-pressed', btn.dataset.view === name ? 'true' : 'false');
+      if (btn.tagName === 'BUTTON' && btn.dataset.view) {
+        btn.setAttribute('aria-pressed', btn.dataset.view === name ? 'true' : 'false');
+      }
     });
     window.scrollTo({top:0, behavior:'instant'});
   }
@@ -565,8 +1729,13 @@
     const link = e.target.closest('[data-view-link]');
     if (link) { e.preventDefault(); return switchView(link.dataset.viewLink); }
   });
-  document.getElementById('toggle-theme').addEventListener('click', () => { document.documentElement.classList.toggle('dark'); });
-  document.getElementById('toggle-state').addEventListener('click', () => { stateIdx = (stateIdx + 1) % states.length; stateLabel.textContent = 'State: ' + states[stateIdx]; });
+  document.getElementById('toggle-theme').addEventListener('click', () => {
+    document.documentElement.classList.toggle('dark');
+  });
+  document.getElementById('toggle-state').addEventListener('click', () => {
+    stateIdx = (stateIdx + 1) % states.length;
+    stateLabel.textContent = 'State: ' + states[stateIdx];
+  });
 </script>
 
 </body>
