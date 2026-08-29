@@ -56,6 +56,8 @@ export const queryKeys = {
 	},
 	toolBroker: {
 		all: (workspaceId: string) => ['tool-broker', workspaceId] as const,
+		catalog: (workspaceId: string, q: string) =>
+			['tool-broker', workspaceId, 'catalog', q] as const,
 	},
 	integrations: {
 		all: (workspaceId: string) => ['integrations', workspaceId] as const,

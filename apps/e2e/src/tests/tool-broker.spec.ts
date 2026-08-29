@@ -223,7 +223,7 @@ test.describe('tool-broker section', () => {
 		await stubBroker(page, { configured: true, available: true, integrations: [] })
 		await gotoIntegrations(page, account.workspaceId)
 
-		await section(page).getByRole('button', { name: 'Add integration' }).click()
+		await section(page).getByRole('button', { name: 'Add by URL' }).click()
 		const dialog = page.getByRole('dialog')
 		await dialog.getByLabel('URL').fill('https://api.example.com/openapi.json')
 
@@ -290,5 +290,174 @@ test.describe('tool-broker flag off', () => {
 
 		await expect(page.getByText('GitHub')).toBeVisible({ timeout: 10000 })
 		await expect(page.getByRole('heading', { name: 'Connected by URL' })).toHaveCount(0)
+	})
+})
+
+const CATALOG = [
+	{
+		id: 'c1',
+		name: 'Sentry',
+		description: 'Errors and releases',
+		domain: 'sentry.dev',
+		iconPath: 'tool-broker/icons/sentry.dev',
+		connectKind: 'mcp' as const,
+		endpointUrl: 'https://mcp.sentry.dev/mcp',
+		authKind: 'oauth2' as const,
+		supportsDcr: true,
+	},
+	{
+		id: 'c2',
+		name: 'Wikipedia',
+		description: 'Reference lookups',
+		domain: 'wikipedia.example',
+		iconPath: null,
+		connectKind: 'mcp' as const,
+		endpointUrl: 'https://mcp.wikipedia.example/mcp',
+		authKind: 'none' as const,
+		supportsDcr: false,
+	},
+	{
+		id: 'c3',
+		name: 'Legacy Thing',
+		description: 'Needs a client configured by hand',
+		domain: 'legacy.example',
+		iconPath: null,
+		connectKind: 'mcp' as const,
+		endpointUrl: 'https://mcp.legacy.example/mcp',
+		authKind: 'oauth2' as const,
+		supportsDcr: false,
+	},
+]
+
+const stubCatalog = async (page: import('@playwright/test').Page) => {
+	await page.route('**/api/tool-broker/catalog*', async (route) => {
+		const url = new URL(route.request().url())
+		const q = (url.searchParams.get('q') ?? '').toLowerCase()
+		const entries = q ? CATALOG.filter((e) => e.name.toLowerCase().includes(q)) : CATALOG
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ entries, total: entries.length }),
+		})
+	})
+}
+
+test.describe('catalogue browser', () => {
+	test.beforeEach(async ({ page, account }) => {
+		expect(account.workspaceId).toBeTruthy()
+		await page.addInitScript(() => localStorage.setItem('ff:tool-broker', 'on'))
+	})
+
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`browses and adds an integration at ${vp.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await stubBroker(page, { configured: true, available: true, integrations: INTEGRATIONS })
+			await stubCatalog(page)
+
+			let added: { url?: string; name?: string } | null = null
+			await page.route('**/api/tool-broker/integrations', async (route) => {
+				added = route.request().postDataJSON()
+				await route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({ slug: 'w0123_sentry' }),
+				})
+			})
+
+			await gotoIntegrations(page, account.workspaceId)
+
+			const browse = section(page).getByRole('button', { name: 'Browse' })
+			await expect(browse).toBeVisible({ timeout: 10000 })
+			await browse.click()
+
+			const dialog = page.getByRole('dialog')
+			await expect(dialog.getByText('Sentry')).toBeVisible()
+
+			await dialog
+				.getByRole('listitem')
+				.filter({ hasText: 'Sentry' })
+				.getByRole('button', { name: 'Add' })
+				.click()
+
+			// Adding sends the PROVIDER's endpoint — the catalogue's own source is
+			// never part of what the browser sends.
+			await expect.poll(() => added?.url, { timeout: 10000 }).toBe('https://mcp.sentry.dev/mcp')
+			expect(added?.name).toBe('Sentry')
+		})
+	}
+
+	test('filters as you search', async ({ page, account }) => {
+		await stubBroker(page, { configured: true, available: true, integrations: INTEGRATIONS })
+		await stubCatalog(page)
+		await gotoIntegrations(page, account.workspaceId)
+
+		await section(page).getByRole('button', { name: 'Browse' }).click()
+		const dialog = page.getByRole('dialog')
+		await dialog.getByLabel('Search').fill('sentry')
+
+		await expect(dialog.getByText('Sentry')).toBeVisible()
+		await expect(dialog.getByText('Wikipedia')).toHaveCount(0)
+	})
+
+	test('says so up front when an entry cannot be connected', async ({ page, account }) => {
+		// Better than letting someone click Add and hit a refusal two steps later.
+		await stubBroker(page, { configured: true, available: true, integrations: INTEGRATIONS })
+		await stubCatalog(page)
+		await gotoIntegrations(page, account.workspaceId)
+
+		await section(page).getByRole('button', { name: 'Browse' }).click()
+		const row = page.getByRole('dialog').getByRole('listitem').filter({ hasText: 'Legacy Thing' })
+
+		await expect(row.getByText('Needs setup')).toBeVisible()
+		await expect(row.getByRole('button', { name: 'Add' })).toBeDisabled()
+	})
+
+	test('marks an entry that needs no sign-in', async ({ page, account }) => {
+		await stubBroker(page, { configured: true, available: true, integrations: INTEGRATIONS })
+		await stubCatalog(page)
+		await gotoIntegrations(page, account.workspaceId)
+
+		await section(page).getByRole('button', { name: 'Browse' }).click()
+		const row = page.getByRole('dialog').getByRole('listitem').filter({ hasText: 'Wikipedia' })
+
+		await expect(row.getByText('No sign-in')).toBeVisible()
+		await expect(row.getByRole('button', { name: 'Add' })).toBeEnabled()
+	})
+
+	test('icons are served from our own origin, never the catalogue source', async ({
+		page,
+		account,
+	}) => {
+		// The leak this whole design exists to prevent: an upstream icon URL would
+		// put that hostname in every page view.
+		const external: string[] = []
+		page.on('request', (req) => {
+			const host = new URL(req.url()).host
+			if (!host.includes('localhost') && !host.includes('127.0.0.1')) external.push(req.url())
+		})
+
+		await stubBroker(page, { configured: true, available: true, integrations: INTEGRATIONS })
+		await stubCatalog(page)
+		await gotoIntegrations(page, account.workspaceId)
+		await section(page).getByRole('button', { name: 'Browse' }).click()
+		await expect(page.getByRole('dialog').getByText('Sentry')).toBeVisible()
+
+		expect(external).toEqual([])
+	})
+
+	test('renders in both light and dark', async ({ page, account }) => {
+		await stubBroker(page, { configured: true, available: true, integrations: INTEGRATIONS })
+		await stubCatalog(page)
+
+		for (const colorScheme of ['light', 'dark'] as const) {
+			await page.emulateMedia({ colorScheme })
+			await gotoIntegrations(page, account.workspaceId)
+			await section(page).getByRole('button', { name: 'Browse' }).click()
+
+			const dialog = page.getByRole('dialog')
+			await expect(dialog.getByText('Sentry')).toBeVisible({ timeout: 10000 })
+			await expect(dialog.getByText('No sign-in')).toBeVisible()
+			await page.keyboard.press('Escape')
+		}
 	})
 })

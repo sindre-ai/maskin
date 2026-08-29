@@ -420,6 +420,11 @@ export const api = {
 	},
 
 	toolBroker: {
+		catalog: (workspaceId: string, q?: string) =>
+			request<ToolBrokerCatalogResponse>(
+				`/tool-broker/catalog${q?.trim() ? `?q=${encodeURIComponent(q.trim())}` : ''}`,
+				{ workspaceId },
+			),
 		list: (workspaceId: string) => request<ToolBrokerListResponse>('/tool-broker', { workspaceId }),
 		add: (workspaceId: string, body: { url: string; kind: 'mcp' | 'openapi'; name?: string }) =>
 			request<{ slug: string }>('/tool-broker/integrations', { method: 'POST', body, workspaceId }),
@@ -1303,6 +1308,26 @@ export interface ToolBrokerIntegration {
 	connected: boolean
 	/** How it can be authenticated; drives which action the row offers. */
 	authKinds: Array<'none' | 'api_key' | 'oauth' | 'other'>
+}
+
+/** One browsable catalogue entry. */
+export interface ToolBrokerCatalogEntry {
+	id: string
+	name: string
+	description: string | null
+	domain: string
+	/** Storage key, not a URL — icons are served from our own origin. */
+	iconPath: string | null
+	connectKind: 'mcp' | 'openapi'
+	endpointUrl: string
+	authKind: 'none' | 'api_key' | 'oauth2'
+	/** False means connecting needs a client configured out of band. */
+	supportsDcr: boolean
+}
+
+export interface ToolBrokerCatalogResponse {
+	entries: ToolBrokerCatalogEntry[]
+	total: number
 }
 
 export interface ToolBrokerListResponse {

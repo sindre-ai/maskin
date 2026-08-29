@@ -1,3 +1,4 @@
+import { CatalogBrowser } from '@/components/integrations/catalog-browser'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { Button } from '@/components/ui/button'
@@ -18,7 +19,7 @@ import {
 	useToolBrokerIntegrations,
 } from '@/hooks/use-tool-broker'
 import type { ToolBrokerIntegration } from '@/lib/api'
-import { Plug, Plus } from 'lucide-react'
+import { Plug, Plus, Search } from 'lucide-react'
 import { useState } from 'react'
 
 // The tool-broker half of the integrations page: integrations added by URL,
@@ -28,6 +29,7 @@ import { useState } from 'react'
 export function ToolBrokerSection({ workspaceId }: { workspaceId: string }) {
 	const { data, isLoading } = useToolBrokerIntegrations(workspaceId)
 	const [addOpen, setAddOpen] = useState(false)
+	const [browseOpen, setBrowseOpen] = useState(false)
 
 	// Not configured for this deployment: render nothing at all rather than an
 	// empty section that suggests something is broken.
@@ -44,10 +46,16 @@ export function ToolBrokerSection({ workspaceId }: { workspaceId: string }) {
 						Point at an MCP server or an OpenAPI spec to give your agents its tools.
 					</p>
 				</div>
-				<Button size="sm" onClick={() => setAddOpen(true)}>
-					<Plus className="size-4" />
-					Add
-				</Button>
+				<div className="flex shrink-0 items-center gap-2">
+					<Button size="sm" variant="outline" onClick={() => setBrowseOpen(true)}>
+						<Search className="size-4" />
+						Browse
+					</Button>
+					<Button size="sm" onClick={() => setAddOpen(true)}>
+						<Plus className="size-4" />
+						Add
+					</Button>
+				</div>
 			</div>
 
 			{isLoading ? (
@@ -63,9 +71,14 @@ export function ToolBrokerSection({ workspaceId }: { workspaceId: string }) {
 					title="No integrations yet"
 					description="Add an MCP server or OpenAPI spec by URL to get started."
 					action={
-						<Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
-							Add integration
-						</Button>
+						<div className="flex flex-wrap items-center justify-center gap-2">
+							<Button size="sm" onClick={() => setBrowseOpen(true)}>
+								Browse integrations
+							</Button>
+							<Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
+								Add by URL
+							</Button>
+						</div>
 					}
 				/>
 			) : (
@@ -81,6 +94,7 @@ export function ToolBrokerSection({ workspaceId }: { workspaceId: string }) {
 			)}
 
 			<AddIntegrationDialog open={addOpen} onOpenChange={setAddOpen} workspaceId={workspaceId} />
+			<CatalogBrowser open={browseOpen} onOpenChange={setBrowseOpen} workspaceId={workspaceId} />
 		</section>
 	)
 }

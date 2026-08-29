@@ -13,6 +13,16 @@ export function useToolBrokerIntegrations(workspaceId: string) {
 	})
 }
 
+export function useToolBrokerCatalog(workspaceId: string, q: string) {
+	return useQuery({
+		queryKey: queryKeys.toolBroker.catalog(workspaceId, q),
+		queryFn: () => api.toolBroker.catalog(workspaceId, q),
+		// The list is a browse surface, not live data — refetching on every focus
+		// makes it flicker while someone is reading it.
+		staleTime: 60_000,
+	})
+}
+
 export function useAddToolBrokerIntegration(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
