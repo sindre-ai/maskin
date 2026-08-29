@@ -1,5 +1,6 @@
 import type { ResolvedProvider } from './types'
 
+import { config as figmaConfig } from './providers/figma/config'
 import { githubAuth } from './providers/github/auth'
 // Import provider configs
 import { config as githubConfig } from './providers/github/config'
@@ -34,7 +35,6 @@ import {
 import { slackWebhookFanOut } from './providers/slack/fan-out'
 import { probeSlackTierOnInstall } from './providers/slack/tier-cache'
 import { slackEventNormalizer } from './providers/slack/webhooks'
-import { config as figmaConfig } from './providers/figma/config'
 import { ubersuggestAuth } from './providers/ubersuggest/auth'
 import { config as ubersuggestConfig } from './providers/ubersuggest/config'
 
