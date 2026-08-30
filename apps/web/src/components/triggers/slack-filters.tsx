@@ -7,9 +7,9 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useSlackConversations, useSlackUsers } from '@/hooks/use-integrations'
 import type { SlackConversation } from '@/lib/api'
-import { getFlag } from '@/lib/feature-flags'
 import { capture } from '@/lib/posthog'
 import { AlertCircle, X } from 'lucide-react'
 import type * as React from 'react'
@@ -184,7 +184,7 @@ export function SlackFilters({
 	)
 
 	const isReaction = entityType === 'slack.reaction'
-	const setupUxV2 = getFlag(SLACK_SETUP_UX_V2_FLAG)
+	const setupUxV2 = useFeatureFlag(SLACK_SETUP_UX_V2_FLAG)
 
 	// PostHog surfaces picker adoption + non-member-picking behaviour so the
 	// bet's dogfood telemetry can distinguish "users pick channels the bot
