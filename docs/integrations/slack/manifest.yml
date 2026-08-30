@@ -108,6 +108,7 @@ settings:
       - channel_deleted
       - channel_rename
       - member_joined_channel
+      - member_left_channel
   interactivity:
     is_enabled: false
   org_deploy_enabled: false
