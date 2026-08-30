@@ -26,6 +26,14 @@ export const FLAGS = {
 	 * been through testing — see `.claude/rules/feature-flags.md`.
 	 */
 	NEW_DESIGN: 'new-design',
+	/**
+	 * Gates the Slack trigger-save setup UX: auto-join public channels via
+	 * `conversations.join`, post a confirmation-in-channel card, and render the
+	 * `SlackTriggerSetupStatus` banner on the trigger form. Off means the
+	 * pre-bet save behaviour — no join, no confirmation, no banner. Retire
+	 * once the bet ships everywhere; see the parent bet spec §10.
+	 */
+	SLACK_SETUP_UX_V2: 'slack-setup-ux-v2',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
@@ -67,6 +75,20 @@ export function resolveFlags(
 		resolved[flagId] = config.testerFlags.has(flagId) && isTester
 	}
 	return resolved
+}
+
+// Whether a specific flag is on for a specific actor. Same rule as resolveFlags
+// but for a single lookup — used at server-side call sites (e.g. the trigger
+// route deciding whether to fire the Slack setup service post-commit).
+export function isFlagEnabled(
+	actorId: string,
+	flagId: string,
+	config: FeatureFlagConfig = getFeatureFlagConfig(),
+	registry: Record<string, string> = FLAGS,
+): boolean {
+	if (!Object.values(registry).includes(flagId)) return false
+	if (!config.testerFlags.has(flagId)) return false
+	return config.testerActorIds.has(actorId.trim().toLowerCase())
 }
 
 let _config: FeatureFlagConfig | null = null
