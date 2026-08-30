@@ -461,3 +461,29 @@ test.describe('catalogue browser', () => {
 		}
 	})
 })
+
+test.describe('catalogue browser — the server-side cap', () => {
+	test.beforeEach(async ({ page }) => {
+		await page.addInitScript(() => localStorage.setItem('ff:tool-broker', 'on'))
+	})
+
+	test('says when it is showing only part of the catalogue', async ({ page, account }) => {
+		// Without this line, a list capped at 50 out of 578 reads as "that is
+		// everything there is".
+		await stubBroker(page, { configured: true, available: true, integrations: INTEGRATIONS })
+		await page.route('**/api/tool-broker/catalog*', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ entries: CATALOG, total: 578 }),
+			})
+		})
+
+		await gotoIntegrations(page, account.workspaceId)
+		await section(page).getByRole('button', { name: 'Browse' }).click()
+
+		await expect(
+			page.getByRole('dialog').getByText(`Showing ${CATALOG.length} of 578`),
+		).toBeVisible()
+	})
+})

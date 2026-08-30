@@ -92,6 +92,15 @@ export function CatalogBrowser({
 						</ul>
 					)}
 				</div>
+
+				{/* The list is capped server-side. Without this line the cap is
+				    invisible, and a browser showing 50 of 578 reads as "that is
+				    everything there is". */}
+				{data && data.total > data.entries.length ? (
+					<p className="text-text-secondary text-xs">
+						Showing {data.entries.length} of {data.total}. Search to narrow it down.
+					</p>
+				) : null}
 			</DialogContent>
 		</Dialog>
 	)

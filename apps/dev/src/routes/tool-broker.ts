@@ -4,7 +4,7 @@ import { events, toolBrokerCatalog, workspaceToolBrokers } from '@maskin/db'
 import { resolveWebAppBaseUrl } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { ToolBrokerUnavailableError } from '@maskin/tool-broker'
-import { and, asc, eq, ilike, or } from 'drizzle-orm'
+import { and, asc, eq, ilike, or, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { resolvePublicOrigin } from '../lib/public-origin'
@@ -685,6 +685,15 @@ app.openapi(browseRoute, async (c) => {
 		.orderBy(asc(toolBrokerCatalog.name))
 		.limit(take)
 
+	// The count of everything matching, not of what this page returned. They are
+	// the same only when the result fits under the limit — and a browser that
+	// says "50" while sitting on 578 tells the user they have seen everything.
+	const [{ count: total = 0 } = { count: 0 }] = await c
+		.get('db')
+		.select({ count: sql<number>`count(*)::int` })
+		.from(toolBrokerCatalog)
+		.where(where)
+
 	return c.json(
 		{
 			entries: rows.map((row) => ({
@@ -698,7 +707,7 @@ app.openapi(browseRoute, async (c) => {
 				authKind: row.authKind as 'none' | 'api_key' | 'oauth2',
 				supportsDcr: row.supportsDcr,
 			})),
-			total: rows.length,
+			total,
 		},
 		200,
 	)

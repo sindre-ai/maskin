@@ -339,3 +339,40 @@ describe('catalogue icons', () => {
 		expect(res.status).toBe(404)
 	})
 })
+
+describe('browsing the catalogue', () => {
+	// The list is capped server-side, so `total` has to come from its own count
+	// query. Returning the page length instead tells a user looking at 50 rows
+	// that 50 is all there is — a wrong answer that looks like a right one.
+	it('reports how many entries match, not how many this page returned', async () => {
+		const { app, mockResults } = createTestApp(routes, '/api/tool-broker')
+		mockResults.selectQueue = [
+			[
+				{
+					id: 'a',
+					name: 'DeepWiki',
+					description: null,
+					domain: 'deepwiki.com',
+					iconPath: null,
+					connectKind: 'mcp',
+					endpointUrl: 'https://mcp.deepwiki.com/mcp',
+					authKind: 'none',
+					supportsDcr: false,
+					status: 'active',
+				},
+			],
+			[{ count: 578 }],
+		]
+
+		const res = await app.request(
+			new Request('http://localhost/api/tool-broker/catalog', {
+				headers: { 'X-Workspace-Id': 'ws-1' },
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as { entries: unknown[]; total: number }
+		expect(body.entries).toHaveLength(1)
+		expect(body.total).toBe(578)
+	})
+})
