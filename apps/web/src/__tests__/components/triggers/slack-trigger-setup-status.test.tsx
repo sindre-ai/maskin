@@ -1,4 +1,6 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { vi } from 'vitest'
 
 vi.mock('@/lib/api', () => ({
@@ -7,6 +9,15 @@ vi.mock('@/lib/api', () => ({
 			slackConversations: vi.fn(),
 			slackUsers: vi.fn(),
 		},
+	},
+}))
+
+// Mock sonner so we can assert the one-time toast + the Resume-click info
+// toast without a real Toaster mount.
+vi.mock('sonner', () => ({
+	toast: {
+		warning: vi.fn(),
+		info: vi.fn(),
 	},
 }))
 
@@ -60,7 +71,20 @@ describe('SlackTriggerSetupStatus', () => {
 				is_mpim: false,
 				is_channel: true,
 			},
+			{
+				id: 'CKICKED',
+				name: 'ops',
+				is_private: false,
+				is_im: false,
+				is_mpim: false,
+				is_channel: true,
+			},
 		])
+		vi.mocked(toast.warning).mockClear()
+		vi.mocked(toast.info).mockClear()
+		// Each test starts with an empty toast-shown ledger so the one-time
+		// toast fires deterministically.
+		window.localStorage.clear()
 	})
 
 	it('renders yellow failure banner with mapped per-channel copy for setup failures', () => {
@@ -152,5 +176,116 @@ describe('SlackTriggerSetupStatus', () => {
 		)
 
 		expect(container.querySelector('[data-testid="slack-trigger-setup-status"]')).toBeNull()
+	})
+
+	// PR C — auto-paused red state
+	it('renders red auto-paused banner with mapped copy + Resume button + one-time toast', async () => {
+		const trigger = baseTrigger({
+			enabled: false,
+			metadata: {
+				auto_paused: {
+					reason: 'slack_member_left',
+					channel_id: 'CKICKED',
+					paused_at: '2026-08-30T14:00:00Z',
+					previous_enabled: true,
+				},
+			},
+		})
+
+		render(
+			<TestWrapper>
+				<SlackTriggerSetupStatus
+					trigger={trigger}
+					integrationId="int-1"
+					workspaceId="ws-1"
+				/>
+			</TestWrapper>,
+		)
+
+		const banner = screen.getByTestId('slack-trigger-setup-status')
+		expect(banner).toHaveAttribute('data-state', 'auto-paused')
+		expect(banner.textContent).toContain(
+			'Auto-paused — Maskin was removed from #ops. Reinvite the app in Slack, then resume the trigger.',
+		)
+		expect(screen.getByTestId('slack-auto-pause-resume')).toBeInTheDocument()
+
+		// The one-time toast fires on mount for the fresh (trigger, paused_at)
+		// pair. localStorage marks it as seen so subsequent renders don't
+		// re-fire.
+		expect(vi.mocked(toast.warning)).toHaveBeenCalledTimes(1)
+		expect(
+			window.localStorage.getItem(
+				'slack-auto-pause-toast:00000000-0000-0000-0000-000000000001:2026-08-30T14:00:00Z',
+			),
+		).toBe('1')
+	})
+
+	it('auto-paused state wins over a concurrent setup-failure state', () => {
+		const trigger = baseTrigger({
+			enabled: false,
+			metadata: {
+				slack_setup: {
+					channel_ids: ['CGONE'],
+					join_attempts: [
+						{
+							channel_id: 'CGONE',
+							status: 'channel_not_found',
+							attempted_at: '2026-08-30T12:00:00Z',
+						},
+					],
+					last_setup_at: '2026-08-30T12:00:00Z',
+				},
+				auto_paused: {
+					reason: 'slack_member_left',
+					channel_id: 'CKICKED',
+					paused_at: '2026-08-30T14:00:00Z',
+					previous_enabled: true,
+				},
+			},
+		})
+
+		render(
+			<TestWrapper>
+				<SlackTriggerSetupStatus
+					trigger={trigger}
+					integrationId="int-1"
+					workspaceId="ws-1"
+				/>
+			</TestWrapper>,
+		)
+
+		const banner = screen.getByTestId('slack-trigger-setup-status')
+		expect(banner).toHaveAttribute('data-state', 'auto-paused')
+		// Setup-failure copy is NOT rendered — the red banner short-circuits.
+		expect(banner.textContent).not.toContain('Channel not found')
+	})
+
+	it('Resume button surfaces the reinvite reminder toast on click (Task 4 will replace)', async () => {
+		const user = userEvent.setup()
+		const trigger = baseTrigger({
+			enabled: false,
+			metadata: {
+				auto_paused: {
+					reason: 'slack_member_left',
+					channel_id: 'CKICKED',
+					paused_at: '2026-08-30T14:00:00Z',
+					previous_enabled: true,
+				},
+			},
+		})
+
+		render(
+			<TestWrapper>
+				<SlackTriggerSetupStatus
+					trigger={trigger}
+					integrationId="int-1"
+					workspaceId="ws-1"
+				/>
+			</TestWrapper>,
+		)
+
+		await user.click(screen.getByTestId('slack-auto-pause-resume'))
+		expect(vi.mocked(toast.info)).toHaveBeenCalledTimes(1)
+		expect(vi.mocked(toast.info).mock.calls[0]?.[0]).toContain('#ops')
 	})
 })
