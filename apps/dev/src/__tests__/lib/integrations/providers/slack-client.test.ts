@@ -45,11 +45,10 @@ describe('listSlackConversations — is_member mapping', () => {
 				}),
 		} as unknown as Response)
 
-		const conversations = await listSlackConversations(
-			'integration-1',
-			'xoxb-token',
-			['public_channel', 'private_channel'],
-		)
+		const conversations = await listSlackConversations('integration-1', 'xoxb-token', [
+			'public_channel',
+			'private_channel',
+		])
 
 		const byId = new Map(conversations.map((c) => [c.id, c]))
 		expect(byId.get('C_MEMBER')?.is_member).toBe(true)
@@ -73,11 +72,10 @@ describe('listSlackConversations — is_member mapping', () => {
 				}),
 		} as unknown as Response)
 
-		const conversations = await listSlackConversations(
-			'integration-2',
-			'xoxb-token',
-			['im', 'mpim'],
-		)
+		const conversations = await listSlackConversations('integration-2', 'xoxb-token', [
+			'im',
+			'mpim',
+		])
 
 		const byId = new Map(conversations.map((c) => [c.id, c]))
 		expect(byId.get('D_1')?.is_member).toBe(true)

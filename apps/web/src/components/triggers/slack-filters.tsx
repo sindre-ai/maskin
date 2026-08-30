@@ -1,12 +1,7 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-	Tooltip,
-	TooltipContent,
-	TooltipProvider,
-	TooltipTrigger,
-} from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useSlackConversations, useSlackUsers } from '@/hooks/use-integrations'
 import type { SlackConversation } from '@/lib/api'
@@ -19,7 +14,7 @@ import { type MultiSelectItem, SearchableMultiSelect } from './searchable-multi-
 const SLACK_SETUP_UX_V2_FLAG = 'slack-setup-ux-v2'
 
 const NON_MEMBER_TOOLTIP =
-	"Bot not in this channel — auto-joins on save (public) or requires invite (private)."
+	'Bot not in this channel — auto-joins on save (public) or requires invite (private).'
 
 const EMPTY_CHANNELS_COPY_V2 =
 	"No channels match — the bot lists every public channel and every private channel it's been invited to."
@@ -190,10 +185,7 @@ export function SlackFilters({
 	// bet's dogfood telemetry can distinguish "users pick channels the bot
 	// isn't in yet" (the whole reason PR B ships auto-join) from a
 	// members-only picker.
-	function captureChannelPickerUsage(
-		nextInclude: string[],
-		nextExclude: string[],
-	): void {
+	function captureChannelPickerUsage(nextInclude: string[], nextExclude: string[]): void {
 		if (!setupUxV2) return
 		const selectedIds = [...nextInclude, ...nextExclude]
 		const hasNonMember = selectedIds.some((id) => {
@@ -221,7 +213,9 @@ export function SlackFilters({
 	const showFooter = setupUxV2 && conversationItems.length === CHANNEL_TRUNCATION_LIMIT
 	const truncationFooter = showFooter ? TRUNCATION_FOOTER_V2 : undefined
 
-	const channelEmptyText = setupUxV2 ? EMPTY_CHANNELS_COPY_V2 : 'No channels found. Make sure the bot is invited.'
+	const channelEmptyText = setupUxV2
+		? EMPTY_CHANNELS_COPY_V2
+		: 'No channels found. Make sure the bot is invited.'
 
 	// Per-chip render: a small warning dot when the bot isn't a member.
 	function renderChipMembership(item: MultiSelectItem): React.ReactNode {

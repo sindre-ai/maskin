@@ -180,9 +180,7 @@ describe('SlackFilters (rendering)', () => {
 	})
 
 	it('renders a not-a-member warning on selected chips when the flag is on and is_member is false', async () => {
-		vi.mocked(useFeatureFlag).mockImplementation(
-			(flag: string) => flag === 'slack-setup-ux-v2',
-		)
+		vi.mocked(useFeatureFlag).mockImplementation((flag: string) => flag === 'slack-setup-ux-v2')
 		vi.mocked(api.integrations.slackConversations).mockResolvedValue([
 			{
 				id: 'C_MEMBER',
