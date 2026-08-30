@@ -12,14 +12,29 @@ vi.mock('@/lib/api', () => ({
 	},
 }))
 
-// Mock sonner so we can assert the one-time toast + the Resume-click info
-// toast without a real Toaster mount.
+// Mock sonner so we can assert the one-time auto-paused warning toast without
+// a real Toaster mount. PR D removed the Resume-click `toast.info` (Task 4
+// swapped the placeholder for a real resume mutation via `useSlackAutoResume`).
 vi.mock('sonner', () => ({
 	toast: {
 		warning: vi.fn(),
 		info: vi.fn(),
 	},
 }))
+
+// PR D — the banner's Resume button now delegates to the shared
+// `useSlackAutoResume` hook (dropdown at $triggerId.tsx uses the same hook).
+// Mock it here so the banner test asserts wiring only; the hook's own
+// analytics + PATCH behaviour is covered in `__tests__/hooks/
+// use-slack-auto-resume.test.tsx`.
+const { resumeMock } = vi.hoisted(() => ({ resumeMock: vi.fn().mockResolvedValue(undefined) }))
+vi.mock('@/hooks/use-slack-auto-resume', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@/hooks/use-slack-auto-resume')>()
+	return {
+		...actual,
+		useSlackAutoResume: () => ({ resume: resumeMock, isPending: false }),
+	}
+})
 
 import { SlackTriggerSetupStatus } from '@/components/triggers/slack-trigger-setup-status'
 import { api } from '@/lib/api'
@@ -82,6 +97,7 @@ describe('SlackTriggerSetupStatus', () => {
 		])
 		vi.mocked(toast.warning).mockClear()
 		vi.mocked(toast.info).mockClear()
+		resumeMock.mockClear()
 		// Each test starts with an empty toast-shown ledger so the one-time
 		// toast fires deterministically.
 		window.localStorage.clear()
@@ -260,7 +276,11 @@ describe('SlackTriggerSetupStatus', () => {
 		expect(banner.textContent).not.toContain('Channel not found')
 	})
 
-	it('Resume button surfaces the reinvite reminder toast on click (Task 4 will replace)', async () => {
+	// PR D — banner Resume button delegates to the shared auto-resume hook so
+	// both surfaces (dropdown + banner) clear metadata.auto_paused + fire the
+	// resume PostHog event via one code path. Analytics + mutation are covered
+	// by the hook's own test; here we only assert the wiring.
+	it('Resume button calls useSlackAutoResume.resume with the current trigger', async () => {
 		const user = userEvent.setup()
 		const trigger = baseTrigger({
 			enabled: false,
@@ -285,7 +305,9 @@ describe('SlackTriggerSetupStatus', () => {
 		)
 
 		await user.click(screen.getByTestId('slack-auto-pause-resume'))
-		expect(vi.mocked(toast.info)).toHaveBeenCalledTimes(1)
-		expect(vi.mocked(toast.info).mock.calls[0]?.[0]).toContain('#ops')
+		expect(resumeMock).toHaveBeenCalledTimes(1)
+		expect(resumeMock).toHaveBeenCalledWith(trigger)
+		// The PR C placeholder `toast.info` reminder is gone.
+		expect(vi.mocked(toast.info)).not.toHaveBeenCalled()
 	})
 })
