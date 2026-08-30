@@ -12,6 +12,7 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useActors } from '@/hooks/use-actors'
+import { readAutoPausedInfo, resumeTriggerLabel, useSlackAutoResume } from '@/hooks/use-slack-auto-resume'
 import {
 	useCreateTrigger,
 	useDeleteTrigger,
@@ -38,6 +39,11 @@ function TriggerDetailRoute() {
 	const createTrigger = useCreateTrigger(workspaceId)
 	const updateTrigger = useUpdateTrigger(workspaceId)
 	const deleteTrigger = useDeleteTrigger(workspaceId)
+	// PR D — the auto-paused resume path clears `metadata.auto_paused` and
+	// fires `slack.trigger.resumed_from_auto_pause` alongside the enabled=true
+	// PATCH. Same hook is used by the red banner button in
+	// SlackTriggerSetupStatus so both Resume affordances behave identically.
+	const autoResume = useSlackAutoResume(workspaceId)
 	const navigate = useNavigate()
 	const isCreatedRef = useRef(false)
 	// Autosave state is lifted out of the form so `✓ Saved` can sit in the shared
@@ -128,6 +134,21 @@ function TriggerDetailRoute() {
 
 	const handleToggleEnabled = () => {
 		if (!trigger) return
+		// PR D — if the trigger is auto-paused by Slack, route through the
+		// resume hook so we clear `metadata.auto_paused` + fire the resume
+		// PostHog event. A plain user-paused → resume keeps the existing
+		// toggle path so `trigger_updated` still fires without the extra
+		// resume telemetry / metadata clear.
+		if (!trigger.enabled && readAutoPausedInfo(trigger)) {
+			autoResume
+				.resume(trigger)
+				.then(() => trackTriggerUpdated({ entity_id: triggerId, entity_type: 'trigger' }))
+				.catch(() => {
+					// The mutation surfaces its own error state; swallow here so an
+					// unhandled promise rejection doesn't crash the route.
+				})
+			return
+		}
 		updateTrigger.mutate(
 			{ id: triggerId, data: { enabled: !trigger.enabled } },
 			{
@@ -170,7 +191,7 @@ function TriggerDetailRoute() {
 											</>
 										) : (
 											<>
-												<Play size={14} /> Resume trigger
+												<Play size={14} /> {resumeTriggerLabel(trigger)}
 											</>
 										)}
 									</DropdownMenuItem>

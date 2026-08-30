@@ -1,4 +1,5 @@
 import { useSlackConversations } from '@/hooks/use-integrations'
+import { useSlackAutoResume } from '@/hooks/use-slack-auto-resume'
 import type { TriggerResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import type { SlackSetupJoinAttempt, SlackSetupMetadata } from '@maskin/shared'
@@ -53,6 +54,12 @@ export function SlackTriggerSetupStatus({
 }: SlackTriggerSetupStatusProps) {
 	const autoPaused = readAutoPaused(trigger)
 	const slackSetup = readSlackSetup(trigger)
+	// PR D — the Resume button now performs the real resume (clears
+	// `metadata.auto_paused` + PATCHes enabled=true + fires the resume PostHog
+	// event) instead of the PR C placeholder toast. Same hook is called from
+	// the Pause/Play dropdown in $triggerId.tsx so the two Resume affordances
+	// stay in lockstep.
+	const autoResume = useSlackAutoResume(workspaceId)
 	// Resolve channel IDs to names via the same 5-min cache the picker uses,
 	// so we don't hit Slack again just to render a banner.
 	const { data: conversations } = useSlackConversations(integrationId, workspaceId)
@@ -106,10 +113,18 @@ export function SlackTriggerSetupStatus({
 					<p>{slackMemberLeftCopy(autoPausedChannelName)}</p>
 					<button
 						type="button"
-						onClick={() => handleResumeClick(trigger.name, autoPausedChannelName)}
+						onClick={() => {
+							// Fire-and-forget — the hook internally uses `mutateAsync`
+							// and swallows nothing, but the banner shouldn't crash on
+							// a rejected promise (the mutation surfaces its own error
+							// state via query cache invalidation).
+							autoResume.resume(trigger).catch(() => {})
+						}}
+						disabled={autoResume.isPending}
 						className={cn(
 							'rounded-md border border-destructive/50 bg-destructive/10 px-2.5 py-1 text-[11.5px] font-semibold text-destructive',
 							'transition-colors hover:bg-destructive/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/50',
+							'disabled:opacity-60 disabled:cursor-not-allowed',
 						)}
 						data-testid="slack-auto-pause-resume"
 					>
@@ -151,19 +166,6 @@ export function SlackTriggerSetupStatus({
 			</ul>
 		</div>
 	)
-}
-
-/**
- * Placeholder Resume handler. Task 4 replaces this with the actual resume
- * mutation (PATCH /triggers/:id with `enabled = auto_paused.previous_enabled`
- * + clear `metadata.auto_paused`, gated on a re-membership check). For now,
- * the button surfaces a copy nudge so a user who clicks it isn't left in a
- * dead-end — the banner explicitly names the reinvite step in Slack.
- */
-function handleResumeClick(triggerName: string, channelName: string): void {
-	toast.info(`Reinvite Maskin to #${channelName} in Slack first.`, {
-		description: `Resume for "${triggerName}" will fail until Maskin is back in the channel.`,
-	})
 }
 
 /**
