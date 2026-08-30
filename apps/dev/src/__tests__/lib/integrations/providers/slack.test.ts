@@ -335,6 +335,23 @@ describe('slackEventNormalizer', () => {
 		expect(result?.action).toBe('joined')
 	})
 
+	it('normalizes member_left_channel event', () => {
+		// PR C AC — mapping test lives here so the normalizer's coverage is
+		// complete in one place. Handler behaviour is tested in
+		// slack-member-left.test.ts (auto-pause, dedup, bot-only guard etc.).
+		const payload = {
+			type: 'event_callback',
+			team_id: 'T123',
+			event: { type: 'member_left_channel', user: 'U456', channel: 'C789' },
+		}
+		const result = slackEventNormalizer(payload, {})
+
+		expect(result).not.toBeNull()
+		expect(result?.entityType).toBe('slack.member')
+		expect(result?.action).toBe('left')
+		expect(result?.installationId).toBe('T123')
+	})
+
 	it('returns null for url_verification type', () => {
 		const payload = { type: 'url_verification', challenge: 'abc123' }
 		expect(slackEventNormalizer(payload, {})).toBeNull()
