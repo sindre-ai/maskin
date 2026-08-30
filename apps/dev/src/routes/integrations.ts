@@ -1821,6 +1821,7 @@ const slackConversationSchema = z.object({
 	is_im: z.boolean(),
 	is_mpim: z.boolean(),
 	is_channel: z.boolean(),
+	is_member: z.boolean(),
 })
 
 const listSlackConversationsRoute = createRoute({
