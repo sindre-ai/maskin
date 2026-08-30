@@ -1,6 +1,16 @@
 import type { Database } from '@maskin/db'
-import { actors, notifications, slackUserLinks, workspaces } from '@maskin/db/schema'
-import { and, desc, eq, ne } from 'drizzle-orm'
+import {
+	actors,
+	events as eventsTable,
+	integrations as integrationsTable,
+	notifications,
+	slackUserLinks,
+	triggers,
+	workspaces,
+} from '@maskin/db/schema'
+import { and, desc, eq, ne, or, sql } from 'drizzle-orm'
+import { capturePosthogEvent } from '../../../analytics/posthog'
+import { decrypt } from '../../../crypto'
 import { frontendBaseUrl } from '../../../file-urls'
 import { logger } from '../../../logger'
 import { TokenManager } from '../../oauth/token-manager'
@@ -22,6 +32,7 @@ const eventMapping: Record<string, { entityType: string; action: string }> = {
 	channel_deleted: { entityType: 'slack.channel', action: 'deleted' },
 	channel_rename: { entityType: 'slack.channel', action: 'renamed' },
 	member_joined_channel: { entityType: 'slack.member', action: 'joined' },
+	member_left_channel: { entityType: 'slack.member', action: 'left' },
 	app_home_opened: { entityType: 'slack.app_home_opened', action: 'opened' },
 	link_shared: { entityType: 'slack.link_shared', action: 'shared' },
 }
@@ -444,4 +455,295 @@ export const _internal = {
 	formatAgentSubscript,
 	FALU_RED,
 	APP_HOME_FEED_LIMIT,
+}
+
+// ── member_left_channel auto-pause handler ─────────────────────────────────
+//
+// Slack fires `member_left_channel` whenever a user (bot or human) leaves a
+// channel; Slack does NOT distinguish kicked-vs-voluntary at the event level.
+// When the leaving user IS our own bot, every trigger that lists this channel
+// in `config.conditions[*].value` is auto-paused: the trigger row is disabled,
+// `metadata.auto_paused` is stamped for the banner to read, an audit row is
+// appended, an in-app inbox notification is created for the trigger owner, and
+// a PostHog metric fires. Slack DM fallback to the installer is deferred to v2
+// because `parseTokenResponse` doesn't currently persist `authed_user.id` — the
+// audit call-out in the parent task's completion note is Q2.
+//
+// The handler is invoked from `slackWebhookFanOut` (fan-out.ts) as a
+// side-effect-only branch (returns `[]`); the fan-out already runs per matched
+// integration for the team, so this handler iterates every matching integration
+// itself to survive standalone / test-only invocations that don't come through
+// the fan-out. Multiple invocations for the same delivery are idempotent via
+// the recency guard below — `enabled=false` + `metadata.auto_paused` overwrite
+// are stable, and repeated invocations short-circuit once the stamp is fresh.
+//
+// Gated behind the `SLACK_AUTO_PAUSE_ON_KICK` env var (backend kill switch —
+// the repo's `FLAGS` registry is visual-layer only per `.claude/rules/feature-
+// flags.md`, so this uses the plain env-var mechanism instead). Flag OFF =
+// event is normalized and dispatched, handler no-ops and returns immediately.
+
+export interface SlackMemberLeftEvent {
+	type: 'member_left_channel'
+	user?: string
+	channel?: string
+	channel_type?: string
+	event_ts?: string
+	team?: string
+}
+
+export interface SlackMemberLeftPayload {
+	type: 'event_callback'
+	team_id?: string
+	event?: SlackMemberLeftEvent
+	[key: string]: unknown
+}
+
+/**
+ * Shape stamped on `triggers.metadata.auto_paused` when the bot is kicked out
+ * of a channel a trigger listens on. The banner in
+ * `apps/web/src/components/triggers/slack-trigger-setup-status.tsx` reads
+ * `reason === 'slack_member_left'` to flip to the red state. `previous_enabled`
+ * captures whether the trigger was enabled before auto-pause so Task 4's
+ * Resume flow can restore the pre-pause state instead of blindly enabling.
+ */
+export interface AutoPausedMetadata {
+	reason: 'slack_member_left'
+	channel_id: string
+	paused_at: string
+	previous_enabled: boolean
+}
+
+// Multiple fan-out calls can land inside seconds of each other for a
+// multi-workspace-per-Slack-team install (one fan-out per matched integration
+// × N iterations in the handler). Second and later runs see this stamp and
+// short-circuit before writing an events / notifications row again. The 5-min
+// window is long enough to cover Slack's own retries plus one minute of DB
+// latency and short enough that a legitimate re-kick a while later still
+// re-notifies.
+const RECENT_AUTO_PAUSE_WINDOW_MS = 5 * 60_000
+
+/** Kill switch (Architect §10 + comment 488058 on task 3643cf14). */
+function slackAutoPauseOnKickEnabled(): boolean {
+	const raw = process.env.SLACK_AUTO_PAUSE_ON_KICK?.trim()
+	return raw === '1' || raw === 'true'
+}
+
+function readBotUserIdFromCredentials(rawCredentials: string): string | null {
+	try {
+		const parsed = JSON.parse(decrypt(rawCredentials)) as { botUserId?: unknown }
+		const id = parsed.botUserId
+		return typeof id === 'string' && id.length > 0 ? id : null
+	} catch (err) {
+		logger.warn('Slack auto-pause: could not decrypt credentials', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return null
+	}
+}
+
+function readSystemActorId(rawConfig: unknown): string | null {
+	if (!rawConfig || typeof rawConfig !== 'object') return null
+	const id = (rawConfig as { system_actor_id?: unknown }).system_actor_id
+	return typeof id === 'string' && id.length > 0 ? id : null
+}
+
+/**
+ * Auto-pause every trigger in every workspace bound to the Slack team whose bot
+ * was just kicked from `payload.event.channel`.
+ *
+ * See the block comment above for design context (kill switch, idempotency,
+ * multi-workspace fan-out semantics). Never throws — the caller (fan-out) is
+ * fire-and-forget by contract, so any failure is logged and swallowed to keep
+ * the webhook ack path clean.
+ */
+export async function handleMemberLeftChannel(
+	db: Database,
+	payload: SlackMemberLeftPayload,
+): Promise<{ pausedTriggerIds: string[] }> {
+	if (!slackAutoPauseOnKickEnabled()) return { pausedTriggerIds: [] }
+
+	const teamId = payload.team_id
+	const event = payload.event
+	const channelId = typeof event?.channel === 'string' ? event.channel : ''
+	const leavingUserId = typeof event?.user === 'string' ? event.user : ''
+	if (!teamId || !channelId || !leavingUserId) return { pausedTriggerIds: [] }
+
+	// (a) All active Slack integrations for this team. Do NOT `.limit(1)` — a
+	// single Slack workspace can be connected to several Maskin workspaces and
+	// each one's triggers need to be paused independently.
+	const activeIntegrations = await db
+		.select()
+		.from(integrationsTable)
+		.where(
+			and(
+				eq(integrationsTable.provider, 'slack'),
+				eq(integrationsTable.externalId, teamId),
+				eq(integrationsTable.status, 'active'),
+			),
+		)
+	if (activeIntegrations.length === 0) return { pausedTriggerIds: [] }
+
+	const pausedTriggerIds: string[] = []
+	for (const integration of activeIntegrations) {
+		// (b) Bot-only guard. A human leaving a channel Maskin lives in is
+		// noise — only bot removals should trip an auto-pause. If credentials
+		// don't decrypt or the botUserId isn't stashed (pre-`parseTokenResponse`
+		// installs), the guard fails closed and we skip this integration.
+		const botUserId = readBotUserIdFromCredentials(integration.credentials as string)
+		if (!botUserId || leavingUserId !== botUserId) continue
+
+		// (c) One workspace-scoped JSONB match. Slack event triggers store the
+		// channel filter as either `event.channel` (channel-message /
+		// app-mention) or `event.item.channel` (reaction / member). `@>`
+		// containment is index-friendly (once a GIN on `config->'conditions'`
+		// exists — Architect §7 deferred that) and picker-shape-safe: an LHS
+		// value with more channels still matches when RHS includes just this
+		// one channel.
+		const containsChannel = JSON.stringify([
+			{ field: 'event.channel', operator: 'in', value: [channelId] },
+		])
+		const containsItemChannel = JSON.stringify([
+			{ field: 'event.item.channel', operator: 'in', value: [channelId] },
+		])
+		const matchedTriggers = await db
+			.select()
+			.from(triggers)
+			.where(
+				and(
+					eq(triggers.workspaceId, integration.workspaceId),
+					or(
+						sql`${triggers.config}->'conditions' @> ${containsChannel}::jsonb`,
+						sql`${triggers.config}->'conditions' @> ${containsItemChannel}::jsonb`,
+					),
+				),
+			)
+		if (matchedTriggers.length === 0) continue
+
+		const systemActorId = readSystemActorId(integration.config)
+		const slackTeamId = integration.externalId
+
+		for (const trigger of matchedTriggers) {
+			const md = (trigger.metadata as Record<string, unknown> | null) ?? {}
+			const existing = md.auto_paused as AutoPausedMetadata | undefined
+
+			// Recency dedup: the same (channel, team) auto-pause was just
+			// written. Fan-out runs once per integration and this handler
+			// itself iterates every integration for the team, so N fan-out
+			// invocations × N integrations would otherwise emit N² events /
+			// notifications rows. The recency window is well below Slack's
+			// retry ceiling (~1 minute) with headroom.
+			if (
+				existing?.reason === 'slack_member_left' &&
+				existing.channel_id === channelId &&
+				typeof existing.paused_at === 'string' &&
+				Date.now() - Date.parse(existing.paused_at) < RECENT_AUTO_PAUSE_WINDOW_MS
+			) {
+				continue
+			}
+
+			// Preserve the original pre-pause enabled state so Task 4's Resume
+			// button restores the trigger's true prior state instead of blindly
+			// flipping to enabled. If the trigger is being auto-paused a second
+			// time (`already-disabled-still-stamps` per AC), carry the earlier
+			// `previous_enabled` forward.
+			const previousEnabled =
+				typeof existing?.previous_enabled === 'boolean' ? existing.previous_enabled : trigger.enabled
+
+			const pausedAt = new Date().toISOString()
+			const autoPaused: AutoPausedMetadata = {
+				reason: 'slack_member_left',
+				channel_id: channelId,
+				paused_at: pausedAt,
+				previous_enabled: previousEnabled,
+			}
+
+			// (d) Single-row txn — cheap, but keeps the enabled flip and the
+			// metadata stamp atomic against a concurrent PATCH from the trigger
+			// form. Merge additively so PR B's `metadata.slack_setup` sibling
+			// (and any future sibling) is preserved.
+			try {
+				await db.transaction(async (tx) => {
+					await tx
+						.update(triggers)
+						.set({
+							enabled: false,
+							metadata: { ...md, auto_paused: autoPaused },
+						})
+						.where(eq(triggers.id, trigger.id))
+				})
+			} catch (err) {
+				logger.error('Slack auto-pause: pause update failed', {
+					triggerId: trigger.id,
+					workspaceId: integration.workspaceId,
+					error: err instanceof Error ? err.message : String(err),
+				})
+				continue
+			}
+			pausedTriggerIds.push(trigger.id)
+
+			// (e) Audit trail. The webhook route writes `events` rows with
+			// `actorId = integration.config.system_actor_id`; we mirror that so
+			// this row belongs to the same actor for downstream filters.
+			if (systemActorId) {
+				try {
+					await db.insert(eventsTable).values({
+						workspaceId: integration.workspaceId,
+						actorId: systemActorId,
+						action: 'auto_paused',
+						entityType: 'trigger',
+						entityId: trigger.id,
+						data: { reason: 'slack_member_left', channel_id: channelId },
+					})
+				} catch (err) {
+					logger.warn('Slack auto-pause: events insert failed', {
+						triggerId: trigger.id,
+						error: err instanceof Error ? err.message : String(err),
+					})
+				}
+			}
+
+			// (f) In-app inbox item for the trigger owner. The For You feed
+			// (App Home + web) reads `notifications` directly, so this row is
+			// what surfaces the auto-pause outside the trigger form.
+			if (systemActorId) {
+				try {
+					await db.insert(notifications).values({
+						workspaceId: integration.workspaceId,
+						type: 'trigger.auto_paused',
+						title: 'Trigger auto-paused',
+						content: `Maskin was removed from a Slack channel — reinvite the app in Slack, then resume "${trigger.name}".`,
+						sourceActorId: systemActorId,
+						targetActorId: trigger.createdBy,
+						metadata: {
+							reason: 'slack_member_left',
+							trigger_id: trigger.id,
+							channel_id: channelId,
+						},
+						status: 'unresolved',
+					})
+				} catch (err) {
+					logger.warn('Slack auto-pause: notifications insert failed', {
+						triggerId: trigger.id,
+						error: err instanceof Error ? err.message : String(err),
+					})
+				}
+			}
+
+			// (g) Slack DM to installer — DEFERRED to v2. Audit Q2: the OAuth
+			// callback doesn't persist `authed_user.id`, only the bot user id.
+			// Enabling the DM path is a follow-up (parseTokenResponse extension +
+			// backfill on connect); once persisted, the DM copy + reinvite deep
+			// link belong here so the installer surface stays in one place.
+
+			// (h) Metric fire-and-forget, same shape PR B uses.
+			void capturePosthogEvent('slack.trigger.auto_paused', integration.workspaceId, {
+				workspace_id: integration.workspaceId,
+				slack_team_id: slackTeamId ?? null,
+				trigger_id: trigger.id,
+				channel_id: channelId,
+				reason: 'member_left',
+			})
+		}
+	}
+	return { pausedTriggerIds }
 }

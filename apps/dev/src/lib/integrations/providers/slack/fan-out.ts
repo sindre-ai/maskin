@@ -13,7 +13,7 @@ import type { NormalizedEvent, WebhookFanOutContext } from '../../types'
 import { maybePromptAccountLink } from './account-link'
 import { extractMentionFields, handleSlackMention, isMentionEntityType } from './mention'
 import { handleLinkShared } from './unfurl'
-import { publishAppHomeView } from './webhooks'
+import { handleMemberLeftChannel, publishAppHomeView, type SlackMemberLeftPayload } from './webhooks'
 
 /**
  * Slack file object shape from Events API message payloads. Slack returns many
@@ -370,6 +370,24 @@ export async function slackWebhookFanOut(ctx: WebhookFanOutContext): Promise<Nor
 			await handleLinkShared(db, ctx.integrationId, ctx.normalized)
 		} catch (err) {
 			logger.error('Slack link_shared: handler failed', {
+				integrationId: ctx.integrationId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+		return []
+	}
+
+	// member_left_channel is a bot-lifecycle event, not a message. The auto-pause
+	// handler mutates trigger rows directly (see webhooks.ts) — no events row is
+	// needed downstream, and returning `[]` keeps the events log free of bot
+	// membership churn. The generic `member_joined_channel` path still flows
+	// through unchanged so trigger authors can still filter on joins if they add
+	// that entity type in the future.
+	if (ctx.normalized.entityType === 'slack.member' && ctx.normalized.action === 'left') {
+		try {
+			await handleMemberLeftChannel(db, ctx.normalized.data as SlackMemberLeftPayload)
+		} catch (err) {
+			logger.error('Slack member_left_channel: handler failed', {
 				integrationId: ctx.integrationId,
 				error: err instanceof Error ? err.message : String(err),
 			})

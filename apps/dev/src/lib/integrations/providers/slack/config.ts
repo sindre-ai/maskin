@@ -70,7 +70,7 @@ export const config: ProviderConfig = {
 				actions: ['created', 'deleted', 'renamed'],
 				label: 'Channel',
 			},
-			{ entityType: 'slack.member', actions: ['joined'], label: 'Member' },
+			{ entityType: 'slack.member', actions: ['joined', 'left'], label: 'Member' },
 		],
 	},
 
