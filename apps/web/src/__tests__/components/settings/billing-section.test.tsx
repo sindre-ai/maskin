@@ -33,6 +33,7 @@ const baseUsage = {
 	stripe_customer_id: null,
 	stripe_subscription_id: null,
 	credit_balance_cents: 0,
+	linkedin_identity_addon: null,
 }
 
 describe('formatCredits', () => {
@@ -425,5 +426,52 @@ describe('BillingSection', () => {
 		await user.click(screen.getByRole('button', { name: 'Hide plans' }))
 		expect(screen.queryByRole('button', { name: 'Downgrade to Free' })).not.toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Compare plans' })).toBeInTheDocument()
+	})
+
+	it('does not render the LinkedIn Identity add-on line when the backend returns null', async () => {
+		// Ship-default: flag off OR zero connected identities → backend returns
+		// `linkedin_identity_addon: null` → nothing about LinkedIn appears in
+		// the plan surface at all.
+		vi.mocked(api.billing.usage).mockResolvedValue({ ...baseUsage })
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" enterprise />
+			</TestWrapper>,
+		)
+		await screen.findByText('Trial')
+		expect(screen.queryByText('LinkedIn Identity')).not.toBeInTheDocument()
+		expect(screen.queryByTestId('linkedin-identity-addon')).not.toBeInTheDocument()
+	})
+
+	it('renders LinkedIn Identity with count × €29 arithmetic and the buyer-framing copy', async () => {
+		// The line renders exactly what the backend sends — the €29 unit price
+		// is Sebk-locked (pricing memo). The buyer-framing paragraph is copied
+		// verbatim from bet §Pricing so buyers see the same framing at the
+		// moment they're asked to pay.
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'pro',
+			status: 'active',
+			hard_cap_usd_cents: 2_000,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+			linkedin_identity_addon: {
+				count: 2,
+				unit_price_eur_cents: 2900,
+				monthly_total_eur_cents: 5800,
+			},
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" enterprise />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('LinkedIn Identity')
+		expect(screen.getByText('€29/mo × 2 = €58.00')).toBeInTheDocument()
+		expect(
+			screen.getByText(/€29\/month covers connectivity to LinkedIn/),
+		).toBeInTheDocument()
 	})
 })
