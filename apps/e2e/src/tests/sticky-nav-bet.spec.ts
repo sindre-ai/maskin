@@ -38,6 +38,15 @@ async function scrollHeroOff(page: import('@playwright/test').Page) {
 // carry the object's name in its crumb (mockup 1033–1035), so "no projection"
 // is now about the status chip and about the bar not changing on scroll, not
 // about the name being absent from the header.
+// The New control is a split button (new-menu.tsx): the label half RUNS the
+// screen's primary create action, and only the caret half opens the menu. The
+// caret is labelled 'More ways to start' wherever a primary kind is set and
+// plain 'New' where none is, so match either — and never the primary half,
+// whose name is 'New object' / 'New chat' / …
+function newMenuTrigger(scope: import('@playwright/test').Locator) {
+	return scope.getByRole('button', { name: /^(More ways to start|New)$/ })
+}
+
 test.describe('Sticky nav — bet identity (interim contract)', () => {
 	for (const viewport of [WIDE_DESKTOP, NARROW_DESKTOP, MOBILE]) {
 		test(`hero status picker present; no sticky chip until T5 (${viewport.width}px)`, async ({
@@ -141,14 +150,14 @@ test.describe('"Create an object" section in the header New menu', () => {
 			timeout: 10000,
 		})
 		// The New menu itself stays available on object-detail pages (chat/loop/
-		const newButton = page.locator('main header').first().getByRole('button', { name: /^New / })
+		const newButton = newMenuTrigger(page.locator('main header').first())
 		await expect(newButton).toBeVisible()
 		await newButton.click()
 		await expect(page.getByText('Create an object')).toBeVisible()
 		await page.keyboard.press('Escape')
 
 		await page.goto(`/${account.workspaceId}/objects`)
-		await page.locator('header').getByRole('button', { name: /^New/ }).click()
+		await newMenuTrigger(page.locator('header')).click()
 		await expect(page.getByText('Create an object')).toBeVisible()
 	})
 
@@ -156,12 +165,12 @@ test.describe('"Create an object" section in the header New menu', () => {
 		await page.setViewportSize(WIDE_DESKTOP)
 
 		await page.goto(`/${account.workspaceId}/agents`)
-		await page.locator('header').getByRole('button', { name: /^New/ }).click()
+		await newMenuTrigger(page.locator('header')).click()
 		await expect(page.getByText('Create an object')).toBeVisible()
 		await page.keyboard.press('Escape')
 
 		await page.goto(`/${account.workspaceId}/triggers`)
-		await page.locator('header').getByRole('button', { name: /^New/ }).click()
+		await newMenuTrigger(page.locator('header')).click()
 		await expect(page.getByText('Create an object')).toBeVisible()
 	})
 })

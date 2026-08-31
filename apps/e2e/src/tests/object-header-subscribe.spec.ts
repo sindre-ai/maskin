@@ -11,6 +11,12 @@ const TITLE = 'Object subscribe affordance'
 test.describe('Object properties drawer — subscribe', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
 		test(`subscribe / unsubscribe round-trips at ${vp.label}`, async ({ page, account }) => {
+			// CI serves the app from `vite dev`, so the first navigation of a shard
+			// pays for on-demand compilation of the whole route graph — and this
+			// file sorts first in its shard, which made its opening `goto` the one
+			// that ate the cold start and timed out on a blank page. The extra
+			// allowance is for the boot, not for anything this test does.
+			test.slow()
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 
 			const bet = await account.api.createObject(account.workspaceId, {
@@ -21,7 +27,7 @@ test.describe('Object properties drawer — subscribe', () => {
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
 			await expect(page.getByRole('heading', { level: 1, name: TITLE })).toBeVisible({
-				timeout: 15000,
+				timeout: 45000,
 			})
 
 			// Open the drawer from the detail bar's toggle, scoped to the bar — the

@@ -50,7 +50,11 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 			)
 			await composer.fill('Avatar slot check')
 			await page.getByRole('button', { name: 'Send comment' }).click()
-			await expect(page.getByText('Avatar slot check')).toBeVisible({ timeout: 10000 })
+			// The composer clearing is the signal the post landed. Asserting on the
+			// comment's text instead would be ambiguous: the composer overlays a
+			// mirror div on its textarea, so the string matches twice while the
+			// draft is still in the field.
+			await expect(composer).toHaveValue('', { timeout: 10000 })
 
 			// AC: initials render in the avatar slot with the account name.
 			const actorName = await page.evaluate(() => {
