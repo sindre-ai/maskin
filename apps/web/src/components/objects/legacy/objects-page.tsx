@@ -1074,8 +1074,10 @@ export function LegacyObjectsPage() {
 							ids: undefined,
 							includeArchived: undefined,
 							// v2-only search keys — see the note in object-document.tsx.
-							filterBy: undefined,
 							attention: undefined,
+							fresh: undefined,
+							starred: undefined,
+							updated: undefined,
 						},
 						replace: true,
 					})
