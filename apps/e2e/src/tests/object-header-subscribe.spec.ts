@@ -32,30 +32,24 @@ test.describe('Object properties drawer — subscribe', () => {
 
 			// Open the drawer from the detail bar's toggle, scoped to the bar — the
 			// drawer body and the files table carry their own "…properties" controls.
-			// Gate on the section itself rather than the toggle's aria-expanded:
-			// below 768 the drawer is a modal Sheet that puts the bar behind
-			// `aria-hidden`, so the toggle is unreadable while it is open.
 			const subscribedSection = page.getByText('Subscribed', { exact: true })
-			// At and above 768 the drawer is an offcanvas panel: it keeps its
-			// content mounted and merely translates it out of the page, so
-			// `isVisible()` reports true while it is shut and the section's
-			// controls sit outside the viewport where they cannot be clicked.
-			// Whether it is really open is a question about geometry, not
-			// visibility, so gate on the box.
-			const sectionOnScreen = async () => {
-				const box = await subscribedSection.boundingBox().catch(() => null)
-				const vp = page.viewportSize()
-				if (!box || !vp) return false
-				return box.x >= 0 && box.x < vp.width && box.y < vp.height && box.y + box.height > 0
-			}
+			// Whether the drawer is open cannot be read off its own content, in
+			// either direction: at and above 768 it is an offcanvas panel that
+			// keeps its content mounted and merely translates it away, so
+			// `isVisible()` is true while it is shut; below 768 it is a modal
+			// Sheet whose section can sit below the fold of its internal scroll,
+			// so a viewport check calls an open drawer shut. Ask the toggle, which
+			// carries `aria-expanded` — and note the Sheet puts the bar behind
+			// `aria-hidden`, so the toggle being unreadable *is* the open state.
+			const drawerToggle = page
+				.locator('main header')
+				.first()
+				.getByRole('button', { name: 'Properties', exact: true })
 			const openDrawer = async () => {
-				if (await sectionOnScreen()) return
-				await page
-					.locator('main header')
-					.first()
-					.getByRole('button', { name: 'Properties', exact: true })
-					.click()
-				await expect(subscribedSection).toBeInViewport({ timeout: 15000 })
+				if ((await drawerToggle.count()) === 0) return
+				if ((await drawerToggle.getAttribute('aria-expanded')) === 'true') return
+				await drawerToggle.click()
+				await expect(subscribedSection).toBeVisible({ timeout: 15000 })
 			}
 			await openDrawer()
 
