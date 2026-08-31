@@ -174,3 +174,67 @@ describe('which state gets bound', () => {
 		expect(JSON.parse(Buffer.from(bound, 'base64url').toString()).state).toBe(RAW)
 	})
 })
+
+describe('resolveOAuthClient — a provider that advertises registration and then refuses', () => {
+	// Meta's Ads MCP server publishes `registration_endpoint` in its
+	// authorization-server metadata and rejects every registration attempt with
+	// "Dynamic registration is not available for this client". Verified against
+	// four request shapes — minimal RFC 7591, with grant/response types, with an
+	// http localhost redirect, and with a scope — all identical 400s, so it is
+	// their policy rather than something we sent.
+	//
+	// Before this, that surfaced as "Tool broker returned 400": a number, with
+	// nothing a user could act on.
+
+	const metaMetadata = {
+		issuer: 'https://mcp.example.com/ads',
+		authorizationUrl: 'https://www.example.com/v26.0/dialog/oauth',
+		tokenUrl: 'https://graph.example.com/v26.0/oauth/access_token',
+		resource: 'https://mcp.example.com/ads',
+		scopesSupported: ['ads_management', 'ads_read'],
+		registrationEndpoint: 'https://mcp.example.com/.well-known/register/ads',
+		tokenEndpointAuthMethodsSupported: ['none'],
+	}
+
+	it('reports it as needing a client configured out of band', async () => {
+		const { ToolBrokerHttpError } = await import('@maskin/tool-broker')
+		const client = {
+			probeOAuth: vi.fn().mockResolvedValue(metaMetadata),
+			registerOAuthClient: vi
+				.fn()
+				.mockRejectedValue(
+					new ToolBrokerHttpError(
+						400,
+						'{"message":"Dynamic Client Registration failed: invalid_client_metadata — Dynamic registration is not available for this client."}',
+					),
+				),
+		}
+
+		await expect(
+			resolveOAuthClient(client as never, 'key', {
+				integrationSlug: 'w0123_ads',
+				endpointUrl: 'https://mcp.example.com/ads',
+				redirectUri: 'https://app.example.com/api/tool-broker/oauth/callback',
+			}),
+		).rejects.toBeInstanceOf(OAuthNotSupportedError)
+	})
+
+	it('does not swallow a failure that is not the provider refusing', async () => {
+		// A 500 is our problem or an outage, not a "this provider needs setup"
+		// answer, and mislabelling it would send someone to configure a client
+		// that was never the issue.
+		const { ToolBrokerHttpError } = await import('@maskin/tool-broker')
+		const client = {
+			probeOAuth: vi.fn().mockResolvedValue(metaMetadata),
+			registerOAuthClient: vi.fn().mockRejectedValue(new ToolBrokerHttpError(500, 'boom')),
+		}
+
+		await expect(
+			resolveOAuthClient(client as never, 'key', {
+				integrationSlug: 'w0123_ads',
+				endpointUrl: 'https://mcp.example.com/ads',
+				redirectUri: 'https://app.example.com/api/tool-broker/oauth/callback',
+			}),
+		).rejects.not.toBeInstanceOf(OAuthNotSupportedError)
+	})
+})

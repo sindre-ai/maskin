@@ -1,7 +1,8 @@
-import type { OAuthMetadata, ToolBrokerClient } from '@maskin/tool-broker'
+import { type OAuthMetadata, type ToolBrokerClient, ToolBrokerHttpError } from '@maskin/tool-broker'
 import type { Context } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
 import { decodeState, encodeState } from '../integrations/oauth/state'
+import { logger } from '../logger'
 
 // ---------------------------------------------------------------------------
 // OAuth for tool-broker integrations.
@@ -135,13 +136,32 @@ export const resolveOAuthClient = async (
 	if (!metadata.registrationEndpoint) {
 		throw new OAuthNotSupportedError(input.integrationSlug)
 	}
-	const clientId = await client.registerOAuthClient(apiKey, {
-		slug: input.integrationSlug,
-		metadata,
-		redirectUri: input.redirectUri,
-		clientName: 'Maskin',
-	})
-	return { clientId, metadata }
+
+	try {
+		const clientId = await client.registerOAuthClient(apiKey, {
+			slug: input.integrationSlug,
+			metadata,
+			redirectUri: input.redirectUri,
+			clientName: 'Maskin',
+		})
+		return { clientId, metadata }
+	} catch (error) {
+		// Advertising a registration endpoint is not the same as allowing anyone to
+		// use it. Meta's Ads server publishes one and then refuses every request
+		// with "Dynamic registration is not available for this client" — measured
+		// against four different request shapes, so it is their policy rather than
+		// something we sent. Presenting that as a bare "returned 400" tells the
+		// user nothing they can act on, and the state is exactly the one we already
+		// have a name for.
+		if (error instanceof ToolBrokerHttpError && error.status === 400) {
+			logger.info('Provider advertises dynamic registration but refused it', {
+				slug: input.integrationSlug,
+				registrationEndpoint: metadata.registrationEndpoint,
+			})
+			throw new OAuthNotSupportedError(input.integrationSlug)
+		}
+		throw error
+	}
 }
 
 /** The provider cannot be connected without a client registered out of band. */
