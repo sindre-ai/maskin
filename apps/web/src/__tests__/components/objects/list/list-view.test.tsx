@@ -143,7 +143,7 @@ describe('ListView', () => {
 		expect(screen.getByText('Gamma')).toBeInTheDocument()
 	})
 
-	it('shows type label, name link, status tag, updated time and chevron on each row', () => {
+	it('shows type label, name link, status tag and updated time on each row', () => {
 		const data = [
 			buildObjectResponse({
 				id: 'obj-1',
@@ -166,15 +166,15 @@ describe('ListView', () => {
 			params: { workspaceId: 'ws-1', objectId: 'obj-1' },
 		})
 
-		// Status tag (StatusBadge dot-word renders the de-underscored status).
-		expect(screen.getByText('in progress')).toBeInTheDocument()
+		// Status tag (StatusBadge `word` renders the humanised status).
+		expect(screen.getByText('In progress')).toBeInTheDocument()
 
 		// Updated-time (RelativeTime, compact age column) renders something for a
 		// known date — "3d", "2h", "now", or a "5 Jul" fallback past a month.
 		expect(screen.getByText(/^(now|\d+[mhd]|\w{3} \d+|\d+ \w{3})$/)).toBeInTheDocument()
 
-		// Per-row open chevron.
-		expect(screen.getAllByRole('button', { name: /open object/i })).not.toHaveLength(0)
+		// No trailing open chevron — the whole row is the target (mockup 764).
+		expect(screen.queryAllByRole('button', { name: /open object/i })).toHaveLength(0)
 	})
 
 	it('toggles row selection through the controlled rowSelection boundary', async () => {
@@ -334,10 +334,10 @@ describe('ListView', () => {
 
 		// ui/checkbox renders a native checkbox role.
 		expect(screen.getAllByRole('checkbox').length).toBeGreaterThan(0)
-		// shared/status-badge renders the status word (dot-word variant).
+		// shared/status-badge renders the status word (`word` variant).
 		// shared/relative-time renders the compact age token.
 		// shared/actor-avatar is absent (no driver) — null driver renders nothing.
-		expect(screen.getAllByText('done').length).toBeGreaterThan(0)
+		expect(screen.getAllByText('Done').length).toBeGreaterThan(0)
 		expect(screen.getByText(/^(now|\d+[mhd]|\w{3} \d+|\d+ \w{3})$/)).toBeInTheDocument()
 	})
 	// Mockup 1021–1022: the empty state names the filters that produced it and

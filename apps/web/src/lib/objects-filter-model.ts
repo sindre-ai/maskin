@@ -73,6 +73,9 @@ export function urlIsInDefaultShape(
 		q?: string
 		attention?: string
 		includeArchived?: number
+		fresh?: number
+		starred?: number
+		updated?: string
 	},
 	metadataFilters: Record<string, string>,
 ): boolean {
@@ -88,6 +91,13 @@ export function urlIsInDefaultShape(
 		!search.q &&
 		!search.attention &&
 		!search.includeArchived &&
+		// The client-side axes count too: a chip clicked in the moment between
+		// first paint and the display-settings query resolving would otherwise
+		// still look like an untouched URL, and hydration would apply the saved
+		// filters on top of the choice the user just made.
+		!search.fresh &&
+		!search.starred &&
+		!search.updated &&
 		Object.keys(metadataFilters).length === 0
 	)
 }
