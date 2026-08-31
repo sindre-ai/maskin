@@ -1509,10 +1509,14 @@ function ObjectsPageV2() {
 	const objectPath = useCallback((id: string) => `/${workspaceId}/objects/${id}`, [workspaceId])
 
 	// The rows `Select all` is allowed to reach. Deliberately the *rendered* set,
-	// not `visibleObjects`: the Attention quick filter narrows what the list
-	// shows, and selecting past it would hand bulk actions rows the user can't
-	// see. Board has no such client-side filter, so its rendered set is its own.
-	const selectableObjects = effectiveView === 'board' ? boardInitialObjects : listObjects
+	// not `visibleObjects`: the quick filters narrow what each view shows, and
+	// selecting past them would hand bulk actions rows the user can't see. The
+	// list gets that for free from `listObjects`; the board filters here with the
+	// same predicate it passes to `BoardView` as `clientFilter`.
+	const selectableObjects = useMemo(() => {
+		if (effectiveView !== 'board') return listObjects
+		return hasClientFilter ? boardInitialObjects.filter(matchesClientFilters) : boardInitialObjects
+	}, [effectiveView, listObjects, hasClientFilter, boardInitialObjects, matchesClientFilters])
 
 	const handleSelectAll = useCallback(() => {
 		setRowSelection(Object.fromEntries(selectableObjects.map((o) => [o.id, true])))
