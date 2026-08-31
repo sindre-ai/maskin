@@ -30,14 +30,26 @@ test.describe('Object properties drawer — subscribe', () => {
 			// below 768 the drawer is a modal Sheet that puts the bar behind
 			// `aria-hidden`, so the toggle is unreadable while it is open.
 			const subscribedSection = page.getByText('Subscribed', { exact: true })
+			// At and above 768 the drawer is an offcanvas panel: it keeps its
+			// content mounted and merely translates it out of the page, so
+			// `isVisible()` reports true while it is shut and the section's
+			// controls sit outside the viewport where they cannot be clicked.
+			// Whether it is really open is a question about geometry, not
+			// visibility, so gate on the box.
+			const sectionOnScreen = async () => {
+				const box = await subscribedSection.boundingBox().catch(() => null)
+				const vp = page.viewportSize()
+				if (!box || !vp) return false
+				return box.x >= 0 && box.x < vp.width && box.y < vp.height && box.y + box.height > 0
+			}
 			const openDrawer = async () => {
-				if (await subscribedSection.isVisible().catch(() => false)) return
+				if (await sectionOnScreen()) return
 				await page
 					.locator('main header')
 					.first()
 					.getByRole('button', { name: 'Properties', exact: true })
 					.click()
-				await expect(subscribedSection).toBeVisible({ timeout: 15000 })
+				await expect(subscribedSection).toBeInViewport({ timeout: 15000 })
 			}
 			await openDrawer()
 
