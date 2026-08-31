@@ -37,6 +37,7 @@ import filesRoutes from './routes/files'
 import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
 import installedLoopsRoutes from './routes/installed-loops'
+import integrationsLinkedinUnipileRoutes from './routes/integrations-linkedin-unipile'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import loopsRoutes from './routes/loops'
@@ -304,6 +305,13 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/relationships', relationshipsRoutes)
 	app.route('/api/triggers', triggersRoutes)
 	app.route('/api/loops', loopsRoutes)
+	// linkedin-unipile connect + callback use Unipile's Hosted Auth Wizard, NOT
+	// OAuth2 — so this dedicated route file handles /connect + /callback for
+	// that provider directly. Mounted BEFORE the generic /api/integrations so
+	// the more-specific prefix wins Hono's trie; without this, the generic
+	// /{provider}/connect handler would try to build an OAuth2 authorization
+	// URL for linkedin-unipile and fail.
+	app.route('/api/integrations/linkedin-unipile', integrationsLinkedinUnipileRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
