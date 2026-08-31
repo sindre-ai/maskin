@@ -1,0 +1,14 @@
+JTBD: engineering leads running production AI agents want to answer 'why did the agent take that path, and did the change we just shipped make it worse?' — without handing sensitive prompts + tool-call args to a vendor and without stopping deploys on gut feel.
+
+QUERY / INTENT: 'LangSmith vs Langfuse vs Braintrust', 'AI agent observability 2026', 'best LLM observability platform', 'how to monitor AI agents in production'. Buyer intent isn't ranking dashboards — it's picking a governance model.
+
+EVIDENCE (Exa sweep 2026-08-25): three independent 2026 comparisons converge on the same anti-frame.
+- **BirJob 'AI Agent Observability in 2026'** (2026-05-19, [ai-observability-stack-2026](https://www.birjob.com/blog/ai-observability-stack-2026)): 'the choice matters more for your team's evaluation workflow than for the tracing UI.' Splits the market by team shape (5-person LangChain → LangSmith; 15-person mixed → self-host Langfuse; 40-person AI-native → Braintrust for eval-gating + whatever trace tool).
+- **Digital Applied 'Agent Observability Platforms 2026'** (2026-04-28, [agent-observability-platforms-langsmith-langfuse-arize-2026](https://www.digitalapplied.com/blog/agent-observability-platforms-langsmith-langfuse-arize-2026)): 'most teams pick a primary LLM observability platform and pair it with the broader infrastructure observability layer' — the load-bearing pattern is LLM-obs + APM, not one tool.
+- **DreamingPress 'Langfuse vs LangSmith vs Arize Phoenix'** (2026-06-20, [langfuse-vs-langsmith-vs-phoenix-observability](https://dreaming.press/posts/langfuse-vs-langsmith-vs-phoenix-observability.html)): 'Everyone selling you LLM observability wants you to believe it's a logging problem with a nicer chart. It isn't.' Frames the choice as three axes — trace-first vs eval-first vs LangChain-tied; self-host vs managed; OTel-agnostic vs vendor SDK — all governance.
+
+All three cite the same market signal: **ClickHouse acquired Langfuse in January 2026** ($400M Series D, reported $15B valuation, both parties publicly committed to keeping it MIT + self-hostable). Framing: 'LLM observability is fundamentally a data problem' — a medium-traffic LLM app generates more telemetry per day than most production services generate in a month.
+
+WHY THIS MATTERS FOR MASKIN: there's a fourth axis nobody in the SERP sells — **the trace and the review artifact are the same object graph.** In Maskin, an agent session produces typed insight/bet/task objects that ARE the trace; a human clicking 'validated' on a task IS the eval gate. No separate trace store, no separate eval CI/CD, no vendor SDK to instrument.
+
+CONFIDENCE: High. Three independent 2026 comparison sources agree on the anti-frame; each names the same three axes; each cites the same ClickHouse/Langfuse market signal; no vendor currently sells the workspace-graph-as-trace answer.

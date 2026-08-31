@@ -17,6 +17,10 @@
 			"types": "./src/sanitize.ts",
 			"default": "./dist/sanitize.js"
 		},
+		"./roundtrip": {
+			"types": "./src/roundtrip.ts",
+			"default": "./dist/roundtrip.js"
+		},
 		"./react": {
 			"types": "./src/react/index.ts",
 			"default": "./dist/react/index.js"
@@ -36,6 +40,7 @@
 		"react-dom": "^19.0.0"
 	},
 	"dependencies": {
+		"@tiptap/core": "^2.10.0",
 		"@tiptap/extension-bubble-menu": "^2.10.0",
 		"@tiptap/extension-code-block-lowlight": "^2.10.0",
 		"@tiptap/extension-link": "^2.10.0",
@@ -69,6 +74,7 @@
 	"devDependencies": {
 		"@types/react": "^19.0.0",
 		"@types/react-dom": "^19.0.0",
+		"jsdom": "^25.0.0",
 		"react": "^19.0.0",
 		"react-dom": "^19.0.0",
 		"typescript": "^5.7.0",
