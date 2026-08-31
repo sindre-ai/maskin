@@ -41,6 +41,24 @@ describe('argKeys', () => {
 		expect(argKeys('a secret string')).toEqual([])
 		expect(argKeys(['a secret element'])).toEqual([])
 	})
+
+	// A key name can itself be free text. Recording key names is only safe
+	// because they are identifier-shaped, so anything that isn't gets dropped
+	// rather than carried into analytics as a "key".
+	it('drops keys that are not identifier-shaped', () => {
+		expect(argKeys({ 'Acquire the Nakatomi account': 1, workspace_id: 'w' })).toEqual([
+			'workspace_id',
+		])
+		expect(argKeys({ 'user@example.com': 1 })).toEqual([])
+		expect(argKeys({ 'owner:login': 1 })).toEqual([])
+	})
+
+	it('drops over-long keys and caps the number of keys', () => {
+		expect(argKeys({ ['a'.repeat(65)]: 1 })).toEqual([])
+		expect(argKeys({ ['a'.repeat(64)]: 1 })).toEqual(['a'.repeat(64)])
+		const many = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`k${i}`, i]))
+		expect(argKeys(many)).toHaveLength(64)
+	})
 })
 
 describe('captureMcpToolCall', () => {

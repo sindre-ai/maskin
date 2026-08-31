@@ -40,6 +40,14 @@ const argKeysSchema = z
 	)
 	.max(64)
 	.optional()
+	// Degrade, don't reject. `arg_keys` is optional analytics riding along on an
+	// event whose primary job is the pre-existing `mcp_telemetry` row (tool
+	// name, rich-render flag, duration). Failing the whole body would 400 the
+	// request before the handler runs and silently discard that row — and the
+	// client sink logs one line per process lifetime, so the loss would be
+	// invisible. A tool declaring a param the regex rejects (custom extensions
+	// define their own schemas) must cost us the key list, not the event.
+	.catch([])
 
 export const recordMcpToolCallSchema = z.object({
 	event_type: z.literal('tool_call'),

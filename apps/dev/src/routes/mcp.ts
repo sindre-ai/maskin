@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { validateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { createMcpServer } from '@maskin/mcp'
@@ -82,12 +83,23 @@ app.post('/', async (c) => {
 	const captured = wrapResponseCapture(nodeRes)
 
 	const startedAt = Date.now()
+
+	// Allocate sequence numbers HERE — synchronously, before any await. `seq`
+	// exists because these events are fire-and-forget and can be ingested out
+	// of order, so it has to be stamped at the moment the call is observed. Do
+	// it downstream (inside the emitter, past the awaited actor lookup) and two
+	// calls on one session can invert: a cache-miss lookup takes a DB roundtrip
+	// while a call arriving a millisecond later hits a warm cache and numbers
+	// itself first. Agents issue tool calls in parallel routinely, so that is
+	// an ordinary case, not a rare race.
+	const session = resolveSessionIdentity(c.req.header.bind(c.req))
+	const plannedCalls = planTracedCalls(body, session, startedAt)
+
 	await mcpServer.connect(transport)
 	await transport.handleRequest(nodeReq, nodeRes, body)
 
 	// Fire-and-forget: emit one `mcp_tool_call` trace event per tools/call, plus
 	// one PostHog event per real misfire. Both read the same captured bytes.
-	const session = resolveSessionIdentity(c.req.header.bind(c.req))
 	void emitMcpTrace({
 		db: c.get('db'),
 		apiKey,
@@ -96,6 +108,7 @@ app.post('/', async (c) => {
 		responseBytes: captured.consume(),
 		session,
 		startedAt,
+		plannedCalls,
 	})
 
 	// transport.handleRequest already wrote the response to nodeRes.
@@ -195,7 +208,78 @@ const seqCounter = createSeqCounter()
 // revoked key should stop being attributed reasonably promptly — this is an
 // analytics label, not an authorization decision, so staleness here is cheap.
 const ACTOR_CACHE_TTL_MS = 60_000
+
+// Hard cap. `POST /mcp` is mounted OUTSIDE `authMiddleware` (see app-factory:
+// auth covers `/api/*`, this route is mounted at `/mcp`), so this cache is fed
+// by unauthenticated input: any caller can present an arbitrary bearer token
+// and reach the lookup below. An unbounded map would therefore grow without
+// limit on request volume alone. Bounded + swept, same discipline as
+// `lib/mcp-trace-seq.ts`.
+const ACTOR_CACHE_MAX = 5_000
+
+// Keyed by a SHA-256 of the API key, never the key itself: this map outlives
+// the 60s TTL of any individual entry, and plaintext credentials sitting in a
+// long-lived process map end up in every heap dump.
 const actorCache = new Map<string, { actorId: string | null; at: number }>()
+
+function actorCacheKey(apiKey: string): string {
+	return createHash('sha256').update(apiKey).digest('hex')
+}
+
+/**
+ * Negative results ARE cached. That is deliberate: an invalid key is exactly
+ * what an abusive caller sends, and not caching it would turn every such
+ * request into a `validateApiKey` query — trading bounded memory for unbounded
+ * DB load. The cap below is what keeps the memory side honest.
+ */
+function rememberActor(key: string, actorId: string | null, at: number): void {
+	if (!actorCache.has(key) && actorCache.size >= ACTOR_CACHE_MAX) {
+		for (const [k, v] of actorCache) {
+			if (at - v.at >= ACTOR_CACHE_TTL_MS) actorCache.delete(k)
+		}
+		// Still full of live entries — evict oldest-inserted first.
+		while (actorCache.size >= ACTOR_CACHE_MAX) {
+			const oldest = actorCache.keys().next()
+			if (oldest.done) break
+			actorCache.delete(oldest.value)
+		}
+	}
+	actorCache.set(key, { actorId, at })
+}
+
+/**
+ * One tools/call, with its ordering already fixed. Built synchronously on the
+ * request path so `seq`/`tsMs` reflect observation order rather than however
+ * long the emitter's async work took.
+ */
+interface PlannedTracedCall {
+	request: JsonRpcMessage
+	toolName: string
+	seq: number
+	tsMs: number
+}
+
+/**
+ * Assign sequence numbers to the tool calls in a request body. Must be called
+ * synchronously from the request handler — see the comment at its call site.
+ *
+ * Calls without a usable tool name are skipped rather than numbered, so `seq`
+ * stays gapless over the events actually emitted.
+ */
+export function planTracedCalls(
+	body: unknown,
+	session: McpSessionIdentity,
+	tsMs: number,
+): PlannedTracedCall[] {
+	const planned: PlannedTracedCall[] = []
+	for (const request of listRequests(body)) {
+		if (request.method !== 'tools/call') continue
+		const toolName = request.params?.name
+		if (typeof toolName !== 'string' || toolName.length === 0) continue
+		planned.push({ request, toolName, seq: seqCounter.next(session.id), tsMs })
+	}
+	return planned
+}
 
 interface EmitMcpTraceArgs {
 	db: Database | undefined
@@ -205,56 +289,71 @@ interface EmitMcpTraceArgs {
 	responseBytes: Buffer
 	session: McpSessionIdentity
 	startedAt: number
+	plannedCalls: PlannedTracedCall[]
 }
 
 async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
+	let responses: JsonRpcMessage[]
+	let agentActorId: string | null = null
 	try {
-		const requests = listRequests(args.requestBody)
-		const toolCalls = requests.filter((r) => r.method === 'tools/call')
-		const responses = parseJsonRpcResponses(args.responseBytes)
-		if (toolCalls.length === 0 && responses.length === 0) return
+		responses = parseJsonRpcResponses(args.responseBytes)
+		if (args.plannedCalls.length === 0 && responses.length === 0) return
+		agentActorId = args.apiKey && args.db ? await resolveAgentActorId(args.db, args.apiKey) : null
+	} catch (err) {
+		logger.warn('mcp trace response parse failed', { error: String(err) })
+		return
+	}
 
-		const responsesById = new Map<string, JsonRpcMessage>()
-		for (const r of responses) {
-			if (r.id != null) responsesById.set(String(r.id), r)
-		}
-		const requestsById = indexRequestsById(args.requestBody)
+	const responsesById = new Map<string, JsonRpcMessage>()
+	for (const r of responses) {
+		if (r.id != null) responsesById.set(String(r.id), r)
+	}
 
-		const agentActorId =
-			args.apiKey && args.db ? await resolveAgentActorId(args.db, args.apiKey) : null
+	// The two phases below are independent and must stay that way: misfire
+	// recording is a separate, pre-existing metric that predates tracing, and a
+	// failure in the new trace path must not be able to suppress it. Hence two
+	// try blocks rather than one wrapping both — and a distinct log message per
+	// phase, so a warn line identifies which half actually died.
 
+	// ── Trace: one event per tools/call, success or failure ──
+	try {
 		// A batched POST shares one wall-clock measurement between its calls, so
 		// only attribute a duration when the batch held exactly one tool call.
 		const elapsedMs = Date.now() - args.startedAt
-		const durationMs = toolCalls.length === 1 ? elapsedMs : null
+		const durationMs = args.plannedCalls.length === 1 ? elapsedMs : null
 
-		// ── Trace: one event per tools/call, success or failure ──
-		for (const request of toolCalls) {
-			const toolName = request.params?.name
-			if (typeof toolName !== 'string' || toolName.length === 0) continue
-			const response = request.id != null ? responsesById.get(String(request.id)) : undefined
-			const error = response ? extractError(response) : undefined
-			await captureMcpToolCall(args.workspaceId, {
-				sessionId: args.session.id,
-				sessionSource: args.session.source,
-				seq: seqCounter.next(args.session.id),
-				toolName,
-				argKeys: argKeys(request.params?.arguments),
-				ok: !error,
-				errorClass: error ? (classifyMcpError(error) ?? 'unclassified') : null,
-				durationMs,
-				responseBytes: args.responseBytes.length,
-				transport: 'http',
-				agentActorId,
-			})
-		}
+		await Promise.all(
+			args.plannedCalls.map(({ request, toolName, seq, tsMs }) => {
+				const response = request.id != null ? responsesById.get(String(request.id)) : undefined
+				const error = response ? extractError(response) : undefined
+				return captureMcpToolCall(args.workspaceId, {
+					sessionId: args.session.id,
+					sessionSource: args.session.source,
+					seq,
+					tsMs,
+					toolName,
+					argKeys: argKeys(request.params?.arguments),
+					ok: !error,
+					errorClass: error ? (classifyMcpError(error) ?? 'unclassified') : null,
+					durationMs,
+					responseBytes: args.responseBytes.length,
+					transport: 'http',
+					agentActorId,
+				})
+			}),
+		)
+	} catch (err) {
+		logger.warn('mcp trace capture failed', { error: String(err) })
+	}
 
-		// ── Misfires: unchanged behaviour, one row + event per classified error ──
+	// ── Misfires: unchanged behaviour, one row + event per classified error ──
+	try {
 		const errored = responses
 			.map((r) => ({ message: r, error: extractError(r) }))
 			.filter((r): r is { message: JsonRpcMessage; error: JsonRpcErrorLike } => Boolean(r.error))
 		if (errored.length === 0) return
 
+		const requestsById = indexRequestsById(args.requestBody)
 		const misfireSessionId = args.session.source === 'unknown' ? null : args.session.id
 		for (const { message, error } of errored) {
 			const kind = classifyMcpError(error)
@@ -273,7 +372,7 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 			await recordMcpMisfire(args.db, args.workspaceId, misfire)
 		}
 	} catch (err) {
-		logger.warn('mcp trace emission failed', { error: String(err) })
+		logger.warn('mcp misfire emission failed', { error: String(err) })
 	}
 }
 
@@ -370,12 +469,13 @@ function extractToolName(
 }
 
 async function resolveAgentActorId(db: Database, apiKey: string): Promise<string | null> {
-	const cached = actorCache.get(apiKey)
+	const key = actorCacheKey(apiKey)
+	const cached = actorCache.get(key)
 	if (cached && Date.now() - cached.at < ACTOR_CACHE_TTL_MS) return cached.actorId
 	try {
 		const actor = await validateApiKey(db, apiKey)
 		const actorId = actor?.actorId ?? null
-		actorCache.set(apiKey, { actorId, at: Date.now() })
+		rememberActor(key, actorId, Date.now())
 		return actorId
 	} catch (err) {
 		logger.warn('mcp trace actor lookup failed', { error: String(err) })

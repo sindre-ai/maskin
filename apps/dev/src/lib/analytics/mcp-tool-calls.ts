@@ -38,6 +38,14 @@ export interface McpToolCallTrace {
 	responseBytes: number | null
 	transport: 'http' | 'stdio'
 	agentActorId: string | null
+	/**
+	 * When the call was observed, as a coarse tiebreak for the multi-replica
+	 * caveat in `lib/mcp-trace-seq.ts`. Supplied by the caller rather than
+	 * stamped here, because this function runs after the request path's async
+	 * work — reading the clock at capture time would order events by how long
+	 * their actor lookup happened to take. `seq` remains authoritative.
+	 */
+	tsMs?: number
 }
 
 /**
@@ -46,9 +54,21 @@ export interface McpToolCallTrace {
  * (a bare string, an array, null) yield an empty list rather than leaking
  * their contents.
  */
+// Key names are only a safe thing to record because they are *names*. Nothing
+// stops a caller passing `{"Acquire the Nakatomi account": 1}`, which would put
+// the very free text this event exists to exclude into analytics under the
+// guise of a key. On the HTTP path these args come straight off the wire with
+// no schema in between, so the constraint has to be applied here. Mirrors
+// `argKeysSchema` in @maskin/shared.
+const ARG_KEY_RE = /^[A-Za-z0-9_.-]{1,64}$/
+const MAX_ARG_KEYS = 64
+
 export function argKeys(args: unknown): string[] {
 	if (!args || typeof args !== 'object' || Array.isArray(args)) return []
-	return Object.keys(args as Record<string, unknown>).sort()
+	return Object.keys(args as Record<string, unknown>)
+		.filter((k) => ARG_KEY_RE.test(k))
+		.sort()
+		.slice(0, MAX_ARG_KEYS)
 }
 
 /**
@@ -75,7 +95,7 @@ export async function captureMcpToolCall(
 		transport: trace.transport,
 		// Coarse tiebreak for the multi-replica caveat documented in
 		// `lib/mcp-trace-seq.ts`. `seq` remains the authoritative ordering.
-		ts_ms: Date.now(),
+		ts_ms: trace.tsMs ?? Date.now(),
 	}
 	// distinct_id: the calling agent when we could resolve it, else the
 	// workspace — same fallback the misfire path uses.

@@ -131,9 +131,19 @@ async function postEvent(event: TelemetryEvent, target: TelemetryConfig): Promis
  * text, or comment bodies into analytics. Non-object arguments yield an empty
  * list rather than leaking their contents.
  */
+// Mirrors `argKeysSchema` in @maskin/shared. Keys that don't fit are dropped
+// here rather than sent and rejected downstream: the ingest boundary validates
+// the whole event, so one odd key from a custom-extension tool would otherwise
+// cost the entire telemetry row.
+const ARG_KEY_RE = /^[A-Za-z0-9_.-]{1,64}$/
+const MAX_ARG_KEYS = 64
+
 export function argKeys(args: unknown): string[] {
 	if (!args || typeof args !== 'object' || Array.isArray(args)) return []
-	return Object.keys(args as Record<string, unknown>).sort()
+	return Object.keys(args as Record<string, unknown>)
+		.filter((k) => ARG_KEY_RE.test(k))
+		.sort()
+		.slice(0, MAX_ARG_KEYS)
 }
 
 export function recordToolCall(

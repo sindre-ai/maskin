@@ -34,15 +34,38 @@ describe('createSeqCounter', () => {
 		now += 500
 		counter.next('c')
 		counter.next('d')
-		// a and b aged out past the TTL and were swept when the cap was reached.
-		expect(counter.size()).toBeLessThanOrEqual(3)
+		// a and b aged out past the TTL and were swept when the cap was reached,
+		// leaving exactly c and d. Asserting the exact size matters: a
+		// `<= maxSessions` bound also passes for an implementation that skips the
+		// TTL sweep and blindly evicts live entries.
+		expect(counter.size()).toBe(2)
 	})
 
-	it('stays within the cap when every session is live', () => {
+	// Regression: eviction used to run BEFORE the existing-session lookup, so at
+	// the cap every call evicted a peer, each session then found itself missing,
+	// and every seq collapsed to 1 — ordering silently destroyed at a threshold
+	// rather than degrading. Assert counter VALUES; size() cannot see this.
+	it('keeps numbering live sessions correctly when the cap is saturated', () => {
+		const counter = createSeqCounter({ maxSessions: 2 })
+		expect(counter.next('a')).toBe(1)
+		expect(counter.next('b')).toBe(1)
+		// Both are live and already tracked, so neither should evict the other
+		// no matter how many times they alternate.
+		expect(counter.next('a')).toBe(2)
+		expect(counter.next('b')).toBe(2)
+		expect(counter.next('a')).toBe(3)
+		expect(counter.next('b')).toBe(3)
+		expect(counter.size()).toBe(2)
+	})
+
+	it('evicts the oldest session to admit a genuinely new one', () => {
 		const counter = createSeqCounter({ maxSessions: 2 })
 		counter.next('a')
 		counter.next('b')
-		counter.next('c')
-		expect(counter.size()).toBeLessThanOrEqual(2)
+		counter.next('c') // admitting c evicts a, the oldest
+		expect(counter.size()).toBe(2)
+		// b and c survived and keep counting; a was evicted and restarts.
+		expect(counter.next('b')).toBe(2)
+		expect(counter.next('c')).toBe(2)
 	})
 })

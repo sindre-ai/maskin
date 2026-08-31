@@ -50,17 +50,13 @@ export function createSeqCounter(options: SeqCounterOptions = {}): SeqCounter {
 	return {
 		next(sessionId: string): number {
 			const t = now()
-			if (entries.size >= maxSessions) {
-				sweep(t - ttlMs)
-				// Still over the cap after sweeping (a burst of live sessions, not
-				// stale ones): evict oldest-inserted first. Map preserves insertion
-				// order, so the first key is the least recently created entry.
-				while (entries.size >= maxSessions) {
-					const oldest = entries.keys().next()
-					if (oldest.done) break
-					entries.delete(oldest.value)
-				}
-			}
+			// Look the session up FIRST. An already-tracked session must never
+			// trigger eviction: it occupies a slot it already holds, so making
+			// room for it can only evict some *other* live session. Doing this
+			// the other way round means that once `entries.size` reaches the cap,
+			// every call evicts a peer and each session then finds itself missing
+			// and restarts at 1 — turning the cap into a cliff where ordering
+			// silently collapses to all-1s rather than degrading gracefully.
 			const existing = entries.get(sessionId)
 			// An entry older than the TTL is treated as a new session rather than
 			// resuming a stale count — a reused session id after hours of silence
@@ -69,6 +65,22 @@ export function createSeqCounter(options: SeqCounterOptions = {}): SeqCounter {
 				existing.n += 1
 				existing.lastSeen = t
 				return existing.n
+			}
+
+			// Only a genuinely new session consumes a slot, so only it pays for
+			// making room. `existing` here is either absent or expired; an
+			// expired entry is about to be overwritten in place, so it needs no
+			// eviction either.
+			if (!existing && entries.size >= maxSessions) {
+				sweep(t - ttlMs)
+				// Still at the cap after sweeping (a burst of live sessions, not
+				// stale ones): evict oldest-inserted first. Map preserves insertion
+				// order, so the first key is the least recently created entry.
+				while (entries.size >= maxSessions) {
+					const oldest = entries.keys().next()
+					if (oldest.done) break
+					entries.delete(oldest.value)
+				}
 			}
 			entries.set(sessionId, { n: 1, lastSeen: t })
 			return 1
