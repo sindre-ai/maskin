@@ -173,6 +173,25 @@ const permanentErrorMessage = (detail: string): string =>
  * that can end the wait — the turn answering, the session going away, the
  * process exiting — can settle it.
  */
+/**
+ * The marker that says a notice came from a turn which wrote its tool calls out
+ * as text, rather than from a model-API failure.
+ *
+ * Carried separately from `error_kind`, which answers a different question —
+ * whether a replay could have helped — and is a persisted enum shared with
+ * `packages/shared/src/schemas/conversations.ts`. Without this discriminator
+ * both families land in the audit trail as `error_kind: 'transient'`, so
+ * anything querying these messages for model-API failures counts
+ * pseudo-tool-call turns as Claude API errors with no way to separate them.
+ * Same argument as the per-watchdog notice text: don't send someone looking in
+ * the wrong place.
+ */
+type PseudoToolCallMetadata = {
+	occurrences: number
+	tags: string[]
+	nudges: number
+}
+
 type ReplayWatchdog = {
 	timer: NodeJS.Timeout
 	gate: SessionGate
@@ -187,6 +206,8 @@ type ReplayWatchdog = {
 	 * an API error when there was none sends them looking in the wrong place.
 	 */
 	unansweredMessage: string
+	/** Set when this watchdog was armed for a pseudo-tool-call turn, for its notice metadata. */
+	pseudoToolCalls?: PseudoToolCallMetadata
 }
 
 type SessionGate = {
@@ -510,6 +531,14 @@ export class InteractiveTurnFinalizer {
 		this.pseudoToolCallNudges.set(sessionId, spent + 1)
 		this.rememberKey(dedupeKey)
 
+		// Stamped on whichever notice this attempt ends up producing, so a
+		// pseudo-tool-call turn is never counted as a model-API failure.
+		const pseudoMetadata = {
+			occurrences: pseudo.occurrences,
+			tags: pseudo.tags,
+			nudges: spent + 1,
+		}
+
 		logger.warn(
 			`Interactive session ${sessionId} wrote tool calls as text (log ${logId}; ${detail}); asking it to run them for real (attempt ${spent + 1}/${MAX_PSEUDO_TOOL_CALL_NUDGES})`,
 		)
@@ -528,6 +557,7 @@ export class InteractiveTurnFinalizer {
 				dedupeKey,
 				logId,
 				PSEUDO_TOOL_CALL_UNANSWERED_MESSAGE,
+				pseudoMetadata,
 			)
 			try {
 				await this.retryTurn?.(sessionId, {
@@ -546,6 +576,7 @@ export class InteractiveTurnFinalizer {
 					dedupeKey,
 					'undeliverable',
 					PSEUDO_TOOL_CALL_UNAVAILABLE_MESSAGE,
+					pseudoMetadata,
 				)
 			}
 		})()
@@ -772,6 +803,7 @@ export class InteractiveTurnFinalizer {
 		dedupeKey: string,
 		reason: 'undeliverable' | 'unanswered',
 		content: string,
+		pseudoToolCalls?: PseudoToolCallMetadata,
 	): Promise<void> {
 		try {
 			const created = await insertConversationMessage(this.db, {
@@ -785,6 +817,7 @@ export class InteractiveTurnFinalizer {
 						dedupe_key: `${dedupeKey}-${reason}`,
 						error_kind: 'transient',
 						retry: reason,
+						...(pseudoToolCalls ? { pseudo_tool_calls: pseudoToolCalls } : {}),
 					},
 				},
 				sessionId,
@@ -817,6 +850,7 @@ export class InteractiveTurnFinalizer {
 		dedupeKey: string,
 		armedAfterLogId: number,
 		unansweredMessage: string = RETRY_UNANSWERED_MESSAGE,
+		pseudoToolCalls?: PseudoToolCallMetadata,
 	): void {
 		this.disarmReplayWatchdog(sessionId)
 		const timer = setTimeout(() => {
@@ -830,6 +864,7 @@ export class InteractiveTurnFinalizer {
 			dedupeKey,
 			armedAfterLogId,
 			unansweredMessage,
+			pseudoToolCalls,
 		})
 	}
 
@@ -857,6 +892,7 @@ export class InteractiveTurnFinalizer {
 			watchdog.dedupeKey,
 			'unanswered',
 			watchdog.unansweredMessage,
+			watchdog.pseudoToolCalls,
 		)
 	}
 

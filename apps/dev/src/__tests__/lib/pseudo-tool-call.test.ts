@@ -65,6 +65,33 @@ describe('detectPseudoToolCalls', () => {
 		expect(verdict.detected).toBe(false)
 	})
 
+	it('leaves a genuine answer whose only tag quotes are its first and last lines', () => {
+		// The harder case for the span rule: everything real sits BETWEEN the
+		// tags, so measuring only outside them scores the whole answer as having
+		// survived nothing and withholds it. Long inter-tag gaps have to count.
+		const body = 'This is a long, genuine answer about how the detector works. '.repeat(40)
+		const verdict = detectPseudoToolCalls(
+			`The model emitted <tool_call> tags.\n\n${body}\n\nIn short it wrote <tool_call>x</tool_call> rather than calling it.`,
+		)
+		expect(verdict.occurrences).toBeGreaterThanOrEqual(3)
+		expect(verdict.detected).toBe(false)
+	})
+
+	it('still detects a flood whose tags are separated only by blank lines', () => {
+		// The counterpart: short gaps are narration glue, not content, so a
+		// rambling model must not buy a pass by padding between its fake calls.
+		const verdict = detectPseudoToolCalls(
+			[
+				'<tool_call>get_session</tool_call>',
+				'checking...',
+				'<tool_call>retry</tool_call>',
+				'hmm',
+				'<tool_call>status=running</tool_call>',
+			].join('\n\n'),
+		)
+		expect(verdict.detected).toBe(true)
+	})
+
 	it('counts a tag with attributes, and reports each distinct tag name once', () => {
 		const verdict = detectPseudoToolCalls(
 			'<function_calls><invoke name="get_actor"></invoke><tool_call>x</tool_call></function_calls>',

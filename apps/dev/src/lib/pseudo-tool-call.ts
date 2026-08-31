@@ -74,6 +74,24 @@ const MIN_TAG_OCCURRENCES = 3
  */
 const MAX_SURVIVING_PROSE_SHARE = 0.25
 
+/**
+ * The shortest gap BETWEEN two tags that counts as surviving prose rather than
+ * narration glue.
+ *
+ * Measuring outside the first..last span is what stops a rambling model from
+ * reading as a real answer, but on its own it throws away a genuine reply that
+ * quotes a tag in its opening line and again in its closing one: everything
+ * real sits between the two, so the message scores as ~0% surviving and is
+ * withheld entirely. Observed with a 2,400-character answer carrying three tags.
+ *
+ * A gap this long is a paragraph the human would lose, not the blank lines and
+ * half-sentences that separate a flood of invented calls — the observed failure's
+ * inter-tag gaps were blank lines. Counting only gaps over this length keeps the
+ * original property (rambling between tags buys no pass) while a substantive
+ * block of content does.
+ */
+const MIN_INTERLEAVED_PROSE_RUN = 400
+
 export type PseudoToolCallVerdict = {
 	/** True when the turn should be nudged instead of posted. */
 	detected: boolean
@@ -123,7 +141,18 @@ export function detectPseudoToolCalls(text: string): PseudoToolCallVerdict {
 
 	const before = text.slice(0, first.index)
 	const after = text.slice(last.index + last[0].length)
-	const survivingProse = `${before} ${after}`.trim().length
+	let survivingProse = `${before} ${after}`.trim().length
+
+	// Plus any gap between two tags long enough to be real content rather than
+	// glue. Without this, a genuine answer bracketed by tag quotes measures as
+	// having survived nothing and is withheld from the human entirely.
+	for (let i = 0; i < occurrences - 1; i++) {
+		const current = matches[i]
+		const next = matches[i + 1]
+		if (current?.index === undefined || next?.index === undefined) continue
+		const gap = text.slice(current.index + current[0].length, next.index).trim().length
+		if (gap >= MIN_INTERLEAVED_PROSE_RUN) survivingProse += gap
+	}
 
 	return {
 		detected: survivingProse <= MAX_SURVIVING_PROSE_SHARE * trimmedLength,

@@ -1,6 +1,9 @@
 import { events, conversations, messages, sessionLogs, sessions } from '@maskin/db/schema'
 import { and, desc, eq } from 'drizzle-orm'
-import { InteractiveTurnFinalizer } from '../../services/interactive-turn-finalizer'
+import {
+	InteractiveTurnFinalizer,
+	type RetryTurnFn,
+} from '../../services/interactive-turn-finalizer'
 import { insertActor, insertSession, insertWorkspace } from '../factories'
 import { db } from './global-setup'
 
@@ -1101,15 +1104,28 @@ ${surviving}
 			})
 		}
 
-		function withRetry() {
+		function withRetry(options: { replyTimeoutMs?: number; retryTurn?: RetryTurnFn } = {}) {
+			const { retryTurn, ...rest } = options
 			const calls: Array<{ sessionId: string; payload: unknown }> = []
 			const instance = new InteractiveTurnFinalizer(db, {
 				retryTurn: async (sessionId, payload) => {
 					calls.push({ sessionId, payload })
+					await retryTurn?.(sessionId, payload)
 				},
 				delay: async () => {},
+				...rest,
 			})
 			return { instance, calls }
+		}
+
+		/** Polls until `check` passes, so a watchdog's real timer can be awaited. */
+		async function eventuallyTrue(check: () => Promise<boolean>, timeoutMs = 2_000) {
+			const deadline = Date.now() + timeoutMs
+			while (Date.now() < deadline) {
+				if (await check()) return
+				await new Promise((resolve) => setTimeout(resolve, 10))
+			}
+			throw new Error('condition never became true')
 		}
 
 		it('asks the model to run the tools instead of posting the markup', async () => {
@@ -1188,6 +1204,56 @@ ${surviving}
 			// A good turn in between proves the model is emitting real calls
 			// again, so a later lapse is a new episode and gets its own nudge.
 			expect(calls).toHaveLength(2)
+		})
+
+		it('tells the human in its own words when the corrected turn never comes back', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			// writeInput resolves when the bytes are queued, not when the turn
+			// runs — a CLI wedged on stdin swallows the correction in silence.
+			const { instance, calls } = withRetry({ replyTimeoutMs: 10 })
+			finalizer = instance
+
+			await feed(session.id, `${pseudoToolCallLine()}\n`)
+			await finalizer.settlePendingRetries()
+			expect(calls).toHaveLength(1)
+
+			await eventuallyTrue(async () => (await messagesFor(conversationId)).length === 1)
+			const rows = await messagesFor(conversationId)
+			// The watchdog must describe THIS failure. Its notice text was once
+			// hardcoded to the model-API wording, which names an error that never
+			// happened and sends the human looking in the wrong place.
+			expect(rows[0]?.content).toContain('instead of running them')
+			expect(rows[0]?.content).not.toContain('Claude API')
+			expect(rows[0]?.content).not.toContain('skill_called')
+
+			const meta = (rows[0]?.metadata as { final_output?: Record<string, unknown> })?.final_output
+			expect(meta?.retry).toBe('unanswered')
+			// And it must be distinguishable from a model-API failure in the audit
+			// trail, not just in the prose the human reads.
+			expect(meta?.pseudo_tool_calls).toMatchObject({ nudges: 1 })
+		})
+
+		it('tells the human when the correction cannot be delivered', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance } = withRetry({
+				retryTurn: async () => {
+					throw new Error('session gone')
+				},
+			})
+			finalizer = instance
+
+			await feed(session.id, `${pseudoToolCallLine()}\n`)
+			await finalizer.settlePendingRetries()
+
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toContain('instead of running them')
+			expect(rows[0]?.content).not.toContain('Claude API')
+			expect(
+				(rows[0]?.metadata as { final_output?: { retry?: string } })?.final_output?.retry,
+			).toBe('undeliverable')
 		})
 
 		it('says so without claiming a retry when nothing can write stdin', async () => {
