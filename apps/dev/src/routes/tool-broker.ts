@@ -644,6 +644,7 @@ const browseRoute = createRoute({
 		query: z.object({
 			q: z.string().optional(),
 			limit: z.string().optional(),
+			offset: z.string().optional(),
 		}),
 	},
 	responses: {
@@ -659,12 +660,17 @@ const browseRoute = createRoute({
 })
 
 app.openapi(browseRoute, async (c) => {
-	const { q, limit } = c.req.valid('query')
+	const { q, limit, offset } = c.req.valid('query')
 
 	// Number() yields NaN for junk and NaN propagates into SQL, so parse safely
 	// and bound it — see .claude/rules/input-validation.md.
 	const parsed = Number(limit)
 	const take = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 100) : 50
+
+	// Same parse, and negative is as dangerous as NaN here: Postgres rejects a
+	// negative OFFSET outright, so an unchecked value turns a scroll into a 500.
+	const parsedOffset = Number(offset)
+	const skip = Number.isFinite(parsedOffset) && parsedOffset > 0 ? Math.floor(parsedOffset) : 0
 
 	const term = q?.trim()
 	const where = term
@@ -682,8 +688,12 @@ app.openapi(browseRoute, async (c) => {
 		.select()
 		.from(toolBrokerCatalog)
 		.where(where)
-		.orderBy(asc(toolBrokerCatalog.name))
+		// A stable, total order matters more here than the sort itself: paging by
+		// OFFSET over a non-deterministic order silently drops and repeats rows
+		// between pages. Name alone is not unique in this table.
+		.orderBy(asc(toolBrokerCatalog.name), asc(toolBrokerCatalog.id))
 		.limit(take)
+		.offset(skip)
 
 	// The count of everything matching, not of what this page returned. They are
 	// the same only when the result fits under the limit — and a browser that

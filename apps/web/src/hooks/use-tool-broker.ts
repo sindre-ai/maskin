@@ -1,6 +1,6 @@
 import { api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 // Data layer for the tool-broker settings section. Mirrors `use-integrations`
@@ -19,6 +19,33 @@ export function useToolBrokerCatalog(workspaceId: string, q: string) {
 		queryFn: () => api.toolBroker.catalog(workspaceId, q),
 		// The list is a browse surface, not live data — refetching on every focus
 		// makes it flicker while someone is reading it.
+		staleTime: 60_000,
+	})
+}
+
+const CATALOG_PAGE_SIZE = 50
+
+/**
+ * The catalogue, one page at a time.
+ *
+ * `total` is the count of everything matching, so the next-page decision comes
+ * from how many rows we already hold rather than from a short final page —
+ * which also means a page that happens to be exactly full does not cause one
+ * pointless extra request at the end.
+ */
+export function useToolBrokerCatalogInfinite(workspaceId: string, q: string, enabled = true) {
+	return useInfiniteQuery({
+		// Off until the browser is actually opened. The catalogue is hundreds of
+		// rows and nobody has asked to see it just by loading the settings page.
+		enabled,
+		queryKey: queryKeys.toolBroker.catalogInfinite(workspaceId, q),
+		queryFn: ({ pageParam }) =>
+			api.toolBroker.catalog(workspaceId, q, { limit: CATALOG_PAGE_SIZE, offset: pageParam }),
+		getNextPageParam: (lastPage, allPages) => {
+			const loaded = allPages.reduce((sum, page) => sum + page.entries.length, 0)
+			return loaded >= lastPage.total ? undefined : loaded
+		},
+		initialPageParam: 0,
 		staleTime: 60_000,
 	})
 }

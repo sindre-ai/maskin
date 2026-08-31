@@ -58,6 +58,8 @@ export const queryKeys = {
 		all: (workspaceId: string) => ['tool-broker', workspaceId] as const,
 		catalog: (workspaceId: string, q: string) =>
 			['tool-broker', workspaceId, 'catalog', q] as const,
+		catalogInfinite: (workspaceId: string, q: string) =>
+			['tool-broker', workspaceId, 'catalog', 'infinite', q] as const,
 	},
 	integrations: {
 		all: (workspaceId: string) => ['integrations', workspaceId] as const,

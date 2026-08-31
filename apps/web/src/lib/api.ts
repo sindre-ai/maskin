@@ -420,11 +420,18 @@ export const api = {
 	},
 
 	toolBroker: {
-		catalog: (workspaceId: string, q?: string) =>
-			request<ToolBrokerCatalogResponse>(
-				`/tool-broker/catalog${q?.trim() ? `?q=${encodeURIComponent(q.trim())}` : ''}`,
-				{ workspaceId },
-			),
+		catalog: (workspaceId: string, q?: string, page?: { limit: number; offset: number }) => {
+			const params = new URLSearchParams()
+			if (q?.trim()) params.set('q', q.trim())
+			if (page) {
+				params.set('limit', String(page.limit))
+				params.set('offset', String(page.offset))
+			}
+			const query = params.toString()
+			return request<ToolBrokerCatalogResponse>(`/tool-broker/catalog${query ? `?${query}` : ''}`, {
+				workspaceId,
+			})
+		},
 		list: (workspaceId: string) => request<ToolBrokerListResponse>('/tool-broker', { workspaceId }),
 		add: (workspaceId: string, body: { url: string; kind: 'mcp' | 'openapi'; name?: string }) =>
 			request<{ slug: string }>('/tool-broker/integrations', { method: 'POST', body, workspaceId }),

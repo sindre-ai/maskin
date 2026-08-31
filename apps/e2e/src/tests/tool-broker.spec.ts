@@ -329,15 +329,25 @@ const CATALOG = [
 	},
 ]
 
-const stubCatalog = async (page: import('@playwright/test').Page) => {
+const stubCatalog = async (
+	page: import('@playwright/test').Page,
+	catalog: typeof CATALOG = CATALOG,
+) => {
 	await page.route('**/api/tool-broker/catalog*', async (route) => {
 		const url = new URL(route.request().url())
 		const q = (url.searchParams.get('q') ?? '').toLowerCase()
-		const entries = q ? CATALOG.filter((e) => e.name.toLowerCase().includes(q)) : CATALOG
+		const matched = q ? catalog.filter((e) => e.name.toLowerCase().includes(q)) : catalog
+
+		// Page the way the real route does, so `total` stays the count of all
+		// matches while `entries` is only this slice. A stub that ignores offset
+		// would let a broken next-page request still look like it worked.
+		const limit = Number(url.searchParams.get('limit')) || matched.length
+		const offset = Number(url.searchParams.get('offset')) || 0
+		const entries = matched.slice(offset, offset + limit)
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
-			body: JSON.stringify({ entries, total: entries.length }),
+			body: JSON.stringify({ entries, total: matched.length }),
 		})
 	})
 }
@@ -462,28 +472,102 @@ test.describe('catalogue browser', () => {
 	})
 })
 
-test.describe('catalogue browser — the server-side cap', () => {
+test.describe('catalogue browser — paging', () => {
+	// 120 entries against a page size of 50: three pages, and the last one short.
+	const MANY = Array.from({ length: 120 }, (_, i) => ({
+		id: `p${i}`,
+		// Zero-padded so the stub's order matches the route's name ordering.
+		name: `Provider ${String(i).padStart(3, '0')}`,
+		description: 'Generated',
+		domain: `p${i}.example`,
+		iconPath: null,
+		connectKind: 'mcp' as const,
+		endpointUrl: `https://mcp.p${i}.example/mcp`,
+		authKind: 'none' as const,
+		supportsDcr: false,
+	}))
+
 	test.beforeEach(async ({ page }) => {
 		await page.addInitScript(() => localStorage.setItem('ff:tool-broker', 'on'))
 	})
 
-	test('says when it is showing only part of the catalogue', async ({ page, account }) => {
-		// Without this line, a list capped at 50 out of 578 reads as "that is
-		// everything there is".
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`loads more as you scroll at ${vp.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await stubBroker(page, { configured: true, available: true, integrations: INTEGRATIONS })
+			await stubCatalog(page, MANY)
+
+			await gotoIntegrations(page, account.workspaceId)
+			await section(page).getByRole('button', { name: 'Browse' }).click()
+
+			const dialog = page.getByRole('dialog')
+			const rows = dialog.getByRole('listitem')
+
+			// First page only, and the footer says so rather than implying this is all.
+			await expect(rows).toHaveCount(50, { timeout: 10000 })
+			await expect(dialog.getByText('50 of 120')).toBeVisible()
+
+			// This is the whole point: reaching the end of the list loads the rest,
+			// with no button to press.
+			await rows.last().scrollIntoViewIfNeeded()
+			await expect(rows).toHaveCount(100, { timeout: 10000 })
+
+			await rows.last().scrollIntoViewIfNeeded()
+			await expect(rows).toHaveCount(120, { timeout: 10000 })
+
+			// Exhausted: the count stops being a fraction.
+			await expect(dialog.getByText('All 120')).toBeVisible()
+			await expect(dialog.getByText('Provider 119')).toBeVisible()
+		})
+	}
+
+	test('a page is never requested twice for the same scroll position', async ({
+		page,
+		account,
+	}) => {
+		// The sentinel stays on screen after a page lands, so an observer that does
+		// not stand down while fetching fires the same request repeatedly.
+		const offsets: string[] = []
 		await stubBroker(page, { configured: true, available: true, integrations: INTEGRATIONS })
 		await page.route('**/api/tool-broker/catalog*', async (route) => {
+			const url = new URL(route.request().url())
+			offsets.push(url.searchParams.get('offset') ?? '0')
+			const offset = Number(url.searchParams.get('offset')) || 0
+			const limit = Number(url.searchParams.get('limit')) || 50
 			await route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify({ entries: CATALOG, total: 578 }),
+				body: JSON.stringify({ entries: MANY.slice(offset, offset + limit), total: MANY.length }),
 			})
 		})
 
 		await gotoIntegrations(page, account.workspaceId)
 		await section(page).getByRole('button', { name: 'Browse' }).click()
 
-		await expect(
-			page.getByRole('dialog').getByText(`Showing ${CATALOG.length} of 578`),
-		).toBeVisible()
+		const rows = page.getByRole('dialog').getByRole('listitem')
+		await expect(rows).toHaveCount(50, { timeout: 10000 })
+		await rows.last().scrollIntoViewIfNeeded()
+		await expect(rows).toHaveCount(100, { timeout: 10000 })
+
+		expect(offsets).toEqual([...new Set(offsets)])
+	})
+
+	test('searching starts a fresh list rather than appending to the old one', async ({
+		page,
+		account,
+	}) => {
+		await stubBroker(page, { configured: true, available: true, integrations: INTEGRATIONS })
+		await stubCatalog(page, MANY)
+
+		await gotoIntegrations(page, account.workspaceId)
+		await section(page).getByRole('button', { name: 'Browse' }).click()
+
+		const dialog = page.getByRole('dialog')
+		const rows = dialog.getByRole('listitem')
+		await expect(rows).toHaveCount(50, { timeout: 10000 })
+
+		await dialog.getByLabel('Search').fill('Provider 007')
+		await expect(rows).toHaveCount(1, { timeout: 10000 })
+		await expect(dialog.getByText('All 1 matching')).toBeVisible()
 	})
 })
