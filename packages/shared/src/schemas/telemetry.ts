@@ -66,6 +66,12 @@ export const recordMcpToolCallSchema = z.object({
 	arg_keys: argKeysSchema,
 	ok: z.boolean().optional(),
 	transport: z.enum(['stdio', 'http']).optional(),
+	// How the client resolved `session_id`. Only the client knows this: a
+	// container-launched stdio server holds a real `sessions.id`, a standalone
+	// one holds a per-process correlation id, and the two are indistinguishable
+	// from the id alone. Absent from an older build, which the route treats as
+	// the conservative `process`.
+	session_source: z.enum(['maskin-session', 'process']).optional(),
 })
 
 export const recordMcpMutationSchema = z.object({

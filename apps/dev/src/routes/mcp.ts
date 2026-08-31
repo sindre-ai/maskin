@@ -185,12 +185,38 @@ export interface McpSessionIdentity {
 	source: McpSessionSource
 }
 
+// Longest session id we will group on. Matches `sessionIdSchema` in
+// @maskin/shared, which already caps the stdio ingest path — this is the same
+// boundary for the HTTP one. The value becomes a long-lived map key and a
+// PostHog dimension, so it must be bounded at the edge.
+const MAX_SESSION_ID_LEN = 128
+
+// An env placeholder that reached us verbatim, e.g. `${SESSION_ID}`.
+//
+// The Maskin MCP preset carries `X-Maskin-Session-Id: ${SESSION_ID}`, expanded
+// by agent-run.sh's envsubst pass. Any path that skips that pass — a user
+// copying the preset out of the UI into their own `claude mcp add` — sends the
+// literal text instead. Accepting it would merge every such client, across
+// every workspace, into one bucket with interleaved seq numbers, labelled
+// `maskin-session`: the tag that means "this is a real sessions.id". Wrong data
+// wearing the highest-confidence label is worse than no data, so these fall
+// through to `unknown`. agent-run.sh guards BROWSER_CDP_URL the same way.
+const UNEXPANDED_PLACEHOLDER_RE = /^\$\{[^}]*\}$/
+
+function usableSessionId(raw: string | undefined): string | null {
+	const value = raw?.trim()
+	if (!value) return null
+	if (value.length > MAX_SESSION_ID_LEN) return null
+	if (UNEXPANDED_PLACEHOLDER_RE.test(value)) return null
+	return value
+}
+
 export function resolveSessionIdentity(
 	header: (name: string) => string | undefined,
 ): McpSessionIdentity {
-	const maskinSessionId = header('X-Maskin-Session-Id')?.trim()
+	const maskinSessionId = usableSessionId(header('X-Maskin-Session-Id'))
 	if (maskinSessionId) return { id: maskinSessionId, source: 'maskin-session' }
-	const mcpSessionId = header('Mcp-Session-Id')?.trim()
+	const mcpSessionId = usableSessionId(header('Mcp-Session-Id'))
 	if (mcpSessionId) return { id: mcpSessionId, source: 'mcp-session' }
 	return {
 		id: `anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
@@ -255,7 +281,8 @@ function rememberActor(key: string, actorId: string | null, at: number): void {
 interface PlannedTracedCall {
 	request: JsonRpcMessage
 	toolName: string
-	seq: number
+	/** Null for a session we cannot order — see `planTracedCalls`. */
+	seq: number | null
 	tsMs: number
 }
 
@@ -263,8 +290,18 @@ interface PlannedTracedCall {
  * Assign sequence numbers to the tool calls in a request body. Must be called
  * synchronously from the request handler — see the comment at its call site.
  *
- * Calls without a usable tool name are skipped rather than numbered, so `seq`
- * stays gapless over the events actually emitted.
+ * Calls without a usable tool name are skipped rather than numbered, so a
+ * number is only ever spent on a call this function actually plans to emit.
+ * (Emission can still fail downstream, so a gap in the delivered events is
+ * possible — `seq` orders what arrives, it does not prove nothing was lost.)
+ *
+ * An unidentified caller gets `seq: null` and never touches the counter. Its
+ * id is freshly minted per request and never recurs, so a slot spent on it
+ * could only ever hold the number 1 — while occupying that slot for the full
+ * TTL. Since `POST /mcp` is mounted outside `authMiddleware`, unauthenticated
+ * traffic alone could otherwise push the counter to its cap and start evicting
+ * live sessions, which would then silently restart at 1: exactly the
+ * ordering-collapse failure `lib/mcp-trace-seq.ts` is built to avoid.
  */
 export function planTracedCalls(
 	body: unknown,
@@ -276,7 +313,8 @@ export function planTracedCalls(
 		if (request.method !== 'tools/call') continue
 		const toolName = request.params?.name
 		if (typeof toolName !== 'string' || toolName.length === 0) continue
-		planned.push({ request, toolName, seq: seqCounter.next(session.id), tsMs })
+		const seq = session.source === 'unknown' ? null : seqCounter.next(session.id)
+		planned.push({ request, toolName, seq, tsMs })
 	}
 	return planned
 }
@@ -326,6 +364,14 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 			args.plannedCalls.map(({ request, toolName, seq, tsMs }) => {
 				const response = request.id != null ? responsesById.get(String(request.id)) : undefined
 				const error = response ? extractError(response) : undefined
+				// A call we could not pair with a response did not succeed, and must
+				// not be recorded as though it did. `ok: !error` alone reads a missing
+				// response as "no error found" — so a transport-level rejection, a
+				// malformed batch, or an id-less `tools/call` would land in analytics
+				// as a success, in an event whose whole purpose is surfacing failures.
+				// Bucketed separately from a classified error so the two stay
+				// distinguishable: this is our own blind spot, not the tool's fault.
+				const unpaired = !response
 				return captureMcpToolCall(args.workspaceId, {
 					sessionId: args.session.id,
 					sessionSource: args.session.source,
@@ -333,8 +379,12 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 					tsMs,
 					toolName,
 					argKeys: argKeys(request.params?.arguments),
-					ok: !error,
-					errorClass: error ? (classifyMcpError(error) ?? 'unclassified') : null,
+					ok: !unpaired && !error,
+					errorClass: unpaired
+						? 'no-response'
+						: error
+							? (classifyMcpError(error) ?? 'unclassified')
+							: null,
 					durationMs,
 					responseBytes: args.responseBytes.length,
 					transport: 'http',
@@ -495,4 +545,12 @@ export function __resetMcpActorCache(): void {
  */
 export function __resetMcpTraceSeq(): void {
 	seqCounter.reset()
+}
+
+/**
+ * Number of sessions the counter is tracking. Only used in tests, to assert
+ * that an unidentified caller consumes no slot.
+ */
+export function __mcpTraceSeqSize(): number {
+	return seqCounter.size()
 }

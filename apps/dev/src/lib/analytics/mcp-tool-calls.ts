@@ -28,7 +28,13 @@ export type McpSessionSource =
 export interface McpToolCallTrace {
 	sessionId: string
 	sessionSource: McpSessionSource
-	seq: number
+	/**
+	 * 1-based position within the session, or null when this call cannot be
+	 * ordered — an unidentified client, or an older sink that sends no seq.
+	 * Null rather than 0 so an out-of-band sentinel never sorts ahead of a real
+	 * call in an ordering query.
+	 */
+	seq: number | null
 	toolName: string
 	argKeys: string[]
 	ok: boolean

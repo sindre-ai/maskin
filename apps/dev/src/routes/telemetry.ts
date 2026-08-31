@@ -85,14 +85,33 @@ app.openapi(recordRoute, (async (c) => {
 		// (which sends neither field) still gets traced — stdio is the
 		// overwhelmingly likely origin for such a client.
 		if (body.transport !== 'http') {
+			// An id-less client gets a per-request id, never a shared literal.
+			// Collapsing them onto one constant would interleave unrelated
+			// processes into a single apparent session with mixed seq counters —
+			// worse than no grouping. `routes/mcp.ts` mints an `anon-` id for the
+			// same reason; matched here.
+			const sessionId =
+				body.session_id ??
+				`anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 			void captureMcpToolCall(workspaceId, {
-				sessionId: body.session_id ?? 'unknown',
-				sessionSource: body.session_id ? 'process' : 'unknown',
-				seq: body.seq ?? 0,
+				sessionId,
+				// Trust the client's own account of how it resolved the id: only it
+				// can tell a real `sessions.id` from its per-process correlation id.
+				// An older build sends nothing, so fall back to the conservative
+				// `process` — never `maskin-session`, which would claim a join back
+				// to the sessions row that may not exist.
+				sessionSource: body.session_id ? (body.session_source ?? 'process') : 'unknown',
+				// Null, not 0: `seq` is 1-based, so 0 is out of band and would sort
+				// ahead of every real call in an ordering query.
+				seq: body.seq ?? null,
 				toolName: body.tool_name,
 				argKeys: body.arg_keys ?? [],
 				ok: body.ok ?? true,
-				errorClass: null,
+				// The stdio sink reports failure without a reason, so bucket it the
+				// same way the HTTP path buckets an error it cannot classify. Using
+				// null here instead would make stdio failures indistinguishable from
+				// successes when grouping by `error_class`.
+				errorClass: body.ok === false ? 'unclassified' : null,
 				durationMs: body.duration_ms,
 				responseBytes: null,
 				transport: 'stdio',

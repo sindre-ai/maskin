@@ -269,3 +269,56 @@ describe('MCP telemetry wrapper', () => {
 		expect(mutations).toHaveLength(0)
 	})
 })
+
+// The env branch that resolves a container-launched server's session id used to
+// read `MASKIN_SESSION_ID`, which nothing in the repo ever sets — so it was
+// dead, and every stdio server in an agent container fell through to a random
+// id that cannot join back to the `sessions` row. These pin the var names.
+describe('session id resolution', () => {
+	const ORIGINAL = { ...process.env }
+
+	afterEach(() => {
+		process.env = { ...ORIGINAL }
+		vi.resetModules()
+	})
+
+	/** Replace the env with both session vars cleared, then apply `vars`. */
+	function setEnv(vars: Record<string, string>) {
+		const { SESSION_ID: _a, MASKIN_SESSION_ID: _b, ...rest } = ORIGINAL
+		process.env = { ...rest, ...vars }
+	}
+
+	async function loadFresh() {
+		vi.resetModules()
+		return await import('../telemetry')
+	}
+
+	it('uses SESSION_ID — the var the agent container actually sets', async () => {
+		setEnv({ SESSION_ID: '33333333-3333-4333-8333-333333333333' })
+		const mod = await loadFresh()
+		expect(mod.__sessionId()).toBe('33333333-3333-4333-8333-333333333333')
+		expect(mod.__sessionSource()).toBe('maskin-session')
+	})
+
+	it('lets MASKIN_SESSION_ID override, for a host that uses SESSION_ID itself', async () => {
+		setEnv({ SESSION_ID: 'host-owned', MASKIN_SESSION_ID: 'maskin-owned' })
+		const mod = await loadFresh()
+		expect(mod.__sessionId()).toBe('maskin-owned')
+		expect(mod.__sessionSource()).toBe('maskin-session')
+	})
+
+	it('falls back to a per-process id, flagged as such, outside a container', async () => {
+		setEnv({})
+		const mod = await loadFresh()
+		expect(mod.__sessionId()).toMatch(/^mcp-/)
+		// Must not claim `maskin-session`: nothing here joins to a sessions row.
+		expect(mod.__sessionSource()).toBe('process')
+	})
+
+	it('ignores a blank SESSION_ID rather than grouping on an empty id', async () => {
+		setEnv({ SESSION_ID: '   ' })
+		const mod = await loadFresh()
+		expect(mod.__sessionId()).toMatch(/^mcp-/)
+		expect(mod.__sessionSource()).toBe('process')
+	})
+})

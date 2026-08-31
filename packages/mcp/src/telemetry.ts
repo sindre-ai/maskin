@@ -7,7 +7,7 @@
 // Failures are logged once and otherwise swallowed: telemetry MUST NOT block or
 // fail tool calls. Aggregation lives behind /api/telemetry/mcp/summary.
 
-const SESSION_ID = resolveSessionId()
+const { id: SESSION_ID, source: SESSION_SOURCE } = resolveSessionId()
 
 let warned = false
 
@@ -16,15 +16,25 @@ let warned = false
 // fire-and-forget POSTs and can be ingested out of order.
 let toolCallSeq = 0
 
-function resolveSessionId(): string {
-	// An MCP server launched by Maskin's own agent container gets the maskin
-	// `sessions.id` in its env — prefer it, so a stdio-launched server's trace
-	// joins back to the session row exactly like the HTTP path does.
-	const fromEnv = process.env.MASKIN_SESSION_ID?.trim()
-	if (fromEnv) return fromEnv
+function resolveSessionId(): { id: string; source: 'maskin-session' | 'process' } {
+	// An MCP server launched by Maskin's own agent container inherits the
+	// session uuid as `SESSION_ID` (set in session-manager.ts and listed in
+	// agent-run.sh's reserved vars) — prefer it, so a stdio-launched server's
+	// trace joins back to the `sessions` row exactly like the HTTP path does.
+	//
+	// `MASKIN_SESSION_ID` is honoured first purely as an explicit override for
+	// a host that already uses `SESSION_ID` for something of its own. Read both
+	// rather than only the namespaced name: nothing in this repo ever sets
+	// `MASKIN_SESSION_ID`, so keying off it alone left this branch dead and
+	// every containerised stdio server falling through to a random id.
+	const fromEnv = (process.env.MASKIN_SESSION_ID ?? process.env.SESSION_ID)?.trim()
+	if (fromEnv) return { id: fromEnv, source: 'maskin-session' }
 	// Otherwise a per-process correlation id. For stdio this is exactly right:
 	// one server process is one client session, for the life of the process.
-	return `mcp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+	return {
+		id: `mcp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+		source: 'process',
+	}
 }
 
 export interface TelemetryConfig {
@@ -47,6 +57,13 @@ export interface ToolCallEvent {
 	ok?: boolean
 	/** Which transport the emitting server is exposed over. */
 	transport?: 'stdio' | 'http'
+	/**
+	 * How `session_id` was obtained. `maskin-session` means it is a real
+	 * `sessions.id` and joins back to the session row; `process` means it is
+	 * this process's correlation id and only groups calls, it does not join.
+	 * Sent because the ingest route cannot tell the two apart from the id.
+	 */
+	session_source?: 'maskin-session' | 'process'
 }
 
 export interface MutationEvent {
@@ -172,6 +189,7 @@ export function recordToolCall(
 			arg_keys: argKeys(event.args),
 			ok: event.ok ?? true,
 			transport: event.transport,
+			session_source: SESSION_SOURCE,
 		},
 		cfg,
 	)
@@ -320,4 +338,9 @@ export function __resetToolCallSeq(): void {
 /** Exposes the per-process correlation id — only used in tests. */
 export function __sessionId(): string {
 	return SESSION_ID
+}
+
+/** Exposes how the session id was resolved — only used in tests. */
+export function __sessionSource(): 'maskin-session' | 'process' {
+	return SESSION_SOURCE
 }

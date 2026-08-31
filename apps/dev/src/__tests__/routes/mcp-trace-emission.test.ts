@@ -296,3 +296,136 @@ describe('MCP tool-call trace emission via /mcp', () => {
 		expect(traces()[0]?.durationMs).toBeNull()
 	})
 })
+
+// ── Regression: the four critical review findings ───────────────────────
+
+describe('session id validation', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		captureMcpToolCall.mockResolvedValue(undefined)
+		recordMcpMisfire.mockResolvedValue(undefined)
+		validateApiKey.mockResolvedValue({ actorId: 'actor-42', type: 'agent' })
+	})
+
+	// The preset header is `${SESSION_ID}`, expanded by agent-run.sh's envsubst.
+	// A client that skips that pass sends the literal text; accepting it would
+	// merge every such caller into one bucket wearing the `maskin-session` tag,
+	// which is the label meaning "this is a real sessions.id".
+	it('rejects an unexpanded ${...} placeholder rather than trusting it', async () => {
+		respondOk(1)
+		const app = await createApp()
+		await post(app, toolCall(1, 'list_objects', {}), {
+			'X-Maskin-Session-Id': '${SESSION_ID}',
+		})
+
+		const trace = traces()[0]
+		expect(trace?.sessionSource).toBe('unknown')
+		expect(trace?.sessionId).not.toBe('${SESSION_ID}')
+		expect(String(trace?.sessionId)).toMatch(/^anon-/)
+	})
+
+	it('falls through to the next header when the first is a placeholder', async () => {
+		respondOk(1)
+		const app = await createApp()
+		await post(app, toolCall(1, 'list_objects', {}), {
+			'X-Maskin-Session-Id': '${SESSION_ID}',
+			'Mcp-Session-Id': 'real-external-id',
+		})
+
+		expect(traces()[0]).toMatchObject({
+			sessionId: 'real-external-id',
+			sessionSource: 'mcp-session',
+		})
+	})
+
+	it('rejects an over-long session id', async () => {
+		respondOk(1)
+		const app = await createApp()
+		await post(app, toolCall(1, 'list_objects', {}), {
+			'X-Maskin-Session-Id': 'a'.repeat(129),
+		})
+
+		expect(traces()[0]?.sessionSource).toBe('unknown')
+	})
+
+	it('still accepts a session id at exactly the cap', async () => {
+		respondOk(1)
+		const app = await createApp()
+		const id = 'a'.repeat(128)
+		await post(app, toolCall(1, 'list_objects', {}), { 'X-Maskin-Session-Id': id })
+
+		expect(traces()[0]).toMatchObject({ sessionId: id, sessionSource: 'maskin-session' })
+	})
+})
+
+describe('seq allocation', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		captureMcpToolCall.mockResolvedValue(undefined)
+		recordMcpMisfire.mockResolvedValue(undefined)
+		validateApiKey.mockResolvedValue({ actorId: 'actor-42', type: 'agent' })
+	})
+
+	// An unidentified caller's id is minted per request and never recurs, so a
+	// counter slot spent on it could only ever hold 1 — while occupying that
+	// slot for the full TTL. `/mcp` is unauthenticated, so letting those calls
+	// consume slots lets anonymous traffic evict live sessions, which then
+	// silently restart at 1.
+	it('does not number, or track, a call from an unidentified caller', async () => {
+		respondOk(1)
+		const app = await createApp()
+		await post(app, toolCall(1, 'list_objects', {}))
+		await post(app, toolCall(1, 'list_objects', {}))
+
+		expect(traces().map((t) => t.seq)).toEqual([null, null])
+		const mod = await import('../../routes/mcp')
+		expect(mod.__mcpTraceSeqSize()).toBe(0)
+	})
+
+	it('still numbers identified callers while anonymous traffic flows', async () => {
+		respondOk(1)
+		const app = await createApp()
+		await post(app, toolCall(1, 'a', {}), { 'X-Maskin-Session-Id': MASKIN_SESSION_ID })
+		await post(app, toolCall(1, 'b', {}))
+		await post(app, toolCall(1, 'c', {}), { 'X-Maskin-Session-Id': MASKIN_SESSION_ID })
+
+		expect(traces().map((t) => t.seq)).toEqual([1, null, 2])
+	})
+})
+
+describe('unpaired tool calls', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		captureMcpToolCall.mockResolvedValue(undefined)
+		recordMcpMisfire.mockResolvedValue(undefined)
+		validateApiKey.mockResolvedValue({ actorId: 'actor-42', type: 'agent' })
+	})
+
+	// `ok: !error` alone reads "no response found" as "no error found", so a
+	// transport-level rejection would be recorded as a success in the very
+	// event that exists to surface failures.
+	it('records a call with no matching response as a failure, not a success', async () => {
+		// Responds under a different id, so the call cannot be paired.
+		mockHandleRequest.mockImplementation(
+			async (_req: unknown, res: { end: (s: string) => void }) => {
+				res.end(JSON.stringify({ jsonrpc: '2.0', id: 999, result: { content: [] } }))
+			},
+		)
+		const app = await createApp()
+		await post(app, toolCall(1, 'list_objects', {}), {
+			'X-Maskin-Session-Id': MASKIN_SESSION_ID,
+		})
+
+		expect(traces()[0]).toMatchObject({ ok: false, errorClass: 'no-response' })
+	})
+
+	it('keeps a genuinely successful call marked ok', async () => {
+		respondOk(1)
+		const app = await createApp()
+		await post(app, toolCall(1, 'list_objects', {}), {
+			'X-Maskin-Session-Id': MASKIN_SESSION_ID,
+		})
+
+		expect(traces()[0]).toMatchObject({ ok: true, errorClass: null })
+	})
+})
