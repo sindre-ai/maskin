@@ -26,6 +26,14 @@ export const FLAGS = {
 	 * been through testing — see `.claude/rules/feature-flags.md`.
 	 */
 	NEW_DESIGN: 'new-design',
+	/**
+	 * Rich Tiptap-based markdown editor (bet `666e3c4a`). Off means the
+	 * existing `<Textarea>` blur-emit surface. On means `<MarkdownEditor>` from
+	 * `@maskin/markdown/react/editor` mounts at the same call site. Retire it
+	 * once the editor has been through tester validation across
+	 * `ObjectDocumentView` / `ObjectCreateForm` / `NotificationInput`.
+	 */
+	RICH_MARKDOWN_EDITOR: 'rich-markdown-editor',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
