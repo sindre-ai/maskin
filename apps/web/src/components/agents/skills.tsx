@@ -53,9 +53,12 @@ import { toast } from 'sonner'
 interface SkillsProps {
 	actorId: string
 	readOnly?: boolean
+	/** Draw attached workspace skills above the attach control (the v2 order)
+	 *  rather than below it. Defaults to the pre-v2 order. */
+	attachedFirst?: boolean
 }
 
-export function Skills({ actorId, readOnly = false }: SkillsProps) {
+export function Skills({ actorId, readOnly = false, attachedFirst = false }: SkillsProps) {
 	const { workspaceId } = useWorkspace()
 	const { data: skills, isLoading } = useSkills(actorId, workspaceId)
 	const deleteSkill = useDeleteSkill(actorId, workspaceId)
@@ -81,7 +84,12 @@ export function Skills({ actorId, readOnly = false }: SkillsProps) {
 
 	return (
 		<div>
-			<WorkspaceSkillsSection actorId={actorId} workspaceId={workspaceId} readOnly={readOnly} />
+			<WorkspaceSkillsSection
+				actorId={actorId}
+				workspaceId={workspaceId}
+				readOnly={readOnly}
+				attachedFirst={attachedFirst}
+			/>
 
 			<SkillsSectionHeader icon={User} label="Personal" count={skillList.length} className="mt-4" />
 
@@ -146,15 +154,18 @@ function WorkspaceSkillsSection({
 	actorId,
 	workspaceId,
 	readOnly = false,
+	attachedFirst = false,
 }: {
 	actorId: string
 	workspaceId: string
 	readOnly?: boolean
+	attachedFirst?: boolean
 }) {
 	const { data: workspaceSkills, isLoading: isLoadingWorkspace } = useWorkspaceSkills(workspaceId)
 	const { data: attachments, isLoading: isLoadingAttachments } = useAgentSkillAttachments(actorId)
 	const attachSkill = useAttachSkill(actorId)
 	const detachSkill = useDetachSkill(actorId)
+
 	const [open, setOpen] = useState(false)
 	const [query, setQuery] = useState('')
 
@@ -164,6 +175,27 @@ function WorkspaceSkillsSection({
 	)
 	const attached = attachments ?? []
 	const attachedIds = new Set(attached.map((s) => s.id))
+	// One definition, rendered in one of two places: v2 reads the list top-down
+	// and puts the "attach another" control at the end of it (mockup 2450–2456),
+	// while the pre-v2 order leads with the control. Rendering it twice would
+	// duplicate every attached skill on screen.
+	const attachedRows =
+		!isLoading && attached.length > 0 ? (
+			<div className={cn('space-y-2', !attachedFirst && 'mt-2')}>
+				{attached.map((skill) => (
+					<AttachedSkillRow
+						key={skill.id}
+						skill={skill}
+						onRemove={() =>
+							detachSkill.mutate(skill.id, {
+								onError: () => toast.error(`Couldn't detach ${skill.name}`),
+							})
+						}
+						readOnly={readOnly}
+					/>
+				))}
+			</div>
+		) : null
 
 	const showEmptyState = !isLoading && available.length === 0 && attached.length === 0
 
@@ -212,21 +244,7 @@ function WorkspaceSkillsSection({
 				</p>
 			)}
 
-			{/* Attached rows first, the attach affordance under them — v2 reads the
-			    list top-down and puts the "add another" control at the end of it
-			    (mockup 2450–2456). */}
-			{!isLoading && attached.length > 0 && (
-				<div className="space-y-2">
-					{attached.map((skill) => (
-						<AttachedSkillRow
-							key={skill.id}
-							skill={skill}
-							onRemove={() => detachSkill.mutate(skill.id)}
-							readOnly={readOnly}
-						/>
-					))}
-				</div>
-			)}
+			{attachedFirst && attachedRows}
 
 			{!readOnly && !isLoading && available.length > 0 && (
 				<ResponsivePopover open={open} onOpenChange={handleOpenChange}>
@@ -304,22 +322,7 @@ function WorkspaceSkillsSection({
 				</ResponsivePopover>
 			)}
 
-			{!isLoading && attached.length > 0 && (
-				<div className="mt-2 space-y-2">
-					{attached.map((skill) => (
-						<AttachedSkillRow
-							key={skill.id}
-							skill={skill}
-							onRemove={() =>
-								detachSkill.mutate(skill.id, {
-									onError: () => toast.error(`Couldn't detach ${skill.name}`),
-								})
-							}
-							readOnly={readOnly}
-						/>
-					))}
-				</div>
-			)}
+			{!attachedFirst && attachedRows}
 		</div>
 	)
 }

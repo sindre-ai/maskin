@@ -16,7 +16,7 @@ import {
 	type CardKind,
 	classifyCardKind,
 } from '@/lib/foryou-card-kind'
-import { compactTime, heldNote } from '@/lib/foryou-feed'
+import { heldNote } from '@/lib/foryou-feed'
 import { Link } from '@tanstack/react-router'
 import { ArrowUpRight, Check, ChevronDown, ChevronUp } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -67,7 +67,6 @@ export function FeedCard({
 	const title = object?.title?.trim() || 'Untitled'
 	const why = object?.content?.trim() ?? ''
 	const status = object?.status
-	const time = compactTime(item.latest_activity_at)
 
 	const { data: actors } = useActors(workspaceId)
 	const driver = useMemo(
