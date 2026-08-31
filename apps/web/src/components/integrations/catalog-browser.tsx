@@ -163,10 +163,15 @@ function CatalogRow({
 	// catalogue source's hostname in every page view.
 	const iconSrc = entry.iconPath ? `/api/tool-broker/catalog/icons/${entry.domain}` : null
 
-	// An entry whose provider will not register a client cannot be connected
-	// without setup we have not built, so say that up front rather than letting
-	// someone click Add and hit a refusal two steps later.
-	const needsSetup = entry.authKind !== 'none' && !entry.supportsDcr
+	// Only an OAuth provider that will not register a client for us is actually
+	// blocked: connecting it needs a client id and secret created by hand in that
+	// vendor's dashboard, which we have no way to store yet.
+	//
+	// `supportsDcr` says nothing about an api-key integration — asking a provider
+	// whether it self-registers an OAuth client tells you nothing about whether
+	// someone can paste a key, and we support pasting a key. Treating the two the
+	// same disabled 18 entries we can connect today.
+	const needsSetup = entry.authKind === 'oauth2' && !entry.supportsDcr
 
 	return (
 		<li className="flex items-center justify-between gap-3 rounded-md border border-border p-3">
@@ -185,10 +190,15 @@ function CatalogRow({
 			</div>
 
 			<div className="flex shrink-0 items-center gap-2">
+				{/* Say what connecting will ask of you, before you commit to it. An
+				    api-key entry needs a secret to hand, which is worth knowing at
+				    this point rather than one step later. */}
 				{needsSetup ? (
 					<span className="text-text-secondary text-xs">Needs setup</span>
 				) : entry.authKind === 'none' ? (
 					<span className="text-text-secondary text-xs">No sign-in</span>
+				) : entry.authKind === 'api_key' ? (
+					<span className="text-text-secondary text-xs">Needs a key</span>
 				) : null}
 				<Button size="sm" variant="outline" disabled={pending || needsSetup} onClick={onAdd}>
 					Add

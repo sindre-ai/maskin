@@ -327,6 +327,19 @@ const CATALOG = [
 		authKind: 'oauth2' as const,
 		supportsDcr: false,
 	},
+	{
+		// api_key with supportsDcr false — the shape that used to be lumped in with
+		// Legacy Thing and disabled, despite the key dialog handling it fine.
+		id: 'c4',
+		name: 'Keyed Service',
+		description: 'Authenticates with an API key',
+		domain: 'keyed.example',
+		iconPath: null,
+		connectKind: 'mcp' as const,
+		endpointUrl: 'https://mcp.keyed.example/mcp',
+		authKind: 'api_key' as const,
+		supportsDcr: false,
+	},
 ]
 
 const stubCatalog = async (
@@ -569,5 +582,62 @@ test.describe('catalogue browser — paging', () => {
 		await dialog.getByLabel('Search').fill('Provider 007')
 		await expect(rows).toHaveCount(1, { timeout: 10000 })
 		await expect(dialog.getByText('All 1 matching')).toBeVisible()
+	})
+})
+
+test.describe('catalogue browser — what each entry will ask of you', () => {
+	test.beforeEach(async ({ page }) => {
+		await page.addInitScript(() => localStorage.setItem('ff:tool-broker', 'on'))
+	})
+
+	test('an api-key entry can be added, and says a key will be needed', async ({
+		page,
+		account,
+	}) => {
+		// Regression: `supportsDcr` is an OAuth property. Reading it as a general
+		// "can we connect this" flag disabled every api-key entry whose provider
+		// happens not to self-register an OAuth client — 18 of them in the live
+		// catalogue — even though pasting a key is a path we fully support.
+		await stubBroker(page, { configured: true, available: true, integrations: INTEGRATIONS })
+		await stubCatalog(page)
+
+		let added: { url?: string } | null = null
+		await page.route('**/api/tool-broker/integrations', async (route) => {
+			added = route.request().postDataJSON()
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ slug: 'w0123_keyed' }),
+			})
+		})
+
+		await gotoIntegrations(page, account.workspaceId)
+		await section(page).getByRole('button', { name: 'Browse' }).click()
+
+		const row = page.getByRole('dialog').getByRole('listitem').filter({ hasText: 'Keyed Service' })
+		await expect(row.getByText('Needs a key')).toBeVisible()
+		await expect(row.getByText('Needs setup')).toHaveCount(0)
+
+		const addButton = row.getByRole('button', { name: 'Add' })
+		await expect(addButton).toBeEnabled()
+		await addButton.click()
+		await expect.poll(() => added?.url, { timeout: 10000 }).toBe('https://mcp.keyed.example/mcp')
+	})
+
+	test('only an OAuth provider that will not self-register is blocked', async ({
+		page,
+		account,
+	}) => {
+		await stubBroker(page, { configured: true, available: true, integrations: INTEGRATIONS })
+		await stubCatalog(page)
+		await gotoIntegrations(page, account.workspaceId)
+		await section(page).getByRole('button', { name: 'Browse' }).click()
+
+		const dialog = page.getByRole('dialog')
+		// Exactly one of the four fixtures qualifies.
+		await expect(dialog.getByText('Needs setup')).toHaveCount(1)
+		await expect(
+			dialog.getByRole('listitem').filter({ hasText: 'Legacy Thing' }).getByText('Needs setup'),
+		).toBeVisible()
 	})
 })
