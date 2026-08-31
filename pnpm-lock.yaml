@@ -494,6 +494,9 @@ importers:
 
   packages/markdown:
     dependencies:
+      '@tiptap/core':
+        specifier: ^2.10.0
+        version: 2.27.2(@tiptap/pm@2.27.2)
       '@tiptap/extension-bubble-menu':
         specifier: ^2.10.0
         version: 2.27.2(@tiptap/core@2.27.2(@tiptap/pm@2.27.2))(@tiptap/pm@2.27.2)
@@ -551,6 +554,9 @@ importers:
       lowlight:
         specifier: ^3.1.0
         version: 3.3.0
+      lucide-react:
+        specifier: ^0.468.0
+        version: 0.468.0(react@19.2.5)
       react-markdown:
         specifier: ^9.0.1
         version: 9.1.0(@types/react@19.2.14)(react@19.2.5)
