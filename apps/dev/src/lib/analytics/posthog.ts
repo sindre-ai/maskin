@@ -31,6 +31,16 @@ export async function capturePosthogEvent(
 		logger.debug('PostHog capture skipped — POSTHOG_API_KEY unset', { event, distinctId })
 		return
 	}
+	// PostHog silently DROPS events with an empty distinct id — the ingestion
+	// endpoint still answers 2xx, so the request looks successful and nothing is
+	// logged. A caller that can produce an empty id (e.g. `POST /mcp` with
+	// neither an API key nor a workspace header, where both default to '') would
+	// otherwise read as traced while its rows never exist. Skip the guaranteed
+	// no-op and say so.
+	if (!distinctId.trim()) {
+		logger.debug('PostHog capture skipped — empty distinct id', { event })
+		return
+	}
 	const host = process.env.POSTHOG_HOST?.trim() || DEFAULT_POSTHOG_HOST
 
 	const body = {

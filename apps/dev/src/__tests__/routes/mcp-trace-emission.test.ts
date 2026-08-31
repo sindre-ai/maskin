@@ -516,6 +516,26 @@ describe('seq key isolation', () => {
 		expect(traces().map((t) => t.seq)).toEqual([1, 1])
 	})
 
+	// `/mcp` is mounted outside authMiddleware and `mcp-session` is reached by
+	// sending any `Mcp-Session-Id` at all, so on one shared map an anonymous
+	// caller could mint unlimited keys, hit the cap, and evict real agent
+	// sessions — which then silently restart at 1. Separate maps bound the
+	// damage to the caller's own tier.
+	it('tracks untrusted callers in a separate map from agent sessions', async () => {
+		const app = await createApp()
+		respondOk(1)
+		await post(app, toolCall(1, 'list_objects', {}), {
+			'X-Maskin-Session-Id': MASKIN_SESSION_ID,
+		})
+		respondOk(2)
+		await post(app, toolCall(2, 'list_objects', {}), { 'Mcp-Session-Id': 'ext-a' })
+		respondOk(3)
+		await post(app, toolCall(3, 'list_objects', {}), { 'Mcp-Session-Id': 'ext-b' })
+
+		const mod = await import('../../routes/mcp')
+		expect(mod.__mcpTraceSeqSizes()).toEqual({ maskin: 1, untrusted: 2 })
+	})
+
 	it('does not let an mcp-session id land on a maskin-session counter', async () => {
 		const app = await createApp()
 		const id = '3f3726b1-0000-4000-8000-000000000002'

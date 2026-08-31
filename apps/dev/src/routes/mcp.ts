@@ -15,7 +15,7 @@ import {
 import { type McpSessionSource, argKeys, captureMcpToolCall } from '../lib/analytics/mcp-tool-calls'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
-import { createSeqCounter } from '../lib/mcp-trace-seq'
+import { type SeqCounter, createSeqCounter } from '../lib/mcp-trace-seq'
 
 // Only `db` is set on the /mcp path — the auth middleware runs under /api/*.
 type Env = {
@@ -274,7 +274,27 @@ export function resolveSessionIdentity(
 
 // ── Trace + misfire emission ────────────────────────────────────────────
 
-const seqCounter = createSeqCounter()
+// TWO counters, partitioned by how much the session id is trusted — not one.
+//
+// `POST /mcp` is mounted outside `authMiddleware`, and `source: 'mcp-session'`
+// is reached by sending any `Mcp-Session-Id` header at all, with a
+// client-supplied `X-Workspace-Id` also folded into the key. On a single shared
+// counter an unauthenticated caller could therefore mint unlimited distinct
+// keys, drive the map to its cap, and start evicting real agent sessions —
+// which then silently restart at 1. That is precisely the ordering-collapse
+// failure `lib/mcp-trace-seq.ts` is built to avoid, reached from outside.
+//
+// Splitting the map bounds the blast radius to the caller's own tier:
+// unauthenticated traffic can only ever evict other unauthenticated traffic.
+// `maskin-session` requires a uuid-shaped `X-Maskin-Session-Id`, which is not
+// a strong guarantee (see `UUID_RE`) but is the strongest signal available on
+// this route, and it is what agent-launched sessions carry.
+const maskinSeqCounter = createSeqCounter()
+const untrustedSeqCounter = createSeqCounter()
+
+function counterFor(session: McpSessionIdentity): SeqCounter {
+	return session.source === 'maskin-session' ? maskinSeqCounter : untrustedSeqCounter
+}
 
 // The counter is keyed on more than the session id, because the id alone is
 // not unique. `Mcp-Session-Id` is chosen by the client and validated only for
@@ -374,7 +394,8 @@ export function planTracedCalls(
 		if (request.method !== 'tools/call') continue
 		const toolName = request.params?.name
 		if (typeof toolName !== 'string' || toolName.length === 0) continue
-		const seq = session.source === 'unknown' ? null : seqCounter.next(seqKey(session, workspaceId))
+		const seq =
+			session.source === 'unknown' ? null : counterFor(session).next(seqKey(session, workspaceId))
 		planned.push({ request, toolName, seq, tsMs })
 	}
 	return planned
@@ -623,7 +644,8 @@ export function __resetMcpActorCache(): void {
  * inherits the numbering left behind by the previous one.
  */
 export function __resetMcpTraceSeq(): void {
-	seqCounter.reset()
+	maskinSeqCounter.reset()
+	untrustedSeqCounter.reset()
 }
 
 /**
@@ -631,5 +653,14 @@ export function __resetMcpTraceSeq(): void {
  * that an unidentified caller consumes no slot.
  */
 export function __mcpTraceSeqSize(): number {
-	return seqCounter.size()
+	return maskinSeqCounter.size() + untrustedSeqCounter.size()
+}
+
+/**
+ * Sessions tracked per trust tier. Only used in tests, to assert that
+ * unauthenticated callers land in their own map and so cannot evict
+ * agent-launched sessions when they exhaust a cap.
+ */
+export function __mcpTraceSeqSizes(): { maskin: number; untrusted: number } {
+	return { maskin: maskinSeqCounter.size(), untrusted: untrustedSeqCounter.size() }
 }

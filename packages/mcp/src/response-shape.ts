@@ -51,6 +51,17 @@ export interface ResponseShape {
 	topFields: string[]
 	/** Bytes attributed to each entry of `topFields`, positionally aligned. */
 	topFieldBytes: number[]
+	/**
+	 * True when measurement itself faulted, so every field above is a fallback
+	 * rather than an observation.
+	 *
+	 * Without this, a fault is indistinguishable downstream from a correct
+	 * measurement of a tool with no row array: both arrive as nulls and empty
+	 * lists. That is the one distinction this module's doc comment promises to
+	 * preserve, so a query can exclude broken rows instead of averaging them in
+	 * as "no rows".
+	 */
+	shapeError: boolean
 }
 
 export const EMPTY_RESPONSE_SHAPE: ResponseShape = {
@@ -59,16 +70,26 @@ export const EMPTY_RESPONSE_SHAPE: ResponseShape = {
 	contentBlockCount: null,
 	topFields: [],
 	topFieldBytes: [],
+	shapeError: false,
 }
 
-function jsonBytes(value: unknown): number {
+/** Collects whether any measurement below faulted, so the caller can flag the
+ *  result rather than pass a fallback off as an observation. */
+interface Fault {
+	hit: boolean
+}
+
+function jsonBytes(value: unknown, fault: Fault): number {
 	if (value === undefined || value === null) return 0
 	try {
 		const json = JSON.stringify(value)
 		return json ? Buffer.byteLength(json, 'utf8') : 0
 	} catch {
 		// Circular or otherwise unserializable. It never reached the wire in
-		// that state either, so 0 is the honest answer rather than a guess.
+		// that state either, so 0 is the honest answer rather than a guess — but
+		// the resulting numbers are understated, so mark the whole measurement
+		// suspect rather than reporting them as clean.
+		fault.hit = true
 		return 0
 	}
 }
@@ -94,19 +115,39 @@ function findRows(structuredContent: unknown): unknown[] | null {
 	return best
 }
 
-/** Total bytes per field name across the sampled rows. Non-object rows (a
- *  bare string array, say) contribute nothing — there are no field names to
- *  attribute to, and their content must not become one. */
-function attributeFieldBytes(rows: unknown[]): Map<string, number> {
+/**
+ * Single pass over the sampled rows, producing both the per-field byte totals
+ * and the largest row seen.
+ *
+ * Both come from the SAME `MAX_ROWS_SAMPLED` window, deliberately. `maxRowBytes`
+ * used to be computed by serializing every row in the array, which is exactly
+ * the O(payload) hot-path cost the sampling cap exists to avoid — and it spread
+ * an unbounded array into `Math.max`, which throws `RangeError` on a large
+ * enough response, discarding the shape data for precisely the biggest ones.
+ * Sampled, it is a lower bound on the widest row rather than an exact maximum:
+ * enough to separate "too many rows" from "rows too fat", which is all it is
+ * read for.
+ *
+ * Non-object rows (a bare string array, say) contribute to the row-size figure
+ * but not to field attribution — there are no field names to attribute to, and
+ * their content must not become one.
+ */
+function scanRows(
+	rows: unknown[],
+	fault: Fault,
+): { totals: Map<string, number>; maxRowBytes: number | null } {
 	const totals = new Map<string, number>()
+	let maxRowBytes: number | null = null
 	for (const row of rows.slice(0, MAX_ROWS_SAMPLED)) {
+		const bytes = jsonBytes(row, fault)
+		if (maxRowBytes === null || bytes > maxRowBytes) maxRowBytes = bytes
 		if (!row || typeof row !== 'object' || Array.isArray(row)) continue
 		for (const [key, value] of Object.entries(row as Record<string, unknown>)) {
 			if (!FIELD_NAME_RE.test(key)) continue
-			totals.set(key, (totals.get(key) ?? 0) + jsonBytes(value))
+			totals.set(key, (totals.get(key) ?? 0) + jsonBytes(value, fault))
 		}
 	}
-	return totals
+	return { totals, maxRowBytes }
 }
 
 /**
@@ -114,18 +155,40 @@ function attributeFieldBytes(rows: unknown[]): Map<string, number> {
  * path, and a measurement fault must cost the metric, not the call.
  */
 export function measureResponseShape(content: unknown, structuredContent: unknown): ResponseShape {
+	const fault: Fault = { hit: false }
 	try {
 		const rows = findRows(structuredContent)
-		const totals = rows ? attributeFieldBytes(rows) : new Map<string, number>()
+		const { totals, maxRowBytes } = rows
+			? scanRows(rows, fault)
+			: { totals: new Map<string, number>(), maxRowBytes: null }
 		const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, MAX_TOP_FIELDS)
 		return {
 			rowCount: rows ? rows.length : null,
-			maxRowBytes: rows?.length ? Math.max(...rows.map(jsonBytes)) : null,
+			maxRowBytes: rows?.length ? maxRowBytes : null,
 			contentBlockCount: Array.isArray(content) ? content.length : null,
 			topFields: ranked.map(([key]) => key),
 			topFieldBytes: ranked.map(([, bytes]) => bytes),
+			shapeError: fault.hit,
 		}
-	} catch {
-		return EMPTY_RESPONSE_SHAPE
+	} catch (err) {
+		// Log once per process, on stderr — stdout is the MCP protocol channel
+		// on the stdio transport, same constraint the sink in `telemetry.ts`
+		// works under. A bare `catch` here left a measurement fault looking
+		// identical to a tool with no rows, permanently and with no signal.
+		warnShapeFailure(err)
+		return { ...EMPTY_RESPONSE_SHAPE, shapeError: true }
 	}
+}
+
+let shapeWarned = false
+
+function warnShapeFailure(err: unknown): void {
+	if (shapeWarned) return
+	shapeWarned = true
+	console.error('[MCP telemetry] response shape measurement failed:', err)
+}
+
+/** Resets the once-per-process shape warning — only used in tests. */
+export function __resetShapeWarnedFlag(): void {
+	shapeWarned = false
 }

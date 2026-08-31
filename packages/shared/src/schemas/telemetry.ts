@@ -150,6 +150,12 @@ export const recordMcpToolCallResponseSizeSchema = z.object({
 	// it can't be a `.transform` here because this object is a member of a
 	// `z.discriminatedUnion`, which (zod 3) accepts only bare ZodObjects.
 	top_field_bytes: z.array(z.number().int().min(0)).max(MAX_TOP_FIELDS).optional().catch([]),
+	// True when the producer's shape measurement faulted, making every shape
+	// field above a fallback rather than an observation. Without it, a fault is
+	// indistinguishable from a correct measurement of a tool that has no row
+	// array — both arrive as nulls and empty lists. Optional, and absent on an
+	// older MCP server build, which is the same thing as "no fault reported".
+	shape_error: z.boolean().optional(),
 })
 
 /**

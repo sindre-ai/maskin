@@ -111,4 +111,38 @@ describe('measureResponseShape', () => {
 		expect(EMPTY_RESPONSE_SHAPE.rowCount).toBeNull()
 		expect(EMPTY_RESPONSE_SHAPE.topFields).toEqual([])
 	})
+
+	it('flags shapeError when a row cannot be serialized', () => {
+		const row: Record<string, unknown> = { id: 'a' }
+		row.self = row
+		// Without this flag the fallback below is byte-identical to a correct
+		// measurement of a tool with no row array, and a query cannot tell a
+		// broken row from a legitimately empty one.
+		expect(measureResponseShape(undefined, { rows: [row] }).shapeError).toBe(true)
+	})
+
+	it('leaves shapeError false for a clean measurement', () => {
+		expect(measureResponseShape(undefined, { rows: [{ id: 'a' }] }).shapeError).toBe(false)
+		expect(measureResponseShape(undefined, { id: 'a' }).shapeError).toBe(false)
+	})
+
+	it('bounds row serialization to the sample window on a huge row array', () => {
+		// The sampling cap exists so measurement is not an O(payload) serialize on
+		// every tool call. maxRowBytes previously serialized (and spread) the whole
+		// array, which is both the cost the cap forbids and a RangeError on a large
+		// enough response — silently discarding shape data for the biggest ones.
+		const rows = Array.from({ length: 200_000 }, (_, i) => ({ id: String(i) }))
+		const shape = measureResponseShape(undefined, { objects: rows })
+		expect(shape.rowCount).toBe(200_000)
+		expect(shape.maxRowBytes).toBeGreaterThan(0)
+		expect(shape.shapeError).toBe(false)
+	})
+
+	it('derives maxRowBytes from the sampled window, not the whole array', () => {
+		// A fat row beyond the sample is not reported: maxRowBytes is a lower
+		// bound on row width, which is all "too many rows vs rows too fat" needs.
+		const rows: Record<string, unknown>[] = Array.from({ length: 40 }, () => ({ id: 'a' }))
+		rows[39] = { id: 'a', content: 'x'.repeat(5_000) }
+		expect(measureResponseShape(undefined, { objects: rows }).maxRowBytes).toBeLessThan(1_000)
+	})
 })

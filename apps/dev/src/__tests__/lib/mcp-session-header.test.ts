@@ -51,4 +51,30 @@ describe('stampMaskinSessionHeader', () => {
 		expect(stampMaskinSessionHeader(null)).toBeNull()
 		expect(stampMaskinSessionHeader(undefined)).toBeUndefined()
 	})
+
+	// The `tools` blob these entries come from is workspace-editable and
+	// unschema'd, so `headers` is not guaranteed to be an object. Reaching the
+	// `in` operator with a non-object throws a TypeError synchronously inside
+	// launchContainer, failing the whole session launch over a stamping step
+	// that only exists for analytics.
+	it.each([
+		['a string', 'not-an-object'],
+		['a number', 42],
+		['an array', ['Authorization: Bearer x']],
+		['null', null],
+	])('passes an entry through untouched when headers is %s', (_label, headers) => {
+		const entry = { ...maskinEntry, headers }
+		const input = { maskin: entry }
+		expect(() => stampMaskinSessionHeader(input)).not.toThrow()
+		expect(stampMaskinSessionHeader(input).maskin).toBe(entry)
+	})
+
+	it('stamps an entry that has no headers key at all', () => {
+		const out = stampMaskinSessionHeader({
+			maskin: { type: 'http', url: '${MASKIN_API_URL}/mcp' },
+		})
+		expect((out.maskin as { headers: Record<string, string> }).headers).toEqual({
+			'X-Maskin-Session-Id': '${SESSION_ID}',
+		})
+	})
 })

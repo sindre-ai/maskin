@@ -148,6 +148,9 @@ export interface ToolCallResponseSizeEvent {
 	top_fields?: string[]
 	/** Bytes for each entry of `top_fields`, positionally aligned. */
 	top_field_bytes?: number[]
+	/** True when shape measurement faulted — the shape fields above are
+	 *  fallbacks, not observations. Absent means they are trustworthy. */
+	shape_error?: boolean
 }
 
 // MCP misfire event for the agent-reach-signal bet. The server-side
@@ -337,6 +340,10 @@ export function recordToolCallResponseSize(
 			content_block_count: shape.contentBlockCount ?? undefined,
 			top_fields: shape.topFields,
 			top_field_bytes: shape.topFieldBytes,
+			// Only sent when true. Marks the shape fields above as fallbacks
+			// rather than observations, so a query can exclude them instead of
+			// averaging a measurement fault in as "this tool returned no rows".
+			shape_error: shape.shapeError ? true : undefined,
 		},
 		cfg,
 	)

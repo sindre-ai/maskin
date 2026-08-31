@@ -23,8 +23,12 @@ export const MASKIN_SESSION_HEADER_VALUE = '${SESSION_ID}'
  * `session-mcp-N`, seeded presets) and a hardcoded name list would silently
  * miss one.
  */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function isMaskinMcpEntry(entry: unknown): entry is Record<string, unknown> {
-	if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false
+	if (!isPlainObject(entry)) return false
 	const e = entry as Record<string, unknown>
 	if (e.type !== undefined && e.type !== 'http') return false
 	const url = typeof e.url === 'string' ? e.url.trim() : ''
@@ -54,7 +58,20 @@ export function stampMaskinSessionHeader<T extends Record<string, unknown> | nul
 			out[name] = entry
 			continue
 		}
-		const headers = (entry.headers ?? {}) as Record<string, unknown>
+		// `headers` comes off the same workspace-editable, unschema'd `tools`
+		// blob as the rest of the entry, so it is not necessarily an object. A
+		// non-object here used to reach the `in` operator below, which throws a
+		// TypeError — synchronously, inside `launchContainer`, failing the whole
+		// session launch over an analytics-only stamping step. Pass such an entry
+		// through untouched instead: its tool calls fall back to
+		// `session_source: 'unknown'`, the same graceful degradation any other
+		// unstampable entry already gets.
+		const rawHeaders = entry.headers
+		if (rawHeaders !== undefined && !isPlainObject(rawHeaders)) {
+			out[name] = entry
+			continue
+		}
+		const headers = (rawHeaders ?? {}) as Record<string, unknown>
 		if (MASKIN_SESSION_HEADER in headers) {
 			out[name] = entry
 			continue

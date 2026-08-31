@@ -182,6 +182,10 @@ app.openapi(recordRoute, (async (c) => {
 			content_block_count: body.content_block_count ?? null,
 			top_fields: topFields,
 			top_field_bytes: topFieldBytes,
+			// Whether the shape fields on this row are observations or fallbacks.
+			// Always emitted (never omitted) so a dashboard can filter on it
+			// without having to treat "absent" as a third state.
+			shape_error: body.shape_error ?? false,
 			// Derived here rather than in a dashboard query so the "is each row
 			// too fat?" question is answerable by grouping alone. Guarded against
 			// a zero row count, which is a real and frequent response.
