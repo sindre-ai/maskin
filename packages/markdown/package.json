@@ -24,6 +24,10 @@
 		"./react/editor": {
 			"types": "./src/react/editor.tsx",
 			"default": "./dist/react/editor.js"
+		},
+		"./react/telemetry": {
+			"types": "./src/react/telemetry.ts",
+			"default": "./dist/react/telemetry.js"
 		}
 	},
 	"scripts": {
