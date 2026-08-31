@@ -81,9 +81,15 @@ app.post('/', async (c) => {
 	} catch {
 		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON in request body'), 400)
 	}
-	const method =
-		(body as Record<string, unknown>)?.method ??
-		(Array.isArray(body) ? body.map((b: { method?: string }) => b.method) : 'unknown')
+	// Via `listRequests` so a junk element (`[null]` is valid JSON and reaches
+	// us straight off `c.req.json()`) cannot throw here. This is a debug LOG
+	// line on the request path: an unguarded `b.method` 500s a request the
+	// transport would have rejected cleanly, which is a steep price for a
+	// console.log.
+	const requestsForLog = listRequests(body)
+	const method = Array.isArray(body)
+		? requestsForLog.map((b) => b.method)
+		: (requestsForLog[0]?.method ?? 'unknown')
 	console.log(`[MCP] POST /mcp — method: ${JSON.stringify(method)}`)
 
 	// Wrap the outgoing Node response so we can sniff the JSON-RPC body for
@@ -102,7 +108,18 @@ app.post('/', async (c) => {
 	// while a call arriving a millisecond later hits a warm cache and numbers
 	// itself first. Agents issue tool calls in parallel routinely, so that is
 	// an ordinary case, not a rare race.
-	const plannedCalls = planTracedCalls(body, session, startedAt, workspaceId)
+	//
+	// Wrapped because this runs OUTSIDE the try below, on the request path: a
+	// throw here fails the tool call itself rather than costing a metric.
+	// `listRequests` filters the one input shape known to do that, so this is
+	// defence in depth against the next one — an analytics step must never be
+	// able to 500 a request the transport would have answered.
+	let plannedCalls: PlannedTracedCall[] = []
+	try {
+		plannedCalls = planTracedCalls(body, session, startedAt, workspaceId)
+	} catch (err) {
+		logger.warn('mcp trace planning failed', { error: String(err) })
+	}
 
 	// `finally`, not a plain sequence: a throw out of `handleRequest` would
 	// otherwise skip emission entirely, having ALREADY spent the sequence
@@ -518,10 +535,20 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 	}
 }
 
-/** Flatten a request body (single message or JSON-RPC batch) into a list. */
+/**
+ * Flatten a request body (single message or JSON-RPC batch) into a list.
+ *
+ * Elements are FILTERED, not cast: `[null]` is valid JSON and reaches us
+ * straight off `c.req.json()`, and reading `.method` off that null throws.
+ * `planTracedCalls` runs on the request path *before* the try around
+ * `handleRequest`, so an unfiltered cast here turns a malformed body into a
+ * 500 on a request the transport would otherwise have rejected cleanly — an
+ * analytics-only step failing the tool call itself. Same guard, and the same
+ * reason, as `parseJsonRpcResponses` on the response side.
+ */
 function listRequests(body: unknown): JsonRpcMessage[] {
-	if (Array.isArray(body)) return body as JsonRpcMessage[]
-	if (body && typeof body === 'object') return [body as JsonRpcMessage]
+	if (Array.isArray(body)) return body.filter(isJsonRpcMessage)
+	if (isJsonRpcMessage(body)) return [body]
 	return []
 }
 
@@ -586,12 +613,9 @@ function tryParseJson(text: string): JsonRpcMessage | JsonRpcMessage[] | null {
 
 function indexRequestsById(body: unknown): Map<string, JsonRpcMessage> {
 	const out = new Map<string, JsonRpcMessage>()
-	const list: JsonRpcMessage[] = Array.isArray(body)
-		? (body as JsonRpcMessage[])
-		: body && typeof body === 'object'
-			? [body as JsonRpcMessage]
-			: []
-	for (const req of list) {
+	// Via `listRequests` so the element filtering lives in exactly one place —
+	// this had its own unfiltered cast, with the same null hazard.
+	for (const req of listRequests(body)) {
 		if (req.id == null) continue
 		out.set(String(req.id), req)
 	}

@@ -619,3 +619,84 @@ describe('unpaired tool calls', () => {
 		expect(traces()[0]).toMatchObject({ ok: true, errorClass: null })
 	})
 })
+
+// Regression: `listRequests` cast any array through unfiltered, and
+// `planTracedCalls` runs on the request path BEFORE the try around
+// `handleRequest`. A body of `[null]` — valid JSON, accepted by `c.req.json()`
+// — therefore threw a TypeError on `request.method` and 500'd a request the
+// transport would have rejected cleanly. An analytics-only step must never be
+// able to fail the tool call itself. The response side was already hardened
+// this way (`parseJsonRpcResponses`); this pins the request side.
+describe('malformed request bodies cannot fail the request path', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		captureMcpToolCall.mockResolvedValue(undefined)
+		recordMcpMisfire.mockResolvedValue(undefined)
+		validateApiKey.mockResolvedValue({ actorId: 'actor-42', type: 'agent' })
+	})
+
+	/** POST a raw body and return the response, so status can be asserted. */
+	async function rawPost(app: Hono<TestEnv>, body: unknown) {
+		const { env } = createEnv()
+		const res = await app.request(
+			new Request('http://localhost/mcp', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: 'Bearer ank_test',
+					'X-Workspace-Id': WORKSPACE_ID,
+					'X-Maskin-Session-Id': MASKIN_SESSION_ID,
+				},
+				body: JSON.stringify(body),
+			}),
+			undefined,
+			env,
+		)
+		for (let i = 0; i < 3; i++) await new Promise((r) => setImmediate(r))
+		return res
+	}
+
+	it.each([
+		['a null element in a batch', [null]],
+		[
+			'null mixed with a real call',
+			[
+				null,
+				{
+					jsonrpc: '2.0',
+					id: 1,
+					method: 'tools/call',
+					params: { name: 'list_objects', arguments: {} },
+				},
+			],
+		],
+		['a nested array element', [[{ method: 'tools/call' }]]],
+		['primitive elements', [1, 'x', true]],
+	])('still reaches the transport with %s', async (_label, body) => {
+		respondOk(1)
+		const app = await createApp()
+		const res = await rawPost(app, body)
+
+		// The transport ran and answered — the planner did not pre-empt it.
+		expect(mockHandleRequest).toHaveBeenCalledTimes(1)
+		expect(res.status).not.toBe(500)
+	})
+
+	it('still traces the real call in a batch that also contains null', async () => {
+		respondOk(1)
+		const app = await createApp()
+		await rawPost(app, [
+			null,
+			{
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'tools/call',
+				params: { name: 'list_objects', arguments: {} },
+			},
+		])
+
+		// The junk element is skipped, the real one is still numbered and emitted.
+		expect(traces()).toHaveLength(1)
+		expect(traces()[0]).toMatchObject({ toolName: 'list_objects', seq: 1, ok: true })
+	})
+})

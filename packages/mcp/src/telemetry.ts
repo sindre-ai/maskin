@@ -360,11 +360,22 @@ export function recordMutation(
 	},
 ): void {
 	const cfg = event.workspace_id ? { ...target, workspaceId: event.workspace_id } : target
+	// `eventSession(target)`, not the module-scope SESSION_ID — the same
+	// identity `recordToolCall` stamps. On the HTTP transport this server runs
+	// in-process inside apps/dev, where the module constant is the APP
+	// process's id, shared by every caller. Stamping it here while
+	// `recordToolCall` stamps the real per-request session splits one call's
+	// two events across two different session ids, and the summary query in
+	// `routes/telemetry.ts` groups by `session_id` with
+	// `HAVING bool_or(event_type = 'tool_call')` — so the mutation-only group
+	// is dropped and `mutation_session_pct` reads 0 for every containerised
+	// agent. Both emitters must resolve the session the same way.
+	const session = eventSession(target)
 	sink(
 		{
 			event_type: 'mutation',
 			tool_name: event.tool_name,
-			session_id: SESSION_ID,
+			session_id: session.id,
 			object_type: event.object_type,
 			mutation_kind: event.mutation_kind,
 		},

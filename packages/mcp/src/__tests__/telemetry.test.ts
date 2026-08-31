@@ -423,3 +423,52 @@ describe('recordToolCallResponseSize — shape fields', () => {
 		expect(JSON.stringify(event)).not.toContain('Nakatomi')
 	})
 })
+
+// `recordMutation` used to stamp the module-scope SESSION_ID while
+// `recordToolCall` had been moved onto the per-target override. On the HTTP
+// transport that constant is the apps/dev PROCESS's id, so one call's two
+// events landed under two different session ids — and the summary query groups
+// by `session_id` with `HAVING bool_or(event_type = 'tool_call')`, which drops
+// the mutation-only group and reports `mutation_session_pct` as 0 for every
+// containerised agent. These pin both emitters to the same identity.
+describe('recordMutation — session identity', () => {
+	const BASE = { apiBaseUrl: 'http://localhost:3000', apiKey: 'ank_testkey', workspaceId: wsId }
+
+	async function load() {
+		vi.resetModules()
+		const mod = await import('../telemetry')
+		const events: TelemetryEvent[] = []
+		const sink: TelemetrySink = (e) => events.push(e)
+		return { mod, sink, events }
+	}
+
+	it('uses the host-supplied session id, not the process id', async () => {
+		const { mod, sink, events } = await load()
+		const target = { ...BASE, sessionId: 'sess-http-1', sessionSource: 'maskin-session' as const }
+		mod.recordMutation(sink, target, { tool_name: 'update_objects', mutation_kind: 'update' })
+		expect(events[0]).toMatchObject({ event_type: 'mutation', session_id: 'sess-http-1' })
+	})
+
+	it('stamps the same session id as the tool_call for the same call', async () => {
+		const { mod, sink, events } = await load()
+		const target = { ...BASE, sessionId: 'sess-http-2', sessionSource: 'maskin-session' as const }
+		mod.recordToolCall(sink, target, {
+			tool_name: 'update_objects',
+			has_rich_render: false,
+			duration_ms: 5,
+			transport: 'http',
+		})
+		mod.recordMutation(sink, target, { tool_name: 'update_objects', mutation_kind: 'update' })
+		const [toolCall, mutation] = events
+		// The join the summary query depends on. If these diverge,
+		// `mutation_session_pct` silently reads 0 for all HTTP traffic.
+		expect(mutation.session_id).toBe(toolCall.session_id)
+		expect(mutation.session_id).toBe('sess-http-2')
+	})
+
+	it('falls back to the process id on stdio, where no override is supplied', async () => {
+		const { mod, sink, events } = await load()
+		mod.recordMutation(sink, BASE, { tool_name: 'create_objects', mutation_kind: 'create' })
+		expect(events[0].session_id).toBe(mod.__sessionId())
+	})
+})
