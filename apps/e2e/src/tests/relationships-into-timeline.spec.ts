@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
@@ -8,6 +9,19 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // view" radio group of AC-U12 / AC-T7: the shell's own Timeline | Related
 // segmented control replaces it, and is covered by
 // object-detail-properties.spec.ts.
+
+// The v2 timeline folds a run of three or more low-signal rows — link rows
+// among them — behind one "N agent updates" pill (timeline-tab.tsx,
+// `FOLD_MIN_RUN`). The projection still happened; it is just collapsed. Open
+// every fold so the edges under test are readable. Opening relabels the pill
+// to "Hide N updates", so this terminates. The pill also carries the folded
+// span's date range, so the name is matched by prefix rather than anchored.
+async function expandTimelineFolds(page: Page) {
+	const folds = page.getByRole('button', { name: /^\d+ agent updates\b/ })
+	while ((await folds.count()) > 0) {
+		await folds.first().click()
+	}
+}
 
 test.describe('Relationships into the timeline (AC-U11)', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
@@ -43,6 +57,7 @@ test.describe('Relationships into the timeline (AC-U11)', () => {
 			// AC-U11 / AC-T6: the linked insight appears as a timeline row. The
 			// Timeline tab is the default, and Radix keeps the Related tab's
 			// content unmounted, so this link can only come from the projection.
+			await expandTimelineFolds(page)
 			await expect(page.getByRole('link', { name: /Inform-relationship insight/ })).toBeVisible({
 				timeout: 10000,
 			})
@@ -65,6 +80,15 @@ test.describe('Relationships into the timeline (AC-U11)', () => {
 				type: 'breaks_into',
 			})
 
+			// The late edge arrives over SSE and lands inside the fold, so re-open
+			// after it appears rather than relying on the earlier expansion.
+			await expect(
+				page
+					.getByRole('button', { name: /^\d+ agent updates\b/ })
+					.or(page.getByRole('link', { name: /Late-linked task/ }))
+					.first(),
+			).toBeVisible({ timeout: 10000 })
+			await expandTimelineFolds(page)
 			await expect(page.getByRole('link', { name: /Late-linked task/ })).toBeVisible({
 				timeout: 10000,
 			})

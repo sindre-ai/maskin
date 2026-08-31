@@ -69,6 +69,18 @@ test.describe('new-design flag — off renders the pre-v2 surfaces', () => {
 		await expect(page.getByRole('tab', { name: 'Timeline' })).toHaveCount(0)
 	})
 
+	test('new chat falls back to the pre-v2 composer', async ({ page, account }) => {
+		await page.goto(`/${account.workspaceId}/chats/new`)
+
+		// The pre-v2 page picks recipients with a multi-select cmdk field; v2
+		// replaced it with a single-recipient popover pill, so this input is the
+		// marker that only the old branch renders.
+		await expect(page.getByRole('combobox', { name: 'Add people or agents' })).toBeVisible({
+			timeout: 10000,
+		})
+		await expect(page.getByPlaceholder('Message this conversation')).toBeVisible()
+	})
+
 	test('search falls back to the pre-v2 view', async ({ page, account }) => {
 		await page.goto(`/${account.workspaceId}/search`)
 

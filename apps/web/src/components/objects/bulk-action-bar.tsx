@@ -40,6 +40,11 @@ export interface BulkActionBarProps {
 	ownerOptions?: BulkActionBarOwnerOption[]
 	onStatusChange?: (status: string) => void
 	onOwnerChange?: (actorId: string) => void
+	/** Rows the current view has loaded — the ceiling `Select all` fills to. */
+	totalCount?: number
+	onSelectAll?: () => void
+	/** Opens a new chat carrying the selected objects as references. */
+	onAskAgent?: () => void
 	onCopyLink?: () => void
 	onCopyTitle?: () => void
 	onCopyTitleAsLink?: () => void
@@ -76,6 +81,9 @@ export function BulkActionBar({
 	selectedCount,
 	statusOptions = [],
 	ownerOptions = [],
+	totalCount = 0,
+	onSelectAll,
+	onAskAgent,
 	onStatusChange,
 	onOwnerChange,
 	onCopyLink,
@@ -107,14 +115,52 @@ export function BulkActionBar({
 		[selectedCount],
 	)
 
+	// Mockup 5036–5039: with rows selected, `a` selects all and `e` archives.
+	// Both are bare letters, so they must never fire while the user is typing.
+	const canSelectAll = !!onSelectAll && totalCount > selectedCount
 	React.useEffect(() => {
 		if (!visible) return
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === 'Escape' && !confirmOpen) onClear()
+			if (e.key === 'Escape' && !confirmOpen) {
+				onClear()
+				return
+			}
+			if (confirmOpen || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.repeat) return
+			// Not necessarily an Element — a keydown dispatched at window/document
+			// targets a non-Element EventTarget, so narrow before touching DOM APIs.
+			const target = e.target instanceof HTMLElement ? e.target : null
+			if (
+				target?.isContentEditable ||
+				(target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+			) {
+				return
+			}
+			// The status and owner pickers live in this same bar. Radix renders their
+			// content as div/button — not INPUT/SELECT — and its typeahead does not stop
+			// propagation, so typing `e` to reach "evaluating" would otherwise land here
+			// as an unconfirmed bulk archive. Bail while any Radix popper is mounted.
+			if (
+				target?.closest(
+					'[data-radix-popper-content-wrapper],[role="menu"],[role="listbox"],[role="dialog"]',
+				) ||
+				document.querySelector('[data-radix-popper-content-wrapper]')
+			) {
+				return
+			}
+			if (e.key === 'a' && canSelectAll) {
+				e.preventDefault()
+				onSelectAll?.()
+				return
+			}
+			if (e.key === 'e' && onArchive) {
+				e.preventDefault()
+				emitCommit('archive')
+				onArchive()
+			}
 		}
 		window.addEventListener('keydown', onKey)
 		return () => window.removeEventListener('keydown', onKey)
-	}, [visible, confirmOpen, onClear])
+	}, [visible, confirmOpen, onClear, canSelectAll, onSelectAll, onArchive, emitCommit])
 
 	// Close the confirm dialog automatically when the selection is cleared.
 	React.useEffect(() => {
@@ -151,7 +197,32 @@ export function BulkActionBar({
 				</span>
 				<span className="hidden text-sm text-muted-foreground sm:inline">selected</span>
 
+				{canSelectAll && (
+					<button
+						type="button"
+						onClick={onSelectAll}
+						title="Select all (a)"
+						className="shrink-0 whitespace-nowrap text-xs font-semibold text-brand hover:underline"
+					>
+						Select all {totalCount}
+					</button>
+				)}
+
 				<div className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+
+				{onAskAgent && (
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						className="shrink-0"
+						onClick={onAskAgent}
+						title="Send these to a new chat as references"
+					>
+						<MessageSquare className="size-4" />
+						Ask an agent
+					</Button>
+				)}
 
 				{onAnswerAsks && askCount > 0 && (
 					<Button
@@ -161,7 +232,6 @@ export function BulkActionBar({
 						onClick={onAnswerAsks}
 						aria-label={`Answer ${askCount} asks`}
 					>
-						<MessageSquare className="size-4" />
 						Answer {askCount} {askCount === 1 ? 'ask' : 'asks'}
 					</Button>
 				)}
@@ -309,6 +379,7 @@ export function BulkActionBar({
 								onArchive()
 							}}
 							aria-label="Archive selected"
+							title="Archive (e)"
 						>
 							<Archive className="size-4" />
 							Archive

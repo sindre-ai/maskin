@@ -40,6 +40,7 @@ import { api } from '@/lib/api'
 import type { DisplaySettingsBody, NotificationResponse, ObjectResponse } from '@/lib/api'
 import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
 import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
+import { MAX_CHAT_OBJECT_REFERENCES } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { getStatusColor } from '@/lib/constants'
 import {
@@ -1232,6 +1233,38 @@ function ObjectsPageV2() {
 	// to window.open for new-tab navigation.
 	const objectPath = useCallback((id: string) => `/${workspaceId}/objects/${id}`, [workspaceId])
 
+	// The rows `Select all` is allowed to reach. Deliberately the *rendered* set,
+	// not `visibleObjects`: the Attention quick filter narrows what the list
+	// shows, and selecting past it would hand bulk actions rows the user can't
+	// see. Board has no such client-side filter, so its rendered set is its own.
+	const selectableObjects = effectiveView === 'board' ? boardInitialObjects : listObjects
+
+	const handleSelectAll = useCallback(() => {
+		setRowSelection(Object.fromEntries(selectableObjects.map((o) => [o.id, true])))
+	}, [selectableObjects])
+
+	// Hands the selection to a new chat as *references* rather than acting on it
+	// in place — `chats/new` reads `objectIds` as a comma-separated list.
+	//
+	// Trimmed here rather than at the far end: `Select all` will happily select
+	// more objects than the chat can resolve into chips, and a link that carries
+	// ids nothing will render is how the extras used to disappear without a
+	// word. Cut the list where it stops being deliverable, and say so.
+	const handleAskAgent = useCallback(() => {
+		if (selectedIds.length === 0) return
+		const carried = selectedIds.slice(0, MAX_CHAT_OBJECT_REFERENCES)
+		if (selectedIds.length > carried.length) {
+			toast.warning(
+				`Only the first ${carried.length} of ${selectedIds.length} selected objects were attached to the chat.`,
+			)
+		}
+		navigate({
+			to: '/$workspaceId/chats/new',
+			params: { workspaceId },
+			search: { objectIds: carried.join(',') },
+		})
+	}, [selectedIds, navigate, workspaceId])
+
 	// Selected objects we have loaded data for. Titles aren't available for rows
 	// outside the current pages, so copy-title actions warn when any selected id
 	// hasn't been fetched yet.
@@ -1595,6 +1628,9 @@ function ObjectsPageV2() {
 			)}
 			<BulkActionBar
 				selectedCount={selectedIds.length}
+				totalCount={selectableObjects.length}
+				onSelectAll={handleSelectAll}
+				onAskAgent={handleAskAgent}
 				statusOptions={bulkStatusOptions}
 				ownerOptions={bulkOwnerOptions}
 				onStatusChange={handleBulkStatusChange}
