@@ -11,6 +11,7 @@ import { recordMcpMisfire } from '../lib/analytics/mcp-misfire'
 import { captureMcpToolCall } from '../lib/analytics/mcp-tool-calls'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 
@@ -79,9 +80,11 @@ app.openapi(recordRoute, (async (c) => {
 		//
 		// HTTP-transport events are deliberately skipped: on that path the MCP
 		// server runs in-process behind `POST /mcp` and its sink loops straight
-		// back here, while `routes/mcp.ts` already emits the trace server-side
-		// with a real session id. Emitting here too would double-count every
-		// HTTP tool call. `transport` is optional, so an older MCP server build
+		// back here, while `routes/mcp.ts` already emits the trace server-side.
+		// Emitting here too would double-count every HTTP tool call. Note the
+		// coupling: removing the server-side trace in `routes/mcp.ts` silently
+		// drops HTTP tool calls from analytics entirely, because this gate goes
+		// on suppressing them. `transport` is optional, so an older MCP server build
 		// (which sends neither field) still gets traced — stdio is the
 		// overwhelmingly likely origin for such a client.
 		if (body.transport !== 'http') {
@@ -93,6 +96,8 @@ app.openapi(recordRoute, (async (c) => {
 			const sessionId =
 				body.session_id ??
 				`anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+			// `.catch` because this is un-awaited: an unhandled rejection from an
+			// analytics call would take the apps/dev process down.
 			void captureMcpToolCall(workspaceId, {
 				sessionId,
 				// Trust the client's own account of how it resolved the id: only it
@@ -116,7 +121,7 @@ app.openapi(recordRoute, (async (c) => {
 				responseBytes: null,
 				transport: 'stdio',
 				agentActorId: actorId,
-			})
+			}).catch((err) => logger.warn('mcp trace fan-out failed', { error: String(err) }))
 		}
 	} else if (body.event_type === 'mutation') {
 		await db.insert(mcpTelemetry).values({
@@ -148,6 +153,11 @@ app.openapi(recordRoute, (async (c) => {
 		void capturePosthogEvent('mcp_tool_call_response_size', workspaceId, {
 			tool_name: body.tool_name,
 			session_id: body.session_id ?? null,
+			// `stdio` and `http` rows are not interchangeable: on `http` there is
+			// no `seq` (see the schema), so a query joining size back to a
+			// `tool_call` must filter on this rather than silently return
+			// nothing for HTTP callers.
+			transport: body.transport ?? null,
 			content_bytes: body.content_bytes,
 			content_tokens: body.content_tokens,
 			structured_content_bytes: body.structured_content_bytes,

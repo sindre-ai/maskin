@@ -20,9 +20,11 @@ let toolCallSeq = 0
 
 function resolveSessionId(): { id: string; source: 'maskin-session' | 'process' } {
 	// An MCP server launched by Maskin's own agent container inherits the
-	// session uuid as `SESSION_ID` (set in session-manager.ts and listed in
-	// agent-run.sh's reserved vars) — prefer it, so a stdio-launched server's
-	// trace joins back to the `sessions` row exactly like the HTTP path does.
+	// session uuid as `SESSION_ID` — both set and reserved in
+	// `session-manager.ts` (`SESSION_ID: session.id`, plus `RESERVED_ENV_KEYS`
+	// so a workspace-supplied env var cannot shadow it). Prefer it, so a
+	// stdio-launched server's trace joins back to the `sessions` row exactly
+	// like the HTTP path does.
 	//
 	// `MASKIN_SESSION_ID` is honoured first purely as an explicit override for
 	// a host that already uses `SESSION_ID` for something of its own. Read both
@@ -43,6 +45,38 @@ export interface TelemetryConfig {
 	apiBaseUrl: string
 	apiKey: string
 	workspaceId?: string
+	/**
+	 * Session identity supplied by the host embedding this server, overriding
+	 * the module-scope `SESSION_ID`.
+	 *
+	 * Load-bearing for the HTTP transport. There the MCP server runs
+	 * *in-process* inside apps/dev and is rebuilt per POST, so the module-scope
+	 * id is the app process's own — one value shared by every client and every
+	 * workspace hitting `/mcp`. Events keyed on it do not group a caller's
+	 * calls and do not join back to anything. `routes/mcp.ts` resolves the real
+	 * per-request session and threads it through here.
+	 *
+	 * Absent on stdio, which needs no override: one server process is one
+	 * client session for the life of the process.
+	 */
+	sessionId?: string
+	/** How `sessionId` was obtained. Ignored unless `sessionId` is set. */
+	sessionSource?: 'maskin-session' | 'process'
+}
+
+/**
+ * The session identity to stamp on an event: the host's, when it supplied one,
+ * otherwise this process's. See `TelemetryConfig.sessionId` for why the
+ * override exists.
+ */
+function eventSession(target: TelemetryConfig): {
+	id: string
+	source: 'maskin-session' | 'process'
+} {
+	if (target.sessionId) {
+		return { id: target.sessionId, source: target.sessionSource ?? 'process' }
+	}
+	return { id: SESSION_ID, source: SESSION_SOURCE }
 }
 
 export interface ToolCallEvent {
@@ -91,8 +125,14 @@ export interface ToolCallResponseSizeEvent {
 	 * arguments/outcome live in two event streams that can only be correlated
 	 * by tool name, which cannot tell a broad `list_objects` from a narrow one
 	 * — the exact distinction a size investigation turns on.
+	 *
+	 * Absent on the HTTP transport, where the paired `tool_call` event is
+	 * numbered by a different counter and this one would not join. See
+	 * `recordToolCallResponseSize`.
 	 */
 	seq?: number
+	/** Which transport the emitting server is exposed over. */
+	transport?: 'stdio' | 'http'
 	/** Sorted argument key NAMES of the call that produced this response.
 	 *  Never values — see `argKeys`. Duplicated onto this event rather than
 	 *  left to the join because the join can be lossy: either event may be
@@ -202,19 +242,20 @@ export function recordToolCall(
 	},
 ): void {
 	const cfg = event.workspace_id ? { ...target, workspaceId: event.workspace_id } : target
+	const session = eventSession(target)
 	toolCallSeq += 1
 	sink(
 		{
 			event_type: 'tool_call',
 			tool_name: event.tool_name,
-			session_id: SESSION_ID,
+			session_id: session.id,
 			has_rich_render: event.has_rich_render,
 			duration_ms: Math.max(0, Math.round(event.duration_ms)),
 			seq: toolCallSeq,
 			arg_keys: argKeys(event.args),
 			ok: event.ok ?? true,
 			transport: event.transport,
-			session_source: SESSION_SOURCE,
+			session_source: session.source,
 		},
 		cfg,
 	)
@@ -258,9 +299,12 @@ export function recordToolCallResponseSize(
 		seq?: number
 		/** Raw arguments of the call. Reduced to key names before emission. */
 		args?: unknown
+		/** Which transport the emitting server is exposed over. */
+		transport?: 'stdio' | 'http'
 	},
 ): void {
 	const cfg = event.workspace_id ? { ...target, workspaceId: event.workspace_id } : target
+	const session = eventSession(target)
 	const contentBytes = measureJsonBytes(event.content)
 	const structuredBytes = measureJsonBytes(event.structured_content)
 	const shape = measureResponseShape(event.content, event.structured_content)
@@ -268,13 +312,21 @@ export function recordToolCallResponseSize(
 		{
 			event_type: 'tool_call_response_size',
 			tool_name: event.tool_name,
-			session_id: SESSION_ID,
+			session_id: session.id,
 			content_bytes: contentBytes,
 			content_tokens: estimateTokensFromBytes(contentBytes),
 			structured_content_bytes: structuredBytes,
 			structured_content_tokens: estimateTokensFromBytes(structuredBytes),
 			truncated: event.truncated,
-			seq: event.seq,
+			// `seq` is this process's counter. On HTTP the paired `tool_call`
+			// event is emitted by `routes/mcp.ts` from a *different*, per-session
+			// counter, so the two numbers describe unrelated sequences and the
+			// documented `(session_id, seq)` join would silently pair the wrong
+			// rows. Omit it there: `arg_keys` + `tool_name` still narrow a size
+			// investigation, and no seq is better than one that reads as a join
+			// key and is not.
+			seq: event.transport === 'http' ? undefined : event.seq,
+			transport: event.transport,
 			arg_keys: argKeys(event.args),
 			// `?? undefined` on each: the shape fields are null when the concept
 			// doesn't apply (a tool with no row array), and an omitted optional

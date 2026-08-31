@@ -354,7 +354,108 @@ describe('session id validation', () => {
 		const id = 'a'.repeat(128)
 		await post(app, toolCall(1, 'list_objects', {}), { 'X-Maskin-Session-Id': id })
 
+		// Kept — a value at the cap is not dropped. But it is not uuid-shaped,
+		// so it cannot claim `maskin-session`; see the next two cases.
+		expect(traces()[0]).toMatchObject({ sessionId: id, sessionSource: 'mcp-session' })
+	})
+
+	it('labels a uuid-shaped X-Maskin-Session-Id as a real session', async () => {
+		respondOk(1)
+		const app = await createApp()
+		const id = '3f3726b1-0000-4000-8000-000000000001'
+		await post(app, toolCall(1, 'list_objects', {}), { 'X-Maskin-Session-Id': id })
+
 		expect(traces()[0]).toMatchObject({ sessionId: id, sessionSource: 'maskin-session' })
+	})
+
+	it('downgrades a non-uuid X-Maskin-Session-Id instead of trusting the label', async () => {
+		respondOk(1)
+		const app = await createApp()
+		// `maskin-session` means "this IS a sessions.id and joins back to that
+		// row". `/mcp` is mounted outside authMiddleware, so an arbitrary header
+		// value must not be able to claim it — the value is still usable for
+		// grouping, so keep it and downgrade rather than discard.
+		await post(app, toolCall(1, 'list_objects', {}), {
+			'X-Maskin-Session-Id': 'not-a-uuid',
+		})
+
+		expect(traces()[0]).toMatchObject({
+			sessionId: 'not-a-uuid',
+			sessionSource: 'mcp-session',
+		})
+	})
+})
+
+describe('transport failure', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		captureMcpToolCall.mockResolvedValue(undefined)
+		recordMcpMisfire.mockResolvedValue(undefined)
+		validateApiKey.mockResolvedValue({ actorId: 'actor-42', type: 'agent' })
+	})
+
+	it('still emits a trace when handleRequest throws, rather than spending a seq on nothing', async () => {
+		const app = await createApp()
+		respondOk(1)
+		await post(app, toolCall(1, 'list_objects', {}), {
+			'X-Maskin-Session-Id': MASKIN_SESSION_ID,
+		})
+
+		// Second call blows up inside the transport. Its sequence number was
+		// already spent before the throw, so without a `finally` the event would
+		// simply never be emitted — and the resulting gaps in `seq` would line up
+		// exactly with the failures this event exists to surface.
+		mockHandleRequest.mockRejectedValueOnce(new Error('transport exploded'))
+		await post(app, toolCall(2, 'list_objects', {}), {
+			'X-Maskin-Session-Id': MASKIN_SESSION_ID,
+		})
+
+		expect(traces()).toHaveLength(2)
+		expect(traces()[1]).toMatchObject({
+			seq: 2,
+			ok: false,
+			errorClass: 'no-response',
+		})
+	})
+})
+
+describe('seq key isolation', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		captureMcpToolCall.mockResolvedValue(undefined)
+		recordMcpMisfire.mockResolvedValue(undefined)
+		validateApiKey.mockResolvedValue({ actorId: 'actor-42', type: 'agent' })
+	})
+
+	it('does not share a counter between workspaces using the same session id', async () => {
+		const app = await createApp()
+		// Same client-chosen `Mcp-Session-Id` from two unrelated callers. Keyed
+		// on the id alone they would interleave into one sequence, and each
+		// caller would see a run with half its numbers missing and no duplicates
+		// to reveal the collision.
+		respondOk(1)
+		await post(app, toolCall(1, 'list_objects', {}), {
+			'Mcp-Session-Id': '1',
+			'X-Workspace-Id': 'workspace-a',
+		})
+		respondOk(2)
+		await post(app, toolCall(2, 'list_objects', {}), {
+			'Mcp-Session-Id': '1',
+			'X-Workspace-Id': 'workspace-b',
+		})
+
+		expect(traces().map((t) => t.seq)).toEqual([1, 1])
+	})
+
+	it('does not let an mcp-session id land on a maskin-session counter', async () => {
+		const app = await createApp()
+		const id = '3f3726b1-0000-4000-8000-000000000002'
+		respondOk(1)
+		await post(app, toolCall(1, 'list_objects', {}), { 'X-Maskin-Session-Id': id })
+		respondOk(2)
+		await post(app, toolCall(2, 'list_objects', {}), { 'Mcp-Session-Id': id })
+
+		expect(traces().map((t) => t.seq)).toEqual([1, 1])
 	})
 })
 

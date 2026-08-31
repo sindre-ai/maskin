@@ -73,6 +73,16 @@ interface McpConfig {
 	 * a noop. The default never throws and never blocks tool calls.
 	 */
 	telemetrySink?: TelemetrySink
+	/**
+	 * Session identity for telemetry, overriding the MCP process's own.
+	 *
+	 * Set by `routes/mcp.ts` on the HTTP transport, where this server is built
+	 * per POST inside apps/dev and the process-scope id would be shared by
+	 * every caller. Omitted on stdio. See `TelemetryConfig.sessionId`.
+	 */
+	telemetrySessionId?: string
+	/** How `telemetrySessionId` was obtained. Ignored without it. */
+	telemetrySessionSource?: 'maskin-session' | 'process'
 }
 
 /**
@@ -1971,6 +1981,8 @@ export function createMcpServer(config: McpConfig) {
 		apiBaseUrl: config.apiBaseUrl,
 		apiKey: config.apiKey,
 		workspaceId: config.defaultWorkspaceId,
+		sessionId: config.telemetrySessionId,
+		sessionSource: config.telemetrySessionSource,
 	}
 
 	// Telemetry-instrumented tool registration. Wraps the upstream
@@ -2026,9 +2038,14 @@ export function createMcpServer(config: McpConfig) {
 						truncated: false,
 						workspace_id: extractWorkspaceId(args),
 						// Same position as the `tool_call` event emitted just above,
-						// which is what joins the two halves of this call.
+						// which is what joins the two halves of this call. Read
+						// with no `await` in between, so a concurrent call cannot
+						// advance the shared counter and mis-pair the two events —
+						// keep it that way. Dropped on HTTP, where the paired event
+						// is numbered elsewhere (see `recordToolCallResponseSize`).
 						seq: currentToolCallSeq(),
 						args,
+						transport: config.transport,
 					})
 					return errorResponse
 				}
@@ -2072,9 +2089,14 @@ export function createMcpServer(config: McpConfig) {
 				workspace_id: extractWorkspaceId(args),
 				// Same position as the `tool_call` event emitted just above, so the
 				// size of a response and the arguments that produced it are one row
-				// after a join on (session_id, seq).
+				// after a join on (session_id, seq). Read with no `await` in
+				// between, so a concurrent call cannot advance the shared counter
+				// and mis-pair the two events — keep it that way. Dropped on HTTP,
+				// where the paired event is numbered by a different counter (see
+				// `recordToolCallResponseSize`).
 				seq: currentToolCallSeq(),
 				args,
+				transport: config.transport,
 			})
 
 			if (mutationKind && isSuccessfulMutationResponse(finalResponse)) {

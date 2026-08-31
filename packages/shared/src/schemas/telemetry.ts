@@ -124,6 +124,13 @@ export const recordMcpToolCallResponseSizeSchema = z.object({
 	// broad `list_objects` from a narrow one, and that distinction is the whole
 	// point of a size investigation.
 	seq: z.number().int().min(1).optional(),
+	// Which transport the emitting server was exposed over. `http` means the
+	// server ran in-process behind `POST /mcp`, where `seq` is deliberately
+	// omitted (the paired `tool_call` event is numbered elsewhere) and
+	// `session_id` is the per-request identity threaded in by `routes/mcp.ts`
+	// rather than the MCP process's own. Optional so an older MCP server build
+	// keeps validating.
+	transport: z.enum(['stdio', 'http']).optional(),
 	arg_keys: argKeysSchema,
 	row_count: z.number().int().min(0).optional(),
 	max_row_bytes: z.number().int().min(0).optional(),

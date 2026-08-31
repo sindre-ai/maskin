@@ -13,7 +13,11 @@ export const MASKIN_SESSION_HEADER = 'X-Maskin-Session-Id'
 export const MASKIN_SESSION_HEADER_VALUE = '${SESSION_ID}'
 
 /**
- * True for an MCP entry that points at Maskin's own `/mcp` endpoint. Matched on
+ * True for an MCP entry written with the platform preset's
+ * `${MASKIN_API_URL}/mcp` placeholder — which every config this repo generates
+ * uses. An entry holding an already-resolved absolute URL is deliberately NOT
+ * matched: it is not stamped, and its tool calls fall through to
+ * `session_source: 'unknown'` rather than being mislabelled. Matched on
  * the placeholders the preset uses rather than on the entry's key name, because
  * the same server is registered under several names (the agent's `tools` blob,
  * `session-mcp-N`, seeded presets) and a hardcoded name list would silently

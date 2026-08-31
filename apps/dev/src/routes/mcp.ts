@@ -49,12 +49,22 @@ app.post('/', async (c) => {
 	const apiKey =
 		c.req.header('Authorization')?.replace('Bearer ', '') ?? url.searchParams.get('key') ?? ''
 	const workspaceId = c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? ''
+	// Resolved before the server is built so it can be threaded into telemetry:
+	// the in-process MCP server would otherwise stamp its events with the app
+	// PROCESS's id, shared by every caller of `/mcp`. An unidentified caller
+	// passes nothing, leaving the process id in place — it groups nothing
+	// either way, and inventing a per-request id would just mint one throwaway
+	// session per POST.
+	const session = resolveSessionIdentity(c.req.header.bind(c.req))
 	const mcpConfig = {
 		apiBaseUrl: `http://localhost:${Number(process.env.PORT) || 3000}`,
 		apiKey,
 		defaultWorkspaceId: workspaceId,
 		transport: 'http' as const,
 		webAppBaseUrl: resolveWebAppBaseUrl(process.env),
+		telemetrySessionId: session.source === 'unknown' ? undefined : session.id,
+		telemetrySessionSource:
+			session.source === 'maskin-session' ? ('maskin-session' as const) : ('process' as const),
 	}
 	const mcpServer = createMcpServer(mcpConfig)
 	const transport = new StreamableHTTPServerTransport({
@@ -92,24 +102,34 @@ app.post('/', async (c) => {
 	// while a call arriving a millisecond later hits a warm cache and numbers
 	// itself first. Agents issue tool calls in parallel routinely, so that is
 	// an ordinary case, not a rare race.
-	const session = resolveSessionIdentity(c.req.header.bind(c.req))
-	const plannedCalls = planTracedCalls(body, session, startedAt)
+	const plannedCalls = planTracedCalls(body, session, startedAt, workspaceId)
 
-	await mcpServer.connect(transport)
-	await transport.handleRequest(nodeReq, nodeRes, body)
-
-	// Fire-and-forget: emit one `mcp_tool_call` trace event per tools/call, plus
-	// one PostHog event per real misfire. Both read the same captured bytes.
-	void emitMcpTrace({
-		db: c.get('db'),
-		apiKey,
-		workspaceId,
-		requestBody: body,
-		responseBytes: captured.consume(),
-		session,
-		startedAt,
-		plannedCalls,
-	})
+	// `finally`, not a plain sequence: a throw out of `handleRequest` would
+	// otherwise skip emission entirely, having ALREADY spent the sequence
+	// numbers above. The gaps in `seq` would then correlate exactly with the
+	// failures — missing precisely the rows this event exists to surface. On
+	// that path there are no response bytes to pair, so every planned call is
+	// recorded unpaired, which `emitMcpTrace` already buckets as `no-response`.
+	try {
+		await mcpServer.connect(transport)
+		await transport.handleRequest(nodeReq, nodeRes, body)
+	} finally {
+		// Fire-and-forget: emit one `mcp_tool_call` trace event per tools/call,
+		// plus one PostHog event per real misfire. Both read the same captured
+		// bytes. The `.catch` is not decoration: this is an un-awaited async
+		// call, so an unhandled rejection here takes down the whole apps/dev
+		// process. Analytics must never be able to do that.
+		void emitMcpTrace({
+			db: c.get('db'),
+			apiKey,
+			workspaceId,
+			requestBody: body,
+			responseBytes: captured.consume(),
+			session,
+			startedAt,
+			plannedCalls,
+		}).catch((err) => logger.warn('mcp trace emission failed', { error: String(err) }))
+	}
 
 	// transport.handleRequest already wrote the response to nodeRes.
 	// Signal @hono/node-server to skip writing headers again.
@@ -203,6 +223,20 @@ const MAX_SESSION_ID_LEN = 128
 // through to `unknown`. agent-run.sh guards BROWSER_CDP_URL the same way.
 const UNEXPANDED_PLACEHOLDER_RE = /^\$\{[^}]*\}$/
 
+// `sessions.id` is a uuid. `X-Maskin-Session-Id` is the only header that earns
+// the `maskin-session` label, whose entire contract is "this value IS a
+// sessions.id and joins back to that row" — so it has to look like one.
+//
+// This is a shape check, not an authorization check, and cannot be more: the
+// route is mounted outside `authMiddleware` and the trace is analytics, not an
+// access decision. It buys the two things that matter here. A malformed or
+// hand-edited value no longer wears the highest-confidence label — it falls
+// through to `mcp-session`, which promises only grouping. And a caller can no
+// longer aim an arbitrary string at another session's sequence counter by
+// accident; a deliberate attacker who knows a real session uuid still can, so
+// treat `maskin-session` rows as attributable-by-convention, not as attested.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 function usableSessionId(raw: string | undefined): string | null {
 	const value = raw?.trim()
 	if (!value) return null
@@ -215,7 +249,13 @@ export function resolveSessionIdentity(
 	header: (name: string) => string | undefined,
 ): McpSessionIdentity {
 	const maskinSessionId = usableSessionId(header('X-Maskin-Session-Id'))
-	if (maskinSessionId) return { id: maskinSessionId, source: 'maskin-session' }
+	if (maskinSessionId && UUID_RE.test(maskinSessionId)) {
+		return { id: maskinSessionId, source: 'maskin-session' }
+	}
+	// Present but not uuid-shaped: keep the value (it still groups a caller's
+	// calls) and downgrade the label rather than dropping to `unknown`, which
+	// would discard usable ordering over a claim we merely could not confirm.
+	if (maskinSessionId) return { id: maskinSessionId, source: 'mcp-session' }
 	const mcpSessionId = usableSessionId(header('Mcp-Session-Id'))
 	if (mcpSessionId) return { id: mcpSessionId, source: 'mcp-session' }
 	return {
@@ -227,6 +267,18 @@ export function resolveSessionIdentity(
 // ── Trace + misfire emission ────────────────────────────────────────────
 
 const seqCounter = createSeqCounter()
+
+// The counter is keyed on more than the session id, because the id alone is
+// not unique. `Mcp-Session-Id` is chosen by the client and validated only for
+// length, and `POST /mcp` is mounted outside `authMiddleware` — so two
+// unrelated callers that both pick `1` would share one counter and each see a
+// sequence with half its numbers missing, with no duplicates to reveal the
+// collision. Including the source keeps a `mcp-session` id from ever landing
+// on a `maskin-session` one; including the workspace confines a collision to
+// callers who already share a workspace.
+function seqKey(session: McpSessionIdentity, workspaceId: string): string {
+	return `${session.source}:${workspaceId}:${session.id}`
+}
 
 // Resolving the actor means a DB lookup per API key. Tool calls arrive in
 // bursts from the same agent, so memoize the mapping for a short window rather
@@ -307,13 +359,14 @@ export function planTracedCalls(
 	body: unknown,
 	session: McpSessionIdentity,
 	tsMs: number,
+	workspaceId: string,
 ): PlannedTracedCall[] {
 	const planned: PlannedTracedCall[] = []
 	for (const request of listRequests(body)) {
 		if (request.method !== 'tools/call') continue
 		const toolName = request.params?.name
 		if (typeof toolName !== 'string' || toolName.length === 0) continue
-		const seq = session.source === 'unknown' ? null : seqCounter.next(session.id)
+		const seq = session.source === 'unknown' ? null : seqCounter.next(seqKey(session, workspaceId))
 		planned.push({ request, toolName, seq, tsMs })
 	}
 	return planned
@@ -460,7 +513,11 @@ function parseJsonRpcResponses(bytes: Buffer): JsonRpcMessage[] {
 	if (text.length === 0) return []
 
 	const asJson = tryParseJson(text)
-	if (asJson) return Array.isArray(asJson) ? asJson : [asJson]
+	// Filter to objects: `[null, {...}]` is valid JSON, and reading `.id` off
+	// that null throws — inside an un-awaited emitter, that is an unhandled
+	// rejection, i.e. a dead app process. Nothing we ship emits such a body;
+	// this is here so a transport quirk cannot escalate into an outage.
+	if (asJson) return (Array.isArray(asJson) ? asJson : [asJson]).filter(isJsonRpcMessage)
 
 	const messages: JsonRpcMessage[] = []
 	for (const line of text.split('\n')) {
@@ -470,10 +527,14 @@ function parseJsonRpcResponses(bytes: Buffer): JsonRpcMessage[] {
 		if (!payload) continue
 		const parsed = tryParseJson(payload)
 		if (!parsed) continue
-		if (Array.isArray(parsed)) messages.push(...parsed)
-		else messages.push(parsed)
+		if (Array.isArray(parsed)) messages.push(...parsed.filter(isJsonRpcMessage))
+		else if (isJsonRpcMessage(parsed)) messages.push(parsed)
 	}
 	return messages
+}
+
+function isJsonRpcMessage(value: unknown): value is JsonRpcMessage {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function tryParseJson(text: string): JsonRpcMessage | JsonRpcMessage[] | null {
