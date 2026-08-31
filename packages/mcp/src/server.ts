@@ -44,6 +44,7 @@ import {
 	MUTATION_TOOL_KINDS,
 	type TelemetrySink,
 	createDefaultSink,
+	currentToolCallSeq,
 	recordMutation,
 	recordToolCall,
 	recordToolCallResponseSize,
@@ -72,6 +73,16 @@ interface McpConfig {
 	 * a noop. The default never throws and never blocks tool calls.
 	 */
 	telemetrySink?: TelemetrySink
+	/**
+	 * Session identity for telemetry, overriding the MCP process's own.
+	 *
+	 * Set by `routes/mcp.ts` on the HTTP transport, where this server is built
+	 * per POST inside apps/dev and the process-scope id would be shared by
+	 * every caller. Omitted on stdio. See `TelemetryConfig.sessionId`.
+	 */
+	telemetrySessionId?: string
+	/** How `telemetrySessionId` was obtained. Ignored without it. */
+	telemetrySessionSource?: 'maskin-session' | 'process' | 'unknown'
 }
 
 /**
@@ -2051,6 +2062,8 @@ export function createMcpServer(config: McpConfig) {
 		apiBaseUrl: config.apiBaseUrl,
 		apiKey: config.apiKey,
 		workspaceId: config.defaultWorkspaceId,
+		sessionId: config.telemetrySessionId,
+		sessionSource: config.telemetrySessionSource,
 	}
 
 	// Telemetry-instrumented tool registration. Wraps the upstream
@@ -2083,6 +2096,9 @@ export function createMcpServer(config: McpConfig) {
 					has_rich_render: defHasRichRender,
 					duration_ms: Date.now() - start,
 					workspace_id: extractWorkspaceId(args),
+					args,
+					ok: false,
+					transport: config.transport,
 				})
 				if (isReadTool) {
 					// Read handlers return a structured error envelope instead of
@@ -2102,6 +2118,15 @@ export function createMcpServer(config: McpConfig) {
 						structured_content: errorResponse.structuredContent,
 						truncated: false,
 						workspace_id: extractWorkspaceId(args),
+						// Same position as the `tool_call` event emitted just above,
+						// which is what joins the two halves of this call. Read
+						// with no `await` in between, so a concurrent call cannot
+						// advance the shared counter and mis-pair the two events —
+						// keep it that way. Dropped on HTTP, where the paired event
+						// is numbered elsewhere (see `recordToolCallResponseSize`).
+						seq: currentToolCallSeq(),
+						args,
+						transport: config.transport,
 					})
 					return errorResponse
 				}
@@ -2117,6 +2142,9 @@ export function createMcpServer(config: McpConfig) {
 				has_rich_render: responseHasRichRender,
 				duration_ms: Date.now() - start,
 				workspace_id: extractWorkspaceId(args),
+				args,
+				ok: true,
+				transport: config.transport,
 			})
 
 			// Token-cap guardrail. Enforces `MAX_RESPONSE_TOKENS` before the
@@ -2140,6 +2168,16 @@ export function createMcpServer(config: McpConfig) {
 				structured_content: responseShape?.structuredContent,
 				truncated: capped.truncated,
 				workspace_id: extractWorkspaceId(args),
+				// Same position as the `tool_call` event emitted just above, so the
+				// size of a response and the arguments that produced it are one row
+				// after a join on (session_id, seq). Read with no `await` in
+				// between, so a concurrent call cannot advance the shared counter
+				// and mis-pair the two events — keep it that way. Dropped on HTTP,
+				// where the paired event is numbered by a different counter (see
+				// `recordToolCallResponseSize`).
+				seq: currentToolCallSeq(),
+				args,
+				transport: config.transport,
 			})
 
 			if (mutationKind && isSuccessfulMutationResponse(finalResponse)) {

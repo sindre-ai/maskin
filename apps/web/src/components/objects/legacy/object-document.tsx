@@ -467,8 +467,10 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 						includeArchived: prev.includeArchived,
 						// v2-only search keys, carried through untouched so the shared
 						// `validateSearch` shape stays satisfied from the pre-v2 branch.
-						filterBy: undefined,
 						attention: undefined,
+						fresh: undefined,
+						starred: undefined,
+						updated: undefined,
 					}),
 				})
 			},
