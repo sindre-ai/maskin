@@ -1509,10 +1509,14 @@ function ObjectsPageV2() {
 	const objectPath = useCallback((id: string) => `/${workspaceId}/objects/${id}`, [workspaceId])
 
 	// The rows `Select all` is allowed to reach. Deliberately the *rendered* set,
-	// not `visibleObjects`: the Attention quick filter narrows what the list
-	// shows, and selecting past it would hand bulk actions rows the user can't
-	// see. Board has no such client-side filter, so its rendered set is its own.
-	const selectableObjects = effectiveView === 'board' ? boardInitialObjects : listObjects
+	// not `visibleObjects`: the quick filters narrow what each view shows, and
+	// selecting past them would hand bulk actions rows the user can't see. The
+	// list gets that for free from `listObjects`; the board filters here with the
+	// same predicate it passes to `BoardView` as `clientFilter`.
+	const selectableObjects = useMemo(() => {
+		if (effectiveView !== 'board') return listObjects
+		return hasClientFilter ? boardInitialObjects.filter(matchesClientFilters) : boardInitialObjects
+	}, [effectiveView, listObjects, hasClientFilter, boardInitialObjects, matchesClientFilters])
 
 	const handleSelectAll = useCallback(() => {
 		setRowSelection(Object.fromEntries(selectableObjects.map((o) => [o.id, true])))
@@ -1716,10 +1720,12 @@ function ObjectsPageV2() {
 		[displaySettingsKey, workspaceId, navigate],
 	)
 
-	// `actions` is a node published into the shared nav row — PageHeader's
-	// effect deps are `[actions]`, so a fresh node every render would re-set
-	// context state on every pass. Memoised for that reason.
-	const headerActions = useMemo(
+	// Published into the shared nav row's *left* cluster, immediately after the
+	// <h1> — the mockup puts the type tabs beside "Objects" (146–153), not out
+	// beyond the search field. PageHeader's effect deps are `[titleTabs]`, so a
+	// fresh node every render would re-set context state on every pass;
+	// memoised for that reason.
+	const headerTabs = useMemo(
 		() => (
 			<FilterTabs
 				variant="nav"
@@ -1741,7 +1747,7 @@ function ObjectsPageV2() {
 			{/* No subtitle: the mockup's Objects header carries the count on the
 			    active type tab (`All 1,063`), not beside the <h1> — printing it in
 			    both places states the same number twice, three characters apart. */}
-			<PageHeader title="Objects" actions={headerActions} scrollLocked />
+			<PageHeader title="Objects" titleTabs={headerTabs} scrollLocked />
 			{idsFilter && (
 				<div className="mb-3 flex items-center gap-2 rounded-md border bg-muted/50 px-3 py-2 text-sm">
 					<Filter className="h-4 w-4 text-muted-foreground shrink-0" />
