@@ -91,7 +91,7 @@ test.describe('Objects list — v2 control row', () => {
 			// Segmented List | Board rail first (mockup 694–697), then the sections.
 			await expect(page.getByRole('button', { name: 'List' })).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Board' })).toBeVisible()
-			await expect(page.getByText('Filter by')).toBeVisible()
+			await expect(page.getByText('Filters')).toBeVisible()
 			await expect(page.getByText('Properties')).toBeVisible()
 			await expect(page.getByText('Show archived')).toBeVisible()
 			await expect(page.getByText('Reset all')).toBeVisible()

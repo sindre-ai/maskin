@@ -483,8 +483,19 @@ function ObjectsPageV2() {
 	// loaded so far (the list paginates via infinite query) — they update as
 	// more pages load, which is the right trade-off vs. a separate count query.
 	// Any narrowing that makes a type's count unrepresentative of the workspace.
+	// `typeFilter` counts as a narrowing here too: with a type selected the API
+	// returns only that type, so every other tab's count is 0 and the hide rule
+	// below would prune the tabs you need to switch back with — a one-way door
+	// out of the All tab.
 	const hasActiveFilterForTabs =
-		!!statusFilter || !!driverFilter || !!attention || fresh || starred || !!updated || !!q
+		!!typeFilter ||
+		!!statusFilter ||
+		!!driverFilter ||
+		!!attention ||
+		fresh ||
+		starred ||
+		!!updated ||
+		!!q
 
 	const countsByType = useMemo(() => {
 		const counts: Record<string, number> = { all: allObjects.length }
