@@ -1,77 +1,25 @@
 import { CommentVisual, isVisualLanguage } from '@/components/activity/comment-visual'
 import { Textarea } from '@/components/ui/textarea'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import type { ActorListItem } from '@/lib/api'
-import { cn } from '@/lib/cn'
-import { remarkPlugins } from '@maskin/markdown/plugins'
+import { capture } from '@/lib/posthog'
 import {
-	Children,
-	type ReactElement,
-	type ReactNode,
-	isValidElement,
-	useCallback,
-	useLayoutEffect,
-	useMemo,
-	useRef,
-	useState,
-} from 'react'
-import ReactMarkdown, { type Components } from 'react-markdown'
-import { MentionedText } from './mentioned-text'
+	MarkdownRenderer,
+	type MentionActor,
+	type RenderCodeBlockArgs,
+} from '@maskin/markdown/react'
+import type { MarkdownParseErrorInfo } from '@maskin/markdown/react/editor'
+import { Suspense, lazy, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
-function wrapWithMentions(
-	children: ReactNode,
-	actors: ActorListItem[],
-	onMentionClick?: (actor: ActorListItem) => void,
-): ReactNode {
-	if (typeof children === 'string') {
-		return <MentionedText content={children} actors={actors} onMentionClick={onMentionClick} />
-	}
-	if (Array.isArray(children)) {
-		const mentionProps = { actors, onMentionClick }
-		return children.map((child, idx) =>
-			typeof child === 'string' ? (
-				// biome-ignore lint/suspicious/noArrayIndexKey: children come from a deterministic markdown AST; order is stable across renders
-				<MentionedText key={`m-${idx}`} content={child} {...mentionProps} />
-			) : (
-				child
-			),
-		)
-	}
-	return children
-}
+// Dynamic-imported so Tiptap never bundles into a read-only route — read paths
+// (feeds, notifications, marketing) never touch this chunk. The Vite chunk-
+// name CI assertion (`apps/web/scripts/assert-editor-chunk.mjs`) enforces the
+// split at build time. See tech spec §12 rabbit hole #6.
+const MarkdownEditor = lazy(() =>
+	import('@maskin/markdown/react/editor').then((m) => ({ default: m.MarkdownEditor })),
+)
 
-/**
- * Extracts the language hint (e.g. "chart") from the `language-X` className
- * react-markdown puts on the inner `<code>` of a fenced block.
- */
-function readCodeLanguage(child: ReactNode): string | undefined {
-	if (!isValidElement(child)) return undefined
-	const childEl = child as ReactElement<{ className?: string }>
-	const className = childEl.props?.className
-	if (typeof className !== 'string') return undefined
-	const match = className.match(/language-([\w-]+)/)
-	return match?.[1]
-}
-
-function readCodeSource(child: ReactNode): string {
-	if (!isValidElement(child)) return ''
-	const childEl = child as ReactElement<{ children?: ReactNode }>
-	const inner = childEl.props?.children
-	if (typeof inner === 'string') return inner
-	if (Array.isArray(inner)) return inner.filter((c): c is string => typeof c === 'string').join('')
-	return ''
-}
-
-export function MarkdownContent({
-	content,
-	onChange,
-	editable = false,
-	className,
-	size = 'sm',
-	disallowedElements,
-	mentionActors,
-	onMentionClick,
-	renderVisuals = false,
-}: {
+interface MarkdownContentProps {
 	content: string
 	onChange?: (value: string) => void
 	editable?: boolean
@@ -86,13 +34,87 @@ export function MarkdownContent({
 	 * unaffected — only ActivityComment opts in.
 	 */
 	renderVisuals?: boolean
+}
+
+/**
+ * Thin adapter over the split `@maskin/markdown/react` package (bet `666e3c4a`).
+ *
+ * - `editable=false` → `<MarkdownRenderer>` (react-markdown, unchanged bundle
+ *   posture — 0 KB added on read routes).
+ * - `editable=true` + `rich-markdown-editor` flag on → `<MarkdownEditor>` from
+ *   the Tiptap chunk (dynamic-imported). Flag off falls back to today's
+ *   `<Textarea>` blur-emit behaviour so nothing changes for a flag-off user.
+ *
+ * Blur-emit save semantics are preserved on both branches — `onChange(markdown)`
+ * fires only on blur (tech spec §9).
+ */
+export function MarkdownContent({
+	content,
+	onChange,
+	editable = false,
+	className,
+	size = 'sm',
+	disallowedElements,
+	mentionActors,
+	onMentionClick,
+	renderVisuals = false,
+}: MarkdownContentProps) {
+	const editorEnabled = useFeatureFlag('rich-markdown-editor')
+
+	if (editable && editorEnabled) {
+		return (
+			<EditorAdapter
+				content={content}
+				onChange={onChange}
+				className={className}
+				disallowedElements={disallowedElements}
+			/>
+		)
+	}
+
+	if (editable) {
+		return <TextareaAdapter content={content} onChange={onChange} className={className} />
+	}
+
+	const renderCodeBlock = renderVisuals
+		? ({ language, source }: RenderCodeBlockArgs) => {
+				if (isVisualLanguage(language)) {
+					return <CommentVisual language={language ?? ''} source={source} />
+				}
+				return undefined
+			}
+		: undefined
+
+	return (
+		<MarkdownRenderer
+			content={content}
+			className={className}
+			size={size}
+			disallowedElements={disallowedElements}
+			mentionActors={mentionActors as MentionActor[] | undefined}
+			onMentionClick={onMentionClick as ((actor: MentionActor) => void) | undefined}
+			renderVisuals={renderVisuals}
+			renderCodeBlock={renderCodeBlock}
+		/>
+	)
+}
+
+// Flag-off: today's edit-in-place behaviour verbatim. Click the rendered
+// markdown to swap in a plain `<Textarea>`, blur-emit the draft on exit,
+// preserve the original box height so headings don't collapse the layout.
+function TextareaAdapter({
+	content,
+	onChange,
+	className,
+}: {
+	content: string
+	onChange?: (value: string) => void
+	className?: string
 }) {
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState(content)
 	const containerRef = useRef<HTMLDivElement>(null)
 	const textareaRef = useRef<HTMLTextAreaElement>(null)
-	// Height of the rendered prose view at the moment edit mode is entered.
-	// Used as a floor so the box doesn't shrink when headings/lists collapse to plain text.
 	const [lockedHeight, setLockedHeight] = useState<number | undefined>(undefined)
 
 	const handleBlur = useCallback(() => {
@@ -123,59 +145,7 @@ export function MarkdownContent({
 		if (editing) adjustHeight()
 	}, [editing, adjustHeight])
 
-	const components = useMemo<Components>(() => {
-		// Inline code spans that contain a bare URL render as a clickable link instead
-		// of styled monospace — agents commonly write URLs in backticks and the
-		// remark-breaks + remark-gfm combination doesn't always autolink them.
-		const code: Components['code'] = ({ children, className }) => {
-			if (!className) {
-				const text = typeof children === 'string' ? children.trim() : ''
-				if (!text.includes('\n') && /^https?:\/\/\S+$/.test(text)) {
-					return (
-						<a href={text} target="_blank" rel="noopener noreferrer">
-							{text}
-						</a>
-					)
-				}
-			}
-			return <code className={className}>{children}</code>
-		}
-
-		// When renderVisuals is on, override <pre> (not just <code>) so the
-		// dispatched visual replaces the whole block — react-markdown wraps fenced
-		// blocks as <pre><code class="language-X">…</code></pre> and a <div>
-		// child inside <pre> is invalid HTML.
-		const pre: Components['pre'] = ({ children, ...rest }) => {
-			if (renderVisuals) {
-				const first = Children.toArray(children).find((c) => isValidElement(c)) as
-					| ReactElement
-					| undefined
-				const lang = readCodeLanguage(first)
-				if (lang && isVisualLanguage(lang)) {
-					return <CommentVisual language={lang} source={readCodeSource(first)} />
-				}
-			}
-			return <pre {...rest}>{children}</pre>
-		}
-
-		if (!mentionActors) return { code, pre }
-		const wrap = (children: ReactNode) => wrapWithMentions(children, mentionActors, onMentionClick)
-		return {
-			code,
-			pre,
-			p: ({ children }) => <p>{wrap(children)}</p>,
-			li: ({ children }) => <li>{wrap(children)}</li>,
-			em: ({ children }) => <em>{wrap(children)}</em>,
-			strong: ({ children }) => <strong>{wrap(children)}</strong>,
-			blockquote: ({ children }) => <blockquote>{wrap(children)}</blockquote>,
-			del: ({ children }) => <del>{wrap(children)}</del>,
-			a: ({ children, ...rest }) => <a {...rest}>{wrap(children)}</a>,
-			td: ({ children, ...rest }) => <td {...rest}>{wrap(children)}</td>,
-			th: ({ children, ...rest }) => <th {...rest}>{wrap(children)}</th>,
-		}
-	}, [mentionActors, onMentionClick, renderVisuals])
-
-	if (editable && editing) {
+	if (editing) {
 		return (
 			<Textarea
 				ref={textareaRef}
@@ -192,7 +162,7 @@ export function MarkdownContent({
 		)
 	}
 
-	if (editable && !content) {
+	if (!content) {
 		return (
 			<Textarea
 				className={`${className ?? ''} w-full min-h-[60px] text-sm text-muted-foreground`}
@@ -207,30 +177,74 @@ export function MarkdownContent({
 		<div
 			ref={containerRef}
 			className={className}
-			onClick={() => {
-				if (editable) startEditing(content)
-			}}
+			onClick={() => startEditing(content)}
 			onKeyDown={(e) => {
-				if (editable && (e.key === 'Enter' || e.key === ' ')) startEditing(content)
+				if (e.key === 'Enter' || e.key === ' ') startEditing(content)
 			}}
-			tabIndex={editable ? 0 : undefined}
+			// biome-ignore lint/a11y/useSemanticElements: rendered markdown holds block-level content (headings, lists) that cannot legally nest inside <button>; div + role=button is the standing pattern
+			role="button"
+			tabIndex={0}
 		>
-			<div
-				className={cn(
-					'prose dark:prose-invert prose-sm max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-p:leading-[1.7142857] prose-li:text-muted-foreground prose-a:text-primary prose-strong:text-foreground prose-code:text-primary prose-code:bg-card prose-code:px-1 prose-code:rounded',
-					'break-words [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_img]:max-w-full [&_table]:block [&_table]:overflow-x-auto [&_table]:max-w-full',
-					size === 'xs' && '[&_p]:text-xs [&_p]:leading-normal [&_li]:text-xs [&_a]:text-xs',
-				)}
-			>
-				<ReactMarkdown
-					remarkPlugins={remarkPlugins as unknown as never[]}
-					disallowedElements={disallowedElements}
-					unwrapDisallowed={Boolean(disallowedElements && disallowedElements.length > 0)}
-					components={components}
-				>
-					{content}
-				</ReactMarkdown>
-			</div>
+			<MarkdownRenderer content={content} />
 		</div>
+	)
+}
+
+// Flag-on: dynamic-imported Tiptap surface. Blur-emit is delegated to the
+// editor itself (spec §9). While the chunk is fetching, render the raw
+// markdown so nothing flashes empty. `surface` / `objectId` are left
+// undefined here — Task 6 threads them through consumer call sites.
+function EditorAdapter({
+	content,
+	onChange,
+	className,
+	disallowedElements,
+}: {
+	content: string
+	onChange?: (value: string) => void
+	className?: string
+	disallowedElements?: string[]
+}) {
+	const handleChange = useCallback(
+		(markdown: string) => {
+			onChange?.(markdown)
+		},
+		[onChange],
+	)
+
+	const handleParseError = useCallback((info: MarkdownParseErrorInfo) => {
+		capture('editor_markdown_parse_error', {
+			error_message: info.errorMessage,
+			variant: info.variant,
+			surface: info.surface,
+			object_id: info.objectId,
+		})
+	}, [])
+
+	const disallowedNodes = useMemo(() => {
+		if (!disallowedElements) return undefined
+		const nodes: Array<'heading' | 'table' | 'taskList' | 'codeBlock'> = []
+		if (disallowedElements.some((el) => /^h[1-6]$/.test(el))) nodes.push('heading')
+		if (disallowedElements.includes('table')) nodes.push('table')
+		return nodes.length > 0 ? nodes : undefined
+	}, [disallowedElements])
+
+	return (
+		<Suspense
+			fallback={
+				<div className={className}>
+					<MarkdownRenderer content={content} />
+				</div>
+			}
+		>
+			<MarkdownEditor
+				value={content}
+				onChange={handleChange}
+				variant="document"
+				className={className}
+				disallowedNodes={disallowedNodes}
+				onParseError={handleParseError}
+			/>
+		</Suspense>
 	)
 }
