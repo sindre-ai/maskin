@@ -1081,4 +1081,128 @@ ${surviving}
 			).toBe('unanswered')
 		})
 	})
+
+	describe('turns that write tool calls out as text', () => {
+		/**
+		 * A closing turn whose "reply" is the model narrating tool calls it never
+		 * made. `is_error` is false — this is the shape that made it into a
+		 * customer's chat, and nothing above this check catches it.
+		 */
+		function pseudoToolCallLine(seed = 'a') {
+			return resultLine({
+				result: [
+					`Past the timeout window — checking status. (${seed})`,
+					'<skill_called>mcp__maskin__get_session</skill_called>',
+					'<skill_called>id=ab464315-40a6-4ab3-8bfb-ac175817945e</skill_called>',
+					'<skill_called>result-not-ready</skill_called>',
+					'<skill_called>retry</skill_called>',
+					'<skill_called>$PATH = /home/agent/.claude/projects/-agent-workspace/088a9cc6</skill_called>',
+				].join('\n\n'),
+			})
+		}
+
+		function withRetry() {
+			const calls: Array<{ sessionId: string; payload: unknown }> = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				retryTurn: async (sessionId, payload) => {
+					calls.push({ sessionId, payload })
+				},
+				delay: async () => {},
+			})
+			return { instance, calls }
+		}
+
+		it('asks the model to run the tools instead of posting the markup', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, `${pseudoToolCallLine()}\n`)
+			await finalizer.settlePendingRetries()
+
+			// Nothing reaches the human: the turn is being redone, not reported,
+			// and neither the markup nor the container path it carried is posted.
+			expect(await messagesFor(conversationId)).toHaveLength(0)
+			expect(calls).toHaveLength(1)
+			expect(calls[0]?.sessionId).toBe(session.id)
+
+			const payload = calls[0]?.payload as { message?: { role?: string; content?: string } }
+			expect(payload.message?.role).toBe('user')
+			// The correction has to name the mistake and its consequence, or the
+			// model has no reason to do anything different on the next attempt.
+			expect(payload.message?.content).toContain('writing tool calls out as text')
+			expect(payload.message?.content).toContain('Nothing ran')
+		})
+
+		it('posts the reply the corrected turn produces', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, `${pseudoToolCallLine()}\n`)
+			await finalizer.settlePendingRetries()
+			await feed(session.id, `${resultLine({ result: 'The session is still running.' })}\n`)
+
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toBe('The session is still running.')
+		})
+
+		it('tells the human in plain words when the correction does not take', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, `${pseudoToolCallLine('a')}\n`)
+			await finalizer.settlePendingRetries()
+			// Same failure again — a different envelope, so dedupe cannot hide it.
+			await feed(session.id, `${pseudoToolCallLine('b')}\n`)
+			await finalizer.settlePendingRetries()
+
+			// Corrected once, not twice: the budget is per session, so the new
+			// turn's different content must not buy it a fresh attempt.
+			expect(calls).toHaveLength(1)
+
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toContain('instead of running them')
+			expect(rows[0]?.content).not.toContain('skill_called')
+			expect(rows[0]?.content).not.toContain('/home/agent')
+		})
+
+		it('gives a session a fresh budget once it replies properly', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(session.id, `${pseudoToolCallLine('a')}\n`)
+			await finalizer.settlePendingRetries()
+			await feed(session.id, `${resultLine({ result: 'Recovered — here is the answer.' })}\n`)
+			await feed(session.id, `${pseudoToolCallLine('b')}\n`)
+			await finalizer.settlePendingRetries()
+
+			// A good turn in between proves the model is emitting real calls
+			// again, so a later lapse is a new episode and gets its own nudge.
+			expect(calls).toHaveLength(2)
+		})
+
+		it('says so without claiming a retry when nothing can write stdin', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			finalizer = new InteractiveTurnFinalizer(db, { delay: async () => {} })
+
+			await feed(session.id, `${pseudoToolCallLine()}\n`)
+			await finalizer.settlePendingRetries()
+
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toContain('instead of running them')
+			expect(rows[0]?.content).not.toContain('tried again')
+			expect(rows[0]?.content).not.toContain('skill_called')
+		})
+	})
 })
