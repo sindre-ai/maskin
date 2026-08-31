@@ -26,6 +26,10 @@ export const config: ProviderConfig = {
 				'chat:write',
 				'chat:write.customize',
 				'commands',
+				// Required to download `url_private` bytes for shared files. Without it
+				// Slack answers every file download with HTTP 403 and attachment ingest
+				// silently degrades to text-only (MASKIN-DEV-A).
+				'files:read',
 				'groups:read',
 				'im:history',
 				'im:read',

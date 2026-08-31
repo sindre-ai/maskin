@@ -14,9 +14,16 @@ import {
 	writeFailoverState,
 	writeSlot,
 } from '../lib/claude-oauth-slots'
+import { isEnterprise } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import {
+	billingAfterByoTransition,
+	cancelActivePaidSubscription,
+	hasActivePaidPlan,
+} from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { getStripeClient, readStripeEnv } from '../lib/stripe'
 import type { WorkspaceSettings } from '../lib/types'
 
 type Env = {
@@ -367,14 +374,26 @@ app.openapi(importRoute, (async (c) => {
 	const tokens: ClaudeOAuthTokens = tokenFields
 
 	// Locked read-modify-write — see the disconnect route above for why.
-	const found = await db.transaction(async (tx) => {
+	//
+	// BYO-LLM ↔ paid plan mutex: importing Claude OAuth is a BYO-LLM selection,
+	// so any live Stripe subscription must be canceled BEFORE the transaction
+	// commits — otherwise a Stripe cancel failure would leave the workspace
+	// with new BYO tokens AND a still-billing paid plan. Sentinel outcomes
+	// let the outer handler translate the txn result into the right HTTP
+	// status without throwing across the transaction boundary.
+	type ImportOutcome = 'ok' | 'not-found' | 'not-allowed' | 'stripe-config' | 'stripe-cancel'
+	const outcome: ImportOutcome = await db.transaction(async (tx) => {
 		const [ws] = await tx
 			.select()
 			.from(workspaces)
 			.where(eq(workspaces.id, workspaceId))
 			.for('update')
 			.limit(1)
-		if (!ws) return false
+		if (!ws) return 'not-found'
+		// Every workspace defaults to the Maskin-provided LLM plan; only
+		// ops-flagged exception workspaces may import a BYO Claude subscription.
+		// See PR #970.
+		if (!isEnterprise(ws)) return 'not-allowed'
 
 		const settings = (ws.settings as WorkspaceSettings) ?? {}
 		const currentFailover = readFailoverState(settings.claude_oauth)
@@ -399,18 +418,71 @@ app.openapi(importRoute, (async (c) => {
 			? writeFailoverState(withSlot, { active_slot: slot })
 			: withSlot
 
+		const nextSettings: Record<string, unknown> = {
+			...settings,
+			claude_oauth: nextOAuth,
+		}
+
+		if (hasActivePaidPlan({ billing: settings.billing })) {
+			let stripeEnv: ReturnType<typeof readStripeEnv>
+			try {
+				stripeEnv = readStripeEnv()
+			} catch (err) {
+				logger.error('Cannot cancel paid plan for Claude OAuth import: Stripe is not configured', {
+					workspaceId,
+					error: err instanceof Error ? err.message : String(err),
+				})
+				return 'stripe-config'
+			}
+			try {
+				await cancelActivePaidSubscription(
+					getStripeClient(stripeEnv),
+					// biome-ignore lint/style/noNonNullAssertion: hasActivePaidPlan guarantees this
+					settings.billing!.stripe_subscription_id!,
+				)
+			} catch (err) {
+				logger.error('Stripe subscription cancel failed during Claude OAuth import', {
+					workspaceId,
+					subscriptionId: settings.billing?.stripe_subscription_id,
+					error: err instanceof Error ? err.message : String(err),
+				})
+				return 'stripe-cancel'
+			}
+			const downgrade = billingAfterByoTransition(settings.billing)
+			if (downgrade) nextSettings.billing = downgrade
+			logger.info('Paid plan canceled during Claude OAuth import', {
+				workspaceId,
+				subscriptionId: settings.billing?.stripe_subscription_id,
+			})
+		}
+
 		await tx
 			.update(workspaces)
 			.set({
-				settings: { ...settings, claude_oauth: nextOAuth },
+				settings: nextSettings,
 				updatedAt: new Date(),
 			})
 			.where(eq(workspaces.id, workspaceId))
-		return true
+		return 'ok'
 	})
 
-	if (!found) {
+	if (outcome === 'not-found') {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+	if (outcome === 'not-allowed') {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				'This workspace is on the Maskin-provided LLM plan and cannot import BYO Claude credentials',
+			),
+			403,
+		)
+	}
+	if (outcome === 'stripe-config') {
+		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
+	}
+	if (outcome === 'stripe-cancel') {
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to cancel paid subscription'), 500)
 	}
 
 	logger.info('Claude OAuth tokens imported for workspace', {

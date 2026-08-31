@@ -32,7 +32,7 @@ interface ThreadMessagesProps {
 }
 
 export function ThreadMessages({ workspaceId, conversationId, className }: ThreadMessagesProps) {
-	const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+	const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const messages = flattenMessagesOldestFirst(data)
@@ -40,6 +40,14 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 		workspaceId,
 		conversationId,
 		messages,
+	)
+
+	// Which agent questions already have a human answer, so an answered set of
+	// options collapses instead of inviting a second, contradictory pick.
+	const answeredQuestionIds = new Set(
+		messages
+			.map((m) => m.metadata?.question_answer?.question_message_id)
+			.filter((id): id is number => typeof id === 'number'),
 	)
 
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
@@ -75,6 +83,31 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 		)
 	}
 
+	// A failed fetch must not borrow the empty state: "No messages yet — send the
+	// first message" tells a reader with a full thread that it is empty and
+	// invites them to start it over. Same reasoning as `conversation-list.tsx`.
+	//
+	// Only when nothing loaded, though. An infinite query flips to `error` when
+	// *any* page rejects while keeping the pages it already has, so a failed
+	// "Load older messages" would otherwise replace a thread the reader is
+	// mid-way through reading with a whole-surface error.
+	if (isError && messages.length === 0) {
+		return (
+			<div className={cn('flex flex-1 flex-col', className)}>
+				<EmptyState
+					className="flex-1"
+					title="Couldn't load this conversation"
+					description="Something went wrong reaching the server. Nothing has been lost — this is only the view."
+					action={
+						<Button variant="link" size="sm" onClick={() => refetch()}>
+							Try again →
+						</Button>
+					}
+				/>
+			</div>
+		)
+	}
+
 	if (messages.length === 0) {
 		return (
 			<div className={cn('flex flex-1 flex-col', className)}>
@@ -92,7 +125,10 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 			ref={scrollerRef}
 			onScroll={handleScroll}
 			data-testid="thread-messages"
-			className={cn('flex flex-1 flex-col gap-4 overflow-y-auto px-3 pt-4 pb-2', className)}
+			className={cn(
+				'flex flex-1 flex-col gap-[18px] overflow-y-auto px-[var(--chat-gut)] pt-[18px] pb-1.5',
+				className,
+			)}
 		>
 			{isOldThread(conversation?.lastMessageAt) ? (
 				<p className="text-center text-[10.5px] leading-[1.5] text-muted-foreground">
@@ -100,11 +136,12 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 				</p>
 			) : null}
 			<ResumeBanner
+				conversationId={conversationId}
 				messages={messages}
 				lastReadMessageId={conversation?.last_read_message_id ?? null}
 			/>
 			{hasNextPage ? (
-				<div className="flex justify-center">
+				<div className="flex flex-col items-center gap-1">
 					<Button
 						type="button"
 						variant="ghost"
@@ -114,6 +151,14 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 					>
 						{isFetchingNextPage ? <Spinner /> : 'Load older messages'}
 					</Button>
+					{/* The whole-surface error state is reserved for a thread that
+					    loaded nothing, so a page that fails partway has to say so
+					    here — otherwise the button just stops doing anything. */}
+					{isError ? (
+						<p className="text-[10.5px] text-muted-foreground">
+							Couldn't reach the older messages. Try again.
+						</p>
+					) : null}
 				</div>
 			) : null}
 			<div className="flex flex-col gap-4">
@@ -129,15 +174,41 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 					const turnsBelowHere = isLast ? [...turnsBelow, ...fallback] : turnsBelow
 					return (
 						<div key={message.id} className="flex flex-col gap-1">
-							{isNewDay(message.createdAt, prev?.createdAt ?? null) ? (
+							{/* A divider separates two days; there is nothing above the
+							    first message to separate it from, so the thread doesn't
+							    open with a "Today" rule floating over its own first line. */}
+							{index > 0 && isNewDay(message.createdAt, prev?.createdAt ?? null) ? (
 								<MessageDivider date={message.createdAt} />
 							) : null}
-							{turnsAbove.map((turn) => (
-								<MessageActivity key={turn.sessionId} workspaceId={workspaceId} turn={turn} />
-							))}
-							<MessageBubble workspaceId={workspaceId} message={message} />
-							{turnsBelowHere.map((turn) => (
-								<MessageActivity key={turn.sessionId} workspaceId={workspaceId} turn={turn} />
+							{/* A finished turn belongs to the reply it produced, so it
+							    renders *inside* that message under the agent's name
+							    rather than as a separate row above it — which read as
+							    a stray line belonging to nothing. Live turns stay
+							    standalone below their trigger, where they carry their
+							    own avatar. */}
+							<MessageBubble
+								workspaceId={workspaceId}
+								message={message}
+								questionAnswered={answeredQuestionIds.has(message.id)}
+								// Keyed by index as well as session: one session can put two
+								// turns under the same message (a result segment plus the
+								// live turn that follows it), so `sessionId` alone is not
+								// unique and React would reconcile the two as one row.
+								activity={turnsAbove.map((turn, turnIndex) => (
+									<MessageActivity
+										key={`${turn.sessionId}-above-${turnIndex}`}
+										workspaceId={workspaceId}
+										turn={turn}
+										layout="inline"
+									/>
+								))}
+							/>
+							{turnsBelowHere.map((turn, turnIndex) => (
+								<MessageActivity
+									key={`${turn.sessionId}-below-${turnIndex}`}
+									workspaceId={workspaceId}
+									turn={turn}
+								/>
 							))}
 						</div>
 					)

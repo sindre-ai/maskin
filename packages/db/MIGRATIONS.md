@@ -11,6 +11,9 @@ A table is "hot" when it is written to on the synchronous path of an external re
 | Table | Why it's hot |
 |-------|--------------|
 | `webhook_deliveries` | Written on every Slack / integration webhook. The route holds the request open until the claim row commits. Lock contention here stalls every provider retry. |
+| `workspace_overage_usage` | Written on every `maskin_plan` session completion for a pro/team workspace that's over its hard cap. Sits on the session-completion path (`handleCompletion`/`markRemoteSessionComplete`), so lock contention here would stall session teardown for every over-cap workspace, not just one. Retired (no longer written to) as of the prepaid usage-credits migration, but kept hot-listed since historical rows remain and the table shape is unchanged. |
+| `workspace_credit_ledger` | Written on every `maskin_plan` session completion for a pro/team workspace that's over its hard cap and has a spendable prepaid credit balance (`lib/credit-billing.ts`), and on every completed Stripe top-up Checkout session (`routes/stripe-webhook.ts`). Same session-completion path as `workspace_overage_usage` above, plus the synchronous webhook request path. |
+| `session_logs` | Written synchronously inside the Docker log-stream loop and inside the agent-server's `POST /sessions/:id/logs` reconcile request. A `SHARE` lock here stalls remote log ingest until that POST times out, and the agent-server then retries the whole batch. |
 
 When adding a table here, briefly note *why* it qualifies — the bar is "external caller will time out if writes block for more than a few seconds," not "it has a lot of rows."
 

@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
-import type { TestAPI } from '../helpers/api.helper'
+import { TestAPI } from '../helpers/api.helper'
 import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -99,10 +99,7 @@ test.describe('Chats v2 — filter menu', () => {
 })
 
 test.describe('Chats v2 — grouped list', () => {
-	test('labels the group a fresh conversation lands in and closes the history', async ({
-		page,
-		account,
-	}) => {
+	test('labels the group a fresh conversation lands in', async ({ page, account }) => {
 		const chats = await seedChats(account.api, account.workspaceId)
 		const list = page.getByTestId('conversation-list')
 
@@ -111,7 +108,6 @@ test.describe('Chats v2 — grouped list', () => {
 		// Pinned sorts above the dated groups.
 		await expect(list.getByText('Pinned', { exact: true })).toBeVisible()
 		await expect(list.getByText('Today', { exact: true })).toBeVisible()
-		await expect(list.getByText(/That's the whole history/)).toBeVisible()
 	})
 })
 
@@ -154,6 +150,43 @@ test.describe('Chats v2 — layout', () => {
 		})
 	}
 
+	test('the shared nav row stays on one line at 375px', async ({ page, account }) => {
+		await page.setViewportSize(VIEWPORTS.mobile)
+		await seedChats(account.api, account.workspaceId)
+
+		await page.goto(`/${account.workspaceId}/chats`)
+		await expect(page.getByTestId('conversation-list')).toBeVisible({ timeout: 15_000 })
+
+		// The title and the New button share a row: wrapping drops New to a
+		// second line, which is what this asserts against.
+		const heading = await page.getByRole('heading', { name: 'Chats' }).boundingBox()
+		const newButton = await page.getByRole('button', { name: 'New chat' }).first().boundingBox()
+		expect(heading).not.toBeNull()
+		expect(newButton).not.toBeNull()
+		expect(Math.abs((newButton?.y ?? 0) - (heading?.y ?? 0))).toBeLessThan(16)
+
+		// Icon-only at this width, but still named for assistive tech.
+		const filter = page.getByRole('button', { name: /^Filter conversations/ })
+		await expect(filter).toBeVisible()
+		expect((await filter.boundingBox())?.width ?? 999).toBeLessThan(56)
+	})
+
+	test('the nav controls are all the same height', async ({ page, account }) => {
+		await seedChats(account.api, account.workspaceId)
+		await page.goto(`/${account.workspaceId}/chats`)
+		await expect(page.getByTestId('conversation-list')).toBeVisible({ timeout: 15_000 })
+
+		const heights = await Promise.all(
+			[
+				page.getByRole('button', { name: 'Search the workspace' }),
+				page.getByRole('button', { name: /^Filter conversations/ }),
+				page.getByRole('button', { name: 'New chat' }).first(),
+			].map(async (l) => (await l.boundingBox())?.height ?? 0),
+		)
+		expect(heights.every((h) => h > 0)).toBe(true)
+		expect(Math.max(...heights) - Math.min(...heights)).toBeLessThanOrEqual(1)
+	})
+
 	test('focus mode hides the list and restores it', async ({ page, account }) => {
 		await page.setViewportSize(VIEWPORTS.tabletLandscape)
 		const chats = await seedChats(account.api, account.workspaceId)
@@ -192,7 +225,9 @@ test.describe('Chats v2 — participants popover', () => {
 			await expect(page.getByText('In this chat')).toBeVisible({ timeout: 10_000 })
 			await expect(page.getByText('Add someone — person or agent')).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Copy link to this chat' })).toBeVisible()
-			await expect(page.getByRole('button', { name: 'Invite someone by email' })).toBeVisible()
+			// Deliberately absent — see participants-popover.tsx: a mailto link
+			// promises access to someone who is not in the workspace.
+			await expect(page.getByRole('button', { name: /Invite/ })).toHaveCount(0)
 			await expect(
 				page.getByText('People see the whole thread. Agents you add start working from it.'),
 			).toBeVisible()
@@ -224,8 +259,19 @@ test.describe('Chats v2 — new chat zero state', () => {
 			const composer = page.getByLabel('Message this conversation')
 			await expect(composer).toHaveValue('')
 
-			await page.getByRole('button', { name: 'Catch me up on billing' }).click()
-			await expect(composer).toHaveValue('Catch me up on billing')
+			// The draft header names who the chat is addressed to (mockup 616–623).
+			await expect(
+				page.getByRole('button', { name: /Change who you are talking to/ }),
+			).toBeVisible()
+			// The tagline is the first thing to truncate away in a narrow header.
+			if (vp.width >= 768) {
+				await expect(
+					page.getByText('answers first, hands it on if someone else owns it'),
+				).toBeVisible()
+			}
+
+			await page.getByRole('button', { name: /What needs a decision from me today/ }).click()
+			await expect(composer).toHaveValue('What needs a decision from me today?')
 			// Prefill only — nothing was sent, so we're still on the draft route.
 			await expect(page).toHaveURL(/\/chats\/new/)
 		})
@@ -266,6 +312,115 @@ test.describe('Chats v2 — light and dark', () => {
 			})
 			expect(plate.background).not.toBe('rgba(0, 0, 0, 0)')
 			expect(plate.background).not.toBe(plate.color)
+		})
+	}
+})
+
+test.describe('Chats v2 — citation pill', () => {
+	for (const scheme of ['light', 'dark'] as const) {
+		test(`the citation pill's type dot, title and status word stay legible in ${scheme} mode`, async ({
+			page,
+			account,
+		}) => {
+			// The pill draws status as a bare coloured word on `bg-card`, with no
+			// pill of its own to sit against. A status the workspace configured
+			// itself falls back to the default colour, and that fallback used to be
+			// light text sized for a dark pill — invisible on white. This is the
+			// known-pitfalls "token used without its foreground pair" shape, and it
+			// only ever shows up in one scheme, so both are asserted.
+			await page.emulateMedia({ colorScheme: scheme })
+			const stamp = Date.now()
+
+			// A status outside the workspace's configured list is a 400 at
+			// `POST /objects`, so the uncoloured status has to be configured
+			// before it can be cited — that is what a workspace that renamed
+			// its own statuses looks like.
+			await account.api.updateWorkspace(account.workspaceId, {
+				settings: {
+					statuses: { bet: ['active'], task: ['awaiting_legal'] },
+				},
+			})
+
+			const known = await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: `Retry window ${stamp}`,
+				status: 'active',
+			})
+			const custom = await account.api.createObject(account.workspaceId, {
+				type: 'task',
+				title: `Legal review ${stamp}`,
+				// Deliberately outside `statusColors` — statuses are workspace-
+				// configurable, so the fallback is a real user-facing path.
+				status: 'awaiting_legal',
+			})
+
+			// The citation pill is an *incoming* message affordance: the viewer's
+			// own messages lift their context out as `You attached` chips instead,
+			// so the cited message has to come from another actor.
+			const agent = await account.api.createAgentActor(`Citing Agent ${stamp}`)
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+			const conversation = await account.api.createConversation(account.workspaceId, {
+				title: `V2 Citations ${stamp}`,
+				participant_actor_ids: [agent.id],
+				initial_message: 'Opening the thread',
+			})
+			const agentApi = new TestAPI(agent.api_key)
+			await agentApi.postConversationMessage(conversation.id, account.workspaceId, {
+				content: 'Both of these are blocked on the same thing.',
+				metadata: {
+					context_objects: [
+						{ id: known.id, title: known.title, type: known.type },
+						{ id: custom.id, title: custom.title, type: custom.type },
+					],
+				},
+			})
+
+			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+			const transcript = page.getByTestId('thread-messages')
+			await expect(transcript.getByText('Referenced')).toBeVisible({ timeout: 15_000 })
+
+			for (const object of [known, custom]) {
+				const pill = transcript.getByRole('link', { name: new RegExp(object.title) })
+				await expect(pill).toBeVisible()
+
+				// Every painted part of the pill must clear 3:1 against the pill's own
+				// background — the status word included, which is the part that has no
+				// background of its own to guarantee it.
+				const contrast = await pill.evaluate((el: HTMLElement) => {
+					const luminance = (colour: string) => {
+						const [r, g, b] = (colour.match(/[\d.]+/g) ?? ['0', '0', '0']).map(Number)
+						const channel = (v: number) => {
+							const s = v / 255
+							return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+						}
+						return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+					}
+					const ratio = (a: string, b: string) => {
+						const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m)
+						return (x + 0.05) / (y + 0.05)
+					}
+					const background = window.getComputedStyle(el).backgroundColor
+					// The status word is the last element child; the title is the span
+					// carrying the object's name.
+					const parts = Array.from(el.children) as HTMLElement[]
+					return parts.map((part) => ({
+						// The type dot carries no text — `bg-current` paints it from
+						// `color`, so the same read covers it.
+						text: part.textContent?.trim() || 'the type dot',
+						ratio: ratio(window.getComputedStyle(part).color, background),
+					}))
+				})
+
+				expect(contrast.length).toBeGreaterThan(0)
+				for (const part of contrast) {
+					expect(
+						part.ratio,
+						`"${part.text}" in ${scheme} mode against the pill background`,
+					).toBeGreaterThan(3)
+				}
+			}
+
+			await expectNoHorizontalOverflow(page)
 		})
 	}
 })

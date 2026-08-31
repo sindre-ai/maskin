@@ -63,9 +63,17 @@ test.describe('Object detail — status + driver persist on reload', () => {
 				.first()
 			await expect(driverTrigger).toContainText('Unassigned')
 			await driverTrigger.click()
-			const memberOption = page.getByRole('option').filter({ hasText: /^E2E / }).first()
+			// Options read "<initials> <name>", e.g. "EA E2E Actor 123" — the name is
+			// not at the start of the accessible name.
+			const memberOption = page
+				.getByRole('option')
+				.filter({ hasText: /E2E Actor/ })
+				.first()
 			await expect(memberOption).toBeVisible()
-			const memberName = (await memberOption.innerText()).trim()
+			// innerText also carries the avatar initials on their own line — keep
+			// just the actor name so it can be matched inside the trigger's label.
+			const memberName = (await memberOption.innerText()).match(/E2E Actor \S+/)?.[0] ?? ''
+			expect(memberName).not.toBe('')
 			await memberOption.click()
 			await expect(driverTrigger).toContainText(memberName)
 

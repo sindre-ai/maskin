@@ -67,7 +67,7 @@ has unread activity — `draft` and `paused` always render as themselves.
 
 Whether a member counts as **closed** is resolved per loop: the loop's own
 `metadata.closed_statuses` entry for the member's type wins; otherwise the built-in fallback
-table in `loops.ts` applies (bet/task/insight/commitment). Custom object types have no fallback —
+table in `loops.ts` applies (bet/task/insight). Custom object types have no fallback —
 a loop flowing custom types **must** set `closed_statuses` or its closed counts stay at zero.
 
 ## MCP tools

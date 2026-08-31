@@ -19,6 +19,11 @@ vi.mock('@/hooks/use-workspaces', () => ({
 	useUpdateWorkspace: () => ({ mutate: mockUpdateMutate, isPending: false }),
 }))
 
+// The privacy section lives on the v2 General page, behind `new-design`.
+vi.mock('@/hooks/use-feature-flag', () => ({
+	useFeatureFlag: (id: string) => id === 'new-design',
+}))
+
 vi.mock('@/lib/theme', () => ({
 	useTheme: () => ({ theme: 'light', setTheme: vi.fn() }),
 }))

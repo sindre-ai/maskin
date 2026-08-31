@@ -1,21 +1,43 @@
-import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
+import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, billing as billingTable, invoices as invoicesTable } from '@maskin/db/schema'
-import { desc, eq } from 'drizzle-orm'
-import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { createApiError, validationFailureHook } from '../lib/errors'
+import { events, workspaces } from '@maskin/db/schema'
+import { CREDIT_TOPUP_MAX_USD, CREDIT_TOPUP_MIN_USD, workspaceSettingsSchema } from '@maskin/shared'
+import { eq } from 'drizzle-orm'
+import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
+import { isEnterprise } from '../lib/enterprise'
+import { createApiError } from '../lib/errors'
+import { getWorkspacePlanUsdCentsUsage } from '../lib/llm-routing'
+import {
+	billingAfterCancel,
+	cancelActivePaidSubscription,
+	hasActivePaidPlan,
+} from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
-import { serializeArray } from '../lib/serialize'
 import {
-	FLAT_PLAN,
-	type ResolvedPlan,
-	type StripeLike,
-	getPublishableKey,
+	createCheckoutSession,
+	createCreditCheckoutSession,
 	getStripeClient,
-	isTestMode,
-	resolvePlan,
+	readStripeEnv,
 } from '../lib/stripe'
+import type { WorkspaceSettings } from '../lib/types'
+import { isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
+
+/**
+ * Fallback hard caps (USD cents) for paid plans when
+ * `billing.hard_cap_usd_cents` hasn't been populated yet (delayed Stripe
+ * webhook, partial state after a webhook failure).
+ *
+ * Delegates to `resolvePlanCapCents` so the cap shown here is byte-identical
+ * to the one `lib/llm-routing.ts` enforces — these were two separate
+ * implementations, and the enforcement side used to fail open to *no* cap for
+ * pro/team in exactly this window. Env is read defensively (not via
+ * `readStripeEnv`, which throws when Stripe is unconfigured) because
+ * `/api/billing/usage` must keep serving usage regardless.
+ */
+function planHardCapFallback(plan: 'trial' | 'pro' | 'team' | 'enterprise'): number | null {
+	return resolvePlanCapCents(plan)
+}
 
 type Env = {
 	Variables: {
@@ -25,593 +47,491 @@ type Env = {
 	}
 }
 
-export interface BillingDeps {
-	/** Injectable Stripe client. Defaults to the env-configured client. */
-	stripe?: StripeLike | null
-	/** Injectable plan resolver. Defaults to env-configured STRIPE_PRICE_ID. */
-	resolvePlan?: () => Promise<ResolvedPlan>
-}
+const app = new OpenAPIHono<Env>()
 
-const planResponseSchema = z.object({
-	planId: z.string(),
-	planLabel: z.string().nullable(),
-	status: z.string(),
-	priceCents: z.number().nullable(),
-	currency: z.string(),
-	nextChargeAt: z.string().datetime().nullable(),
-})
-
-const invoiceResponseSchema = z.object({
-	id: z.string().uuid(),
-	description: z.string(),
-	amountCents: z.number(),
-	currency: z.string(),
-	status: z.string(),
-	billedAt: z.string().datetime(),
-})
-
-const summaryResponseSchema = z.object({
-	configured: z.boolean(),
-	testMode: z.boolean(),
-	publishableKey: z.string().nullable(),
-	plan: planResponseSchema,
-	invoiceEmail: z.string().nullable(),
-	invoices: z.array(invoiceResponseSchema),
+const checkoutBodySchema = z.object({
+	plan: z.enum(['pro', 'team']),
+	success_url: z.string().url(),
+	cancel_url: z.string().url(),
 })
 
 const checkoutResponseSchema = z.object({
-	clientSecret: z.string(),
-	testMode: z.boolean(),
-	plan: planResponseSchema,
+	url: z.string().url(),
+	session_id: z.string(),
 })
 
-const portalResponseSchema = z.object({
-	url: z.string(),
-})
-
-// ── GET / ─────────────────────────────────────────────────────────────────
-// Billing summary for the settings page: plan snapshot, invoice email, and the
-// full invoice history. The publishable key is served here (never bundled in a
-// VITE_ env) so Stripe Elements can mount. `configured` lets the frontend
-// degrade to a "Stripe not configured" notice instead of a broken checkout.
-
-const summaryRoute = createRoute({
-	method: 'get',
-	path: '/',
+const checkoutRoute = createRoute({
+	method: 'post',
+	path: '/checkout',
 	tags: ['billing'],
-	summary: 'Get billing summary for the workspace',
+	summary: 'Start a Stripe Checkout session for a Maskin subscription',
 	request: {
 		headers: workspaceIdHeader,
+		body: {
+			content: { 'application/json': { schema: checkoutBodySchema } },
+			required: true,
+		},
 	},
 	responses: {
 		200: {
-			description: 'Billing summary',
-			content: { 'application/json': { schema: summaryResponseSchema } },
+			description: 'Checkout session created',
+			content: { 'application/json': { schema: checkoutResponseSchema } },
+		},
+		400: {
+			description: 'Bad request',
+			content: { 'application/json': { schema: errorSchema } },
 		},
 		403: {
-			description: 'Not a workspace member',
+			description: 'Caller is not permitted to manage billing for this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description: 'Stripe misconfigured or upstream failure',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
 })
 
-const FREE_PLAN = {
-	planId: 'free',
-	planLabel: 'Free',
-	status: 'inactive',
-	priceCents: null,
-	currency: 'usd',
-	nextChargeAt: null,
-} as const
+const usageResponseSchema = z.object({
+	plan: z.enum(['trial', 'pro', 'team', 'enterprise']),
+	status: z.enum(['active', 'past_due', 'canceled', 'incomplete']),
+	// Actual dollar cost incurred this period, in USD cents — not a token
+	// count, since different agents can run different models with different
+	// $/token ratios.
+	usd_cents_used: z.number().int().nonnegative(),
+	hard_cap_usd_cents: z.number().int().positive().nullable(),
+	period_start: z.number().int().nonnegative().nullable(),
+	period_resets_in_ms: z.number().int().nullable(),
+	stripe_customer_id: z.string().nullable(),
+	stripe_subscription_id: z.string().nullable(),
+	// Prepaid usage-credits balance, in USD cents. Only meaningful for
+	// pro/team — see `lib/credit-billing.ts`.
+	credit_balance_cents: z.number().int().nonnegative(),
+})
 
-export function createBillingApp(deps: BillingDeps = {}) {
-	const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
+const usageRoute = createRoute({
+	method: 'get',
+	path: '/usage',
+	tags: ['billing'],
+	summary: 'Current billing plan + tokens used this period',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			description: 'Current billing snapshot',
+			content: { 'application/json': { schema: usageResponseSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
 
-	const stripeClient = () => deps.stripe ?? getStripeClient()
-	const planResolver = deps.resolvePlan ?? resolvePlan
+app.openapi(usageRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
-	app.openapi(summaryRoute, (async (c) => {
-		const db = c.get('db')
-		const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-		const configured = stripeClient() !== null
-
-		const [billingRow] = await db
-			.select()
-			.from(billingTable)
-			.where(eq(billingTable.workspaceId, workspaceId))
-			.limit(1)
-
-		const invoiceRows = await db
-			.select()
-			.from(invoicesTable)
-			.where(eq(invoicesTable.workspaceId, workspaceId))
-			.orderBy(desc(invoicesTable.billedAt))
-
-		const plan = billingRow
-			? {
-					planId: billingRow.planId,
-					planLabel: billingRow.planLabel,
-					status: billingRow.status,
-					priceCents: billingRow.priceCents,
-					currency: billingRow.currency,
-					nextChargeAt: billingRow.nextChargeAt,
-				}
-			: FREE_PLAN
-
-		const publishableKey = getPublishableKey()
-
-		return c.json({
-			configured,
-			testMode: isTestMode(publishableKey),
-			publishableKey,
-			plan,
-			invoiceEmail: billingRow?.invoiceEmail ?? null,
-			invoices: serializeArray(invoiceRows),
+	const [workspace] = await db
+		.select({
+			id: workspaces.id,
+			settings: workspaces.settings,
+			enterpriseGranted: workspaces.enterpriseGranted,
+			billingOwnerId: workspaces.billingOwnerId,
 		})
-	}) as RouteHandler<typeof summaryRoute, Env>)
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
 
-	// ── POST /checkout ─────────────────────────────────────────────────────────
-	// Creates a fresh PaymentIntent (amount resolved from the Stripe Price) and
-	// snapshots the plan on the billing row as 'pending'. The Payment Element
-	// mounts client-side with the returned clientSecret + publishable key; card
-	// data only ever lives inside Stripe's own frames. No Stripe Customer is
-	// created here — the complete step persists one only after payment succeeds
-	// (avoids orphan customers on abandoned checkouts).
+	if (!workspace) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
 
-	const checkoutRoute = createRoute({
-		method: 'post',
-		path: '/checkout',
-		tags: ['billing'],
-		summary: 'Start a checkout for the workspace plan',
-		request: {
-			headers: workspaceIdHeader,
-			body: {
-				content: {
-					'application/json': {
-						schema: z.object({
-							invoiceEmail: z.string().email().optional(),
-						}),
-					},
-				},
-			},
-		},
-		responses: {
-			200: {
-				description: 'Checkout started',
-				content: { 'application/json': { schema: checkoutResponseSchema } },
-			},
-			400: {
-				description: 'Stripe not configured or plan price unresolvable',
-				content: { 'application/json': { schema: errorSchema } },
-			},
-			403: {
-				description: 'Not a workspace member',
-				content: { 'application/json': { schema: errorSchema } },
-			},
-		},
+	const parsed = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
+	const billing = parsed.success ? parsed.data.billing : undefined
+
+	// No billing row → workspace is on trial. Window starts whenever sessions
+	// first ran; we use a 30d rolling window so the trial usage never grows
+	// unbounded, and the row in Settings has a consistent "X / Y · resets in Zd".
+	//
+	// A BYO-LLM entitled workspace (the `enterprise_granted` column OR an enterprise
+	// billing owner) is reported as `enterprise` regardless of what's stored:
+	// `billing.plan === 'enterprise'` is only written by `billingAfterByoTransition()`
+	// once a BYO credential is connected, so an entitled workspace that hasn't
+	// connected one yet — or never had a billing block at all — would otherwise
+	// fall through to the `trial` default and be shown as a trial workspace with
+	// a usage meter it isn't metered against. Same predicate the routing layer
+	// uses to keep these workspaces off the Maskin-funded LLM.
+	const plan = isEnterprise(workspace) ? 'enterprise' : (billing?.plan ?? 'trial')
+	const status = billing?.status ?? 'active'
+	const hardCapCents =
+		billing?.hard_cap_usd_cents && billing.hard_cap_usd_cents > 0
+			? billing.hard_cap_usd_cents
+			: planHardCapFallback(plan)
+	// `billing.period_start` is a Unix SECONDS value — the Stripe webhook
+	// writes `subscription.current_period_start` straight through, and Stripe
+	// timestamps are seconds (not ms). Coerce to a positive integer at read
+	// time so a partial / legacy / malformed stored value never trips the
+	// response schema (which requires `int().nonnegative()`).
+	const rawPeriodStart = billing?.period_start
+	const periodStartSec =
+		typeof rawPeriodStart === 'number' && Number.isFinite(rawPeriodStart) && rawPeriodStart > 0
+			? Math.floor(rawPeriodStart)
+			: null
+	const periodStartMs =
+		periodStartSec !== null ? periodStartSec * 1000 : Date.now() - DEFAULT_PERIOD_LENGTH_MS
+	const rawPeriodEnd = billing?.period_end
+	const periodEndSec =
+		typeof rawPeriodEnd === 'number' && Number.isFinite(rawPeriodEnd) && rawPeriodEnd > 0
+			? Math.floor(rawPeriodEnd)
+			: null
+	const periodEndMs =
+		periodEndSec !== null
+			? periodEndSec * 1000
+			: periodStartSec !== null
+				? periodStartSec * 1000 + DEFAULT_PERIOD_LENGTH_MS
+				: Date.now() + DEFAULT_PERIOD_LENGTH_MS
+
+	const usdCentsUsed =
+		plan !== 'enterprise' ? await getWorkspacePlanUsdCentsUsage(db, workspaceId, periodStartMs) : 0
+
+	const resetsIn = Math.max(0, periodEndMs - Date.now())
+
+	const creditBalanceCents =
+		typeof billing?.credit_balance_cents === 'number' && billing.credit_balance_cents > 0
+			? Math.floor(billing.credit_balance_cents)
+			: 0
+
+	logger.info('Billing usage read', {
+		workspaceId,
+		plan,
+		status,
+		usdCentsUsed,
+		hardCapCents,
+		creditBalanceCents,
 	})
 
-	app.openapi(checkoutRoute, (async (c) => {
-		const db = c.get('db')
-		const actorId = c.get('actorId')
-		const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-		const { invoiceEmail } = c.req.valid('json')
+	return c.json(
+		{
+			plan,
+			status,
+			usd_cents_used: usdCentsUsed,
+			hard_cap_usd_cents: hardCapCents,
+			period_start: periodStartSec,
+			period_resets_in_ms: plan === 'enterprise' ? null : resetsIn,
+			stripe_customer_id: billing?.stripe_customer_id ?? null,
+			stripe_subscription_id: billing?.stripe_subscription_id ?? null,
+			credit_balance_cents: creditBalanceCents,
+		},
+		200,
+	)
+})
 
-		const stripe = stripeClient()
-		if (!stripe) {
-			return c.json(
-				createApiError('BAD_REQUEST', 'Stripe is not configured for this instance'),
-				400,
-			)
-		}
+app.openapi(checkoutRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { plan, success_url, cancel_url } = c.req.valid('json')
 
-		const plan = await planResolver()
-		if (!plan.priceId) {
-			// A configured instance must never charge the FLAT_PLAN placeholder.
-			return c.json(
-				createApiError('BAD_REQUEST', 'No Stripe price configured (STRIPE_PRICE_ID)'),
-				400,
-			)
-		}
+	const [workspace] = await db
+		.select({ id: workspaces.id, settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
 
-		let created: Awaited<ReturnType<StripeLike['paymentIntents']['create']>>
-		try {
-			created = await stripe.paymentIntents.create({
-				amount: plan.priceCents,
-				currency: plan.currency,
-				metadata: { workspace_id: workspaceId },
-				automatic_payment_methods: { enabled: true },
-			})
-		} catch (err) {
-			logger.error('Stripe PaymentIntent create failed', { workspaceId, error: String(err) })
-			return c.json(
-				createApiError('INTERNAL_ERROR', 'Failed to start checkout. Please try again.'),
-				500,
-			)
-		}
+	if (!workspace) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
 
-		// Upsert the plan snapshot. A workspace that already has an active plan
-		// stays active — an abandoned re-checkout must not demote it to 'pending'
-		// or overwrite the live price snapshot. First-time checkouts snapshot the
-		// new plan as 'pending' until completion. Preserve the existing
-		// invoiceEmail across checkouts unless the caller supplied one.
-		const [existingRow] = await db
-			.select()
-			.from(billingTable)
-			.where(eq(billingTable.workspaceId, workspaceId))
-			.limit(1)
-		const alreadyActive = existingRow?.status === 'active'
-		const billingValues = alreadyActive
-			? {
-					workspaceId,
-					status: 'active' as const,
-					...(invoiceEmail ? { invoiceEmail } : {}),
-					updatedAt: new Date(),
-				}
-			: {
-					workspaceId,
-					planId: plan.planId,
-					planLabel: plan.planLabel,
-					status: 'pending' as const,
-					priceCents: plan.priceCents,
-					currency: plan.currency,
-					stripePriceId: plan.priceId,
-					...(invoiceEmail ? { invoiceEmail } : {}),
-					updatedAt: new Date(),
-				}
-		const nextStatus = alreadyActive ? 'active' : 'pending'
-		await db.insert(billingTable).values(billingValues).onConflictDoUpdate({
-			target: billingTable.workspaceId,
-			set: billingValues,
+	// authMiddleware only proves membership. Starting a subscription binds the
+	// workspace to a recurring charge, so it takes the same human admin/owner
+	// gate the other ownership-sensitive routes use - which also keeps agents
+	// holding a workspace-scoped API key (MCP) out of the payment surface.
+	// Checked after the existence lookup so a missing workspace still 404s.
+	if (!(await isWorkspaceHumanAdminOrOwner(db, c.get('actorId'), workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only workspace owners/admins can manage billing'),
+			403,
+		)
+	}
+
+	// Existing billing.stripe_customer_id (if any) lets us reuse the same
+	// Stripe Customer across plan changes — otherwise Stripe would create a
+	// new customer for every checkout, and our customer→workspace map (kept
+	// in settings.billing) would point at a stale id.
+	const settingsParse = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
+	const existingCustomerId = settingsParse.success
+		? (settingsParse.data.billing?.stripe_customer_id ?? null)
+		: null
+
+	let stripeEnv: ReturnType<typeof readStripeEnv>
+	try {
+		stripeEnv = readStripeEnv()
+	} catch (err) {
+		logger.error('Stripe is not configured', {
+			error: err instanceof Error ? err.message : String(err),
 		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
+	}
 
-		// Audit + real-time: the billing row transitioned to 'pending' (or stayed 'active').
+	const stripe = getStripeClient(stripeEnv)
+	try {
+		const session = await createCheckoutSession(
+			stripe,
+			{
+				workspaceId,
+				plan,
+				successUrl: success_url,
+				cancelUrl: cancel_url,
+				existingCustomerId,
+			},
+			stripeEnv,
+		)
+		if (!session.url) {
+			logger.error('Stripe checkout session missing url', { sessionId: session.id })
+			return c.json(createApiError('INTERNAL_ERROR', 'Stripe returned no checkout url'), 500)
+		}
+		return c.json({ url: session.url, session_id: session.id }, 200)
+	} catch (err) {
+		logger.error('Stripe checkout session creation failed', {
+			workspaceId,
+			plan,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create checkout session'), 500)
+	}
+})
+
+const buyCreditsBodySchema = z.object({
+	amount_usd_cents: z
+		.number()
+		.int()
+		.min(CREDIT_TOPUP_MIN_USD * 100)
+		.max(CREDIT_TOPUP_MAX_USD * 100),
+	success_url: z.string().url(),
+	cancel_url: z.string().url(),
+})
+
+const buyCreditsRoute = createRoute({
+	method: 'post',
+	path: '/credits/checkout',
+	tags: ['billing'],
+	summary: 'Start a Stripe Checkout session for a one-time usage-credits top-up',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: { 'application/json': { schema: buyCreditsBodySchema } },
+			required: true,
+		},
+	},
+	responses: {
+		200: {
+			description: 'Checkout session created',
+			content: { 'application/json': { schema: checkoutResponseSchema } },
+		},
+		400: {
+			description: 'Workspace is not eligible to buy usage credits',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Caller is not permitted to manage billing for this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description: 'Stripe misconfigured or upstream failure',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(buyCreditsRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { amount_usd_cents, success_url, cancel_url } = c.req.valid('json')
+
+	const [workspace] = await db
+		.select({ id: workspaces.id, settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+
+	if (!workspace) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	// Spends against the workspace's card - same gate as `checkoutRoute`.
+	if (!(await isWorkspaceHumanAdminOrOwner(db, c.get('actorId'), workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only workspace owners/admins can manage billing'),
+			403,
+		)
+	}
+
+	const settingsParse = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
+	const billing = settingsParse.success ? settingsParse.data.billing : undefined
+
+	// Same eligibility as spending a balance (`canUseCreditBalance`), minus
+	// the balance>0 check since we're about to add to it: plan must be
+	// pro/team, subscription active, and a Stripe customer already on file
+	// (guaranteed once a paid checkout has completed).
+	const eligible =
+		(billing?.plan === 'pro' || billing?.plan === 'team') &&
+		billing.status === 'active' &&
+		Boolean(billing.stripe_customer_id)
+	if (!eligible) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Workspace is not eligible to buy usage credits'),
+			400,
+		)
+	}
+
+	let stripeEnv: ReturnType<typeof readStripeEnv>
+	try {
+		stripeEnv = readStripeEnv()
+	} catch (err) {
+		logger.error('Stripe is not configured', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
+	}
+
+	const stripe = getStripeClient(stripeEnv)
+	try {
+		const session = await createCreditCheckoutSession(stripe, {
+			workspaceId,
+			amountUsdCents: amount_usd_cents,
+			successUrl: success_url,
+			cancelUrl: cancel_url,
+			existingCustomerId: billing?.stripe_customer_id as string,
+		})
+		if (!session.url) {
+			logger.error('Stripe credit top-up checkout session missing url', { sessionId: session.id })
+			return c.json(createApiError('INTERNAL_ERROR', 'Stripe returned no checkout url'), 500)
+		}
+		return c.json({ url: session.url, session_id: session.id }, 200)
+	} catch (err) {
+		logger.error('Stripe credit top-up checkout session creation failed', {
+			workspaceId,
+			amountUsdCents: amount_usd_cents,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create checkout session'), 500)
+	}
+})
+
+const cancelRoute = createRoute({
+	method: 'post',
+	path: '/cancel',
+	tags: ['billing'],
+	summary: 'Downgrade to Free by cancelling the active Maskin subscription',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		200: {
+			description: 'Subscription cancelled, plan set to Free',
+			content: { 'application/json': { schema: z.object({ ok: z.literal(true) }) } },
+		},
+		403: {
+			description: 'Caller is not permitted to manage billing for this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: { description: 'Stripe error', content: { 'application/json': { schema: errorSchema } } },
+	},
+})
+
+app.openapi(cancelRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const [workspace] = await db
+		.select({
+			id: workspaces.id,
+			settings: workspaces.settings,
+			enterpriseGranted: workspaces.enterpriseGranted,
+			billingOwnerId: workspaces.billingOwnerId,
+		})
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+
+	if (!workspace) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+
+	// Cancelling destroys the workspace's paid subscription outright, so it is
+	// restricted to the billing owner - the actor whose card is on file -
+	// matching the transfer-ownership gate in routes/workspaces.ts. Older rows
+	// predate `billing_owner_id`; those fall back to the human admin/owner
+	// check rather than being left open to every member.
+	const callerId = c.get('actorId')
+	const authorized = workspace.billingOwnerId
+		? workspace.billingOwnerId === callerId
+		: await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId)
+	if (!authorized) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only the billing owner can cancel the subscription'),
+			403,
+		)
+	}
+
+	const settings = (workspace.settings ?? {}) as WorkspaceSettings
+	const billing = settings.billing
+
+	if (hasActivePaidPlan({ billing })) {
+		const subscriptionId = billing?.stripe_subscription_id
+		if (!subscriptionId) {
+			return c.json(createApiError('INTERNAL_ERROR', 'No active subscription id'), 500)
+		}
+		let stripeEnv: ReturnType<typeof readStripeEnv>
+		try {
+			stripeEnv = readStripeEnv()
+		} catch {
+			return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
+		}
+		try {
+			await cancelActivePaidSubscription(getStripeClient(stripeEnv), subscriptionId)
+		} catch (err) {
+			logger.error('Stripe cancel failed', { workspaceId, error: String(err) })
+			return c.json(createApiError('INTERNAL_ERROR', 'Failed to cancel subscription'), 500)
+		}
+	}
+
+	const downgraded = billingAfterCancel(billing, isEnterprise(workspace))
+	if (downgraded) {
+		await db
+			.update(workspaces)
+			.set({ settings: { ...settings, billing: downgraded }, updatedAt: new Date() })
+			.where(eq(workspaces.id, workspaceId))
+
+		// Audit + real-time, per the "events logged on every mutation" rule.
+		// A cancellation is the single most disputable billing action; without
+		// this row there is no record of who cancelled or when, and no SSE
+		// invalidation to refresh the billing UI off the stale plan.
 		await db.insert(events).values({
 			workspaceId,
-			actorId,
-			action: 'updated',
-			entityType: 'billing',
+			actorId: callerId,
+			action: 'workspace_billing_canceled',
+			entityType: 'workspace',
 			entityId: workspaceId,
-			data: { status: nextStatus, planId: plan.planId, priceCents: plan.priceCents },
-		})
-
-		capturePosthogEvent('billing_checkout_started', workspaceId, {
-			workspace_id: workspaceId,
-			actor_id: actorId,
-			amount_cents: plan.priceCents,
-			currency: plan.currency,
-		})
-
-		return c.json({
-			clientSecret: created.client_secret,
-			testMode: isTestMode(getPublishableKey()),
-			plan: {
-				planId: plan.planId,
-				planLabel: plan.planLabel,
-				status: nextStatus,
-				priceCents: plan.priceCents,
-				currency: plan.currency,
-				nextChargeAt: null,
+			data: {
+				plan_before: billing?.plan ?? null,
+				plan_after: downgraded.plan ?? null,
+				status_before: billing?.status ?? null,
+				status_after: downgraded.status ?? null,
+				stripe_subscription_id: billing?.stripe_subscription_id ?? null,
 			},
 		})
-	}) as RouteHandler<typeof checkoutRoute, Env>)
+	}
 
-	// ── POST /complete ─────────────────────────────────────────────────────────
-	// Verifies the PaymentIntent server-side (status === 'succeeded' AND metadata
-	// workspace match) before marking the plan active — a client cannot fabricate
-	// a successful payment. On decline, the billing row flips to 'declined' for
-	// the UI to surface. Idempotent per payment intent: re-confirming the same
-	// succeeded intent short-circuits instead of double-inserting an invoice.
+	logger.info('Plan downgraded to Free', { workspaceId })
+	return c.json({ ok: true as const }, 200)
+})
 
-	const completeRoute = createRoute({
-		method: 'post',
-		path: '/complete',
-		tags: ['billing'],
-		summary: 'Confirm a checkout after Stripe Elements completes',
-		request: {
-			headers: workspaceIdHeader,
-			body: {
-				content: {
-					'application/json': {
-						schema: z.object({
-							paymentIntentId: z.string().min(1),
-							invoiceEmail: z.string().email().optional(),
-						}),
-					},
-				},
-			},
-		},
-		responses: {
-			200: {
-				description: 'Payment verified and plan activated',
-				content: { 'application/json': { schema: summaryResponseSchema } },
-			},
-			400: {
-				description: 'Payment failed or belongs to another workspace',
-				content: { 'application/json': { schema: errorSchema } },
-			},
-			403: {
-				description: 'Not a workspace member',
-				content: { 'application/json': { schema: errorSchema } },
-			},
-		},
-	})
-
-	app.openapi(completeRoute, (async (c) => {
-		const db = c.get('db')
-		const actorId = c.get('actorId')
-		const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-		const { paymentIntentId, invoiceEmail } = c.req.valid('json')
-
-		const stripe = stripeClient()
-		if (!stripe) {
-			return c.json(
-				createApiError('BAD_REQUEST', 'Stripe is not configured for this instance'),
-				400,
-			)
-		}
-
-		let intent: Awaited<ReturnType<StripeLike['paymentIntents']['retrieve']>>
-		try {
-			intent = await stripe.paymentIntents.retrieve(paymentIntentId)
-		} catch {
-			// One generic message for both "intent does not exist" and "intent
-			// belongs to another workspace" — distinguishing them would let a
-			// member probe arbitrary payment-intent ids.
-			return c.json(createApiError('BAD_REQUEST', 'Unable to verify this payment'), 400)
-		}
-
-		if (intent.metadata.workspace_id !== workspaceId) {
-			return c.json(createApiError('BAD_REQUEST', 'Unable to verify this payment'), 400)
-		}
-
-		if (intent.status !== 'succeeded') {
-			// Mark declined so the UI can show the failure reason on the plan card.
-			// An active plan must not be demoted by a failed change-plan re-pay --
-			// the decline surfaces as the 400 response either way.
-			const [declineRow] = await db
-				.select()
-				.from(billingTable)
-				.where(eq(billingTable.workspaceId, workspaceId))
-				.limit(1)
-
-			if (declineRow?.status !== 'active') {
-				await db
-					.insert(billingTable)
-					.values({ workspaceId, status: 'declined', updatedAt: new Date() })
-					.onConflictDoUpdate({
-						target: billingTable.workspaceId,
-						set: { status: 'declined', updatedAt: new Date() },
-					})
-
-				await db.insert(events).values({
-					workspaceId,
-					actorId,
-					action: 'updated',
-					entityType: 'billing',
-					entityId: workspaceId,
-					data: { status: 'declined', paymentIntentId },
-				})
-			}
-
-			capturePosthogEvent('billing_payment_declined', workspaceId, {
-				workspace_id: workspaceId,
-				actor_id: actorId,
-				payment_intent_id: paymentIntentId,
-			})
-
-			return c.json(
-				createApiError('BAD_REQUEST', 'Your payment was declined. Please try again.'),
-				400,
-			)
-		}
-
-		// Idempotency: the partial unique index on stripe_payment_intent_id
-		// serializes concurrent re-confirms of the same intent — only the first
-		// request inserts. Racing duplicates take the onConflictDoNothing no-op
-		// path, skip the side effects below, and re-read the row the winner
-		// wrote. The pre-check is gone on purpose: the index is the arbiter.
-		const [billingRow] = await db
-			.select()
-			.from(billingTable)
-			.where(eq(billingTable.workspaceId, workspaceId))
-			.limit(1)
-
-		const planLabel = billingRow?.planLabel ?? FLAT_PLAN.planLabel
-		const [invoice] = await db
-			.insert(invoicesTable)
-			.values({
-				workspaceId,
-				description: `${planLabel} plan — monthly`,
-				amountCents: intent.amount,
-				currency: intent.currency,
-				stripePaymentIntentId: intent.id,
-				status: 'paid',
-				billedAt: new Date(),
-			})
-			.onConflictDoNothing()
-			.returning()
-
-		if (invoice) {
-			await db.insert(events).values({
-				workspaceId,
-				actorId,
-				action: 'created',
-				entityType: 'invoice',
-				entityId: invoice.id,
-				data: {
-					description: invoice.description,
-					amountCents: invoice.amountCents,
-					currency: invoice.currency,
-				},
-			})
-
-			capturePosthogEvent('billing_payment_succeeded', workspaceId, {
-				workspace_id: workspaceId,
-				actor_id: actorId,
-				amount_cents: intent.amount,
-				currency: intent.currency,
-			})
-
-			// Activate the plan (preserving invoice email, price + plan snapshot).
-			// A Stripe Customer is created only now — after the payment succeeded —
-			// so abandoned checkouts never leave orphan customers behind.
-			// Best-effort: a customer-create failure must not block an
-			// already-confirmed payment.
-			let stripeCustomerId = billingRow?.stripeCustomerId ?? null
-			if (!stripeCustomerId) {
-				try {
-					const customer = await stripe.customers.create({
-						...(billingRow?.invoiceEmail ? { email: billingRow.invoiceEmail } : {}),
-						metadata: { workspace_id: workspaceId },
-					})
-					stripeCustomerId = customer.id
-				} catch (err) {
-					logger.error('Stripe Customer create failed', { workspaceId, error: String(err) })
-				}
-			}
-
-			const activateValues = {
-				status: 'active' as const,
-				planId: billingRow?.planId ?? FLAT_PLAN.planId,
-				planLabel: billingRow?.planLabel ?? FLAT_PLAN.planLabel,
-				priceCents: billingRow?.priceCents ?? intent.amount,
-				currency: billingRow?.currency ?? intent.currency,
-				stripePriceId: billingRow?.stripePriceId ?? null,
-				stripeCustomerId,
-				invoiceEmail: invoiceEmail ?? billingRow?.invoiceEmail ?? null,
-				updatedAt: new Date(),
-			}
-			await db
-				.insert(billingTable)
-				.values({ workspaceId, ...activateValues })
-				.onConflictDoUpdate({
-					target: billingTable.workspaceId,
-					set: activateValues,
-				})
-
-			await db.insert(events).values({
-				workspaceId,
-				actorId,
-				action: 'updated',
-				entityType: 'billing',
-				entityId: workspaceId,
-				data: { status: 'active', paymentIntentId },
-			})
-		}
-
-		// Build the response from the post-write row so a racing duplicate reads
-		// the state the winner persisted (active plan, customer id, email).
-		const [currentRow] = await db
-			.select()
-			.from(billingTable)
-			.where(eq(billingTable.workspaceId, workspaceId))
-			.limit(1)
-
-		const invoiceRows = await db
-			.select()
-			.from(invoicesTable)
-			.where(eq(invoicesTable.workspaceId, workspaceId))
-			.orderBy(desc(invoicesTable.billedAt))
-
-		const plan = currentRow
-			? {
-					planId: currentRow.planId,
-					planLabel: currentRow.planLabel,
-					status: 'active' as const,
-					priceCents: currentRow.priceCents,
-					currency: currentRow.currency,
-					nextChargeAt: currentRow.nextChargeAt,
-				}
-			: FREE_PLAN
-
-		return c.json({
-			configured: true,
-			testMode: isTestMode(getPublishableKey()),
-			publishableKey: getPublishableKey(),
-			plan,
-			invoiceEmail: currentRow?.invoiceEmail ?? null,
-			invoices: serializeArray(invoiceRows),
-		})
-	}) as RouteHandler<typeof completeRoute, Env>)
-
-	// ── POST /portal ───────────────────────────────────────────────────────────
-	// Creates a Stripe Customer Portal session ("Manage on Stripe"). Requires a
-	// persisted Stripe Customer — created only after a successful payment — so
-	// workspaces that never paid (or a Stripe-unconfigured instance) get a clear
-	// 400 instead of a broken redirect.
-
-	const portalRoute = createRoute({
-		method: 'post',
-		path: '/portal',
-		tags: ['billing'],
-		summary: 'Open the Stripe Customer Portal',
-		request: {
-			headers: workspaceIdHeader,
-		},
-		responses: {
-			200: {
-				description: 'Portal session URL',
-				content: { 'application/json': { schema: portalResponseSchema } },
-			},
-			400: {
-				description: 'Stripe not configured or no Stripe customer yet',
-				content: { 'application/json': { schema: errorSchema } },
-			},
-			403: {
-				description: 'Not a workspace member',
-				content: { 'application/json': { schema: errorSchema } },
-			},
-		},
-	})
-
-	app.openapi(portalRoute, (async (c) => {
-		const db = c.get('db')
-		const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-
-		const stripe = stripeClient()
-		if (!stripe) {
-			return c.json(
-				createApiError('BAD_REQUEST', 'Stripe is not configured for this instance'),
-				400,
-			)
-		}
-
-		const [billingRow] = await db
-			.select()
-			.from(billingTable)
-			.where(eq(billingTable.workspaceId, workspaceId))
-			.limit(1)
-
-		if (!billingRow?.stripeCustomerId) {
-			return c.json(
-				createApiError('BAD_REQUEST', 'Manage on Stripe is available once your plan is active'),
-				400,
-			)
-		}
-
-		const returnUrl = `${process.env.FRONTEND_URL ?? 'http://localhost:5173'}/${workspaceId}/settings/billing`
-		let session: Awaited<ReturnType<StripeLike['billingPortal']['sessions']['create']>>
-		try {
-			session = await stripe.billingPortal.sessions.create({
-				customer: billingRow.stripeCustomerId,
-				return_url: returnUrl,
-			})
-		} catch (err) {
-			logger.error('Stripe portal session create failed', {
-				workspaceId,
-				error: String(err),
-			})
-			return c.json(
-				createApiError('INTERNAL_ERROR', 'Failed to open the Stripe portal. Please try again.'),
-				500,
-			)
-		}
-
-		return c.json({ url: session.url })
-	}) as RouteHandler<typeof portalRoute, Env>)
-
-	return app
-}
-
-export default createBillingApp()
+export default app

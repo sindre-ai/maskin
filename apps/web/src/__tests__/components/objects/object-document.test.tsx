@@ -33,10 +33,6 @@ vi.mock('@/hooks/use-objects', async () => {
 	}
 })
 
-vi.mock('@/components/objects/commitment-card', () => ({
-	CommitmentCard: () => <div data-testid="commitment-card" />,
-}))
-
 const baseProps = {
 	workspaceId: 'ws-1',
 	statuses: ['proposed', 'active', 'done'],
@@ -142,20 +138,6 @@ describe('ObjectDocumentView', () => {
 		expect(screen.queryByTestId('metadata-properties')).not.toBeInTheDocument()
 		expect(screen.queryByTestId('object-files')).not.toBeInTheDocument()
 		expect(screen.queryByTestId('linked-objects')).not.toBeInTheDocument()
-	})
-
-	describe('CommitmentCard wiring', () => {
-		it('renders CommitmentCard when type is commitment', () => {
-			const object = buildObjectResponse({ type: 'commitment', status: 'holding' })
-			render(<ObjectDocumentView {...baseProps} object={object} />)
-			expect(screen.getByTestId('commitment-card')).toBeInTheDocument()
-		})
-
-		it('does not render CommitmentCard for other types', () => {
-			const object = buildObjectResponse({ type: 'bet' })
-			render(<ObjectDocumentView {...baseProps} object={object} />)
-			expect(screen.queryByTestId('commitment-card')).not.toBeInTheDocument()
-		})
 	})
 
 	it('shows AgentWorkingBadge when activeSessionId present', () => {

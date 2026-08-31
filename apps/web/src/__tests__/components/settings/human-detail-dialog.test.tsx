@@ -7,6 +7,8 @@ const mockUseActor = vi.fn()
 const mockUseWorkspaceMembers = vi.fn()
 const mockUpdateActorMutate = vi.fn()
 const mockUpdateRoleMutateAsync = vi.fn().mockResolvedValue({})
+const mockRemoveMemberMutate = vi.fn()
+const mockRemoveMemberReset = vi.fn()
 
 vi.mock('@/hooks/use-actors', () => ({
 	useActor: (...args: unknown[]) => mockUseActor(...args),
@@ -18,6 +20,24 @@ vi.mock('@/hooks/use-workspaces', () => ({
 	useUpdateWorkspaceMemberRole: () => ({
 		mutateAsync: mockUpdateRoleMutateAsync,
 		isPending: false,
+	}),
+	// The dialog also owns the remove-member action; without this the module
+	// mock is missing an export the component imports and every test throws
+	// before rendering.
+	useRemoveWorkspaceMember: () => ({
+		mutate: mockRemoveMemberMutate,
+		reset: mockRemoveMemberReset,
+		isPending: false,
+		error: null,
+	}),
+}))
+
+// The dialog reads `workspace.billingOwnerId` to decide whether the role Select
+// is disabled. Default to a different actor so the Select stays enabled.
+vi.mock('@/lib/workspace-context', () => ({
+	useWorkspace: () => ({
+		workspaceId: 'ws-1',
+		workspace: { id: 'ws-1', name: 'Test Workspace', billingOwnerId: 'someone-else' },
 	}),
 }))
 
@@ -77,8 +97,21 @@ describe('HumanDetailDialog', () => {
 		renderDialog()
 
 		fireEvent.click(screen.getByRole('combobox', { name: /Role for Alice/i }))
-		fireEvent.click(await screen.findByRole('option', { name: 'owner' }))
+		fireEvent.click(await screen.findByRole('option', { name: 'admin' }))
 
 		expect(await screen.findByRole('alert')).toHaveTextContent('nope')
+	})
+
+	// Ownership moves through POST /{id}/transfer-ownership, which enforces the
+	// plan's ownership cap. The backend body schema is z.enum(['admin','member']),
+	// so offering `owner` here would be a guaranteed 400.
+	it('does not offer owner as a selectable role', async () => {
+		renderDialog()
+
+		fireEvent.click(screen.getByRole('combobox', { name: /Role for Alice/i }))
+
+		expect(await screen.findByRole('option', { name: 'admin' })).toBeInTheDocument()
+		expect(screen.getByRole('option', { name: 'member' })).toBeInTheDocument()
+		expect(screen.queryByRole('option', { name: 'owner' })).not.toBeInTheDocument()
 	})
 })

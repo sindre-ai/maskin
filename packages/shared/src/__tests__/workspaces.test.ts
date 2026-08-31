@@ -16,7 +16,6 @@ describe('workspaceSettingsSchema', () => {
 			bet: 'Bet',
 			task: 'Task',
 			loop: 'Loop',
-			commitment: 'Commitment',
 		})
 		expect(result.statuses.insight).toEqual([
 			'new',
@@ -28,7 +27,6 @@ describe('workspaceSettingsSchema', () => {
 		])
 		expect(result.statuses.bet).toEqual([
 			'signal',
-			'qualified',
 			'define',
 			'active',
 			'live',

@@ -1,39 +1,32 @@
 import { randomUUID } from 'node:crypto'
-import { buildActor, buildCreateWorkspaceBody, buildWorkspace } from '../factories'
+import { buildCreateWorkspaceBody, buildWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { createTestApp } from '../setup'
+import { createSessionTestApp, createTestApp } from '../setup'
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
 
-// Ordered actor names for the six default agents. Seed inserts run in this order:
-// workspaces → owner member → for each agent [actor insert, member insert].
-const DEFAULT_AGENT_NAMES = [
-	'Workspace Coach',
-	'Chief of Staff',
-	'Workspace Driver',
-	'Strategist',
-	'Insights Triage Agent',
-	'Research Agent',
-] as const
-
-function buildDefaultAgentSeedQueue(ws: ReturnType<typeof buildWorkspace>) {
-	const queue: unknown[][] = [
-		[ws], // workspaces insert
-		[{}], // owner workspaceMembers insert
-	]
-	for (const name of DEFAULT_AGENT_NAMES) {
-		queue.push([buildActor({ type: 'agent', name })]) // actor insert
-		queue.push([{}]) // workspaceMembers insert
-	}
-	return queue
-}
-
 describe('Workspaces Routes', () => {
 	describe('POST /api/workspaces', () => {
-		it('creates a workspace and seeds all 6 default agents, returning 201', async () => {
+		// Each of the 7 default agents does one actor insert + one
+		// workspaceMembers insert inside the create transaction (seedDefaultAgentActors);
+		// mockResults.insert is the static fallback once insertQueue is exhausted, so
+		// unconfigured agent/member inserts still resolve to a row with an id.
+		const defaultAgentInsertFallback = { id: randomUUID() }
+
+		it('creates a workspace and adds the creator as owner, returning 201', async () => {
 			const ws = buildWorkspace()
-			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
-			mockResults.insertQueue = buildDefaultAgentSeedQueue(ws)
+			const { app, mockResults, calls, sessionManager } = createSessionTestApp(
+				workspacesRoutes,
+				'/api/workspaces',
+			)
+			mockResults.insertQueue = [
+				[ws], // workspaces insert
+				[{}], // owner workspaceMembers insert
+			]
+			mockResults.insert = [defaultAgentInsertFallback]
+			// Chief of Staff's welcome session is kicked off fire-and-forget
+			// (.catch(), not awaited) right after the transaction commits.
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
 
 			const res = await app.request(
 				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
@@ -43,54 +36,35 @@ describe('Workspaces Routes', () => {
 			const body = await res.json()
 			expect(body.id).toBe(ws.id)
 			expect(body.name).toBe(ws.name)
+			// workspace + owner-member + 7 default agents × (actor + member) = 16.
+			expect(calls.inserts).toHaveLength(16)
+			expect(calls.inserts[1]).toMatchObject({ workspaceId: ws.id, role: 'owner' })
 		})
 
-		it('seeds every default agent with a generated apiKey and role member', async () => {
-			const ws = buildWorkspace()
-			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
-			mockResults.insertQueue = buildDefaultAgentSeedQueue(ws)
+		it('rejects a caller-supplied settings.billing with 400 and creates nothing', async () => {
+			// Regression: PATCH already refused `billing`, but POST accepted the
+			// full workspaceSettingsSchema and provisionWorkspace wrote it
+			// verbatim — so any actor (or any agent via MCP `create_workspace`)
+			// could self-grant `plan: 'team', status: 'active'` at creation time
+			// and take the seat cap, the ownership cap and an arbitrary
+			// Maskin-funded spend cap without paying Stripe.
+			const { app, calls } = createSessionTestApp(workspacesRoutes, '/api/workspaces')
 
 			const res = await app.request(
-				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
+				jsonRequest('POST', '/api/workspaces', {
+					...buildCreateWorkspaceBody(),
+					settings: {
+						billing: {
+							plan: 'team',
+							status: 'active',
+							hard_cap_usd_cents: 100_000_000,
+						},
+					},
+				}),
 			)
 
-			expect(res.status).toBe(201)
-			// inserts: [workspace, owner-member, agent1-actor, agent1-member, agent2-actor, ...]
-			// The 6 actor inserts are at indices 2, 4, 6, 8, 10, 12.
-			const actorInserts = [2, 4, 6, 8, 10, 12].map(
-				(i) => calls.inserts[i] as { apiKey?: string; type?: string; name?: string },
-			)
-			expect(actorInserts.map((a) => a.name)).toEqual([...DEFAULT_AGENT_NAMES])
-			for (const insert of actorInserts) {
-				expect(insert.type).toBe('agent')
-				expect(insert.apiKey).toMatch(/^ank_/)
-			}
-			// Member roles for the 6 default agents (at 3, 5, 7, 9, 11, 13).
-			const memberInserts = [3, 5, 7, 9, 11, 13].map((i) => calls.inserts[i] as { role?: string })
-			for (const insert of memberInserts) {
-				expect(insert.role).toBe('member')
-			}
-		})
-
-		it('sets default_agent_id to Chief of Staff when the caller does not specify one', async () => {
-			const ws = buildWorkspace()
-			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
-			const agentRows = DEFAULT_AGENT_NAMES.map((name) => buildActor({ type: 'agent', name }))
-			const queue: unknown[][] = [[ws], [{}]]
-			for (const row of agentRows) {
-				queue.push([row])
-				queue.push([{}])
-			}
-			mockResults.insertQueue = queue
-
-			const res = await app.request(
-				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
-			)
-
-			expect(res.status).toBe(201)
-			const body = await res.json()
-			const chief = agentRows.find((a) => a.name === 'Chief of Staff')
-			expect(body.settings.default_agent_id).toBe(chief?.id)
+			expect(res.status).toBe(400)
+			expect(calls.inserts).toHaveLength(0)
 		})
 
 		it('respects an explicit default_agent_id and does not overwrite it', async () => {
@@ -99,8 +73,13 @@ describe('Workspaces Routes', () => {
 			// doesn't reflect what was actually passed to .values()), so build it
 			// with the settings the route would have written for this request.
 			const ws = buildWorkspace({ settings: { default_agent_id: explicitAgentId } })
-			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
-			mockResults.insertQueue = buildDefaultAgentSeedQueue(ws)
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				workspacesRoutes,
+				'/api/workspaces',
+			)
+			mockResults.insertQueue = [[ws], [{}]]
+			mockResults.insert = [defaultAgentInsertFallback]
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
 
 			const res = await app.request(
 				jsonRequest('POST', '/api/workspaces', {
@@ -126,33 +105,6 @@ describe('Workspaces Routes', () => {
 			const body = await res.json()
 			expect(body.error.code).toBe('INTERNAL_ERROR')
 			expect(body.error.message).toContain('Failed to create workspace')
-		})
-
-		it('rolls back and returns 500 naming the failing agent when a seed insert fails', async () => {
-			const ws = buildWorkspace()
-			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
-			mockResults.insertQueue = [
-				[ws], // workspaces insert succeeds
-				[{}], // owner workspaceMembers insert succeeds
-				[], // first default-agent actor insert returns empty — triggers rollback
-			]
-
-			const res = await app.request(
-				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
-			)
-
-			expect(res.status).toBe(500)
-			const body = await res.json()
-			expect(body.error.code).toBe('INTERNAL_ERROR')
-			// The response names the failing agent and the underlying error class,
-			// not a generic "failed to create workspace" message.
-			expect(body.error.message).toContain('workspace_coach')
-			expect(body.error.details).toEqual(
-				expect.arrayContaining([
-					expect.objectContaining({ field: 'agent_id', message: 'workspace_coach' }),
-					expect.objectContaining({ field: 'error_class' }),
-				]),
-			)
 		})
 	})
 
@@ -221,6 +173,44 @@ describe('Workspaces Routes', () => {
 			expect(body.error.code).toBe('BAD_REQUEST')
 			expect(calls.updates).toHaveLength(0)
 		})
+
+		// Stripe owns settings.billing. Accepting it here would be a free paid
+		// plan: unlimited seats, unlimited owned workspaces, a paid spend cap.
+		it('returns 400 and does not touch the DB when settings.billing is present', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.update = [{ ...ws }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { billing: { plan: 'team', status: 'active' } },
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.code).toBe('BAD_REQUEST')
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('rejects settings.billing even when smuggled alongside a legitimate key', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.update = [{ ...ws }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					name: 'Renamed',
+					settings: {
+						max_concurrent_sessions: 5,
+						billing: { plan: 'team', status: 'active' },
+					},
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			expect(calls.updates).toHaveLength(0)
+		})
 	})
 
 	describe('PATCH /api/workspaces/admin/:id', () => {
@@ -271,6 +261,112 @@ describe('Workspaces Routes', () => {
 
 			expect(res.status).toBe(404)
 		})
+
+		// `enterprise_granted` is the entitlement that bypasses the plan cap, the
+		// paid-plan mutex and credit debiting. Every self-signed-up user owns
+		// their own workspace, so owner rights must NOT be enough to set it.
+		describe('enterprise_granted is ops-gated, not owner-gated', () => {
+			const OPS_ACTOR = '11111111-1111-4111-8111-111111111111'
+			const ORIGINAL_ENV = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+
+			// `delete`, not `= undefined`: assigning undefined to process.env
+			// stores the STRING "undefined", which would leave the allowlist
+			// non-empty and let the "no ops actor" cases pass for the wrong reason.
+			function setOpsAllowlist(value: string | undefined) {
+				if (value === undefined) {
+					// biome-ignore lint/performance/noDelete: required for correct env semantics
+					delete process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+				} else {
+					process.env.MASKIN_ENTERPRISE_ACTOR_IDS = value
+				}
+			}
+
+			afterEach(() => setOpsAllowlist(ORIGINAL_ENV))
+
+			it('returns 403 and writes nothing when a workspace owner self-grants it', async () => {
+				setOpsAllowlist(undefined)
+				const ws = buildWorkspace()
+				const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [
+					[ws], // workspace exists
+					[{ actorId: 'test-actor-id' }], // isWorkspaceOwner → caller IS the owner
+				]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { enterprise_granted: true }),
+				)
+
+				expect(res.status).toBe(403)
+				const body = await res.json()
+				expect(body.error.code).toBe('FORBIDDEN')
+				expect(calls.updates).toHaveLength(0)
+			})
+
+			it('returns 403 when an owner smuggles it alongside onboarding_enabled', async () => {
+				setOpsAllowlist(undefined)
+				const ws = buildWorkspace()
+				const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [[ws], [{ actorId: 'test-actor-id' }]]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, {
+						onboarding_enabled: true,
+						enterprise_granted: true,
+					}),
+				)
+
+				expect(res.status).toBe(403)
+				// The permitted half of the body must not land either.
+				expect(calls.updates).toHaveLength(0)
+			})
+
+			it('returns 403 when enterprise_granted is set to false by a non-ops owner', async () => {
+				setOpsAllowlist(undefined)
+				const ws = buildWorkspace()
+				const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [[ws], [{ actorId: 'test-actor-id' }]]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { enterprise_granted: false }),
+				)
+
+				expect(res.status).toBe(403)
+			})
+
+			it('allows an ops actor on the allowlist to grant it', async () => {
+				setOpsAllowlist(OPS_ACTOR)
+				const ws = buildWorkspace()
+				const updated = { ...ws, enterpriseGranted: true }
+				const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces', OPS_ACTOR)
+				mockResults.selectQueue = [
+					[ws], // workspace exists
+					[{ actorId: OPS_ACTOR }], // ops actor is also the owner here
+				]
+				mockResults.update = [updated]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { enterprise_granted: true }),
+				)
+
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body.enterprise).toBe(true)
+			})
+
+			it('still lets a plain owner flip onboarding_enabled', async () => {
+				setOpsAllowlist(undefined)
+				const ws = buildWorkspace()
+				const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [[ws], [{ actorId: 'test-actor-id' }]]
+				mockResults.update = [{ ...ws, onboardingEnabled: true }]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { onboarding_enabled: true }),
+				)
+
+				expect(res.status).toBe(200)
+			})
+		})
 	})
 
 	describe('POST /api/workspaces/:id/members', () => {
@@ -278,8 +374,12 @@ describe('Workspaces Routes', () => {
 			const wsId = randomUUID()
 			const actorId = randomUUID()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
-			// isWorkspaceMember(callerId, wsId) → one row (caller is a member)
-			mockResults.selectQueue = [[{ actorId: 'test-actor-id' }]]
+			mockResults.selectQueue = [
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)(callerId, wsId)
+				[{ type: 'human' }], // target actor type lookup
+				[{ id: wsId, settings: {} }], // workspace row locked FOR UPDATE (trial plan)
+				[{ n: 0 }], // countHumanMembers — 0 < trial cap 1
+			]
 			mockResults.insert = [{}]
 
 			const res = await app.request(
@@ -342,8 +442,9 @@ describe('Workspaces Routes', () => {
 			const actorId = randomUUID()
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.selectQueue = [
-				[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
-				[{ role: 'member' }], // existing member row lookup
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
+				[{ billingOwnerId: null }], // in-transaction workspace lock + billing-owner guard
+				[{ role: 'member' }], // in-transaction SELECT ... FOR UPDATE of the target
 			]
 			mockResults.update = [{ actorId, role: 'admin', joinedAt: new Date() }]
 			// After update, the route re-fetches the actor for name/type.
@@ -379,8 +480,9 @@ describe('Workspaces Routes', () => {
 			const actorId = randomUUID()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.selectQueue = [
-				[{ actorId: 'test-actor-id' }], // isWorkspaceMember
-				[], // existing member lookup — no row
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
+				[{ billingOwnerId: null }], // in-transaction SELECT ... FOR UPDATE of the workspace
+				[], // in-transaction SELECT ... FOR UPDATE of the target — no row
 			]
 
 			const res = await app.request(
@@ -395,8 +497,9 @@ describe('Workspaces Routes', () => {
 			const actorId = randomUUID()
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.selectQueue = [
-				[{ actorId: 'test-actor-id' }], // isWorkspaceMember
-				[{ role: 'owner' }], // existing member is the owner
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
+				[{ billingOwnerId: null }], // in-transaction workspace lock + billing-owner guard
+				[{ role: 'owner' }], // in-transaction SELECT ... FOR UPDATE of the target
 				[{ actorId }], // owner count = 1 → last owner guard trips
 			]
 
@@ -414,7 +517,7 @@ describe('Workspaces Routes', () => {
 			const wsId = randomUUID()
 			const selfId = randomUUID()
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces', selfId)
-			mockResults.select = [{ actorId: selfId }] // isWorkspaceMember passes
+			mockResults.select = [{ role: 'owner', type: 'human' }] // admin/owner gate passes
 
 			const res = await app.request(
 				jsonRequest('PATCH', `/api/workspaces/${wsId}/members/${selfId}`, { role: 'admin' }),
@@ -445,7 +548,7 @@ describe('Workspaces Routes', () => {
 			const actorId = randomUUID()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.selectQueue = [
-				[{ actorId: 'test-actor-id' }], // isWorkspaceMember
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
 				[{ role: 'member' }], // existing member row
 			]
 			mockResults.delete = [{ actorId }]
@@ -477,11 +580,17 @@ describe('Workspaces Routes', () => {
 			expect(res.status).toBe(403)
 		})
 
-		it('returns 400 when caller targets their own actorId', async () => {
+		// Unlike PATCH, self-targeting is allowed here — leaving a workspace is a
+		// member's own call, so the admin/owner gate is skipped for self-removal.
+		it('lets a member remove themselves without the admin/owner gate', async () => {
 			const wsId = randomUUID()
 			const selfId = randomUUID()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces', selfId)
-			mockResults.select = [{ actorId: selfId }] // isWorkspaceMember passes
+			mockResults.selectQueue = [
+				[{ billingOwnerId: randomUUID() }], // workspace row — someone else owns billing
+			]
+			mockResults.delete = [{ actorId: selfId }]
+			mockResults.insert = [{}]
 
 			const res = await app.request(
 				new Request(`http://localhost/api/workspaces/${wsId}/members/${selfId}`, {
@@ -489,19 +598,18 @@ describe('Workspaces Routes', () => {
 				}),
 			)
 
-			expect(res.status).toBe(400)
+			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body.error.code).toBe('BAD_REQUEST')
+			expect(body.removed).toBe(true)
 		})
 
-		it('returns 400 when removing the only owner', async () => {
+		it('returns 409 when removing the billing owner', async () => {
 			const wsId = randomUUID()
 			const actorId = randomUUID()
-			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.selectQueue = [
-				[{ actorId: 'test-actor-id' }], // isWorkspaceMember
-				[{ role: 'owner' }], // existing member is the owner
-				[{ actorId }], // owner count = 1
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
+				[{ billingOwnerId: actorId }], // target is the billing owner
 			]
 
 			const res = await app.request(
@@ -510,9 +618,11 @@ describe('Workspaces Routes', () => {
 				}),
 			)
 
-			expect(res.status).toBe(400)
+			expect(res.status).toBe(409)
 			const body = await res.json()
-			expect(body.error.code).toBe('BAD_REQUEST')
+			expect(body.error.code).toBe('CONFLICT')
+			// The guard trips before the delete, so no audit event is written.
+			expect(calls.inserts).toHaveLength(0)
 		})
 	})
 })

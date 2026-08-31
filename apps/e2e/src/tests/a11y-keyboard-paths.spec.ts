@@ -1,10 +1,33 @@
+import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { VIEWPORTS } from '../helpers/viewports'
+
+// The command palette's placeholder.
+const PALETTE_PLACEHOLDER = 'Run a command or jump to…'
 
 // Keyboard reachability + focus containment for the surfaces the bet's
 // accessibility criterion specifically calls out: interactive paths reachable
 // without a pointer, focus visible on every interactive element, and focus
 // correctly trapped in modals and the command palette.
+
+// Navigates to the workspace root and waits for the shell itself to be on
+// screen. `$workspaceId.tsx` renders a bare "Loading workspace..." placeholder
+// until useWorkspaces() resolves, so a fixed settle timeout races the CI dev
+// server's cold module transform: the tab walk below has no auto-waiting and
+// would step through 20 Tab presses against an empty document.
+//
+// `load` + this assertion, not `networkidle` — the open SSE connection to
+// /api/events means the network never goes idle (see a11y-routes.spec.ts).
+async function gotoWorkspaceShell(page: Page, workspaceId: string) {
+	await page.goto(`/${workspaceId}`)
+	await page.waitForLoadState('load')
+	// 10s, not the 5s default: this is the cold-start guard, not the assertion
+	// under test, and it is the first navigation in its shard — the CI dev
+	// server is still transforming modules on the first hit.
+	await expect(
+		page.locator('[data-sidebar="sidebar"]').getByRole('link', { name: 'For you' }),
+	).toBeVisible({ timeout: 10000 })
+}
 
 test.describe('keyboard-only interactive paths', () => {
 	test.use({
@@ -15,8 +38,7 @@ test.describe('keyboard-only interactive paths', () => {
 		page,
 		account,
 	}) => {
-		await page.goto(`/${account.workspaceId}`)
-		await page.waitForLoadState('networkidle')
+		await gotoWorkspaceShell(page, account.workspaceId)
 
 		// Walk a handful of Tab stops and confirm each one lands on a real
 		// focusable node with a rendered focus indicator. axe checks static
@@ -54,11 +76,10 @@ test.describe('keyboard-only interactive paths', () => {
 		page,
 		account,
 	}) => {
-		await page.goto(`/${account.workspaceId}`)
-		await page.waitForLoadState('networkidle')
+		await gotoWorkspaceShell(page, account.workspaceId)
 
 		await page.keyboard.press('ControlOrMeta+k')
-		const palette = page.getByPlaceholder('Search objects, navigate...')
+		const palette = page.getByPlaceholder(PALETTE_PLACEHOLDER)
 		await expect(palette).toBeVisible()
 		await expect(palette).toBeFocused()
 
@@ -76,11 +97,10 @@ test.describe('keyboard-only interactive paths', () => {
 		// button and the focused element will no longer be inside the palette
 		// tree. Owning fix goes on the app-shell bet; this spec fails if the
 		// containment ever regresses further.
-		await page.goto(`/${account.workspaceId}`)
-		await page.waitForLoadState('networkidle')
+		await gotoWorkspaceShell(page, account.workspaceId)
 
 		await page.keyboard.press('ControlOrMeta+k')
-		const palette = page.getByPlaceholder('Search objects, navigate...')
+		const palette = page.getByPlaceholder(PALETTE_PLACEHOLDER)
 		await expect(palette).toBeVisible()
 
 		for (let i = 0; i < 8; i++) {

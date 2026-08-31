@@ -8,6 +8,7 @@ interface FakeRecognition {
 	lang: string
 	start: () => void
 	stop: () => void
+	abort: () => void
 	onresult: ((event: unknown) => void) | null
 	onerror: (() => void) | null
 	onend: (() => void) | null
@@ -28,6 +29,7 @@ function installFakeSpeechRecognition() {
 		stop = vi.fn(() => {
 			this.onend?.()
 		})
+		abort = vi.fn()
 		constructor() {
 			instances.push(this)
 		}
@@ -47,9 +49,9 @@ describe('useDictation', () => {
 		expect(result.current.recording).toBe(false)
 	})
 
-	it('start() does nothing when unsupported', () => {
+	it('toggle() does nothing when unsupported', () => {
 		const { result } = renderHook(() => useDictation(vi.fn()))
-		act(() => result.current.start())
+		act(() => result.current.toggle())
 		expect(result.current.recording).toBe(false)
 	})
 
@@ -63,12 +65,12 @@ describe('useDictation', () => {
 		installFakeSpeechRecognition()
 		const { result } = renderHook(() => useDictation(vi.fn()))
 
-		act(() => result.current.start())
+		act(() => result.current.toggle())
 		expect(result.current.recording).toBe(true)
 		expect(instances[0].start).toHaveBeenCalled()
 		expect(instances[0].continuous).toBe(true)
 
-		act(() => result.current.stop())
+		act(() => result.current.toggle())
 		expect(result.current.recording).toBe(false)
 	})
 
@@ -86,7 +88,7 @@ describe('useDictation', () => {
 		installFakeSpeechRecognition()
 		const onTranscript = vi.fn()
 		const { result } = renderHook(() => useDictation(onTranscript))
-		act(() => result.current.start())
+		act(() => result.current.toggle())
 
 		act(() => {
 			instances[0].onresult?.({
@@ -108,7 +110,7 @@ describe('useDictation', () => {
 	it('leaves recording when the recogniser errors out', () => {
 		installFakeSpeechRecognition()
 		const { result } = renderHook(() => useDictation(vi.fn()))
-		act(() => result.current.start())
+		act(() => result.current.toggle())
 		act(() => instances[0].onerror?.())
 		expect(result.current.recording).toBe(false)
 	})

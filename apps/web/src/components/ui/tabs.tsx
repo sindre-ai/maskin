@@ -23,10 +23,14 @@ const TabsList = React.forwardRef<
 		<TabsPrimitive.List
 			ref={ref}
 			className={cn(
-				'inline-flex items-center justify-center text-muted-foreground',
+				'inline-flex items-center justify-center',
 				variant === 'segmented'
-					? 'gap-0.5 rounded-[9px] border border-border p-0.5'
-					: 'h-10 rounded-md bg-muted p-1',
+					? 'gap-0.5 rounded-[9px] border border-border p-0.5 text-muted-foreground'
+					: // `text-muted-foreground` (#71717a) on `bg-muted` (#f4f4f5) is 4.39:1 —
+						// just under WCAG AA. Inactive triggers sit on that muted surface, so
+						// the list's resting colour is a dimmed `foreground` instead. The
+						// segmented variant has no muted fill, so it keeps the muted token.
+						'h-10 rounded-md bg-muted p-1 text-foreground/70',
 				className,
 			)}
 			{...props}

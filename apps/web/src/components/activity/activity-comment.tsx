@@ -1,4 +1,5 @@
 import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
+import { ObjectReference } from '@/components/shared/object-reference'
 import { useActor, useActors } from '@/hooks/use-actors'
 import { useFiles } from '@/hooks/use-files'
 import type { ActorListItem, EventResponse, SessionResponse } from '@/lib/api'
@@ -21,6 +22,14 @@ const COMMENT_DISALLOWED_ELEMENTS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
 // Long agent comments are clamped so the timeline stays readable at a glance
 // (mockup 6261–6268): past 300 characters the bubble shows the first 230, cut
 // at a word boundary, behind a Show more / Show less toggle.
+/** Object ids the composer attached to the comment via `metadata.refs`. */
+function readReferencedObjectIds(event: EventResponse): string[] {
+	const metadata = event.data?.metadata as Record<string, unknown> | undefined
+	const refs = metadata?.refs
+	if (!Array.isArray(refs)) return []
+	return refs.filter((id): id is string => typeof id === 'string' && id.length > 0)
+}
+
 const CLAMP_OVER = 300
 const CLAMP_TO = 230
 
@@ -86,7 +95,13 @@ function CommentRow({
 	const { data: actor } = useActor(event.actorId)
 	const content = (event.data?.content as string) ?? ''
 	const attachmentFileIds = (event.data?.attachmentFileIds as string[] | undefined) ?? []
-	const { data: workspaceFiles } = useFiles(workspaceId)
+	// Scope the lookup to exactly the ids this comment references. An unfiltered
+	// useFiles(workspaceId) resolves against the 50 newest workspace files
+	// (apps/dev/src/routes/files.ts), so every attachment older than that window
+	// silently rendered as nothing at all.
+	const { data: attachedFiles, isPending: attachmentsPending } = useFiles(workspaceId, {
+		ids: attachmentFileIds,
+	})
 	const [humanDialogActorId, setHumanDialogActorId] = useState<string | null>(null)
 	const navigate = useNavigate()
 
@@ -103,6 +118,7 @@ function CommentRow({
 
 	const isAgent = actor?.type === 'agent'
 	const clampable = isBubble && content.length > CLAMP_OVER
+	const referencedObjectIds = readReferencedObjectIds(event)
 
 	const avatarClass = isBubble
 		? 'size-[30px] border-[3px] border-background text-[11px]'
@@ -167,7 +183,9 @@ function CommentRow({
 			<div
 				className={cn(
 					'relative flex items-start rounded-md transition-colors',
-					isBubble ? 'z-[1] gap-[11px] py-2.5' : '-mx-1 gap-2 px-1 py-1 hover:bg-secondary/50',
+					// Mockup 1281–1284: 24px avatar, 10px gutter, 2px of vertical air —
+					// the timeline is read as a stream, so rows sit close together.
+					isBubble ? 'z-[1] gap-2.5 py-0.5' : '-mx-1 gap-2 px-1 py-1 hover:bg-secondary/50',
 					isDecisionPoint && !isBubble && 'pl-3',
 				)}
 			>
@@ -189,59 +207,94 @@ function CommentRow({
 				<div
 					className={cn(
 						'flex-1 min-w-0',
-						isBubble && 'rounded-xl bg-muted/60 px-3.5 py-[11px] text-[13px] leading-[1.55]',
+						isBubble && 'rounded-[11px] bg-muted/60 px-2.5 py-1.5 text-[12.5px] leading-[1.5]',
 					)}
 				>
-					<div className={cn('flex items-baseline gap-2', isBubble && 'gap-[7px]')}>
-						<div
-							className={cn(
-								'min-w-0 flex items-baseline gap-1.5 flex-wrap',
-								isBubble ? 'shrink' : 'flex-1',
-							)}
-						>
+					{/* Bubbled, the name and time run inline with the message so a
+					    long history stays on one screen (mockup 1285). */}
+					{isBubble ? (
+						<>
 							{nameEl}
+							<RelativeTime
+								date={event.createdAt}
+								className="mx-1.5 font-mono text-[10px] tabular-nums text-border-strong"
+							/>
 							{isDecisionPoint && (
-								<span className="text-[10px] font-medium leading-none px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground">
+								<span className="mr-1.5 rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-medium leading-none text-accent-foreground">
 									Needs you
 								</span>
 							)}
-						</div>
-						<RelativeTime
-							date={event.createdAt}
-							className={cn(
-								'text-muted-foreground font-mono tabular-nums shrink-0',
-								isBubble ? 'text-[10px]' : 'w-14 text-right text-xs',
-							)}
-						/>
-					</div>
-					{clampable && !expanded ? (
-						// Clamped, the message is a plain excerpt so "Show more" can sit
-						// on the end of the sentence rather than under it (mockup 1006).
-						<p className="mt-1 text-[13px] leading-[1.55]">
-							{clampComment(content)}
-							{showMoreButton}
-						</p>
-					) : (
-						<>
-							<AgentOutput
-								content={content}
-								disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
-								mentionActors={actors}
-								onMentionClick={handleMentionClick}
-								size="sm"
-								className="mt-1"
-								renderVisuals
-							/>
-							{clampable && showMoreButton}
 						</>
+					) : (
+						<div className="flex items-baseline gap-2">
+							<div className="min-w-0 flex flex-1 items-baseline gap-1.5 flex-wrap">
+								{nameEl}
+								{isDecisionPoint && (
+									<span className="text-[10px] font-medium leading-none px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground">
+										Needs you
+									</span>
+								)}
+							</div>
+							<RelativeTime
+								date={event.createdAt}
+								className="text-muted-foreground font-mono tabular-nums shrink-0 w-14 text-right text-xs"
+							/>
+						</div>
 					)}
+					{/* Clamped or whole, the message renders through the same markdown
+					    path — an excerpt is still markdown, and rendering it raw showed
+					    literal `**`, `- ` and link syntax on the most common row of the
+					    timeline. Clamped, it stays inline so "Show more" can sit on the
+					    end of the sentence rather than under it (mockup 1285–1286). */}
+					<>
+						<AgentOutput
+							content={clampable && !expanded ? clampComment(content) : content}
+							disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
+							mentionActors={actors}
+							onMentionClick={handleMentionClick}
+							size="sm"
+							className={cn(
+								isBubble || (clampable && !expanded)
+									? 'inline [&_p:first-child]:inline [&_p]:my-0'
+									: 'mt-1',
+							)}
+							renderVisuals
+						/>
+						{clampable && showMoreButton}
+					</>
+
 					{footer && <div>{footer}</div>}
+					{/* Objects the author attached from the composer, as real
+					    references (mockup `refList`). */}
+					{referencedObjectIds.length > 0 && (
+						<div className="mt-2 flex flex-wrap gap-1.5">
+							{referencedObjectIds.map((refId) => (
+								<ObjectReference
+									key={refId}
+									objectId={refId}
+									workspaceId={workspaceId}
+									variant="inline"
+									className="text-xs"
+								/>
+							))}
+						</div>
+					)}
 					{hasTaskList(event) && <CommentTaskList event={event} workspaceId={workspaceId} />}
 					{attachmentFileIds.length > 0 && (
 						<ul className="mt-1.5 space-y-1">
 							{attachmentFileIds.map((fileId) => {
-								const file = workspaceFiles?.find((f) => f.id === fileId)
-								if (!file) return null
+								const file = attachedFiles?.find((f) => f.id === fileId)
+								// Still loading: render nothing rather than flash "unavailable".
+								if (!file) {
+									if (attachmentsPending) return null
+									// Resolved and absent — the file was deleted or is not visible
+									// to this actor. Say so instead of dropping the attachment.
+									return (
+										<li key={fileId} className="text-muted-foreground text-xs italic">
+											Attachment unavailable
+										</li>
+									)
+								}
 								return (
 									<li key={fileId}>
 										<AttachedFileCard workspaceId={workspaceId} file={file} />

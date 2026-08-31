@@ -28,6 +28,8 @@ function buildUsage(overrides: Partial<WorkspaceModelUsage> = {}): WorkspaceMode
 	return {
 		isLoading: false,
 		hasUsage: true,
+		failedAgentCount: 0,
+		isError: false,
 		totalCostUsd: 12.5,
 		totalSessions: 6,
 		rows: [
@@ -76,6 +78,37 @@ describe('BillingUsageSummary', () => {
 		expect(screen.getByText('No model usage recorded this month yet.')).toBeInTheDocument()
 		expect(screen.queryByText('$0.00')).not.toBeInTheDocument()
 	})
+
+	// A failed usage query contributes 0, so the total silently under-reports the
+	// bill. The figure may still be shown, but never as if it were complete.
+	it('warns that the total is partial when some agents failed to load', () => {
+		render(<BillingUsageSummary usage={buildUsage({ failedAgentCount: 2 })} />)
+
+		expect(screen.getByText('$12.50')).toBeInTheDocument()
+		expect(screen.getByRole('status')).toHaveTextContent(
+			"Couldn't load usage for 2 agents — the figures below are incomplete.",
+		)
+	})
+
+	it('shows no total at all when every usage query failed', () => {
+		render(
+			<BillingUsageSummary
+				usage={buildUsage({
+					isError: true,
+					failedAgentCount: 2,
+					hasUsage: false,
+					totalCostUsd: 0,
+					totalSessions: 0,
+					rows: [],
+				})}
+			/>,
+		)
+
+		expect(screen.getByText('Model usage is unavailable right now.')).toBeInTheDocument()
+		expect(screen.queryByText('$0.00')).not.toBeInTheDocument()
+		// The load failure must not be reported as an absence of usage.
+		expect(screen.queryByText('No model usage recorded this month yet.')).not.toBeInTheDocument()
+	})
 })
 
 describe('BillingUsageDetails', () => {
@@ -107,6 +140,29 @@ describe('BillingUsageDetails', () => {
 		await user.click(screen.getByRole('button', { name: /Usage details/ }))
 
 		expect(screen.getByText(/No agent has finished a session this month/)).toBeInTheDocument()
+	})
+
+	it('distinguishes a load failure from an absence of usage', async () => {
+		const user = userEvent.setup()
+		render(
+			<BillingUsageDetails
+				usage={buildUsage({
+					isError: true,
+					failedAgentCount: 2,
+					hasUsage: false,
+					totalCostUsd: 0,
+					totalSessions: 0,
+					rows: [],
+				})}
+			/>,
+		)
+
+		await user.click(screen.getByRole('button', { name: /Usage details/ }))
+
+		expect(
+			screen.getByText(/This is a loading failure, not an absence of usage/),
+		).toBeInTheDocument()
+		expect(screen.queryByText(/No agent has finished a session this month/)).not.toBeInTheDocument()
 	})
 })
 

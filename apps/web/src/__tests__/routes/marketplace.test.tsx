@@ -49,6 +49,9 @@ const COUNTS = {
 describe('MarketplacePage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		// The v2 catalogue sits behind `new-design`; drive the flag on through
+		// the test-only localStorage override.
+		localStorage.setItem('ff:new-design', 'on')
 		mockUseQueries.mockReturnValue([])
 		mockUseMarketplaceLoops.mockReturnValue({
 			data: { loops: [], counts: COUNTS },

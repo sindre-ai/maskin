@@ -1,6 +1,8 @@
 import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
+import { LegacyMembersPage } from '@/components/settings/legacy/members-page'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
+import { FormError } from '@/components/shared/form-error'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
@@ -26,13 +28,15 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	useAddWorkspaceMember,
 	useRemoveWorkspaceMember,
 	useUpdateWorkspaceMemberRole,
 	useWorkspaceMembers,
 } from '@/hooks/use-workspaces'
-import type { MemberResponse } from '@/lib/api'
+import { ApiError, type MemberResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Bot, Plus, Trash2, UserPlus } from 'lucide-react'
@@ -43,9 +47,12 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/members')({
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-const ROLE_OPTIONS = ['owner', 'admin', 'member'] as const
+// Deliberately excludes 'owner'. The backend body schema is
+// z.enum(['admin','member']) — ownership is claimed through
+// POST /{id}/transfer-ownership, which enforces the plan's ownership cap.
+const ROLE_OPTIONS = ['admin', 'member'] as const
 
-function MembersPage() {
+function MembersPageV2() {
 	const { workspaceId } = useWorkspace()
 	const { data: members, isLoading } = useWorkspaceMembers(workspaceId)
 	const addMember = useAddWorkspaceMember(workspaceId)
@@ -71,7 +78,13 @@ function MembersPage() {
 			setNewMemberRole('member')
 			setShowAddDialog(false)
 		} catch (err) {
-			setAddError(err instanceof Error ? err.message : 'Failed to add member')
+			setAddError(
+				err instanceof ApiError && err.code === 'SEAT_CAP_EXCEEDED'
+					? "This workspace has reached its plan's member limit. Upgrade to add more."
+					: err instanceof Error
+						? err.message
+						: 'Failed to add member',
+			)
 		}
 	}
 
@@ -147,63 +160,79 @@ function MembersPage() {
 				/>
 			) : (
 				<div className="flex flex-col">
-					{members.map((member) => (
-						<div
-							key={member.actorId}
-							className="flex items-center gap-3 rounded-lg border-b border-border px-2 py-2.5 transition-colors hover:bg-muted"
-						>
-							<button
-								type="button"
-								className="flex min-w-0 flex-1 items-center gap-3 text-left"
-								onClick={() => {
-									if (member.type === 'agent') {
-										navigate({
-											to: '/$workspaceId/agents/$agentId',
-											params: { workspaceId, agentId: member.actorId },
-										})
-									} else {
-										setActiveHumanId(member.actorId)
-									}
-								}}
+					{members.map((member) => {
+						const isOwner = member.role === 'owner'
+						return (
+							<div
+								key={member.actorId}
+								className="flex items-center gap-3 rounded-lg border-b border-border px-2 py-2.5 transition-colors hover:bg-muted"
 							>
-								<ActorAvatar name={member.name} type={member.type} size="md" />
-								<span className="min-w-0 flex-1">
-									<span className="block truncate text-sm font-medium">{member.name}</span>
-									<span className="block truncate text-xs capitalize text-muted-foreground">
-										{member.type}
+								<button
+									type="button"
+									className="flex min-w-0 flex-1 items-center gap-3 text-left"
+									onClick={() => {
+										if (member.type === 'agent') {
+											navigate({
+												to: '/$workspaceId/agents/$agentId',
+												params: { workspaceId, agentId: member.actorId },
+											})
+										} else {
+											setActiveHumanId(member.actorId)
+										}
+									}}
+								>
+									<ActorAvatar name={member.name} type={member.type} size="md" />
+									<span className="min-w-0 flex-1">
+										<span className="block truncate text-sm font-medium">{member.name}</span>
+										<span className="block truncate text-xs capitalize text-muted-foreground">
+											{member.type}
+										</span>
 									</span>
-								</span>
-							</button>
-							<Select
-								value={member.role}
-								onValueChange={(value) => handleRoleChange(member, value)}
-								disabled={updateRole.isPending}
-							>
-								<SelectTrigger className="w-28 shrink-0" aria-label={`Role for ${member.name}`}>
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									{ROLE_OPTIONS.map((role) => (
-										<SelectItem key={role} value={role}>
-											{role}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-							<Button
-								variant="ghost"
-								size="icon"
-								className="shrink-0"
-								aria-label={`Remove ${member.name}`}
-								onClick={() => {
-									setRemoveError(null)
-									setPendingRemoval(member)
-								}}
-							>
-								<Trash2 size={14} />
-							</Button>
-						</div>
-					))}
+								</button>
+								{isOwner ? (
+									// The owner's role is not editable here, and `ROLE_OPTIONS` deliberately
+									// excludes 'owner', so a Select would render a blank trigger with no
+									// matching item. Both mutations are backend-400s for this row anyway
+									// (role change wants transfer-ownership; removal wants the billing
+									// owner moved first), so render the role and drop the remove control
+									// rather than offer two buttons that can only fail.
+									<span className="w-28 shrink-0 px-3 text-xs text-muted-foreground">
+										{member.role}
+									</span>
+								) : (
+									<Select
+										value={member.role}
+										onValueChange={(value) => handleRoleChange(member, value)}
+										disabled={updateRole.isPending}
+									>
+										<SelectTrigger className="w-28 shrink-0" aria-label={`Role for ${member.name}`}>
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											{ROLE_OPTIONS.map((role) => (
+												<SelectItem key={role} value={role}>
+													{role}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								)}
+								<Button
+									variant="ghost"
+									size="icon"
+									className={cn('shrink-0', isOwner && 'invisible')}
+									aria-label={`Remove ${member.name}`}
+									disabled={isOwner}
+									onClick={() => {
+										setRemoveError(null)
+										setPendingRemoval(member)
+									}}
+								>
+									<Trash2 size={14} />
+								</Button>
+							</div>
+						)
+					})}
 				</div>
 			)}
 
@@ -242,11 +271,7 @@ function MembersPage() {
 								))}
 							</SelectContent>
 						</Select>
-						{addError && (
-							<p className="text-sm text-error" role="alert">
-								{addError}
-							</p>
-						)}
+						{addError && <FormError error={addError} />}
 						<DialogFooter>
 							<Button type="button" variant="ghost" onClick={() => setShowAddDialog(false)}>
 								Cancel
@@ -308,4 +333,9 @@ function MembersPage() {
 			)}
 		</div>
 	)
+}
+
+// `new-design` boundary for Settings → Members.
+function MembersPage() {
+	return useFeatureFlag('new-design') ? <MembersPageV2 /> : <LegacyMembersPage />
 }

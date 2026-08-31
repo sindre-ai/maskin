@@ -32,6 +32,8 @@ function buildConversation(
 		archived: false,
 		unread_count: 0,
 		snippet: 'Still open on three accounts.',
+		snippet_actor_id: null,
+		snippet_actor_name: null,
 		participants: [],
 		...overrides,
 	}
@@ -42,7 +44,7 @@ describe('ConversationList', () => {
 		vi.mocked(api.conversations.list).mockReset()
 	})
 
-	it('renders the group rail and the end-of-history line when there is no next page', async () => {
+	it('renders the group rail and ends the list silently when there is no next page', async () => {
 		vi.mocked(api.conversations.list).mockResolvedValue({
 			conversations: [buildConversation({ id: 'a', title: 'Billing retries' })],
 			has_more: false,
@@ -50,12 +52,12 @@ describe('ConversationList', () => {
 		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
 
 		expect(await screen.findByText('Today')).toBeInTheDocument()
-		expect(
-			screen.getByText(/That's the whole history — 1 conversation in this workspace\./),
-		).toBeInTheDocument()
+		// The last row is the end of the list — no running-total footer under it.
+		expect(screen.queryByText(/whole history/)).not.toBeInTheDocument()
+		expect(screen.queryByText(/Older conversations load as you scroll/)).not.toBeInTheDocument()
 	})
 
-	it('does not claim the whole history is loaded while another page is pending', async () => {
+	it('advertises the scroll affordance only while another page is pending', async () => {
 		vi.mocked(api.conversations.list).mockResolvedValue({
 			conversations: [buildConversation({ id: 'a' })],
 			has_more: true,
@@ -65,7 +67,6 @@ describe('ConversationList', () => {
 		// The sentinel only claims to be loading while a page is actually in
 		// flight; idle it advertises the scroll affordance (mockup 545–549).
 		expect(await screen.findByText(/Older conversations load as you scroll/)).toBeInTheDocument()
-		expect(screen.queryByText(/That's the whole history/)).not.toBeInTheDocument()
 	})
 
 	it('shows the archived-specific empty copy when the archived filter matches nothing', async () => {
@@ -121,5 +122,23 @@ describe('ConversationList', () => {
 
 		expect(await screen.findByText('Archived')).toBeInTheDocument()
 		expect(screen.queryByText('Pinned')).not.toBeInTheDocument()
+	})
+
+	it('shows a retryable error rather than the empty state when the fetch fails', async () => {
+		// A failed fetch used to collapse into `[]` and render "No conversations
+		// here — start a chat", which reads as an empty account and invites the
+		// reader to duplicate a thread they already have.
+		vi.mocked(api.conversations.list).mockRejectedValue(new Error('network down'))
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText("Couldn't load your conversations")).toBeInTheDocument()
+		expect(screen.queryByText('No conversations here')).not.toBeInTheDocument()
+
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [buildConversation({ id: 'a', title: 'Billing retries' })],
+			has_more: false,
+		})
+		screen.getByRole('button', { name: /Try again/ }).click()
+		expect(await screen.findByText('Billing retries')).toBeInTheDocument()
 	})
 })

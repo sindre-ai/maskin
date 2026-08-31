@@ -101,6 +101,71 @@ describe('QueryState', () => {
 		)
 		expect(container.querySelector('.animate-pulse')).toBeTruthy()
 	})
+	it('keeps cached content and warns when a refetch fails', async () => {
+		// A background refetch / SSE invalidation / reconnect failure must never
+		// render a stale snapshot as if it were fresh.
+		const refetch = vi.fn()
+		const user = userEvent.setup()
+		render(
+			<QueryState
+				query={{
+					data: ['a', 'b'],
+					isLoading: false,
+					isError: true,
+					error: new Error('refetch boom'),
+					refetch,
+				}}
+			>
+				{(data: unknown[]) => <div data-testid="ready">{data.length}</div>}
+			</QueryState>,
+		)
+		expect(screen.getByTestId('ready')).toHaveTextContent('2')
+		expect(screen.getByRole('status')).toHaveTextContent(/couldn.t refresh/i)
+		await user.click(screen.getByRole('button', { name: /try again/i }))
+		expect(refetch).toHaveBeenCalledOnce()
+	})
+
+	it('shows no stale notice when the query is healthy', () => {
+		render(
+			<QueryState query={{ data: ['a'], isLoading: false, isError: false }}>
+				{(data: unknown[]) => <div data-testid="ready">{data.length}</div>}
+			</QueryState>,
+		)
+		expect(screen.queryByRole('status')).not.toBeInTheDocument()
+	})
+
+	it('resolves a settled-undefined query to the empty state, not an endless skeleton', () => {
+		const { container } = render(
+			<QueryState query={{ data: undefined, isLoading: false, isError: false }}>
+				{() => <div>Ready</div>}
+			</QueryState>,
+		)
+		expect(container.querySelector('.animate-pulse')).toBeNull()
+		expect(screen.getByText('Not found')).toBeInTheDocument()
+	})
+
+	it('prefers the caller empty node for a settled-undefined query', () => {
+		render(
+			<QueryState
+				query={{ data: undefined, isLoading: false, isError: false }}
+				empty={<EmptyState title="No widgets" />}
+			>
+				{() => <div>Ready</div>}
+			</QueryState>,
+		)
+		expect(screen.getByText('No widgets')).toBeInTheDocument()
+	})
+
+	it('keeps the skeleton for a disabled query that has not fetched yet', () => {
+		const { container } = render(
+			<QueryState
+				query={{ data: undefined, isLoading: false, isError: false, fetchStatus: 'fetching' }}
+			>
+				{() => <div>Ready</div>}
+			</QueryState>,
+		)
+		expect(container.querySelector('.animate-pulse')).toBeTruthy()
+	})
 })
 
 describe('QueryStateError', () => {

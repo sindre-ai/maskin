@@ -11,7 +11,7 @@ test.describe('Loop detail page', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Customer feedback loop',
-				status: 'running',
+				status: 'learning',
 				content: 'Every customer who gives feedback hears back within 30 days',
 			})
 			const trigger = await account.api.createTrigger(account.workspaceId, {
@@ -80,13 +80,21 @@ test.describe('Loop detail page', () => {
 			await expect(page.getByRole('heading', { name: 'Changes' })).toBeVisible()
 			await expect(page.getByRole('button', { name: /undo/i }).first()).toBeVisible()
 
-			// The composer is the last thing in the reader column and sticks to
-			// the bottom — it sits below the Changes section, not above the story.
+			// The composer is the last thing in the reader column — it sits below
+			// the Changes section, not above the story. Compare document order
+			// rather than bounding boxes: the composer is `sticky bottom-0`, so
+			// while Changes is below the fold its pinned y is the smaller number
+			// at every viewport where the page scrolls.
 			const composer = page.getByPlaceholder('Listening — speak in plain words')
-			const changesBox = await page.getByRole('heading', { name: 'Changes' }).boundingBox()
-			const composerBox = await composer.boundingBox()
-			if (!changesBox || !composerBox) throw new Error('missing bounding boxes')
-			expect(composerBox.y).toBeGreaterThan(changesBox.y)
+			const composerFollowsChanges = await composer.evaluate((node, changesText) => {
+				const changes = [...document.querySelectorAll('h1, h2, h3, h4, h5, h6')].find(
+					(heading) => heading.textContent?.trim() === changesText,
+				)
+				if (!changes) throw new Error('missing Changes heading')
+				// DOCUMENT_POSITION_FOLLOWING — the composer comes after it.
+				return Boolean(changes.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)
+			}, 'Changes')
+			expect(composerFollowsChanges).toBe(true)
 
 			// A step row is the only route into a loop-owned trigger now that
 			// /triggers redirects.
@@ -107,7 +115,7 @@ test.describe('Loop detail page', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Brand new loop',
-				status: 'running',
+				status: 'learning',
 			})
 			const trigger = await account.api.createTrigger(account.workspaceId, {
 				name: 'Nightly sweep',
@@ -140,7 +148,7 @@ test.describe('Loop detail page', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Feedback loop',
-			status: 'running',
+			status: 'learning',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
@@ -167,13 +175,15 @@ test.describe('Loop detail page', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Billing reliability loop',
-			status: 'running',
+			status: 'learning',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
-		await expect(page.getByTestId('loop-pill')).toHaveText('Running', { timeout: 10000 })
+		await expect(page.getByTestId('loop-pill')).toHaveText('Learning', { timeout: 10000 })
 
-		await page.getByRole('button', { name: 'More' }).click()
+		// Exact — the v2 header's split New button adds a "More ways to start"
+		// control, which a substring match would also pick up.
+		await page.getByRole('button', { name: 'More', exact: true }).click()
 		await page.getByRole('menuitem', { name: 'Pause loop' }).click()
 
 		await expect(page.getByTestId('loop-pill')).toHaveText('Paused', { timeout: 10000 })
@@ -188,7 +198,7 @@ test.describe('Loop detail page', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Churn early-warning loop',
-			status: 'running',
+			status: 'learning',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops`)

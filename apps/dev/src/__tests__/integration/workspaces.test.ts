@@ -1,10 +1,40 @@
 import { randomUUID } from 'node:crypto'
-import { generateApiKey } from '@maskin/auth'
-import { actors, workspaceMembers, workspaces as workspacesTable } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
-import { insertActor } from '../factories'
+import { OpenAPIHono } from '@hono/zod-openapi'
+import type { Database } from '@maskin/db'
+import {
+	events,
+	actors,
+	agentSkills,
+	objects,
+	triggers,
+	workspaceMembers,
+	workspaceSkills,
+	workspaces as workspacesTable,
+} from '@maskin/db/schema'
+import type { PgNotifyBridge } from '@maskin/realtime'
+import type { StorageProvider } from '@maskin/storage'
+import { and, eq } from 'drizzle-orm'
+import { createApiError, formatZodError } from '../../lib/errors'
+import { insertActor, setWorkspacePlan } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { createIntegrationApp, db, getTestActorId } from './global-setup'
+import { db, getTestActorId } from './global-setup'
+
+// POST /api/workspaces kicks off the Chief of Staff welcome session
+// fire-and-forget (.catch(), not awaited) right after the create transaction
+// commits, so the route needs a sessionManager in context even though these
+// tests don't assert on session creation itself. It also needs an agentStorage:
+// provisionWorkspace() skips skills, triggers and loops entirely when that is
+// absent, which would leave the route's own post-commit phase untested.
+type Env = {
+	Variables: {
+		db: Database
+		actorId: string
+		actorType: string
+		notifyBridge: PgNotifyBridge
+		sessionManager: { createSession: (...args: unknown[]) => Promise<unknown> }
+		agentStorage: InstanceType<typeof AgentStorageManager>
+	}
+}
 
 // PostHog is invoked as `void capturePosthogEvent(...)` from the create route.
 // Spy on the module so we can assert emit-once on success and no-emit on
@@ -16,41 +46,118 @@ vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: capturePosthogEventMock,
 }))
 
-// Wrap seedDefaultAgentActors so specific tests can inject a partial-success
-// failure (agents 1-3 written, agent 4 throws) without touching the real
-// production seed for the happy-path tests. The default implementation is the
-// real function — only failure tests use `mockImplementationOnce`.
-const { seedDefaultAgentActorsMock } = vi.hoisted(() => ({
-	seedDefaultAgentActorsMock: vi.fn(),
-}))
-vi.mock('../../services/workspace-bootstrap', async () => {
-	const actual = await vi.importActual<typeof import('../../services/workspace-bootstrap')>(
-		'../../services/workspace-bootstrap',
-	)
-	seedDefaultAgentActorsMock.mockImplementation(
-		(...args: Parameters<typeof actual.seedDefaultAgentActors>) =>
-			actual.seedDefaultAgentActors(...args),
-	)
-	return {
-		...actual,
-		seedDefaultAgentActors: seedDefaultAgentActorsMock,
-	}
+// Failure injection for the partial-seed rollback test. provisionWorkspace()
+// calls seedDefaultAgentActors() module-internally, so mocking that export
+// wouldn't intercept it — instead we mock the `@maskin/auth` boundary it really
+// crosses and make one generateApiKey() call throw. That runs the *real* seed
+// code, so the test covers production rollback behaviour rather than a
+// hand-rolled stand-in. Defaults to the genuine implementation; only the
+// rollback test arms a failure via mockImplementationOnce.
+const { generateApiKeyMock } = vi.hoisted(() => ({ generateApiKeyMock: vi.fn() }))
+vi.mock('@maskin/auth', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@maskin/auth')>()
+	generateApiKeyMock.mockImplementation(actual.generateApiKey)
+	return { ...actual, generateApiKey: generateApiKeyMock }
 })
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
-const { SeedAgentError } = await import('../../services/workspace-bootstrap')
+const { bootstrapDefaultAgents } = await import('../../services/workspace-bootstrap')
+const { AgentStorageManager } = await import('../../services/agent-storage')
+
+function createMemoryStorage(): StorageProvider {
+	const store = new Map<string, Buffer>()
+	return {
+		async put(key, data) {
+			store.set(key, Buffer.isBuffer(data) ? data : Buffer.from(data as Uint8Array))
+		},
+		async get(key) {
+			const buf = store.get(key)
+			if (!buf) throw new Error(`Not found: ${key}`)
+			return buf
+		},
+		async list(prefix) {
+			return [...store.keys()].filter((k) => k.startsWith(prefix))
+		},
+		async listWithMetadata(prefix) {
+			return [...store.entries()]
+				.filter(([k]) => k.startsWith(prefix))
+				.map(([key, buf]) => ({ key, size: buf.length }))
+		},
+		async delete(key) {
+			store.delete(key)
+		},
+		async exists(key) {
+			return store.has(key)
+		},
+		async ensureBucket() {
+			// no-op
+		},
+	}
+}
 
 const DEFAULT_AGENT_NAMES = [
 	'Workspace Coach',
 	'Chief of Staff',
-	'Workspace Driver',
+	'Driver',
 	'Strategist',
-	'Insights Triage Agent',
-	'Research Agent',
+	'Signal Analyst',
+	'Researcher',
+	'Knowledge Curator',
 ]
 
-function createApp() {
-	return createIntegrationApp({ path: '/api/workspaces', module: workspacesRoutes })
+function createApp(agentStorage = new AgentStorageManager(createMemoryStorage(), db)) {
+	const app = new OpenAPIHono<Env>({
+		defaultHook: (result, c) => {
+			if (!result.success) {
+				return c.json(
+					createApiError(
+						'VALIDATION_ERROR',
+						'Request validation failed',
+						formatZodError(result.error),
+					),
+					400,
+				)
+			}
+			return undefined
+		},
+	})
+
+	app.use('*', async (c, next) => {
+		c.set('db', db)
+		c.set('actorId', getTestActorId())
+		c.set('actorType', 'human')
+		c.set('notifyBridge', {} as PgNotifyBridge)
+		c.set('sessionManager', { createSession: vi.fn().mockResolvedValue({}) })
+		c.set('agentStorage', agentStorage)
+		await next()
+	})
+
+	app.route('/api/workspaces', workspacesRoutes)
+	return app
+}
+
+/**
+ * Flips the `enterprise_granted` ops grant via the real admin route.
+ *
+ * The allowlist is scoped to just this call rather than the whole test: an
+ * actor in MASKIN_ENTERPRISE_ACTOR_IDS is enterprise-entitled outright, so leaving
+ * it set would make every later assertion pass through the allowlist and never
+ * touch the per-workspace grant these tests are about.
+ */
+async function grantEnterpriseAsOps(
+	app: ReturnType<typeof createApp>,
+	workspaceId: string,
+): Promise<Response> {
+	const prev = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+	process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
+	try {
+		return await app.request(
+			jsonRequest('PATCH', `/api/workspaces/admin/${workspaceId}`, { enterprise_granted: true }),
+		)
+	} finally {
+		// '' parses to an empty allowlist, same as unset.
+		process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
+	}
 }
 
 async function agentNamesFor(workspaceId: string): Promise<string[]> {
@@ -106,7 +213,7 @@ describe('Workspaces Integration', () => {
 			expect(body.settings.enabled_modules).toEqual(['work', 'knowledge', 'crm'])
 
 			// The row that actually landed in Postgres carries each enabled
-			// module's own defaults, so the Articles/Contacts/Companies tabs have
+			// module's own defaults, so the Knowledge/People/Companies tabs have
 			// statuses and display names behind them from the first render.
 			const [row] = await db
 				.select({ settings: workspacesTable.settings })
@@ -121,8 +228,8 @@ describe('Workspaces Integration', () => {
 			}
 			expect(settings.enabled_modules).toEqual(['work', 'knowledge', 'crm'])
 			expect(settings.display_names).toMatchObject({
-				knowledge: 'Article',
-				contact: 'Contact',
+				knowledge: 'Knowledge',
+				contact: 'Person',
 				company: 'Company',
 			})
 			expect(settings.statuses.knowledge).toEqual(['draft', 'validated', 'deprecated'])
@@ -153,9 +260,15 @@ describe('Workspaces Integration', () => {
 		it('lists workspaces for the current actor', async () => {
 			const app = createApp()
 
-			// Create two workspaces
-			await app.request(jsonRequest('POST', '/api/workspaces', { name: 'WS 1' }))
-			await app.request(jsonRequest('POST', '/api/workspaces', { name: 'WS 2' }))
+			// A trial-tier actor may only own one workspace (see
+			// workspace-capacity.test.ts) — raise the first to pro before creating
+			// a second, so this test exercises listing rather than the ownership
+			// cap. Seeded on the row because the API refuses `settings.billing`.
+			const first = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'WS 1' }))
+			const ws1 = await first.json()
+			await setWorkspacePlan(db, ws1.id, 'pro')
+			const second = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'WS 2' }))
+			expect(second.status).toBe(201)
 
 			const res = await app.request(jsonGet('/api/workspaces'))
 			expect(res.status).toBe(200)
@@ -209,6 +322,11 @@ describe('Workspaces Integration', () => {
 			)
 			const ws = await createRes.json()
 
+			// New workspaces default to enterprise: false — grant entitlement so
+			// this test can exercise the llm_keys deep-merge itself, not the gate.
+			const grant = await grantEnterpriseAsOps(app, ws.id)
+			expect(grant.status).toBe(200)
+
 			await app.request(
 				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
 					settings: { llm_keys: { anthropic: 'sk-ant-AAA' } },
@@ -236,6 +354,196 @@ describe('Workspaces Integration', () => {
 		})
 	})
 
+	describe('enterprise entitlement gate', () => {
+		it('defaults new workspaces to enterprise: false', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Entitlement Default' }),
+			)
+			const ws = await createRes.json()
+			expect(ws.enterprise).toBe(false)
+		})
+
+		it('returns enterprise on GET /api/workspaces so the settings UI can gate on it', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Entitlement In List' }),
+			)
+			const ws = await createRes.json()
+			const grant = await grantEnterpriseAsOps(app, ws.id)
+			expect(grant.status).toBe(200)
+
+			const listRes = await app.request(jsonGet('/api/workspaces'))
+			expect(listRes.status).toBe(200)
+			const list = (await listRes.json()) as Array<{ id: string; enterprise: boolean }>
+			const listed = list.find((w) => w.id === ws.id)
+			expect(listed?.enterprise).toBe(true)
+		})
+
+		it('entitles an enterprise billing owner without any per-workspace grant', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Enterprise Owner Entitlement' }),
+			)
+			const ws = await createRes.json()
+			expect(ws.enterprise).toBe(false)
+
+			// The allowlist is read from process.env at call time, so flipping it
+			// here exercises exactly what a founder deployment configures.
+			const prev = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
+			try {
+				const listRes = await app.request(jsonGet('/api/workspaces'))
+				const list = (await listRes.json()) as Array<{ id: string; enterprise: boolean }>
+				expect(list.find((w) => w.id === ws.id)?.enterprise).toBe(true)
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+						settings: { llm_keys: { anthropic: 'sk-ant-enterprise' } },
+					}),
+				)
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body.settings.llm_keys.anthropic).toBe('sk-ant-enterprise')
+			} finally {
+				// '' parses to an empty allowlist, same as unset.
+				process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
+			}
+		})
+
+		it('leaves non-allowlisted owners blocked while an allowlist is configured', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Non Allowlisted Owner' }),
+			)
+			const ws = await createRes.json()
+
+			const prev = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = randomUUID()
+			try {
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+						settings: { llm_keys: { anthropic: 'sk-ant-blocked' } },
+					}),
+				)
+				expect(res.status).toBe(403)
+			} finally {
+				// '' parses to an empty allowlist, same as unset.
+				process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
+			}
+		})
+
+		it('blocks adding a BYO anthropic key when not entitled', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Blocked Anthropic Key' }),
+			)
+			const ws = await createRes.json()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: 'sk-ant-blocked' } },
+				}),
+			)
+			expect(res.status).toBe(403)
+
+			const [row] = await db.select().from(workspacesTable).where(eq(workspacesTable.id, ws.id))
+			const llmKeys = (row.settings as Record<string, unknown>).llm_keys as Record<string, unknown>
+			expect(llmKeys.anthropic).toBeUndefined()
+		})
+
+		it('blocks adding a BYO openai key when not entitled', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Blocked OpenAI Key' }),
+			)
+			const ws = await createRes.json()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { openai: 'sk-oai-blocked' } },
+				}),
+			)
+			expect(res.status).toBe(403)
+		})
+
+		it('blocks enabling custom_llm when not entitled', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Blocked Custom LLM' }),
+			)
+			const ws = await createRes.json()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: {
+						custom_llm: {
+							enabled: true,
+							base_url: 'https://openrouter.ai/api',
+							api_key: 'sk-or-blocked',
+							model: 'deepseek/deepseek-v4-flash',
+						},
+					},
+				}),
+			)
+			expect(res.status).toBe(403)
+		})
+
+		it('allows adding BYO credentials once an admin flips enterprise_granted', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Allowed After Admin Flip' }),
+			)
+			const ws = await createRes.json()
+
+			// Granted as ops, then read back as an ordinary owner: the PATCH below
+			// must succeed on the strength of the per-workspace grant alone.
+			const adminRes = await grantEnterpriseAsOps(app, ws.id)
+			expect(adminRes.status).toBe(200)
+			const adminBody = await adminRes.json()
+			expect(adminBody.enterprise).toBe(true)
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: 'sk-ant-allowed' } },
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.settings.llm_keys.anthropic).toBe('sk-ant-allowed')
+		})
+
+		it('does not block deleting an existing (pre-entitlement) BYO key', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Delete Still Allowed' }),
+			)
+			const ws = await createRes.json()
+
+			// Grant, add a key, then revoke entitlement while the key is still set.
+			await app.request(
+				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { enterprise_granted: true }),
+			)
+			await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: 'sk-ant-old' } },
+				}),
+			)
+			await app.request(
+				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { enterprise_granted: false }),
+			)
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: null } },
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.settings.llm_keys).toEqual({})
+		})
+	})
+
 	describe('members', () => {
 		it('adds and lists members', async () => {
 			const app = createApp()
@@ -245,6 +553,9 @@ describe('Workspaces Integration', () => {
 				jsonRequest('POST', '/api/workspaces', { name: 'Members Test' }),
 			)
 			const ws = await createRes.json()
+			// Trial's seat cap is 1 (owner only) — bump to pro so a second member
+			// can actually be added (see workspace-capacity.test.ts for cap coverage).
+			await setWorkspacePlan(db, ws.id, 'pro')
 
 			// Create another actor to add as member
 			const newActor = await insertActor(db, { name: 'New Member', email: 'member@test.com' })
@@ -262,11 +573,12 @@ describe('Workspaces Integration', () => {
 			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
 			expect(listRes.status).toBe(200)
 			const members = await listRes.json()
-			// Creator (owner) + all 6 default agents (seeded atomically inside the
-			// create transaction) + the newly-added member = 8.
-			expect(members).toHaveLength(8)
+			// Creator (owner) + all 7 default agents (seeded atomically inside the
+			// create transaction) + the newly-added member = 9.
+			expect(members).toHaveLength(9)
 			const roles = members.map((m: { role: string }) => m.role).sort()
 			expect(roles).toEqual([
+				'member',
 				'member',
 				'member',
 				'member',
@@ -278,97 +590,246 @@ describe('Workspaces Integration', () => {
 			])
 		})
 
-		it("changes a member's role and the change survives a reload", async () => {
+		it('rejects an over-cap invite with 403 SEAT_CAP_EXCEEDED, not a 500', async () => {
+			// This app mounts the router with app.route() and defines no
+			// onError — exactly like every other route-level harness, and unlike
+			// createApp(). A cap rejection that is *thrown* rather than returned
+			// degrades to a bare framework 500 here, which is what this asserts
+			// against: the status is part of the route's contract, so it must not
+			// depend on how the router happens to be mounted.
 			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Seat Cap 403' }),
+			)
+			const ws = await createRes.json()
 
-			const ws = await (
-				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Role Change' }))
-			).json()
+			// Left on trial: the owner alone fills the single seat.
+			const overflow = await insertActor(db)
+			const res = await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: overflow.id }),
+			)
 
-			const target = await insertActor(db, {
-				name: 'Role Target',
-				email: 'role-target@test.com',
-			})
+			expect(res.status).toBe(403)
+			const body = await res.json()
+			expect(body.error.code).toBe('SEAT_CAP_EXCEEDED')
+			expect(body.error.workspace_id).toBe(ws.id)
+			expect(body.error.plan).toBe('trial')
+			expect(body.error.cap).toBe(1)
+
+			// The rejection is a no-op, not a partial write.
+			const members = await memberActorIdsFor(ws.id)
+			expect(members).not.toContain(overflow.id)
+		})
+	})
+
+	// Every guard on this route depends on DB semantics a mocked db cannot
+	// express — a FOR UPDATE re-read, a COUNT over the owner rows, and an audit
+	// insert that has to share the update's transaction. The mocked unit tests
+	// in __tests__/routes/workspaces.test.ts cover request shape only.
+	describe('PATCH /api/workspaces/:id/members/:actorId', () => {
+		/** Creates a pro workspace owned by the test actor, plus one extra human member. */
+		async function workspaceWithMember() {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Role Change' }),
+			)
+			const ws = await createRes.json()
+			await setWorkspacePlan(db, ws.id, 'pro')
+			const member = await insertActor(db, { name: 'Member', email: `${randomUUID()}@test.com` })
 			await app.request(
 				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {
-					actor_id: target.id,
+					actor_id: member.id,
 					role: 'member',
 				}),
 			)
+			return { app, ws, member }
+		}
 
-			const patchRes = await app.request(
-				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${target.id}`, { role: 'admin' }),
+		function setRole(workspaceId: string, actorId: string, role: string) {
+			return db
+				.update(workspaceMembers)
+				.set({ role })
+				.where(
+					and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+				)
+		}
+
+		function roleOf(workspaceId: string, actorId: string) {
+			return db
+				.select({ role: workspaceMembers.role })
+				.from(workspaceMembers)
+				.where(
+					and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+				)
+				.limit(1)
+				.then((rows) => rows[0]?.role)
+		}
+
+		it('promotes a member to admin and writes the audit event in the same transaction', async () => {
+			const { app, ws, member } = await workspaceWithMember()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${member.id}`, { role: 'admin' }),
 			)
-			expect(patchRes.status).toBe(200)
 
-			// Re-fetch (simulates reload) — the new role must persist.
-			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
-			const members = (await listRes.json()) as { actorId: string; role: string }[]
-			expect(members.find((m) => m.actorId === target.id)?.role).toBe('admin')
+			expect(res.status).toBe(200)
+			expect(await roleOf(ws.id, member.id)).toBe('admin')
+
+			// The audit row is the half most easily dropped — it lives inside the
+			// transaction, so a rollback must take it with the role change.
+			// Scoped to 'updated': adding the member in the fixture already wrote a
+			// 'created' row for the same entity, and this assertion is about the
+			// role change specifically.
+			const audit = await db
+				.select({ action: events.action, data: events.data })
+				.from(events)
+				.where(
+					and(
+						eq(events.entityType, 'workspace_member'),
+						eq(events.entityId, member.id),
+						eq(events.action, 'updated'),
+					),
+				)
+			expect(audit).toHaveLength(1)
+			expect(audit[0].action).toBe('updated')
+			expect(audit[0].data).toMatchObject({ role: { from: 'member', to: 'admin' } })
 		})
 
-		it('removes a member and the removal survives a reload', async () => {
-			const app = createApp()
+		it('refuses to demote the last owner and leaves the role untouched', async () => {
+			const { app, ws, member } = await workspaceWithMember()
+			// Hand the sole ownership to `member` and drop the caller to admin —
+			// the caller can't reach this branch by targeting themselves (that is a
+			// separate 400), so the only route in is an admin demoting the owner.
+			await setRole(ws.id, member.id, 'owner')
+			await setRole(ws.id, getTestActorId(), 'admin')
 
-			const ws = await (
-				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Remove Member' }))
-			).json()
-
-			const target = await insertActor(db, {
-				name: 'Remove Target',
-				email: 'remove-target@test.com',
-			})
-			await app.request(
-				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {
-					actor_id: target.id,
-					role: 'member',
-				}),
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${member.id}`, { role: 'member' }),
 			)
 
-			const before = (await (
-				await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
-			).json()) as { actorId: string }[]
-			expect(before.some((m) => m.actorId === target.id)).toBe(true)
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toMatch(/last owner/i)
+			expect(await roleOf(ws.id, member.id)).toBe('owner')
 
-			const deleteRes = await app.request(
-				new Request(`http://localhost/api/workspaces/${ws.id}/members/${target.id}`, {
-					method: 'DELETE',
-				}),
-			)
-			expect(deleteRes.status).toBe(200)
-
-			const after = (await (
-				await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
-			).json()) as { actorId: string }[]
-			expect(after.some((m) => m.actorId === target.id)).toBe(false)
+			// A rejected demotion must not leave an audit row behind. Scoped to
+			// 'updated' so the fixture's own 'created' row for this member doesn't
+			// mask a regression here.
+			const audit = await db
+				.select({ id: events.id })
+				.from(events)
+				.where(
+					and(
+						eq(events.entityType, 'workspace_member'),
+						eq(events.entityId, member.id),
+						eq(events.action, 'updated'),
+					),
+				)
+			expect(audit).toHaveLength(0)
 		})
 
-		it('refuses to demote or remove the last owner', async () => {
-			const app = createApp()
-			const ws = await (
-				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Last Owner Guard' }))
-			).json()
+		it('refuses to change the billing owner, so billing_owner_id can never point at a non-owner', async () => {
+			const { app, ws, member } = await workspaceWithMember()
+			await db
+				.update(workspacesTable)
+				.set({ billingOwnerId: member.id })
+				.where(eq(workspacesTable.id, ws.id))
 
-			// The workspace creator is the only owner — try to demote them.
-			const demoteRes = await app.request(
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${member.id}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(400)
+			expect(await roleOf(ws.id, member.id)).toBe('member')
+		})
+
+		it('rejects a plain member changing someone else’s role with 403', async () => {
+			const { app, ws, member } = await workspaceWithMember()
+			await setRole(ws.id, getTestActorId(), 'member')
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${member.id}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(403)
+			expect(await roleOf(ws.id, member.id)).toBe('member')
+		})
+
+		it('rejects targeting yourself with 400', async () => {
+			const { app, ws } = await workspaceWithMember()
+
+			const res = await app.request(
 				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${getTestActorId()}`, {
 					role: 'admin',
 				}),
 			)
-			expect(demoteRes.status).toBe(400)
 
-			const removeRes = await app.request(
-				new Request(`http://localhost/api/workspaces/${ws.id}/members/${getTestActorId()}`, {
-					method: 'DELETE',
-				}),
+			expect(res.status).toBe(400)
+			expect(await roleOf(ws.id, getTestActorId())).toBe('owner')
+		})
+
+		it('returns 404 for an actor who is not a member of this workspace', async () => {
+			const { app, ws } = await workspaceWithMember()
+			const stranger = await insertActor(db, { email: `${randomUUID()}@test.com` })
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${stranger.id}`, { role: 'admin' }),
 			)
-			expect(removeRes.status).toBe(400)
 
-			// The owner is still there and still an owner.
-			const members = (await (
-				await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
-			).json()) as { actorId: string; role: string }[]
-			expect(members.find((m) => m.actorId === getTestActorId())?.role).toBe('owner')
+			expect(res.status).toBe(404)
+		})
+	})
+
+	// Regression cover for the merge this PR widened. `applyModuleDefaults()` in
+	// workspace-bootstrap previously folded in only `display_names` and
+	// `statuses`, silently discarding the `field_definitions` and
+	// `relationship_types` that crm/knowledge/work all declare — so every
+	// workspace was created missing them. Asserting on the persisted row (not the
+	// response body) is the point: the drop happened on the way into the DB.
+	describe('module default settings applied at creation', () => {
+		it('persists field_definitions and relationship_types from every enabled module', async () => {
+			const app = createApp()
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Module Defaults' }),
+			)
+			expect(res.status).toBe(201)
+			const ws = await res.json()
+
+			const [row] = await db
+				.select({ settings: workspacesTable.settings })
+				.from(workspacesTable)
+				.where(eq(workspacesTable.id, ws.id))
+				.limit(1)
+			const settings = row?.settings as {
+				enabled_modules?: string[]
+				display_names?: Record<string, string>
+				field_definitions?: Record<string, unknown[]>
+				relationship_types?: string[]
+			}
+
+			// Guards the premise: without crm enabled the assertions below would
+			// pass vacuously against a workspace that never had those types.
+			expect(settings.enabled_modules).toEqual(expect.arrayContaining(['work', 'knowledge', 'crm']))
+
+			// crm and knowledge each contribute field definitions — the key that
+			// used to be dropped entirely.
+			expect(Object.keys(settings.field_definitions ?? {})).toEqual(
+				expect.arrayContaining(['contact', 'company', 'knowledge']),
+			)
+			expect(settings.field_definitions?.contact?.length).toBeGreaterThan(0)
+
+			// relationship_types is unioned across modules rather than overwritten,
+			// so crm's entries survive alongside knowledge's.
+			expect(settings.relationship_types).toEqual(
+				expect.arrayContaining(['works_at', 'decision_maker_at']),
+			)
+			// Unioned, not duplicated.
+			expect(new Set(settings.relationship_types).size).toBe(settings.relationship_types?.length)
+
+			// The keys that already worked must keep working.
+			expect(Object.keys(settings.display_names ?? {})).toEqual(
+				expect.arrayContaining(['contact', 'company']),
+			)
 		})
 	})
 
@@ -388,41 +849,56 @@ describe('Workspaces Integration', () => {
 		it('creates two workspaces for the same creator with default agents each and no cross-contamination', async () => {
 			const app = createApp()
 
-			const first = await (
-				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant A' }))
-			).json()
-			const second = await (
-				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant B' }))
-			).json()
+			// The ownership cap (trial tier: 1 owned workspace) would otherwise
+			// block the second create below — bypass it via the enterprise
+			// allowlist so this test can focus on its actual subject: agent-seed
+			// isolation between two workspaces owned by the same creator.
+			const ORIGINAL_ENV = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
+			try {
+				const first = await (
+					await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant A' }))
+				).json()
+				const second = await (
+					await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant B' }))
+				).json()
 
-			expect(first.id).not.toBe(second.id)
-			expect(await agentNamesFor(first.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
-			expect(await agentNamesFor(second.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
+				expect(first.id).not.toBe(second.id)
+				expect(await agentNamesFor(first.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
+				expect(await agentNamesFor(second.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
 
-			// Agent actor rows are distinct between workspaces — a workspace's
-			// members must not overlap another workspace's, otherwise
-			// permissions/skills would leak across tenants.
-			const firstAgentIds = new Set(
-				(
+				// Agent actor rows are distinct between workspaces — a workspace's
+				// members must not overlap another workspace's, otherwise
+				// permissions/skills would leak across tenants.
+				const firstAgentIds = new Set(
+					(
+						await db
+							.select({ actorId: workspaceMembers.actorId })
+							.from(workspaceMembers)
+							.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+							.where(eq(workspaceMembers.workspaceId, first.id))
+					)
+						.map((r) => r.actorId)
+						.filter((id) => id !== getTestActorId()),
+				)
+				const secondAgentIds = (
 					await db
 						.select({ actorId: workspaceMembers.actorId })
 						.from(workspaceMembers)
 						.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-						.where(eq(workspaceMembers.workspaceId, first.id))
+						.where(eq(workspaceMembers.workspaceId, second.id))
 				)
 					.map((r) => r.actorId)
-					.filter((id) => id !== getTestActorId()),
-			)
-			const secondAgentIds = (
-				await db
-					.select({ actorId: workspaceMembers.actorId })
-					.from(workspaceMembers)
-					.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-					.where(eq(workspaceMembers.workspaceId, second.id))
-			)
-				.map((r) => r.actorId)
-				.filter((id) => id !== getTestActorId())
-			for (const id of secondAgentIds) expect(firstAgentIds.has(id)).toBe(false)
+					.filter((id) => id !== getTestActorId())
+				for (const id of secondAgentIds) expect(firstAgentIds.has(id)).toBe(false)
+			} finally {
+				if (ORIGINAL_ENV === undefined) {
+					// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+					delete process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+				} else {
+					process.env.MASKIN_ENTERPRISE_ACTOR_IDS = ORIGINAL_ENV
+				}
+			}
 		})
 
 		it('re-invoking the seeding path against an already-seeded workspace inserts zero new agent rows', async () => {
@@ -452,6 +928,168 @@ describe('Workspaces Integration', () => {
 			expect(after.length).toBe(initialAgents.length)
 		})
 
+		it('attaches the continuous-onboarding and maskin-way-of-working workspace skills and creates all 15 triggers', async () => {
+			const app = createApp()
+
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Skills And Triggers' }),
+			)
+			const ws = await createRes.json()
+
+			// No manual bootstrapDefaultAgents call: provisionWorkspace awaits it
+			// post-commit, so everything below must already be queryable by the
+			// time the 201 lands. That is the property under test — asserting it
+			// here is what covers the route -> provisionWorkspace -> bootstrap
+			// wiring rather than bootstrapDefaultAgents in isolation.
+			const [chief] = await db
+				.select({ id: actors.id })
+				.from(workspaceMembers)
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(and(eq(workspaceMembers.workspaceId, ws.id), eq(actors.name, 'Chief of Staff')))
+				.limit(1)
+			expect(chief).toBeDefined()
+
+			const skillRows = await db
+				.select({ id: workspaceSkills.id, name: workspaceSkills.name })
+				.from(workspaceSkills)
+				.where(
+					and(
+						eq(workspaceSkills.workspaceId, ws.id),
+						eq(workspaceSkills.name, 'continuous-onboarding'),
+					),
+				)
+			expect(skillRows).toHaveLength(1)
+
+			const continuousOnboardingSkillId = skillRows[0]?.id
+			if (!continuousOnboardingSkillId) throw new Error('continuous-onboarding skill not seeded')
+			const attachRows = await db
+				.select({ actorId: agentSkills.actorId })
+				.from(agentSkills)
+				.where(eq(agentSkills.workspaceSkillId, continuousOnboardingSkillId))
+			expect(attachRows.map((r) => r.actorId)).toContain(chief?.id)
+
+			// The shared "Maskin way of working" skill is attached to every default
+			// agent (mirrored from the Template workspace) — Coach, Chief of Staff,
+			// Driver, Strategist, Signal Analyst, Researcher, Knowledge Curator.
+			const [wayOfWorkingSkill] = await db
+				.select({ id: workspaceSkills.id })
+				.from(workspaceSkills)
+				.where(
+					and(
+						eq(workspaceSkills.workspaceId, ws.id),
+						eq(workspaceSkills.name, 'maskin-way-of-working'),
+					),
+				)
+				.limit(1)
+			const wayOfWorkingSkillId = wayOfWorkingSkill?.id
+			if (!wayOfWorkingSkillId) throw new Error('maskin-way-of-working skill not seeded')
+			const wayOfWorkingAttachRows = await db
+				.select({ actorId: agentSkills.actorId })
+				.from(agentSkills)
+				.where(eq(agentSkills.workspaceSkillId, wayOfWorkingSkillId))
+			expect(wayOfWorkingAttachRows).toHaveLength(7)
+
+			const triggerRows = await db
+				.select({ name: triggers.name })
+				.from(triggers)
+				.where(eq(triggers.workspaceId, ws.id))
+			expect(triggerRows).toHaveLength(15)
+		})
+
+		it('seeds the Bet discovery loop, Workspace improvements, Knowledge Wiki, and Competitor intelligence loops wired to their triggers', async () => {
+			const app = createApp()
+
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Loops Seeded' }),
+			)
+			const ws = await createRes.json()
+
+			// Seeded by provisionWorkspace during the request — see above.
+			const loopRows = await db
+				.select({ id: objects.id, title: objects.title, metadata: objects.metadata })
+				.from(objects)
+				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
+
+			expect(loopRows.map((r) => r.title).sort()).toEqual([
+				'Bet discovery loop',
+				'Competitor intelligence',
+				'Knowledge Wiki → digest',
+				'Workspace improvements',
+			])
+
+			const triggerRows = await db
+				.select({ id: triggers.id, name: triggers.name })
+				.from(triggers)
+				.where(eq(triggers.workspaceId, ws.id))
+			const triggerIdByName = new Map(triggerRows.map((t) => [t.name, t.id]))
+
+			const discoveryBetLoop = loopRows.find((r) => r.title === 'Bet discovery loop')
+			const discoveryBetTriggerIds =
+				(discoveryBetLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ?? []
+			expect(new Set(discoveryBetTriggerIds)).toEqual(
+				new Set([
+					triggerIdByName.get('Triage new insight'),
+					triggerIdByName.get('Daily signal sweep'),
+					triggerIdByName.get('Weekly deep revalidation'),
+					triggerIdByName.get('Shape the bet'),
+				]),
+			)
+
+			const workspaceImprovementsLoop = loopRows.find((r) => r.title === 'Workspace improvements')
+			const workspaceImprovementsTriggerIds =
+				(workspaceImprovementsLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ??
+				[]
+			expect(new Set(workspaceImprovementsTriggerIds)).toEqual(
+				new Set([
+					triggerIdByName.get('Workspace Coach — daily sweep'),
+					triggerIdByName.get('Workspace Coach — session completed (onboarding)'),
+					triggerIdByName.get('Cluster & recommend'),
+					triggerIdByName.get('Capture outcome'),
+				]),
+			)
+
+			const knowledgeWikiLoop = loopRows.find((r) => r.title === 'Knowledge Wiki → digest')
+			const knowledgeWikiTriggerIds =
+				(knowledgeWikiLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ?? []
+			expect(new Set(knowledgeWikiTriggerIds)).toEqual(
+				new Set([
+					triggerIdByName.get('Fold new knowledge into the wiki'),
+					triggerIdByName.get('Compile the twice-weekly digest'),
+				]),
+			)
+
+			const competitorIntelligenceLoop = loopRows.find((r) => r.title === 'Competitor intelligence')
+			const competitorIntelligenceTriggerIds =
+				(competitorIntelligenceLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ??
+				[]
+			expect(new Set(competitorIntelligenceTriggerIds)).toEqual(
+				new Set([
+					triggerIdByName.get('Weekly competitor sweep'),
+					triggerIdByName.get('Monthly list revalidation'),
+				]),
+			)
+		})
+
+		it('re-invoking bootstrapDefaultAgents inserts zero new loop objects', async () => {
+			const app = createApp()
+
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Idempotent Loop Seed' }),
+			)
+			const ws = await createRes.json()
+
+			const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
+			await bootstrapDefaultAgents(db, agentStorage, ws.id, getTestActorId())
+			await bootstrapDefaultAgents(db, agentStorage, ws.id, getTestActorId())
+
+			const loopRows = await db
+				.select({ id: objects.id })
+				.from(objects)
+				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
+
+			expect(loopRows).toHaveLength(4)
+		})
+
 		it('leaves three pre-existing workspaces byte-identical when a new workspace is seeded', async () => {
 			// Create three workspaces with their own actor lists directly, bypassing
 			// the seed path — these represent workspaces that existed before the T2
@@ -463,6 +1101,7 @@ describe('Workspaces Integration', () => {
 					.insert(workspacesTable)
 					.values({ name: `Pre-existing ${i}`, createdBy: getTestActorId() })
 					.returning()
+				if (!ws) throw new Error('failed to insert pre-existing workspace')
 				preExistingIds.push(ws.id)
 				await db.insert(workspaceMembers).values({
 					workspaceId: ws.id,
@@ -475,6 +1114,7 @@ describe('Workspaces Integration', () => {
 						name: `Legacy Actor ${i}-${k}`,
 						email: `legacy-${i}-${k}@test.com`,
 					})
+					if (!extra) throw new Error('failed to insert legacy actor')
 					await db.insert(workspaceMembers).values({
 						workspaceId: ws.id,
 						actorId: extra.id,
@@ -484,15 +1124,15 @@ describe('Workspaces Integration', () => {
 				snapshots.set(ws.id, await memberActorIdsFor(ws.id))
 			}
 
-			// Now run the new seed path against a fresh workspace via the route.
+			// Now create a fresh workspace via the route.
 			const app = createApp()
 			const res = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Fresh Seeded' }),
+				jsonRequest('POST', '/api/workspaces', { name: 'Fresh Workspace' }),
 			)
 			expect(res.status).toBe(201)
 
 			// Every pre-existing workspace's member list is byte-identical to its
-			// snapshot — the new code path didn't touch them.
+			// snapshot — creating a new workspace didn't touch them.
 			for (const id of preExistingIds) {
 				const now = await memberActorIdsFor(id)
 				expect(now).toEqual(snapshots.get(id))
@@ -500,31 +1140,19 @@ describe('Workspaces Integration', () => {
 		})
 
 		it('returns 500 naming the failed agent and rolls back workspace/member/actor rows when seeding fails on the 4th agent', async () => {
-			// Simulate the "fourth agent fails" case: the seed helper writes agents
-			// 1-3 into the caller's transaction, then throws SeedAgentError for
-			// insights_triage. The route's `db.transaction` must roll back every
-			// row — including the three partial actor inserts.
-			seedDefaultAgentActorsMock.mockImplementationOnce(async (tx, wsId, createdBy) => {
-				for (const name of ['Workspace Coach', 'Workspace Driver', 'Strategist']) {
-					const [created] = await tx
-						.insert(actors)
-						.values({
-							type: 'agent',
-							name,
-							apiKey: generateApiKey().key,
-							createdBy: createdBy as string,
-						})
-						.returning()
-					if (created) {
-						await tx.insert(workspaceMembers).values({
-							workspaceId: wsId as string,
-							actorId: created.id,
-							role: 'member',
-						})
-					}
-				}
-				throw new SeedAgentError('insights_triage', new Error('mock failure on 4th agent'))
-			})
+			// Agents seed in DEFAULT_AGENT_IDS order — Workspace Coach, Chief of
+			// Staff, Driver, then Strategist. Each mints an API key first, so
+			// throwing on the 4th generateApiKey() call fails strategist after
+			// agents 1-3 are already written into the transaction. Everything —
+			// including those three partial actor inserts — must roll back.
+			const realGenerateApiKey = generateApiKeyMock.getMockImplementation()
+			generateApiKeyMock
+				.mockImplementationOnce(realGenerateApiKey)
+				.mockImplementationOnce(realGenerateApiKey)
+				.mockImplementationOnce(realGenerateApiKey)
+				.mockImplementationOnce(() => {
+					throw new Error('mock failure on 4th agent')
+				})
 
 			const workspacesBefore = await db.select({ id: workspacesTable.id }).from(workspacesTable)
 			const membersBefore = await db
@@ -542,9 +1170,9 @@ describe('Workspaces Integration', () => {
 				error: { code: string; message: string; details?: { field: string; message: string }[] }
 			}
 			expect(body.error.code).toBe('INTERNAL_ERROR')
-			expect(body.error.message).toContain('insights_triage')
+			expect(body.error.message).toContain('strategist')
 			expect(body.error.details).toEqual(
-				expect.arrayContaining([{ field: 'agent_id', message: 'insights_triage' }]),
+				expect.arrayContaining([{ field: 'agent_id', message: 'strategist' }]),
 			)
 
 			// No workspace row, no member row, no actor row survived the aborted request.
@@ -583,6 +1211,89 @@ describe('Workspaces Integration', () => {
 			expect(event).toBe('workspace_created')
 			expect(distinctId).toBe(ws.id)
 			expect(properties.workspace_id).toBe(ws.id)
+		})
+	})
+
+	describe('POST /api/workspaces/:id/members', () => {
+		it('is idempotent when the actor is already a member', async () => {
+			const app = createApp()
+
+			const created = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Member Dedup' }),
+			)
+			expect(created.status).toBe(201)
+			const ws = await created.json()
+			// Trial seats exactly one human (the owner); this test is about the
+			// re-add being a no-op, not about the cap.
+			await setWorkspacePlan(db, ws.id, 'pro')
+
+			const newMember = await insertActor(db)
+
+			const first = await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: newMember.id }),
+			)
+			expect(first.status).toBe(201)
+			expect(await first.json()).toEqual({ added: true })
+
+			// Re-adding used to violate workspace_members_workspace_id_actor_id_pk
+			// and surface as an unhandled 500 (Sentry MASKIN-DEV-9).
+			const second = await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: newMember.id }),
+			)
+			expect(second.status).toBe(201)
+			expect(await second.json()).toEqual({ added: false })
+
+			const rows = await db
+				.select({ role: workspaceMembers.role })
+				.from(workspaceMembers)
+				.where(
+					and(eq(workspaceMembers.workspaceId, ws.id), eq(workspaceMembers.actorId, newMember.id)),
+				)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.role).toBe('member')
+		})
+
+		it('does not downgrade an existing admin when re-added as a member', async () => {
+			const app = createApp()
+
+			const created = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Member No Downgrade' }),
+			)
+			expect(created.status).toBe(201)
+			const ws = await created.json()
+			await setWorkspacePlan(db, ws.id, 'pro')
+
+			const admin = await insertActor(db)
+
+			const first = await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {
+					actor_id: admin.id,
+					role: 'admin',
+				}),
+			)
+			expect(first.status).toBe(201)
+			expect(await first.json()).toEqual({ added: true })
+
+			// This is the reason the route uses onConflictDoNothing rather than
+			// onConflictDoUpdate: a re-add carrying the default role must not
+			// silently strip an existing admin of their privileges. With DoUpdate
+			// this second call rewrites role to 'member' and the assertion below
+			// fails.
+			const second = await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {
+					actor_id: admin.id,
+					role: 'member',
+				}),
+			)
+			expect(second.status).toBe(201)
+			expect(await second.json()).toEqual({ added: false })
+
+			const rows = await db
+				.select({ role: workspaceMembers.role })
+				.from(workspaceMembers)
+				.where(and(eq(workspaceMembers.workspaceId, ws.id), eq(workspaceMembers.actorId, admin.id)))
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.role).toBe('admin')
 		})
 	})
 

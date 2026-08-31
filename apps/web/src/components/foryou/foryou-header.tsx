@@ -1,25 +1,25 @@
 import { FilterTabs } from '@/components/shared/filter-tabs'
 import { Button } from '@/components/ui/button'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
-	ResponsivePopover,
-	ResponsivePopoverContent,
-	ResponsivePopoverTrigger,
-} from '@/components/ui/responsive-popover'
-import { Separator } from '@/components/ui/separator'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ArrowUpDown, CheckCheck, ChevronDown, LayoutGrid, List, Newspaper } from 'lucide-react'
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuLabel,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { cn } from '@/lib/cn'
+import { typeLabel } from '@/lib/constants'
+import { Check, LayoutList, ListFilter, Rows3 } from 'lucide-react'
 
 export type FeedMode = 'cards' | 'list'
-export type FeedSort = 'latest' | 'priority' | 'oldest'
+export type FeedSort = 'attention' | 'chrono'
 
+const MODE_LABEL: Record<FeedMode, string> = { cards: 'Cards', list: 'List' }
 const SORT_LABEL: Record<FeedSort, string> = {
-	priority: 'Most urgent',
-	latest: 'Newest first',
-	oldest: 'Oldest first',
+	attention: 'By attention',
+	chrono: 'Chronological',
 }
-
-const SORT_OPTIONS: readonly FeedSort[] = ['priority', 'latest', 'oldest']
 
 // The chip's leading swatch uses the type's *foreground* token as a fill — the
 // `-bg` tint is a pale wash built to sit under text and reads as blank at 6px.
@@ -31,38 +31,13 @@ const CHIP_DOT: Record<string, string> = {
 }
 const DEFAULT_CHIP_DOT = 'bg-muted-foreground'
 
-interface ForYouHeaderActionsProps {
-	// Optional so the button only renders where a caller wires it up — kept out
-	// of test render helpers that don't pass it.
-	onMarkAllRead?: () => void
-	markAllReadDisabled?: boolean
-	onOpenBrief: () => void
-}
-
-// "Brief" + "Mark all read" projected into the shared top nav's actions slot.
-// The nav owns the title/subtitle and the global New menu — this component
-// only contributes the two For You-specific affordances. Mark-all-read is
-// *absent* rather than disabled when there's nothing unread (mockup 218's
-// `cuHas` gate) so the nav row doesn't carry a dead control.
-export function ForYouHeaderActions({
-	onMarkAllRead,
-	markAllReadDisabled,
-	onOpenBrief,
-}: ForYouHeaderActionsProps) {
-	return (
-		<div className="flex items-center gap-1">
-			<Button variant="ghost" size="sm" aria-label="Today's brief" onClick={onOpenBrief}>
-				<Newspaper size={14} aria-hidden />
-				<span className="hidden sm:inline">Brief</span>
-			</Button>
-			{onMarkAllRead && !markAllReadDisabled && (
-				<Button variant="ghost" size="sm" aria-label="Mark all as read" onClick={onMarkAllRead}>
-					<CheckCheck size={14} aria-hidden />
-					<span className="hidden sm:inline">Mark all read</span>
-				</Button>
-			)}
-		</div>
-	)
+export interface ForYouBulkAction {
+	id: string
+	label: string
+	/** How many cards the action would touch. Omit for an action that is always
+	 *  available (the mockup prints no count for those either). */
+	count?: number
+	onSelect: () => void
 }
 
 interface ForYouHeaderProps {
@@ -70,120 +45,205 @@ interface ForYouHeaderProps {
 	typeFilter: string | undefined
 	onTypeFilterChange: (value: string | undefined) => void
 	typeCounts: Map<string, number>
-	mentionCount: number
 	mode: FeedMode
 	onModeChange: (mode: FeedMode) => void
 	sort: FeedSort
 	onSortChange: (sort: FeedSort) => void
+	filterPills: boolean
+	onFilterPillsChange: (value: boolean) => void
+	/** The `···` menu's rows — bulk actions the feed owns (mockup `moreOpts`). */
+	bulkActions: readonly ForYouBulkAction[]
 }
 
-// The v2 filter row (mockup 283–305): per-type chips on the left, a "Display"
-// popover holding Cards/List + Sort on the right, both centred on the same
-// 760px column the card queue uses. The whole row disappears when there is
-// nothing unread (`cuFilterShow`) — an "All (0)" chip is noise on a drained
-// feed. The screen title and Brief/Mark-all-read actions live in the shared
-// top nav instead (see ForYouHeaderActions).
+/**
+ * The control row above the feed (Feed v4, lines 27–103): an optional filter
+ * pill rail on the left, then the `···` bulk menu and the view menu pinned to
+ * the right of the same 700px column the feed itself uses.
+ *
+ * The view menu carries everything that used to be three separate controls —
+ * Cards/List, the filter-pill toggle, the per-type filter and the sort — and
+ * its trigger label reads back whatever is not at its default ("List",
+ * "Cards · Bets · Chronological").
+ */
 export function ForYouHeader({
 	unreadCount,
 	typeFilter,
 	onTypeFilterChange,
 	typeCounts,
-	mentionCount,
 	mode,
 	onModeChange,
 	sort,
 	onSortChange,
+	filterPills,
+	onFilterPillsChange,
+	bulkActions,
 }: ForYouHeaderProps) {
-	if (unreadCount === 0 && typeCounts.size === 0) return null
-
-	const filterTabs = [
-		{ label: 'All', value: undefined as string | undefined, count: unreadCount },
-		...(mentionCount > 0 ? [{ label: 'Mentions', value: 'mentions', count: mentionCount }] : []),
+	const typeOptions = [
+		{ value: undefined as string | undefined, label: 'Everything', count: unreadCount },
 		...Array.from(typeCounts.entries())
 			.filter(([, count]) => count > 0)
-			.map(([type, count]) => ({
-				label: type.charAt(0).toUpperCase() + type.slice(1),
-				value: type,
-				count,
-				dot: CHIP_DOT[type] ?? DEFAULT_CHIP_DOT,
-				dotShape: 'square' as const,
-			})),
+			.map(([type, count]) => ({ value: type, label: `${typeLabel(type)}s`, count })),
 	]
 
+	const menuParts = [MODE_LABEL[mode]]
+	if (typeFilter) {
+		menuParts.push(typeOptions.find((option) => option.value === typeFilter)?.label ?? typeFilter)
+	}
+	if (sort !== 'attention') menuParts.push(SORT_LABEL[sort])
+
 	return (
-		<header className="mx-auto mb-2 flex w-full max-w-[760px] items-center gap-2">
+		<div className="mx-auto flex w-full max-w-[700px] items-center gap-1.5 pb-0.5">
 			<div className="min-w-0 flex-1">
-				<FilterTabs
-					aria-label="Filter unread feed"
-					variant="pill"
-					value={typeFilter}
-					onChange={onTypeFilterChange}
-					tabs={filterTabs}
-				/>
+				{filterPills && (
+					<FilterTabs
+						aria-label="Filter unread feed"
+						variant="pill"
+						value={typeFilter}
+						onChange={onTypeFilterChange}
+						tabs={typeOptions.map((option) => ({
+							label: option.label,
+							value: option.value,
+							count: option.count,
+							dot: option.value ? (CHIP_DOT[option.value] ?? DEFAULT_CHIP_DOT) : undefined,
+							dotShape: 'square' as const,
+						}))}
+					/>
+				)}
 			</div>
 
-			<ResponsivePopover>
-				<ResponsivePopoverTrigger asChild>
-					<Button variant="outline" size="sm" aria-label="Display options" className="shrink-0">
-						<span className="hidden sm:inline">Display</span>
-						<ChevronDown size={14} className="opacity-70" aria-hidden />
+			<DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<Button
+						variant="outline"
+						size="icon"
+						aria-label="Feed actions"
+						className="h-[30px] w-[30px] shrink-0 rounded-lg border-border font-bold text-muted-foreground hover:border-border-strong hover:text-foreground"
+					>
+						<span aria-hidden className="text-[13px] leading-none">
+							···
+						</span>
 					</Button>
-				</ResponsivePopoverTrigger>
-				<ResponsivePopoverContent
-					align="end"
-					accessibleTitle="Display options"
-					hideCloseButton
-					className="w-64"
-				>
-					<div className="space-y-3">
-						<Tabs
-							value={mode}
-							onValueChange={(v) => onModeChange(v as FeedMode)}
-							aria-label="Display mode"
+				</DropdownMenuTrigger>
+				<DropdownMenuContent align="end" className="w-[250px]">
+					{bulkActions.map((action) => (
+						<DropdownMenuItem
+							key={action.id}
+							disabled={action.count === 0}
+							onSelect={action.onSelect}
+							className="text-xs font-semibold"
 						>
-							<TabsList className="h-8 w-full gap-1 p-1">
-								<TabsTrigger
-									value="cards"
-									aria-label="Cards"
-									className="h-6 flex-1 gap-1.5 px-2 text-xs"
-								>
-									<LayoutGrid size={14} aria-hidden />
-									Cards
-								</TabsTrigger>
-								<TabsTrigger
-									value="list"
-									aria-label="List"
-									className="h-6 flex-1 gap-1.5 px-2 text-xs"
-								>
-									<List size={14} aria-hidden />
-									List
-								</TabsTrigger>
-							</TabsList>
-						</Tabs>
+							<span className="min-w-0 flex-1">{action.label}</span>
+							{action.count !== undefined && action.count > 0 && (
+								<span className="shrink-0 text-[10.5px] font-medium tabular-nums text-muted-foreground">
+									{action.count}
+								</span>
+							)}
+						</DropdownMenuItem>
+					))}
+				</DropdownMenuContent>
+			</DropdownMenu>
 
-						<Separator />
+			<DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<Button
+						variant="outline"
+						size="sm"
+						aria-label="View options"
+						className="h-[30px] shrink-0 gap-[7px] rounded-lg border-border px-3 text-[11.5px] font-semibold text-muted-foreground hover:border-border-strong hover:text-foreground"
+					>
+						<ListFilter size={12} aria-hidden />
+						<span className="max-w-[200px] truncate">{menuParts.join(' · ')}</span>
+					</Button>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent align="end" className="w-[264px]">
+					<DropdownMenuLabel className="eyebrow px-2.5 pb-1 pt-1.5">View</DropdownMenuLabel>
+					{(['list', 'cards'] as const).map((value) => (
+						<MenuRow
+							key={value}
+							label={MODE_LABEL[value]}
+							selected={mode === value}
+							icon={
+								value === 'list' ? (
+									<Rows3 size={13} aria-hidden />
+								) : (
+									<LayoutList size={13} aria-hidden />
+								)
+							}
+							onSelect={() => onModeChange(value)}
+						/>
+					))}
+					<DropdownMenuSeparator />
+					<DropdownMenuLabel className="eyebrow px-2.5 pb-1 pt-1.5">Show</DropdownMenuLabel>
+					{typeOptions.map((option) => (
+						<MenuRow
+							key={option.value ?? 'all'}
+							label={option.label}
+							count={option.count}
+							selected={typeFilter === option.value}
+							onSelect={() => onTypeFilterChange(option.value)}
+						/>
+					))}
 
-						<div>
-							<p className="eyebrow mb-2 flex items-center gap-1.5">
-								<ArrowUpDown size={12} aria-hidden />
-								Sort by
-							</p>
-							<RadioGroup value={sort} onValueChange={(v) => onSortChange(v as FeedSort)}>
-								{SORT_OPTIONS.map((value) => (
-									<label
-										key={value}
-										htmlFor={`sort-${value}`}
-										className="flex items-center gap-2 text-sm"
-									>
-										<RadioGroupItem value={value} id={`sort-${value}`} />
-										{SORT_LABEL[value]}
-									</label>
-								))}
-							</RadioGroup>
-						</div>
-					</div>
-				</ResponsivePopoverContent>
-			</ResponsivePopover>
-		</header>
+					<DropdownMenuSeparator />
+					<DropdownMenuLabel className="eyebrow px-2.5 pb-1 pt-1.5">Sort</DropdownMenuLabel>
+					{(['attention', 'chrono'] as const).map((value) => (
+						<MenuRow
+							key={value}
+							label={SORT_LABEL[value]}
+							selected={sort === value}
+							onSelect={() => onSortChange(value)}
+						/>
+					))}
+
+					<DropdownMenuSeparator />
+					<MenuRow
+						label="Filter bar under the header"
+						selected={filterPills}
+						onSelect={() => onFilterPillsChange(!filterPills)}
+					/>
+				</DropdownMenuContent>
+			</DropdownMenu>
+		</div>
+	)
+}
+
+// One row of the view menu: an optional leading glyph, the label, an optional
+// dim count, and the check column that stays reserved so labels don't shift
+// when the selection moves (mockup's fixed 13px check cell).
+function MenuRow({
+	label,
+	icon,
+	count,
+	selected,
+	onSelect,
+}: {
+	label: string
+	icon?: React.ReactNode
+	count?: number
+	selected: boolean
+	onSelect: () => void
+}) {
+	return (
+		<DropdownMenuItem
+			onSelect={(event) => {
+				// Filter/view rows are toggles the reader often fires several times
+				// in a row; keeping the menu open matches the mockup.
+				event.preventDefault()
+				onSelect()
+			}}
+			aria-checked={selected}
+			className={cn('text-xs', selected ? 'font-bold text-foreground' : 'text-muted-foreground')}
+		>
+			{icon}
+			<span className="min-w-0 flex-1 truncate">{label}</span>
+			{count !== undefined && (
+				<span className="shrink-0 text-[10.5px] font-medium tabular-nums text-muted-foreground">
+					{count}
+				</span>
+			)}
+			<span className="flex w-3.5 shrink-0 justify-end text-foreground">
+				{selected && <Check size={11} aria-hidden />}
+			</span>
+		</DropdownMenuItem>
 	)
 }

@@ -17,6 +17,7 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { ObjectAskBanner } from './object-ask-banner'
 import { ObjectDetailBody } from './object-detail-body'
 import { getAsk } from './object-detail-fixtures'
@@ -125,13 +126,20 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	const sidebarExpanded = isMobile ? sidebarOpenMobile : sidebarOpen
 	const contentPush = !isMobile && sidebarOpen ? SIDEBAR_WIDTH : undefined
 
-	// ⌘/Ctrl+I toggles the right sidebar. Shares `handleToggleSidebar` with the
-	// PanelRight header button so both entry points flow through the same
-	// mobile-vs-persisted branch, and both are observable to the
-	// `sidebar_toggle` analytics effect below.
+	// ⌘⇧\ toggles the properties drawer. It was ⌘I until the document editor
+	// claimed ⌘I for italic. Shares `handleToggleSidebar` with the header
+	// button so both entry points flow through the same mobile-vs-persisted
+	// branch, and both are observable to the `sidebar_toggle` effect below.
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
-			if (!((e.metaKey || e.ctrlKey) && (e.key === 'i' || e.key === 'I'))) return
+			// Shift makes the backslash a pipe on most layouts — accept both.
+			// `!altKey` for the same reason the nav chord needs it: AltGr sets
+			// `ctrlKey` on Windows, and both characters are AltGr products on the
+			// layouts where `\` is not a bare key.
+			if (
+				!((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && (e.key === '\\' || e.key === '|'))
+			)
+				return
 			const target = e.target as HTMLElement | null
 			if (target) {
 				const tag = target.tagName
@@ -168,15 +176,23 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	// Carried over from the retired ObjectDocument surface: the object page
 	// used to emit scroll_to_top from its body render path. The shell replaces
 	// that body renderer, so the emitter mounts here to keep the telemetry.
+	// The shell publishes `scrollLocked`, so the layout's `[data-scroll-root]`
+	// is `overflow-hidden` and this region is the only live scroller — the
+	// emitter has to be pointed at it explicitly.
+	const scrollRegionRef = useRef<HTMLDivElement>(null)
 	useScrollToTopEmitter({
 		enabled: object.type === 'bet',
 		objectSubtype: object.type,
 		objectId: object.id,
+		scrollRootRef: scrollRegionRef,
 	})
 
 	const handleUpdateStatus = useCallback(
 		(status: string) => {
-			updateObject.mutate({ id: object.id, data: { status } })
+			updateObject.mutate(
+				{ id: object.id, data: { status } },
+				{ onError: () => toast.error('Could not update status') },
+			)
 		},
 		[object.id, updateObject],
 	)
@@ -185,15 +201,51 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	// stamps the prior status for the archived-row treatment downstream.
 	const handleArchive = useCallback(() => {
 		if (object.type !== 'bet' || object.status === 'archived') return
-		updateObject.mutate({
-			id: object.id,
-			data: { status: 'archived', metadata: { previous_status: object.status } },
-		})
+		updateObject.mutate(
+			{
+				id: object.id,
+				data: { status: 'archived', metadata: { previous_status: object.status } },
+			},
+			{ onError: () => toast.error('Could not archive this bet') },
+		)
 	}, [object.id, object.status, object.type, updateObject])
+
+	// Title and body edits commit through the same `updateObject` mutation as
+	// status and owner, and toast on failure for the same reason —
+	// `useUpdateObject` rolls its optimistic patch back silently, so without a
+	// toast a failed save reads as the text reverting on its own.
+	// These return the mutation promise so the editor can reopen with the draft
+	// intact when the write fails, rather than dropping the user's text.
+	const handleUpdateTitle = useCallback(
+		async (title: string) => {
+			try {
+				await updateObject.mutateAsync({ id: object.id, data: { title } })
+			} catch (err) {
+				toast.error('Could not save your changes')
+				throw err
+			}
+		},
+		[object.id, updateObject],
+	)
+
+	const handleUpdateContent = useCallback(
+		async (content: string) => {
+			try {
+				await updateObject.mutateAsync({ id: object.id, data: { content } })
+			} catch (err) {
+				toast.error('Could not save your changes')
+				throw err
+			}
+		},
+		[object.id, updateObject],
+	)
 
 	const handleUpdateDriver = useCallback(
 		(driver: string | null) => {
-			updateObject.mutate({ id: object.id, data: { driver } })
+			updateObject.mutate(
+				{ id: object.id, data: { driver } },
+				{ onError: () => toast.error('Could not update owner') },
+			)
 		},
 		[object.id, updateObject],
 	)
@@ -247,10 +299,6 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 					<ObjectDetailBarActions
 						object={object}
 						workspaceId={workspaceId}
-						statuses={statuses}
-						members={members ?? []}
-						onStatusChange={handleUpdateStatus}
-						onDriverChange={handleUpdateDriver}
 						onDeleteRequest={() => setConfirmDelete(true)}
 						onArchiveRequest={object.type === 'bet' ? handleArchive : undefined}
 						onTogglePropertiesRequest={handleToggleSidebar}
@@ -263,14 +311,22 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 			<div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
 				{/* The document owns the only scroll region on this screen, so the
 				    bar above stays put and the composer can pin to its bottom. */}
-				<div className="min-h-0 flex-1 overflow-y-auto px-[clamp(14px,3vw,24px)] pt-[clamp(18px,3vw,30px)]">
-					<div className="mx-auto flex w-full min-w-0 max-w-[680px] flex-col">
+				<div
+					ref={scrollRegionRef}
+					data-detail-scroll-region
+					className="min-h-0 flex-1 overflow-y-auto px-[clamp(14px,3vw,24px)] pt-[clamp(18px,3vw,30px)]"
+				>
+					{/* `min-h-full` + the spacer below put the composer on the bottom of
+					    the viewport while the document is short, without giving up the
+					    sticky behaviour once it grows past one screen. */}
+					<div className="mx-auto flex min-h-full w-full min-w-0 max-w-[680px] flex-col">
 						<ObjectDetailIdentity
 							object={object}
 							statuses={statuses}
 							members={members ?? []}
 							onStatusChange={handleUpdateStatus}
 							onDriverChange={handleUpdateDriver}
+							onTitleChange={handleUpdateTitle}
 						/>
 
 						{askText && (
@@ -283,7 +339,11 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 							/>
 						)}
 
-						<ObjectDetailBody object={object} />
+						<ObjectDetailBody
+							object={object}
+							workspaceId={workspaceId}
+							onContentChange={handleUpdateContent}
+						/>
 
 						{/* One Activity rule + a 2-way segmented control (mockup
 						    1138–1143): the label is a mono micro-heading, not a
@@ -311,6 +371,8 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 								<RelatedTab object={object} />
 							</TabsContent>
 						</Tabs>
+
+						<div aria-hidden="true" className="min-h-6 flex-1" />
 
 						{/* The mockup's composer is a single bar — `+`, the field, mic and
 						    send on one row (1358–1366), with no hint line under it. */}

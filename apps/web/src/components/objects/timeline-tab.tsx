@@ -10,13 +10,15 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useObjectGraph } from '@/hooks/use-objects'
+import { useMarkRead } from '@/hooks/use-subscriptions'
 import type { ActorListItem, EventResponse, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { OBJECT_DIFF_FIELDS, findChange, getChangesFromEventData } from '@maskin/shared'
 import { formatEventDescription } from '@maskin/shared'
 import { ArrowDown, ChevronDown } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 /**
  * One row of the merged activity stream (mockup 1176–1355). Comments and events
@@ -43,6 +45,7 @@ type TimelineEntry =
 			 *  the mockup's `tl.isRel` (1258–1272), not a sentence. */
 			isRelationship: boolean
 			newStatus: string | null
+			prevStatus: string | null
 			reference?: { verb: string; objectId: string; object?: ObjectResponse }
 	  }
 
@@ -152,8 +155,8 @@ const CHIP_TONE_CLASSES: Record<ChipTone, string> = {
 }
 
 const DOT_TONE_CLASSES: Record<ChipTone, string> = {
-	status: 'border-foreground',
-	session: 'border-primary',
+	status: 'border-border-strong',
+	session: 'border-border-strong',
 	link: 'border-border-strong',
 	update: 'border-border-strong',
 	created: 'border-border-strong',
@@ -192,6 +195,14 @@ function eventReference(
 function newStatusOf(event: EventResponse): string | null {
 	const changes = getChangesFromEventData(event.data, OBJECT_DIFF_FIELDS)
 	const value = findChange(changes, 'status')?.new
+	return typeof value === 'string' ? value : null
+}
+
+/** The status the object moved AWAY from — i.e. the one everything older than
+ *  this event sat in. Drives the phase divider below the change. */
+function prevStatusOf(event: EventResponse): string | null {
+	const changes = getChangesFromEventData(event.data, OBJECT_DIFF_FIELDS)
+	const value = findChange(changes, 'status')?.old
 	return typeof value === 'string' ? value : null
 }
 
@@ -259,6 +270,7 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 				isStatusChange: event.action === 'status_changed',
 				isRelationship: false,
 				newStatus: event.action === 'status_changed' ? newStatusOf(event) : null,
+				prevStatus: event.action === 'status_changed' ? prevStatusOf(event) : null,
 				reference: reference
 					? { ...reference, object: objectsById.get(reference.objectId) }
 					: undefined,
@@ -280,6 +292,7 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 				isStatusChange: false,
 				isRelationship: true,
 				newStatus: null,
+				prevStatus: null,
 				reference: {
 					verb: relationshipVerb(rel.type, direction),
 					objectId: linkedId,
@@ -341,6 +354,32 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 		[events, unreadCount],
 	)
 	const [unreadDismissed, setUnreadDismissed] = useState(false)
+	// High-water mark for mark-read: the newest comment event in the stream,
+	// matching the server's tracking (see `object-activity.tsx`).
+	const latestCommentEventId = useMemo(() => {
+		let max = 0
+		for (const e of events ?? []) {
+			if (e.action === 'commented' && e.id > max) max = e.id
+		}
+		return max
+	}, [events])
+	const markRead = useMarkRead(workspaceId)
+	// Dismissing the divider is a local, immediate affordance; the mutation is
+	// what actually clears the badge and the For You feed. Without it the
+	// divider would reappear on the next mount.
+	const handleMarkRead = useCallback(() => {
+		setUnreadDismissed(true)
+		if (latestCommentEventId <= 0) return
+		markRead.mutate(
+			{ entityType: 'object', entityId: object.id, lastEventId: latestCommentEventId },
+			{
+				onError: () => {
+					setUnreadDismissed(false)
+					toast.error('Failed to mark as read')
+				},
+			},
+		)
+	}, [markRead, object.id, latestCommentEventId])
 	const firstUnreadId = useMemo(() => {
 		if (unreadEventIds.size === 0) return null
 		let min: number | null = null
@@ -387,12 +426,22 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 		for (const entry of visible) {
 			out[out.length - 1]?.rows.push(entry)
 			if (entry.kind === 'event' && entry.isStatusChange) {
-				// Everything older than this change sat in the status it moved from;
-				// the entry itself carries the new status and closes the phase above.
+				// `visible` runs newest-first, so this change CLOSES the phase we
+				// have been filling and OPENS the older one below it. The phase
+				// above sat in the status the object moved to (`newStatus`) and
+				// began at this event's timestamp; everything older than the
+				// change sat in the status it moved from (`prevStatus`), and when
+				// that phase began is only known once we reach the next (older)
+				// change — hence `startedAt: null` until then.
+				const closing = out[out.length - 1]
+				if (closing) {
+					closing.startedAt = entry.time
+					if (entry.newStatus) closing.status = entry.newStatus
+				}
 				out.push({
 					key: `phase-${entry.key}`,
-					status: entry.newStatus ?? object.status,
-					startedAt: entry.time,
+					status: entry.prevStatus ?? object.status,
+					startedAt: null,
 					rows: [],
 				})
 			}
@@ -417,7 +466,7 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 	const renderEntry = (entry: TimelineEntry) => {
 		const divider =
 			showUnreadDivider && entry.kind === 'comment' && entry.event.id === firstUnreadId ? (
-				<UnreadDivider count={unreadCount} onMarkRead={() => setUnreadDismissed(true)} />
+				<UnreadDivider count={unreadCount} onMarkRead={handleMarkRead} />
 			) : null
 		return (
 			<li key={entry.key} className="list-none">
@@ -444,16 +493,16 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 		const open = expandedFolds.has(row.key)
 		return (
 			<li key={row.key} className="list-none">
-				<div className="relative py-1 pl-9">
+				<div className="relative py-[2px] pl-9">
 					<span
 						aria-hidden="true"
-						className="absolute left-[11px] top-3 size-[7px] rounded-full bg-border"
+						className="absolute left-[11px] top-[9px] size-[7px] rounded-full bg-border"
 					/>
 					<button
 						type="button"
 						aria-expanded={open}
 						onClick={() => toggleFold(row.key)}
-						className="inline-flex h-[26px] items-center gap-2 rounded-full border border-dashed border-border px-3 transition-colors hover:border-border-strong hover:bg-muted/40"
+						className="inline-flex h-6 items-center gap-2 rounded-full border border-dashed border-border px-[11px] transition-colors hover:border-border-strong hover:bg-muted/40"
 					>
 						<span className="text-[11.5px] font-semibold text-muted-foreground">
 							{open ? `Hide ${row.rows.length} updates` : `${row.rows.length} agent updates`}
@@ -582,7 +631,7 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 
 function UnreadDivider({ count, onMarkRead }: { count: number; onMarkRead: () => void }) {
 	return (
-		<div className="relative z-[3] flex items-center gap-2.5 py-3">
+		<div className="relative z-[3] flex items-center gap-2.5 pb-1.5 pt-2">
 			<span aria-hidden="true" className="h-px flex-1 bg-brand/40" />
 			<span className="rounded-full bg-brand/10 px-2.5 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.11em] text-brand">
 				{count} new
@@ -616,15 +665,16 @@ function EventRow({
 	// row rather than a trailer on someone's name.
 	if (entry.isRelationship && entry.reference) {
 		return (
-			<div className="relative flex flex-wrap items-center gap-x-2.5 gap-y-1 py-[7px] pl-9">
+			<div className="relative flex flex-wrap items-center gap-x-2.5 gap-y-1 py-1 pl-9">
 				<span
 					aria-hidden="true"
-					className="absolute left-[10px] top-3.5 size-2 rounded-[2px] border-[1.5px] border-border-strong bg-background"
+					className="absolute left-[10px] top-[11px] size-2 rounded-[2px] border-[1.5px] border-border-strong bg-background"
 				/>
 				{entry.time && (
 					<RelativeTime
 						date={entry.time}
-						className="w-[46px] shrink-0 text-[10px] tabular-nums text-border-strong"
+						compact
+						className="w-[46px] shrink-0 text-[10px] uppercase tabular-nums text-muted-foreground"
 					/>
 				)}
 				<span className="shrink-0 text-[12.5px] text-muted-foreground">{entry.reference.verb}</span>
@@ -643,11 +693,11 @@ function EventRow({
 		// Mockup 1177–1191: a hollow 8px node on the rail, the time in its own
 		// 46px column, then one sentence — the event's weight comes from the
 		// bold actor name, not from a filled dot or an uppercase badge.
-		<div className="relative py-2 pl-9">
+		<div className="relative py-[3px] pl-9">
 			<span
 				aria-hidden="true"
 				className={cn(
-					'absolute left-[10px] top-[13px] size-2 rounded-full border-2 bg-background',
+					'absolute left-[10px] top-2 size-2 rounded-full border-2 bg-background',
 					DOT_TONE_CLASSES[entry.chipTone],
 				)}
 			/>
@@ -655,7 +705,8 @@ function EventRow({
 				{entry.time && (
 					<RelativeTime
 						date={entry.time}
-						className="w-[46px] shrink-0 text-[10px] tabular-nums text-border-strong"
+						compact
+						className="w-[46px] shrink-0 text-[10px] uppercase tabular-nums text-muted-foreground"
 					/>
 				)}
 				<span className="font-bold text-foreground">{who}</span>

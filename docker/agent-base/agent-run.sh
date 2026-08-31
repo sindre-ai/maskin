@@ -7,6 +7,12 @@ if [ -f /agent/.env-overflow.sh ]; then
   source /agent/.env-overflow.sh
 fi
 
+# Committer identity for anything the agent commits. Overridable via env, but
+# any override must stay on a domain we own (maskin.io / sindre.ai) — see
+# setup_git_identity below.
+GIT_IDENTITY_NAME="${GIT_IDENTITY_NAME:-Maskin Agent}"
+GIT_IDENTITY_EMAIL="${GIT_IDENTITY_EMAIL:-agent@maskin.io}"
+
 # Resolve a working URL for the agent-server (log ingest, input stream, completion
 # signal). The server injects AGENT_SERVER_URL as http://host.microsandbox.internal:<port>,
 # but on msb 0.5.7 that alias does not reliably resolve inside the VM, so every
@@ -144,8 +150,14 @@ setup_cdp_retry_proxy() {
     echo "[system] WARNING: could not parse BROWSER_CDP_URL ($BROWSER_CDP_URL), skipping retry proxy" >&2
     return
   fi
+  # tee, not a plain redirect: the startup poll below greps this log file,
+  # so the file must stay - but it lives in a VM that gets destroyed, so it
+  # is also mirrored to stderr, which `msb exec` carries back to the host
+  # and into agent-server logs as source='msb-exec' (guest-log-stream.ts).
+  # Process substitution (not a pipeline) keeps $! as node's own pid, which
+  # the kill -0 liveness check below depends on.
   node /cdp-retry-proxy.js "$CDP_RETRY_PROXY_PORT" "$target_host" "$target_port" \
-    > /tmp/cdp-retry-proxy.log 2>&1 &
+    > >(tee /tmp/cdp-retry-proxy.log | sed -u 's/^/[cdp-retry-proxy] /' >&2) 2>&1 &
   local proxy_pid=$!
   # Give it a moment to bind before handing out the local URL — a failed
   # bind (port in use, node missing) means BROWSER_CDP_URL should still
@@ -263,6 +275,21 @@ CREDS_EOF
   echo "[system] Claude OAuth credentials written to $creds_dir/.credentials.json"
 }
 
+# Give git a committer identity up front so the agent never has to invent one.
+# Nothing else in the image or the injected env sets user.name/user.email, so
+# without this every session improvised its own address at commit time — which
+# is how ~40 fabricated identities (agent@maskin.ai, dev@maskin.ai,
+# developer@maskin.local, ...) ended up in the history. Anything at a domain we
+# do not own is claimable: verifying such an address on a GitHub account
+# retroactively credits its holder as a contributor here. maskin.ai in
+# particular is registered to someone else. Pin it to a domain we control.
+setup_git_identity() {
+  git config --global user.name "$GIT_IDENTITY_NAME"
+  git config --global user.email "$GIT_IDENTITY_EMAIL"
+
+  echo "[system] git identity set to $GIT_IDENTITY_NAME <$GIT_IDENTITY_EMAIL>"
+}
+
 # Point git's github.com credential helper at our just-in-time token script
 # instead of relying on GITHUB_TOKEN staying valid for the whole session.
 # GitHub App installation tokens expire after exactly 1 hour, so a session
@@ -294,95 +321,46 @@ start_preview_port_watcher() {
   if [ -z "$BROWSER_CDP_URL" ] || [ -z "$AGENT_SERVER_URL" ] || [ -z "$SESSION_ID" ]; then
     return
   fi
-  node /preview-port-watcher.js > /tmp/preview-port-watcher.log 2>&1 &
+  # Straight to stderr rather than a write-only /tmp file that dies with the
+  # VM - `msb exec` carries stderr back to agent-server's structured logs.
+  # Process substitution (not a pipeline) so $! stays node's own pid.
+  node /preview-port-watcher.js > >(sed -u 's/^/[preview-port-watcher] /' >&2) 2>&1 &
   echo "[system] preview-port watcher started (pid $!)"
 }
 
 # Run the agent
 run_agent() {
-  # Pipe output to the agent-server's log ingest endpoint so the Maskin UI
-  # can show live logs. Bind mounts from the microVM to the host are not
-  # reliable in the current microsandbox version, so we stream over HTTP
-  # instead. Falls back to plain stdout if AGENT_SERVER_URL is unset.
-  local log_ingest_url=""
-  if [ -n "$AGENT_SERVER_URL" ] && [ -n "$SESSION_ID" ]; then
-    log_ingest_url="${AGENT_SERVER_URL}/sessions/${SESSION_ID}/logs/ingest"
-  fi
-
-  # Stream agent output to the agent-server's log-ingest endpoint LINE BY LINE
-  # over a single long-lived chunked POST, so the Maskin UI shows logs live
-  # while the agent runs.  The previous implementation buffered ALL output to a
-  # temp file (`cat > file`) and POSTed it once at exit (`--data-binary @file`),
-  # which (a) showed nothing until the process exited and (b) showed NOTHING for
-  # interactive sessions, where `claude` never exits.
+  # Agent output leaves the VM over HTTP: bind mounts from the microVM to the
+  # host are not reliable in the current microsandbox version. output-stream.js
+  # reads AGENT_SERVER_URL/SESSION_ID from the environment itself.
+  #
+  # Ship agent output to the agent-server via output-stream.js, which POSTs it
+  # in bounded, acknowledged batches. It replaced a single long-lived chunked
+  # upload (curl -T -) that could not survive microsandbox egress proxy: when
+  # the proxy guest-side leg died the upload never EOFed and never errored, so
+  # curl blocked in a write forever and the reconnect loop around it could not
+  # run. The agent reply then never left the VM -- the user saw silence even
+  # though the agent had answered (wedges of Aug 21-24), and with the reader
+  # stalled the pipe eventually blocked the agent itself.
+  #
+  # The helper drains stdin unconditionally, so delivery can never apply
+  # backpressure to the agent, and only forgets lines the server acks. With no
+  # AGENT_SERVER_URL (the local Docker path) it just passes stdin to stdout.
+  # See docker/agent-base/output-stream.js.
+  # `|| true` because this is a log shipper, not the agent. Line 2 sets
+  # `set -e`, and every call site turns pipefail OFF before `agent | log_tee`,
+  # so the pipeline's status is THIS command's. A non-zero exit here therefore
+  # aborted run_agent before `AGENT_EXIT_CODE=${PIPESTATUS[0]}` ran, and the
+  # EXIT trap reported the initial 0 — a failed session posting clean success,
+  # with everything after run_agent skipped.
+  #
+  # It must be inside this function, not `... | log_tee || true` at the call
+  # site: `|| true` there resets PIPESTATUS, so ${PIPESTATUS[0]} reads 0 and
+  # every real agent failure is masked as success. Verified both ways.
+  # PIPESTATUS[0] refers to the agent, the pipeline's FIRST element, so
+  # swallowing this function's own status cannot affect it.
   log_tee() {
-    if [ -z "$log_ingest_url" ]; then
-      # No agent-server reachable: just drain stdin (to the unread PTY) so the
-      # agent isn't blocked by a full pipe.
-      cat
-      return
-    fi
-    # `curl -T -` uploads stdin with Transfer-Encoding: chunked, forwarding bytes
-    # as they arrive — unlike `--data-binary @-`, which first buffers ALL of
-    # stdin to compute a Content-Length (effectively what `cat > file` did).
-    # Chunked requires HTTP/1.1, so we drop the old `--http1.0`.  The server
-    # (apps/agent-server) reads the request body as a stream and pushes each
-    # newline-delimited line into the session's log buffer immediately, so one
-    # POST carries the whole session and the UI updates as lines arrive.
-    # `-H "Expect:"` strips the 100-continue handshake (curl adds it for uploads
-    # >1KB), which would otherwise stall the stream waiting for a 100 Continue.
-    #
-    # Why a function fed by a pipe (`agent ... | log_tee`) and not process
-    # substitution: bash WAITS for every stage of a pipeline before the script
-    # exits, so curl finishes before run_agent returns and the VM is torn down.
-    # bash does NOT wait for `>(...)` subprocesses (the reason the old code could
-    # not use them).  curl also continuously drains the pipe, so the undrained
-    # microsandbox PTY never fills and freezes the agent — the problem that ruled
-    # out plain `tee`.
-    #
-    # The reconnect loop keeps a reader on the pipe AT ALL TIMES.  Without it a
-    # dropped upload connection would leave the agent writing to a broken pipe
-    # (SIGPIPE -> the agent dies).  With it, a transient drop reconnects and
-    # resumes streaming; after repeated failures we fall back to draining stdin
-    # so the agent keeps running and this script can still reach its EXIT trap
-    # (the completion signal).  curl returns 0 only once stdin hits EOF (the
-    # agent exited) and the body flushed — the clean end-of-stream.
-    #
-    # Retry budget: 5 fast attempts (1s apart, ~5s) for the common quick blip,
-    # then slower attempts (10s apart) for another ~2 minutes to ride out an
-    # agent-server restart or network hiccup — a reader sitting idle between
-    # attempts just causes mild pipe backpressure (this loop never closes the
-    # read end), not the SIGPIPE risk that a fully-stopped reader would cause.
-    # Once that budget is exhausted we fall back to draining stdin, same as
-    # before, but first fire a one-shot best-effort marker POST so the switch
-    # to local-only output is visible in the Maskin UI instead of silent.
-    local attempts=0
-    local fast_attempts=5
-    local max_attempts=17
-    while true; do
-      if curl -4 -sN -X POST "$log_ingest_url" \
-          -H "Content-Type: text/plain" \
-          -H "Expect:" \
-          -T - \
-          -o /dev/null \
-          2>/dev/null; then
-        return 0
-      fi
-      attempts=$((attempts + 1))
-      if [ "$attempts" -ge "$max_attempts" ]; then
-        curl -4 -s --max-time 5 -X POST "$log_ingest_url" \
-          -H "Content-Type: text/plain" \
-          -d "[system] log streaming to Maskin failed after ${attempts} attempts — falling back to local-only output; further agent output will not appear in the Maskin UI for the rest of this session" \
-          -o /dev/null 2>/dev/null || true
-        cat > /dev/null
-        return 0
-      fi
-      if [ "$attempts" -ge "$fast_attempts" ]; then
-        sleep 10
-      else
-        sleep 1
-      fi
-    done
+    node /output-stream.js || true
   }
 
   case "$RUNTIME" in
@@ -395,9 +373,27 @@ run_agent() {
       if [ "$INTERACTIVE" = "1" ]; then
         if [ -n "$AGENT_SERVER_URL" ]; then
           # Remote microsandbox path: stream user turns from the agent-server.
-          # curl holds a long-lived HTTP connection; process substitution pipes
-          # its output into claude's stdin so each newline-delimited JSON message
-          # is delivered as a user turn without needing Docker stdin attach.
+          # input-stream.js holds the connection and pipes NDJSON turns into
+          # claude stdin via process substitution, so no Docker stdin attach
+          # is needed. It replaced a curl reconnect loop that could not work:
+          # these connections terminate on the HOST at microsandbox's egress
+          # proxy, and when the proxy guest-side leg dies the host keeps
+          # ACKing writes into a socket the guest never reads. Host-side the
+          # socket looks perfect (Send-Q 0, bytes_sent == bytes_acked); in the
+          # guest curl blocked forever on a half-open socket that never EOFs
+          # and never errors, so the loop around it never ran and every turn
+          # the human sent was silently destroyed (wedges of Aug 21-24).
+          #
+          # The helper fixes both halves: it re-dials when no byte arrives for
+          # 90s (three missed server heartbeats), and it acks the seq of each
+          # turn it consumed so the agent-server can redeliver anything a
+          # blackholed write swallowed. See docker/agent-base/input-stream.js
+          # and apps/agent-server/src/services/input-queue.ts.
+          #
+          # Its stdout IS claude stdin, so it carries only NDJSON turns;
+          # status and errors go to stderr. It never exits on its own -- it
+          # dies with the VM at teardown -- so claude stdin never sees EOF
+          # mid-conversation.
           set +o pipefail
           claude -p \
             --input-format stream-json \
@@ -406,8 +402,7 @@ run_agent() {
             --dangerously-skip-permissions \
             "${mcp_args[@]}" \
             2>&1 \
-            < <(curl -4 -sN --no-buffer \
-                "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/input/stream") \
+            < <(node /input-stream.js) \
             | log_tee
           AGENT_EXIT_CODE=${PIPESTATUS[0]}
           set -o pipefail
@@ -480,6 +475,7 @@ install_runtime
 build_context
 setup_mcps
 setup_claude_credentials
+setup_git_identity
 setup_github_credential_helper
 start_preview_port_watcher
 

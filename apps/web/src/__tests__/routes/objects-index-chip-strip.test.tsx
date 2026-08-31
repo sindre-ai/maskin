@@ -81,13 +81,20 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 	}
 })
 
+const bulkUpdateCapture = vi.hoisted(() => ({ mutate: vi.fn() }))
 vi.mock('@/hooks/use-objects', () => ({
-	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
+	useBulkUpdateObjects: () => ({ mutate: bulkUpdateCapture.mutate }),
 	useBulkResultHandlers: () => ({ reportBulkResult: vi.fn(), retainOnlyFailed: vi.fn() }),
 }))
 
+const toastCapture = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }))
+vi.mock('sonner', () => ({
+	toast: { error: toastCapture.error, success: toastCapture.success },
+}))
+
+const displaySettings = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }))
 vi.mock('@/hooks/use-user-display-settings', () => ({
-	useUserDisplaySettings: () => ({ data: null, isSuccess: true }),
+	useUserDisplaySettings: () => ({ data: displaySettings.current, isSuccess: true }),
 	useUpdateUserDisplaySettings: () => ({ mutate: vi.fn() }),
 }))
 
@@ -120,8 +127,14 @@ vi.mock('@/components/layout/page-header', () => ({
 vi.mock('@/components/objects/list/list-view', () => ({
 	ListView: () => <div data-testid="list-view" />,
 }))
+// Capture the board's props so the single-card `→` advance handler can be
+// driven directly — the real BoardView is stubbed out in this suite.
+const boardCapture = vi.hoisted(() => ({ lastProps: null as Record<string, unknown> | null }))
 vi.mock('@/components/objects/board/board-view', () => ({
-	BoardView: () => <div data-testid="board-view" />,
+	BoardView: (props: Record<string, unknown>) => {
+		boardCapture.lastProps = props
+		return <div data-testid="board-view" />
+	},
 }))
 // The chip strip now lives inside the toolbar's single control row (mockup
 // 907–921), so the stand-in renders exactly what the route hands it.
@@ -222,6 +235,7 @@ vi.mock('@/lib/analytics', () => ({
 	trackEvent: vi.fn(),
 	trackObjectsListArrived: vi.fn(),
 	trackObjectsListGroupToggled: vi.fn(),
+	trackObjectsBoardArrived: vi.fn(),
 }))
 vi.mock('@/lib/back-nav-tracker', () => ({
 	consumeArrivalNavType: vi.fn().mockReturnValue('direct'),
@@ -259,8 +273,16 @@ vi.mock('@/lib/query-keys', () => ({
 
 import { Route } from '@/routes/_authed/$workspaceId/objects/index'
 
+// The v2 Objects page sits behind `new-design`; these specs cover that branch,
+// so they drive the flag on through the test-only localStorage override. The
+// pre-v2 branch is covered by its own spec.
+beforeEach(() => {
+	localStorage.setItem('ff:new-design', 'on')
+})
+
 const RouteOptions = Route as unknown as { component: React.FC }
-const ObjectsPage = RouteOptions.component
+const ObjectsPageComponent = RouteOptions.component
+const ObjectsPage = ObjectsPageComponent
 
 beforeEach(() => {
 	searchState.current = {
@@ -438,5 +460,62 @@ describe('ObjectsPage — published screen identity', () => {
 		expect(screen.getByTestId('page-subtitle')).toBeEmptyDOMElement()
 		expect(screen.getByRole('group', { name: 'Type filter' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'All (0)' })).toBeInTheDocument()
+	})
+})
+
+// The bulk endpoint reports per-row failures as HTTP 200 with
+// `results:[{ok:false,error}]`, so `onError` never fires for them. Without an
+// explicit `ok` check the optimistic patch sits there until `onSettled`
+// refetches and the card snaps back silently — the shape the drag path in
+// `board-view.tsx` already guards against.
+describe('ObjectsPage — board single-card advance', () => {
+	beforeEach(() => {
+		bulkUpdateCapture.mutate.mockReset()
+		toastCapture.error.mockReset()
+		boardCapture.lastProps = null
+		displaySettings.current = null
+	})
+
+	function advance() {
+		// The board branch is gated on a resolved type filter with configured
+		// statuses; the view itself comes from persisted display settings, not
+		// the search param.
+		searchState.current.type = 'bet'
+		displaySettings.current = { settings: { view: 'board' } }
+		render(<ObjectsPage />)
+		const onAdvance = boardCapture.lastProps?.onAdvance as (id: string, status: string) => void
+		expect(onAdvance).toBeTypeOf('function')
+		onAdvance('obj-1', 'done')
+		return bulkUpdateCapture.mutate.mock.calls.at(-1) as [
+			unknown,
+			{
+				onSuccess?: (d: { results: Array<{ id: string; ok: boolean; error?: string }> }) => void
+				onError?: (e: Error) => void
+			},
+		]
+	}
+
+	it('toasts the server error when the response reports a per-id failure', () => {
+		const [, opts] = advance()
+		opts.onSuccess?.({ results: [{ id: 'obj-1', ok: false, error: "Invalid status 'done'" }] })
+		expect(toastCapture.error).toHaveBeenCalledWith("Invalid status 'done'")
+	})
+
+	it('toasts when the response omits the advanced id entirely', () => {
+		const [, opts] = advance()
+		opts.onSuccess?.({ results: [{ id: 'other', ok: true }] })
+		expect(toastCapture.error).toHaveBeenCalledWith('Failed to move object')
+	})
+
+	it('stays silent when the server confirms the move', () => {
+		const [, opts] = advance()
+		opts.onSuccess?.({ results: [{ id: 'obj-1', ok: true }] })
+		expect(toastCapture.error).not.toHaveBeenCalled()
+	})
+
+	it('toasts when the mutation itself rejects', () => {
+		const [, opts] = advance()
+		opts.onError?.(new Error('Network blew up'))
+		expect(toastCapture.error).toHaveBeenCalledWith('Failed to move object')
 	})
 })

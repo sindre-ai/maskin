@@ -56,18 +56,21 @@ function ChatsLayout() {
 			? `${unreadCount} unread`
 			: `${total} ${total === 1 ? 'conversation' : 'conversations'}`
 
+	// Stay on whatever chats route is currently mounted (`to: '.'`) and rewrite
+	// only the search params. Navigating to `/$workspaceId/chats` instead would
+	// drop the `$conversationId` leaf, so re-filtering while reading a thread
+	// closed the thread out from under the reader.
 	const handleFilterChange = useCallback(
 		(next: ChatsFilter) => {
 			navigate({
-				to: '/$workspaceId/chats',
-				params: { workspaceId },
+				to: '.',
 				search: (prev: ChatsSearch) => ({
 					...prev,
 					filter: next === 'all' ? undefined : next,
 				}),
 			})
 		},
-		[navigate, workspaceId],
+		[navigate],
 	)
 
 	// One writer for the shared nav row: a child route rendering its own
@@ -96,7 +99,7 @@ function ChatsLayout() {
 			<>
 				{header}
 				{hasThread ? (
-					<div className="-m-4 flex min-h-0 flex-1 flex-col">
+					<div className="-m-4 flex min-h-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)]">
 						<Outlet />
 					</div>
 				) : (
@@ -127,14 +130,21 @@ function ChatsLayout() {
 			{header}
 			<div className="-m-4 flex min-h-0 flex-1 md:-m-8">
 				{wide ? null : (
-					<div className="hidden w-[clamp(266px,25vw,326px)] shrink-0 flex-col border-r border-border md:flex">
+					// `bg-surface-sunken` is what makes the split read as index +
+					// document rather than two equal halves (mockup 273).
+					<div className="hidden w-[clamp(266px,25vw,326px)] shrink-0 flex-col border-r border-border bg-surface-sunken md:flex">
 						<ConversationList workspaceId={workspaceId} filter={filter} />
 					</div>
 				)}
+				{/* One gutter variable for the whole thread pane — the header,
+				    transcript and composer all read `--chat-gut` so they can never
+				    drift apart, and focus mode swaps the value for a centring
+				    margin instead of adding padding on top of the base gutter
+				    (mockup 7763). */}
 				<div
 					className={cn(
-						'flex min-w-0 flex-1 flex-col',
-						wide && 'md:px-[max(28px,calc((100%-900px)/2))]',
+						'flex min-w-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)]',
+						wide && 'md:[--chat-gut:max(28px,calc((100%-900px)/2))]',
 					)}
 				>
 					<Outlet />

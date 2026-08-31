@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
@@ -7,6 +8,32 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // holds driver / status / custom fields / subscribed / files. Below the
 // document, one Activity heading with a Timeline | Related segmented control,
 // and a composer pinned to the bottom of the scroll region.
+
+// Below 768 the drawer is a modal Radix Sheet, which puts the rest of the page
+// behind `aria-hidden` — the Properties toggle leaves the accessibility tree
+// entirely while it is open, so its `aria-expanded` can only be read on the
+// inline (>=768) drawer. Assert the drawer itself on mobile.
+async function expectDrawerOpen(page: Page, viewportWidth: number) {
+	if (viewportWidth < 768) {
+		await expect(page.getByRole('dialog', { name: 'Sidebar' })).toBeVisible()
+		return
+	}
+	await expect(page.getByRole('button', { name: 'Properties', exact: true })).toHaveAttribute(
+		'aria-expanded',
+		'true',
+	)
+}
+
+async function expectDrawerClosed(page: Page, viewportWidth: number) {
+	if (viewportWidth < 768) {
+		await expect(page.getByRole('dialog', { name: 'Sidebar' })).toHaveCount(0)
+		return
+	}
+	await expect(page.getByRole('button', { name: 'Properties', exact: true })).toHaveAttribute(
+		'aria-expanded',
+		'false',
+	)
+}
 
 test.describe('Object detail — properties drawer', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
@@ -62,10 +89,10 @@ test.describe('Object detail — properties drawer', () => {
 		})
 
 		// Ported from the retired ObjectDocument surface onto the shell: the
-		// ⌘/Ctrl+I chord shares the header button's toggle path, and on
+		// ⌘/Ctrl+⇧+\ chord shares the header button's toggle path, and on
 		// non-mobile the open/closed bit is persisted per actor under the
 		// `__chrome__` display-settings row, so it survives a reload.
-		test(`⌘/Ctrl+I toggles the drawer and the state persists at ${vp.label}`, async ({
+		test(`⌘/Ctrl+⇧+\\ toggles the drawer and the state persists at ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -95,17 +122,17 @@ test.describe('Object detail — properties drawer', () => {
 			// is open, so the toggle's own attribute is unreadable there.
 			const drawerHeading = page.getByText('Properties', { exact: true }).last()
 
-			await page.keyboard.press('Control+i')
+			await page.keyboard.press('Control+Shift+Backslash')
 			await expect(drawerHeading).toBeInViewport()
 
-			await page.keyboard.press('Control+i')
+			await page.keyboard.press('Control+Shift+Backslash')
 			await expect(toggle).toHaveAttribute('aria-expanded', 'false')
 			await expect(drawerHeading).not.toBeInViewport()
 
 			// Mobile's drawer is a transient Sheet by design; the persisted bit
 			// only governs the inline drawer at >=768.
 			if (vp.width >= 768) {
-				await page.keyboard.press('Control+i')
+				await page.keyboard.press('Control+Shift+Backslash')
 				await expect(toggle).toHaveAttribute('aria-expanded', 'true')
 				await page.reload()
 				await expect(page.getByRole('heading', { level: 1, name: 'Chord bet' })).toBeVisible({
@@ -148,7 +175,7 @@ test.describe('Object detail — properties drawer', () => {
 				'aria-selected',
 				'true',
 			)
-			await expect(page.getByText('No related objects yet.')).toBeVisible()
+			await expect(page.getByText('No related objects yet')).toBeVisible()
 
 			await timeline.click()
 			await expect(timeline).toHaveAttribute('aria-selected', 'true')
@@ -214,7 +241,8 @@ test.describe('Object detail — properties drawer', () => {
 			.first()
 			.getByRole('button', { name: 'Properties', exact: true })
 			.click()
-		// The creator is auto-subscribed, and the row says why they are on it.
-		await expect(page.getByText('you', { exact: true })).toBeVisible()
+		// The creator is auto-subscribed, and the row says why they are on it —
+		// the mockup's wording (1441).
+		await expect(page.getByText('you own the outcome')).toBeVisible()
 	})
 })

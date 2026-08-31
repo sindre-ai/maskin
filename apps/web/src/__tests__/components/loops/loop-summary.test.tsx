@@ -16,10 +16,10 @@ describe('buildLoopSummarySentences', () => {
 	it('builds four sentences from real loop data', () => {
 		const loop = buildLoopSummary({
 			name: 'Feedback loop',
-			guarantee: 'Every customer hears back within 30 days',
+			content: 'Every customer hears back within 30 days',
 			entryCondition: 'A new piece of customer feedback lands in the inbox',
 			closeCondition: 'the customer follows up',
-			pill: 'running',
+			pill: 'learning',
 			inProgressCount: 3,
 		})
 
@@ -36,7 +36,7 @@ describe('buildLoopSummarySentences', () => {
 
 	it('segments the key noun so it renders at full ink against the muted body', () => {
 		const loop = buildLoopSummary({
-			guarantee: null,
+			content: null,
 			name: 'Billing reliability',
 			entryCondition: 'a payment fails',
 			pill: 'paused',
@@ -55,14 +55,14 @@ describe('buildLoopSummarySentences', () => {
 		])
 	})
 
-	it('falls back to a name-based guarantee when none is set', () => {
-		const loop = buildLoopSummary({ name: 'Billing reliability', guarantee: null })
+	it('falls back to a name-based promise when none is set', () => {
+		const loop = buildLoopSummary({ name: 'Billing reliability', content: null })
 		expect(texts(loop)[0]).toBe('Billing reliability keeps the workspace moving on its own.')
 	})
 
-	it('says it is waiting on you with decision points when the pill is waiting_on_you', () => {
-		const loop = buildLoopSummary({ pill: 'waiting_on_you', humanDecisionPoints: 2 })
-		expect(texts(loop)[3]).toBe('Right now it is waiting on you, with 2 decision points open.')
+	it('says it is waiting on you when the pill is waiting_on_you', () => {
+		const loop = buildLoopSummary({ pill: 'waiting_on_you' })
+		expect(texts(loop)[3]).toBe('Right now it is waiting on you.')
 	})
 
 	it('says it is paused when the pill is paused', () => {
@@ -72,8 +72,8 @@ describe('buildLoopSummarySentences', () => {
 
 describe('LoopSummary', () => {
 	it('renders each sentence as a paragraph', () => {
-		render(<LoopSummary loop={buildLoopSummary({ guarantee: 'The loop guarantee' })} />)
-		expect(screen.getByText('The loop guarantee')).toBeInTheDocument()
+		render(<LoopSummary loop={buildLoopSummary({ content: 'The loop promise' })} />)
+		expect(screen.getByText('The loop promise')).toBeInTheDocument()
 	})
 
 	it('offers "Edit this loop" with the no-builder hint and calls back', async () => {

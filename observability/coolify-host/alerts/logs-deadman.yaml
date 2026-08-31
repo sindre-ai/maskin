@@ -1,0 +1,147 @@
+# Grafana alert rules for the Coolify host's LOG SHIPPING itself.
+#
+# WHAT THIS DETECTS: Alloy has stopped delivering logs to Loki, while
+# continuing to look completely healthy from every other angle.
+#
+# WHY IT NEEDS ITS OWN RULE. The two metrics pipelines and the logs pipeline
+# fail independently. A metrics failure is close to self-evident — the
+# dashboards go flat and `up` drops. A logs failure is invisible off-box:
+#
+#   - the systemd unit stays active, because Alloy does not exit on a write
+#     rejection, it retries and drops
+#   - `alloy validate` still passes; the config was never the problem
+#   - the host dashboard stays green, because metrics use a DIFFERENT endpoint
+#     and different credentials
+#   - up{job=...} stays 1 for every scrape target
+#
+# The only local evidence is `journalctl -u alloy`, which nobody reads on a
+# healthy-looking box. So the first symptom is someone opening Explore during
+# an incident and finding the hours they need are missing — the one moment the
+# logs had to be there. This is the repo's "healthy collector that silently
+# matches nothing" pitfall applied to the collector itself.
+#
+# THE THREE REALISTIC CAUSES, all flagged at their sites in alloy.alloy:
+#   1. Loki and Prometheus credentials crossed. In Grafana Cloud the numeric
+#      usernames differ per signal; one access-policy token scoped
+#      logs:write + metrics:write serves both, but the usernames do not
+#      interchange. The rejection is a 401 that reads like a bad token.
+#      Note this cause breaks logs while leaving metrics working — which is
+#      what makes the dead-man necessary rather than redundant.
+#   2. The systemd unit has no EnvironmentFile=, so LOKI_URL/USERNAME/PASSWORD
+#      are all "". These have no defaults on purpose; blank means "ship
+#      nowhere", not "ship somewhere sensible".
+#   3. The alloy user is not in the `docker` group, so discovery.docker cannot
+#      read the socket and there is nothing to ship in the first place.
+#
+# HOW TO APPLY IT: identical to alerts/seaweedfs-disk.yaml — see the header
+# there. Same conversion, same X-Disable-Provenance requirement, same drift
+# workflow. Use rule-group name `coolify-logs-deadman` in the PUT path.
+#
+# BEFORE APPLYING, substitute:
+#   ${PROM_DATASOURCE_UID}       the Prometheus datasource UID
+#   ${CONTACT_POINT}             the notification target
+#   ${COLLECTOR_PROM_JOB_LABEL}  must equal the value Alloy ships its own
+#                                metrics under (default `integrations/alloy`,
+#                                see alloy.env.example). If the two disagree
+#                                this rule watches a job nobody writes and
+#                                sits in NoData forever — the exact silence it
+#                                was written to break.
+#
+# NOTE THE DEPENDENCY: this rule reads Alloy's self-metrics, which arrive over
+# the PROMETHEUS pipeline. It therefore detects "logs broken, metrics fine",
+# which is the common and invisible case. It CANNOT detect both pipelines
+# failing together — a dead host or dead Alloy — because then nothing reports
+# anything. That case is covered by the host being absent from
+# up{job="integrations/node_exporter"}, and is not silent in the same way.
+
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: coolify-logs-deadman
+    folder: Maskin
+    # 5m matches the seaweedfs group. The input is a counter over a 30m
+    # window; evaluating faster would not shorten detection.
+    interval: 5m
+    rules:
+      - uid: maskin-coolify-logs-not-shipping
+        title: Coolify host is not shipping logs
+        condition: alert
+        data:
+          - refId: sent
+            relativeTimeRange: { from: 3600, to: 0 }
+            datasourceUid: ${PROM_DATASOURCE_UID}
+            model:
+              refId: sent
+              # Bytes successfully SENT over the last 30m, per host.
+              #
+              # increase() over a counter rather than the raw counter: the
+              # counter resets to 0 on every Alloy restart, so a raw
+              # comparison would fire on each deploy. increase() handles the
+              # reset.
+              #
+              # A healthy Coolify host is never silent for 30 minutes — the
+              # allowlisted containers include Traefik and the app, which log
+              # continuously. Zero over that window means the pipeline, not a
+              # quiet night.
+              expr: >-
+                sum by (instance) (
+                  increase(loki_write_sent_bytes_total{job="${COLLECTOR_PROM_JOB_LABEL}"}[30m])
+                )
+              instant: true
+          - refId: alert
+            datasourceUid: __expr__
+            model:
+              refId: alert
+              type: threshold
+              expression: sent
+              conditions:
+                # Strictly less than 1 byte, i.e. exactly nothing. Deliberately
+                # not a "low volume" threshold — log volume varies far too much
+                # by time of day to put a floor under, and a rule that fires on
+                # a quiet Sunday gets muted, after which it may as well not
+                # exist. This asks only the unambiguous question.
+                - evaluator: { type: lt, params: [1] }
+        # 15m on top of the 30m window: total detection is ~45m. That is
+        # deliberate. This is a ticket, not a page — logs stopping is not a
+        # user-facing outage, it is a loss of the ability to diagnose one, and
+        # the cost of a false positive here (someone stops trusting the rule)
+        # is higher than 15 extra minutes of delay.
+        for: 15m
+        # NoData means Alloy's self-metrics are absent — it is not scraping
+        # itself, or the metrics pipeline is also down. Either is a real fault
+        # and must not clear silently.
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: warning
+          service: alloy
+        annotations:
+          summary: >-
+            {{ $labels.instance }}: no logs delivered to Loki in 30 minutes —
+            log-based queries and dashboards for this host are blind.
+          description: >-
+            Metrics are still arriving (this rule's own input came over the metrics
+            pipeline), so the host is up and Alloy is running. What has stopped is log
+            delivery specifically.
+
+            Check in this order:
+
+            1. `journalctl -u alloy -n 200` filtered for error/401/429 — this is where the
+               cause will actually be stated. A 401 here is almost always the
+               Loki/Prometheus username crossed, not an expired token.
+            2. `systemctl show alloy -p EnvironmentFiles` — if empty, LOKI_URL and its
+               credentials are "" and Alloy has been shipping to nowhere since last restart.
+            3. `sudo -u alloy docker ps` — if this fails, the alloy user is not in the
+               `docker` group, discovery.docker returns nothing, and there are no logs to
+               ship. Note this cause also silently empties the container log stream while
+               leaving any journald-sourced entries flowing.
+            4. Alloy's own endpoint on localhost:12345/metrics — loki_write_dropped_bytes_total
+               climbing while loki_write_sent_bytes_total stays flat confirms delivery
+               rejection rather than an empty source.
+
+            If the cause was an empty source rather than a rejection, also confirm
+            discovery.docker is returning targets — see the README's note on a single
+            malformed IPv6 gateway aborting discovery for every container on the daemon.
+          runbook_url: https://github.com/sindre-ai/maskin/blob/main/observability/coolify-host/README.md
+        notification_settings:
+          receiver: ${CONTACT_POINT}

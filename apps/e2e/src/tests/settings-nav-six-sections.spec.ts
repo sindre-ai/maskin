@@ -41,7 +41,7 @@ test.describe('Settings — six-section left rail', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await gotoSettings(page, account.workspaceId)
 
-			const nav = page.getByRole('navigation').first()
+			const nav = page.getByRole('navigation', { name: 'Settings sections' })
 			await expect(nav).toBeVisible({ timeout: 10000 })
 
 			const labels = await nav.getByRole('link').allInnerTexts()
@@ -60,7 +60,7 @@ test.describe('Settings — six-section left rail', () => {
 		}) => {
 			await gotoSettings(page, account.workspaceId, path)
 
-			const nav = page.getByRole('navigation').first()
+			const nav = page.getByRole('navigation', { name: 'Settings sections' })
 			const link = nav.getByRole('link', { name: label, exact: true })
 			await expect(link).toBeVisible({ timeout: 10000 })
 			// Active item styles carry `bg-muted` + `font-bold` (mockup 2721 puts the

@@ -1,5 +1,6 @@
 import { generateKeyPairSync, randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, vi } from 'vitest'
+import { ProviderUnreachableError } from '../../lib/integrations/errors'
 import type { ResolvedProvider } from '../../lib/integrations/types'
 import { buildIntegration, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
@@ -102,19 +103,168 @@ describe('Integrations Routes', () => {
 			expect(body.error.message).toContain('Unknown provider')
 		})
 
+		// GitHub connect now goes through user authorization rather than the App
+		// install page, so it needs the App's OAuth client id. Missing config is a
+		// deliberate 500 (a server misconfiguration, not a retryable fault), which
+		// is why this test has to supply it.
 		it('returns 200 with install_url for a known provider', async () => {
+			const previousClientId = process.env.GITHUB_CLIENT_ID
+			process.env.GITHUB_CLIENT_ID = 'Iv1.testclientid'
+			try {
+				const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+				const res = await app.request(
+					jsonRequest('POST', '/api/integrations/github/connect', undefined, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body.install_url).toBeDefined()
+				expect(body.install_url).toContain('github.com/login/oauth/authorize')
+			} finally {
+				process.env.GITHUB_CLIENT_ID = previousClientId
+			}
+		})
+
+		it('returns 500 when the GitHub App OAuth client id is not configured', async () => {
+			const previousClientId = process.env.GITHUB_CLIENT_ID
+			process.env.GITHUB_CLIENT_ID = undefined
+			// biome-ignore lint/performance/noDelete: must be absent, not the string "undefined"
+			delete process.env.GITHUB_CLIENT_ID
+			try {
+				const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+				const res = await app.request(
+					jsonRequest('POST', '/api/integrations/github/connect', undefined, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(500)
+			} finally {
+				process.env.GITHUB_CLIENT_ID = previousClientId
+			}
+		})
+
+		it('hands the custom auth handler the redirect URI the callback will be served from', async () => {
+			const seen: string[] = []
+			vi.mocked(getProvider).mockReturnValueOnce({
+				config: { name: 'custom-provider', displayName: 'Custom', auth: { type: 'oauth2_custom' } },
+				customAuth: {
+					getInstallUrl: (_state: string, redirectUri: string) => {
+						seen.push(redirectUri)
+						return 'http://example.test/auth'
+					},
+					handleCallback: async () => ({ accessToken: 'token' }),
+					getAccessToken: async () => 'token',
+				},
+			} as unknown as ResolvedProvider)
 			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
 
 			const res = await app.request(
-				jsonRequest('POST', '/api/integrations/github/connect', undefined, {
+				jsonRequest('POST', '/api/integrations/custom-provider/connect', undefined, {
 					'x-workspace-id': wsId,
 				}),
 			)
 
 			expect(res.status).toBe(200)
+			expect(seen[0]).toContain('/api/integrations/custom-provider/callback')
+		})
+
+		// The other half of the browser binding the callback enforces. Emitted here
+		// so a forwarded authorize URL cannot be completed by anyone else.
+		it('sets an HttpOnly nonce cookie that binds the state to this browser', async () => {
+			let issuedState = ''
+			vi.mocked(getProvider).mockReturnValueOnce({
+				config: { name: 'custom-provider', displayName: 'Custom', auth: { type: 'oauth2_custom' } },
+				customAuth: {
+					getInstallUrl: (state: string) => {
+						issuedState = state
+						return 'http://example.test/auth'
+					},
+					handleCallback: async () => ({ accessToken: 'token' }),
+					getAccessToken: async () => 'token',
+				},
+			} as unknown as ResolvedProvider)
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/integrations/custom-provider/connect', undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const setCookieHeader = res.headers.get('Set-Cookie') ?? ''
+			expect(setCookieHeader).toContain('maskin_oauth_nonce_custom-provider=')
+			expect(setCookieHeader).toContain('HttpOnly')
+			// Lax, not Strict: the callback arrives as a top-level GET navigation from
+			// the provider's domain, which Strict would drop.
+			expect(setCookieHeader).toContain('SameSite=Lax')
+
+			// The cookie must carry the same nonce that is sealed into the state.
+			const { decodeState } = await import('../../lib/integrations/oauth/state')
+			const cookieNonce = /maskin_oauth_nonce_custom-provider=([^;]+)/.exec(setCookieHeader)?.[1]
+			expect(cookieNonce).toBe(decodeState(issuedState).nonce)
+		})
+
+		it('returns 502 when a custom auth handler cannot reach the provider', async () => {
+			// Ubersuggest registers an OAuth client (RFC 7591) inside getInstallUrl, so
+			// a provider outage surfaces here. It must not escape as an opaque 500.
+			vi.mocked(getProvider).mockReturnValueOnce({
+				config: { name: 'custom-provider', displayName: 'Custom', auth: { type: 'oauth2_custom' } },
+				customAuth: {
+					getInstallUrl: async () => {
+						throw new ProviderUnreachableError('client registration failed: 503')
+					},
+					handleCallback: async () => ({ accessToken: 'token' }),
+					getAccessToken: async () => 'token',
+				},
+			} as unknown as ResolvedProvider)
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/integrations/custom-provider/connect', undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(502)
 			const body = await res.json()
-			expect(body.install_url).toBeDefined()
-			expect(body.install_url).toContain('github.com')
+			expect(body.error.message).toContain('Custom')
+			expect(body.error.message).toContain('try again')
+		})
+
+		it('returns 500, not 502, when the handler fails for a local reason', async () => {
+			// A missing INTEGRATION_ENCRYPTION_KEY or a malformed state envelope is a
+			// server misconfiguration. Reporting it as "provider unreachable, please
+			// try again" sends the user into a retry loop that can never succeed and
+			// hides the real fault from whoever has to fix it.
+			vi.mocked(getProvider).mockReturnValueOnce({
+				config: { name: 'custom-provider', displayName: 'Custom', auth: { type: 'oauth2_custom' } },
+				customAuth: {
+					getInstallUrl: async () => {
+						throw new Error('INTEGRATION_ENCRYPTION_KEY environment variable is required')
+					},
+					handleCallback: async () => ({ accessToken: 'token' }),
+					getAccessToken: async () => 'token',
+				},
+			} as unknown as ResolvedProvider)
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/integrations/custom-provider/connect', undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(500)
+			const body = await res.json()
+			expect(body.error.message).toContain('misconfiguration')
+			// The operator-facing detail must not leak to the caller.
+			expect(body.error.message).not.toContain('INTEGRATION_ENCRYPTION_KEY')
 		})
 
 		it('activates an api_key provider (posthog) immediately and stores the request key in credentials', async () => {
@@ -245,6 +395,48 @@ describe('Integrations Routes', () => {
 	})
 
 	describe('GET /api/integrations/:provider/callback', () => {
+		// The callback now requires (a) the state-binding cookie set by POST
+		// /:provider/connect, and (b) a real `code` — a bare `installation_id` is
+		// unverifiable and is refused. Both are properties of the flow under test,
+		// so every case here supplies them.
+		const originalFetch = globalThis.fetch
+		const originalClientId = process.env.GITHUB_CLIENT_ID
+		const originalSecret = process.env.GITHUB_CLIENT_SECRET
+
+		/** Every installation id these tests hand to the callback. */
+		const REACHABLE = [42, 99, 123, 200, 300]
+
+		beforeEach(() => {
+			process.env.GITHUB_CLIENT_ID = 'Iv1.testclientid'
+			process.env.GITHUB_CLIENT_SECRET = 'test-client-secret'
+			globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+				const url = String(input)
+				if (url.includes('login/oauth/access_token')) {
+					return new Response(JSON.stringify({ access_token: 'ghu_usertoken' }), { status: 200 })
+				}
+				if (url.includes('/user/installations')) {
+					return new Response(
+						JSON.stringify({
+							installations: REACHABLE.map((id) => ({ id, account: { login: `owner-${id}` } })),
+						}),
+						{ status: 200 },
+					)
+				}
+				throw new Error(`Unexpected fetch: ${url}`)
+			}) as unknown as typeof fetch
+		})
+
+		afterEach(() => {
+			globalThis.fetch = originalFetch
+			process.env.GITHUB_CLIENT_ID = originalClientId
+			process.env.GITHUB_CLIENT_SECRET = originalSecret
+		})
+
+		/** A callback request carrying the binding cookie the connect route sets. */
+		function callbackGet(path: string, nonce: string, provider = 'github') {
+			return jsonGet(path, { cookie: `maskin_oauth_nonce_${provider}=${nonce}` })
+		}
+
 		it('returns 400 for unknown provider', async () => {
 			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
 
@@ -292,8 +484,9 @@ describe('Integrations Routes', () => {
 			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
 
 			const res = await app.request(
-				jsonGet(
-					`/api/integrations/github/callback?state=${encodeURIComponent(expiredState)}&installation_id=123`,
+				callbackGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(expiredState)}&code=cb&installation_id=123`,
+					'test-nonce',
 				),
 			)
 
@@ -316,8 +509,9 @@ describe('Integrations Routes', () => {
 			// No pending integration found with this nonce
 
 			const res = await app.request(
-				jsonGet(
-					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&installation_id=123`,
+				callbackGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&code=cb&installation_id=123`,
+					'used-nonce',
 				),
 			)
 
@@ -347,14 +541,95 @@ describe('Integrations Routes', () => {
 			mockResults.selectQueue = [[pendingIntegration], []]
 
 			const res = await app.request(
-				jsonGet(
-					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&installation_id=123`,
+				callbackGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&code=cb&installation_id=123`,
+					'valid-nonce',
 				),
 			)
 
 			expect(res.status).toBe(400)
 			const body = await res.json()
 			expect(body.error.message).toContain('no longer a member')
+		})
+
+		// The state envelope authorizes whoever presents it, and GitHub's
+		// user-authorization endpoint returns with no prompt for anyone who has
+		// already approved the App. Without the browser binding, an attacker could
+		// hand their own authorize URL to a victim and have the victim's org bound
+		// into the attacker's workspace on one click.
+		it('returns 400 when the state-binding cookie is absent', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+			const nonce = 'unbound-nonce'
+			const state = encrypt(
+				JSON.stringify({ workspaceId: wsId, actorId: 'test-actor-id', ts: Date.now(), nonce }),
+			)
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [
+				[buildIntegration({ workspaceId: wsId, status: 'pending', externalId: nonce })],
+				[buildWorkspaceMember({ workspaceId: wsId, actorId: 'test-actor-id' })],
+			]
+
+			const res = await app.request(
+				jsonGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&code=cb&installation_id=42`,
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('not started in this browser')
+		})
+
+		it('returns 400 when the binding cookie names a different nonce', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+			const nonce = 'victim-nonce'
+			const state = encrypt(
+				JSON.stringify({ workspaceId: wsId, actorId: 'test-actor-id', ts: Date.now(), nonce }),
+			)
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [
+				[buildIntegration({ workspaceId: wsId, status: 'pending', externalId: nonce })],
+				[buildWorkspaceMember({ workspaceId: wsId, actorId: 'test-actor-id' })],
+			]
+
+			const res = await app.request(
+				callbackGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&code=cb&installation_id=42`,
+					'some-other-flows-nonce',
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('not started in this browser')
+		})
+
+		// installation_id is a raw query param and every downstream mint uses the
+		// App's own JWT, which succeeds for any installation of the App — so it must
+		// be checked against what the authenticated user can actually reach.
+		it('returns 400 when the callback names an installation the user cannot reach', async () => {
+			const { encrypt } = await import('../../lib/crypto')
+			const nonce = 'unreachable-nonce'
+			const state = encrypt(
+				JSON.stringify({ workspaceId: wsId, actorId: 'test-actor-id', ts: Date.now(), nonce }),
+			)
+			const { app, mockResults } = createTestApp(integrationsRoutes, '/api/integrations')
+			mockResults.selectQueue = [
+				[buildIntegration({ workspaceId: wsId, status: 'pending', externalId: nonce })],
+				[buildWorkspaceMember({ workspaceId: wsId, actorId: 'test-actor-id' })],
+			]
+
+			const res = await app.request(
+				callbackGet(
+					// 999 is not in REACHABLE, so /user/installations does not list it.
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&code=cb&installation_id=999`,
+					nonce,
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain('not one your GitHub account can access')
 		})
 
 		it('completes callback flow and redirects for github provider', async () => {
@@ -384,8 +659,9 @@ describe('Integrations Routes', () => {
 			]
 
 			const res = await app.request(
-				jsonGet(
-					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&installation_id=42`,
+				callbackGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&code=cb&installation_id=42`,
+					'cb-nonce',
 				),
 			)
 
@@ -423,8 +699,9 @@ describe('Integrations Routes', () => {
 			mockResults.insert = [newSystemActor] // insert new system actor
 
 			const res = await app.request(
-				jsonGet(
-					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&installation_id=99`,
+				callbackGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&code=cb&installation_id=99`,
+					'new-actor-nonce',
 				),
 			)
 
@@ -459,7 +736,11 @@ describe('Integrations Routes', () => {
 
 			// No code query parameter
 			const res = await app.request(
-				jsonGet(`/api/integrations/slack/callback?state=${encodeURIComponent(state)}`),
+				callbackGet(
+					`/api/integrations/slack/callback?state=${encodeURIComponent(state)}`,
+					'slack-no-code',
+					'slack',
+				),
 			)
 
 			expect(res.status).toBe(400)
@@ -499,8 +780,10 @@ describe('Integrations Routes', () => {
 
 				// The code=invalid will cause the token exchange to fail (network error to slack.com)
 				const res = await app.request(
-					jsonGet(
+					callbackGet(
 						`/api/integrations/slack/callback?state=${encodeURIComponent(state)}&code=invalid-code`,
+						'slack-token-fail',
+						'slack',
 					),
 				)
 
@@ -551,8 +834,9 @@ describe('Integrations Routes', () => {
 
 			// GitHub callback with installation_id — uses installation_id as externalId
 			const res = await app.request(
-				jsonGet(
-					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&installation_id=42`,
+				callbackGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&code=cb&installation_id=42`,
+					'fallback-nonce-1234567890',
 				),
 			)
 
@@ -601,8 +885,9 @@ describe('Integrations Routes', () => {
 			]
 
 			const res = await app.request(
-				jsonGet(
-					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&installation_id=200`,
+				callbackGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&code=cb&installation_id=200`,
+					'second-install-nonce',
 				),
 			)
 
@@ -668,8 +953,9 @@ describe('Integrations Routes', () => {
 			]
 
 			const res = await app.request(
-				jsonGet(
-					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&installation_id=300`,
+				callbackGet(
+					`/api/integrations/github/callback?state=${encodeURIComponent(state)}&code=cb&installation_id=300`,
+					'reconnect-nonce',
 				),
 			)
 
@@ -770,7 +1056,11 @@ describe('Integrations Routes', () => {
 			]
 
 			const res = await app.request(
-				jsonGet(`/api/integrations/${providerName}/callback?state=${encodeURIComponent(state)}`),
+				callbackGet(
+					`/api/integrations/${providerName}/callback?state=${encodeURIComponent(state)}`,
+					'reconnect-email-nonce',
+					providerName,
+				),
 			)
 
 			expect(res.status).toBe(302)

@@ -1033,7 +1033,7 @@ describe('Subscriptions Integration', () => {
 	})
 
 	it("agent-to-agent mentions on a shared object never surface in a human watcher's For You", async () => {
-		// The bet's commitment: agent→agent mentions route to the target agent via
+		// The bet's contract: agent→agent mentions route to the target agent via
 		// the per-event notification path and never surface to a human's For You.
 		// Reuse B as a stand-in for "another agent" mentioned in passing.
 		const appA = appAs(aId)
@@ -1178,12 +1178,11 @@ describe('Subscriptions Integration', () => {
 		expect(item.max_unread_attention).toBe(4)
 	})
 
-	it('commitment/Loop status changes — at-risk, breached, or born signalling — never surface in the mentions-only unread feed', async () => {
-		// For You dropped the status_changed/created status arms (formerly
-		// SIGNALLING_LOOP_STATUSES / COMMITMENT_ATTENTION_STATUSES, T2 on
-		// bet/loops-primitive) once the feed became mentions-only. A watcher's
-		// unread feed no longer reacts to a Loop's status at all — transition,
-		// birth, or recovery — only an @-mentioning comment does.
+	it('Loop status changes — paused, born, or recovered — never surface in the mentions-only unread feed', async () => {
+		// For You dropped the status_changed/created status arms once the feed
+		// became mentions-only. A watcher's unread feed no longer reacts to a
+		// Loop's status at all — transition, birth, or recovery — only an
+		// @-mentioning comment does.
 		const appA = appAs(aId)
 		const appB = appAs(bId)
 		const headersA = { 'x-workspace-id': workspaceId }
@@ -1194,9 +1193,9 @@ describe('Subscriptions Integration', () => {
 				'POST',
 				'/api/objects',
 				buildCreateObjectBody({
-					type: 'commitment',
-					title: 'Seeded breached loop',
-					status: 'breached',
+					type: 'loop',
+					title: 'Seeded paused loop',
+					status: 'paused',
 				}),
 				headersA,
 			),
@@ -1221,9 +1220,9 @@ describe('Subscriptions Integration', () => {
 			unreadAfterBirth.items.find((i: { entity_id: string }) => i.entity_id === loop.id),
 		).toBeUndefined()
 
-		// A transition into at-risk: no `status_changed` arm left either.
+		// A transition to another loop status: no `status_changed` arm left either.
 		const patchRes = await appA.request(
-			jsonRequest('PATCH', `/api/objects/${loop.id}`, { status: 'at-risk' }, headersA),
+			jsonRequest('PATCH', `/api/objects/${loop.id}`, { status: 'waiting' }, headersA),
 		)
 		expect(patchRes.status).toBe(200)
 
@@ -1402,6 +1401,50 @@ describe('Subscriptions Integration', () => {
 		const item = mixedFeed.items.find((i: { entity_id: string }) => i.entity_id === obj.id)
 		expect(item).toBeDefined()
 		expect(item.unread_count).toBe(1)
+	})
+
+	// Regression: mention ids arrive from the request body, so they can name an
+	// actor that no longer exists (deleted, or a stale client cache). Inserting
+	// one into subscriptions.actor_id violates subscriptions_actor_id_fkey and
+	// rolls back the entire comment transaction (Sentry MASKIN-DEV-8).
+	it('posts the comment and skips the subscription when a mention names a non-existent actor', async () => {
+		const appA = appAs(aId)
+		const headersA = { 'x-workspace-id': workspaceId }
+
+		const obj = await appA
+			.request(jsonRequest('POST', '/api/objects', buildCreateObjectBody(), headersA))
+			.then((r) => r.json())
+
+		const ghostActorId = '3e16ed51-e5e1-4b57-959f-7eda01b21bea'
+		const commentRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/events',
+				{
+					action: 'commented',
+					entity_type: 'object',
+					entity_id: obj.id,
+					content: `Hello @${ghostActorId}`,
+					mentions: [ghostActorId, bId],
+				},
+				headersA,
+			),
+		)
+		expect(commentRes.status).toBe(201)
+
+		// The caller is told which mention evaporated, and what to do about it.
+		const commentBody = await commentRes.json()
+		expect(commentBody.unresolved_mentions).toEqual([ghostActorId])
+		expect(commentBody.warning).toContain('list_actors')
+
+		// The real mentioned actor is still subscribed...
+		const subs = await db.execute(
+			sql`select actor_id, source from subscriptions where entity_id = ${obj.id}`,
+		)
+		const rows = subs as unknown as Array<{ actor_id: string; source: string }>
+		expect(rows.some((r) => r.actor_id === bId && r.source === 'mentioned')).toBe(true)
+		// ...and the ghost simply produced no row.
+		expect(rows.some((r) => r.actor_id === ghostActorId)).toBe(false)
 	})
 })
 

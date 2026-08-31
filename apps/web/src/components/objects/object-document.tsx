@@ -47,7 +47,6 @@ import { SourceBadge } from '../shared/source-badge'
 import { StatusBadge } from '../shared/status-badge'
 import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
-import { CommitmentCard } from './commitment-card'
 import { LinkedObjects } from './linked-objects'
 import { ObjectPropertiesSidebar } from './object-properties-sidebar'
 import { PropertiesSidebarProvider, SIDEBAR_WIDTH } from './properties-sidebar-provider'
@@ -259,10 +258,6 @@ export function ObjectDocumentView({
 						workspaceId={workspaceId}
 						variant="banner"
 					/>
-				)}
-
-				{object.type === 'commitment' && (
-					<CommitmentCard object={object} workspaceId={workspaceId} />
 				)}
 			</div>
 
@@ -666,11 +661,6 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				workspaceId={workspaceId}
 				open={menuOpen}
 				onOpenChange={setMenuOpen}
-				statuses={statuses}
-				members={members}
-				currentDriverId={object.driver ?? null}
-				onStatusChange={handleAuxStatusChange}
-				onDriverChange={handleUpdateDriver}
 			/>
 		</>
 	)
@@ -783,7 +773,7 @@ export function DeleteConfirmDialog({
 		</Dialog>
 	)
 }
-function StickyBetIdentity({
+export function StickyBetIdentity({
 	title,
 	status,
 	onScrollBack,

@@ -270,7 +270,7 @@ export const tools = {
 	},
 	get_objects: {
 		description:
-			"Get one or more objects by ID. Default response per object: `{id, type, title, status, contextLine, url, workspaceId}` — no other fields. Opt into extra blocks with `include:` (each adds only its own block): `content` — the object's body/description; `metadata` — the object's custom field values; `relationships` — inbound and outbound edges, each with sourceTitle and targetTitle; `connected_objects` — the objects on the other end of those edges; `events` — recent lifecycle changes and comments; `files` — metadata for files attached to the object or its comments; `setup` — a fresh readiness check per object (`{checks, next_steps, prose}`) surfacing gaps to walk the user through, same shape create_objects/update_objects return. For a loop's deep setup check (steps, connectors, members), call get_loop with `include: ['setup']` — the check here is the lightweight per-object slice. In human-facing output, refer to objects by their `title`, not their UUID. Append a short id suffix (e.g. \"Sales v4 (ca957490)\") only when two titles collide.",
+			"Get one or more objects by ID. Default response per object: `{id, type, title, status, contextLine, url, workspaceId}` plus an always-on `setup` block (`{checks, next_steps, prose}`) — a fresh readiness check surfacing gaps (thin content, no driver, entry-status objects) to walk the user through; same shape create_objects/update_objects return. Opt into further blocks with `include:` (each adds only its own block): `content` — the object's body/description; `metadata` — the object's custom field values; `relationships` — inbound and outbound edges, each with sourceTitle and targetTitle; `connected_objects` — the objects on the other end of those edges; `events` — recent lifecycle changes and comments; `files` — metadata for files attached to the object or its comments. For a loop's deeper setup check (steps, connectors, members), call get_loop — it always returns its own `setup` block, richer than the lightweight per-object slice here. In human-facing output, refer to objects by their `title`, not their UUID. Append a short id suffix (e.g. \"Sales v4 (ca957490)\") only when two titles collide.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			ids: z.array(z.string().uuid()).min(1).max(50).describe('Object IDs to fetch'),
@@ -288,7 +288,7 @@ export const tools = {
 				)
 				.default([])
 				.describe(
-					'Opt-in blocks to add to each object response. Default `[]` returns only the core fields `{id, type, title, status, contextLine, url, workspaceId}` per object; each listed value adds one block back. `setup` computes a fresh readiness check per object and attaches it as `{checks, next_steps, prose}`.',
+					'Opt-in blocks to add to each object response. Default `[]` returns only the core fields `{id, type, title, status, contextLine, url, workspaceId}` plus `setup` per object; each listed value adds one more block. `setup` is always attached regardless of whether it is listed here — the enum value is accepted only for backward compatibility and is a no-op.',
 				),
 		}),
 	},
@@ -550,7 +550,7 @@ export const tools = {
 	},
 	create_actor: {
 		description:
-			'Create a new actor (human or agent). Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
+			'Create a new actor (human or agent). Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. Agents default to auto_create_workspace=false, so workspace_id is effectively required when type is "agent" — omitting both fails the call rather than silently creating a workspace-less agent. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
 		inputSchema: z.object({
 			type: z.enum(['human', 'agent']),
 			name: z.string().min(1).describe('Name of actor'),
@@ -565,7 +565,9 @@ export const tools = {
 				.string()
 				.uuid()
 				.optional()
-				.describe('Add the new actor to this existing workspace'),
+				.describe(
+					'Add the new actor to this existing workspace. Required when type is "agent" unless auto_create_workspace is explicitly true — the call fails otherwise rather than creating an agent with no workspace.',
+				),
 			role: z
 				.enum(['owner', 'admin', 'member'])
 				.default('member')
@@ -574,9 +576,10 @@ export const tools = {
 				),
 			description: z
 				.string()
+				.min(1)
 				.max(80)
 				.describe(
-					'Short one-liner (max 80 chars) summarizing the actor. For agents this is shown on the Agents page list and sub-page so teammates can tell agents apart at a glance.',
+					'Required, non-empty short one-liner (max 80 chars) summarizing the actor. For agents this is shown on the Agents page list and sub-page so teammates can tell agents apart at a glance — do not pass an empty or placeholder string.',
 				),
 			system_prompt: z
 				.string()
@@ -612,9 +615,10 @@ export const tools = {
 				.describe('New email address for the actor. Only meaningful for humans.'),
 			description: z
 				.string()
+				.min(1)
 				.max(80)
 				.optional()
-				.describe('Short one-liner (max 80 chars) summarizing the actor.'),
+				.describe('Short, non-empty one-liner (max 80 chars) summarizing the actor.'),
 			system_prompt: z
 				.string()
 				.optional()
@@ -1060,7 +1064,7 @@ export const tools = {
 		}),
 	},
 	post_conversation_message: {
-		description: `Post a reply into a conversation you are a participant in. You were invoked because you decided (or were @mentioned) that a reply might add value — read the recent messages with list_conversation_messages first if you need more context than what triggered this session. Only call this when a reply genuinely helps; silence is a valid outcome, and posting "okay" or "got it" style acknowledgements with nothing else adds noise, not value. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
+		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need this tool for your actual reply: whatever you write at the end of your turn is posted into the chat automatically. Use it for an interim note — most usefully a short heads-up, before you start something that will take a while, saying what you are going into so the human isn't left waiting in silence. That is optional; skip it when the message just wants a direct answer. Read the recent messages with list_conversation_messages first if you need more context than what triggered this session. Posting "okay" or "got it" style acknowledgements with nothing else adds noise, not value. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),
@@ -1580,13 +1584,19 @@ export const tools = {
 	},
 	connect_integration: {
 		description:
-			'Start an integration connection flow for a provider (e.g. "github"). Returns an install_url that must be opened in a browser to complete the OAuth/installation flow. The callback is handled automatically by the server.',
+			'Start an integration connection flow for a provider (e.g. "github"). OAuth providers return an install_url that must be opened in a browser to complete the flow; the callback is handled automatically by the server. API-key providers (e.g. "posthog") require `api_key` and are activated immediately, with no install_url.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			provider: z
 				.string()
 				.describe(
 					'Provider name (e.g. "github"). Call list_integration_providers to see available providers.',
+				),
+			api_key: z
+				.string()
+				.optional()
+				.describe(
+					'API key for providers whose auth type is "api_key" (e.g. "posthog"). Required for those providers and ignored for OAuth providers.',
 				),
 		}),
 	},

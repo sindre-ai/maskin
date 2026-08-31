@@ -1,8 +1,8 @@
 // Shared constants for the SDR Outreach Loop marketplace bundle.
 //
-// The bundle contains Sales Rep, Sales Rep (Magnus), Rune Værk, and Sales
-// Coach — runs daily territory-based outbound (first touches, personalized
-// follow-ups, no-reply fallback ladders) and coaches messaging on what's
+// The bundle contains Sales Rep, Rune Værk, and Sales Coach — runs daily
+// territory-based outbound (first touches, personalized follow-ups, no-reply
+// fallback ladders) and coaches messaging on what's
 // converting. Sourced from the live Growth workspace
 // (2b95807b-26f8-424c-8e35-8bee8ed57f7d).
 //
@@ -14,7 +14,6 @@ import {
 	GROWTH_ACTOR_RUNE_VAERK,
 	GROWTH_ACTOR_SALES_COACH,
 	GROWTH_ACTOR_SALES_REP,
-	GROWTH_ACTOR_SALES_REP_MAGNUS,
 	GROWTH_LOOP_SDR_OUTREACH_DESCRIPTION,
 	GROWTH_LOOP_SDR_OUTREACH_NAME,
 	GROWTH_LOOP_SDR_OUTREACH_SLUG,
@@ -37,7 +36,6 @@ export const GROWTH_SDR_OUTREACH_LOOP = {
 
 export const GROWTH_SDR_OUTREACH_ACTOR_IDS = [
 	GROWTH_ACTOR_SALES_REP,
-	GROWTH_ACTOR_SALES_REP_MAGNUS,
 	GROWTH_ACTOR_RUNE_VAERK,
 	GROWTH_ACTOR_SALES_COACH,
 ] as const

@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockMatchRoute = vi.fn()
 
@@ -20,6 +20,12 @@ vi.mock('@/lib/workspace-context', () => ({
 import { Route } from '@/routes/_authed/$workspaceId/settings'
 
 const SettingsLayout = (Route as unknown as { component: React.FC }).component
+
+// These specs cover the v2 branch of the `new-design` boundary, so they drive
+// the flag on through the test-only localStorage override.
+beforeEach(() => {
+	localStorage.setItem('ff:new-design', 'on')
+})
 
 describe('SettingsLayout', () => {
 	beforeEach(() => {
@@ -45,7 +51,7 @@ describe('SettingsLayout', () => {
 		expect(billing.className).toContain('font-bold')
 	})
 
-	it('renders the six settings sections in mockup order', () => {
+	it('renders the settings sections in mockup order', () => {
 		render(<SettingsLayout />)
 		const labels = screen.getAllByRole('link').map((link) => link.textContent)
 		expect(labels).toEqual([
@@ -58,11 +64,12 @@ describe('SettingsLayout', () => {
 		])
 	})
 
-	it('does not render retired legacy nav labels (Skills, LLM, MCP)', () => {
+	it('points Billing at its own page, not the LLM credentials page', () => {
 		render(<SettingsLayout />)
-		expect(screen.queryByText('Skills')).not.toBeInTheDocument()
-		expect(screen.queryByText('LLM')).not.toBeInTheDocument()
-		expect(screen.queryByText('MCP')).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'Billing' })).toHaveAttribute(
+			'href',
+			expect.stringContaining('/settings/billing'),
+		)
 	})
 
 	it('renders Outlet for child content', () => {

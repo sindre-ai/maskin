@@ -11,7 +11,7 @@ vi.mock('@/components/shared/markdown-content', () => ({
 describe('ObjectDetailBody', () => {
 	it('renders object content markdown', () => {
 		const object = buildObjectResponse({ content: '## Heading\n\nSome paragraph' })
-		render(<ObjectDetailBody object={object} />)
+		render(<ObjectDetailBody object={object} workspaceId="ws-1" />)
 		expect(screen.getByText(/## Heading/)).toBeInTheDocument()
 		expect(screen.getByText(/Some paragraph/)).toBeInTheDocument()
 	})
@@ -22,7 +22,7 @@ describe('ObjectDetailBody', () => {
 		const object = buildObjectResponse({
 			metadata: { priority: 'high', team: 'alpha', _hidden: 'secret' },
 		})
-		const { container } = render(<ObjectDetailBody object={object} />)
+		const { container } = render(<ObjectDetailBody object={object} workspaceId="ws-1" />)
 		expect(screen.queryByText('priority')).not.toBeInTheDocument()
 		expect(screen.queryByText('team')).not.toBeInTheDocument()
 		expect(container.querySelector('dl')).toBeNull()
@@ -33,7 +33,7 @@ describe('ObjectDetailBody', () => {
 		const object = buildObjectResponse({
 			metadata: { _fold_title: 'Research notes', _fold_markdown: '# Notes\n\nBody text' },
 		})
-		render(<ObjectDetailBody object={object} />)
+		render(<ObjectDetailBody object={object} workspaceId="ws-1" />)
 
 		expect(screen.getByText('Research notes')).toBeInTheDocument()
 		expect(screen.queryByText(/Body text/)).not.toBeInTheDocument()
@@ -46,7 +46,7 @@ describe('ObjectDetailBody', () => {
 		const object = buildObjectResponse({
 			metadata: { _evidence_quote: 'A source quote', _evidence_source: 'Slack #general' },
 		})
-		render(<ObjectDetailBody object={object} />)
+		render(<ObjectDetailBody object={object} workspaceId="ws-1" />)
 
 		expect(screen.getByText(/A source quote/)).toBeInTheDocument()
 		expect(screen.getByText('Slack #general')).toBeInTheDocument()

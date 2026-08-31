@@ -1,17 +1,31 @@
+import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// Covers AC-U11 / AC-U12 / AC-T6 / AC-T7 / AC-T8 — the relationships-into-the-timeline
-// surface. The rebuilt object-detail shell (bet/object-detail, T1) does not yet
-// render the activity/timeline projections (T2–T4 scope), so this spec pins the
-// surface absent on the T1 shell: the linked object must not appear as a
-// timeline row and no Relationship-view toggle may render. When the timeline
-// tab lands this spec re-scopes to the original ACs (edge created_at ordering,
-// Timeline ↔ Table persistence, SSE invalidation).
+// Covers AC-U11 / AC-T6 / AC-T8 — relationships projected into the object's
+// activity timeline. The rebuilt object-detail shell keeps the projection (a
+// linked object renders as a timeline row at the edge's created_at) and keeps
+// SSE invalidation, but retires the legacy Timeline ⇄ Table "Relationship
+// view" radio group of AC-U12 / AC-T7: the shell's own Timeline | Related
+// segmented control replaces it, and is covered by
+// object-detail-properties.spec.ts.
 
-test.describe('Relationships into the timeline (AC-U11/U12) — T1 absence contract', () => {
+// The v2 timeline folds a run of three or more low-signal rows — link rows
+// among them — behind one "N agent updates" pill (timeline-tab.tsx,
+// `FOLD_MIN_RUN`). The projection still happened; it is just collapsed. Open
+// every fold so the edges under test are readable. Opening relabels the pill
+// to "Hide N updates", so this terminates. The pill also carries the folded
+// span's date range, so the name is matched by prefix rather than anchored.
+async function expandTimelineFolds(page: Page) {
+	const folds = page.getByRole('button', { name: /^\d+ agent updates\b/ })
+	while ((await folds.count()) > 0) {
+		await folds.first().click()
+	}
+}
+
+test.describe('Relationships into the timeline (AC-U11)', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`no timeline projection or view toggle on the T1 shell at ${viewport.label}`, async ({
+		test(`projects linked objects and picks up late edges at ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -40,10 +54,44 @@ test.describe('Relationships into the timeline (AC-U11/U12) — T1 absence contr
 				page.getByRole('heading', { level: 1, name: 'Relationships timeline bet' }),
 			).toBeVisible({ timeout: 10000 })
 
-			// No Timeline/Table toggle, no inline timeline row, no edge-type table.
+			// AC-U11 / AC-T6: the linked insight appears as a timeline row. The
+			// Timeline tab is the default, and Radix keeps the Related tab's
+			// content unmounted, so this link can only come from the projection.
+			await expandTimelineFolds(page)
+			await expect(page.getByRole('link', { name: /Inform-relationship insight/ })).toBeVisible({
+				timeout: 10000,
+			})
+
+			// The legacy Timeline ⇄ Table radio group is gone for good.
 			await expect(page.getByRole('group', { name: 'Relationship view' })).toHaveCount(0)
-			await expect(page.getByRole('link', { name: /Inform-relationship insight/ })).toHaveCount(0)
-			await expect(page.getByText(/informs/i)).toHaveCount(0)
+
+			// AC-T8: a relationship POSTed after the page is open shows up through
+			// the existing SSE invalidation channel, with no manual reload.
+			const lateChild = await account.api.createObject(account.workspaceId, {
+				type: 'task',
+				title: 'Late-linked task',
+				status: 'todo',
+			})
+			await account.api.createRelationship(account.workspaceId, {
+				source_type: 'bet',
+				source_id: bet.id,
+				target_type: 'task',
+				target_id: lateChild.id,
+				type: 'breaks_into',
+			})
+
+			// The late edge arrives over SSE and lands inside the fold, so re-open
+			// after it appears rather than relying on the earlier expansion.
+			await expect(
+				page
+					.getByRole('button', { name: /^\d+ agent updates\b/ })
+					.or(page.getByRole('link', { name: /Late-linked task/ }))
+					.first(),
+			).toBeVisible({ timeout: 10000 })
+			await expandTimelineFolds(page)
+			await expect(page.getByRole('link', { name: /Late-linked task/ })).toBeVisible({
+				timeout: 10000,
+			})
 		})
 	}
 })

@@ -33,7 +33,7 @@ export function PhaseDivider({ status, startedAt, isOpen, onToggle }: PhaseDivid
 			type="button"
 			onClick={onToggle}
 			aria-expanded={isOpen}
-			className="relative z-[2] flex w-full cursor-pointer items-center gap-[9px] bg-background pb-2.5 pt-3.5 text-left"
+			className="relative z-[2] flex w-full cursor-pointer items-center gap-[9px] bg-background pb-[5px] pt-2 text-left"
 		>
 			<span className="shrink-0 font-mono text-[9.5px] font-bold uppercase tracking-[0.11em] text-muted-foreground">
 				{label}

@@ -7,6 +7,7 @@ import {
 	useConversation,
 	useConversationMessages,
 } from '@/hooks/use-conversation'
+import { useSessionBudgetStopToast } from '@/hooks/use-conversation-activity'
 import { useUpdateConversationMe } from '@/hooks/use-conversations'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -24,6 +25,7 @@ function ConversationThreadPage() {
 	const { data: messagesData } = useConversationMessages(conversationId, workspaceId)
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const lastMarkedRef = useRef<number | null>(null)
+	useSessionBudgetStopToast(workspaceId, conversationId)
 
 	// Mark the newest message read once it's loaded — mirrors the "open = read"
 	// convention used elsewhere (subscriptions markRead on open).
@@ -43,7 +45,11 @@ function ConversationThreadPage() {
 		<div className="flex min-h-0 flex-1 flex-col">
 			<ThreadHeader workspaceId={workspaceId} conversationId={conversationId} />
 			<ThreadMessages workspaceId={workspaceId} conversationId={conversationId} />
-			<div className="border-t border-border p-2">
+			{/* No rule above the composer (mockup 517): the composer draws its own
+			    border, and a second full-bleed hairline behind it cut the thread in
+			    half. The gutter matches the header's and the transcript's so the
+			    three stack on one vertical edge. */}
+			<div className="shrink-0 px-[var(--chat-gut)] pt-2.5 pb-3.5">
 				<ThreadComposer workspaceId={workspaceId} conversationId={conversationId} />
 			</div>
 		</div>

@@ -41,8 +41,17 @@ interface NewMenuProps {
 
 export type PrimaryKind = 'chat' | 'object' | 'loop' | 'agent'
 
-// The label always reads "New", so the tooltip is the only place the contextual
-// behaviour is discoverable — it must name the outcome, not repeat the label.
+// The visible label always reads "New", so the accessible name has to carry the
+// contextual behaviour — E2E specs target the primary half by these names.
+const PRIMARY_LABEL: Record<PrimaryKind, string> = {
+	chat: 'New chat',
+	object: 'New object',
+	loop: 'New loop',
+	agent: 'New agent',
+}
+
+// The tooltip is where the outcome gets spelled out — it must name what the
+// action produces, not repeat the label.
 const PRIMARY_TITLE: Record<PrimaryKind, string> = {
 	chat: 'New chat — your agents already have the context',
 	object: 'New insight — capture what you noticed',
@@ -88,7 +97,7 @@ export function NewMenu({ onNewChat, hideObjectSection, primaryKind }: NewMenuPr
 						size="sm"
 						onClick={runPrimary}
 						title={PRIMARY_TITLE[kind]}
-						aria-label={PRIMARY_TITLE[kind]}
+						aria-label={PRIMARY_LABEL[kind]}
 						className="h-[30px] gap-1.5 rounded-lg rounded-r-none px-2.5 text-xs font-semibold"
 					>
 						<Plus aria-hidden className="size-[14px]" />

@@ -35,6 +35,7 @@ function buildMessage(overrides: Partial<MessageResponse> = {}): MessageResponse
 		kind: 'message',
 		content: 'Here is what I found.',
 		metadata: null,
+		editedAt: null,
 		sessionId: null,
 		createdAt: new Date().toISOString(),
 		...overrides,

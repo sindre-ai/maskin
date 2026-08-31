@@ -19,13 +19,14 @@ test.describe('Agent detail — Loops it runs', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Customer feedback loop',
+				status: 'learning',
 			})
 			const trigger = await account.api.createTrigger(account.workspaceId, {
 				name: 'Nightly sweep',
 				type: 'cron',
 				action_prompt: 'Sweep the feedback queue',
 				target_actor_id: agent.id,
-				config: { schedule: '0 3 * * *' },
+				config: { expression: '0 3 * * *' },
 			})
 			await account.api.updateObject(loop.id, account.workspaceId, {
 				metadata: { trigger_ids: [trigger.id] },

@@ -1,3 +1,4 @@
+import { QueryClient } from '@tanstack/react-query'
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -49,7 +50,53 @@ describe('useSSE', () => {
 		expect(mockConnectSSE).toHaveBeenCalledWith('ws-1', {
 			onEvent: expect.any(Function),
 			onStatusChange: expect.any(Function),
+			onReconnect: expect.any(Function),
+			onError: expect.any(Function),
 		})
+	})
+
+	it('resyncs caches when the stream reconnects', () => {
+		const invalidateQueries = vi.spyOn(QueryClient.prototype, 'invalidateQueries')
+
+		renderHook(() => useSSE('ws-1'), { wrapper: TestWrapper })
+
+		const callbacks = mockConnectSSE.mock.calls[0]?.[1] as { onReconnect?: () => void } | undefined
+		callbacks?.onReconnect?.()
+
+		// Server-side replay is capped at 100 events, so anything cached during
+		// the disconnect may be stale — without this the chat transcript stays
+		// frozen after a dropped connection until the user reloads.
+		expect(invalidateQueries).toHaveBeenCalled()
+	})
+
+	it('collapses a burst of reconnects into one resync', () => {
+		vi.useFakeTimers()
+		try {
+			const invalidateQueries = vi.spyOn(QueryClient.prototype, 'invalidateQueries')
+			invalidateQueries.mockClear()
+
+			renderHook(() => useSSE('ws-1'), { wrapper: TestWrapper })
+			const callbacks = mockConnectSSE.mock.calls[0]?.[1] as
+				| { onReconnect?: () => void }
+				| undefined
+
+			// fetch-event-source re-runs onopen on every internal retry, so a
+			// flapping backend fires this once a second. Unthrottled that is a
+			// full-cache refetch per second, in exactly the degraded conditions
+			// the reconnect logic exists to survive.
+			for (let i = 0; i < 5; i++) {
+				callbacks?.onReconnect?.()
+				vi.advanceTimersByTime(1000)
+			}
+
+			expect(invalidateQueries).toHaveBeenCalledTimes(1)
+
+			// The collapsed reconnects still get reconciled, just once.
+			vi.advanceTimersByTime(10_000)
+			expect(invalidateQueries).toHaveBeenCalledTimes(2)
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 
 	it('does not connect when workspaceId is empty', () => {

@@ -34,6 +34,7 @@ import {
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
 	actorListItemSchema,
@@ -45,10 +46,11 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
-import { buildNewWorkspaceSettings } from '../lib/workspace-defaults'
+import { OwnershipCapExceededError } from '../lib/workspace-capacity'
 import type { AgentStorageManager } from '../services/agent-storage'
+import { stopSessionsForActors } from '../services/session-cleanup'
 import type { SessionManager } from '../services/session-manager'
-import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
+import { SeedAgentError, provisionWorkspace } from '../services/workspace-bootstrap'
 
 type Env = {
 	Variables: {
@@ -203,66 +205,63 @@ app.openapi(createActorRoute, async (c) => {
 	// Auto-create personal workspace (default true for humans, false for agents)
 	const shouldCreateWorkspace = body.auto_create_workspace ?? body.type === 'human'
 	let workspaceId: string | undefined
+	let workspaceProvisioningFailed = false
 
 	if (shouldCreateWorkspace) {
-		const defaultSettings = buildNewWorkspaceSettings()
-		const created = await db.transaction(async (tx) => {
-			const [workspace] = await tx
-				.insert(workspaces)
-				.values({
-					name: `${body.name}'s Workspace`,
-					settings: defaultSettings,
-					createdBy: actor.id,
-				})
-				.returning()
-
-			if (!workspace) return null
-
-			await tx.insert(workspaceMembers).values({
-				workspaceId: workspace.id,
-				actorId: actor.id,
-				role: 'owner',
+		// Same provisioning path as POST /api/workspaces and the dev bootstrap:
+		// full default agent roster, skills, triggers, default loops, pinned chat
+		// agent, and the Chief of Staff welcome session.
+		//
+		// Unlike POST /api/workspaces (which 500s naming the failed agent), signup
+		// cannot fail the request: the actor row is already committed above and
+		// unretryable — a second attempt with the same email 409s. So it returns
+		// 201 with a usable api_key and reports the failure via
+		// `workspace_provisioning_failed` instead of leaving the caller to infer
+		// it from an absent `workspace_id`.
+		let created: Awaited<ReturnType<typeof provisionWorkspace>> = null
+		let atOwnershipCap = false
+		try {
+			created = await provisionWorkspace({
+				db,
+				agentStorage: c.get('agentStorage'),
+				sessionManager: c.get('sessionManager'),
+				name: `${body.name}'s Workspace`,
+				ownerActorId: actor.id,
+				settings: { enabled_modules: ['work', 'crm', 'knowledge'] },
 			})
-
-			// Seed Workspace Coach — the built-in meta-agent shipped with every workspace.
-			// apiKey is required: without it, the agent's container boots with an empty
-			// Bearer token and MCP writes either 401 or — worse — fall back to a key
-			// that resolves to a different actor, misattributing every comment.
-			const [coach] = await tx
-				.insert(actors)
-				.values({
-					type: WORKSPACE_COACH_DEFAULT.type,
-					name: WORKSPACE_COACH_DEFAULT.name,
-					isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
-					systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
-					llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
-					llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
-					tools: WORKSPACE_COACH_DEFAULT.tools,
-					apiKey: generateApiKey().key,
-					createdBy: actor.id,
+			if (!created) {
+				logger.error('signup workspace provisioning returned no workspace row', {
+					actorId: actor.id,
 				})
-				.returning()
-
-			if (!coach) throw new Error('Failed to seed Workspace Coach actor')
-
-			await tx.insert(workspaceMembers).values({
-				workspaceId: workspace.id,
-				actorId: coach.id,
-				role: 'member',
-			})
-
-			return workspace
-		})
-
-		if (created) {
-			workspaceId = created.id
-			const agentStorage = c.get('agentStorage')
-			if (agentStorage) {
-				await bootstrapDefaultAgents(db, agentStorage, created.id, actor.id).catch((err) =>
-					logger.error('workspace bootstrap failed', { workspaceId: created.id, err }),
-				)
+			}
+		} catch (err) {
+			// An actor at their ownership cap is not a provisioning failure — the
+			// signup itself succeeded, and the response is shaped exactly like an
+			// explicit `auto_create_workspace: false`.
+			if (err instanceof OwnershipCapExceededError) {
+				atOwnershipCap = true
+				logger.warn('Skipping auto-workspace creation: actor at ownership cap', {
+					actorId: actor.id,
+					effectiveTier: err.effectiveTier,
+					used: err.used,
+					cap: err.cap,
+				})
+			} else if (err instanceof SeedAgentError) {
+				// Log the seeded-agent detail when we have it, so this failure is as
+				// diagnosable as the 500 the workspaces route returns for the same bug.
+				logger.error('signup workspace provisioning failed — default agent seed failed', {
+					actorId: actor.id,
+					agentId: err.agentId,
+					errorClass: err.errorClass,
+					cause: err.cause instanceof Error ? err.cause.message : String(err.cause),
+				})
+			} else {
+				logger.error('signup workspace provisioning failed', { actorId: actor.id, err })
 			}
 		}
+
+		if (created) workspaceId = created.id
+		else if (!atOwnershipCap) workspaceProvisioningFailed = true
 	}
 
 	// Return actor WITHOUT api_key, but WITH it in the expected response field.
@@ -277,6 +276,7 @@ app.openapi(createActorRoute, async (c) => {
 			llm_config: llmConfig,
 			api_key: key,
 			...(workspaceId && { workspace_id: workspaceId }),
+			...(workspaceProvisioningFailed && { workspace_provisioning_failed: true }),
 		} as z.infer<typeof actorWithKeySchema>,
 		201,
 	)
@@ -992,6 +992,15 @@ app.openapi(deleteActorRoute, (async (c) => {
 	}
 
 	const existingData = { ...existing }
+
+	// Stop before delete. The cascade below removes this actor's session rows,
+	// but a sandbox already running on an agent-server keeps executing as an
+	// agent the user believes they just deleted, keeps holding its capacity
+	// slot until the 2h timeout, and keeps POSTing logs against a session_id
+	// that no longer exists. Best-effort and outside the transaction — see
+	// stopSessionsForActors.
+	await stopSessionsForActors(db, c.get('sessionManager'), [id], c.get('actorId'))
+
 	await db.transaction(async (tx) => {
 		// Delete session logs for sessions owned by this actor
 		const actorSessions = await tx
@@ -1320,6 +1329,12 @@ app.openapi(runAgentRoute, (async (c) => {
 				})
 			}
 		} catch (err) {
+			// A plan-cap rejection is not a bad request — flattening it to a 400
+			// with a bare message string dropped the `PLAN_CAP_EXCEEDED` code and
+			// the plan/used/cap context, so the client could only show the raw
+			// text instead of a typed upgrade CTA. Re-throw and let app-factory's
+			// onError emit the same structured 402 that POST /api/sessions does.
+			if (err instanceof PlanCapExceededError) throw err
 			const message = err instanceof Error ? err.message : String(err)
 			return c.json(createApiError('BAD_REQUEST', message), 400)
 		}

@@ -1,6 +1,7 @@
 /// <reference types="vitest/globals" />
 import '@testing-library/jest-dom'
 import type { WorkspaceWithRole } from '@/lib/api'
+import { CommandPaletteProvider } from '@/lib/command-palette-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
 import { WorkspaceContext, type WorkspaceContextValue } from '@/lib/workspace-context'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -21,13 +22,19 @@ if (typeof Element !== 'undefined') {
 	}
 }
 
-// Node 22 ships its own `localStorage` getter on the global object. In vitest's
-// jsdom environment the global *is* the jsdom window, and Node's getter wins over
-// jsdom's own storage property — so both `localStorage` and `window.localStorage`
-// read back `undefined`, and any module touching storage at import time throws.
-// Install a spec-shaped in-memory Storage instead. setup.ts runs per test file,
-// so each file gets a clean store and `localStorage.clear()` behaves.
-if (typeof globalThis.localStorage === 'undefined') {
+// Defensive polyfill: on some Node/jsdom/vitest version combinations,
+// `globalThis.localStorage` can come back `undefined` in the test environment (a global
+// storage getter shadowing jsdom's own implementation), which makes any module that
+// touches storage at import time throw. Where that happens, install a spec-shaped
+// in-memory Storage instead. This is a no-op when jsdom's storage is already present,
+// which is the common case — it's exported and covered directly by
+// `storage-polyfill.test.ts` since the failure condition doesn't reproduce in every
+// environment (notably not in this repo's CI, which pins Node 20), so nothing else
+// exercises this branch.
+export function installStoragePolyfill(
+	target: { localStorage?: Storage; sessionStorage?: Storage } = globalThis,
+) {
+	if (typeof target.localStorage !== 'undefined') return
 	const makeStorage = (): Storage => {
 		const store = new Map<string, string>()
 		return {
@@ -46,13 +53,14 @@ if (typeof globalThis.localStorage === 'undefined') {
 		} as Storage
 	}
 	for (const name of ['localStorage', 'sessionStorage'] as const) {
-		Object.defineProperty(globalThis, name, {
+		Object.defineProperty(target, name, {
 			value: makeStorage(),
 			configurable: true,
 			writable: true,
 		})
 	}
 }
+installStoragePolyfill()
 
 // Radix's `react-use-size` (used by Switch + others) reads ResizeObserver.
 if (typeof globalThis.ResizeObserver === 'undefined') {
@@ -165,6 +173,8 @@ export function createWorkspaceWrapper(
 		workspaceId: workspace.id,
 		sseStatus: 'connected',
 	}
+	// The palette provider rides along because shell components (the New menu in
+	// the object page's detail bar) reach for it; the app always has one.
 	return ({ children }: { children: ReactNode }) =>
 		React.createElement(
 			QueryClientProvider,
@@ -172,13 +182,17 @@ export function createWorkspaceWrapper(
 			React.createElement(
 				WorkspaceContext.Provider,
 				{ value: ctxValue },
-				renderPageHeader
-					? React.createElement(
-							PageHeaderProvider,
-							null,
-							React.createElement(PageHeaderOutlet, null, children),
-						)
-					: children,
+				React.createElement(
+					CommandPaletteProvider,
+					null,
+					renderPageHeader
+						? React.createElement(
+								PageHeaderProvider,
+								null,
+								React.createElement(PageHeaderOutlet, null, children),
+							)
+						: children,
+				),
 			),
 		)
 }

@@ -1,4 +1,6 @@
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
+import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { useObjectFileAttachments } from '@/hooks/use-object-file-attachments'
@@ -25,7 +27,12 @@ const DEFAULT_RELATIONSHIP_TYPES = ['informs', 'breaks_into', 'blocks', 'relates
  */
 export function RelatedTab({ object }: { object: ObjectResponse }) {
 	const { workspaceId, workspace } = useWorkspace()
-	const { data: graph } = useObjectGraph(workspaceId, object.id)
+	const {
+		data: graph,
+		isLoading: isGraphLoading,
+		isError: isGraphError,
+		error: graphError,
+	} = useObjectGraph(workspaceId, object.id)
 	const { data: allObjects } = useObjects(workspaceId)
 	const createRelationship = useCreateRelationship(workspaceId, object.id)
 	const deleteRelationship = useDeleteRelationship(workspaceId, object.id)
@@ -62,85 +69,88 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 
 	return (
 		<div className="flex w-full min-w-0 flex-col gap-4 pt-3">
-			{groups.map((group) => (
-				<div key={group.type}>
-					<div className="mb-[7px] flex items-baseline gap-[7px]">
-						<span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.09em] text-muted-foreground">
-							{group.type.replace(/_/g, ' ')}
-						</span>
-						<span className="text-[10.5px] font-semibold tabular-nums text-border-strong">
-							{group.rows.length}
-						</span>
-					</div>
-					<div className="overflow-hidden rounded-xl border border-border">
-						{group.rows.map((row, index) => (
-							<div
-								key={row.rel.id}
-								className={cn(
-									'relative flex items-center gap-2.5 px-3 py-2.5 transition-colors hover:bg-muted/40',
-									index > 0 && 'border-t border-border',
-								)}
-							>
-								<span
-									aria-hidden="true"
+			{!isGraphLoading &&
+				!isGraphError &&
+				groups.map((group) => (
+					<div key={group.type}>
+						<div className="mb-[7px] flex items-baseline gap-[7px]">
+							<span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.09em] text-muted-foreground">
+								{group.type.replace(/_/g, ' ')}
+							</span>
+							<span className="text-[10.5px] font-semibold tabular-nums text-border-strong">
+								{group.rows.length}
+							</span>
+						</div>
+						<div className="overflow-hidden rounded-xl border border-border">
+							{group.rows.map((row, index) => (
+								<div
+									key={row.rel.id}
 									className={cn(
-										'size-[7px] shrink-0 rounded-[2px]',
-										getTypeColor(row.object.type).bg,
+										'relative flex items-center gap-2.5 px-3 py-2.5 transition-colors hover:bg-muted/40',
+										index > 0 && 'border-t border-border',
 									)}
-								/>
-								<TypeBadge
-									type={row.object.type}
-									variant="mono"
-									className="shrink-0 text-[8.5px]"
-								/>
-								<span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-foreground">
-									{row.object.title ?? 'Untitled'}
-								</span>
-								{/* A linked object an agent is working on right now says so here —
-								    the row's status slot is where that live state belongs. */}
-								{row.object.activeSessionId ? (
-									<span className="relative z-[2] shrink-0">
-										<AgentWorkingBadge
-											sessionId={row.object.activeSessionId}
-											workspaceId={workspaceId}
-										/>
-									</span>
-								) : (
-									<span
-										className={cn(
-											'hidden max-w-[150px] shrink-0 truncate text-[11px] font-semibold md:block',
-											getStatusColor(row.object.status).text,
-										)}
-									>
-										{statusLabel(row.object.status)}
-									</span>
-								)}
-								<RelativeTime
-									date={row.object.updatedAt ?? row.object.createdAt}
-									className="w-[38px] shrink-0 text-right text-[10px] tabular-nums text-border-strong"
-								/>
-								{/* The link covers the row so the whole thing opens the object;
-								    the remove button sits above it so × still hits ×. */}
-								<Link
-									to="/$workspaceId/objects/$objectId"
-									params={{ workspaceId, objectId: row.object.id }}
-									aria-label={row.object.title ?? 'Untitled'}
-									className="absolute inset-0 z-[1]"
-								/>
-								<button
-									type="button"
-									aria-label={`Remove link to ${row.object.title ?? 'Untitled'}`}
-									title="Remove link"
-									onClick={() => deleteRelationship.mutate(row.rel.id)}
-									className="relative z-[2] shrink-0 px-0.5 text-border transition-colors hover:text-destructive"
 								>
-									<X size={13} />
-								</button>
-							</div>
-						))}
+									<span
+										aria-hidden="true"
+										className={cn(
+											'size-[7px] shrink-0 rounded-[2px]',
+											getTypeColor(row.object.type).bg,
+										)}
+									/>
+									<TypeBadge
+										type={row.object.type}
+										variant="mono"
+										className="shrink-0 text-[8.5px]"
+									/>
+									<span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-foreground">
+										{row.object.title ?? 'Untitled'}
+									</span>
+									{/* A linked object an agent is working on right now says so here —
+								    the row's status slot is where that live state belongs. */}
+									{row.object.activeSessionId ? (
+										<span className="relative z-[2] shrink-0">
+											<AgentWorkingBadge
+												sessionId={row.object.activeSessionId}
+												workspaceId={workspaceId}
+											/>
+										</span>
+									) : (
+										<span
+											className={cn(
+												'hidden max-w-[150px] shrink-0 truncate text-[11px] font-semibold md:block',
+												getStatusColor(row.object.status).text,
+											)}
+										>
+											{statusLabel(row.object.status)}
+										</span>
+									)}
+									<RelativeTime
+										date={row.object.updatedAt ?? row.object.createdAt}
+										compact
+										className="w-[38px] shrink-0 text-right text-[10px] uppercase tabular-nums text-border-strong"
+									/>
+									{/* The link covers the row so the whole thing opens the object;
+								    the remove button sits above it so × still hits ×. */}
+									<Link
+										to="/$workspaceId/objects/$objectId"
+										params={{ workspaceId, objectId: row.object.id }}
+										aria-label={row.object.title ?? 'Untitled'}
+										className="absolute inset-0 z-[1]"
+									/>
+									<button
+										type="button"
+										aria-label={`Remove link to ${row.object.title ?? 'Untitled'}`}
+										title="Remove link"
+										onClick={() => deleteRelationship.mutate(row.rel.id)}
+										className="relative z-[2] shrink-0 px-0.5 text-border transition-colors hover:text-destructive"
+									>
+										<X size={13} />
+									</button>
+								</div>
+							))}
+						</div>
 					</div>
-				</div>
-			))}
+				))}
 
 			{showAdd && (
 				<AddLinkForm
@@ -183,11 +193,19 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 				/>
 			</div>
 
-			{resolved.length === 0 && (
+			{/* Loading → error → empty. "No related objects yet" is a claim about
+			    the object, so it may only be made once the graph has resolved — a
+			    pending or failed fetch has the same empty `resolved` array and must
+			    not read as one. */}
+			{isGraphLoading ? (
+				<ListSkeleton rows={3} />
+			) : isGraphError ? (
+				<QueryStateError title="Couldn't load related objects" error={graphError} />
+			) : resolved.length === 0 ? (
 				<div className="px-3 py-6 text-center text-[12.5px] text-muted-foreground">
 					No related objects yet.
 				</div>
-			)}
+			) : null}
 		</div>
 	)
 }

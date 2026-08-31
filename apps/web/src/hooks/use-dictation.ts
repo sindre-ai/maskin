@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-// Minimal structural types for the Web Speech API — it isn't in TS's DOM lib
-// and only Chromium/Safari ship it (behind the webkit prefix on Safari).
+// Minimal shape of the Web Speech API surface we use. It is not in lib.dom.d.ts
+// (the spec is still a draft and Chrome ships it prefixed), so the fields the
+// hook touches are declared here rather than pulling in a dependency.
 interface SpeechRecognitionAlternativeLike {
 	transcript: string
 }
 interface SpeechRecognitionResultLike {
-	isFinal: boolean
-	0: SpeechRecognitionAlternativeLike
+	readonly isFinal: boolean
+	readonly length: number
+	[index: number]: SpeechRecognitionAlternativeLike
 }
 interface SpeechRecognitionEventLike {
 	resultIndex: number
-	results: { length: number } & Record<number, SpeechRecognitionResultLike>
+	results: {
+		readonly length: number
+		[index: number]: SpeechRecognitionResultLike
+	}
 }
 interface SpeechRecognitionLike {
 	continuous: boolean
@@ -19,6 +24,7 @@ interface SpeechRecognitionLike {
 	lang: string
 	start(): void
 	stop(): void
+	abort(): void
 	onresult: ((event: SpeechRecognitionEventLike) => void) | null
 	onerror: (() => void) | null
 	onend: (() => void) | null
@@ -35,73 +41,89 @@ function getRecognitionCtor(): SpeechRecognitionCtor | null {
 }
 
 export interface Dictation {
-	/** False when the browser has no SpeechRecognition — the caller should
-	 *  render nothing at all rather than a disabled control (mockup 8066). */
+	/** False when the browser has no SpeechRecognition — render no control at all. */
 	supported: boolean
 	recording: boolean
-	start: () => void
-	stop: () => void
 	toggle: () => void
 }
 
 /**
- * Composer dictation. Emits each finalised phrase through `onTranscript` so the
- * caller decides how to fold it into its own draft; interim results are
- * ignored, which keeps the textarea from flickering mid-word.
+ * Wraps the browser's SpeechRecognition in a start/stop toggle, calling
+ * `onPhrase` once per finalised phrase. Interim results are dropped so the
+ * caller only ever appends settled text.
+ *
+ * `supported` is resolved once on mount rather than at module scope: reading
+ * `window` during import breaks SSR and the jsdom test environment, where the
+ * API is absent and the mic must render as nothing rather than a dead control.
  */
-export function useDictation(onTranscript: (text: string) => void): Dictation {
-	const [supported] = useState(() => getRecognitionCtor() !== null)
+export function useDictation(onPhrase: (text: string) => void): Dictation {
+	const [supported, setSupported] = useState(false)
 	const [recording, setRecording] = useState(false)
 	const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
-	// Kept in a ref so restarting dictation never rebinds the recogniser.
-	const onTranscriptRef = useRef(onTranscript)
-	onTranscriptRef.current = onTranscript
+
+	// Keep the latest callback without re-creating the recognition instance,
+	// which would drop an in-flight session on every parent render.
+	const onPhraseRef = useRef(onPhrase)
+	useEffect(() => {
+		onPhraseRef.current = onPhrase
+	}, [onPhrase])
 
 	useEffect(() => {
+		setSupported(getRecognitionCtor() !== null)
+	}, [])
+
+	// Stop any live session when the composer unmounts, otherwise the mic stays
+	// hot after navigating away.
+	useEffect(() => {
 		return () => {
-			recognitionRef.current?.stop()
+			recognitionRef.current?.abort()
 			recognitionRef.current = null
 		}
 	}, [])
 
-	const start = useCallback(() => {
+	const toggle = useCallback(() => {
+		if (recognitionRef.current) {
+			recognitionRef.current.stop()
+			return
+		}
+
 		const Ctor = getRecognitionCtor()
-		if (!Ctor || recognitionRef.current) return
+		if (!Ctor) return
+
 		const recognition = new Ctor()
 		recognition.continuous = true
 		recognition.interimResults = false
-		recognition.lang = typeof navigator !== 'undefined' ? navigator.language : 'en-US'
+		recognition.lang = navigator.language || 'en-US'
+
 		recognition.onresult = (event) => {
-			let text = ''
 			for (let i = event.resultIndex; i < event.results.length; i++) {
 				const result = event.results[i]
-				if (result?.isFinal) text += result[0].transcript
+				if (!result?.isFinal) continue
+				const transcript = result[0]?.transcript?.trim()
+				if (transcript) onPhraseRef.current(transcript)
 			}
-			if (text.trim().length > 0) onTranscriptRef.current(text)
 		}
+		// A recognition error (no mic permission, no network for the remote
+		// recogniser) ends the session. `onend` fires either way and is where the
+		// UI state is reset, so both handlers converge there.
 		recognition.onerror = () => {
-			recognitionRef.current = null
-			setRecording(false)
+			recognition.stop()
 		}
 		recognition.onend = () => {
 			recognitionRef.current = null
 			setRecording(false)
 		}
+
+		try {
+			recognition.start()
+		} catch {
+			// start() throws if a session is already running for this page. Nothing
+			// to recover — leave the control idle rather than showing a live mic.
+			return
+		}
 		recognitionRef.current = recognition
-		recognition.start()
 		setRecording(true)
 	}, [])
 
-	const stop = useCallback(() => {
-		recognitionRef.current?.stop()
-		recognitionRef.current = null
-		setRecording(false)
-	}, [])
-
-	const toggle = useCallback(() => {
-		if (recognitionRef.current) stop()
-		else start()
-	}, [start, stop])
-
-	return { supported, recording, start, stop, toggle }
+	return { supported, recording, toggle }
 }

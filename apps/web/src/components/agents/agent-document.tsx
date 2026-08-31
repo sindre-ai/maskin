@@ -33,6 +33,7 @@ import {
 import type { ActorListItem, ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
+import { toastSessionCreateError } from '@/lib/session-errors'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import {
@@ -589,6 +590,7 @@ function SessionRow({
 	const isFailed = session.status === 'failed' || session.status === 'timeout'
 	const [showError, setShowError] = useState(false)
 	const createSession = useCreateSession(workspaceId)
+	const navigate = useNavigate()
 
 	const result = session.result as Record<string, unknown> | null
 	const errorMessage = typeof result?.error === 'string' ? result.error : undefined
@@ -650,10 +652,13 @@ function SessionRow({
 							className="text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 cursor-pointer min-h-[44px] inline-flex items-center"
 							onClick={(e) => {
 								e.stopPropagation()
-								createSession.mutate({
-									actor_id: agentId,
-									action_prompt: session.actionPrompt,
-								})
+								createSession.mutate(
+									{
+										actor_id: agentId,
+										action_prompt: session.actionPrompt,
+									},
+									{ onError: (err) => toastSessionCreateError(err, navigate, workspaceId) },
+								)
 							}}
 							disabled={createSession.isPending}
 						>
@@ -873,7 +878,7 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				onRun={() =>
 					run.mutate(
 						{ id: agent.id },
-						{ onError: () => toast.error(`Couldn't start ${agent.name}`) },
+						{ onError: (err) => toastSessionCreateError(err, navigate, workspaceId) },
 					)
 				}
 				onNewConversation={() =>

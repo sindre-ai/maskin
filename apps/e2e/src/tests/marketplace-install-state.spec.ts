@@ -11,7 +11,8 @@ import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 // card to install. Each test installs and then removes, leaving the workspace
 // as it found it.
 
-const MANAGE = 'Manage'
+// Exact — an item card titled e.g. "Influencer Manager Agent" also contains "Manage".
+const MANAGE = { name: 'Manage', exact: true }
 
 test.describe('Marketplace install state', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
@@ -38,7 +39,7 @@ test.describe('Marketplace install state', () => {
 
 			// The footer flips to the installed pair (mockup 2596–2597).
 			await expect(card.getByText('Installed')).toBeVisible({ timeout: 20000 })
-			const manage = card.getByRole('link', { name: MANAGE })
+			const manage = card.getByRole('link', MANAGE)
 			await expect(manage).toBeVisible()
 			await expect(card.getByRole('button', { name: /^install$/i })).toHaveCount(0)
 
@@ -49,7 +50,7 @@ test.describe('Marketplace install state', () => {
 				.locator('article')
 				.filter({ has: page.getByRole('heading', { name: loopName ?? '', level: 3 }) })
 			await expect(reloadedCard.getByText('Installed')).toBeVisible({ timeout: 20000 })
-			await expect(reloadedCard.getByRole('link', { name: MANAGE })).toBeVisible()
+			await expect(reloadedCard.getByRole('link', MANAGE)).toBeVisible()
 
 			// Detail page: the action bar sits above the scroll region, so the
 			// breadcrumb, Manage and ⋯ are all on screen without scrolling.
@@ -57,11 +58,15 @@ test.describe('Marketplace install state', () => {
 			await expect(page).toHaveURL(/\/marketplace\/[^/]+\/?$/)
 
 			const detail = page.getByRole('main')
-			const crumb = detail.getByRole('link', { name: 'Marketplace' })
+			// At >=768 `main` holds two breadcrumbs: the app shell header's (hidden
+			// at 375px) and the detail page's own action bar, which is what this
+			// test is about. The page's is the last one in the DOM.
+			const actionBarCrumbs = detail.getByRole('navigation', { name: 'breadcrumb' }).last()
+			const crumb = actionBarCrumbs.getByRole('link', { name: 'Marketplace', exact: true })
 			await expect(crumb).toBeVisible({ timeout: 20000 })
 			const overflow = detail.getByRole('button', { name: 'Loop actions' })
 			await expect(overflow).toBeVisible()
-			await expect(detail.getByRole('link', { name: MANAGE })).toBeVisible()
+			await expect(detail.getByRole('link', MANAGE)).toBeVisible()
 
 			const scrollY = await page.evaluate(() => window.scrollY)
 			expect(scrollY).toBe(0)

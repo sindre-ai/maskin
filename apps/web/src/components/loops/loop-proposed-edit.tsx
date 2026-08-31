@@ -1,5 +1,5 @@
 import { Button } from '@/components/ui/button'
-import { type LoopPlan, describeLoopPlan } from '@/lib/loop-plan'
+import { type LoopPlan, describeLoopPlan, loopPlanSchema } from '@/lib/loop-plan'
 
 export interface PlanDiffRow {
 	label: string
@@ -9,16 +9,19 @@ export interface PlanDiffRow {
 
 /** Parse the plan snapshot `/loops/new` writes to `metadata.plan`. Returns null
  *  for loops that carry none (marketplace installs, MCP-created loops), which
- *  is the signal to fall back to the chat hand-off. */
+ *  is the signal to fall back to the chat hand-off.
+ *
+ *  `metadata` is agent-writable, so a stored plan is untrusted input: a
+ *  structurally-invalid snapshot must read as "no plan" rather than reach the
+ *  consumers, which dereference `triggers` / `agents` / `stateChain` directly. */
 export function readStoredPlan(
 	metadata: Record<string, unknown> | null | undefined,
 ): LoopPlan | null {
 	const raw = metadata?.plan
 	if (typeof raw !== 'string') return null
 	try {
-		const parsed = JSON.parse(raw) as LoopPlan
-		if (!parsed || !Array.isArray(parsed.objectTypes)) return null
-		return parsed
+		const result = loopPlanSchema.safeParse(JSON.parse(raw))
+		return result.success ? result.data : null
 	} catch {
 		return null
 	}
@@ -30,7 +33,7 @@ function planFields(plan: LoopPlan): Record<string, string> {
 	const primary = plan.objectTypes[0]
 	return {
 		'OBJECT TYPE': primary?.name ?? NONE,
-		STATES: primary?.stateChain.join(' → ') || NONE,
+		STATES: primary?.stateChain?.join(' → ') || NONE,
 		TRIGGERS: plan.triggers.map((t) => t.whenClause).join(' · ') || NONE,
 		AGENTS: plan.agents.map((a) => a.name).join(', ') || NONE,
 		'STOPS FOR YOU': plan.stopForOperator ?? 'never',

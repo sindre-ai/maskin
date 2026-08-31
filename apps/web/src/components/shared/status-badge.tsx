@@ -1,6 +1,6 @@
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/cn'
-import { statusColors, statusLabel } from '@/lib/constants'
+import { defaultStatusColor, statusColors, statusLabel } from '@/lib/constants'
 
 type StatusBadgeVariant = 'default' | 'dot-word' | 'word'
 
@@ -15,19 +15,24 @@ export function StatusBadge({
 	className?: string
 	variant?: StatusBadgeVariant
 }) {
-	const colors = statusColors[status] ?? { bg: 'bg-zinc-700', text: 'text-zinc-300' }
+	// `defaultStatusColor` rather than a literal: statuses are workspace-
+	// configurable, and the old fallback was light text sized for a dark pill.
+	// The `word` and `dot-word` variants drop the pill and render `text` on the
+	// surface itself, where `text-zinc-300` is unreadable in light mode.
+	const colors = statusColors[status] ?? defaultStatusColor
 	const label = status.replace(/_/g, ' ')
 
-	// The bare status word — no dot, no pill. The Objects list row carries
-	// status as coloured text (mockup 759); a dot beside it would double the
-	// colour signal inside 11px of space.
+	// The bare status word, no dot and no pill — a citation pill, the For You
+	// feed's card meta line and its row subtitle, and the Objects list row
+	// (mockup 759) carry status as coloured text rather than as chrome. A dot
+	// beside it would double the colour signal inside 11px of space.
 	if (variant === 'word') {
 		return (
 			<span
 				className={cn('shrink-0 whitespace-nowrap font-medium', colors.text, className)}
 				aria-label={`Status ${label}`}
 			>
-				{statusLabel(status)}
+				{capitalize(statusLabel(status))}
 			</span>
 		)
 	}
@@ -86,4 +91,11 @@ export function StatusBadge({
 			{label}
 		</Badge>
 	)
+}
+
+// Status words are sentence-cased at the point of display ("In review",
+// "Blocked"): the shared `statusLabel` map only spells out the statuses the
+// product ships; anything custom falls through as the raw, lowercase value.
+function capitalize(label: string): string {
+	return label.charAt(0).toUpperCase() + label.slice(1)
 }

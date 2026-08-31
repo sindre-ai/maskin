@@ -14,6 +14,7 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { getStoredActor } from '@/lib/auth'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
+import { getTypeColor } from '@/lib/constants'
 import { formatSize } from '@/lib/file-utils'
 import { useDraft } from '@/lib/pending-comments-context'
 import { COMMENT_MAX_ATTACHMENTS, COMMENT_MAX_LENGTH } from '@maskin/shared'
@@ -102,6 +103,11 @@ export function CommentInput({
 	const [decisionChips, setDecisionChips] = useState<string[]>([])
 	const [chipDraft, setChipDraft] = useState('')
 	const [decisionOpen, setDecisionOpen] = useState(false)
+	// Objects picked from "Reference an object" ride the comment as chips and
+	// land on the timeline as real references (mockup `refList`).
+	const [references, setReferences] = useState<Array<{ id: string; title: string; type: string }>>(
+		[],
+	)
 
 	const inputRef = useRef<HTMLTextAreaElement>(null)
 	const overlayRef = useRef<HTMLDivElement>(null)
@@ -237,16 +243,20 @@ export function CommentInput({
 		}, []),
 	)
 
-	const insertAtCursor = useCallback((snippet: string) => {
+	// `trailingSpace` exists for the "@" opener: the mention dropdown stays open
+	// only while the text after the "@" contains no space (see handleInput), so
+	// seeding "@ " would close it on the very first keystroke.
+	const insertAtCursor = useCallback((snippet: string, { trailingSpace = true } = {}) => {
 		const textarea = inputRef.current
 		setContent((prev) => {
 			const pos = textarea?.selectionStart ?? prev.length
 			const before = prev.slice(0, pos)
 			const after = prev.slice(pos)
 			const spacer = before.length > 0 && !/\s$/.test(before) ? ' ' : ''
-			const next = `${before}${spacer}${snippet} ${after}`
+			const tail = trailingSpace ? ' ' : ''
+			const next = `${before}${spacer}${snippet}${tail}${after}`
 			requestAnimationFrame(() => {
-				const caret = before.length + spacer.length + snippet.length + 1
+				const caret = before.length + spacer.length + snippet.length + tail.length
 				textarea?.focus()
 				textarea?.setSelectionRange(caret, caret)
 			})
@@ -257,21 +267,25 @@ export function CommentInput({
 	const handleObjectPicked = useCallback(
 		(result: SlashPickerResult) => {
 			if (result.kind === 'object') {
-				const title = result.ref.title?.trim() || 'object'
-				insertAtCursor(`[${title}](/${workspaceId}/objects/${result.ref.id})`)
+				const picked = {
+					id: result.ref.id,
+					title: result.ref.title?.trim() || 'Untitled',
+					type: result.ref.type ?? 'object',
+				}
+				setReferences((prev) => (prev.some((r) => r.id === picked.id) ? prev : [...prev, picked]))
 			} else if (result.kind === 'agent') {
 				insertAtCursor(`@${result.ref.name}`)
 				setMentions((prev) => (prev.includes(result.ref.id) ? prev : [...prev, result.ref.id]))
 			}
 			setObjectPickerOpen(false)
 		},
-		[insertAtCursor, workspaceId],
+		[insertAtCursor],
 	)
 
 	// Opens the @-mention flow the textarea already owns instead of a parallel
 	// picker — one mention path, one dropdown.
 	const startMention = useCallback(() => {
-		insertAtCursor('@')
+		insertAtCursor('@', { trailingSpace: false })
 		setShowMentions(true)
 		setMentionFilter('')
 		setSelectedIndex(0)
@@ -299,8 +313,10 @@ export function CommentInput({
 			.map((chip) => chip.trim().slice(0, MAX_DECISION_CHIP_LENGTH))
 			.filter((chip) => chip.length > 0)
 			.slice(0, MAX_DECISION_CHIPS)
-		return chips.length > 0 ? { chips } : undefined
-	}, [decisionChips])
+		const refs = references.map((r) => r.id)
+		if (chips.length === 0 && refs.length === 0) return undefined
+		return { ...(chips.length > 0 ? { chips } : {}), ...(refs.length > 0 ? { refs } : {}) }
+	}, [decisionChips, references])
 
 	const overLimit = content.length > COMMENT_MAX_LENGTH
 	const showCounter = content.length >= COMMENT_MAX_LENGTH * COUNTER_VISIBILITY_THRESHOLD
@@ -311,13 +327,23 @@ export function CommentInput({
 		setDecisionChips([])
 		setChipDraft('')
 		setDecisionOpen(false)
+		setReferences([])
 		draftIdRef.current = randomDraftId()
 	}, [])
 
 	const handleSubmit = useCallback(() => {
 		const trimmed = content.trim()
+		// References ride along with a comment, they are not a comment on their
+		// own: `createCommentSchema.content` is `.min(1)`, so posting chips with
+		// an empty body is a guaranteed 400. Same rule as decision chips.
 		if (!trimmed) return
 		if (content.length > COMMENT_MAX_LENGTH) return
+		// The Send button is already disabled while a POST is in flight; Enter has
+		// to obey the same rule. The composer deliberately keeps its text until
+		// the POST succeeds (so a rejected one is not lost), which means a slow
+		// round trip looks exactly like a keypress that did nothing — and the
+		// second Enter posts the same comment twice.
+		if (createComment.isPending) return
 
 		// Reconcile mentions: only include actors whose @Name is still in the text
 		const activeMentions = mentions.filter((id) => {
@@ -327,37 +353,50 @@ export function CommentInput({
 
 		const metadata = buildMetadata()
 
+		const postDirectly = () => {
+			createComment.mutate(
+				{
+					entity_id: objectId,
+					content: trimmed,
+					mentions: activeMentions.length > 0 ? activeMentions : undefined,
+					parent_event_id: parentEventId,
+					...(metadata ? { metadata } : {}),
+				},
+				{
+					onSuccess: () => {
+						resetComposer()
+						onSubmitted?.()
+					},
+				},
+			)
+		}
+
 		if (hasAttachments) {
 			// Hand the submission to the pending-comments queue. Uploads (if still
 			// in flight) and the final POST will continue in the background even
 			// if the user navigates away from this page. The queue carries the
 			// same metadata the direct path sends, so an attachment and a
 			// decision can ride one comment.
-			draft.submit({
+			const outcome = draft.submit({
 				content: trimmed,
 				mentions: activeMentions,
 				...(metadata ? { metadata } : {}),
 			})
+			// The queue has nothing to send — the entry was never created, or every
+			// attachment was removed between the `hasAttachments` read and this
+			// click. It also deletes the entry in that second case, so there is no
+			// queued row left to render a failure on. Post directly rather than
+			// resetting the composer, which would clear the comment as if it sent.
+			if (outcome === 'no-attachments') {
+				postDirectly()
+				return
+			}
 			resetComposer()
 			onSubmitted?.()
 			return
 		}
 
-		createComment.mutate(
-			{
-				entity_id: objectId,
-				content: trimmed,
-				mentions: activeMentions.length > 0 ? activeMentions : undefined,
-				parent_event_id: parentEventId,
-				...(metadata ? { metadata } : {}),
-			},
-			{
-				onSuccess: () => {
-					resetComposer()
-					onSubmitted?.()
-				},
-			},
-		)
+		postDirectly()
 	}, [
 		content,
 		mentions,
@@ -477,7 +516,12 @@ export function CommentInput({
 						<Paperclip size={15} aria-hidden />
 						Attach a file
 					</DropdownMenuItem>
-					<DropdownMenuItem onSelect={() => setObjectPickerOpen(true)}>
+					<DropdownMenuItem
+						// Opened on the next tick: the menu closes first, and its
+						// focus-return would otherwise land as an outside-click on the
+						// picker and shut it again the moment it mounts.
+						onSelect={() => window.setTimeout(() => setObjectPickerOpen(true), 0)}
+					>
 						<Box size={15} aria-hidden />
 						Reference an object
 					</DropdownMenuItem>
@@ -526,6 +570,51 @@ export function CommentInput({
 		</>
 	)
 
+	const referenceChips = references.length > 0 && (
+		<ul className={cn('flex flex-wrap gap-1.5', isBar ? 'px-1 pb-[7px]' : 'p-1.5 pb-0')}>
+			{references.map((ref) => (
+				<li
+					key={ref.id}
+					className={cn(
+						'flex items-center gap-1.5',
+						isBar
+							? 'rounded-full border border-brand/25 bg-brand/10 px-2.5 py-1'
+							: 'rounded-lg border border-border bg-background px-2 py-1',
+					)}
+				>
+					<span
+						aria-hidden="true"
+						className={cn('size-[7px] shrink-0 rounded-[2px]', getTypeColor(ref.type).bg)}
+					/>
+					{!isBar && (
+						<span className="font-mono text-[8px] font-bold uppercase tracking-[0.09em] text-muted-foreground">
+							{ref.type}
+						</span>
+					)}
+					<span
+						className={cn(
+							'max-w-[180px] truncate text-[11.5px] font-semibold',
+							isBar ? 'text-brand' : 'text-foreground',
+						)}
+					>
+						{ref.title}
+					</span>
+					<button
+						type="button"
+						aria-label={`Remove reference to ${ref.title}`}
+						onClick={() => setReferences((prev) => prev.filter((r) => r.id !== ref.id))}
+						className={cn(
+							'transition-colors',
+							isBar ? 'text-brand/45 hover:text-brand' : 'text-border hover:text-destructive',
+						)}
+					>
+						<X size={12} />
+					</button>
+				</li>
+			))}
+		</ul>
+	)
+
 	return (
 		<div
 			className={cn(
@@ -550,6 +639,7 @@ export function CommentInput({
 				    pushes the row past the card and the page scrolls horizontally
 				    instead of the field growing vertically. */}
 				<div className="min-w-0 flex-1">
+					{isBar && referenceChips}
 					<div
 						className={cn(
 							'border transition-colors',
@@ -557,6 +647,7 @@ export function CommentInput({
 							overLimit ? 'border-error' : isBar ? 'border-input' : 'border-border',
 						)}
 					>
+						{!isBar && referenceChips}
 						{hasAttachments && (
 							<ul className="flex flex-wrap gap-1.5 p-1.5">
 								{attachments.map((file) => (

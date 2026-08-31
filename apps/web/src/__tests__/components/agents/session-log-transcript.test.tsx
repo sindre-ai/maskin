@@ -277,7 +277,48 @@ function taggedUserTurn(messageId: number, content: string): string {
 	})
 }
 
+function retriedUserTurn(content: string): string {
+	return JSON.stringify({
+		type: 'user',
+		message: { role: 'user', content },
+		maskin_retry: true,
+	})
+}
+
 describe('segmentActivityByMessage', () => {
+	it('retracts the result of a failed turn the backend is replaying', () => {
+		const failure = JSON.stringify({
+			type: 'result',
+			is_error: true,
+			result: 'API Error: {"type":"error","error":{"type":"api_error"}}',
+		})
+		const success = JSON.stringify({ type: 'result', is_error: false, result: 'The answer.' })
+		const { segments } = segmentActivityByMessage([
+			log(1, 'stdout', taggedUserTurn(7, 'hello')),
+			log(2, 'stdout', failure),
+			log(3, 'stdout', retriedUserTurn('hello')),
+			log(4, 'stdout', success),
+		])
+
+		// One segment, not two: the replay reopens the same turn rather than
+		// starting a new one.
+		expect(segments).toHaveLength(1)
+		// The failed envelope produces no chat message ever, so leaving it here
+		// would render the raw API error as the agent's answer and shift the
+		// ordinal result/message pairing for every later turn in the session.
+		expect(segments[0]?.result?.text).toBe('The answer.')
+		expect(segments[0]?.result?.isError).toBe(false)
+	})
+
+	it('does not render a replayed turn as the human sending a second message', () => {
+		const { segments } = segmentActivityByMessage([
+			log(1, 'stdout', taggedUserTurn(7, 'hello')),
+			log(2, 'stdout', retriedUserTurn('hello')),
+		])
+		expect(segments).toHaveLength(1)
+		expect(segments[0]?.steps).toEqual([])
+	})
+
 	it('returns one step per meaningful event, in chronological order, for an untagged (legacy) session', () => {
 		const first = JSON.stringify({
 			type: 'assistant',
@@ -299,6 +340,65 @@ describe('segmentActivityByMessage', () => {
 			{ id: '1-0', kind: 'tool_use', text: 'Using search_objects' },
 			{ id: '2-0', kind: 'text', text: 'Found 3 matches' },
 		])
+	})
+
+	it('records a turn result on its segment without listing it as a step', () => {
+		const userTurn = JSON.stringify({
+			type: 'user',
+			message: { role: 'user', content: 'hi' },
+			maskin_message_id: 7,
+		})
+		const resultLine = JSON.stringify({
+			type: 'result',
+			subtype: 'success',
+			is_error: false,
+			result: 'Here is the answer.',
+		})
+		const { segments } = segmentActivityByMessage([
+			log(1, 'stdout', userTurn),
+			log(2, 'stdout', resultLine),
+		])
+		// The dropdown lists what the agent DID; the answer itself renders as a
+		// chat bubble, so it must not also appear as a step.
+		expect(segments).toEqual([
+			{
+				conversationMessageId: 7,
+				steps: [],
+				containsReply: false,
+				result: { text: 'Here is the answer.', isError: false, logId: 2 },
+			},
+		])
+	})
+
+	it('gives each turn its own result rather than the last one', () => {
+		const turn = (id: number) =>
+			JSON.stringify({
+				type: 'user',
+				message: { role: 'user', content: 'x' },
+				maskin_message_id: id,
+			})
+		const res = (text: string) =>
+			JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text })
+		const { segments } = segmentActivityByMessage([
+			log(1, 'stdout', turn(1)),
+			log(2, 'stdout', res('first answer')),
+			log(3, 'stdout', turn(2)),
+			log(4, 'stdout', res('second answer')),
+		])
+		expect(segments.map((s) => s.result?.text)).toEqual(['first answer', 'second answer'])
+	})
+
+	it('ignores a result that has no open segment', () => {
+		const resultLine = JSON.stringify({
+			type: 'result',
+			subtype: 'success',
+			is_error: false,
+			result: 'orphan',
+		})
+		const { segments, unassigned } = segmentActivityByMessage([log(1, 'stdout', resultLine)])
+		expect(segments).toEqual([])
+		// `unassigned` holds steps only — a result must not be pushed into it.
+		expect(unassigned).toEqual([])
 	})
 
 	it('omits result, system, and debug envelopes from the history', () => {

@@ -12,24 +12,48 @@ import {
 	WORKSPACE_COACH_DEFAULT,
 	computeChanges,
 	createWorkspaceSchema,
+	transferBillingOwnershipSchema,
 	updateWorkspaceAdminSchema,
 	updateWorkspaceSchema,
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
-import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { isEnterprise, isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import {
+	billingAfterByoTransition,
+	cancelActivePaidSubscription,
+	hasActivePaidPlan,
+	patchAddsAnyByoCredential,
+	patchAddsByoSource,
+} from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { isWorkspaceMember, isWorkspaceOwner } from '../lib/workspace-auth'
-import { buildNewWorkspaceSettings } from '../lib/workspace-defaults'
+import { getStripeClient, readStripeEnv } from '../lib/stripe'
+import type { WorkspaceSettings } from '../lib/types'
+import {
+	isWorkspaceHumanAdminOrOwner,
+	isWorkspaceMember,
+	isWorkspaceOwner,
+} from '../lib/workspace-auth'
+import {
+	OwnershipCapExceededError,
+	SeatCapExceededError,
+	computeEffectiveTier,
+	countHumanMembers,
+	lockActorForOwnershipClaim,
+	ownedWorkspacePlans,
+	ownershipCapErrorBody,
+	ownershipCapForTier,
+	resolvePlanTier,
+	seatCapErrorBody,
+	seatCapForPlan,
+} from '../lib/workspace-capacity'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
-import {
-	SeedAgentError,
-	bootstrapDefaultAgents,
-	seedDefaultAgentActors,
-} from '../services/workspace-bootstrap'
+import { SeedAgentError, provisionWorkspace } from '../services/workspace-bootstrap'
+
+type WorkspaceBilling = WorkspaceSettings['billing']
 
 type Env = {
 	Variables: {
@@ -54,20 +78,25 @@ const addMemberBodySchema = z.object({
 	role: z.string().optional(),
 })
 
-const updateMemberBodySchema = z.object({
-	role: z.enum(['owner', 'admin', 'member']),
-})
-
-const memberParamSchema = z.object({
-	id: z.string().uuid(),
-	actorId: z.string().uuid(),
-})
-
 const workspaceWithRoleSchema = workspaceResponseSchema.extend({
 	role: z.string(),
 })
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
+
+/**
+ * Shape a workspace row for a response: swap the raw `enterprise_granted`
+ * column for the derived `enterprise` status callers actually care about (the
+ * column OR an enterprise billing owner). Every single-row workspace response
+ * goes through this, so a route can't leak the raw grant flag or disagree with
+ * the list route about who is enterprise.
+ */
+function serializeWorkspace<
+	T extends { enterpriseGranted: boolean | null; billingOwnerId: string | null },
+>(row: T) {
+	const { enterpriseGranted, ...rest } = row
+	return serialize({ ...rest, enterprise: isEnterprise(row) })
+}
 
 // POST /api/workspaces
 const createWorkspaceRoute = createRoute({
@@ -89,6 +118,14 @@ const createWorkspaceRoute = createRoute({
 			description: 'Workspace created',
 			content: { 'application/json': { schema: workspaceResponseSchema } },
 		},
+		400: {
+			description: 'Request set `settings.billing`, which is owned by Stripe',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Actor has reached their workspace-ownership cap for their plan tier',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		500: {
 			description: 'Internal server error',
 			content: { 'application/json': { schema: errorSchema } },
@@ -101,48 +138,52 @@ app.openapi(createWorkspaceRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
 
-	const settings = buildNewWorkspaceSettings(body.settings)
+	// Same rule as PATCH below: `billing` is owned by Stripe and /api/billing/*.
+	// Every workspace starts on trial; accepting it here would let any actor —
+	// or any agent via MCP `create_workspace`, which shares this schema —
+	// self-grant `plan: 'team', status: 'active'` at creation time and take the
+	// seat cap, the ownership cap and an arbitrary `hard_cap_usd_cents` of
+	// Maskin-funded spend without paying. The ownership-cap check inside
+	// provisionWorkspace() derives the candidate tier from these same settings,
+	// so an unguarded create also validates the claim against itself.
+	if (body.settings && 'billing' in body.settings) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'billing cannot be set via POST /api/workspaces — it is owned by Stripe and /api/billing/*',
+			),
+			400,
+		)
+	}
 
+	// All workspace provisioning — default agents, skills, triggers, default
+	// loops, the pinned chat agent, and Chief of Staff's welcome session — lives
+	// in provisionWorkspace() so this route, signup, and the dev auto-bootstrap
+	// all produce identically furnished workspaces.
 	let workspace: typeof workspaces.$inferSelect | null
 	try {
-		workspace = await db.transaction(async (tx) => {
-			const [ws] = await tx
-				.insert(workspaces)
-				.values({
-					name: body.name,
-					settings,
-					createdBy: actorId,
-				})
-				.returning()
-
-			if (!ws) return null
-
-			// Auto-add creator as owner
-			await tx.insert(workspaceMembers).values({
-				workspaceId: ws.id,
-				actorId,
-				role: 'owner',
-			})
-
-			// Seed all default agents (Coach, Chief of Staff, Driver, Strategist,
-			// Insights Triage, Research Agent) inside the same transaction. If any
-			// one fails the tx rolls back — no half-seeded workspace lingers behind
-			// a partial success.
-			// Skills, workspace_skill files, and triggers are seeded post-commit
-			// because they hit S3 and can't be rolled back inside a DB transaction.
-			const agentIds = await seedDefaultAgentActors(tx, ws.id, actorId)
-
-			// Pin Chief of Staff as the default chat agent unless the caller
-			// explicitly requested a different (or no) default in the create body.
-			if (settings.default_agent_id === undefined && agentIds.chief_of_staff) {
-				const nextSettings = { ...settings, default_agent_id: agentIds.chief_of_staff }
-				await tx.update(workspaces).set({ settings: nextSettings }).where(eq(workspaces.id, ws.id))
-				ws.settings = nextSettings
-			}
-
-			return ws
+		workspace = await provisionWorkspace({
+			db,
+			agentStorage: c.get('agentStorage'),
+			sessionManager: c.get('sessionManager'),
+			name: body.name,
+			ownerActorId: actorId,
+			settings: body.settings,
 		})
 	} catch (err) {
+		// Returned here rather than thrown to `createApp`'s `onError`: this
+		// router is mounted with `app.route()`, which does not carry a parent
+		// error handler, so a throw is a 500 under any other mount. See
+		// `seatCapErrorBody`.
+		if (err instanceof OwnershipCapExceededError) {
+			logger.warn('Workspace create blocked — actor at ownership cap', {
+				actorId,
+				effectiveTier: err.effectiveTier,
+				used: err.used,
+				cap: err.cap,
+			})
+			return c.json(ownershipCapErrorBody(err), 403)
+		}
 		if (err instanceof SeedAgentError) {
 			logger.error('Workspace create rolled back — default agent seed failed', {
 				agentId: err.agentId,
@@ -168,26 +209,7 @@ app.openapi(createWorkspaceRoute, async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create workspace'), 500)
 	}
 
-	// Post-commit: emit workspace_created for the bet's activation-cohort query.
-	// Fire-and-forget by design — the analytics client never throws (see posthog.ts).
-	void capturePosthogEvent('workspace_created', workspace.id, {
-		workspace_id: workspace.id,
-		workspace_name: workspace.name,
-		created_by: actorId,
-	})
-
-	// Post-commit: seed the default agents' skills + triggers. The actor + member
-	// rows are already committed by seedDefaultAgentActors, so this call is a
-	// no-op for actors (name check hits every one) and only writes
-	// workspace_skills + agent_skills + triggers.
-	const agentStorage = c.get('agentStorage')
-	if (agentStorage) {
-		bootstrapDefaultAgents(db, agentStorage, workspace.id, actorId).catch((err) =>
-			logger.error('workspace bootstrap failed', { workspaceId: workspace.id, err }),
-		)
-	}
-
-	return c.json(serialize(workspace) as z.infer<typeof workspaceResponseSchema>, 201)
+	return c.json(serializeWorkspace(workspace) as z.infer<typeof workspaceResponseSchema>, 201)
 })
 
 // GET /api/workspaces
@@ -213,14 +235,33 @@ app.openapi(listWorkspacesRoute, async (c) => {
 			id: workspaces.id,
 			name: workspaces.name,
 			settings: workspaces.settings,
+			// The BYO-LLM entitlement flag drives whether the settings UI renders
+			// the Claude subscription / API-key controls at all. Omitting it here
+			// made every workspace look non-entitled in the frontend even after an
+			// ops grant, because the sidebar workspace list is the only source the
+			// UI reads it from. See PR #970.
+			onboardingEnabled: workspaces.onboardingEnabled,
+			enterpriseGranted: workspaces.enterpriseGranted,
+			billingOwnerId: workspaces.billingOwnerId,
+			createdBy: workspaces.createdBy,
 			role: workspaceMembers.role,
 			createdAt: workspaces.createdAt,
+			updatedAt: workspaces.updatedAt,
 		})
 		.from(workspaceMembers)
 		.innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
 		.where(eq(workspaceMembers.actorId, actorId))
 
-	return c.json(serializeArray(results) as z.infer<typeof workspaceWithRoleSchema>[])
+	// Report the *effective* entitlement, not the raw column — an enterprise
+	// billing owner is entitled on every workspace they own without a
+	// per-workspace grant. This list is the only place the frontend reads the
+	// flag from, so it gates the whole settings UI.
+	const withEntitlement = results.map(({ enterpriseGranted, ...row }) => ({
+		...row,
+		enterprise: isEnterprise({ ...row, enterpriseGranted }),
+	}))
+
+	return c.json(serializeArray(withEntitlement) as z.infer<typeof workspaceWithRoleSchema>[])
 })
 
 // PATCH /api/workspaces/:id
@@ -246,6 +287,10 @@ const updateWorkspaceRoute = createRoute({
 		},
 		400: {
 			description: 'Invalid request',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Workspace is not entitled to BYO LLM credentials',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
@@ -278,6 +323,27 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		)
 	}
 
+	// `billing` is owned by Stripe (the webhook in routes/stripe-webhook.ts) and
+	// the dedicated /api/billing/* routes; the balance is owned by
+	// lib/credit-billing.ts. Accepting it here would let any workspace owner —
+	// or any agent holding a workspace API key, since MCP exposes
+	// `update_workspace` with this same schema — self-grant `plan: 'team',
+	// status: 'active'` and take unlimited seats, unlimited owned workspaces and
+	// a paid spend cap without paying. Nobody hand-writes billing, not even ops:
+	// Stripe is authoritative and the next webhook would overwrite it anyway, so
+	// this is rejected outright rather than permissioned. The BYO-transition
+	// downgrade below still works — it derives `merged.billing` itself, after
+	// this merge, and never reads it from the request body.
+	if (body.settings && 'billing' in body.settings) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'billing cannot be updated via PATCH /api/workspaces/:id — it is owned by Stripe and /api/billing/*',
+			),
+			400,
+		)
+	}
+
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
 	if (body.settings) {
@@ -287,6 +353,20 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		// are treated as deletions.
 		const [existing] = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1)
 		if (!existing) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+
+		// Entitlement gate: every workspace defaults to the Maskin-provided LLM
+		// plan; only ops-flagged exception workspaces may add a BYO Anthropic/
+		// OpenAI key or enable custom_llm. See PR #970.
+		if (!isEnterprise(existing) && patchAddsAnyByoCredential(body.settings)) {
+			return c.json(
+				createApiError(
+					'FORBIDDEN',
+					'This workspace is on the Maskin-provided LLM plan and cannot add BYO LLM credentials',
+				),
+				403,
+			)
+		}
+
 		const existingSettings = (existing.settings ?? {}) as Record<string, unknown>
 		const merged: Record<string, unknown> = { ...existingSettings, ...body.settings }
 		if (body.settings.llm_keys) {
@@ -298,6 +378,17 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 			}
 			merged.llm_keys = mergedLlm
 		}
+
+		// BYO-LLM ↔ paid plan mutex: if the PATCH is adding a BYO Anthropic
+		// key or enabling custom_llm AND a live Stripe subscription exists,
+		// cancel the subscription via API first and roll the billing slot
+		// into the same merged write. The .deleted webhook will arrive
+		// shortly after and is idempotent against this exact terminal state.
+		if (patchAddsByoSource(body.settings)) {
+			const errorRes = await cancelPaidPlanForByoTransition(existingSettings, merged, id)
+			if (errorRes) return c.json(...errorRes)
+		}
+
 		updateData.settings = merged
 	}
 
@@ -320,15 +411,72 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		data: { updated },
 	})
 
-	return c.json(serialize(updated) as z.infer<typeof workspaceResponseSchema>)
+	return c.json(serializeWorkspace(updated) as z.infer<typeof workspaceResponseSchema>)
 }) as RouteHandler<typeof updateWorkspaceRoute, Env>)
 
-// PATCH /api/workspaces/admin/:id — flip onboarding_enabled without a code deploy
+/**
+ * Shared by PATCH /api/workspaces/:id when the body adds a BYO-LLM source.
+ * Mutates `merged.billing` in place once the Stripe cancel succeeds.
+ * Returns a `[body, status]` tuple for the route to surface on failure, or
+ * `null` to proceed with the existing settings merge.
+ */
+async function cancelPaidPlanForByoTransition(
+	existingSettings: Record<string, unknown>,
+	merged: Record<string, unknown>,
+	workspaceId: string,
+): Promise<[ReturnType<typeof createApiError>, 500] | null> {
+	const existingBilling = (existingSettings.billing as WorkspaceBilling) ?? undefined
+	if (!hasActivePaidPlan({ billing: existingBilling })) {
+		// Either no plan, or already canceled — still write the enterprise
+		// downgrade so the local row reflects the user's intent.
+		const downgrade = billingAfterByoTransition(existingBilling)
+		if (downgrade) merged.billing = downgrade
+		return null
+	}
+
+	let stripeEnv: ReturnType<typeof readStripeEnv>
+	try {
+		stripeEnv = readStripeEnv()
+	} catch (err) {
+		logger.error('Cannot cancel paid plan for BYO-LLM transition: Stripe is not configured', {
+			workspaceId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return [createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500]
+	}
+
+	try {
+		await cancelActivePaidSubscription(
+			getStripeClient(stripeEnv),
+			// biome-ignore lint/style/noNonNullAssertion: hasActivePaidPlan guarantees this
+			existingBilling!.stripe_subscription_id!,
+		)
+	} catch (err) {
+		logger.error('Stripe subscription cancel failed during BYO-LLM transition', {
+			workspaceId,
+			subscriptionId: existingBilling?.stripe_subscription_id,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return [createApiError('INTERNAL_ERROR', 'Failed to cancel paid subscription'), 500]
+	}
+
+	const downgrade = billingAfterByoTransition(existingBilling)
+	if (downgrade) merged.billing = downgrade
+	logger.info('Paid plan canceled during BYO-LLM transition', {
+		workspaceId,
+		subscriptionId: existingBilling?.stripe_subscription_id,
+	})
+	return null
+}
+
+// PATCH /api/workspaces/admin/:id — flip onboarding_enabled without a code deploy.
+// `onboarding_enabled` is owner-settable; `enterprise_granted` additionally requires
+// an ops actor (MASKIN_ENTERPRISE_ACTOR_IDS) — see the handler.
 const updateWorkspaceOnboardingRoute = createRoute({
 	method: 'patch',
 	path: '/admin/{id}',
 	tags: ['workspaces'],
-	summary: 'Set onboarding_enabled flag (owner only)',
+	summary: 'Set onboarding_enabled (owner) / enterprise_granted (ops only)',
 	request: {
 		params: idParamSchema,
 		body: {
@@ -345,7 +493,8 @@ const updateWorkspaceOnboardingRoute = createRoute({
 			content: { 'application/json': { schema: workspaceResponseSchema } },
 		},
 		403: {
-			description: 'Caller is not the workspace owner',
+			description:
+				'Caller is not the workspace owner, or set enterprise_granted without ops rights',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
@@ -376,9 +525,27 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Not a workspace owner'), 403)
 	}
 
+	// `enterprise_granted` is an ops grant, NOT an owner-settable preference: it is
+	// the only thing standing between a workspace and bypassing the plan cap,
+	// the paid-plan mutex, and credit debiting entirely. Every self-signed-up
+	// user is the `owner` of their own workspace, so the owner check above is
+	// not a gate for this field — without the allowlist check, `PATCH
+	// {"enterprise_granted": true}` would be free self-service entitlement. See the
+	// same reasoning in `isEnterprise` (lib/enterprise-allowlist.ts).
+	if (body.enterprise_granted !== undefined && !isEnterpriseActor(actorId)) {
+		return c.json(
+			createApiError('FORBIDDEN', 'enterprise_granted can only be set by an ops actor'),
+			403,
+		)
+	}
+
+	const adminUpdate: Record<string, unknown> = { updatedAt: new Date() }
+	if (body.onboarding_enabled !== undefined) adminUpdate.onboardingEnabled = body.onboarding_enabled
+	if (body.enterprise_granted !== undefined) adminUpdate.enterpriseGranted = body.enterprise_granted
+
 	const [updated] = await db
 		.update(workspaces)
-		.set({ onboardingEnabled: body.onboarding_enabled, updatedAt: new Date() })
+		.set(adminUpdate)
 		.where(eq(workspaces.id, id))
 		.returning()
 
@@ -429,7 +596,7 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 		data: { changes },
 	})
 
-	return c.json(serialize(updated) as z.infer<typeof workspaceResponseSchema>)
+	return c.json(serializeWorkspace(updated) as z.infer<typeof workspaceResponseSchema>)
 }) as RouteHandler<typeof updateWorkspaceOnboardingRoute, Env>)
 
 // POST /api/workspaces/:id/members
@@ -450,11 +617,15 @@ const addMemberRoute = createRoute({
 	},
 	responses: {
 		201: {
-			description: 'Member added',
+			description: 'Member added (or already a member — idempotent)',
 			content: { 'application/json': { schema: z.object({ added: z.boolean() }) } },
 		},
 		403: {
-			description: 'Caller is not a workspace member',
+			description: 'Caller is not a workspace member, or the workspace has reached its seat cap',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace or actor not found',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -470,13 +641,84 @@ app.openapi(addMemberRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
-	await db.insert(workspaceMembers).values({
-		workspaceId,
-		actorId: actor_id,
-		role: role || 'member',
+	const [targetActor] = await db
+		.select({ type: actors.type })
+		.from(actors)
+		.where(eq(actors.id, actor_id))
+		.limit(1)
+	if (!targetActor) return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+
+	const outcome = await db.transaction(async (tx) => {
+		// Lock the workspace row for the duration of the capacity check + insert.
+		// Serializes ALL concurrent member-adds against this workspace — the
+		// seat cap is a workspace-scoped aggregate (COUNT across all members),
+		// not a per-row invariant a UNIQUE constraint alone could enforce.
+		const [locked] = await tx
+			.select({
+				id: workspaces.id,
+				settings: workspaces.settings,
+				billingOwnerId: workspaces.billingOwnerId,
+			})
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.for('update')
+			.limit(1)
+		if (!locked) return { kind: 'ws_not_found' as const }
+
+		// Agents never count toward the seat cap and are never blocked by it.
+		if (targetActor.type === 'human' && !isEnterpriseActor(locked.billingOwnerId)) {
+			const plan = resolvePlanTier(locked.settings)
+			const cap = seatCapForPlan(plan)
+			if (cap !== null) {
+				const used = await countHumanMembers(tx, workspaceId)
+				if (used >= cap) {
+					return { kind: 'cap_exceeded' as const, plan, used, cap }
+				}
+			}
+		}
+
+		// onConflictDoNothing turns a re-invite of an already-a-member actor into
+		// a safe idempotent no-op instead of an uncaught PK-violation crash.
+		const inserted = await tx
+			.insert(workspaceMembers)
+			.values({ workspaceId, actorId: actor_id, role: role || 'member' })
+			.onConflictDoNothing({ target: [workspaceMembers.workspaceId, workspaceMembers.actorId] })
+			.returning()
+
+		if (!inserted.length) return { kind: 'already_member' as const }
+
+		await tx.insert(events).values({
+			workspaceId,
+			actorId: callerId,
+			action: 'created',
+			entityType: 'workspace_member',
+			entityId: actor_id,
+			data: { role: role || 'member', added_actor_id: actor_id },
+		})
+
+		return { kind: 'added' as const }
 	})
 
-	return c.json({ added: true }, 201)
+	if (outcome.kind === 'ws_not_found') {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+	if (outcome.kind === 'cap_exceeded') {
+		const err = new SeatCapExceededError({
+			workspaceId,
+			plan: outcome.plan,
+			used: outcome.used,
+			cap: outcome.cap,
+		})
+		logger.warn('Workspace seat cap exceeded', {
+			workspaceId,
+			plan: outcome.plan,
+			used: outcome.used,
+			cap: outcome.cap,
+		})
+		return c.json(seatCapErrorBody(err), 403)
+	}
+
+	return c.json({ added: outcome.kind === 'added' }, 201)
 }) as RouteHandler<typeof addMemberRoute, Env>)
 
 // GET /api/workspaces/:id/members
@@ -515,14 +757,171 @@ app.openapi(listMembersRoute, async (c) => {
 	return c.json(serializeArray(members) as z.infer<typeof memberResponseSchema>[])
 })
 
+// POST /api/workspaces/:id/transfer-ownership
+const transferOwnershipRoute = createRoute({
+	method: 'post',
+	path: '/{id}/transfer-ownership',
+	tags: ['workspaces'],
+	summary: 'Transfer billing ownership to another existing human member',
+	request: {
+		params: idParamSchema,
+		body: {
+			content: {
+				'application/json': {
+					schema: transferBillingOwnershipSchema,
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: 'Ownership transferred',
+			content: { 'application/json': { schema: workspaceResponseSchema } },
+		},
+		400: {
+			description: 'Cannot transfer to self',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Caller is not the current billing owner, or the new owner is over their cap',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found, or new owner is not an existing member',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'New owner is not a human actor',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(transferOwnershipRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { id: workspaceId } = c.req.valid('param')
+	const { new_owner_actor_id: newOwnerActorId } = c.req.valid('json')
+
+	if (newOwnerActorId === callerId) {
+		return c.json(createApiError('BAD_REQUEST', 'Already the billing owner'), 400)
+	}
+
+	const outcome = await db.transaction(async (tx) => {
+		// Lock BOTH actors' ownership-claim serialization points, in a fixed
+		// (sorted) order to prevent a lock-ordering deadlock against a
+		// concurrent transfer running the reverse direction (A transferring to
+		// B while B transfers a DIFFERENT workspace to A at the same time).
+		const [first, second] = [callerId, newOwnerActorId].sort() as [string, string]
+		await lockActorForOwnershipClaim(tx, first)
+		await lockActorForOwnershipClaim(tx, second)
+
+		const [ws] = await tx
+			.select()
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.for('update')
+			.limit(1)
+		if (!ws) return { kind: 'ws_not_found' as const }
+		if (ws.billingOwnerId !== callerId) return { kind: 'not_owner' as const }
+
+		const [targetMember] = await tx
+			.select({ type: actors.type })
+			.from(workspaceMembers)
+			.innerJoin(actors, eq(actors.id, workspaceMembers.actorId))
+			.where(
+				and(
+					eq(workspaceMembers.workspaceId, workspaceId),
+					eq(workspaceMembers.actorId, newOwnerActorId),
+				),
+			)
+			.limit(1)
+		if (!targetMember) return { kind: 'not_member' as const }
+		if (targetMember.type !== 'human') return { kind: 'not_human' as const }
+
+		const wsPlan = resolvePlanTier(ws.settings)
+		const newOwnerPlans = await ownedWorkspacePlans(tx, newOwnerActorId)
+		const effectiveTier = computeEffectiveTier(newOwnerPlans, wsPlan)
+		const cap = ownershipCapForTier(effectiveTier)
+		if (cap !== null && newOwnerPlans.length >= cap) {
+			return { kind: 'cap_exceeded' as const, effectiveTier, used: newOwnerPlans.length, cap }
+		}
+
+		const [updated] = await tx
+			.update(workspaces)
+			.set({ billingOwnerId: newOwnerActorId, updatedAt: new Date() })
+			.where(eq(workspaces.id, workspaceId))
+			.returning()
+		if (!updated) return { kind: 'ws_not_found' as const }
+
+		await tx.insert(events).values({
+			workspaceId,
+			actorId: callerId,
+			action: 'updated',
+			entityType: 'workspace',
+			entityId: workspaceId,
+			data: {
+				billing_owner_transferred_from: callerId,
+				billing_owner_transferred_to: newOwnerActorId,
+			},
+		})
+
+		return { kind: 'transferred' as const, workspace: updated }
+	})
+
+	switch (outcome.kind) {
+		case 'ws_not_found':
+			return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+		case 'not_owner':
+			return c.json(
+				createApiError('FORBIDDEN', 'Only the current billing owner can transfer ownership'),
+				403,
+			)
+		case 'not_member':
+			return c.json(createApiError('NOT_FOUND', 'New owner must be an existing member'), 404)
+		case 'not_human':
+			return c.json(createApiError('CONFLICT', 'Billing owner must be a human actor'), 409)
+		case 'cap_exceeded': {
+			const err = new OwnershipCapExceededError({
+				actorId: newOwnerActorId,
+				effectiveTier: outcome.effectiveTier,
+				used: outcome.used,
+				cap: outcome.cap,
+			})
+			logger.warn('Workspace ownership cap exceeded', {
+				actorId: newOwnerActorId,
+				effectiveTier: outcome.effectiveTier,
+				used: outcome.used,
+				cap: outcome.cap,
+			})
+			return c.json(ownershipCapErrorBody(err), 403)
+		}
+		case 'transferred':
+			return c.json(
+				serializeWorkspace(outcome.workspace) as z.infer<typeof workspaceResponseSchema>,
+				200,
+			)
+	}
+}) as RouteHandler<typeof transferOwnershipRoute, Env>)
+
 // PATCH /api/workspaces/:id/members/:actorId — change a member's role
+const updateMemberParamsSchema = idParamSchema.extend({ actorId: z.string().uuid() })
+
+// Deliberately excludes 'owner'. Billing ownership is claimed through
+// POST /{id}/transfer-ownership, which locks the actor row and enforces the
+// plan's ownership cap; accepting 'owner' here would be a second, unguarded
+// path to the same state and would let a workspace exceed that cap.
+const updateMemberBodySchema = z.object({
+	role: z.enum(['admin', 'member']),
+})
+
 const updateMemberRoute = createRoute({
 	method: 'patch',
 	path: '/{id}/members/{actorId}',
 	tags: ['workspaces'],
-	summary: "Change a workspace member's role",
+	summary: "Change a workspace member's role (admin/member; owner via transfer-ownership)",
 	request: {
-		params: memberParamSchema,
+		params: updateMemberParamsSchema,
 		body: {
 			content: {
 				'application/json': {
@@ -537,11 +936,11 @@ const updateMemberRoute = createRoute({
 			content: { 'application/json': { schema: memberResponseSchema } },
 		},
 		400: {
-			description: 'Would leave the workspace without an owner',
+			description: 'Would leave the workspace without an owner, or targets the caller',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		403: {
-			description: 'Caller is not a workspace member',
+			description: 'Caller is not a human admin or owner of this workspace',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
@@ -557,8 +956,13 @@ app.openapi(updateMemberRoute, (async (c) => {
 	const { id: workspaceId, actorId } = c.req.valid('param')
 	const { role } = c.req.valid('json')
 
-	if (!(await isWorkspaceMember(db, callerId, workspaceId))) {
-		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	// Role management is an admin/owner action — a plain member changing other
+	// people's roles would be a privilege-escalation path.
+	if (!(await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only a workspace admin or owner can change member roles'),
+			403,
+		)
 	}
 
 	if (callerId === actorId) {
@@ -568,21 +972,51 @@ app.openapi(updateMemberRoute, (async (c) => {
 		)
 	}
 
-	const [existing] = await db
-		.select({ role: workspaceMembers.role })
-		.from(workspaceMembers)
-		.where(
-			and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
-		)
-		.limit(1)
-	if (!existing) {
-		return c.json(createApiError('NOT_FOUND', 'Member not found in this workspace'), 404)
-	}
-
 	const result = await db.transaction(async (tx) => {
-		// Guardrail inside the transaction: re-check the owner count under the transaction lock
-		// so two concurrent demotions cannot both pass the guard before either write commits.
-		if (existing.role === 'owner' && role !== 'owner') {
+		// Lock the workspace row first, before anything else in this transaction.
+		// It is the single serialization point for every membership change in this
+		// workspace, which buys two things:
+		//
+		//  1. The billing-owner check below is evaluated under the same lock that
+		//     transfer-ownership takes, so a concurrent transfer cannot commit
+		//     between the check and the UPDATE and leave `billing_owner_id`
+		//     pointing at a member we just demoted.
+		//  2. Two concurrent demotions can no longer deadlock. They previously
+		//     locked the target member row first and the owner set second, so a
+		//     pair demoting each other's target acquired the same two locks in
+		//     opposite orders; Postgres broke the cycle with a 40P01, surfacing as
+		//     a 500. Taking the workspace row first gives every writer one
+		//     well-known first lock, so they queue instead of deadlocking.
+		const [ws] = await tx
+			.select({ billingOwnerId: workspaces.billingOwnerId })
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.for('update')
+			.limit(1)
+		if (!ws) return { kind: 'not_found' } as const
+
+		// The billing owner's role is Stripe's business: demoting them here would
+		// leave `workspaces.billing_owner_id` pointing at a non-owner. Ownership
+		// moves through transfer-ownership, which relocates both together.
+		if (ws.billingOwnerId === actorId) return { kind: 'billing_owner' } as const
+
+		// Read the target's role under a row lock, inside the same transaction that
+		// performs the UPDATE, so it cannot be stale by the time we write.
+		const [locked] = await tx
+			.select({ role: workspaceMembers.role })
+			.from(workspaceMembers)
+			.where(
+				and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+			)
+			.for('update')
+			.limit(1)
+		if (!locked) return { kind: 'not_found' } as const
+
+		// `role` is admin|member here, so reaching this branch is always a demotion.
+		// The workspace-row lock above already serializes concurrent demotions, so
+		// this count is evaluated after any competing demotion has committed and
+		// reflects the reduced owner set rather than a stale one.
+		if (locked.role === 'owner') {
 			const owners = await tx
 				.select({ actorId: workspaceMembers.actorId })
 				.from(workspaceMembers)
@@ -620,12 +1054,21 @@ app.openapi(updateMemberRoute, (async (c) => {
 			action: 'updated',
 			entityType: 'workspace_member',
 			entityId: actorId,
-			data: { role: { from: existing.role, to: role } },
+			data: { role: { from: locked.role, to: role } },
 		})
 
 		return { kind: 'success', updated: u, actor: a } as const
 	})
 
+	if (result.kind === 'billing_owner') {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				"Transfer billing ownership before changing this member's role",
+			),
+			400,
+		)
+	}
 	if (result.kind === 'last_owner_error') {
 		return c.json(createApiError('BAD_REQUEST', 'Cannot demote the last owner of a workspace'), 400)
 	}
@@ -644,30 +1087,32 @@ app.openapi(updateMemberRoute, (async (c) => {
 	)
 }) as RouteHandler<typeof updateMemberRoute, Env>)
 
-// DELETE /api/workspaces/:id/members/:actorId — remove a member
+// DELETE /api/workspaces/:id/members/:actorId
+const removeMemberParamsSchema = idParamSchema.extend({ actorId: z.string().uuid() })
+
 const removeMemberRoute = createRoute({
 	method: 'delete',
 	path: '/{id}/members/{actorId}',
 	tags: ['workspaces'],
-	summary: 'Remove a member from a workspace',
+	summary: 'Remove a member from a workspace (or leave, if removing yourself)',
 	request: {
-		params: memberParamSchema,
+		params: removeMemberParamsSchema,
 	},
 	responses: {
 		200: {
 			description: 'Member removed',
-			content: { 'application/json': { schema: z.object({ removed: z.boolean() }) } },
-		},
-		400: {
-			description: 'Would leave the workspace without an owner',
-			content: { 'application/json': { schema: errorSchema } },
+			content: { 'application/json': { schema: z.object({ removed: z.literal(true) }) } },
 		},
 		403: {
-			description: 'Caller is not a workspace member',
+			description: 'Only owners/admins can remove other members',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
-			description: 'Member not found in this workspace',
+			description: 'Workspace or membership not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'Cannot remove the current billing owner — transfer ownership first',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -676,71 +1121,65 @@ const removeMemberRoute = createRoute({
 app.openapi(removeMemberRoute, (async (c) => {
 	const db = c.get('db')
 	const callerId = c.get('actorId')
-	const { id: workspaceId, actorId } = c.req.valid('param')
+	const { id: workspaceId, actorId: targetActorId } = c.req.valid('param')
+	const isSelfRemoval = targetActorId === callerId
 
-	if (!(await isWorkspaceMember(db, callerId, workspaceId))) {
-		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	if (!isSelfRemoval && !(await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'Only owners/admins can remove other members'), 403)
 	}
 
-	if (callerId === actorId) {
-		return c.json(createApiError('BAD_REQUEST', 'Use account settings to leave a workspace'), 400)
-	}
+	const outcome = await db.transaction(async (tx) => {
+		const [ws] = await tx
+			.select({ billingOwnerId: workspaces.billingOwnerId })
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.for('update')
+			.limit(1)
+		if (!ws) return { kind: 'ws_not_found' as const }
 
-	const [existing] = await db
-		.select({ role: workspaceMembers.role })
-		.from(workspaceMembers)
-		.where(
-			and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
-		)
-		.limit(1)
-	if (!existing) {
-		return c.json(createApiError('NOT_FOUND', 'Member not found in this workspace'), 404)
-	}
+		// Checked inside the same lock as the delete so a concurrent transfer
+		// can't race past this guard.
+		if (ws.billingOwnerId === targetActorId) return { kind: 'is_billing_owner' as const }
 
-	const deleteResult = await db.transaction(async (tx) => {
-		// Guardrail inside the transaction: re-check the owner count under the transaction lock
-		// so two concurrent removes cannot both pass the guard before either write commits.
-		if (existing.role === 'owner') {
-			const owners = await tx
-				.select({ actorId: workspaceMembers.actorId })
-				.from(workspaceMembers)
-				.where(
-					and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.role, 'owner')),
-				)
-			if (owners.length <= 1) {
-				return { kind: 'last_owner_error' } as const
-			}
-		}
-
-		const rows = await tx
+		const deleted = await tx
 			.delete(workspaceMembers)
 			.where(
-				and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+				and(
+					eq(workspaceMembers.workspaceId, workspaceId),
+					eq(workspaceMembers.actorId, targetActorId),
+				),
 			)
-			.returning({ actorId: workspaceMembers.actorId })
+			.returning()
+		if (!deleted.length) return { kind: 'not_member' as const }
 
-		if (rows.length > 0) {
-			await tx.insert(events).values({
-				workspaceId,
-				actorId: callerId,
-				action: 'deleted',
-				entityType: 'workspace_member',
-				entityId: actorId,
-				data: { role: existing.role },
-			})
-		}
+		await tx.insert(events).values({
+			workspaceId,
+			actorId: callerId,
+			action: 'deleted',
+			entityType: 'workspace_member',
+			entityId: targetActorId,
+			data: { removed_actor_id: targetActorId, self_removal: isSelfRemoval },
+		})
 
-		return { kind: 'deleted', rows } as const
+		return { kind: 'removed' as const }
 	})
 
-	if (deleteResult.kind === 'last_owner_error') {
-		return c.json(createApiError('BAD_REQUEST', 'Cannot remove the last owner of a workspace'), 400)
+	switch (outcome.kind) {
+		case 'ws_not_found':
+			return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+		case 'not_member':
+			return c.json(createApiError('NOT_FOUND', 'Not a member of this workspace'), 404)
+		case 'is_billing_owner':
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					'Cannot remove the billing owner — transfer ownership to another member first',
+				),
+				409,
+			)
+		case 'removed':
+			return c.json({ removed: true as const }, 200)
 	}
-	if (deleteResult.rows.length === 0) {
-		return c.json(createApiError('NOT_FOUND', 'Member not found in this workspace'), 404)
-	}
-
-	return c.json({ removed: true })
 }) as RouteHandler<typeof removeMemberRoute, Env>)
 
 export default app

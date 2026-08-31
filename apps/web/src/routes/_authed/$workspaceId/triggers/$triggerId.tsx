@@ -26,11 +26,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/triggers/$triggerId')({
-	component: TriggerDetailPage,
+	component: TriggerDetailRoute,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-function TriggerDetailPage() {
+function TriggerDetailRoute() {
 	const { triggerId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
 	const { data: trigger, isLoading, isError, error, refetch } = useTrigger(triggerId, workspaceId)
@@ -96,22 +96,21 @@ function TriggerDetailPage() {
 		}
 	}
 
-	const handleSave = (payload: TriggerFormPayload) => {
-		updateTrigger.mutate(
-			{
-				id: triggerId,
-				data: {
-					name: payload.name,
-					type: payload.type,
-					action_prompt: payload.action_prompt,
-					target_actor_id: payload.target_actor_id,
-					config: payload.config as never,
-				},
+	// `mutateAsync` so the auto-save indicator resolves on the real outcome — a
+	// fire-and-forget `mutate` here reported "✓ Saved" for saves that failed and
+	// left the edit un-retryable.
+	const handleSave = async (payload: TriggerFormPayload) => {
+		await updateTrigger.mutateAsync({
+			id: triggerId,
+			data: {
+				name: payload.name,
+				type: payload.type,
+				action_prompt: payload.action_prompt,
+				target_actor_id: payload.target_actor_id,
+				config: payload.config as never,
 			},
-			{
-				onSuccess: () => trackTriggerUpdated({ entity_id: triggerId, entity_type: 'trigger' }),
-			},
-		)
+		})
+		trackTriggerUpdated({ entity_id: triggerId, entity_type: 'trigger' })
 	}
 
 	const handleDelete = () => {

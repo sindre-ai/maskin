@@ -18,3 +18,8 @@ coverage/
 .claude/worktrees/
 .playwright-mcp/
 .tokensave/
+
+# Deployment records — real hostnames, addresses and account ids.
+# This repo is open source and multi-tenant; see
+# observability/deployment.local.md.example.
+*.local.md

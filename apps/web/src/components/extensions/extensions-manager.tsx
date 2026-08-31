@@ -12,7 +12,11 @@ import { toast } from 'sonner'
 
 interface PendingRemoval {
 	affectedTypes: string[]
-	commit: () => void
+	// Runs AFTER the dialog has irreversibly deleted or retyped objects, so it
+	// must be awaitable: if this settings write fails the dialog has to surface
+	// it and stay open. A fire-and-forget `mutate` here would leave the user
+	// looking at an unchanged toggle with their objects already gone.
+	commit: () => Promise<void>
 }
 
 /**
@@ -44,12 +48,9 @@ export function ExtensionsManager() {
 		)
 	}
 
-	const disableModule = (moduleId: string) => {
+	const disableModule = async (moduleId: string) => {
 		const next = enabledModules.filter((m) => m !== moduleId)
-		updateWorkspace.mutate(
-			{ settings: { ...settings, enabled_modules: next } },
-			{ onError: () => toast.error('Failed to update extensions') },
-		)
+		await updateWorkspace.mutateAsync({ settings: { ...settings, enabled_modules: next } })
 	}
 
 	const handleToggle = (moduleId: string, enabled: boolean) => {
@@ -65,22 +66,22 @@ export function ExtensionsManager() {
 		})
 	}
 
-	const persistCustomExtensionEnabled = (extId: string, enabled: boolean) => {
+	const persistCustomExtensionEnabled = async (extId: string, enabled: boolean) => {
 		const customExts = {
 			...((settings?.custom_extensions as Record<string, unknown>) ?? {}),
 		}
 		const existing = customExts[extId] as Record<string, unknown>
 		customExts[extId] = { ...existing, enabled }
 
-		updateWorkspace.mutate(
-			{ settings: { ...settings, custom_extensions: customExts } },
-			{ onError: () => toast.error('Failed to update extension') },
-		)
+		await updateWorkspace.mutateAsync({ settings: { ...settings, custom_extensions: customExts } })
 	}
 
 	const handleToggleCustomExtension = (extId: string, enabled: boolean) => {
 		if (enabled) {
-			persistCustomExtensionEnabled(extId, true)
+			// Direct toggle with nothing destructive before it, so a toast is enough.
+			persistCustomExtensionEnabled(extId, true).catch(() =>
+				toast.error('Failed to update extension'),
+			)
 			return
 		}
 		const ext = customExtensions.find((e) => e.id === extId)
@@ -90,7 +91,7 @@ export function ExtensionsManager() {
 		})
 	}
 
-	const persistDeleteCustomExtension = (extId: string, types: string[]) => {
+	const persistDeleteCustomExtension = async (extId: string, types: string[]) => {
 		const statuses = { ...((settings?.statuses as Record<string, string[]>) ?? {}) }
 		const displayNames = { ...((settings?.display_names as Record<string, string>) ?? {}) }
 		const fieldDefs = {
@@ -107,18 +108,15 @@ export function ExtensionsManager() {
 		}
 		delete customExts[extId]
 
-		updateWorkspace.mutate(
-			{
-				settings: {
-					...settings,
-					statuses,
-					display_names: displayNames,
-					field_definitions: fieldDefs,
-					custom_extensions: customExts,
-				},
+		await updateWorkspace.mutateAsync({
+			settings: {
+				...settings,
+				statuses,
+				display_names: displayNames,
+				field_definitions: fieldDefs,
+				custom_extensions: customExts,
 			},
-			{ onError: () => toast.error('Failed to delete extension') },
-		)
+		})
 	}
 
 	const handleDeleteCustomExtension = (extId: string, types: string[]) => {
@@ -196,8 +194,11 @@ export function ExtensionsManager() {
 					affectedTypes={pendingRemoval.affectedTypes}
 					workspaceId={workspaceId}
 					settings={settings}
-					onConfirmed={() => {
-						pendingRemoval.commit()
+					onConfirmed={async () => {
+						// Not caught here: ExtensionRemovalDialog awaits this, and on a
+						// rejection reports it and stays open rather than closing on a
+						// half-applied removal.
+						await pendingRemoval.commit()
 						setPendingRemoval(null)
 					}}
 				/>

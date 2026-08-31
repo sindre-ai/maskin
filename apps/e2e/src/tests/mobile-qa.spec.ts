@@ -26,12 +26,13 @@ async function assertNoHorizontalOverflow(page: Page, surface: string, viewport:
 // of which silently fail the parity constraint ("no functionality hidden on
 // iPad"). Each control is asserted by its accessible role/name + the
 // Playwright `toBeVisible` opacity check (ignores opacity:0 and visibility:hidden).
-// Mirrors useIsMobile()'s 768px boundary (apps/web/src/hooks/use-mobile.tsx) —
-// comment-input.tsx shortens its placeholder below that width.
+// Both callers below are the object-detail surface, whose v2 shell passes its
+// own placeholder down to the composer rather than using comment-input.tsx's
+// default (object-detail-shell.tsx). The 768px split still mirrors
+// useIsMobile() (apps/web/src/hooks/use-mobile.tsx), which is what the shell
+// switches on.
 function commentPlaceholderFor(viewport: NamedViewport): string {
-	return viewport.width < 768
-		? 'Write a comment...'
-		: 'Write a comment... Use @ to mention an agent'
+	return viewport.width < 768 ? 'Comment…' : 'Comment — / commands, @ mentions'
 }
 
 async function assertCommentComposerVisible(page: Page, surface: string, viewport: NamedViewport) {
