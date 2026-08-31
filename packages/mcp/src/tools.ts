@@ -1580,7 +1580,7 @@ export const tools = {
 	},
 	list_integration_providers: {
 		description:
-			'List available integration providers, their supported events, and their MCP surface. Each provider that has one returns `mcp: { envKey, autoInject, server }`. `server` is the paste-ready value for the `tools.mcpServers.<provider>` field of an agent — pass it to create_actor/update_actor verbatim, including any `${TOKEN}` placeholders, which are expanded inside the session container. When `autoInject` is true the server is attached to every agent in the workspace already and no per-agent config is needed; when it is false (the default) connecting the integration alone gives the agent NO tools, and attaching `server` to the agent is the required second step.',
+			'List available integration providers, their supported events, and their MCP surface. Each provider that has one returns `mcp: { envKey, autoInject, server }`. `server` is the paste-ready value for the `tools.mcpServers.<provider>` field of an agent — pass it to create_actor/update_actor verbatim, including any `${TOKEN}` placeholders, which are expanded inside the session container. When `autoInject` is true the integration is already wired into every agent session in the workspace and there is nothing to attach — such a provider may return no `server` at all (github is auto-injected as one `github-<owner>` entry per connected organisation, so no single spec describes it). When `autoInject` is false (the default) connecting the integration alone gives the agent NO tools, and attaching `server` to the agent is the required second step.',
 		inputSchema: z.object({}),
 	},
 	connect_integration: {

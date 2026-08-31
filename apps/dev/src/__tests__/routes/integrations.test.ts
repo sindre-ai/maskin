@@ -1,7 +1,9 @@
 import { generateKeyPairSync, randomBytes } from 'node:crypto'
+import { z } from '@hono/zod-openapi'
 import { afterAll, beforeAll, vi } from 'vitest'
 import { ProviderUnreachableError } from '../../lib/integrations/errors'
 import type { ResolvedProvider } from '../../lib/integrations/types'
+import { providerInfoSchema } from '../../lib/openapi-schemas'
 import { buildIntegration, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -125,6 +127,11 @@ describe('Integrations Routes', () => {
 		// Guards the gap this whole endpoint change exists to close: a provider
 		// that declares mcp but no server is undiscoverable to every client that
 		// isn't the web UI, and fails as silence rather than as an error.
+		//
+		// Asserts the positive set, not an empty complement. `filter(...)` over a
+		// body with no `mcp` on any row is also `[]`, so the empty-complement form
+		// stayed green with the entire mcp block deleted from the route — it could
+		// not see the regression its own comment claimed to guard.
 		it('gives every MCP-capable provider a paste-ready server spec', async () => {
 			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
 
@@ -134,8 +141,50 @@ describe('Integrations Routes', () => {
 				mcp?: { server?: unknown }
 			}>
 
-			const missing = body.filter((p) => p.mcp && !p.mcp.server).map((p) => p.name)
-			expect(missing).toEqual([])
+			expect(
+				body
+					.filter((p) => p.mcp)
+					.map((p) => p.name)
+					.sort(),
+			).toEqual(['github', 'gmail', 'google-calendar', 'linear', 'posthog', 'slack', 'ubersuggest'])
+
+			// github is the one exemption — its entries are named per installation
+			// with literal tokens, so there is no single spec to hand out.
+			expect(body.filter((p) => p.mcp && !p.mcp.server).map((p) => p.name)).toEqual(['github'])
+		})
+
+		// The handler casts its response rather than parsing it, so a field can be
+		// served that the registered schema never declares — which is how `mcp`
+		// first shipped absent from /api/openapi.json while present in the JSON.
+		it('serves a body that satisfies the response schema it registers', async () => {
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(jsonGet('/api/integrations/providers'))
+			const parsed = z.array(providerInfoSchema).safeParse(await res.json())
+
+			expect(parsed.error?.issues ?? []).toEqual([])
+			expect(parsed.success).toBe(true)
+		})
+
+		// The value agents copy verbatim out of discovery. @modelcontextprotocol
+		// /server-github reads the token from GITHUB_PERSONAL_ACCESS_TOKEN and no
+		// other name; GITHUB_TOKEN is ignored in silence and surfaces as 403s on
+		// every GitHub tool call (.claude/rules/known-pitfalls.md).
+		it('never advertises a github server spec keyed on GITHUB_TOKEN', async () => {
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(jsonGet('/api/integrations/providers'))
+			const body = (await res.json()) as Array<{
+				name: string
+				mcp?: { autoInject: boolean; server?: { env?: Record<string, string> } }
+			}>
+			const github = body.find((p) => p.name === 'github')
+
+			// Auto-injected per installation as `github-<owner>`, so a client is
+			// told it has nothing to attach rather than being handed a spec that
+			// would bind to the first installation only.
+			expect(github?.mcp?.autoInject).toBe(true)
+			expect(Object.keys(github?.mcp?.server?.env ?? {})).not.toContain('GITHUB_TOKEN')
 		})
 	})
 

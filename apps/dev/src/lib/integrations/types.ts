@@ -116,6 +116,11 @@ export interface McpConfig {
 	 * the OAuth handshake completes, the token env var is injected, and the
 	 * agent still gets zero tools with nothing to explain why. `command`/`args`
 	 * above are NOT a substitute — nothing reads them at runtime.
+	 *
+	 * The single exemption is `github`, whose server entries are named per
+	 * installation with literal tokens, so no one spec describes them; see the
+	 * comment in providers/github/config.ts. The route test enumerating which
+	 * providers carry a `server` is what holds that line.
 	 */
 	server?: McpServerSpec
 }

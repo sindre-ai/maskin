@@ -490,6 +490,38 @@ describe('mcpServerSchema — inferred transport type', () => {
 	it('rejects an entry that is neither transport', () => {
 		expect(mcpServerSchema.safeParse({ headers: {} }).success).toBe(false)
 	})
+
+	// Every provider config in this repo states command, args AND url for the
+	// same mcp-remote server, so this is the shape a caller copying one writes.
+	// Inferring http from the url would strip command/args/env and leave an http
+	// client with no Authorization header — connected, zero tools, no error, on
+	// rows already in the database. stdio has always won here; it must keep
+	// winning.
+	it('leaves an entry carrying both url and command as stdio', () => {
+		expect(
+			mcpServerSchema.parse({
+				command: 'npx',
+				args: ['-y', 'mcp-remote', 'https://mcp.linear.app/mcp'],
+				env: { LINEAR_TOKEN: 'x' },
+				url: 'https://mcp.linear.app/mcp',
+			}),
+		).toMatchObject({
+			type: 'stdio',
+			command: 'npx',
+			args: ['-y', 'mcp-remote', 'https://mcp.linear.app/mcp'],
+			env: { LINEAR_TOKEN: 'x' },
+		})
+	})
+
+	// `'type' in server` counts a key explicitly set to undefined as stated and
+	// skips inference, so `{ type: cfg.type, url }` built from a partly-populated
+	// object failed with the same bare "Invalid input" this inference removes.
+	it('infers http when type is present but undefined', () => {
+		expect(mcpServerSchema.parse({ type: undefined, url: 'https://x/mcp' })).toMatchObject({
+			type: 'http',
+			url: 'https://x/mcp',
+		})
+	})
 })
 
 describe('mcpServerSchema — browser CDP endpoint misuse', () => {

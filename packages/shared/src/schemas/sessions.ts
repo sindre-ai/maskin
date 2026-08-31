@@ -59,11 +59,29 @@ const BROWSER_CDP_PLACEHOLDER = '${BROWSER_CDP_URL}'
  * "MCP servers can't be set here", which is how it kept getting read.
  *
  * An explicit `type` is always honoured; this only fills in a missing one.
+ *
+ * Two shapes are deliberately left alone rather than guessed at:
+ *
+ * - `type` present but `undefined` — an `in` check would treat that as stated
+ *   and skip inference, so a caller building `{ type: cfg.type, url }` from a
+ *   partly-populated object would get the same bare "Invalid input" this
+ *   function exists to remove. It is a missing type, so it is inferred.
+ * - An entry carrying BOTH `url` and `command`. That is how every provider
+ *   config in this repo describes an `mcp-remote` server (see
+ *   providers/linear/config.ts), so it is the shape a caller copying one will
+ *   produce, and it has always parsed as stdio — the union tries stdio first
+ *   and drops `url` as an unknown key. Inferring `http` from the `url` would
+ *   flip a working stdio server into an http one with `command`, `args` and
+ *   `env` stripped and no Authorization header: connected, zero tools, no
+ *   error — exactly the failure this whole change set out to remove, and on
+ *   already-stored rows rather than new input. Ambiguous, so left to the
+ *   union's existing stdio-wins behaviour.
  */
 const inferMcpServerType = (value: unknown): unknown => {
 	if (typeof value !== 'object' || value === null || Array.isArray(value)) return value
 	const server = value as Record<string, unknown>
-	if ('type' in server) return server
+	if (server.type !== undefined) return server
+	if (typeof server.command === 'string') return server
 	if (typeof server.url === 'string') return { ...server, type: 'http' }
 	return server
 }
