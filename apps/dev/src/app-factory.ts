@@ -38,6 +38,7 @@ import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
 import installedLoopsRoutes from './routes/installed-loops'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
+import integrationsLinkedinUnipileRoutes from './routes/integrations-linkedin-unipile'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import loopsRoutes from './routes/loops'
 import marketplaceLoopsRoutes from './routes/marketplace-loops'
@@ -315,6 +316,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/triggers', triggersRoutes)
 	app.route('/api/loops', loopsRoutes)
 	app.route('/api/integrations', integrationsRoutes)
+	app.route('/api/integrations/linkedin-unipile', integrationsLinkedinUnipileRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
 	// catchall (`/api/webhooks/:provider`) so the more-specific match wins.
