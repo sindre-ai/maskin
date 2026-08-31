@@ -16,6 +16,14 @@ function SectionLabel({ children, className }: { children: string; className?: s
 	return <div className={cn('eyebrow', className)}>{children}</div>
 }
 
+// Creating a loop persists the loop object and the plan snapshot it was drawn
+// from — it does not yet provision the object types, triggers and agents the
+// card lists above. Until it does, this copy must not claim the loop is
+// running: a loop with no trigger attached will never fire, and
+// `LoopFirstRunBanner` on the detail page says exactly that.
+const CREATED_DESCRIPTION =
+	'Saved, along with the plan it was drawn from. Nothing fires yet — the object types, triggers and agents above are still a preview until they are attached to the loop.'
+
 /** `NEW TYPE` / `JUST ADDED` — the brand-tinted "this doesn't exist yet" marker
  *  (mockup 2168, 2197–2198). Distinct from a trigger's `kindLabel`. */
 function NewBadge({ children }: { children: string }) {
@@ -59,7 +67,7 @@ export function LoopPlanCard({
 				</div>
 				<h2 className="text-base font-semibold tracking-tight text-foreground">{title}</h2>
 				<p className="text-xs leading-relaxed text-muted-foreground">
-					{created ? 'Your loop is running. Open it to watch it move.' : describeLoopPlan(plan)}
+					{created ? CREATED_DESCRIPTION : describeLoopPlan(plan)}
 				</p>
 			</div>
 

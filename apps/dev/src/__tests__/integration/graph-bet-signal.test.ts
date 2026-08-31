@@ -19,7 +19,7 @@ describe('Graph — bet creation always lands at `signal`', () => {
 
 	beforeEach(async () => {
 		// Use the full bet status list from workspaceSettingsSchema so the
-		// signal → qualified → define advancement path can be exercised end-to-end.
+		// signal → define advancement path can be exercised end-to-end.
 		const ws = await insertWorkspace(db, getTestActorId(), {
 			settings: {
 				enabled_modules: ['work'],
@@ -27,24 +27,12 @@ describe('Graph — bet creation always lands at `signal`', () => {
 					insight: 'Insight',
 					bet: 'Bet',
 					task: 'Task',
-					commitment: 'Commitment',
 					loop: 'Loop',
 				},
 				statuses: {
 					insight: ['new', 'processing', 'clustered', 'discarded'],
-					bet: [
-						'signal',
-						'qualified',
-						'define',
-						'active',
-						'live',
-						'succeeded',
-						'failed',
-						'paused',
-						'archived',
-					],
+					bet: ['signal', 'define', 'active', 'live', 'succeeded', 'failed', 'paused', 'archived'],
 					task: ['todo', 'in_progress', 'done', 'blocked'],
-					commitment: ['holding', 'at-risk', 'breached'],
 					loop: ['running', 'waiting', 'paused', 'archived'],
 				},
 				field_definitions: {},
@@ -156,7 +144,7 @@ describe('Graph — bet creation always lands at `signal`', () => {
 		expect(body.error.message).toContain("Missing status for type 'task'")
 	})
 
-	it('advancement path signal → qualified → define is unaffected by the creation override', async () => {
+	it('advancement path signal → define is unaffected by the creation override', async () => {
 		const app = createApp()
 		// Create the bet via the graph route — should land in `signal` even though
 		// the caller tried to jump straight to `define`.
@@ -176,19 +164,7 @@ describe('Graph — bet creation always lands at `signal`', () => {
 		expect(created.nodes[0].status).toBe('signal')
 		const betId = created.nodes[0].id
 
-		// signal → qualified via PATCH.
-		const toQualified = await app.request(
-			jsonRequest(
-				'PATCH',
-				`/api/objects/${betId}`,
-				{ status: 'qualified' },
-				{ 'x-workspace-id': workspaceId },
-			),
-		)
-		expect(toQualified.status).toBe(200)
-		expect((await toQualified.json()).status).toBe('qualified')
-
-		// qualified → define via PATCH.
+		// signal → define via PATCH.
 		const toDefine = await app.request(
 			jsonRequest(
 				'PATCH',

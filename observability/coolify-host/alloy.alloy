@@ -1,0 +1,654 @@
+// Grafana Alloy — ship the Coolify host's Docker logs, host metrics, and
+// SeaweedFS metrics to Grafana Cloud.
+//
+// This is one of two host configs in this repo. The other is
+// apps/agent-server/observability/alloy.alloy. They differ in where logs come
+// from:
+//
+//   agent-server host   agent-server as a plain systemd unit. Logs come from
+//                       JOURNALD.
+//   Coolify host        everything containerised — `app` (apps/dev serving
+//                       apps/web), SeaweedFS, Postgres, and the Coolify stack
+//                       that deploys them. Logs come from the DOCKER API.
+//
+// That difference is the whole reason this is a separate file rather than a
+// branch inside the other one: a systemd host has no containers worth tailing,
+// and a Coolify host writes nothing useful to journald.
+//
+// Everything else is deliberately kept identical — same label vocabulary
+// (`env`, `instance`, `job`), same 60s scrape interval, same WAL settings, same
+// relabel-don't-static-label discipline. A query written against one host works
+// against the other with only the `instance` value changed.
+//
+// There are FOUR pipelines here, in this order:
+//
+//   1. LOGS      — Docker API → Loki
+//   2. HOST      — node_exporter (embedded) → Prometheus
+//   3. SEAWEEDFS — SeaweedFS's own /metrics → Prometheus
+//   4. COLLECTOR — Alloy's own metrics → Prometheus
+//
+// The fourth is what makes the other three falsifiable. Pipelines 1-3 all ship
+// somebody else's telemetry and none of them reports its own failure; a broken
+// LOGS pipeline in particular is invisible off-box, because it uses a different
+// endpoint and different credentials from the metrics pipelines, so every
+// dashboard stays green while nothing arrives. Pipeline 4 carries
+// loki_write_sent_bytes_total off the host, which is the input to the dead-man
+// rule in alerts/logs-deadman.yaml.
+//
+// NOT here, on purpose: postgres_exporter. Whether the compose `postgres`
+// service is the real database depends on the deployment — point DATABASE_URL
+// at a managed provider and the container keeps running, unused. Exporting an
+// unused database produces a confident, permanently-green dashboard that invites
+// someone mid-incident to conclude the database is fine, which is worse than no
+// dashboard. If the compose Postgres IS your production database, adding
+// prometheus.exporter.postgres here is the right move. See README.md → "What
+// this does not cover".
+//
+// Install: /etc/alloy/config.alloy, by hand. Unlike the agent-server host there
+// is NO deploy workflow syncing this file onto the box — Coolify deploys from a
+// git webhook and never runs a script of ours. Read the drift warning in
+// README.md before editing.
+//
+// Settings: see alloy.env.example. Every deployment-specific value is read from
+// the environment so this file can be committed unmodified.
+
+// ===========================================================================
+// LOGS — Docker containers → Loki
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Discovery — every running container on the box
+// ---------------------------------------------------------------------------
+
+// ⚠️ CHECK THIS AFTER INSTALL — it can return ZERO targets while reporting
+// itself HEALTHY, in which case the logs pipeline ships nothing and the two
+// metrics pipelines below carry on as though all is well.
+//
+// Docker service discovery computes "network labels" for EVERY network on the
+// daemon, in one pass, before it returns any container. If any network's IPAM
+// gateway is stored as a CIDR rather than a bare address — fd00:...::1/64
+// instead of fd00:...::1 — the address parser rejects it and discovery aborts
+// for ALL containers:
+//
+//   level=error component_id=discovery.docker.containers
+//     msg="Unable to refresh target groups"
+//     err="error while computing network labels: ParseAddr(...): unexpected
+//          character, want colon (at /64)"
+//
+// Docker accepts such a gateway at creation time, so a malformed value can sit
+// there indefinitely. Observed with an IPv6-enabled network created by Coolify's
+// own installer, and reproduced on Alloy v1.19.0 and v1.19.2 — upgrading is not
+// the fix. Diagnosis and remediation are in README.md → "Docker log discovery
+// can fail silently on an IPv6-enabled network".
+//
+// Recorded here rather than worked around because every workaround is worse:
+// tailing /var/lib/docker/containers/*/*-json.log gets you container IDs and no
+// service names, which is exactly the cardinality bug the next block prevents.
+//
+discovery.docker "containers" {
+	host = coalesce(sys.env("DOCKER_HOST_ADDR"), "unix:///var/run/docker.sock")
+
+	// Coolify creates a NEW container on every deploy and removes the old one.
+	// A stale target list means the log stream stops at the deploy and never
+	// resumes — silently, because the pipeline stays healthy and the old
+	// container's logs simply end. 30s bounds how much of a fresh deploy's
+	// startup output can be missed.
+	refresh_interval = "30s"
+}
+
+// ---------------------------------------------------------------------------
+// Selection and labelling
+// ---------------------------------------------------------------------------
+
+discovery.relabel "containers" {
+	targets = discovery.docker.containers.targets
+
+	// `service_name` — the stable identity of a container across redeploys.
+	//
+	// THIS IS THE IMPORTANT RULE IN THIS FILE. Coolify names containers
+	// `<service>-<projectId>-<deployId>`. The trailing id changes on
+	// EVERY deploy. Labelling streams by container name would therefore mint a
+	// brand-new Loki stream per deploy, forever: an index that grows with
+	// deploy count rather than log volume, dashboards that go blank each
+	// release, and `{service_name="app"}` matching nothing at all.
+	//
+	// This is the same class of mistake as putting sessionId in a label on the
+	// agent-server host — an unbounded value used as an index key. The compose
+	// service name (`app`, `seaweedfs`, `postgres`) is set by Coolify from
+	// docker-compose.prod.yml, is stable across deploys, and has one value per
+	// service.
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+		target_label  = "service_name"
+	}
+
+	// Coolify's OWN containers (coolify, coolify-db, coolify-proxy,
+	// coolify-realtime, coolify-redis, coolify-sentinel) are not started from a
+	// compose file of ours, so they carry no compose labels and the rule above
+	// leaves them unnamed. Their container names are fixed — no deploy id — so
+	// the name is safe to use as the identity here.
+	//
+	// They are worth shipping: coolify-proxy is Traefik, and it is the only
+	// place a request that never reached `app` is visible at all; `coolify`
+	// itself is where a failed deploy explains itself.
+	rule {
+		source_labels = ["__meta_docker_container_name"]
+		regex         = "/(coolify(?:-[a-z]+)?)"
+		target_label  = "service_name"
+		replacement   = "$1"
+	}
+
+	// DROP everything still unnamed. This is an ALLOWLIST by construction, and
+	// it is a bill control, mirroring the agent-server host's decision to
+	// filter journald to one SyslogIdentifier.
+	//
+	// A shared box may well run containers belonging to unrelated projects, and
+	// those can easily outnumber this stack's. They carry no compose labels, so
+	// they fall through both rules above and are dropped here. Anything started
+	// by a bare `docker run` is dropped for the same reason: if it is worth
+	// shipping, give it a compose service name.
+	rule {
+		source_labels = ["service_name"]
+		regex         = ""
+		action        = "drop"
+	}
+
+	// The join key, and it MUST be the same expression the metrics pipelines
+	// below use — that shared value is what lets a CPU spike in PromQL be
+	// pivoted to this host's container logs for the same instant.
+	//
+	// WHY THE FALLBACK IS DELIBERATELY UGLY. It used to be a bare
+	// constants.hostname, which is a trap now that this host and the
+	// agent-server host share PROM_JOB_LABEL=integrations/node_exporter on
+	// purpose (see the job rule below). Sharing `job` makes `instance` the
+	// ONLY label separating the two boxes — and cloud images are routinely
+	// named after the image rather than the role, so two machines built from
+	// the same base image carry the SAME hostname.
+	//
+	// With a bare hostname fallback and a blank env var on both boxes, the two
+	// Alloys write literally the same series. Grafana Cloud rejects one side as
+	// duplicate/out-of-order, and the dashboard shows one host entry that is
+	// silently two machines interleaved, with gaps that read as scrape
+	// flakiness. Every install check still passes: a value exists, queries
+	// return rows.
+	//
+	// Alloy has no assert, so "fail loudly" here means "produce a value no one
+	// can mistake for a real host". UNCONFIGURED- shows up at the top of the
+	// instance dropdown and in every alert summary. It does not make two
+	// same-hostname boxes distinct — nothing at this layer can — but it makes
+	// the reason they collided visible instead of silent.
+	rule {
+		target_label = "instance"
+		replacement  = coalesce(sys.env("COOLIFY_INSTANCE"), "UNCONFIGURED-" + constants.hostname)
+	}
+
+	rule {
+		target_label = "env"
+		replacement  = coalesce(sys.env("DEPLOY_ENV"), "production")
+	}
+
+	// NOTE: `job` is deliberately NOT set here. A rule in this block relabels
+	// TARGETS, which loki.source.docker consumes as input — so it runs BEFORE
+	// the source component and would lose to anything the component stamps on
+	// its own output. It is set in loki.relabel.containers below instead, which
+	// is applied to ENTRIES via the source's `relabel_rules`. See the comment
+	// there.
+}
+
+// ---------------------------------------------------------------------------
+// Source — tail each container's stdout/stderr over the Docker API
+// ---------------------------------------------------------------------------
+
+// `job` MUST be set in a relabel rule attached DOWNSTREAM of the source, never
+// as a static label on the source component and never in the discovery.relabel
+// block above.
+//
+// This is the trap documented three times over in the agent-server config: a
+// component that pre-stamps `job` beats any static value, and the failure is
+// silent — entries are accepted, nothing is dropped, and every documented query
+// matches nothing.
+//
+// The subtlety that bit this file, and that the agent-server config does not
+// have to contend with: "set it in a relabel rule" is only true when the rule
+// runs AFTER the component. discovery.relabel relabels the TARGET LIST that
+// loki.source.docker reads, so it runs before. loki.relabel wired as the
+// source's `relabel_rules` relabels the ENTRIES the component emits, so it runs
+// after and wins. Same wiring as loki.relabel.journal on the agent-server host
+// (apps/agent-server/observability/alloy.alloy) — forward_to is empty because
+// this block is consumed for its `.rules` only, not as a pipeline stage.
+//
+// Whether loki.source.docker pre-stamps job="<component id>" the way
+// loki.source.journal demonstrably does is UNVERIFIED on this host. Wiring it
+// here costs nothing and is correct either way. Verify by query after install,
+// never by component health: the `job` label browser must show "maskin-coolify"
+// and no "loki.source.docker.containers" value. See README.md → step 5.
+loki.relabel "containers" {
+	forward_to = []
+
+	rule {
+		target_label = "job"
+		replacement  = coalesce(sys.env("LOKI_JOB_LABEL"), "maskin-coolify")
+	}
+}
+
+loki.source.docker "containers" {
+	host          = coalesce(sys.env("DOCKER_HOST_ADDR"), "unix:///var/run/docker.sock")
+	targets       = discovery.relabel.containers.output
+	labels        = {}
+	relabel_rules = loki.relabel.containers.rules
+	forward_to    = [loki.process.containers.receiver]
+
+	// Reading the Docker socket requires the alloy user to be in the `docker`
+	// group. The apt package runs Alloy as `alloy`, NOT root — so this is a
+	// setup step that is easy to miss, and its failure mode is a component that
+	// reports an error only in Alloy's own log while the metrics pipelines keep
+	// working. See README.md → "1. Install Alloy on the Coolify host".
+}
+
+// ---------------------------------------------------------------------------
+// Processing
+// ---------------------------------------------------------------------------
+
+loki.process "containers" {
+	forward_to = [loki.write.default.receiver]
+
+	// apps/dev logs are structured (the same NDJSON shape as agent-server).
+	// SeaweedFS, Postgres, Traefik and Coolify are not — they emit glog,
+	// logfmt and plain text. This stage extracts nothing from those and they
+	// pass through unchanged with the labels above; they are NOT dropped.
+	stage.json {
+		expressions = {
+			level = "level",
+			time  = "time",
+		}
+	}
+
+	// Same reasoning as the agent-server pipeline: prefer the application's own
+	// timestamp so ordering survives a collector restart or an ingest backlog.
+	//
+	// action_on_failure MUST be "skip". The default, "fudge", stamps any line
+	// with no extractable `time` as last-successful-timestamp + 1ns. On THIS
+	// host that default is far more damaging than on the agent-server box,
+	// because most containers here never emit JSON at all: a SeaweedFS panic or
+	// a Traefik 502 burst would be dated from whenever `app` last logged, which
+	// could be hours earlier. "skip" leaves Docker's own ingest timestamp on
+	// those lines — correct, and roughly right.
+	stage.timestamp {
+		source            = "time"
+		format            = "RFC3339"
+		action_on_failure = "skip"
+	}
+
+	// LABELS — low cardinality ONLY. `level` has four values on the lines that
+	// have one at all. `service_name` is already a label from the relabel
+	// stage. Nothing else here is bounded, so nothing else is promoted.
+	stage.labels {
+		values = {
+			level = "",
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Destination
+// ---------------------------------------------------------------------------
+
+loki.write "default" {
+	endpoint {
+		url       = sys.env("LOKI_URL")
+		tenant_id = sys.env("LOKI_TENANT_ID")
+
+		// Grafana Cloud: username is the numeric LOKI stack id, password is an
+		// access policy token with logs:write. It is a DIFFERENT number from
+		// PROM_USERNAME below; crossing them yields a 401 that reads like a bad
+		// token.
+		//
+		// Self-hosted Loki with no auth: comment this whole block out rather
+		// than leaving the values blank — an empty basic_auth still sends an
+		// Authorization header.
+		basic_auth {
+			username = sys.env("LOKI_USERNAME")
+			password = sys.env("LOKI_PASSWORD")
+		}
+	}
+
+	wal {
+		enabled = true
+	}
+}
+
+// ===========================================================================
+// METRICS — host resources → Prometheus
+// ===========================================================================
+
+prometheus.exporter.unix "host" {
+	// The same collector list as the agent-server host, minus `systemd`.
+	//
+	// systemd is omitted because on this box there is nothing to point it at:
+	// every workload is a container, so there is no per-service unit whose
+	// restart count would mean anything. The equivalent signal here — is the
+	// app up, how often has it restarted — comes from the container itself, and
+	// `up{job="seaweedfs"}` plus the log stream cover the part of it that
+	// matters today. (Container-level cAdvisor metrics are the real answer and
+	// are deliberately deferred; see README.md → "What this does not cover".)
+	//
+	// Every collector below is FIXED cardinality ONCE FILTERED — see the netdev
+	// and netclass blocks, which are load-bearing here rather than defensive.
+	//
+	// MEASURED on a non-Docker host, the identical list plus systemd ran 887
+	// series. Do NOT assume a Docker host is cheaper because it is smaller: one
+	// measured 4,325 samples per scrape unfiltered, because it carried 90 Docker
+	// bridge interfaces and 22 veths. With the netdev/netclass filters below the
+	// same exporter produced 376 — an 11x reduction. Grafana Cloud's free tier
+	// allows 10k active series across ALL hosts, so measure after any collector
+	// change rather than estimating; the gap between estimate and measurement
+	// here was an order of magnitude.
+	set_collectors = [
+		"cpu",
+		"meminfo",
+		"loadavg",
+		"filesystem",
+		"diskstats",
+		"netdev",
+		"uname",
+		"processes",
+		"vmstat",
+		"filefd",
+		"netstat",
+		"sockstat",
+		"softnet",
+		"stat",
+		"timex",
+		"os",
+		"netclass",
+		"nf_conntrack",
+	]
+
+	// NETWORK INTERFACE FILTERING — load-bearing on a Docker host, not
+	// belt-and-braces.
+	//
+	// Docker creates a bridge per network and a veth per attached container, so
+	// a busy daemon can carry a hundred-plus interfaces. MEASURED on a host with
+	// 115 (one physical NIC, lo, docker0, 90 `br-*` bridges and 22 `veth*`):
+	// netdev (~17 series/interface) and netclass (~10) alone accounted for
+	// roughly 3,100 of the 4,325 samples this exporter produced per scrape
+	// before these blocks were added — against 887 for an entire non-Docker
+	// host. That is nearly a third of Grafana Cloud's free-tier 10k allowance
+	// spent on interfaces nobody will query. With these two blocks the same
+	// exporter produced 376 samples per scrape.
+	//
+	// Measure your own host — `ip -o link | wc -l` — rather than assuming these
+	// numbers transfer.
+	//
+	// Worse than the volume: `veth*` names are generated per container and
+	// change every time a container is recreated. Coolify recreates containers
+	// on every deploy. So these are not just numerous, they CHURN — new series
+	// on each release that never retire. That is the metrics-side form of the
+	// unbounded-label bug, and it is the reason this is an allowlist rather than
+	// a trim.
+	//
+	// What survives: the host's real NIC and docker0. Per-container network
+	// accounting is cAdvisor's job, and is deliberately deferred — see
+	// README.md → "What this does not cover".
+	netdev {
+		device_include = "^(eth[0-9]+|en[a-z0-9]+|docker0)$"
+	}
+
+	netclass {
+		// netclass has no include form, so this is the same allowlist expressed
+		// as its complement. Keep the two in agreement.
+		ignored_devices = "^(veth.*|br-.*|lo)$"
+	}
+
+	filesystem {
+		// Filter by filesystem TYPE, not by path.
+		//
+		// This matters much more here than on the agent-server box. Docker
+		// mounts one `overlay` filesystem per running container, and Coolify
+		// churns containers on every deploy — so a path-based filter that
+		// missed one would add a fresh set of series per release and never
+		// retire them. A type filter still catches a mount shape nobody
+		// anticipated; a path filter has to have guessed the directory.
+		//
+		// One consequence worth knowing: in a default Compose deployment the
+		// `seaweed_data` Docker volume lives under /var/lib/docker, so
+		// node_exporter reports its headroom as whatever filesystem that path
+		// sits on, not as a mount of its own. The
+		// disk-headroom alert therefore uses SeaweedFS's OWN
+		// SeaweedFS_volumeServer_resource metric instead, which measures the
+		// /data mount from inside the container and names it correctly. See
+		// alerts/seaweedfs-disk.yaml.
+		//
+		// Both regexes are upstream node_exporter's defaults, verbatim.
+		mount_points_exclude = "^/(dev|proc|run/credentials/.+|sys|var/lib/docker/.+|var/lib/containers/storage/.+)($|/)"
+		fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fuse.*|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|ramfs|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tmpfs|tracefs|virtiofs)$"
+	}
+}
+
+discovery.relabel "host" {
+	targets = prometheus.exporter.unix.host.targets
+
+	// Without this, prometheus.scrape sets instance to the scrape target's
+	// address ("127.0.0.1:12345") — meaningless, and identical on every host.
+	// Overriding it with the same expression the logs pipeline uses is what
+	// makes the two joinable.
+	rule {
+		target_label = "instance"
+		replacement  = coalesce(sys.env("COOLIFY_INSTANCE"), "UNCONFIGURED-" + constants.hostname)
+	}
+
+	rule {
+		target_label = "env"
+		replacement  = coalesce(sys.env("DEPLOY_ENV"), "production")
+	}
+
+	// prometheus.exporter.unix pre-stamps job="integrations/unix" onto its
+	// targets, and a target that already carries `job` keeps it —
+	// prometheus.scrape's job_name only fills in targets that have none. So
+	// job_name ALONE IS SILENTLY INERT here. Same trap as the logs pipeline.
+	//
+	// The value matches the agent-server host on purpose: Grafana Cloud's
+	// prebuilt "Linux Server" dashboards filter on exactly
+	// job="integrations/node_exporter", so both boxes appear in the same
+	// prebuilt dashboard set, selectable by `instance`, with no panel building.
+	rule {
+		target_label = "job"
+		replacement  = coalesce(sys.env("PROM_JOB_LABEL"), "integrations/node_exporter")
+	}
+}
+
+prometheus.scrape "host" {
+	targets    = discovery.relabel.host.output
+	forward_to = [prometheus.remote_write.default.receiver]
+
+	// Kept aligned with the relabel rule above so the two can never disagree,
+	// even though the rule is what actually decides the label.
+	job_name = coalesce(sys.env("PROM_JOB_LABEL"), "integrations/node_exporter")
+
+	// Capacity monitoring, not incident-second resolution. Matches the
+	// agent-server host so a dashboard spanning both reads consistently.
+	scrape_interval = "60s"
+	scrape_timeout  = "10s"
+}
+
+prometheus.remote_write "default" {
+	endpoint {
+		url = sys.env("PROM_URL")
+
+		// NOT the Loki credentials. In Grafana Cloud the Prometheus push URL
+		// and especially the numeric username differ from Loki's. One access
+		// policy token scoped logs:write + metrics:write serves both; the
+		// usernames do not interchange.
+		basic_auth {
+			username = sys.env("PROM_USERNAME")
+			password = sys.env("PROM_PASSWORD")
+		}
+	}
+
+	wal {
+		truncate_frequency = "2h"
+		min_keepalive_time = "5m"
+		max_keepalive_time = "8h"
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ALLOY'S OWN METRICS — the collector watching itself
+// ---------------------------------------------------------------------------
+//
+// WHY THIS EXISTS. Everything above this line ships someone else's telemetry.
+// If the shipping itself breaks, none of it reports the breakage — the two
+// metrics pipelines and the logs pipeline fail independently, and the metrics
+// side failing is the only one that is self-evident (the dashboards go flat).
+// A logs failure is invisible off-box: dashboards stay green, `up` stays 1,
+// and the only evidence is `journalctl -u alloy` on the host.
+//
+// That is exactly the failure this repo's known-pitfalls entry describes ("a
+// healthy collector component that silently matches nothing"), one level up
+// and applied to the collector itself. The three realistic ways to get there
+// are all documented at their sites in this file: Loki and Prometheus
+// credentials crossed (the 401 that reads like a bad token), a systemd unit
+// with no EnvironmentFile= so every value is "", and the alloy user missing
+// from the `docker` group.
+//
+// What this block buys, specifically:
+//   loki_write_dropped_bytes_total     entries thrown away rather than sent
+//   loki_write_sent_bytes_total        the dead-man input: 0 means shipping nothing
+//   prometheus_remote_storage_samples_failed_total
+//   prometheus_remote_storage_samples_in_total   the number the README's
+//                                      interface-filter measurement quotes
+//
+// It is a small number of series — this is the collector, not the host — and
+// it is the only thing here that can report its own failure.
+prometheus.exporter.self "collector" {}
+
+discovery.relabel "collector" {
+	targets = prometheus.exporter.self.collector.targets
+
+	// Same instance/env expressions as the host and container pipelines, so a
+	// dashboard can put "is this host shipping?" next to that host's data
+	// without a second variable.
+	rule {
+		target_label = "instance"
+		replacement  = coalesce(sys.env("COOLIFY_INSTANCE"), "UNCONFIGURED-" + constants.hostname)
+	}
+
+	rule {
+		target_label = "env"
+		replacement  = coalesce(sys.env("DEPLOY_ENV"), "production")
+	}
+
+	// Deliberately NOT integrations/node_exporter. These are collector
+	// internals, not host metrics; sharing the job label would put them in the
+	// prebuilt Linux Server dashboards where they mean nothing, and would make
+	// `up{job="integrations/node_exporter"}` ambiguous between "the host
+	// exporter answered" and "Alloy answered about itself".
+	rule {
+		target_label = "job"
+		replacement  = coalesce(sys.env("COLLECTOR_PROM_JOB_LABEL"), "integrations/alloy")
+	}
+}
+
+prometheus.scrape "collector" {
+	targets    = discovery.relabel.collector.output
+	forward_to = [prometheus.remote_write.default.receiver]
+
+	job_name = coalesce(sys.env("COLLECTOR_PROM_JOB_LABEL"), "integrations/alloy")
+
+	scrape_interval = "60s"
+	scrape_timeout  = "10s"
+}
+
+// ===========================================================================
+// METRICS — SeaweedFS → Prometheus
+// ===========================================================================
+//
+// The pipeline this whole directory was written for.
+//
+// SeaweedFS holds every agent's persistent files — skills, learnings, memory —
+// pulled at session start and pushed at session end by
+// apps/dev/src/services/agent-storage.ts. When it degrades, sessions do not
+// hard-fail: agent file operations get slow, or start failing individually, and
+// the result surfaces as an agent that has "forgotten" something or is
+// mysteriously slow. That is the same silent-degradation class as the wedge
+// bugs, and it is invisible from both the Coolify dashboard and the database,
+// because neither of them can see this process at all.
+//
+// The concrete failure to catch is the disk filling. See
+// alerts/seaweedfs-disk.yaml.
+//
+// `weed server` runs master, volume, filer and S3 in ONE process, so this
+// single endpoint carries all four subsystems' metrics — verified 2026-08-27
+// against SeaweedFS 4.16. The ones worth knowing:
+//
+//   SeaweedFS_volumeServer_resource{name="/data",type="avail"|"all"|"used"}
+//                                     free/total bytes on the seaweed_data
+//                                     volume. The alert's input.
+//   SeaweedFS_volumeServer_volumes    volume count, vs
+//   SeaweedFS_volumeServer_max_volumes  the cap. Hitting the cap fails WRITES
+//                                     while the disk still looks fine — a
+//                                     second, independent failure mode. See
+//                                     README.md.
+//   SeaweedFS_s3_request_total        S3 API calls by type. Absent until the
+//                                     first request; an empty panel on a fresh
+//                                     boot is expected, not broken.
+//   SeaweedFS_filerStore_request_seconds_bucket  filer latency histogram.
+//   SeaweedFS_master_is_leader        1 on the leader. Single-node here, so
+//                                     always 1; a 0 means the master is unwell.
+//
+// The endpoint only exists because docker-compose.prod.yml passes
+// `-metricsPort` — it is off by default. See the comment on the seaweedfs
+// service there for why `-metricsIp=0.0.0.0` is also required.
+
+discovery.relabel "seaweedfs" {
+	targets = [{
+		__address__ = "127.0.0.1:" + coalesce(sys.env("SEAWEEDFS_METRICS_PORT"), "9327"),
+	}]
+
+	// The join key — same expression as both pipelines above.
+	rule {
+		target_label = "instance"
+		replacement  = coalesce(sys.env("COOLIFY_INSTANCE"), "UNCONFIGURED-" + constants.hostname)
+	}
+
+	rule {
+		target_label = "env"
+		replacement  = coalesce(sys.env("DEPLOY_ENV"), "production")
+	}
+
+	// A static target list carries no `job` of its own, so job_name below would
+	// in fact work today. The rule is here anyway: it costs one block, it is
+	// what the other two pipelines must do, and it means a future change to how
+	// this target is discovered cannot silently reintroduce the inert-job_name
+	// bug.
+	rule {
+		target_label = "job"
+		replacement  = coalesce(sys.env("SEAWEEDFS_PROM_JOB_LABEL"), "seaweedfs")
+	}
+}
+
+prometheus.scrape "seaweedfs" {
+	targets    = discovery.relabel.seaweedfs.output
+	forward_to = [prometheus.remote_write.default.receiver]
+
+	job_name = coalesce(sys.env("SEAWEEDFS_PROM_JOB_LABEL"), "seaweedfs")
+
+	// 60s, matching the other pipelines. Disk headroom moves over hours; a
+	// faster interval would buy nothing but ingest.
+	scrape_interval = "60s"
+	scrape_timeout  = "10s"
+
+	// SeaweedFS down, or restarting mid-deploy, makes this scrape fail — which
+	// is correct and self-describing: `up{job="seaweedfs"}` goes to 0 and the
+	// resource series go stale.
+	//
+	// That `up` series is ALERTED ON, by the `SeaweedFS volume server
+	// unreachable` rule in alerts/seaweedfs-disk.yaml. It is not merely
+	// available to query. The distinction matters: this comment used to say
+	// the disk alert's noDataState "handles the rest", and it did not. A
+	// synthesised NoData instance carries none of the rule's labels, so it
+	// paged with an empty body, it fired twice at two severities for one gap,
+	// and it could not tell a scrape gap from a target that had never been
+	// scraped at all. The two disk rules now clear on no data and the
+	// unreachable rule owns that condition outright.
+}

@@ -12,6 +12,7 @@ import {
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
+import { eq } from 'drizzle-orm'
 
 let counter = 0
 function next() {
@@ -46,6 +47,7 @@ export function buildActor(overrides?: Record<string, unknown>) {
 
 export function buildWorkspace(overrides?: Record<string, unknown>) {
 	const n = next()
+	const createdBy = randomUUID()
 	return {
 		id: randomUUID(),
 		name: `Workspace ${n}`,
@@ -55,21 +57,29 @@ export function buildWorkspace(overrides?: Record<string, unknown>) {
 				insight: 'Insight',
 				bet: 'Bet',
 				task: 'Task',
-				commitment: 'Commitment',
 				loop: 'Loop',
 			},
 			statuses: {
 				insight: ['new', 'processing', 'clustered', 'discarded'],
 				bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
 				task: ['todo', 'in_progress', 'done', 'blocked'],
-				commitment: ['holding', 'at-risk', 'breached'],
 				loop: ['running', 'waiting', 'paused', 'archived'],
 			},
 			field_definitions: {},
 			relationship_types: ['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates'],
 		},
 		onboardingEnabled: true,
-		createdBy: randomUUID(),
+		// Defaults to true here (unlike the real DB column default of false) so
+		// the many existing BYO-credential route tests that predate the
+		// enterpriseGranted gate don't all need an explicit override. Tests for the
+		// gate itself pass `{ enterpriseGranted: false }`. See PR #970.
+		enterpriseGranted: true,
+		// Defaults to the same actor as createdBy (matches the real
+		// POST /api/workspaces / POST /api/actors behavior — see
+		// insertWorkspace below) so plain buildWorkspace() output satisfies
+		// workspaceResponseSchema's required billingOwnerId out of the box.
+		billingOwnerId: createdBy,
+		createdBy,
 		createdAt: new Date(),
 		updatedAt: new Date(),
 		...overrides,
@@ -522,7 +532,13 @@ export async function insertWorkspace(
 	actorId: string,
 	overrides?: Record<string, unknown>,
 ) {
-	const data = buildWorkspace({ createdBy: actorId, ...overrides })
+	// billingOwnerId defaults to the creating actor (matches the real
+	// POST /api/workspaces / POST /api/actors behavior) so every workspace
+	// this factory produces is internally consistent for the seat/ownership
+	// cap checks in apps/dev/src/lib/workspace-capacity.ts. Pass
+	// `billingOwnerId: null` (or another actor id) in overrides to test the
+	// unowned/reassigned cases explicitly.
+	const data = buildWorkspace({ createdBy: actorId, billingOwnerId: actorId, ...overrides })
 	const rows = await db.insert(workspaces).values(data).returning()
 	const ws = rows[0]
 	await db.insert(workspaceMembers).values({
@@ -623,4 +639,33 @@ export async function insertTrigger(
 	})
 	const rows = await db.insert(triggers).values(data).returning()
 	return rows[0]
+}
+
+/**
+ * Puts an existing workspace on a plan tier by writing the row directly.
+ *
+ * The API is deliberately NOT the seam for this: `settings.billing` is owned
+ * by Stripe, and both POST /api/workspaces and PATCH /api/workspaces/:id
+ * reject a request carrying it with a 400 — accepting it would be a
+ * self-service entitlement bypass of the seat cap, the ownership cap and
+ * `hard_cap_usd_cents`. The seat and ownership checks read the tier back out
+ * of this same JSON via `resolvePlanTier`, so seeding it here still exercises
+ * the real cap arithmetic. Merges into existing settings rather than
+ * replacing them, so a workspace's seeded statuses/display names survive.
+ */
+export async function setWorkspacePlan(
+	db: Database,
+	workspaceId: string,
+	plan: 'trial' | 'pro' | 'team' | 'enterprise',
+): Promise<void> {
+	const [row] = await db
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+	const current = (row?.settings ?? {}) as Record<string, unknown>
+	const billing = (current.billing ?? {}) as Record<string, unknown>
+	await db
+		.update(workspaces)
+		.set({ settings: { ...current, billing: { ...billing, plan } } })
+		.where(eq(workspaces.id, workspaceId))
 }

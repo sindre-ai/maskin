@@ -9,9 +9,8 @@ export function AgentRunPauseButton({
 	isRunPending = false,
 	isPausePending = false,
 	runLabel = 'Run',
-	pauseLabel = 'Pause',
-	tone = 'default',
 	fullWidth = false,
+	density = 'default',
 }: {
 	isActive: boolean
 	onRun: () => void
@@ -19,17 +18,15 @@ export function AgentRunPauseButton({
 	isRunPending?: boolean
 	isPausePending?: boolean
 	runLabel?: string
-	pauseLabel?: string
-	/** `warning` draws both states as one bordered amber control — how v2 renders
-	 *  the agent-level Disable/Enable toggle in the detail bar (mockup 2313), where
-	 *  the two states are one switch rather than a primary action and its undo. */
-	tone?: 'default' | 'warning'
 	fullWidth?: boolean
+	/** 'nav' matches the top nav's 30px control scale (Search, New). */
+	density?: 'default' | 'nav'
 }) {
-	const isWarning = tone === 'warning'
+	// The nav row is built on a 30px scale (NavSearch's size-[30px], NewMenu's
+	// h-[30px]) rather than shadcn's sm (h-9/36px), so a nav-density button opts
+	// out of the sm height entirely. Everywhere else keeps the 44px touch floor.
 	const className = cn(
-		'min-h-[44px]',
-		isWarning && 'text-warning hover:bg-warning/5 hover:text-warning',
+		density === 'nav' ? 'h-[30px] gap-1.5 rounded-lg px-2.5 text-xs font-semibold' : 'min-h-[44px]',
 		fullWidth && 'w-full',
 	)
 
@@ -48,7 +45,7 @@ export function AgentRunPauseButton({
 				disabled={isPausePending}
 			>
 				<PauseCircle size={14} aria-hidden="true" />
-				{isPausePending ? 'Pausing…' : pauseLabel}
+				{isPausePending ? 'Pausing…' : 'Pause'}
 			</Button>
 		)
 	}
@@ -56,7 +53,6 @@ export function AgentRunPauseButton({
 	return (
 		<Button
 			type="button"
-			variant={isWarning ? 'outline' : 'default'}
 			size="sm"
 			className={className}
 			onClick={(e) => {

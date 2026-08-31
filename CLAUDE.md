@@ -27,11 +27,17 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `.claude/rules/input-validation.md` — input validation requirements at system boundaries (HTTP params, env vars, DB triggers)
 - `.claude/rules/structural-verification.md` — file placement and build configuration verification checklist
 - `.claude/rules/known-pitfalls.md` — registry of recurring bugs to check against before submitting code
+- `.claude/rules/feature-flags.md` — how to add, place, and retire a feature flag (one boundary per feature; visual layer only)
 - `.claude/rules/verification.md` — mandatory runtime-verification gates: integration tests for DB/route changes, E2E specs for frontend changes
 - `packages/db/MIGRATIONS.md` — migration conventions for hot tables (CONCURRENTLY indexes, chunked backfills); read before editing a `.sql` file produced by `pnpm db:generate`
 
 ## Reference
 - `docs/reference/README.md` — Canonical documentation for Maskin's primitives — read the matching page before trusting model memory.
+
+## Observability
+- **Frontend (`apps/web`)** — Grafana Faro (`src/lib/faro.ts`) reports browser-side JS exceptions, unhandled rejections, Core Web Vitals, failed `/api` calls and the TanStack route name into the same Grafana Cloud stack as the backend. It runs **in parallel with** Sentry (`src/lib/sentry.ts`) while we compare the two; do not assume Sentry has been retired. Both are gated on `import.meta.env.PROD` plus a `VITE_*_FORCE_ENABLE` escape hatch, and both are **tree-shaken out entirely** when their `VITE_` config var is absent at build time — so a `VITE_` var missing from `apps/dev/Dockerfile`'s ARG/ENV list means that SDK simply isn't in the production bundle, silently.
+- `apps/agent-server/observability/README.md` — for a host running agent-server as a systemd unit: journald logs, host metrics, `/metrics` scrape, stalled-session alerts
+- `observability/coolify-host/README.md` — for a host running `docker-compose.prod.yml` under Coolify: Docker logs, host metrics, SeaweedFS metrics, disk-headroom alerts. Both configs read every deployment-specific value from the environment — keep it that way.
 
 ## Runbooks
 - `docs/runbooks/github-agent-merge-reliability.md` — diagnostic + recovery guide for GitHub write-path failures (approve, merge, push, PR open) in autonomous agent sessions; includes the first-move pattern for late-run 401s (token-mint delta, installation-ID churn) and the failure-tag glossary set by the tool-call layer
@@ -194,8 +200,38 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `S3_ACCESS_KEY`, `S3_SECRET_KEY` — S3 credentials (default: `admin`/`admin` for dev)
 - `S3_REGION` — S3 region (default: `us-east-1`)
 - `CORS_ORIGIN` — comma-separated allowed origins for CORS (default: `http://localhost:5173`)
+- `FF_TESTER_ACTOR_IDS` — comma-separated actor UUIDs who get early access to flagged features (default: empty)
+- `FF_TESTER_FEATURES` — comma-separated flag ids those testers see (default: empty = every flag off for everyone)
 
 **Important**: All env vars used at runtime must be listed in `turbo.json` `globalPassThroughEnv`. Turbo filters env vars — unlisted ones are silently unavailable to dev/build tasks. When adding new env vars (e.g., for integrations), always add them there too.
+
+## Feature Flags
+
+Ship a feature to a couple of named testers before everyone else. Config is read
+at runtime from the `apps/dev` environment, so a rollout or rollback is an env
+change plus a backend restart — never a frontend rebuild.
+
+```
+FF_TESTER_ACTOR_IDS=<uuid>,<uuid>        # actors who get early access
+FF_TESTER_FEATURES=new-design            # flag ids those actors see
+```
+
+A flag has two states: **off**, or **on for the tester actors**. There is no
+"on for everyone" setting — shipping to everyone means *deleting* the flag, not
+promoting it, so the config can't become a graveyard of undeleted code.
+
+- Register every flag id in `FLAGS` in `apps/dev/src/lib/feature-flags.ts`;
+  unregistered ids always resolve to `false`.
+- Read it with `useFeatureFlag(id)` at **one** boundary, as high in the tree as
+  possible (shell or route layout) — never scattered across components. Third
+  call site for one flag means the boundary is wrong.
+- Flags are for the **visual layer only**. Never flag data-layer, API, or
+  migration changes — a user with the flag off hits the same backend.
+- Resolution happens server-side (`GET /api/feature-flags`); the tester actor
+  ids never reach the browser.
+
+Full guide, including the test-only `ff:<flagId>` localStorage override and the
+retirement checklist: `.claude/rules/feature-flags.md`.
 
 ## Principles
 1. Simple & intuitive

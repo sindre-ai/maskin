@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { UnreadItem } from '@/lib/api'
-import { bucketRank, compactTime, feedItemKey, feedTailLabel, heldNote } from '@/lib/foryou-feed'
+import { bucketRank, feedItemKey, feedTailLabel, heldNote } from '@/lib/foryou-feed'
 
 const NOW = Date.parse('2026-08-19T12:00:00.000Z')
 
@@ -17,24 +17,6 @@ function buildItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 		...overrides,
 	}
 }
-
-describe('compactTime', () => {
-	it('counts up through minutes, hours and days', () => {
-		expect(compactTime('2026-08-19T11:59:30.000Z', NOW)).toBe('NOW')
-		expect(compactTime('2026-08-19T11:41:00.000Z', NOW)).toBe('19M')
-		expect(compactTime('2026-08-19T07:00:00.000Z', NOW)).toBe('5H')
-		expect(compactTime('2026-08-17T12:00:00.000Z', NOW)).toBe('2D')
-	})
-
-	it('falls back to a date once a week has passed', () => {
-		expect(compactTime('2026-08-01T12:00:00.000Z', NOW)).toMatch(/AUG/)
-	})
-
-	it('renders nothing without a timestamp', () => {
-		expect(compactTime(null, NOW)).toBe('')
-		expect(compactTime('not-a-date', NOW)).toBe('')
-	})
-})
 
 describe('heldNote', () => {
 	it('says nothing for anything younger than a day', () => {

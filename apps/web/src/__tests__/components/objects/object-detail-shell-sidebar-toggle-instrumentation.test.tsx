@@ -113,6 +113,7 @@ vi.mock('@/hooks/use-subscriptions', () => ({
 	useSubscribe: () => ({ mutate: vi.fn(), isPending: false }),
 	useUnsubscribe: () => ({ mutate: vi.fn(), isPending: false }),
 	useSubscribers: () => ({ data: [] }),
+	useMarkRead: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/components/shared/markdown-content', () => ({
@@ -179,6 +180,19 @@ describe('ObjectDetailShell sidebar_toggle instrumentation', () => {
 			viewport: 'desktop',
 			object_id: 'obj-shortcut',
 		})
+	})
+
+	// AltGr reports as Ctrl+Alt on Windows, and `\` is an AltGr product on the
+	// Nordic, German, Polish and Turkish layouts — so a user typing a literal
+	// backslash must not toggle the drawer (nor lose the character to
+	// `preventDefault()`).
+	it('does not fire when AltGr produces the backslash rather than the chord', async () => {
+		const user = userEvent.setup()
+		renderShell('obj-altgr')
+
+		await user.keyboard('{Control>}{Alt>}{Shift>}\\{/Shift}{/Alt}{/Control}')
+
+		expect(trackSidebarToggleMock).not.toHaveBeenCalled()
 	})
 
 	it('persists the collapsed bit so the toggle survives a remount', async () => {

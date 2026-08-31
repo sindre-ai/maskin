@@ -70,10 +70,19 @@ function readCodeSource(child: ReactNode): string {
  */
 export function toggleMarkdownMarker(
 	value: string,
-	start: number,
-	end: number,
+	rawStart: number,
+	rawEnd: number,
 	marker: string,
 ): { value: string; start: number; end: number } {
+	// Markdown will not emphasise a run padded with spaces — `**word **` renders
+	// as literal asterisks — and a double-click or a drag routinely picks up the
+	// trailing space. Wrap the words, leave the padding outside.
+	let start = rawStart
+	let end = rawEnd
+	while (start < end && /\s/.test(value[start] ?? '')) start += 1
+	while (end > start && /\s/.test(value[end - 1] ?? '')) end -= 1
+	if (start === end) return { value, start: rawStart, end: rawEnd }
+
 	const before = value.slice(Math.max(0, start - marker.length), start)
 	const after = value.slice(end, end + marker.length)
 	if (before === marker && after === marker) {
@@ -116,15 +125,6 @@ export function caretOffsetInSource(
 	const lead = nodeText.length - nodeText.trimStart().length
 	const within = Math.max(0, Math.min(offsetInNode - lead, probe.length))
 	return at + within
-}
-
-/**
- * Source offset for one end of a DOM range. Only a text node can be mapped —
- * an offset into an element is a child index, not a character position.
- */
-function offsetOfRangeEnd(source: string, node: Node, offset: number): number | null {
-	if (node.nodeType !== Node.TEXT_NODE) return null
-	return caretOffsetInSource(source, node.textContent ?? '', offset)
 }
 
 /** Reads the caret position under a point, across both browser spellings. */
@@ -256,6 +256,25 @@ export function shiftIndent(
 	}
 }
 
+/**
+ * Maps a character offset in the draft onto a position in the overlay's text
+ * nodes. The overlay renders exactly the draft, so the two share an offset
+ * space — which is what lets a textarea selection, which has no geometry of
+ * its own, borrow the overlay's.
+ */
+function locateOffset(root: HTMLElement, target: number): { node: Node; offset: number } | null {
+	const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+	let seen = 0
+	let node = walker.nextNode()
+	while (node) {
+		const length = node.textContent?.length ?? 0
+		if (seen + length >= target) return { node, offset: target - seen }
+		seen += length
+		node = walker.nextNode()
+	}
+	return null
+}
+
 /** ⌘B / ⌘I / ⌘E — the three the mockup binds. */
 const SHORTCUT_MARKERS: Record<string, string> = { b: '**', i: '_', e: '`' }
 
@@ -279,9 +298,12 @@ export function MarkdownContent({
 	mentionActors,
 	onMentionClick,
 	renderVisuals = false,
+	editorLabel,
 }: {
 	content: string
-	onChange?: (value: string) => void
+	// May return a promise. If it rejects, the editor is reopened with the
+	// user's draft intact: a failed save must never discard typed text.
+	onChange?: (value: string) => unknown
 	editable?: boolean
 	className?: string
 	/** `doc` is the v2 document scale a detail page's body renders at (mockup
@@ -297,6 +319,8 @@ export function MarkdownContent({
 	 * unaffected — only ActivityComment opts in.
 	 */
 	renderVisuals?: boolean
+	/** Accessible name for the editing field — it has no visible label. */
+	editorLabel?: string
 }) {
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState(content)
@@ -311,13 +335,22 @@ export function MarkdownContent({
 	// Height of the rendered prose view at the moment edit mode is entered.
 	// Used as a floor so the box doesn't shrink when headings/lists collapse to plain text.
 	const [lockedHeight, setLockedHeight] = useState<number | undefined>(undefined)
-	// Floating B / I / <> over a selection in the rendered view (mockup 1030–1035).
+	// Floating B / I / <> over a highlighted run in the editor (mockup 1030–1035).
 	const [selectionToolbar, setSelectionToolbar] = useState<SelectionToolbarState | null>(null)
+	const docOverlayRef = useRef<HTMLDivElement>(null)
 
 	const handleBlur = useCallback(() => {
 		setEditing(false)
-		if (draft !== content) {
-			onChange?.(draft)
+		if (draft === content) return
+		const result = onChange?.(draft)
+		if (result && typeof (result as Promise<unknown>).then === 'function') {
+			// The save is optimistic and rolls back silently on failure. Reopen the
+			// editor with the draft still in it so a rejected write cannot destroy a
+			// long rewrite the user can no longer reach.
+			void (result as Promise<unknown>).catch(() => {
+				setDraft(draft)
+				setEditing(true)
+			})
 		}
 	}, [draft, content, onChange])
 
@@ -330,52 +363,57 @@ export function MarkdownContent({
 		setEditing(true)
 	}
 
-	// A selection in the view arms the toolbar; clicking away or selecting
-	// nothing disarms it.
-	const handleSelectionUp = useCallback(() => {
-		if (!editable) return
-		window.setTimeout(() => {
-			const selection = window.getSelection()
-			const text = selection ? String(selection).trim() : ''
-			if (!text || !selection?.rangeCount) {
-				setSelectionToolbar(null)
-				return
-			}
-			const range = selection.getRangeAt(0)
-			const rect = range.getBoundingClientRect()
-			// Map both ends through their own text node. The probe is the whole
-			// run the selection sits in, so selecting the second "retry" in a
-			// paragraph resolves to *that* one — a bare text search would always
-			// have formatted the first.
-			const from = offsetOfRangeEnd(content, range.startContainer, range.startOffset)
-			const to = offsetOfRangeEnd(content, range.endContainer, range.endOffset)
-			const mapped = from !== null && to !== null && to > from
-			setSelectionToolbar({
-				x: (rect.left + rect.right) / 2,
-				y: rect.top - 8,
-				text,
-				start: mapped ? from : null,
-				end: mapped ? to : null,
-			})
-		}, 0)
-	}, [editable, content])
+	// The toolbar belongs to the editor: it rises on a highlight inside the
+	// field and nowhere else. The textarea has no selection geometry, so the
+	// rect comes from the overlay behind it — same metrics, same coordinates.
+	const handleEditorSelect = useCallback(() => {
+		const ta = textareaRef.current
+		const overlay = docOverlayRef.current
+		if (!ta || !overlay) return
+		const { selectionStart: start, selectionEnd: end } = ta
+		if (start === end) {
+			setSelectionToolbar(null)
+			return
+		}
+		const from = locateOffset(overlay, start)
+		const to = locateOffset(overlay, end)
+		if (!from || !to) {
+			setSelectionToolbar(null)
+			return
+		}
+		const range = document.createRange()
+		range.setStart(from.node, from.offset)
+		range.setEnd(to.node, to.offset)
+		const rect = range.getBoundingClientRect()
+		if (!rect.width && !rect.height) {
+			setSelectionToolbar(null)
+			return
+		}
+		setSelectionToolbar({
+			x: (rect.left + rect.right) / 2,
+			y: rect.top - 8,
+			text: ta.value.slice(start, end),
+			start,
+			end,
+		})
+	}, [])
 
-	// The toolbar edits the markdown source, not the rendered output: it finds
-	// the selected text in the source and toggles the marker around it.
 	const applyMarkerToSelection = useCallback(
 		(marker: string) => {
 			const active = selectionToolbar
 			setSelectionToolbar(null)
-			if (!active) return
+			const ta = textareaRef.current
 			// `?? ` not `||` — a selection at offset 0 is a real range.
-			const from = active.start ?? content.indexOf(active.text)
-			if (from < 0) return
-			const to = active.end ?? from + active.text.length
-			const next = toggleMarkdownMarker(content, from, to, marker)
-			window.getSelection()?.removeAllRanges()
-			if (next.value !== content) onChange?.(next.value)
+			if (!active || !ta || active.start === null || active.end === null) return
+			const next = toggleMarkdownMarker(ta.value, active.start, active.end, marker)
+			setDraft(next.value)
+			// Keep the words selected so a second press toggles them back off.
+			requestAnimationFrame(() => {
+				ta.focus()
+				ta.setSelectionRange(next.start, next.end)
+			})
 		},
-		[selectionToolbar, content, onChange],
+		[selectionToolbar],
 	)
 
 	const adjustHeight = useCallback(() => {
@@ -427,6 +465,12 @@ export function MarkdownContent({
 				e.currentTarget.blur()
 				return
 			}
+			// AltGr is Ctrl+Alt on Windows/Linux, so `AltGr+E` (`€` on the Nordic,
+			// German, Polish and Turkish layouts) arrives here with `ctrlKey` set.
+			// Without this the character never lands and the selection gets wrapped
+			// in backticks instead. Same guard as the panel chords in
+			// `ui/sidebar.tsx` and `objects/object-detail-shell.tsx`.
+			if (e.altKey) return
 			const marker = SHORTCUT_MARKERS[e.key.toLowerCase()]
 			if (!marker) return
 			e.preventDefault()
@@ -543,6 +587,7 @@ export function MarkdownContent({
 		const field = (
 			<Textarea
 				ref={textareaRef}
+				aria-label={editorLabel}
 				className={cn(
 					'w-full resize-none overflow-hidden border-none font-sans outline-none focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0',
 					isDoc
@@ -556,7 +601,14 @@ export function MarkdownContent({
 					adjustHeight()
 				}}
 				onKeyDown={handleEditorKeyDown}
-				onBlur={handleBlur}
+				onSelect={isDoc ? handleEditorSelect : undefined}
+				onBlur={(e) => {
+					// A toolbar press blurs the field; its own mousedown re-focuses, so
+					// only a blur to somewhere else should commit and dismiss.
+					if (e.relatedTarget?.closest('[data-selection-toolbar]')) return
+					setSelectionToolbar(null)
+					handleBlur()
+				}}
 			/>
 		)
 
@@ -564,12 +616,54 @@ export function MarkdownContent({
 
 		return (
 			<div className="-ml-2 flex w-[calc(100%+8px)] max-w-[75ch] flex-col">
+				{/* Fixed over the highlighted run. The buttons act on mousedown so
+				    the browser never clears the selection first, and the field's
+				    blur handler ignores a blur that lands on them. */}
+				{selectionToolbar && (
+					<div
+						data-selection-toolbar=""
+						className="fixed z-[60] flex -translate-x-1/2 -translate-y-full gap-0.5 rounded-[9px] bg-primary p-[3px] shadow-lg"
+						style={{ left: selectionToolbar.x, top: selectionToolbar.y }}
+					>
+						{(
+							[
+								{ marker: '**', label: 'Bold', glyph: 'B', className: 'font-extrabold' },
+								{ marker: '_', label: 'Italic', glyph: 'I', className: 'font-semibold italic' },
+								{
+									marker: '`',
+									label: 'Code',
+									glyph: '<>',
+									className: 'font-mono text-[11px] font-semibold',
+								},
+							] as const
+						).map((action) => (
+							<button
+								key={action.label}
+								type="button"
+								title={action.label}
+								aria-label={action.label}
+								onMouseDown={(e) => {
+									e.preventDefault()
+									applyMarkerToSelection(action.marker)
+								}}
+								className={cn(
+									'grid size-[26px] place-items-center rounded-[7px] text-[12.5px] text-primary-foreground transition-colors hover:bg-secondary-foreground/25',
+									action.className,
+								)}
+							>
+								{action.glyph}
+							</button>
+						))}
+					</div>
+				)}
+
 				{/* What you read is the overlay; the textarea over it is transparent
 				    but for its caret. Same font, size, leading, padding and wrapping,
 				    so every glyph lands in the same place — which is what lets the
 				    delimiters recede without the caret drifting off the text. */}
-				<div className="relative rounded-[9px] bg-muted/60 ring-1 ring-border">
+				<div className="relative rounded-[9px] bg-muted/60">
 					<div
+						ref={docOverlayRef}
 						aria-hidden="true"
 						className="pointer-events-none absolute inset-0 whitespace-pre-wrap break-words px-2 py-1 text-[15px] leading-[1.65] text-foreground"
 					>
@@ -599,6 +693,7 @@ export function MarkdownContent({
 	if (editable && !content) {
 		return (
 			<Textarea
+				aria-label={editorLabel}
 				className={`${className ?? ''} w-full min-h-[60px] text-sm text-muted-foreground`}
 				placeholder="Click to add content..."
 				onFocus={() => startEditing('')}
@@ -609,44 +704,6 @@ export function MarkdownContent({
 
 	return (
 		<>
-			{/* Fixed to the selection, above it (mockup 1030–1035). The buttons act
-			    on mousedown so the browser never clears the selection first. */}
-			{selectionToolbar && (
-				<div
-					className="fixed z-[60] flex -translate-x-1/2 -translate-y-full gap-0.5 rounded-[9px] bg-primary p-[3px] shadow-lg"
-					style={{ left: selectionToolbar.x, top: selectionToolbar.y }}
-				>
-					{(
-						[
-							{ marker: '**', label: 'Bold', glyph: 'B', className: 'font-extrabold' },
-							{ marker: '_', label: 'Italic', glyph: 'I', className: 'font-semibold italic' },
-							{
-								marker: '`',
-								label: 'Code',
-								glyph: '<>',
-								className: 'font-mono text-[11px] font-semibold',
-							},
-						] as const
-					).map((action) => (
-						<button
-							key={action.label}
-							type="button"
-							title={action.label}
-							aria-label={action.label}
-							onMouseDown={(e) => {
-								e.preventDefault()
-								applyMarkerToSelection(action.marker)
-							}}
-							className={cn(
-								'grid size-[26px] place-items-center rounded-[7px] text-[12.5px] text-primary-foreground transition-colors hover:bg-secondary-foreground/25',
-								action.className,
-							)}
-						>
-							{action.glyph}
-						</button>
-					))}
-				</div>
-			)}
 			<div
 				ref={containerRef}
 				className={cn(
@@ -657,7 +714,6 @@ export function MarkdownContent({
 						editable &&
 						'-ml-2 w-[calc(100%+8px)] max-w-[75ch] cursor-text rounded-[9px] px-2 py-1 transition-colors hover:bg-muted/60',
 				)}
-				onMouseUp={handleSelectionUp}
 				onClick={(e) => {
 					if (!editable) return
 					// Links, task checkboxes and any other control in the body have to
@@ -681,7 +737,7 @@ export function MarkdownContent({
 			>
 				<div
 					className={cn(
-						'prose dark:prose-invert prose-sm max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-p:leading-[1.7142857] prose-li:text-muted-foreground prose-a:text-primary prose-strong:text-foreground prose-code:text-primary prose-code:bg-card prose-code:px-1 prose-code:rounded',
+						'prose dark:prose-invert prose-sm max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-p:leading-[1.7142857] prose-li:text-muted-foreground prose-a:text-primary prose-strong:text-foreground prose-code:text-primary prose-code:bg-card prose-code:px-1 prose-code:rounded prose-code:before:content-none prose-code:after:content-none',
 						'break-words [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_img]:max-w-full [&_table]:block [&_table]:overflow-x-auto [&_table]:max-w-full',
 						size === 'xs' && '[&_p]:text-xs [&_p]:leading-normal [&_li]:text-xs [&_a]:text-xs',
 						size === 'doc' && [

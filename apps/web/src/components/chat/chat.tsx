@@ -12,9 +12,9 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
+	DropdownMenuLabel,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
@@ -24,7 +24,7 @@ import { deriveEntryAgentRole, trackSpecialistSummonedManually } from '@/lib/ana
 import type { ChatSelection, ChatSelectionAction } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { readFileAsBase64 } from '@/lib/file-utils'
-import { AtSign, Box, Mic, Paperclip, Plus, Send, Sparkles, X } from 'lucide-react'
+import { ArrowUp, AtSign, Box, Mic, Paperclip, Plus, Sparkles, X } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type FormEvent,
@@ -319,8 +319,13 @@ export function Composer({
 				// user's intent is honoured (closes T4 reviewer SHOULD).
 				if (controller.signal.aborted) return
 				console.info(
-					'[chat] uploaded image attachment',
-					JSON.stringify({ fileId: created.id, name: file.name, sizeBytes: file.size }),
+					'[chat] uploaded attachment',
+					JSON.stringify({
+						fileId: created.id,
+						name: file.name,
+						sizeBytes: file.size,
+						mimeType: file.type || 'application/octet-stream',
+					}),
 				)
 				setPendingUploads((prev) => prev.filter((p) => p.tempId !== tempId))
 				onDispatchSelection?.({
@@ -401,43 +406,51 @@ export function Composer({
 					<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
 				}
 			/>
-			<Popover
+			{/* A DropdownMenu rather than a Popover: `/` opens this without a click,
+			    so the list has to be reachable from the keyboard. Radix gives the
+			    menu roving focus, arrow keys and typeahead for free — the Popover
+			    this replaced left focus in the textarea with no way in. */}
+			<DropdownMenu
 				open={turnIntoOpen}
 				onOpenChange={(next) => {
 					setTurnIntoOpen(next)
 					if (!next) slashPosRef.current = null
 				}}
 			>
-				<PopoverAnchor asChild>
+				<DropdownMenuTrigger asChild>
 					<span aria-hidden className="pointer-events-none absolute bottom-2 left-2 h-0 w-0" />
-				</PopoverAnchor>
-				<PopoverContent
+				</DropdownMenuTrigger>
+				<DropdownMenuContent
 					align="start"
 					side="top"
 					sideOffset={8}
-					className="w-[320px] p-1.5"
-					onOpenAutoFocus={(e) => e.preventDefault()}
+					className="w-[320px]"
+					// The visible DropdownMenuLabel below is not an accessible name
+					// for the menu itself — name it explicitly so the list is
+					// announced (and addressable) as "Turn this into an object".
 					aria-label="Turn this into an object"
+					// Radix returns focus to the trigger, which here is an invisible
+					// anchor — send the caret back to the composer instead.
+					onCloseAutoFocus={(e) => {
+						e.preventDefault()
+						textareaRef.current?.focus()
+					}}
 				>
-					<p className="eyebrow px-2 pb-1 pt-1.5">Turn this into an object</p>
-					<ul className="flex list-none flex-col p-0">
-						{objectTypes.map((type) => (
-							<li key={type.value}>
-								<button
-									type="button"
-									onClick={() => openCreateFor(type.value)}
-									className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground"
-								>
-									<TypeBadge type={type.value} variant="tile" />
-									<span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold">
-										{type.label}
-									</span>
-								</button>
-							</li>
-						))}
-					</ul>
-				</PopoverContent>
-			</Popover>
+					<DropdownMenuLabel className="eyebrow">Turn this into an object</DropdownMenuLabel>
+					{objectTypes.map((type) => (
+						<DropdownMenuItem
+							key={type.value}
+							onSelect={() => openCreateFor(type.value)}
+							className="gap-2.5"
+						>
+							<TypeBadge type={type.value} variant="tile" />
+							<span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold">
+								{type.label}
+							</span>
+						</DropdownMenuItem>
+					))}
+				</DropdownMenuContent>
+			</DropdownMenu>
 			<SelectionChips
 				selection={selection}
 				onRemoveAgent={onRemoveAgent}
@@ -485,7 +498,6 @@ export function Composer({
 			<input
 				ref={fileInputRef}
 				type="file"
-				accept="image/*"
 				multiple
 				className="hidden"
 				onChange={handleFileSelection}
@@ -553,7 +565,7 @@ export function Composer({
 						className="relative h-7 w-7 shrink-0 rounded-full text-muted-foreground before:absolute before:-inset-2 before:h-11 before:w-11 before:content-['']"
 						onClick={() => fileInputRef.current?.click()}
 						disabled={disabled}
-						aria-label="Attach image"
+						aria-label="Attach file"
 					>
 						<Paperclip size={14} aria-hidden />
 					</Button>
@@ -587,7 +599,9 @@ export function Composer({
 						disabled={!canSend}
 						aria-label="Send message"
 					>
-						{showSpinner ? <Spinner /> : <Send size={14} />}
+						{/* An up-arrow, not a paper plane — v2's send glyph across every
+						    composer (mockup 543). */}
+						{showSpinner ? <Spinner /> : <ArrowUp size={15} />}
 					</Button>
 				</div>
 			</form>

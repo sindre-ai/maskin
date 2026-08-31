@@ -26,11 +26,10 @@ interface LoopInstalledProps {
 		skills: number
 		integrations: number
 	}
-	// Which marketplace surface started the install. Only the detail view sets
-	// this (`'detail'`); the catalog surface emits without it so the two
-	// populations stay distinguishable in PostHog for the install-from-detail
-	// conversion metric. Deliberately absent elsewhere — never derived
-	// client-side from URL/layout heuristics.
+	// Which marketplace surface the install was started from. Absent means the
+	// catalogue card, which is the overwhelming majority; the loop detail page
+	// sends `'detail'`. Emitted as `'catalogue'` when absent so downstream
+	// queries can group on the property without a null branch.
 	source?: 'detail'
 }
 
@@ -57,7 +56,7 @@ export async function trackLoopInstalled(p: LoopInstalledProps): Promise<void> {
 		actor_id: p.actorId,
 		component_type_count: componentTypes.length,
 		component_types: componentTypes,
-		...(p.source ? { source: p.source } : {}),
+		source: p.source ?? 'catalogue',
 	})
 }
 

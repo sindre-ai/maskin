@@ -119,4 +119,41 @@ describe('RelatedTab', () => {
 
 		expect(mutate).toHaveBeenCalledWith('r1')
 	})
+	// Regression: a pending or failed graph fetch yields the same empty
+	// `resolved` array as a genuinely unlinked object. "No related objects yet"
+	// is a claim about the user's data and must not be made over either — it
+	// also shipped an "Add link" CTA for links that may already exist.
+	it('shows a skeleton while the graph loads, not the empty state', () => {
+		vi.mocked(useObjectGraph).mockReturnValue({
+			data: undefined,
+			isLoading: true,
+			isError: false,
+		} as never)
+
+		const { container } = render(<RelatedTab object={buildObjectResponse({ id: 'obj-1' })} />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+
+		expect(screen.queryByText(/No related objects yet/)).toBeNull()
+		// The v2 tab has no "Related (N)" heading of its own — the count lives in
+		// the segmented control above it — so the skeleton is what marks the
+		// pending state here.
+		expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
+	})
+
+	it('surfaces an error when the graph fetch fails, not the empty state', () => {
+		vi.mocked(useObjectGraph).mockReturnValue({
+			data: undefined,
+			isLoading: false,
+			isError: true,
+			error: new Error('boom'),
+		} as never)
+
+		render(<RelatedTab object={buildObjectResponse({ id: 'obj-1' })} />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+
+		expect(screen.queryByText('No related objects yet')).toBeNull()
+		expect(screen.getByText("Couldn't load related objects")).toBeInTheDocument()
+	})
 })

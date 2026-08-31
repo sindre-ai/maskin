@@ -1,5 +1,6 @@
 import { AgentCreateForm } from '@/components/agents/agent-create-form'
 import { AgentDetailView } from '@/components/agents/agent-detail-view'
+import { AgentDocument } from '@/components/agents/agent-document'
 import { PageHeader } from '@/components/layout/page-header'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
@@ -50,23 +51,39 @@ function AgentDetailPage() {
 				type: 'agent',
 				name: data.name,
 			})
-			// Auto-add agent to workspace members
+			// Auto-add agent to workspace members. A conflict means the membership
+			// already exists, which is the one benign outcome — anything else (403,
+			// 404, 5xx, network) leaves an agent that is not a workspace member, so
+			// it must be surfaced rather than swallowed under a success toast.
 			try {
 				await api.workspaces.members.add(workspaceId, {
 					actor_id: agentId,
 					role: 'member',
 				})
-			} catch {
-				// workspace membership may already exist
+			} catch (err) {
+				const isDuplicate = err instanceof ApiError && (err.status === 409 || err.status === 400)
+				if (!isDuplicate) {
+					toast.error(
+						`Agent created, but adding it to the workspace failed: ${
+							err instanceof Error ? err.message : 'unknown error'
+						}`,
+					)
+					return
+				}
 			}
 			toast.success('Agent created')
 		} catch {
+			// The create itself failed. Allow a retry, and let the error surface
+			// through `createActor.error`, which AgentCreateForm renders inline.
 			isCreatedRef.current = false
 		}
 	}
 
 	const handleUpdate = (data: Record<string, unknown>) => {
-		updateActor.mutate({ id: agentId, data })
+		updateActor.mutate(
+			{ id: agentId, data },
+			{ onError: () => toast.error("Couldn't save that change") },
+		)
 	}
 
 	// Once created, render the full document editor (fetches full detail)

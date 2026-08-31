@@ -39,6 +39,23 @@ export function formatUsd(amount: number): string {
 }
 
 /**
+ * Says plainly that a figure is short. A failed usage query contributes nothing
+ * to the sum, so the total renders *lower* than reality — presenting it bare
+ * would be an affirmative false claim about money.
+ */
+function IncompleteUsageNotice({ usage }: { usage: WorkspaceModelUsage }) {
+	if (usage.failedAgentCount === 0) return null
+	const n = usage.failedAgentCount
+	return (
+		<output className="block text-xs text-muted-foreground">
+			{usage.isError
+				? "Couldn't load model usage. No figure is shown because none is known."
+				: `Couldn't load usage for ${n} agent${n === 1 ? '' : 's'} — the figures below are incomplete.`}
+		</output>
+	)
+}
+
+/**
  * The headline figure inside the plan banner (mockup 2803–2813) — total, period
  * and reset date. No meter: the "of $X included" denominator has no API field.
  */
@@ -50,7 +67,11 @@ export function BillingUsageSummary({ usage }: { usage: WorkspaceModelUsage }) {
 	return (
 		<div className="flex flex-wrap items-baseline gap-3">
 			<p className="min-w-0 flex-1 sm:min-w-[190px]">
-				{usage.hasUsage ? (
+				{usage.isError ? (
+					<span className="text-xs text-muted-foreground">
+						Model usage is unavailable right now.
+					</span>
+				) : usage.hasUsage ? (
 					<>
 						<span className="text-[27px] font-bold tabular-nums tracking-tight text-foreground">
 							{formatUsd(usage.totalCostUsd)}
@@ -66,6 +87,9 @@ export function BillingUsageSummary({ usage }: { usage: WorkspaceModelUsage }) {
 			<p className="text-xs text-muted-foreground sm:text-right">
 				since {DAY_FORMAT.format(usage.periodStart)} · resets {DAY_FORMAT.format(usage.resetsAt)}
 			</p>
+			<div className="w-full">
+				<IncompleteUsageNotice usage={usage} />
+			</div>
 		</div>
 	)
 }
@@ -81,11 +105,13 @@ export function BillingUsageDetails({ usage }: { usage: WorkspaceModelUsage }) {
 
 	const summary = usage.isLoading
 		? 'loading…'
-		: usage.hasUsage
-			? `${usage.rows.length} agent${usage.rows.length === 1 ? '' : 's'} · ${usage.totalSessions} session${
-					usage.totalSessions === 1 ? '' : 's'
-				}`
-			: 'no agent sessions this month'
+		: usage.isError
+			? 'usage unavailable'
+			: usage.hasUsage
+				? `${usage.rows.length} agent${usage.rows.length === 1 ? '' : 's'} · ${usage.totalSessions} session${
+						usage.totalSessions === 1 ? '' : 's'
+					}`
+				: 'no agent sessions this month'
 
 	return (
 		<Collapsible open={open} onOpenChange={setOpen} className="border-t border-border pt-4">
@@ -99,6 +125,9 @@ export function BillingUsageDetails({ usage }: { usage: WorkspaceModelUsage }) {
 				</span>
 			</CollapsibleTrigger>
 			<CollapsibleContent className="pt-4">
+				<div className="pb-3 empty:hidden">
+					<IncompleteUsageNotice usage={usage} />
+				</div>
 				{usage.hasUsage ? (
 					<div className="rounded-xl border border-border px-4">
 						{usage.rows.map((row) => (
@@ -115,7 +144,9 @@ export function BillingUsageDetails({ usage }: { usage: WorkspaceModelUsage }) {
 					</div>
 				) : (
 					<p className="rounded-xl border border-border bg-muted/30 px-4 py-4 text-xs text-muted-foreground">
-						No agent has finished a session this month, so there is nothing to break down yet.
+						{usage.isError
+							? "Couldn't load model usage, so there is nothing to break down. This is a loading failure, not an absence of usage."
+							: 'No agent has finished a session this month, so there is nothing to break down yet.'}
 					</p>
 				)}
 			</CollapsibleContent>

@@ -12,6 +12,7 @@ import type {
 } from '@/components/objects/data-table/display-panel'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
 import type { FieldDefinition } from '@/components/objects/field-value-input'
+import { LegacyObjectsPage } from '@/components/objects/legacy/objects-page'
 import { ListView, type ListViewHandle } from '@/components/objects/list/list-view'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { type FilterTabItem, FilterTabs } from '@/components/shared/filter-tabs'
@@ -21,6 +22,7 @@ import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useImportToast } from '@/hooks/use-imports'
 import { useNotifications, useRespondNotification } from '@/hooks/use-notifications'
 import { useBulkResultHandlers, useBulkUpdateObjects } from '@/hooks/use-objects'
@@ -38,12 +40,14 @@ import { api } from '@/lib/api'
 import type { DisplaySettingsBody, NotificationResponse, ObjectResponse } from '@/lib/api'
 import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
 import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
+import { MAX_CHAT_OBJECT_REFERENCES } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { getStatusColor } from '@/lib/constants'
 import {
 	DEFAULT_ORDER,
 	DEFAULT_SORT,
 	fromUrlSearch,
+	urlIsInDefaultShape as isUrlInDefaultShape,
 	toBoardParams,
 	toDisplaySettingsBody,
 	toListParams,
@@ -69,7 +73,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
-	component: ObjectsPage,
+	component: ObjectsRoute,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 	validateSearch: (search: Record<string, unknown>) => {
 		// Pass through dynamic `metadata.<field>` filter keys so they persist in
@@ -141,7 +145,14 @@ const PAGE_SIZE = 50
 const BOARD_PAGE_SIZE = 20
 const BOARD_MANUAL_SORT = 'boardOrder'
 
-function ObjectsPage() {
+// `new-design` boundary for the Objects list: the v2 page below, or the pre-v2
+// one vendored under `components/objects/legacy/`. The route's `validateSearch`
+// is deliberately shared — flags govern the visual layer only.
+function ObjectsRoute() {
+	return useFeatureFlag('new-design') ? <ObjectsPageV2 /> : <LegacyObjectsPage />
+}
+
+function ObjectsPageV2() {
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const searchParams = useSearch({ from: '/_authed/$workspaceId/objects/' })
@@ -726,26 +737,17 @@ function ObjectsPage() {
 	const hydratedTypesRef = useRef<Set<string>>(new Set())
 
 	const urlIsInDefaultShape = useMemo(
-		() =>
-			(!searchParams.sort || searchParams.sort === DEFAULT_SORT) &&
-			(!searchParams.order || searchParams.order === DEFAULT_ORDER) &&
-			(!searchParams.groupBy || searchParams.groupBy === 'status') &&
-			!searchParams.status &&
-			!searchParams.driver &&
-			Object.keys(metadataFilters).length === 0,
-		[
-			searchParams.sort,
-			searchParams.order,
-			searchParams.groupBy,
-			searchParams.status,
-			searchParams.driver,
-			metadataFilters,
-		],
+		() => isUrlInDefaultShape(searchParams, metadataFilters),
+		[searchParams, metadataFilters],
 	)
 
 	useEffect(() => {
 		if (hydratedTypesRef.current.has(displaySettingsKey)) return
-		if (!displaySettingsQuery.isSuccess) return
+		// A failed read is treated like "nothing persisted": there is no saved
+		// view to apply either way, and gating on `isSuccess` alone would leave
+		// the write-through effect disarmed for the rest of the session, so
+		// nothing the user changed afterwards would ever be saved.
+		if (!displaySettingsQuery.isSuccess && !displaySettingsQuery.isError) return
 		// Mark hydrated even if there are no persisted settings yet — that lets
 		// the write-through effect start tracking once the user makes their
 		// first change, without re-running this hydrate block.
@@ -803,6 +805,7 @@ function ObjectsPage() {
 	}, [
 		displaySettingsKey,
 		displaySettingsQuery.isSuccess,
+		displaySettingsQuery.isError,
 		displaySettingsQuery.data,
 		urlIsInDefaultShape,
 		updateSearch,
@@ -1139,11 +1142,25 @@ function ObjectsPage() {
 	const queryClient = useQueryClient()
 
 	// Single-object status advance from the board card's `→` affordance.
+	// The bulk endpoint reports per-row failures as HTTP 200 with
+	// `results:[{ok:false,error}]`, so `onError` alone never fires for them and
+	// the optimistic patch would sit there until `onSettled` refetched and
+	// snapped the card back with nothing said. Mirrors the drag path's check in
+	// `board-view.tsx` — a missing entry counts as a failure, since the server
+	// never confirmed this id.
 	const handleAdvanceStatus = useCallback(
 		(objectId: string, status: string) => {
 			bulkUpdate.mutate(
 				{ ids: [objectId], patch: { status } },
-				{ onError: () => toast.error('Failed to move object') },
+				{
+					onSuccess: (data) => {
+						const result = Array.isArray(data?.results)
+							? data.results.find((item) => item.id === objectId)
+							: undefined
+						if (!result?.ok) toast.error(result?.error ?? 'Failed to move object')
+					},
+					onError: () => toast.error('Failed to move object'),
+				},
 			)
 		},
 		[bulkUpdate],
@@ -1215,6 +1232,38 @@ function ObjectsPage() {
 	// resolve to an absolute URL for clipboard payloads but pass the path directly
 	// to window.open for new-tab navigation.
 	const objectPath = useCallback((id: string) => `/${workspaceId}/objects/${id}`, [workspaceId])
+
+	// The rows `Select all` is allowed to reach. Deliberately the *rendered* set,
+	// not `visibleObjects`: the Attention quick filter narrows what the list
+	// shows, and selecting past it would hand bulk actions rows the user can't
+	// see. Board has no such client-side filter, so its rendered set is its own.
+	const selectableObjects = effectiveView === 'board' ? boardInitialObjects : listObjects
+
+	const handleSelectAll = useCallback(() => {
+		setRowSelection(Object.fromEntries(selectableObjects.map((o) => [o.id, true])))
+	}, [selectableObjects])
+
+	// Hands the selection to a new chat as *references* rather than acting on it
+	// in place — `chats/new` reads `objectIds` as a comma-separated list.
+	//
+	// Trimmed here rather than at the far end: `Select all` will happily select
+	// more objects than the chat can resolve into chips, and a link that carries
+	// ids nothing will render is how the extras used to disappear without a
+	// word. Cut the list where it stops being deliverable, and say so.
+	const handleAskAgent = useCallback(() => {
+		if (selectedIds.length === 0) return
+		const carried = selectedIds.slice(0, MAX_CHAT_OBJECT_REFERENCES)
+		if (selectedIds.length > carried.length) {
+			toast.warning(
+				`Only the first ${carried.length} of ${selectedIds.length} selected objects were attached to the chat.`,
+			)
+		}
+		navigate({
+			to: '/$workspaceId/chats/new',
+			params: { workspaceId },
+			search: { objectIds: carried.join(',') },
+		})
+	}, [selectedIds, navigate, workspaceId])
 
 	// Selected objects we have loaded data for. Titles aren't available for rows
 	// outside the current pages, so copy-title actions warn when any selected id
@@ -1579,6 +1628,9 @@ function ObjectsPage() {
 			)}
 			<BulkActionBar
 				selectedCount={selectedIds.length}
+				totalCount={selectableObjects.length}
+				onSelectAll={handleSelectAll}
+				onAskAgent={handleAskAgent}
 				statusOptions={bulkStatusOptions}
 				ownerOptions={bulkOwnerOptions}
 				onStatusChange={handleBulkStatusChange}

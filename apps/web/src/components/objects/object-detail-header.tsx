@@ -12,10 +12,6 @@ import { OwnerSelect, StatusSelect } from './property-selects'
 interface ObjectDetailBarActionsProps {
 	object: ObjectResponse
 	workspaceId: string
-	statuses: string[]
-	members: MemberResponse[]
-	onStatusChange: (status: string) => void
-	onDriverChange: (driver: string | null) => void
 	onDeleteRequest: () => void
 	onArchiveRequest?: () => void
 	/** Opens/closes the properties drawer (mockup 1037). Rendered only when the
@@ -33,10 +29,6 @@ interface ObjectDetailBarActionsProps {
 export function ObjectDetailBarActions({
 	object,
 	workspaceId,
-	statuses,
-	members,
-	onStatusChange,
-	onDriverChange,
 	onDeleteRequest,
 	onArchiveRequest,
 	onTogglePropertiesRequest,
@@ -56,11 +48,6 @@ export function ObjectDetailBarActions({
 				workspaceId={workspaceId}
 				open={menuOpen}
 				onOpenChange={setMenuOpen}
-				statuses={statuses}
-				members={members}
-				currentDriverId={object.driver ?? null}
-				onStatusChange={onStatusChange}
-				onDriverChange={onDriverChange}
 			/>
 			{onTogglePropertiesRequest && (
 				<Button
@@ -125,7 +112,9 @@ export function ObjectDetailIdentity({
 	onDriverChange: (driver: string | null) => void
 	/** Wire this to make the title editable in place. Omitted by read-only
 	 *  hosts (the MCP-app embed), which keeps the plain heading. */
-	onTitleChange?: (title: string) => void
+	// May return a promise. If it rejects, the field is reopened with the
+	// user's draft intact rather than silently reverting to the old title.
+	onTitleChange?: (title: string) => unknown
 }) {
 	const Icon = typeIcons[object.type]
 	const typeColor = getTypeColor(object.type)
@@ -139,11 +128,31 @@ export function ObjectDetailIdentity({
 		if (!editingTitle) setTitleDraft(object.title ?? '')
 	}, [object.title, editingTitle])
 
+	// A route swap reuses this instance, and the effect above deliberately holds
+	// the draft while you are typing — so without this an in-flight edit would
+	// survive the swap and blur would commit the previous object's text onto the
+	// new one. Leaving edit mode as well means the swap lands on the heading.
+	const [trackedObjectId, setTrackedObjectId] = useState(object.id)
+	if (trackedObjectId !== object.id) {
+		setTrackedObjectId(object.id)
+		setTitleDraft(object.title ?? '')
+		setEditingTitle(false)
+	}
+
 	const commitTitle = () => {
 		setEditingTitle(false)
 		const next = titleDraft.trim()
-		if (next && next !== object.title) onTitleChange?.(next)
-		else setTitleDraft(object.title ?? '')
+		if (!next || next === object.title) {
+			setTitleDraft(object.title ?? '')
+			return
+		}
+		const result = onTitleChange?.(next)
+		if (result && typeof (result as Promise<unknown>).then === 'function') {
+			void (result as Promise<unknown>).catch(() => {
+				setTitleDraft(next)
+				setEditingTitle(true)
+			})
+		}
 	}
 
 	return (

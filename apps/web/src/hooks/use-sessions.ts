@@ -48,6 +48,22 @@ export function useWorkspaceSessions(
 	})
 }
 
+/**
+ * Every session for one agent, filtered server-side by `actor_id`. Agent
+ * detail must NOT derive its status or session list from the unpaged
+ * workspace-wide list: that returns only the 100 newest sessions across all
+ * agents, so on a busy workspace a given agent's runs fall off the page and
+ * the detail view renders "No sessions yet" for an agent that is actually
+ * running. Filtering at the API means one request regardless of workspace size.
+ */
+export function useActorSessions(actorId: string, workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.sessions.byActorAll(workspaceId, actorId),
+		queryFn: () => api.sessions.list(workspaceId, { actor_id: actorId, limit: '100' }),
+		enabled: !!actorId && !!workspaceId,
+	})
+}
+
 export function useCreateSession(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
@@ -140,6 +156,12 @@ export function useActiveSessionsForConversation(
 				conversation_id: conversationId as string,
 			}),
 		enabled: !!workspaceId && !!conversationId,
+		// The chat transcript derives its entire live state from this list —
+		// activity only renders for sessions cached as `running`. Relying on
+		// SSE invalidation alone meant one dropped connection froze the
+		// transcript until the user reloaded. Poll as a floor so the worst
+		// case is a few seconds of lag rather than a dead UI.
+		refetchInterval: 5000,
 	})
 }
 

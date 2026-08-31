@@ -13,11 +13,11 @@ import { Users } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/agents/')({
-	component: AgentsPage,
+	component: AgentsRoute,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-function AgentsPage() {
+function AgentsRoute() {
 	const { workspaceId } = useWorkspace()
 	const { data: actors, isLoading } = useActors(workspaceId)
 	const { data: sessions } = useWorkspaceSessions(workspaceId, { paged: true })

@@ -1,6 +1,6 @@
+import { TrialExpiredBanner } from '@/components/billing/trial-expired-banner'
 import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
-import { MobileNav } from '@/components/layout/mobile-nav'
 import { AppSidebar } from '@/components/layout/sidebar'
 import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
@@ -15,6 +15,7 @@ import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { CommandPaletteProvider } from '@/lib/command-palette-context'
 import { deriveConversationTitle } from '@/lib/conversation-title'
+import { setFaroUser } from '@/lib/faro'
 import { isHiddenRouteId, migrateLegacySidebarState, viewKeyFromRouteId } from '@/lib/nav-view-keys'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
@@ -72,6 +73,11 @@ function WorkspaceLayout() {
 			actor_type: actor.type,
 		})
 		setCapturingEnabled(shareUsage)
+		// Faro gets ids only — never the actor's email or the workspace name.
+		// Unlike PostHog this is not gated on the share-usage analytics toggle:
+		// it is crash reporting, the same category as Sentry, which is likewise
+		// ungated.
+		setFaroUser(actor.id, workspaceId)
 		void identifyForWorkspace(actor.id, anonymizeWorkspace)
 	}, [workspace, workspaceId, shareUsage, anonymizeWorkspace])
 
@@ -92,15 +98,20 @@ function WorkspaceLayout() {
 					<PendingCommentsProvider workspaceId={workspaceId}>
 						<PageHeaderProvider>
 							<ContentPushShell>
-								<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
+								<SidebarProvider
+									open={open}
+									onOpenChange={setOpen}
+									className="h-screen !min-h-0"
+									data-shell="v2"
+								>
 									<AppSidebar />
 									<SidebarInset className="min-w-0">
 										<Header />
+										<TrialExpiredBanner workspaceId={workspaceId} />
 										<MainScrollArea>
 											<Outlet />
 										</MainScrollArea>
 									</SidebarInset>
-									<MobileNav />
 								</SidebarProvider>
 							</ContentPushShell>
 						</PageHeaderProvider>
@@ -217,16 +228,14 @@ function ContentPushShell({ children }: { children: ReactNode }) {
  * own internal scroll region on the active card's thread) — the container
  * then clips instead of scrolling, so only that inner region scrolls.
  *
- * Mobile leaves `pb-20`/`scroll-pb-20` of space so the fixed `MobileNav`
- * bottom bar never covers the last row of content or a scroll-into-view
- * target; desktop resets both back to zero via `md:p-8`/`md:scroll-pb-0`.
+ * Padding steps up from `px-4 pt-4` on mobile to `p-8` from `md:` up.
  */
 function MainScrollArea({ children }: { children: ReactNode }) {
 	const { scrollLocked } = usePageHeader()
 	return (
 		<div
 			className={cn(
-				'flex flex-col flex-1 min-w-0 px-4 pb-20 pt-4 scroll-pb-20 md:p-8 md:scroll-pb-0',
+				'flex flex-col flex-1 min-w-0 px-4 pb-4 pt-4 md:p-8',
 				scrollLocked ? 'overflow-hidden' : 'overflow-auto',
 			)}
 			data-scroll-root

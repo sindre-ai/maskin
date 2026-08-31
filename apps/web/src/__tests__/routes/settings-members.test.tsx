@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockUseWorkspaceMembers = vi.fn()
 const mockUpdateRoleMutateAsync = vi.fn().mockResolvedValue({})
@@ -54,6 +54,12 @@ vi.mock('@/components/settings/human-detail-dialog', () => ({
 import { Route } from '@/routes/_authed/$workspaceId/settings/members'
 
 const MembersPage = (Route as unknown as { component: React.FC }).component
+
+// These specs cover the v2 branch of the `new-design` boundary, so they drive
+// the flag on through the test-only localStorage override.
+beforeEach(() => {
+	localStorage.setItem('ff:new-design', 'on')
+})
 
 describe('MembersPage', () => {
 	beforeEach(() => {

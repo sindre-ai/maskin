@@ -2,6 +2,25 @@
 const MAX_TITLE_LENGTH = 72
 /** Below this a word-boundary cut would leave a stub, so we cut mid-word instead. */
 const MIN_WORD_BOUNDARY = 40
+/**
+ * Shorter than this, a "sentence" is almost certainly an abbreviation we cut on
+ * by mistake ("Dr.", "e.g.") rather than a real one, so we keep the whole
+ * message instead of titling a chat `Dr.`.
+ */
+const MIN_SENTENCE_LENGTH = 12
+
+/**
+ * Matches up to and including the first sentence terminator that is actually
+ * ending a sentence — one followed by whitespace or the end of the message.
+ * Requiring the space is what keeps decimals and URLs intact: the `.` in
+ * `3.5` or `acme.com` is followed by a character, so it never terminates.
+ * Abbreviations ("Dr. Ruiz") do pass this test and are caught by
+ * MIN_SENTENCE_LENGTH below.
+ *
+ * `cleaned` has had its whitespace collapsed before this runs, so it holds no
+ * newlines and `.` matches every character in it.
+ */
+const FIRST_SENTENCE = /^.*?[.!?](?=\s|$)/
 
 /**
  * Titles a conversation from its first message, the way the mockup's chat list
@@ -21,11 +40,10 @@ export function deriveConversationTitle(message: string, fallback: string): stri
 	const cleaned = message.replace(/\s+/g, ' ').trim()
 	if (cleaned.length === 0) return fallback
 
-	// Up to and including the first sentence terminator. `[^.!?]+` can't match
-	// the empty string, so a message that opens with punctuation falls through
-	// to the whole cleaned string rather than producing an empty title.
-	const sentence = cleaned.match(/^[^.!?]+[.!?]?/)?.[0]?.trim()
-	const title = sentence && sentence.length > 0 ? sentence : cleaned
+	// A sentence too short to be one is discarded rather than shipped, so the
+	// title falls through to the whole (length-capped) message.
+	const sentence = cleaned.match(FIRST_SENTENCE)?.[0]?.trim()
+	const title = sentence && sentence.length >= MIN_SENTENCE_LENGTH ? sentence : cleaned
 	if (title.length <= MAX_TITLE_LENGTH) return title
 
 	const cut = title.slice(0, MAX_TITLE_LENGTH)

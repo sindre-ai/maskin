@@ -118,7 +118,7 @@ async function pickFromDisplayPanel(
 ) {
 	// The panel stays open between picks — only open it if it isn't up already.
 	if (!screen.queryByText(label)) {
-		await user.click(screen.getByRole('button', { name: /^Display/ }))
+		await user.click(screen.getByRole('button', { name: 'Display' }))
 	}
 	const row = screen.getByText(label)
 	// The picker row's first button is the dropdown trigger — the ordering row
@@ -258,26 +258,6 @@ describe('AgentsIndexView', () => {
 			const row = screen.getByRole('link').closest('li') as HTMLElement
 			expect(within(row).getByText('Agent')).toBeInTheDocument()
 		})
-
-		// Mockup 2327: rows are flat, separated by the quietest hairline in the
-		// palette. A bordered card around each group turned one column of agents
-		// into a stack of panels.
-		it('draws rows as an unframed column separated by the subtle hairline', () => {
-			mount([agentAda(), agentBrian()], [brianRunningSession()])
-			for (const link of screen.getAllByRole('link')) {
-				const row = link.closest('li') as HTMLElement
-				expect(row.className).toContain('border-border-subtle')
-				expect(row.parentElement?.className ?? '').not.toContain('border-border')
-			}
-		})
-
-		// Mockup 2337: a dot and a coloured word, not a filled plate.
-		it('renders the row status as a plate-less dot and label', () => {
-			mount([agentBrian()], [brianRunningSession()])
-			const status = screen.getByText('Running')
-			expect(status.className).toContain('text-status-in_progress-text')
-			expect(status.className).not.toContain('bg-status-in_progress-bg')
-		})
 	})
 
 	describe('Display menu', () => {
@@ -287,15 +267,9 @@ describe('AgentsIndexView', () => {
 			expect(screen.getByRole('link', { name: /Brian/ })).toBeInTheDocument()
 			expect(screen.getByRole('link', { name: /Ada/ })).toBeInTheDocument()
 
-			await user.click(screen.getByRole('button', { name: /^Display/ }))
-			// The panel's Status row expands into its buckets (mockup 2304). The
-			// chip strip's own Working control carries its count in the name, so
-			// the bare 'Working' here can only be the panel option.
-			const statusRow = screen.getByRole('button', { name: 'Status filter, All' })
-			await user.click(statusRow)
-			await user.click(
-				within(statusRow.parentElement as HTMLElement).getByRole('button', { name: /^Working/ }),
-			)
+			await user.click(screen.getByRole('button', { name: 'Display' }))
+			await user.click(screen.getByRole('button', { name: /\+ status/i }))
+			await user.click(screen.getByRole('menuitemcheckbox', { name: 'working' }))
 
 			expect(screen.getByRole('link', { name: /Brian/ })).toBeInTheDocument()
 			expect(screen.queryByRole('link', { name: /Ada/ })).not.toBeInTheDocument()
@@ -313,7 +287,7 @@ describe('AgentsIndexView', () => {
 			await user.click(within(strip).getByRole('button', { name: 'Working (1)' }))
 			expect(screen.queryByRole('link', { name: /Ada/ })).not.toBeInTheDocument()
 
-			await user.click(screen.getByRole('button', { name: /^Display/ }))
+			await user.click(screen.getByRole('button', { name: 'Display' }))
 			await pickFromDisplayPanel(user, 'Group by', 'Kind')
 			expect(screen.getByRole('heading', { name: 'Architect' })).toBeInTheDocument()
 
@@ -332,7 +306,7 @@ describe('AgentsIndexView', () => {
 			const user = userEvent.setup()
 			mount([agentAda(), agentBrian(), agentCy()], [brianRunningSession()])
 
-			await user.click(screen.getByRole('button', { name: /^Display/ }))
+			await user.click(screen.getByRole('button', { name: 'Display' }))
 			await pickFromDisplayPanel(user, 'Group by', 'Kind')
 
 			// Ada → 'Researcher', Brian → 'Architect', Cy → 'Reviewer'
@@ -352,7 +326,7 @@ describe('AgentsIndexView', () => {
 
 			// Ada has 0 sessions, Brian has 1 — first make the ordering
 			// visible by collapsing grouping, then sort by Sessions.
-			await user.click(screen.getByRole('button', { name: /^Display/ }))
+			await user.click(screen.getByRole('button', { name: 'Display' }))
 			await pickFromDisplayPanel(user, 'Group by', 'None')
 			await pickFromDisplayPanel(user, 'Sort by', 'Sessions')
 
@@ -370,7 +344,7 @@ describe('AgentsIndexView', () => {
 			const user = userEvent.setup()
 			mount([agentAda(), agentBrian(), agentCy()], [brianRunningSession()])
 
-			await user.click(screen.getByRole('button', { name: /^Display/ }))
+			await user.click(screen.getByRole('button', { name: 'Display' }))
 			await pickFromDisplayPanel(user, 'Group by', 'None')
 			await pickFromDisplayPanel(user, 'Sort by', 'Status')
 

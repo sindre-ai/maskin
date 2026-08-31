@@ -1,9 +1,11 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { FormError } from '@/components/shared/form-error'
 import { Button } from '@/components/ui/button'
 import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
+	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
@@ -16,12 +18,18 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
+import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useActor, useUpdateActor } from '@/hooks/use-actors'
-import { useUpdateWorkspaceMemberRole, useWorkspaceMembers } from '@/hooks/use-workspaces'
+import {
+	useRemoveWorkspaceMember,
+	useUpdateWorkspaceMemberRole,
+	useWorkspaceMembers,
+} from '@/hooks/use-workspaces'
+import { ApiError } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
+import { useWorkspace } from '@/lib/workspace-context'
 import { useEffect, useState } from 'react'
-
-const ROLE_OPTIONS = ['owner', 'admin', 'member'] as const
 
 interface HumanDetailDialogProps {
 	actorId: string | null
@@ -30,6 +38,11 @@ interface HumanDetailDialogProps {
 	onOpenChange: (open: boolean) => void
 }
 
+// 'owner' is intentionally absent: billing ownership moves through
+// POST /workspaces/:id/transfer-ownership, which enforces the plan's ownership
+// cap. The API rejects role='owner' here, so offering it would only ever 400.
+const ROLE_OPTIONS = ['admin', 'member'] as const
+
 export function HumanDetailDialog({
 	actorId,
 	workspaceId,
@@ -37,21 +50,30 @@ export function HumanDetailDialog({
 	onOpenChange,
 }: HumanDetailDialogProps) {
 	const { data: actor } = useActor(actorId ?? '')
+	const updateActor = useUpdateActor(workspaceId)
+	const removeMember = useRemoveWorkspaceMember(workspaceId)
+	const updateRole = useUpdateWorkspaceMemberRole(workspaceId)
 	const { data: members } = useWorkspaceMembers(workspaceId)
 	const member = members?.find((m) => m.actorId === actorId)
-	const updateActor = useUpdateActor(workspaceId)
-	const updateRole = useUpdateWorkspaceMemberRole(workspaceId)
+	const { workspace } = useWorkspace()
 
 	const [descriptionDraft, setDescriptionDraft] = useState('')
 	const [systemPromptDraft, setSystemPromptDraft] = useState('')
+	const [confirmingRemove, setConfirmingRemove] = useState(false)
 	const [roleError, setRoleError] = useState<string | null>(null)
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: actorId is the reset trigger — drafts and the role error must clear when the dialog switches actors, even though the effect body never reads actorId.
 	useEffect(() => {
 		setDescriptionDraft(actor?.description ?? '')
 		setSystemPromptDraft(actor?.system_prompt ?? '')
-		setRoleError(null)
-	}, [actorId, actor?.description, actor?.system_prompt])
+	}, [actor?.description, actor?.system_prompt])
+
+	useEffect(() => {
+		if (!open) {
+			setConfirmingRemove(false)
+			setRoleError(null)
+			removeMember.reset()
+		}
+	}, [open, removeMember.reset])
 
 	if (!actorId) return null
 
@@ -79,6 +101,56 @@ export function HumanDetailDialog({
 		updateActor.mutate({ id: actor.id, data }, { onSuccess: () => onOpenChange(false) })
 	}
 
+	const isSelf = getStoredActor()?.id === actorId
+	const isBillingOwner = workspace.billingOwnerId === actorId
+	const removeLabel = isSelf ? 'Leave workspace' : 'Remove from workspace'
+
+	const handleRemove = () => {
+		removeMember.mutate(actorId, { onSuccess: () => onOpenChange(false) })
+	}
+
+	if (confirmingRemove) {
+		const errorMessage =
+			removeMember.error instanceof ApiError && removeMember.error.code === 'CONFLICT'
+				? 'This person is the billing owner — transfer ownership to another member before removing them.'
+				: removeMember.error?.message
+
+		return (
+			<Dialog open={open} onOpenChange={onOpenChange}>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>{removeLabel}?</DialogTitle>
+						<DialogDescription>
+							{isSelf
+								? `You'll lose access to this workspace immediately.`
+								: `${actor?.name ?? 'This person'} will lose access to this workspace immediately.`}
+						</DialogDescription>
+					</DialogHeader>
+					{errorMessage && <FormError error={errorMessage} />}
+					<DialogFooter className="gap-2">
+						<Button
+							variant="ghost"
+							onClick={() => setConfirmingRemove(false)}
+							disabled={removeMember.isPending}
+						>
+							Cancel
+						</Button>
+						<Button variant="destructive" onClick={handleRemove} disabled={removeMember.isPending}>
+							{removeMember.isPending ? (
+								<>
+									<Spinner className="h-3 w-3" />
+									Removing…
+								</>
+							) : (
+								removeLabel
+							)}
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+		)
+	}
+
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
@@ -93,7 +165,7 @@ export function HumanDetailDialog({
 					</DialogDescription>
 				</DialogHeader>
 				<div className="space-y-4">
-					{member && (
+					{member && member.role !== 'owner' && (
 						<div>
 							<Label htmlFor="human-role">Role</Label>
 							<Select
@@ -148,14 +220,32 @@ export function HumanDetailDialog({
 							comment.
 						</p>
 					</div>
+					{isBillingOwner && (
+						<p className="text-xs text-muted-foreground">
+							{isSelf ? "You're" : `${actor?.name ?? 'This person'} is`} the billing owner for this
+							workspace — transfer ownership to another member before{' '}
+							{isSelf ? 'leaving' : 'removing them'}.
+						</p>
+					)}
 				</div>
-				<div className="flex justify-end gap-2">
-					<Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-						Cancel
+				<div className="flex justify-between gap-2">
+					<Button
+						type="button"
+						variant="ghost"
+						className="text-error hover:text-error"
+						disabled={isBillingOwner}
+						onClick={() => setConfirmingRemove(true)}
+					>
+						{removeLabel}
 					</Button>
-					<Button type="button" onClick={handleSave} disabled={updateActor.isPending}>
-						{updateActor.isPending ? 'Saving…' : 'Save'}
-					</Button>
+					<div className="flex gap-2">
+						<Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+							Cancel
+						</Button>
+						<Button type="button" onClick={handleSave} disabled={updateActor.isPending}>
+							{updateActor.isPending ? 'Saving…' : 'Save'}
+						</Button>
+					</div>
 				</div>
 			</DialogContent>
 		</Dialog>

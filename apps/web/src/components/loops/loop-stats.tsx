@@ -1,12 +1,13 @@
 import type { LoopSummary } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatLoopDurationMs } from '@/lib/loop-duration'
+import { isLiveLoopPill } from './loop-pill'
 
 export function LoopStats({ loop }: { loop: LoopSummary }) {
 	const isWaiting = loop.pill === 'waiting_on_you'
 	const inProgressColor = isWaiting
 		? 'text-warning'
-		: loop.pill === 'running'
+		: isLiveLoopPill(loop.pill)
 			? 'text-success'
 			: 'text-foreground'
 	const median = formatLoopDurationMs(loop.medianTimeToCloseMs)
@@ -18,7 +19,7 @@ export function LoopStats({ loop }: { loop: LoopSummary }) {
 			value: String(loop.inProgressCount),
 			label: 'in progress',
 			className: inProgressColor,
-			live: loop.pill === 'running' && loop.inProgressCount > 0,
+			live: isLiveLoopPill(loop.pill) && loop.inProgressCount > 0,
 		},
 		{ value: String(loop.closedCount), label: 'closed' },
 		{ value: median ?? '—', label: 'median to close' },

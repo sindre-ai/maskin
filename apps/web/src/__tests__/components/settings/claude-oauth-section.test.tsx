@@ -32,6 +32,7 @@ const mockWorkspaceWithRole = {
 	name: 'Test Workspace',
 	role: 'owner' as const,
 	settings: {},
+	enterprise: true,
 	createdBy: 'actor-1',
 	createdAt: new Date().toISOString(),
 	updatedAt: new Date().toISOString(),

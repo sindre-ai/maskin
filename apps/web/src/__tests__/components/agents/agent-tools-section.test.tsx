@@ -50,12 +50,10 @@ describe('AgentToolsSection', () => {
 		expect(screen.getByText('https://mcp.linear.app/mcp')).toBeInTheDocument()
 		expect(screen.getByText('npx -y @modelcontextprotocol/server-github')).toBeInTheDocument()
 
-		// Glyphs are lucide SVGs rendered inside each row; each transport draws its
-		// own. The Add Browser control carries a globe too, so scope the count to
-		// the rows rather than the whole section.
+		// Glyphs are lucide SVGs rendered inside each row; the pair count matches.
 		const region = screen.getByRole('region', { name: 'Tools' })
+		expect(region.querySelectorAll('svg.lucide-globe')).toHaveLength(1)
 		expect(region.querySelectorAll('svg.lucide-terminal')).toHaveLength(1)
-		expect(region.querySelectorAll('svg.lucide-globe').length).toBeGreaterThanOrEqual(1)
 	})
 
 	it('reads the empty state and shows zero count when the agent has no MCP servers', () => {
@@ -63,14 +61,10 @@ describe('AgentToolsSection', () => {
 		render(<AgentToolsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
 
 		expect(screen.getByLabelText('0 tools attached')).toHaveTextContent('· 0')
-		expect(
-			screen.getByText(/No MCP servers configured\. Add servers to give this agent access/),
-		).toBeInTheDocument()
+		expect(screen.getByText('No MCP servers configured.')).toBeInTheDocument()
 	})
 
-	// v2 removed the Manage toggle — the section is editable at rest, so the add
-	// and per-row controls are reachable without a mode switch (mockup 2470–2488).
-	it('is editable at rest and hands edits back through useUpdateActor', async () => {
+	it('flips into managing mode on click and hands edits back through useUpdateActor', async () => {
 		const agent = buildActorResponse({
 			id: 'agent-tools-manage',
 			type: 'agent',
@@ -88,17 +82,17 @@ describe('AgentToolsSection', () => {
 
 		render(<AgentToolsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
 
-		// No mode switch to flip; the add controls are already on the page.
-		expect(screen.queryByRole('button', { name: 'Manage' })).not.toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /Add Server/ })).toBeInTheDocument()
+		// Manage flips read-only -> editable.
+		await userEvent.click(screen.getByRole('button', { name: 'Manage' }))
+		expect(screen.getByRole('button', { name: 'Done' })).toHaveAttribute('aria-pressed', 'true')
 
-		// A two-step confirm delete lives inside ServerCard.
+		// Delete flow becomes reachable — a two-step confirm delete lives inside ServerCard.
 		await userEvent.click(screen.getByRole('button', { name: 'Delete server' }))
 		await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
 
-		expect(updateMutate).toHaveBeenCalledWith({
-			id: 'agent-tools-manage',
-			data: { tools: { mcpServers: {} } },
-		})
+		expect(updateMutate).toHaveBeenCalledWith(
+			{ id: 'agent-tools-manage', data: { tools: { mcpServers: {} } } },
+			expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
+		)
 	})
 })

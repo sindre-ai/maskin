@@ -382,6 +382,49 @@ describe('ListView', () => {
 		expect(observedNodes.length).toBe(1)
 	})
 
+	// Regression: the populated and empty branches each render their OWN
+	// sentinel node, so when the rendered set narrows to zero (client-side
+	// Attention filtering) the observer must re-arm on the node that actually
+	// mounted. Without `isEmpty` in the effect's dep array the observer keeps
+	// watching the detached node and paging stalls for good. Rendering empty
+	// from the first commit cannot catch this — the transition is the bug.
+	it('re-arms the infinite-scroll observer when the rendered set narrows to empty', () => {
+		observedNodes.length = 0
+		// Stable identity: a fresh fetchNextPage each render would re-run the
+		// effect on its own and mask the missing dep.
+		const fetchNextPage = vi.fn()
+		const props = {
+			workspaceId: 'ws-1',
+			actors: [],
+			columnVisibility: {} as VisibilityState,
+			hasActiveFilters: true,
+			emptyTitle: 'No bets waiting on you right now.',
+			hasNextPage: true,
+			fetchNextPage,
+		}
+
+		const { rerender } = renderListView({
+			...props,
+			data: [buildObjectResponse({ id: 'o1' })],
+		})
+		expect(observedNodes.length).toBe(1)
+		expect(observedNodes[0]?.isConnected).toBe(true)
+
+		rerender(<StatefulListViewHarness {...props} data={[]} />)
+
+		expect(screen.getByText('No bets waiting on you right now.')).toBeInTheDocument()
+		// The effect re-ran on the transition rather than leaving the observer
+		// armed from the populated render.
+		expect(observedNodes.length).toBe(2)
+		// Whatever node it re-armed on is the sentinel that is actually live in
+		// the DOM — this is the guarantee that survives a markup change, even
+		// when React happens to reconcile the two branches onto one host node.
+		// Whatever node it re-armed on is the sentinel that is actually live in
+		// the DOM — the guarantee that survives a markup change, even when React
+		// happens to reconcile both branches onto a single host node.
+		expect(observedNodes[1]?.isConnected).toBe(true)
+	})
+
 	// Mockup 995: the group a row belongs to stays readable while its rows scroll.
 	it('pins the group header to the top of the scroller', () => {
 		renderListView({

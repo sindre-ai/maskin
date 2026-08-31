@@ -1,108 +1,228 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-
-// The real getStripeClient() constructs the 'stripe' SDK with STRIPE_SECRET_KEY,
-// so mock the constructor (not the module function — resolvePlan calls
-// getStripeClient through its own module binding, which a spy cannot intercept).
-const { retrievePriceMock } = vi.hoisted(() => ({
-	retrievePriceMock: vi.fn(),
-}))
-
-vi.mock('stripe', () => ({
-	default: class {
-		prices = { retrieve: retrievePriceMock }
-	},
-}))
-
+import type Stripe from 'stripe'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-	FLAT_PLAN,
-	getPublishableKey,
-	isTestMode,
-	resetStripeClient,
-	resolvePlan,
+	CREDIT_TOPUP_METADATA_KIND,
+	createCheckoutSession,
+	createCreditCheckoutSession,
+	hardCapForPlan,
+	isHandledStripeEvent,
+	mapSubscriptionStatus,
+	planForPriceId,
+	priceIdForPlan,
+	priceIdFromSubscription,
+	readStripeEnv,
+	resetStripeClientForTests,
+	resolveWorkspaceIdFromEvent,
 } from '../../lib/stripe'
 
+const VALID_ENV = {
+	STRIPE_SECRET_KEY: 'sk_test_x',
+	STRIPE_WEBHOOK_SECRET: 'whsec_x',
+	STRIPE_PRICE_PRO: 'price_pro',
+	STRIPE_PRICE_TEAM: 'price_team',
+	MASKIN_PRO_HARD_CAP_USD_CENTS: '2000',
+	MASKIN_TEAM_HARD_CAP_USD_CENTS: '20000',
+}
+
+beforeEach(() => {
+	resetStripeClientForTests()
+})
+
 afterEach(() => {
-	retrievePriceMock.mockReset()
-	vi.unstubAllEnvs()
-	resetStripeClient()
+	vi.restoreAllMocks()
 })
 
-describe('resolvePlan', () => {
-	it('falls back to the flat plan with a null priceId when Stripe is unconfigured', async () => {
-		vi.stubEnv('STRIPE_SECRET_KEY', '')
-		vi.stubEnv('STRIPE_PRICE_ID', '')
-
-		const plan = await resolvePlan()
-		expect(plan.planId).toBe(FLAT_PLAN.planId)
-		expect(plan.priceCents).toBe(FLAT_PLAN.priceCents)
-		expect(plan.currency).toBe(FLAT_PLAN.currency)
-		expect(plan.priceId).toBeNull()
-		expect(retrievePriceMock).not.toHaveBeenCalled()
+describe('readStripeEnv', () => {
+	it('parses a valid env block', () => {
+		const env = readStripeEnv(VALID_ENV)
+		expect(env.pricePro).toBe('price_pro')
+		expect(env.proHardCapUsdCents).toBe(2_000)
+		expect(env.teamHardCapUsdCents).toBe(20_000)
 	})
 
-	it('resolves the plan from the Stripe Price when configured', async () => {
-		vi.stubEnv('STRIPE_SECRET_KEY', 'sk_test_1')
-		vi.stubEnv('STRIPE_PRICE_ID', 'price_test_1')
-		retrievePriceMock.mockResolvedValue({
-			id: 'price_test_1',
-			nickname: 'Pro Plus',
-			unit_amount: 24000,
-			currency: 'usd',
-		})
-
-		const plan = await resolvePlan()
-		expect(retrievePriceMock).toHaveBeenCalledWith('price_test_1')
-		expect(plan).toEqual({
-			planId: 'pro-plus',
-			planLabel: 'Pro Plus',
-			priceCents: 24000,
-			currency: 'usd',
-			priceId: 'price_test_1',
-		})
+	it('throws when a required var is missing', () => {
+		const { STRIPE_PRICE_TEAM: _omit, ...missing } = VALID_ENV
+		expect(() => readStripeEnv(missing)).toThrow(/STRIPE_PRICE_TEAM/)
 	})
 
-	it('never charges the placeholder when the configured price cannot be resolved', async () => {
-		vi.stubEnv('STRIPE_SECRET_KEY', 'sk_test_1')
-		vi.stubEnv('STRIPE_PRICE_ID', 'price_test_missing')
-		retrievePriceMock.mockRejectedValue(new Error('no such price'))
-
-		const plan = await resolvePlan()
-		expect(plan.priceCents).toBe(FLAT_PLAN.priceCents)
-		expect(plan.priceId).toBeNull()
+	it('throws when a cap is non-numeric', () => {
+		expect(() => readStripeEnv({ ...VALID_ENV, MASKIN_PRO_HARD_CAP_USD_CENTS: 'abc' })).toThrow(
+			/positive integer string/,
+		)
 	})
 
-	it('treats a price without a unit amount as unresolvable', async () => {
-		vi.stubEnv('STRIPE_SECRET_KEY', 'sk_test_1')
-		vi.stubEnv('STRIPE_PRICE_ID', 'price_test_recurring')
-		retrievePriceMock.mockResolvedValue({
-			id: 'price_test_recurring',
-			nickname: 'Recurring',
-			unit_amount: null,
-			currency: 'usd',
-		})
-
-		const plan = await resolvePlan()
-		expect(plan.priceId).toBeNull()
+	it('throws when a cap is zero or negative', () => {
+		expect(() => readStripeEnv({ ...VALID_ENV, MASKIN_TEAM_HARD_CAP_USD_CENTS: '0' })).toThrow(
+			/positive integer string/,
+		)
 	})
 })
 
-describe('isTestMode / getPublishableKey', () => {
-	it('detects test-mode publishable keys', () => {
-		expect(isTestMode('pk_test_123')).toBe(true)
-		expect(isTestMode('pk_live_123')).toBe(false)
-		expect(isTestMode(null)).toBe(false)
-		expect(isTestMode('')).toBe(false)
+describe('priceIdForPlan / planForPriceId / hardCapForPlan', () => {
+	const env = readStripeEnv(VALID_ENV)
+
+	it('round-trips plan ↔ price id', () => {
+		expect(priceIdForPlan('pro', env)).toBe('price_pro')
+		expect(priceIdForPlan('team', env)).toBe('price_team')
+		expect(planForPriceId('price_pro', env)).toBe('pro')
+		expect(planForPriceId('price_team', env)).toBe('team')
 	})
 
-	it('reads the publishable key from the environment', () => {
-		vi.stubEnv('STRIPE_PUBLISHABLE_KEY', 'pk_test_abc')
-		expect(getPublishableKey()).toBe('pk_test_abc')
+	it('returns null for an unknown price id', () => {
+		expect(planForPriceId('price_unknown', env)).toBeNull()
 	})
 
-	it('returns null when the publishable key is unset or blank', () => {
-		vi.stubEnv('STRIPE_PUBLISHABLE_KEY', '')
-		expect(getPublishableKey()).toBeNull()
-		vi.stubEnv('STRIPE_PUBLISHABLE_KEY', '   ')
-		expect(getPublishableKey()).toBeNull()
+	it('returns the configured USD-cent cap for each plan', () => {
+		expect(hardCapForPlan('pro', env)).toBe(2_000)
+		expect(hardCapForPlan('team', env)).toBe(20_000)
+	})
+})
+
+describe('isHandledStripeEvent', () => {
+	it('accepts the six events we care about', () => {
+		const accepted = [
+			'checkout.session.completed',
+			'customer.subscription.created',
+			'customer.subscription.updated',
+			'customer.subscription.deleted',
+			'invoice.paid',
+			'invoice.payment_failed',
+		]
+		for (const t of accepted) expect(isHandledStripeEvent(t)).toBe(true)
+	})
+
+	it('rejects events outside the allowlist', () => {
+		expect(isHandledStripeEvent('charge.succeeded')).toBe(false)
+		expect(isHandledStripeEvent('customer.created')).toBe(false)
+	})
+})
+
+describe('mapSubscriptionStatus', () => {
+	it.each([
+		['active', 'active'],
+		['trialing', 'active'],
+		['past_due', 'past_due'],
+		['unpaid', 'past_due'],
+		['canceled', 'canceled'],
+		['incomplete_expired', 'canceled'],
+		['incomplete', 'incomplete'],
+		['paused', 'incomplete'],
+	] as const)('maps stripe status %s → %s', (stripeStatus, expected) => {
+		expect(mapSubscriptionStatus(stripeStatus as Stripe.Subscription.Status)).toBe(expected)
+	})
+})
+
+describe('resolveWorkspaceIdFromEvent', () => {
+	it('reads client_reference_id off a checkout.session.completed', () => {
+		const event = {
+			type: 'checkout.session.completed',
+			data: { object: { client_reference_id: 'ws-1', metadata: null } },
+		} as unknown as Stripe.Event
+		expect(resolveWorkspaceIdFromEvent(event)).toBe('ws-1')
+	})
+
+	it('falls back to metadata.workspace_id on subscription events', () => {
+		const event = {
+			type: 'customer.subscription.updated',
+			data: { object: { metadata: { workspace_id: 'ws-2' } } },
+		} as unknown as Stripe.Event
+		expect(resolveWorkspaceIdFromEvent(event)).toBe('ws-2')
+	})
+
+	it('returns null when no link is present', () => {
+		const event = {
+			type: 'invoice.paid',
+			data: { object: { metadata: null } },
+		} as unknown as Stripe.Event
+		expect(resolveWorkspaceIdFromEvent(event)).toBeNull()
+	})
+})
+
+describe('priceIdFromSubscription', () => {
+	it('extracts the first item price id', () => {
+		const sub = {
+			items: { data: [{ price: { id: 'price_pro' } }] },
+		} as unknown as Stripe.Subscription
+		expect(priceIdFromSubscription(sub)).toBe('price_pro')
+	})
+
+	it('returns null when items are empty', () => {
+		const sub = { items: { data: [] } } as unknown as Stripe.Subscription
+		expect(priceIdFromSubscription(sub)).toBeNull()
+	})
+})
+
+describe('createCheckoutSession', () => {
+	const env = readStripeEnv(VALID_ENV)
+
+	it('builds subscription-mode params with the workspace as client_reference_id', async () => {
+		const create = vi
+			.fn()
+			.mockResolvedValue({ id: 'cs_1', url: 'https://stripe.test/checkout/cs_1' })
+		const stripe = { checkout: { sessions: { create } } } as unknown as Stripe
+		const session = await createCheckoutSession(
+			stripe,
+			{
+				workspaceId: 'ws-1',
+				plan: 'pro',
+				successUrl: 'https://app.test/success',
+				cancelUrl: 'https://app.test/cancel',
+			},
+			env,
+		)
+		expect(session.id).toBe('cs_1')
+		expect(create).toHaveBeenCalledTimes(1)
+		const params = create.mock.calls[0][0] as Stripe.Checkout.SessionCreateParams
+		expect(params.mode).toBe('subscription')
+		expect(params.client_reference_id).toBe('ws-1')
+		expect(params.metadata?.workspace_id).toBe('ws-1')
+		expect(params.line_items).toEqual([{ price: 'price_pro', quantity: 1 }])
+	})
+
+	it('reuses an existing Stripe customer when one is supplied', async () => {
+		const create = vi.fn().mockResolvedValue({ id: 'cs_2', url: 'https://stripe.test/cs_2' })
+		const stripe = { checkout: { sessions: { create } } } as unknown as Stripe
+		await createCheckoutSession(
+			stripe,
+			{
+				workspaceId: 'ws-1',
+				plan: 'team',
+				successUrl: 'https://app.test/success',
+				cancelUrl: 'https://app.test/cancel',
+				existingCustomerId: 'cus_existing',
+			},
+			env,
+		)
+		const params = create.mock.calls[0][0] as Stripe.Checkout.SessionCreateParams
+		expect(params.customer).toBe('cus_existing')
+		expect(params.customer_creation).toBeUndefined()
+	})
+})
+
+describe('createCreditCheckoutSession', () => {
+	it('builds a one-time payment-mode session with dynamic price_data', async () => {
+		const create = vi
+			.fn()
+			.mockResolvedValue({ id: 'cs_credit_1', url: 'https://stripe.test/checkout/cs_credit_1' })
+		const stripe = { checkout: { sessions: { create } } } as unknown as Stripe
+		const session = await createCreditCheckoutSession(stripe, {
+			workspaceId: 'ws-1',
+			amountUsdCents: 2_500,
+			successUrl: 'https://app.test/success',
+			cancelUrl: 'https://app.test/cancel',
+			existingCustomerId: 'cus_existing',
+		})
+		expect(session.id).toBe('cs_credit_1')
+		expect(create).toHaveBeenCalledTimes(1)
+		const params = create.mock.calls[0]?.[0] as Stripe.Checkout.SessionCreateParams
+		expect(params.mode).toBe('payment')
+		expect(params.customer).toBe('cus_existing')
+		expect(params.client_reference_id).toBe('ws-1')
+		expect(params.metadata?.kind).toBe(CREDIT_TOPUP_METADATA_KIND)
+		expect(params.metadata?.amount_usd_cents).toBe('2500')
+		const lineItem = params.line_items?.[0] as Stripe.Checkout.SessionCreateParams.LineItem
+		expect(lineItem.quantity).toBe(1)
+		expect(lineItem.price_data?.unit_amount).toBe(2_500)
+		expect(lineItem.price_data?.currency).toBe('usd')
 	})
 })

@@ -94,7 +94,6 @@
 	--color-destructive: var(--destructive);
 	--color-destructive-foreground: var(--destructive-foreground);
 	--color-border: var(--border);
-	--color-border-subtle: var(--border-subtle);
 	--color-border-strong: var(--border-strong);
 	--color-border-hover: var(--border-hover);
 	--color-input: var(--input);
@@ -111,6 +110,9 @@
 	--color-brand-subtle-foreground: var(--brand-subtle-foreground);
 	--color-ask-surface: var(--ask-surface);
 	--color-ask-border: var(--ask-border);
+
+	/* The quieter half of a two-pane split (the chats index column). */
+	--color-surface-sunken: var(--surface-sunken);
 
 	/* Today's brief — the one deliberately inverted surface in the light feed. */
 	--color-brief-surface: var(--brief-surface);
@@ -285,10 +287,6 @@
 	--destructive-foreground: #ffffff;
 
 	--border: #e4e4e7;
-	/* The quietest rule in v2 — the row-to-row hairline inside a long list,
-	   softer than --border so a list of rows reads as one block rather than a
-	   stack of cards (mockup 2327's `border-bottom:1px solid #f7f7f8`). */
-	--border-subtle: #f7f7f8;
 	--border-strong: #c4c4cc;
 	--border-hover: #c4c4cc;
 	--input: #e4e4e7;
@@ -308,6 +306,12 @@
 	/* v2 ask banner — warm parchment surface, semantically distinct from brand-subtle. */
 	--ask-surface: #fffdf7;
 	--ask-border: #f0e6d2;
+
+	/* The index column of a two-pane screen — the chats list beside an open
+	   thread. One notch off --background so the pane reads as the quieter half
+	   of the split without becoming a card (mockup 273's `#fcfcfd`). Distinct
+	   from --sidebar, which is the app-wide nav rail. */
+	--surface-sunken: #fcfcfd;
 
 	/* Today's brief card — zinc-700, the mockup's one inverted block in the
 	   light feed (Feed v4 line 108). Dark mode drops it to zinc-800 so it still
@@ -425,7 +429,6 @@
 	--destructive-foreground: #18181b;
 
 	--border: #27272a;
-	--border-subtle: #212124;
 	--border-strong: #3f3f46;
 	--border-hover: #3f3f46;
 	--input: #27272a;
@@ -441,6 +444,10 @@
 	/* v2 ask banner — warm parchment surface, dark derived by cooling the warm ramp one stop. */
 	--ask-surface: #1c1a14;
 	--ask-border: #3a2d1e;
+
+	/* Dark keeps the same relationship — one notch off --background (#09090b),
+	   still below --card so the split reads the same way round. */
+	--surface-sunken: #0c0c0e;
 
 	--brief-surface: #27272a;
 	--brief-surface-hover: #3f3f46;
@@ -608,8 +615,7 @@
 
 	/* Settings section label — the mockup's other uppercase label, used only on
 	   the Settings surface ("WORKSPACE NAME", "APPEARANCE", "PRIVACY & DATA",
-	   "PLANS", "PAYMENT METHOD", "BILLING DETAILS", "INVOICES", mockup 2697,
-	   2704, 2710, 2789, 2864, 2881, 2891). It is the body sans at 11px with
+	   mockup 2697, 2704, 2710). It is the body sans at 11px with
 	   near-flat tracking, not `.eyebrow`'s 8px mono — Settings labels sit above
 	   full-width form blocks and need to read as headings, not micro-captions. */
 	.settings-label {

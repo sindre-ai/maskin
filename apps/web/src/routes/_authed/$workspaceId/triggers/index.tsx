@@ -1,4 +1,5 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { RouteError } from '@/components/shared/route-error'
+import { Navigate, createFileRoute, useParams } from '@tanstack/react-router'
 
 /**
  * v2 folds triggers into Loops: the Loops list renders every standalone trigger
@@ -9,7 +10,11 @@ import { createFileRoute, redirect } from '@tanstack/react-router'
  * `/{ws}/triggers/{id}` stays fully mounted.
  */
 export const Route = createFileRoute('/_authed/$workspaceId/triggers/')({
-	beforeLoad: ({ params }) => {
-		throw redirect({ to: '/$workspaceId/loops', params: { workspaceId: params.workspaceId } })
-	},
+	component: TriggersRoute,
+	errorComponent: ({ error }) => <RouteError error={error} />,
 })
+
+function TriggersRoute() {
+	const { workspaceId } = useParams({ from: '/_authed/$workspaceId/triggers/' })
+	return <Navigate to="/$workspaceId/loops" params={{ workspaceId }} replace />
+}

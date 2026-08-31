@@ -1,9 +1,11 @@
 import { PageHeader } from '@/components/layout/page-header'
+import { ObjectDocument } from '@/components/objects/legacy/object-document'
 import { ObjectCreateForm } from '@/components/objects/object-create-form'
 import { ObjectDetailShell } from '@/components/objects/object-detail-shell'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useCreateObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { ApiError } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -19,8 +21,9 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/$objectId')(
 
 function ObjectDetailPage() {
 	const { objectId } = Route.useParams()
+	// `new-design` boundary for the object detail surface.
+	const newDesign = useFeatureFlag('new-design')
 	const { workspaceId, workspace } = useWorkspace()
-
 	// Derive default statuses from workspace settings (first status per type)
 	const settings = workspace.settings as Record<string, unknown>
 	const statusMap = (settings?.statuses ?? {}) as Record<string, string[]>
@@ -59,7 +62,10 @@ function ObjectDetailPage() {
 
 	const handleUpdate = useCallback(
 		(data: { title?: string; content?: string; status?: string }) => {
-			updateObject.mutate({ id: objectId, data })
+			updateObject.mutate(
+				{ id: objectId, data },
+				{ onError: () => toast.error('Could not save your changes') },
+			)
 		},
 		[objectId, updateObject],
 	)
@@ -93,7 +99,7 @@ function ObjectDetailPage() {
 
 	// Once fully loaded with object data, render the full document editor
 	if (isCreated && object) {
-		return <ObjectDetailShell object={object} />
+		return newDesign ? <ObjectDetailShell object={object} /> : <ObjectDocument object={object} />
 	}
 
 	// Create mode — show form with document-like sections

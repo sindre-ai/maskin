@@ -1,4 +1,5 @@
 import { Composer } from '@/components/chat/chat'
+import { LegacyNewConversationPage } from '@/components/chat/legacy/new-conversation-page'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -8,17 +9,23 @@ import {
 } from '@/components/ui/responsive-popover'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import type { MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
-import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
+import {
+	EMPTY_CHAT_SELECTION,
+	MAX_CHAT_OBJECT_REFERENCES,
+	chatSelectionReducer,
+} from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { deriveConversationTitle } from '@/lib/conversation-title'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { ChevronDown, Search } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 interface NewChatSearch {
 	agentId?: string
@@ -33,7 +40,7 @@ interface NewChatSearch {
 }
 
 export const Route = createFileRoute('/_authed/$workspaceId/chats/new')({
-	component: NewConversationPage,
+	component: NewChatRoute,
 	validateSearch: (search: Record<string, unknown>): NewChatSearch => ({
 		agentId: typeof search.agentId === 'string' ? search.agentId : undefined,
 		agentName: typeof search.agentName === 'string' ? search.agentName : undefined,
@@ -73,6 +80,16 @@ interface Recipient {
 	description?: string | null
 }
 
+// `new-design` boundary for the New chat screen: the v2 page below, or the
+// pre-v2 page vendored under `components/chat/legacy/`. Note what is *not*
+// behind it — `validateSearch` above, so `objectIds` links resolve on both
+// sides rather than 404ing a user whose flag happens to be off. Resolving is
+// not enough on its own: the pre-v2 page seeds the same ids into its composer
+// selection, so the objects arrive on either branch.
+function NewChatRoute() {
+	return useFeatureFlag('new-design') ? <NewConversationPage /> : <LegacyNewConversationPage />
+}
+
 function NewConversationPage() {
 	const { workspaceId } = useWorkspace()
 	const search = Route.useSearch()
@@ -96,9 +113,13 @@ function NewConversationPage() {
 		() => (search.objectIds ? search.objectIds.split(',').filter(Boolean) : []),
 		[search.objectIds],
 	)
+	// `limit` is explicit because the endpoint's default is 50 — well under the
+	// selection sizes `Select all` produces. Without it a larger hand-over
+	// resolved its first fifty ids and dropped the rest with no chip and no
+	// message; the id list in the URL still said otherwise.
 	const { data: referencedObjects } = useObjects(
 		workspaceId,
-		{ ids: referencedIds.join(',') },
+		{ ids: referencedIds.join(','), limit: String(MAX_CHAT_OBJECT_REFERENCES) },
 		{ enabled: referencedIds.length > 0 },
 	)
 	const seededRef = useRef(false)
@@ -110,6 +131,16 @@ function NewConversationPage() {
 				type: 'add_object',
 				object: { id: object.id, title: object.title, type: object.type },
 			})
+		}
+		// An id can also fail to resolve for reasons the cap has nothing to do
+		// with — deleted since the link was made, or belonging to another
+		// workspace. Either way the chat is about to carry fewer objects than the
+		// user picked, so say which, rather than letting the count quietly shrink.
+		const missing = referencedIds.length - referencedObjects.length
+		if (missing > 0) {
+			toast.warning(
+				`${missing} of ${referencedIds.length} objects couldn't be attached — they may have been deleted.`,
+			)
 		}
 	}, [referencedIds, referencedObjects])
 
@@ -172,12 +203,29 @@ function NewConversationPage() {
 				setError(err.message)
 				throw err
 			}
-			const objects = seedObject ? [seedObject] : selection.objects
-			const notifications = seedNotification ? [seedNotification] : selection.notifications
+			// The seeds from ?objectId= / ?notificationId= are additions to whatever the
+			// composer holds, not replacements: a user who arrives via "Ask an agent" and
+			// then attaches more objects must not have those silently dropped.
+			const objects =
+				seedObject && !selection.objects.some((o) => o.id === seedObject.id)
+					? [seedObject, ...selection.objects]
+					: selection.objects
+			const notifications =
+				seedNotification && !selection.notifications.some((n) => n.id === seedNotification.id)
+					? [seedNotification, ...selection.notifications]
+					: selection.notifications
 
 			// Sent as structured metadata (rendered as chips by MessageBubble)
 			// rather than inlined into the message text.
 			const metadata: MessageMetadata = {}
+			if (selection.files.length > 0) {
+				metadata.attachments = selection.files.map((f) => ({
+					file_id: f.fileId,
+					name: f.name,
+					mime_type: f.mimeType ?? 'application/octet-stream',
+					size_bytes: f.sizeBytes,
+				}))
+			}
 			if (objects.length > 0) {
 				metadata.context_objects = objects.map((o) => ({
 					id: o.id,

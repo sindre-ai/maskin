@@ -28,14 +28,12 @@ test.describe('Agent detail — header and Usage block', () => {
 			await expect(page.getByText('Owns one outcome:')).toBeVisible()
 			await expect(page.getByText(outcome)).toBeVisible()
 
-			// The one agent-level action is the enable/disable switch, in the detail
-			// bar (mockup 2313), reachable at every viewport…
-			const stateToggle = page.getByRole('button', { name: /Disable agent|Enable agent/ })
-			await expect(stateToggle).toBeVisible()
-			// …and never duplicated into the page body beside the outcome line.
-			await expect(
-				page.locator('.max-w-3xl').getByRole('button', { name: /Disable agent|Enable agent/ }),
-			).toHaveCount(0)
+			// The agent-level action lives in the shared nav row (mockup 2351) and
+			// is reachable at every viewport…
+			const runButton = page.getByRole('button', { name: /^Run$/ })
+			await expect(runButton).toBeVisible()
+			// …and no longer sits in the page body beside the outcome line.
+			await expect(page.locator('.max-w-3xl').getByRole('button', { name: /^Run$/ })).toHaveCount(0)
 
 			// Usage block: label, tabs, both columns, budget line.
 			const usage = page.getByRole('region', { name: 'Usage' })
@@ -66,47 +64,51 @@ test.describe('Agent detail — header and Usage block', () => {
 			}
 			await page.emulateMedia({ colorScheme: 'light' })
 		})
+	}
+})
 
-		// The v2 detail bar and the order the page reads in (mockup 2309–2490).
-		test(`detail bar, identity row and section order @ ${vp.label}`, async ({ page, account }) => {
+test.describe('Agent detail — inline identity editing', () => {
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`renames the agent and edits its outcome @ ${vp.label}`, async ({ page, account }) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			const agent = await account.api.createAgentActor('Orla Order')
+
+			const agent = await account.api.createAgentActor('Bo Byte')
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
 			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
 
-			await expect(page.getByRole('region', { name: 'Instructions' })).toBeVisible({
-				timeout: 15_000,
+			await expect(page.getByRole('heading', { name: 'Bo Byte' })).toBeVisible({ timeout: 10_000 })
+
+			// Name — the editor is reachable on touch (no hover-only reveal).
+			const editName = page.getByRole('button', { name: 'Edit agent name' })
+			await expect(editName).toBeVisible()
+			await editName.click()
+			const nameField = page.getByRole('textbox', { name: 'Agent name' })
+			await nameField.fill('Bo Bytesmith')
+			await nameField.press('Enter')
+			await expect(page.getByRole('heading', { name: 'Bo Bytesmith' })).toBeVisible()
+
+			// Outcome — starts unset, so the placeholder is the edit target.
+			const editOutcome = page.getByRole('button', { name: 'Edit outcome' })
+			await expect(editOutcome).toBeVisible()
+			await editOutcome.click()
+			const outcomeField = page.getByRole('textbox', { name: 'Outcome' })
+			await outcomeField.fill('Keeps the build green')
+			await outcomeField.press('Enter')
+			await expect(page.getByText('Keeps the build green')).toBeVisible()
+
+			// Both edits persisted, not just optimistic UI.
+			await page.reload()
+			await expect(page.getByRole('heading', { name: 'Bo Bytesmith' })).toBeVisible({
+				timeout: 10_000,
 			})
+			await expect(page.getByText('Keeps the build green')).toBeVisible()
 
-			// `Agents › {name}` replaces the nav row's <h1>, and the crumb links back.
-			// Scoped to the detail bar — the sidebar carries an "Agents" link too.
-			const crumb = page.locator('header').getByRole('link', { name: 'Agents', exact: true })
-			await expect(crumb).toBeVisible()
-
-			// The one agent-level control is the enable/disable switch, in both schemes.
-			const disable = page.getByRole('button', { name: /Disable agent/ })
+			// The edit affordances render in both colour schemes.
 			for (const scheme of ['light', 'dark'] as const) {
 				await page.emulateMedia({ colorScheme: scheme })
-				await expect(disable).toBeVisible()
+				await expect(page.getByRole('button', { name: 'Edit agent name' })).toBeVisible()
 			}
 			await page.emulateMedia({ colorScheme: 'light' })
-
-			// Instructions comes before Skills, which comes before Tools.
-			const order = await page
-				.locator('section[aria-labelledby]')
-				.evaluateAll((els) =>
-					els.map((e) => e.getAttribute('aria-labelledby') ?? '').filter(Boolean),
-				)
-			const at = (id: string) => order.findIndex((v) => v.includes(id))
-			expect(at('instructions')).toBeGreaterThanOrEqual(0)
-			expect(at('instructions')).toBeLessThan(at('skills'))
-			expect(at('skills')).toBeLessThan(at('tools'))
-
-			// Disabling the agent flips the control to Enable and the status word with it.
-			await disable.click()
-			await expect(page.getByRole('button', { name: /Enable agent/ })).toBeVisible({
-				timeout: 15_000,
-			})
 		})
 	}
 })

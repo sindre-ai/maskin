@@ -37,7 +37,66 @@ export const mcpServerHttpSchema = z.object({
 	headers: z.record(z.string()).default({}),
 })
 
-export const mcpServerSchema = z.union([mcpServerStdioSchema, mcpServerHttpSchema])
+// The placeholder session-manager.ts replaces with the browser sidecar's
+// Chrome DevTools Protocol address. A CDP endpoint speaks CDP, NOT the MCP
+// protocol — pointing an `http` MCP server at it is a silent, total failure:
+// the MCP client opens the connection, never completes a handshake, and the
+// server sits at status "pending" forever. The agent gets no browser tools and
+// no error, so it reports that browser automation "isn't wired in this run"
+// while its sidecar is running perfectly. The browser is reached by running
+// @playwright/mcp as a stdio server and handing it the address via
+// --cdp-endpoint; that is what BROWSER_MCP_PRESET (apps/web's "Add Browser")
+// and expandBrowserCapability (marketplace installs) both write.
+const BROWSER_CDP_PLACEHOLDER = '${BROWSER_CDP_URL}'
+
+/**
+ * Infer a missing `type` from the shape of the entry.
+ *
+ * The stdio branch defaults `type` to "stdio" but the http branch requires the
+ * literal, so `{ url, headers }` — the shape people naturally write, and the
+ * shape most MCP docs show — matched neither branch and failed the union with a
+ * bare "Invalid input" naming no field. That error is indistinguishable from
+ * "MCP servers can't be set here", which is how it kept getting read.
+ *
+ * An explicit `type` is always honoured; this only fills in a missing one.
+ *
+ * Two shapes are deliberately left alone rather than guessed at:
+ *
+ * - `type` present but `undefined` — an `in` check would treat that as stated
+ *   and skip inference, so a caller building `{ type: cfg.type, url }` from a
+ *   partly-populated object would get the same bare "Invalid input" this
+ *   function exists to remove. It is a missing type, so it is inferred.
+ * - An entry carrying BOTH `url` and `command`. That is how every provider
+ *   config in this repo describes an `mcp-remote` server (see
+ *   providers/linear/config.ts), so it is the shape a caller copying one will
+ *   produce, and it has always parsed as stdio — the union tries stdio first
+ *   and drops `url` as an unknown key. Inferring `http` from the `url` would
+ *   flip a working stdio server into an http one with `command`, `args` and
+ *   `env` stripped and no Authorization header: connected, zero tools, no
+ *   error — exactly the failure this whole change set out to remove, and on
+ *   already-stored rows rather than new input. Ambiguous, so left to the
+ *   union's existing stdio-wins behaviour.
+ */
+const inferMcpServerType = (value: unknown): unknown => {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return value
+	const server = value as Record<string, unknown>
+	if (server.type !== undefined) return server
+	if (typeof server.command === 'string') return server
+	if (typeof server.url === 'string') return { ...server, type: 'http' }
+	return server
+}
+
+export const mcpServerSchema = z
+	.preprocess(inferMcpServerType, z.union([mcpServerStdioSchema, mcpServerHttpSchema]))
+	.superRefine((server, ctx) => {
+		if (!('url' in server) || !server.url.includes(BROWSER_CDP_PLACEHOLDER)) return
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			path: ['url'],
+			message:
+				'A browser CDP endpoint is not an MCP server — an http server pointed at ${BROWSER_CDP_URL} never connects and exposes no browser tools. Use a stdio server instead: { "type": "stdio", "command": "npx", "args": ["@playwright/mcp@latest", "--cdp-endpoint", "${BROWSER_CDP_URL}"] }',
+		})
+	})
 
 export const runtimeConfigSchema = z.object({
 	max_turns: z.number().int().positive().optional(),
@@ -140,8 +199,28 @@ export const sessionQuerySchema = z.object({
 
 export const sessionLogQuerySchema = z.object({
 	since: z.coerce.number().int().optional(),
+	/**
+	 * Half-open, exclusive: rows satisfy `id < before`. Pages BACKWARD from a
+	 * known id, which `since` cannot do — it is how a client reaches the
+	 * earlier history of a long-lived interactive session it only hydrated
+	 * the tail of. Implies newest-first selection regardless of `order`; the
+	 * response is still returned in ascending id order. Combining `before`
+	 * with `since` is legal and yields the bounded window `since < id < before`.
+	 */
+	before: z.coerce.number().int().optional(),
 	stream: z.enum(['stdout', 'stderr', 'system']).optional(),
 	limit: z.coerce.number().int().min(1).max(500).default(100),
+	/**
+	 * Which end of the log to take `limit` rows from. `asc` (the default,
+	 * and the historical behaviour) returns the OLDEST rows — correct when
+	 * paging forward from a `since` cursor, but wrong for hydrating a view
+	 * of a long-lived session: an interactive chat session accumulates logs
+	 * for the whole conversation, so `asc` + `limit` pins the client to the
+	 * beginning of the conversation forever. `desc` takes the newest rows
+	 * instead (still returned in ascending id order) so callers can hydrate
+	 * the tail and then page forward with `since`.
+	 */
+	order: z.enum(['asc', 'desc']).default('asc'),
 })
 
 export const sessionParamsSchema = z.object({
@@ -223,6 +302,13 @@ export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
  * - agent_server_lost     The agent-server restarted and no longer holds
  *                         the microsandbox for this session — the work is
  *                         irrecoverable and the row is closed out.
+ * - startup_stalled       Launch never completed: the session sat in
+ *                         `starting` past the zombie window with no container
+ *                         and no sandbox, and was force-failed.
+ * - plan_cap_exceeded     The session was deliberately stopped mid-run by
+ *                         SessionManager's budget watchdog because workspace
+ *                         usage crossed the plan cap with no usage credits
+ *                         left to cover it — not a provider-side failure.
  */
 export const failureReasonCodeSchema = z.enum([
 	'session_limit',
@@ -237,6 +323,20 @@ export const failureReasonCodeSchema = z.enum([
 	'rate_limit_error',
 	'insufficient_credits',
 	'agent_server_lost',
+	'plan_cap_exceeded',
+	// The session could not be handed to any agent-server before the dispatch
+	// queue ran out of attempts. Recoverable by starting a new session.
+	'dispatch_failed',
+	// The session's agent was deleted (or removed by a loop uninstall/version
+	// push) while the session was still live, so it was stopped mid-run.
+	'agent_deleted',
+	// The session never left `starting` — launch stalled before any container
+	// or sandbox existed, and the zombie reaper closed it out. Written by
+	// SessionManager's cleanup pass, which knows the session stalled but not
+	// why; `verbatim_output` carries whatever the row still shows (elapsed
+	// time, resolved route if any) so the stall is at least diagnosable from
+	// the session itself instead of only from server logs.
+	'startup_stalled',
 ])
 export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
 
@@ -253,6 +353,9 @@ export type SessionResultFailureReason = z.infer<typeof sessionResultFailureReas
 export const sessionResultSchema = z.object({
 	exit_code: z.number().int().nullable().optional(),
 	error: z.string().optional(),
+	// Human-readable note for sessions that ended successfully without an exit
+	// code — e.g. the watchdog's graceful close of an idle chat session.
+	summary: z.string().optional(),
 	failure_reason: sessionResultFailureReasonSchema.nullable().optional(),
 	// Set only by SessionManager.stopSession()'s provisional terminal write —
 	// see markRemoteSessionComplete() in apps/dev/src/services/session-manager.ts.
@@ -262,5 +365,12 @@ export const sessionResultSchema = z.object({
 	// to overwrite a record still carrying this marker with the real exit code;
 	// it is never set on a genuine report itself.
 	stopped_by_user: z.boolean().optional(),
+	// The user asked for this session to stop. Unlike `stopped_by_user` (the
+	// provisional-write marker that gates markRemoteSessionComplete's CAS
+	// overwrite), this is a pure UI flag: it survives the genuine completion
+	// report so a user-initiated stop keeps rendering as "stopped", never as
+	// a failure. Set by the local handleCompletion path and carried forward
+	// by markRemoteSessionComplete when it overwrites a provisional stop.
+	user_stop_requested: z.boolean().optional(),
 })
 export type SessionResult = z.infer<typeof sessionResultSchema>

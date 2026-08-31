@@ -1,16 +1,20 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// The rebuilt object-detail shell (bet/object-detail, T1) retires the right
-// sidebar / properties drawer: non-private metadata renders as key/value rows
-// in the body, and there is no "Properties" toggle or overlay sheet. The
-// retired surface is pinned as an absence/regression contract here (the
-// object-detail-sidebar spec does the same from the other side) until a
-// later task re-introduces properties chrome.
+// The rebuilt object-detail shell keeps the properties drawer, but moves it
+// behind an explicit toggle on the page bar: the document itself reads as
+// title + body + activity, and the drawer rests closed until asked for. This
+// spec pins that resting shape — the body carries the hypothesis on its own,
+// and no drawer overlay is mounted before the toggle is used. The drawer's own
+// behaviour (sections, chord, persistence) lives in
+// object-detail-properties.spec.ts.
 
-test.describe('Bet detail — properties drawer retired', () => {
+test.describe('Bet detail — document reads without the properties drawer', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`properties drawer surface is absent at ${viewport.label}`, async ({ page, account }) => {
+		test(`body carries the hypothesis and the drawer rests closed at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 
 			const bet = await account.api.createObject(account.workspaceId, {
@@ -32,8 +36,11 @@ test.describe('Bet detail — properties drawer retired', () => {
 				page.getByText('Hypothesis: operators read state from description + timeline alone.'),
 			).toBeVisible()
 
-			// No sidebar toggle button, no overlay dialog, no "Properties" chrome.
-			await expect(page.getByRole('button', { name: 'Properties', exact: true })).toHaveCount(0)
+			// The toggle is present on every ship-gate viewport, and the drawer it
+			// governs is closed on first paint — no overlay dialog is mounted.
+			const toggle = page.getByRole('button', { name: 'Properties', exact: true })
+			await expect(toggle).toBeVisible()
+			await expect(toggle).toHaveAttribute('aria-expanded', 'false')
 			await expect(page.getByRole('dialog')).toHaveCount(0)
 		})
 	}

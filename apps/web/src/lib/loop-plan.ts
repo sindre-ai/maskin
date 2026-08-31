@@ -1,4 +1,5 @@
 import { getActorInitials } from '@/components/shared/actor-avatar'
+import { z } from 'zod'
 
 /**
  * Plan model + cue-word parser for the language-only loop builder (T1).
@@ -77,6 +78,57 @@ export interface LoopPlan {
 	agents: PlanAgent[]
 	stopForOperator: string | null
 }
+
+/**
+ * Runtime shape of a persisted `LoopPlan`.
+ *
+ * A stored plan re-enters the app from `objects.metadata.plan`, which agents
+ * write through `PATCH /api/objects` and MCP `update_objects` — an external
+ * input per `.claude/rules/input-validation.md`, not something the parser
+ * constructed. Validating only the outer object let a truncated or hand-edited
+ * snapshot through, and the consumers (`planFields`, `describeLoopPlan`) then
+ * dereferenced `triggers` / `agents` / `stateChain` unguarded.
+ */
+const planObjectTypeSchema = z.object({
+	type: z.string(),
+	name: z.string(),
+	role: z.string(),
+	live: z.string().nullable(),
+	readOnly: z.boolean().optional(),
+	note: z.string().optional(),
+	stateChain: z.array(z.string()),
+	isNew: z.boolean(),
+})
+
+const planTriggerSchema = z.object({
+	kindLabel: z.string(),
+	whenClause: z.string(),
+	targetAgent: z.string(),
+	thenWrites: z.array(
+		z.object({
+			act: z.enum(['create', 'state_change', 'notify']),
+			type: z.string().optional(),
+			state: z.string().optional(),
+		}),
+	),
+	asks: z.string().optional(),
+	isNew: z.boolean(),
+	whenChip: z.object({ type: z.string(), state: z.string().optional() }).optional(),
+})
+
+export const loopPlanSchema = z.object({
+	objectTypes: z.array(planObjectTypeSchema),
+	triggers: z.array(planTriggerSchema),
+	agents: z.array(
+		z.object({
+			avatar: z.string(),
+			name: z.string(),
+			role: z.string(),
+			count: z.number(),
+		}),
+	),
+	stopForOperator: z.string().nullable(),
+})
 
 export interface ParseOptions {
 	/** Optional per-object-type status chain overrides (from workspace.settings.statuses). */
@@ -191,7 +243,7 @@ export function parseLoopDescription(description: string, options: ParseOptions 
 		})
 	}
 
-	const coreTrigger = buildCoreTrigger(lower, detected.type, agentName, cue, asks)
+	const coreTrigger = buildCoreTrigger(lower, detected.type, agentName, cue, asks, stateChain)
 	const triggers: PlanTrigger[] = []
 	if (coreTrigger) triggers.push(coreTrigger)
 	if (cue.summaryInterval) {
@@ -287,6 +339,8 @@ function detectCueWords(lower: string): CueFlags {
 			hasWord(lower, 'ping') ||
 			hasWord(lower, 'alert') ||
 			hasWord(lower, 'message') ||
+			hasWord(lower, 'tell') ||
+			hasWord(lower, 'report') ||
 			hasWord(lower, 'remind'),
 		note: hasWord(lower, 'note') || hasWord(lower, 'log') || hasWord(lower, 'record'),
 		coach: hasWord(lower, 'coach') || hasWord(lower, 'guide') || hasWord(lower, 'mentor'),
@@ -306,8 +360,12 @@ function detectInterval(lower: string): string | null {
 function detectAgent(lower: string, detected: DetectedType): string {
 	const named = lower.match(/have(?:\s+the)?\s+([a-z][a-z -]*?)\s+agent\b/)
 	if (named?.[1].trim()) return normalizeAgentName(named[1])
+	// Bounded to at most two words, no commas: an unbounded lazy capture here ran
+	// from the leading verb all the way to a trailing cue, so "Notify me weekly
+	// with a summary of new customer feedback, and triage …" named an agent
+	// "Me Weekly With A Summary Of New Customer Feedback And".
 	const directed = lower.match(
-		/(?:ping|have|message|notify|get|ask|let)\s+(?:the\s+)?([a-z][a-z ,]*?)\s+(?:to|run|write|triage)\b/,
+		/(?:ping|have|message|notify|get|ask|let)\s+(?:a|an|the)?\s*([a-z]+(?:\s+[a-z]+)??)\s+(?:to|run|write|triage)\b/,
 	)
 	if (directed?.[1].trim()) return normalizeAgentName(directed[1])
 	return normalizeAgentName(detected.spec.name)
@@ -318,6 +376,9 @@ function normalizeAgentName(raw: string): string {
 		.trim()
 		.replace(/\s+agent$/i, '')
 		.replace(/[^a-z ]+/gi, ' ')
+		// "have a triage agent …" captures the article too — "A Triage" is not a
+		// name anyone typed.
+		.replace(/^\s*(?:a|an|the)\s+/i, '')
 		.split(/\s+/)
 		.filter(Boolean)
 	if (words.length === 0) return 'Agent agent'
@@ -344,9 +405,16 @@ function detectStop(lower: string, cue: CueFlags): string | null {
 	return null
 }
 
-function deriveCoreWrites(lower: string, type: string): PlanThenWrite[] {
+function deriveCoreWrites(lower: string, type: string, stateChain: string[]): PlanThenWrite[] {
 	const writes: PlanThenWrite[] = []
+	// A proposed state is only real if the type's own chain can hold it. The
+	// chain is the workspace's vocabulary (or the base chain when the workspace
+	// supplied none), so a cue word like "triage" on a type whose chain has no
+	// triage state must not be drawn — the card renders these through
+	// StatusBadge, and a status the workspace cannot hold is a promise the loop
+	// can never keep.
 	const push = (w: PlanThenWrite) => {
+		if (w.state && !stateChain.includes(w.state)) return
 		if (!writes.some((x) => x.act === w.act && x.type === w.type && x.state === w.state)) {
 			writes.push(w)
 		}
@@ -376,12 +444,13 @@ function buildCoreTrigger(
 	agentName: string,
 	cue: CueFlags,
 	asks: string | undefined,
+	stateChain: string[],
 ): PlanTrigger | null {
 	const when = lower.match(/\bwhen\s+(.+)$/)
 	if (!when) return null
 	const clause = stripTrailingPunctuation(extractWhenClause(when[1]))
 
-	const writes = deriveCoreWrites(lower, type)
+	const writes = deriveCoreWrites(lower, type, stateChain)
 	if (cue.notify && !writes.some((w) => w.act === 'notify')) writes.push({ act: 'notify' })
 	if (cue.note && !writes.some((w) => w.act === 'create' && w.type === 'note')) {
 		writes.push({ act: 'create', type: 'note' })
@@ -442,8 +511,13 @@ function stripTrailingPunctuation(value: string): string {
 		.trim()
 }
 
+/** Whole-word match that also accepts a regular plural — an operator writes
+ *  "track bets", not "track bet", while the vocabulary is stored in the
+ *  singular. Words already ending in `s` match as-is, so `status` doesn't
+ *  demand `statuss`. */
 function hasWord(text: string, word: string): boolean {
-	return new RegExp(`(^|[^a-z])${word}([^a-z]|$)`, 'i').test(text)
+	const stem = word.endsWith('s') ? word : `${word}s?`
+	return new RegExp(`(^|[^a-z])${stem}([^a-z]|$)`, 'i').test(text)
 }
 
 /** One-line read-back of the drafted loop, shown under the card title

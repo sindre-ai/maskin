@@ -1,5 +1,6 @@
 import type { Database } from '@maskin/db'
 import { events, sessionDispatchAttempts, sessions } from '@maskin/db/schema'
+import type { SessionResultFailureReason } from '@maskin/shared'
 import { and, asc, eq, lte, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 
@@ -20,7 +21,18 @@ export type DispatchResult =
 	| { kind: 'dispatched' }
 	| { kind: 'no_capacity' }
 	| { kind: 'transient_failure'; error: string }
-	| { kind: 'permanent_failure'; error: string }
+	| {
+			kind: 'permanent_failure'
+			error: string
+			/**
+			 * Classification for the session row. When absent the queue falls back
+			 * to the generic `dispatch_failed` reason — correct for "no agent-server
+			 * took it", wrong for a failure the dispatcher already understands (e.g.
+			 * the workspace has no LLM credentials), which is why callers that know
+			 * better pass their own.
+			 */
+			failureReason?: SessionResultFailureReason
+	  }
 
 /**
  * Pluggable dispatch callback. Wired by T6's `SessionDispatcher` at startup.
@@ -47,6 +59,14 @@ export interface SessionDispatchQueueOptions {
 	 * Should comfortably exceed the slowest dispatch RTT. Default 60s.
 	 */
 	leaseMs?: number
+	/**
+	 * Append a `system`-stream line to a session's transcript (SessionManager's
+	 * insertSystemLog). Optional and best-effort — a log write must never stop
+	 * the row from being marked failed. Without it a user watching a session
+	 * that exhausted dispatch just sees the stream stop dead: no line, no
+	 * reason, no hint that starting a new session is the recovery.
+	 */
+	appendSystemLog?: (sessionId: string, content: string) => Promise<void>
 }
 
 const DEFAULTS = {
@@ -69,6 +89,15 @@ export function dispatchIdempotencyKey(sessionId: string): string {
 	return `dispatch:${sessionId}`
 }
 
+/**
+ * Shown to the user both as a `system` log line in the session transcript and
+ * as `result.failure_reason.human_message` in the session detail panel. Says
+ * what happened and what to do about it — dispatch exhaustion is recoverable,
+ * and starting a new session is the recovery.
+ */
+const DISPATCH_FAILED_MESSAGE =
+	'This session could not be started — no agent server accepted it after several attempts. Nothing was run. Start a new session to try again.'
+
 export class SessionDispatchQueue {
 	private timer: NodeJS.Timeout | null = null
 	private running = false
@@ -79,6 +108,7 @@ export class SessionDispatchQueue {
 	private readonly tickMs: number
 	private readonly batchSize: number
 	private readonly leaseMs: number
+	private readonly appendSystemLog?: (sessionId: string, content: string) => Promise<void>
 
 	constructor(
 		private db: Database,
@@ -92,6 +122,7 @@ export class SessionDispatchQueue {
 		this.tickMs = opts.tickMs ?? DEFAULTS.tickMs
 		this.batchSize = opts.batchSize ?? DEFAULTS.batchSize
 		this.leaseMs = opts.leaseMs ?? DEFAULTS.leaseMs
+		this.appendSystemLog = opts.appendSystemLog
 	}
 
 	/**
@@ -236,7 +267,7 @@ export class SessionDispatchQueue {
 				await this.handleTransientFailure(row, result.error)
 				return
 			case 'permanent_failure':
-				await this.handlePermanentFailure(row, result.error)
+				await this.handlePermanentFailure(row, result.error, result.failureReason)
 				return
 		}
 	}
@@ -305,9 +336,14 @@ export class SessionDispatchQueue {
 	private async handlePermanentFailure(
 		row: typeof sessionDispatchAttempts.$inferSelect,
 		error: string,
+		failureReason?: SessionResultFailureReason,
 	): Promise<void> {
 		await this.markRowFailed(row, error)
-		await this.markSessionFailed(row.sessionId, `Permanent dispatch failure: ${error}`)
+		await this.markSessionFailed(
+			row.sessionId,
+			`Permanent dispatch failure: ${error}`,
+			failureReason,
+		)
 		logger.error('Session dispatch permanent failure', {
 			sessionId: row.sessionId,
 			error,
@@ -336,13 +372,36 @@ export class SessionDispatchQueue {
 	 * raced us to it) the UPDATE matches zero rows and the event still records
 	 * the dispatch-side observation.
 	 */
-	private async markSessionFailed(sessionId: string, errorMessage: string): Promise<void> {
+	private async markSessionFailed(
+		sessionId: string,
+		errorMessage: string,
+		failureReason?: SessionResultFailureReason,
+	): Promise<void> {
+		// A bare `result.error` string renders nowhere: the session detail panel's
+		// FailureCard reads `result.failure_reason`, and use-conversation-activity
+		// reads `failure_reason.human_message`. Without this the user's session
+		// simply stopped, with the real explanation visible only in Sentry
+		// (MASKIN-DEV-4). `dispatch_failed` is the right default for "no
+		// agent-server took it" — a caller that already knows the cause passes
+		// its own, so a credential failure doesn't masquerade as a dispatch one.
+		const resolvedFailureReason: SessionResultFailureReason = failureReason ?? {
+			provider: 'agent-server',
+			reason_code: 'dispatch_failed',
+			human_message: DISPATCH_FAILED_MESSAGE,
+			http_status: null,
+			reset_at: null,
+			verbatim_output: errorMessage,
+		}
 		try {
 			const [updated] = await this.db
 				.update(sessions)
 				.set({
 					status: 'failed',
-					result: { error: errorMessage },
+					result: {
+						error: errorMessage,
+						exit_code: null,
+						failure_reason: resolvedFailureReason,
+					},
 					completedAt: new Date(),
 					updatedAt: new Date(),
 				})
@@ -362,8 +421,25 @@ export class SessionDispatchQueue {
 					action: 'session_failed',
 					entityType: 'session',
 					entityId: updated.id,
-					data: { error: errorMessage, source: 'dispatch_queue' },
+					data: {
+						error: errorMessage,
+						reason_code: resolvedFailureReason.reason_code,
+						source: 'dispatch_queue',
+					},
 				})
+
+				// Best-effort, and deliberately after the row is already failed: a
+				// log-write failure must not leave the session stuck non-terminal.
+				if (this.appendSystemLog) {
+					try {
+						await this.appendSystemLog(updated.id, resolvedFailureReason.human_message)
+					} catch (err) {
+						logger.warn('Failed to append dispatch-failure log line', {
+							sessionId,
+							error: String(err),
+						})
+					}
+				}
 			}
 		} catch (err) {
 			// Surface but never throw — the row is already marked failed in the

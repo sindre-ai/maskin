@@ -82,6 +82,38 @@ describe('SidebarProvider + SidebarRightProvider — dual-instance shortcut wiri
 		expect(screen.getByTestId('right-state').textContent).toBe('open')
 	})
 
+	// Windows synthesises `ctrlKey: true` alongside `altKey: true` for AltGr, and
+	// `\` is only reachable via AltGr on the Nordic, German, Polish and Turkish
+	// layouts. Without an `!altKey` guard both chords match while the user is
+	// simply typing a backslash, swallowing the character via `preventDefault()`.
+	it('does not fire on AltGr+\\ — that is a literal backslash, not the nav chord', () => {
+		render(
+			<SidebarProvider defaultOpen={true}>
+				<LeftStatePeek />
+			</SidebarProvider>,
+		)
+
+		act(() => {
+			fireEvent.keyDown(window, { key: '\\', ctrlKey: true, altKey: true })
+		})
+
+		expect(screen.getByTestId('left-state').textContent).toBe('open')
+	})
+
+	it('does not fire on AltGr+⇧+\\ — the drawer chord must ignore AltGr too', () => {
+		render(
+			<SidebarRightProvider defaultOpen={false}>
+				<RightStatePeek />
+			</SidebarRightProvider>,
+		)
+
+		act(() => {
+			fireEvent.keyDown(window, { key: '\\', ctrlKey: true, shiftKey: true, altKey: true })
+		})
+
+		expect(screen.getByTestId('right-state').textContent).toBe('closed')
+	})
+
 	it("does not fire on ⌘I — that is the editor's italic now", () => {
 		render(
 			<SidebarRightProvider defaultOpen={false}>

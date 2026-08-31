@@ -125,11 +125,25 @@ export function BulkActionBar({
 				onClear()
 				return
 			}
-			if (confirmOpen || e.metaKey || e.ctrlKey || e.altKey) return
-			const target = e.target as HTMLElement | null
+			if (confirmOpen || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.repeat) return
+			// Not necessarily an Element — a keydown dispatched at window/document
+			// targets a non-Element EventTarget, so narrow before touching DOM APIs.
+			const target = e.target instanceof HTMLElement ? e.target : null
 			if (
 				target?.isContentEditable ||
 				(target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+			) {
+				return
+			}
+			// The status and owner pickers live in this same bar. Radix renders their
+			// content as div/button — not INPUT/SELECT — and its typeahead does not stop
+			// propagation, so typing `e` to reach "evaluating" would otherwise land here
+			// as an unconfirmed bulk archive. Bail while any Radix popper is mounted.
+			if (
+				target?.closest(
+					'[data-radix-popper-content-wrapper],[role="menu"],[role="listbox"],[role="dialog"]',
+				) ||
+				document.querySelector('[data-radix-popper-content-wrapper]')
 			) {
 				return
 			}

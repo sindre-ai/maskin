@@ -4,7 +4,7 @@ import {
 } from '@/components/objects/object-detail-header'
 import type { MemberResponse } from '@/lib/api'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { buildObjectResponse } from '../../factories'
@@ -14,10 +14,22 @@ vi.mock('@tanstack/react-router', async () => {
 	return mockTanStackRouter()
 })
 
+const subscribeMock = vi.fn()
+const unsubscribeMock = vi.fn()
+
 vi.mock('@/hooks/use-subscriptions', () => ({
-	useSubscribe: () => ({ mutate: vi.fn() }),
-	useUnsubscribe: () => ({ mutate: vi.fn() }),
+	useSubscribe: () => ({ mutate: subscribeMock, isPending: false }),
+	useUnsubscribe: () => ({ mutate: unsubscribeMock, isPending: false }),
+	useSubscribers: () => ({ data: { actors: [] } }),
 }))
+
+vi.mock('@/lib/auth', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/auth')>('@/lib/auth')
+	return {
+		...actual,
+		getStoredActor: vi.fn(() => ({ id: 'a1', name: 'Alice', type: 'human', email: null })),
+	}
+})
 
 vi.mock('@/hooks/use-mobile', () => ({
 	useIsMobile: () => false,
@@ -81,6 +93,10 @@ describe('ObjectDetailBarActions', () => {
 		render(<ObjectDetailBarActions {...baseProps} object={object} />, { wrapper: makeWrapper() })
 		expect(screen.queryByRole('button', { name: 'Properties' })).toBeNull()
 	})
+
+	// Subscription is no longer a header affordance: the v2 detail bar carries
+	// only the drawer toggle and the ⋯ menu, and Subscribers moved into the
+	// properties drawer (object-properties-sidebar).
 })
 
 describe('ObjectDetailIdentity', () => {
@@ -101,11 +117,73 @@ describe('ObjectDetailIdentity', () => {
 		expect(screen.getByText('Unassigned')).toBeInTheDocument()
 	})
 
-	it('renders the h1 title as static text (not an editable textarea)', () => {
+	it('renders a static h1 for read-only hosts that pass no onTitleChange', () => {
 		const object = buildObjectResponse({ title: 'Static Title' })
 		render(<ObjectDetailIdentity {...identityProps} object={object} />, { wrapper: makeWrapper() })
 		expect(screen.getByRole('heading', { level: 1, name: 'Static Title' })).toBeInTheDocument()
 		expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+	})
+
+	it('renders an editable title and commits a rename on blur', async () => {
+		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+		const onTitleChange = vi.fn()
+		const object = buildObjectResponse({ title: 'Old Title' })
+		render(
+			<ObjectDetailIdentity {...identityProps} object={object} onTitleChange={onTitleChange} />,
+			{ wrapper: makeWrapper() },
+		)
+
+		// Click-to-edit: the heading is a real <h1> until you ask to rename.
+		await user.click(screen.getByRole('heading', { level: 1, name: 'Old Title' }))
+		const input = screen.getByRole('textbox', { name: 'Object title' })
+		await user.clear(input)
+		await user.type(input, 'New Title')
+		await user.tab()
+
+		expect(onTitleChange).toHaveBeenCalledWith('New Title')
+	})
+
+	it('does not commit when the title is blurred unchanged', async () => {
+		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+		const onTitleChange = vi.fn()
+		const object = buildObjectResponse({ title: 'Unchanged' })
+		render(
+			<ObjectDetailIdentity {...identityProps} object={object} onTitleChange={onTitleChange} />,
+			{ wrapper: makeWrapper() },
+		)
+
+		await user.click(screen.getByRole('heading', { level: 1, name: 'Unchanged' }))
+		await user.click(screen.getByRole('textbox', { name: 'Object title' }))
+		await user.tab()
+
+		expect(onTitleChange).not.toHaveBeenCalled()
+	})
+
+	it('resets the title draft when the route swaps to a different object', async () => {
+		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+		const onTitleChange = vi.fn()
+		const first = buildObjectResponse({ id: 'obj-a', title: 'First' })
+		const second = buildObjectResponse({ id: 'obj-b', title: 'Second' })
+		const { rerender } = render(
+			<ObjectDetailIdentity {...identityProps} object={first} onTitleChange={onTitleChange} />,
+			{ wrapper: makeWrapper() },
+		)
+
+		await user.click(screen.getByRole('heading', { level: 1, name: 'First' }))
+		const input = screen.getByRole('textbox', { name: 'Object title' })
+		await user.clear(input)
+		await user.type(input, 'Edited but never blurred')
+
+		rerender(
+			<ObjectDetailIdentity {...identityProps} object={second} onTitleChange={onTitleChange} />,
+		)
+
+		// The swap drops back to the heading carrying the new object's title — the
+		// abandoned draft must not follow it across, or blur would rename obj-b to
+		// what was typed for obj-a.
+		expect(screen.getByRole('heading', { level: 1, name: 'Second' })).toBeInTheDocument()
+		expect(screen.queryByRole('textbox', { name: 'Object title' })).toBeNull()
+		expect(onTitleChange).not.toHaveBeenCalled()
 	})
 
 	it('status dropdown offers the workspace statuses as checked options', async () => {

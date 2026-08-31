@@ -11,6 +11,58 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Config-only gate. The Alloy configs and Grafana alert rules under
+  # observability/ are shipped as text and applied by hand — nothing in the
+  # build or the test suite ever parses them, so without this job their first
+  # syntax check is a human pasting them onto a production box.
+  #
+  # It is deliberately cheap and has no dependency on the pnpm workspace, so it
+  # gives a signal in well under a minute rather than waiting on a full install.
+  observability-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # `alloy validate` catches syntax and component-graph errors — an
+      # undefined component reference, a bad argument name, a forward_to
+      # pointing at something that does not exist. Run in the same container
+      # image the hosts run, so a version-specific rejection surfaces here.
+      #
+      # NOTE WHAT IT CANNOT CATCH, because this is the recurring trap in this
+      # directory: a config that validates cleanly and still matches nothing.
+      # Discovery returning zero targets, a `job` label set upstream of the
+      # component that overwrites it, an allowlist regex that excludes every
+      # real container — all of these are "valid". See
+      # .claude/rules/known-pitfalls.md, "A Healthy Collector Component That
+      # Silently Matches Nothing". This job is a floor, not a proof.
+      - name: alloy validate
+        env:
+          ALLOY_IMAGE: grafana/alloy:v1.19.0
+        run: |
+          set -euo pipefail
+          for cfg in apps/agent-server/observability/alloy.alloy observability/coolify-host/alloy.alloy; do
+            echo "==> $cfg"
+            docker run --rm -v "$PWD:/w" -w /w "$ALLOY_IMAGE" validate "$cfg"
+          done
+
+      - name: Install promtool
+        env:
+          PROMETHEUS_VERSION: 2.55.1
+        run: |
+          set -euo pipefail
+          tarball="prometheus-${PROMETHEUS_VERSION}.linux-amd64"
+          url="https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/${tarball}.tar.gz"
+          curl -sSfL "$url" | sudo tar xz --strip-components=1 -C /usr/local/bin "${tarball}/promtool"
+          promtool --version
+
+      # Validates the Grafana alert rules: PromQL syntax via promtool, plus the
+      # structural invariants promtool cannot see because these are unified
+      # alerting files rather than Prometheus rule files. See the script header.
+      - name: Validate alert rules
+        run: |
+          pip install --quiet pyyaml
+          python observability/validate-alerts.py
+
   lint-typecheck:
     runs-on: ubuntu-latest
     steps:
@@ -131,6 +183,11 @@ jobs:
 
   verify-e2e:
     runs-on: ubuntu-latest
+    # A healthy shard finishes in ~6 minutes. Without a cap, one wedged shard
+    # (a spec waiting on something that can never happen — see the SSE /
+    # networkidle note in the a11y specs) runs to GitHub's 6-hour default and
+    # holds the PR open with no signal.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -176,9 +233,22 @@ jobs:
             if [ "$status" != "000" ]; then break; fi
             sleep 1
           done
-          curl -sf --aws-sigv4 "aws:amz:us-east-1:s3" \
-            --user "admin:admin" \
-            -X PUT http://localhost:8333/agent-files
+          # The port opens before the S3 filer can actually serve a bucket PUT,
+          # so an open port is necessary but not sufficient — retry the PUT
+          # itself rather than assuming readiness. Without this a single early
+          # non-2xx fails the whole shard under `set -e`, with no diagnostics.
+          for i in $(seq 1 30); do
+            if curl -sf --aws-sigv4 "aws:amz:us-east-1:s3" \
+              --user "admin:admin" \
+              -X PUT http://localhost:8333/agent-files; then
+              echo "SeaweedFS ready; bucket agent-files created."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::SeaweedFS never accepted the agent-files bucket PUT after 30s."
+          docker logs seaweedfs || true
+          exit 1
 
       - uses: pnpm/action-setup@v5
         with:
@@ -219,11 +289,42 @@ jobs:
         run: pnpm --filter @maskin/e2e exec playwright install-deps chromium
 
       - name: Run E2E tests (shard ${{ matrix.shard }}/5)
-        run: pnpm --filter @maskin/e2e exec playwright test --shard=${{ matrix.shard }}/5
+        # Argos's upload() can reject via a promise that safe-argos-reporter.ts's
+        # own try/catch doesn't end up wrapping — an unhandled rejection there
+        # has previously crashed an otherwise-green shard. Rather than keep
+        # patching that from the reporter side, don't let this step's exit
+        # code decide pass/fail at all: `|| true` lets a non-zero exit through,
+        # and assert-results.mjs makes the real call from Playwright's own
+        # JSON report, which is written to disk before Argos's reporter ever
+        # runs (see playwright.config.ts). A problem anywhere in Argos's
+        # upload path — quota, outage, auth, a library bug — can then never
+        # fail the job, while an actual test regression still does.
+        run: |
+          pnpm --filter @maskin/e2e exec playwright test --shard=${{ matrix.shard }}/5 || true
+          node apps/e2e/scripts/assert-results.mjs apps/e2e/playwright-report/e2e-results.json
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+          # Mounts POST /api/test-grants so specs can obtain a paid tier / the
+          # BYO-LLM entitlement, neither of which is self-service in the product.
+          # Playwright spawns the API itself (webServer in playwright.config.ts),
+          # so this one entry reaches both the specs and the stack under test.
+          # Never set in production — the route is not mounted without it.
+          MASKIN_TEST_GRANT_TOKEN: e2e-local-test-grant-token
+          # Argos visual-regression uploads are opt-in and never gate a PR: the
+          # free-plan screenshot quota is shared across all shards of all runs,
+          # so an exhausted quota fails the upload for reasons unrelated to the
+          # code under test. Only pushes to `main` capture and upload; on PRs
+          # `isArgosEnabled()` is false, so the reporter is not registered and
+          # `safeArgosScreenshot()` is a no-op.
+          ARGOS_ENABLED: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           ARGOS_TOKEN: ${{ secrets.ARGOS_TOKEN }}
+          # `warn` is a Node-level backstop for the enabled (main) path: Argos's
+          # upload() can reject via a promise that safe-argos-reporter.ts's own
+          # try/catch doesn't end up wrapping (see that file's comment), and
+          # `warn` stops that unhandled rejection from crashing the process
+          # before assert-results.mjs gets to run.
+          NODE_OPTIONS: --unhandled-rejections=warn
           S3_ENDPOINT: http://localhost:8333
           S3_BUCKET: agent-files
           S3_ACCESS_KEY: admin

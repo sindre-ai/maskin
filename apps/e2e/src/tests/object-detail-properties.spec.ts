@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
@@ -7,6 +8,32 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // holds driver / status / custom fields / subscribed / files. Below the
 // document, one Activity heading with a Timeline | Related segmented control,
 // and a composer pinned to the bottom of the scroll region.
+
+// Below 768 the drawer is a modal Radix Sheet, which puts the rest of the page
+// behind `aria-hidden` — the Properties toggle leaves the accessibility tree
+// entirely while it is open, so its `aria-expanded` can only be read on the
+// inline (>=768) drawer. Assert the drawer itself on mobile.
+async function expectDrawerOpen(page: Page, viewportWidth: number) {
+	if (viewportWidth < 768) {
+		await expect(page.getByRole('dialog', { name: 'Sidebar' })).toBeVisible()
+		return
+	}
+	await expect(page.getByRole('button', { name: 'Properties', exact: true })).toHaveAttribute(
+		'aria-expanded',
+		'true',
+	)
+}
+
+async function expectDrawerClosed(page: Page, viewportWidth: number) {
+	if (viewportWidth < 768) {
+		await expect(page.getByRole('dialog', { name: 'Sidebar' })).toHaveCount(0)
+		return
+	}
+	await expect(page.getByRole('button', { name: 'Properties', exact: true })).toHaveAttribute(
+		'aria-expanded',
+		'false',
+	)
+}
 
 test.describe('Object detail — properties drawer', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
@@ -148,7 +175,7 @@ test.describe('Object detail — properties drawer', () => {
 				'aria-selected',
 				'true',
 			)
-			await expect(page.getByText('No related objects yet.')).toBeVisible()
+			await expect(page.getByText('No related objects yet')).toBeVisible()
 
 			await timeline.click()
 			await expect(timeline).toHaveAttribute('aria-selected', 'true')

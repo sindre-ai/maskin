@@ -18,10 +18,10 @@ vi.mock('@/hooks/use-events', () => ({
 }))
 
 // The real composer pulls in uploads, drafts, the slash picker and dictation;
-// the card only cares that it renders addressed to the right agent.
+// the card only cares that it renders one, wired to the right object.
 vi.mock('@/components/activity/comment-input', () => ({
-	CommentInput: ({ placeholder }: { placeholder?: string }) => (
-		<div data-testid="comment-input">{placeholder}</div>
+	CommentInput: ({ objectId }: { objectId?: string }) => (
+		<div data-testid="comment-input" data-object-id={objectId} />
 	),
 }))
 
@@ -80,7 +80,12 @@ describe('FeedCard — row state', () => {
 		expect(screen.getByText('Merge the trigger settings rewrite?')).toBeInTheDocument()
 		expect(screen.getByLabelText('Status in review')).toBeInTheDocument()
 		expect(screen.getByText('Code Reviewer')).toBeInTheDocument()
-		expect(screen.getByText('5H')).toBeInTheDocument()
+		// `RelativeTime` emits "5h"; the feed's uppercase is a CSS transform, so
+		// the accessible text stays lowercase.
+		const age = screen.getByText('5h')
+		expect(age).toBeInTheDocument()
+		expect(age.tagName).toBe('TIME')
+		expect(age.className).toContain('tabular-nums')
 		// The body only exists in the expanded state.
 		expect(screen.queryByTestId('comment-input')).not.toBeInTheDocument()
 
@@ -116,7 +121,11 @@ describe('FeedCard — full state', () => {
 		).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Send back' })).toBeInTheDocument()
-		expect(screen.getByTestId('comment-input')).toHaveTextContent('Reply to Code Reviewer…')
+		// The composer renders stacked with its default placeholder until the
+		// Object detail split lands `variant`/`placeholder` on the v2 composer —
+		// see the TODO in feed-card.tsx. Assert it is wired to the object, not
+		// the addressed-to copy this card cannot yet pass through.
+		expect(screen.getByTestId('comment-input')).toHaveAttribute('data-object-id', 'task-1')
 	})
 
 	it('offers no options on a plain thread', () => {
@@ -141,6 +150,23 @@ describe('FeedCard — full state', () => {
 		await user.click(screen.getByRole('button', { name: 'Approve' }))
 		await waitFor(() => expect(onDecide).toHaveBeenCalledTimes(1))
 		expect(onDecide.mock.calls[0]?.[0]).toMatchObject({ id: 'approve', label: 'Approve' })
+	})
+
+	// The option is acknowledged with a 260ms beat before `onDecide` fires, and
+	// `onDecide` posts a real reply. A bulk dismiss unmounts the card inside that
+	// window, so an uncancelled timer would comment on a thread the reader just
+	// cleared.
+	it('does not decide when the card unmounts during the acknowledgement beat', async () => {
+		const onDecide = vi.fn()
+		const user = userEvent.setup()
+		const { unmount } = renderCard({ onDecide })
+
+		await user.click(screen.getByRole('button', { name: 'Approve' }))
+		unmount()
+		// Comfortably past the 260ms beat — the cancelled timer must never fire.
+		await new Promise((resolve) => setTimeout(resolve, 500))
+
+		expect(onDecide).not.toHaveBeenCalled()
 	})
 
 	it('loads the thread only once the timeline history is opened', async () => {

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -12,6 +12,8 @@ vi.mock('@tanstack/react-router', async () => {
 			...options,
 			useSearch: () => mockSearch(),
 		}),
+		// The pre-v2 page reads the same search via `useSearch({ from })`.
+		useSearch: () => mockSearch(),
 		useNavigate: () => mockNavigate,
 	}
 })
@@ -32,9 +34,16 @@ vi.mock('@/hooks/use-workspaces', () => ({
 }))
 
 const mockReferencedObjects = vi.fn()
+const objectsFilters = vi.fn()
 vi.mock('@/hooks/use-objects', () => ({
-	useObjects: () => ({ data: mockReferencedObjects() }),
+	useObjects: (_ws: string, filters?: Record<string, string>) => {
+		objectsFilters(filters)
+		return { data: mockReferencedObjects() }
+	},
 }))
+
+const toastCapture = vi.hoisted(() => ({ warning: vi.fn() }))
+vi.mock('sonner', () => ({ toast: { warning: toastCapture.warning } }))
 
 vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1', workspace: { settings: {} } }),
@@ -86,6 +95,9 @@ const FORGE = { id: 'forge-1', name: 'Forge', type: 'agent', description: 'Ships
 
 describe('New chat', () => {
 	beforeEach(() => {
+		// These specs drive the v2 New chat page; the route is a `new-design`
+		// boundary, so the flag has to be on for it to render.
+		localStorage.setItem('ff:new-design', 'on')
 		vi.clearAllMocks()
 		mockSearch.mockReturnValue({})
 		mockActors.mockReturnValue([CHIEF, FORGE])
@@ -170,6 +182,54 @@ describe('New chat', () => {
 		)
 	})
 
+	// Regression: the hand-over used to ride the endpoint's default limit of 50,
+	// so a larger selection resolved its first fifty ids and the rest arrived as
+	// nothing at all — no chip, no message, and a URL that still listed them.
+	it('asks for as many referenced objects as the endpoint will return', async () => {
+		mockSearch.mockReturnValue({ objectIds: 'obj-1,obj-2' })
+		mockReferencedObjects.mockReturnValue([
+			{ id: 'obj-1', title: 'Retry window', type: 'bet' },
+			{ id: 'obj-2', title: 'Churned accounts', type: 'insight' },
+		])
+		render(<NewChatPage />)
+
+		expect(objectsFilters).toHaveBeenCalledWith(
+			expect.objectContaining({ ids: 'obj-1,obj-2', limit: '100' }),
+		)
+	})
+
+	// An id can go missing for reasons the cap has nothing to do with — deleted,
+	// or in another workspace. The chat then carries fewer objects than the user
+	// picked, which it has to say rather than quietly shrink the count.
+	it('reports ids that could not be resolved into chips', async () => {
+		mockSearch.mockReturnValue({ objectIds: 'obj-1,obj-2,obj-3' })
+		mockReferencedObjects.mockReturnValue([{ id: 'obj-1', title: 'Retry window', type: 'bet' }])
+		render(<NewChatPage />)
+
+		await waitFor(() =>
+			expect(toastCapture.warning).toHaveBeenCalledWith(
+				expect.stringContaining("2 of 3 objects couldn't be attached"),
+			),
+		)
+	})
+
+	// Regression: ?objectId= used to *replace* the composer's selection rather than
+	// join it, so objects attached after arriving via "Ask an agent" rendered as
+	// chips and were then dropped from the request with no error.
+	it('keeps composer-attached objects alongside the ?objectId= seed', async () => {
+		mockSearch.mockReturnValue({ objectId: 'obj-seed', objectIds: 'obj-1' })
+		mockReferencedObjects.mockReturnValue([{ id: 'obj-1', title: 'Retry window', type: 'bet' }])
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+
+		await user.type(screen.getByLabelText('Message this conversation'), 'What links these?{Enter}')
+
+		const sent = mockCreateConversation.mock.calls[0][0]
+		const ids = sent.initial_message_metadata.context_objects.map((o: { id: string }) => o.id)
+		expect(ids).toContain('obj-1')
+		expect(ids).toContain('obj-seed')
+	})
+
 	it('titles the conversation from the first message, not the agent', async () => {
 		const user = userEvent.setup()
 		render(<NewChatPage />)
@@ -188,5 +248,82 @@ describe('New chat', () => {
 			to: '/$workspaceId/chats/$conversationId',
 			params: { workspaceId: 'ws-1', conversationId: 'conv-1' },
 		})
+	})
+})
+
+// `objectIds` is deliberately above the `new-design` boundary so an "Ask an
+// agent" link resolves whichever side of the flag the user is on. Resolving is
+// not the same as working: the pre-v2 page has to honour the ids too, or a
+// flag-off user follows the link and their objects are silently absent.
+describe('New chat (new-design off)', () => {
+	beforeEach(() => {
+		localStorage.setItem('ff:new-design', 'off')
+		vi.clearAllMocks()
+		mockSearch.mockReturnValue({})
+		mockActors.mockReturnValue([CHIEF, FORGE])
+		mockReferencedObjects.mockReturnValue(undefined)
+		mockCreateConversation.mockResolvedValue({ id: 'conv-1' })
+	})
+
+	it('carries objects handed over by "Ask an agent" into the first message', async () => {
+		mockSearch.mockReturnValue({ agentId: 'cos-1', objectIds: 'obj-1,obj-2' })
+		mockReferencedObjects.mockReturnValue([
+			{ id: 'obj-1', title: 'Retry window', type: 'bet' },
+			{ id: 'obj-2', title: 'Churned accounts', type: 'insight' },
+		])
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+
+		await user.type(screen.getByLabelText('Message this conversation'), 'What links these?{Enter}')
+
+		expect(mockCreateConversation).toHaveBeenCalledWith(
+			expect.objectContaining({
+				initial_message_metadata: {
+					context_objects: [
+						{ id: 'obj-1', title: 'Retry window', type: 'bet' },
+						{ id: 'obj-2', title: 'Churned accounts', type: 'insight' },
+					],
+				},
+			}),
+		)
+	})
+
+	it('asks for as many referenced objects as the endpoint will return', () => {
+		mockSearch.mockReturnValue({ agentId: 'cos-1', objectIds: 'obj-1,obj-2' })
+		mockReferencedObjects.mockReturnValue([
+			{ id: 'obj-1', title: 'Retry window', type: 'bet' },
+			{ id: 'obj-2', title: 'Churned accounts', type: 'insight' },
+		])
+		render(<NewChatPage />)
+
+		expect(objectsFilters).toHaveBeenCalledWith(
+			expect.objectContaining({ ids: 'obj-1,obj-2', limit: '100' }),
+		)
+	})
+
+	it('reports ids that could not be resolved into chips', async () => {
+		mockSearch.mockReturnValue({ agentId: 'cos-1', objectIds: 'obj-1,obj-2,obj-3' })
+		mockReferencedObjects.mockReturnValue([{ id: 'obj-1', title: 'Retry window', type: 'bet' }])
+		render(<NewChatPage />)
+
+		await waitFor(() =>
+			expect(toastCapture.warning).toHaveBeenCalledWith(
+				expect.stringContaining("2 of 3 objects couldn't be attached"),
+			),
+		)
+	})
+
+	it('keeps the referenced objects alongside the ?objectId= seed', async () => {
+		mockSearch.mockReturnValue({ agentId: 'cos-1', objectId: 'obj-seed', objectIds: 'obj-1' })
+		mockReferencedObjects.mockReturnValue([{ id: 'obj-1', title: 'Retry window', type: 'bet' }])
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+
+		await user.type(screen.getByLabelText('Message this conversation'), 'What links these?{Enter}')
+
+		const sent = mockCreateConversation.mock.calls[0][0]
+		const ids = sent.initial_message_metadata.context_objects.map((o: { id: string }) => o.id)
+		expect(ids).toContain('obj-1')
+		expect(ids).toContain('obj-seed')
 	})
 })

@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -8,6 +8,10 @@ vi.mock('@tanstack/react-router', async () => {
 		createFileRoute: () => (options: Record<string, unknown>) => options,
 	}
 })
+
+vi.mock('@/lib/workspace-context', () => ({
+	useWorkspace: () => ({ workspaceId: 'ws-1' }),
+}))
 
 vi.mock('@/components/shared/route-error', () => ({
 	RouteError: () => <div>Error</div>,
@@ -20,6 +24,12 @@ vi.mock('@/components/extensions/extensions-manager', () => ({
 import { Route } from '@/routes/_authed/$workspaceId/settings/extensions'
 
 const ExtensionsPage = (Route as unknown as { component: React.FC }).component
+
+// These specs cover the v2 branch of the `new-design` boundary, so they drive
+// the flag on through the test-only localStorage override.
+beforeEach(() => {
+	localStorage.setItem('ff:new-design', 'on')
+})
 
 describe('ExtensionsPage', () => {
 	// The screen's title belongs to the shared top nav, so the page body opens

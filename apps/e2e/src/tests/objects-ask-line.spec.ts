@@ -35,7 +35,9 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 
 			// The pill is the shorthand; the ask line carries actor + text.
 			await expect(page.getByText('Waiting on you')).toBeVisible()
-			await expect(page.getByText(/asks ·/i)).toBeVisible()
+			// The line names the asking actor; a source actor outside this
+			// workspace's member list reads as the generic "Agent".
+			await expect(page.getByText('Agent asks', { exact: true })).toBeVisible()
 			await expect(page.getByText(/approve this bet/i).first()).toBeVisible()
 		})
 	}

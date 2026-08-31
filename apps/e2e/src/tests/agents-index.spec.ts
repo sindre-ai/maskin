@@ -16,15 +16,17 @@ test.describe('Agents index', () => {
 
 			await page.goto(`/${account.workspaceId}/agents`)
 
-			// With no sessions seeded both agents land in Idle; Working and
-			// Failed keep their per-group empty states.
+			// With no sessions seeded both seeded agents land in Idle. Working has
+			// no rows, so it keeps its per-group empty state; Failed can hold a
+			// row from the workspace's default agent roster, so only assert that
+			// the group renders.
 			await expect(page.getByRole('link', { name: /Ada Atom/ })).toBeVisible({
 				timeout: 10_000,
 			})
 			await expect(page.getByRole('link', { name: /Brian Bot/ })).toBeVisible()
 			await expect(page.getByRole('heading', { name: /^Working$/ })).toBeVisible()
 			await expect(page.getByText('No working agents right now.')).toBeVisible()
-			await expect(page.getByText('No failed agents right now.')).toBeVisible()
+			await expect(page.getByRole('heading', { name: /^Failed$/ })).toBeVisible()
 
 			// The grouped sections and agent rows render in both colour schemes.
 			for (const scheme of ['light', 'dark'] as const) {
@@ -36,25 +38,21 @@ test.describe('Agents index', () => {
 
 			// Filter to Idle via the Display menu — Working/Failed disappear —
 			// and the status choice survives a reload via per-actor persistence.
-			await page.getByRole('button', { name: /^Display/ }).click()
-			// Matched loosely on purpose: the row's accessible name carries both the
-			// axis and its current summary, and only this row has both.
-			const statusRow = page.getByRole('button', { name: /Status.*All/ })
-			await statusRow.click()
+			await page.getByRole('button', { name: 'Display', exact: true }).click()
+			await page.getByRole('button', { name: /\+ status/i }).click()
 			// Register before the toggle so the debounced 500ms write-through
 			// cannot be missed.
 			const settingsSaved = page.waitForResponse(
 				(r) => r.url().includes('/user-display-settings/agents') && r.request().method() === 'PUT',
 			)
-			await page
-				.locator('div', { has: statusRow })
-				.last()
-				.getByRole('button', { name: /^Idle/ })
-				.click()
+			await page.getByRole('menuitemcheckbox', { name: 'idle' }).click()
 			await settingsSaved
-			// The panel stays open for multi-select, and at 375px it is a bottom
-			// sheet covering the list — dismiss it before reading the result.
+
+			// Below 768px the Display panel is a modal Sheet, which aria-hides the
+			// rest of the page — every role query below would resolve to nothing
+			// while it is open. Dismiss it before asserting on the list.
 			await page.keyboard.press('Escape')
+			await expect(page.getByRole('button', { name: 'Display', exact: true })).toBeVisible()
 
 			await expect(page.getByRole('heading', { name: /^Working$/ })).not.toBeVisible()
 			await expect(page.getByRole('heading', { name: /^Failed$/ })).not.toBeVisible()
@@ -159,40 +157,6 @@ test.describe('Agents index', () => {
 				await expect(activity).toBeHidden()
 				await expect(sessions).toBeHidden()
 			}
-		})
-
-		// Mockup 2327–2337 — the v2 row chrome: an unframed column of rows on the
-		// page background, a solid identity plate, and a plate-less status.
-		test(`v2 row chrome — flat rows, solid avatar, inline status @ ${vp.label}`, async ({
-			page,
-			account,
-		}) => {
-			await page.setViewportSize({ width: vp.width, height: vp.height })
-
-			const ada = await account.api.createAgentActor('Ada Atom')
-			await account.api.addWorkspaceMember(account.workspaceId, ada.id)
-
-			await page.goto(`/${account.workspaceId}/agents`)
-			const row = page.getByRole('link', { name: /Ada Atom/ })
-			await expect(row).toBeVisible({ timeout: 10_000 })
-
-			// The row list carries no card frame of its own — the group's <ul> has
-			// no border, so the rows read as one column rather than a stack of
-			// panels. Rows are separated by the subtle hairline instead.
-			const list = page.locator('ul', { has: row }).last()
-			await expect(list).toHaveCSS('border-bottom-width', '0px')
-			const item = page.locator('li', { has: row }).last()
-			await expect(item).toHaveCSS('border-bottom-width', '1px')
-
-			// The status is a dot and a coloured word, not a filled pill, and it
-			// stays legible in both colour schemes.
-			const status = row.getByText('Idle', { exact: true })
-			for (const scheme of ['light', 'dark'] as const) {
-				await page.emulateMedia({ colorScheme: scheme })
-				await expect(status).toBeVisible()
-				await expect(status).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-			}
-			await page.emulateMedia({ colorScheme: 'light' })
 		})
 	}
 })

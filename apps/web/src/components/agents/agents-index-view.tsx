@@ -5,11 +5,12 @@ import {
 	getPortraitStatus,
 	portraitStatusToFilter,
 } from '@/components/agents/agent-portrait-card'
-import type { DisplayFilterSectionModel } from '@/components/objects/data-table/display-filter-section'
 import type { DisplayPanelColumn } from '@/components/objects/data-table/display-panel'
 import { DisplayPanel } from '@/components/objects/data-table/display-panel'
-import { ActorAvatar, getActorAvatarPaletteClass } from '@/components/shared/actor-avatar'
+import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { EmptyState } from '@/components/shared/empty-state'
 import { FilterTabs } from '@/components/shared/filter-tabs'
+import { Badge } from '@/components/ui/badge'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
@@ -21,7 +22,6 @@ import {
 	groupSessionsByAgent,
 } from '@/lib/agent-status'
 import type { ActorListItem, DisplaySettingsBody, SessionResponse } from '@/lib/api'
-import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
 import { ChevronRight } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -37,20 +37,6 @@ const COLUMNS: DisplayPanelColumn[] = [
 	{ id: 'activity', label: 'Activity', canHide: true },
 	{ id: 'sessions', label: 'Sessions', canHide: true },
 	{ id: 'status', label: 'Status', canHide: true },
-]
-
-// Ordering / Grouping pickers point at the same property rail, but not every
-// column is a sensible sort key (ordering by free-text activity is noise) and
-// only status/kind produce stable section headers.
-const ORDERING_COLUMNS: DisplayPanelColumn[] = [
-	{ id: 'name', label: 'Name', canHide: false },
-	{ id: 'kind', label: 'Kind', canHide: false },
-	{ id: 'status', label: 'Status', canHide: false },
-	{ id: 'sessions', label: 'Sessions', canHide: false },
-]
-const GROUPING_COLUMNS: DisplayPanelColumn[] = [
-	{ id: 'status', label: 'Status', canHide: false },
-	{ id: 'kind', label: 'Kind', canHide: false },
 ]
 
 // Leading dot for each status chip — semantic tokens only, never a raw colour.
@@ -242,38 +228,6 @@ export function AgentsIndexView({
 		return counts
 	}, [rows])
 
-	// The Display menu's Status row (mockup 2304). Same buckets and the same
-	// pre-filter counts the chip strip draws, built once so the two can't
-	// disagree. Not pinnable — the chip strip above already *is* the pinned row.
-	const filterSections = useMemo<DisplayFilterSectionModel[]>(
-		() => [
-			{
-				id: 'status',
-				label: 'Status',
-				summary:
-					activeStatuses.length > 0
-						? activeStatuses
-								.map((bucket) => STATUS_GROUP_META[bucket as StatusBucket]?.label ?? bucket)
-								.join(', ')
-						: 'All',
-				pinnable: false,
-				options: AGENT_STATUSES.map((bucket) => ({
-					id: bucket,
-					label: STATUS_GROUP_META[bucket].label,
-					count: statusCounts[bucket],
-					active: activeStatuses.includes(bucket),
-					onToggle: () => {
-						const next = activeStatuses.includes(bucket)
-							? activeStatuses.filter((s) => s !== bucket)
-							: [...activeStatuses, bucket]
-						setStatusFilter(next.length > 0 ? next.join(',') : undefined)
-					},
-				})),
-			},
-		],
-		[activeStatuses, statusCounts],
-	)
-
 	const statusTabs = useMemo(
 		() => [
 			{ label: 'All', value: undefined, count: rows.length },
@@ -289,8 +243,7 @@ export function AgentsIndexView({
 
 	return (
 		<div>
-			{/* Chips left, Display right, on one 28px line (mockup 2290–2308). */}
-			<div className="flex min-h-7 flex-wrap items-center gap-1.5 px-0.5">
+			<div className="mb-4 flex flex-wrap items-center gap-2 md:gap-3">
 				<FilterTabs
 					variant="pill"
 					aria-label="Filter agents by status"
@@ -300,16 +253,20 @@ export function AgentsIndexView({
 					onChange={setStatusFilter}
 				/>
 				<DisplayPanel
+					// The current DisplayPanel derives both the Ordering and Grouping
+					// pickers from `columns`, so every property is offered as a sort and
+					// group key. Sorting and grouping both fall back to name / a flat list
+					// for keys this view doesn't implement (Activity), so the extra
+					// options are inert rather than broken. The rebuilt panel in #1422
+					// adds `orderingColumns` / `groupingColumns` to narrow them back down.
 					columns={COLUMNS}
-					orderingColumns={ORDERING_COLUMNS}
-					groupingColumns={GROUPING_COLUMNS}
 					columnVisibility={columnVisibility}
 					onColumnVisibilityChange={(id, visible) =>
 						setColumnVisibility((prev) => ({ ...prev, [id]: visible }))
 					}
 					statusFilter={statusFilter}
 					onStatusFilterChange={setStatusFilter}
-					filterSections={filterSections}
+					statusesByType={{ agent: [...AGENT_STATUSES] }}
 					sort={sort}
 					onSortChange={setSort}
 					order={order}
@@ -325,19 +282,14 @@ export function AgentsIndexView({
 						setColumnVisibility({})
 					}}
 					showView={false}
+					iconOnly
 				/>
 			</div>
 
 			{sortedRows.length === 0 ? (
-				// A centred line, not a bordered empty-state card — the list this
-				// replaces has no frame of its own to sit inside (mockup 2313).
-				<p className="px-3.5 py-9 text-center text-[12.5px] text-muted-foreground">
-					No agents in that state right now.
-				</p>
+				<EmptyState title="No agents in that state right now." />
 			) : (
-				// Groups are separated by the header's own top padding, not a gap —
-				// the hairlines have to run unbroken down the list (mockup 2315–2341).
-				<div className="mt-3">
+				<div className="space-y-6">
 					{groups.map((group) => (
 						<AgentGroupSection
 							key={group.id}
@@ -372,7 +324,7 @@ function AgentGroupSection({
 }) {
 	if (group.label === undefined) {
 		return (
-			<ul>
+			<ul className="overflow-hidden rounded-xl border border-border bg-card">
 				{group.rows.map((row) => (
 					<AgentRowItem
 						key={row.agent.id}
@@ -390,25 +342,18 @@ function AgentGroupSection({
 
 	return (
 		<section aria-label={group.label}>
-			{/* Not the mono `.eyebrow` — the agents list marks a group with a tighter
-			    11px uppercase label so the count and the note can share its line
-			    (mockup 2318–2321). */}
-			<div className="flex items-baseline gap-[9px] px-1 pt-3.5 pb-1.5">
-				<h3 className="shrink-0 text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
-					{group.label}
-				</h3>
-				<span className="shrink-0 text-[11px] font-semibold tabular-nums text-border-strong">
+			<div className="flex items-baseline gap-2 px-1 pb-2">
+				<h3 className="eyebrow shrink-0 text-foreground">{group.label}</h3>
+				<span className="shrink-0 text-xs tabular-nums text-muted-foreground">
 					{group.rows.length}
 				</span>
 				{group.note && (
 					// One truncated line beside the count at every width (mockup 2320) —
 					// hiding it below `sm` dropped the only explanation of the group.
-					<span className="min-w-0 truncate text-[11px] text-muted-foreground/70">
-						{group.note}
-					</span>
+					<span className="min-w-0 truncate text-xs text-muted-foreground">{group.note}</span>
 				)}
 			</div>
-			<ul>
+			<ul className="overflow-hidden rounded-xl border border-border bg-card">
 				{group.rows.length > 0 ? (
 					group.rows.map((row) => (
 						<AgentRowItem
@@ -422,9 +367,8 @@ function AgentGroupSection({
 						/>
 					))
 				) : (
-					// Sits on the same hairline the rows do, so an empty group reads as
-					// part of the list rather than a gap in it (mockup 2324).
-					<li className="border-b border-border-subtle px-3.5 py-3 text-[11.5px] text-muted-foreground/70">
+					// Inline row inside the list frame, not a centred block (mockup 2324).
+					<li className="px-4 py-3 text-[11.5px] text-muted-foreground">
 						{`No ${group.label.toLowerCase()} agents right now.`}
 					</li>
 				)}
@@ -449,45 +393,38 @@ function AgentRowItem({
 	showStatus: boolean
 }) {
 	const { agent, portrait, latestSession } = row
-	// Mockup 2330 puts a mono uppercase KIND badge beside the name, tinted in the
-	// agent's own identity colour rather than outlined. `ActorListItem` carries the
-	// workspace-membership role when the row came from the members join;
-	// everything else is just an agent.
+	// Mockup 2330 puts a mono uppercase KIND badge beside the name. `ActorListItem`
+	// carries the workspace-membership role when the row came from the members
+	// join; everything else is just an agent.
 	const kind = showKind ? agent.role?.trim() || 'Agent' : undefined
 	const outcome = agent.description?.split('\n')[0]?.trim() || 'No outcome set yet'
 	const sessionsLabel = `${row.sessionCount} session${row.sessionCount === 1 ? '' : 's'}`
 
 	return (
-		// A hairline under every row, including the last — the group below butts
-		// straight onto it, so the list reads as one unbroken column of rows rather
-		// than a stack of framed cards (mockup 2327).
-		<li className="border-b border-border-subtle">
+		<li className="[&:not(:last-child)]:border-b [&:not(:last-child)]:border-border">
 			{/* The whole row is the click target (mockup 2327), not just the name. */}
 			<Link
 				to="/$workspaceId/agents/$agentId"
 				params={{ workspaceId, agentId: agent.id }}
-				className="group flex items-center gap-3 rounded-xl px-3.5 py-[15px] transition-colors duration-150 hover:bg-muted/50 md:gap-3.5"
+				className="group flex items-center gap-3 px-4 py-3 transition-colors duration-150 hover:bg-muted/50 md:gap-3.5"
 			>
 				<ActorAvatar
 					name={agent.name}
 					type={agent.type}
 					size="lg"
-					tone="strong"
 					id={agent.id}
-					className="size-10 shrink-0 text-[15px] font-extrabold"
+					className="shrink-0"
 				/>
 				<div className="flex min-w-0 flex-1 flex-col gap-0.5">
-					<span className="flex min-w-0 items-center gap-[7px]">
+					<span className="flex min-w-0 items-center gap-2">
 						<span className="truncate text-[13.5px] font-bold text-foreground">{agent.name}</span>
 						{kind && (
-							<span
-								className={cn(
-									'shrink-0 rounded-[5px] px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase leading-none tracking-[0.09em]',
-									getActorAvatarPaletteClass(agent.id),
-								)}
+							<Badge
+								variant="outline"
+								className="shrink-0 px-1.5 py-0 font-mono text-[9px] font-bold uppercase tracking-[0.09em]"
 							>
 								{kind}
-							</span>
+							</Badge>
 						)}
 					</span>
 					<span className="truncate text-xs text-muted-foreground" title={outcome}>
@@ -508,14 +445,12 @@ function AgentRowItem({
 					</span>
 				)}
 				{showStatus && (
-					// A dot and a coloured label, not a filled pill — at row density the
-					// plate reads as a second badge beside the kind (mockup 2337).
 					<span className="shrink-0 text-[11px]">
-						<AgentStatusPill status={portrait} variant="inline" />
+						<AgentStatusPill status={portrait} />
 					</span>
 				)}
 				<ChevronRight
-					className="size-3.5 shrink-0 text-border-strong transition-colors duration-150 group-hover:text-foreground"
+					className="size-3.5 shrink-0 text-muted-foreground transition-colors duration-150 group-hover:text-foreground"
 					aria-hidden
 				/>
 			</Link>

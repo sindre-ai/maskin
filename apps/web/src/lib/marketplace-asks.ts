@@ -48,8 +48,13 @@ const GATES: { re: RegExp; ask: string }[] = [
 		ask: 'your approval',
 	},
 	{
-		// "without your approval", "without a human approval" — the negation of auto
-		re: /without (?:your|a human|the operator's?) (?:approval|sign-?off|go-?ahead|decision)/i,
+		// "never lands without your approval", "does not merge without a human
+		// sign-off". The negation is required: a bare "without your approval"
+		// states the opposite — "merges without your approval once CI passes" is
+		// an autonomy claim, and matching it would put an "asks you" pill on a
+		// step that explicitly never pauses. The negation must reach "without"
+		// within the same sentence, hence [^.!?].
+		re: /(?:\b(?:never|not|no|nothing|none|cannot)\b|n't)[^.!?]{0,80}?without (?:your|a human|the operator's?) (?:approval|sign-?off|go-?ahead|decision)/i,
 		ask: 'your approval',
 	},
 	{

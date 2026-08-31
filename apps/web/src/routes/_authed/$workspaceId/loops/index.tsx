@@ -50,11 +50,11 @@ function compareLoops(a: LoopSummary, b: LoopSummary, sort: string): number {
 }
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/')({
-	component: LoopsPage,
+	component: LoopsRoute,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-function LoopsPage() {
+function LoopsRoute() {
 	const { workspaceId } = useWorkspace()
 	const {
 		data: loops,

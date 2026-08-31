@@ -14,10 +14,17 @@ interface AuthFixtures {
 }
 
 export const test = base.extend<AuthFixtures>({
-	account: async ({ page }, use, testInfo) => {
+	account: async ({ page }, use) => {
+		// Deliberately NOT derived from the test title. The workspace is named
+		// after the actor ("<name>'s Workspace") and that name is rendered in the
+		// sidebar workspace-switcher pill's aria-label, so a title-derived name
+		// leaks the test's own words into the DOM — any spec whose title contains
+		// a string it also locates by (e.g. "Hide plans", "Buy usage credits")
+		// then fails with a Playwright strict-mode violation.
+		const unique = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`
 		const actor = await createTestActor({
-			name: `E2E ${testInfo.title.slice(0, 30)} ${Date.now()}`,
-			email: `e2e-${Date.now()}@test.com`,
+			name: `E2E Actor ${unique}`,
+			email: `e2e-${unique}@test.com`,
 		})
 
 		const api = new TestAPI(actor.api_key)
@@ -37,6 +44,12 @@ export const test = base.extend<AuthFixtures>({
 			}) => {
 				localStorage.setItem('maskin-api-key', data.apiKey)
 				localStorage.setItem('maskin-actor', JSON.stringify(data.actor))
+				localStorage.setItem(`north_star_answered_${data.workspaceId}`, '1')
+				// The v2 Objects surfaces sit behind `new-design` until they have been
+				// tested; the seeded actor is not a configured tester, so specs drive
+				// the on-branch through the test-only override. A spec that needs the
+				// pre-v2 branch sets `ff:new-design` to 'off' in its own initScript.
+				localStorage.setItem('ff:new-design', 'on')
 			},
 			{
 				apiKey: actor.api_key,

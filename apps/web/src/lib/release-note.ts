@@ -42,6 +42,6 @@ export function dismissRelease(version: string): void {
 	try {
 		localStorage.setItem(storageKey(version), '1')
 	} catch {
-		// Best-effort — the card reappears next session, which is harmless.
+		// Dismissal is best-effort; a full/privacy-mode storage must never throw.
 	}
 }

@@ -1,6 +1,7 @@
 import type { Browser, Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { type TestAPI, createTestActor } from '../helpers/api.helper'
+import { grantPlanHeadroom } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -28,7 +29,9 @@ async function signInAsActor(
 	return page
 }
 
-async function setUpConversation(api: TestAPI, workspaceId: string) {
+async function setUpConversation(api: TestAPI, workspaceId: string, apiKey: string) {
+	// A trial workspace allows a single human seat — this spec needs two.
+	await grantPlanHeadroom(apiKey, workspaceId)
 	const secondHuman = await createTestActor({ name: `E2E Chat Partner ${Date.now()}` })
 	await api.addWorkspaceMember(workspaceId, secondHuman.id)
 	const agent = await api.createAgentActor(`E2E Chat Agent ${Date.now()}`)
@@ -53,6 +56,7 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			const { conversation, secondHuman } = await setUpConversation(
 				account.api,
 				account.workspaceId,
+				account.apiKey,
 			)
 
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
@@ -101,7 +105,11 @@ test.describe('Chats — full-screen multi-party chat', () => {
 		account,
 		browser,
 	}) => {
-		const { conversation, secondHuman } = await setUpConversation(account.api, account.workspaceId)
+		const { conversation, secondHuman } = await setUpConversation(
+			account.api,
+			account.workspaceId,
+			account.apiKey,
+		)
 
 		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 		await expect(page.getByRole('heading', { name: 'E2E multi-party chat' })).toBeVisible({
@@ -140,7 +148,11 @@ test.describe('Chats — full-screen multi-party chat', () => {
 
 	test('mobile back button returns to the conversation list', async ({ page, account }) => {
 		await page.setViewportSize({ width: 375, height: 812 })
-		const { conversation } = await setUpConversation(account.api, account.workspaceId)
+		const { conversation } = await setUpConversation(
+			account.api,
+			account.workspaceId,
+			account.apiKey,
+		)
 
 		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 		await expect(page.getByRole('heading', { name: 'E2E multi-party chat' })).toBeVisible({
@@ -157,7 +169,11 @@ test.describe('Chats — full-screen multi-party chat', () => {
 		account,
 		browser,
 	}) => {
-		const { conversation, secondHuman } = await setUpConversation(account.api, account.workspaceId)
+		const { conversation, secondHuman } = await setUpConversation(
+			account.api,
+			account.workspaceId,
+			account.apiKey,
+		)
 		await account.api.postConversationMessage(conversation.id, account.workspaceId, {
 			content: 'Visible in both themes',
 		})
@@ -192,4 +208,111 @@ test.describe('Chats — full-screen multi-party chat', () => {
 		}
 		await partnerPage.context().close()
 	})
+
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`edits an own message inline and shows the (edited) marker at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const { conversation } = await setUpConversation(
+				account.api,
+				account.workspaceId,
+				account.apiKey,
+			)
+
+			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+			const composer = page.getByLabel('Message this conversation')
+			await composer.fill('Original wording with a typo')
+			await composer.press('Enter')
+
+			const thread = page.getByTestId('thread-messages')
+			await expect(thread.getByText('Original wording with a typo')).toBeVisible({
+				timeout: 10_000,
+			})
+
+			// The action renders only once the optimistic bubble reconciles with
+			// the persisted row (a real message id) — and must be reachable
+			// without hover, so plain toBeVisible is the touch-viewport check.
+			const editButton = page.getByRole('button', { name: 'Edit message' })
+			await expect(editButton).toBeVisible({ timeout: 10_000 })
+			await editButton.click()
+
+			// After entering edit mode the icon button unmounts, so the label
+			// uniquely addresses the inline textarea.
+			const editor = page.getByLabel('Edit message')
+			await expect(editor).toHaveValue('Original wording with a typo')
+			await editor.fill('Corrected wording, no typo')
+			await page.getByRole('button', { name: 'Save' }).click()
+
+			await expect(thread.getByText('Corrected wording, no typo')).toBeVisible({
+				timeout: 10_000,
+			})
+			await expect(thread.getByText('(edited)')).toBeVisible({ timeout: 10_000 })
+
+			// The edit survives a reload — it was persisted, not just optimistic.
+			await page.reload()
+			await expect(thread.getByText('Corrected wording, no typo')).toBeVisible({
+				timeout: 10_000,
+			})
+			await expect(thread.getByText('(edited)')).toBeVisible({ timeout: 10_000 })
+		})
+
+		test(`retries an agent response from an own message at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const { conversation } = await setUpConversation(
+				account.api,
+				account.workspaceId,
+				account.apiKey,
+			)
+
+			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+			const composer = page.getByLabel('Message this conversation')
+			await composer.fill('Anyone there? Please respond')
+			await composer.press('Enter')
+
+			const retryButton = page.getByRole('button', { name: 'Ask agents to respond again' })
+			await expect(retryButton).toBeVisible({ timeout: 10_000 })
+			await retryButton.click()
+
+			// The backend accepts the retry (202) and the UI confirms via toast.
+			await expect(page.getByText('Asked the agents to respond')).toBeVisible({
+				timeout: 10_000,
+			})
+		})
+	}
+
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`a chat started from the UI gets a placeholder title, not the agent's name, at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const agentName = `E2E Titler Agent ${Date.now()}`
+			const agent = await account.api.createAgentActor(agentName)
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+
+			await page.goto(
+				`/${account.workspaceId}/chats/new?agentId=${agent.id}&agentName=${encodeURIComponent(agentName)}`,
+			)
+			const composer = page.getByLabel('Message this conversation')
+			await composer.fill('The deploy pipeline keeps failing on the migrate step')
+			await composer.press('Enter')
+
+			await page.waitForURL(/\/chats\/[0-9a-f-]{36}/, { timeout: 15_000 })
+			const heading = page.getByRole('heading').first()
+			await expect(heading).toBeVisible({ timeout: 10_000 })
+
+			// The title is either still the placeholder or already replaced by the
+			// backend auto-titler (conversation-titler.ts) — both are correct, and
+			// which one you get depends on whether the environment has an LLM
+			// credential. What must never come back is the old behaviour of naming
+			// the conversation after its participants. The generated text itself
+			// isn't asserted: that would need a live model.
+			await expect(heading).not.toHaveText(agentName)
+		})
+	}
 })

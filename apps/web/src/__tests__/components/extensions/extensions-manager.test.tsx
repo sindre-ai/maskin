@@ -5,6 +5,9 @@ import { buildWorkspaceWithRole } from '../../factories'
 import { TestWrapper } from '../../setup'
 
 const mockMutate = vi.fn()
+// The removal paths persist through `mutateAsync` so the dialog can await the
+// settings write and report a failure instead of closing over it.
+const mockMutateAsync = vi.fn(async () => undefined)
 const mockWorkspace = { current: buildWorkspaceWithRole({ settings: {} }) }
 const mockEnabledModules = { current: ['work'] }
 const mockCustomExtensions = { current: [] as CustomExtensionInfo[] }
@@ -16,7 +19,11 @@ vi.mock('@/lib/workspace-context', () => ({
 }))
 
 vi.mock('@/hooks/use-workspaces', () => ({
-	useUpdateWorkspace: () => ({ mutate: mockMutate, isPending: false }),
+	useUpdateWorkspace: () => ({
+		mutate: mockMutate,
+		mutateAsync: mockMutateAsync,
+		isPending: false,
+	}),
 }))
 
 vi.mock('@/hooks/use-enabled-modules', () => ({
@@ -120,11 +127,10 @@ describe('ExtensionsManager', () => {
 		expect(screen.getByRole('button', { name: 'Confirm removal' })).toBeInTheDocument()
 		await user.click(screen.getByRole('button', { name: 'Confirm removal' }))
 
-		expect(mockMutate).toHaveBeenCalledWith(
+		expect(mockMutateAsync).toHaveBeenCalledWith(
 			expect.objectContaining({
 				settings: expect.objectContaining({ enabled_modules: [] }),
 			}),
-			expect.anything(),
 		)
 	})
 
@@ -147,7 +153,7 @@ describe('ExtensionsManager', () => {
 		await user.click(within(myExtRow).getByRole('switch'))
 		await user.click(screen.getByRole('button', { name: 'Confirm removal' }))
 
-		expect(mockMutate).toHaveBeenCalledWith(
+		expect(mockMutateAsync).toHaveBeenCalledWith(
 			expect.objectContaining({
 				settings: expect.objectContaining({
 					custom_extensions: expect.objectContaining({
@@ -155,7 +161,6 @@ describe('ExtensionsManager', () => {
 					}),
 				}),
 			}),
-			expect.anything(),
 		)
 	})
 })

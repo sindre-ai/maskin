@@ -1,5 +1,6 @@
 import { TimelineTab } from '@/components/objects/timeline-tab'
 import { useObjectGraph } from '@/hooks/use-objects'
+import { useMarkRead } from '@/hooks/use-subscriptions'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildEventResponse, buildObjectResponse, buildRelationshipResponse } from '../../factories'
@@ -13,6 +14,11 @@ vi.mock('@tanstack/react-router', async () => {
 vi.mock('@/hooks/use-objects', () => ({
 	useObjectGraph: vi.fn(),
 	useObject: () => ({ data: undefined, isLoading: false }),
+}))
+
+const markReadMutate = vi.fn()
+vi.mock('@/hooks/use-subscriptions', () => ({
+	useMarkRead: vi.fn(() => ({ mutate: markReadMutate, isPending: false })),
 }))
 
 vi.mock('@/hooks/use-actors', () => ({
@@ -325,6 +331,13 @@ describe('TimelineTab', () => {
 
 		await user.click(screen.getByRole('button', { name: 'Mark read' }))
 		expect(screen.queryByRole('button', { name: 'Mark read' })).toBeNull()
+		// Dismissing the divider must also persist the read high-water mark —
+		// a local-only dismiss would let the unread badge come back on remount.
+		expect(vi.mocked(useMarkRead)).toHaveBeenCalledWith('ws-1')
+		expect(markReadMutate).toHaveBeenCalledWith(
+			{ entityType: 'object', entityId: 'obj-1', lastEventId: 20 },
+			expect.anything(),
+		)
 	})
 
 	it('threads replies under their parent comment instead of listing them', () => {
@@ -417,5 +430,63 @@ describe('TimelineTab', () => {
 
 		expect(screen.queryByRole('button', { name: /agent updates/ })).toBeNull()
 		expect(screen.getAllByRole('listitem')).toHaveLength(2)
+	})
+	// Regression: `visible` runs newest-first, so a status_changed event CLOSES
+	// the phase above it and OPENS the older one below. The older phase must be
+	// labelled with the status the object moved AWAY from (`old`). Labelling it
+	// with `new` made every divider below the top repeat the one above it and
+	// left the oldest phase unlabelled.
+	it('labels each phase divider with the status that phase actually sat in', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'active' })
+		mockGraph(
+			[
+				buildEventResponse({
+					id: 40,
+					action: 'status_changed',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					createdAt: '2026-01-04T00:00:00Z',
+					data: { changes: [{ field: 'status', old: 'define', new: 'active' }] },
+				}),
+				buildEventResponse({
+					id: 30,
+					action: 'commented',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					createdAt: '2026-01-03T00:00:00Z',
+				}),
+				buildEventResponse({
+					id: 20,
+					action: 'status_changed',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					createdAt: '2026-01-02T00:00:00Z',
+					data: { changes: [{ field: 'status', old: 'scope', new: 'define' }] },
+				}),
+				buildEventResponse({
+					id: 10,
+					action: 'commented',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					createdAt: '2026-01-01T00:00:00Z',
+				}),
+			],
+			[],
+			[],
+			object,
+		)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		// Newest phase first: active (current) → define → scope. Each status
+		// appears exactly once; the pre-fix code rendered active, active, define.
+		// Scoped to the dividers themselves: v2 status_changed rows also carry a
+		// status badge with the same word, so an unscoped text query interleaves
+		// them with the phase labels.
+		const labels = screen
+			.getAllByText(/^(active|define|scope)$/)
+			.filter((el) => el.closest('button[aria-expanded]'))
+			.map((el) => el.textContent?.trim())
+		expect(labels).toEqual(['active', 'define', 'scope'])
 	})
 })

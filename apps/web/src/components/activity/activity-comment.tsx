@@ -95,7 +95,13 @@ function CommentRow({
 	const { data: actor } = useActor(event.actorId)
 	const content = (event.data?.content as string) ?? ''
 	const attachmentFileIds = (event.data?.attachmentFileIds as string[] | undefined) ?? []
-	const { data: workspaceFiles } = useFiles(workspaceId)
+	// Scope the lookup to exactly the ids this comment references. An unfiltered
+	// useFiles(workspaceId) resolves against the 50 newest workspace files
+	// (apps/dev/src/routes/files.ts), so every attachment older than that window
+	// silently rendered as nothing at all.
+	const { data: attachedFiles, isPending: attachmentsPending } = useFiles(workspaceId, {
+		ids: attachmentFileIds,
+	})
 	const [humanDialogActorId, setHumanDialogActorId] = useState<string | null>(null)
 	const navigate = useNavigate()
 
@@ -235,28 +241,28 @@ function CommentRow({
 							/>
 						</div>
 					)}
-					{clampable && !expanded ? (
-						// Clamped, the message is a plain excerpt so it can run inline
-						// after the name and "Show more" can sit on the end of the
-						// sentence rather than under it (mockup 1285–1286).
-						<>
-							<span>{clampComment(content)}</span>
-							{showMoreButton}
-						</>
-					) : (
-						<>
-							<AgentOutput
-								content={content}
-								disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
-								mentionActors={actors}
-								onMentionClick={handleMentionClick}
-								size="sm"
-								className={cn(isBubble ? 'inline [&_p:first-child]:inline [&_p]:my-0' : 'mt-1')}
-								renderVisuals
-							/>
-							{clampable && showMoreButton}
-						</>
-					)}
+					{/* Clamped or whole, the message renders through the same markdown
+					    path — an excerpt is still markdown, and rendering it raw showed
+					    literal `**`, `- ` and link syntax on the most common row of the
+					    timeline. Clamped, it stays inline so "Show more" can sit on the
+					    end of the sentence rather than under it (mockup 1285–1286). */}
+					<>
+						<AgentOutput
+							content={clampable && !expanded ? clampComment(content) : content}
+							disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
+							mentionActors={actors}
+							onMentionClick={handleMentionClick}
+							size="sm"
+							className={cn(
+								isBubble || (clampable && !expanded)
+									? 'inline [&_p:first-child]:inline [&_p]:my-0'
+									: 'mt-1',
+							)}
+							renderVisuals
+						/>
+						{clampable && showMoreButton}
+					</>
+
 					{footer && <div>{footer}</div>}
 					{/* Objects the author attached from the composer, as real
 					    references (mockup `refList`). */}
@@ -277,8 +283,18 @@ function CommentRow({
 					{attachmentFileIds.length > 0 && (
 						<ul className="mt-1.5 space-y-1">
 							{attachmentFileIds.map((fileId) => {
-								const file = workspaceFiles?.find((f) => f.id === fileId)
-								if (!file) return null
+								const file = attachedFiles?.find((f) => f.id === fileId)
+								// Still loading: render nothing rather than flash "unavailable".
+								if (!file) {
+									if (attachmentsPending) return null
+									// Resolved and absent — the file was deleted or is not visible
+									// to this actor. Say so instead of dropping the attachment.
+									return (
+										<li key={fileId} className="text-muted-foreground text-xs italic">
+											Attachment unavailable
+										</li>
+									)
+								}
 								return (
 									<li key={fileId}>
 										<AttachedFileCard workspaceId={workspaceId} file={file} />

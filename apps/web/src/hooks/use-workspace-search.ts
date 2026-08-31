@@ -55,9 +55,17 @@ export interface WorkspaceSearchResult {
 	/** True while a committed query has produced no object results yet — the
 	 *  page shows "Searching…" instead of flashing the no-match state. */
 	isPending: boolean
+	/** The object search itself failed. Nothing can be shown, so the page
+	 *  renders an error rather than sitting on "Searching…" forever — a failed
+	 *  query never resolves, so `isPending` alone would stay true indefinitely. */
+	isError: boolean
+	/** One of the secondary sources (loops / agents / triggers / chats) failed
+	 *  while the object search succeeded. Results are real but incomplete, so
+	 *  counts would otherwise understate silently. */
+	isPartial: boolean
 }
 
-function matches(query: string, ...fields: (string | null | undefined)[]): boolean {
+export function matches(query: string, ...fields: (string | null | undefined)[]): boolean {
 	if (!query) return true
 	const needle = query.toLowerCase()
 	return fields.some((field) => (field ?? '').toLowerCase().includes(needle))
@@ -70,11 +78,20 @@ export function useWorkspaceSearch(
 	const query = q.trim()
 	const enabled = query.length > 0
 
-	const { data: objectResults } = useSearchObjects(workspaceId, { q: query, type, status })
-	const { data: loops } = useLoops(workspaceId)
-	const { data: actors } = useActors(workspaceId)
-	const { data: triggers } = useTriggers(workspaceId)
-	const { data: conversations } = useConversationsInfinite(workspaceId)
+	const { data: objectResults, isError: objectsFailed } = useSearchObjects(workspaceId, {
+		q: query,
+		type,
+		status,
+	})
+	const { data: loops, isError: loopsFailed } = useLoops(workspaceId)
+	const { data: actors, isError: actorsFailed } = useActors(workspaceId)
+	const { data: triggers, isError: triggersFailed } = useTriggers(workspaceId)
+	const { data: conversations, isError: chatsFailed } = useConversationsInfinite(workspaceId)
+
+	// Secondary sources are consumed as `?? []` below, so a failure would drop a
+	// whole group to zero and hide its chip while the header still claimed a
+	// confident total. Track it so the page can say results are incomplete.
+	const isPartial = loopsFailed || actorsFailed || triggersFailed || chatsFailed
 
 	const firstChatPage = conversations?.pages?.[0]?.conversations
 
@@ -89,7 +106,7 @@ export function useWorkspaceSearch(
 		}
 
 		if (!enabled) {
-			return { rows, countsByGroup, total: 0, isPending: false }
+			return { rows, countsByGroup, total: 0, isPending: false, isError: false, isPartial: false }
 		}
 
 		for (const conversation of firstChatPage ?? []) {
@@ -109,14 +126,14 @@ export function useWorkspaceSearch(
 
 		for (const loop of loops ?? []) {
 			const name = loop.name ?? 'Untitled loop'
-			if (!matches(query, name, loop.guarantee, loop.entryCondition)) continue
+			if (!matches(query, name, loop.content, loop.entryCondition)) continue
 			rows.push({
 				id: loop.id,
 				group: 'loops',
 				kind: 'LOOP',
 				title: name,
 				sub: loop.status,
-				snippet: loop.guarantee ?? '',
+				snippet: loop.content ?? '',
 				to: '/$workspaceId/loops/$loopId',
 				params: { workspaceId, loopId: loop.id },
 			})
@@ -174,7 +191,20 @@ export function useWorkspaceSearch(
 			rows,
 			countsByGroup,
 			total: rows.length,
-			isPending: objectResults === undefined,
+			isPending: objectResults === undefined && !objectsFailed,
+			isError: objectsFailed,
+			isPartial,
 		}
-	}, [enabled, query, workspaceId, firstChatPage, loops, actors, objectResults, triggers])
+	}, [
+		enabled,
+		query,
+		workspaceId,
+		firstChatPage,
+		loops,
+		actors,
+		objectResults,
+		triggers,
+		objectsFailed,
+		isPartial,
+	])
 }

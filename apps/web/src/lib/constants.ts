@@ -34,16 +34,19 @@ export const statusColors: Record<string, { bg: string; text: string }> = {
 	snapshotting: { bg: 'bg-status-processing-bg', text: 'text-status-processing-text' },
 	waiting_for_input: { bg: 'bg-status-blocked-bg', text: 'text-status-blocked-text' },
 	timeout: { bg: 'bg-status-failed-bg', text: 'text-status-failed-text' },
-	// Billing lifecycle. Without these, StatusBadge falls through to its
-	// hardcoded zinc-700/zinc-300 default, which is a dark pill with low-contrast
-	// text on a white invoice row. `past_due` and `canceled` are included because
-	// apps/dev/src/routes/billing.ts can write them.
+	// Billing lifecycle — AHEAD OF THE BACKEND. No billing route exists yet; these
+	// statuses are the plan/invoice vocabulary the upcoming billing work will
+	// write, landed here so the screens that consume it have styling from day one.
+	// See the `billing` block in `lib/api.ts` for the rest of the placeholder
+	// surface and the note on what has to be re-checked when it ships.
+	//
+	// They earn their place regardless of timing: StatusBadge falls through to a
+	// hardcoded zinc-700/zinc-300 default for any unknown status, which is a dark
+	// pill with low-contrast text — on a white invoice row, on the one card a user
+	// most needs to be able to read.
 	paid: { bg: 'bg-status-succeeded-bg', text: 'text-status-succeeded-text' },
 	inactive: { bg: 'bg-status-parked-bg', text: 'text-status-parked-text' },
 	past_due: { bg: 'bg-status-at_risk-bg', text: 'text-status-at_risk-text' },
-	// billing.ts:381 writes 'declined' when a payment fails. Without an entry it
-	// falls through to StatusBadge's zinc-700 default — a dark pill with
-	// low-contrast text, on the one card a user needs to be able to read.
 	declined: { bg: 'bg-status-failed-bg', text: 'text-status-failed-text' },
 	canceled: { bg: 'bg-status-discarded-bg', text: 'text-status-discarded-text' },
 }

@@ -20,6 +20,31 @@ vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => mockUseActors(),
 }))
 
+// The reference picker is stubbed down to the one thing the composer cares
+// about: a button that hands back a picked object.
+vi.mock('@/components/chat/slash-picker', () => ({
+	SlashPicker: ({
+		open,
+		onSelect,
+	}: {
+		open: boolean
+		onSelect: (result: {
+			kind: string
+			ref: { id: string; title: string; type: string }
+		}) => void
+	}) =>
+		open ? (
+			<button
+				type="button"
+				onClick={() =>
+					onSelect({ kind: 'object', ref: { id: 'obj-9', title: 'Retry window', type: 'bet' } })
+				}
+			>
+				pick-object
+			</button>
+		) : null,
+}))
+
 // The attachment queue is exercised for its contract only: what the composer
 // hands to `submitDraft` when files are in play.
 const mockDraftSubmit = vi.fn()
@@ -47,6 +72,7 @@ describe('CommentInput', () => {
 		mockGetStoredActor.mockReturnValue({ id: 'actor-1', name: 'Alice', type: 'human' })
 		mockUseActors.mockReturnValue({ data: [] })
 		mockDraftSubmit.mockClear()
+		mockDraftSubmit.mockReturnValue('queued')
 		mockDraftFiles = []
 	})
 
@@ -95,6 +121,46 @@ describe('CommentInput', () => {
 		)
 	})
 
+	it('posts picked objects as metadata.refs alongside the comment body', async () => {
+		const user = userEvent.setup()
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
+		await user.click(await screen.findByText('Reference an object'))
+		await user.click(await screen.findByRole('button', { name: 'pick-object' }))
+
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'See this one',
+		)
+		await user.click(screen.getByRole('button', { name: /send/i }))
+
+		expect(mockMutate).toHaveBeenCalledWith(
+			expect.objectContaining({
+				content: 'See this one',
+				metadata: { refs: ['obj-9'] },
+			}),
+			expect.any(Object),
+		)
+	})
+
+	// `createCommentSchema.content` is `.min(1)`, so a references-only comment
+	// would be a guaranteed 400 — the composer must not offer to send one.
+	it('keeps send disabled, and posts nothing, when only a reference is attached', async () => {
+		const user = userEvent.setup()
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
+		await user.click(await screen.findByText('Reference an object'))
+		await user.click(await screen.findByRole('button', { name: 'pick-object' }))
+
+		const send = screen.getByRole('button', { name: /send/i })
+		expect(send).toBeDisabled()
+
+		fireEvent.click(send)
+		expect(mockMutate).not.toHaveBeenCalled()
+	})
+
 	it('carries an attachment and decision options on the same comment', async () => {
 		mockDraftFiles = [
 			{ tempId: 'f-1', name: 'metrics.png', sizeBytes: 1024, status: 'uploaded', progress: 100 },
@@ -122,6 +188,32 @@ describe('CommentInput', () => {
 			metadata: { chips: ['Ship it'] },
 		})
 		expect(mockMutate).not.toHaveBeenCalled()
+	})
+
+	// `submitDraft` returns 'no-attachments' when the queue has nothing to send:
+	// the entry was never created, or every attachment was removed between the
+	// composer reading `hasAttachments` and the click. In the second case it also
+	// deletes the entry, so there is no queued row left to render a failure on.
+	// Dropping the comment there loses the user's text silently.
+	it('falls back to a direct post when the queue reports no attachments', async () => {
+		mockDraftFiles = [
+			{ tempId: 'f-1', name: 'metrics.png', sizeBytes: 1024, status: 'uploaded', progress: 100 },
+		]
+		mockDraftSubmit.mockReturnValue('no-attachments')
+		const user = userEvent.setup()
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'Still worth saying',
+		)
+		await user.click(screen.getByRole('button', { name: /send/i }))
+
+		expect(mockDraftSubmit).toHaveBeenCalled()
+		expect(mockMutate).toHaveBeenCalledWith(
+			expect.objectContaining({ entity_id: 'obj-1', content: 'Still worth saying' }),
+			expect.anything(),
+		)
 	})
 
 	it('sends no metadata when no decision is attached', async () => {
@@ -185,6 +277,20 @@ describe('CommentInput', () => {
 			'Hello',
 		)
 		expect(screen.getByRole('button', { name: /send/i })).toBeDisabled()
+	})
+
+	// The Send button has always been disabled while a POST is in flight; Enter
+	// went straight through. Since the composer keeps its text until the POST
+	// succeeds, a slow round trip looks like a keypress that did nothing, and
+	// the impatient second Enter posted the same comment twice.
+	it('does NOT submit on Enter while a post is in flight', async () => {
+		const user = userEvent.setup()
+		mockIsPending = true
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		const textarea = screen.getByPlaceholderText('Write a comment... Use @ to mention an agent')
+		await user.type(textarea, 'Impatient user{Enter}')
+		expect(mockMutate).not.toHaveBeenCalled()
 	})
 
 	it('submits on Enter key', async () => {

@@ -27,6 +27,8 @@ function buildConversation(
 		archived: false,
 		unread_count: 0,
 		snippet: 'The retry window is still open on three accounts.',
+		snippet_actor_id: null,
+		snippet_actor_name: null,
 		participants: [
 			{
 				actorId: 'me',
@@ -54,11 +56,47 @@ function renderRow(conversation: ConversationListItemResponse) {
 }
 
 describe('ConversationListRow', () => {
-	it('renders a single lead avatar for the first participant who is not the viewer', () => {
+	it('plates who the conversation is with, never the viewer', () => {
 		renderRow(buildConversation())
-		// Two participants, one of them the viewer — exactly one avatar renders.
+		// Two participants, one of them the viewer — only the counterpart plates.
 		expect(screen.getByText('BA')).toBeInTheDocument()
 		expect(screen.queryByText('ME')).not.toBeInTheDocument()
+	})
+
+	it('stacks up to two counterparts and counts the rest', () => {
+		renderRow(
+			buildConversation({
+				participants: [
+					{ actorId: 'me', actorName: 'Me', actorType: 'human', joinedAt: null, addedBy: null },
+					{
+						actorId: 'a',
+						actorName: 'Billing Agent',
+						actorType: 'agent',
+						joinedAt: null,
+						addedBy: null,
+					},
+					{ actorId: 'b', actorName: 'Relay', actorType: 'agent', joinedAt: null, addedBy: null },
+					{ actorId: 'c', actorName: 'Quill', actorType: 'agent', joinedAt: null, addedBy: null },
+					{ actorId: 'd', actorName: 'Compass', actorType: 'agent', joinedAt: null, addedBy: null },
+				],
+			}),
+		)
+		expect(screen.getByText('BA')).toBeInTheDocument()
+		expect(screen.getByText('RE')).toBeInTheDocument()
+		// Four counterparts plus the viewer, two plated: Quill, Compass and Me.
+		expect(screen.getByText('+3')).toBeInTheDocument()
+		expect(screen.queryByText('QU')).not.toBeInTheDocument()
+	})
+
+	it('plates the only participant in a thread the viewer is alone in', () => {
+		renderRow(
+			buildConversation({
+				participants: [
+					{ actorId: 'me', actorName: 'Me', actorType: 'human', joinedAt: null, addedBy: null },
+				],
+			}),
+		)
+		expect(screen.getByText('ME')).toBeInTheDocument()
 	})
 
 	it('renders the unread dot only when there are unread messages', () => {
@@ -86,13 +124,22 @@ describe('ConversationListRow', () => {
 		).toContain('line-clamp-2')
 	})
 
-	it('marks a pinned conversation and leaves an unpinned one unmarked', () => {
-		const { unmount } = renderRow(buildConversation({ pinned: true }))
-		expect(screen.getByLabelText('Pinned')).toBeInTheDocument()
+	it('leaves pinned state to the group rail rather than marking the row twice', () => {
+		// A pinned row only ever appears under the PINNED heading, so a per-row
+		// glyph repeated what the group already said (mockup 276–297).
+		renderRow(buildConversation({ pinned: true }))
+		expect(screen.queryByLabelText('Pinned')).not.toBeInTheDocument()
+	})
+
+	it('attributes the snippet to whoever wrote it, and to "You" when that is the viewer', () => {
+		const { unmount } = renderRow(
+			buildConversation({ snippet_actor_id: 'agent-1', snippet_actor_name: 'Billing Agent' }),
+		)
+		expect(screen.getByText('Billing Agent:')).toBeInTheDocument()
 		unmount()
 
-		renderRow(buildConversation({ pinned: false }))
-		expect(screen.queryByLabelText('Pinned')).not.toBeInTheDocument()
+		renderRow(buildConversation({ snippet_actor_id: 'me', snippet_actor_name: 'Me' }))
+		expect(screen.getByText('You:')).toBeInTheDocument()
 	})
 
 	it('falls back to a placeholder when the conversation has no messages', () => {

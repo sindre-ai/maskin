@@ -71,3 +71,37 @@ describe('lib/sentry (apps/dev) init gating', () => {
 		expect(Sentry.init).toHaveBeenCalledOnce()
 	})
 })
+
+describe('resolveClientSourceTag', () => {
+	async function load() {
+		const mod = await import('../../lib/sentry')
+		return mod.resolveClientSourceTag
+	}
+
+	it('passes through each known client source', async () => {
+		const resolve = await load()
+		for (const source of ['ui', 'mcp', 'agent', 'extension']) {
+			expect(resolve(source)).toBe(source)
+		}
+	})
+
+	it('normalizes case and surrounding whitespace', async () => {
+		const resolve = await load()
+		expect(resolve('  MCP ')).toBe('mcp')
+	})
+
+	it('reports unknown when the header is absent', async () => {
+		const resolve = await load()
+		expect(resolve(undefined)).toBe('unknown')
+		expect(resolve('')).toBe('unknown')
+	})
+
+	it('collapses unrecognised values to other rather than passing them through', async () => {
+		const resolve = await load()
+		// The header is caller-supplied, so arbitrary text must never reach
+		// Sentry as a tag — that would blow up tag cardinality and could
+		// smuggle personal data into the error store.
+		expect(resolve('curl/8.4.0')).toBe('other')
+		expect(resolve('alice@example.com')).toBe('other')
+	})
+})
