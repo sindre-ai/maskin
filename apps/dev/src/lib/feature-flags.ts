@@ -26,6 +26,17 @@ export const FLAGS = {
 	 * been through testing — see `.claude/rules/feature-flags.md`.
 	 */
 	NEW_DESIGN: 'new-design',
+	/**
+	 * LinkedIn Identity add-on visibility on the plan surface
+	 * (Settings > Billing). When off, the €29/connected-identity/month line is
+	 * hidden regardless of how many `linkedin-unipile` credentials the
+	 * workspace has connected. Actor-scoped rollout — add the pilot workspace
+	 * admin's actor id to `FF_TESTER_ACTOR_IDS` and this flag id to
+	 * `FF_TESTER_FEATURES` to reveal. The line still stays hidden when the
+	 * flag is on but no credentials are connected (see
+	 * `apps/dev/src/lib/linkedin-addon.ts`).
+	 */
+	LINKEDIN_ADDON_VISIBLE: 'linkedin-addon-visible',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
