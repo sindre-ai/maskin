@@ -494,6 +494,9 @@ importers:
 
   packages/markdown:
     dependencies:
+      '@tiptap/core':
+        specifier: ^2.10.0
+        version: 2.27.2(@tiptap/pm@2.27.2)
       '@tiptap/extension-bubble-menu':
         specifier: ^2.10.0
         version: 2.27.2(@tiptap/core@2.27.2(@tiptap/pm@2.27.2))(@tiptap/pm@2.27.2)
@@ -588,6 +591,9 @@ importers:
       '@types/react-dom':
         specifier: ^19.0.0
         version: 19.2.3(@types/react@19.2.14)
+      jsdom:
+        specifier: ^25.0.0
+        version: 25.0.1
       react:
         specifier: ^19.0.0
         version: 19.2.5
