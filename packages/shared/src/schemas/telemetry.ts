@@ -141,8 +141,34 @@ export const recordMcpToolCallResponseSizeSchema = z.object({
 	top_fields: fieldNamesSchema,
 	// Positionally aligned with `top_fields`. Bounded to the same length so a
 	// client can't ship an unbounded number array through the boundary.
+	//
+	// The two arrays are validated INDEPENDENTLY, so `.catch([])` can fire on
+	// one and not the other and leave them misaligned — 8 names beside 0 byte
+	// counts. That is worse than dropping both: a dashboard joining them by
+	// position would confidently attribute the wrong size to every named
+	// field. `alignTopFields` below re-imposes the invariant at the consumer;
+	// it can't be a `.transform` here because this object is a member of a
+	// `z.discriminatedUnion`, which (zod 3) accepts only bare ZodObjects.
 	top_field_bytes: z.array(z.number().int().min(0)).max(MAX_TOP_FIELDS).optional().catch([]),
 })
+
+/**
+ * Return `top_fields`/`top_field_bytes` only if they are positionally aligned,
+ * and `[]`/`[]` otherwise. Aligned-or-nothing: a ranking with no sizes can't
+ * answer "which field do I trim", so half the pair is not worth keeping.
+ *
+ * Callers must use this rather than reading the two fields directly — see the
+ * note on `top_field_bytes`.
+ */
+export function alignTopFields(
+	names: string[] | undefined,
+	bytes: number[] | undefined,
+): { topFields: string[]; topFieldBytes: number[] } {
+	const n = names ?? []
+	const b = bytes ?? []
+	if (n.length !== b.length) return { topFields: [], topFieldBytes: [] }
+	return { topFields: n, topFieldBytes: b }
+}
 
 // MCP misfire events for the agent-reach-signal bet: one row per real MCP
 // runtime error we can bucket into a demand signal. Persisted in

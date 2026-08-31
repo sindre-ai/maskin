@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { recordMcpToolCallSchema } from '../schemas/telemetry'
+import {
+	alignTopFields,
+	recordMcpToolCallResponseSizeSchema,
+	recordMcpToolCallSchema,
+} from '../schemas/telemetry'
 
 function baseEvent(overrides: Record<string, unknown> = {}) {
 	return {
@@ -47,5 +51,45 @@ describe('recordMcpToolCallSchema — arg_keys', () => {
 		// `.catch` on arg_keys must not have made the whole schema permissive.
 		expect(() => recordMcpToolCallSchema.parse(baseEvent({ tool_name: 'bad name!' }))).toThrow()
 		expect(() => recordMcpToolCallSchema.parse(baseEvent({ duration_ms: -1 }))).toThrow()
+	})
+})
+
+describe('alignTopFields', () => {
+	it('keeps the pair when the two arrays line up', () => {
+		expect(alignTopFields(['data', 'title'], [900, 40])).toEqual({
+			topFields: ['data', 'title'],
+			topFieldBytes: [900, 40],
+		})
+	})
+
+	it('drops both when only the names survive validation', () => {
+		// The real path: `top_fields` and `top_field_bytes` each carry their own
+		// `.catch([])`, so one can degrade without the other. Eight names beside
+		// zero byte counts is worse than nothing — a dashboard joining them by
+		// position would attribute a confident, wrong size to every field.
+		const parsed = recordMcpToolCallResponseSizeSchema.parse({
+			event_type: 'tool_call_response_size',
+			tool_name: 'list_objects',
+			session_id: 'session-1',
+			content_bytes: 10,
+			content_tokens: 2,
+			structured_content_bytes: 900,
+			structured_content_tokens: 220,
+			truncated: false,
+			top_fields: ['data', 'title'],
+			// A negative byte count fails validation and degrades to [].
+			top_field_bytes: [900, -1],
+		})
+		expect(parsed.top_field_bytes).toEqual([])
+		expect(alignTopFields(parsed.top_fields, parsed.top_field_bytes)).toEqual({
+			topFields: [],
+			topFieldBytes: [],
+		})
+	})
+
+	it('treats an absent array as empty rather than throwing', () => {
+		expect(alignTopFields(undefined, undefined)).toEqual({ topFields: [], topFieldBytes: [] })
+		// An older producer sending names but no sizes is still misaligned.
+		expect(alignTopFields(['data'], undefined)).toEqual({ topFields: [], topFieldBytes: [] })
 	})
 })

@@ -114,6 +114,14 @@ app.post('/', async (c) => {
 		await mcpServer.connect(transport)
 		await transport.handleRequest(nodeReq, nodeRes, body)
 	} finally {
+		// Read the clock HERE, synchronously, for the same reason `seq` is
+		// allocated synchronously above: `emitMcpTrace` awaits an actor lookup
+		// that costs a DB roundtrip on a cache miss and nothing on a hit. Timing
+		// the call from inside the emitter would fold that lookup into
+		// `duration_ms`, giving every tool a bimodal latency distribution whose
+		// second mode is our own cache behaviour rather than the tool's.
+		const elapsedMs = Date.now() - startedAt
+
 		// Fire-and-forget: emit one `mcp_tool_call` trace event per tools/call,
 		// plus one PostHog event per real misfire. Both read the same captured
 		// bytes. The `.catch` is not decoration: this is an un-awaited async
@@ -126,7 +134,7 @@ app.post('/', async (c) => {
 			requestBody: body,
 			responseBytes: captured.consume(),
 			session,
-			startedAt,
+			elapsedMs,
 			plannedCalls,
 		}).catch((err) => logger.warn('mcp trace emission failed', { error: String(err) }))
 	}
@@ -379,7 +387,11 @@ interface EmitMcpTraceArgs {
 	requestBody: unknown
 	responseBytes: Buffer
 	session: McpSessionIdentity
-	startedAt: number
+	/**
+	 * Wall-clock duration of the POST, measured at the request handler rather
+	 * than here — see the comment at the call site.
+	 */
+	elapsedMs: number
 	plannedCalls: PlannedTracedCall[]
 }
 
@@ -408,10 +420,16 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 
 	// ── Trace: one event per tools/call, success or failure ──
 	try {
-		// A batched POST shares one wall-clock measurement between its calls, so
-		// only attribute a duration when the batch held exactly one tool call.
-		const elapsedMs = Date.now() - args.startedAt
-		const durationMs = args.plannedCalls.length === 1 ? elapsedMs : null
+		// A batched POST shares BOTH its wall-clock measurement and its response
+		// body between the calls it carries, so neither can be attributed to an
+		// individual call. Recording them anyway would make a batch of N look
+		// like N calls that each took the whole POST's time and each returned
+		// the whole POST's bytes — inflating any sum or average by roughly N×,
+		// silently, in the direction that makes tools look worse than they are.
+		// Null instead: absent is honest, wrong is not.
+		const isSingleCall = args.plannedCalls.length === 1
+		const durationMs = isSingleCall ? args.elapsedMs : null
+		const responseBytes = isSingleCall ? args.responseBytes.length : null
 
 		await Promise.all(
 			args.plannedCalls.map(({ request, toolName, seq, tsMs }) => {
@@ -439,7 +457,7 @@ async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 							? (classifyMcpError(error) ?? 'unclassified')
 							: null,
 					durationMs,
-					responseBytes: args.responseBytes.length,
+					responseBytes,
 					transport: 'http',
 					agentActorId,
 				})

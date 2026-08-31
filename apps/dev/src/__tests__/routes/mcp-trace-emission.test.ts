@@ -295,6 +295,75 @@ describe('MCP tool-call trace emission via /mcp', () => {
 		// Duration is not attributed when a batch shares one wall-clock reading.
 		expect(traces()[0]?.durationMs).toBeNull()
 	})
+
+	it('does not attribute the batch response size to each call in the batch', async () => {
+		// A batch writes ONE response body. Stamping its length onto each of the
+		// N traces would inflate any sum or average of `response_bytes` by ~N×,
+		// in the direction that makes tools look fatter than they are. Null is
+		// the honest answer for a measurement that isn't per-call.
+		mockHandleRequest.mockImplementation(
+			async (_req: unknown, res: { end: (s: string) => void }) => {
+				res.end(
+					JSON.stringify([
+						{ jsonrpc: '2.0', id: 1, result: { content: [] } },
+						{ jsonrpc: '2.0', id: 2, result: { content: [] } },
+					]),
+				)
+			},
+		)
+		const app = await createApp()
+		await post(app, [toolCall(1, 'list_objects', {}), toolCall(2, 'get_objects', {})], {
+			'X-Maskin-Session-Id': MASKIN_SESSION_ID,
+		})
+		expect(traces().map((t) => t.responseBytes)).toEqual([null, null])
+	})
+
+	it('attributes duration and response size on a single-call request', async () => {
+		// The negative assertions above pass just as happily against an
+		// always-null regression, so pin the positive case too.
+		mockHandleRequest.mockImplementation(
+			async (_req: unknown, res: { end: (s: string) => void }) => {
+				res.end(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { content: [] } }))
+			},
+		)
+		const app = await createApp()
+		await post(app, toolCall(1, 'list_objects', {}), {
+			'X-Maskin-Session-Id': MASKIN_SESSION_ID,
+		})
+		const trace = traces()[0]
+		expect(typeof trace?.durationMs).toBe('number')
+		expect(trace?.responseBytes).toBeGreaterThan(0)
+	})
+
+	it('excludes the actor lookup from duration_ms', async () => {
+		// `duration_ms` must measure the tool call, not our own actor-cache
+		// miss. The lookup is awaited inside the emitter; if the clock were read
+		// there rather than in the request handler's `finally`, a slow lookup
+		// would be billed to the tool and every tool would show a bimodal
+		// latency distribution that is really just cache behaviour.
+		let resolveSlowLookup: ((v: unknown) => void) | undefined
+		validateApiKey.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveSlowLookup = resolve
+				}),
+		)
+		respondOk(1)
+		const app = await createApp()
+
+		const call = post(app, toolCall(1, 'list_objects', {}), {
+			'X-Maskin-Session-Id': MASKIN_SESSION_ID,
+		})
+		// Hold the actor lookup open well past any plausible tool-call time.
+		await new Promise((r) => setTimeout(r, 80))
+		resolveSlowLookup?.({ actorId: 'actor-42', type: 'agent' })
+		await call
+		// `post` drained its ticks while the lookup was still blocked, so let
+		// the emitter finish now that it has resolved.
+		for (let i = 0; i < 3; i++) await new Promise((r) => setImmediate(r))
+
+		expect(traces()[0]?.durationMs).toBeLessThan(80)
+	})
 })
 
 // ── Regression: the four critical review findings ───────────────────────

@@ -118,4 +118,28 @@ describe('response-size fan-out', () => {
 		expect(lastProps().top_fields).toEqual([])
 		expect(lastProps().total_bytes).toBe(1000)
 	})
+
+	it('never forwards a misaligned name/byte pair', async () => {
+		// The two arrays validate independently, so one can degrade and leave
+		// the other intact. Forwarding that half-pair would let a dashboard
+		// join them by position and report the wrong size for every field —
+		// so the ranking is aligned-or-nothing.
+		const res = await post(
+			baseBody({
+				top_fields: ['Acquire the Nakatomi account', 'data'],
+				top_field_bytes: [900, 40],
+			}),
+		)
+		expect(res.status).toBe(202)
+		expect(lastProps()).toMatchObject({ top_fields: [], top_field_bytes: [] })
+	})
+
+	it('forwards an aligned name/byte pair intact', async () => {
+		const res = await post(baseBody({ top_fields: ['data', 'title'], top_field_bytes: [900, 40] }))
+		expect(res.status).toBe(202)
+		expect(lastProps()).toMatchObject({
+			top_fields: ['data', 'title'],
+			top_field_bytes: [900, 40],
+		})
+	})
 })

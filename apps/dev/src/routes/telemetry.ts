@@ -2,6 +2,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { mcpTelemetry } from '@maskin/db/schema'
 import {
+	alignTopFields,
 	mcpTelemetrySummaryQuerySchema,
 	mcpTelemetrySummarySchema,
 	recordMcpTelemetrySchema,
@@ -150,6 +151,11 @@ app.openapi(recordRoute, (async (c) => {
 		// doesn't earn a schema migration. The Product Analyst's baseline query
 		// reads `mcp_tool_call_response_size` rows directly from PostHog.
 		// Fire-and-forget; `capturePosthogEvent` never throws.
+		//
+		// Read the field ranking through `alignTopFields`, never off `body`
+		// directly: the names and the byte counts are validated independently
+		// at the boundary and can degrade apart into a misaligned pair.
+		const { topFields, topFieldBytes } = alignTopFields(body.top_fields, body.top_field_bytes)
 		void capturePosthogEvent('mcp_tool_call_response_size', workspaceId, {
 			tool_name: body.tool_name,
 			session_id: body.session_id ?? null,
@@ -174,8 +180,8 @@ app.openapi(recordRoute, (async (c) => {
 			row_count: body.row_count ?? null,
 			max_row_bytes: body.max_row_bytes ?? null,
 			content_block_count: body.content_block_count ?? null,
-			top_fields: body.top_fields ?? [],
-			top_field_bytes: body.top_field_bytes ?? [],
+			top_fields: topFields,
+			top_field_bytes: topFieldBytes,
 			// Derived here rather than in a dashboard query so the "is each row
 			// too fat?" question is answerable by grouping alone. Guarded against
 			// a zero row count, which is a real and frequent response.
