@@ -83,7 +83,9 @@ interface Recipient {
 // `new-design` boundary for the New chat screen: the v2 page below, or the
 // pre-v2 page vendored under `components/chat/legacy/`. Note what is *not*
 // behind it — `validateSearch` above, so `objectIds` links resolve on both
-// sides rather than 404ing a user whose flag happens to be off.
+// sides rather than 404ing a user whose flag happens to be off. Resolving is
+// not enough on its own: the pre-v2 page seeds the same ids into its composer
+// selection, so the objects arrive on either branch.
 function NewChatRoute() {
 	return useFeatureFlag('new-design') ? <NewConversationPage /> : <LegacyNewConversationPage />
 }

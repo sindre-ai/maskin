@@ -8,16 +8,22 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
+import { useObjects } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import type { MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
-import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
+import {
+	EMPTY_CHAT_SELECTION,
+	MAX_CHAT_OBJECT_REFERENCES,
+	chatSelectionReducer,
+} from '@/lib/chat-selection'
 import { useWorkspace } from '@/lib/workspace-context'
 import { NEW_CONVERSATION_PLACEHOLDER_TITLE } from '@maskin/shared'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { Command } from 'cmdk'
 import { Search, X } from 'lucide-react'
-import { useCallback, useMemo, useReducer, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 // Zero-state suggestions (mockup 739–748). Clicking one *prefills* the
 // composer — it never sends, so the draft is still editable before it goes.
@@ -54,6 +60,44 @@ export function LegacyNewConversationPage() {
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
 	const [draft, setDraft] = useState('')
+
+	// Objects handed over by the Objects page's "Ask an agent". The link resolves
+	// on both sides of the `new-design` boundary, so this page has to honour
+	// `objectIds` too — otherwise a flag-off user follows the link and the
+	// objects they picked are silently absent. Same shape as the v2 page:
+	// resolved so the chips read as titles, dispatched once so they stay
+	// removable.
+	const referencedIds = useMemo(
+		() => (search.objectIds ? search.objectIds.split(',').filter(Boolean) : []),
+		[search.objectIds],
+	)
+	// `limit` is explicit because the endpoint's default is 50 — well under the
+	// selection sizes "Select all" produces.
+	const { data: referencedObjects } = useObjects(
+		workspaceId,
+		{ ids: referencedIds.join(','), limit: String(MAX_CHAT_OBJECT_REFERENCES) },
+		{ enabled: referencedIds.length > 0 },
+	)
+	const seededRef = useRef(false)
+	useEffect(() => {
+		if (seededRef.current || referencedIds.length === 0 || !referencedObjects) return
+		seededRef.current = true
+		for (const object of referencedObjects) {
+			dispatchSelection({
+				type: 'add_object',
+				object: { id: object.id, title: object.title, type: object.type },
+			})
+		}
+		// An id can also fail to resolve for reasons the cap has nothing to do
+		// with — deleted since the link was made, or belonging to another
+		// workspace. Say which, rather than letting the count quietly shrink.
+		const missing = referencedIds.length - referencedObjects.length
+		if (missing > 0) {
+			toast.warning(
+				`${missing} of ${referencedIds.length} objects couldn't be attached — they may have been deleted.`,
+			)
+		}
+	}, [referencedIds, referencedObjects])
 
 	const seedObject = search.objectId
 		? { id: search.objectId, title: search.objectTitle ?? null, type: search.objectType ?? null }
@@ -107,7 +151,13 @@ export function LegacyNewConversationPage() {
 				setError(err.message)
 				throw err
 			}
-			const objects = seedObject ? [seedObject] : selection.objects
+			// Merge rather than replace, matching the v2 page: a `?objectId=` seed
+			// used to discard everything attached in the composer, including the
+			// objects seeded from `objectIds`.
+			const objects =
+				seedObject && !selection.objects.some((o) => o.id === seedObject.id)
+					? [seedObject, ...selection.objects]
+					: selection.objects
 			const notifications = seedNotification ? [seedNotification] : selection.notifications
 
 			// Sent as structured metadata (rendered as chips by MessageBubble)
