@@ -49,8 +49,27 @@ export const mcpServerHttpSchema = z.object({
 // and expandBrowserCapability (marketplace installs) both write.
 const BROWSER_CDP_PLACEHOLDER = '${BROWSER_CDP_URL}'
 
+/**
+ * Infer a missing `type` from the shape of the entry.
+ *
+ * The stdio branch defaults `type` to "stdio" but the http branch requires the
+ * literal, so `{ url, headers }` — the shape people naturally write, and the
+ * shape most MCP docs show — matched neither branch and failed the union with a
+ * bare "Invalid input" naming no field. That error is indistinguishable from
+ * "MCP servers can't be set here", which is how it kept getting read.
+ *
+ * An explicit `type` is always honoured; this only fills in a missing one.
+ */
+const inferMcpServerType = (value: unknown): unknown => {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return value
+	const server = value as Record<string, unknown>
+	if ('type' in server) return server
+	if (typeof server.url === 'string') return { ...server, type: 'http' }
+	return server
+}
+
 export const mcpServerSchema = z
-	.union([mcpServerStdioSchema, mcpServerHttpSchema])
+	.preprocess(inferMcpServerType, z.union([mcpServerStdioSchema, mcpServerHttpSchema]))
 	.superRefine((server, ctx) => {
 		if (!('url' in server) || !server.url.includes(BROWSER_CDP_PLACEHOLDER)) return
 		ctx.addIssue({

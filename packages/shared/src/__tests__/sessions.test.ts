@@ -461,12 +461,50 @@ describe('sessionResultSchema', () => {
 	})
 })
 
+describe('mcpServerSchema — inferred transport type', () => {
+	// An http entry written without `type` matched neither union branch and
+	// failed with a bare "Invalid input" naming no field, which read as "MCP
+	// servers can't be configured here" rather than "you left out one key".
+	it('infers type "http" for an entry with a url and no type', () => {
+		const result = mcpServerSchema.parse({
+			url: 'https://ubersuggest-mcp.neilpatelapi.com/mcp',
+			headers: { Authorization: 'Bearer ${UBERSUGGEST_TOKEN}' },
+		})
+		expect(result).toMatchObject({
+			type: 'http',
+			url: 'https://ubersuggest-mcp.neilpatelapi.com/mcp',
+			headers: { Authorization: 'Bearer ${UBERSUGGEST_TOKEN}' },
+		})
+	})
+
+	it('still defaults a command-only entry to stdio', () => {
+		expect(mcpServerSchema.parse({ command: 'npx' })).toMatchObject({ type: 'stdio' })
+	})
+
+	it('does not override an explicit type', () => {
+		expect(mcpServerSchema.parse({ type: 'http', url: 'https://example.com' })).toMatchObject({
+			type: 'http',
+		})
+	})
+
+	it('rejects an entry that is neither transport', () => {
+		expect(mcpServerSchema.safeParse({ headers: {} }).success).toBe(false)
+	})
+})
+
 describe('mcpServerSchema — browser CDP endpoint misuse', () => {
 	// Verbatim from the production actor row that caused a customer-reported
 	// "no Playwright in this session": a CDP address configured as an http MCP
 	// server. It parsed fine, so nothing rejected it; the server then sat at
 	// status "pending" forever and the agent had no browser tools.
 	const badEntry = { type: 'http', url: '${BROWSER_CDP_URL}', headers: {} }
+
+	// The type-inference preprocess must not become a way around this guard:
+	// a typeless { url } is now inferred as http, so it has to hit the same
+	// refinement rather than slip past it.
+	it('rejects a CDP endpoint written without an explicit type', () => {
+		expect(mcpServerSchema.safeParse({ url: '${BROWSER_CDP_URL}' }).success).toBe(false)
+	})
 
 	it('rejects a CDP endpoint configured as an http MCP server', () => {
 		const result = mcpServerSchema.safeParse(badEntry)

@@ -86,6 +86,57 @@ describe('Integrations Routes', () => {
 			expect(body[0]).toHaveProperty('displayName')
 			expect(body[0]).toHaveProperty('events')
 		})
+
+		// A provider whose mcp.autoInject is false gives an agent no tools until
+		// its server spec is attached per-agent. That spec used to exist only as
+		// a frontend constant, so an agent driving Maskin over MCP could connect
+		// the OAuth integration and had no way to discover it had any tools —
+		// "connected, but zero mcp__*ubersuggest* tools exposed".
+		it('exposes each provider MCP surface so non-browser clients can discover it', async () => {
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(jsonGet('/api/integrations/providers'))
+			const body = (await res.json()) as Array<{
+				name: string
+				mcp?: { envKey: string; autoInject: boolean; server?: Record<string, unknown> }
+			}>
+
+			const ubersuggest = body.find((p) => p.name === 'ubersuggest')
+			expect(ubersuggest?.mcp).toEqual({
+				envKey: 'UBERSUGGEST_TOKEN',
+				autoInject: false,
+				server: {
+					type: 'http',
+					url: 'https://ubersuggest-mcp.neilpatelapi.com/mcp',
+					headers: { Authorization: 'Bearer ${UBERSUGGEST_TOKEN}' },
+				},
+			})
+		})
+
+		it('reports autoInject true for workspace-level providers', async () => {
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(jsonGet('/api/integrations/providers'))
+			const body = (await res.json()) as Array<{ name: string; mcp?: { autoInject: boolean } }>
+
+			expect(body.find((p) => p.name === 'posthog')?.mcp?.autoInject).toBe(true)
+		})
+
+		// Guards the gap this whole endpoint change exists to close: a provider
+		// that declares mcp but no server is undiscoverable to every client that
+		// isn't the web UI, and fails as silence rather than as an error.
+		it('gives every MCP-capable provider a paste-ready server spec', async () => {
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(jsonGet('/api/integrations/providers'))
+			const body = (await res.json()) as Array<{
+				name: string
+				mcp?: { server?: unknown }
+			}>
+
+			const missing = body.filter((p) => p.mcp && !p.mcp.server).map((p) => p.name)
+			expect(missing).toEqual([])
+		})
 	})
 
 	describe('POST /api/integrations/:provider/connect', () => {

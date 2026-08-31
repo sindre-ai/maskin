@@ -44,5 +44,15 @@ export const config: ProviderConfig = {
 		command: 'npx',
 		args: ['-y', '@modelcontextprotocol/server-github'],
 		envKey: 'GITHUB_TOKEN',
+		// The env key MUST be GITHUB_PERSONAL_ACCESS_TOKEN — that is the only
+		// name @modelcontextprotocol/server-github reads. Passing the token as
+		// GITHUB_TOKEN here is silently ignored and surfaces later as 403s on
+		// every GitHub tool call (see .claude/rules/known-pitfalls.md).
+		server: {
+			type: 'stdio',
+			command: 'npx',
+			args: ['-y', '@modelcontextprotocol/server-github'],
+			env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN}' },
+		},
 	},
 }

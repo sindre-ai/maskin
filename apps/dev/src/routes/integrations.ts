@@ -153,6 +153,17 @@ app.openapi(listProvidersRoute, (async (c) => {
 		authType: p.config.auth.type,
 		events: p.config.events?.definitions ?? [],
 		externalIdDisplay: p.config.externalIdDisplay,
+		// Serve the MCP surface so clients that aren't the web UI can discover
+		// it. `server` is the paste-ready tools.mcpServers.<provider> value; a
+		// provider with autoInject=false is otherwise undiscoverable and reads
+		// as "OAuth connected, zero tools" with nothing explaining the gap.
+		...(p.config.mcp && {
+			mcp: {
+				envKey: p.config.mcp.envKey,
+				autoInject: p.config.mcp.autoInject ?? false,
+				...(p.config.mcp.server && { server: p.config.mcp.server }),
+			},
+		}),
 	}))
 
 	return c.json(providers as z.infer<typeof providerInfoSchema>[])

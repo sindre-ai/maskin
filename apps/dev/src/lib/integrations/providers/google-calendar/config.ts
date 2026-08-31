@@ -46,6 +46,11 @@ export const config: ProviderConfig = {
 		command: 'npx',
 		args: ['-y', 'mcp-remote', 'https://calendarmcp.googleapis.com/mcp/v1'],
 		envKey: 'GOOGLE_CALENDAR_TOKEN',
+		server: {
+			type: 'http',
+			url: 'https://calendarmcp.googleapis.com/mcp/v1',
+			headers: { Authorization: 'Bearer ${GOOGLE_CALENDAR_TOKEN}' },
+		},
 	},
 
 	externalIdDisplay: 'email',
