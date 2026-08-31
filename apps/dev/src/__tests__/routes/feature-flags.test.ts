@@ -22,6 +22,13 @@ function setEnv(vars: Partial<Record<(typeof ENV_KEYS)[number], string>>) {
 	_resetFeatureFlagConfig()
 }
 
+// The shape of the response body when every registered flag is OFF. Add
+// entries here as new flags land in FLAGS so a shipped-off default is exercised.
+const ALL_FLAGS_OFF = {
+	[FLAGS.NEW_DESIGN]: false,
+	[FLAGS.SALES_REP_LINKEDIN_AUTOSEND]: false,
+}
+
 beforeEach(() => setEnv({}))
 afterEach(() => setEnv({}))
 
@@ -33,7 +40,7 @@ describe('GET /api/feature-flags', () => {
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ flags: { [FLAGS.NEW_DESIGN]: false } })
+		expect(await res.json()).toEqual({ flags: ALL_FLAGS_OFF })
 	})
 
 	it('turns a registered flag on for a listed tester', async () => {
@@ -41,7 +48,24 @@ describe('GET /api/feature-flags', () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({ flags: { [FLAGS.NEW_DESIGN]: true } })
+		expect(await res.json()).toEqual({
+			flags: { ...ALL_FLAGS_OFF, [FLAGS.NEW_DESIGN]: true },
+		})
+	})
+
+	// Task 5 acceptance criterion 1 — the LinkedIn autosend flag defaults OFF
+	// and only turns ON via the same tester-scoped env pair as any other flag.
+	it('turns SALES_REP_LINKEDIN_AUTOSEND on for a listed tester', async () => {
+		setEnv({
+			FF_TESTER_FEATURES: FLAGS.SALES_REP_LINKEDIN_AUTOSEND,
+			FF_TESTER_ACTOR_IDS: TESTER,
+		})
+		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
+
+		const res = await app.request(jsonGet('/api/feature-flags'))
+		expect(await res.json()).toEqual({
+			flags: { ...ALL_FLAGS_OFF, [FLAGS.SALES_REP_LINKEDIN_AUTOSEND]: true },
+		})
 	})
 
 	it('never invents a flag from an unregistered id in FF_TESTER_FEATURES', async () => {
@@ -49,7 +73,7 @@ describe('GET /api/feature-flags', () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({ flags: { [FLAGS.NEW_DESIGN]: false } })
+		expect(await res.json()).toEqual({ flags: ALL_FLAGS_OFF })
 	})
 
 	it('sets Cache-Control: no-store so a rollback is not defeated by a stale cache', async () => {
