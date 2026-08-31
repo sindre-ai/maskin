@@ -29,6 +29,11 @@ export const PLATFORM_MCP_PRESET = {
 	headers: {
 		Authorization: 'Bearer ${MASKIN_API_KEY}',
 		'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+		// Lets `POST /mcp` attribute each tool call to the session that made it.
+		// Expanded by agent-run.sh's envsubst pass, like the two headers above.
+		// session-manager also stamps this at launch, which is what covers
+		// agents whose stored config predates this line.
+		'X-Maskin-Session-Id': '${SESSION_ID}',
 	},
 } as const
 
