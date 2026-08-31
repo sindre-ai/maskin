@@ -36,8 +36,14 @@ describe('parseFeatureFlagConfig', () => {
 describe('resolveFlags', () => {
 	it('resolves the live registry — new-design is on for a listed tester', () => {
 		const c = config({ FF_TESTER_FEATURES: FLAGS.NEW_DESIGN, FF_TESTER_ACTOR_IDS: TESTER })
-		expect(resolveFlags(TESTER, c)).toEqual({ [FLAGS.NEW_DESIGN]: true })
-		expect(resolveFlags(NON_TESTER, c)).toEqual({ [FLAGS.NEW_DESIGN]: false })
+		// Every registered flag is resolved on every call; every id other than the
+		// one in FF_TESTER_FEATURES must default to false for a tester actor.
+		const resolvedTester = resolveFlags(TESTER, c)
+		expect(resolvedTester[FLAGS.NEW_DESIGN]).toBe(true)
+		expect(resolvedTester[FLAGS.RICH_MARKDOWN_EDITOR]).toBe(false)
+		const resolvedNonTester = resolveFlags(NON_TESTER, c)
+		expect(resolvedNonTester[FLAGS.NEW_DESIGN]).toBe(false)
+		expect(resolvedNonTester[FLAGS.RICH_MARKDOWN_EDITOR]).toBe(false)
 	})
 
 	it('is false for every flag when the env is empty', () => {

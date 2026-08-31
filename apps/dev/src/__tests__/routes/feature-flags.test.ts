@@ -33,7 +33,9 @@ describe('GET /api/feature-flags', () => {
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ flags: { [FLAGS.NEW_DESIGN]: false } })
+		const body = (await res.json()) as { flags: Record<string, boolean> }
+		expect(body.flags[FLAGS.NEW_DESIGN]).toBe(false)
+		expect(body.flags[FLAGS.RICH_MARKDOWN_EDITOR]).toBe(false)
 	})
 
 	it('turns a registered flag on for a listed tester', async () => {
@@ -41,7 +43,9 @@ describe('GET /api/feature-flags', () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({ flags: { [FLAGS.NEW_DESIGN]: true } })
+		const body = (await res.json()) as { flags: Record<string, boolean> }
+		expect(body.flags[FLAGS.NEW_DESIGN]).toBe(true)
+		expect(body.flags[FLAGS.RICH_MARKDOWN_EDITOR]).toBe(false)
 	})
 
 	it('never invents a flag from an unregistered id in FF_TESTER_FEATURES', async () => {
@@ -49,7 +53,10 @@ describe('GET /api/feature-flags', () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({ flags: { [FLAGS.NEW_DESIGN]: false } })
+		const body = (await res.json()) as { flags: Record<string, boolean> }
+		expect(body.flags[FLAGS.NEW_DESIGN]).toBe(false)
+		expect(body.flags[FLAGS.RICH_MARKDOWN_EDITOR]).toBe(false)
+		expect('not-a-real-flag' in body.flags).toBe(false)
 	})
 
 	it('sets Cache-Control: no-store so a rollback is not defeated by a stale cache', async () => {
