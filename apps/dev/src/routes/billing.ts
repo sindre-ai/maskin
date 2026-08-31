@@ -6,6 +6,11 @@ import { eq } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
 import { isEnterprise } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
+import { FLAGS, getFeatureFlagConfig, resolveFlags } from '../lib/feature-flags'
+import {
+	getConnectedLinkedInIdentityCount,
+	resolveLinkedInIdentityAddon,
+} from '../lib/linkedin-addon'
 import { getWorkspacePlanUsdCentsUsage } from '../lib/llm-routing'
 import {
 	billingAfterCancel,
@@ -96,6 +101,18 @@ const checkoutRoute = createRoute({
 	},
 })
 
+// The LinkedIn Identity add-on line — €29/connected-identity/month, gated on
+// the `linkedin-addon-visible` flag AND ≥1 connected `linkedin-unipile`
+// credential. Null in both the flag-off and zero-identities cases; see
+// `../lib/linkedin-addon.ts`.
+const linkedinIdentityAddonSchema = z
+	.object({
+		count: z.number().int().nonnegative(),
+		unit_price_eur_cents: z.number().int().positive(),
+		monthly_total_eur_cents: z.number().int().nonnegative(),
+	})
+	.nullable()
+
 const usageResponseSchema = z.object({
 	plan: z.enum(['trial', 'pro', 'team', 'enterprise']),
 	status: z.enum(['active', 'past_due', 'canceled', 'incomplete']),
@@ -111,6 +128,7 @@ const usageResponseSchema = z.object({
 	// Prepaid usage-credits balance, in USD cents. Only meaningful for
 	// pro/team — see `lib/credit-billing.ts`.
 	credit_balance_cents: z.number().int().nonnegative(),
+	linkedin_identity_addon: linkedinIdentityAddonSchema,
 })
 
 const usageRoute = createRoute({
@@ -205,6 +223,22 @@ app.openapi(usageRoute, async (c) => {
 			? Math.floor(billing.credit_balance_cents)
 			: 0
 
+	// LinkedIn Identity add-on line. Gated on the actor-scoped
+	// `linkedin-addon-visible` flag AND ≥1 connected `linkedin-unipile`
+	// credential row. Deliberately DOES NOT touch `usdCentsUsed` — the €29
+	// per-connected-identity/month price is a separate SKU line that must not
+	// flow into the inference-token ledger (see bet §Pricing). Short-circuited
+	// on flag-off so a non-tester actor never hits the count query.
+	const linkedinFlagOn =
+		resolveFlags(c.get('actorId'), getFeatureFlagConfig())[FLAGS.LINKEDIN_ADDON_VISIBLE] === true
+	const linkedinConnectedCount = linkedinFlagOn
+		? await getConnectedLinkedInIdentityCount(db, workspaceId)
+		: 0
+	const linkedinIdentityAddon = resolveLinkedInIdentityAddon({
+		connectedCount: linkedinConnectedCount,
+		flagOn: linkedinFlagOn,
+	})
+
 	logger.info('Billing usage read', {
 		workspaceId,
 		plan,
@@ -212,6 +246,7 @@ app.openapi(usageRoute, async (c) => {
 		usdCentsUsed,
 		hardCapCents,
 		creditBalanceCents,
+		linkedinIdentityCount: linkedinIdentityAddon?.count ?? 0,
 	})
 
 	return c.json(
@@ -225,6 +260,7 @@ app.openapi(usageRoute, async (c) => {
 			stripe_customer_id: billing?.stripe_customer_id ?? null,
 			stripe_subscription_id: billing?.stripe_subscription_id ?? null,
 			credit_balance_cents: creditBalanceCents,
+			linkedin_identity_addon: linkedinIdentityAddon,
 		},
 		200,
 	)
