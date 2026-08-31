@@ -1,4 +1,4 @@
-import { readStars, writeStars } from '@/lib/objects-stars'
+import { readStars, subscribeToStars, writeStars } from '@/lib/objects-stars'
 import { useCallback, useEffect, useState } from 'react'
 
 export interface ObjectStars {
@@ -7,9 +7,12 @@ export interface ObjectStars {
 	toggleStar: (objectId: string) => void
 }
 
-/** The workspace's starred-object set, kept in sync across every tab that has
- *  the app open (the `storage` event fires in the *other* tabs on write, so a
- *  star set in one is reflected in the rest without a reload). */
+/** The workspace's starred-object set, kept in sync across every consumer.
+ *  Two sources feed it: `subscribeToStars` for writes made in *this* tab (the
+ *  list row and the route each call this hook, and the route's copy drives the
+ *  Starred filter and its count), and the `storage` event for writes made in
+ *  another tab — that event deliberately does not fire in the writing tab, so
+ *  neither channel alone is enough. */
 export function useObjectStars(workspaceId: string): ObjectStars {
 	const [starredIds, setStarredIds] = useState<Set<string>>(() => readStars(workspaceId))
 
@@ -24,18 +27,26 @@ export function useObjectStars(workspaceId: string): ObjectStars {
 			setStarredIds(readStars(workspaceId))
 		}
 		window.addEventListener('storage', onStorage)
-		return () => window.removeEventListener('storage', onStorage)
+		const unsubscribe = subscribeToStars((changedWorkspaceId) => {
+			if (changedWorkspaceId !== workspaceId) return
+			setStarredIds(readStars(workspaceId))
+		})
+		return () => {
+			window.removeEventListener('storage', onStorage)
+			unsubscribe()
+		}
 	}, [workspaceId])
 
 	const toggleStar = useCallback(
 		(objectId: string) => {
-			setStarredIds((current) => {
-				const next = new Set(current)
-				if (next.has(objectId)) next.delete(objectId)
-				else next.add(objectId)
-				writeStars(workspaceId, next)
-				return next
-			})
+			// Read-modify-write off storage rather than off `starredIds`: the write
+			// has to happen outside the state updater (it is a side effect, and
+			// StrictMode double-invokes updaters), and storage is the shared truth
+			// every other instance of this hook is about to be notified from.
+			const next = readStars(workspaceId)
+			if (next.has(objectId)) next.delete(objectId)
+			else next.add(objectId)
+			writeStars(workspaceId, next)
 		},
 		[workspaceId],
 	)
