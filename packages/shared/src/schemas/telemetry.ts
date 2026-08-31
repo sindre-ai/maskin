@@ -92,7 +92,13 @@ export const recordMcpToolCallSchema = z.object({
 	// one holds a per-process correlation id, and the two are indistinguishable
 	// from the id alone. Absent from an older build, which the route treats as
 	// the conservative `process`.
-	session_source: z.enum(['maskin-session', 'process']).optional(),
+	//
+	// `unknown` means the id groups nothing: it is a per-request throwaway
+	// minted because the caller supplied no identity at all. It is load-bearing
+	// rather than cosmetic — the ingest route stores NO `session_id` for these
+	// rows, keeping them out of the per-session metric they would otherwise
+	// distort. See the `sessionId` comment in `routes/telemetry.ts`.
+	session_source: z.enum(['maskin-session', 'process', 'unknown']).optional(),
 })
 
 export const recordMcpMutationSchema = z.object({

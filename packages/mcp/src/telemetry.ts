@@ -60,8 +60,10 @@ export interface TelemetryConfig {
 	 * client session for the life of the process.
 	 */
 	sessionId?: string
-	/** How `sessionId` was obtained. Ignored unless `sessionId` is set. */
-	sessionSource?: 'maskin-session' | 'process'
+	/** How `sessionId` was obtained. Ignored unless `sessionId` is set.
+	 *  `unknown` marks a per-request throwaway that groups nothing — the host
+	 *  had no client identity to work from. */
+	sessionSource?: 'maskin-session' | 'process' | 'unknown'
 }
 
 /**
@@ -71,7 +73,7 @@ export interface TelemetryConfig {
  */
 function eventSession(target: TelemetryConfig): {
 	id: string
-	source: 'maskin-session' | 'process'
+	source: 'maskin-session' | 'process' | 'unknown'
 } {
 	if (target.sessionId) {
 		return { id: target.sessionId, source: target.sessionSource ?? 'process' }
@@ -98,8 +100,11 @@ export interface ToolCallEvent {
 	 * `sessions.id` and joins back to the session row; `process` means it is
 	 * this process's correlation id and only groups calls, it does not join.
 	 * Sent because the ingest route cannot tell the two apart from the id.
+	 *
+	 * `unknown` means the id is a per-request throwaway and groups nothing;
+	 * the ingest route drops it rather than persisting it as a session.
 	 */
-	session_source?: 'maskin-session' | 'process'
+	session_source?: 'maskin-session' | 'process' | 'unknown'
 }
 
 export interface MutationEvent {

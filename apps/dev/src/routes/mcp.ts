@@ -51,10 +51,23 @@ app.post('/', async (c) => {
 	const workspaceId = c.req.header('X-Workspace-Id') ?? url.searchParams.get('workspace') ?? ''
 	// Resolved before the server is built so it can be threaded into telemetry:
 	// the in-process MCP server would otherwise stamp its events with the app
-	// PROCESS's id, shared by every caller of `/mcp`. An unidentified caller
-	// passes nothing, leaving the process id in place — it groups nothing
-	// either way, and inventing a per-request id would just mint one throwaway
-	// session per POST.
+	// PROCESS's id, shared by every caller of `/mcp`.
+	//
+	// Threaded through for EVERY source, including `unknown`. Leaving it unset
+	// there looks harmless — "an unidentified caller groups nothing either
+	// way" — but it is the opposite: `eventSession()` then falls back to the
+	// module-scope `SESSION_ID`, one constant for the life of the apps/dev
+	// process. Those events reach `mcp_telemetry` with that shared value, and
+	// the summary query groups sessions by it, so every unidentified caller in
+	// a workspace collapses into ONE apparent session for the process's whole
+	// uptime — one mutation from any of them flips the entire bucket and
+	// `mutation_session_pct` moves for reasons unrelated to agent behaviour.
+	// The per-request `anon-` id below cannot do that. It is not persisted as a
+	// session either: it carries `source: 'unknown'`, and the ingest route
+	// stores no `session_id` for those rows (see `routes/telemetry.ts`), so an
+	// unattributable call still counts toward the per-CALL metrics and stays
+	// out of the per-SESSION one, which is the honest reading of "we do not
+	// know who this was".
 	const session = resolveSessionIdentity(c.req.header.bind(c.req))
 	const mcpConfig = {
 		apiBaseUrl: `http://localhost:${Number(process.env.PORT) || 3000}`,
@@ -62,9 +75,14 @@ app.post('/', async (c) => {
 		defaultWorkspaceId: workspaceId,
 		transport: 'http' as const,
 		webAppBaseUrl: resolveWebAppBaseUrl(process.env),
-		telemetrySessionId: session.source === 'unknown' ? undefined : session.id,
+		telemetrySessionId: session.id,
+		// `mcp-session` reports as `process`: both mean "groups this caller's
+		// calls, does not join back to a sessions row", and the sink's vocabulary
+		// has no separate word for the former.
 		telemetrySessionSource:
-			session.source === 'maskin-session' ? ('maskin-session' as const) : ('process' as const),
+			session.source === 'maskin-session' || session.source === 'unknown'
+				? session.source
+				: ('process' as const),
 	}
 	const mcpServer = createMcpServer(mcpConfig)
 	const transport = new StreamableHTTPServerTransport({

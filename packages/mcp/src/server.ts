@@ -82,7 +82,7 @@ interface McpConfig {
 	 */
 	telemetrySessionId?: string
 	/** How `telemetrySessionId` was obtained. Ignored without it. */
-	telemetrySessionSource?: 'maskin-session' | 'process'
+	telemetrySessionSource?: 'maskin-session' | 'process' | 'unknown'
 }
 
 /**

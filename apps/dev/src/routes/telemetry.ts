@@ -68,11 +68,24 @@ app.openapi(recordRoute, (async (c) => {
 	}
 
 	if (body.event_type === 'tool_call') {
+		// A `session_source` of `unknown` means the id is a per-request throwaway
+		// minted because the caller supplied no identity — it groups nothing.
+		// Store NO session id for those rows. The summary query groups by
+		// `session_id` and skips null, so an unattributable call still counts
+		// toward the per-call metric (rich-render rate) while staying out of the
+		// per-session one (`mutation_session_pct`), which it could only distort:
+		// persisting the throwaway would inflate the denominator by one session
+		// per request, and persisting a shared constant instead — the bug this
+		// replaced — collapsed every such caller into a single session that one
+		// mutation could flip. A `mutation` row keyed on the same throwaway is
+		// harmless: its group holds no tool_call, so the HAVING clause in the
+		// summary query drops it rather than counting it in the numerator.
+		const persistedSessionId = body.session_source === 'unknown' ? null : (body.session_id ?? null)
 		await db.insert(mcpTelemetry).values({
 			workspaceId,
 			eventType: 'tool_call',
 			toolName: body.tool_name,
-			sessionId: body.session_id ?? null,
+			sessionId: persistedSessionId,
 			hasRichRender: body.has_rich_render,
 			durationMs: body.duration_ms,
 		})
@@ -106,6 +119,8 @@ app.openapi(recordRoute, (async (c) => {
 				// An older build sends nothing, so fall back to the conservative
 				// `process` — never `maskin-session`, which would claim a join back
 				// to the sessions row that may not exist.
+				// An explicit `unknown` from the client is honoured as-is; only an
+				// older build that sends no source at all falls back to `process`.
 				sessionSource: body.session_id ? (body.session_source ?? 'process') : 'unknown',
 				// Null, not 0: `seq` is 1-based, so 0 is out of band and would sort
 				// ahead of every real call in an ordering query.

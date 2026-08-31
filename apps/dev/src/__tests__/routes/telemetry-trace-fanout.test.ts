@@ -30,7 +30,13 @@ function baseBody(overrides: Record<string, unknown> = {}) {
 }
 
 async function post(body: Record<string, unknown>) {
-	const { app, mockResults } = createTestApp(telemetryRoutes, '/api/telemetry')
+	const { res } = await postCapturing(body)
+	return res
+}
+
+/** As `post`, but also returns the rows handed to `db.insert().values()`. */
+async function postCapturing(body: Record<string, unknown>) {
+	const { app, mockResults, calls } = createTestApp(telemetryRoutes, '/api/telemetry')
 	mockResults.select = [memberRow]
 	mockResults.insert = [{}]
 	const res = await app.request(
@@ -38,7 +44,7 @@ async function post(body: Record<string, unknown>) {
 	)
 	// The trace is emitted as an un-awaited promise after the handler returns.
 	await new Promise((r) => setImmediate(r))
-	return res
+	return { res, inserts: calls.inserts as Array<Record<string, unknown>> }
 }
 
 /** The trace argument of the most recent capture. */
@@ -51,6 +57,39 @@ describe('stdio trace fan-out', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		captureMcpToolCall.mockResolvedValue(undefined)
+	})
+
+	// The per-SESSION metric (`mutation_session_pct`) groups `mcp_telemetry`
+	// rows by `session_id`. A caller whose identity we could not resolve must
+	// not land in that grouping under ANY id:
+	//   - a shared constant (what `routes/mcp.ts` used to fall through to)
+	//     collapses every unidentified caller in a workspace into one apparent
+	//     session for the whole process uptime, so a single mutation flips the
+	//     entire bucket;
+	//   - the per-request throwaway that replaced it would instead inflate the
+	//     denominator by one session per request.
+	// Neither is a session, so no id is persisted. Both failure modes are
+	// silent — the metric simply reads wrong — which is why this is pinned.
+	it('persists no session id when the client reports an unknown session source', async () => {
+		const { res, inserts } = await postCapturing(
+			baseBody({ transport: 'http', session_source: 'unknown', session_id: 'anon-abc-123' }),
+		)
+
+		expect(res.status).toBe(202)
+		expect(inserts).toHaveLength(1)
+		expect(inserts[0]?.sessionId).toBeNull()
+		// The per-CALL metric still counts it: an unattributable call is real
+		// activity, it just isn't a session.
+		expect(inserts[0]?.eventType).toBe('tool_call')
+		expect(inserts[0]?.hasRichRender).toBe(true)
+	})
+
+	it('persists the session id for an attributable source', async () => {
+		const { inserts } = await postCapturing(
+			baseBody({ transport: 'stdio', session_source: 'maskin-session', session_id: 'sess-1' }),
+		)
+
+		expect(inserts[0]?.sessionId).toBe('sess-1')
 	})
 
 	it('emits a trace for a stdio client', async () => {
