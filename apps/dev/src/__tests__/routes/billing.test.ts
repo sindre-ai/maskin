@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { jsonGet } from '../helpers'
 
 vi.mock('../../lib/stripe', async () => {
@@ -13,6 +13,7 @@ vi.mock('../../lib/stripe', async () => {
 })
 
 import { TRIAL_HARD_CAP_DEFAULT_USD_CENTS } from '../../lib/billing-defaults'
+import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { createCheckoutSession, createCreditCheckoutSession } from '../../lib/stripe'
 import billingRoutes from '../../routes/billing'
 import { jsonRequest } from '../helpers'
@@ -53,6 +54,13 @@ beforeEach(() => {
 	vi.mocked(createCreditCheckoutSession).mockReset()
 	clearEnv()
 	setupEnv()
+	// Reset the memoized flag config so a prior test's FF_* mutations can't
+	// leak into the next describe block. Individual tests that need flags on
+	// mutate the env AND call _resetFeatureFlagConfig() again before firing
+	// the request.
+	delete process.env.FF_TESTER_ACTOR_IDS
+	delete process.env.FF_TESTER_FEATURES
+	_resetFeatureFlagConfig()
 })
 
 describe('POST /api/billing/checkout', () => {
@@ -841,5 +849,134 @@ describe('GET /api/billing/usage', () => {
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
 		expect(await res.json()).toMatchObject({ period_start: periodStart })
+	})
+
+	describe('LinkedIn Identity add-on line', () => {
+		// The default `actorId` injected by createTestApp is 'test-actor-id'. The
+		// flag registry lowercases actor ids at compare time so the string form
+		// works even though the real system stores UUIDs.
+		const TESTER_ACTOR_ID = 'test-actor-id'
+
+		const enableFlag = () => {
+			process.env.FF_TESTER_ACTOR_IDS = TESTER_ACTOR_ID
+			process.env.FF_TESTER_FEATURES = 'linkedin-addon-visible'
+			_resetFeatureFlagConfig()
+		}
+
+		afterEach(() => {
+			delete process.env.FF_TESTER_ACTOR_IDS
+			delete process.env.FF_TESTER_FEATURES
+			_resetFeatureFlagConfig()
+		})
+
+		it('omits the add-on line when the flag is off — the SKU stays hidden by default', async () => {
+			// Flag OFF is the ship-default (feature flag is default OFF per the bet).
+			// The route short-circuits the count query when the flag resolves to false,
+			// so no third selectQueue entry is needed for the integrations count.
+			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+			const workspaceId = randomUUID()
+			mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], []]
+
+			const res = await app.request(
+				jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			expect(await res.json()).toMatchObject({ linkedin_identity_addon: null })
+		})
+
+		it('omits the add-on line when the flag is on but zero linkedin-unipile identities are connected', async () => {
+			enableFlag()
+			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+			const workspaceId = randomUUID()
+			mockResults.selectQueue = [
+				[{ id: workspaceId, settings: {} }],
+				[], // sessions sum
+				[{ n: 0 }], // integrations count → 0
+			]
+
+			const res = await app.request(
+				jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			expect(await res.json()).toMatchObject({ linkedin_identity_addon: null })
+		})
+
+		it('shows the add-on line with count × €29 when the flag is on and identities are connected', async () => {
+			enableFlag()
+			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+			const workspaceId = randomUUID()
+			mockResults.selectQueue = [
+				[{ id: workspaceId, settings: {} }],
+				[], // sessions sum
+				[{ n: 3 }], // integrations count → 3 connected identities
+			]
+
+			const res = await app.request(
+				jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			expect(await res.json()).toMatchObject({
+				linkedin_identity_addon: {
+					count: 3,
+					unit_price_eur_cents: 2900,
+					monthly_total_eur_cents: 8700,
+				},
+			})
+		})
+
+		it('add-on total does NOT flow into usd_cents_used — the SKU is separate from the token ledger', async () => {
+			// This is the load-bearing invariant of the bet §Pricing: connectivity
+			// (flat per-account) and inference (per-token) MUST be reported as
+			// distinct lines. Ledger conflation would either double-bill the
+			// customer or eat into their token cap. The token sum comes solely
+			// from the sessions query; the €29/identity math never touches it.
+			enableFlag()
+			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+			const workspaceId = randomUUID()
+			mockResults.selectQueue = [
+				[
+					{
+						id: workspaceId,
+						settings: {
+							billing: { plan: 'pro', status: 'active', hard_cap_usd_cents: 2_000 },
+						},
+					},
+				],
+				[{ totalCostUsd: '1.23', inputTokens: 100, outputTokens: 50 }], // sessions sum → 123 cents
+				[{ n: 5 }], // 5 identities × €29 = €145 = 14_500 EUR cents; must NOT contribute to usd_cents_used
+			]
+
+			const res = await app.request(
+				jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.usd_cents_used).toBe(123)
+			expect(body.linkedin_identity_addon).toEqual({
+				count: 5,
+				unit_price_eur_cents: 2900,
+				monthly_total_eur_cents: 14_500,
+			})
+		})
+
+		it('omits the add-on line for a non-tester actor even when the flag id is enabled', async () => {
+			// Actor-scoped flag: the flag is listed in FF_TESTER_FEATURES but the
+			// caller's actor id is not in FF_TESTER_ACTOR_IDS, so the flag resolves
+			// to false for THIS caller. Prevents an early rollout from leaking to
+			// non-pilot workspaces via a shared session context.
+			process.env.FF_TESTER_ACTOR_IDS = randomUUID() // some other actor
+			process.env.FF_TESTER_FEATURES = 'linkedin-addon-visible'
+			_resetFeatureFlagConfig()
+
+			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+			const workspaceId = randomUUID()
+			mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], []]
+
+			const res = await app.request(
+				jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			expect(await res.json()).toMatchObject({ linkedin_identity_addon: null })
+		})
 	})
 })
