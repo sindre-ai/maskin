@@ -21,8 +21,8 @@ import { toast } from 'sonner'
 import { ObjectAskBanner } from './object-ask-banner'
 import { ObjectDetailBody } from './object-detail-body'
 import { getAsk } from './object-detail-fixtures'
-import { ObjectDetailHeader, ObjectDetailIdentity } from './object-detail-header'
-import { DeleteConfirmDialog, StickyBetIdentity } from './object-document'
+import { ObjectDetailBarActions, ObjectDetailIdentity } from './object-detail-header'
+import { DeleteConfirmDialog } from './object-document'
 import { ObjectPropertiesSidebar } from './object-properties-sidebar'
 import { PropertiesSidebarProvider, SIDEBAR_WIDTH } from './properties-sidebar-provider'
 import { RelatedTab } from './related-tab'
@@ -39,12 +39,6 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	const { data: actors } = useActors(workspaceId)
 	const { data: graph } = useObjectGraph(workspaceId, object.id)
 	const { data: allObjects } = useObjects(workspaceId)
-	// Mockup 1362 `composerHint` — names the agent that will read what you write
-	// here. Only rendered when an agent actually drives the object.
-	const driverActor = object.driver ? actors?.find((a) => a.id === object.driver) : undefined
-	const composerHint =
-		driverActor && driverActor.type === 'agent' ? `${driverActor.name} is listening` : null
-
 	const settings = workspace.settings as Record<string, unknown>
 	const statuses = (settings?.statuses as Record<string, string[]> | undefined)?.[object.type] ?? []
 
@@ -78,6 +72,17 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 		? actors?.find((a) => a.id === liveAsk.sourceActorId)
 		: undefined
 	const askText = liveAsk ? (liveAsk.content ?? liveAsk.title) : getAsk(object)
+
+	// Memoised so the published crumb keeps a stable identity across renders.
+	const crumb = useMemo(
+		() => ({
+			parentLabel: 'Objects',
+			parentTo: '/$workspaceId/objects',
+			parentParams: { workspaceId },
+			label: object.title ?? 'Untitled',
+		}),
+		[workspaceId, object.title],
+	)
 
 	const answerRef = useRef<HTMLTextAreaElement>(null)
 	const [confirmDelete, setConfirmDelete] = useState(false)
@@ -121,13 +126,20 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	const sidebarExpanded = isMobile ? sidebarOpenMobile : sidebarOpen
 	const contentPush = !isMobile && sidebarOpen ? SIDEBAR_WIDTH : undefined
 
-	// ⌘/Ctrl+I toggles the right sidebar. Shares `handleToggleSidebar` with the
-	// PanelRight header button so both entry points flow through the same
-	// mobile-vs-persisted branch, and both are observable to the
-	// `sidebar_toggle` analytics effect below.
+	// ⌘⇧\ toggles the properties drawer. It was ⌘I until the document editor
+	// claimed ⌘I for italic. Shares `handleToggleSidebar` with the header
+	// button so both entry points flow through the same mobile-vs-persisted
+	// branch, and both are observable to the `sidebar_toggle` effect below.
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
-			if (!((e.metaKey || e.ctrlKey) && (e.key === 'i' || e.key === 'I'))) return
+			// Shift makes the backslash a pipe on most layouts — accept both.
+			// `!altKey` for the same reason the nav chord needs it: AltGr sets
+			// `ctrlKey` on Windows, and both characters are AltGr products on the
+			// layouts where `\` is not a bare key.
+			if (
+				!((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && (e.key === '\\' || e.key === '|'))
+			)
+				return
 			const target = e.target as HTMLElement | null
 			if (target) {
 				const tag = target.tagName
@@ -175,43 +187,6 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 		scrollRootRef: scrollRegionRef,
 	})
 
-	// Bet-scoped sticky nav, carried over from the retired ObjectDocument: once
-	// the hero identity row leaves the viewport the shared nav row sprouts a
-	// compact title + status chip, so the object's identity is never absent
-	// from the screen. `threshold: 0` matches "the hero scrolled off".
-	const heroIdentityRef = useRef<HTMLDivElement>(null)
-	const [heroVisible, setHeroVisible] = useState(true)
-	useEffect(() => {
-		if (object.type !== 'bet') return
-		const el = heroIdentityRef.current
-		if (!el || typeof IntersectionObserver === 'undefined') return
-		const observer = new IntersectionObserver(([entry]) => setHeroVisible(entry.isIntersecting), {
-			threshold: 0,
-		})
-		observer.observe(el)
-		return () => observer.disconnect()
-	}, [object.type])
-
-	const scrollBackToHero = useCallback(() => {
-		const target = heroIdentityRef.current
-		if (!target) return
-		target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-		// Focus lands on the hero's status trigger once the smooth scroll
-		// settles — the header chip is read-only, editing happens in the hero.
-		window.setTimeout(() => {
-			document.querySelector<HTMLElement>('[data-hero-status-trigger]')?.focus()
-		}, 400)
-	}, [])
-
-	const stickyIdentity =
-		object.type === 'bet' && !heroVisible ? (
-			<StickyBetIdentity
-				title={object.title ?? 'Untitled'}
-				status={object.status}
-				onScrollBack={scrollBackToHero}
-			/>
-		) : null
-
 	const handleUpdateStatus = useCallback(
 		(status: string) => {
 			updateObject.mutate(
@@ -235,20 +210,32 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 		)
 	}, [object.id, object.status, object.type, updateObject])
 
-	// Body edits commit through the same `updateObject` mutation as status and
-	// owner, and toast on failure for the same reason — `useUpdateObject` rolls
-	// its optimistic patch back silently, so without a toast a failed save reads
-	// as the text reverting on its own.
-	//
-	// The title is deliberately not editable here: the v2 shell renders it as a
-	// static `h1` under the identity row, so `ObjectDetailIdentity` is mounted
-	// without `onTitleChange`.
+	// Title and body edits commit through the same `updateObject` mutation as
+	// status and owner, and toast on failure for the same reason —
+	// `useUpdateObject` rolls its optimistic patch back silently, so without a
+	// toast a failed save reads as the text reverting on its own.
+	// These return the mutation promise so the editor can reopen with the draft
+	// intact when the write fails, rather than dropping the user's text.
+	const handleUpdateTitle = useCallback(
+		async (title: string) => {
+			try {
+				await updateObject.mutateAsync({ id: object.id, data: { title } })
+			} catch (err) {
+				toast.error('Could not save your changes')
+				throw err
+			}
+		},
+		[object.id, updateObject],
+	)
+
 	const handleUpdateContent = useCallback(
-		(content: string) => {
-			updateObject.mutate(
-				{ id: object.id, data: { content } },
-				{ onError: () => toast.error('Could not save your changes') },
-			)
+		async (content: string) => {
+			try {
+				await updateObject.mutateAsync({ id: object.id, data: { content } })
+			} catch (err) {
+				toast.error('Could not save your changes')
+				throw err
+			}
 		},
 		[object.id, updateObject],
 	)
@@ -301,34 +288,44 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 
 	return (
 		<>
-			<PageHeader contentPush={contentPush} stickyIdentity={stickyIdentity} scrollLocked />
+			{/* `Objects › <name>` with the drawer toggle and overflow menu on the
+			    right — the mockup's whole detail bar (1033–1039). Published to the
+			    shared nav so the screen carries one bar, not two. */}
+			<PageHeader
+				crumb={crumb}
+				actions={
+					<ObjectDetailBarActions
+						object={object}
+						workspaceId={workspaceId}
+						onDeleteRequest={() => setConfirmDelete(true)}
+						onArchiveRequest={object.type === 'bet' ? handleArchive : undefined}
+						onTogglePropertiesRequest={handleToggleSidebar}
+						propertiesOpen={sidebarExpanded}
+					/>
+				}
+				contentPush={contentPush}
+				scrollLocked
+			/>
 			<div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
-				<ObjectDetailHeader
-					object={object}
-					workspaceId={workspaceId}
-					onDeleteRequest={() => setConfirmDelete(true)}
-					onArchiveRequest={object.type === 'bet' ? handleArchive : undefined}
-					onTogglePropertiesRequest={handleToggleSidebar}
-					propertiesOpen={sidebarExpanded}
-				/>
-
 				{/* The document owns the only scroll region on this screen, so the
 				    bar above stays put and the composer can pin to its bottom. */}
 				<div
 					ref={scrollRegionRef}
 					data-detail-scroll-region
-					className="min-h-0 flex-1 overflow-y-auto"
+					className="min-h-0 flex-1 overflow-y-auto px-[clamp(14px,3vw,24px)] pt-[clamp(18px,3vw,30px)]"
 				>
-					<div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col pt-5">
-						<div ref={heroIdentityRef}>
-							<ObjectDetailIdentity
-								object={object}
-								statuses={statuses}
-								members={members ?? []}
-								onStatusChange={handleUpdateStatus}
-								onDriverChange={handleUpdateDriver}
-							/>
-						</div>
+					{/* `min-h-full` + the spacer below put the composer on the bottom of
+					    the viewport while the document is short, without giving up the
+					    sticky behaviour once it grows past one screen. */}
+					<div className="mx-auto flex min-h-full w-full min-w-0 max-w-[680px] flex-col">
+						<ObjectDetailIdentity
+							object={object}
+							statuses={statuses}
+							members={members ?? []}
+							onStatusChange={handleUpdateStatus}
+							onDriverChange={handleUpdateDriver}
+							onTitleChange={handleUpdateTitle}
+						/>
 
 						{askText && (
 							<ObjectAskBanner
@@ -346,19 +343,20 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 							onContentChange={handleUpdateContent}
 						/>
 
-						{/* One Activity heading + rule + a 2-way segmented control
-						    (mockup 1138–1143). TabsList/TabsTrigger stay at their
-						    shadcn defaults per apps/web/CLAUDE.md's no-size-override
-						    rule, so the control is taller than the mockup's 28px pair. */}
-						<Tabs defaultValue="timeline" className="mt-8">
+						{/* One Activity rule + a 2-way segmented control (mockup
+						    1138–1143): the label is a mono micro-heading, not a
+						    section title, and the switch rides the rule's right end. */}
+						<Tabs defaultValue="timeline" className="mb-1 mt-11">
 							<div className="flex items-center gap-2.5">
-								<span className="shrink-0 text-sm font-bold text-foreground">Activity</span>
-								<div className="h-px flex-1 bg-border" />
-								<TabsList className="shrink-0">
+								<span className="shrink-0 font-mono text-[10px] font-bold uppercase tracking-[0.11em] text-muted-foreground">
+									Activity
+								</span>
+								<div className="h-px flex-1 bg-muted" />
+								<TabsList variant="segmented" className="shrink-0">
 									<TabsTrigger value="timeline">Timeline</TabsTrigger>
 									<TabsTrigger value="related">
 										Related
-										<span className="ml-1.5 tabular-nums text-muted-foreground">
+										<span className="text-[10.5px] tabular-nums text-border-strong">
 											{relatedCount}
 										</span>
 									</TabsTrigger>
@@ -372,16 +370,19 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 							</TabsContent>
 						</Tabs>
 
-						<div className="sticky bottom-0 z-[6] bg-gradient-to-b from-transparent via-background to-background pb-4 pt-6">
-							{/* The mockup gives the composer one hint slot (1362); on object
-							    detail its content names the agent that will read what you
-							    write, so it replaces the keyboard hint rather than stacking
-							    a second line beneath the card. */}
+						<div aria-hidden="true" className="min-h-6 flex-1" />
+
+						{/* The mockup's composer is a single bar — `+`, the field, mic and
+						    send on one row (1358–1366), with no hint line under it. */}
+						<div className="sticky bottom-0 z-[6] mt-1.5 bg-gradient-to-b from-transparent via-background via-20% to-background pb-4 pt-[22px]">
 							<CommentInput
 								workspaceId={workspaceId}
 								objectId={object.id}
 								focusRef={answerRef}
-								hint={composerHint || undefined}
+								variant="bar"
+								// The full prompt wraps to three lines in a 375px bar, so the
+								// phone gets the short form.
+								placeholder={isMobile ? 'Comment…' : 'Comment — / commands, @ mentions'}
 							/>
 						</div>
 					</div>

@@ -1,4 +1,7 @@
-import { ObjectDetailHeader, ObjectDetailIdentity } from '@/components/objects/object-detail-header'
+import {
+	ObjectDetailBarActions,
+	ObjectDetailIdentity,
+} from '@/components/objects/object-detail-header'
 import type { MemberResponse } from '@/lib/api'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
@@ -56,12 +59,12 @@ const baseProps = {
 	onDeleteRequest: vi.fn(),
 }
 
-describe('ObjectDetailHeader', () => {
-	// The shared nav row owns the `Objects › <name>` chain for detail routes, so
-	// the in-page bar carries actions only — two breadcrumbs would compete.
+describe('ObjectDetailBarActions', () => {
+	// The crumb is published to the shared nav's detail bar, which renders it
+	// alongside this cluster — the cluster itself carries actions only.
 	it('renders no breadcrumb of its own', () => {
 		const object = buildObjectResponse({ title: 'My Bet' })
-		render(<ObjectDetailHeader {...baseProps} object={object} />, { wrapper: makeWrapper() })
+		render(<ObjectDetailBarActions {...baseProps} object={object} />, { wrapper: makeWrapper() })
 		expect(screen.queryByRole('link', { name: 'Objects' })).toBeNull()
 		expect(screen.queryByText('My Bet')).toBeNull()
 	})
@@ -71,7 +74,7 @@ describe('ObjectDetailHeader', () => {
 		const object = buildObjectResponse({ title: 'My Bet' })
 		const onTogglePropertiesRequest = vi.fn()
 		render(
-			<ObjectDetailHeader
+			<ObjectDetailBarActions
 				{...baseProps}
 				object={object}
 				onTogglePropertiesRequest={onTogglePropertiesRequest}
@@ -87,30 +90,13 @@ describe('ObjectDetailHeader', () => {
 
 	it('omits the properties toggle when no handler is wired', () => {
 		const object = buildObjectResponse({ title: 'My Bet' })
-		render(<ObjectDetailHeader {...baseProps} object={object} />, { wrapper: makeWrapper() })
+		render(<ObjectDetailBarActions {...baseProps} object={object} />, { wrapper: makeWrapper() })
 		expect(screen.queryByRole('button', { name: 'Properties' })).toBeNull()
 	})
 
-	it('renders a one-tap subscribe affordance when the current actor is not subscribed', async () => {
-		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
-		subscribeMock.mockClear()
-		const object = buildObjectResponse({ id: 'obj-42', title: 'My Bet' })
-		object.is_subscribed = false
-		render(<ObjectDetailHeader {...baseProps} object={object} />, { wrapper: makeWrapper() })
-
-		const subscribe = await screen.findByRole('button', { name: /^subscribe/i })
-		await user.click(subscribe)
-		await waitFor(() =>
-			expect(subscribeMock).toHaveBeenCalledWith({ entityType: 'object', entityId: 'obj-42' }),
-		)
-	})
-
-	it('hides the subscribe + button once the actor is already subscribed', () => {
-		const object = buildObjectResponse({ id: 'obj-43', title: 'My Bet' })
-		object.is_subscribed = true
-		render(<ObjectDetailHeader {...baseProps} object={object} />, { wrapper: makeWrapper() })
-		expect(screen.queryByRole('button', { name: /^subscribe/i })).toBeNull()
-	})
+	// Subscription is no longer a header affordance: the v2 detail bar carries
+	// only the drawer toggle and the ⋯ menu, and Subscribers moved into the
+	// properties drawer (object-properties-sidebar).
 })
 
 describe('ObjectDetailIdentity', () => {
@@ -125,9 +111,10 @@ describe('ObjectDetailIdentity', () => {
 		const object = buildObjectResponse({ type: 'bet', status: 'active' })
 		render(<ObjectDetailIdentity {...identityProps} object={object} />, { wrapper: makeWrapper() })
 
-		expect(screen.getByText('bet')).toBeInTheDocument()
+		expect(screen.getByText('Bet')).toBeInTheDocument()
 		expect(screen.getByText('active')).toBeInTheDocument()
-		expect(screen.getByText('Driver: Unassigned')).toBeInTheDocument()
+		expect(screen.getByText('Driver')).toBeInTheDocument()
+		expect(screen.getByText('Unassigned')).toBeInTheDocument()
 	})
 
 	it('renders a static h1 for read-only hosts that pass no onTitleChange', () => {
@@ -146,6 +133,8 @@ describe('ObjectDetailIdentity', () => {
 			{ wrapper: makeWrapper() },
 		)
 
+		// Click-to-edit: the heading is a real <h1> until you ask to rename.
+		await user.click(screen.getByRole('heading', { level: 1, name: 'Old Title' }))
 		const input = screen.getByRole('textbox', { name: 'Object title' })
 		await user.clear(input)
 		await user.type(input, 'New Title')
@@ -163,6 +152,7 @@ describe('ObjectDetailIdentity', () => {
 			{ wrapper: makeWrapper() },
 		)
 
+		await user.click(screen.getByRole('heading', { level: 1, name: 'Unchanged' }))
 		await user.click(screen.getByRole('textbox', { name: 'Object title' }))
 		await user.tab()
 
@@ -179,6 +169,7 @@ describe('ObjectDetailIdentity', () => {
 			{ wrapper: makeWrapper() },
 		)
 
+		await user.click(screen.getByRole('heading', { level: 1, name: 'First' }))
 		const input = screen.getByRole('textbox', { name: 'Object title' })
 		await user.clear(input)
 		await user.type(input, 'Edited but never blurred')
@@ -187,7 +178,12 @@ describe('ObjectDetailIdentity', () => {
 			<ObjectDetailIdentity {...identityProps} object={second} onTitleChange={onTitleChange} />,
 		)
 
-		expect(screen.getByRole('textbox', { name: 'Object title' })).toHaveValue('Second')
+		// The swap drops back to the heading carrying the new object's title — the
+		// abandoned draft must not follow it across, or blur would rename obj-b to
+		// what was typed for obj-a.
+		expect(screen.getByRole('heading', { level: 1, name: 'Second' })).toBeInTheDocument()
+		expect(screen.queryByRole('textbox', { name: 'Object title' })).toBeNull()
+		expect(onTitleChange).not.toHaveBeenCalled()
 	})
 
 	it('status dropdown offers the workspace statuses as checked options', async () => {
@@ -205,7 +201,7 @@ describe('ObjectDetailIdentity', () => {
 		const object = buildObjectResponse({ type: 'bet' })
 		render(<ObjectDetailIdentity {...identityProps} object={object} />, { wrapper: makeWrapper() })
 
-		await user.click(screen.getByText('Driver: Unassigned'))
+		await user.click(screen.getByText('Driver'))
 		const items = await screen.findAllByRole('option')
 		const labels = items.map((el) => el.textContent ?? '')
 		expect(labels.some((l) => l.includes('Unassigned'))).toBe(true)
@@ -214,14 +210,14 @@ describe('ObjectDetailIdentity', () => {
 	})
 })
 
-describe('ObjectDetailHeader overflow menu', () => {
+describe('ObjectDetailBarActions overflow menu', () => {
 	it('overflow menu exposes archive and delete actions', async () => {
 		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
 		const object = buildObjectResponse({ type: 'bet' })
 		const onDeleteRequest = vi.fn()
 		const onArchiveRequest = vi.fn()
 		render(
-			<ObjectDetailHeader
+			<ObjectDetailBarActions
 				{...baseProps}
 				object={object}
 				onDeleteRequest={onDeleteRequest}

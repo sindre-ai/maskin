@@ -181,3 +181,15 @@ export function chatSelectionReducer(
 		}
 	}
 }
+
+/**
+ * How many objects "Ask an agent" may hand to a new chat in one go.
+ *
+ * Bounded by the objects list endpoint, not by taste: `objectQuerySchema`
+ * caps `limit` at 100, so ids past the hundredth could not be resolved into
+ * chips however many the URL carried — they would simply not arrive, with
+ * nothing on screen to say so. The selection is trimmed to this at the
+ * source and the trim is reported, so the count in the chat is the count the
+ * user was told about.
+ */
+export const MAX_CHAT_OBJECT_REFERENCES = 100

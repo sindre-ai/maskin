@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { trackCommentPosted } from '../lib/analytics'
 import { type CreateCommentInput, type EventResponse, type ObjectResponse, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
@@ -54,6 +55,12 @@ export function useCreateComment(workspaceId: string, entityId: string) {
 		onSuccess: (_result, variables) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(entityId) })
 			trackCommentPostedFor(queryClient, entityId, variables, null)
+		},
+		// Without this a rejected POST is indistinguishable from nothing
+		// happening: the composer only resets `onSuccess`, so the comment stays
+		// in the box and the user re-clicks Send forever with no explanation.
+		onError: (err) => {
+			toast.error(err instanceof Error ? err.message : 'Could not post your comment')
 		},
 	})
 }

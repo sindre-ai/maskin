@@ -127,7 +127,10 @@ function setViewport(px: number) {
 
 function renderShell(id: string) {
 	return render(<ObjectDetailShell object={buildObjectResponse({ id, type: 'bet' })} />, {
-		wrapper: createWorkspaceWrapper({ settings: { statuses: { bet: ['active'] } } }),
+		wrapper: createWorkspaceWrapper(
+			{ settings: { statuses: { bet: ['active'] } } },
+			{ renderPageHeader: true },
+		),
 	})
 }
 
@@ -140,7 +143,7 @@ beforeEach(() => {
 
 describe('ObjectDetailShell sidebar_toggle instrumentation', () => {
 	// Ship-metric event for the object-detail-sidebar bet, ported from the
-	// retired ObjectDocument surface along with the ⌘/Ctrl+I chord and the
+	// retired ObjectDocument surface along with the ⌘/Ctrl+⇧+\ chord and the
 	// persisted `objectDetailSidebarCollapsed` bit. Every open/close of the
 	// right sidebar must fire — the exit gate revokes the feature if this
 	// event stays at 0/day for 7 consecutive days.
@@ -165,11 +168,11 @@ describe('ObjectDetailShell sidebar_toggle instrumentation', () => {
 		})
 	})
 
-	it('fires when the ⌘/Ctrl+I shortcut toggles the sidebar', async () => {
+	it('fires when the ⌘/Ctrl+⇧+\\ shortcut toggles the sidebar', async () => {
 		const user = userEvent.setup()
 		renderShell('obj-shortcut')
 
-		await user.keyboard('{Control>}i{/Control}')
+		await user.keyboard('{Control>}{Shift>}\\{/Shift}{/Control}')
 
 		expect(trackSidebarToggleMock).toHaveBeenCalledTimes(1)
 		expect(trackSidebarToggleMock).toHaveBeenCalledWith({
@@ -177,6 +180,19 @@ describe('ObjectDetailShell sidebar_toggle instrumentation', () => {
 			viewport: 'desktop',
 			object_id: 'obj-shortcut',
 		})
+	})
+
+	// AltGr reports as Ctrl+Alt on Windows, and `\` is an AltGr product on the
+	// Nordic, German, Polish and Turkish layouts — so a user typing a literal
+	// backslash must not toggle the drawer (nor lose the character to
+	// `preventDefault()`).
+	it('does not fire when AltGr produces the backslash rather than the chord', async () => {
+		const user = userEvent.setup()
+		renderShell('obj-altgr')
+
+		await user.keyboard('{Control>}{Alt>}{Shift>}\\{/Shift}{/Alt}{/Control}')
+
+		expect(trackSidebarToggleMock).not.toHaveBeenCalled()
 	})
 
 	it('persists the collapsed bit so the toggle survives a remount', async () => {

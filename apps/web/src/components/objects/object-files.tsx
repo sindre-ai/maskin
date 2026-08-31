@@ -7,6 +7,7 @@ import {
 } from '@/components/ui/responsive-popover'
 import { useActors } from '@/hooks/use-actors'
 import { useCreateFile, useFiles } from '@/hooks/use-files'
+import { useObjectFileAttachments } from '@/hooks/use-object-file-attachments'
 import { useCreateRelationship } from '@/hooks/use-relationships'
 import {
 	useUpdateUserDisplaySettings,
@@ -15,7 +16,7 @@ import {
 import { trackEvent } from '@/lib/analytics'
 import type { FileListItem, RelationshipResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { formatSize, readFileAsBase64 } from '@/lib/file-utils'
+import { formatSize } from '@/lib/file-utils'
 import { Link } from '@tanstack/react-router'
 import { Check, Columns3, File as FileIcon, Loader2, Plus } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -41,12 +42,13 @@ const TOGGLEABLE_PROPERTIES: { id: ToggleableProperty; label: string }[] = [
 // Per T1's design: Filename is locked-on. Size defaults ON; everything else
 // defaults OFF — only non-default toggles count toward the bet's PostHog ship
 // metric, so any default-ON property is invisible to the measurement.
+// `MD · 4 KB · Quill` — the mockup's file meta line (1454–1462).
 const DEFAULT_VISIBLE: Record<ToggleableProperty, boolean> = {
+	kind: true,
 	size: true,
+	uploaded_by: true,
 	created_at: false,
 	modified_at: false,
-	kind: false,
-	uploaded_by: false,
 }
 
 function deriveKind(file: Pick<FileListItem, 'name' | 'mimeType'>): string {
@@ -100,12 +102,14 @@ export function ObjectFiles({
 
 	const { data: files = [] } = useFiles(workspaceId, { ids: candidateFileIds })
 
-	const createFile = useCreateFile(workspaceId)
-	const createRelationship = useCreateRelationship(workspaceId, objectId)
+	const { upload: handleUpload, isUploading } = useObjectFileAttachments({
+		workspaceId,
+		objectId,
+		objectType,
+	})
 
 	const inputRef = useRef<HTMLInputElement>(null)
 	const [isDragging, setIsDragging] = useState(false)
-	const [isUploading, setIsUploading] = useState(false)
 	const [visible, setVisible] = useState<Record<ToggleableProperty, boolean>>(DEFAULT_VISIBLE)
 
 	// Per-actor visibility persistence under `object_type = "files"`. Reuses the
@@ -149,36 +153,6 @@ export function ObjectFiles({
 		}, 500)
 		return () => clearTimeout(handle)
 	}, [visible])
-
-	const handleUpload = useCallback(
-		async (incoming: File[]) => {
-			setIsUploading(true)
-			try {
-				for (const file of incoming) {
-					const content = await readFileAsBase64(file)
-					const created = await createFile.mutateAsync({
-						name: file.name,
-						mime_type: file.type || 'application/octet-stream',
-						content,
-						encoding: 'base64',
-					})
-					await createRelationship.mutateAsync({
-						source_type: objectType,
-						source_id: objectId,
-						target_type: 'file',
-						target_id: created.id,
-						type: ATTACHED_REL_TYPE,
-					})
-					toast.success(`Uploaded ${file.name}`)
-				}
-			} catch (err) {
-				toast.error(err instanceof Error ? err.message : 'Failed to upload file')
-			} finally {
-				setIsUploading(false)
-			}
-		},
-		[createFile, createRelationship, objectId, objectType],
-	)
 
 	const handleFileChange = useCallback(
 		(e: React.ChangeEvent<HTMLInputElement>) => {
@@ -238,19 +212,19 @@ export function ObjectFiles({
 			onDrop={handleDrop}
 			className={cn('rounded-md transition-colors', isDragging && 'bg-accent/5')}
 		>
-			<div className="flex items-center gap-2 mb-2">
-				<h3 className="eyebrow">Files ({totalCount})</h3>
+			<div className="mb-2 flex items-center gap-2 px-2">
+				<h3 className="eyebrow">Files</h3>
 				<div className="flex-1" />
 				<ResponsivePopover>
 					<ResponsivePopoverTrigger asChild>
 						<Button
 							variant="ghost"
 							size="icon"
-							className="h-8 w-8 relative"
+							className="relative size-6 text-muted-foreground"
 							title="File properties"
 							aria-label="File properties"
 						>
-							<Columns3 size={14} />
+							<Columns3 size={13} />
 							{hasActiveOverrides && (
 								<span
 									aria-hidden="true"
@@ -294,13 +268,13 @@ export function ObjectFiles({
 				<Button
 					variant="ghost"
 					size="icon"
-					className="h-8 w-8"
+					className="size-6 text-muted-foreground"
 					title="Attach file"
 					aria-label="Attach file"
 					onClick={() => inputRef.current?.click()}
 					disabled={isUploading}
 				>
-					{isUploading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+					{isUploading ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
 				</Button>
 			</div>
 
@@ -374,6 +348,12 @@ interface FileRowProps {
 
 function FileRow({ workspaceId, file, visible, uploaderName }: FileRowProps) {
 	const metaCells: { key: ToggleableProperty; node: React.ReactNode }[] = []
+	if (visible.kind) {
+		metaCells.push({
+			key: 'kind',
+			node: <span className="whitespace-nowrap">{deriveKind(file)}</span>,
+		})
+	}
 	if (visible.size) {
 		metaCells.push({
 			key: 'size',
@@ -404,12 +384,6 @@ function FileRow({ workspaceId, file, visible, uploaderName }: FileRowProps) {
 			),
 		})
 	}
-	if (visible.kind) {
-		metaCells.push({
-			key: 'kind',
-			node: <span className="whitespace-nowrap">{deriveKind(file)}</span>,
-		})
-	}
 	if (visible.uploaded_by) {
 		metaCells.push({
 			key: 'uploaded_by',
@@ -424,24 +398,33 @@ function FileRow({ workspaceId, file, visible, uploaderName }: FileRowProps) {
 				params={{ workspaceId, fileId: file.id }}
 				target="_blank"
 				rel="noopener noreferrer"
-				className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-accent"
+				className="flex items-center gap-2.5 rounded-[9px] p-2 transition-colors hover:bg-muted/60"
 			>
-				<FileIcon size={14} className="text-muted-foreground shrink-0" />
-				<span className="flex-1 min-w-0 truncate">{file.name}</span>
-				{metaCells.length > 0 && (
-					<span className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
-						{metaCells.map((cell, i) => (
-							<span key={cell.key} className="inline-flex items-center gap-1.5">
-								{i > 0 && (
-									<span aria-hidden="true" className="opacity-50">
-										·
-									</span>
-								)}
-								{cell.node}
-							</span>
-						))}
+				<span
+					aria-hidden="true"
+					className="grid size-[26px] shrink-0 place-items-center rounded-[7px] bg-muted text-muted-foreground"
+				>
+					<FileIcon size={13} />
+				</span>
+				<span className="min-w-0 flex-1 leading-tight">
+					<span className="block truncate text-[12.5px] font-semibold text-foreground">
+						{file.name}
 					</span>
-				)}
+					{metaCells.length > 0 && (
+						<span className="mt-px flex flex-wrap items-center gap-x-1.5 text-[10.5px] text-muted-foreground">
+							{metaCells.map((cell, i) => (
+								<span key={cell.key} className="inline-flex items-center gap-1.5">
+									{i > 0 && (
+										<span aria-hidden="true" className="opacity-50">
+											·
+										</span>
+									)}
+									{cell.node}
+								</span>
+							))}
+						</span>
+					)}
+				</span>
 			</Link>
 		</li>
 	)

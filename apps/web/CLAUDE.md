@@ -112,7 +112,12 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 - Use `cn()` from `src/lib/cn.ts` (clsx + tailwind-merge) for conditional class merging
 - Icons from `lucide-react`, typically `size={15}` in nav, `size={16}` in content
 - **No raw HTML form elements** — never use `<select>`, always use Radix `Select` from `@/components/ui/select`. DropdownMenu is only for action menus (not form value selection).
-- **No custom size overrides on SelectTrigger** — use the default h-8 bordered trigger everywhere. Layout classes like `flex-1` or `w-fit` are fine, but don't override height/border/text-size.
+- **No custom size overrides on SelectTrigger** — pick one of the primitive's own
+  `size` values instead of restyling the trigger at the call site. `default` is the
+  h-8 bordered trigger every form uses; `chip` is the borderless inline pill the v2
+  object detail meta row rides on. Layout classes like `flex-1` or `w-fit` are fine,
+  but don't override height/border/text-size — a shape the two sizes don't cover is a
+  new `size` on `ui/select.tsx`, not a page-local override.
 
 ### Layout
 - Fixed sidebar (w-56) with solid background (`bg-sidebar`) and right border, left side
