@@ -6756,6 +6756,123 @@ ${claudeCredsBlock}`,
 		},
 	)
 
+	// ─── LinkedIn (Unipile-backed) thin-proxy handlers ──────────────────────
+	// Each handler proxies to the corresponding backend route which does the
+	// actor-scoped credential lookup, Unipile call, and idempotency dedup —
+	// see apps/dev/src/routes/integrations-linkedin-unipile.ts. Errors from
+	// the backend surface as `{ isError: true, content: [{ text: '<CODE>: <msg>' }] }`
+	// rather than thrown exceptions so the agent can reason about them per
+	// the six-class error taxonomy (see the backend errors.ts).
+	registerAppTool(
+		server,
+		'linkedin__send_message',
+		{
+			description: tools.linkedin__send_message.description,
+			inputSchema: tools.linkedin__send_message.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			try {
+				const result = await apiCall(
+					config,
+					'POST',
+					'/api/integrations/linkedin-unipile/send-message',
+					{
+						recipient_urn: args.recipient_urn,
+						body: args.body,
+						idempotency_key: args.idempotency_key,
+					},
+					{ workspaceId: (args as { workspace_id?: string }).workspace_id },
+				)
+				return {
+					_meta: meta(
+						'linkedin__send_message',
+						config,
+						(args as { workspace_id?: string }).workspace_id,
+					),
+					content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+					structuredContent: result as Record<string, unknown>,
+				}
+			} catch (err) {
+				return toolErrorResponse('linkedin__send_message', err)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'linkedin__list_conversations',
+		{
+			description: tools.linkedin__list_conversations.description,
+			inputSchema: tools.linkedin__list_conversations.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			try {
+				const params = new URLSearchParams()
+				const cursor = (args as { cursor?: string }).cursor
+				const limit = (args as { limit?: number }).limit
+				if (cursor) params.set('cursor', cursor)
+				if (typeof limit === 'number') params.set('limit', String(limit))
+				const qs = params.toString()
+				const result = await apiCall(
+					config,
+					'GET',
+					`/api/integrations/linkedin-unipile/list-conversations${qs ? `?${qs}` : ''}`,
+					undefined,
+					{ workspaceId: (args as { workspace_id?: string }).workspace_id },
+				)
+				return {
+					_meta: meta(
+						'linkedin__list_conversations',
+						config,
+						(args as { workspace_id?: string }).workspace_id,
+					),
+					content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+					structuredContent: result as Record<string, unknown>,
+				}
+			} catch (err) {
+				return toolErrorResponse('linkedin__list_conversations', err)
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'linkedin__reply',
+		{
+			description: tools.linkedin__reply.description,
+			inputSchema: tools.linkedin__reply.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			try {
+				const result = await apiCall(
+					config,
+					'POST',
+					'/api/integrations/linkedin-unipile/reply',
+					{
+						thread_id: args.thread_id,
+						body: args.body,
+						idempotency_key: args.idempotency_key,
+					},
+					{ workspaceId: (args as { workspace_id?: string }).workspace_id },
+				)
+				return {
+					_meta: meta(
+						'linkedin__reply',
+						config,
+						(args as { workspace_id?: string }).workspace_id,
+					),
+					content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+					structuredContent: result as Record<string, unknown>,
+				}
+			} catch (err) {
+				return toolErrorResponse('linkedin__reply', err)
+			}
+		},
+	)
+
 	// Register extension MCP tools (namespaced with extensionId prefix)
 	for (const ext of getAllModules()) {
 		for (const tool of ext.mcpTools ?? []) {
