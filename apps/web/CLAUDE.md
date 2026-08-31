@@ -95,6 +95,7 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 - Fonts: Schibsted Grotesk (sans, variable 400–900) + JetBrains Mono (mono) — self-hosted from `/public/fonts/`, see `src/styles/typography.md`.
 - Base border radius: 10px (`--radius: 0.625rem`) — the `sm`/`md`/`lg`/`xl`/`2xl` scale steps 6/8/10/14/16px, matched to the v2 mockup's chip / menu-item / control / card / modal usage.
 - Micro eyebrow labels (the mockup's "VIEW / SHOW / SORT" markers) ship as the `.eyebrow` utility — 8px mono, 700, 0.11em tracking, uppercase, muted-foreground.
+- Settings section labels ("WORKSPACE NAME", "APPEARANCE", "PRIVACY & DATA") ship as the `.settings-label` utility — 11px sans, 600, 0.04em tracking, uppercase, muted-foreground. Settings is the only surface that uses it; everywhere else the micro label is `.eyebrow`.
 - Subtle transitions: `transition-colors duration-150` at the base layer.
 - Gallery specimen: `/prototypes/gallery` — every page must render from these primitives.
 

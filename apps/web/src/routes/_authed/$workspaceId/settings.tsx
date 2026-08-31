@@ -40,7 +40,7 @@ function SettingsLayoutV2() {
 			<div className="flex flex-col gap-6 md:flex-row md:gap-8">
 				<nav
 					aria-label="Settings sections"
-					className="md:w-[172px] md:shrink-0 md:border-r md:border-border md:pr-2"
+					className="md:w-[172px] md:shrink-0 md:border-r md:border-border-subtle md:pr-2"
 				>
 					<ul className="flex gap-0.5 overflow-x-auto pb-2 md:flex-col md:pb-0">
 						{navItems.map((item) => {
