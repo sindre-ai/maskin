@@ -4,7 +4,6 @@ import { cn } from '@/lib/cn'
 import { ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 import { MarkdownContent } from '../shared/markdown-content'
-import { CommitmentCard } from './commitment-card'
 import { getDocumentFold, getEvidence } from './object-detail-fixtures'
 import { ObjectEvidenceBlock } from './object-evidence-block'
 
@@ -34,11 +33,6 @@ export function ObjectDetailBody({
 		// The mockup runs the body at the document scale and holds it to a 75ch
 		// measure (1105–1122); sections below it sit on the same column.
 		<div className="mt-4 flex flex-col gap-3.5">
-			{/* Commitments lead with their card (floor, cadence, source bet, last
-			    breach) — the generic rows can't carry the source-bet link or the
-			    status chip. Carried over from the retired document. */}
-			{object.type === 'commitment' && <CommitmentCard object={object} workspaceId={workspaceId} />}
-
 			{/* Editable when the host wires a commit handler — an empty body still
 			    renders the editor so a new object can be written into, which a
 			    truthy-content guard alone would make impossible. */}

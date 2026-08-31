@@ -27,25 +27,7 @@ export const TERMINAL_BET_STATUSES = ['succeeded', 'failed', 'paused'] as const
 export type TerminalBetStatus = (typeof TERMINAL_BET_STATUSES)[number]
 
 /**
- * Commitment statuses that warrant an unread-feed entry when transitioned
- * into — the "your standing commitment needs attention" signal that mirrors
- * the bet's terminal-status signal. `holding` is deliberately omitted: a
- * commitment settling back into holding is quiet news, not a For You surface.
- * Shared between the briefing composer (`apps/dev/src/services/workspace-briefing.ts`,
- * where these commitments sort ahead of holding) and the unread-feed join
- * (`apps/dev/src/routes/subscriptions.ts`, where a `status_changed` into
- * these values enters the feed). Single source of truth so the two surfaces
- * can't drift.
- *
- * Named `commitment` after the T1 architecture-decision rename of the
- * legacy `loop` object type — the pipeline/automation concept now owns the
- * `loop` name. See `packages/db/drizzle/0050_rename_loop_to_commitment.sql`.
- */
-export const COMMITMENT_ATTENTION_STATUSES = ['at-risk', 'breached'] as const
-export type CommitmentAttentionStatus = (typeof COMMITMENT_ATTENTION_STATUSES)[number]
-
-/**
- * Loop statuses used by the (post-T1-rename) pipeline concept: an iterative
+ * Loop statuses used by the pipeline concept: an iterative
  * multi-agent process wrapping triggers + agents + a pipeline of object
  * states. This is a graduated-trust ladder, not an on/off toggle — a loop
  * starts as a `draft`, earns more autonomy as it proves itself

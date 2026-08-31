@@ -21,14 +21,13 @@ const workWebExtension: ModuleWebDefinition = {
 			insight: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
 			bet: ['signal', 'define', 'active', 'live', 'succeeded', 'failed', 'paused'],
 			task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
-			loop: ['holding', 'at-risk', 'breached'],
+			loop: ['draft', 'paused', 'learning', 'supervised', 'fully_autonomous'],
 		},
 		field_definitions: {
 			loop: [
-				{ name: 'floor', type: 'text' },
-				{ name: 'cadence', type: 'text' },
-				{ name: 'source_bet_id', type: 'text' },
-				{ name: 'last_breach_at', type: 'date' },
+				{ name: 'entry_condition', type: 'text' },
+				{ name: 'close_condition', type: 'text' },
+				{ name: 'installed_from_marketplace_loop_id', type: 'text' },
 			],
 		},
 	},
