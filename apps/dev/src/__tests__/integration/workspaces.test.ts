@@ -213,7 +213,7 @@ describe('Workspaces Integration', () => {
 			expect(body.settings.enabled_modules).toEqual(['work', 'knowledge', 'crm'])
 
 			// The row that actually landed in Postgres carries each enabled
-			// module's own defaults, so the Articles/Contacts/Companies tabs have
+			// module's own defaults, so the Knowledge/People/Companies tabs have
 			// statuses and display names behind them from the first render.
 			const [row] = await db
 				.select({ settings: workspacesTable.settings })
@@ -228,8 +228,8 @@ describe('Workspaces Integration', () => {
 			}
 			expect(settings.enabled_modules).toEqual(['work', 'knowledge', 'crm'])
 			expect(settings.display_names).toMatchObject({
-				knowledge: 'Article',
-				contact: 'Contact',
+				knowledge: 'Knowledge',
+				contact: 'Person',
 				company: 'Company',
 			})
 			expect(settings.statuses.knowledge).toEqual(['draft', 'validated', 'deprecated'])
