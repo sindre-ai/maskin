@@ -2,10 +2,10 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { Button } from '@/components/ui/button'
+import { useObjectStars } from '@/hooks/use-object-stars'
 import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
-import { getStatusColor } from '@/lib/constants'
 import { getObjectGroupLabel, getObjectGroupValue } from '@/lib/objects-grouping'
 import { useNavigate } from '@tanstack/react-router'
 import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
@@ -68,6 +68,10 @@ interface ListViewProps {
 	 *  surfaces the `Clear all filters` action (mockup 1021–1022). */
 	hasActiveFilters?: boolean
 	onClearFilters?: () => void
+	/** Resolves a type key to the workspace's singular display name. Passed in
+	 *  rather than read from `useWorkspace()` here so the list stays renderable
+	 *  outside a workspace provider; rows fall back to the raw key without it. */
+	objectTypeLabel?: (type: string) => string
 }
 
 interface ListGroup {
@@ -100,6 +104,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 		emptyTitle,
 		hasActiveFilters,
 		onClearFilters,
+		objectTypeLabel,
 	},
 	ref,
 ) {
@@ -107,6 +112,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 	const scrollRef = useRef<HTMLDivElement>(null)
 	const sentinelRef = useRef<HTMLDivElement>(null)
 	const groupBy = grouping?.[0]
+	const { starredIds, toggleStar } = useObjectStars(workspaceId)
 
 	// Rows the user is blocking float to the top of the pool (mockup fixture
 	// 6655's `nyOf`). A stable partition, so within each half the API's own
@@ -326,6 +332,9 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 				ask={asksByObjectId?.get(object.id)}
 				columnVisibility={columnVisibility}
 				anySelected={selectedIdSet.size > 0}
+				typeLabel={objectTypeLabel?.(object.type)}
+				isStarred={starredIds.has(object.id)}
+				onToggleStar={toggleStar}
 			/>
 		))
 
@@ -389,7 +398,6 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 								? group.rows
 								: group.rows.slice(0, LIST_GROUP_ROW_CAP)
 							const hiddenCount = group.rows.length - LIST_GROUP_ROW_CAP
-							const statusDot = groupBy === 'status' ? getStatusColor(group.value) : null
 							return (
 								<li key={group.key}>
 									{/* Sticky so the group a row belongs to stays readable while
@@ -405,25 +413,22 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 												size={12}
 												aria-hidden="true"
 												className={cn(
-													'shrink-0 text-muted-foreground/60 transition-transform',
+													'shrink-0 text-muted-foreground/50 transition-transform',
 													open && 'rotate-90',
 												)}
 											/>
-											<span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
-												{statusDot && (
-													<span
-														aria-hidden="true"
-														className={cn(
-															'h-[7px] w-[7px] shrink-0 rounded-[2px] bg-current',
-															statusDot.text,
-														)}
-													/>
-												)}
+											{/* Mono, wide-tracked and colourless — the divider rule below
+											    carries the eye across the row, so the label doesn't also need
+											    a status swatch to mark where a group starts (mockup 748–752). */}
+											<span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.1em] text-muted-foreground">
 												{getObjectGroupLabel(groupBy, group.value, actors)}
 											</span>
-											<span className="text-[11px] font-semibold tabular-nums text-muted-foreground/60">
+											<span className="font-mono text-[10.5px] font-medium tabular-nums text-muted-foreground/50">
 												{group.rows.length}
 											</span>
+											{/* The hairline runs from the count to the right edge — a long
+											    scroll then always has a horizontal rule to break on. */}
+											<span aria-hidden="true" className="h-px flex-1 bg-muted" />
 										</button>
 									</div>
 									{open && (

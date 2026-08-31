@@ -29,6 +29,9 @@ const searchState = vi.hoisted(() => ({
 }))
 const navigateMock = vi.hoisted(() => vi.fn())
 const rows = vi.hoisted(() => ({ current: [] as Array<Record<string, unknown>> }))
+// The board reads its rows from a separate query, so a board-view test has to
+// seed them here rather than through the infinite list query.
+const boardRows = vi.hoisted(() => ({ current: [] as Array<Record<string, unknown>> }))
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
@@ -67,7 +70,7 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 		useQuery: (options: { queryKey?: readonly unknown[] }) => ({
 			data:
 				options?.queryKey?.[0] === 'objects' && options?.queryKey?.[1] === 'board'
-					? { columns: [] }
+					? { columns: [{ objects: boardRows.current }] }
 					: [],
 			isLoading: false,
 			isSuccess: true,
@@ -275,6 +278,7 @@ beforeEach(() => {
 	vi.clearAllMocks()
 	bulkBarCapture.lastProps = null
 	rows.current = [WAITING, WORKING, IDLE]
+	boardRows.current = []
 	displaySettings.current = null
 	searchState.current = {
 		type: 'bet',
@@ -333,6 +337,26 @@ describe('objects route — bulk select all / ask an agent', () => {
 				search: { objectIds: 'obj-waiting,obj-working,obj-idle' },
 			}),
 		)
+	})
+
+	// Regression: the board's rendered set is `boardInitialObjects` put through
+	// the same `clientFilter` predicate the route hands `BoardView`. Selecting
+	// from the unfiltered set instead would let `Select all` — and the `e`
+	// archive that follows it — reach cards the board is not showing.
+	it('never reaches past the Attention filter into cards the board is hiding', async () => {
+		boardRows.current = [WAITING, WORKING, IDLE]
+		displaySettings.current = { settings: { view: 'board' } }
+		searchState.current = { ...searchState.current, filterBy: 'attention', attention: 'working' }
+		render(<ObjectsPage />)
+		await waitFor(() => expect(bulkBarCapture.lastProps).not.toBeNull())
+
+		// Only `WORKING` survives `attention=working`, on the board as on the list.
+		expect(bulkBarCapture.lastProps?.totalCount).toBe(1)
+
+		await act(async () => {
+			;(bulkBarCapture.lastProps?.onSelectAll as () => void)()
+		})
+		await waitFor(() => expect(bulkBarCapture.lastProps?.selectedCount).toBe(1))
 	})
 
 	// Regression: `Select all` can select more objects than the chat is able to

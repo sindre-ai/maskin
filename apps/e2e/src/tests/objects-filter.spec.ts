@@ -45,16 +45,20 @@ test.describe('Objects Filtering', () => {
 		await expect(page.getByText('Filter Test Insight')).not.toBeVisible()
 		await expect(page.getByText('Filter Test Bet')).not.toBeVisible()
 
-		// Click All tab — back to all 3. The type tabs carry counts ("All (1)")
-		// and the status chip row below has a bare "All", so match the count form
-		// to land on the tab rather than the chip.
+		// Click All tab — back to all 3. The v2 `nav` FilterTabs variant *draws*
+		// the count on the selected tab only, but every tab still announces one
+		// via `aria-label`, so the count form is a stable way to name the tab.
 		await page.getByRole('button', { name: /^All \(\d+\)$/ }).click()
 		await expect(page.getByText('Filter Test Insight')).toBeVisible()
 		await expect(page.getByText('Filter Test Bet')).toBeVisible()
 		await expect(page.getByText('Filter Test Task')).toBeVisible()
 	})
 
-	test('can search objects by title', async ({ page, account }) => {
+	// The in-list search input was removed in the v2 list — workspace search is
+	// the nav-bar affordance now. `?q=` remains a first-class filter: it still
+	// narrows the list and still renders a removable "Search:" pill, so this
+	// covers the deep link and the pill's × in place of typing into an input.
+	test('a ?q= deep link filters the list and clears from its pill', async ({ page, account }) => {
 		await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Unique Alpha Object',
@@ -66,22 +70,22 @@ test.describe('Objects Filtering', () => {
 			status: 'signal',
 		})
 
-		await page.goto(`/${account.workspaceId}/objects`)
+		await page.goto(`/${account.workspaceId}/objects?q=Alpha`)
 
 		await expect(page.getByText('Unique Alpha Object')).toBeVisible({ timeout: 10000 })
-		await expect(page.getByText('Unique Beta Object')).toBeVisible()
-
-		// Search for "Alpha"
-		await page.getByPlaceholder('Search...').fill('Alpha')
-
-		await expect(page.getByText('Unique Alpha Object')).toBeVisible()
 		await expect(page.getByText('Unique Beta Object')).not.toBeVisible()
 
-		// Clear search
-		await page.getByPlaceholder('Search...').clear()
+		// The active search surfaces as a removable pill in the control row.
+		const pill = page.getByText('Search:').locator('..')
+		await expect(pill).toBeVisible()
+		await expect(pill).toContainText('Alpha')
 
-		await expect(page.getByText('Unique Alpha Object')).toBeVisible()
+		// Clearing it via the pill's × drops the param and restores both rows.
+		await page.getByRole('button', { name: 'Remove Search filter' }).click()
+
 		await expect(page.getByText('Unique Beta Object')).toBeVisible()
+		await expect(page.getByText('Unique Alpha Object')).toBeVisible()
+		await expect(page).not.toHaveURL(/[?&]q=/)
 	})
 })
 
