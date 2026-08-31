@@ -5,7 +5,7 @@ const CAPTURE_TIMEOUT_MS = 2_000
 
 export type PosthogEventProps = Record<
 	string,
-	string | number | boolean | null | undefined | string[]
+	string | number | boolean | null | undefined | string[] | number[]
 >
 
 /**

@@ -153,6 +153,28 @@ app.openapi(recordRoute, (async (c) => {
 			structured_content_bytes: body.structured_content_bytes,
 			structured_content_tokens: body.structured_content_tokens,
 			truncated: body.truncated,
+			// Shape dimensions — what to actually cut. `row_count` + `max_row_bytes`
+			// separate "too many rows" from "rows too fat"; `top_fields` names the
+			// heaviest fields so a trim has a target instead of a hunch. Absent
+			// from an older MCP build, and null rather than 0 when the concept
+			// doesn't apply — a tool with no row array is not a tool that returned
+			// zero rows, and collapsing the two would skew every average.
+			seq: body.seq ?? null,
+			arg_keys: body.arg_keys ?? [],
+			row_count: body.row_count ?? null,
+			max_row_bytes: body.max_row_bytes ?? null,
+			content_block_count: body.content_block_count ?? null,
+			top_fields: body.top_fields ?? [],
+			top_field_bytes: body.top_field_bytes ?? [],
+			// Derived here rather than in a dashboard query so the "is each row
+			// too fat?" question is answerable by grouping alone. Guarded against
+			// a zero row count, which is a real and frequent response.
+			bytes_per_row:
+				body.row_count && body.row_count > 0
+					? Math.round(body.structured_content_bytes / body.row_count)
+					: null,
+			total_bytes: body.content_bytes + body.structured_content_bytes,
+			total_tokens: body.content_tokens + body.structured_content_tokens,
 			workspace_id: workspaceId,
 		})
 	}

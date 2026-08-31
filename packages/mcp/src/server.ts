@@ -44,6 +44,7 @@ import {
 	MUTATION_TOOL_KINDS,
 	type TelemetrySink,
 	createDefaultSink,
+	currentToolCallSeq,
 	recordMutation,
 	recordToolCall,
 	recordToolCallResponseSize,
@@ -2024,6 +2025,10 @@ export function createMcpServer(config: McpConfig) {
 						structured_content: errorResponse.structuredContent,
 						truncated: false,
 						workspace_id: extractWorkspaceId(args),
+						// Same position as the `tool_call` event emitted just above,
+						// which is what joins the two halves of this call.
+						seq: currentToolCallSeq(),
+						args,
 					})
 					return errorResponse
 				}
@@ -2065,6 +2070,11 @@ export function createMcpServer(config: McpConfig) {
 				structured_content: responseShape?.structuredContent,
 				truncated: capped.truncated,
 				workspace_id: extractWorkspaceId(args),
+				// Same position as the `tool_call` event emitted just above, so the
+				// size of a response and the arguments that produced it are one row
+				// after a join on (session_id, seq).
+				seq: currentToolCallSeq(),
+				args,
 			})
 
 			if (mutationKind && isSuccessfulMutationResponse(finalResponse)) {

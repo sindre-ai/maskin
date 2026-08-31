@@ -322,3 +322,104 @@ describe('session id resolution', () => {
 		expect(mod.__sessionSource()).toBe('process')
 	})
 })
+
+describe('recordToolCallResponseSize — shape fields', () => {
+	// `vi.resetModules()` above means a statically imported telemetry module
+	// would be a different instance from the one the server tests drive, and
+	// the per-process seq counter lives in module state. Import per test.
+	const TARGET = { apiBaseUrl: 'http://localhost:3000', apiKey: 'ank_testkey', workspaceId: wsId }
+
+	type SizeEvent = Extract<TelemetryEvent, { event_type: 'tool_call_response_size' }>
+
+	async function load() {
+		vi.resetModules()
+		const mod = await import('../telemetry')
+		mod.__resetToolCallSeq()
+		const events: TelemetryEvent[] = []
+		const sink: TelemetrySink = (e) => events.push(e)
+		const size = (event: Omit<Parameters<typeof mod.recordToolCallResponseSize>[2], never>) => {
+			mod.recordToolCallResponseSize(sink, TARGET, event)
+			return events[events.length - 1] as SizeEvent
+		}
+		return { mod, sink, events, size }
+	}
+
+	it('carries the row count and heaviest field alongside the byte totals', async () => {
+		const { size } = await load()
+		const event = size({
+			tool_name: 'list_objects',
+			content: [{ type: 'text', text: 'ok' }],
+			structured_content: {
+				objects: [
+					{ id: 'a', content: 'x'.repeat(300) },
+					{ id: 'b', content: 'y'.repeat(300) },
+				],
+			},
+			truncated: false,
+		})
+		expect(event.row_count).toBe(2)
+		expect(event.top_fields?.[0]).toBe('content')
+		expect(event.content_block_count).toBe(1)
+		expect(event.max_row_bytes).toBeGreaterThan(300)
+	})
+
+	it('omits shape fields rather than sending null when they do not apply', async () => {
+		// The ingest schema types these as optional numbers. A null would fail
+		// validation and cost the whole event, byte totals included.
+		const { size } = await load()
+		const event = size({
+			tool_name: 'get_objects',
+			content: undefined,
+			structured_content: { id: 'a' },
+			truncated: false,
+		})
+		expect(event.row_count).toBeUndefined()
+		expect(event.max_row_bytes).toBeUndefined()
+		expect(event.content_block_count).toBeUndefined()
+	})
+
+	it('reads the shared seq without advancing it', async () => {
+		// Both events for one call must report the same position. Incrementing
+		// here as well would double every call's seq and break the join.
+		const { mod, sink, size } = await load()
+		mod.recordToolCall(sink, TARGET, {
+			tool_name: 'list_objects',
+			has_rich_render: false,
+			duration_ms: 1,
+		})
+		const args = {
+			tool_name: 'list_objects',
+			content: undefined,
+			structured_content: undefined,
+			truncated: false,
+		}
+		const first = size({ ...args, seq: mod.currentToolCallSeq() })
+		const second = size({ ...args, seq: mod.currentToolCallSeq() })
+		expect(first.seq).toBe(1)
+		expect(second.seq).toBe(1)
+	})
+
+	it('records argument key names so a broad call is distinguishable from a narrow one', async () => {
+		const { size } = await load()
+		const event = size({
+			tool_name: 'list_objects',
+			content: undefined,
+			structured_content: undefined,
+			truncated: false,
+			args: { limit: 100, type: 'insight' },
+		})
+		expect(event.arg_keys).toEqual(['limit', 'type'])
+	})
+
+	it('never lets a response value reach the event', async () => {
+		const { size } = await load()
+		const event = size({
+			tool_name: 'list_objects',
+			content: [{ type: 'text', text: 'Acquire the Nakatomi account' }],
+			structured_content: { objects: [{ id: 'a', title: 'Acquire the Nakatomi account' }] },
+			truncated: false,
+			args: { query: 'Acquire the Nakatomi account' },
+		})
+		expect(JSON.stringify(event)).not.toContain('Nakatomi')
+	})
+})

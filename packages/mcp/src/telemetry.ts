@@ -1,3 +1,5 @@
+import { measureResponseShape } from './response-shape'
+
 // MCP telemetry — fire-and-forget POSTs to /api/telemetry/mcp.
 //
 // Powers the bet's two success metrics (50% rich-render rate, 20% session-with-
@@ -83,6 +85,29 @@ export interface ToolCallResponseSizeEvent {
 	structured_content_bytes: number
 	structured_content_tokens: number
 	truncated: boolean
+	/**
+	 * Position within the session, shared with the `tool_call` event for the
+	 * same call. This is the join key: without it, size and the call's
+	 * arguments/outcome live in two event streams that can only be correlated
+	 * by tool name, which cannot tell a broad `list_objects` from a narrow one
+	 * — the exact distinction a size investigation turns on.
+	 */
+	seq?: number
+	/** Sorted argument key NAMES of the call that produced this response.
+	 *  Never values — see `argKeys`. Duplicated onto this event rather than
+	 *  left to the join because the join can be lossy: either event may be
+	 *  dropped independently by a fire-and-forget POST. */
+	arg_keys?: string[]
+	/** Rows in the response's row array; absent when it carries none. */
+	row_count?: number
+	/** Serialized bytes of the largest single row. */
+	max_row_bytes?: number
+	/** Blocks in the `content` array. */
+	content_block_count?: number
+	/** Field names ranked by bytes, heaviest first. Names only. */
+	top_fields?: string[]
+	/** Bytes for each entry of `top_fields`, positionally aligned. */
+	top_field_bytes?: number[]
 }
 
 // MCP misfire event for the agent-reach-signal bet. The server-side
@@ -225,11 +250,20 @@ export function recordToolCallResponseSize(
 		structured_content: unknown
 		truncated: boolean
 		workspace_id?: string
+		/** `seq` of the `tool_call` event for this same call — see the field's
+		 *  note on `ToolCallResponseSizeEvent`. Read from the shared counter by
+		 *  the caller rather than incremented here: this function fires once per
+		 *  call alongside `recordToolCall`, and bumping the counter in both
+		 *  would double every call's position. */
+		seq?: number
+		/** Raw arguments of the call. Reduced to key names before emission. */
+		args?: unknown
 	},
 ): void {
 	const cfg = event.workspace_id ? { ...target, workspaceId: event.workspace_id } : target
 	const contentBytes = measureJsonBytes(event.content)
 	const structuredBytes = measureJsonBytes(event.structured_content)
+	const shape = measureResponseShape(event.content, event.structured_content)
 	sink(
 		{
 			event_type: 'tool_call_response_size',
@@ -240,6 +274,17 @@ export function recordToolCallResponseSize(
 			structured_content_bytes: structuredBytes,
 			structured_content_tokens: estimateTokensFromBytes(structuredBytes),
 			truncated: event.truncated,
+			seq: event.seq,
+			arg_keys: argKeys(event.args),
+			// `?? undefined` on each: the shape fields are null when the concept
+			// doesn't apply (a tool with no row array), and an omitted optional
+			// is how that reaches the ingest schema. Sending null would fail
+			// validation and cost the whole event.
+			row_count: shape.rowCount ?? undefined,
+			max_row_bytes: shape.maxRowBytes ?? undefined,
+			content_block_count: shape.contentBlockCount ?? undefined,
+			top_fields: shape.topFields,
+			top_field_bytes: shape.topFieldBytes,
 		},
 		cfg,
 	)
@@ -328,6 +373,12 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 /** Resets the warned flag — only used in tests. */
 export function __resetTelemetryWarnedFlag(): void {
 	warned = false
+}
+
+/** The seq most recently assigned by `recordToolCall`. Lets the size event
+ *  for the same call carry the same position without advancing the counter. */
+export function currentToolCallSeq(): number {
+	return toolCallSeq
 }
 
 /** Resets the per-process tool-call sequence — only used in tests. */

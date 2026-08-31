@@ -10,10 +10,14 @@ import { z } from 'zod'
 //   - mutation:     every successful in-chat mutation (update_objects / delete_object).
 //                   Counted per `session_id` to power the "20% of MCP sessions include
 //                   at least one in-chat mutation" metric.
-//   - tool_call_response_size: byte + token splits of `content` vs `structuredContent`
-//                   on every tool response. Fan-out to PostHog as
-//                   `mcp_tool_call_response_size` for the response-scoping bet's
-//                   p95-per-tool baseline.
+//   - tool_call_response_size: how big a tool response was, and why. Byte +
+//                   token splits of `content` vs `structuredContent` give the
+//                   p95-per-tool baseline; the shape fields (`row_count`,
+//                   `max_row_bytes`, `top_fields`) say whether a heavy response
+//                   is heavy from row count or row width, and which fields to
+//                   trim. `seq` + `arg_keys` join it to the `tool_call` event
+//                   for the same call. Fan-out to PostHog as
+//                   `mcp_tool_call_response_size`.
 //
 // Tool name is constrained loosely (1–128 chars, identifier-ish characters).
 // The MCP server is the producer, but we still validate at the boundary because
@@ -47,6 +51,23 @@ const argKeysSchema = z
 	// client sink logs one line per process lifetime, so the loss would be
 	// invisible. A tool declaring a param the regex rejects (custom extensions
 	// define their own schemas) must cost us the key list, not the event.
+	.catch([])
+
+// Response field names, ranked by bytes. Same constraints as `arg_keys` and
+// the same degrade-don't-reject behaviour: a rejected name must cost the name,
+// not the size event it rides on.
+const MAX_TOP_FIELDS = 8
+
+const fieldNamesSchema = z
+	.array(
+		z
+			.string()
+			.min(1)
+			.max(64)
+			.regex(/^[A-Za-z0-9_.-]+$/, 'field name must be identifier-like'),
+	)
+	.max(MAX_TOP_FIELDS)
+	.optional()
 	.catch([])
 
 export const recordMcpToolCallSchema = z.object({
@@ -97,6 +118,23 @@ export const recordMcpToolCallResponseSizeSchema = z.object({
 	structured_content_bytes: z.number().int().min(0),
 	structured_content_tokens: z.number().int().min(0),
 	truncated: z.boolean(),
+	// Shape fields — the "why is it big" half. All optional so an older MCP
+	// server build keeps validating. `seq` and `arg_keys` are the join back to
+	// the `tool_call` event for the same call: size alone can't distinguish a
+	// broad `list_objects` from a narrow one, and that distinction is the whole
+	// point of a size investigation.
+	seq: z.number().int().min(1).optional(),
+	arg_keys: argKeysSchema,
+	row_count: z.number().int().min(0).optional(),
+	max_row_bytes: z.number().int().min(0).optional(),
+	content_block_count: z.number().int().min(0).optional(),
+	// Field NAMES only, never values — same bar and same regex as `arg_keys`,
+	// and it matters more here: these are keys off a *response* row, which can
+	// include a workspace-authored `data` jsonb whose keys are free text.
+	top_fields: fieldNamesSchema,
+	// Positionally aligned with `top_fields`. Bounded to the same length so a
+	// client can't ship an unbounded number array through the boundary.
+	top_field_bytes: z.array(z.number().int().min(0)).max(MAX_TOP_FIELDS).optional().catch([]),
 })
 
 // MCP misfire events for the agent-reach-signal bet: one row per real MCP
