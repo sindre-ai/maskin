@@ -52,6 +52,7 @@ const maskinOnlyTools = {
 			headers: {
 				Authorization: 'Bearer ${MASKIN_API_KEY}',
 				'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+				'X-Maskin-Session-Id': '${SESSION_ID}',
 			},
 		},
 	},
@@ -71,6 +72,7 @@ const githubPlusMaskinTools = {
 			headers: {
 				Authorization: 'Bearer ${MASKIN_API_KEY}',
 				'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+				'X-Maskin-Session-Id': '${SESSION_ID}',
 			},
 		},
 	},
@@ -96,6 +98,7 @@ const maskinTool = {
 	headers: {
 		Authorization: 'Bearer ${MASKIN_API_KEY}',
 		'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+		'X-Maskin-Session-Id': '${SESSION_ID}',
 	},
 }
 
