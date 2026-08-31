@@ -20,6 +20,31 @@ vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => mockUseActors(),
 }))
 
+// The reference picker is stubbed down to the one thing the composer cares
+// about: a button that hands back a picked object.
+vi.mock('@/components/chat/slash-picker', () => ({
+	SlashPicker: ({
+		open,
+		onSelect,
+	}: {
+		open: boolean
+		onSelect: (result: {
+			kind: string
+			ref: { id: string; title: string; type: string }
+		}) => void
+	}) =>
+		open ? (
+			<button
+				type="button"
+				onClick={() =>
+					onSelect({ kind: 'object', ref: { id: 'obj-9', title: 'Retry window', type: 'bet' } })
+				}
+			>
+				pick-object
+			</button>
+		) : null,
+}))
+
 // The attachment queue is exercised for its contract only: what the composer
 // hands to `submitDraft` when files are in play.
 const mockDraftSubmit = vi.fn()
@@ -94,6 +119,46 @@ describe('CommentInput', () => {
 			}),
 			expect.any(Object),
 		)
+	})
+
+	it('posts picked objects as metadata.refs alongside the comment body', async () => {
+		const user = userEvent.setup()
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
+		await user.click(await screen.findByText('Reference an object'))
+		await user.click(await screen.findByRole('button', { name: 'pick-object' }))
+
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'See this one',
+		)
+		await user.click(screen.getByRole('button', { name: /send/i }))
+
+		expect(mockMutate).toHaveBeenCalledWith(
+			expect.objectContaining({
+				content: 'See this one',
+				metadata: { refs: ['obj-9'] },
+			}),
+			expect.any(Object),
+		)
+	})
+
+	// `createCommentSchema.content` is `.min(1)`, so a references-only comment
+	// would be a guaranteed 400 — the composer must not offer to send one.
+	it('keeps send disabled, and posts nothing, when only a reference is attached', async () => {
+		const user = userEvent.setup()
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
+		await user.click(await screen.findByText('Reference an object'))
+		await user.click(await screen.findByRole('button', { name: 'pick-object' }))
+
+		const send = screen.getByRole('button', { name: /send/i })
+		expect(send).toBeDisabled()
+
+		fireEvent.click(send)
+		expect(mockMutate).not.toHaveBeenCalled()
 	})
 
 	it('carries an attachment and decision options on the same comment', async () => {
@@ -212,6 +277,20 @@ describe('CommentInput', () => {
 			'Hello',
 		)
 		expect(screen.getByRole('button', { name: /send/i })).toBeDisabled()
+	})
+
+	// The Send button has always been disabled while a POST is in flight; Enter
+	// went straight through. Since the composer keeps its text until the POST
+	// succeeds, a slow round trip looks like a keypress that did nothing, and
+	// the impatient second Enter posted the same comment twice.
+	it('does NOT submit on Enter while a post is in flight', async () => {
+		const user = userEvent.setup()
+		mockIsPending = true
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		const textarea = screen.getByPlaceholderText('Write a comment... Use @ to mention an agent')
+		await user.type(textarea, 'Impatient user{Enter}')
+		expect(mockMutate).not.toHaveBeenCalled()
 	})
 
 	it('submits on Enter key', async () => {

@@ -188,7 +188,9 @@ describe('ObjectFiles', () => {
 		expect(within(getFileRow('spec.md')).queryByText(/^Modified/)).not.toBeInTheDocument()
 	})
 
-	it('toggling Kind appends the derived kind label to the row', async () => {
+	// Kind, size and uploader are on by default now — the mockup's meta line is
+	// `MD · 4 KB · Quill` — so toggling Kind takes it away.
+	it('toggling Kind removes the derived kind label from the row', async () => {
 		const user = userEvent.setup()
 		const file = buildFile({ mimeType: 'application/pdf', name: 'brief.pdf' })
 		useFilesMock.mockReturnValue({ data: [file] })
@@ -201,13 +203,15 @@ describe('ObjectFiles', () => {
 			{ wrapper: TestWrapper },
 		)
 
+		expect(within(getFileRow('brief.pdf')).getByText('PDF')).toBeInTheDocument()
+
 		await user.click(screen.getByRole('button', { name: 'File properties' }))
 		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Kind/ }))
 
-		expect(within(getFileRow('brief.pdf')).getByText('PDF')).toBeInTheDocument()
+		expect(within(getFileRow('brief.pdf')).queryByText('PDF')).not.toBeInTheDocument()
 	})
 
-	it('toggling Uploaded by shows the resolved actor name from useActors', async () => {
+	it('shows the resolved uploader name from useActors by default', async () => {
 		const user = userEvent.setup()
 		const file = buildFile({ createdBy: 'actor-42' })
 		useFilesMock.mockReturnValue({ data: [file] })
@@ -221,10 +225,12 @@ describe('ObjectFiles', () => {
 			{ wrapper: TestWrapper },
 		)
 
+		expect(within(getFileRow('spec.md')).getByText('Magnus')).toBeInTheDocument()
+
 		await user.click(screen.getByRole('button', { name: 'File properties' }))
 		await user.click(screen.getByRole('menuitemcheckbox', { name: /^Uploaded by/ }))
 
-		expect(within(getFileRow('spec.md')).getByText('Magnus')).toBeInTheDocument()
+		expect(within(getFileRow('spec.md')).queryByText('Magnus')).not.toBeInTheDocument()
 	})
 
 	it('filename is always present and locked in the property menu', async () => {
@@ -261,12 +267,12 @@ describe('ObjectFiles', () => {
 
 		const row = getFileRow('spec.md')
 		expect(within(row).getByText(/^Created/)).toBeInTheDocument()
-		expect(within(row).getByText('Markdown')).toBeInTheDocument()
+		expect(within(row).queryByText('Markdown')).not.toBeInTheDocument()
 
 		await user.click(screen.getByRole('button', { name: 'Reset to defaults' }))
 
 		expect(within(getFileRow('spec.md')).queryByText(/^Created/)).not.toBeInTheDocument()
-		expect(within(getFileRow('spec.md')).queryByText('Markdown')).not.toBeInTheDocument()
+		expect(within(getFileRow('spec.md')).getByText('Markdown')).toBeInTheDocument()
 		expect(within(getFileRow('spec.md')).getByText('2.0 KB')).toBeInTheDocument()
 	})
 
@@ -368,8 +374,8 @@ describe('ObjectFiles', () => {
 						size: true,
 						created_at: true,
 						modified_at: false,
-						kind: false,
-						uploaded_by: false,
+						kind: true,
+						uploaded_by: true,
 					},
 				},
 			})

@@ -1,5 +1,10 @@
 import { z } from '@hono/zod-openapi'
-import { actorListItemSchema, agentStateSchema, triggerResponseSchema } from '@maskin/shared'
+import {
+	actorListItemSchema,
+	agentStateSchema,
+	providerMcpInfoSchema,
+	triggerResponseSchema,
+} from '@maskin/shared'
 import { apiErrorSchema } from './errors'
 
 // Re-exported so existing route handlers keep their `from '../lib/openapi-schemas'`
@@ -214,9 +219,20 @@ export const providerEventSchema = z.object({
 export const providerInfoSchema = z.object({
 	name: z.string(),
 	displayName: z.string(),
-	authType: z.enum(['oauth2', 'oauth2_custom', 'api_key']),
+	// 'manual' is real — providers/skjald mints its own webhook secret locally
+	// and has no auth handshake. It was missing here while apps/web's ProviderInfo
+	// already listed it; the route casts instead of parsing, so the spec simply
+	// under-declared the enum without anything failing.
+	authType: z.enum(['oauth2', 'oauth2_custom', 'api_key', 'manual']),
 	events: z.array(providerEventSchema),
 	externalIdDisplay: z.enum(['email', 'installation']).optional(),
+	// THIS is the schema the /api/integrations/providers route registers as its
+	// response — `providerInfoSchema` in @maskin/shared is a separate, narrower
+	// declaration with no route wired to it. A field added only there is absent
+	// from /api/openapi.json, so a client generated from the spec cannot see it,
+	// even though the handler does return it (the route casts rather than parses,
+	// so nothing complains). Keep any new field on both, or delete the duplicate.
+	mcp: providerMcpInfoSchema.optional(),
 })
 
 export const sessionResponseSchema = z.object({

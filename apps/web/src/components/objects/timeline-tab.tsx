@@ -1,4 +1,5 @@
 import { ActivityComment } from '@/components/activity/activity-comment'
+import { hasDecisionChips } from '@/components/activity/decision-chips'
 import { computeUnreadEventIds } from '@/components/activity/object-activity'
 import { PhaseDivider } from '@/components/activity/phase-divider'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -40,10 +41,25 @@ type TimelineEntry =
 			chipLabel: string
 			chipTone: ChipTone
 			isStatusChange: boolean
+			/** Edge rows read `<when> <verb> <object chip>` with a square node —
+			 *  the mockup's `tl.isRel` (1258–1272), not a sentence. */
+			isRelationship: boolean
 			newStatus: string | null
 			prevStatus: string | null
 			reference?: { verb: string; objectId: string; object?: ObjectResponse }
 	  }
+
+/** `JUN 8 → 2H` — the span a fold covers, read off its first and last row. */
+function foldRange(rows: TimelineEntry[]): string | null {
+	const times = rows.map((row) => row.time).filter((t): t is string => !!t)
+	if (times.length < 2) return null
+	const oldest = times[times.length - 1]
+	const newest = times[0]
+	if (!oldest || !newest) return null
+	const fmt = (value: string) =>
+		new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+	return `${fmt(oldest)} → ${fmt(newest)}`
+}
 
 /** A collapsed run of low-signal rows (mockup 1205–1219). */
 interface TimelineFold {
@@ -55,7 +71,7 @@ interface TimelineFold {
 type StreamRow = TimelineEntry | TimelineFold
 
 /** A run of this many consecutive low-signal rows collapses behind one pill. */
-const FOLD_MIN_RUN = 4
+const FOLD_MIN_RUN = 3
 
 /**
  * Collapse consecutive runs of routine machine chatter — plain updates, session
@@ -88,15 +104,28 @@ function foldRuns(entries: TimelineEntry[]): StreamRow[] {
 
 type ChipTone = 'status' | 'session' | 'link' | 'update' | 'created' | 'signal'
 
-/** Chip-row filters, mockup 1145–1152. */
-type StreamFilter = 'all' | 'comments' | 'status' | 'updates'
+/**
+ * Chip-row filters, mockup 1145–1152. `decisions` is the subset of comments
+ * that carry a decision — an ask with options, or one already answered; the
+ * mockup's `cnt.decisions`. `changes` is everything that is not a comment.
+ */
+type StreamFilter = 'all' | 'comments' | 'decisions' | 'changes'
 
 const FILTERS: Array<{ id: StreamFilter; label: string }> = [
 	{ id: 'all', label: 'All' },
 	{ id: 'comments', label: 'Comments' },
-	{ id: 'status', label: 'Status' },
-	{ id: 'updates', label: 'Updates' },
+	{ id: 'decisions', label: 'Decisions' },
+	{ id: 'changes', label: 'Changes' },
 ]
+
+/**
+ * The mockup's `cnt.decisions` — a comment that asked the reader to choose.
+ * Carrying decision chips is what makes a comment a decision; a plain comment,
+ * however important, is not one.
+ */
+function isDecisionComment(event: EventResponse): boolean {
+	return hasDecisionChips(event)
+}
 
 // Past-participle inverses for inbound relationships (matches
 // activity/relationship-node.tsx's INBOUND_VERB).
@@ -117,8 +146,8 @@ function relationshipVerb(type: string, direction: 'outbound' | 'inbound'): stri
 const OBJECT_ENTITY_TYPES = new Set(['bet', 'task', 'insight', 'knowledge'])
 
 const CHIP_TONE_CLASSES: Record<ChipTone, string> = {
-	status: 'border-transparent bg-secondary text-foreground',
-	session: 'border-transparent bg-secondary text-foreground',
+	status: 'border-border bg-background text-secondary-foreground',
+	session: 'border-border bg-background text-secondary-foreground',
 	link: 'border-border bg-background text-muted-foreground',
 	update: 'border-border bg-background text-muted-foreground',
 	created: 'border-border bg-background text-muted-foreground',
@@ -126,12 +155,12 @@ const CHIP_TONE_CLASSES: Record<ChipTone, string> = {
 }
 
 const DOT_TONE_CLASSES: Record<ChipTone, string> = {
-	status: 'bg-foreground',
-	session: 'bg-primary',
-	link: 'bg-muted-foreground',
-	update: 'bg-muted-foreground',
-	created: 'bg-muted-foreground',
-	signal: 'bg-destructive',
+	status: 'border-border-strong',
+	session: 'border-border-strong',
+	link: 'border-border-strong',
+	update: 'border-border-strong',
+	created: 'border-border-strong',
+	signal: 'border-destructive',
 }
 
 function eventChip(event: EventResponse): { label: string; tone: ChipTone } {
@@ -239,6 +268,7 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 				chipLabel: chip.label,
 				chipTone: chip.tone,
 				isStatusChange: event.action === 'status_changed',
+				isRelationship: false,
 				newStatus: event.action === 'status_changed' ? newStatusOf(event) : null,
 				prevStatus: event.action === 'status_changed' ? prevStatusOf(event) : null,
 				reference: reference
@@ -260,6 +290,7 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 				chipLabel: 'Link',
 				chipTone: 'link',
 				isStatusChange: false,
+				isRelationship: true,
 				newStatus: null,
 				prevStatus: null,
 				reference: {
@@ -295,12 +326,13 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 
 	const counts = useMemo(() => {
 		let comments = 0
-		let status = 0
+		let decisions = 0
 		for (const entry of entries) {
-			if (entry.kind === 'comment') comments++
-			else if (entry.isStatusChange) status++
+			if (entry.kind !== 'comment') continue
+			comments++
+			if (isDecisionComment(entry.event)) decisions++
 		}
-		return { all: entries.length, comments, status, updates: entries.length - comments - status }
+		return { all: entries.length, comments, decisions, changes: entries.length - comments }
 	}, [entries])
 
 	const [filter, setFilter] = useState<StreamFilter>('all')
@@ -308,8 +340,8 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 		if (filter === 'all') return entries
 		return entries.filter((entry) => {
 			if (filter === 'comments') return entry.kind === 'comment'
-			if (filter === 'status') return entry.kind === 'event' && entry.isStatusChange
-			return entry.kind === 'event' && !entry.isStatusChange
+			if (filter === 'decisions') return entry.kind === 'comment' && isDecisionComment(entry.event)
+			return entry.kind !== 'comment'
 		})
 	}, [filter, entries])
 
@@ -446,6 +478,8 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 						workspaceId={workspaceId}
 						objectId={object.id}
 						isUnread={unreadEventIds.has(entry.event.id)}
+						variant="bubble"
+						collapsibleReplies
 					/>
 				) : (
 					<EventRow entry={entry} actorsById={actorsById} workspaceId={workspaceId} />
@@ -459,20 +493,24 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 		const open = expandedFolds.has(row.key)
 		return (
 			<li key={row.key} className="list-none">
-				<div className="relative py-1 pl-9">
+				<div className="relative py-[2px] pl-9">
 					<span
 						aria-hidden="true"
-						className="absolute left-[3px] top-3 size-[7px] rounded-full bg-border"
+						className="absolute left-[11px] top-[9px] size-[7px] rounded-full bg-border"
 					/>
 					<button
 						type="button"
 						aria-expanded={open}
 						onClick={() => toggleFold(row.key)}
-						className="inline-flex h-[26px] items-center gap-2 rounded-full border border-dashed border-border px-3 transition-colors hover:border-border-strong hover:bg-muted/40"
+						className="inline-flex h-6 items-center gap-2 rounded-full border border-dashed border-border px-[11px] transition-colors hover:border-border-strong hover:bg-muted/40"
 					>
 						<span className="text-[11.5px] font-semibold text-muted-foreground">
-							{open ? 'Hide' : `${row.rows.length} more updates`}
+							{open ? `Hide ${row.rows.length} updates` : `${row.rows.length} agent updates`}
 						</span>
+						{/* The span the fold covers, oldest → newest (mockup 1211). */}
+						{!open && foldRange(row.rows) && (
+							<span className="text-[10px] text-border-strong">{foldRange(row.rows)}</span>
+						)}
 						<ChevronDown
 							size={10}
 							aria-hidden="true"
@@ -517,14 +555,20 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 							aria-label={`${f.label} (${counts[f.id]})`}
 							onClick={() => setFilter(f.id)}
 							className={cn(
-								'inline-flex h-[26px] items-center gap-1.5 rounded-full border px-3 text-[11.5px] font-semibold transition-colors',
+								'inline-flex h-[26px] items-center gap-1.5 rounded-full border border-border px-[11px] text-[11.5px] font-semibold transition-colors',
 								active
-									? 'border-primary bg-primary text-primary-foreground'
-									: 'border-border text-muted-foreground hover:border-border-hover hover:text-foreground',
+									? 'bg-primary text-primary-foreground'
+									: 'text-muted-foreground hover:border-border-hover hover:text-foreground',
 							)}
 						>
 							{f.label}
-							<span aria-hidden="true" className="text-[10.5px] tabular-nums opacity-70">
+							<span
+								aria-hidden="true"
+								className={cn(
+									'text-[10.5px] font-semibold tabular-nums',
+									active ? 'text-primary-foreground/50' : 'text-border-strong',
+								)}
+							>
 								{counts[f.id]}
 							</span>
 						</button>
@@ -537,9 +581,9 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 							setFilter('all')
 							setJumpTick((t) => t + 1)
 						}}
-						className="ml-auto inline-flex h-[26px] items-center gap-1.5 rounded-full bg-brand/10 px-3 text-[11.5px] font-bold text-brand transition-colors hover:bg-brand/20"
+						className="ml-auto inline-flex h-[26px] items-center gap-1.5 rounded-full bg-brand-subtle px-[11px] text-[11.5px] font-bold text-brand-subtle-foreground transition-colors hover:bg-brand/20"
 					>
-						{unreadCount} new
+						{unreadCount} {unreadCount === 1 ? 'new update' : 'new updates'}
 						<ArrowDown size={12} aria-hidden="true" />
 					</button>
 				)}
@@ -548,9 +592,7 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 			{visible.length === 0 ? (
 				<div className="flex flex-col items-center gap-2.5 px-3 py-8 text-center">
 					<p className="text-[12.5px] text-muted-foreground">
-						{filter === 'all'
-							? 'No activity yet.'
-							: `Nothing here under ${FILTERS.find((f) => f.id === filter)?.label}.`}
+						{filter === 'all' ? 'No activity yet.' : 'Nothing in this view yet.'}
 					</p>
 					{filter !== 'all' && (
 						<Button variant="outline" size="sm" onClick={() => setFilter('all')}>
@@ -560,10 +602,7 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 				</div>
 			) : (
 				<div ref={containerRef} className="relative pt-2">
-					<span
-						aria-hidden="true"
-						className="absolute left-[7px] top-3 bottom-3 w-0.5 bg-border/60"
-					/>
+					<span aria-hidden="true" className="absolute bottom-3 left-[14px] top-3 w-0.5 bg-muted" />
 					{showPhases ? (
 						phases.map((phase) => {
 							const collapsed = collapsedPhases.has(phase.key)
@@ -592,7 +631,7 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 
 function UnreadDivider({ count, onMarkRead }: { count: number; onMarkRead: () => void }) {
 	return (
-		<div className="relative z-[3] flex items-center gap-2.5 py-3">
+		<div className="relative z-[3] flex items-center gap-2.5 pb-1.5 pt-2">
 			<span aria-hidden="true" className="h-px flex-1 bg-brand/40" />
 			<span className="rounded-full bg-brand/10 px-2.5 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.11em] text-brand">
 				{count} new
@@ -620,33 +659,72 @@ function EventRow({
 }) {
 	const actor = entry.actorId ? actorsById.get(entry.actorId) : undefined
 	const who = actor?.name ?? 'Someone'
-	return (
-		<div className="relative py-2 pl-9">
-			<span
-				aria-hidden="true"
-				className={cn(
-					'absolute left-0 top-[13px] h-3.5 w-3.5 rounded-full border-2 border-background',
-					DOT_TONE_CLASSES[entry.chipTone],
-				)}
-			/>
-			<div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
+
+	// An edge row is not a sentence — the mockup reads it as `<when> <verb>
+	// <object>` behind a square node (1258–1272), so the linked object is the
+	// row rather than a trailer on someone's name.
+	if (entry.isRelationship && entry.reference) {
+		return (
+			<div className="relative flex flex-wrap items-center gap-x-2.5 gap-y-1 py-1 pl-9">
+				<span
+					aria-hidden="true"
+					className="absolute left-[10px] top-[11px] size-2 rounded-[2px] border-[1.5px] border-border-strong bg-background"
+				/>
 				{entry.time && (
 					<RelativeTime
 						date={entry.time}
-						className="w-14 shrink-0 font-mono text-xs tabular-nums text-muted-foreground"
+						compact
+						className="w-[46px] shrink-0 text-[10px] uppercase tabular-nums text-muted-foreground"
 					/>
 				)}
-				<span className="font-medium text-foreground">{who}</span>
+				<span className="shrink-0 text-[12.5px] text-muted-foreground">{entry.reference.verb}</span>
+				<ObjectReference
+					objectId={entry.reference.objectId}
+					workspaceId={workspaceId}
+					object={entry.reference.object}
+					variant="inline"
+					className="min-w-0 text-xs"
+				/>
+			</div>
+		)
+	}
+
+	return (
+		// Mockup 1177–1191: a hollow 8px node on the rail, the time in its own
+		// 46px column, then one sentence — the event's weight comes from the
+		// bold actor name, not from a filled dot or an uppercase badge.
+		<div className="relative py-[3px] pl-9">
+			<span
+				aria-hidden="true"
+				className={cn(
+					'absolute left-[10px] top-2 size-2 rounded-full border-2 bg-background',
+					DOT_TONE_CLASSES[entry.chipTone],
+				)}
+			/>
+			<div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-[12.5px] leading-[1.45]">
+				{entry.time && (
+					<RelativeTime
+						date={entry.time}
+						compact
+						className="w-[46px] shrink-0 text-[10px] uppercase tabular-nums text-muted-foreground"
+					/>
+				)}
+				<span className="font-bold text-foreground">{who}</span>
 				<span className="min-w-0 text-muted-foreground">{entry.text}</span>
-				<Badge
-					variant="outline"
-					className={cn(
-						'shrink-0 px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide',
-						CHIP_TONE_CLASSES[entry.chipTone],
-					)}
-				>
-					{entry.chipLabel}
-				</Badge>
+				{/* Only a status move carries a chip — it names the state the object
+				    landed in. Every other event says what happened in its sentence,
+				    so an "Update" badge would just repeat the row. */}
+				{entry.isStatusChange && entry.newStatus && (
+					<Badge
+						variant="outline"
+						className={cn(
+							'shrink-0 rounded-[7px] px-2 py-[3px] text-[11.5px] font-semibold',
+							CHIP_TONE_CLASSES[entry.chipTone],
+						)}
+					>
+						{entry.newStatus.replace(/_/g, ' ')}
+					</Badge>
+				)}
 				{entry.reference && (
 					<span className="flex min-w-0 items-baseline gap-1.5">
 						<span className="shrink-0 text-xs text-muted-foreground">{entry.reference.verb}</span>
@@ -655,7 +733,7 @@ function EventRow({
 							workspaceId={workspaceId}
 							object={entry.reference.object}
 							variant="inline"
-							className="min-w-0 text-sm"
+							className="min-w-0 text-xs"
 						/>
 					</span>
 				)}

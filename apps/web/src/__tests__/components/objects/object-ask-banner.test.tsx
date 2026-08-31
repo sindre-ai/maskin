@@ -3,10 +3,12 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 describe('ObjectAskBanner', () => {
+	// The lead and the question run together on one line, so the lead is
+	// matched as a prefix rather than as its own text node.
 	it('renders the open question', () => {
 		render(<ObjectAskBanner question="Should we ship this?" onAnswerClick={vi.fn()} />)
-		expect(screen.getByText('Open question')).toBeInTheDocument()
-		expect(screen.getByText('Should we ship this?')).toBeInTheDocument()
+		expect(screen.getByText(/Open question/)).toBeInTheDocument()
+		expect(screen.getByText(/Should we ship this\?/)).toBeInTheDocument()
 	})
 
 	it('calls onAnswerClick when Answer it is clicked', async () => {

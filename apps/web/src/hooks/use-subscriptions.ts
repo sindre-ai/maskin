@@ -1,6 +1,7 @@
 import { type ObjectGraphResponse, type ObjectResponse, api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 
 /**
  * Live list of subscribers for an entity. Used by the watchers avatar stack.
@@ -45,6 +46,10 @@ export function useSubscribe(workspaceId: string) {
 				queryKey: queryKeys.subscriptions.unread(workspaceId),
 			})
 		},
+		// The button's label is driven by `is_subscribed`, which only moves once
+		// the invalidation above lands — so a failed write leaves it reading the
+		// old state with nothing to say the change didn't take.
+		onError: () => toast.error('Could not subscribe'),
 	})
 }
 
@@ -65,6 +70,10 @@ export function useUnsubscribe(workspaceId: string) {
 				queryKey: queryKeys.subscriptions.unread(workspaceId),
 			})
 		},
+		// The button's label is driven by `is_subscribed`, which only moves once
+		// the invalidation above lands — so a failed write leaves it reading the
+		// old state with nothing to say the change didn't take.
+		onError: () => toast.error('Could not unsubscribe'),
 	})
 }
 
