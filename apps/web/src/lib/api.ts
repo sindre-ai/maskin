@@ -433,7 +433,15 @@ export const api = {
 			})
 		},
 		list: (workspaceId: string) => request<ToolBrokerListResponse>('/tool-broker', { workspaceId }),
-		add: (workspaceId: string, body: { url: string; kind: 'mcp' | 'openapi'; name?: string }) =>
+		add: (
+			workspaceId: string,
+			body: {
+				url: string
+				kind: 'mcp' | 'openapi'
+				name?: string
+				apiKeyHeader?: { name: string; value: string }
+			},
+		) =>
 			request<{ slug: string }>('/tool-broker/integrations', { method: 'POST', body, workspaceId }),
 		connect: (
 			workspaceId: string,

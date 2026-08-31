@@ -53,8 +53,12 @@ export function useToolBrokerCatalogInfinite(workspaceId: string, q: string, ena
 export function useAddToolBrokerIntegration(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
-		mutationFn: (input: { url: string; kind: 'mcp' | 'openapi'; name?: string }) =>
-			api.toolBroker.add(workspaceId, input),
+		mutationFn: (input: {
+			url: string
+			kind: 'mcp' | 'openapi'
+			name?: string
+			apiKeyHeader?: { name: string; value: string }
+		}) => api.toolBroker.add(workspaceId, input),
 		onSuccess: () => {
 			// Adding only registers it; it is not usable until connected, so the
 			// toast says so rather than implying the tools are live.

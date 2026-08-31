@@ -13,6 +13,14 @@ vi.mock('../../lib/tool-broker/provisioning', () => ({
 	getToolBrokerClient: () => getToolBrokerClient(),
 }))
 
+// Adding now asks the URL what it is first. Stubbed so these tests stay about
+// the route contract rather than the network; the probe has its own unit tests.
+const probeEndpoint = vi.fn()
+
+vi.mock('../../lib/tool-broker/endpoint-probe', () => ({
+	probeEndpoint: (...args: unknown[]) => probeEndpoint(...args),
+}))
+
 const { createTestApp } = await import('../setup')
 const { ToolBrokerUnavailableError } = await import('@maskin/tool-broker')
 const routes = (await import('../../routes/tool-broker')).default
@@ -69,6 +77,8 @@ const post = (path: string, body: unknown) =>
 
 beforeEach(() => {
 	getToolBrokerClient.mockReturnValue({})
+	// Most tests are not about the probe; default it to a plain OAuth server.
+	probeEndpoint.mockResolvedValue({ kind: 'mcp', auth: 'oauth2' })
 })
 
 afterEach(() => {
@@ -374,5 +384,129 @@ describe('browsing the catalogue', () => {
 		const body = (await res.json()) as { entries: unknown[]; total: number }
 		expect(body.entries).toHaveLength(1)
 		expect(body.total).toBe(578)
+	})
+})
+
+describe('POST /api/tool-broker/integrations — asking the URL what it is', () => {
+	// Add used to accept anything. A documentation page registered happily and the
+	// failure surfaced two steps later at Connect, as a 400 about OAuth — for a URL
+	// that was never a server. This is the real case: a user pasted
+	// https://developer.unipile.com/docs/mcp, which answers 404 HTML.
+
+	it('refuses a URL that is not an MCP server, and says what it probably is', async () => {
+		const client = makeClient()
+		ensureProvisioned.mockResolvedValue(provisionedWith(client))
+		probeEndpoint.mockResolvedValue({ kind: 'not-mcp', status: 404 })
+		const { app } = createTestApp(routes, '/api/tool-broker')
+
+		const res = await app.request(
+			post('/integrations', { url: 'https://developer.unipile.com/docs/mcp', kind: 'mcp' }),
+		)
+
+		expect(res.status).toBe(400)
+		expect(((await res.json()) as { error: { message: string } }).error.message).toContain(
+			'documentation page',
+		)
+		expect(client.addIntegrationByUrl).not.toHaveBeenCalled()
+	})
+
+	it('refuses a host it cannot reach', async () => {
+		const client = makeClient()
+		ensureProvisioned.mockResolvedValue(provisionedWith(client))
+		probeEndpoint.mockResolvedValue({ kind: 'unreachable' })
+		const { app } = createTestApp(routes, '/api/tool-broker')
+
+		const res = await app.request(
+			post('/integrations', { url: 'https://nope.example/mcp', kind: 'mcp' }),
+		)
+
+		expect(res.status).toBe(400)
+		expect(client.addIntegrationByUrl).not.toHaveBeenCalled()
+	})
+
+	it('asks for a key rather than registering a server that would fail every call', async () => {
+		const client = makeClient()
+		ensureProvisioned.mockResolvedValue(provisionedWith(client))
+		probeEndpoint.mockResolvedValue({ kind: 'mcp', auth: 'api_key' })
+		const { app } = createTestApp(routes, '/api/tool-broker')
+
+		const res = await app.request(
+			post('/integrations', { url: 'https://developer.unipile.com/mcp', kind: 'mcp' }),
+		)
+
+		expect(res.status).toBe(400)
+		// The code is what lets the UI open the key fields instead of just showing
+		// the message.
+		expect((await res.json()) as { error: { code?: string } }).toMatchObject({
+			error: { code: 'api_key_required' },
+		})
+		expect(client.addIntegrationByUrl).not.toHaveBeenCalled()
+	})
+
+	it('registers an api-key server with its header once the key is supplied', async () => {
+		const client = makeClient()
+		ensureProvisioned.mockResolvedValue(provisionedWith(client))
+		probeEndpoint.mockResolvedValue({ kind: 'mcp', auth: 'api_key' })
+		const { app } = createTestApp(routes, '/api/tool-broker')
+
+		const res = await app.request(
+			post('/integrations', {
+				url: 'https://developer.unipile.com/mcp',
+				kind: 'mcp',
+				apiKeyHeader: { name: 'X-API-KEY', value: 'secret' },
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		expect(client.addIntegrationByUrl).toHaveBeenCalledWith(
+			'key',
+			expect.objectContaining({ auth: 'api_key', headers: { 'X-API-KEY': 'secret' } }),
+		)
+	})
+
+	it('passes the probed auth kind through instead of assuming OAuth', async () => {
+		const client = makeClient()
+		ensureProvisioned.mockResolvedValue(provisionedWith(client))
+		probeEndpoint.mockResolvedValue({ kind: 'mcp', auth: 'none' })
+		const { app } = createTestApp(routes, '/api/tool-broker')
+
+		await app.request(post('/integrations', { url: 'https://mcp.deepwiki.com/mcp', kind: 'mcp' }))
+
+		expect(client.addIntegrationByUrl).toHaveBeenCalledWith(
+			'key',
+			expect.objectContaining({ auth: 'none' }),
+		)
+	})
+
+	it('rejects a header name that is not a header name', async () => {
+		// It is sent onward as a header name; a newline in it is header injection.
+		const client = makeClient()
+		ensureProvisioned.mockResolvedValue(provisionedWith(client))
+		probeEndpoint.mockResolvedValue({ kind: 'mcp', auth: 'api_key' })
+		const { app } = createTestApp(routes, '/api/tool-broker')
+
+		const res = await app.request(
+			post('/integrations', {
+				url: 'https://mcp.example.com/mcp',
+				kind: 'mcp',
+				apiKeyHeader: { name: 'X-Bad\r\nInjected: yes', value: 'v' },
+			}),
+		)
+
+		expect(res.status).toBe(400)
+		expect(client.addIntegrationByUrl).not.toHaveBeenCalled()
+	})
+
+	it('does not probe an OpenAPI spec, which is a document and answers no initialize', async () => {
+		const client = makeClient()
+		ensureProvisioned.mockResolvedValue(provisionedWith(client))
+		const { app } = createTestApp(routes, '/api/tool-broker')
+
+		const res = await app.request(
+			post('/integrations', { url: 'https://example.com/openapi.json', kind: 'openapi' }),
+		)
+
+		expect(res.status).toBe(200)
+		expect(probeEndpoint).not.toHaveBeenCalled()
 	})
 })

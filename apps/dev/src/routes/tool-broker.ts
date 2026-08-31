@@ -13,6 +13,7 @@ import {
 	CatalogNormalisationError,
 	syncCatalog,
 } from '../lib/tool-broker/catalog-sync'
+import { probeEndpoint } from '../lib/tool-broker/endpoint-probe'
 import {
 	OAuthNotSupportedError,
 	bindOAuthFlow,
@@ -159,6 +160,21 @@ const addRoute = createRoute({
 						url: z.string().min(1),
 						kind: z.enum(['mcp', 'openapi']),
 						name: z.string().min(1).max(60).optional(),
+						/**
+						 * A static header for a server that authenticates with an API key.
+						 * The name is constrained to real header characters because it is
+						 * sent onward as a header name.
+						 */
+						apiKeyHeader: z
+							.object({
+								name: z
+									.string()
+									.min(1)
+									.max(64)
+									.regex(/^[A-Za-z0-9-]+$/, 'Header names may contain letters, digits and hyphens'),
+								value: z.string().min(1).max(4096),
+							})
+							.optional(),
 					}),
 				},
 			},
@@ -192,6 +208,47 @@ app.openapi(addRoute, async (c) => {
 		)
 	}
 
+	// Ask the URL what it is before registering it. Skipped for OpenAPI, which is
+	// a document rather than a server and answers no `initialize`.
+	let auth: 'none' | 'api_key' | 'oauth2' = 'oauth2'
+	if (body.kind === 'mcp') {
+		const probe = await probeEndpoint(url.toString())
+
+		if (probe.kind === 'unreachable') {
+			return c.json(
+				{ error: { message: `Could not reach ${url.hostname}. Check the URL and try again.` } },
+				400,
+			)
+		}
+		if (probe.kind === 'not-mcp') {
+			// The mistake this catches is pasting a documentation page, so the
+			// message says that rather than reporting a status code.
+			return c.json(
+				{
+					error: {
+						message: `That URL did not answer as an MCP server (HTTP ${probe.status}). It may be a documentation page rather than the server's address — check the provider's docs for the endpoint itself.`,
+					},
+				},
+				400,
+			)
+		}
+
+		auth = probe.auth
+		if (auth === 'api_key' && !body.apiKeyHeader) {
+			// Registering anyway would produce an integration that connects and then
+			// fails on every tool call, which is harder to diagnose than this.
+			return c.json(
+				{
+					error: {
+						message: 'This server needs an API key. Add the header name and value, then try again.',
+						code: 'api_key_required',
+					},
+				},
+				400,
+			)
+		}
+	}
+
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	try {
@@ -203,6 +260,10 @@ app.openapi(addRoute, async (c) => {
 			url: url.toString(),
 			kind: body.kind,
 			name: body.name,
+			auth,
+			headers: body.apiKeyHeader
+				? { [body.apiKeyHeader.name]: body.apiKeyHeader.value }
+				: undefined,
 		})
 
 		await db.insert(events).values({

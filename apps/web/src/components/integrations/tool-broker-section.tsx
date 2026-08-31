@@ -18,7 +18,7 @@ import {
 	useDisconnectToolBrokerIntegration,
 	useToolBrokerIntegrations,
 } from '@/hooks/use-tool-broker'
-import type { ToolBrokerIntegration } from '@/lib/api'
+import { ApiError, type ToolBrokerIntegration } from '@/lib/api'
 import { Plug, Plus, Search } from 'lucide-react'
 import { useState } from 'react'
 
@@ -242,6 +242,12 @@ function AddIntegrationDialog({
 }: { open: boolean; onOpenChange: (open: boolean) => void; workspaceId: string }) {
 	const [url, setUrl] = useState('')
 	const [name, setName] = useState('')
+	// Revealed only once the server has told us it wants a key. Asking everyone
+	// up front for a field most integrations do not need is worse than asking the
+	// few who do, one step later.
+	const [needsKey, setNeedsKey] = useState(false)
+	const [headerName, setHeaderName] = useState('Authorization')
+	const [headerValue, setHeaderValue] = useState('')
 	const add = useAddToolBrokerIntegration(workspaceId)
 
 	// An MCP endpoint and an OpenAPI document are registered differently, and the
@@ -249,15 +255,36 @@ function AddIntegrationDialog({
 	// user see what was inferred rather than asking them to classify it.
 	const kind: 'mcp' | 'openapi' = /\.(json|ya?ml)(\?|$)/i.test(url) ? 'openapi' : 'mcp'
 
+	const reset = () => {
+		setUrl('')
+		setName('')
+		setNeedsKey(false)
+		setHeaderName('Authorization')
+		setHeaderValue('')
+	}
+
 	const submit = () => {
 		if (!url.trim()) return
+		if (needsKey && !headerValue.trim()) return
+
 		add.mutate(
-			{ url: url.trim(), kind, name: name.trim() || undefined },
+			{
+				url: url.trim(),
+				kind,
+				name: name.trim() || undefined,
+				...(needsKey && headerValue.trim()
+					? { apiKeyHeader: { name: headerName.trim(), value: headerValue.trim() } }
+					: {}),
+			},
 			{
 				onSuccess: () => {
-					setUrl('')
-					setName('')
+					reset()
 					onOpenChange(false)
+				},
+				onError: (error) => {
+					// The server probed the URL and found it wants a key. Open the
+					// fields rather than leaving the user to work that out from a toast.
+					if (error instanceof ApiError && error.code === 'api_key_required') setNeedsKey(true)
 				},
 			},
 		)
@@ -300,13 +327,46 @@ function AddIntegrationDialog({
 							autoComplete="off"
 						/>
 					</div>
+
+					{needsKey ? (
+						<div className="space-y-3 rounded-md border border-border p-3">
+							<p className="text-text-secondary text-xs">
+								This server requires an API key. Its documentation will name the header — often{' '}
+								<code className="font-mono">Authorization</code> or{' '}
+								<code className="font-mono">X-API-KEY</code>.
+							</p>
+							<div className="space-y-1.5">
+								<Label htmlFor="tool-broker-header-name">Header name</Label>
+								<Input
+									id="tool-broker-header-name"
+									value={headerName}
+									onChange={(event) => setHeaderName(event.target.value)}
+									autoComplete="off"
+								/>
+							</div>
+							<div className="space-y-1.5">
+								<Label htmlFor="tool-broker-header-value">Header value</Label>
+								<Input
+									id="tool-broker-header-value"
+									type="password"
+									value={headerValue}
+									onChange={(event) => setHeaderValue(event.target.value)}
+									placeholder="Bearer sk-… or the key itself"
+									autoComplete="off"
+								/>
+							</div>
+						</div>
+					) : null}
 				</div>
 
 				<DialogFooter>
 					<Button variant="outline" onClick={() => onOpenChange(false)}>
 						Cancel
 					</Button>
-					<Button onClick={submit} disabled={!url.trim() || add.isPending}>
+					<Button
+						onClick={submit}
+						disabled={!url.trim() || (needsKey && !headerValue.trim()) || add.isPending}
+					>
 						{add.isPending ? 'Adding…' : 'Add'}
 					</Button>
 				</DialogFooter>

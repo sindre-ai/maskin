@@ -378,11 +378,36 @@ export class ToolBrokerClient {
 	/** Ingest an MCP server or OpenAPI spec by URL, namespaced to the workspace. */
 	async addIntegrationByUrl(
 		apiKey: string,
-		input: { workspaceId: string; url: string; kind: 'mcp' | 'openapi'; name?: string },
+		input: {
+			workspaceId: string
+			url: string
+			kind: 'mcp' | 'openapi'
+			name?: string
+			/**
+			 * How the server authenticates, as determined by probing it.
+			 *
+			 * Defaults to oauth2 only to keep existing callers working; a caller
+			 * that knows better should say so. Declaring oauth2 for a server that
+			 * does not do OAuth produces a Connect button that cannot work — the
+			 * flow probes for OAuth metadata, finds none, and 400s.
+			 */
+			auth?: 'none' | 'api_key' | 'oauth2'
+			/**
+			 * Static headers sent on every request to the server.
+			 *
+			 * How an api-key server is authenticated. The backend rejects
+			 * `auth: {kind: 'api_key'}` on registration — measured, four spellings,
+			 * empty-bodied 400 each time — and a bare registration offers only "no
+			 * authentication", which connects and then fails on every tool call. A
+			 * headers map is the shape it does accept.
+			 */
+			headers?: Record<string, string>
+		},
 	): Promise<{ slug: string }> {
 		const slug = workspaceScopedSlug(input.workspaceId, input.name ?? hostnameOf(input.url))
 		const displayName = input.name?.trim() || hostnameOf(input.url)
 		const path = input.kind === 'mcp' ? '/api/mcp/servers' : '/api/openapi/specs'
+		const auth = input.auth ?? 'oauth2'
 		const body =
 			input.kind === 'mcp'
 				? {
@@ -399,7 +424,15 @@ export class ToolBrokerClient {
 						// an auth template on afterwards produces a template with no
 						// discovery config, and scopes are resolved from that config at
 						// authorize time — so the request goes out with no scope at all.
-						auth: { kind: 'oauth2' },
+						//
+						// It must NOT be declared for a server that does not do OAuth: the
+						// connect flow would then probe for metadata that does not exist
+						// and fail with a 400 naming OAuth, for a server that only ever
+						// wanted a header.
+						...(auth === 'oauth2' ? { auth: { kind: 'oauth2' } } : {}),
+						...(input.headers && Object.keys(input.headers).length > 0
+							? { headers: input.headers }
+							: {}),
 					}
 				: // The url variant keys the value as `url`; only the blob variant uses
 					// `value`. Sending `value` here fails with a bare "Missing key".

@@ -641,3 +641,102 @@ test.describe('catalogue browser — what each entry will ask of you', () => {
 		).toBeVisible()
 	})
 })
+
+test.describe('adding by URL — what the server says it is', () => {
+	test.beforeEach(async ({ page }) => {
+		await page.addInitScript(() => localStorage.setItem('ff:tool-broker', 'on'))
+	})
+
+	const openAdd = async (page: import('@playwright/test').Page, workspaceId: string) => {
+		await stubBroker(page, { configured: true, available: true, integrations: INTEGRATIONS })
+		await gotoIntegrations(page, workspaceId)
+		await section(page).getByRole('button', { name: 'Add', exact: true }).click()
+		return page.getByRole('dialog')
+	}
+
+	test('reveals key fields when the server asks for one, then adds with the header', async ({
+		page,
+		account,
+	}) => {
+		// The Unipile case. The server authenticates with X-API-KEY and publishes no
+		// OAuth metadata, so add refuses once and asks, rather than registering an
+		// integration that would fail on every tool call.
+		const bodies: Array<Record<string, unknown>> = []
+		await page.route('**/api/tool-broker/integrations', async (route) => {
+			const body = route.request().postDataJSON()
+			bodies.push(body)
+			if (!body.apiKeyHeader) {
+				return route.fulfill({
+					status: 400,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						error: { code: 'api_key_required', message: 'This server needs an API key.' },
+					}),
+				})
+			}
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ slug: 'w0123_unipile' }),
+			})
+		})
+
+		const dialog = await openAdd(page, account.workspaceId)
+		await dialog.getByLabel('URL').fill('https://developer.unipile.com/mcp?branch=v1.0')
+
+		// Nothing about a key is shown until the server says so.
+		await expect(dialog.getByLabel('Header value')).toHaveCount(0)
+		await dialog.getByRole('button', { name: 'Add', exact: true }).click()
+
+		await expect(dialog.getByLabel('Header value')).toBeVisible({ timeout: 10000 })
+		await dialog.getByLabel('Header name').fill('X-API-KEY')
+		await dialog.getByLabel('Header value').fill('secret-key')
+		await dialog.getByRole('button', { name: 'Add', exact: true }).click()
+
+		await expect.poll(() => bodies.length, { timeout: 10000 }).toBe(2)
+		expect(bodies[1]?.apiKeyHeader).toEqual({ name: 'X-API-KEY', value: 'secret-key' })
+		await expect(dialog).toBeHidden()
+	})
+
+	test('the key is a password field, so it is not shoulder-readable', async ({ page, account }) => {
+		await page.route('**/api/tool-broker/integrations', (route) =>
+			route.fulfill({
+				status: 400,
+				contentType: 'application/json',
+				body: JSON.stringify({ error: { code: 'api_key_required', message: 'Needs a key.' } }),
+			}),
+		)
+
+		const dialog = await openAdd(page, account.workspaceId)
+		await dialog.getByLabel('URL').fill('https://developer.unipile.com/mcp')
+		await dialog.getByRole('button', { name: 'Add', exact: true }).click()
+
+		await expect(dialog.getByLabel('Header value')).toHaveAttribute('type', 'password')
+	})
+
+	test('says a documentation page is not a server, rather than failing later at Connect', async ({
+		page,
+		account,
+	}) => {
+		await page.route('**/api/tool-broker/integrations', (route) =>
+			route.fulfill({
+				status: 400,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					error: {
+						message:
+							'That URL did not answer as an MCP server (HTTP 404). It may be a documentation page rather than the server’s address.',
+					},
+				}),
+			}),
+		)
+
+		const dialog = await openAdd(page, account.workspaceId)
+		await dialog.getByLabel('URL').fill('https://developer.unipile.com/docs/mcp')
+		await dialog.getByRole('button', { name: 'Add', exact: true }).click()
+
+		await expect(page.getByText(/did not answer as an MCP server/)).toBeVisible({ timeout: 10000 })
+		// The dialog stays open so the URL can be corrected in place.
+		await expect(dialog).toBeVisible()
+	})
+})

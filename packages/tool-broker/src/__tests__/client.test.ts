@@ -537,3 +537,83 @@ describe('connect template', () => {
 		expect(body.value).toBe('secret')
 	})
 })
+
+describe('addIntegrationByUrl — how the server authenticates', () => {
+	// A hardcoded oauth2 declaration gave every MCP server an OAuth Connect
+	// button. For a server that authenticates with a header, that button probes
+	// for OAuth metadata, finds none, and 400s — which is exactly what happened
+	// with Unipile: 401 on the endpoint, 404 on both well-known paths.
+
+	it('declares oauth2 when the server does OAuth, so discovery config is built', async () => {
+		const { impl, calls } = stubFetch({ '/api/mcp/servers': () => json({}) })
+
+		await makeClient(impl).addIntegrationByUrl('key', {
+			workspaceId: WORKSPACE,
+			url: 'https://mcp.linear.app/mcp',
+			kind: 'mcp',
+			auth: 'oauth2',
+		})
+
+		expect((calls.at(-1)?.body as { auth?: unknown }).auth).toEqual({ kind: 'oauth2' })
+	})
+
+	it('does not declare oauth2 for an api-key server', async () => {
+		const { impl, calls } = stubFetch({ '/api/mcp/servers': () => json({}) })
+
+		await makeClient(impl).addIntegrationByUrl('key', {
+			workspaceId: WORKSPACE,
+			url: 'https://developer.unipile.com/mcp',
+			kind: 'mcp',
+			auth: 'api_key',
+			headers: { 'X-API-KEY': 'secret' },
+		})
+
+		const body = calls.at(-1)?.body as Record<string, unknown>
+		expect(body.auth).toBeUndefined()
+		expect(body.headers).toEqual({ 'X-API-KEY': 'secret' })
+	})
+
+	it('does not declare oauth2 for a server needing no credential', async () => {
+		const { impl, calls } = stubFetch({ '/api/mcp/servers': () => json({}) })
+
+		await makeClient(impl).addIntegrationByUrl('key', {
+			workspaceId: WORKSPACE,
+			url: 'https://mcp.deepwiki.com/mcp',
+			kind: 'mcp',
+			auth: 'none',
+		})
+
+		const body = calls.at(-1)?.body as Record<string, unknown>
+		expect(body.auth).toBeUndefined()
+		expect(body.headers).toBeUndefined()
+	})
+
+	it('omits an empty headers map rather than sending one', async () => {
+		// The backend rejects `auth: {kind:'api_key'}` outright, so `headers` is the
+		// whole mechanism; sending an empty map would register a credential-less
+		// server that looks configured.
+		const { impl, calls } = stubFetch({ '/api/mcp/servers': () => json({}) })
+
+		await makeClient(impl).addIntegrationByUrl('key', {
+			workspaceId: WORKSPACE,
+			url: 'https://mcp.example.com/mcp',
+			kind: 'mcp',
+			auth: 'none',
+			headers: {},
+		})
+
+		expect((calls.at(-1)?.body as Record<string, unknown>).headers).toBeUndefined()
+	})
+
+	it('still declares oauth2 when the caller says nothing, so existing callers are unchanged', async () => {
+		const { impl, calls } = stubFetch({ '/api/mcp/servers': () => json({}) })
+
+		await makeClient(impl).addIntegrationByUrl('key', {
+			workspaceId: WORKSPACE,
+			url: 'https://mcp.example.com/mcp',
+			kind: 'mcp',
+		})
+
+		expect((calls.at(-1)?.body as { auth?: unknown }).auth).toEqual({ kind: 'oauth2' })
+	})
+})
