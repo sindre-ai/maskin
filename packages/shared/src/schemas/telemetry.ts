@@ -26,6 +26,21 @@ const toolNameSchema = z
 
 const sessionIdSchema = z.string().min(1).max(128).optional()
 
+// Argument KEY NAMES only — never values. Constrained to identifier-like
+// strings and a bounded count so a misbehaving or hostile client can't smuggle
+// free text (which is exactly what this field exists to keep out) through the
+// boundary by passing an object whose keys are sentences.
+const argKeysSchema = z
+	.array(
+		z
+			.string()
+			.min(1)
+			.max(64)
+			.regex(/^[A-Za-z0-9_.-]+$/, 'arg key must be identifier-like'),
+	)
+	.max(64)
+	.optional()
+
 export const recordMcpToolCallSchema = z.object({
 	event_type: z.literal('tool_call'),
 	tool_name: toolNameSchema,
@@ -36,6 +51,13 @@ export const recordMcpToolCallSchema = z.object({
 		.int()
 		.min(0)
 		.max(60 * 60 * 1000),
+	// Trace fields. Optional so an older MCP server build keeps validating.
+	// `seq` orders calls within a session; wall-clock can't, because these
+	// events are fire-and-forget and can be ingested out of order.
+	seq: z.number().int().min(1).optional(),
+	arg_keys: argKeysSchema,
+	ok: z.boolean().optional(),
+	transport: z.enum(['stdio', 'http']).optional(),
 })
 
 export const recordMcpMutationSchema = z.object({

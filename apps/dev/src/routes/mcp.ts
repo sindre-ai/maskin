@@ -11,8 +11,10 @@ import {
 	recordMcpMisfire,
 	requestedShape,
 } from '../lib/analytics/mcp-misfire'
+import { type McpSessionSource, argKeys, captureMcpToolCall } from '../lib/analytics/mcp-tool-calls'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
+import { createSeqCounter } from '../lib/mcp-trace-seq'
 
 // Only `db` is set on the /mcp path — the auth middleware runs under /api/*.
 type Env = {
@@ -79,19 +81,21 @@ app.post('/', async (c) => {
 	// the MCP request path.
 	const captured = wrapResponseCapture(nodeRes)
 
+	const startedAt = Date.now()
 	await mcpServer.connect(transport)
 	await transport.handleRequest(nodeReq, nodeRes, body)
 
-	// Fire-and-forget: classify any JSON-RPC errors in the response and emit
-	// one PostHog event per real misfire.
-	const sessionCorrelationId = c.req.header('Mcp-Session-Id') ?? null
-	void emitMcpMisfires({
+	// Fire-and-forget: emit one `mcp_tool_call` trace event per tools/call, plus
+	// one PostHog event per real misfire. Both read the same captured bytes.
+	const session = resolveSessionIdentity(c.req.header.bind(c.req))
+	void emitMcpTrace({
 		db: c.get('db'),
 		apiKey,
 		workspaceId,
 		requestBody: body,
 		responseBytes: captured.consume(),
-		sessionCorrelationId,
+		session,
+		startedAt,
 	})
 
 	// transport.handleRequest already wrote the response to nodeRes.
@@ -149,29 +153,109 @@ function wrapResponseCapture(res: import('node:http').ServerResponse) {
 	}
 }
 
-// ── Misfire emission ────────────────────────────────────────────────────
+// ── Session identity ────────────────────────────────────────────────────
+//
+// The HTTP transport is stateless (`sessionIdGenerator: undefined` above), so
+// the MCP SDK never mints a session id of its own. We resolve one from headers
+// instead, most-specific first:
+//
+//   1. `X-Maskin-Session-Id` — stamped onto the Maskin MCP entry by
+//      session-manager for agents running *inside* Maskin. It is the
+//      `sessions.id` uuid, so a trace joins straight back to the session row.
+//   2. `Mcp-Session-Id` — whatever an external client chose to send.
+//   3. Neither — an external HTTP client we cannot group. We still emit the
+//      event (the tool-usage signal is worth having) under a per-request id,
+//      flagged `unknown` so it is trivially excluded from ordering queries.
 
-interface EmitMcpMisfiresArgs {
+export interface McpSessionIdentity {
+	id: string
+	source: McpSessionSource
+}
+
+export function resolveSessionIdentity(
+	header: (name: string) => string | undefined,
+): McpSessionIdentity {
+	const maskinSessionId = header('X-Maskin-Session-Id')?.trim()
+	if (maskinSessionId) return { id: maskinSessionId, source: 'maskin-session' }
+	const mcpSessionId = header('Mcp-Session-Id')?.trim()
+	if (mcpSessionId) return { id: mcpSessionId, source: 'mcp-session' }
+	return {
+		id: `anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+		source: 'unknown',
+	}
+}
+
+// ── Trace + misfire emission ────────────────────────────────────────────
+
+const seqCounter = createSeqCounter()
+
+// Resolving the actor means a DB lookup per API key. Tool calls arrive in
+// bursts from the same agent, so memoize the mapping for a short window rather
+// than hitting `validateApiKey` on every single call. Short TTL because a
+// revoked key should stop being attributed reasonably promptly — this is an
+// analytics label, not an authorization decision, so staleness here is cheap.
+const ACTOR_CACHE_TTL_MS = 60_000
+const actorCache = new Map<string, { actorId: string | null; at: number }>()
+
+interface EmitMcpTraceArgs {
 	db: Database | undefined
 	apiKey: string
 	workspaceId: string
 	requestBody: unknown
 	responseBytes: Buffer
-	sessionCorrelationId: string | null
+	session: McpSessionIdentity
+	startedAt: number
 }
 
-async function emitMcpMisfires(args: EmitMcpMisfiresArgs): Promise<void> {
+async function emitMcpTrace(args: EmitMcpTraceArgs): Promise<void> {
 	try {
+		const requests = listRequests(args.requestBody)
+		const toolCalls = requests.filter((r) => r.method === 'tools/call')
 		const responses = parseJsonRpcResponses(args.responseBytes)
+		if (toolCalls.length === 0 && responses.length === 0) return
+
+		const responsesById = new Map<string, JsonRpcMessage>()
+		for (const r of responses) {
+			if (r.id != null) responsesById.set(String(r.id), r)
+		}
+		const requestsById = indexRequestsById(args.requestBody)
+
+		const agentActorId =
+			args.apiKey && args.db ? await resolveAgentActorId(args.db, args.apiKey) : null
+
+		// A batched POST shares one wall-clock measurement between its calls, so
+		// only attribute a duration when the batch held exactly one tool call.
+		const elapsedMs = Date.now() - args.startedAt
+		const durationMs = toolCalls.length === 1 ? elapsedMs : null
+
+		// ── Trace: one event per tools/call, success or failure ──
+		for (const request of toolCalls) {
+			const toolName = request.params?.name
+			if (typeof toolName !== 'string' || toolName.length === 0) continue
+			const response = request.id != null ? responsesById.get(String(request.id)) : undefined
+			const error = response ? extractError(response) : undefined
+			await captureMcpToolCall(args.workspaceId, {
+				sessionId: args.session.id,
+				sessionSource: args.session.source,
+				seq: seqCounter.next(args.session.id),
+				toolName,
+				argKeys: argKeys(request.params?.arguments),
+				ok: !error,
+				errorClass: error ? (classifyMcpError(error) ?? 'unclassified') : null,
+				durationMs,
+				responseBytes: args.responseBytes.length,
+				transport: 'http',
+				agentActorId,
+			})
+		}
+
+		// ── Misfires: unchanged behaviour, one row + event per classified error ──
 		const errored = responses
 			.map((r) => ({ message: r, error: extractError(r) }))
 			.filter((r): r is { message: JsonRpcMessage; error: JsonRpcErrorLike } => Boolean(r.error))
 		if (errored.length === 0) return
 
-		const requestsById = indexRequestsById(args.requestBody)
-		const agentActorId =
-			args.apiKey && args.db ? await resolveAgentActorId(args.db, args.apiKey) : null
-
+		const misfireSessionId = args.session.source === 'unknown' ? null : args.session.id
 		for (const { message, error } of errored) {
 			const kind = classifyMcpError(error)
 			if (!kind) continue
@@ -183,14 +267,21 @@ async function emitMcpMisfires(args: EmitMcpMisfiresArgs): Promise<void> {
 				kind,
 				toolName,
 				requestedShape: shape,
-				sessionId: args.sessionCorrelationId,
+				sessionId: misfireSessionId,
 				agentActorId,
 			}
 			await recordMcpMisfire(args.db, args.workspaceId, misfire)
 		}
 	} catch (err) {
-		logger.warn('mcp misfire emission failed', { error: String(err) })
+		logger.warn('mcp trace emission failed', { error: String(err) })
 	}
+}
+
+/** Flatten a request body (single message or JSON-RPC batch) into a list. */
+function listRequests(body: unknown): JsonRpcMessage[] {
+	if (Array.isArray(body)) return body as JsonRpcMessage[]
+	if (body && typeof body === 'object') return [body as JsonRpcMessage]
+	return []
 }
 
 // Normalize both shapes the MCP SDK uses for error responses into a
@@ -279,11 +370,29 @@ function extractToolName(
 }
 
 async function resolveAgentActorId(db: Database, apiKey: string): Promise<string | null> {
+	const cached = actorCache.get(apiKey)
+	if (cached && Date.now() - cached.at < ACTOR_CACHE_TTL_MS) return cached.actorId
 	try {
 		const actor = await validateApiKey(db, apiKey)
-		return actor?.actorId ?? null
+		const actorId = actor?.actorId ?? null
+		actorCache.set(apiKey, { actorId, at: Date.now() })
+		return actorId
 	} catch (err) {
-		logger.warn('mcp misfire actor lookup failed', { error: String(err) })
+		logger.warn('mcp trace actor lookup failed', { error: String(err) })
 		return null
 	}
+}
+
+/** Clears the memoized API-key → actor mapping. Only used in tests. */
+export function __resetMcpActorCache(): void {
+	actorCache.clear()
+}
+
+/**
+ * Resets the per-session sequence numbers. Only used in tests — the counter is
+ * module-level (one process, one counter), so without this each test case
+ * inherits the numbering left behind by the previous one.
+ */
+export function __resetMcpTraceSeq(): void {
+	seqCounter.reset()
 }

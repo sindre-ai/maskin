@@ -2002,6 +2002,9 @@ export function createMcpServer(config: McpConfig) {
 					has_rich_render: defHasRichRender,
 					duration_ms: Date.now() - start,
 					workspace_id: extractWorkspaceId(args),
+					args,
+					ok: false,
+					transport: config.transport,
 				})
 				if (isReadTool) {
 					// Read handlers return a structured error envelope instead of
@@ -2036,6 +2039,9 @@ export function createMcpServer(config: McpConfig) {
 				has_rich_render: responseHasRichRender,
 				duration_ms: Date.now() - start,
 				workspace_id: extractWorkspaceId(args),
+				args,
+				ok: true,
+				transport: config.transport,
 			})
 
 			// Token-cap guardrail. Enforces `MAX_RESPONSE_TOKENS` before the

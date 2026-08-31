@@ -7,14 +7,23 @@
 // Failures are logged once and otherwise swallowed: telemetry MUST NOT block or
 // fail tool calls. Aggregation lives behind /api/telemetry/mcp/summary.
 
-const SESSION_ID = randomCorrelationId()
+const SESSION_ID = resolveSessionId()
 
 let warned = false
 
-function randomCorrelationId(): string {
-	// Per-process correlation id used when the upstream MCP transport doesn't
-	// surface a session id (stdio transport in particular). Stable for the
-	// lifetime of the process so per-session aggregation is meaningful.
+// Monotonic per-process counter stamped onto every tool_call so the *order* of
+// calls in a session can be reconstructed. Timestamps can't do this: events are
+// fire-and-forget POSTs and can be ingested out of order.
+let toolCallSeq = 0
+
+function resolveSessionId(): string {
+	// An MCP server launched by Maskin's own agent container gets the maskin
+	// `sessions.id` in its env — prefer it, so a stdio-launched server's trace
+	// joins back to the session row exactly like the HTTP path does.
+	const fromEnv = process.env.MASKIN_SESSION_ID?.trim()
+	if (fromEnv) return fromEnv
+	// Otherwise a per-process correlation id. For stdio this is exactly right:
+	// one server process is one client session, for the life of the process.
 	return `mcp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
@@ -30,6 +39,14 @@ export interface ToolCallEvent {
 	session_id: string
 	has_rich_render: boolean
 	duration_ms: number
+	/** 1-based position of this call within the process's session. */
+	seq?: number
+	/** Sorted argument key NAMES. Never values — see `recordToolCall`. */
+	arg_keys?: string[]
+	/** False when the handler threw. */
+	ok?: boolean
+	/** Which transport the emitting server is exposed over. */
+	transport?: 'stdio' | 'http'
 }
 
 export interface MutationEvent {
@@ -105,6 +122,20 @@ async function postEvent(event: TelemetryEvent, target: TelemetryConfig): Promis
 	}
 }
 
+/**
+ * Reduce an arguments object to its sorted key names.
+ *
+ * Privacy contract: values are dropped entirely — not stringified, not typed,
+ * not truncated. This is what lets the trace answer "which tools, in what
+ * order, reaching for which fields" without carrying object titles, prompt
+ * text, or comment bodies into analytics. Non-object arguments yield an empty
+ * list rather than leaking their contents.
+ */
+export function argKeys(args: unknown): string[] {
+	if (!args || typeof args !== 'object' || Array.isArray(args)) return []
+	return Object.keys(args as Record<string, unknown>).sort()
+}
+
 export function recordToolCall(
 	sink: TelemetrySink,
 	target: TelemetryConfig,
@@ -113,9 +144,13 @@ export function recordToolCall(
 		has_rich_render: boolean
 		duration_ms: number
 		workspace_id?: string
+		args?: unknown
+		ok?: boolean
+		transport?: 'stdio' | 'http'
 	},
 ): void {
 	const cfg = event.workspace_id ? { ...target, workspaceId: event.workspace_id } : target
+	toolCallSeq += 1
 	sink(
 		{
 			event_type: 'tool_call',
@@ -123,6 +158,10 @@ export function recordToolCall(
 			session_id: SESSION_ID,
 			has_rich_render: event.has_rich_render,
 			duration_ms: Math.max(0, Math.round(event.duration_ms)),
+			seq: toolCallSeq,
+			arg_keys: argKeys(event.args),
+			ok: event.ok ?? true,
+			transport: event.transport,
 		},
 		cfg,
 	)
@@ -261,6 +300,11 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 /** Resets the warned flag — only used in tests. */
 export function __resetTelemetryWarnedFlag(): void {
 	warned = false
+}
+
+/** Resets the per-process tool-call sequence — only used in tests. */
+export function __resetToolCallSeq(): void {
+	toolCallSeq = 0
 }
 
 /** Exposes the per-process correlation id — only used in tests. */

@@ -8,6 +8,7 @@ import {
 } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { recordMcpMisfire } from '../lib/analytics/mcp-misfire'
+import { captureMcpToolCall } from '../lib/analytics/mcp-tool-calls'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -73,6 +74,31 @@ app.openapi(recordRoute, (async (c) => {
 			hasRichRender: body.has_rich_render,
 			durationMs: body.duration_ms,
 		})
+		// Trace fan-out for stdio clients (Claude Code, Cursor, …), whose calls
+		// only ever reach us through this sink.
+		//
+		// HTTP-transport events are deliberately skipped: on that path the MCP
+		// server runs in-process behind `POST /mcp` and its sink loops straight
+		// back here, while `routes/mcp.ts` already emits the trace server-side
+		// with a real session id. Emitting here too would double-count every
+		// HTTP tool call. `transport` is optional, so an older MCP server build
+		// (which sends neither field) still gets traced — stdio is the
+		// overwhelmingly likely origin for such a client.
+		if (body.transport !== 'http') {
+			void captureMcpToolCall(workspaceId, {
+				sessionId: body.session_id ?? 'unknown',
+				sessionSource: body.session_id ? 'process' : 'unknown',
+				seq: body.seq ?? 0,
+				toolName: body.tool_name,
+				argKeys: body.arg_keys ?? [],
+				ok: body.ok ?? true,
+				errorClass: null,
+				durationMs: body.duration_ms,
+				responseBytes: null,
+				transport: 'stdio',
+				agentActorId: actorId,
+			})
+		}
 	} else if (body.event_type === 'mutation') {
 		await db.insert(mcpTelemetry).values({
 			workspaceId,
