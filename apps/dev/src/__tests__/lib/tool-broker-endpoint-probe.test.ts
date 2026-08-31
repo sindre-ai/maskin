@@ -17,8 +17,12 @@ const INITIALIZE_RESULT = JSON.stringify({
 /** How a streamable-http server actually replies: the result inside an SSE frame. */
 const SSE_INITIALIZE_RESULT = `event: message\ndata: ${INITIALIZE_RESULT}\n\n`
 
-const reply = (status: number, body = '', contentType = 'application/json') =>
-	new Response(body, { status, headers: { 'Content-Type': contentType } })
+const reply = (
+	status: number,
+	body = '',
+	contentType = 'application/json',
+	extraHeaders: Record<string, string> = {},
+) => new Response(body, { status, headers: { 'Content-Type': contentType, ...extraHeaders } })
 
 describe('probeEndpoint', () => {
 	it('recognises a server that answers initialize with no credential', async () => {
@@ -125,5 +129,80 @@ describe('probeEndpoint', () => {
 			kind: 'mcp',
 			auth: 'api_key',
 		})
+	})
+})
+
+describe('probeEndpoint — finding OAuth metadata that is not at the origin root', () => {
+	// Captured verbatim from https://mcp.facebook.com/ads. Meta publishes its
+	// metadata under the resource's PATH, per RFC 9728, and advertises the exact
+	// URL in the 401. Looking only at the origin root finds neither, which
+	// classified a fully DCR-capable OAuth server as wanting an API key.
+	const META_CHALLENGE =
+		'Bearer resource_metadata="https://mcp.facebook.com/.well-known/oauth-protected-resource/ads", scope="ads_management ads_read catalog_management"'
+
+	it('follows the metadata URL the 401 advertises', async () => {
+		const fetched: string[] = []
+		const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+			const url = String(input)
+			fetched.push(url)
+			if (url === 'https://mcp.facebook.com/ads') {
+				return reply(401, '', 'application/json', { 'WWW-Authenticate': META_CHALLENGE })
+			}
+			if (url === 'https://mcp.facebook.com/.well-known/oauth-protected-resource/ads') {
+				return reply(200, JSON.stringify({ resource: 'https://mcp.facebook.com/ads' }))
+			}
+			return reply(404)
+		})
+
+		await expect(probeEndpoint('https://mcp.facebook.com/ads', { fetchImpl })).resolves.toEqual({
+			kind: 'mcp',
+			auth: 'oauth2',
+		})
+		// The advertised URL is tried first — no guessing needed when the server says.
+		expect(fetched[1]).toBe('https://mcp.facebook.com/.well-known/oauth-protected-resource/ads')
+	})
+
+	it('finds path-scoped metadata even with no WWW-Authenticate header', async () => {
+		// Not every server advertises it, so the path-inserted form is still tried.
+		const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+			const url = String(input)
+			if (url === 'https://mcp.example.com/ads') return reply(401)
+			if (url === 'https://mcp.example.com/.well-known/oauth-protected-resource/ads') {
+				return reply(200, '{}')
+			}
+			return reply(404)
+		})
+
+		await expect(probeEndpoint('https://mcp.example.com/ads', { fetchImpl })).resolves.toEqual({
+			kind: 'mcp',
+			auth: 'oauth2',
+		})
+	})
+
+	it('still finds metadata at the origin root, where most servers put it', async () => {
+		const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+			const url = String(input)
+			if (url === 'https://mcp.example.com/mcp') return reply(401)
+			if (url === 'https://mcp.example.com/.well-known/oauth-protected-resource') {
+				return reply(200, '{}')
+			}
+			return reply(404)
+		})
+
+		await expect(probeEndpoint('https://mcp.example.com/mcp', { fetchImpl })).resolves.toEqual({
+			kind: 'mcp',
+			auth: 'oauth2',
+		})
+	})
+
+	it('still calls it an api-key server when no metadata exists anywhere', async () => {
+		// The genuine api-key case must survive the extra lookups.
+		const fetchImpl = vi.fn(async (input: string | URL | Request) =>
+			String(input).includes('.well-known') ? reply(404) : reply(401),
+		)
+
+		await expect(probeEndpoint('https://api.databuddy.cc/v1/mcp/', { fetchImpl })).resolves.toEqual(
+			{ kind: 'mcp', auth: 'api_key' },
+		)
 	})
 })
