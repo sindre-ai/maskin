@@ -241,28 +241,28 @@ function CommentRow({
 							/>
 						</div>
 					)}
-					{clampable && !expanded ? (
-						// Clamped, the message is a plain excerpt so it can run inline
-						// after the name and "Show more" can sit on the end of the
-						// sentence rather than under it (mockup 1285–1286).
-						<>
-							<span>{clampComment(content)}</span>
-							{showMoreButton}
-						</>
-					) : (
-						<>
-							<AgentOutput
-								content={content}
-								disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
-								mentionActors={actors}
-								onMentionClick={handleMentionClick}
-								size="sm"
-								className={cn(isBubble ? 'inline [&_p:first-child]:inline [&_p]:my-0' : 'mt-1')}
-								renderVisuals
-							/>
-							{clampable && showMoreButton}
-						</>
-					)}
+					{/* Clamped or whole, the message renders through the same markdown
+					    path — an excerpt is still markdown, and rendering it raw showed
+					    literal `**`, `- ` and link syntax on the most common row of the
+					    timeline. Clamped, it stays inline so "Show more" can sit on the
+					    end of the sentence rather than under it (mockup 1285–1286). */}
+					<>
+						<AgentOutput
+							content={clampable && !expanded ? clampComment(content) : content}
+							disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
+							mentionActors={actors}
+							onMentionClick={handleMentionClick}
+							size="sm"
+							className={cn(
+								isBubble || (clampable && !expanded)
+									? 'inline [&_p:first-child]:inline [&_p]:my-0'
+									: 'mt-1',
+							)}
+							renderVisuals
+						/>
+						{clampable && showMoreButton}
+					</>
+
 					{footer && <div>{footer}</div>}
 					{/* Objects the author attached from the composer, as real
 					    references (mockup `refList`). */}
