@@ -1652,6 +1652,87 @@ function buildActorHeroCardObject(actor: RawActor, includeDetails = false): Hero
 	return obj
 }
 
+/**
+ * Settings keys stripped from every workspace row an MCP tool returns.
+ *
+ * `/api/workspaces` hands back the whole `settings` blob, which carries live
+ * provider credentials (`llm_keys`, `custom_llm.api_key`, `claude_oauth`'s
+ * encrypted token pair) and billing internals (`billing`'s Stripe customer and
+ * subscription ids, plan, spend cap). None of it is actionable for an agent:
+ * the schema-shaped settings an agent legitimately reads — statuses, display
+ * names, field definitions, relationship types — stay, and `get_workspace_schema`
+ * remains the tool for them. So this is pure exposure plus context noise on a
+ * tool agents call constantly to resolve a workspace id.
+ *
+ * `SECRET_KEY_SEGMENTS` is the self-maintaining half: a settings key added
+ * later whose name reads as a credential is dropped without anyone remembering
+ * to extend the list. The explicit list covers the ones whose names don't say
+ * so (`billing`, `claude_oauth`).
+ */
+const REDACTED_WORKSPACE_SETTINGS_KEYS = ['billing', 'claude_oauth', 'llm_keys'] as const
+
+/**
+ * Nested settings objects that may themselves hold a credential. Only these
+ * are descended into — the schema containers (`field_definitions`, `statuses`,
+ * `custom_extensions`, …) are left whole, so a workspace whose object type or
+ * field happens to be named `secret` keeps its schema intact.
+ */
+const NESTED_REDACTION_TARGETS = ['custom_llm'] as const
+
+/**
+ * Whole `_`-delimited segments that mark a key as credential-bearing. Matched
+ * segment-wise rather than as a substring so `monkey` doesn't read as `key`.
+ */
+const SECRET_KEY_SEGMENTS = new Set([
+	'key',
+	'keys',
+	'apikey',
+	'token',
+	'tokens',
+	'secret',
+	'secrets',
+	'password',
+	'passwords',
+	'credential',
+	'credentials',
+])
+
+function isSecretSettingsKey(key: string): boolean {
+	return key.split('_').some((segment) => SECRET_KEY_SEGMENTS.has(segment.toLowerCase()))
+}
+
+/**
+ * Drop credential- and billing-bearing keys from a workspace's `settings`.
+ * Returns a copy; the input is not mutated. A workspace row without
+ * `settings` passes through untouched.
+ */
+export function redactWorkspaceSettings<T>(workspace: T): T {
+	if (workspace == null || typeof workspace !== 'object') return workspace
+	const row = workspace as Record<string, unknown>
+	const settings = row.settings
+	if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return workspace
+	const out: Record<string, unknown> = {}
+	for (const [key, value] of Object.entries(settings as Record<string, unknown>)) {
+		if ((REDACTED_WORKSPACE_SETTINGS_KEYS as readonly string[]).includes(key)) continue
+		if (isSecretSettingsKey(key)) continue
+		if (
+			(NESTED_REDACTION_TARGETS as readonly string[]).includes(key) &&
+			value &&
+			typeof value === 'object' &&
+			!Array.isArray(value)
+		) {
+			const nested: Record<string, unknown> = {}
+			for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+				if (!isSecretSettingsKey(k)) nested[k] = v
+			}
+			out[key] = nested
+			continue
+		}
+		out[key] = value
+	}
+	return { ...row, settings: out } as T
+}
+
 function buildWorkspaceContextLine(workspace: RawWorkspace): string {
 	const age = ageLabel(workspace.updatedAt ?? workspace.createdAt)
 	const parts = ['workspace']
@@ -3348,10 +3429,18 @@ export function createMcpServer(config: McpConfig) {
 				tool: 'get_actor',
 				object: heroObject,
 			}
+			// `actor` carries the full record alongside the presentation card, so
+			// both channels describe the same thing. Without it `structuredContent`
+			// held only the heroCard — a lossy, camelCased re-projection missing
+			// `setup` and the snake_case fields the tool description promises —
+			// while the record lived solely in `content`. A caller comparing the
+			// two saw a response that had visibly lost fields, which reads as a
+			// truncated or degraded result rather than a card plus its source.
+			// Mirrors list_workspaces' `{ heroCard, workspaces }` shape.
 			return {
 				_meta: uiMeta('get_actor', config, workspaceId, UI_RESOURCES.heroCard),
 				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
-				structuredContent: { heroCard },
+				structuredContent: { heroCard, actor: withUrl },
 			}
 		},
 	)
@@ -3515,7 +3604,7 @@ export function createMcpServer(config: McpConfig) {
 			})
 			return {
 				_meta: meta('create_workspace', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(redactWorkspaceSettings(result)) }],
 			}
 		},
 	)
@@ -3535,7 +3624,7 @@ export function createMcpServer(config: McpConfig) {
 			})
 			return {
 				_meta: meta('update_workspace', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(redactWorkspaceSettings(result)) }],
 			}
 		},
 	)
@@ -3566,6 +3655,7 @@ export function createMcpServer(config: McpConfig) {
 				getSortValue: (row) => row.createdAt ?? null,
 				getId: (row) => row.id,
 			})
+			const safeRows = pagedRows.map(redactWorkspaceSettings)
 			const heroObjects = pagedRows.map(buildWorkspaceHeroCardObject)
 			const webContextWorkspaceId = config.defaultWorkspaceId ?? pagedRows[0]?.id
 			const heroCard: HeroCardPayload =
@@ -3589,12 +3679,12 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: buildListContentText({ workspaces: pagedRows }),
+						text: buildListContentText({ workspaces: safeRows }),
 					},
 				],
 				structuredContent: {
 					heroCard,
-					workspaces: pagedRows,
+					workspaces: safeRows,
 					...(nextCursor ? { next_cursor: nextCursor } : {}),
 				},
 			}
