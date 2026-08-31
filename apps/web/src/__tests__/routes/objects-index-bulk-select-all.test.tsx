@@ -98,9 +98,13 @@ vi.mock('@/hooks/use-objects', () => ({
 	useBulkResultHandlers: () => ({ reportBulkResult: vi.fn(), retainOnlyFailed: vi.fn() }),
 }))
 
-const toastCapture = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }))
+const toastCapture = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), warning: vi.fn() }))
 vi.mock('sonner', () => ({
-	toast: { error: toastCapture.error, success: toastCapture.success },
+	toast: {
+		error: toastCapture.error,
+		success: toastCapture.success,
+		warning: toastCapture.warning,
+	},
 }))
 
 const displaySettings = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }))
@@ -328,6 +332,31 @@ describe('objects route — bulk select all / ask an agent', () => {
 				to: '/$workspaceId/chats/new',
 				search: { objectIds: 'obj-waiting,obj-working,obj-idle' },
 			}),
+		)
+	})
+
+	// Regression: `Select all` can select more objects than the chat is able to
+	// resolve into chips (the objects endpoint caps `limit` at 100), and the
+	// hand-over carried every id regardless — so past the hundredth the objects
+	// simply did not arrive, with nothing on either screen to say so.
+	it('trims the hand-over to what the chat can resolve, and says it did', async () => {
+		rows.current = Array.from({ length: 120 }, (_, i) => ({ ...WAITING, id: `obj-${i}` }))
+		render(<ObjectsPage />)
+		await waitFor(() => expect(bulkBarCapture.lastProps).not.toBeNull())
+
+		await act(async () => {
+			;(bulkBarCapture.lastProps?.onSelectAll as () => void)()
+		})
+		await waitFor(() => expect(bulkBarCapture.lastProps?.selectedCount).toBe(120))
+
+		await act(async () => {
+			;(bulkBarCapture.lastProps?.onAskAgent as () => void)()
+		})
+
+		const search = navigateMock.mock.calls.at(-1)?.[0].search as { objectIds: string }
+		expect(search.objectIds.split(',')).toHaveLength(100)
+		expect(toastCapture.warning).toHaveBeenCalledWith(
+			expect.stringContaining('Only the first 100 of 120'),
 		)
 	})
 })

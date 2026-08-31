@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -32,9 +32,16 @@ vi.mock('@/hooks/use-workspaces', () => ({
 }))
 
 const mockReferencedObjects = vi.fn()
+const objectsFilters = vi.fn()
 vi.mock('@/hooks/use-objects', () => ({
-	useObjects: () => ({ data: mockReferencedObjects() }),
+	useObjects: (_ws: string, filters?: Record<string, string>) => {
+		objectsFilters(filters)
+		return { data: mockReferencedObjects() }
+	},
 }))
+
+const toastCapture = vi.hoisted(() => ({ warning: vi.fn() }))
+vi.mock('sonner', () => ({ toast: { warning: toastCapture.warning } }))
 
 vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1', workspace: { settings: {} } }),
@@ -170,6 +177,37 @@ describe('New chat', () => {
 					],
 				},
 			}),
+		)
+	})
+
+	// Regression: the hand-over used to ride the endpoint's default limit of 50,
+	// so a larger selection resolved its first fifty ids and the rest arrived as
+	// nothing at all — no chip, no message, and a URL that still listed them.
+	it('asks for as many referenced objects as the endpoint will return', async () => {
+		mockSearch.mockReturnValue({ objectIds: 'obj-1,obj-2' })
+		mockReferencedObjects.mockReturnValue([
+			{ id: 'obj-1', title: 'Retry window', type: 'bet' },
+			{ id: 'obj-2', title: 'Churned accounts', type: 'insight' },
+		])
+		render(<NewChatPage />)
+
+		expect(objectsFilters).toHaveBeenCalledWith(
+			expect.objectContaining({ ids: 'obj-1,obj-2', limit: '100' }),
+		)
+	})
+
+	// An id can go missing for reasons the cap has nothing to do with — deleted,
+	// or in another workspace. The chat then carries fewer objects than the user
+	// picked, which it has to say rather than quietly shrink the count.
+	it('reports ids that could not be resolved into chips', async () => {
+		mockSearch.mockReturnValue({ objectIds: 'obj-1,obj-2,obj-3' })
+		mockReferencedObjects.mockReturnValue([{ id: 'obj-1', title: 'Retry window', type: 'bet' }])
+		render(<NewChatPage />)
+
+		await waitFor(() =>
+			expect(toastCapture.warning).toHaveBeenCalledWith(
+				expect.stringContaining("2 of 3 objects couldn't be attached"),
+			),
 		)
 	})
 

@@ -14,13 +14,18 @@ import { useObjects } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import type { MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
-import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
+import {
+	EMPTY_CHAT_SELECTION,
+	MAX_CHAT_OBJECT_REFERENCES,
+	chatSelectionReducer,
+} from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { deriveConversationTitle } from '@/lib/conversation-title'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { ChevronDown, Search } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 interface NewChatSearch {
 	agentId?: string
@@ -106,9 +111,13 @@ function NewConversationPage() {
 		() => (search.objectIds ? search.objectIds.split(',').filter(Boolean) : []),
 		[search.objectIds],
 	)
+	// `limit` is explicit because the endpoint's default is 50 — well under the
+	// selection sizes `Select all` produces. Without it a larger hand-over
+	// resolved its first fifty ids and dropped the rest with no chip and no
+	// message; the id list in the URL still said otherwise.
 	const { data: referencedObjects } = useObjects(
 		workspaceId,
-		{ ids: referencedIds.join(',') },
+		{ ids: referencedIds.join(','), limit: String(MAX_CHAT_OBJECT_REFERENCES) },
 		{ enabled: referencedIds.length > 0 },
 	)
 	const seededRef = useRef(false)
@@ -120,6 +129,16 @@ function NewConversationPage() {
 				type: 'add_object',
 				object: { id: object.id, title: object.title, type: object.type },
 			})
+		}
+		// An id can also fail to resolve for reasons the cap has nothing to do
+		// with — deleted since the link was made, or belonging to another
+		// workspace. Either way the chat is about to carry fewer objects than the
+		// user picked, so say which, rather than letting the count quietly shrink.
+		const missing = referencedIds.length - referencedObjects.length
+		if (missing > 0) {
+			toast.warning(
+				`${missing} of ${referencedIds.length} objects couldn't be attached — they may have been deleted.`,
+			)
 		}
 	}, [referencedIds, referencedObjects])
 

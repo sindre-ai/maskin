@@ -40,6 +40,7 @@ import { api } from '@/lib/api'
 import type { DisplaySettingsBody, NotificationResponse, ObjectResponse } from '@/lib/api'
 import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
 import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
+import { MAX_CHAT_OBJECT_REFERENCES } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { getStatusColor } from '@/lib/constants'
 import {
@@ -1244,12 +1245,23 @@ function ObjectsPageV2() {
 
 	// Hands the selection to a new chat as *references* rather than acting on it
 	// in place — `chats/new` reads `objectIds` as a comma-separated list.
+	//
+	// Trimmed here rather than at the far end: `Select all` will happily select
+	// more objects than the chat can resolve into chips, and a link that carries
+	// ids nothing will render is how the extras used to disappear without a
+	// word. Cut the list where it stops being deliverable, and say so.
 	const handleAskAgent = useCallback(() => {
 		if (selectedIds.length === 0) return
+		const carried = selectedIds.slice(0, MAX_CHAT_OBJECT_REFERENCES)
+		if (selectedIds.length > carried.length) {
+			toast.warning(
+				`Only the first ${carried.length} of ${selectedIds.length} selected objects were attached to the chat.`,
+			)
+		}
 		navigate({
 			to: '/$workspaceId/chats/new',
 			params: { workspaceId },
-			search: { objectIds: selectedIds.join(',') },
+			search: { objectIds: carried.join(',') },
 		})
 	}, [selectedIds, navigate, workspaceId])
 
