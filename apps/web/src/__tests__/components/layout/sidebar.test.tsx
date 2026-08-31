@@ -129,6 +129,11 @@ describe('AppSidebar', () => {
 		expect(screen.getByText('NavUser')).toBeInTheDocument()
 	})
 
+	it('does not render a release announcement card — v2 dropped it', () => {
+		render(<AppSidebar />)
+		expect(screen.queryByTestId('sidebar-release-card')).not.toBeInTheDocument()
+	})
+
 	it('renders WorkspaceSwitcher in the header', () => {
 		render(<AppSidebar />)
 		expect(screen.getByTestId('workspace-switcher')).toBeInTheDocument()

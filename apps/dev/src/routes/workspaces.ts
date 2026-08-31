@@ -80,6 +80,9 @@ const addMemberBodySchema = z.object({
 
 const workspaceWithRoleSchema = workspaceResponseSchema.extend({
 	role: z.string(),
+	// The v2 workspace menu labels each row with how many people are in it
+	// ("9 members" / "just you") rather than the caller's own role.
+	memberCount: z.number().int().nonnegative(),
 })
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })

@@ -9,6 +9,8 @@ export function AgentRunPauseButton({
 	isRunPending = false,
 	isPausePending = false,
 	runLabel = 'Run',
+	pauseLabel = 'Pause',
+	tone = 'default',
 	fullWidth = false,
 	density = 'default',
 }: {
@@ -18,6 +20,11 @@ export function AgentRunPauseButton({
 	isRunPending?: boolean
 	isPausePending?: boolean
 	runLabel?: string
+	pauseLabel?: string
+	/** `warning` draws both states as one bordered amber control — how v2 renders
+	 *  the agent-level Disable/Enable toggle in the detail bar (mockup 2313), where
+	 *  the two states are one switch rather than a primary action and its undo. */
+	tone?: 'default' | 'warning'
 	fullWidth?: boolean
 	/** 'nav' matches the top nav's 30px control scale (Search, New). */
 	density?: 'default' | 'nav'
@@ -45,7 +52,7 @@ export function AgentRunPauseButton({
 				disabled={isPausePending}
 			>
 				<PauseCircle size={14} aria-hidden="true" />
-				{isPausePending ? 'Pausing…' : 'Pause'}
+				{isPausePending ? 'Pausing…' : pauseLabel}
 			</Button>
 		)
 	}

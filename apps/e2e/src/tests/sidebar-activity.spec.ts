@@ -129,13 +129,17 @@ test.describe('Sidebar Activity card', () => {
 		page,
 		account,
 	}) => {
-		const sessions = Array.from({ length: 7 }, (_, i) =>
-			buildSession({ id: `s-${i}`, actorId: `a-${i}`, currentActivity: `Task ${i}` }),
+		// Two agents, three live sessions — the sessions list carries one row per
+		// session, so the left half must collapse by actor while the right does not.
+		await mockSessionsAndActors(
+			page,
+			[
+				buildSession({ id: 's-1', actorId: 'a-1' }),
+				buildSession({ id: 's-2', actorId: 'a-1' }),
+				buildSession({ id: 's-3', actorId: 'a-2' }),
+			],
+			[buildActor({ id: 'a-1', name: 'Planner' }), buildActor({ id: 'a-2', name: 'Reviewer' })],
 		)
-		const actors = Array.from({ length: 7 }, (_, i) =>
-			buildActor({ id: `a-${i}`, name: `Agent ${i}` }),
-		)
-		await mockSessionsAndActors(page, sessions, actors)
 		await page.goto(`/${account.workspaceId}`)
 		const card = page.getByTestId('sidebar-activity')
 		// AVATAR_LIMIT is 4, so the 3 remaining agents collapse into one tile.

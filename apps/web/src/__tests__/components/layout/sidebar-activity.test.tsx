@@ -36,7 +36,7 @@ function agent(overrides: Partial<ActiveAgent> = {}): ActiveAgent {
 	}
 }
 
-function card() {
+function row() {
 	return screen.getByTestId('sidebar-activity')
 }
 
@@ -47,16 +47,17 @@ describe('SidebarActivity', () => {
 		setOpenMobile.mockReset()
 	})
 
-	it('reads "idle" with nothing running when no agent holds a live session', () => {
+	it('reads idle with a zero tile and no live dot when nothing holds a session', () => {
 		mockUseActiveAgents.mockReturnValue({ agents: [], isLoading: false, isError: false })
 		render(<SidebarActivity workspaceId="ws-1" />)
-		expect(card()).toHaveTextContent('idle')
-		expect(card()).toHaveTextContent('nothing running')
+		expect(row()).toHaveTextContent('Agents idle')
+		expect(row()).toHaveTextContent('nothing running')
+		expect(row()).toHaveTextContent('0')
 	})
 
-	it('reads "working" and counts sessions, not agents', () => {
+	it('counts agents in the tile and sessions in the sub-line', () => {
 		// Two agents, three live sessions — `useActiveAgents` returns one row per
-		// session, so the card must de-duplicate for the avatar stack.
+		// session, so the tile must de-duplicate by actor while the sub-line does not.
 		mockUseActiveAgents.mockReturnValue({
 			agents: [
 				agent({ actorId: 'a-1', name: 'Quill', sessionId: 's-1' }),
@@ -67,10 +68,9 @@ describe('SidebarActivity', () => {
 			isError: false,
 		})
 		render(<SidebarActivity workspaceId="ws-1" />)
-		expect(card()).toHaveTextContent('working')
-		expect(card()).toHaveTextContent('3 sessions running')
-		expect(screen.getAllByTitle('Quill')).toHaveLength(1)
-		expect(screen.getAllByTitle('Analyst')).toHaveLength(1)
+		expect(row()).toHaveTextContent('Agents working')
+		expect(row()).toHaveTextContent('2')
+		expect(row()).toHaveTextContent('3 sessions running')
 	})
 
 	it('singularises a lone session', () => {
@@ -80,19 +80,24 @@ describe('SidebarActivity', () => {
 			isError: false,
 		})
 		render(<SidebarActivity workspaceId="ws-1" />)
-		expect(card()).toHaveTextContent('1 session running')
+		expect(row()).toHaveTextContent('1 session running')
 	})
 
-	it('collapses the avatar stack past four agents into a +N tile', () => {
+	it('summarises both counts on the rail tile title', () => {
 		mockUseActiveAgents.mockReturnValue({
-			agents: Array.from({ length: 6 }, (_, i) =>
-				agent({ actorId: `a-${i}`, name: `Agent ${i}`, sessionId: `s-${i}` }),
-			),
+			agents: [
+				agent({ actorId: 'a-1', sessionId: 's-1' }),
+				agent({ actorId: 'a-2', sessionId: 's-2' }),
+				agent({ actorId: 'a-2', sessionId: 's-3' }),
+			],
 			isLoading: false,
 			isError: false,
 		})
 		render(<SidebarActivity workspaceId="ws-1" />)
-		expect(screen.getByTitle('2 more')).toHaveTextContent('+2')
+		expect(screen.getByLabelText('Agents')).toHaveAttribute(
+			'title',
+			'2 agents working · 3 sessions running',
+		)
 	})
 
 	it('links to Agents and emits the footer nav event on click', () => {
@@ -102,12 +107,12 @@ describe('SidebarActivity', () => {
 			isError: false,
 		})
 		render(<SidebarActivity workspaceId="ws-1" />)
-		fireEvent.click(card())
+		fireEvent.click(row())
 		expect(trackNavItemClicked).toHaveBeenCalledWith({ item_key: 'agents', source: 'footer' })
 		expect(setOpenMobile).toHaveBeenCalledWith(false)
 	})
 
-	it('renders a skeleton card while loading', () => {
+	it('renders a skeleton row while loading', () => {
 		mockUseActiveAgents.mockReturnValue({ agents: [], isLoading: true, isError: false })
 		render(<SidebarActivity workspaceId="ws-1" />)
 		expect(screen.getByTestId('sidebar-activity-loading')).toBeInTheDocument()
@@ -119,16 +124,18 @@ describe('SidebarActivity', () => {
 		expect(container).toBeEmptyDOMElement()
 	})
 
-	it('hides the card and shows the bare dot in icon-collapsed mode', () => {
+	it('hides the row and keeps the count tile in icon-collapsed mode', () => {
 		mockUseActiveAgents.mockReturnValue({
 			agents: [agent()],
 			isLoading: false,
 			isError: false,
 		})
 		render(<SidebarActivity workspaceId="ws-1" />)
-		expect(card().className).toContain('group-data-[collapsible=icon]:hidden')
-		expect(screen.getByLabelText('Agents').className).toContain(
-			'group-data-[collapsible=icon]:grid',
-		)
+		expect(row().className).toContain('group-data-[collapsible=icon]:hidden')
+		const rail = screen.getByLabelText('Agents')
+		expect(rail.className).toContain('group-data-[collapsible=icon]:grid')
+		// The rail keeps the number, not just a dot — it is the only agents
+		// signal left once the labels are gone.
+		expect(rail).toHaveTextContent('1')
 	})
 })

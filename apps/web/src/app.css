@@ -94,6 +94,7 @@
 	--color-destructive: var(--destructive);
 	--color-destructive-foreground: var(--destructive-foreground);
 	--color-border: var(--border);
+	--color-border-subtle: var(--border-subtle);
 	--color-border-strong: var(--border-strong);
 	--color-border-hover: var(--border-hover);
 	--color-border-subtle: var(--border-subtle);
@@ -288,6 +289,10 @@
 	--destructive-foreground: #ffffff;
 
 	--border: #e4e4e7;
+	/* The quietest rule in v2 — the row-to-row hairline inside a long list,
+	   softer than --border so a list of rows reads as one block rather than a
+	   stack of cards (mockup 2327's `border-bottom:1px solid #f7f7f8`). */
+	--border-subtle: #f7f7f8;
 	--border-strong: #c4c4cc;
 	--border-hover: #c4c4cc;
 	/* Hairline that separates panes without drawing a line the eye stops on
@@ -434,6 +439,7 @@
 	--destructive-foreground: #18181b;
 
 	--border: #27272a;
+	--border-subtle: #212124;
 	--border-strong: #3f3f46;
 	--border-hover: #3f3f46;
 	/* Same relationship inverted: one step up from --card (#18181b) rather

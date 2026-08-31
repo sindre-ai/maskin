@@ -275,6 +275,38 @@ describe('Workspaces Integration', () => {
 			const body = await res.json()
 			expect(body).toHaveLength(2)
 		})
+
+		it('reports a human member count per workspace, excluding seeded agents', async () => {
+			const app = createApp()
+
+			// Creating a workspace also seeds six default agent actors as members.
+			// The count is about people, so a solo workspace must still read 1.
+			const created = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Counted WS' }),
+			)
+			const workspace = await created.json()
+
+			const solo = await app.request(jsonGet('/api/workspaces'))
+			const soloRow = (await solo.json()).find((w: { id: string }) => w.id === workspace.id) as {
+				memberCount: number
+			}
+			expect(soloRow.memberCount).toBe(1)
+
+			// Add a second human — the count moves; adding an agent would not.
+			const teammate = await insertActor(db)
+			await app.request(
+				jsonRequest('POST', `/api/workspaces/${workspace.id}/members`, {
+					actor_id: teammate.id,
+					role: 'member',
+				}),
+			)
+
+			const paired = await app.request(jsonGet('/api/workspaces'))
+			const pairedRow = (await paired.json()).find(
+				(w: { id: string }) => w.id === workspace.id,
+			) as { memberCount: number }
+			expect(pairedRow.memberCount).toBe(2)
+		})
 	})
 
 	describe('update settings', () => {

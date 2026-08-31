@@ -1,44 +1,44 @@
-import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { useSidebar } from '@/components/ui/sidebar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { type ActiveAgent, useActiveAgents } from '@/hooks/use-active-agents'
 import { trackNavItemClicked } from '@/lib/analytics'
 import { cn } from '@/lib/cn'
-import { useWorkspace } from '@/lib/workspace-context'
 import { Link } from '@tanstack/react-router'
-
-// How many avatars the stack shows before collapsing the rest into a +N tile.
-const AVATAR_LIMIT = 4
+import { ChevronRight } from 'lucide-react'
 
 interface ActivitySummary {
 	// One entry per distinct agent with at least one live session.
-	agents: ActiveAgent[]
+	agentCount: number
 	sessionCount: number
 }
 
 // `useActiveAgents` returns one row per live session, so an agent running three
-// sessions appears three times. The card counts agents in the stack and sessions
-// in the sub-line, matching the mockup's `workingIds` / `liveTotal` split.
+// sessions appears three times. The count tile shows agents, the sub-line shows
+// sessions — the mockup's `railAgentsCount` / `liveTotal` split.
 function summarize(rows: ActiveAgent[]): ActivitySummary {
-	const byActor = new Map<string, ActiveAgent>()
-	for (const row of rows) {
-		if (!byActor.has(row.actorId)) byActor.set(row.actorId, row)
-	}
-	return { agents: [...byActor.values()], sessionCount: rows.length }
+	const actorIds = new Set(rows.map((row) => row.actorId))
+	return { agentCount: actorIds.size, sessionCount: rows.length }
 }
 
-function sessionsLabel(count: number): string {
+// The headline is a state, not a tally — the tile already carries the number
+// (mockup line 8795). Nothing running is our equivalent of the mockup's
+// `sessionsPaused` branch: the row still reads, it just reads as quiet.
+export function workingLabel(agentCount: number): string {
+	return agentCount > 0 ? 'Agents working' : 'Agents idle'
+}
+
+export function sessionsLabel(count: number): string {
 	if (count === 0) return 'nothing running'
 	return `${count} ${count === 1 ? 'session' : 'sessions'} running`
 }
 
 /**
- * The sidebar's "agents working" card — mockup lines 93–101.
+ * The sidebar's agents row — mockup lines 83–89 (rail: 127–130).
  *
- * One compact card, not a list: a pulsing live dot, a stack of the agents that
- * currently hold a live session, the working/idle word, and a sessions count.
- * The whole card navigates to Agents, which is how the v2 shell reaches that
- * page at all — Agents is not a sidebar nav entry.
+ * A bordered count tile carrying a live dot, the working/idle state, and the
+ * session total, with a chevron because the whole row navigates to Agents —
+ * which is how the v2 shell reaches that page at all, since Agents is not a
+ * sidebar nav entry. Collapsed, the tile survives on its own.
  */
 export function SidebarActivity({ workspaceId }: { workspaceId: string }) {
 	const { agents: rows, isLoading, isError } = useActiveAgents(workspaceId)
@@ -47,80 +47,75 @@ export function SidebarActivity({ workspaceId }: { workspaceId: string }) {
 	if (isError) return null
 	if (isLoading) return <SidebarActivityLoading />
 
-	const { agents, sessionCount } = summarize(rows)
-	const isWorking = agents.length > 0
-	const visible = agents.slice(0, AVATAR_LIMIT)
-	const overflow = agents.length - visible.length
+	const { agentCount, sessionCount } = summarize(rows)
+	const isWorking = agentCount > 0
+	const summary = `${agentCount} ${agentCount === 1 ? 'agent' : 'agents'} working · ${sessionsLabel(sessionCount)}`
 
 	return (
 		<>
 			<Link
 				to="/$workspaceId/agents"
 				params={{ workspaceId }}
-				title={`${agents.length} ${agents.length === 1 ? 'agent' : 'agents'} · ${sessionsLabel(sessionCount)}`}
+				title={summary}
 				aria-label="Agents"
 				onClick={() => trackNavItemClicked({ item_key: 'agents', source: 'footer' })}
-				className="hidden place-items-center py-1 group-data-[collapsible=icon]:grid"
+				className="relative mx-auto hidden size-8 place-items-center rounded-lg transition-colors duration-150 hover:bg-sidebar-accent group-data-[collapsible=icon]:grid"
 			>
-				<span
-					aria-hidden="true"
-					className={cn(
-						'size-[7px] rounded-full',
-						isWorking ? 'animate-pulse bg-success' : 'bg-border-strong',
-					)}
-				/>
+				<CountTile count={agentCount} />
+				{isWorking && <LiveDot className="right-0.5 top-0.5" />}
 			</Link>
 			<Link
 				to="/$workspaceId/agents"
 				params={{ workspaceId }}
 				data-testid="sidebar-activity"
+				title="View all agents"
 				onClick={() => {
-					// Agents left the nav list in v2 — this card is its only entry
+					// Agents left the nav list in v2 — this row is its only entry
 					// point, so it emits the same `nav_item_clicked` event the nav
 					// entry used to, keeping the footer-CTR series continuous.
 					trackNavItemClicked({ item_key: 'agents', source: 'footer' })
 					setOpenMobile(false)
 				}}
-				className="block rounded-[10px] border border-border bg-card px-[11px] py-2.5 transition-colors duration-150 hover:border-border-hover group-data-[collapsible=icon]:hidden"
+				className="flex items-center gap-[9px] rounded-lg px-2.5 py-2 transition-colors duration-150 hover:bg-sidebar-accent group-data-[collapsible=icon]:hidden"
 			>
-				<div className="flex items-center gap-2">
-					<span
-						aria-hidden="true"
-						className={cn(
-							'size-[7px] shrink-0 rounded-full',
-							isWorking ? 'animate-pulse bg-success' : 'bg-border-strong',
-						)}
-					/>
-					{visible.length > 0 && (
-						<span className="flex shrink-0 items-center">
-							{visible.map((agent, i) => (
-								<ActorAvatar
-									key={agent.actorId}
-									id={agent.actorId}
-									name={agent.name}
-									type={agent.type}
-									className={cn('size-[22px] text-[9px] ring-2 ring-card', i > 0 && '-ml-1.5')}
-								/>
-							))}
-							{overflow > 0 && (
-								<span
-									title={`${overflow} more`}
-									className="-ml-1.5 grid size-[22px] place-items-center rounded-full bg-muted text-[9px] font-medium text-muted-foreground ring-2 ring-card"
-								>
-									+{overflow}
-								</span>
-							)}
-						</span>
-					)}
-					<span className="min-w-0 truncate text-xs font-semibold text-foreground">
-						{isWorking ? 'working' : 'idle'}
+				<span className="relative flex-none">
+					<CountTile count={agentCount} />
+					{isWorking && <LiveDot className="-right-0.5 -top-0.5" />}
+				</span>
+				<span className="min-w-0 flex-1 leading-[1.25]">
+					<span className="block truncate text-xs font-semibold text-sidebar-foreground">
+						{workingLabel(agentCount)}
 					</span>
-				</div>
-				<div className="mt-[5px] pl-[15px] text-[11.5px] text-muted-foreground">
-					{sessionsLabel(sessionCount)}
-				</div>
+					<span className="block truncate text-[10.5px] text-muted-foreground">
+						{sessionsLabel(sessionCount)}
+					</span>
+				</span>
+				<ChevronRight aria-hidden="true" className="size-3 flex-none text-border-strong" />
 			</Link>
 		</>
+	)
+}
+
+function CountTile({ count }: { count: number }) {
+	return (
+		<span className="grid size-[22px] place-items-center rounded-full border-[1.5px] border-border-strong text-[10px] font-bold text-secondary-foreground tabular-nums">
+			{count}
+		</span>
+	)
+}
+
+// Green, not brand: this reports liveness, and the nav's own brand dot already
+// means "unread". Ringed in the sidebar's own fill so it reads as a badge
+// sitting on the tile rather than a hole punched through it.
+function LiveDot({ className }: { className?: string }) {
+	return (
+		<span
+			aria-hidden="true"
+			className={cn(
+				'absolute size-1.5 rounded-full bg-success ring-[1.5px] ring-sidebar',
+				className,
+			)}
+		/>
 	)
 }
 
@@ -128,14 +123,13 @@ function SidebarActivityLoading() {
 	return (
 		<div
 			data-testid="sidebar-activity-loading"
-			className="rounded-[10px] border border-border bg-card px-[11px] py-2.5 group-data-[collapsible=icon]:hidden"
+			className="flex items-center gap-[9px] px-2.5 py-2 group-data-[collapsible=icon]:hidden"
 		>
-			<div className="flex items-center gap-2">
-				<Skeleton className="size-[7px] rounded-full" />
-				<Skeleton className="h-[22px] w-[52px] rounded-full" />
-				<Skeleton className="h-3 w-12" />
-			</div>
-			<Skeleton className="mt-[5px] ml-[15px] h-3 w-24" />
+			<Skeleton className="size-[22px] flex-none rounded-full" />
+			<span className="min-w-0 flex-1">
+				<Skeleton className="h-3 w-24" />
+				<Skeleton className="mt-1 h-2.5 w-20" />
+			</span>
 		</div>
 	)
 }
