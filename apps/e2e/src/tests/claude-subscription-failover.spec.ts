@@ -56,7 +56,10 @@ const seedPrimary = {
 // (apps/dev/src/routes/workspaces.ts) so an unlocked merge can't clobber that
 // locked state. Mock the status boundary instead, same pattern as
 // foryou-sparse-composer.spec.ts's `mockUnreadCount`.
-async function mockFailedOverStatus(page: Page) {
+async function mockFailedOverStatus(
+	page: Page,
+	reason: 'quota_exhausted_weekly' | 'auth_failed' | 'token_expired' = 'quota_exhausted_weekly',
+) {
 	const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000
 	await page.route('**/api/claude-oauth/status*', async (route) => {
 		await route.fulfill({
@@ -73,7 +76,7 @@ async function mockFailedOverStatus(page: Page) {
 				},
 				active_slot: 'backup',
 				last_primary_failure_at: Date.now() - 2 * 60 * 1000,
-				last_classified_reason: 'quota_exhausted_weekly',
+				last_classified_reason: reason,
 			}),
 		})
 	})
@@ -172,5 +175,42 @@ test.describe('Claude subscription failover — settings UI', () => {
 		}
 		expect(settings.claude_oauth?.primary).toBeDefined()
 		expect(settings.claude_oauth?.backup).toBeDefined()
+	})
+
+	test('Reconnect-primary CTA on the banner opens the paste flow with primary preselected (auth_failed)', async ({
+		page,
+		account,
+	}) => {
+		await mockFailedOverStatus(page, 'auth_failed')
+
+		await page.goto(`/${account.workspaceId}/settings/keys`)
+
+		const reconnect = page.getByTestId('failover-banner-reconnect')
+		await expect(reconnect).toBeVisible()
+		await expect(reconnect).toHaveText('Reconnect primary')
+
+		for (const vp of SHIP_GATE_VIEWPORTS) {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await expect(reconnect).toBeVisible()
+		}
+
+		await reconnect.click()
+		await expect(page.getByTestId('paste-flow')).toBeVisible()
+		await expect(page.getByRole('radio', { name: /Primary/ })).toHaveAttribute(
+			'aria-checked',
+			'true',
+		)
+	})
+
+	test('quota-exhausted banner does not render a Reconnect-primary CTA', async ({
+		page,
+		account,
+	}) => {
+		await mockFailedOverStatus(page, 'quota_exhausted_weekly')
+
+		await page.goto(`/${account.workspaceId}/settings/keys`)
+
+		await expect(page.getByTestId('failover-banner')).toBeVisible()
+		await expect(page.getByTestId('failover-banner-reconnect')).toHaveCount(0)
 	})
 })

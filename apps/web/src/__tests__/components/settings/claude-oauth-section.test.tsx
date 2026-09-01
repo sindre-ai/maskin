@@ -157,6 +157,86 @@ describe('Settings > Keys > Claude Subscription', () => {
 		expect(screen.getByTestId('slot-primary')).toHaveTextContent('Authentication failed')
 	})
 
+	it.each(['auth_failed', 'token_expired'])(
+		'renders a Reconnect-primary CTA on the banner for %s and opens the paste flow with primary preselected',
+		async (reason) => {
+			const user = userEvent.setup()
+			mockStatus.mockResolvedValue({
+				connected: true,
+				valid: true,
+				slots: {
+					primary: { subscription_type: 'pro', expires_at: Date.now() + 1000 },
+					backup: { subscription_type: 'pro', expires_at: Date.now() + 1000 },
+				},
+				active_slot: 'backup',
+				last_classified_reason: reason,
+			})
+
+			renderPage()
+
+			const banner = await screen.findByTestId('failover-banner')
+			const reconnect = await screen.findByTestId('failover-banner-reconnect')
+			expect(reconnect).toBeInTheDocument()
+			expect(banner).toContainElement(reconnect)
+			expect(reconnect).toHaveTextContent('Reconnect primary')
+
+			await user.click(reconnect)
+
+			const pasteFlow = await screen.findByTestId('paste-flow')
+			expect(pasteFlow).toBeInTheDocument()
+			const primaryRadio = screen.getByRole('radio', { name: /Primary/ })
+			expect(primaryRadio).toHaveAttribute('aria-checked', 'true')
+		},
+	)
+
+	it('renders the failover banner with a generic body when the classified reason is unknown', async () => {
+		mockStatus.mockResolvedValue({
+			connected: true,
+			valid: true,
+			slots: {
+				primary: { subscription_type: 'pro', expires_at: Date.now() + 1000 },
+				backup: { subscription_type: 'pro', expires_at: Date.now() + 1000 },
+			},
+			active_slot: 'backup',
+			last_classified_reason: 'network_unreachable',
+		})
+
+		renderPage()
+
+		const banner = await screen.findByTestId('failover-banner')
+		expect(banner).toHaveTextContent('Running on backup')
+		expect(banner).toHaveTextContent(
+			'The primary subscription is unhealthy. Agents are running on the backup until it recovers.',
+		)
+		// Unknown reasons have no Reconnect CTA — recovery path is unknown.
+		expect(screen.queryByTestId('failover-banner-reconnect')).not.toBeInTheDocument()
+		// Slot card still surfaces the generic unhealthy line so both surfaces stay in sync.
+		const primary = screen.getByTestId('slot-primary')
+		expect(primary).toHaveTextContent('Unhealthy')
+		expect(primary).toHaveTextContent('Primary subscription is unhealthy.')
+	})
+
+	it.each(['quota_exhausted_5h', 'quota_exhausted_weekly', 'quota_exhausted'])(
+		'does not render the Reconnect-primary CTA for %s (quota reasons clear on their own)',
+		async (reason) => {
+			mockStatus.mockResolvedValue({
+				connected: true,
+				valid: true,
+				slots: {
+					primary: { subscription_type: 'pro', expires_at: Date.now() + 1000 },
+					backup: { subscription_type: 'pro', expires_at: Date.now() + 1000 },
+				},
+				active_slot: 'backup',
+				last_classified_reason: reason,
+			})
+
+			renderPage()
+
+			await screen.findByTestId('failover-banner')
+			expect(screen.queryByTestId('failover-banner-reconnect')).not.toBeInTheDocument()
+		},
+	)
+
 	it('opens the paste flow with Backup pre-selected when clicking Add a backup', async () => {
 		const user = userEvent.setup()
 		mockStatus.mockResolvedValue({

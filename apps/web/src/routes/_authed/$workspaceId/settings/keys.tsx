@@ -85,16 +85,32 @@ const NICKNAME_PLACEHOLDER = 'Add a nickname'
 // Map a classified failover reason (written by the classifier in T4/T6) to
 // the customer-facing line shown next to the unhealthy primary. Reasons
 // outside this map render generically rather than leaking raw codes.
-const FAILOVER_REASON_COPY: Record<string, { slotLine: string; bannerBody: string }> = {
+type FailoverReasonCopy = {
+	slotLine: string
+	bannerBody: string
+	// Reasons the customer can act on directly get a CTA on the banner.
+	// Quota reasons clear on their own (AC-U6) so they carry no `recoverable`.
+	recoverable?: 'reconnect'
+}
+
+// Generic body used when the classifier emits a reason not in the copy map
+// below. Keeps the "Running on backup" signal visible instead of silently
+// dropping the banner if T4 widens its reason set.
+const GENERIC_FAILOVER_BANNER_BODY =
+	'The primary subscription is unhealthy. Agents are running on the backup until it recovers.'
+
+const FAILOVER_REASON_COPY: Record<string, FailoverReasonCopy> = {
 	auth_failed: {
 		slotLine: 'Authentication failed. Reconnect to use this subscription again.',
 		bannerBody:
 			'The primary subscription needs to be reconnected. Agents are running on the backup until then.',
+		recoverable: 'reconnect',
 	},
 	token_expired: {
 		slotLine: 'Credentials expired. Reconnect to use this subscription again.',
 		bannerBody:
 			'The primary subscription needs to be reconnected. Agents are running on the backup until then.',
+		recoverable: 'reconnect',
 	},
 	quota_exhausted_5h: {
 		slotLine: '5-hour usage limit reached.',
@@ -151,6 +167,14 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 
 	const closePaste = useCallback(() => setPasteSlot(null), [])
 
+	const slotsGridRef = useRef<HTMLDivElement>(null)
+	const handleReconnectPrimary = useCallback(() => {
+		slotsGridRef.current
+			?.querySelector('[data-slot="primary"]')
+			?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+		setPasteSlot('primary')
+	}, [])
+
 	return (
 		<div>
 			<div>
@@ -168,11 +192,20 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 				credentials expire.
 			</p>
 
-			{isFailedOver && reasonCopy && (
-				<FailoverBanner reasonCopy={reasonCopy} reasonCode={status?.last_classified_reason ?? ''} />
+			{isFailedOver && (
+				<FailoverBanner
+					bannerBody={reasonCopy?.bannerBody ?? GENERIC_FAILOVER_BANNER_BODY}
+					recoverable={reasonCopy?.recoverable}
+					reasonCode={status?.last_classified_reason ?? ''}
+					onReconnectPrimary={handleReconnectPrimary}
+				/>
 			)}
 
-			<div className="grid grid-cols-1 md:grid-cols-2 gap-3" data-testid="claude-oauth-slots">
+			<div
+				ref={slotsGridRef}
+				className="grid grid-cols-1 md:grid-cols-2 gap-3"
+				data-testid="claude-oauth-slots"
+			>
 				<SlotCard
 					slot="primary"
 					info={slots.primary}
@@ -405,11 +438,15 @@ function SlotCard({
 }
 
 function FailoverBanner({
-	reasonCopy,
+	bannerBody,
+	recoverable,
 	reasonCode,
+	onReconnectPrimary,
 }: {
-	reasonCopy: (typeof FAILOVER_REASON_COPY)[string]
+	bannerBody: string
+	recoverable?: FailoverReasonCopy['recoverable']
 	reasonCode: string
+	onReconnectPrimary: () => void
 }) {
 	const [showVerbatim, setShowVerbatim] = useState(false)
 	return (
@@ -418,7 +455,17 @@ function FailoverBanner({
 			data-testid="failover-banner"
 		>
 			<p className="text-sm font-bold text-warning">Running on backup</p>
-			<p className="text-xs text-foreground/80">{reasonCopy.bannerBody}</p>
+			<p className="text-xs text-foreground/80">{bannerBody}</p>
+			{recoverable === 'reconnect' && (
+				<button
+					type="button"
+					onClick={onReconnectPrimary}
+					className="text-xs font-medium text-warning underline underline-offset-2 hover:text-warning/80 transition-colors"
+					data-testid="failover-banner-reconnect"
+				>
+					Reconnect primary
+				</button>
+			)}
 			<button
 				type="button"
 				className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
