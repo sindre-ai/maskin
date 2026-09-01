@@ -175,7 +175,7 @@ describe('spoken briefing', () => {
 			expect(storage.files.has(briefCacheKey(workspaceId, new Date()))).toBe(true)
 
 			const second = await generateSpokenBrief(db, storage, workspaceId)
-			expect(second.source).toBe('cache')
+			expect(second.cached).toBe(true)
 			expect(second.script).toBe(first.script)
 		})
 
@@ -188,7 +188,7 @@ describe('spoken briefing', () => {
 			})
 
 			const second = await generateSpokenBrief(db, storage, workspaceId)
-			expect(second.source).not.toBe('cache')
+			expect(second.cached).toBe(false)
 			expect(second.script).toContain('Ship the pricing page')
 		})
 

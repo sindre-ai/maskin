@@ -23,7 +23,13 @@ const MAX_SCRIPT_TOKENS = 700
  */
 const SCRIPT_TEMPERATURE = 0.6
 
-export type SpokenBriefSource = 'cache' | 'agent' | 'fallback'
+/**
+ * Who actually wrote the script. Deliberately *not* a `'cache'` member: a
+ * cached brief still has an author, and collapsing the two made an agent brief
+ * and a fallback brief indistinguishable the moment either was cached. Whether
+ * this response came from storage is the separate `cached` flag.
+ */
+export type SpokenBriefSource = 'agent' | 'fallback'
 
 export interface SpokenBrief {
 	workspaceId: string
@@ -32,12 +38,18 @@ export interface SpokenBrief {
 	mentionedIds: string[]
 	generatedAt: string
 	source: SpokenBriefSource
+	/** True when this response was served from the day's cache rather than
+	 *  written just now. Orthogonal to `source`. */
+	cached: boolean
+	/** The agent that wrote it, or null — including when an agent resolved but
+	 *  never got to write, so the UI can never credit prose to someone who
+	 *  didn't produce it. */
 	agent: { id: string; name: string } | null
 	model: string | null
 }
 
 /** Cached script for one workspace-day. `briefs/{workspaceId}/{YYYY-MM-DD}.json`. */
-interface CachedBrief extends Omit<SpokenBrief, 'source'> {
+interface CachedBrief extends Omit<SpokenBrief, 'cached'> {
 	inputHash: string
 }
 
@@ -219,9 +231,13 @@ export function formatSpokenFallback(facts: BriefingFacts): string {
 		sentences.push(`Last session left a note: ${lastLearning}`)
 	}
 
+	// Says only what the facts contain. `BriefingBetFact.progress` carries a
+	// done/total rollup and nothing about blocked children, so the earlier
+	// "Nothing is blocked" claim asserted something this function never checked
+	// — the same invention the model is instructed not to make.
 	sentences.push(
 		facts.activeBets.length > 0
-			? 'Nothing is blocked, so pick up whichever of those you have the appetite for.'
+			? 'Pick up whichever of those you have the appetite for.'
 			: 'Nothing needs you today.',
 	)
 
@@ -315,7 +331,7 @@ export async function generateSpokenBrief(
 	const cached = await readCache(storage, key, inputHash)
 	if (cached) {
 		const { inputHash: _ignored, ...brief } = cached
-		return { ...brief, source: 'cache' }
+		return { ...brief, cached: true }
 	}
 
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
@@ -324,6 +340,12 @@ export async function generateSpokenBrief(
 
 	let script: string | null = null
 	let model: string | null = null
+	// Whether this result is worth keeping for the rest of the day. A fallback
+	// written because the workspace has no callable credentials is stable and
+	// cheap to reuse; one written because a call *failed* is not — caching that
+	// would pin the workspace to degraded prose until the facts change or UTC
+	// midnight, and every retry would silently read the failure back.
+	let cacheable = true
 
 	if (agent) {
 		const llmConfig = (agent.llmConfig as Record<string, unknown> | null) ?? {}
@@ -371,12 +393,14 @@ export async function generateSpokenBrief(
 				} else {
 					// Reasoning models occasionally spend the whole budget on
 					// thinking and return nothing — same failure `callLlm` retries.
+					cacheable = false
 					logger.warn('Brief script came back empty — using fallback prose', {
 						workspaceId,
 						model: credentials.model,
 					})
 				}
 			} catch (err) {
+				cacheable = false
 				logger.warn('Brief script generation failed — using fallback prose', {
 					workspaceId,
 					error: err instanceof Error ? err.message : String(err),
@@ -402,17 +426,25 @@ export async function generateSpokenBrief(
 		mentionedIds: resolveMentionedIds(facts, finalScript),
 		generatedAt: now.toISOString(),
 		source,
-		agent: agent ? { id: agent.id, name: agent.name } : null,
+		cached: false,
+		// Only credit the agent when it actually wrote the script. Resolving an
+		// agent is not authorship: the fallback paths resolve one too, and
+		// crediting it there tells the reader a named colleague wrote prose that
+		// `formatSpokenFallback` concatenated.
+		agent: source === 'agent' && agent ? { id: agent.id, name: agent.name } : null,
 		model,
 	}
 
-	// Cache the fallback too: without credentials every press would otherwise
-	// re-run the queries, and the prose is identical anyway.
-	try {
-		const { source: _source, ...cacheable } = brief
-		await storage.put(key, Buffer.from(JSON.stringify({ ...cacheable, inputHash }), 'utf-8'))
-	} catch (err) {
-		logger.warn('Failed to cache brief', { key, error: String(err) })
+	// The no-credentials fallback is worth caching — the prose is deterministic,
+	// so every press would otherwise re-run the queries for an identical result.
+	// A fallback caused by a failed call is not: see `cacheable` above.
+	if (cacheable) {
+		try {
+			const { cached: _cached, ...persisted } = brief
+			await storage.put(key, Buffer.from(JSON.stringify({ ...persisted, inputHash }), 'utf-8'))
+		} catch (err) {
+			logger.warn('Failed to cache brief', { key, error: String(err) })
+		}
 	}
 
 	return brief

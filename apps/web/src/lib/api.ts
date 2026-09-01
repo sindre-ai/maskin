@@ -1135,7 +1135,13 @@ export interface SpokenBriefResponse {
 	script: string
 	mentioned_ids: string[]
 	generated_at: string
-	source: 'cache' | 'agent' | 'fallback'
+	/** Who wrote it. `agent` only when the model actually produced the script. */
+	source: 'agent' | 'fallback'
+	/** Served from the day's cache rather than written just now — orthogonal to
+	 *  `source`, since a cached brief still has an author. */
+	cached: boolean
+	/** Null whenever `source` is `fallback`, so the UI cannot credit an agent
+	 *  that didn't write the prose. */
 	agent: { id: string; name: string } | null
 	model: string | null
 }

@@ -131,10 +131,13 @@ export function BriefCard({ workspaceId }: { workspaceId: string }) {
 
 	useEffect(() => {
 		if (!pendingPlay) return
-		// A failed write clears the intent too, or the card would try to speak
-		// every time the query settles.
+		// A failure clears the intent, or a later successful refetch would speak
+		// unprompted. It also opens the card: pressing play on a collapsed one is
+		// the whole gesture, and the error lives inside the expanded body — left
+		// collapsed, a failed brief is silence indistinguishable from a misclick.
 		if (isError) {
 			setPendingPlay(false)
+			setOpen(true)
 			return
 		}
 		if (!data || isFetching || playback.playing) return

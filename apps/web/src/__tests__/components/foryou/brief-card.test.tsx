@@ -55,6 +55,7 @@ function buildSpokenBrief(overrides: Record<string, unknown> = {}) {
 		mentioned_ids: [OBJECT_ID],
 		generated_at: '2026-08-19T08:00:00.000Z',
 		source: 'agent' as const,
+		cached: false,
 		agent: { id: 'agent-1', name: 'Chief of Staff' },
 		model: 'claude-haiku-4-5-20251001',
 		...overrides,
@@ -194,6 +195,37 @@ describe('BriefCard', () => {
 
 		await userEvent.click(screen.getByRole('button', { name: "Today's brief" }))
 		expect(await screen.findByText(/by Chief of Staff/)).toBeInTheDocument()
+	})
+
+	it('does not credit an agent for prose the agent did not write', async () => {
+		// The server nulls `agent` on the fallback paths, so the card has nothing
+		// to misattribute. This pins the card's side of that contract.
+		installSpeechSynthesis()
+		mockOnDemandBrief(buildSpokenBrief({ source: 'fallback', agent: null, model: null }))
+		render(<BriefCard workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		await userEvent.click(screen.getByRole('button', { name: "Today's brief" }))
+		expect(await screen.findByTestId('brief-player')).toBeInTheDocument()
+		expect(screen.queryByText(/by Chief of Staff/)).not.toBeInTheDocument()
+	})
+
+	it('shows the failure when play is pressed on a collapsed card', async () => {
+		// Pressing play while collapsed is the whole gesture. The error lives in
+		// the expanded body, so a failure left collapsed is silence — and silence
+		// is indistinguishable from having missed the button.
+		installSpeechSynthesis()
+		const refetch = vi.fn()
+		mockUseSpokenBrief.mockReturnValue({
+			data: undefined,
+			isFetching: false,
+			isError: true,
+			error: new Error('nope'),
+			refetch,
+		})
+		render(<BriefCard workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		await userEvent.click(screen.getByRole('button', { name: /read the brief aloud/i }))
+		expect(await screen.findByText("Couldn't write the brief")).toBeInTheDocument()
 	})
 
 	it('surfaces a retry when the brief could not be written', async () => {

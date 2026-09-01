@@ -305,8 +305,11 @@ describe('generateSpokenBrief', () => {
 		const second = await generateSpokenBrief(db, storage as AnyDb, WS_ID)
 
 		expect(first.source).toBe('agent')
-		expect(second.source).toBe('cache')
-		expect(second.script).toBe(first.script)
+		expect(first.cached).toBe(false)
+		expect(second.cached).toBe(true)
+		// The cache must not launder authorship: a cached agent brief is still an
+		// agent brief, and every field the card renders survives the round-trip.
+		expect(second).toEqual({ ...first, cached: true })
 		expect(chat).toHaveBeenCalledTimes(1)
 	})
 
@@ -330,6 +333,7 @@ describe('generateSpokenBrief', () => {
 		const second = await generateSpokenBrief(db, storage as AnyDb, WS_ID)
 
 		expect(second.source).toBe('agent')
+		expect(second.cached).toBe(false)
 		expect(chat).toHaveBeenCalledTimes(2)
 	})
 
@@ -346,6 +350,71 @@ describe('generateSpokenBrief', () => {
 		expect(brief.source).toBe('fallback')
 		expect(brief.script).toContain('Cut signup friction')
 		expect(mockCreateLLMAdapter).not.toHaveBeenCalled()
+		// An agent resolved, but it never wrote anything — crediting it would tell
+		// the reader a named colleague produced concatenated prose.
+		expect(brief.agent).toBeNull()
+	})
+
+	it('reuses the credential-less fallback, which is deterministic anyway', async () => {
+		mockResolveChatCredentials.mockReturnValue(null)
+		const storage = fakeStorage()
+		const db = fakeDb({ workspace: buildWorkspaceRow(), agent: buildAgentRow() }) as AnyDb
+
+		const first = await generateSpokenBrief(db, storage as AnyDb, WS_ID)
+		const second = await generateSpokenBrief(db, storage as AnyDb, WS_ID)
+
+		expect(first.cached).toBe(false)
+		expect(second.cached).toBe(true)
+		expect(second.source).toBe('fallback')
+		expect(second.agent).toBeNull()
+	})
+
+	it('never caches a fallback caused by a failed call, so a retry can succeed', async () => {
+		// The failure is transient. Caching it would pin the workspace to
+		// degraded prose until the facts change or UTC midnight, and every press
+		// of play would read the failure back and look like it had worked.
+		const chat = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('503 upstream'))
+			.mockResolvedValue({ content: 'Signup is the one to watch.' })
+		mockCreateLLMAdapter.mockReturnValue({ chat })
+		mockResolveChatCredentials.mockReturnValue({
+			provider: 'openai',
+			apiKey: 'sk',
+			model: 'm',
+		})
+		const storage = fakeStorage()
+		const db = fakeDb({ workspace: buildWorkspaceRow(), agent: buildAgentRow() }) as AnyDb
+
+		const failed = await generateSpokenBrief(db, storage as AnyDb, WS_ID)
+		expect(failed.source).toBe('fallback')
+
+		const retried = await generateSpokenBrief(db, storage as AnyDb, WS_ID)
+		expect(retried.cached).toBe(false)
+		expect(retried.source).toBe('agent')
+		expect(retried.script).toBe('Signup is the one to watch.')
+		expect(chat).toHaveBeenCalledTimes(2)
+	})
+
+	it('never caches a fallback caused by an empty completion either', async () => {
+		const chat = vi
+			.fn()
+			.mockResolvedValueOnce({ content: '  ' })
+			.mockResolvedValue({ content: 'Written on the retry.' })
+		mockCreateLLMAdapter.mockReturnValue({ chat })
+		mockResolveChatCredentials.mockReturnValue({
+			provider: 'openai',
+			apiKey: 'sk',
+			model: 'm',
+		})
+		const storage = fakeStorage()
+		const db = fakeDb({ workspace: buildWorkspaceRow(), agent: buildAgentRow() }) as AnyDb
+
+		await generateSpokenBrief(db, storage as AnyDb, WS_ID)
+		const retried = await generateSpokenBrief(db, storage as AnyDb, WS_ID)
+
+		expect(retried.source).toBe('agent')
+		expect(retried.script).toBe('Written on the retry.')
 	})
 
 	it('falls back to prose rather than throwing when the model call fails', async () => {
@@ -364,6 +433,7 @@ describe('generateSpokenBrief', () => {
 			WS_ID,
 		)
 		expect(brief.source).toBe('fallback')
+		expect(brief.agent).toBeNull()
 	})
 
 	it('falls back when the model returns an empty completion', async () => {

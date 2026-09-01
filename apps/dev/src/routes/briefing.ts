@@ -58,7 +58,13 @@ const spokenBriefResponseSchema = z.object({
 	script: z.string(),
 	mentioned_ids: z.array(z.string().uuid()),
 	generated_at: z.string(),
-	source: z.enum(['cache', 'agent', 'fallback']),
+	/** Who wrote it. `agent` only when the model actually produced the script. */
+	source: z.enum(['agent', 'fallback']),
+	/** Served from the day's cache rather than written just now. Orthogonal to
+	 *  `source` — a cached brief still has an author. */
+	cached: z.boolean(),
+	/** Null whenever `source` is `fallback`, so a client can never credit the
+	 *  prose to an agent that didn't write it. */
 	agent: z.object({ id: z.string().uuid(), name: z.string() }).nullable(),
 	model: z.string().nullable(),
 })
@@ -97,6 +103,7 @@ app.openapi(spokenBriefRoute, async (c) => {
 			mentioned_ids: brief.mentionedIds,
 			generated_at: brief.generatedAt,
 			source: brief.source,
+			cached: brief.cached,
 			agent: brief.agent,
 			model: brief.model,
 		},
