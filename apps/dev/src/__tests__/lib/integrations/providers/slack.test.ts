@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
 	config,
@@ -29,10 +31,16 @@ describe('Slack provider config', () => {
 	})
 
 	// AC-T8: code-side scope alignment. The Marketplace listing is built from
-	// this array by a separate human follow-up; assert here that the brief's
-	// allow-list is satisfied and the `conversations.history`-equivalents are
-	// deliberately absent in phase 1.
-	it('requests every scope the bet brief calls out and excludes phase-1 history scopes', () => {
+	// this array by a separate human follow-up; assert here that everything the
+	// tool surface depends on is actually requested.
+	//
+	// The history scopes were deliberately EXCLUDED in phase 1 (the bot was to
+	// see only what it was @mentioned in) and this test asserted their absence.
+	// That decision was reversed: agents need to read channel history, so they
+	// are now required here and the Marketplace listing was re-submitted to
+	// match. The AC-T8 rule is unchanged and runs both ways — this array and the
+	// listing move together.
+	it('requests every scope the tool surface depends on, including channel history', () => {
 		if (config.auth.type !== 'oauth2') throw new Error('unreachable')
 		const scopes = new Set(config.auth.config.scopes)
 		for (const required of [
@@ -47,11 +55,96 @@ describe('Slack provider config', () => {
 			'links:write',
 			'team:read',
 			'users:read',
+			// Reversed from phase 1 — `slack_read_channel` / `slack_read_thread`
+			// cannot work without these.
+			'channels:history',
+			'groups:history',
+			'mpim:history',
+			// `slack_read_user_profile` detail and the canvas trio.
+			'users.profile:read',
+			'canvases:read',
+			'canvases:write',
+			// `conversations.join`, so a public-channel read can clear its own
+			// `not_in_channel` instead of asking a human to invite the bot.
+			'channels:join',
 		]) {
 			expect(scopes.has(required)).toBe(true)
 		}
-		for (const excluded of ['channels:history', 'groups:history', 'mpim:history']) {
-			expect(scopes.has(excluded)).toBe(false)
+	})
+
+	// `search.messages` has no bot-scope equivalent, so the install asks for a
+	// user token in the same round-trip. `extraAuthParams` is applied verbatim to
+	// the authorize URL, which is what makes this work with no handler change.
+	it('requests the search user scope via extraAuthParams', () => {
+		if (config.auth.type !== 'oauth2') throw new Error('unreachable')
+		// Present at all: without it Slack returns no user token and the two
+		// search tools never register.
+		expect(config.auth.config.extraAuthParams?.user_scope).toBeTruthy()
+	})
+
+	it('does not request search:read as a bot scope — Slack does not offer one', () => {
+		if (config.auth.type !== 'oauth2') throw new Error('unreachable')
+		expect(config.auth.config.scopes).not.toContain('search:read')
+	})
+
+	// Slack split the blanket `search:read` into per-surface scopes. Asking for
+	// the old name would fail the whole authorize with `invalid_scope`.
+	it('requests the granular search scopes, not the retired blanket one', () => {
+		if (config.auth.type !== 'oauth2') throw new Error('unreachable')
+		const userScopes = (config.auth.config.extraAuthParams?.user_scope ?? '').split(',')
+		expect(userScopes).toContain('search:read.public')
+		expect(userScopes).toContain('search:read.private')
+		expect(userScopes).not.toContain('search:read')
+	})
+
+	// The scope lists in config.ts and the Slack app manifest are two halves of
+	// one contract: Slack rejects the ENTIRE authorize with `invalid_scope` if
+	// the request names anything the app does not declare. Nothing at runtime
+	// catches that — the first symptom is that connecting Slack stops working
+	// for everyone — so pin the subset relationship here.
+	it('requests only scopes the Slack app manifest declares', () => {
+		if (config.auth.type !== 'oauth2') throw new Error('unreachable')
+
+		const manifest = readFileSync(
+			resolve(__dirname, '../../../../../../../docs/integrations/slack/manifest.yml'),
+			'utf8',
+		)
+
+		// The manifest's scope block is a flat YAML list under `bot:` / `user:`.
+		// Parsed with a small reader rather than adding a YAML dependency for one
+		// assertion; it fails loudly below if the shape ever changes.
+		const declared = (key: 'bot' | 'user'): Set<string> => {
+			const lines = manifest.split('\n')
+			const start = lines.findIndex((l) => l.trim() === `${key}:`)
+			if (start === -1) throw new Error(`manifest.yml has no \`${key}:\` scope list`)
+			const scopes: string[] = []
+			for (const line of lines.slice(start + 1)) {
+				const trimmed = line.trim()
+				if (trimmed.startsWith('#') || trimmed === '') continue
+				if (!trimmed.startsWith('- ')) break // next YAML key — list is done
+				scopes.push(trimmed.slice(2).trim())
+			}
+			if (scopes.length === 0) throw new Error(`manifest.yml \`${key}:\` list parsed as empty`)
+			return new Set(scopes)
+		}
+
+		const declaredBot = declared('bot')
+		for (const scope of config.auth.config.scopes) {
+			expect(
+				declaredBot.has(scope),
+				`bot scope \`${scope}\` is requested in config.ts but not declared in manifest.yml`,
+			).toBe(true)
+		}
+
+		const declaredUser = declared('user')
+		for (const scope of (config.auth.config.extraAuthParams?.user_scope ?? '')
+			.split(',')
+			.map((s) => s.trim())
+			.filter(Boolean)) {
+			expect(
+				declaredUser.has(scope),
+				`user scope \`${scope}\` is requested in config.ts but not declared in manifest.yml`,
+			).toBe(true)
 		}
 	})
 
@@ -123,6 +216,46 @@ describe('parseTokenResponse', () => {
 		expect(result.accessToken).toBe('xoxb-test')
 		expect(result.teamId).toBeUndefined()
 		expect(result.teamName).toBeUndefined()
+	})
+
+	// The dual-token grant. `access_token` must stay the BOT token — the xoxb-
+	// guards in session-manager and the MCP server key off it, and a user token
+	// landing there would make agents post as the human who installed the app.
+	it('stashes the user token from authed_user without disturbing the bot token', () => {
+		const raw = {
+			ok: true,
+			access_token: 'xoxb-bot-token',
+			scope: 'channels:read,channels:history',
+			team: { id: 'T456TEAM', name: 'Test Workspace' },
+			authed_user: {
+				id: 'U000USER',
+				access_token: 'xoxp-user-token',
+				scope: 'search:read',
+				token_type: 'user',
+			},
+		}
+
+		const result = parseTokenResponse(raw)
+		expect(result.accessToken).toBe('xoxb-bot-token')
+		expect(result.userAccessToken).toBe('xoxp-user-token')
+		expect(result.userScope).toBe('search:read')
+		expect(result.authedUserId).toBe('U000USER')
+	})
+
+	// An install that predates the user_scope grant: Slack still sends
+	// `authed_user`, but with an id only and no token.
+	it('leaves the user token undefined when authed_user carries no access_token', () => {
+		const raw = {
+			ok: true,
+			access_token: 'xoxb-bot-token',
+			authed_user: { id: 'U000USER' },
+		}
+
+		const result = parseTokenResponse(raw)
+		expect(result.accessToken).toBe('xoxb-bot-token')
+		expect(result.authedUserId).toBe('U000USER')
+		expect(result.userAccessToken).toBeUndefined()
+		expect(result.userScope).toBeUndefined()
 	})
 
 	it('throws on error response', () => {
