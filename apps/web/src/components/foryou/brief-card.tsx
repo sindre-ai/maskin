@@ -135,7 +135,13 @@ export function BriefCard({ workspaceId }: { workspaceId: string }) {
 		// unprompted. It also opens the card: pressing play on a collapsed one is
 		// the whole gesture, and the error lives inside the expanded body — left
 		// collapsed, a failed brief is silence indistinguishable from a misclick.
-		if (isError) {
+		//
+		// `!isFetching` is load-bearing. The query is `retry: false`, and an
+		// errored query keeps `status: 'error'` for the whole duration of a manual
+		// `refetch()` — only `fetchStatus` moves. Without this guard the retry
+		// press abandons its own intent on the very next render, then succeeds and
+		// renders a brief that never speaks.
+		if (isError && !isFetching) {
 			setPendingPlay(false)
 			setOpen(true)
 			return

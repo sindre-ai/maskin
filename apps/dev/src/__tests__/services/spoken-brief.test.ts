@@ -164,6 +164,52 @@ describe('briefInputHash', () => {
 		expect(briefInputHash(moved)).not.toBe(briefInputHash(buildFacts()))
 	})
 
+	it('changes when the system prompt behind the voice is edited', () => {
+		// The prompt is spliced into the request, so editing the Chief of Staff in
+		// the UI changes what the agent would write even though the object graph
+		// has not moved. On a facts-only fingerprint the day cache would replay the
+		// old prose under the edited agent name.
+		const before = briefInputHash(buildFacts(), {
+			agentId: 'agent-1',
+			systemPrompt: 'Plain. Direct. Short.',
+			model: 'small-fast',
+		})
+		const after = briefInputHash(buildFacts(), {
+			agentId: 'agent-1',
+			systemPrompt: 'Plain. Direct. Short. Lead with the risk.',
+			model: 'small-fast',
+		})
+		expect(after).not.toBe(before)
+	})
+
+	it('changes when a different agent is pinned', () => {
+		const before = briefInputHash(buildFacts(), {
+			agentId: 'agent-1',
+			systemPrompt: 'Plain. Direct. Short.',
+			model: 'small-fast',
+		})
+		const after = briefInputHash(buildFacts(), {
+			agentId: 'agent-2',
+			systemPrompt: 'Plain. Direct. Short.',
+			model: 'small-fast',
+		})
+		expect(after).not.toBe(before)
+	})
+
+	it('changes when the model changes', () => {
+		const before = briefInputHash(buildFacts(), {
+			agentId: 'agent-1',
+			systemPrompt: 'Plain. Direct. Short.',
+			model: 'small-fast',
+		})
+		const after = briefInputHash(buildFacts(), {
+			agentId: 'agent-1',
+			systemPrompt: 'Plain. Direct. Short.',
+			model: 'big-slow',
+		})
+		expect(after).not.toBe(before)
+	})
+
 	it('changes when task progress advances', () => {
 		const advanced = buildFacts({
 			activeBets: [

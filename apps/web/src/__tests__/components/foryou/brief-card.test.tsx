@@ -127,6 +127,38 @@ function mockOnDemandBrief(brief = buildSpokenBrief()) {
 	return { refetch }
 }
 
+/**
+ * A `useSpokenBrief` stand-in that has already failed once and recovers on the
+ * next refetch — with TanStack Query's real semantics, which are the whole
+ * point of the test. The query is `retry: false`, so an errored query keeps
+ * `status: 'error'` (and therefore `isError`) for the *entire* duration of a
+ * manual `refetch()`; only `fetchStatus` moves. A card that abandons its play
+ * intent the moment it sees `isError` therefore throws it away on the very
+ * render that starts the retry, then renders a brief that never speaks.
+ */
+function mockRecoveringBrief(brief = buildSpokenBrief()) {
+	const refetch = vi.fn()
+	mockUseSpokenBrief.mockImplementation(() => {
+		const [phase, setPhase] = useState<'error' | 'fetching' | 'done'>('error')
+		refetch.mockImplementation(async () => {
+			setPhase('fetching')
+			await Promise.resolve()
+			act(() => setPhase('done'))
+			return { data: brief }
+		})
+		return {
+			data: phase === 'done' ? brief : undefined,
+			isFetching: phase === 'fetching',
+			// Still `true` while the retry is in flight — this is not a quirk of
+			// the mock, it is what TanStack Query reports.
+			isError: phase !== 'done',
+			error: phase === 'done' ? null : new Error('brief unavailable'),
+			refetch,
+		}
+	})
+	return { refetch }
+}
+
 describe('BriefCard', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
@@ -164,6 +196,20 @@ describe('BriefCard', () => {
 		for (const text of spoken) {
 			expect(text).not.toMatch(/[#*`]|id:/)
 		}
+	})
+
+	it('speaks the retry when the first attempt failed', async () => {
+		const { speak } = installSpeechSynthesis()
+		const { refetch } = mockRecoveringBrief()
+		render(<BriefCard workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		// The press that retries has to keep its intent alive across a refetch
+		// that begins while the query is still reporting the previous failure.
+		await userEvent.click(screen.getByRole('button', { name: 'Read the brief aloud' }))
+
+		await waitFor(() => expect(refetch).toHaveBeenCalledTimes(1))
+		await waitFor(() => expect(speak).toHaveBeenCalledTimes(2))
+		expect(speak.mock.calls.map((call) => call[0].text).join(' ')).toBe(SCRIPT)
 	})
 
 	it('renders the transcript unconditionally when the browser cannot speak', async () => {

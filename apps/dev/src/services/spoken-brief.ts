@@ -63,12 +63,34 @@ export function utcDateStamp(date: Date): string {
 }
 
 /**
+ * Who the script would be written by, as far as the cache is concerned.
+ * Folded into the fingerprint alongside the facts because these are the other
+ * two inputs to the prose — the system prompt is spliced into the request, and
+ * the model decides what comes back.
+ */
+export interface BriefAuthorFingerprint {
+	agentId: string | null
+	systemPrompt: string | null
+	model: string | null
+}
+
+/**
  * Stable fingerprint of everything the script is written from. A cached brief
  * is reused only while this matches, so a bet moving status regenerates the
  * brief the next time it's asked for — and nothing else does.
+ *
+ * `author` is part of it because the facts are not the only input. Editing the
+ * Chief of Staff's system prompt in the UI, pinning a different
+ * `default_agent_id`, or switching the model all change what the agent would
+ * write while leaving the object graph untouched — and on a facts-only
+ * fingerprint the day's cache would replay the old prose under the new agent's
+ * name, crediting it with something it didn't write.
  */
-export function briefInputHash(facts: BriefingFacts): string {
-	return createHash('sha256').update(JSON.stringify(facts)).digest('hex').slice(0, 16)
+export function briefInputHash(
+	facts: BriefingFacts,
+	author: BriefAuthorFingerprint = { agentId: null, systemPrompt: null, model: null },
+): string {
+	return createHash('sha256').update(JSON.stringify({ facts, author })).digest('hex').slice(0, 16)
 }
 
 /**
@@ -302,13 +324,45 @@ async function readCache(
 }
 
 /**
+ * The credentials the brief would be written with, or null when the workspace
+ * has no chat-callable route (e.g. an agent whose only route is Claude OAuth,
+ * which `resolveChatCredentials` intentionally cannot use out-of-container).
+ *
+ * Split out because it is now needed twice over: once to fingerprint the day's
+ * cache, and once to actually make the call.
+ */
+function resolveBriefCredentials(
+	ws: typeof workspaces.$inferSelect | undefined,
+	settings: WorkspaceSettings,
+	agent: typeof actors.$inferSelect,
+) {
+	const llmConfig = (agent.llmConfig as Record<string, unknown> | null) ?? {}
+	return resolveChatCredentials({
+		wsSettings: settings,
+		// Absent row => treat as entitled, i.e. refuse the Maskin key. A brief we
+		// can't attribute to a readable workspace degrades to no spoken script,
+		// which is the safe direction.
+		workspace: {
+			enterpriseGranted: ws ? ws.enterpriseGranted : true,
+			billingOwnerId: ws?.billingOwnerId ?? null,
+		},
+		agent: {
+			provider: agent.llmProvider,
+			apiKey: (llmConfig.api_key as string | undefined)?.trim() || null,
+			model: (llmConfig.model as string | undefined)?.trim() || null,
+		},
+	})
+}
+
+/**
  * The human-facing daily brief: the workspace's own default agent, writing
  * from the same facts the agent briefing is built from.
  *
  * Generated on demand — when someone presses play, never on a schedule and
  * never at session start — then cached for the rest of the UTC day under a
- * fingerprint of the facts, so pressing play again costs nothing unless the
- * workspace actually changed. `BriefCacheCleaner` sweeps yesterday's files.
+ * fingerprint of the facts *and its author*, so pressing play again costs
+ * nothing unless the workspace, the agent, or its model actually changed.
+ * `BriefCacheCleaner` sweeps yesterday's files.
  *
  * Provider-agnostic by construction: `resolveChatCredentials` falls through
  * the agent's own key, the workspace's custom OpenAI-compatible endpoint (the
@@ -325,7 +379,25 @@ export async function generateSpokenBrief(
 ): Promise<SpokenBrief> {
 	const now = options.now ?? new Date()
 	const facts = await collectBriefingFacts(db, storage, workspaceId)
-	const inputHash = briefInputHash(facts)
+
+	// Resolved before the cache is read, not after: the agent and the model it
+	// would use are part of the fingerprint, so they have to be known to decide
+	// whether the cached script is still the one this workspace would produce.
+	// Two selects on the hit path, against the model call they exist to avoid.
+	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
+	const settings = (ws?.settings as WorkspaceSettings) ?? ({} as WorkspaceSettings)
+	const agent = ws ? await resolveBriefingAgent(db, workspaceId, settings) : null
+	const credentials = agent ? resolveBriefCredentials(ws, settings, agent) : null
+	// The prompt as it would actually be sent — the agent's own, or the default
+	// it falls back to. Hashing `agent.systemPrompt` raw would miss an edit that
+	// blanks it, which changes the voice just as much as rewriting it.
+	const systemPrompt = agent ? agent.systemPrompt?.trim() || CHIEF_OF_STAFF_SYSTEM_PROMPT : null
+
+	const inputHash = briefInputHash(facts, {
+		agentId: agent?.id ?? null,
+		systemPrompt,
+		model: credentials?.model ?? null,
+	})
 	const key = briefCacheKey(workspaceId, now)
 
 	const cached = await readCache(storage, key, inputHash)
@@ -333,10 +405,6 @@ export async function generateSpokenBrief(
 		const { inputHash: _ignored, ...brief } = cached
 		return { ...brief, cached: true }
 	}
-
-	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
-	const settings = (ws?.settings as WorkspaceSettings) ?? ({} as WorkspaceSettings)
-	const agent = ws ? await resolveBriefingAgent(db, workspaceId, settings) : null
 
 	let script: string | null = null
 	let model: string | null = null
@@ -348,23 +416,6 @@ export async function generateSpokenBrief(
 	let cacheable = true
 
 	if (agent) {
-		const llmConfig = (agent.llmConfig as Record<string, unknown> | null) ?? {}
-		const credentials = resolveChatCredentials({
-			wsSettings: settings,
-			// Absent row => treat as entitled, i.e. refuse the Maskin key. A brief
-			// we can't attribute to a readable workspace degrades to no spoken
-			// script, which is the safe direction.
-			workspace: {
-				enterpriseGranted: ws ? ws.enterpriseGranted : true,
-				billingOwnerId: ws?.billingOwnerId ?? null,
-			},
-			agent: {
-				provider: agent.llmProvider,
-				apiKey: (llmConfig.api_key as string | undefined)?.trim() || null,
-				model: (llmConfig.model as string | undefined)?.trim() || null,
-			},
-		})
-
 		if (credentials) {
 			try {
 				const adapter = createLLMAdapter(credentials.provider, {
@@ -378,10 +429,7 @@ export async function generateSpokenBrief(
 					messages: [
 						{
 							role: 'system',
-							content: [
-								agent.systemPrompt?.trim() || CHIEF_OF_STAFF_SYSTEM_PROMPT,
-								buildScriptInstruction(facts.labels),
-							].join('\n\n'),
+							content: [systemPrompt, buildScriptInstruction(facts.labels)].join('\n\n'),
 						},
 						{ role: 'user', content: buildFactsMessage(facts) },
 					],
