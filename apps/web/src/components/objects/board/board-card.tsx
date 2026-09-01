@@ -80,10 +80,15 @@ export function BoardCard({
 				</span>
 				{showStatus && <StatusBadge status={object.status} className="shrink-0" />}
 				{onAdvance && (
-					// Always rendered at full opacity — a hover-only reveal would be
-					// unreachable on touch (see .claude/rules/verification.md).
-					<button
-						type="button"
+					// `<span role="button">` rather than a native `<button>`: the whole
+					// card is a `<Link>` (`<a>`), and `<button>` inside `<a>` is invalid
+					// HTML (React 19 logs `<button> cannot be a descendant of <a>` on
+					// every render). Always rendered at full opacity — a hover-only
+					// reveal would be unreachable on touch (see verification.md).
+					// biome-ignore lint/a11y/useSemanticElements: `<button>` would be a descendant of the card's `<a>`, which is invalid HTML — see comment above.
+					<span
+						role="button"
+						tabIndex={0}
 						title={advanceLabel}
 						aria-label={advanceLabel ?? 'Move to next column'}
 						onClick={(event) => {
@@ -91,10 +96,16 @@ export function BoardCard({
 							event.stopPropagation()
 							onAdvance()
 						}}
-						className="grid size-5 shrink-0 place-items-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
+						onKeyDown={(event) => {
+							if (event.key !== 'Enter' && event.key !== ' ') return
+							event.preventDefault()
+							event.stopPropagation()
+							onAdvance()
+						}}
+						className="grid size-5 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 					>
 						<ArrowRight size={12} aria-hidden="true" />
-					</button>
+					</span>
 				)}
 			</div>
 
