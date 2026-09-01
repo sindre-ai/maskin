@@ -3,12 +3,20 @@ import {
 	useDraft,
 	usePendingCommentsForObject,
 } from '@/lib/pending-comments-context'
+import { queryKeys } from '@/lib/query-keys'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { type ReactNode, useMemo, useState } from 'react'
 
 const uploadProgressMock = vi.fn()
 const eventsCreateMock = vi.fn()
+
+vi.mock('@/lib/analytics', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@/lib/analytics')>()
+	return { ...actual, trackCommentPosted: vi.fn() }
+})
+
+import { trackCommentPosted } from '@/lib/analytics'
 
 vi.mock('@/lib/api', async () => {
 	return {
@@ -71,6 +79,7 @@ describe('PendingCommentsProvider', () => {
 	beforeEach(() => {
 		uploadProgressMock.mockReset()
 		eventsCreateMock.mockReset()
+		vi.mocked(trackCommentPosted).mockReset()
 	})
 
 	it('uploads on attach, advances status to uploaded, and exposes file id', async () => {
@@ -259,5 +268,54 @@ describe('PendingCommentsProvider', () => {
 
 		await waitFor(() => expect(result.current.feed).toHaveLength(0))
 		expect(aborts[0].aborted).toBe(true)
+	})
+
+	// Guards the ship-metric funnel for the iOS comment-input bet: without this
+	// emission the attachment/queued submit path drops `comment_posted` silently
+	// and only the non-attachment path (covered in analytics-call-sites) counts
+	// toward the funnel.
+	it('emits comment_posted after the queued attachment path posts successfully', async () => {
+		uploadProgressMock.mockResolvedValue({ id: 'file-99' })
+		eventsCreateMock.mockResolvedValue({})
+
+		// gcTime > 0 keeps the seeded object detail alive without an active
+		// observer — trackCommentPostedFor reads it to derive `entity_type`.
+		const client = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, gcTime: Number.POSITIVE_INFINITY },
+				mutations: { retry: false },
+			},
+		})
+		client.setQueryData(queryKeys.objects.detail('obj-metric'), { type: 'bet' })
+
+		const { result } = renderHook(
+			() => useDraft({ draftId: 'd-metric', workspaceId: 'ws-1', objectId: 'obj-metric' }),
+			{
+				wrapper: ({ children }) => (
+					<QueryClientProvider client={client}>
+						<PendingCommentsProvider workspaceId="ws-1">{children}</PendingCommentsProvider>
+					</QueryClientProvider>
+				),
+			},
+		)
+
+		await act(async () => {
+			result.current.attach(new File(['hi'], 'a.txt', { type: 'text/plain' }))
+		})
+		await waitFor(() => expect(result.current.files[0].status).toBe('uploaded'))
+
+		await act(async () => {
+			result.current.submit({ content: 'ship-metric line', mentions: [] })
+		})
+
+		await waitFor(() => expect(trackCommentPosted).toHaveBeenCalledTimes(1))
+		expect(trackCommentPosted).toHaveBeenCalledWith({
+			entity_id: 'obj-metric',
+			entity_type: 'bet',
+			is_reply: false,
+			attachment_count: 1,
+			content: 'ship-metric line',
+			flow_id: 'd-metric',
+		})
 	})
 })
