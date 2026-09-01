@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
+import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../../lib/llm-routing'
 import {
 	TriggerRunner,
 	calculateBackoffUntil,
@@ -712,6 +713,137 @@ describe('TriggerRunner', () => {
 			// Should not fire again
 			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+	})
+
+	// Regression coverage for Sentry MASKIN-DEV-K / MASKIN-DEV-6: both of these
+	// failures happen inside createSession BEFORE a session row exists, so no
+	// session_failed event is emitted, so the per-trigger `triggerFailures`
+	// backoff never engages. An over-cap workspace re-fired every cron trigger
+	// at full rate indefinitely (~372 identical failures/day in production).
+	describe('workspace suppression', () => {
+		const cronTrigger = (workspaceId: string) =>
+			buildTrigger({ workspaceId, type: 'cron', config: { expression: '*/1 * * * *' } })
+
+		/** Boots the runner with one every-minute cron trigger and fires it once. */
+		const startWithCron = async (trigger: ReturnType<typeof buildTrigger>, rejection: unknown) => {
+			mockResults.selectQueue = [[trigger], []]
+			mockResults.insert = []
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockRejectedValue(rejection)
+			await runner.start()
+			await vi.advanceTimersByTimeAsync(60 * 1000)
+		}
+
+		it('stops firing cron triggers after the workspace exceeds its plan cap', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			const trigger = cronTrigger('ws-capped')
+			await startWithCron(
+				trigger,
+				new PlanCapExceededError({
+					plan: 'trial',
+					used: 1054,
+					cap: 1000,
+					// Unix SECONDS, as Stripe writes it — 2 hours out.
+					periodEnd: Math.floor(new Date('2026-01-01T02:00:00Z').getTime() / 1000),
+				}),
+			)
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+
+			// 30 further scheduled ticks, none of which should reach createSession.
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('resumes firing once the billing period rolls over', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			const trigger = cronTrigger('ws-capped')
+			await startWithCron(
+				trigger,
+				new PlanCapExceededError({
+					plan: 'trial',
+					used: 1054,
+					cap: 1000,
+					periodEnd: Math.floor(new Date('2026-01-01T02:00:00Z').getTime() / 1000),
+				}),
+			)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'session-2',
+			})
+
+			// Still inside the period — suppressed.
+			await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+			// Past periodEnd — the entry expires on read, with no timer or sweep.
+			await vi.advanceTimersByTimeAsync(70 * 60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('stops firing when the workspace has no LLM credentials connected', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			await startWithCron(
+				cronTrigger('ws-nocreds'),
+				new LlmCredentialsUnavailableError('no credentials configured'),
+			)
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('keeps firing when credentials are only transiently unverifiable', async () => {
+			// `transient` means we could not REACH the provider, not that the
+			// workspace is misconfigured — pausing on a network blip would take a
+			// paying customer's automations offline for an hour.
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			await startWithCron(
+				cronTrigger('ws-blip'),
+				new LlmCredentialsUnavailableError('anthropic unreachable', true),
+			)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(3 * 60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('keeps firing after an unrelated session-creation failure', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			await startWithCron(cronTrigger('ws-other'), new Error('docker daemon unreachable'))
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(3 * 60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('resumes immediately when the workspace is updated', async () => {
+			// Connecting a Claude subscription or upgrading a plan emits a
+			// workspace-updated event; automations should resume on the next tick
+			// rather than waiting out the pause.
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			const trigger = cronTrigger('ws-upgrades')
+			await startWithCron(trigger, new LlmCredentialsUnavailableError('no credentials configured'))
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'session-3',
+			})
+
+			await vi.advanceTimersByTimeAsync(2 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+			mockResults.select = []
+			bridge.emit('event', {
+				workspace_id: 'ws-upgrades',
+				entity_type: 'workspace',
+				entity_id: 'ws-upgrades',
+				action: 'updated',
+				actor_id: 'actor-1',
+				event_id: 'evt-ws-1',
+			} as PgEvent)
+			await vi.advanceTimersByTimeAsync(0)
+
+			mockResults.selectQueue = [[trigger], []]
+			await vi.advanceTimersByTimeAsync(2 * 60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalled()
 		})
 	})
 })
