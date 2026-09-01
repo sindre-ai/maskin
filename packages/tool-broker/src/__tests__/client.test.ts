@@ -8,6 +8,7 @@ import {
 	assertScopedPattern,
 	displayNameFromSlug,
 	integrationPattern,
+	toolPattern,
 	workspacePrefix,
 	workspaceScopedSlug,
 } from '../index'
@@ -617,3 +618,106 @@ describe('addIntegrationByUrl — how the server authenticates', () => {
 		expect((calls.at(-1)?.body as { auth?: unknown }).auth).toEqual({ kind: 'oauth2' })
 	})
 })
+
+describe('per-tool membership', () => {
+	// The address shape is four segments after `tools.` —
+	// `<slug>.<owner>.<connection>.<name>`. Verified against the running backend:
+	// admitting one tool left siblings returning `tool_blocked`, and search did
+	// not surface them at all. A two-segment guess matches nothing and fails
+	// silently as "this agent has no tools", which is why this is pinned.
+
+	const SLUG = 'w0123456789abcdef0123456789abcdef_deepwiki'
+
+	it('builds the four-segment address, not a two-segment guess', () => {
+		expect(
+			toolPattern({ slug: SLUG, owner: 'org', connection: 'shared', tool: 'read_wiki_structure' }),
+		).toBe(`${SLUG}.org.shared.read_wiki_structure`)
+	})
+
+	it('admits one membership row per named tool', async () => {
+		const { impl, calls } = stubFetch({ '/api/toolkits/tk-1/connections': () => json({}) })
+
+		await makeClient(impl).admitIntegration('key', {
+			toolkitId: 'tk-1',
+			integrationSlug: SLUG,
+			tools: { owner: 'org', connection: 'shared', names: ['read_wiki_structure', 'ask_question'] },
+		})
+
+		const patterns = calls.map((c) => (c.body as { pattern: string }).pattern)
+		expect(patterns).toEqual([
+			`${SLUG}.org.shared.read_wiki_structure`,
+			`${SLUG}.org.shared.ask_question`,
+		])
+	})
+
+	it('admits the whole integration when no tools are named', async () => {
+		const { impl, calls } = stubFetch({ '/api/toolkits/tk-1/connections': () => json({}) })
+
+		await makeClient(impl).admitIntegration('key', { toolkitId: 'tk-1', integrationSlug: SLUG })
+
+		expect((calls.at(-1)?.body as { pattern: string }).pattern).toBe(`${SLUG}.*`)
+	})
+
+	it('admits nothing for an empty tool list, rather than everything', async () => {
+		// The dangerous confusion: "no tools chosen" must not widen to "all tools".
+		const { impl, calls } = stubFetch({ '/api/toolkits/tk-1/connections': () => json({}) })
+
+		await makeClient(impl).admitIntegration('key', {
+			toolkitId: 'tk-1',
+			integrationSlug: SLUG,
+			tools: { owner: 'org', connection: 'shared', names: [] },
+		})
+
+		expect(calls).toHaveLength(0)
+	})
+
+	it('still refuses an over-broad pattern built from a bad slug', async () => {
+		// The guard that stands between a slug bug and a cross-workspace grant has
+		// to survive the new path too.
+		const { impl } = stubFetch({ '/api/toolkits/tk-1/connections': () => json({}) })
+
+		await expect(
+			makeClient(impl).admitIntegration('key', {
+				toolkitId: 'tk-1',
+				integrationSlug: '*',
+				tools: { owner: 'org', connection: 'shared', names: ['anything'] },
+			}),
+		).rejects.toThrow()
+	})
+})
+
+describe('per-agent toolkits', () => {
+	it('gives each agent its own toolkit slug', async () => {
+		const { impl, calls } = stubFetch({
+			'/api/toolkits': () => json({ toolkits: [] }),
+		})
+		const client = makeClient(impl)
+
+		await client.ensureToolkit('key', { workspaceId: WORKSPACE, name: 'W', actorId: 'aaaa-bbbb' })
+		const created = calls.find((c) => c.method === 'POST')?.body as { slug: string }
+
+		expect(created.slug).toMatch(/^tk-w[0-9a-f]{32}-a/)
+	})
+
+	it('keeps the workspace toolkit slug unchanged when no actor is given', async () => {
+		// Existing workspaces must keep resolving to the toolkit they already have.
+		const { impl, calls } = stubFetch({ '/api/toolkits': () => json({ toolkits: [] }) })
+
+		await makeClient(impl).ensureToolkit('key', { workspaceId: WORKSPACE, name: 'W' })
+		const created = calls.find((c) => c.method === 'POST')?.body as { slug: string }
+
+		expect(created.slug).toMatch(/^tk-w[0-9a-f]{32}$/)
+	})
+
+	it('a per-agent membership pattern still carries the workspace prefix', () => {
+		// assertScopedPattern checks the FIRST segment for the workspace prefix, so
+		// per-agent toolkits must not change what goes into a pattern.
+		expect(() =>
+			assertScopedPattern(
+				toolPattern({ slug: SLUG_FOR_GUARD, owner: 'org', connection: 'shared', tool: 't' }),
+			),
+		).not.toThrow()
+	})
+})
+
+const SLUG_FOR_GUARD = 'w0123456789abcdef0123456789abcdef_linear'

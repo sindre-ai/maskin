@@ -1292,6 +1292,14 @@ describe('SessionManager', () => {
 			workspace: { id: string; settings: Record<string, unknown> }
 			agent: Record<string, unknown>
 			integrationRows: ReturnType<typeof buildIntegration>[]
+			/**
+			 * Tool-grant rows for this agent. Omit for the pre-scoping behaviour —
+			 * no rows means no policy in this workspace, so every integration still
+			 * reaches every agent.
+			 */
+			grantRows?: Array<Record<string, unknown>>
+			/** Known tools per integration, only read when a grant says `read`. */
+			toolRows?: Array<Record<string, unknown>>
 		}) {
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -1306,6 +1314,10 @@ describe('SessionManager', () => {
 				[opts.workspace], // launchContainer: workspace lookup (llm keys)
 				[opts.workspace], // resolveLlmRoute -> resolveClaudeCredentialsWithFailover: workspace lookup
 				opts.integrationRows, // launchContainer: integrations lookup
+				opts.grantRows ?? [], // loadSessionGrants: tool grants
+				// Only queried when a grant needs a tool list, so it is conditional —
+				// an unused entry here would shift every later result by one.
+				...(opts.grantRows?.length ? [opts.toolRows ?? []] : []),
 			]
 		}
 
@@ -1335,6 +1347,101 @@ describe('SessionManager', () => {
 				integrationRows,
 			}
 		}
+
+		describe('per-agent tool scoping', () => {
+			// The point of the whole feature: one workspace, one integration, and an
+			// agent that was not granted it gets neither the tool NOR the credential.
+			// The credential half matters most — the CLI runs with permission checks
+			// off, so a token in the container is usable whether or not a tool wraps
+			// it.
+
+			const grant = (over: Record<string, unknown> = {}) => ({
+				actorId: 'agent-1',
+				integrationRef: 'integration-slack',
+				mode: 'all',
+				tools: [],
+				...over,
+			})
+
+			const slackFixtures = () => {
+				const wsId = randomUUID()
+				const integration = buildIntegration({ workspaceId: wsId, provider: 'slack' })
+				const fixtures = buildLaunchFixtures([integration])
+				fixtures.session.workspaceId = wsId
+				fixtures.workspace.id = wsId
+				vi.mocked(getProvider).mockReturnValue({
+					config: {
+						mcp: {
+							autoInject: true,
+							server: { type: 'http', url: 'https://slack.example/mcp' },
+							envKey: 'SLACK_BOT_TOKEN',
+						},
+					},
+				} as never)
+				mockGetValidToken.mockResolvedValue('xoxb-test-token')
+				return fixtures
+			}
+
+			const envOf = () =>
+				(mockContainerManager.create.mock.calls[0]?.[0] as { env: Record<string, string> }).env
+
+			it('withholds both the server and the token from an ungranted agent', async () => {
+				const fixtures = slackFixtures()
+				setupLaunchMocks({
+					...fixtures,
+					// A policy exists in this workspace, but it grants a DIFFERENT
+					// integration — so Slack is denied.
+					grantRows: [grant({ actorId: fixtures.agent.id, integrationRef: 'github-acme' })],
+				})
+
+				await manager.startSession(fixtures.session.id)
+
+				const env = envOf()
+				expect(env.SLACK_BOT_TOKEN).toBeUndefined()
+				expect(env.MCP_SERVERS_JSON ?? '').not.toContain('integration-slack')
+			})
+
+			it('gives both to an agent that was granted it', async () => {
+				const fixtures = slackFixtures()
+				setupLaunchMocks({
+					...fixtures,
+					grantRows: [grant({ actorId: fixtures.agent.id })],
+				})
+
+				await manager.startSession(fixtures.session.id)
+
+				const env = envOf()
+				expect(env.SLACK_BOT_TOKEN).toBe('xoxb-test-token')
+				expect(env.MCP_SERVERS_JSON ?? '').toContain('integration-slack')
+			})
+
+			it('changes nothing for a workspace with no grants at all', async () => {
+				// The upgrade path. Shipping this must not disarm existing agents, so
+				// "no policy" has to stay distinguishable from "an empty allow-list".
+				const fixtures = slackFixtures()
+				setupLaunchMocks(fixtures)
+
+				await manager.startSession(fixtures.session.id)
+
+				const env = envOf()
+				expect(env.SLACK_BOT_TOKEN).toBe('xoxb-test-token')
+				expect(env.MCP_SERVERS_JSON ?? '').toContain('integration-slack')
+			})
+
+			it('a workspace-level row alone grants nothing', async () => {
+				// A workspace row is a ceiling, not a grant. If it granted on its own,
+				// connecting an integration would silently re-arm every agent.
+				const fixtures = slackFixtures()
+				setupLaunchMocks({
+					...fixtures,
+					grantRows: [grant({ actorId: null })],
+				})
+
+				await manager.startSession(fixtures.session.id)
+
+				expect(envOf().SLACK_BOT_TOKEN).toBeUndefined()
+			})
+		})
 
 		it('produces per-owner env vars and auto-injects MCP server entries for two GitHub installations', async () => {
 			const wsId = randomUUID()
@@ -1425,6 +1532,9 @@ describe('SessionManager', () => {
 				[fixtures.workspace],
 				[fixtures.workspace],
 				fixtures.integrationRows,
+				// loadSessionGrants: no grant rows, so this workspace keeps the
+				// pre-scoping behaviour and every integration still reaches the agent.
+				[],
 				// resolveGithubRepoSlug: activeSessionId lookup returns the bet directly
 				[scopedBet],
 				// resolveGithubRepoSlug: bet.metadata lookup by id

@@ -1415,3 +1415,97 @@ export const toolBrokerCatalog = pgTable(
 
 export type ToolBrokerCatalogEntry = typeof toolBrokerCatalog.$inferSelect
 export type NewToolBrokerCatalogEntry = typeof toolBrokerCatalog.$inferInsert
+
+// ---------------------------------------------------------------------------
+// Per-agent tool scoping.
+//
+// A workspace connects an integration once; each agent is then granted it
+// explicitly. Before this, every agent in a workspace got every integration and
+// every integration's credential, so a Developer agent held the HubSpot token
+// with no way to take it away.
+//
+// Modelled on `agent_skills`, which is the one mechanism here that already
+// scopes per agent and does it by ABSENCE — an unattached skill's file is
+// simply not in the container. Grants work the same way: an ungranted tool is
+// not in the agent's toolkit, so it cannot be called and does not appear in
+// search.
+// ---------------------------------------------------------------------------
+
+export const toolGrants = pgTable(
+	'tool_grants',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		/** NULL means the workspace-level ceiling for this integration. */
+		actorId: uuid('actor_id').references(() => actors.id, { onDelete: 'cascade' }),
+		/**
+		 * Which integration this grant covers.
+		 *
+		 * A broker slug (`w<hex>_linear`) or a container MCP server key
+		 * (`integration-slack`, `github-acme`) — the same string used as the key in
+		 * the session's MCP server map, so the launch filter can match on it
+		 * directly.
+		 */
+		integrationRef: text('integration_ref').notNull(),
+		/** `all` · `read` · `custom` */
+		mode: text('mode').notNull().default('all'),
+		/** Tool names when mode is `custom`; empty otherwise. */
+		tools: jsonb('tools').$type<string[]>().notNull().default([]),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// Two PARTIAL uniques rather than one over all three columns: Postgres
+		// treats NULLs as distinct, so a single index would happily allow two
+		// workspace-level rows for the same integration.
+		uniqueIndex('tool_grants_workspace_uniq')
+			.on(t.workspaceId, t.integrationRef)
+			.where(sql`actor_id IS NULL`),
+		uniqueIndex('tool_grants_actor_uniq')
+			.on(t.actorId, t.integrationRef)
+			.where(sql`actor_id IS NOT NULL`),
+		index('tool_grants_actor_idx').on(t.actorId),
+	],
+)
+
+export type ToolGrant = typeof toolGrants.$inferSelect
+export type NewToolGrant = typeof toolGrants.$inferInsert
+
+/**
+ * The tools an integration exposes, and whether each only reads.
+ *
+ * Ours rather than the broker's: `GET /api/tools?integration=<slug>` returns
+ * names and descriptions but no `readOnlyHint` (measured), while the MCP servers
+ * themselves declare it on 95% of tools. So we collect it at add time from the
+ * server's own `tools/list` and keep it here, which is what makes a "read only"
+ * grant honest instead of guessed from the tool's name — name-guessing disagreed
+ * with the declaration on about 1 tool in 9.
+ */
+export const integrationTools = pgTable(
+	'integration_tools',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		integrationRef: text('integration_ref').notNull(),
+		name: text('name').notNull(),
+		description: text('description'),
+		/**
+		 * NULL where the server did not say. Those tools are shown as
+		 * unclassified and are never included in a read-only grant.
+		 */
+		readOnly: boolean('read_only'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('integration_tools_uniq').on(t.workspaceId, t.integrationRef, t.name),
+		index('integration_tools_lookup_idx').on(t.workspaceId, t.integrationRef),
+	],
+)
+
+export type IntegrationTool = typeof integrationTools.$inferSelect
+export type NewIntegrationTool = typeof integrationTools.$inferInsert

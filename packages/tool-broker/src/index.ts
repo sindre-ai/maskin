@@ -4,6 +4,7 @@ export {
 	assertScopedPattern,
 	displayNameFromSlug,
 	integrationPattern,
+	toolPattern,
 	workspacePrefix,
 	workspaceScopedSlug,
 } from './client'

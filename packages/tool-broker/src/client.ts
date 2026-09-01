@@ -95,6 +95,30 @@ export const workspacePrefix = (workspaceId: string): string =>
  */
 export const integrationPattern = (slug: string): string => `${slug}.*`
 
+/**
+ * The membership pattern admitting ONE TOOL of one integration.
+ *
+ * A tool address is four segments after `tools.` —
+ * `<slug>.<owner>.<connection>.<name>`, e.g.
+ * `tools.w…_deepwiki.org.shared.ask_question`. Verified against the running
+ * backend, and worth stating because a two-segment `<slug>.<name>` guess matches
+ * nothing and fails silently as "the agent has no tools".
+ *
+ * `owner`/`connection` come from the connection itself (`org`/`shared` for a
+ * workspace-shared one) rather than being assumed, because a personal connection
+ * differs and would produce a pattern that never matches.
+ *
+ * Measured end to end: admitting one tool leaves siblings on the same
+ * integration returning `tool_blocked`, and `tools.search` does not surface them
+ * at all — so an ungranted tool is undiscoverable, not merely uncallable.
+ */
+export const toolPattern = (input: {
+	slug: string
+	owner: string
+	connection: string
+	tool: string
+}): string => `${input.slug}.${input.owner}.${input.connection}.${input.tool}`
+
 /** Namespace a user-supplied integration name into the workspace's own space. */
 export const workspaceScopedSlug = (workspaceId: string, name: string): string => {
 	// Underscores, not hyphens, and that is not cosmetic: a tool address becomes a
@@ -269,9 +293,20 @@ export class ToolBrokerClient {
 	 */
 	async ensureToolkit(
 		apiKey: string,
-		input: { workspaceId: string; name: string },
+		input: { workspaceId: string; name: string; actorId?: string },
 	): Promise<WorkspaceToolkit> {
-		const slug = `tk-${workspacePrefix(input.workspaceId).replace(/_$/, '')}`
+		// One toolkit per agent when an actor is given, so membership can differ
+		// between agents in the same workspace. Without it, every agent shares the
+		// workspace toolkit and per-agent scoping has nowhere to live.
+		//
+		// The actor discriminator is a suffix rather than a replacement: the first
+		// segment of every membership pattern still carries the WORKSPACE prefix,
+		// which is what `assertScopedPattern` checks, so per-agent toolkits pass
+		// that guard unchanged.
+		const base = workspacePrefix(input.workspaceId).replace(/_$/, '')
+		const slug = input.actorId
+			? `tk-${base}-a${input.actorId.replace(/-/g, '').toLowerCase()}`
+			: `tk-${base}`
 
 		const existing = await this.request<{ toolkits?: RawToolkit[] }>({
 			path: '/api/toolkits',
@@ -304,8 +339,40 @@ export class ToolBrokerClient {
 	 */
 	async admitIntegration(
 		apiKey: string,
-		input: { toolkitId: string; integrationSlug: string },
+		input: {
+			toolkitId: string
+			integrationSlug: string
+			/**
+			 * Admit only these tools instead of the whole integration.
+			 *
+			 * One membership row per tool. Omit for every tool — which is NOT the
+			 * same as an empty array: empty admits nothing, and silently producing
+			 * an integration with no callable tools is the failure this distinction
+			 * exists to prevent.
+			 */
+			tools?: { owner: string; connection: string; names: string[] }
+		},
 	): Promise<void> {
+		if (input.tools) {
+			for (const name of input.tools.names) {
+				const scoped = assertScopedPattern(
+					toolPattern({
+						slug: input.integrationSlug,
+						owner: input.tools.owner,
+						connection: input.tools.connection,
+						tool: name,
+					}),
+				)
+				await this.request({
+					method: 'POST',
+					path: `/api/toolkits/${input.toolkitId}/connections`,
+					token: apiKey,
+					body: { pattern: scoped },
+				})
+			}
+			return
+		}
+
 		const pattern = assertScopedPattern(integrationPattern(input.integrationSlug))
 		await this.request({
 			method: 'POST',

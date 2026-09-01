@@ -98,6 +98,7 @@ import {
 import { logger } from '../lib/logger'
 import { detectUnhealthyMcpServers, formatUnhealthyMcpWarning } from '../lib/mcp-health'
 import { resolveToolBrokerInjection } from '../lib/tool-broker/session-injection'
+import { grantsAllow, integrationRefFor, loadSessionGrants } from '../lib/tool-grants/session'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import {
 	AgentServerAuthError,
@@ -1817,6 +1818,15 @@ export class SessionManager extends EventEmitter {
 			)
 			.orderBy(asc(integrations.createdAt))
 
+		// What this agent may use. Filtering happens below at each injection site
+		// rather than as a pass afterwards: the credential and the MCP server are
+		// written together, and stripping only the server leaves the token sitting
+		// in a container whose CLI runs with permission checks off.
+		const grants = await loadSessionGrants(this.db, {
+			workspaceId: session.workspaceId,
+			actorId: agent.id,
+		})
+
 		const tokenManager = new TokenManager()
 		// MCP servers injected by virtue of a workspace having an active
 		// integration with `mcp.autoInject = true`. Workspace-scoped data pipes
@@ -1828,6 +1838,8 @@ export class SessionManager extends EventEmitter {
 		// baked in. The bare GITHUB_TOKEN is aliased from the first installation
 		// so existing agent configs using ${GITHUB_TOKEN} continue to work.
 		const autoInjectedMcpServers: Record<string, unknown> = {}
+		/** Slack bot token for the platform preflight alert, independent of grants. */
+		let slackAlertBotToken: string | undefined
 		const resolvedGithubInstalls: Array<{
 			ownerLogin: string
 			token: string
@@ -1853,6 +1865,13 @@ export class SessionManager extends EventEmitter {
 								sessionId: session.id,
 							},
 						)
+						continue
+					}
+
+					if (!grantsAllow(grants, integrationRefFor.githubOwner(ownerLogin))) {
+						// Not granted: no server AND no token. Skipping before the env
+						// write is the point — a token the agent cannot reach through a
+						// tool is still a token it can use directly.
 						continue
 					}
 
@@ -1887,6 +1906,16 @@ export class SessionManager extends EventEmitter {
 					const envVarName =
 						resolved.config.mcp?.envKey ??
 						`${integration.provider.toUpperCase().replace(/-/g, '_')}_TOKEN`
+
+					// Captured before the grant check: the GitHub preflight alert posts
+					// to Slack using the workspace's bot token, and that is a platform
+					// notification rather than a capability of this agent. Reading it
+					// from `envVars` after filtering would silence the alert for any
+					// agent not granted Slack.
+					if (integration.provider === 'slack') slackAlertBotToken = accessToken
+
+					if (!grantsAllow(grants, integrationRefFor.provider(integration.provider))) continue
+
 					envVars[envVarName] = accessToken
 					if (resolved.config.mcp?.autoInject && resolved.config.mcp.server) {
 						autoInjectedMcpServers[`integration-${integration.provider}`] =
@@ -2098,7 +2127,7 @@ export class SessionManager extends EventEmitter {
 						statusSnippet: v.statusSnippet,
 					})),
 				})
-				const slackBotToken = envVars.SLACK_BOT_TOKEN
+				const slackBotToken = slackAlertBotToken
 				if (slackBotToken) {
 					await postGitHubPreflightSlackAlert({
 						botToken: slackBotToken,
