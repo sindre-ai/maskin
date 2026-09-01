@@ -194,10 +194,19 @@ function ProviderRow({
 		connect.mutate({ provider: provider.name })
 	}
 
+	// An install whose token predates a scope the provider now requires still
+	// works for everything it was granted, so it stays "connected" — but say
+	// plainly that some features are dark and that reconnecting is the fix.
+	// Reconnecting runs the normal OAuth flow, which updates this row in place.
+	const missingCount = integration?.missingScopes?.length ?? 0
+	const needsReconnect = Boolean(integration?.needsReconnect) && missingCount > 0
+
 	const connectedLabel = isConnected
-		? provider.externalIdDisplay === 'email' && integration.externalId
-			? `Connected as ${integration.externalId}`
-			: `Connected${integration.externalId ? ` · Installation ${integration.externalId}` : ''}`
+		? needsReconnect
+			? `Update needed — reconnect to grant ${missingCount} new permission${missingCount === 1 ? '' : 's'}`
+			: provider.externalIdDisplay === 'email' && integration.externalId
+				? `Connected as ${integration.externalId}`
+				: `Connected${integration.externalId ? ` · Installation ${integration.externalId}` : ''}`
 		: provider.events.length > 0
 			? `${provider.events.length} event types available`
 			: 'Available to connect'
@@ -205,22 +214,41 @@ function ProviderRow({
 	return (
 		<div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
 			<div
-				className={`h-3 w-3 shrink-0 rounded-full ${isConnected ? 'bg-success' : 'bg-zinc-600'}`}
+				className={`h-3 w-3 shrink-0 rounded-full ${
+					needsReconnect ? 'bg-warning' : isConnected ? 'bg-success' : 'bg-zinc-600'
+				}`}
 			/>
 			<div className="flex-1 min-w-0">
 				<p className="text-sm font-medium text-foreground truncate">{provider.displayName}</p>
-				<p className="text-xs text-muted-foreground truncate">{connectedLabel}</p>
+				<p
+					className={`text-xs truncate ${needsReconnect ? 'text-warning' : 'text-muted-foreground'}`}
+					title={needsReconnect ? integration?.missingScopes?.join(', ') : undefined}
+				>
+					{connectedLabel}
+				</p>
 			</div>
 			{isConnected ? (
-				<Button
-					variant="ghost"
-					size="sm"
-					className="shrink-0 text-muted-foreground hover:text-error"
-					onClick={() => disconnect.mutate(integration.id)}
-					disabled={disconnect.isPending}
-				>
-					Disconnect
-				</Button>
+				<div className="flex shrink-0 items-center gap-2">
+					{needsReconnect && (
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={handleConnect}
+							disabled={connect.isPending}
+						>
+							Reconnect
+						</Button>
+					)}
+					<Button
+						variant="ghost"
+						size="sm"
+						className="text-muted-foreground hover:text-error"
+						onClick={() => disconnect.mutate(integration.id)}
+						disabled={disconnect.isPending}
+					>
+						Disconnect
+					</Button>
+				</div>
 			) : (
 				<div className="flex shrink-0 items-center gap-2">
 					{linkableCount > 0 && (

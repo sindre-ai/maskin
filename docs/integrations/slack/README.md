@@ -34,7 +34,25 @@ Until the T2 PNG lands, `icon-placeholder.svg` documents the placeholder. It is 
 
 ## Scopes — bot vs user
 
-The agent-posting path this bet ships uses **only the bot token** (`chat:write` + `chat:write.customize`). The `user` / `user_optional` scopes are retained from the live app because other Maskin features rely on the **user token** — Slack search (`search:read.*` is user-token-only), canvases, and file reads. They are intentionally NOT part of the trust-surface posting path; the runtime guard in `apps/dev/src/services/session-manager.ts` and `mcp-server.ts` refuses to post with a user (`xoxp-`) token. **Do not strip the user scopes** unless you have confirmed nothing in `apps/dev` reads the user token — removing them forces a re-authorise and breaks those features.
+Every Maskin Slack tool runs on the **bot token** except message search, which runs on the **user token**. That split is not a preference — Slack does not offer a bot-scope equivalent for `search.messages`, so search is the one capability a bot token can never have.
+
+| | Token | Tools |
+|---|---|---|
+| Post, schedule | bot (`xoxb-`) | `slack_send_message`, `slack_schedule_message` |
+| Read channels, threads, users, canvases | bot (`xoxb-`) | `slack_search_channels`, `slack_get_channel_info`, `slack_read_channel`, `slack_read_thread`, `slack_search_users`, `slack_read_user_profile`, `slack_read_canvas`, `slack_create_canvas`, `slack_update_canvas` |
+| Search message content | **user** (`xoxp-`) | `slack_search_messages` |
+
+Both tokens come from **one** OAuth exchange: Slack returns the bot token as `access_token` and the installer's user token under `authed_user.access_token` when `user_scope` is present. `credentials.accessToken` therefore stays the bot token, which is what keeps the `xoxb-` guards in `session-manager.ts` and `mcp-server.ts` correct. The user token is stored separately as `credentials.userAccessToken` and is **never** used for a write — `assertBotToken()` in `mcp-server.ts` enforces that at the write boundary.
+
+The user token carries the Slack visibility of whoever installed the app, including their private channels and DMs. That is why it is confined to search and why the search tool is registered **only** when a user token is present: a workspace whose install predates the `user_scope` grant sees no search tool at all, rather than one that always fails.
+
+There is exactly **one** search tool, and its description says plainly that it reaches private channels and DMs. `search.messages` takes no channel-scoping parameter — its reach is fixed by the granted `search:read.*` scopes, so a second `slack_search_public` could differ from it only in its *name*, while issuing the identical unconstrained request. An agent that chose the narrow-sounding tool specifically to stay out of private conversations would be handed DM content under an assurance the request never made. Each match instead carries its own `is_private` flag from Slack's metadata, so the agent can judge per result. If Slack ever adds real per-call channel-type scoping, split the tool then.
+
+**Do not strip the user scopes** — removing them forces a re-authorise and takes search away entirely.
+
+### Two lists that must stay in step
+
+`user_scope` in `apps/dev/src/lib/integrations/providers/slack/config.ts` must be a **subset** of the `user` scopes in `manifest.yml`, and the same for bot scopes. Slack fails the entire authorize with `invalid_scope` if the request asks for anything the app does not declare. Note that Slack split the old blanket `search:read` into granular per-surface scopes (`search:read.public`, `search:read.private`, `search:read.mpim`, `search:read.im`, …) — request the granular names, not `search:read`. `slack.test.ts` asserts the subset relationship so the two files cannot drift silently.
 
 ## What this manifest deliberately does NOT include
 

@@ -1341,6 +1341,10 @@ export interface IntegrationResponse {
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
+	/** Scopes this install's token lacks that the provider now requires. Names only. */
+	missingScopes?: string[]
+	/** True when `missingScopes` is non-empty — reconnecting re-consents and fixes it. */
+	needsReconnect?: boolean
 }
 
 /** A GitHub App installation the current actor can bind to this workspace,
