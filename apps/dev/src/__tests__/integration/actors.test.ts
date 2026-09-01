@@ -76,29 +76,32 @@ describe('Actors Integration — PATCH /:id description', () => {
 	// Profile's "How to work with me" writes multi-paragraph prose into this
 	// same column. It was bounded by the 80-character agent tagline length, so
 	// anything a human actually typed 400'd and their text was discarded.
+	// Profile edits the *caller's own* actor. A human PATCHing a different human
+	// is the admin path and needs an X-Workspace-Id header, so writing this
+	// against a freshly inserted human would 403 on the workspace-context guard
+	// long before the length bound is reached.
 	it('accepts a description longer than the agent tagline cap', async () => {
 		const app = createApp()
-		const human = await insertActor(db, { type: 'human', name: 'Prose Writer' })
+		const self = getTestActorId()
 		const prose = `${'Ask before emailing anyone. '.repeat(20)}
 
 Never ship on a Friday.`
 		expect(prose.length).toBeGreaterThan(ACTOR_DESCRIPTION_MAX_LENGTH)
 
 		const res = await app.request(
-			jsonRequest('PATCH', `/api/actors/${human.id}`, { description: prose }),
+			jsonRequest('PATCH', `/api/actors/${self}`, { description: prose }),
 		)
 		expect(res.status).toBe(200)
 
-		const [row] = await db.select().from(actors).where(eq(actors.id, human.id))
+		const [row] = await db.select().from(actors).where(eq(actors.id, self))
 		expect(row.description).toBe(prose)
 	})
 
 	it('still rejects a description past the storage bound', async () => {
 		const app = createApp()
-		const human = await insertActor(db, { type: 'human', name: 'Over Writer' })
 
 		const res = await app.request(
-			jsonRequest('PATCH', `/api/actors/${human.id}`, {
+			jsonRequest('PATCH', `/api/actors/${getTestActorId()}`, {
 				description: 'x'.repeat(ACTOR_DESCRIPTION_MAX_STORED_LENGTH + 1),
 			}),
 		)

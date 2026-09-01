@@ -293,13 +293,19 @@ describe('Workspaces Integration', () => {
 			expect(soloRow.memberCount).toBe(1)
 
 			// Add a second human — the count moves; adding an agent would not.
+			// A trial workspace seats exactly one human (SEAT_CAPS.trial), so the
+			// add would be rejected on the seat cap and the count would never
+			// move. Raise the plan first, and assert the add actually landed —
+			// otherwise a rejected member reads here as a wrong count.
+			await setWorkspacePlan(db, workspace.id, 'pro')
 			const teammate = await insertActor(db)
-			await app.request(
+			const added = await app.request(
 				jsonRequest('POST', `/api/workspaces/${workspace.id}/members`, {
 					actor_id: teammate.id,
 					role: 'member',
 				}),
 			)
+			expect(added.status).toBe(201)
 
 			const paired = await app.request(jsonGet('/api/workspaces'))
 			const pairedRow = (await paired.json()).find(

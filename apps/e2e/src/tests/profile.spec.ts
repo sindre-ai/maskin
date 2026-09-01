@@ -1,6 +1,5 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
-import { openSidebarOnMobile } from '../helpers/sidebar.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // Your profile — v2's `Profile` screen, reached from the sidebar's profile menu.
@@ -26,10 +25,10 @@ test.describe('Profile', () => {
 		await expect(page).toHaveURL(new RegExp(account.workspaceId), { timeout: 10_000 })
 
 		const name = await signedInName(page)
-		await page
-			.locator('[data-slot="sidebar"], [data-sidebar="sidebar"]')
-			.getByRole('button', { name: new RegExp(name.slice(0, 20), 'i') })
-			.click()
+		// By the control's own name, not the person's: a default workspace is
+		// named after its creator, so a person-name regex also matches the
+		// workspace switcher above it.
+		await page.getByRole('button', { name: /^Your account/ }).click()
 		await page.getByRole('menuitem', { name: 'Your profile' }).click()
 
 		await expect(page).toHaveURL(/\/profile$/, { timeout: 10_000 })
@@ -43,10 +42,10 @@ test.describe('Profile', () => {
 		await page.setViewportSize({ width: 1024, height: 768 })
 		await page.goto(`/${account.workspaceId}/profile`)
 
-		await page.getByRole('button', { name: 'Edit' }).click()
+		await page.getByRole('button', { name: 'Edit how to work with me' }).click()
 		const box = page.getByRole('textbox', { name: 'How to work with me' })
 		await box.fill('Ask before emailing anyone outside the company.')
-		await page.getByRole('button', { name: 'Done' }).click()
+		await page.getByRole('button', { name: 'Done editing how to work with me' }).click()
 
 		await expect(page.getByText('Ask before emailing anyone outside the company.')).toBeVisible()
 
@@ -92,7 +91,9 @@ test.describe('Profile', () => {
 		test(`reads and stays in one column at ${viewport.label}`, async ({ page, account }) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}/profile`)
-			if (viewport.width < 768) await openSidebarOnMobile(page)
+			// Deliberately not opening the mobile drawer: it is a modal sheet that
+			// aria-hides the page behind it, so every assertion below — which is
+			// about the profile page itself — would find nothing at 375px.
 
 			const name = await signedInName(page)
 			await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 10_000 })

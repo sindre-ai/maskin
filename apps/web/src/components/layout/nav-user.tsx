@@ -48,6 +48,13 @@ export function NavUser() {
 						    object in the nav rather than the frame around it. */}
 						<SidebarMenuButton
 							tooltip={displayName}
+							// Without an explicit name this button's is the concatenation of
+							// its contents — person *and* workspace. A default workspace is
+							// named after its creator ("Ada's Workspace"), so that name then
+							// collides with the switcher's "Switch workspace, currently …"
+							// and a screen reader hears the person twice with no clue which
+							// row does what. The prefix says what the control is first.
+							aria-label={`Your account, ${displayName}`}
 							className="h-auto rounded-lg py-[7px] data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
 						>
 							<span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-subtle text-[10px] font-bold text-brand-subtle-foreground">

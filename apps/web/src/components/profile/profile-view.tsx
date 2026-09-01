@@ -202,6 +202,9 @@ function WorkingPreferences({ actor, workspaceId }: { actor: ActorResponse; work
 						onMouseDown={(e) => e.preventDefault()}
 						onClick={() => (editing ? save() : startEditing())}
 						disabled={updateActor.isPending}
+						// "Edit" alone is the same name the account rows below already
+						// use, so out of context it says nothing about what it edits.
+						aria-label={editing ? 'Done editing how to work with me' : 'Edit how to work with me'}
 						className="text-xs font-semibold text-muted-foreground transition-colors duration-150 hover:text-foreground disabled:opacity-60"
 					>
 						{editing ? (updateActor.isPending ? 'Saving…' : 'Done') : 'Edit'}

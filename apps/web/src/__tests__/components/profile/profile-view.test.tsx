@@ -43,11 +43,11 @@ describe('ProfileView', () => {
 		renderProfile({ description: 'Ask before emailing anyone.' })
 		expect(screen.getByText('Ask before emailing anyone.')).toBeInTheDocument()
 
-		await user.click(screen.getByRole('button', { name: 'Edit' }))
+		await user.click(screen.getByRole('button', { name: 'Edit how to work with me' }))
 		const box = screen.getByRole('textbox', { name: 'How to work with me' })
 		await user.clear(box)
 		await user.type(box, 'Never ship on a Friday.')
-		await user.click(screen.getByRole('button', { name: 'Done' }))
+		await user.click(screen.getByRole('button', { name: 'Done editing how to work with me' }))
 
 		await waitFor(() =>
 			expect(updateMutate).toHaveBeenCalledWith(
@@ -65,11 +65,11 @@ describe('ProfileView', () => {
 		const prose = 'A'.repeat(400)
 		renderProfile({ description: '' })
 
-		await user.click(screen.getByRole('button', { name: 'Edit' }))
+		await user.click(screen.getByRole('button', { name: 'Edit how to work with me' }))
 		const box = screen.getByRole('textbox', { name: 'How to work with me' })
 		await user.click(box)
 		await user.paste(prose)
-		await user.click(screen.getByRole('button', { name: 'Done' }))
+		await user.click(screen.getByRole('button', { name: 'Done editing how to work with me' }))
 
 		await waitFor(() =>
 			expect(updateMutate).toHaveBeenCalledWith(
@@ -86,11 +86,11 @@ describe('ProfileView', () => {
 		updateMutate.mockImplementation((_vars, opts) => opts.onError(new Error('nope')))
 		renderProfile({ description: 'Old text.' })
 
-		await user.click(screen.getByRole('button', { name: 'Edit' }))
+		await user.click(screen.getByRole('button', { name: 'Edit how to work with me' }))
 		const box = screen.getByRole('textbox', { name: 'How to work with me' })
 		await user.clear(box)
 		await user.type(box, 'New text.')
-		await user.click(screen.getByRole('button', { name: 'Done' }))
+		await user.click(screen.getByRole('button', { name: 'Done editing how to work with me' }))
 
 		const stillOpen = await screen.findByRole('textbox', { name: 'How to work with me' })
 		expect(stillOpen).toHaveValue('New text.')
@@ -100,8 +100,8 @@ describe('ProfileView', () => {
 		const user = userEvent.setup()
 		renderProfile({ description: 'Same text.' })
 
-		await user.click(screen.getByRole('button', { name: 'Edit' }))
-		await user.click(screen.getByRole('button', { name: 'Done' }))
+		await user.click(screen.getByRole('button', { name: 'Edit how to work with me' }))
+		await user.click(screen.getByRole('button', { name: 'Done editing how to work with me' }))
 
 		expect(updateMutate).not.toHaveBeenCalled()
 	})
