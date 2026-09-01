@@ -18,6 +18,7 @@ async function insertRootCommentAt(opts: {
 	content: string
 	createdAt: Date
 	metadata?: Record<string, unknown>
+	decision?: Record<string, unknown>
 }) {
 	const rows = await db
 		.insert(events)
@@ -31,6 +32,7 @@ async function insertRootCommentAt(opts: {
 				content: opts.content,
 				mentions: opts.mentions,
 				...(opts.metadata ? { metadata: opts.metadata } : {}),
+				...(opts.decision ? { decision: opts.decision } : {}),
 			},
 			createdAt: opts.createdAt,
 		})
@@ -191,7 +193,7 @@ describe('OrphanThreadDetector — integration', () => {
 		expect(capturePosthogEvent).not.toHaveBeenCalled()
 	})
 
-	it('classifies decision-chip metadata as decision_required', async () => {
+	it('classifies a comment carrying a decision block as decision_required', async () => {
 		const actor = getTestActorId()
 		const ws = await insertWorkspace(db, actor)
 		const object = await insertObject(db, ws.id, actor)
@@ -204,7 +206,15 @@ describe('OrphanThreadDetector — integration', () => {
 			mentions: [agent.id],
 			content: 'pick one',
 			createdAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
-			metadata: { chips: ['ship', 'wait', 'kill'] },
+			decision: {
+				title: 'Ship the retry backoff?',
+				summary: '3 sessions stalled last night. The patch is written and tested.',
+				ask: 'This changes what every running session does, so I will not ship it alone.',
+				options: [
+					{ label: 'Ship', recommended: true, consequences: ['Goes out tonight', 'No rollback'] },
+					{ label: 'Hold', consequences: ['Nothing ships', 'Stalls keep happening'] },
+				],
+			},
 		})
 
 		const detector = new OrphanThreadDetector(db)

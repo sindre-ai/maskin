@@ -23,8 +23,6 @@ interface FeedItemInput {
 	objectTitle?: string
 	hoursAgo?: number
 	decision?: boolean
-	/** Legacy `metadata.chips` options, for a pre-decision ask. */
-	chips?: string[]
 	/** Comment body under the opening line. Long, to prove nothing is cut. */
 	body?: string
 }
@@ -60,7 +58,6 @@ function buildItem(workspaceId: string, input: FeedItemInput) {
 
 ${input.body}`
 				: input.title,
-			chips: input.chips ?? [],
 			attention: 3,
 			decision: input.decision
 				? {
@@ -112,20 +109,12 @@ function feed(workspaceId: string) {
 			decision: true,
 		}),
 		buildItem(workspaceId, {
-			id: 'task-legacy-chips',
-			title: 'Which way do you want this shaped?',
-			type: 'task',
-			status: 'active',
-			hoursAgo: 2,
-			chips: ['Expand tool surface', 'Something else'],
-			body: `${'Context the reader must be able to finish on the card. '.repeat(20)}The last line of the ask.`,
-		}),
-		buildItem(workspaceId, {
 			id: 'insight-fyi',
 			title: 'Is the feed too long?',
 			type: 'insight',
 			status: 'active',
 			hoursAgo: 8,
+			body: `${'Context the reader must be able to finish on the card. '.repeat(20)}The last line of the ask.`,
 		}),
 		buildItem(workspaceId, {
 			id: 'bet-held',
@@ -195,12 +184,10 @@ test.describe('For You v4 — the feed at every ship-gate viewport', () => {
 			// tighten back to /Reply to /.
 			await expect(page.getByPlaceholder(/Write a comment/).first()).toBeVisible()
 
-			// A pre-decision ask gets the same option boxes, and its body is on
-			// the card in full — no "Read the rest" anywhere in the feed.
-			const chipCard = cards.filter({ hasText: 'Which way do you want this shaped?' })
-			await expect(chipCard.getByRole('button', { name: 'Expand tool surface' })).toBeVisible()
-			await expect(chipCard.getByRole('button', { name: 'Something else' })).toBeVisible()
-			await expect(chipCard.getByText('The last line of the ask.')).toBeVisible()
+			// A plain mention carries its whole body on the card — nothing is held
+			// behind a "Read the rest" link any more.
+			const fyiCard = cards.filter({ hasText: 'Is the feed too long?' })
+			await expect(fyiCard.getByText('The last line of the ask.')).toBeVisible()
 			await expect(page.getByText('Read the rest')).toHaveCount(0)
 
 			await assertNoHorizontalOverflow(page, `${vp.label} cards`)
@@ -223,7 +210,7 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 		await mockFeed(page, account.workspaceId)
 		await page.goto(`/${account.workspaceId}`)
 
-		await expect(page.getByTestId('foryou-feed-card')).toHaveCount(6)
+		await expect(page.getByTestId('foryou-feed-card')).toHaveCount(5)
 		// Every card is its own bordered block — the feed carries no group shells.
 		await expect(page.getByTestId('foryou-feed-group')).toHaveCount(0)
 	})
@@ -415,9 +402,8 @@ test.describe('For You v4 — the card\u2019s own controls', () => {
 		await page.getByRole('button', { name: 'Feed actions' }).click()
 		await page.getByRole('menuitem', { name: /Take every suggested option/ }).click()
 
-		// Three of the six cards carry an agent-authored decision. The chip card
-		// has options but no recommendation, and the plain insight and blocked
-		// bet have nothing to answer, so bulk-answer skips all three.
+		// Three of the five cards carry an agent-authored decision. The plain
+		// insight and the blocked bet are mentions with nothing to answer.
 		await expect(page.getByTestId('decision-receipt')).toHaveCount(3)
 		await expect.poll(() => posted.length).toBe(3)
 	})

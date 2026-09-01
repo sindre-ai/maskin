@@ -3,8 +3,8 @@ import { ObjectReference } from '@/components/shared/object-reference'
 import { useActor, useActors } from '@/hooks/use-actors'
 import { useFiles } from '@/hooks/use-files'
 import type { ActorListItem, EventResponse, SessionResponse } from '@/lib/api'
-import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { hasDecision } from '@/lib/comment-decision'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { ChevronDown, Reply } from 'lucide-react'
 import { useState } from 'react'
@@ -14,7 +14,6 @@ import { AttachedFileCard } from '../shared/attached-file-card'
 import { RelativeTime } from '../shared/relative-time'
 import { CommentInput } from './comment-input'
 import { CommentTaskList, hasTaskList } from './comment-task-list'
-import { DecisionChips, hasDecisionChips } from './decision-chips'
 import { MentionSessionCard } from './mention-session-card'
 
 const COMMENT_DISALLOWED_ELEMENTS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
@@ -347,9 +346,7 @@ export function ActivityComment({
 	const [showReplyInput, setShowReplyInput] = useState(false)
 	const hasReplies = replies.length > 0
 	const actorList = actors ?? []
-	const isDecisionPoint = hasDecisionChips(event)
-	const currentActorId = getStoredActor()?.id
-	const alreadyReplied = !!currentActorId && replies.some((r) => r.actorId === currentActorId)
+	const isDecisionPoint = hasDecision(event)
 	// Collapsed by default when the caller opts in — the toggle carries the
 	// count and a note naming who spoke last, both read off the replies
 	// themselves (mockup 369).
@@ -368,13 +365,6 @@ export function ActivityComment({
 	}
 
 	const isBubble = variant === 'bubble'
-
-	const decisionBlock =
-		isDecisionPoint && !alreadyReplied ? (
-			<div className={cn('mt-1.5', !isBubble && 'ml-7')}>
-				<DecisionChips event={event} objectId={objectId} workspaceId={workspaceId} />
-			</div>
-		) : null
 
 	// Mockup 1288: the thread toggle is a pill inside the message, carrying just
 	// the count. The plain reading keeps the "last from <name>" note, which the
@@ -416,17 +406,8 @@ export function ActivityComment({
 				isUnread={isUnread}
 				isDecisionPoint={isDecisionPoint}
 				variant={variant}
-				footer={
-					isBubble ? (
-						<>
-							{decisionBlock}
-							{threadToggle}
-						</>
-					) : undefined
-				}
+				footer={isBubble ? threadToggle : undefined}
 			/>
-
-			{!isBubble && decisionBlock}
 
 			{mentionSessions.length > 0 && (
 				<div className={cn('mt-1 space-y-1', isBubble ? 'ml-[41px]' : 'ml-7')}>

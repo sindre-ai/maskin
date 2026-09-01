@@ -56,7 +56,6 @@ function buildMention(overrides: Partial<LatestMention> = {}): LatestMention {
 		actor_id: 'agent-1',
 		created_at: new Date().toISOString(),
 		content: 'Merge the trigger settings rewrite?',
-		chips: [],
 		attention: 4,
 		decision: buildDecision(),
 		...overrides,
@@ -184,31 +183,6 @@ describe('FeedCard — full state', () => {
 		expect(screen.queryByRole('button', { name: 'Merge now' })).not.toBeInTheDocument()
 		expect(screen.getByText('Can you confirm the launch date?')).toBeInTheDocument()
 		expect(screen.getByTestId('comment-input')).toBeInTheDocument()
-	})
-
-	// Comments written before the decision block put their options in
-	// `metadata.chips`. Those are agent-authored too, so they get the same boxes.
-	it('renders legacy chips as option buttons', async () => {
-		const onDecide = vi.fn()
-		const user = userEvent.setup()
-		renderCard({
-			onDecide,
-			item: buildItem({
-				latest_mention: buildMention({
-					decision: null,
-					content: 'Which way do you want this shaped?',
-					chips: ['Expand tool surface', 'Something else'],
-				}),
-			}),
-		})
-
-		expect(screen.getByRole('button', { name: 'Expand tool surface' })).toBeInTheDocument()
-		await user.click(screen.getByRole('button', { name: 'Something else' }))
-		await waitFor(() => expect(onDecide).toHaveBeenCalledTimes(1))
-		expect(onDecide.mock.calls[0]?.[0]).toMatchObject({
-			id: 'something_else',
-			label: 'Something else',
-		})
 	})
 
 	// The reader answers on the card, so the whole comment is on the card. There

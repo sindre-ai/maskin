@@ -1513,7 +1513,6 @@ describe('Subscriptions Integration', () => {
 			expect(item?.latest_mention?.content).toBe('second ask')
 			expect(item?.latest_mention?.attention).toBe(4)
 			expect(item?.latest_mention?.decision).toEqual(decision)
-			expect(item?.latest_mention?.chips).toEqual([])
 		})
 
 		it('returns a null decision for a plain mention', async () => {
@@ -1598,66 +1597,6 @@ describe('Subscriptions Integration', () => {
 			}
 			const mention = body.items.find((i) => i.entity_id === obj.id)?.latest_mention
 			expect(mention?.content).toHaveLength(1200)
-		})
-
-		// Pre-decision comments put their options in `metadata.chips`; the card
-		// renders them as buttons, so the feed has to carry them.
-		it('carries the legacy metadata chips on the mention', async () => {
-			const appA = appAs(aId)
-			const appB = appAs(bId)
-			const headers = { 'x-workspace-id': workspaceId }
-			const obj = await seedObject()
-
-			await appB.request(
-				jsonRequest(
-					'POST',
-					'/api/events',
-					{
-						entity_id: obj.id,
-						content: 'Chips or free-text?',
-						mentions: [aId],
-						metadata: { chips: ['Expand tool surface', 'Something else'] },
-					},
-					headers,
-				),
-			)
-
-			const res = await appA.request(jsonGet('/api/subscriptions/unread', headers))
-			const body = (await res.json()) as {
-				items: Array<{ entity_id: string; latest_mention?: { chips: string[] } }>
-			}
-			const mention = body.items.find((i) => i.entity_id === obj.id)?.latest_mention
-			expect(mention?.chips).toEqual(['Expand tool surface', 'Something else'])
-		})
-
-		// A stored row is untrusted: a malformed chips value must produce no
-		// buttons rather than blank ones.
-		it('drops chips that are not usable labels', async () => {
-			const appA = appAs(aId)
-			const appB = appAs(bId)
-			const headers = { 'x-workspace-id': workspaceId }
-			const obj = await seedObject()
-
-			await appB.request(
-				jsonRequest(
-					'POST',
-					'/api/events',
-					{
-						entity_id: obj.id,
-						content: 'Malformed chips.',
-						mentions: [aId],
-						metadata: { chips: ['  ', 42, null, 'Keep this one'] },
-					},
-					headers,
-				),
-			)
-
-			const res = await appA.request(jsonGet('/api/subscriptions/unread', headers))
-			const body = (await res.json()) as {
-				items: Array<{ entity_id: string; latest_mention?: { chips: string[] } }>
-			}
-			const mention = body.items.find((i) => i.entity_id === obj.id)?.latest_mention
-			expect(mention?.chips).toEqual(['Keep this one'])
 		})
 	})
 })

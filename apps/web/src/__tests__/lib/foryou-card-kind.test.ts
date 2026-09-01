@@ -4,6 +4,7 @@ import type { LatestMention, LatestMentionDecision, UnreadItem } from '@/lib/api
 import {
 	actionIdFromLabel,
 	cardActions,
+	cardBody,
 	cardHeadline,
 	classifyCardKind,
 	decisionOf,
@@ -34,7 +35,6 @@ function buildMention(overrides: Partial<LatestMention> = {}): LatestMention {
 		actor_id: null,
 		created_at: '2026-09-01T00:00:00.000Z',
 		content: 'Body of the comment.',
-		chips: [],
 		attention: null,
 		decision: null,
 		...overrides,
@@ -107,31 +107,6 @@ describe('cardActions', () => {
 	it('returns no actions for a plain mention', () => {
 		expect(cardActions(buildItem({ latest_mention: buildMention() }))).toEqual([])
 	})
-
-	it('falls back to the comment legacy chips when there is no decision', () => {
-		const item = buildItem({
-			latest_mention: buildMention({ chips: ['Expand tool surface', 'Something else'] }),
-		})
-		expect(cardActions(item)).toEqual([
-			{ id: 'expand_tool_surface', label: 'Expand tool surface', consequences: [] },
-			{ id: 'something_else', label: 'Something else', consequences: [] },
-		])
-	})
-
-	// A chip says nothing about which option the agent would take, so none of
-	// them may claim the filled bar.
-	it('marks no chip recommended', () => {
-		const item = buildItem({ latest_mention: buildMention({ chips: ['Yes', 'No'] }) })
-		expect(cardActions(item).some((action) => action.recommended)).toBe(false)
-		expect(recommendedAction(item)).toBeUndefined()
-	})
-
-	it('prefers the decision over chips when a comment carries both', () => {
-		const item = buildItem({
-			latest_mention: buildMention({ decision: buildDecision(), chips: ['Yes', 'No'] }),
-		})
-		expect(cardActions(item).map((action) => action.label)).toEqual(['Hold', '7-day window'])
-	})
 })
 
 describe('recommendedAction', () => {
@@ -184,6 +159,30 @@ describe('cardHeadline', () => {
 			latest_mention: buildMention({ content: '## Heading\n\n- Can you confirm the date?' }),
 		})
 		expect(cardHeadline(item)).toBe('Heading')
+	})
+
+	// A comment's opening was written as prose, not as a title. Three sentences
+	// of welcome copy set at headline weight is the bug this guards.
+	it('takes only the first sentence of an opening paragraph', () => {
+		const item = buildItem({
+			latest_mention: buildMention({
+				content:
+					"Welcome to Maskin, asd. This is a workspace where you and a team of AI agents share memory. I'm your Chief of Staff.",
+			}),
+		})
+		expect(cardHeadline(item)).toBe('Welcome to Maskin, asd.')
+		expect(cardBody(item)).toBe(
+			"This is a workspace where you and a team of AI agents share memory. I'm your Chief of Staff.",
+		)
+	})
+
+	it('caps a long opening sentence, and keeps it whole in the body', () => {
+		const content =
+			'This is one very long opening sentence that simply refuses to stop before the cap, honestly. And a second one.'
+		const item = buildItem({ latest_mention: buildMention({ content }) })
+		expect(cardHeadline(item)).toBe('This is one very long opening sentence that simply…')
+		// Nothing the headline cut is lost — the body opens with that sentence.
+		expect(cardBody(item)).toBe(content)
 	})
 
 	// An item with no mention payload still has to render something.
