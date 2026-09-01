@@ -19,7 +19,7 @@ import {
 } from '@/hooks/use-user-display-settings'
 import { type CreateCommentInput, type DisplaySettingsBody, type UnreadItem, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { classifyCardKind, recommendedAction } from '@/lib/foryou-card-kind'
+import { CARD_ACTIONS, classifyCardKind } from '@/lib/foryou-card-kind'
 import { type FeedBucket, bucketRank, feedItemKey, feedTailLabel } from '@/lib/foryou-feed'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -394,11 +394,10 @@ function ForYouFeed() {
 	const takeSuggested = useCallback(
 		(targets: UnreadItem[]) => {
 			for (const item of targets) {
-				// Only cards where the agent actually named a recommendation. A
-				// plain mention has nothing to take, and a decision without one
-				// cannot be posted (the API rejects it), so there is nothing to
-				// guess at here.
-				const option = recommendedAction(item)
+				const kind = classifyCardKind(item)
+				if (kind === 'thread') continue
+				const option =
+					CARD_ACTIONS[kind].find((action) => action.recommended) ?? CARD_ACTIONS[kind][0]
 				if (!option) continue
 				handleDecide(item, { id: option.id, label: option.label })
 			}

@@ -2,7 +2,6 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { events, objects, subscriptions } from '@maskin/db/schema'
 import {
-	commentDecisionSchema,
 	markReadBodySchema,
 	markUnreadBodySchema,
 	subscribeBodySchema,
@@ -101,62 +100,7 @@ const unreadItemSchema = z.object({
 	latest_event_id: z.number().nullable(),
 	latest_activity_at: z.string().nullable(),
 	object: objectResponseSchema.optional(),
-	// The comment that put this card in the feed. Every For You item exists
-	// because an agent @-mentioned the reader (see the join predicate below), so
-	// the card leads with this rather than with the object's own title and
-	// description — those are stable across every mention on the object, and are
-	// one click away on the object page.
-	latest_mention: z
-		.object({
-			event_id: z.number(),
-			actor_id: z.string().uuid().nullable(),
-			created_at: z.string(),
-			// Truncated to MENTION_PREVIEW_CHARS; the full body is on the object.
-			content: z.string(),
-			truncated: z.boolean(),
-			attention: z.number().nullable(),
-			// Present only when the agent asked for a structured decision. The
-			// card renders its options as the buttons the reader taps.
-			decision: commentDecisionSchema.nullable(),
-		})
-		.optional(),
 })
-
-/**
- * How much of the mention body the feed carries. The card shows a few lines
- * before the reader opens the object, and a feed is N of these — sending full
- * 2000-character bodies for every card would dominate the payload.
- */
-const MENTION_PREVIEW_CHARS = 600
-
-type LatestMention = NonNullable<z.infer<typeof unreadItemSchema>['latest_mention']>
-
-/**
- * Projects a `commented` event row into the feed's mention payload.
- *
- * The decision block is re-parsed rather than trusted: it was validated on the
- * way in, but rows predating that gate — or written by a future caller that
- * skips it — would otherwise reach the card as a malformed set of buttons. A
- * block that no longer parses degrades to `null`, and the card falls back to
- * rendering the comment body.
- */
-function toLatestMention(event: typeof events.$inferSelect): LatestMention {
-	const data = (event.data ?? {}) as Record<string, unknown>
-	const rawContent = typeof data.content === 'string' ? data.content : ''
-	const attention = Number(data.attention)
-	const decision = commentDecisionSchema.safeParse(data.decision)
-
-	return {
-		event_id: Number(event.id),
-		actor_id: event.actorId ?? null,
-		created_at:
-			event.createdAt instanceof Date ? event.createdAt.toISOString() : String(event.createdAt),
-		content: rawContent.slice(0, MENTION_PREVIEW_CHARS),
-		truncated: rawContent.length > MENTION_PREVIEW_CHARS,
-		attention: Number.isFinite(attention) ? attention : null,
-		decision: decision.success ? decision.data : null,
-	}
-}
 
 const unreadResponseSchema = z.object({
 	items: z.array(unreadItemSchema),
@@ -510,29 +454,8 @@ app.openapi(listUnreadRoute, (async (c) => {
 		for (const o of fetched) objectsById.set(o.id, o)
 	}
 
-	// Hydrate the mention comment itself. `latest_event_id` is max(events.id)
-	// over the join scope above, and that scope is mentions-only, so the newest
-	// joined event *is* the newest comment mentioning this actor — fetching
-	// those ids directly is exact. Deliberately a second keyed query rather than
-	// a correlated subquery inside the aggregate: Drizzle column objects
-	// interpolated into a correlated `sql` template render unqualified and bind
-	// to the wrong table, which fails silently (see .claude/rules/known-pitfalls.md).
-	const mentionEventIds = rows
-		.map((r) => r.latestEventId)
-		.filter((id): id is number => typeof id === 'number')
-	const mentionsByEventId = new Map<number, typeof events.$inferSelect>()
-	if (mentionEventIds.length > 0) {
-		const fetched = await db
-			.select()
-			.from(events)
-			.where(and(eq(events.workspaceId, workspaceId), inArray(events.id, mentionEventIds)))
-		for (const e of fetched) mentionsByEventId.set(Number(e.id), e)
-	}
-
 	const items = rows.map((r) => {
 		const obj = r.entityType === 'object' ? objectsById.get(r.entityId) : undefined
-		const mentionEvent =
-			r.latestEventId == null ? undefined : mentionsByEventId.get(Number(r.latestEventId))
 		return {
 			entity_type: r.entityType,
 			entity_id: r.entityId,
@@ -543,7 +466,6 @@ app.openapi(listUnreadRoute, (async (c) => {
 			latest_activity_at:
 				r.latestActivityAt instanceof Date ? r.latestActivityAt.toISOString() : r.latestActivityAt,
 			...(obj ? { object: serialize(obj) as z.infer<typeof objectResponseSchema> } : {}),
-			...(mentionEvent ? { latest_mention: toLatestMention(mentionEvent) } : {}),
 		}
 	})
 

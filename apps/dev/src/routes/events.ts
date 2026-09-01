@@ -2,7 +2,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { events, actors, files, objects } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
-import { createCommentSchema, eventQuerySchema, validateDecisionProse } from '@maskin/shared'
+import { createCommentSchema, eventQuerySchema } from '@maskin/shared'
 import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { trackAgentCommentPosted } from '../lib/analytics/comment-events'
@@ -216,28 +216,6 @@ app.openapi(createCommentRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404 as never)
 	}
 
-	// A decision block renders as the buttons a human taps on their For You
-	// card, so a malformed one is a broken control rather than merely untidy
-	// prose. Reject it — but report every violated rule at once, each quoting
-	// the offending value, so the agent fixes it in one retry instead of
-	// burning a turn per nit. Comments without a decision never reach here.
-	if (body.decision) {
-		const violations = validateDecisionProse(body.decision)
-		if (violations.length > 0) {
-			return c.json(
-				createApiError(
-					'BAD_REQUEST',
-					`The decision block breaks ${violations.length} of the house style rules. Fix all of them and post again.`,
-					violations.map((violation) => ({
-						field: `decision.${violation.path}`,
-						message: violation.message,
-					})),
-				),
-				400,
-			)
-		}
-	}
-
 	// Validate any attached file IDs belong to this workspace before we
 	// commit them onto the event row. Without this check an attacker could
 	// store IDs of files they cannot read, and the renderer would still
@@ -285,7 +263,6 @@ app.openapi(createCommentRoute, (async (c) => {
 		parentEventId,
 		attachmentFileIds: body.attachment_file_ids,
 		metadata: body.metadata,
-		decision: body.decision,
 		attention: body.attention,
 	})
 

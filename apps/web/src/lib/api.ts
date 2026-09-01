@@ -1071,9 +1071,7 @@ export interface UnreadItem {
 	entity_id: string
 	unread_count: number
 	// Count of unread events on the entity that actually @-mention the viewer.
-	// Not rendered: the feed is mentions-only, so this equals unread_count on
-	// every card except an onboarding_session, and a "Mentioned" pill would sit
-	// on nearly all of them. The card shows the mention itself instead.
+	// Drives the "Mentioned" pill on the For You card when > 0.
 	mentioning_unread_count: number
 	// Highest attention score (1-5) among the entity's unread comments. null
 	// when no unread comment carries a score — sorts below scored comments in
@@ -1082,35 +1080,6 @@ export interface UnreadItem {
 	latest_event_id: number | null
 	latest_activity_at: string | null
 	object?: ObjectResponse
-	// The comment that put this item in the feed. Absent only for entities with
-	// no joined event payload (a subscription whose events were pruned).
-	latest_mention?: LatestMention
-}
-
-export interface LatestMentionDecisionOption {
-	label: string
-	consequences: string[]
-	recommended?: boolean
-}
-
-export interface LatestMentionDecision {
-	title: string
-	summary: string
-	ask: string
-	options: LatestMentionDecisionOption[]
-}
-
-export interface LatestMention {
-	event_id: number
-	actor_id: string | null
-	created_at: string
-	// Truncated server-side; `truncated` says whether anything was cut.
-	content: string
-	truncated: boolean
-	attention: number | null
-	// Present only when the agent asked for a structured decision. The card
-	// renders its options as the buttons the reader taps.
-	decision: LatestMentionDecision | null
 }
 
 export interface UnreadResponse {

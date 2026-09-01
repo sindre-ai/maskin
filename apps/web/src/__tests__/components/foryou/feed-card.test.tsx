@@ -26,42 +26,8 @@ vi.mock('@/components/activity/comment-input', () => ({
 }))
 
 import { FeedCard } from '@/components/foryou/feed-card'
-import type { LatestMention, LatestMentionDecision, UnreadItem } from '@/lib/api'
+import type { UnreadItem } from '@/lib/api'
 import { TestWrapper } from '../../setup'
-
-function buildDecision(overrides: Partial<LatestMentionDecision> = {}): LatestMentionDecision {
-	return {
-		title: 'Merge the trigger settings rewrite?',
-		summary:
-			'A page 200 people use every day was rewritten, and no human has opened it. I have run the suite and the visual diff.',
-		ask: 'This ships to every workspace at once, so I will not merge it alone.',
-		options: [
-			{
-				label: 'Send back',
-				consequences: ['Nothing ships this cycle', 'Costs another review round'],
-			},
-			{
-				label: 'Merge now',
-				recommended: true,
-				consequences: ['Ships with tonight deploy', 'No rollback once migrations run'],
-			},
-		],
-		...overrides,
-	}
-}
-
-function buildMention(overrides: Partial<LatestMention> = {}): LatestMention {
-	return {
-		event_id: 42,
-		actor_id: 'agent-1',
-		created_at: new Date().toISOString(),
-		content: 'Merge the trigger settings rewrite?',
-		truncated: false,
-		attention: 4,
-		decision: buildDecision(),
-		...overrides,
-	}
-}
 
 function buildItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 	return {
@@ -76,7 +42,7 @@ function buildItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 			id: 'task-1',
 			workspaceId: 'ws-1',
 			type: 'task',
-			title: 'Trigger settings rewrite',
+			title: 'Merge the trigger settings rewrite?',
 			content: 'A page people use every day was rewritten, and no human has opened it.',
 			status: 'in_review',
 			metadata: { decision_type: 'architecture' },
@@ -86,7 +52,6 @@ function buildItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 			createdAt: null,
 			updatedAt: null,
 		},
-		latest_mention: buildMention(),
 		...overrides,
 	}
 }
@@ -145,24 +110,17 @@ describe('FeedCard — row state', () => {
 })
 
 describe('FeedCard — full state', () => {
-	it('leads with the agent ask and renders its options, not the object description', () => {
+	it('renders the object link, the why, the options and the composer', () => {
 		renderCard()
 
-		// The object's own name is context in the meta line now; the headline is
-		// the decision the agent asked for.
-		expect(screen.getByRole('link', { name: /Trigger settings rewrite/ })).toBeInTheDocument()
-		expect(screen.getByText(/A page 200 people use every day was rewritten/)).toBeInTheDocument()
+		// The headline already names the object, so the meta line's link is a bare
+		// "Open" — it only spells out a name when the card sits under a parent.
+		expect(screen.getByRole('link', { name: /Open/ })).toBeInTheDocument()
 		expect(
-			screen.getByText('This ships to every workspace at once, so I will not merge it alone.'),
+			screen.getByText('A page people use every day was rewritten, and no human has opened it.'),
 		).toBeInTheDocument()
-		// The object's description no longer appears on the card at all.
-		expect(
-			screen.queryByText('A page people use every day was rewritten, and no human has opened it.'),
-		).not.toBeInTheDocument()
-		// The buttons are the agent's own labels, each carrying its consequences.
-		expect(screen.getByRole('button', { name: 'Merge now' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Send back' })).toBeInTheDocument()
-		expect(screen.getByText('No rollback once migrations run')).toBeInTheDocument()
 		// The composer renders stacked with its default placeholder until the
 		// Object detail split lands `variant`/`placeholder` on the v2 composer —
 		// see the TODO in feed-card.tsx. Assert it is wired to the object, not
@@ -170,28 +128,17 @@ describe('FeedCard — full state', () => {
 		expect(screen.getByTestId('comment-input')).toHaveAttribute('data-object-id', 'task-1')
 	})
 
-	// A review-status task used to be enough to invent Approve / Send back. Only
-	// an agent-authored decision produces options now.
-	it('offers no options on a mention with no decision, and renders the comment body', () => {
+	it('offers no options on a plain thread', () => {
 		renderCard({
 			item: buildItem({
-				latest_mention: buildMention({
-					decision: null,
-					content: 'Can you confirm the launch date?',
-				}),
+				object: {
+					...buildItem().object,
+					status: 'in_progress',
+					metadata: {},
+				} as UnreadItem['object'],
 			}),
 		})
-		expect(screen.queryByRole('button', { name: 'Merge now' })).not.toBeInTheDocument()
-		expect(screen.getByText('Can you confirm the launch date?')).toBeInTheDocument()
-		expect(screen.getByTestId('comment-input')).toBeInTheDocument()
-	})
-
-	// An item whose events were pruned still has to render something.
-	it('falls back to the object title when there is no mention payload', () => {
-		renderCard({ item: buildItem({ latest_mention: undefined }) })
-		expect(screen.getByText('Trigger settings rewrite')).toBeInTheDocument()
-		// It is the headline, so the meta link does not repeat it.
-		expect(screen.getByRole('link', { name: /Open/ })).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
 		expect(screen.getByTestId('comment-input')).toBeInTheDocument()
 	})
 
@@ -200,9 +147,9 @@ describe('FeedCard — full state', () => {
 		const user = userEvent.setup()
 		renderCard({ onDecide })
 
-		await user.click(screen.getByRole('button', { name: 'Merge now' }))
+		await user.click(screen.getByRole('button', { name: 'Approve' }))
 		await waitFor(() => expect(onDecide).toHaveBeenCalledTimes(1))
-		expect(onDecide.mock.calls[0]?.[0]).toMatchObject({ id: 'merge_now', label: 'Merge now' })
+		expect(onDecide.mock.calls[0]?.[0]).toMatchObject({ id: 'approve', label: 'Approve' })
 	})
 
 	// The option is acknowledged with a 260ms beat before `onDecide` fires, and
@@ -214,7 +161,7 @@ describe('FeedCard — full state', () => {
 		const user = userEvent.setup()
 		const { unmount } = renderCard({ onDecide })
 
-		await user.click(screen.getByRole('button', { name: 'Merge now' }))
+		await user.click(screen.getByRole('button', { name: 'Approve' }))
 		unmount()
 		// Comfortably past the 260ms beat — the cancelled timer must never fire.
 		await new Promise((resolve) => setTimeout(resolve, 500))
@@ -237,10 +184,10 @@ describe('FeedCard — full state', () => {
 
 describe('FeedCard — decided state', () => {
 	it('shows the receipt for the option that was taken, with nothing to take back', () => {
-		renderCard({ decided: { id: 'merge_now', label: 'Merge now' } })
+		renderCard({ decided: { id: 'approve', label: 'Approve' } })
 
 		const receipt = screen.getByTestId('decision-receipt')
-		expect(receipt).toHaveTextContent('Merge now')
+		expect(receipt).toHaveTextContent('Approve')
 		expect(receipt).toHaveTextContent('Sent to Code Reviewer')
 		expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
 		// The card's own controls are gone once it has been answered.
