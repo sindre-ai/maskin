@@ -25,8 +25,17 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 async function openTranscript(page: Page) {
 	const brief = page.getByTestId('brief-card')
 	await brief.getByRole('button', { name: "Today's brief" }).click()
+
 	const reveal = brief.getByRole('button', { name: /show the transcript/i })
-	if (await reveal.isVisible().catch(() => false)) await reveal.click()
+	const transcript = brief.getByTestId('brief-transcript')
+	// The expand is what starts the write, so for as long as it takes the body
+	// reads "Writing your brief…" and neither control exists yet. Waiting for
+	// whichever one arrives is what makes this deterministic: with
+	// SpeechSynthesis the prose is folded behind the reveal, without it the
+	// transcript is already open. A bare `isVisible()` here is a snapshot, and
+	// it always snapshotted the still-writing body.
+	await expect(reveal.or(transcript).first()).toBeVisible({ timeout: 15_000 })
+	if (await reveal.isVisible()) await reveal.click()
 	return brief
 }
 

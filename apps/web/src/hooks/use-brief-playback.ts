@@ -137,12 +137,18 @@ export function useBriefPlayback(text: string): BriefPlayback {
 	// getVoices() returns [] until the list loads, and fires `voiceschanged`
 	// when it does — reading it once at mount is the classic way to end up
 	// with the default robotic voice forever.
+	// Every member is probed before it is called: `speechSynthesis` is a host
+	// object a hardening extension (or a test stub) can leave half-implemented,
+	// and voice selection is the one lever here that is pure polish — losing it
+	// must degrade to the browser's default voice, never take the card down.
 	useEffect(() => {
-		if (!hasSpeechSynthesis()) return
-		const load = () => setVoices(window.speechSynthesis.getVoices())
+		const synth = hasSpeechSynthesis() ? window.speechSynthesis : null
+		if (!synth || typeof synth.getVoices !== 'function') return
+		const load = () => setVoices(synth.getVoices())
 		load()
-		window.speechSynthesis.addEventListener('voiceschanged', load)
-		return () => window.speechSynthesis.removeEventListener('voiceschanged', load)
+		if (typeof synth.addEventListener !== 'function') return
+		synth.addEventListener('voiceschanged', load)
+		return () => synth.removeEventListener?.('voiceschanged', load)
 	}, [])
 
 	const stop = useCallback(() => {

@@ -3,7 +3,11 @@ import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BriefCacheCleaner } from '../../services/brief-cache-cleaner'
-import { briefCacheKey, generateSpokenBrief } from '../../services/spoken-brief'
+import {
+	briefCacheKey,
+	generateSpokenBrief,
+	resolveBriefingAgent,
+} from '../../services/spoken-brief'
 import {
 	collectBriefingFacts,
 	formatAgentBriefing,
@@ -192,24 +196,27 @@ describe('spoken briefing', () => {
 			expect(second.script).toContain('Ship the pricing page')
 		})
 
+		// Resolution is asserted through `resolveBriefingAgent`, not through
+		// `brief.agent`: that field credits the *author*, and with no model
+		// credentials in the test environment every brief here comes back
+		// through the fallback, which credits nobody. Asserting a name on it
+		// would be asserting authorship of prose the agent never wrote.
 		it('picks the Chief of Staff over the legacy Workspace Coach', async () => {
 			await seedAgent(workspaceId, 'Workspace Coach')
 			await seedAgent(workspaceId, 'Chief of Staff')
 
-			const brief = await generateSpokenBrief(db, storage, workspaceId)
-			expect(brief.agent?.name).toBe('Chief of Staff')
+			const agent = await resolveBriefingAgent(db, workspaceId, {} as never)
+			expect(agent?.name).toBe('Chief of Staff')
 		})
 
 		it('honours the workspace pinned default agent above either', async () => {
 			await seedAgent(workspaceId, 'Chief of Staff')
 			const relay = await seedAgent(workspaceId, 'Relay')
-			await db
-				.update(workspaces)
-				.set({ settings: { default_agent_id: relay.id } })
-				.where(eq(workspaces.id, workspaceId))
+			const settings = { default_agent_id: relay.id }
+			await db.update(workspaces).set({ settings }).where(eq(workspaces.id, workspaceId))
 
-			const brief = await generateSpokenBrief(db, storage, workspaceId)
-			expect(brief.agent?.name).toBe('Relay')
+			const agent = await resolveBriefingAgent(db, workspaceId, settings as never)
+			expect(agent?.name).toBe('Relay')
 		})
 
 		it('never borrows another workspace agent — actors are scoped by membership', async () => {
@@ -219,7 +226,19 @@ describe('spoken briefing', () => {
 			const other = await insertWorkspace(db, otherOwner.id)
 			await seedAgent(other.id, 'Chief of Staff')
 
+			expect(await resolveBriefingAgent(db, workspaceId, {} as never)).toBeNull()
+
+			// And the brief itself credits nobody, so the card can't name one.
 			const brief = await generateSpokenBrief(db, storage, workspaceId)
+			expect(brief.agent).toBeNull()
+		})
+
+		// The other half of that contract: resolving an agent is not authorship.
+		it('credits nobody when the fallback wrote the prose', async () => {
+			await seedAgent(workspaceId, 'Chief of Staff')
+
+			const brief = await generateSpokenBrief(db, storage, workspaceId)
+			expect(brief.source).toBe('fallback')
 			expect(brief.agent).toBeNull()
 		})
 	})
