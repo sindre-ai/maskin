@@ -67,6 +67,30 @@ export interface SessionDispatchQueueOptions {
 	 * reason, no hint that starting a new session is the recovery.
 	 */
 	appendSystemLog?: (sessionId: string, content: string) => Promise<void>
+	/**
+	 * Notified when a dispatch fails permanently for a reason the dispatcher
+	 * already classified. Exists so a WORKSPACE-level cause — most importantly
+	 * `not_logged_in`, "this workspace has no working LLM credentials" — can
+	 * reach a listener that is able to stop re-provoking it.
+	 *
+	 * Why it is needed at all: `SessionDispatcher` *returns* its failures as
+	 * values rather than throwing, and in production `SessionManager.launchContainer`
+	 * enqueues and returns rather than launching, so nothing about a credential
+	 * failure on this path propagates back to whoever created the session. The
+	 * caller that created it (e.g. `TriggerRunner`) therefore never learns the
+	 * workspace is unusable and keeps firing on schedule — which is exactly the
+	 * flood this hook lets it stop (Sentry MASKIN-DEV-6).
+	 *
+	 * Best-effort and synchronous-safe: a throw here is caught and logged, never
+	 * allowed to leave the session row un-failed.
+	 */
+	onPermanentFailure?: (info: {
+		sessionId: string
+		workspaceId: string
+		/** `undefined` when the dispatcher gave no classification. */
+		reasonCode?: string
+		error: string
+	}) => void
 }
 
 const DEFAULTS = {
@@ -109,6 +133,7 @@ export class SessionDispatchQueue {
 	private readonly batchSize: number
 	private readonly leaseMs: number
 	private readonly appendSystemLog?: (sessionId: string, content: string) => Promise<void>
+	private readonly onPermanentFailure?: SessionDispatchQueueOptions['onPermanentFailure']
 
 	constructor(
 		private db: Database,
@@ -123,6 +148,7 @@ export class SessionDispatchQueue {
 		this.batchSize = opts.batchSize ?? DEFAULTS.batchSize
 		this.leaseMs = opts.leaseMs ?? DEFAULTS.leaseMs
 		this.appendSystemLog = opts.appendSystemLog
+		this.onPermanentFailure = opts.onPermanentFailure
 	}
 
 	/**
@@ -339,7 +365,7 @@ export class SessionDispatchQueue {
 		failureReason?: SessionResultFailureReason,
 	): Promise<void> {
 		await this.markRowFailed(row, error)
-		await this.markSessionFailed(
+		const workspaceId = await this.markSessionFailed(
 			row.sessionId,
 			`Permanent dispatch failure: ${error}`,
 			failureReason,
@@ -348,6 +374,25 @@ export class SessionDispatchQueue {
 			sessionId: row.sessionId,
 			error,
 		})
+
+		// `workspaceId` is null only when the session row was already terminal —
+		// the dispatcher raced us to it — in which case there is no live session
+		// to attribute the workspace state to and nothing useful to notify about.
+		if (workspaceId && this.onPermanentFailure) {
+			try {
+				this.onPermanentFailure({
+					sessionId: row.sessionId,
+					workspaceId,
+					reasonCode: failureReason?.reason_code,
+					error,
+				})
+			} catch (err) {
+				logger.warn('onPermanentFailure hook threw', {
+					sessionId: row.sessionId,
+					error: String(err),
+				})
+			}
+		}
 	}
 
 	private async markRowFailed(
@@ -371,12 +416,15 @@ export class SessionDispatchQueue {
 	 * runtime failure. If the session row was already terminal (the dispatcher
 	 * raced us to it) the UPDATE matches zero rows and the event still records
 	 * the dispatch-side observation.
+	 *
+	 * Returns the failed session's workspace id, or null when the UPDATE matched
+	 * nothing (already terminal) or the write threw.
 	 */
 	private async markSessionFailed(
 		sessionId: string,
 		errorMessage: string,
 		failureReason?: SessionResultFailureReason,
-	): Promise<void> {
+	): Promise<string | null> {
 		// A bare `result.error` string renders nowhere: the session detail panel's
 		// FailureCard reads `result.failure_reason`, and use-conversation-activity
 		// reads `failure_reason.human_message`. Without this the user's session
@@ -441,6 +489,8 @@ export class SessionDispatchQueue {
 					}
 				}
 			}
+
+			return updated?.workspaceId ?? null
 		} catch (err) {
 			// Surface but never throw — the row is already marked failed in the
 			// queue, the worker should keep draining the rest of the batch.
@@ -448,6 +498,7 @@ export class SessionDispatchQueue {
 				sessionId,
 				error: String(err),
 			})
+			return null
 		}
 	}
 

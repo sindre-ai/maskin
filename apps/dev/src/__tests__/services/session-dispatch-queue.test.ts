@@ -218,7 +218,21 @@ vi.mock('drizzle-orm', async () => {
 			(r[col.__name] as Date).getTime() <= v.getTime(),
 	})
 	const asc = (_col: unknown) => ({})
-	const sql = (..._args: unknown[]) => ({ __pred: () => true })
+	// The queue has exactly one raw-SQL predicate: the
+	// `status NOT IN ('completed','failed')` guard that stops markSessionFailed
+	// from overwriting a session the dispatcher already finished. Modelling it
+	// rather than returning `true` is what lets a test assert the guard holds —
+	// a blanket-true `sql` silently makes every already-terminal case look
+	// writable, which is the opposite of what the code does.
+	const sql = (strings: TemplateStringsArray, ..._args: unknown[]) => {
+		const text = Array.isArray(strings) ? strings.join('') : String(strings)
+		if (text.includes("NOT IN ('completed','failed')")) {
+			return {
+				__pred: (r: Record<string, unknown>) => r.status !== 'completed' && r.status !== 'failed',
+			}
+		}
+		return { __pred: () => true }
+	}
 	return { eq, and, lte, asc, sql }
 })
 
@@ -502,6 +516,78 @@ describe('SessionDispatchQueue.tick — outcomes', () => {
 		const finalSession = sessionRows[0]
 		if (!finalSession) throw new Error('session missing')
 		expect(finalSession.status).toBe('failed')
+	})
+
+	// The dispatcher reports failures as return values, and SessionManager has
+	// already returned by the time they happen, so this hook is the only way a
+	// workspace-level cause reaches a caller that can stop re-provoking it —
+	// TriggerRunner's credential suppression (Sentry MASKIN-DEV-6).
+	it('notifies onPermanentFailure with the workspace id and reason code', async () => {
+		const row = aDispatchRow({ attempt: 0, maxAttempts: 10 })
+		const session = aSessionRow({ workspaceId: 'ws-nocreds' })
+		const { db } = makeFakeDb({ dispatchRows: [row], sessionRows: [session] })
+		const onPermanentFailure = vi.fn()
+		const queue = makeQueue(
+			db,
+			async () => ({
+				kind: 'permanent_failure',
+				error: 'no credentials configured',
+				failureReason: {
+					provider: 'maskin',
+					reason_code: 'not_logged_in',
+					human_message: 'Connect a Claude subscription.',
+					http_status: null,
+					reset_at: null,
+					verbatim_output: 'no credentials configured',
+				},
+			}),
+			{ onPermanentFailure },
+		)
+
+		await queue.tick()
+
+		expect(onPermanentFailure).toHaveBeenCalledWith(
+			expect.objectContaining({
+				sessionId: session.id,
+				workspaceId: 'ws-nocreds',
+				reasonCode: 'not_logged_in',
+			}),
+		)
+	})
+
+	it('does not notify onPermanentFailure when the session was already terminal', async () => {
+		// Nothing was failed by us — the dispatcher raced us to the row — so
+		// there is no live session to attribute the workspace state to.
+		const row = aDispatchRow({ attempt: 0, maxAttempts: 10 })
+		const session = aSessionRow({ status: 'failed' })
+		const { db } = makeFakeDb({ dispatchRows: [row], sessionRows: [session] })
+		const onPermanentFailure = vi.fn()
+		const queue = makeQueue(db, async () => ({ kind: 'permanent_failure', error: 'gone' }), {
+			onPermanentFailure,
+		})
+
+		await queue.tick()
+
+		expect(onPermanentFailure).not.toHaveBeenCalled()
+	})
+
+	it('keeps marking the session failed when onPermanentFailure throws', async () => {
+		const row = aDispatchRow({ attempt: 0, maxAttempts: 10 })
+		const session = aSessionRow()
+		const { db, dispatchRows, sessionRows } = makeFakeDb({
+			dispatchRows: [row],
+			sessionRows: [session],
+		})
+		const queue = makeQueue(db, async () => ({ kind: 'permanent_failure', error: 'nope' }), {
+			onPermanentFailure: () => {
+				throw new Error('listener exploded')
+			},
+		})
+
+		await queue.tick()
+
+		expect(sessionRows[0]?.status).toBe('failed')
+		expect(dispatchRows[0]?.status).toBe('failed')
 	})
 
 	it('treats thrown errors as transient_failure', async () => {

@@ -716,11 +716,16 @@ describe('TriggerRunner', () => {
 		})
 	})
 
-	// Regression coverage for Sentry MASKIN-DEV-K / MASKIN-DEV-6: both of these
-	// failures happen inside createSession BEFORE a session row exists, so no
+	// Regression coverage for Sentry MASKIN-DEV-K / MASKIN-DEV-6. The plan cap is
+	// checked inside createSession BEFORE a session row exists, so no
 	// session_failed event is emitted, so the per-trigger `triggerFailures`
 	// backoff never engages. An over-cap workspace re-fired every cron trigger
 	// at full rate indefinitely (~372 identical failures/day in production).
+	//
+	// The credentials case additionally has a production-only route: there
+	// SessionManager hands off to the dispatch queue and returns, so the failure
+	// never rejects a promise here — see the `dispatch permanent failure`
+	// describe block below for that entry point.
 	describe('workspace suppression', () => {
 		const cronTrigger = (workspaceId: string) =>
 			buildTrigger({ workspaceId, type: 'cron', config: { expression: '*/1 * * * *' } })
@@ -743,8 +748,9 @@ describe('TriggerRunner', () => {
 					plan: 'trial',
 					used: 1054,
 					cap: 1000,
-					// Unix SECONDS, as Stripe writes it — 2 hours out.
-					periodEnd: Math.floor(new Date('2026-01-01T02:00:00Z').getTime() / 1000),
+					// Unix MILLISECONDS — what checkPlanCap actually builds the error
+					// with, having already converted Stripe's seconds. 2 hours out.
+					periodEnd: new Date('2026-01-01T02:00:00Z').getTime(),
 				}),
 			)
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
@@ -764,7 +770,7 @@ describe('TriggerRunner', () => {
 					plan: 'trial',
 					used: 1054,
 					cap: 1000,
-					periodEnd: Math.floor(new Date('2026-01-01T02:00:00Z').getTime() / 1000),
+					periodEnd: new Date('2026-01-01T02:00:00Z').getTime(),
 				}),
 			)
 			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
@@ -843,6 +849,61 @@ describe('TriggerRunner', () => {
 
 			mockResults.selectQueue = [[trigger], []]
 			await vi.advanceTimersByTimeAsync(2 * 60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+	})
+
+	// In production SessionManager hands off to SessionDispatchQueue and returns,
+	// and SessionDispatcher reports failures as return values rather than throws
+	// — so a credentials failure never rejects the createSession promise the
+	// classifier is attached to. `handleDispatchPermanentFailure` is the entry
+	// point for that path (wired as the queue's `onPermanentFailure`); without it
+	// the credentials branch above is dead in production (Sentry MASKIN-DEV-6).
+	describe('dispatch permanent failure', () => {
+		const cronTrigger = (workspaceId: string) =>
+			buildTrigger({ workspaceId, type: 'cron', config: { expression: '*/1 * * * *' } })
+
+		const startWithCron = async (trigger: ReturnType<typeof buildTrigger>) => {
+			mockResults.selectQueue = [[trigger], []]
+			mockResults.insert = []
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'session-1',
+			})
+			await runner.start()
+			await vi.advanceTimersByTimeAsync(60 * 1000)
+		}
+
+		it('stops firing after a not_logged_in dispatch failure', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			await startWithCron(cronTrigger('ws-dispatch-nocreds'))
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+
+			runner.handleDispatchPermanentFailure('ws-dispatch-nocreds', 'not_logged_in')
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('keeps firing after an unrelated permanent dispatch failure', async () => {
+			// `dispatch_failed` is about the fleet, not the workspace's
+			// entitlement — and this path DOES emit session_failed, so the existing
+			// per-trigger backoff is the right response to it.
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			await startWithCron(cronTrigger('ws-dispatch-other'))
+
+			runner.handleDispatchPermanentFailure('ws-dispatch-other', 'dispatch_failed')
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(3 * 60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('keeps firing when the dispatcher gave no classification', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			await startWithCron(cronTrigger('ws-dispatch-unclassified'))
+
+			runner.handleDispatchPermanentFailure('ws-dispatch-unclassified', undefined)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(3 * 60 * 1000)
 			expect(sessionManager.createSession).toHaveBeenCalled()
 		})
 	})

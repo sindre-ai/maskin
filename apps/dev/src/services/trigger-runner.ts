@@ -41,19 +41,30 @@ export function calculateBackoffUntil(failureCount: number, now: Date): Date {
 }
 
 /**
- * A workspace-wide pause on spawning trigger sessions, set when `createSession`
- * rejects for a reason that is a property of the WORKSPACE rather than of the
- * individual trigger — an exhausted plan cap, or no LLM credentials at all.
+ * A workspace-wide pause on spawning trigger sessions, set when starting a
+ * session fails for a reason that is a property of the WORKSPACE rather than of
+ * the individual trigger — an exhausted plan cap, or no LLM credentials at all.
  *
  * Why this exists: the per-trigger backoff above (`triggerFailures`) is driven
- * by session *outcome* events, and both of these failures happen inside
- * `createSession` BEFORE a session row exists. No session row means no
- * `session_failed` event, which means `recordTriggerFailure` never runs and the
- * backoff gate never engages — so an over-cap workspace re-fired every one of
- * its cron triggers, at full rate, forever. In production that was ~372
- * identical failures a day from a single trial workspace (Sentry MASKIN-DEV-K),
- * plus ~82/day from one enterprise workspace with no credentials connected
- * (MASKIN-DEV-6).
+ * by session *outcome* events, and a plan cap is checked inside `createSession`
+ * BEFORE a session row exists. No session row means no `session_failed` event,
+ * which means `recordTriggerFailure` never runs and the backoff gate never
+ * engages — so an over-cap workspace re-fired every one of its cron triggers,
+ * at full rate, forever: ~372 identical failures a day from a single trial
+ * workspace (Sentry MASKIN-DEV-K).
+ *
+ * The credentials case reaches this map by TWO routes, because the two
+ * session-start paths report it differently:
+ *
+ *  - Local Docker (`launchContainer`) throws, so it arrives through
+ *    `handleSessionCreateFailure` like the plan cap does.
+ *  - Production (`SessionDispatchQueue` → `SessionDispatcher`) *returns* the
+ *    failure as a value, and `SessionManager` has already returned by then, so
+ *    nothing rejects here at all. That path arrives through
+ *    `handleDispatchPermanentFailure`, wired as the queue's `onPermanentFailure`
+ *    in `index.ts`. Without it this suppression would be inert in production
+ *    for exactly the workspace it was written for — ~82/day from one enterprise
+ *    workspace with no credentials connected (MASKIN-DEV-6).
  *
  * Deliberately NOT implemented as `triggers.enabled = false`: that is lossy.
  * Once flipped we cannot tell "Maskin paused this for billing" apart from "the
@@ -242,12 +253,14 @@ export class TriggerRunner {
 		const now = new Date()
 
 		if (err instanceof PlanCapExceededError) {
-			// `periodEnd` is Unix SECONDS (Stripe's current_period_end, carried
-			// through from checkPlanCap) — convert before comparing to now.
-			const periodEndMs = err.periodEnd !== null ? err.periodEnd * 1000 : null
+			// `periodEnd` is Unix MILLISECONDS. Stripe writes `current_period_end`
+			// in seconds, but checkPlanCap converts it before constructing this
+			// error (llm-routing.ts `effectivePeriodEnd` takes and returns ms) —
+			// so it needs no scaling here. Multiplying by 1000 would push `until`
+			// tens of thousands of years out and make the pause permanent.
 			const until =
-				periodEndMs !== null && periodEndMs > now.getTime()
-					? new Date(periodEndMs)
+				err.periodEnd !== null && err.periodEnd > now.getTime()
+					? new Date(err.periodEnd)
 					: new Date(now.getTime() + PLAN_CAP_FALLBACK_SUPPRESSION_MS)
 			this.suppressWorkspace(
 				workspaceId,
@@ -280,6 +293,36 @@ export class TriggerRunner {
 			workspaceId,
 			trigger: triggerName,
 			error: String(err),
+		})
+	}
+
+	/**
+	 * Entry point for the OTHER session-start path: in production
+	 * `SessionManager` hands off to `SessionDispatchQueue` and returns, and the
+	 * dispatcher reports failures as return values rather than throws — so a
+	 * workspace with no LLM credentials never rejects the `createSession`
+	 * promise that `handleSessionCreateFailure` is attached to. Without this the
+	 * credential branch there is dead in production, and the trigger keeps firing
+	 * on schedule against a workspace that cannot start a session
+	 * (Sentry MASKIN-DEV-6). Wired in `index.ts` as the queue's
+	 * `onPermanentFailure`.
+	 *
+	 * Only `not_logged_in` pauses. Every other permanent dispatch failure
+	 * (no agent-server took it, a deleted actor) is about the session or the
+	 * fleet, not the workspace's entitlement, and the existing per-trigger
+	 * backoff — which DOES engage here, because this path emits `session_failed`
+	 * — is the right response to those.
+	 *
+	 * A `not_logged_in` reaching this point is always the non-transient kind:
+	 * `SessionDispatcher` returns `permanent_failure` with that classification
+	 * only when `!err.transient`, and routes transient credential errors back
+	 * through its retry path instead.
+	 */
+	handleDispatchPermanentFailure(workspaceId: string, reasonCode?: string): void {
+		if (reasonCode !== 'not_logged_in') return
+		this.suppressWorkspace(workspaceId, {
+			until: new Date(Date.now() + NO_CREDENTIALS_SUPPRESSION_MS),
+			reason: 'no LLM credentials connected for this workspace',
 		})
 	}
 
