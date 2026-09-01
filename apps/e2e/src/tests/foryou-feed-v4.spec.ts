@@ -15,32 +15,64 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 interface FeedItemInput {
 	id: string
+	/** The ask — the decision's title, or the comment's opening line. */
 	title: string
 	type: string
 	status: string
-	content?: string | null
+	/** The object's own name, shown in the meta line as context. */
+	objectTitle?: string
 	hoursAgo?: number
 	decision?: boolean
 }
 
+// Every card in the feed exists because an agent @-mentioned the reader, so
+// each fixture item carries that comment. `decision: true` makes it a
+// structured ask, whose options become the card's buttons.
 function buildItem(workspaceId: string, input: FeedItemInput) {
 	return {
 		entity_type: 'object' as const,
 		entity_id: input.id,
 		unread_count: 2,
-		mentioning_unread_count: 0,
+		mentioning_unread_count: 2,
 		max_unread_attention: 3,
 		latest_event_id: 42,
 		latest_activity_at: new Date(Date.now() - (input.hoursAgo ?? 4) * 3_600_000).toISOString(),
 		object: {
 			id: input.id,
-			title: input.title,
+			title: input.objectTitle ?? `${input.title} (object)`,
 			type: input.type,
 			status: input.status,
-			content: input.content === undefined ? 'Why this needs a person.' : input.content,
+			content: 'The durable spec, which the card must not show.',
 			workspaceId,
 			driver: null,
-			metadata: input.decision ? { decision_type: 'architecture' } : {},
+			metadata: {},
+		},
+		latest_mention: {
+			event_id: 42,
+			actor_id: null,
+			created_at: new Date(Date.now() - (input.hoursAgo ?? 4) * 3_600_000).toISOString(),
+			content: input.title,
+			truncated: false,
+			attention: 3,
+			decision: input.decision
+				? {
+						title: input.title,
+						summary:
+							'A page 200 people use every day was rewritten and nobody has opened it. I have run the suite.',
+						ask: 'This ships to every workspace at once, so I will not merge it alone.',
+						options: [
+							{
+								label: 'Send back',
+								consequences: ['Nothing ships today', 'Costs another review round'],
+							},
+							{
+								label: 'Merge now',
+								recommended: true,
+								consequences: ['Ships tonight', 'No rollback once migrations run'],
+							},
+						],
+					}
+				: null,
 		},
 	}
 }
@@ -52,7 +84,6 @@ function feed(workspaceId: string) {
 			title: 'Merge the trigger settings rewrite?',
 			type: 'task',
 			status: 'in_review',
-			content: 'A page people use every day was rewritten and no human has opened it.',
 			hoursAgo: 5,
 			decision: true,
 		}),
@@ -62,6 +93,7 @@ function feed(workspaceId: string) {
 			type: 'task',
 			status: 'in_review',
 			hoursAgo: 3,
+			decision: true,
 		}),
 		buildItem(workspaceId, {
 			id: 'task-loop-detail',
@@ -69,6 +101,7 @@ function feed(workspaceId: string) {
 			type: 'task',
 			status: 'in_review',
 			hoursAgo: 4,
+			decision: true,
 		}),
 		buildItem(workspaceId, {
 			id: 'insight-fyi',
@@ -201,17 +234,29 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 		const decisionCard = page
 			.getByTestId('foryou-feed-card')
 			.filter({ hasText: 'Merge the trigger settings rewrite?' })
-		await expect(decisionCard.getByRole('button', { name: 'Approve' })).toBeVisible()
+		// The card leads with the agent's ask, and its buttons are the options the
+		// agent authored — including the consequence lines under each.
+		await expect(decisionCard.getByRole('button', { name: 'Merge now' })).toBeVisible()
 		await expect(decisionCard.getByRole('button', { name: 'Send back' })).toBeVisible()
+		await expect(decisionCard.getByText('No rollback once migrations run')).toBeVisible()
+		await expect(
+			decisionCard.getByText(
+				'This ships to every workspace at once, so I will not merge it alone.',
+			),
+		).toBeVisible()
+		// The object's durable spec never reaches the card.
+		await expect(
+			decisionCard.getByText('The durable spec, which the card must not show.'),
+		).toHaveCount(0)
 
-		await decisionCard.getByRole('button', { name: 'Approve' }).click()
+		await decisionCard.getByRole('button', { name: 'Merge now' }).click()
 
 		const receipt = page.getByTestId('decision-receipt')
 		await expect(receipt).toBeVisible()
-		await expect(receipt).toContainText('Approve')
+		await expect(receipt).toContainText('Merge now')
 		await expect(receipt.getByRole('button', { name: 'Undo' })).toHaveCount(0)
 		// The choice really went out as a reply on the thread.
-		await expect.poll(() => posted?.content).toBe('Approve')
+		await expect.poll(() => posted?.content).toBe('Merge now')
 		// …and the receipt is still there once the feed has refetched without it.
 		await page.waitForTimeout(1200)
 		await expect(page.getByTestId('decision-receipt')).toBeVisible()
@@ -223,8 +268,8 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 
 		const fyi = page.getByTestId('foryou-feed-card').filter({ hasText: 'Is the feed too long?' })
 		await expect(fyi.getByPlaceholder(/Write a comment/)).toBeVisible()
-		await expect(fyi.getByRole('button', { name: 'Approve' })).toHaveCount(0)
-		await expect(fyi.getByRole('button', { name: 'Sign off' })).toHaveCount(0)
+		await expect(fyi.getByRole('button', { name: 'Merge now' })).toHaveCount(0)
+		await expect(fyi.getByRole('button', { name: 'Send back' })).toHaveCount(0)
 	})
 
 	test('the ··· menu carries the bulk actions with their counts', async ({ page, account }) => {
@@ -345,9 +390,8 @@ test.describe('For You v4 — the card\u2019s own controls', () => {
 		await page.getByRole('button', { name: 'Feed actions' }).click()
 		await page.getByRole('menuitem', { name: /Take every suggested option/ }).click()
 
-		// Three of the five cards carry options: the two in-review tasks and the
-		// decision. The plain insight and the blocked bet classify as threads,
-		// which have nothing to answer.
+		// Three of the five cards carry an agent-authored decision. The plain
+		// insight and the blocked bet are mentions with nothing to answer.
 		await expect(page.getByTestId('decision-receipt')).toHaveCount(3)
 		await expect.poll(() => posted.length).toBe(3)
 	})
@@ -413,7 +457,7 @@ test.describe('For You v4 — light and dark', () => {
 			expect(briefBg).not.toBe(pageBg)
 
 			await expect(page.getByTestId('foryou-feed-card').first()).toBeVisible()
-			await expect(page.getByRole('button', { name: 'Approve' }).first()).toBeVisible()
+			await expect(page.getByRole('button', { name: 'Merge now' }).first()).toBeVisible()
 		})
 	}
 })
