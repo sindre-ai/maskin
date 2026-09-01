@@ -15,6 +15,10 @@ export interface SlackConversation {
 	is_im: boolean
 	is_mpim: boolean
 	is_channel: boolean
+	// True when the bot is a member of the channel. `conversations.list` returns
+	// this on every public/private channel; DMs and MPIMs are always visible so
+	// the bot is implicitly a member (we default to `true` for those in the mapper).
+	is_member: boolean
 }
 
 export interface SlackUser {
@@ -114,13 +118,18 @@ export async function listSlackConversations(
 		for (const c of json.channels ?? []) {
 			const id = c.id as string | undefined
 			if (!id) continue
+			const isIm = Boolean(c.is_im)
+			const isMpim = Boolean(c.is_mpim)
 			all.push({
 				id,
 				name: (c.name as string | undefined) ?? '',
 				is_private: Boolean(c.is_private),
-				is_im: Boolean(c.is_im),
-				is_mpim: Boolean(c.is_mpim),
+				is_im: isIm,
+				is_mpim: isMpim,
 				is_channel: Boolean(c.is_channel),
+				// DMs / MPIMs are only visible when the bot participates, so treat
+				// them as members even though Slack omits the field on those rows.
+				is_member: isIm || isMpim ? true : Boolean(c.is_member),
 			})
 		}
 
