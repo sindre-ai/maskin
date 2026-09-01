@@ -1,10 +1,43 @@
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { buildCreateTriggerBody, buildTrigger, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
+const { runSlackTriggerSetupMock } = vi.hoisted(() => ({
+	runSlackTriggerSetupMock: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('../../services/slack-trigger-setup', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/slack-trigger-setup')>()
+	return {
+		...actual,
+		runSlackTriggerSetup: runSlackTriggerSetupMock,
+	}
+})
+
 const { default: triggersRoutes } = await import('../../routes/triggers')
 
 const wsId = '00000000-0000-0000-0000-000000000001'
+const testerActorId = 'test-actor-id'
+
+// The route reads its flag via `isFlagEnabled(actorId, 'slack-setup-ux-v2')`,
+// which resolves against `FF_TESTER_ACTOR_IDS` × `FF_TESTER_FEATURES`. Turn
+// both on for the test actor so the post-commit hook actually fires — a fresh
+// `_resetFeatureFlagConfig()` re-reads the env after every mutation.
+beforeAll(() => {
+	process.env.FF_TESTER_ACTOR_IDS = testerActorId
+	process.env.FF_TESTER_FEATURES = 'slack-setup-ux-v2'
+	_resetFeatureFlagConfig()
+})
+
+beforeEach(() => {
+	runSlackTriggerSetupMock.mockClear()
+})
+
+afterEach(() => {
+	_resetFeatureFlagConfig()
+})
 
 describe('Triggers Routes', () => {
 	describe('POST /api/triggers', () => {
@@ -41,6 +74,56 @@ describe('Triggers Routes', () => {
 			expect(res.status).toBe(400)
 			const body = await res.json()
 			expect(body.error.code).toBe('VALIDATION_ERROR')
+		})
+
+		it('fires runSlackTriggerSetup post-commit for a Slack event trigger with channel_ids', async () => {
+			const config = {
+				entity_type: 'slack.channel_message',
+				action: 'created',
+				conditions: [{ field: 'event.channel', operator: 'in', value: ['C1', 'C2'] }],
+			}
+			const trigger = buildTrigger({
+				workspaceId: wsId,
+				type: 'event',
+				name: 'Sales alerts',
+				config,
+			})
+			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.insert = [trigger]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/triggers',
+					buildCreateTriggerBody({ type: 'event', name: 'Sales alerts', config }),
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			expect(runSlackTriggerSetupMock).toHaveBeenCalledTimes(1)
+			expect(runSlackTriggerSetupMock).toHaveBeenCalledWith(expect.anything(), {
+				triggerId: trigger.id,
+				workspaceId: wsId,
+				channelIds: ['C1', 'C2'],
+				triggerName: 'Sales alerts',
+				actorId: testerActorId,
+			})
+		})
+
+		it('does not fire the setup service for a non-Slack trigger', async () => {
+			const trigger = buildTrigger({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.insert = [trigger]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/triggers', buildCreateTriggerBody(), {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(201)
+			expect(runSlackTriggerSetupMock).not.toHaveBeenCalled()
 		})
 	})
 
@@ -124,6 +207,36 @@ describe('Triggers Routes', () => {
 			expect(res.status).toBe(400)
 			const body = await res.json()
 			expect(body.error.code).toBe('VALIDATION_ERROR')
+		})
+
+		it('fires runSlackTriggerSetup post-commit when a Slack trigger is updated', async () => {
+			const config = {
+				entity_type: 'slack.channel_message',
+				action: 'created',
+				conditions: [{ field: 'event.channel', operator: 'in', value: ['CNEW'] }],
+			}
+			const trigger = buildTrigger({ workspaceId: wsId, type: 'event', name: 'Alerts', config })
+			const updated = { ...trigger, config }
+			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, {
+					type: 'event',
+					config,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(runSlackTriggerSetupMock).toHaveBeenCalledTimes(1)
+			expect(runSlackTriggerSetupMock).toHaveBeenCalledWith(expect.anything(), {
+				triggerId: trigger.id,
+				workspaceId: trigger.workspaceId,
+				channelIds: ['CNEW'],
+				triggerName: 'Alerts',
+				actorId: testerActorId,
+			})
 		})
 	})
 

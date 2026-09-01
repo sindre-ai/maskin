@@ -213,6 +213,64 @@ export async function slackPost<T extends SlackResponse>(
 }
 
 /**
+ * Result shape for `joinSlackChannel`. Returned as a discriminated union so
+ * the caller can branch on the raw Slack error code (`is_private`,
+ * `not_authed`, `channel_not_found`, `restricted_action`, `already_in_channel`)
+ * without a try/catch — the setup service maps these codes to per-channel
+ * banner copy.
+ */
+export type SlackJoinResult =
+	| { ok: true; already_in?: boolean }
+	| { ok: false; error: string }
+
+/**
+ * Join a public Slack channel using the bot token. Idempotent — a re-join
+ * returns `ok:true, already_in:true` rather than an error. Private channels
+ * are rejected by Slack with `{ok:false, error:'is_private'}`; the caller is
+ * expected to detect private-channel picks (via `is_private` on the picker
+ * data) and skip the call entirely rather than rely on this error path.
+ *
+ * Both the trigger-save setup service AND the MCP `slack_join_channel` tool
+ * (from PR #1456) call this helper — see spec §2, "do not duplicate the
+ * fetch".
+ *
+ * https://api.slack.com/methods/conversations.join
+ */
+export async function joinSlackChannel(
+	accessToken: string,
+	channelId: string,
+): Promise<SlackJoinResult> {
+	let res: Response
+	try {
+		res = await fetch(`${SLACK_API_BASE}/conversations.join`, {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${accessToken}`,
+				'Content-Type': 'application/json; charset=utf-8',
+			},
+			body: JSON.stringify({ channel: channelId }),
+			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+		})
+	} catch (err) {
+		if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+			return { ok: false, error: 'timeout' }
+		}
+		// Network-level failure — surface the message so the setup service can log
+		// it into `join_attempts[i].error` for the banner to render.
+		return { ok: false, error: err instanceof Error ? err.message : String(err) }
+	}
+	const json = (await res.json()) as {
+		ok?: boolean
+		error?: string
+		already_in_channel?: boolean
+	}
+	if (json.ok) {
+		return { ok: true, already_in: Boolean(json.already_in_channel) }
+	}
+	return { ok: false, error: json.error ?? 'unknown_error' }
+}
+
+/**
  * Publish an App Home view for one user. Slack rate-limits this at tier 4
  * (~1/s/user); upstream callers should debounce.
  *

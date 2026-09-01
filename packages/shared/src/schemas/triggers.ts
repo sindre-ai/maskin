@@ -154,6 +154,33 @@ export const triggerParamsSchema = z.object({
 	id: z.string().uuid(),
 })
 
+// Slack trigger-save setup outcomes, persisted on `triggers.metadata.slack_setup`.
+// Written by `runSlackTriggerSetup` and read by `SlackTriggerSetupStatus` on the
+// trigger detail form. Additive on an existing jsonb column — no migration.
+export const slackSetupJoinStatusSchema = z.enum([
+	'joined',
+	'already_in',
+	'not_public',
+	'not_authed',
+	'channel_not_found',
+	'restricted_action',
+	'error',
+])
+
+export const slackSetupJoinAttemptSchema = z.object({
+	channel_id: z.string(),
+	status: slackSetupJoinStatusSchema,
+	error: z.string().optional(),
+	attempted_at: z.string(),
+})
+
+export const slackSetupMetadataSchema = z.object({
+	channel_ids: z.array(z.string()),
+	join_attempts: z.array(slackSetupJoinAttemptSchema),
+	confirmation_posted_at: z.record(z.string(), z.string()).optional(),
+	last_setup_at: z.string(),
+})
+
 // HTTP shape returned by `GET /api/triggers`. Lives here so the MCP server and
 // web client both consume the same canonical fields — a rename like
 // `targetActorId → target_actor_id` would otherwise null out trigger owners in
@@ -167,9 +194,16 @@ export const triggerResponseSchema = z.object({
 	actionPrompt: z.string(),
 	targetActorId: z.string().uuid(),
 	enabled: z.boolean(),
+	// Additive JSONB — carries `slack_setup` from `runSlackTriggerSetup` and
+	// (in later PRs) `auto_paused` from the `member_left_channel` handler.
+	// Nullable everywhere; the form only reads it, never writes it.
+	metadata: z.record(z.string(), z.unknown()).nullable().optional(),
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 })
 
 export type TriggerResponse = z.infer<typeof triggerResponseSchema>
+export type SlackSetupJoinStatus = z.infer<typeof slackSetupJoinStatusSchema>
+export type SlackSetupJoinAttempt = z.infer<typeof slackSetupJoinAttemptSchema>
+export type SlackSetupMetadata = z.infer<typeof slackSetupMetadataSchema>

@@ -1,6 +1,7 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, triggers } from '@maskin/db/schema'
+import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { configSchemaForType, createTriggerSchema, updateTriggerSchema } from '@maskin/shared'
 import { Cron } from 'croner'
 import { and, asc, count, desc, eq } from 'drizzle-orm'
@@ -14,6 +15,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import { extractSlackChannelIds, runSlackTriggerSetup } from '../services/slack-trigger-setup'
 
 type Env = {
 	Variables: {
@@ -24,6 +26,36 @@ type Env = {
 }
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
+
+/**
+ * Kick off the Slack trigger setup service after the DB commit — never inside
+ * the transaction (spec §2). Skips non-Slack triggers, cron, and reminder
+ * triggers because `extractSlackChannelIds` returns an empty array for anything
+ * not carrying `event.channel` / `event.item.channel` conditions.
+ *
+ * Gated behind `slack-setup-ux-v2` per spec §10 rollout — flag OFF = today's
+ * behaviour (no join, no confirmation, no metadata write).
+ */
+function kickOffSlackSetup(
+	db: Database,
+	actorId: string,
+	row: { id: string; workspaceId: string; name: string; type: string; config: unknown },
+): void {
+	if (row.type !== 'event') return
+	if (!isFlagEnabled(actorId, FLAGS.SLACK_SETUP_UX_V2)) return
+	const channelIds = extractSlackChannelIds(row.config as Record<string, unknown> | null)
+	if (channelIds.length === 0) return
+	// Fire-and-forget — the route response is what the frontend awaits, not the
+	// setup outcome. `runSlackTriggerSetup` swallows its own errors so a
+	// rejected promise here would be a runtime bug, not a Slack API failure.
+	void runSlackTriggerSetup(db, {
+		triggerId: row.id,
+		workspaceId: row.workspaceId,
+		channelIds,
+		triggerName: row.name,
+		actorId,
+	})
+}
 
 // POST /api/triggers
 const createTriggerRoute = createRoute({
@@ -102,6 +134,11 @@ app.openapi(createTriggerRoute, async (c) => {
 
 		return row
 	})
+
+	// Post-commit — the transaction is done, the row exists. Kick off the
+	// Slack setup service (join channels + post confirmations) if the trigger
+	// is Slack-shaped. Never blocks the response.
+	kickOffSlackSetup(db, actorId, created)
 
 	return c.json(serialize(created) as z.infer<typeof triggerResponseSchema>, 201)
 })
@@ -292,6 +329,12 @@ app.openapi(updateTriggerRoute, (async (c) => {
 	})
 
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
+
+	// Post-commit — same rules as create. Fires when the PATCH touched
+	// `config` (channel list may have changed) or `name` (confirmation copy
+	// uses the trigger name). Body.enabled toggles don't need a re-run, but
+	// we skip via the empty-channel-list short-circuit anyway.
+	kickOffSlackSetup(db, actorId, updated)
 
 	return c.json(serialize(updated) as z.infer<typeof triggerResponseSchema>)
 }) as RouteHandler<typeof updateTriggerRoute, Env>)
