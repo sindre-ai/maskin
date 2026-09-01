@@ -26,6 +26,13 @@ export const FLAGS = {
 	 * been through testing — see `.claude/rules/feature-flags.md`.
 	 */
 	NEW_DESIGN: 'new-design',
+	/**
+	 * Email-based workspace member invite. Off means the actor-ID-only member
+	 * add flow; on means the Members page renders the email + role modal and
+	 * the /invite accept page is live. Retire (delete the flag) once the
+	 * feature is on for everyone — see `.claude/rules/feature-flags.md`.
+	 */
+	EMAIL_INVITES: 'email-invites',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
