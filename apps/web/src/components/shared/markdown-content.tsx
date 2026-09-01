@@ -127,6 +127,15 @@ export function caretOffsetInSource(
 	return at + within
 }
 
+/**
+ * Source offset for one end of a DOM range. Only a text node can be mapped —
+ * an offset into an element is a child index, not a character position.
+ */
+function offsetOfRangeEnd(source: string, node: Node, offset: number): number | null {
+	if (node.nodeType !== Node.TEXT_NODE) return null
+	return caretOffsetInSource(source, node.textContent ?? '', offset)
+}
+
 /** Reads the caret position under a point, across both browser spellings. */
 function caretOffsetAtPoint(x: number, y: number, source: string): number | null {
 	const doc = document as Document & {
@@ -704,6 +713,44 @@ export function MarkdownContent({
 
 	return (
 		<>
+			{/* Fixed to the selection, above it (mockup 1030–1035). The buttons act
+			    on mousedown so the browser never clears the selection first. */}
+			{selectionToolbar && (
+				<div
+					className="fixed z-[60] flex -translate-x-1/2 -translate-y-full gap-0.5 rounded-[9px] bg-primary p-[3px] shadow-lg"
+					style={{ left: selectionToolbar.x, top: selectionToolbar.y }}
+				>
+					{(
+						[
+							{ marker: '**', label: 'Bold', glyph: 'B', className: 'font-extrabold' },
+							{ marker: '_', label: 'Italic', glyph: 'I', className: 'font-semibold italic' },
+							{
+								marker: '`',
+								label: 'Code',
+								glyph: '<>',
+								className: 'font-mono text-[11px] font-semibold',
+							},
+						] as const
+					).map((action) => (
+						<button
+							key={action.label}
+							type="button"
+							title={action.label}
+							aria-label={action.label}
+							onMouseDown={(e) => {
+								e.preventDefault()
+								applyMarkerToSelection(action.marker)
+							}}
+							className={cn(
+								'grid size-[26px] place-items-center rounded-[7px] text-[12.5px] text-primary-foreground transition-colors hover:bg-secondary-foreground/25',
+								action.className,
+							)}
+						>
+							{action.glyph}
+						</button>
+					))}
+				</div>
+			)}
 			<div
 				ref={containerRef}
 				className={cn(

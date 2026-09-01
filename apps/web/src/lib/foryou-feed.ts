@@ -9,6 +9,24 @@ import type { UnreadItem } from '@/lib/api'
  * without React lives here so it can be tested directly.
  */
 
+// The card's trailing timestamp is a mono micro-label — "5H", "1D", "AUG 12"
+// (mockup's `c.time`). Minutes are the smallest unit the feed shows.
+export function compactTime(iso: string | null | undefined, now: number = Date.now()): string {
+	if (!iso) return ''
+	const then = new Date(iso).getTime()
+	if (!Number.isFinite(then)) return ''
+	const minutes = Math.floor((now - then) / 60_000)
+	if (minutes < 1) return 'NOW'
+	if (minutes < 60) return `${minutes}M`
+	const hours = Math.floor(minutes / 60)
+	if (hours < 24) return `${hours}H`
+	const days = Math.floor(hours / 24)
+	if (days < 7) return `${days}D`
+	return new Date(then)
+		.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+		.toUpperCase()
+}
+
 // The amber "held 3 days" note beside the status word: how long a card that
 // still needs a person has been sitting in the feed (mockup's `c.waitNote`).
 // Nothing is said until a card has been waiting a full day.

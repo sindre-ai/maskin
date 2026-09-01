@@ -1,13 +1,17 @@
+// PRE-V2 COMPONENT — governed by the `new-design` feature flag. Rendered only
+// by the pre-v2 branch of the `agents/` routes when the flag is off.
+// This directory dies with the flag; edit the v2 component instead.
+
 import { AgentComposer } from '@/components/agents/agent-composer'
-import { AgentDetailHeader } from '@/components/agents/agent-detail-header'
 import { AgentInstructionsSection } from '@/components/agents/agent-instructions-section'
 import { AgentLoopsSection } from '@/components/agents/agent-loops-section'
 import { getPortraitStatus } from '@/components/agents/agent-portrait-card'
 import { AgentRunPauseButton } from '@/components/agents/agent-run-pause-button'
 import { AgentSessionsSection } from '@/components/agents/agent-sessions-section'
-import { AgentSkillsSection } from '@/components/agents/agent-skills-section'
-import { AgentToolsSection } from '@/components/agents/agent-tools-section'
 import { AgentUsageBlock } from '@/components/agents/agent-usage-block'
+import { AgentDetailHeader } from '@/components/agents/legacy/agent-detail-header'
+import { AgentSkillsSection } from '@/components/agents/legacy/agent-skills-section'
+import { AgentToolsSection } from '@/components/agents/legacy/agent-tools-section'
 import { PageHeader } from '@/components/layout/page-header'
 import { useAgentPause, useAgentRun } from '@/hooks/use-actors'
 import { useActorSessions } from '@/hooks/use-sessions'
@@ -25,60 +29,37 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 
 	const sessionsByAgent = useMemo(() => groupSessionsByAgent(sessions ?? []), [sessions])
 	const portrait = getPortraitStatus(agent, deriveAgentStatus(agent.id, sessionsByAgent))
+	const isRunning = portrait === 'running'
 
-	// The detail bar's one agent-level control is the enable/disable switch
-	// (mockup 2313: `adPaused ? "Enable agent" : "Disable agent"`), bordered and
-	// amber in both states. Both halves already map onto the app's own calls:
-	// `POST /actors/:id/pause` sets agentState `paused` and stops its live
-	// sessions, `POST /actors/:id/run` sets it back to `running` and resumes.
-	// Starting new work is the composer's job at the foot of the page, exactly
-	// as the mockup has it.
-	const isDisabled = portrait === 'paused'
+	// The agent-level action belongs in the top bar, right-aligned (mockup 2351),
+	// not beside the outcome line in the page body.
 	const actions = (
 		<AgentRunPauseButton
-			isActive={!isDisabled}
+			isActive={isRunning}
 			onRun={() =>
-				run.mutate(
-					{ id: agent.id },
-					{ onError: () => toast.error(`Couldn't enable ${agent.name}`) },
-				)
+				run.mutate({ id: agent.id }, { onError: () => toast.error(`Couldn't start ${agent.name}`) })
 			}
 			onPause={() =>
-				pause.mutate(agent.id, { onError: () => toast.error(`Couldn't disable ${agent.name}`) })
+				pause.mutate(agent.id, { onError: () => toast.error(`Couldn't pause ${agent.name}`) })
 			}
 			isRunPending={run.isPending}
 			isPausePending={pause.isPending}
-			runLabel="Enable agent"
-			pauseLabel="Disable agent"
-			tone="warning"
+			runLabel={portrait === 'paused' ? 'Resume' : 'Run'}
 			density="nav"
 		/>
 	)
 
 	return (
 		<>
-			{/* `Agents › {name}` in the compact detail bar, not a nav-row <h1> — the
-			    screen's own identity block below carries the name (mockup 2309–2315). */}
-			<PageHeader
-				crumb={{
-					parentLabel: 'Agents',
-					parentTo: '/$workspaceId/agents',
-					parentParams: { workspaceId },
-					label: agent.name,
-				}}
-				actions={actions}
-			/>
-			{/* Order is what the agent *is*, then what it did, then how it is
-			    configured: identity → usage → sessions → loops → instructions →
-			    skills → tools (mockup 2442–2490). */}
+			<PageHeader title={agent.name} actions={actions} />
 			<div className="mx-auto flex max-w-3xl flex-col gap-6">
 				<AgentDetailHeader agent={agent} portrait={portrait} />
 				<AgentUsageBlock agent={agent} workspaceId={workspaceId} />
 				<AgentSessionsSection agent={agent} />
 				<AgentLoopsSection agent={agent} />
-				<AgentInstructionsSection agent={agent} />
 				<AgentSkillsSection agent={agent} />
 				<AgentToolsSection agent={agent} />
+				<AgentInstructionsSection agent={agent} />
 				<AgentComposer agent={agent} />
 			</div>
 		</>

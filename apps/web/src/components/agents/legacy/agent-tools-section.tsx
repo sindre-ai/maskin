@@ -1,5 +1,10 @@
+// PRE-V2 COMPONENT — governed by the `new-design` feature flag. Rendered only
+// by the pre-v2 branch of the `agents/` routes when the flag is off.
+// This directory dies with the flag; edit the v2 component instead.
+
 import { AgentSectionHeading } from '@/components/agents/agent-section-heading'
 import { McpServers } from '@/components/agents/mcp-servers'
+import { Button } from '@/components/ui/button'
 import { useUpdateActor } from '@/hooks/use-actors'
 import type { ActorResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -15,6 +20,7 @@ function countServers(tools: Record<string, unknown> | null): number {
 export function AgentToolsSection({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()
 	const updateActor = useUpdateActor(workspaceId)
+	const [managing, setManaging] = useState(false)
 
 	const total = countServers(agent.tools)
 
@@ -44,9 +50,21 @@ export function AgentToolsSection({ agent }: { agent: ActorResponse }) {
 						· {total}
 					</span>
 				}
+				action={
+					<Button
+						type="button"
+						size="sm"
+						variant="ghost"
+						className="h-7 shrink-0 px-2 text-xs font-medium"
+						aria-pressed={managing}
+						onClick={() => setManaging((v) => !v)}
+					>
+						{managing ? 'Done' : 'Manage'}
+					</Button>
+				}
 			/>
 			<div className="rounded-xl border border-border bg-card px-4 py-4">
-				<McpServers tools={agent.tools} onUpdate={handleUpdate} />
+				<McpServers tools={agent.tools} onUpdate={handleUpdate} readOnly={!managing} />
 			</div>
 		</section>
 	)

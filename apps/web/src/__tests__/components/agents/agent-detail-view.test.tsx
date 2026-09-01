@@ -1,4 +1,7 @@
-import { AgentDetailView } from '@/components/agents/agent-detail-view'
+// The pre-v2 detail view, behind `new-design`. These specs assert the Run /
+// Pause action pair, which v2 replaced with an Enable / Disable switch — the
+// v2 header is covered by `agent-detail.spec.ts` instead. Dies with the flag.
+import { AgentDetailView } from '@/components/agents/legacy/agent-detail-view'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'

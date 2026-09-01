@@ -137,6 +137,40 @@ test.describe('new-design flag — off renders the pre-v2 surfaces', () => {
 		await page.goto(`/${account.workspaceId}/settings/extensions`)
 		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/settings$`))
 	})
+
+	test('profile has no pre-v2 route and redirects to the workspace', async ({ page, account }) => {
+		// Profile is a v2-only surface — nothing on the pre-v2 branch links here,
+		// so a direct hit lands back on the workspace index rather than 404ing.
+		await page.goto(`/${account.workspaceId}/profile`)
+		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}$`))
+	})
+
+	test('agent detail falls back to the pre-v2 run/pause control', async ({ page, account }) => {
+		const agent = await account.api.createAgentActor('Flag-off agent')
+		await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+
+		await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
+
+		// v2 renders the agent-level switch as Disable/Enable; the pre-v2 header
+		// keeps the Run/Pause action pair, so that is the branch marker.
+		await expect(page.getByRole('button', { name: /^Run$/ })).toBeVisible({ timeout: 10000 })
+		await expect(page.getByRole('button', { name: /Disable agent|Enable agent/ })).toHaveCount(0)
+	})
+
+	test('agents list falls back to the pre-v2 filled status pill', async ({ page, account }) => {
+		const listAgent = await account.api.createAgentActor('Flag-off list agent')
+		await account.api.addWorkspaceMember(account.workspaceId, listAgent.id)
+
+		await page.goto(`/${account.workspaceId}/agents`)
+
+		const row = page.getByRole('link', { name: /Flag-off list agent/ })
+		await expect(row).toBeVisible({ timeout: 10000 })
+		// v2 draws the status plate-less (transparent). Pre-v2 keeps the filled
+		// pill, so a non-transparent background is what distinguishes the branch.
+		const status = row.getByText('Idle', { exact: true })
+		await expect(status).toBeVisible()
+		await expect(status).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+	})
 })
 
 test.describe('new-design flag — on renders the v2 surfaces', () => {
@@ -158,5 +192,11 @@ test.describe('new-design flag — on renders the v2 surfaces', () => {
 		await expect(page.getByRole('link', { name: 'Extensions' })).toBeVisible({ timeout: 10000 })
 		await expect(page.getByRole('link', { name: 'Billing' })).toBeVisible()
 		await expect(page.getByRole('link', { name: 'MCP' })).toHaveCount(0)
+	})
+	test('the shell reaches the v2 profile page', async ({ page, account }) => {
+		await page.goto(`/${account.workspaceId}/profile`)
+
+		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/profile$`))
+		await expect(page.getByRole('heading', { name: 'Profile' })).toBeVisible({ timeout: 10000 })
 	})
 })

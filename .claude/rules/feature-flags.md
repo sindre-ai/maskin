@@ -49,12 +49,16 @@ const newDesign = useFeatureFlag('new-design')
 ```
 
 `new-design` is the live flag. It was retired once when the v2 shell shipped to
-everyone, and re-added for the untested v2 surfaces. Its read sites are all route
-components, each swapping a whole page, with the pre-v2 components vendored under
-a sibling `legacy/` directory that dies with the flag:
+everyone, and re-added for the untested v2 surfaces. Its read sites are route
+components, each swapping a whole page, plus one shell read — with the pre-v2
+components vendored under a sibling `legacy/` directory that dies with the flag:
 
 | Route component | Pre-v2 branch |
 |---|---|
+| `layout/sidebar.tsx` (app shell) | `components/layout/legacy/` |
+| `agents/index.tsx` | `components/agents/legacy/` |
+| `agents/$agentId.tsx` | `components/agents/legacy/` |
+| `profile.tsx` | no pre-v2 route — redirects to the workspace index |
 | `objects/index.tsx` | `components/objects/legacy/` |
 | `objects/$objectId.tsx` | `components/objects/legacy/` |
 | `chats/new.tsx` | `components/chat/legacy/new-conversation-page.tsx` |
@@ -72,8 +76,11 @@ a sibling `legacy/` directory that dies with the flag:
 Note what is *not* behind it: the routes' `validateSearch` (including `chats/new`'s
 `objectIds`, so an "Ask an agent" link resolves on both branches), the shared filter
 and grouping helpers, `useWorkspaceSearch`, the marketplace hooks, the additive
-`ObjectReference` `pill` variant and `item-type-label` helpers, and the additive
-`Select` `chip` / `Tabs` `segmented` variants and `MarkdownContent`'s `doc` size —
+`ObjectReference` `pill` variant and `item-type-label` helpers, the additive
+`Select` `chip` / `Tabs` `segmented` variants and `MarkdownContent`'s `doc` size,
+the `ActorAvatar` `strong` tone, `SidebarTrigger`'s `icon`, `AgentStatusPill`'s
+`inline` / `bare` variants, `AgentRunPauseButton`'s `pauseLabel` / `tone`,
+`Skills`' `attachedFirst`, and the `compactTime` / workspace-create data layer —
 each defaults to the pre-v2 rendering, so the primitive is unchanged for the branch
 that doesn't ask for the new one. Both branches run on the same search schema and the same data layer, per the rule below.
 
