@@ -180,6 +180,12 @@ interface PlanCapContext {
 	used: number
 	/** USD cents. */
 	cap: number
+	/**
+	 * Unix MILLISECONDS, not seconds. Stripe stores `current_period_end` in
+	 * seconds, but `checkPlanCap` converts it (and `effectivePeriodEnd` derives
+	 * its fallback in ms) before building this context, so consumers must use
+	 * the value as-is. Null when Stripe has written no period at all yet.
+	 */
 	periodEnd: number | null
 }
 
@@ -193,6 +199,7 @@ export class PlanCapExceededError extends Error {
 	readonly plan: MaskinPlan
 	readonly used: number
 	readonly cap: number
+	/** Unix MILLISECONDS (already converted from Stripe's seconds), or null. */
 	readonly periodEnd: number | null
 
 	constructor(ctx: PlanCapContext) {

@@ -140,6 +140,11 @@ const sessionDispatchQueue = new SessionDispatchQueue(db, async () => ({ kind: '
 	// session: the log stream just stops. This puts the reason, and the
 	// "start a new session" recovery, into the transcript itself.
 	appendSystemLog: (sessionId, content) => sessionManager.insertSystemLog(sessionId, content),
+	// In production the dispatch queue — not the createSession promise — is
+	// where a workspace's missing LLM credentials surface, so this is the only
+	// way the trigger runner learns to stop firing against it.
+	onPermanentFailure: ({ workspaceId, reasonCode }) =>
+		triggerRunner.handleDispatchPermanentFailure(workspaceId, reasonCode),
 })
 if (process.env.NODE_ENV === 'production') {
 	const dispatcher = new SessionDispatcher({
