@@ -21,6 +21,22 @@ const MAX_CHANNEL_PAGES = 10
 const MAX_USER_PAGES = 10
 /** Slack's own per-page maximum for the listing endpoints. */
 const LIST_PAGE_SIZE = 200
+/**
+ * `conversations.join` failures that genuinely mean "Maskin cannot add itself,
+ * a human must invite it" — the only cases where the original `not_in_channel`
+ * text ("this one is private, so a human must invite the Maskin app") is a true
+ * statement rather than a guess. Slack answers a private channel with
+ * `method_not_supported_for_channel_type`, and an invite-only or restricted one
+ * with `restricted_action` / `channel_not_found`. Anything else (missing scope,
+ * rate limit, revoked token, 5xx) is reported on its own terms instead.
+ */
+const JOIN_MEMBERSHIP_REFUSALS = new Set([
+	'method_not_supported_for_channel_type',
+	'restricted_action',
+	'channel_not_found',
+	'is_archived',
+])
+
 /** Inline canvas text returned to an agent, in characters. */
 const MAX_CANVAS_CHARS = 100_000
 
@@ -34,9 +50,9 @@ export interface SlackToolContext {
 	/**
 	 * The installer's user token (`xoxp-...`), present only when the install
 	 * granted `search:read`. `search.messages` has no bot-token equivalent, so
-	 * the two search tools are registered ONLY when this is set — an agent's
-	 * tool list then reflects what the workspace can actually do, instead of
-	 * advertising a tool that always fails.
+	 * the search tool is registered ONLY when this is set — an agent's tool list
+	 * then reflects what the workspace can actually do, instead of advertising a
+	 * tool that always fails.
 	 *
 	 * Never used for writes. See `assertBotToken`.
 	 */
@@ -133,9 +149,27 @@ async function readConversation<T>(
 		if (!(err instanceof SlackApiError) || err.code !== 'not_in_channel') throw err
 		try {
 			await slackApiCall(token, 'conversations.join', { channel: params.channel }, 'POST')
-		} catch {
-			// Private channel (or join otherwise refused) — the caller needs the
-			// original "invite the app" instruction, not a join failure.
+		} catch (joinErr) {
+			// The join failed — but WHY decides what the caller should be told.
+			//
+			// The `not_in_channel` text asserts the channel is private and a human
+			// must `/invite @Maskin`. That is only true when the join was refused on
+			// membership grounds. Blanket-rethrowing `err` here would state that
+			// diagnosis for a missing `channels:join` scope, a rate limit, a revoked
+			// token or a Slack 5xx as well — sending an admin to invite the app into
+			// a public channel, where it will fail again for the unchanged real
+			// reason. So: surface the join error when it stands on its own terms,
+			// and keep the invite instruction only for a genuine membership refusal.
+			const joinCode = joinErr instanceof SlackApiError ? joinErr.code : 'unknown'
+			logger.warn('Slack auto-join failed while satisfying a read', {
+				workspaceId: ctx.workspaceId,
+				actorId: ctx.actorId,
+				channel: String(params.channel),
+				method,
+				joinCode,
+				error: joinErr instanceof Error ? joinErr.message : String(joinErr),
+			})
+			if (!JOIN_MEMBERSHIP_REFUSALS.has(joinCode)) throw joinErr
 			throw err
 		}
 		logger.info('Joined Slack channel to satisfy a read', {
@@ -199,9 +233,37 @@ function summariseUser(u: SlackUser) {
 export function createSlackMcpServer(ctx: SlackToolContext): McpServer {
 	const server = new McpServer({ name: 'maskin-slack', version: '0.2.0' })
 
+	// Log every tool failure exactly once, at the boundary where it leaves us.
+	//
+	// Without this, nothing here is observable. The MCP SDK turns a thrown error
+	// into an `isError` text result and answers the transport with a 200, so a
+	// Slack outage, a workspace-wide missing scope or a revoked token is visible
+	// only inside individual agent transcripts — and when a customer reports "the
+	// agent can't read Slack", there is nothing to query. The rest of this
+	// provider (mention.ts, fan-out.ts, unfurl.ts) logs failures consistently;
+	// wrapping registration keeps the 13 handlers below from each having to
+	// remember to. Rethrows unchanged: the agent-facing prose is unaffected.
+	const registerTool: McpServer['registerTool'] = (name, config, handler) =>
+		server.registerTool(name, config, (async (...handlerArgs: unknown[]) => {
+			try {
+				return await (handler as (...a: unknown[]) => unknown)(...handlerArgs)
+			} catch (err) {
+				logger.error('Slack MCP tool failed', {
+					tool: name,
+					workspaceId: ctx.workspaceId,
+					actorId: ctx.actorId,
+					slackTeamId: ctx.slackTeamId,
+					code: err instanceof SlackApiError ? err.code : 'unknown',
+					needed: err instanceof SlackApiError ? err.needed : undefined,
+					error: err instanceof Error ? err.message : String(err),
+				})
+				throw err
+			}
+		}) as typeof handler)
+
 	// ----------------------------------------------------------------- writing
 
-	server.registerTool(
+	registerTool(
 		'slack_send_message',
 		{
 			description:
@@ -245,7 +307,7 @@ export function createSlackMcpServer(ctx: SlackToolContext): McpServer {
 		},
 	)
 
-	server.registerTool(
+	registerTool(
 		'slack_schedule_message',
 		{
 			description:
@@ -288,7 +350,7 @@ export function createSlackMcpServer(ctx: SlackToolContext): McpServer {
 
 	// ----------------------------------------------------------------- reading
 
-	server.registerTool(
+	registerTool(
 		'slack_search_channels',
 		{
 			description:
@@ -370,7 +432,7 @@ export function createSlackMcpServer(ctx: SlackToolContext): McpServer {
 		},
 	)
 
-	server.registerTool(
+	registerTool(
 		'slack_get_channel_info',
 		{
 			description:
@@ -392,7 +454,7 @@ export function createSlackMcpServer(ctx: SlackToolContext): McpServer {
 		},
 	)
 
-	server.registerTool(
+	registerTool(
 		'slack_read_channel',
 		{
 			description:
@@ -455,7 +517,7 @@ export function createSlackMcpServer(ctx: SlackToolContext): McpServer {
 		},
 	)
 
-	server.registerTool(
+	registerTool(
 		'slack_read_thread',
 		{
 			description:
@@ -508,7 +570,7 @@ export function createSlackMcpServer(ctx: SlackToolContext): McpServer {
 		},
 	)
 
-	server.registerTool(
+	registerTool(
 		'slack_search_users',
 		{
 			description:
@@ -573,7 +635,7 @@ export function createSlackMcpServer(ctx: SlackToolContext): McpServer {
 		},
 	)
 
-	server.registerTool(
+	registerTool(
 		'slack_read_user_profile',
 		{
 			description:
@@ -604,7 +666,7 @@ export function createSlackMcpServer(ctx: SlackToolContext): McpServer {
 
 	// ---------------------------------------------------------------- canvases
 
-	server.registerTool(
+	registerTool(
 		'slack_read_canvas',
 		{
 			description:
@@ -638,7 +700,7 @@ export function createSlackMcpServer(ctx: SlackToolContext): McpServer {
 		},
 	)
 
-	server.registerTool(
+	registerTool(
 		'slack_create_canvas',
 		{
 			description:
@@ -673,7 +735,7 @@ export function createSlackMcpServer(ctx: SlackToolContext): McpServer {
 		},
 	)
 
-	server.registerTool(
+	registerTool(
 		'slack_update_canvas',
 		{
 			description:
@@ -732,89 +794,98 @@ export function createSlackMcpServer(ctx: SlackToolContext): McpServer {
 
 	// `search.messages` has no bot-scope equivalent — Slack offers `search:read`
 	// only as a user scope. Registered conditionally so a workspace whose install
-	// predates the user-token grant simply does not see these tools, rather than
-	// seeing tools that always fail.
+	// predates the user-token grant simply does not see this tool, rather than
+	// seeing a tool that always fails.
+	//
+	// There is exactly ONE search tool on purpose. `search.messages` takes no
+	// channel-scoping parameter: its reach is fixed by the user token's granted
+	// `search:read.*` scopes, which the install requests as the full set
+	// (public, private, mpim, im — see config.ts). A `slack_search_public` that
+	// merely *labelled* its results `public_channel` while issuing the identical
+	// unconstrained request would be worse than no tool at all — an agent picks
+	// the narrow-sounding name precisely to stay out of private conversations,
+	// and would be handed DM content under an assurance the request never made.
+	// If Slack ever adds real channel-type scoping, split this then.
 	if (ctx.userToken) {
 		const userToken = ctx.userToken
-		const registerSearchTool = (name: string, lede: string, channelTypes: string) => {
-			server.registerTool(
-				name,
-				{
-					description: `${lede} Supports Slack's search modifiers: \`in:#channel\`, \`from:@user\`, \`before:YYYY-MM-DD\`, \`after:YYYY-MM-DD\`, \`has:link\`, \`is:thread\`, \`"exact phrase"\`, \`-excluded\`. Space-separated terms are ANDed; there are no boolean operators. Runs with the Slack visibility of the person who installed Maskin, not of the calling agent. Read-only.`,
-					inputSchema: {
-						query: z
-							.string()
-							.min(1)
-							.describe('Search query, optionally with Slack search modifiers.'),
-						count: z
-							.number()
-							.int()
-							.min(1)
-							.max(100)
-							.optional()
-							.describe('Results per page, 1-100. Default 20.'),
-						page: z.number().int().min(1).optional().describe('Page number, 1-based. Default 1.'),
-						sort: z.enum(['score', 'timestamp']).optional().describe('Sort by relevance or date.'),
-						sort_dir: z.enum(['asc', 'desc']).optional().describe('Sort direction. Default desc.'),
-					},
+		registerTool(
+			'slack_search_messages',
+			{
+				description:
+					'Search message content across ALL Slack conversations the installing user can see — public channels, and also their private channels, group DMs and DMs. There is no way to narrow this to public channels only: Slack scopes search by the searching identity, not per call. Treat every result as potentially confidential, and do not repost an excerpt into a channel without checking where it came from. Supports Slack\'s search modifiers: `in:#channel`, `from:@user`, `before:YYYY-MM-DD`, `after:YYYY-MM-DD`, `has:link`, `is:thread`, `"exact phrase"`, `-excluded` — use `in:#channel` to constrain the surface yourself. Space-separated terms are ANDed; there are no boolean operators. Runs with the Slack visibility of the person who installed Maskin, not of the calling agent. Read-only.',
+				inputSchema: {
+					query: z
+						.string()
+						.min(1)
+						.describe('Search query, optionally with Slack search modifiers.'),
+					count: z
+						.number()
+						.int()
+						.min(1)
+						.max(100)
+						.optional()
+						.describe('Results per page, 1-100. Default 20.'),
+					page: z.number().int().min(1).optional().describe('Page number, 1-based. Default 1.'),
+					sort: z.enum(['score', 'timestamp']).optional().describe('Sort by relevance or date.'),
+					sort_dir: z.enum(['asc', 'desc']).optional().describe('Sort direction. Default desc.'),
 				},
-				async (args: {
-					query: string
-					count?: number
-					page?: number
-					sort?: string
-					sort_dir?: string
-				}) => {
-					const res = await slackApiCall<{
-						messages?: {
-							total?: number
-							matches?: Record<string, unknown>[]
-							paging?: Record<string, unknown>
-						}
-					}>(
-						userToken,
-						'search.messages',
-						{
-							query: args.query,
-							count: args.count ?? 20,
-							page: args.page ?? 1,
-							sort: args.sort,
-							sort_dir: args.sort_dir,
-						},
-						'GET',
-					)
-					const matches = (res.messages?.matches ?? []).map((m) => {
-						const channel = m.channel as { id?: string; name?: string } | undefined
-						return {
-							ts: m.ts,
-							text: m.text,
-							username: m.username,
-							user: m.user,
-							channel: channel?.id,
-							channel_name: channel?.name,
-							permalink: m.permalink,
-						}
-					})
-					return ok({
+			},
+			async (args: {
+				query: string
+				count?: number
+				page?: number
+				sort?: string
+				sort_dir?: string
+			}) => {
+				const res = await slackApiCall<{
+					messages?: {
+						total?: number
+						matches?: Record<string, unknown>[]
+						paging?: Record<string, unknown>
+					}
+				}>(
+					userToken,
+					'search.messages',
+					{
 						query: args.query,
-						total: res.messages?.total ?? matches.length,
-						matches,
-						paging: res.messages?.paging,
-						channel_types: channelTypes,
-					})
-				},
-			)
-		}
-
-		registerSearchTool(
-			'slack_search_public',
-			'Search message content across public Slack channels.',
-			'public_channel',
-		)
-		registerSearchTool(
-			'slack_search_public_and_private',
-			'Search message content across ALL Slack conversations the installing user can see — public channels, private channels, group DMs and DMs.',
-			'public_channel,private_channel,mpim,im',
+						count: args.count ?? 20,
+						page: args.page ?? 1,
+						sort: args.sort,
+						sort_dir: args.sort_dir,
+					},
+					'GET',
+				)
+				const matches = (res.messages?.matches ?? []).map((m) => {
+					const channel = m.channel as
+						| {
+								id?: string
+								name?: string
+								is_private?: boolean
+								is_im?: boolean
+								is_mpim?: boolean
+						  }
+						| undefined
+					return {
+						ts: m.ts,
+						text: m.text,
+						username: m.username,
+						user: m.user,
+						channel: channel?.id,
+						channel_name: channel?.name,
+						// Per-match, from Slack's own metadata — so the agent can tell a
+						// public-channel hit from a private one instead of trusting a
+						// blanket claim about the whole result set.
+						is_private: channel?.is_private ?? channel?.is_im ?? channel?.is_mpim ?? undefined,
+						permalink: m.permalink,
+					}
+				})
+				return ok({
+					query: args.query,
+					total: res.messages?.total ?? matches.length,
+					matches,
+					paging: res.messages?.paging,
+				})
+			},
 		)
 	}
 

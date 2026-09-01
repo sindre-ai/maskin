@@ -233,7 +233,10 @@ describe('createSlackMcpServer — slack_send_message', () => {
 
 type ToolMap = Record<
 	string,
-	{ handler: (args: unknown, extra: unknown) => Promise<{ content: { text: string }[] }> }
+	{
+		description?: string
+		handler: (args: unknown, extra: unknown) => Promise<{ content: { text: string }[] }>
+	}
 >
 
 function toolsOf(ctx: Parameters<typeof createSlackMcpServer>[0]): ToolMap {
@@ -279,17 +282,35 @@ describe('createSlackMcpServer — tool registration', () => {
 
 	// Slack offers `search:read` only as a user scope, so a workspace whose
 	// install predates the user-token grant genuinely cannot search. Omitting the
-	// tools is honest; registering ones that always fail is not.
-	it('omits the search tools when the workspace has no user token', () => {
+	// tool is honest; registering one that always fails is not.
+	it('omits the search tool when the workspace has no user token', () => {
 		const tools = toolsOf(baseCtx)
+		expect(tools.slack_search_messages).toBeUndefined()
+	})
+
+	it('registers the search tool when a user token is present', () => {
+		const tools = toolsOf({ ...baseCtx, userToken: 'xoxp-user-token' })
+		expect(tools.slack_search_messages).toBeDefined()
+	})
+
+	// `search.messages` has no channel-scoping parameter — its reach is fixed by
+	// the user token's scopes. A second, narrower-sounding tool could therefore
+	// only differ in its label, and an agent that picked it to stay out of private
+	// conversations would be handed DM content under an assurance the request
+	// never made. One tool, honestly described.
+	it('registers exactly one search tool, and does not claim a public-only one', () => {
+		const tools = toolsOf({ ...baseCtx, userToken: 'xoxp-user-token' })
+		expect(Object.keys(tools).filter((n) => n.startsWith('slack_search_m'))).toEqual([
+			'slack_search_messages',
+		])
 		expect(tools.slack_search_public).toBeUndefined()
 		expect(tools.slack_search_public_and_private).toBeUndefined()
 	})
 
-	it('registers the search tools when a user token is present', () => {
+	it('warns in its description that search reaches private channels and DMs', () => {
 		const tools = toolsOf({ ...baseCtx, userToken: 'xoxp-user-token' })
-		expect(tools.slack_search_public).toBeDefined()
-		expect(tools.slack_search_public_and_private).toBeDefined()
+		expect(tools.slack_search_messages.description).toMatch(/private channels/i)
+		expect(tools.slack_search_messages.description).toMatch(/DMs/)
 	})
 })
 
@@ -310,7 +331,7 @@ describe('createSlackMcpServer — token separation', () => {
 	it('searches with the USER token', async () => {
 		fetchMock.mockResolvedValue(jsonResponse({ ok: true, messages: { total: 0, matches: [] } }))
 		const tools = toolsOf({ ...baseCtx, userToken: 'xoxp-user-token' })
-		await tools.slack_search_public.handler({ query: 'pricing' }, {})
+		await tools.slack_search_messages.handler({ query: 'pricing' }, {})
 		expect(authOf(0)).toBe('Bearer xoxp-user-token')
 	})
 
@@ -479,6 +500,36 @@ describe('Slack error messages are actionable', () => {
 		const tools = toolsOf(baseCtx)
 		await expect(tools.slack_get_channel_info.handler({ channel_id: 'C1' }, {})).rejects.toThrow(
 			/missing_scope/,
+		)
+	})
+
+	// The auto-join fallback used to rethrow the original `not_in_channel`
+	// whatever the join failed on — telling an admin to `/invite @Maskin` into a
+	// PUBLIC channel when the real cause was a scope the reconnect prompt fixes.
+	it('surfaces the join failure when the join failed for its own reason', async () => {
+		fetchMock
+			.mockResolvedValueOnce(jsonResponse({ ok: false, error: 'not_in_channel' }))
+			.mockResolvedValueOnce(
+				jsonResponse({ ok: false, error: 'missing_scope', needed: 'channels:join' }),
+			)
+		const tools = toolsOf(baseCtx)
+		const err = await tools.slack_read_channel
+			.handler({ channel_id: 'C1' }, {})
+			.catch((e: Error) => e)
+		expect(err.message).toMatch(/channels:join/)
+		expect(err.message).not.toMatch(/\/invite/)
+	})
+
+	// ...but a genuine membership refusal is exactly when that instruction is true.
+	it('keeps the invite instruction when the channel cannot be self-joined', async () => {
+		fetchMock
+			.mockResolvedValueOnce(jsonResponse({ ok: false, error: 'not_in_channel' }))
+			.mockResolvedValueOnce(
+				jsonResponse({ ok: false, error: 'method_not_supported_for_channel_type' }),
+			)
+		const tools = toolsOf(baseCtx)
+		await expect(tools.slack_read_channel.handler({ channel_id: 'C1' }, {})).rejects.toThrow(
+			/\/invite @Maskin/,
 		)
 	})
 
