@@ -4,7 +4,7 @@ import { useActor, useActors } from '@/hooks/use-actors'
 import { useFiles } from '@/hooks/use-files'
 import type { ActorListItem, EventResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { hasDecision } from '@/lib/comment-decision'
+import { hasDecision, legacyChipsOf } from '@/lib/comment-decision'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { ChevronDown, Reply } from 'lucide-react'
 import { useState } from 'react'
@@ -75,7 +75,7 @@ interface CommentRowProps {
 	isDecisionPoint?: boolean
 	variant?: CommentVariant
 	/** Rendered under the message text — inside the bubble when bubbled, so the
-	 *  decision chips and thread toggle read as part of the message. */
+	 *  thread toggle reads as part of the message. */
 	footer?: React.ReactNode
 }
 
@@ -118,6 +118,7 @@ function CommentRow({
 	const isAgent = actor?.type === 'agent'
 	const clampable = isBubble && content.length > CLAMP_OVER
 	const referencedObjectIds = readReferencedObjectIds(event)
+	const legacyChips = legacyChipsOf(event)
 
 	const avatarClass = isBubble
 		? 'size-[30px] border-[3px] border-background text-[11px]'
@@ -279,6 +280,16 @@ function CommentRow({
 						</div>
 					)}
 					{hasTaskList(event) && <CommentTaskList event={event} workspaceId={workspaceId} />}
+					{/* Options from a comment written before `decision` replaced
+					    `metadata.chips`. They never lived in the comment's own text, so
+					    without this the reader sees a question with its choices missing.
+					    Text, not buttons: the mechanism is gone and these are not a
+					    decision — the reader answers in the composer below. */}
+					{legacyChips.length > 0 && (
+						<p className="text-muted-foreground mt-1.5 text-xs">
+							Options offered: {legacyChips.join(' · ')}
+						</p>
+					)}
 					{attachmentFileIds.length > 0 && (
 						<ul className="mt-1.5 space-y-1">
 							{attachmentFileIds.map((fileId) => {

@@ -225,6 +225,61 @@ describe('OrphanThreadDetector — integration', () => {
 		expect(ledger[0].threadKind).toBe('decision_required')
 	})
 
+	// `metadata.chips` was the pre-`decision` way to ask, and stored rows still
+	// carry it. It is not a decision any more, so the ledger must record the
+	// thread as the plain question it reads as — otherwise the escalation signal
+	// keeps firing on a mechanism nothing renders.
+	it('classifies a legacy metadata.chips comment as a question, not a decision', async () => {
+		const actor = getTestActorId()
+		const ws = await insertWorkspace(db, actor)
+		const object = await insertObject(db, ws.id, actor)
+		const agent = await insertActor(db, { type: 'agent', name: 'Agent Legacy' })
+
+		await insertRootCommentAt({
+			workspaceId: ws.id,
+			actorId: actor,
+			entityId: object.id,
+			mentions: [agent.id],
+			content: 'Which one should we take?',
+			createdAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
+			metadata: { chips: ['ship', 'wait', 'kill'] },
+		})
+
+		const detector = new OrphanThreadDetector(db)
+		await detector.tick()
+
+		const ledger = await db.select().from(orphanThreadDetections)
+		expect(ledger).toHaveLength(1)
+		expect(ledger[0].threadKind).toBe('question')
+	})
+
+	// A decision block that does not satisfy the schema is not a decision. This
+	// is the shape a bare `typeof x === 'object'` check used to accept, which
+	// made the detector disagree with the For You feed about the same row.
+	it('classifies a malformed decision block as a question, not a decision', async () => {
+		const actor = getTestActorId()
+		const ws = await insertWorkspace(db, actor)
+		const object = await insertObject(db, ws.id, actor)
+		const agent = await insertActor(db, { type: 'agent', name: 'Agent Malformed' })
+
+		await insertRootCommentAt({
+			workspaceId: ws.id,
+			actorId: actor,
+			entityId: object.id,
+			mentions: [agent.id],
+			content: 'Which one should we take?',
+			createdAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
+			decision: {} as never,
+		})
+
+		const detector = new OrphanThreadDetector(db)
+		await detector.tick()
+
+		const ledger = await db.select().from(orphanThreadDetections)
+		expect(ledger).toHaveLength(1)
+		expect(ledger[0].threadKind).toBe('question')
+	})
+
 	it('ignores threads younger than the reply deadline', async () => {
 		const actor = getTestActorId()
 		const ws = await insertWorkspace(db, actor)

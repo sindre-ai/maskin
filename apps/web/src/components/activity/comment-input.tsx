@@ -28,7 +28,17 @@ interface CommentInputProps {
 	workspaceId: string
 	objectId: string
 	parentEventId?: number
+	// Fires once the comment is actually on the server. Callers that take an
+	// irreversible action on a reply (For You marks the thread read, which drops
+	// the card) must use this one and not `onQueued`.
 	onSubmitted?: () => void
+	// Fires when a comment carrying attachments is handed to the pending-comments
+	// queue, which uploads and POSTs in the background. The comment has NOT been
+	// posted yet and may still fail, so this is for clearing local composer state
+	// only. When it is not supplied the queued path stays silent rather than
+	// falling back to `onSubmitted`, because a caller that never opted in would
+	// otherwise treat a queued draft as a posted one.
+	onQueued?: () => void
 	// Direction the @-mention dropdown opens. Defaults to 'below' (object detail
 	// page, plenty of room underneath). Callers pinned to the viewport bottom
 	// (e.g. ForYouQueueCard) pass 'above' so the dropdown doesn't render
@@ -70,6 +80,7 @@ export function CommentInput({
 	objectId,
 	parentEventId,
 	onSubmitted,
+	onQueued,
 	mentionDropdownPlacement = 'below',
 	focusRef,
 	hint,
@@ -360,7 +371,11 @@ export function CommentInput({
 				return
 			}
 			resetComposer()
-			onSubmitted?.()
+			// Deliberately not `onSubmitted` — the upload and the POST are still
+			// ahead of us, and a queued comment can still fail. Telling the caller
+			// it was submitted here let For You mark the thread read and drop the
+			// card for a reply that was never sent.
+			onQueued?.()
 			return
 		}
 
@@ -373,6 +388,7 @@ export function CommentInput({
 		parentEventId,
 		createComment,
 		onSubmitted,
+		onQueued,
 		hasAttachments,
 		draft,
 		buildMetadata,

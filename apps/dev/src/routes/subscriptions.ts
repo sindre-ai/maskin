@@ -5,6 +5,7 @@ import {
 	commentDecisionSchema,
 	markReadBodySchema,
 	markUnreadBodySchema,
+	parseCommentDecision,
 	subscribeBodySchema,
 	subscribersQuerySchema,
 	unreadQuerySchema,
@@ -138,7 +139,7 @@ function toLatestMention(event: typeof events.$inferSelect): LatestMention {
 	const data = (event.data ?? {}) as Record<string, unknown>
 	const rawContent = typeof data.content === 'string' ? data.content : ''
 	const attention = Number(data.attention)
-	const decision = commentDecisionSchema.safeParse(data.decision)
+	const decision = parseCommentDecision(data.decision)
 
 	return {
 		event_id: Number(event.id),
@@ -147,7 +148,7 @@ function toLatestMention(event: typeof events.$inferSelect): LatestMention {
 			event.createdAt instanceof Date ? event.createdAt.toISOString() : String(event.createdAt),
 		content: rawContent,
 		attention: Number.isFinite(attention) ? attention : null,
-		decision: decision.success ? decision.data : null,
+		decision,
 	}
 }
 

@@ -1,5 +1,6 @@
 import type { Database } from '@maskin/db'
 import { events, actors, orphanThreadDetections } from '@maskin/db/schema'
+import { parseCommentDecision } from '@maskin/shared'
 import { and, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm'
 import { trackOrphanThreadDetected } from '../lib/analytics/orphan-thread-events'
 import type { OrphanThreadKind } from '../lib/analytics/orphan-thread-events'
@@ -253,7 +254,9 @@ function deriveThreadKind(data: CommentData): OrphanThreadKind {
 	// A decision block is what makes a comment a decision. `metadata.chips` used
 	// to be a second way to say the same thing; it is gone, and a comment that
 	// still carries one is treated as the plain question or flag it reads as.
-	if (data.decision && typeof data.decision === 'object') return 'decision_required'
+	// Parsed rather than duck-typed, so this agrees with the feed and the
+	// timeline about what counts (see `parseCommentDecision`).
+	if (parseCommentDecision(data.decision)) return 'decision_required'
 	if (typeof data.content === 'string' && data.content.includes('?')) return 'question'
 	return 'flag'
 }
