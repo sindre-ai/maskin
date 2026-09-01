@@ -170,7 +170,7 @@ test.describe('For You v4 — the feed at every ship-gate viewport', () => {
 			await expect(cards.first()).toBeVisible()
 			await expect(page.getByText('Merge the trigger settings rewrite?').first()).toBeVisible()
 			await expect(
-				page.getByText('A page people use every day was rewritten and no human has opened it.'),
+				cards.first().getByText(/A page 200 people use every day was rewritten/),
 			).toBeVisible()
 			// Matches the v2 composer's default placeholder (both its mobile and
 			// desktop wording). Once the Object detail split lands `placeholder`
