@@ -19,9 +19,13 @@ test.describe('Marketplace composition chip row', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}/marketplace`)
 
-			// Wait for the Loops section (bundle-card container) to render.
+			// At 375 the Loops section renders below the fold and shard-load
+			// variance was pushing the 20s cap. Use 30s to match the wider window
+			// other marketplace specs apply at tablet viewports, then scroll the
+			// section into the viewport so chip-row bounding-box reads are stable.
 			const loopsSection = page.getByRole('region', { name: 'Loops' })
-			await expect(loopsSection).toBeVisible({ timeout: 20000 })
+			await expect(loopsSection).toBeVisible({ timeout: 30000 })
+			await loopsSection.scrollIntoViewIfNeeded()
 
 			// AC: every bundle card shows the composition chip row. The Loops
 			// section renders as soon as the cheap loop-summary list loads, but
