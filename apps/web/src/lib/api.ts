@@ -1107,9 +1107,11 @@ export interface LatestMention {
 	event_id: number
 	actor_id: string | null
 	created_at: string
-	// Truncated server-side; `truncated` says whether anything was cut.
+	// The whole comment body, not a preview.
 	content: string
-	truncated: boolean
+	// Legacy quick-reply options (`metadata.chips`) on comments written before
+	// the structured `decision` block existed. Empty for everything else.
+	chips: string[]
 	attention: number | null
 	// Present only when the agent asked for a structured decision. The card
 	// renders its options as the buttons the reader taps.

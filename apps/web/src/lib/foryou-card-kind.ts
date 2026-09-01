@@ -10,6 +10,12 @@ import type { LatestMention, LatestMentionDecision, UnreadItem } from '@/lib/api
 // marked one of them recommended on no evidence. Both are gone: an ask is a
 // decision when the agent said it was, and its options are the ones the agent
 // wrote.
+//
+// A `thread` card can still carry buttons: comments written before the decision
+// block existed put their options in `metadata.chips`, and those are
+// agent-authored too, so rendering them invents nothing. They stay `thread`
+// because the agent did not author a decision, and a chip carries no
+// consequences and no recommendation.
 export type CardKind = 'decision' | 'thread'
 
 export interface CardAction {
@@ -47,10 +53,21 @@ export function classifyCardKind(item: UnreadItem): CardKind {
 /**
  * The card's options, in render order. The recommended one sits last, where the
  * layout puts the filled bar.
+ *
+ * Falls back to the comment's legacy `metadata.chips` when there is no decision
+ * block, so a pre-decision ask still renders as buttons rather than as prose the
+ * reader has to answer by hand. A chip is a bare label: no consequence lines, and
+ * no recommendation, so no option gets the filled bar.
  */
 export function cardActions(item: UnreadItem): readonly CardAction[] {
 	const decision = decisionOf(item)
-	if (!decision) return []
+	if (!decision) {
+		return (item.latest_mention?.chips ?? []).map((chip) => ({
+			id: actionIdFromLabel(chip),
+			label: chip,
+			consequences: [],
+		}))
+	}
 	return decision.options
 		.map((option) => ({
 			id: actionIdFromLabel(option.label),

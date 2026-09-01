@@ -111,9 +111,14 @@ const unreadItemSchema = z.object({
 			event_id: z.number(),
 			actor_id: z.string().uuid().nullable(),
 			created_at: z.string(),
-			// Truncated to MENTION_PREVIEW_CHARS; the full body is on the object.
+			// The whole comment. For You is where the reader decides, so the card
+			// must not send them elsewhere to finish reading the ask; the body is
+			// bounded by createCommentSchema's 2000-character cap.
 			content: z.string(),
-			truncated: z.boolean(),
+			// Legacy quick-reply options (`metadata.chips`), for comments written
+			// before the structured `decision` block existed. The card renders them
+			// as option buttons with no consequence lines.
+			chips: z.array(z.string()),
 			attention: z.number().nullable(),
 			// Present only when the agent asked for a structured decision. The
 			// card renders its options as the buttons the reader taps.
@@ -122,14 +127,27 @@ const unreadItemSchema = z.object({
 		.optional(),
 })
 
-/**
- * How much of the mention body the feed carries. The card shows a few lines
- * before the reader opens the object, and a feed is N of these — sending full
- * 2000-character bodies for every card would dominate the payload.
- */
-const MENTION_PREVIEW_CHARS = 600
+// Bounds on `metadata.chips`, mirroring what createCommentSchema's `metadata`
+// description promises agents. A row is untrusted storage, so they are enforced
+// again on the way out rather than assumed.
+const MAX_CHIPS = 5
+const MAX_CHIP_CHARS = 20
 
 type LatestMention = NonNullable<z.infer<typeof unreadItemSchema>['latest_mention']>
+
+/**
+ * The legacy quick-reply options stored on a comment's metadata. Anything that
+ * is not a non-empty string is dropped rather than rendered as a blank button.
+ */
+function toChips(metadata: unknown): string[] {
+	if (!metadata || typeof metadata !== 'object') return []
+	const raw = (metadata as Record<string, unknown>).chips
+	if (!Array.isArray(raw)) return []
+	return raw
+		.filter((chip): chip is string => typeof chip === 'string' && chip.trim().length > 0)
+		.slice(0, MAX_CHIPS)
+		.map((chip) => chip.trim().slice(0, MAX_CHIP_CHARS))
+}
 
 /**
  * Projects a `commented` event row into the feed's mention payload.
@@ -151,8 +169,8 @@ function toLatestMention(event: typeof events.$inferSelect): LatestMention {
 		actor_id: event.actorId ?? null,
 		created_at:
 			event.createdAt instanceof Date ? event.createdAt.toISOString() : String(event.createdAt),
-		content: rawContent.slice(0, MENTION_PREVIEW_CHARS),
-		truncated: rawContent.length > MENTION_PREVIEW_CHARS,
+		content: rawContent,
+		chips: toChips(data.metadata),
 		attention: Number.isFinite(attention) ? attention : null,
 		decision: decision.success ? decision.data : null,
 	}

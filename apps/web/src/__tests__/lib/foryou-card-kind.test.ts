@@ -34,7 +34,7 @@ function buildMention(overrides: Partial<LatestMention> = {}): LatestMention {
 		actor_id: null,
 		created_at: '2026-09-01T00:00:00.000Z',
 		content: 'Body of the comment.',
-		truncated: false,
+		chips: [],
 		attention: null,
 		decision: null,
 		...overrides,
@@ -106,6 +106,31 @@ describe('cardActions', () => {
 
 	it('returns no actions for a plain mention', () => {
 		expect(cardActions(buildItem({ latest_mention: buildMention() }))).toEqual([])
+	})
+
+	it('falls back to the comment legacy chips when there is no decision', () => {
+		const item = buildItem({
+			latest_mention: buildMention({ chips: ['Expand tool surface', 'Something else'] }),
+		})
+		expect(cardActions(item)).toEqual([
+			{ id: 'expand_tool_surface', label: 'Expand tool surface', consequences: [] },
+			{ id: 'something_else', label: 'Something else', consequences: [] },
+		])
+	})
+
+	// A chip says nothing about which option the agent would take, so none of
+	// them may claim the filled bar.
+	it('marks no chip recommended', () => {
+		const item = buildItem({ latest_mention: buildMention({ chips: ['Yes', 'No'] }) })
+		expect(cardActions(item).some((action) => action.recommended)).toBe(false)
+		expect(recommendedAction(item)).toBeUndefined()
+	})
+
+	it('prefers the decision over chips when a comment carries both', () => {
+		const item = buildItem({
+			latest_mention: buildMention({ decision: buildDecision(), chips: ['Yes', 'No'] }),
+		})
+		expect(cardActions(item).map((action) => action.label)).toEqual(['Hold', '7-day window'])
 	})
 })
 

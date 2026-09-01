@@ -261,17 +261,10 @@ export function FeedCard({
 					</div>
 				) : (
 					mentionBody && (
+						// The whole comment, not a preview: the reader answers here, so
+						// nothing about the ask lives behind a second click.
 						<div className="-mt-1 max-w-[58ch] text-[13px] leading-[1.55] text-pretty text-muted-foreground">
 							<MarkdownContent content={mentionBody} size="sm" mentionActors={actors} />
-							{item.latest_mention?.truncated && (
-								<Link
-									to="/$workspaceId/objects/$objectId"
-									params={{ workspaceId, objectId }}
-									className="text-[11.5px] font-semibold text-muted-foreground hover:text-foreground"
-								>
-									Read the rest
-								</Link>
-							)}
 						</div>
 					)
 				)}
