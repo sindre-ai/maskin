@@ -510,3 +510,51 @@ describe('POST /api/tool-broker/integrations — asking the URL what it is', () 
 		expect(probeEndpoint).not.toHaveBeenCalled()
 	})
 })
+
+describe('POST /api/tool-broker/integrations — a supplied credential beats the probe', () => {
+	// A server can offer OAuth and still accept a token in a header. Meta's Ads
+	// server documents both, and its own metadata says
+	// `bearer_methods_supported: ["header"]`. Since its dynamic registration is
+	// closed, that token is the ONLY way in — so a probe result of oauth2 must not
+	// override a credential the user has explicitly provided.
+
+	it('registers as api_key when a header is given, even though the probe said oauth2', async () => {
+		const client = makeClient()
+		ensureProvisioned.mockResolvedValue(provisionedWith(client))
+		probeEndpoint.mockResolvedValue({ kind: 'mcp', auth: 'oauth2' })
+		const { app } = createTestApp(routes, '/api/tool-broker')
+
+		const res = await app.request(
+			post('/integrations', {
+				url: 'https://mcp.example.com/ads',
+				kind: 'mcp',
+				apiKeyHeader: { name: 'Authorization', value: 'Bearer token' },
+			}),
+		)
+
+		expect(res.status).toBe(200)
+		expect(client.addIntegrationByUrl).toHaveBeenCalledWith(
+			'key',
+			expect.objectContaining({
+				auth: 'api_key',
+				headers: { Authorization: 'Bearer token' },
+			}),
+		)
+	})
+
+	it('still uses OAuth when no credential is offered', async () => {
+		// The default has to stay OAuth, or every OAuth provider would start asking
+		// for a token nobody has.
+		const client = makeClient()
+		ensureProvisioned.mockResolvedValue(provisionedWith(client))
+		probeEndpoint.mockResolvedValue({ kind: 'mcp', auth: 'oauth2' })
+		const { app } = createTestApp(routes, '/api/tool-broker')
+
+		await app.request(post('/integrations', { url: 'https://mcp.example.com/mcp', kind: 'mcp' }))
+
+		expect(client.addIntegrationByUrl).toHaveBeenCalledWith(
+			'key',
+			expect.objectContaining({ auth: 'oauth2', headers: undefined }),
+		)
+	})
+})

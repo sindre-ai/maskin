@@ -246,6 +246,10 @@ function AddIntegrationDialog({
 	// up front for a field most integrations do not need is worse than asking the
 	// few who do, one step later.
 	const [needsKey, setNeedsKey] = useState(false)
+	// Chosen rather than demanded. A server can offer OAuth and still accept a
+	// token you already hold — and where the provider's dynamic registration is
+	// closed, that token is the only way in.
+	const [useOwnToken, setUseOwnToken] = useState(false)
 	const [headerName, setHeaderName] = useState('Authorization')
 	const [headerValue, setHeaderValue] = useState('')
 	const add = useAddToolBrokerIntegration(workspaceId)
@@ -259,9 +263,12 @@ function AddIntegrationDialog({
 		setUrl('')
 		setName('')
 		setNeedsKey(false)
+		setUseOwnToken(false)
 		setHeaderName('Authorization')
 		setHeaderValue('')
 	}
+
+	const showKeyFields = needsKey || useOwnToken
 
 	const submit = () => {
 		if (!url.trim()) return
@@ -272,7 +279,7 @@ function AddIntegrationDialog({
 				url: url.trim(),
 				kind,
 				name: name.trim() || undefined,
-				...(needsKey && headerValue.trim()
+				...(showKeyFields && headerValue.trim()
 					? { apiKeyHeader: { name: headerName.trim(), value: headerValue.trim() } }
 					: {}),
 			},
@@ -328,10 +335,12 @@ function AddIntegrationDialog({
 						/>
 					</div>
 
-					{needsKey ? (
+					{showKeyFields ? (
 						<div className="space-y-3 rounded-md border border-border p-3">
 							<p className="text-text-secondary text-xs">
-								This server requires an API key. Its documentation will name the header — often{' '}
+								{needsKey
+									? 'This server requires an API key. Its documentation will name the header — often '
+									: 'Send a token you already hold on every request. The provider’s documentation will name the header — often '}
 								<code className="font-mono">Authorization</code> or{' '}
 								<code className="font-mono">X-API-KEY</code>.
 							</p>
@@ -356,7 +365,18 @@ function AddIntegrationDialog({
 								/>
 							</div>
 						</div>
-					) : null}
+					) : (
+						// Not shown as a field, because most integrations do not need one and
+						// an always-visible token box invites pasting a credential where none
+						// is wanted.
+						<button
+							type="button"
+							className="text-text-secondary text-xs underline underline-offset-2 hover:text-foreground"
+							onClick={() => setUseOwnToken(true)}
+						>
+							Use a token or API key instead
+						</button>
+					)}
 				</div>
 
 				<DialogFooter>

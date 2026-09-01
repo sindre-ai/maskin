@@ -740,3 +740,50 @@ test.describe('adding by URL — what the server says it is', () => {
 		await expect(dialog).toBeVisible()
 	})
 })
+
+test.describe('adding by URL — volunteering a token', () => {
+	test.beforeEach(async ({ page }) => {
+		await page.addInitScript(() => localStorage.setItem('ff:tool-broker', 'on'))
+	})
+
+	test('offers a token path without being asked, and sends the header', async ({
+		page,
+		account,
+	}) => {
+		// Meta's Ads server offers OAuth but will not register a client for us, so
+		// the only way in is a token the user already holds. Nothing prompts for
+		// one — the user has to be able to choose it.
+		let posted: { apiKeyHeader?: { name: string; value: string } } | null = null
+		await stubBroker(page, { configured: true, available: true, integrations: INTEGRATIONS })
+		await page.route('**/api/tool-broker/integrations', async (route) => {
+			posted = route.request().postDataJSON()
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ slug: 'w0123_meta' }),
+			})
+		})
+
+		await gotoIntegrations(page, account.workspaceId)
+		await section(page).getByRole('button', { name: 'Add', exact: true }).click()
+
+		const dialog = page.getByRole('dialog')
+		await dialog.getByLabel('URL').fill('https://mcp.facebook.example/ads')
+
+		// Not a visible field by default — an always-open token box invites pasting
+		// a credential where none is wanted.
+		await expect(dialog.getByLabel('Header value')).toHaveCount(0)
+		await dialog.getByRole('button', { name: 'Use a token or API key instead' }).click()
+
+		await expect(dialog.getByLabel('Header value')).toBeVisible()
+		// Authorization is the common case, so it is prefilled.
+		await expect(dialog.getByLabel('Header name')).toHaveValue('Authorization')
+		await dialog.getByLabel('Header value').fill('Bearer EAA-token')
+		await dialog.getByRole('button', { name: 'Add', exact: true }).click()
+
+		await expect
+			.poll(() => posted?.apiKeyHeader?.value, { timeout: 10000 })
+			.toBe('Bearer EAA-token')
+		expect(posted?.apiKeyHeader?.name).toBe('Authorization')
+	})
+})

@@ -233,7 +233,14 @@ app.openapi(addRoute, async (c) => {
 			)
 		}
 
-		auth = probe.auth
+		// A supplied credential beats the probe. A server can offer OAuth and still
+		// accept a token in a header — Meta's Ads server documents both, and its
+		// own metadata says `bearer_methods_supported: ["header"]`. Registering it
+		// as oauth2 anyway would send the user into a consent flow they explicitly
+		// chose not to use, and for a provider whose dynamic registration is closed
+		// that flow cannot complete at all.
+		auth = body.apiKeyHeader ? 'api_key' : probe.auth
+
 		if (auth === 'api_key' && !body.apiKeyHeader) {
 			// Registering anyway would produce an integration that connects and then
 			// fails on every tool call, which is harder to diagnose than this.
