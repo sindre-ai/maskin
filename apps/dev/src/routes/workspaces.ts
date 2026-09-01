@@ -16,7 +16,7 @@ import {
 	updateWorkspaceAdminSchema,
 	updateWorkspaceSchema,
 } from '@maskin/shared'
-import { and, eq } from 'drizzle-orm'
+import { and, count, eq, inArray } from 'drizzle-orm'
 import { isEnterprise, isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import {
@@ -80,6 +80,11 @@ const addMemberBodySchema = z.object({
 
 const workspaceWithRoleSchema = workspaceResponseSchema.extend({
 	role: z.string(),
+	// The v2 workspace menu labels each row with how many people are in it
+	// ("9 members" / "just you") rather than the caller's own role. Humans only:
+	// workspace creation seeds agent actors as `workspace_members` rows, so a
+	// raw COUNT(*) would report a brand-new solo workspace as seven people.
+	memberCount: z.number().int().nonnegative(),
 })
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
@@ -261,7 +266,35 @@ app.openapi(listWorkspacesRoute, async (c) => {
 		enterprise: isEnterprise({ ...row, enterpriseGranted }),
 	}))
 
-	return c.json(serializeArray(withEntitlement) as z.infer<typeof workspaceWithRoleSchema>[])
+	// Member counts come from a second grouped query, not a correlated subquery:
+	// Drizzle column objects inside a raw `sql` template render unqualified and
+	// silently bind to the inner table (see .claude/rules/known-pitfalls.md).
+	//
+	// Humans only. Agents are members of `workspace_members` too, so counting
+	// the raw rows would report a brand-new solo workspace as seven people —
+	// the label is about who else is in the room, not how big the crew is.
+	const ids = withEntitlement.map((w) => w.id)
+	const counts = ids.length
+		? await db
+				.select({ workspaceId: workspaceMembers.workspaceId, total: count() })
+				.from(workspaceMembers)
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(and(inArray(workspaceMembers.workspaceId, ids), eq(actors.type, 'human')))
+				.groupBy(workspaceMembers.workspaceId)
+		: []
+	const countByWorkspace = new Map<string, number>()
+	for (const row of counts) {
+		const total = Number(row.total)
+		if (Number.isFinite(total)) countByWorkspace.set(row.workspaceId, total)
+	}
+
+	// The caller is a member of every row here, so 1 is the floor, never 0.
+	const withCounts = withEntitlement.map((w) => ({
+		...w,
+		memberCount: countByWorkspace.get(w.id) ?? 1,
+	}))
+
+	return c.json(serializeArray(withCounts) as z.infer<typeof workspaceWithRoleSchema>[])
 })
 
 // PATCH /api/workspaces/:id

@@ -349,6 +349,8 @@ export const api = {
 
 	workspaces: {
 		list: () => request<WorkspaceWithRole[]>('/workspaces'),
+		create: (data: { name: string }) =>
+			request<WorkspaceResponse>('/workspaces', { method: 'POST', body: data }),
 		update: (id: string, data: UpdateWorkspaceInput) =>
 			request<WorkspaceResponse>(`/workspaces/${id}`, { method: 'PATCH', body: data }),
 		members: {
@@ -1238,6 +1240,8 @@ export interface WorkspaceResponse {
 
 export interface WorkspaceWithRole extends WorkspaceResponse {
 	role: string
+	/** People in the workspace, including the caller — the workspace menu's sub-line. */
+	memberCount: number
 }
 
 export interface UpdateWorkspaceInput {

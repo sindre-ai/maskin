@@ -362,6 +362,7 @@ function ForYouFeed() {
 				for (const key of keys) next.delete(key)
 				return next
 			})
+			for (const item of targets) markItemRead(item)
 
 			toast(label, {
 				duration: UNDO_WINDOW_MS,

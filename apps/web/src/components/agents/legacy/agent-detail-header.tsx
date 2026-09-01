@@ -1,3 +1,7 @@
+// PRE-V2 COMPONENT — governed by the `new-design` feature flag. Rendered only
+// by the pre-v2 branch of the `agents/` routes when the flag is off.
+// This directory dies with the flag; edit the v2 component instead.
+
 import { AgentStatusPill, type PortraitStatus } from '@/components/agents/agent-portrait-card'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Input } from '@/components/ui/input'
@@ -47,20 +51,12 @@ export function AgentDetailHeader({
 					name={agent.name}
 					type={agent.type}
 					size="xl"
-					tone="strong"
-					className="size-14 rounded-2xl text-[22px] font-bold"
+					className="rounded-2xl"
 					id={agent.id}
 				/>
 				<div className="flex min-w-0 flex-1 flex-col gap-1.5">
 					<div className="flex flex-wrap items-center gap-2.5">
-						{/* Named explicitly: the heading's only child is the edit button,
-						    and a control contributes its *accessible name* to the name of
-						    an ancestor computed from content — so without this the page's
-						    one <h1> announces "Edit agent name" instead of the agent's. */}
-						<h1
-							aria-label={agent.name}
-							className="min-w-0 flex-1 truncate text-xl font-semibold tracking-tight text-foreground sm:text-2xl"
-						>
+						<h1 className="min-w-0 flex-1 truncate text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
 							<EditableField
 								value={agent.name}
 								label="Agent name"
@@ -71,16 +67,15 @@ export function AgentDetailHeader({
 								inputClassName="text-xl font-semibold tracking-tight sm:text-2xl"
 							/>
 						</h1>
-						{/* The bare coloured word — no dot, no plate. v2 dropped both here
-						    because the name already carries the eye and the identity row
-						    should read as one line of text (mockup 2321). */}
+						{/* Dot form of the single status renderer — it pulses while live
+						    (mockup 2360). */}
 						<span className="text-[11px]">
-							<AgentStatusPill status={portrait} variant="bare" />
+							<AgentStatusPill status={portrait} pulse />
 						</span>
 						<Select value={workspace.id} disabled>
 							<SelectTrigger
 								aria-label="Team"
-								className="h-[22px] gap-1.5 rounded-full border-dashed bg-muted/40 px-2.5 py-0 text-[11px] font-semibold text-muted-foreground"
+								className="h-7 rounded-full border-dashed px-2.5 text-[11px] font-medium text-muted-foreground"
 							>
 								<SelectValue />
 							</SelectTrigger>

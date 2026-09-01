@@ -1,4 +1,5 @@
 import { AgentsIndexView } from '@/components/agents/agents-index-view'
+import { AgentsIndexView as LegacyAgentsIndexView } from '@/components/agents/legacy/agents-index-view'
 import { PageHeader } from '@/components/layout/page-header'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -6,6 +7,7 @@ import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -19,6 +21,9 @@ export const Route = createFileRoute('/_authed/$workspaceId/agents/')({
 
 function AgentsRoute() {
 	const { workspaceId } = useWorkspace()
+	// The `new-design` boundary for this route: v2 rewrote the list in place,
+	// so the pre-v2 list is vendored under `agents/legacy/`.
+	const AgentsList = useFeatureFlag('new-design') ? AgentsIndexView : LegacyAgentsIndexView
 	const { data: actors, isLoading } = useActors(workspaceId)
 	const { data: sessions } = useWorkspaceSessions(workspaceId, { paged: true })
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
@@ -67,7 +72,7 @@ function AgentsRoute() {
 					action={<Button onClick={() => setCreatePickerOpen(true)}>Create an agent</Button>}
 				/>
 			) : (
-				<AgentsIndexView workspaceId={workspaceId} agents={agents} sessions={sessions ?? []} />
+				<AgentsList workspaceId={workspaceId} agents={agents} sessions={sessions ?? []} />
 			)}
 			<CreatePicker
 				open={createPickerOpen}
