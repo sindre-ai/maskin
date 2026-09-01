@@ -1150,7 +1150,7 @@ export interface UserDisplaySettingsResponse {
 	object_type: string
 	name: string
 	settings: DisplaySettingsBody
-	updated_at: string
+	updated_at: string | null
 }
 
 export interface UserDisplaySettingsListResponse {

@@ -8,9 +8,9 @@ import {
 	userDisplaySettingsResponseSchema,
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
-import { createApiError, validationFailureHook } from '../lib/errors'
+import { validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
-import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { workspaceIdHeader } from '../lib/openapi-schemas'
 
 type Env = {
 	Variables: {
@@ -76,8 +76,10 @@ app.openapi(listRoute, async (c) => {
 })
 
 // GET /api/user-display-settings/:object_type — fetch the actor's default
-// settings row for one object type. 404 when no row exists yet so callers
-// can fall back to client defaults without persisting an empty row.
+// settings row for one object type. Returns 200 with an empty defaults body
+// (settings={}, updated_at=null) when no row exists yet — a 404 renders in
+// the browser as a console error on every page load for fresh actors, which
+// inflates Sentry noise even though nothing is actually broken.
 const getRoute = createRoute({
 	method: 'get',
 	path: '/{object_type}',
@@ -89,12 +91,8 @@ const getRoute = createRoute({
 	},
 	responses: {
 		200: {
-			description: 'Display settings',
+			description: 'Display settings (defaults body when no row is persisted yet)',
 			content: { 'application/json': { schema: userDisplaySettingsResponseSchema } },
-		},
-		404: {
-			description: 'No settings persisted yet for this object type',
-			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
 })
@@ -119,7 +117,7 @@ app.openapi(getRoute, async (c) => {
 		.limit(1)
 
 	if (!row) {
-		return c.json(createApiError('NOT_FOUND', 'No display settings for this object type'), 404)
+		return c.json({ object_type, name: DEFAULT_NAME, settings: {}, updated_at: null }, 200)
 	}
 
 	return c.json(serializeRow(row), 200)
