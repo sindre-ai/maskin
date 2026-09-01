@@ -1,11 +1,13 @@
 import { AgentCreateForm } from '@/components/agents/agent-create-form'
 import { AgentDetailView } from '@/components/agents/agent-detail-view'
 import { AgentDocument } from '@/components/agents/agent-document'
+import { AgentDetailView as LegacyAgentDetailView } from '@/components/agents/legacy/agent-detail-view'
 import { PageHeader } from '@/components/layout/page-header'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useActor, useAgent, useCreateActor, useUpdateActor } from '@/hooks/use-actors'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { ApiError, api } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -20,6 +22,10 @@ export const Route = createFileRoute('/_authed/$workspaceId/agents/$agentId')({
 function AgentDetailPage() {
 	const { agentId } = Route.useParams()
 	const { workspaceId } = useWorkspace()
+	// The `new-design` boundary for this route. Read once here and handed to
+	// AgentDetailLoaded rather than read again there, so the route keeps a
+	// single branch.
+	const DetailView = useFeatureFlag('new-design') ? AgentDetailView : LegacyAgentDetailView
 	// Use list-derived hook to check existence (returns undefined for new IDs, no 404)
 	const { data: agentListItem, isLoading } = useAgent(agentId, workspaceId)
 	const createActor = useCreateActor(workspaceId)
@@ -88,7 +94,7 @@ function AgentDetailPage() {
 
 	// Once created, render the full document editor (fetches full detail)
 	if (isCreated) {
-		return <AgentDetailLoaded agentId={agentId} />
+		return <AgentDetailLoaded agentId={agentId} DetailView={DetailView} />
 	}
 
 	// Create mode — show form with all sections
@@ -107,7 +113,10 @@ function AgentDetailPage() {
 }
 
 /** Fetches the full agent detail and renders the document editor. */
-function AgentDetailLoaded({ agentId }: { agentId: string }) {
+function AgentDetailLoaded({
+	agentId,
+	DetailView,
+}: { agentId: string; DetailView: typeof AgentDetailView }) {
 	const { data: agent, isLoading, isError, error, refetch } = useActor(agentId)
 
 	if (isLoading) {
@@ -143,5 +152,5 @@ function AgentDetailLoaded({ agentId }: { agentId: string }) {
 		)
 	}
 
-	return <AgentDetailView agent={agent} />
+	return <DetailView agent={agent} />
 }

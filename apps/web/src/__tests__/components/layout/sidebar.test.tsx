@@ -2,6 +2,12 @@ import { AppSidebar } from '@/components/layout/sidebar'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
+// AppSidebar is the `new-design` boundary for the app shell; these specs assert
+// the v2 chrome, so drive the flag on.
+vi.mock('@/hooks/use-feature-flag', () => ({
+	useFeatureFlag: (id: string) => id === 'new-design',
+}))
+
 vi.mock('@/hooks/use-enabled-modules', () => ({
 	useEnabledModules: vi.fn(() => ['work']),
 }))
@@ -127,6 +133,11 @@ describe('AppSidebar', () => {
 		expect(screen.queryByTestId('sidebar-release-card')).not.toBeInTheDocument()
 		expect(screen.getByText('SidebarActivity')).toBeInTheDocument()
 		expect(screen.getByText('NavUser')).toBeInTheDocument()
+	})
+
+	it('does not render a release announcement card — v2 dropped it', () => {
+		render(<AppSidebar />)
+		expect(screen.queryByTestId('sidebar-release-card')).not.toBeInTheDocument()
 	})
 
 	it('renders WorkspaceSwitcher in the header', () => {
