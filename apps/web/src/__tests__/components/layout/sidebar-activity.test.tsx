@@ -48,7 +48,12 @@ describe('SidebarActivity', () => {
 	})
 
 	it('reads idle with a zero tile and no live dot when nothing holds a session', () => {
-		mockUseActiveAgents.mockReturnValue({ agents: [], isLoading: false, isError: false })
+		mockUseActiveAgents.mockReturnValue({
+			agents: [],
+			activeSessionCount: 0,
+			isLoading: false,
+			isError: false,
+		})
 		render(<SidebarActivity workspaceId="ws-1" />)
 		expect(row()).toHaveTextContent('Agents idle')
 		expect(row()).toHaveTextContent('nothing running')
@@ -56,14 +61,14 @@ describe('SidebarActivity', () => {
 	})
 
 	it('counts agents in the tile and sessions in the sub-line', () => {
-		// Two agents, three live sessions — `useActiveAgents` returns one row per
-		// session, so the tile must de-duplicate by actor while the sub-line does not.
+		// Two agents, three live sessions — `agents` is already one row per agent,
+		// so the sub-line must read the hook's session count and not this length.
 		mockUseActiveAgents.mockReturnValue({
 			agents: [
 				agent({ actorId: 'a-1', name: 'Quill', sessionId: 's-1' }),
-				agent({ actorId: 'a-1', name: 'Quill', sessionId: 's-2' }),
 				agent({ actorId: 'a-2', name: 'Analyst', sessionId: 's-3' }),
 			],
+			activeSessionCount: 3,
 			isLoading: false,
 			isError: false,
 		})
@@ -76,6 +81,7 @@ describe('SidebarActivity', () => {
 	it('singularises a lone session', () => {
 		mockUseActiveAgents.mockReturnValue({
 			agents: [agent()],
+			activeSessionCount: 1,
 			isLoading: false,
 			isError: false,
 		})
@@ -88,8 +94,8 @@ describe('SidebarActivity', () => {
 			agents: [
 				agent({ actorId: 'a-1', sessionId: 's-1' }),
 				agent({ actorId: 'a-2', sessionId: 's-2' }),
-				agent({ actorId: 'a-2', sessionId: 's-3' }),
 			],
+			activeSessionCount: 3,
 			isLoading: false,
 			isError: false,
 		})
@@ -103,6 +109,7 @@ describe('SidebarActivity', () => {
 	it('links to Agents and emits the footer nav event on click', () => {
 		mockUseActiveAgents.mockReturnValue({
 			agents: [agent()],
+			activeSessionCount: 1,
 			isLoading: false,
 			isError: false,
 		})
@@ -113,13 +120,23 @@ describe('SidebarActivity', () => {
 	})
 
 	it('renders a skeleton row while loading', () => {
-		mockUseActiveAgents.mockReturnValue({ agents: [], isLoading: true, isError: false })
+		mockUseActiveAgents.mockReturnValue({
+			agents: [],
+			activeSessionCount: 0,
+			isLoading: true,
+			isError: false,
+		})
 		render(<SidebarActivity workspaceId="ws-1" />)
 		expect(screen.getByTestId('sidebar-activity-loading')).toBeInTheDocument()
 	})
 
 	it('renders nothing when the sessions query errors', () => {
-		mockUseActiveAgents.mockReturnValue({ agents: [], isLoading: false, isError: true })
+		mockUseActiveAgents.mockReturnValue({
+			agents: [],
+			activeSessionCount: 0,
+			isLoading: false,
+			isError: true,
+		})
 		const { container } = render(<SidebarActivity workspaceId="ws-1" />)
 		expect(container).toBeEmptyDOMElement()
 	})
@@ -127,6 +144,7 @@ describe('SidebarActivity', () => {
 	it('hides the row and keeps the count tile in icon-collapsed mode', () => {
 		mockUseActiveAgents.mockReturnValue({
 			agents: [agent()],
+			activeSessionCount: 1,
 			isLoading: false,
 			isError: false,
 		})

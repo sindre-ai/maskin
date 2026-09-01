@@ -11,8 +11,23 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useCreateWorkspace } from '@/hooks/use-workspaces'
+import { ApiError } from '@/lib/api'
 import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
+
+/**
+ * The cap rejection is a plan limit, not a fault: a trial actor may own exactly
+ * one workspace (OWNERSHIP_CAPS in @maskin/shared), so "try again" is the one
+ * thing that cannot work. Surface the server's own sentence for it and point at
+ * the plan; keep the generic retry line for everything else.
+ */
+export function createErrorMessage(error: unknown): string | undefined {
+	if (!error) return undefined
+	if (error instanceof ApiError && error.code === 'OWNERSHIP_CAP_EXCEEDED') {
+		return `${error.message} Upgrade your plan in Settings → Billing to own more.`
+	}
+	return "Couldn't create the workspace — try again"
+}
 
 /**
  * "New workspace" from the sidebar's workspace menu (mockup line 62).
@@ -32,6 +47,7 @@ export function NewWorkspaceDialog({
 	const navigate = useNavigate()
 	const createMutation = useCreateWorkspace()
 	const trimmed = name.trim()
+	const error = createMutation.error
 
 	function handleOpenChange(next: boolean) {
 		if (!next) {
@@ -74,11 +90,7 @@ export function NewWorkspaceDialog({
 							placeholder="Nordic Labs"
 							autoFocus
 						/>
-						<FormError
-							error={
-								createMutation.isError ? "Couldn't create the workspace — try again" : undefined
-							}
-						/>
+						<FormError error={createErrorMessage(error)} />
 					</div>
 					<DialogFooter className="mt-5">
 						<Button type="button" variant="ghost" onClick={() => handleOpenChange(false)}>

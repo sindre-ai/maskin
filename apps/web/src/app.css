@@ -331,7 +331,11 @@
 
 	/* Semantic */
 	--success: #16a34a;
-	--warning: #b45309;
+	/* amber-800, not amber-700: `text-warning` is routinely drawn on a
+	   `bg-warning/10` tint (#f8eee6 over the light background), where amber-700
+	   lands at 4.39:1 — under WCAG AA for the 12px body sizes these controls
+	   use, and caught by the a11y route sweep on agent detail. */
+	--warning: #92400e;
 	--error: #dc2626;
 
 	/* Status badges */

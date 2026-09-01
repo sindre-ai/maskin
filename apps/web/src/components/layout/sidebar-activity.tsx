@@ -1,24 +1,10 @@
 import { useSidebar } from '@/components/ui/sidebar'
 import { Skeleton } from '@/components/ui/skeleton'
-import { type ActiveAgent, useActiveAgents } from '@/hooks/use-active-agents'
+import { useActiveAgents } from '@/hooks/use-active-agents'
 import { trackNavItemClicked } from '@/lib/analytics'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
 import { ChevronRight } from 'lucide-react'
-
-interface ActivitySummary {
-	// One entry per distinct agent with at least one live session.
-	agentCount: number
-	sessionCount: number
-}
-
-// `useActiveAgents` returns one row per live session, so an agent running three
-// sessions appears three times. The count tile shows agents, the sub-line shows
-// sessions — the mockup's `railAgentsCount` / `liveTotal` split.
-function summarize(rows: ActiveAgent[]): ActivitySummary {
-	const actorIds = new Set(rows.map((row) => row.actorId))
-	return { agentCount: actorIds.size, sessionCount: rows.length }
-}
 
 // The headline is a state, not a tally — the tile already carries the number
 // (mockup line 8795). Nothing running is our equivalent of the mockup's
@@ -41,13 +27,22 @@ export function sessionsLabel(count: number): string {
  * sidebar nav entry. Collapsed, the tile survives on its own.
  */
 export function SidebarActivity({ workspaceId }: { workspaceId: string }) {
-	const { agents: rows, isLoading, isError } = useActiveAgents(workspaceId)
+	// The tile counts agents, the sub-line counts sessions — the mockup's
+	// `railAgentsCount` / `liveTotal` split. `agents` is already one row per
+	// distinct agent, so the session total has to come from the hook's own
+	// count rather than this list's length.
+	const {
+		agents,
+		activeSessionCount: sessionCount,
+		isLoading,
+		isError,
+	} = useActiveAgents(workspaceId)
 	const { setOpenMobile } = useSidebar()
 
 	if (isError) return null
 	if (isLoading) return <SidebarActivityLoading />
 
-	const { agentCount, sessionCount } = summarize(rows)
+	const agentCount = agents.length
 	const isWorking = agentCount > 0
 	const summary = `${agentCount} ${agentCount === 1 ? 'agent' : 'agents'} working · ${sessionsLabel(sessionCount)}`
 
