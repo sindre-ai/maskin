@@ -179,6 +179,10 @@ export function useUpdateObject(workspaceId: string) {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
+			// A loop is an object, and `useLoop` reads the loop out of the /loops
+			// list response — without this a rename or an edit to the loop's
+			// promise wouldn't reach the loop pages until the list refetched.
+			queryClient.invalidateQueries({ queryKey: queryKeys.loops.all(workspaceId) })
 		},
 	})
 }
