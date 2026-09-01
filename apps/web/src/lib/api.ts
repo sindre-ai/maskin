@@ -419,6 +419,24 @@ export const api = {
 			}),
 	},
 
+	toolGrants: {
+		list: (workspaceId: string, actorId?: string) =>
+			request<ToolGrantsResponse>(
+				`/tool-grants${actorId ? `?actor_id=${encodeURIComponent(actorId)}` : ''}`,
+				{ workspaceId },
+			),
+		upsert: (
+			workspaceId: string,
+			body: {
+				actorId?: string | null
+				integrationRef: string
+				mode: 'all' | 'read' | 'custom'
+				tools?: string[]
+			},
+		) => request<ToolGrant>('/tool-grants', { method: 'PUT', body, workspaceId }),
+		revoke: (workspaceId: string, id: string) =>
+			request<{ revoked: boolean }>(`/tool-grants/${id}`, { method: 'DELETE', workspaceId }),
+	},
 	toolBroker: {
 		catalog: (workspaceId: string, q?: string, page?: { limit: number; offset: number }) => {
 			const params = new URLSearchParams()
@@ -2003,4 +2021,26 @@ interface InstalledLoopForkResponse {
 	installedAt: string | null
 	updatedAt: string | null
 	detached: { actors: number; triggers: number; skills: number; integrations: number }
+}
+
+export interface ToolGrant {
+	id: string
+	/** NULL is the workspace ceiling — it narrows a grant but never creates one. */
+	actorId: string | null
+	integrationRef: string
+	mode: 'all' | 'read' | 'custom'
+	tools: string[]
+}
+
+export interface ToolGrantTool {
+	name: string
+	description: string | null
+	/** NULL means the server did not declare it; never shown as read-only. */
+	readOnly: boolean | null
+}
+
+export interface ToolGrantsResponse {
+	grants: ToolGrant[]
+	/** Tools per integration ref, for the picker and the read-only grant. */
+	tools: Record<string, ToolGrantTool[]>
 }

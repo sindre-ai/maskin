@@ -54,6 +54,11 @@ export const queryKeys = {
 		activity: (workspaceId: string, loopId: string) =>
 			['loops', workspaceId, 'activity', loopId] as const,
 	},
+	toolGrants: {
+		all: (workspaceId: string) => ['tool-grants', workspaceId] as const,
+		forActor: (workspaceId: string, actorId: string) =>
+			['tool-grants', workspaceId, actorId] as const,
+	},
 	toolBroker: {
 		all: (workspaceId: string) => ['tool-broker', workspaceId] as const,
 		catalog: (workspaceId: string, q: string) =>
