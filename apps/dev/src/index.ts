@@ -16,6 +16,7 @@ import {
 } from './lib/dev-bootstrap'
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
+import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
@@ -116,6 +117,10 @@ logger.info('Gmail watch renewer started')
 const webhookDeliveriesCleaner = new WebhookDeliveriesCleaner(db)
 webhookDeliveriesCleaner.start()
 logger.info('Webhook deliveries cleaner started')
+
+const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
+briefCacheCleaner.start()
+logger.info('Brief cache cleaner started')
 
 const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()
