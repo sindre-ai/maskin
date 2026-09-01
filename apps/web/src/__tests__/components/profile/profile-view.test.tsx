@@ -57,6 +57,45 @@ describe('ProfileView', () => {
 		)
 	})
 
+	// Multi-paragraph prose is the whole point of this section, and the actor
+	// description used to be capped at the 80-character agent tagline length —
+	// anything longer 400'd and the user's text was thrown away.
+	it('saves preferences longer than an agent tagline', async () => {
+		const user = userEvent.setup()
+		const prose = 'A'.repeat(400)
+		renderProfile({ description: '' })
+
+		await user.click(screen.getByRole('button', { name: 'Edit' }))
+		const box = screen.getByRole('textbox', { name: 'How to work with me' })
+		await user.click(box)
+		await user.paste(prose)
+		await user.click(screen.getByRole('button', { name: 'Done' }))
+
+		await waitFor(() =>
+			expect(updateMutate).toHaveBeenCalledWith(
+				{ id: 'actor-1', data: { description: prose } },
+				expect.anything(),
+			),
+		)
+	})
+
+	// A failed save must not close the editor: closing first re-rendered the
+	// read view with the old text and dropped everything the user had typed.
+	it('keeps the editor open and the draft intact when the save fails', async () => {
+		const user = userEvent.setup()
+		updateMutate.mockImplementation((_vars, opts) => opts.onError(new Error('nope')))
+		renderProfile({ description: 'Old text.' })
+
+		await user.click(screen.getByRole('button', { name: 'Edit' }))
+		const box = screen.getByRole('textbox', { name: 'How to work with me' })
+		await user.clear(box)
+		await user.type(box, 'New text.')
+		await user.click(screen.getByRole('button', { name: 'Done' }))
+
+		const stillOpen = await screen.findByRole('textbox', { name: 'How to work with me' })
+		expect(stillOpen).toHaveValue('New text.')
+	})
+
 	it('does not write when the preferences text is unchanged', async () => {
 		const user = userEvent.setup()
 		renderProfile({ description: 'Same text.' })

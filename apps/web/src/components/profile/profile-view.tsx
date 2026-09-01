@@ -4,6 +4,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useActor, useUpdateActor, useUploadActorAvatar } from '@/hooks/use-actors'
 import { type ActorResponse, ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { ACTOR_DESCRIPTION_MAX_STORED_LENGTH } from '@maskin/shared'
 import { Camera, Copy } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -155,14 +156,32 @@ function WorkingPreferences({ actor, workspaceId }: { actor: ActorResponse; work
 		setEditing(true)
 	}
 
+	// The editor stays open until the write settles, and the draft survives a
+	// failure. Closing first — as this did — re-rendered the read view with the
+	// *old* text and dropped everything the user had typed, with a generic
+	// "try again" that could not succeed if the text was over the limit.
 	function save() {
-		setEditing(false)
-		if (draft === saved) return
+		if (updateActor.isPending) return
+		const next = draft.trim()
+		if (next === saved) {
+			setEditing(false)
+			return
+		}
+		if (next.length > ACTOR_DESCRIPTION_MAX_STORED_LENGTH) {
+			toast.error(
+				`That's ${next.length} characters — ${ACTOR_DESCRIPTION_MAX_STORED_LENGTH} is the limit.`,
+			)
+			return
+		}
 		updateActor.mutate(
-			{ id: actor.id, data: { description: draft } },
+			{ id: actor.id, data: { description: next } },
 			{
-				onSuccess: () => toast.success('Your agents have the update'),
-				onError: () => toast.error("Couldn't save that — try again"),
+				onSuccess: () => {
+					setEditing(false)
+					toast.success('Your agents have the update')
+				},
+				onError: (err) =>
+					toast.error(err instanceof ApiError ? err.message : "Couldn't save that — try again"),
 			},
 		)
 	}
@@ -177,10 +196,15 @@ function WorkingPreferences({ actor, workspaceId }: { actor: ActorResponse; work
 				action={
 					<button
 						type="button"
+						// Keeping focus in the textarea stops the button's own mousedown
+						// from firing `onBlur` — which saved, flipped `editing` to false,
+						// and left the click to land on `startEditing()` and re-open the box.
+						onMouseDown={(e) => e.preventDefault()}
 						onClick={() => (editing ? save() : startEditing())}
-						className="text-xs font-semibold text-muted-foreground transition-colors duration-150 hover:text-foreground"
+						disabled={updateActor.isPending}
+						className="text-xs font-semibold text-muted-foreground transition-colors duration-150 hover:text-foreground disabled:opacity-60"
 					>
-						{editing ? 'Done' : 'Edit'}
+						{editing ? (updateActor.isPending ? 'Saving…' : 'Done') : 'Edit'}
 					</button>
 				}
 			/>
@@ -192,6 +216,7 @@ function WorkingPreferences({ actor, workspaceId }: { actor: ActorResponse; work
 					value={draft}
 					onChange={(e) => setDraft(e.target.value)}
 					onBlur={save}
+					maxLength={ACTOR_DESCRIPTION_MAX_STORED_LENGTH}
 					aria-label="How to work with me"
 					className="min-h-[120px] resize-y rounded-xl px-4 py-3.5 text-[13px] leading-[1.65]"
 				/>

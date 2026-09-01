@@ -13,6 +13,7 @@ import {
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
+import { ACTOR_DESCRIPTION_MAX_LENGTH, ACTOR_DESCRIPTION_MAX_STORED_LENGTH } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import {
 	buildAgentFile,
@@ -68,6 +69,40 @@ describe('Actors Integration — GET /:id', () => {
 		expect(res.status).toBe(200)
 		const body = await res.json()
 		expect(body.skills).toEqual([])
+	})
+})
+
+describe('Actors Integration — PATCH /:id description', () => {
+	// Profile's "How to work with me" writes multi-paragraph prose into this
+	// same column. It was bounded by the 80-character agent tagline length, so
+	// anything a human actually typed 400'd and their text was discarded.
+	it('accepts a description longer than the agent tagline cap', async () => {
+		const app = createApp()
+		const human = await insertActor(db, { type: 'human', name: 'Prose Writer' })
+		const prose = `${'Ask before emailing anyone. '.repeat(20)}
+
+Never ship on a Friday.`
+		expect(prose.length).toBeGreaterThan(ACTOR_DESCRIPTION_MAX_LENGTH)
+
+		const res = await app.request(
+			jsonRequest('PATCH', `/api/actors/${human.id}`, { description: prose }),
+		)
+		expect(res.status).toBe(200)
+
+		const [row] = await db.select().from(actors).where(eq(actors.id, human.id))
+		expect(row.description).toBe(prose)
+	})
+
+	it('still rejects a description past the storage bound', async () => {
+		const app = createApp()
+		const human = await insertActor(db, { type: 'human', name: 'Over Writer' })
+
+		const res = await app.request(
+			jsonRequest('PATCH', `/api/actors/${human.id}`, {
+				description: 'x'.repeat(ACTOR_DESCRIPTION_MAX_STORED_LENGTH + 1),
+			}),
+		)
+		expect(res.status).toBe(400)
 	})
 })
 
