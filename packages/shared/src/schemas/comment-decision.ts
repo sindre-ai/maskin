@@ -82,7 +82,7 @@ export const decisionOptionSchema = z.object({
 		.min(CONSEQUENCES_MIN)
 		.max(CONSEQUENCES_MAX)
 		.describe(
-			`${CONSEQUENCES_MIN}-${CONSEQUENCES_MAX} lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". One of them must be the downside, because an option with only upsides is not a real choice. Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.`,
+			`${CONSEQUENCES_MIN}-${CONSEQUENCES_MAX} lines, present tense, one clause each: "Ships with cycle 1 tomorrow", "Adds 18 support tickets in week one". Make one of them the downside, because an option with only upsides is not a real choice (the API does not check this one; the human will). Where numbers trade off, give both sides with units. No semicolons and no ", and" — that is two lines, not one.`,
 		),
 	recommended: z
 		.boolean()
@@ -125,10 +125,15 @@ export const commentDecisionSchema = z
 			'Attach this when you need a human to make a call, together with that human in `mentions` — a decision with an empty `mentions` array reaches nobody.',
 			'It renders as a card in their For You feed: the title is the headline, the summary and ask are the body, and each option becomes a button.',
 			'',
-			'House style, enforced by the API. A decision that breaks these is rejected, with every violated rule listed at once:',
-			'sentence case, uppercase only for micro-labels; numbers concrete or absent, never "significantly"; cut every adjective that is not load-bearing;',
-			'no em-dashes, no emoji, no metadiscourse, and no summarising what the human can already see on screen.',
-			'If you can delete a word and the decision is still clear, delete it.',
+			'The API checks the rules below and rejects a decision that breaks any of them, listing every violation at once:',
+			'title 3-7 words and not opening with a status verb ("Reviewing the funnel"); summary at most 2 sentences, carrying at least one digit, and not a restatement of the title;',
+			'ask exactly one sentence, first person; 2-3 options with exactly one marked recommended, each label 4 words or fewer;',
+			'2-3 consequence lines per option, one clause each (no semicolons, no ", and"); and nowhere in the block an em-dash, an en-dash, an emoji,',
+			'or a hedge word standing in for a number ("significantly", "substantially", "several", "many", and the like).',
+			'',
+			'The rest is house style the API does not check. Write to it anyway, because a human reads the result:',
+			'sentence case, uppercase only for micro-labels; cut every adjective that is not load-bearing; no metadiscourse,',
+			'and no summarising what the human can already see on screen. If you can delete a word and the decision is still clear, delete it.',
 			'',
 			'Example:',
 			'{ "title": "Is the onboarding bet worth running?",',
