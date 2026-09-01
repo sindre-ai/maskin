@@ -28,11 +28,13 @@ type TestState = {
 	__markReadFails: boolean
 	__lastMutateOptions?: unknown
 	__createCalls: Array<Record<string, unknown>>
+	__markReadCalls: Array<Record<string, unknown>>
 }
 const testState = globalThis as unknown as TestState
 testState.__items = []
 testState.__markReadFails = false
 testState.__createCalls = []
+testState.__markReadCalls = []
 
 vi.mock('@/hooks/use-subscriptions', () => ({
 	useUnread: () => ({
@@ -42,8 +44,10 @@ vi.mock('@/hooks/use-subscriptions', () => ({
 	useMarkRead: () => ({
 		// `mutateAsync` returns a promise per call, so each caller keeps its own
 		// success/failure handling. This is the API the route must use.
-		mutateAsync: (_vars: unknown) => {
-			if (!(globalThis as unknown as TestState).__markReadFails) return Promise.resolve({})
+		mutateAsync: (vars: Record<string, unknown>) => {
+			const state = globalThis as unknown as TestState
+			state.__markReadCalls.push(vars)
+			if (!state.__markReadFails) return Promise.resolve({})
 			return Promise.reject(new Error('mark-read failed'))
 		},
 		// `mutate` is modelled the way react-query really behaves, so a
@@ -92,11 +96,13 @@ vi.mock('@/components/foryou/feed-card', () => ({
 		decided,
 		onDecide,
 		onMarkRead,
+		onReplied,
 	}: {
 		item: { object?: { title?: string | null } }
 		decided: { id: string; label: string } | null
 		onDecide: (option: { id: string; label: string }) => void
 		onMarkRead: () => void
+		onReplied: () => void
 	}) => (
 		<div data-testid="foryou-feed-card" data-decided={String(Boolean(decided))}>
 			{item.object?.title}
@@ -105,6 +111,9 @@ vi.mock('@/components/foryou/feed-card', () => ({
 			</button>
 			<button type="button" onClick={onMarkRead}>
 				dismiss
+			</button>
+			<button type="button" onClick={onReplied}>
+				reply
 			</button>
 		</div>
 	),
@@ -176,6 +185,7 @@ describe('For You — dismiss rollback', () => {
 		testState.__items = [buildItem('thread-1', 'Renewal terms need a read')]
 		testState.__markReadFails = false
 		testState.__createCalls = []
+		testState.__markReadCalls = []
 	})
 
 	it('keeps the decision receipt when dismissing it fails', async () => {
@@ -214,6 +224,19 @@ describe('For You — dismiss rollback', () => {
 			content: 'Approve',
 			parent_event_id: 4242,
 		})
+	})
+
+	// A typed answer settles the thread just as taking an option does. It used
+	// to leave the card sitting in the feed, so the reader saw their own answer
+	// still asking to be answered.
+	it('marks the thread read when the reader types an answer', async () => {
+		const view = await renderFeed()
+		await act(async () => {
+			view.getByText('reply').click()
+		})
+		expect(testState.__markReadCalls).toMatchObject([
+			{ entityType: 'object', entityId: 'thread-1', lastEventId: 42 },
+		])
 	})
 
 	it('still hides the card when the dismissal succeeds', async () => {

@@ -326,6 +326,32 @@ function ForYouFeed() {
 		[markItemRead, postReply, undoDecision],
 	)
 
+	// Typing an answer settles the thread exactly as taking an option does, so
+	// it leaves the feed the same way: the card shows "Waiting on <agent>" until
+	// the next fetch drops it. The composer has already posted the comment by
+	// the time this fires — all that is left is the high-water mark, which is
+	// what the card was missing.
+	const handleReplied = useCallback(
+		(item: UnreadItem) => {
+			const key = feedItemKey(item)
+			setRepliedKeys((prev) => new Set(prev).add(key))
+			const forget = () =>
+				setRepliedKeys((prev) => {
+					const next = new Set(prev)
+					next.delete(key)
+					return next
+				})
+			// Same honesty as a taken option: an unmarkable thread comes back on
+			// the next fetch carrying the reader's own answer, so say so rather
+			// than implying it is settled.
+			if (!markItemRead(item, forget)) {
+				forget()
+				toast.warning('Reply sent, but the thread stayed unread.')
+			}
+		},
+		[markItemRead],
+	)
+
 	// Dismissing is marking read: the high-water mark moves and the card leaves
 	// the column. The mutation fires immediately — waiting for the Undo toast to
 	// close before mutating meant navigating away during that window silently
@@ -550,7 +576,7 @@ function ForYouFeed() {
 									decided={decided.get(key)?.option ?? null}
 									onDecide={(option) => handleDecide(item, option)}
 									replied={repliedKeys.has(key)}
-									onReplied={() => setRepliedKeys((prev) => new Set(prev).add(key))}
+									onReplied={() => handleReplied(item)}
 									onMarkRead={() => dismissAll([item], 'Marked as read')}
 								/>
 							)
