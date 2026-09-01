@@ -265,7 +265,33 @@ describe('Agent Skill Attachments Routes', () => {
 				agentActorId: actorId,
 				skillName: skill.name,
 				via: 'ui',
+				skillVisible: true,
 			})
+		})
+
+		it('carries skillVisible=false from the workspace_skills row so invalid attaches segment cleanly', async () => {
+			const { app, mockResults } = createTestApp(agentSkillAttachmentsRoutes, '/api/actors')
+			const skill = buildWorkspaceSkill({
+				id: workspaceSkillId,
+				workspaceId,
+				isValid: false,
+			})
+
+			mockResults.selectQueue = [
+				[buildActor({ id: actorId })],
+				[skill],
+				[buildWorkspaceMember({ workspaceId, actorId: callerActorId })],
+				[buildWorkspaceMember({ workspaceId, actorId })],
+			]
+			mockResults.insert = [{ actorId, workspaceSkillId, createdAt: new Date() }]
+
+			await app.request(
+				jsonRequest('POST', `/api/actors/${actorId}/workspace-skills`, { workspaceSkillId }),
+			)
+
+			expect(trackWorkspaceSkillAttachedMock).toHaveBeenCalledWith(
+				expect.objectContaining({ skillVisible: false }),
+			)
 		})
 
 		it('emits via=mcp when the X-Client-Source header is mcp', async () => {
@@ -482,6 +508,7 @@ describe('Agent Skill Attachments Routes', () => {
 				agentActorId: actorId,
 				skillName: skill1.name,
 				via: 'mcp',
+				skillVisible: true,
 			})
 		})
 	})

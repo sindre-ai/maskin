@@ -277,6 +277,7 @@ app.openapi(attachSkillRoute, (async (c) => {
 			agentActorId: actorId,
 			skillName: skill.name,
 			via: resolveAttachSource(c.req.header('x-client-source')),
+			skillVisible: skill.isValid,
 		})
 	}
 
@@ -464,6 +465,7 @@ app.openapi(attachSkillsBatchRoute, (async (c) => {
 				agentActorId: actorId,
 				skillName: skill.name,
 				via,
+				skillVisible: skill.isValid,
 			})
 		}
 	}

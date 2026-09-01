@@ -39,6 +39,36 @@ describe('trackWorkspaceSkillAttached', () => {
 		})
 	})
 
+	it('includes skill_visible when the caller supplies it', async () => {
+		await trackWorkspaceSkillAttached({
+			workspaceId: 'ws-1',
+			actorId: 'human-1',
+			agentActorId: 'agent-1',
+			skillName: 'pr-review',
+			via: 'ui',
+			skillVisible: false,
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(
+			WORKSPACE_SKILL_ATTACHED,
+			'ws-1',
+			expect.objectContaining({ skill_visible: false }),
+		)
+	})
+
+	it('omits skill_visible when the caller does not supply it', async () => {
+		await trackWorkspaceSkillAttached({
+			workspaceId: 'ws-1',
+			actorId: 'human-1',
+			agentActorId: 'agent-1',
+			skillName: 'pr-review',
+			via: 'ui',
+		})
+
+		const props = capturePosthogEventMock.mock.calls[0][2] as Record<string, unknown>
+		expect(props).not.toHaveProperty('skill_visible')
+	})
+
 	it('propagates via=mcp', async () => {
 		await trackWorkspaceSkillAttached({
 			workspaceId: 'ws-1',
