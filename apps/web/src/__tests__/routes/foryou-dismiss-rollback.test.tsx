@@ -27,10 +27,12 @@ type TestState = {
 	__items: UnreadItem[]
 	__markReadFails: boolean
 	__lastMutateOptions?: unknown
+	__createCalls: Array<Record<string, unknown>>
 }
 const testState = globalThis as unknown as TestState
 testState.__items = []
 testState.__markReadFails = false
+testState.__createCalls = []
 
 vi.mock('@/hooks/use-subscriptions', () => ({
 	useUnread: () => ({
@@ -71,7 +73,14 @@ vi.mock('@/lib/api', () => {
 	class ApiError extends Error {}
 	return {
 		ApiError,
-		api: { events: { create: async () => ({ id: 'evt-1' }) } },
+		api: {
+			events: {
+				create: async (_ws: string, input: Record<string, unknown>) => {
+					;(globalThis as unknown as TestState).__createCalls.push(input)
+					return { id: 'evt-1' }
+				},
+			},
+		},
 	}
 })
 
@@ -122,6 +131,14 @@ function buildItem(id: string, title: string): UnreadItem {
 		max_unread_attention: null,
 		latest_event_id: 42,
 		latest_activity_at: '2026-08-11T10:00:00.000Z',
+		latest_mention: {
+			event_id: 4242,
+			actor_id: 'agent-1',
+			created_at: '2026-08-11T10:00:00.000Z',
+			content: 'Which way do we go?',
+			attention: null,
+			decision: null,
+		},
 		object: {
 			id,
 			workspaceId: 'ws-1',
@@ -158,6 +175,7 @@ describe('For You — dismiss rollback', () => {
 	beforeEach(() => {
 		testState.__items = [buildItem('thread-1', 'Renewal terms need a read')]
 		testState.__markReadFails = false
+		testState.__createCalls = []
 	})
 
 	it('keeps the decision receipt when dismissing it fails', async () => {
@@ -181,6 +199,21 @@ describe('For You — dismiss rollback', () => {
 		const card = screen.getByTestId('foryou-feed-card')
 		expect(card).toBeInTheDocument()
 		expect(card).toHaveAttribute('data-decided', 'true')
+	})
+
+	// The answer belongs under the question. Posted loose on the object, the
+	// agent that asked has to infer from timing which of its asks was answered.
+	it('threads the taken option under the comment that raised the card', async () => {
+		const view = await renderFeed()
+		await act(async () => {
+			view.getByText('decide').click()
+		})
+		expect(testState.__createCalls).toHaveLength(1)
+		expect(testState.__createCalls[0]).toMatchObject({
+			entity_id: 'thread-1',
+			content: 'Approve',
+			parent_event_id: 4242,
+		})
 	})
 
 	it('still hides the card when the dismissal succeeds', async () => {

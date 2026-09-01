@@ -285,6 +285,9 @@ export function FeedCard({
 				<CommentInput
 					workspaceId={workspaceId}
 					objectId={objectId}
+					// The composer answers the comment that put this card in the feed,
+					// so a typed reply threads under it exactly as a taken option does.
+					parentEventId={item.latest_mention?.event_id}
 					// TODO: restore `variant="bar"` and `placeholder` once the
 					// Object detail split lands them on the v2 composer (branch
 					// commit 9c126196). Until then the composer renders in its

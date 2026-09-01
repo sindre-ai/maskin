@@ -20,8 +20,8 @@ vi.mock('@/hooks/use-events', () => ({
 // The real composer pulls in uploads, drafts, the slash picker and dictation;
 // the card only cares that it renders one, wired to the right object.
 vi.mock('@/components/activity/comment-input', () => ({
-	CommentInput: ({ objectId }: { objectId?: string }) => (
-		<div data-testid="comment-input" data-object-id={objectId} />
+	CommentInput: ({ objectId, parentEventId }: { objectId?: string; parentEventId?: number }) => (
+		<div data-testid="comment-input" data-object-id={objectId} data-parent={parentEventId} />
 	),
 }))
 
@@ -222,6 +222,14 @@ ${tail}`,
 		await user.click(screen.getByRole('button', { name: 'Merge now' }))
 		await waitFor(() => expect(onDecide).toHaveBeenCalledTimes(1))
 		expect(onDecide.mock.calls[0]?.[0]).toMatchObject({ id: 'merge_now', label: 'Merge now' })
+	})
+
+	// A typed answer belongs under the question, the same as a taken option.
+	// Without it the reply lands as a loose comment on the object and the agent
+	// that asked has to infer which of its asks was just answered.
+	it('threads the composer under the comment that raised the card', () => {
+		renderCard()
+		expect(screen.getByTestId('comment-input')).toHaveAttribute('data-parent', '42')
 	})
 
 	// The option is acknowledged with a 260ms beat before `onDecide` fires, and

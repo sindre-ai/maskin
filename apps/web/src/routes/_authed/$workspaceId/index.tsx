@@ -301,7 +301,14 @@ function ForYouFeed() {
 			// and with call-site callbacks every reply but the last would fail
 			// silently behind a green receipt claiming it was sent.
 			postReply
-				.mutateAsync({ entity_id: item.entity_id, content: option.label })
+				.mutateAsync({
+					entity_id: item.entity_id,
+					content: option.label,
+					// The answer belongs under the question. Without this it lands as
+					// a loose comment on the object, and the agent that asked has to
+					// infer from timing which of its asks was just answered.
+					...(item.latest_mention ? { parent_event_id: item.latest_mention.event_id } : {}),
+				})
 				.then(() => {
 					// A thread with no high-water mark can't be marked read, so the
 					// reply would go out and the card would come back on the next
