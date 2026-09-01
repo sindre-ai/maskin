@@ -61,6 +61,20 @@ export function missingScopes(
  * scopes, and `oauth2_custom` providers (GitHub Apps) derive permissions from
  * the app installation rather than a scope string, so a comparison here would
  * produce false positives.
+ *
+ * An install with NO stored scope string at all is reported as current, not as
+ * missing everything. `OAuth2Handler` only persists `scope` when the provider
+ * answers with a string, and not every provider does — Linear returns it as a
+ * JSON array, so its credentials carry no scope at all. Treating that as "zero
+ * scopes granted" would light the Reconnect banner on every Linear install and
+ * keep it lit, because reconnecting produces another credential with no scope
+ * string either. Absent means unknown, and we cannot claim drift we have not
+ * observed.
+ *
+ * The bot scope string doubles as the signal that a provider records scopes at
+ * all, which is what makes the user-scope check safe: once we have seen one, an
+ * absent `userScope` genuinely means no user scopes were granted — exactly the
+ * pre-`user_scope` Slack install the Reconnect prompt is for.
  */
 export function integrationScopeGaps(
 	config: ProviderConfig,
@@ -69,6 +83,8 @@ export function integrationScopeGaps(
 	if (config.auth.type !== 'oauth2') return { missing: [], needsReconnect: false }
 
 	const grantedScope = typeof credentials.scope === 'string' ? credentials.scope : undefined
+	if (grantedScope === undefined) return { missing: [], needsReconnect: false }
+
 	const grantedUserScope =
 		typeof credentials.userScope === 'string' ? credentials.userScope : undefined
 

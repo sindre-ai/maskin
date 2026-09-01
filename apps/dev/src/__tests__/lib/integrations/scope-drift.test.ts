@@ -153,8 +153,31 @@ describe('integrationScopeGaps', () => {
 		})
 	})
 
-	it('treats a non-string stored scope as absent rather than throwing', () => {
-		const result = integrationScopeGaps(oauthConfig(['chat:write']), { scope: 12345 })
-		expect(result.missing).toEqual(['chat:write'])
+	// Absent is not empty. OAuth2Handler stores `scope` only when the provider
+	// answers with a string, and Linear answers with a JSON array — so a Linear
+	// credential carries no scope at all. Reporting drift here would light the
+	// Reconnect banner on every Linear install permanently, since reconnecting
+	// yields another credential with no scope string either.
+	it('reports no drift when the credential carries no scope string at all', () => {
+		expect(integrationScopeGaps(oauthConfig(['chat:write']), {})).toEqual({
+			missing: [],
+			needsReconnect: false,
+		})
+	})
+
+	it('treats a non-string stored scope as unknown rather than throwing', () => {
+		expect(integrationScopeGaps(oauthConfig(['chat:write']), { scope: 12345 })).toEqual({
+			missing: [],
+			needsReconnect: false,
+		})
+	})
+
+	// The bot scope string is the signal that a provider records scopes at all,
+	// so once it is present an absent userScope really does mean none granted —
+	// the pre-`user_scope` Slack install the Reconnect prompt exists for.
+	it('still reports missing user scopes once a bot scope string is present', () => {
+		const provider = oauthConfig(['chat:write'], 'search:read.public')
+		const result = integrationScopeGaps(provider, { scope: 'chat:write' })
+		expect(result).toEqual({ missing: ['search:read.public'], needsReconnect: true })
 	})
 })
