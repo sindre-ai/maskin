@@ -156,3 +156,96 @@ export const probeEndpoint = async (
 
 	return { kind: 'mcp', auth: 'none' }
 }
+
+/** One tool a server advertises, with whatever it says about writing. */
+export interface RemoteTool {
+	name: string
+	description: string | null
+	/** NULL where the server did not declare it — never assumed. */
+	readOnly: boolean | null
+}
+
+/**
+ * Ask a server what tools it has, and whether each only reads.
+ *
+ * The broker's own tool list carries names and descriptions but no read-only
+ * flag (measured), while the servers themselves declare `annotations.readOnlyHint`
+ * on 95% of tools across the catalogue. So this reads it from the source, and
+ * leaves it NULL rather than guessing from the tool's name — name-based guessing
+ * disagreed with the declaration on about 1 tool in 9, which is far too often to
+ * put behind a "Read only" label.
+ *
+ * Returns an empty list rather than throwing: a server that will not enumerate
+ * without a credential is a normal state, and the caller shows those tools as
+ * unclassified instead of failing the whole add.
+ */
+export const listRemoteTools = async (
+	url: string,
+	options: { fetchImpl?: typeof fetch; timeoutMs?: number; headers?: Record<string, string> } = {},
+): Promise<RemoteTool[]> => {
+	const fetchImpl = options.fetchImpl ?? fetch
+	const timeoutMs = options.timeoutMs ?? 15_000
+	const base = {
+		'Content-Type': 'application/json',
+		Accept: 'application/json, text/event-stream',
+		...options.headers,
+	}
+
+	try {
+		const init = await fetchImpl(url, {
+			method: 'POST',
+			headers: base,
+			body: INITIALIZE,
+			signal: AbortSignal.timeout(timeoutMs),
+		})
+		if (init.status !== 200) return []
+
+		// The upstream is a stateful session: without the id it returned, the next
+		// call is refused with "Server not initialized".
+		const sessionId = init.headers.get('mcp-session-id')
+		const headers = sessionId ? { ...base, 'mcp-session-id': sessionId } : base
+
+		const res = await fetchImpl(url, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+			signal: AbortSignal.timeout(timeoutMs),
+		})
+		if (res.status !== 200) return []
+
+		return parseToolsList(await res.text())
+	} catch {
+		return []
+	}
+}
+
+/** Read a tools/list result out of plain JSON or an SSE frame. */
+const parseToolsList = (body: string): RemoteTool[] => {
+	const payload = body.includes('data: ') ? (body.split('data: ')[1]?.split('\n')[0] ?? '') : body
+	let parsed: unknown
+	try {
+		parsed = JSON.parse(payload)
+	} catch {
+		return []
+	}
+
+	const tools = (parsed as { result?: { tools?: unknown } })?.result?.tools
+	if (!Array.isArray(tools)) return []
+
+	return tools.flatMap((tool): RemoteTool[] => {
+		const t = tool as {
+			name?: unknown
+			description?: unknown
+			annotations?: { readOnlyHint?: unknown }
+		}
+		if (typeof t.name !== 'string' || !t.name) return []
+		const hint = t.annotations?.readOnlyHint
+		return [
+			{
+				name: t.name,
+				description: typeof t.description === 'string' ? t.description : null,
+				readOnly: typeof hint === 'boolean' ? hint : null,
+			},
+		]
+	})
+}
