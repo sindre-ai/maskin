@@ -47,6 +47,8 @@ function makeFakeDb(
 	opts: {
 		dispatchRows?: DispatchRow[]
 		sessionRows?: SessionRow[]
+		/** Makes the `events` insert reject, to exercise its error boundary. */
+		failEventInsert?: boolean
 	} = {},
 ) {
 	const dispatchRows: DispatchRow[] = [...(opts.dispatchRows ?? [])]
@@ -67,6 +69,7 @@ function makeFakeDb(
 				return {
 					values(value: Partial<DispatchRow> | EventRow) {
 						if (name === 'events') {
+							if (opts.failEventInsert) return Promise.reject(new Error('events insert failed'))
 							events.push(value as EventRow)
 							return Promise.resolve()
 						}
@@ -569,6 +572,47 @@ describe('SessionDispatchQueue.tick — outcomes', () => {
 		await queue.tick()
 
 		expect(onPermanentFailure).not.toHaveBeenCalled()
+	})
+
+	// Regression: the UPDATE and the `session_failed` insert used to share one
+	// try/catch, so an insert failure returned null and was read by
+	// handlePermanentFailure as "already terminal — nothing to notify about".
+	// The workspace-level pause then silently never opened and the trigger kept
+	// firing at full rate — the exact flood the hook exists to stop.
+	it('still notifies onPermanentFailure when the session_failed event insert throws', async () => {
+		const row = aDispatchRow({ attempt: 0, maxAttempts: 10 })
+		const session = aSessionRow({ workspaceId: 'ws-nocreds' })
+		const { db, sessionRows } = makeFakeDb({
+			dispatchRows: [row],
+			sessionRows: [session],
+			failEventInsert: true,
+		})
+		const onPermanentFailure = vi.fn()
+		const queue = makeQueue(
+			db,
+			async () => ({
+				kind: 'permanent_failure',
+				error: 'no credentials configured',
+				failureReason: {
+					provider: 'maskin',
+					reason_code: 'not_logged_in',
+					human_message: 'Connect a Claude subscription.',
+					http_status: null,
+					reset_at: null,
+					verbatim_output: 'no credentials configured',
+				},
+			}),
+			{ onPermanentFailure },
+		)
+
+		await queue.tick()
+
+		// The session really was failed by us, so the workspace id is known and
+		// the pause must still open despite the bookkeeping write failing.
+		expect(sessionRows[0]?.status).toBe('failed')
+		expect(onPermanentFailure).toHaveBeenCalledWith(
+			expect.objectContaining({ workspaceId: 'ws-nocreds', reasonCode: 'not_logged_in' }),
+		)
 	})
 
 	it('keeps marking the session failed when onPermanentFailure throws', async () => {

@@ -417,8 +417,12 @@ export class SessionDispatchQueue {
 	 * raced us to it) the UPDATE matches zero rows and the event still records
 	 * the dispatch-side observation.
 	 *
-	 * Returns the failed session's workspace id, or null when the UPDATE matched
-	 * nothing (already terminal) or the write threw.
+	 * Returns the failed session's workspace id, or null when this call did not
+	 * fail a live session — the UPDATE matched nothing (already terminal) or the
+	 * UPDATE itself threw. Deliberately NOT null for a failure of the event
+	 * insert or the system-log append that follow it: those are reporting on a
+	 * session this call really did fail, and the caller uses a non-null return
+	 * to open a workspace-level pause.
 	 */
 	private async markSessionFailed(
 		sessionId: string,
@@ -440,8 +444,17 @@ export class SessionDispatchQueue {
 			reset_at: null,
 			verbatim_output: errorMessage,
 		}
+		// Scoped to the UPDATE alone, so a null return means exactly one thing:
+		// the session row was already terminal. Widening this `try` to cover the
+		// bookkeeping below would conflate "already terminal" with "a later write
+		// failed", and the caller acts on that distinction — `handlePermanentFailure`
+		// reads a null as "no live session, nothing to notify about" and skips
+		// `onPermanentFailure`. A transient events-insert error would then quietly
+		// withhold the workspace-level pause and let the trigger keep firing at
+		// full rate: the exact flood the hook exists to stop (Sentry MASKIN-DEV-6).
+		let updated: { id: string; workspaceId: string; actorId: string } | undefined
 		try {
-			const [updated] = await this.db
+			;[updated] = await this.db
 				.update(sessions)
 				.set({
 					status: 'failed',
@@ -461,36 +474,6 @@ export class SessionDispatchQueue {
 					workspaceId: sessions.workspaceId,
 					actorId: sessions.actorId,
 				})
-
-			if (updated) {
-				await this.db.insert(events).values({
-					workspaceId: updated.workspaceId,
-					actorId: updated.actorId,
-					action: 'session_failed',
-					entityType: 'session',
-					entityId: updated.id,
-					data: {
-						error: errorMessage,
-						reason_code: resolvedFailureReason.reason_code,
-						source: 'dispatch_queue',
-					},
-				})
-
-				// Best-effort, and deliberately after the row is already failed: a
-				// log-write failure must not leave the session stuck non-terminal.
-				if (this.appendSystemLog) {
-					try {
-						await this.appendSystemLog(updated.id, resolvedFailureReason.human_message)
-					} catch (err) {
-						logger.warn('Failed to append dispatch-failure log line', {
-							sessionId,
-							error: String(err),
-						})
-					}
-				}
-			}
-
-			return updated?.workspaceId ?? null
 		} catch (err) {
 			// Surface but never throw — the row is already marked failed in the
 			// queue, the worker should keep draining the rest of the batch.
@@ -500,6 +483,46 @@ export class SessionDispatchQueue {
 			})
 			return null
 		}
+
+		if (!updated) return null
+
+		// Everything below is best-effort reporting on a session that is already
+		// failed. Each failure is logged and swallowed so it cannot cost the
+		// caller the workspace id it needs to open the pause.
+		try {
+			await this.db.insert(events).values({
+				workspaceId: updated.workspaceId,
+				actorId: updated.actorId,
+				action: 'session_failed',
+				entityType: 'session',
+				entityId: updated.id,
+				data: {
+					error: errorMessage,
+					reason_code: resolvedFailureReason.reason_code,
+					source: 'dispatch_queue',
+				},
+			})
+		} catch (err) {
+			logger.error('Failed to record session_failed event from dispatch queue', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
+		// Best-effort, and deliberately after the row is already failed: a
+		// log-write failure must not leave the session stuck non-terminal.
+		if (this.appendSystemLog) {
+			try {
+				await this.appendSystemLog(updated.id, resolvedFailureReason.human_message)
+			} catch (err) {
+				logger.warn('Failed to append dispatch-failure log line', {
+					sessionId,
+					error: String(err),
+				})
+			}
+		}
+
+		return updated.workspaceId
 	}
 
 	private backoffMs(attempt: number): number {
