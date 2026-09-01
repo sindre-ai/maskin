@@ -5,14 +5,16 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // SidebarFooter Activity card (v2 app shell).
 //
-// v2 replaced the named-row Activity list with one compact card
-// (`components/layout/sidebar-activity.tsx`): a live dot, a stack of the agents
-// holding a live session, the working/idle word, and a sessions count. It is
-// also the only way the v2 shell reaches /agents, since Agents left the nav.
+// v2 replaced the named-row Activity list with one compact row
+// (`components/layout/sidebar-activity.tsx`): a bordered tile carrying the
+// count of agents holding a live session, a live dot, the working/idle state,
+// and a sessions count. It is also the only way the v2 shell reaches /agents,
+// since Agents left the nav. The avatar stack the pre-v2 card used is gone —
+// the tile is a number, so nothing here identifies agents by name.
 //
-// AC-U4: agents with live sessions render as an avatar stack + "working".
-// AC-U5: agents beyond the avatar limit collapse into a `+N` tile.
-// AC-U6: 0 running agents render "idle" / "nothing running".
+// AC-U4: agents with live sessions render the count tile + "Agents working".
+// AC-U5: the tile counts agents while the sub-line counts sessions.
+// AC-U6: 0 running agents render "Agents idle" / "nothing running".
 // AC-U7: SSE-driven cache invalidation reflects start/stop without a refresh.
 // AC-T2: hiding on error must not shift the sidebar shell.
 // AC-T3: icon-collapsed mode replaces the card with the bare live dot.
@@ -104,7 +106,7 @@ async function mockSessionsAndActors(page: Page, sessions: MockSession[], actors
 }
 
 test.describe('Sidebar Activity card', () => {
-	test('renders one avatar per working agent with a sessions count (AC-U4)', async ({
+	test('renders the working agent count with a sessions count (AC-U4)', async ({
 		page,
 		account,
 	}) => {
@@ -118,14 +120,14 @@ test.describe('Sidebar Activity card', () => {
 		)
 		await page.goto(`/${account.workspaceId}`)
 		const card = page.getByTestId('sidebar-activity')
-		await expect(card.getByText('working', { exact: true })).toBeVisible()
+		await expect(card.getByText('Agents working')).toBeVisible()
 		await expect(card.getByText('2 sessions running')).toBeVisible()
-		// One avatar per distinct agent, not per session (ActorAvatar sets title={name}).
-		await expect(card.getByTitle('Planner')).toBeVisible()
-		await expect(card.getByTitle('Reviewer')).toBeVisible()
+		// The tile counts distinct agents. v2 dropped the avatar stack, so the
+		// agents' names are no longer on this row at all.
+		await expect(card.getByText('2', { exact: true })).toBeVisible()
 	})
 
-	test('collapses agents beyond the avatar limit into a +N tile (AC-U5)', async ({
+	test('counts agents in the tile and sessions in the sub-line (AC-U5)', async ({
 		page,
 		account,
 	}) => {
@@ -142,12 +144,11 @@ test.describe('Sidebar Activity card', () => {
 		)
 		await page.goto(`/${account.workspaceId}`)
 		const card = page.getByTestId('sidebar-activity')
-		// AVATAR_LIMIT is 4, so the 3 remaining agents collapse into one tile.
-		await expect(card.getByTitle('Agent 0')).toBeVisible()
-		await expect(card.getByTitle('Agent 3')).toBeVisible()
-		await expect(card.getByTitle('Agent 4')).toHaveCount(0)
-		await expect(card.getByText('+3', { exact: true })).toBeVisible()
-		await expect(card.getByText('7 sessions running')).toBeVisible()
+		// The two halves must not agree: the tile dedupes by actor, the sub-line
+		// does not. Three sessions held by two agents is the case that catches a
+		// row counting the same thing twice.
+		await expect(card.getByText('2', { exact: true })).toBeVisible()
+		await expect(card.getByText('3 sessions running')).toBeVisible()
 	})
 
 	test('renders idle / "nothing running" when nothing is active (AC-U6)', async ({
@@ -157,7 +158,7 @@ test.describe('Sidebar Activity card', () => {
 		await mockSessionsAndActors(page, [], [])
 		await page.goto(`/${account.workspaceId}`)
 		const card = page.getByTestId('sidebar-activity')
-		await expect(card.getByText('idle', { exact: true })).toBeVisible()
+		await expect(card.getByText('Agents idle')).toBeVisible()
 		await expect(card.getByText('nothing running')).toBeVisible()
 	})
 
@@ -266,7 +267,7 @@ test.describe('Sidebar Activity card', () => {
 
 		// The `session` entity SSE event broad-invalidates the sessions query;
 		// the running agent appears without a page.reload().
-		await expect(card.getByText('working', { exact: true })).toBeVisible()
+		await expect(card.getByText('Agents working')).toBeVisible()
 		await expect(card.getByText('1 session running')).toBeVisible()
 		expect(sessionCalls).toBeGreaterThanOrEqual(2)
 	})
@@ -331,7 +332,7 @@ test.describe('Sidebar Activity card', () => {
 
 		await page.goto(`/${account.workspaceId}`)
 		const card = page.getByTestId('sidebar-activity')
-		await expect(card.getByText('working', { exact: true })).toBeVisible()
+		await expect(card.getByText('Agents working')).toBeVisible()
 		releaseSseEvent()
 
 		// The `session` entity SSE event broad-invalidates the sessions query;
