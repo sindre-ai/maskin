@@ -1314,6 +1314,12 @@ export const workspaceToolBrokers = pgTable(
 			.notNull(),
 		toolkitSlug: text('toolkit_slug').notNull(),
 		toolkitId: text('toolkit_id').notNull(),
+		// Whose toolkit this is. NULL = the workspace-wide default, which is what
+		// every row was before per-agent scoping. An agent gets its own row so its
+		// toolkit can admit a SUBSET of the workspace's tools — the only place a
+		// per-tool boundary can be enforced, since the proxy cannot see which
+		// integration a code-mode call will touch.
+		actorId: uuid('actor_id').references(() => actors.id, { onDelete: 'cascade' }),
 		status: text('status').notNull().default('active'),
 		// Display names of connected integrations, cached so session launch needs no
 		// broker I/O. A hint for the agent preamble only — never an authorisation
@@ -1328,7 +1334,17 @@ export const workspaceToolBrokers = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
-	(t) => [uniqueIndex('workspace_tool_brokers_workspace_uniq').on(t.workspaceId)],
+	(t) => [
+		// Partial, not a single index over both columns: Postgres treats NULLs as
+		// distinct, so a plain unique on (workspace_id, actor_id) would permit two
+		// workspace-wide defaults.
+		uniqueIndex('workspace_tool_brokers_default_uniq')
+			.on(t.workspaceId)
+			.where(sql`actor_id IS NULL`),
+		uniqueIndex('workspace_tool_brokers_actor_uniq')
+			.on(t.workspaceId, t.actorId)
+			.where(sql`actor_id IS NOT NULL`),
+	],
 )
 
 // BLOCKING DEPENDENCY — read before implementing actor deletion or workspace-

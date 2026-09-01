@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { sanitiseBody } from '../../lib/tool-broker/mcp-scrub'
 import { resolveToolBrokerInjection } from '../../lib/tool-broker/session-injection'
 
@@ -20,12 +20,19 @@ import { resolveToolBrokerInjection } from '../../lib/tool-broker/session-inject
 const KEY = 'broker-key-must-never-escape'
 
 describe('a broker key never reaches a container', () => {
-	const makeDb = (row: unknown) =>
-		({
-			select: () => ({
-				from: () => ({ where: () => ({ limit: async () => (row ? [row] : []) }) }),
-			}),
-		}) as never
+	// The toolkit lookup orders before limiting now, because an agent may have its
+	// own toolkit row alongside the workspace default. The chain has to accept
+	// `orderBy` or this test throws before it can check the thing it is here for.
+	const makeDb = (row: unknown) => {
+		const result = async () => (row ? [row] : [])
+		const chain = {
+			where: () => chain,
+			orderBy: () => chain,
+			limit: result,
+			then: (...args: Parameters<Promise<unknown[]>['then']>) => result().then(...args),
+		}
+		return { select: () => ({ from: () => chain }) } as never
+	}
 
 	it('injects a scoped session token, never the broker key', async () => {
 		process.env.TOOL_BROKER_URL = 'http://localhost:4788'

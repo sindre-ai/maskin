@@ -1,5 +1,5 @@
 import { type Database, toolBrokerActors, workspaceToolBrokers } from '@maskin/db'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNull, or, sql } from 'drizzle-orm'
 import { logger } from '../logger'
 import { ensureActorIdentity, getToolBrokerClient } from './provisioning'
 import { mintToolBrokerSessionToken } from './session-token'
@@ -87,6 +87,9 @@ export const resolveToolBrokerInjection = async (
 ): Promise<ToolBrokerSessionInjection | null> => {
 	if (!process.env.TOOL_BROKER_URL || !process.env.TOOL_BROKER_SESSION_SECRET) return null
 
+	// Prefer the agent's own toolkit, exactly as the proxy does — the preamble
+	// names the integrations this session can reach, so reading the workspace-wide
+	// row here would advertise tools the agent's toolkit will then refuse.
 	const [row] = await db
 		.select()
 		.from(workspaceToolBrokers)
@@ -94,8 +97,11 @@ export const resolveToolBrokerInjection = async (
 			and(
 				eq(workspaceToolBrokers.workspaceId, input.workspaceId),
 				eq(workspaceToolBrokers.status, 'active'),
+				or(eq(workspaceToolBrokers.actorId, input.actorId), isNull(workspaceToolBrokers.actorId)),
 			),
 		)
+		// Agent row first — see the proxy for why the order is explicit.
+		.orderBy(sql`actor_id IS NULL`)
 		.limit(1)
 	if (!row) return null
 

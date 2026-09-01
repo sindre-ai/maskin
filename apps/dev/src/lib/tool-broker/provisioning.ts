@@ -7,7 +7,7 @@ import {
 	workspaces,
 } from '@maskin/db'
 import { ToolBrokerClient, workspaceScopedSlug } from '@maskin/tool-broker'
-import { eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { decrypt, encrypt } from '../crypto'
 import { logger } from '../logger'
 
@@ -63,7 +63,15 @@ export const ensureWorkspaceToolkit = async (
 	const existing = await db
 		.select()
 		.from(workspaceToolBrokers)
-		.where(eq(workspaceToolBrokers.workspaceId, input.workspaceId))
+		// The workspace DEFAULT row specifically. Agents can now have their own
+		// rows in this table, so a bare workspace_id match would sometimes return
+		// an agent's toolkit and quietly widen or narrow the wrong one.
+		.where(
+			and(
+				eq(workspaceToolBrokers.workspaceId, input.workspaceId),
+				isNull(workspaceToolBrokers.actorId),
+			),
+		)
 		.limit(1)
 	if (existing[0]) {
 		return {
@@ -97,7 +105,15 @@ export const ensureWorkspaceToolkit = async (
 	const [row] = await db
 		.select()
 		.from(workspaceToolBrokers)
-		.where(eq(workspaceToolBrokers.workspaceId, input.workspaceId))
+		// The workspace DEFAULT row specifically. Agents can now have their own
+		// rows in this table, so a bare workspace_id match would sometimes return
+		// an agent's toolkit and quietly widen or narrow the wrong one.
+		.where(
+			and(
+				eq(workspaceToolBrokers.workspaceId, input.workspaceId),
+				isNull(workspaceToolBrokers.actorId),
+			),
+		)
 		.limit(1)
 	if (!row) throw new Error('Failed to provision a tool broker toolkit for this workspace')
 

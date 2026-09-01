@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { toolBrokerActors, workspaceToolBrokers } from '@maskin/db'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNull, or, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { decrypt } from '../lib/crypto'
 import { logger } from '../lib/logger'
@@ -84,6 +84,17 @@ app.post('/', async (c) => {
 
 	const db = c.get('db')
 
+	// The agent's own toolkit when it has one, else the workspace default.
+	//
+	// This is where per-tool scoping actually bites: a toolkit is default-deny and
+	// its membership is per tool, whereas here the request is always for
+	// `execute`/`skills`/`resume` and the integration is named only inside the
+	// agent's JavaScript. Picking the right toolkit is a boundary; inspecting the
+	// code string would be a guess.
+	//
+	// Ordering matters, and the `.limit(1)` without it was safe only while a
+	// workspace could have exactly one row. Agent rows sort first so an agent with
+	// its own toolkit never falls back to the wider default.
 	const [provisioned] = await db
 		.select()
 		.from(workspaceToolBrokers)
@@ -91,8 +102,14 @@ app.post('/', async (c) => {
 			and(
 				eq(workspaceToolBrokers.workspaceId, claims.workspaceId),
 				eq(workspaceToolBrokers.status, 'active'),
+				or(eq(workspaceToolBrokers.actorId, claims.actorId), isNull(workspaceToolBrokers.actorId)),
 			),
 		)
+		// `actor_id IS NULL` is false (0) for the agent's own row and true (1) for
+		// the workspace default, so this puts the agent's row first and the LIMIT
+		// picks it. Without an explicit order the LIMIT would choose arbitrarily
+		// between the two the moment per-agent rows exist.
+		.orderBy(sql`actor_id IS NULL`)
 		.limit(1)
 	if (!provisioned) {
 		return jsonRpcError(message.id, -32000, 'This workspace has no tool broker toolkit')

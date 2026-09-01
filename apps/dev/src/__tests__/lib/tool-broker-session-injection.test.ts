@@ -15,12 +15,19 @@ const ACTOR = 'f06b724e-618a-4111-914d-5554062fe155'
 
 // One indexed read, stubbed. The point of these tests is the GATE — what happens
 // when the feature is off — not the query itself.
-const makeDb = (row: unknown) =>
-	({
-		select: () => ({
-			from: () => ({ where: () => ({ limit: async () => (row ? [row] : []) }) }),
-		}),
-	}) as never
+const makeDb = (row: unknown) => {
+	// `orderBy` is part of the chain now: the toolkit lookup can match an agent's
+	// own row or the workspace default, and it orders so the agent's wins. Without
+	// it here the mock would throw rather than exercise the gate.
+	const result = async () => (row ? [row] : [])
+	const chain = {
+		where: () => chain,
+		orderBy: () => chain,
+		limit: result,
+		then: (...args: Parameters<Promise<unknown[]>['then']>) => result().then(...args),
+	}
+	return { select: () => ({ from: () => chain }) } as never
+}
 
 const provisionedRow = {
 	toolkitSlug: 'tk-w80c',
