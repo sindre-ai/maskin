@@ -23,7 +23,7 @@ const PLAN_LABEL: Record<BillingPlan, string> = {
 	trial: 'Trial',
 	pro: 'Pro — $20/mo',
 	team: 'Team — $200/mo',
-	byollm: 'Enterprise',
+	enterprise: 'Enterprise',
 }
 
 const STRIPE_BILLING_PORTAL = 'https://billing.stripe.com/p/login/maskin'
@@ -116,15 +116,15 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		],
 	},
 	{
-		plan: 'byollm',
+		plan: 'enterprise',
 		eyebrow: 'ENTERPRISE',
 		price: 'BYOL',
 		priceSuffix: '',
 		tagline: 'Bring your own LLM. Pay by invoice. Full control.',
 		features: [
 			'No Maskin-hosted token cap',
-			formatOwnershipCap(OWNERSHIP_CAPS.byollm),
-			formatSeatCap(SEAT_CAPS.byollm),
+			formatOwnershipCap(OWNERSHIP_CAPS.enterprise),
+			formatSeatCap(SEAT_CAPS.enterprise),
 			'Use your own Claude Pro/Max, Anthropic API key, or custom endpoint',
 		],
 	},
@@ -158,7 +158,7 @@ function PeriodCountdown({ ms, label }: { ms: number; label: string }) {
 }
 
 function statusBadge(plan: BillingPlan, status: BillingStatus): { label: string; tone: string } {
-	if (plan === 'byollm') return { label: 'BYOL', tone: 'bg-muted text-muted-foreground' }
+	if (plan === 'enterprise') return { label: 'BYOL', tone: 'bg-muted text-muted-foreground' }
 	if (status === 'active') return { label: 'Active', tone: 'bg-success/10 text-success' }
 	if (status === 'past_due') return { label: 'Past due', tone: 'bg-warning/10 text-warning' }
 	if (status === 'canceled') return { label: 'Canceled', tone: 'bg-muted text-muted-foreground' }
@@ -177,7 +177,7 @@ function getPlanCta(
 	usage: BillingUsageResponse,
 	isTrial: boolean,
 	isPaid: boolean,
-	byollmAllowed: boolean,
+	enterprise: boolean,
 	checkoutPending: boolean,
 	handleUpgrade: (plan: 'pro' | 'team') => void,
 	openSwitch: () => void,
@@ -185,7 +185,7 @@ function getPlanCta(
 	if (planKey === usage.plan) return null
 
 	if (planKey === 'trial') {
-		if (isPaid && usage.status === 'active' && !byollmAllowed) {
+		if (isPaid && usage.status === 'active' && !enterprise) {
 			return {
 				label: 'Cancel subscription',
 				onClick: openSwitch,
@@ -223,7 +223,7 @@ function getPlanCta(
 		return null
 	}
 
-	// byollm
+	// enterprise
 	if (isPaid && usage.status === 'active') {
 		return { label: 'Downgrade to Free', onClick: openSwitch, disabled: false, variant: 'ghost' }
 	}
@@ -232,10 +232,10 @@ function getPlanCta(
 
 export function BillingSection({
 	workspaceId,
-	byollmAllowed = false,
+	enterprise = false,
 }: {
 	workspaceId: string
-	byollmAllowed?: boolean
+	enterprise?: boolean
 }) {
 	const usageQuery = useBillingUsage(workspaceId)
 	const checkout = useStripeCheckout(workspaceId)
@@ -311,7 +311,7 @@ export function BillingSection({
 
 	const usage = usageQuery.data
 	const badge = statusBadge(usage.plan, usage.status)
-	const isByo = usage.plan === 'byollm'
+	const isByo = usage.plan === 'enterprise'
 	const isPaid = usage.plan === 'pro' || usage.plan === 'team'
 	const isTrial = usage.plan === 'trial'
 	const cap = usage.hard_cap_usd_cents ?? 0
@@ -319,7 +319,7 @@ export function BillingSection({
 	const periodMs = usage.period_resets_in_ms
 	const resetsIn = formatResetsIn(periodMs)
 
-	const visiblePlans = PLAN_CONFIG.filter((config) => config.plan !== 'byollm' || byollmAllowed)
+	const visiblePlans = PLAN_CONFIG.filter((config) => config.plan !== 'enterprise' || enterprise)
 	const defaultPlansOpen = !(isPaid && usage.status === 'active')
 	const plansOpen = plansOpenOverride ?? defaultPlansOpen
 
@@ -368,7 +368,7 @@ export function BillingSection({
 									usage,
 									isTrial,
 									isPaid,
-									byollmAllowed,
+									enterprise,
 									checkout.isPending,
 									handleUpgrade,
 									() => setSwitchOpen(true),
@@ -383,7 +383,7 @@ export function BillingSection({
 				open={switchOpen}
 				onOpenChange={setSwitchOpen}
 				workspaceId={workspaceId}
-				byollmAllowed={byollmAllowed}
+				enterprise={enterprise}
 			/>
 
 			<BuyCreditsDialog
@@ -552,12 +552,12 @@ function DowngradeDialog({
 	open,
 	onOpenChange,
 	workspaceId,
-	byollmAllowed,
+	enterprise,
 }: {
 	open: boolean
 	onOpenChange: (open: boolean) => void
 	workspaceId: string
-	byollmAllowed: boolean
+	enterprise: boolean
 }) {
 	const cancel = useBillingCancel(workspaceId)
 
@@ -569,9 +569,9 @@ function DowngradeDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>{byollmAllowed ? 'Downgrade to Free?' : 'Cancel subscription?'}</DialogTitle>
+					<DialogTitle>{enterprise ? 'Downgrade to Free?' : 'Cancel subscription?'}</DialogTitle>
 					<DialogDescription>
-						{byollmAllowed
+						{enterprise
 							? "You'll lose access to Maskin's hosted LLM and your remaining token credits for this period. You won't be charged again."
 							: "You'll go back to the free trial plan with Maskin's hosted LLM, on the trial's lower usage cap. You won't be charged again."}
 					</DialogDescription>

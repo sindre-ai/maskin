@@ -92,9 +92,11 @@ test.describe('Visual — Object detail (right sidebar)', () => {
 				})
 				await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
 				await waitForApp(page)
-				// Wait for the title textarea to hydrate before snapshotting so
+				// Wait for the title heading to hydrate before snapshotting so
 				// the hero row isn't captured mid-render.
-				await page.getByPlaceholder('Untitled').waitFor({ state: 'visible', timeout: 10_000 })
+				await page
+					.getByRole('heading', { level: 1, name: 'Object detail sidebar visual' })
+					.waitFor({ state: 'visible', timeout: 10_000 })
 				// Mask per-run dynamic content: relative time labels (<time>) and
 				// activity items whose actor-name contains a run-specific timestamp
 				// (seeded by the E2E auth fixture). Neither is a regression signal

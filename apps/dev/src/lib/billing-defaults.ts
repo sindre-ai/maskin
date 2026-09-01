@@ -119,12 +119,12 @@ export const DEFAULT_PERIOD_LENGTH_MS = 30 * 24 * 60 * 60 * 1000
  * usage page showed it capped. One resolver means the number a customer is
  * shown is the number that actually stops them.
  *
- * `byollm` returns the trial cap only so the display path keeps its previous
- * shape; nothing enforces a cap on byollm, which is routed away from the
+ * `enterprise` returns the trial cap only so the display path keeps its previous
+ * shape; nothing enforces a cap on enterprise, which is routed away from the
  * Maskin plan entirely (`MASKIN_PLAN_ROUTED_PLANS` in lib/llm-routing.ts).
  */
 export function resolvePlanCapCents(
-	plan: 'trial' | 'pro' | 'team' | 'byollm',
+	plan: 'trial' | 'pro' | 'team' | 'enterprise',
 	env: NodeJS.ProcessEnv = process.env,
 ): number {
 	switch (plan) {

@@ -9,7 +9,7 @@ redeploy of `apps/web`.
 
 ```
 FF_TESTER_ACTOR_IDS=<uuid>,<uuid>                  # actors who get early access
-FF_TESTER_FEATURES=some-flag,new-model             # flag ids those actors see
+FF_TESTER_FEATURES=new-design,new-model            # flag ids those actors see
 ```
 
 Both are comma-separated and optional; empty means every flag is off for
@@ -43,19 +43,45 @@ layout — and branch there. Do not scatter `useFeatureFlag` checks across
 individual components.
 
 ```tsx
-const someFlag = useFeatureFlag('some-flag')
+const newDesign = useFeatureFlag('new-design')
 ...
-{someFlag ? <AppSidebar /> : <LegacyAppSidebar />}
+{newDesign ? <ObjectsPageV2 /> : <LegacyObjectsPage />}
 ```
 
-`FLAGS` is currently empty — `new-design` was retired when the v2 design shipped
-to everyone, following exactly the checklist below. The shape it had is the one
-to copy: `apps/web/src/routes/_authed/$workspaceId.tsx` read the flag once and
-swapped the whole shell (sidebar, header, command palette) at that single site,
-with the pre-v2 components parked under `components/*/legacy/`.
+`new-design` is the live flag. It was retired once when the v2 shell shipped to
+everyone, and re-added for the untested v2 surfaces. Its read sites are all route
+components, each swapping a whole page, with the pre-v2 components vendored under
+a sibling `legacy/` directory that dies with the flag:
 
-**If you reach a third call site for one flag, stop — the boundary is in the
-wrong place.** Move it up rather than adding another check.
+| Route component | Pre-v2 branch |
+|---|---|
+| `objects/index.tsx` | `components/objects/legacy/` |
+| `objects/$objectId.tsx` | `components/objects/legacy/` |
+| `chats/new.tsx` | `components/chat/legacy/new-conversation-page.tsx` |
+| `search.tsx` | `components/search/legacy/` |
+| `marketplace/index.tsx` | `components/marketplace/legacy/` |
+| `marketplace/$loopId/index.tsx` | `components/marketplace/legacy/` |
+| `marketplace/$loopId/$itemId.tsx` | `components/marketplace/legacy/` |
+| `settings.tsx` | `components/settings/legacy/settings-nav.tsx` |
+| `settings/index.tsx` | `components/settings/legacy/general-page.tsx` |
+| `settings/members.tsx` | `components/settings/legacy/members-page.tsx` |
+| `settings/keys.tsx` | same page, plus the plan card v2 moved to `settings/billing.tsx` |
+| `settings/billing.tsx` | no pre-v2 route — redirects to `settings/keys` |
+| `settings/extensions.tsx` | no pre-v2 route — redirects to `settings` |
+
+Note what is *not* behind it: the routes' `validateSearch` (including `chats/new`'s
+`objectIds`, so an "Ask an agent" link resolves on both branches), the shared filter
+and grouping helpers, `useWorkspaceSearch`, the marketplace hooks, the additive
+`ObjectReference` `pill` variant and `item-type-label` helpers, and the additive
+`Select` `chip` / `Tabs` `segmented` variants and `MarkdownContent`'s `doc` size —
+each defaults to the pre-v2 rendering, so the primitive is unchanged for the branch
+that doesn't ask for the new one. Both branches run on the same search schema and the same data layer, per the rule below.
+
+**One route component = one boundary.** `new-design` has more than two read sites
+because it governs more than two pages, and a page is the highest point at which
+its own branch can be chosen. What must never happen is a *second* check inside a
+page already on one side of the boundary — that is the signal the boundary is in
+the wrong place, and the fix is to move it up rather than add another check.
 
 When a feature rewrites components in place, keep the old ones under a clearly
 marked `legacy/` directory with a header comment saying which flag governs them

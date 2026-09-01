@@ -45,10 +45,108 @@ export const messageFinalOutputSchema = z.object({
 	dedupe_key: z.string().min(1).max(64),
 	/** The conversation message whose turn produced this output, if resolvable. */
 	message_id: z.number().int().nullable().optional(),
+	/**
+	 * The `result` envelope carried no text, so the reply was recovered from the
+	 * turn's last `assistant` text line instead. Kept as a marker because that
+	 * fallback can surface mid-turn narration rather than a deliberate reply —
+	 * it makes the over-eager cases findable without hunting through logs.
+	 */
+	recovered: z.boolean().optional(),
 	is_error: z.boolean().optional(),
+	/**
+	 * How a failed turn (`is_error`) was read: 'transient' means the model API
+	 * blipped and the turn was replayed, 'permanent' means no replay would have
+	 * helped (credentials, credit, a malformed request). See
+	 * apps/dev/src/lib/turn-error-classifier.ts.
+	 */
+	error_kind: z.enum(['transient', 'permanent']).optional(),
+	/** Replays spent before giving up on a transient failure. */
+	retries: z.number().int().min(0).max(10).optional(),
+	/**
+	 * Why a transient failure was reported instead of replayed:
+	 * 'unavailable' — the turn's opening envelope could not be recovered;
+	 * 'undeliverable' — the replay could not reach the CLI (session gone);
+	 * 'unanswered' — the replay was written but the turn never produced a
+	 * result envelope, so the CLI is presumed wedged on stdin.
+	 */
+	retry: z.enum(['unavailable', 'undeliverable', 'unanswered']).optional(),
+	/**
+	 * Set when the turn ended by writing its tool calls out as text rather than
+	 * making them (apps/dev/src/lib/pseudo-tool-call.ts). A separate axis from
+	 * `error_kind`, which says whether a replay could have helped: without this
+	 * marker these notices are indistinguishable from model-API failures, and
+	 * anything querying for those over-counts.
+	 */
+	pseudo_tool_calls: z
+		.object({
+			occurrences: z.number().int().min(0),
+			tags: z.array(z.string().max(64)).max(20),
+			nudges: z.number().int().min(0).max(10),
+		})
+		.optional(),
 	subtype: z.string().max(64).optional(),
 	/** Set when the agent's output exceeded MESSAGE_MAX_LENGTH and was cut. */
 	truncated: z.boolean().optional(),
+})
+
+export const MESSAGE_MAX_QUESTIONS = 4
+export const MESSAGE_MAX_QUESTION_OPTIONS = 4
+
+/**
+ * One question an agent asked the human mid-turn, mirroring the shape of the
+ * Claude Code AskUserQuestion tool input so the hook that intercepts it can
+ * forward the payload without reshaping it.
+ */
+export const messageQuestionItemSchema = z.object({
+	question: z.string().min(1).max(1000),
+	/** Short chip label for the question, e.g. 'Spotify access'. */
+	header: z.string().min(1).max(24),
+	multi_select: z.boolean().default(false),
+	options: z
+		.array(
+			z.object({
+				label: z.string().min(1).max(200),
+				description: z.string().max(1000).optional(),
+			}),
+		)
+		.min(2)
+		.max(MESSAGE_MAX_QUESTION_OPTIONS),
+})
+
+/**
+ * Set by the backend when an agent in a chat calls AskUserQuestion, which the
+ * headless CLI cannot render on its own (see
+ * docker/agent-base/hooks/ask-user-question.sh). Never accepted from a client —
+ * the POST /messages route strips it, so a forged message cannot put words in
+ * an agent's mouth as an official prompt.
+ *
+ * The message's `content` carries the same questions as plain markdown, so a
+ * reader that knows nothing about this metadata (notifications, digests, the
+ * MCP conversation tools) still shows something sensible.
+ */
+export const messageQuestionSchema = z.object({
+	/** The session whose turn asked. Ties the answer back to the right agent. */
+	session_id: z.string().uuid(),
+	questions: z.array(messageQuestionItemSchema).min(1).max(MESSAGE_MAX_QUESTIONS),
+})
+
+/**
+ * Set on the human's reply to a `question` message. Unlike `question` this IS
+ * client-supplied — the frontend posts it when the human picks chips — so it
+ * carries no authority beyond letting the UI pair an answer to its question.
+ */
+export const messageQuestionAnswerSchema = z.object({
+	/** `messages.id` of the question being answered. */
+	question_message_id: z.number().int().positive(),
+	answers: z
+		.array(
+			z.object({
+				header: z.string().min(1).max(24),
+				selected: z.array(z.string().min(1).max(200)).min(1).max(MESSAGE_MAX_QUESTION_OPTIONS),
+			}),
+		)
+		.min(1)
+		.max(MESSAGE_MAX_QUESTIONS),
 })
 
 export const messageMetadataSchema = z.object({
@@ -66,6 +164,10 @@ export const messageMetadataSchema = z.object({
 	 */
 	source: z.enum(['final_output']).optional(),
 	final_output: messageFinalOutputSchema.optional(),
+	/** Backend-owned: an agent's AskUserQuestion, surfaced as chips in chat. */
+	question: messageQuestionSchema.optional(),
+	/** Client-supplied: which options the human picked for a `question`. */
+	question_answer: messageQuestionAnswerSchema.optional(),
 })
 
 /**
@@ -77,7 +179,7 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 	metadata: T,
 ): T {
 	if (!metadata) return metadata
-	const { source: _source, final_output: _finalOutput, ...rest } = metadata
+	const { source: _source, final_output: _finalOutput, question: _question, ...rest } = metadata
 	return rest as T
 }
 
@@ -151,3 +253,26 @@ export const updateConversationParticipantStateSchema = z
 
 export type MessageMetadata = z.infer<typeof messageMetadataSchema>
 export type MessageFinalOutput = z.infer<typeof messageFinalOutputSchema>
+export type MessageQuestion = z.infer<typeof messageQuestionSchema>
+export type MessageQuestionItem = z.infer<typeof messageQuestionItemSchema>
+export type MessageQuestionAnswer = z.infer<typeof messageQuestionAnswerSchema>
+
+/**
+ * The plain-markdown rendering of a question set, used as the message's
+ * `content`. Everything that isn't the chip-aware chat UI reads this.
+ */
+export function formatQuestionsAsMarkdown(questions: MessageQuestionItem[]): string {
+	return questions
+		.map((q) => {
+			const options = q.options.map(
+				(o) => `- **${o.label}**${o.description ? ` — ${o.description}` : ''}`,
+			)
+			return [q.question, ...options].join('\n')
+		})
+		.join('\n\n')
+}
+
+/** The `ask` request body: the tool input, as the in-container hook forwards it. */
+export const sessionAskSchema = z.object({
+	questions: z.array(messageQuestionItemSchema).min(1).max(MESSAGE_MAX_QUESTIONS),
+})

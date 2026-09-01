@@ -29,9 +29,13 @@ describe('jsonbField', () => {
 })
 
 describe('workspaceResponseSchema', () => {
-	const ws = buildWorkspace({ settings: null })
+	// buildWorkspace() returns a DB row, which carries the raw `enterprise_granted`
+	// column. The response schema carries the derived `enterprise` status instead
+	// (see serializeWorkspace in routes/workspaces.ts), so map it here.
+	const { enterpriseGranted, ...ws } = buildWorkspace({ settings: null })
 	const validWorkspace = {
 		...ws,
+		enterprise: enterpriseGranted,
 		createdAt: ws.createdAt.toISOString(),
 		updatedAt: ws.updatedAt.toISOString(),
 	}

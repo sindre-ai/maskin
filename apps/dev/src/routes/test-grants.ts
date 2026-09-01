@@ -15,7 +15,7 @@ import { errorSchema } from '../lib/openapi-schemas'
  *
  *   - `settings.billing` is rejected by PATCH /api/workspaces/:id, because
  *     Stripe owns it and accepting it would be a free paid plan.
- *   - `byollm_allowed` on PATCH /api/workspaces/admin/:id requires an ops actor
+ *   - `enterprise_granted` on PATCH /api/workspaces/admin/:id requires an ops actor
  *     on MASKIN_ENTERPRISE_ACTOR_IDS, because it bypasses the plan cap.
  *
  * E2E is pure HTTP with no DB access, and its actors are created through public
@@ -58,10 +58,10 @@ function tokenMatches(provided: string | undefined, expected: string): boolean {
 const grantBodySchema = z
 	.object({
 		plan: z.enum(['trial', 'pro', 'team']).optional(),
-		byollm_allowed: z.boolean().optional(),
+		enterprise_granted: z.boolean().optional(),
 	})
-	.refine((v) => v.plan !== undefined || v.byollm_allowed !== undefined, {
-		message: 'At least one of plan or byollm_allowed must be provided',
+	.refine((v) => v.plan !== undefined || v.enterprise_granted !== undefined, {
+		message: 'At least one of plan or enterprise_granted must be provided',
 	})
 
 const grantRoute = createRoute({
@@ -110,7 +110,7 @@ app.openapi(grantRoute, async (c) => {
 	if (!existing) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 
 	const update: Record<string, unknown> = { updatedAt: new Date() }
-	if (body.byollm_allowed !== undefined) update.byollmAllowed = body.byollm_allowed
+	if (body.enterprise_granted !== undefined) update.enterpriseGranted = body.enterprise_granted
 	if (body.plan !== undefined) {
 		// Spread the RAW settings row, not a Zod-parsed copy: parsing strips
 		// unknown keys and drops everything on a validation failure.
@@ -130,7 +130,7 @@ app.openapi(grantRoute, async (c) => {
 		action: 'updated',
 		entityType: 'workspace',
 		entityId: id,
-		data: { test_grant: { plan: body.plan, byollm_allowed: body.byollm_allowed } },
+		data: { test_grant: { plan: body.plan, enterprise_granted: body.enterprise_granted } },
 	})
 
 	return c.json({ ok: true as const }, 200)

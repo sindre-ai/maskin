@@ -23,8 +23,14 @@ const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
 const SIDEBAR_WIDTH = '13.5rem' // 216px — Direction 1 full sidebar state
 const SIDEBAR_WIDTH_MOBILE = '18rem'
 const SIDEBAR_WIDTH_ICON = '3.75rem' // 60px — Direction 1 collapsed icon rail state
-const SIDEBAR_KEYBOARD_SHORTCUT = 'b'
-const SIDEBAR_RIGHT_KEYBOARD_SHORTCUT = 'i'
+// ⌘\ toggles the nav sidebar and ⌘⇧\ the right drawer — same key, other
+// side. They used to be ⌘B and ⌘I, which the document editor needs for bold
+// and italic; text formatting wins those two everywhere it is focused, so the
+// panels moved rather than fighting for them.
+const SIDEBAR_KEYBOARD_SHORTCUT = '\\'
+// Shift turns the backslash into a pipe on most layouts, so the right drawer
+// answers to either character.
+const SIDEBAR_RIGHT_KEYBOARD_SHORTCUT = ['\\', '|']
 
 type SidebarContextProps = {
 	state: 'expanded' | 'collapsed'
@@ -97,7 +103,17 @@ const SidebarProvider = React.forwardRef<
 		// Adds a keyboard shortcut to toggle the sidebar.
 		React.useEffect(() => {
 			const handleKeyDown = (event: KeyboardEvent) => {
-				if (event.key === SIDEBAR_KEYBOARD_SHORTCUT && (event.metaKey || event.ctrlKey)) {
+				// `!altKey` is load-bearing, not defensive: Windows synthesises
+				// `ctrlKey` for AltGr, and `\` is an AltGr product on the Nordic,
+				// German, Polish and Turkish layouts. Without this, typing a literal
+				// backslash into the document editor would be swallowed by
+				// `preventDefault()` and toggle the nav instead.
+				if (
+					event.key === SIDEBAR_KEYBOARD_SHORTCUT &&
+					(event.metaKey || event.ctrlKey) &&
+					!event.shiftKey &&
+					!event.altKey
+				) {
 					event.preventDefault()
 					toggleSidebar()
 				}
@@ -202,9 +218,9 @@ function SidebarRightProvider({
 	React.useEffect(() => {
 		const handleKeyDown = (event: KeyboardEvent) => {
 			if (
-				event.key.toLowerCase() === SIDEBAR_RIGHT_KEYBOARD_SHORTCUT &&
+				SIDEBAR_RIGHT_KEYBOARD_SHORTCUT.includes(event.key) &&
 				(event.metaKey || event.ctrlKey) &&
-				!event.shiftKey &&
+				event.shiftKey &&
 				!event.altKey
 			) {
 				event.preventDefault()

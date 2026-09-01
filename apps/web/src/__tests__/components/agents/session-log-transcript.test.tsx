@@ -277,7 +277,48 @@ function taggedUserTurn(messageId: number, content: string): string {
 	})
 }
 
+function retriedUserTurn(content: string): string {
+	return JSON.stringify({
+		type: 'user',
+		message: { role: 'user', content },
+		maskin_retry: true,
+	})
+}
+
 describe('segmentActivityByMessage', () => {
+	it('retracts the result of a failed turn the backend is replaying', () => {
+		const failure = JSON.stringify({
+			type: 'result',
+			is_error: true,
+			result: 'API Error: {"type":"error","error":{"type":"api_error"}}',
+		})
+		const success = JSON.stringify({ type: 'result', is_error: false, result: 'The answer.' })
+		const { segments } = segmentActivityByMessage([
+			log(1, 'stdout', taggedUserTurn(7, 'hello')),
+			log(2, 'stdout', failure),
+			log(3, 'stdout', retriedUserTurn('hello')),
+			log(4, 'stdout', success),
+		])
+
+		// One segment, not two: the replay reopens the same turn rather than
+		// starting a new one.
+		expect(segments).toHaveLength(1)
+		// The failed envelope produces no chat message ever, so leaving it here
+		// would render the raw API error as the agent's answer and shift the
+		// ordinal result/message pairing for every later turn in the session.
+		expect(segments[0]?.result?.text).toBe('The answer.')
+		expect(segments[0]?.result?.isError).toBe(false)
+	})
+
+	it('does not render a replayed turn as the human sending a second message', () => {
+		const { segments } = segmentActivityByMessage([
+			log(1, 'stdout', taggedUserTurn(7, 'hello')),
+			log(2, 'stdout', retriedUserTurn('hello')),
+		])
+		expect(segments).toHaveLength(1)
+		expect(segments[0]?.steps).toEqual([])
+	})
+
 	it('returns one step per meaningful event, in chronological order, for an untagged (legacy) session', () => {
 		const first = JSON.stringify({
 			type: 'assistant',

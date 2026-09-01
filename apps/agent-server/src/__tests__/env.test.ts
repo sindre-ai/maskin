@@ -31,6 +31,35 @@ describe('parseEnv', () => {
 		)
 	})
 
+	it('defaults METRICS_PORT to 9464', () => {
+		expect(parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32) }).METRICS_PORT).toBe(9464)
+	})
+
+	it('accepts an explicit 0 as the disable sentinel', () => {
+		expect(parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), METRICS_PORT: '0' }).METRICS_PORT).toBe(
+			0,
+		)
+	})
+
+	it('rejects an empty METRICS_PORT rather than treating it as disabled', () => {
+		// `Number('')` is 0, so without an explicit guard a bare `METRICS_PORT=`
+		// line would silently land on the disable sentinel and the endpoint would
+		// never bind — with no error and no log to say so.
+		for (const v of ['', '   ']) {
+			expect(() => parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), METRICS_PORT: v })).toThrow(
+				/Invalid METRICS_PORT: empty/,
+			)
+		}
+	})
+
+	it('rejects METRICS_PORT values outside the valid range', () => {
+		for (const v of ['abc', '-1', '70000', '1.5']) {
+			expect(() => parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), METRICS_PORT: v })).toThrow(
+				/Invalid METRICS_PORT/,
+			)
+		}
+	})
+
 	it('rejects a missing or short AGENT_SERVER_SECRET', () => {
 		expect(() => parseEnv({})).toThrow()
 		expect(() => parseEnv({ AGENT_SERVER_SECRET: 'short' })).toThrow(/16 chars/)
@@ -112,5 +141,34 @@ describe('parseEnv', () => {
 		expect(() =>
 			parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), AGENT_SERVER_ID: 'not-a-uuid' }),
 		).toThrow()
+	})
+})
+
+describe('AGENT_SERVER_STALL_THRESHOLD_MS', () => {
+	it('defaults to 5 minutes', () => {
+		expect(parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32) }).AGENT_SERVER_STALL_THRESHOLD_MS).toBe(
+			300_000,
+		)
+	})
+
+	it('accepts an override so the threshold can move without a deploy', () => {
+		expect(
+			parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), AGENT_SERVER_STALL_THRESHOLD_MS: '600000' })
+				.AGENT_SERVER_STALL_THRESHOLD_MS,
+		).toBe(600_000)
+	})
+
+	it('rejects a threshold below the guest re-dial interval', () => {
+		// Under 90s every healthy unacked window looks like a wedge — the floor
+		// is the point at which this alert becomes guaranteed noise.
+		expect(() =>
+			parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), AGENT_SERVER_STALL_THRESHOLD_MS: '30000' }),
+		).toThrow(/AGENT_SERVER_STALL_THRESHOLD_MS/)
+	})
+
+	it('rejects a non-numeric threshold', () => {
+		expect(() =>
+			parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), AGENT_SERVER_STALL_THRESHOLD_MS: 'soon' }),
+		).toThrow(/AGENT_SERVER_STALL_THRESHOLD_MS/)
 	})
 })

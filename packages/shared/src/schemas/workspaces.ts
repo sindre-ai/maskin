@@ -77,7 +77,6 @@ export const workspaceSettingsSchema = z.object({
 		insight: 'Insight',
 		bet: 'Bet',
 		task: 'Task',
-		commitment: 'Commitment',
 		loop: 'Loop',
 	}),
 	statuses: z.record(z.array(z.string())).default({
@@ -87,7 +86,6 @@ export const workspaceSettingsSchema = z.object({
 		// notification fan-out. Add other terminal states there, not archived.
 		bet: ['signal', 'define', 'active', 'live', 'succeeded', 'failed', 'paused', 'archived'],
 		task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
-		commitment: ['holding', 'at-risk', 'breached'],
 		loop: [...LOOP_STATUSES],
 	}),
 	field_definitions: z.record(z.array(fieldDefinitionSchema)).default({
@@ -98,7 +96,12 @@ export const workspaceSettingsSchema = z.object({
 		.array(z.string())
 		.default(['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates']),
 	custom_extensions: z.record(customExtensionEntrySchema).default({}),
-	enabled_modules: z.array(z.string()).default(['work', 'crm', 'knowledge']),
+	// Extensions a brand-new workspace ships with. Existing workspace rows that
+	// predate an id being added here keep whatever they stored — this default
+	// only applies when settings are parsed at creation time (POST /workspaces,
+	// signup in routes/actors.ts). The runtime fallback for rows with no
+	// `enabled_modules` at all stays `['work']` (module-sdk `getEnabledModuleIds`).
+	enabled_modules: z.array(z.string()).default(['work', 'knowledge', 'crm']),
 	max_concurrent_sessions: z.coerce.number().int().min(1).max(50).default(3),
 	// Chat sessions bypass max_concurrent_sessions entirely (a live human is
 	// waiting), but still need *some* aggregate ceiling so a workspace with
@@ -155,7 +158,7 @@ export const workspaceSettingsSchema = z.object({
 	// `PLAN_CAP_EXCEEDED` error so the frontend can show a reset ETA.
 	billing: z
 		.object({
-			plan: z.enum(['trial', 'pro', 'team', 'byollm']),
+			plan: z.enum(['trial', 'pro', 'team', 'enterprise']),
 			stripe_customer_id: z.string().nullable().optional(),
 			stripe_subscription_id: z.string().nullable().optional(),
 			period_start: z.number().nullable().optional(),
@@ -225,10 +228,10 @@ export const updateWorkspaceAdminSchema = z
 		// Entitlement to BYO LLM credentials (Claude OAuth, custom_llm, llm_keys).
 		// Defaults to false for every workspace; only ops-flagged exceptions may
 		// bypass the Maskin-provided LLM plan. See PR #970.
-		byollm_allowed: z.boolean().optional(),
+		enterprise_granted: z.boolean().optional(),
 	})
-	.refine((v) => v.onboarding_enabled !== undefined || v.byollm_allowed !== undefined, {
-		message: 'At least one of onboarding_enabled or byollm_allowed must be provided',
+	.refine((v) => v.onboarding_enabled !== undefined || v.enterprise_granted !== undefined, {
+		message: 'At least one of onboarding_enabled or enterprise_granted must be provided',
 	})
 
 export const workspaceParamsSchema = z.object({

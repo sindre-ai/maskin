@@ -80,13 +80,21 @@ test.describe('Loop detail page', () => {
 			await expect(page.getByRole('heading', { name: 'Changes' })).toBeVisible()
 			await expect(page.getByRole('button', { name: /undo/i }).first()).toBeVisible()
 
-			// The composer is the last thing in the reader column and sticks to
-			// the bottom — it sits below the Changes section, not above the story.
+			// The composer is the last thing in the reader column — it sits below
+			// the Changes section, not above the story. Compare document order
+			// rather than bounding boxes: the composer is `sticky bottom-0`, so
+			// while Changes is below the fold its pinned y is the smaller number
+			// at every viewport where the page scrolls.
 			const composer = page.getByPlaceholder('Listening — speak in plain words')
-			const changesBox = await page.getByRole('heading', { name: 'Changes' }).boundingBox()
-			const composerBox = await composer.boundingBox()
-			if (!changesBox || !composerBox) throw new Error('missing bounding boxes')
-			expect(composerBox.y).toBeGreaterThan(changesBox.y)
+			const composerFollowsChanges = await composer.evaluate((node, changesText) => {
+				const changes = [...document.querySelectorAll('h1, h2, h3, h4, h5, h6')].find(
+					(heading) => heading.textContent?.trim() === changesText,
+				)
+				if (!changes) throw new Error('missing Changes heading')
+				// DOCUMENT_POSITION_FOLLOWING — the composer comes after it.
+				return Boolean(changes.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)
+			}, 'Changes')
+			expect(composerFollowsChanges).toBe(true)
 
 			// A step row is the only route into a loop-owned trigger now that
 			// /triggers redirects.

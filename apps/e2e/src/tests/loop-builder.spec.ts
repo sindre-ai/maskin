@@ -61,8 +61,12 @@ test.describe('Loop builder — language-only create flow', () => {
 			// Create loop → the card flips to "created" and a real loop object is
 			// persisted matching the preview name.
 			await page.getByRole('button', { name: /create loop/i }).click()
-			await expect(page.getByText('Loop created')).toBeVisible({ timeout: 10000 })
-			await expect(page.getByText('created')).toBeVisible()
+			// The card carries both an eyebrow and a heading — locate the heading
+			// by role, or the two collide under strict mode.
+			await expect(page.getByRole('heading', { name: 'Loop created' })).toBeVisible({
+				timeout: 10000,
+			})
+			await expect(page.getByText('LOOP CREATED', { exact: true })).toBeVisible()
 
 			const loopsAfter = (await account.api.listObjects(account.workspaceId)).filter(
 				(o) => o.type === 'loop',

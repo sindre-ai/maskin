@@ -71,6 +71,11 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 		url: 'https://mcp.posthog.com/mcp',
 		headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
 	},
+	ubersuggest: {
+		type: 'http',
+		url: 'https://ubersuggest-mcp.neilpatelapi.com/mcp',
+		headers: { Authorization: 'Bearer ${UBERSUGGEST_TOKEN}' },
+	},
 }
 
 const PLATFORM_MCP_PRESET: McpServer = {
@@ -79,6 +84,7 @@ const PLATFORM_MCP_PRESET: McpServer = {
 	headers: {
 		Authorization: 'Bearer ${MASKIN_API_KEY}',
 		'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+		'X-Maskin-Session-Id': '${SESSION_ID}',
 	},
 }
 

@@ -1,22 +1,37 @@
 import { Composer } from '@/components/chat/chat'
+import { LegacyNewConversationPage } from '@/components/chat/legacy/new-conversation-page'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Button } from '@/components/ui/button'
-import { useActors } from '@/hooks/use-actors'
+import {
+	ResponsivePopover,
+	ResponsivePopoverContent,
+	ResponsivePopoverTrigger,
+} from '@/components/ui/responsive-popover'
+import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
+import { useObjects } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import type { MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
-import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
+import {
+	EMPTY_CHAT_SELECTION,
+	MAX_CHAT_OBJECT_REFERENCES,
+	chatSelectionReducer,
+} from '@/lib/chat-selection'
+import { cn } from '@/lib/cn'
+import { deriveConversationTitle } from '@/lib/conversation-title'
 import { useWorkspace } from '@/lib/workspace-context'
-import { NEW_CONVERSATION_PLACEHOLDER_TITLE } from '@maskin/shared'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { Command } from 'cmdk'
-import { Search, X } from 'lucide-react'
-import { useCallback, useMemo, useReducer, useState } from 'react'
+import { ChevronDown, Search } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 interface NewChatSearch {
 	agentId?: string
 	agentName?: string
+	/** Comma-separated object ids, from the Objects page's "Ask an agent". */
+	objectIds?: string
 	objectId?: string
 	objectTitle?: string
 	objectType?: string
@@ -25,10 +40,11 @@ interface NewChatSearch {
 }
 
 export const Route = createFileRoute('/_authed/$workspaceId/chats/new')({
-	component: NewConversationPage,
+	component: NewChatRoute,
 	validateSearch: (search: Record<string, unknown>): NewChatSearch => ({
 		agentId: typeof search.agentId === 'string' ? search.agentId : undefined,
 		agentName: typeof search.agentName === 'string' ? search.agentName : undefined,
+		objectIds: typeof search.objectIds === 'string' ? search.objectIds : undefined,
 		objectId: typeof search.objectId === 'string' ? search.objectId : undefined,
 		objectTitle: typeof search.objectTitle === 'string' ? search.objectTitle : undefined,
 		objectType: typeof search.objectType === 'string' ? search.objectType : undefined,
@@ -38,20 +54,40 @@ export const Route = createFileRoute('/_authed/$workspaceId/chats/new')({
 	}),
 })
 
-// Zero-state suggestions (mockup 739–748). Clicking one *prefills* the
-// composer — it never sends, so the draft is still editable before it goes.
+/**
+ * Zero-state suggestions (mockup 6143–6150). Clicking one *prefills* the
+ * composer — it never sends, so the draft is still editable before it goes.
+ *
+ * `who` is the agent the mockup attributes the question to. The prototype's
+ * cast (Forge, Sentinel, Relay, Compass) isn't seeded into real workspaces, so
+ * a name is only shown when an agent by that name actually exists here;
+ * otherwise the row falls back to whoever the chat is currently addressed to,
+ * which is who would in fact answer it.
+ */
 const CHAT_SUGGESTIONS = [
-	'Catch me up on billing',
-	'Why is the retry window still open?',
-	"Draft Acme's note before Thursday",
-	'Which accounts went quiet this week?',
-	'Turn the onboarding cluster into a bet',
+	{ text: 'What needs a decision from me today?', who: 'Chief of Staff' },
+	{ text: 'Summarise what the loops did overnight', who: 'Chief of Staff' },
+	{ text: 'Why is the retry window still open?', who: 'Forge' },
+	{ text: 'Which accounts went quiet this week?', who: 'Sentinel' },
+	{ text: "Draft Acme's note before Thursday", who: 'Relay' },
+	{ text: 'Turn the onboarding cluster into a bet', who: 'Compass' },
 ] as const
 
-interface Participant {
+interface Recipient {
 	id: string
 	name: string
 	type: string
+	description?: string | null
+}
+
+// `new-design` boundary for the New chat screen: the v2 page below, or the
+// pre-v2 page vendored under `components/chat/legacy/`. Note what is *not*
+// behind it — `validateSearch` above, so `objectIds` links resolve on both
+// sides rather than 404ing a user whose flag happens to be off. Resolving is
+// not enough on its own: the pre-v2 page seeds the same ids into its composer
+// selection, so the objects arrive on either branch.
+function NewChatRoute() {
+	return useFeatureFlag('new-design') ? <NewConversationPage /> : <LegacyNewConversationPage />
 }
 
 function NewConversationPage() {
@@ -60,19 +96,53 @@ function NewConversationPage() {
 	const navigate = useNavigate()
 	const createConversation = useCreateConversation(workspaceId)
 	const { data: members } = useWorkspaceMembers(workspaceId)
-	const { data: actors } = useActors(workspaceId)
+	const { data: actors } = useActors(workspaceId, { enabled: true })
+	const defaultAgent = useDefaultChatAgent()
 	const currentActor = getStoredActor()
 
-	const [participants, setParticipants] = useState<Participant[]>(() =>
-		search.agentId
-			? [{ id: search.agentId, name: search.agentName ?? 'Agent', type: 'agent' }]
-			: [],
-	)
-	const [query, setQuery] = useState('')
-	const [isPickerFocused, setIsPickerFocused] = useState(false)
+	const [pickedId, setPickedId] = useState<string | null>(search.agentId ?? null)
+	const [pickerOpen, setPickerOpen] = useState(false)
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
 	const [draft, setDraft] = useState('')
+
+	// Objects handed over by "Ask an agent". Resolved so the chips read as
+	// titles rather than raw ids, then dispatched into the composer's selection
+	// once, so they are removable like any other reference.
+	const referencedIds = useMemo(
+		() => (search.objectIds ? search.objectIds.split(',').filter(Boolean) : []),
+		[search.objectIds],
+	)
+	// `limit` is explicit because the endpoint's default is 50 — well under the
+	// selection sizes `Select all` produces. Without it a larger hand-over
+	// resolved its first fifty ids and dropped the rest with no chip and no
+	// message; the id list in the URL still said otherwise.
+	const { data: referencedObjects } = useObjects(
+		workspaceId,
+		{ ids: referencedIds.join(','), limit: String(MAX_CHAT_OBJECT_REFERENCES) },
+		{ enabled: referencedIds.length > 0 },
+	)
+	const seededRef = useRef(false)
+	useEffect(() => {
+		if (seededRef.current || referencedIds.length === 0 || !referencedObjects) return
+		seededRef.current = true
+		for (const object of referencedObjects) {
+			dispatchSelection({
+				type: 'add_object',
+				object: { id: object.id, title: object.title, type: object.type },
+			})
+		}
+		// An id can also fail to resolve for reasons the cap has nothing to do
+		// with — deleted since the link was made, or belonging to another
+		// workspace. Either way the chat is about to carry fewer objects than the
+		// user picked, so say which, rather than letting the count quietly shrink.
+		const missing = referencedIds.length - referencedObjects.length
+		if (missing > 0) {
+			toast.warning(
+				`${missing} of ${referencedIds.length} objects couldn't be attached — they may have been deleted.`,
+			)
+		}
+	}, [referencedIds, referencedObjects])
 
 	const seedObject = search.objectId
 		? { id: search.objectId, title: search.objectTitle ?? null, type: search.objectType ?? null }
@@ -81,53 +151,69 @@ function NewConversationPage() {
 		? { id: search.notificationId, title: search.notificationTitle ?? null }
 		: null
 
-	const participantIds = useMemo(() => new Set(participants.map((p) => p.id)), [participants])
+	// Agents first, then the workspace's people — the mockup's picker is a list
+	// of who can answer, and an agent is the common case.
+	const candidates = useMemo<Recipient[]>(() => {
+		const agents: Recipient[] = (actors ?? [])
+			.filter((a) => a.type === 'agent')
+			.map((a) => ({ id: a.id, name: a.name, type: a.type, description: a.description }))
+		const people: Recipient[] = (members ?? [])
+			.filter((m) => m.actorId !== currentActor?.id && m.type !== 'agent')
+			.map((m) => ({ id: m.actorId, name: m.name, type: m.type, description: m.role }))
+		const byId = new Map<string, Recipient>()
+		for (const r of [...agents, ...people]) if (!byId.has(r.id)) byId.set(r.id, r)
+		return Array.from(byId.values())
+	}, [actors, members, currentActor])
 
-	const candidates = useMemo(() => {
-		const byId = new Map<string, Participant>()
-		for (const m of members ?? []) {
-			if (m.actorId !== currentActor?.id && !participantIds.has(m.actorId)) {
-				byId.set(m.actorId, { id: m.actorId, name: m.name, type: m.type })
+	// The URL's agentId wins, then an explicit pick, then the workspace's
+	// default chat agent. `agentName` covers the first paint, before the actors
+	// query has resolved and the pill would otherwise read "Agent".
+	const recipient = useMemo<Recipient | null>(() => {
+		const targetId = pickedId ?? defaultAgent?.id ?? null
+		if (targetId) {
+			const found = candidates.find((c) => c.id === targetId)
+			if (found) return found
+			if (targetId === search.agentId) {
+				return { id: targetId, name: search.agentName ?? 'Agent', type: 'agent' }
+			}
+			if (targetId === defaultAgent?.id) {
+				return { id: defaultAgent.id, name: defaultAgent.name, type: 'agent' }
 			}
 		}
-		for (const a of actors ?? []) {
-			if (a.type === 'agent' && !participantIds.has(a.id)) {
-				byId.set(a.id, { id: a.id, name: a.name, type: a.type })
-			}
-		}
-		const needle = query.trim().toLowerCase()
-		const all = Array.from(byId.values())
-		return needle ? all.filter((c) => c.name.toLowerCase().includes(needle)) : all
-	}, [members, actors, participantIds, currentActor, query])
+		return candidates.find((c) => c.type === 'agent') ?? candidates[0] ?? null
+	}, [pickedId, defaultAgent, candidates, search.agentId, search.agentName])
 
-	const handleAddParticipant = useCallback((p: Participant) => {
-		setParticipants((prev) => (prev.some((x) => x.id === p.id) ? prev : [...prev, p]))
-		setQuery('')
-	}, [])
-
-	const handleRemoveParticipant = useCallback((id: string) => {
-		setParticipants((prev) => prev.filter((p) => p.id !== id))
-	}, [])
+	const agentNames = useMemo(
+		() => new Map(candidates.map((c) => [c.name.toLowerCase(), c.name])),
+		[candidates],
+	)
 
 	const handleSend = useCallback(
 		async (content: string) => {
 			setError(null)
 			// The Composer's "Agent" button (selection.agent) is a separate entry
-			// point from the "To" field above — fold it into the participant list
-			// so tagging an agent there actually adds them to the conversation,
-			// instead of silently doing nothing.
-			const taggedAgent =
-				selection.agent && !participantIds.has(selection.agent.id)
-					? [{ id: selection.agent.id, name: selection.agent.name ?? 'Agent', type: 'agent' }]
-					: []
-			const allParticipants = [...participants, ...taggedAgent]
-			if (allParticipants.length === 0) {
+			// point from the recipient pill above — fold it into the participant
+			// list so tagging an agent there actually adds them to the
+			// conversation, instead of silently doing nothing.
+			const ids = new Set<string>()
+			if (recipient) ids.add(recipient.id)
+			if (selection.agent) ids.add(selection.agent.id)
+			if (ids.size === 0) {
 				const err = new Error('Add at least one person or agent to start the conversation')
 				setError(err.message)
 				throw err
 			}
-			const objects = seedObject ? [seedObject] : selection.objects
-			const notifications = seedNotification ? [seedNotification] : selection.notifications
+			// The seeds from ?objectId= / ?notificationId= are additions to whatever the
+			// composer holds, not replacements: a user who arrives via "Ask an agent" and
+			// then attaches more objects must not have those silently dropped.
+			const objects =
+				seedObject && !selection.objects.some((o) => o.id === seedObject.id)
+					? [seedObject, ...selection.objects]
+					: selection.objects
+			const notifications =
+				seedNotification && !selection.notifications.some((n) => n.id === seedNotification.id)
+					? [seedNotification, ...selection.notifications]
+					: selection.notifications
 
 			// Sent as structured metadata (rendered as chips by MessageBubble)
 			// rather than inlined into the message text.
@@ -156,8 +242,8 @@ function NewConversationPage() {
 
 			try {
 				const conversation = await createConversation.mutateAsync({
-					title: NEW_CONVERSATION_PLACEHOLDER_TITLE,
-					participant_actor_ids: allParticipants.map((p) => p.id),
+					title: deriveConversationTitle(content, recipient?.name ?? 'New chat'),
+					participant_actor_ids: Array.from(ids),
 					initial_message: content,
 					...(Object.keys(metadata).length > 0 ? { initial_message_metadata: metadata } : {}),
 				})
@@ -171,31 +257,89 @@ function NewConversationPage() {
 				throw err
 			}
 		},
-		[
-			participants,
-			participantIds,
-			seedObject,
-			seedNotification,
-			selection,
-			createConversation,
-			navigate,
-			workspaceId,
-		],
+		[recipient, seedObject, seedNotification, selection, createConversation, navigate, workspaceId],
 	)
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
 			<div className="flex shrink-0 items-center gap-2.5 border-b border-border px-[clamp(14px,3vw,28px)] py-3">
-				<span className="eyebrow tracking-[0.16em] text-foreground">New chat</span>
-				<span aria-hidden className="text-border-strong">
+				<span className="eyebrow shrink-0 tracking-[0.16em] text-foreground">New chat</span>
+				<span aria-hidden className="shrink-0 text-border-strong">
 					/
 				</span>
+				<ResponsivePopover open={pickerOpen} onOpenChange={setPickerOpen}>
+					<ResponsivePopoverTrigger asChild>
+						<button
+							type="button"
+							title="Change who you are talking to"
+							aria-label={
+								recipient
+									? `Talking to ${recipient.name}. Change who you are talking to`
+									: 'Choose who to talk to'
+							}
+							className="inline-flex shrink-0 items-center gap-[7px] rounded-full border border-border bg-card py-1 pr-2.5 pl-1.5 transition-colors hover:border-foreground"
+						>
+							{recipient ? (
+								<ActorAvatar
+									id={recipient.id}
+									name={recipient.name}
+									type={recipient.type}
+									size="sm"
+								/>
+							) : null}
+							<span className="whitespace-nowrap text-[11.5px] font-semibold text-foreground">
+								{recipient?.name ?? 'Choose an agent'}
+							</span>
+							<ChevronDown size={10} className="text-muted-foreground" aria-hidden />
+						</button>
+					</ResponsivePopoverTrigger>
+					<ResponsivePopoverContent
+						align="start"
+						className="w-[292px] p-1.5"
+						accessibleTitle="Choose who to talk to"
+					>
+						<div className="flex max-h-[60vh] flex-col overflow-y-auto">
+							{candidates.length === 0 ? (
+								<p className="px-2.5 py-2 text-sm text-muted-foreground">
+									No agents or people in this workspace yet.
+								</p>
+							) : (
+								candidates.map((c) => (
+									<button
+										key={c.id}
+										type="button"
+										onClick={() => {
+											setPickedId(c.id)
+											setPickerOpen(false)
+										}}
+										className={cn(
+											'flex items-center gap-2.5 rounded-[9px] px-2.5 py-2 text-left hover:bg-muted',
+											c.id === recipient?.id && 'bg-muted',
+										)}
+									>
+										<ActorAvatar id={c.id} name={c.name} type={c.type} size="md" />
+										<span className="min-w-0 flex-1">
+											<span className="block truncate text-[12.5px] font-semibold text-foreground">
+												{c.name}
+											</span>
+											<span className="block truncate text-[11px] text-muted-foreground">
+												{c.description || (c.type === 'agent' ? 'Agent' : 'Person')}
+											</span>
+										</span>
+									</button>
+								))
+							)}
+						</div>
+					</ResponsivePopoverContent>
+				</ResponsivePopover>
 				<span className="min-w-0 truncate text-xs text-muted-foreground">
-					it becomes a conversation you can come back to
+					answers first, hands it on if someone else owns it
 				</span>
 			</div>
-			<div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-[clamp(14px,3vw,28px)] py-6">
-				<div className="mx-auto w-full max-w-[660px]">
+			<div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-[clamp(14px,3vw,28px)] py-6">
+				{/* `m-auto` — the mockup centres this block in the free space above
+				    the composer rather than pinning it to the top. */}
+				<div className="m-auto w-full max-w-[660px]">
 					<h2 className="text-[clamp(20px,2.4vw,26px)] font-bold leading-tight tracking-[-0.025em]">
 						What are we working on?
 					</h2>
@@ -206,95 +350,45 @@ function NewConversationPage() {
 					<div className="mt-5 flex flex-col gap-1.5">
 						{CHAT_SUGGESTIONS.map((suggestion) => (
 							<Button
-								key={suggestion}
+								key={suggestion.text}
 								type="button"
 								variant="outline"
 								className="h-auto w-full justify-start gap-2.5 whitespace-normal rounded-[11px] px-3.5 py-2.5 text-left text-[13px] font-normal"
-								onClick={() => setDraft(suggestion)}
+								onClick={() => setDraft(suggestion.text)}
 							>
 								<Search size={12} className="shrink-0 text-muted-foreground" aria-hidden />
-								<span className="min-w-0 flex-1">{suggestion}</span>
+								<span className="min-w-0 flex-1">{suggestion.text}</span>
+								<span className="shrink-0 text-[11px] font-normal text-muted-foreground">
+									{agentNames.get(suggestion.who.toLowerCase()) ?? recipient?.name ?? ''}
+								</span>
 							</Button>
 						))}
 					</div>
 				</div>
-				<div className="mx-auto flex w-full max-w-[660px] flex-col gap-1.5">
-					<span className="text-xs font-medium text-muted-foreground">To</span>
-					<div className="flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-card p-2">
-						{participants.map((p) => (
-							<span
-								key={p.id}
-								className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2 py-0.5 text-xs"
-							>
-								<ActorAvatar id={p.id} name={p.name} type={p.type} size="sm" />
-								{p.name}
-								<button
-									type="button"
-									onClick={() => handleRemoveParticipant(p.id)}
-									aria-label={`Remove ${p.name}`}
-									className="inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-								>
-									<X size={10} aria-hidden />
-								</button>
-							</span>
-						))}
-						<Command shouldFilter={false} className="min-w-[10rem] flex-1">
-							<Command.Input
-								value={query}
-								onValueChange={setQuery}
-								placeholder="Add people or agents…"
-								aria-label="Add people or agents"
-								onFocus={() => setIsPickerFocused(true)}
-								onBlur={() => setIsPickerFocused(false)}
-								className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-							/>
-							{isPickerFocused ? (
-								<Command.List
-									onMouseDown={(e) => e.preventDefault()}
-									className="mt-1 max-h-48 overflow-auto rounded-md border border-border bg-popover shadow-sm"
-								>
-									{candidates.length === 0 ? (
-										<div className="px-2 py-2 text-sm text-muted-foreground">No matches.</div>
-									) : (
-										candidates.map((c) => (
-											<Command.Item
-												key={c.id}
-												value={c.id}
-												onSelect={() => handleAddParticipant(c)}
-												className="flex cursor-pointer items-center gap-2 px-2 py-1.5 text-sm data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
-											>
-												<ActorAvatar id={c.id} name={c.name} type={c.type} size="sm" />
-												{c.name}
-											</Command.Item>
-										))
-									)}
-								</Command.List>
-							) : null}
-						</Command>
-					</div>
-				</div>
+			</div>
 
-				<div className="flex flex-1 flex-col justify-end gap-3">
-					<Composer
-						workspaceId={workspaceId}
-						onSend={handleSend}
-						disabled={createConversation.isPending}
-						pending={createConversation.isPending}
-						surface="sheet"
-						placeholder="Message this conversation"
-						selection={selection}
-						onDispatchSelection={dispatchSelection}
-						onRemoveAgent={() => dispatchSelection({ type: 'remove_agent' })}
-						onRemoveObject={(id) => dispatchSelection({ type: 'remove_object', id })}
-						onRemoveNotification={(id) => dispatchSelection({ type: 'remove_notification', id })}
-						onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}
-						externalError={error}
-						onDismissExternalError={() => setError(null)}
-						textareaLabel="Message this conversation"
-						value={draft}
-						onValueChange={setDraft}
-					/>
-				</div>
+			{/* The composer is pinned below the scroll region, gutter-aligned with
+			    the header and with no divider above it (mockup 645–646). */}
+			<div className="shrink-0 px-[clamp(14px,3vw,28px)] pt-2.5 pb-3.5">
+				<Composer
+					workspaceId={workspaceId}
+					onSend={handleSend}
+					disabled={createConversation.isPending}
+					pending={createConversation.isPending}
+					surface="sheet"
+					placeholder={recipient ? `Message ${recipient.name}…` : 'Message this conversation'}
+					selection={selection}
+					onDispatchSelection={dispatchSelection}
+					onRemoveAgent={() => dispatchSelection({ type: 'remove_agent' })}
+					onRemoveObject={(id) => dispatchSelection({ type: 'remove_object', id })}
+					onRemoveNotification={(id) => dispatchSelection({ type: 'remove_notification', id })}
+					onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}
+					externalError={error}
+					onDismissExternalError={() => setError(null)}
+					textareaLabel="Message this conversation"
+					value={draft}
+					onValueChange={setDraft}
+				/>
 			</div>
 		</div>
 	)

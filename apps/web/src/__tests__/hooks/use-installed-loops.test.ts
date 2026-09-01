@@ -80,7 +80,7 @@ describe('useInstallLoop', () => {
 		const { result } = renderHook(() => useInstallLoop(workspaceId), { wrapper: TestWrapper })
 		result.current.mutate({ loopId: 'loop-1' })
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
-		expect(api.installedLoops.install).toHaveBeenCalledWith(workspaceId, 'loop-1')
+		expect(api.installedLoops.install).toHaveBeenCalledWith(workspaceId, 'loop-1', undefined)
 		expect(toast.success).toHaveBeenCalledWith('Loop installed')
 	})
 

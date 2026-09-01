@@ -23,10 +23,7 @@ interface HeroCardObject {
 	title: string | null
 	status: string | null
 	driver: HeroCardActor | null
-	// Omitted for actor rows — status (role) and description already cover it.
-	contextLine?: string
-	// Actor-only: the raw role, independent of status's isSystem/type fallback.
-	role?: string | null
+	contextLine: string
 	badges?: string[]
 }
 
@@ -133,11 +130,9 @@ function HeroCardSingle({ object }: { object: HeroCardObject }) {
 			<h3 className="text-[15px] font-semibold leading-snug text-foreground m-0 line-clamp-1">
 				{object.title || 'Untitled'}
 			</h3>
-			{(object.contextLine || object.role) && (
-				<p className="text-[13px] text-muted-foreground leading-relaxed m-0 line-clamp-1">
-					{object.contextLine || object.role}
-				</p>
-			)}
+			<p className="text-[13px] text-muted-foreground leading-relaxed m-0 line-clamp-1">
+				{object.contextLine}
+			</p>
 			<div className="flex items-center gap-2.5 pt-2 border-t border-border mt-0.5">
 				{object.driver?.name &&
 					(object.driver.type !== 'agent' ? (
@@ -317,7 +312,7 @@ function HeroCardListRow({
 				</span>
 			) : null}
 			<span className="ml-auto text-[11.5px] text-muted-foreground tabular-nums truncate shrink-0 max-w-[160px]">
-				{row.contextLine || row.role || typeLabel}
+				{row.contextLine || typeLabel}
 			</span>
 		</>
 	)

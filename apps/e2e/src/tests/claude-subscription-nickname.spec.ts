@@ -1,5 +1,5 @@
 import { expect, test } from '../fixtures/auth.fixture'
-import { grantByollmAllowed } from '../helpers/plan.helper'
+import { grantEnterprise } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const BASE = 'http://localhost:5173'
@@ -43,7 +43,7 @@ test.describe('Claude subscription nickname — settings UI', () => {
 		page,
 		account,
 	}) => {
-		await grantByollmAllowed(account.apiKey, account.workspaceId)
+		await grantEnterprise(account.apiKey, account.workspaceId)
 		await importClaudeOAuth(account.apiKey, account.workspaceId, {
 			...seedPrimary,
 			slot: 'primary',
@@ -82,6 +82,7 @@ test.describe('Claude subscription nickname — settings UI', () => {
 		// Long labels are the case most likely to clip or scroll out of view on
 		// narrow widths — the reported "nickname missing on small screens".
 		const longNickname = 'The primary work account nickname for Q3'
+		await grantEnterprise(account.apiKey, account.workspaceId)
 		await importClaudeOAuth(account.apiKey, account.workspaceId, {
 			...seedPrimary,
 			slot: 'primary',
@@ -101,7 +102,7 @@ test.describe('Claude subscription nickname — settings UI', () => {
 	})
 
 	test('clearing a nickname reverts to the placeholder', async ({ page, account }) => {
-		await grantByollmAllowed(account.apiKey, account.workspaceId)
+		await grantEnterprise(account.apiKey, account.workspaceId)
 		await importClaudeOAuth(account.apiKey, account.workspaceId, {
 			...seedPrimary,
 			slot: 'primary',

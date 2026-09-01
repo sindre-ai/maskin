@@ -27,6 +27,7 @@ import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { describeCronSchedule, parseCronExpression } from '@/lib/cron'
+import { isTriggerChange } from '@/lib/triggers'
 import type { SafeJsonValue, conditionOperatorSchema } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { Bell, Clock, Plus, X, Zap } from 'lucide-react'
@@ -698,9 +699,11 @@ export function TriggerForm({
 	// Suggestion chips are the zero state of the language bar: they only stand
 	// in for a transcript that isn't there yet (mockup 1821–1827). Shares the
 	// `events.byEntity` cache entry TriggerHistory already reads, so gating on
-	// it costs no extra request.
+	// it costs no extra request — and shares its predicate, so the chips stand
+	// down exactly when CHANGES appears, not when the trigger's own `created`
+	// event lands.
 	const { data: triggerEvents } = useEntityEvents(workspaceId, triggerId ?? '')
-	const hasChanges = (triggerEvents ?? []).some((e) => e.entityId === triggerId)
+	const hasChanges = (triggerEvents ?? []).some((e) => isTriggerChange(e, triggerId ?? ''))
 
 	const handleUtterance = useCallback(
 		async (_content: string) => {

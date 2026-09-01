@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { buildWorkspaceWithRole } from '../factories'
 
@@ -43,7 +43,7 @@ vi.mock('@maskin/module-sdk', () => ({
 }))
 
 vi.mock('sonner', () => ({
-	toast: { error: vi.fn() },
+	toast: { error: vi.fn(), success: vi.fn() },
 }))
 
 vi.mock('@/components/shared/route-error', () => ({
@@ -51,8 +51,15 @@ vi.mock('@/components/shared/route-error', () => ({
 }))
 
 import { Route } from '@/routes/_authed/$workspaceId/settings/index'
+import { toast } from 'sonner'
 
 const GeneralPage = (Route as unknown as { component: React.FC }).component
+
+// These specs cover the v2 branch of the `new-design` boundary, so they drive
+// the flag on through the test-only localStorage override.
+beforeEach(() => {
+	localStorage.setItem('ff:new-design', 'on')
+})
 
 describe('GeneralPage', () => {
 	beforeEach(() => {
@@ -87,7 +94,20 @@ describe('GeneralPage', () => {
 		await user.clear(input)
 		await user.type(input, 'New Name')
 		await user.click(screen.getByRole('button', { name: 'Save' }))
-		expect(mockMutate).toHaveBeenCalledWith({ name: 'New Name' })
+		expect(mockMutate).toHaveBeenCalledWith({ name: 'New Name' }, expect.anything())
+	})
+
+	it('confirms a successful save with a toast', async () => {
+		const user = userEvent.setup()
+		render(<GeneralPage />)
+		const input = screen.getByDisplayValue('My Workspace')
+		await user.clear(input)
+		await user.type(input, 'New Name')
+		await user.click(screen.getByRole('button', { name: 'Save' }))
+
+		const [, options] = mockMutate.mock.calls[0] as [unknown, { onSuccess: () => void }]
+		options.onSuccess()
+		expect(toast.success).toHaveBeenCalledWith('Workspace name saved')
 	})
 
 	it('renders theme picker with light/dark/system options', () => {
@@ -97,8 +117,16 @@ describe('GeneralPage', () => {
 		expect(screen.getByText('System')).toBeInTheDocument()
 	})
 
-	it('renders extensions section', () => {
+	// Extensions has its own rail section (mockup 2778-2789) and is not part of
+	// General — rendering ExtensionsManager here mounted the same component twice.
+	it('does not render the extensions manager on General', () => {
 		render(<GeneralPage />)
-		expect(screen.getByText('Extensions')).toBeInTheDocument()
+		expect(screen.queryByText('Extensions')).not.toBeInTheDocument()
+	})
+
+	it('renders the three general sections as uppercase eyebrow labels in mockup order', () => {
+		render(<GeneralPage />)
+		const headings = screen.getAllByRole('heading').map((h) => h.textContent)
+		expect(headings).toEqual(['WORKSPACE NAME', 'APPEARANCE', 'PRIVACY & DATA'])
 	})
 })

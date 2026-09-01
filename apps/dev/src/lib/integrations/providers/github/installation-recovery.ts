@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { events, integrations } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
+import { and, eq, ne } from 'drizzle-orm'
 import { decrypt, encrypt } from '../../../crypto'
 import { logger } from '../../../logger'
 import type { StoredCredentials } from '../../types'
@@ -97,4 +97,113 @@ export async function persistRecoveredInstallationId(
 		}
 		return { persisted: true }
 	})
+}
+
+/**
+ * Propagate a recovered installation id to every *other* workspace bound to the
+ * same installation. One GitHub App installation can be linked into several
+ * workspaces (see `POST /api/integrations/github/link`); when a reinstall
+ * rotates the id, only the row that happened to mint the token gets rotated by
+ * `persistRecoveredInstallationId`. Without this the siblings each carry a dead
+ * id until they independently 404 and recover, which for a workspace that only
+ * reads webhooks may be never.
+ *
+ * Keyed on the *source row's own* `external_id`, which the recovery path
+ * deliberately leaves at its original value — webhook routing matches on it, and
+ * GitHub keeps delivering under the id its payloads carry. It must not be keyed
+ * on `expectedOldInstallationId`: that comes from the credentials blob, which
+ * `persistRecoveredInstallationId` rotates while `external_id` stays put, so the
+ * two diverge after the first recovery and every later rotation would match no
+ * siblings at all. Best-effort: failures are logged, never thrown, so a sibling
+ * write can't fail an already-successful token mint.
+ */
+export async function propagateRecoveredInstallationId(
+	db: Database,
+	input: {
+		/** The row already rotated by persistRecoveredInstallationId — skipped. */
+		sourceIntegrationId: string
+		/** The source row's `external_id` — stable across rotations, unlike credentials. */
+		sourceExternalId: string
+		actorId: string
+		expectedOldInstallationId: string
+		newInstallationId: string
+		repo: string
+	},
+): Promise<{ updatedIntegrationIds: string[] }> {
+	const {
+		sourceIntegrationId,
+		sourceExternalId,
+		actorId,
+		expectedOldInstallationId,
+		newInstallationId,
+		repo,
+	} = input
+
+	// The lookup itself sits inside the best-effort boundary too. It used to run
+	// outside it, so a transient DB error here escaped into the token route's
+	// catch and turned an already-minted, perfectly valid token into a 400.
+	let siblings: { id: string; workspaceId: string; credentials: string }[]
+	try {
+		siblings = await db
+			.select({
+				id: integrations.id,
+				workspaceId: integrations.workspaceId,
+				credentials: integrations.credentials,
+			})
+			.from(integrations)
+			.where(
+				and(
+					eq(integrations.provider, 'github'),
+					eq(integrations.externalId, sourceExternalId),
+					eq(integrations.status, 'active'),
+					ne(integrations.id, sourceIntegrationId),
+				),
+			)
+	} catch (err) {
+		logger.warn('Failed to load sibling integrations for installation id propagation', {
+			sourceIntegrationId,
+			sourceExternalId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return { updatedIntegrationIds: [] }
+	}
+
+	const updatedIntegrationIds: string[] = []
+	for (const sibling of siblings) {
+		try {
+			const creds: StoredCredentials = JSON.parse(decrypt(sibling.credentials))
+			if (creds.installation_id !== expectedOldInstallationId) continue
+
+			await db
+				.update(integrations)
+				.set({
+					credentials: encrypt(JSON.stringify({ ...creds, installation_id: newInstallationId })),
+					updatedAt: new Date(),
+				})
+				.where(eq(integrations.id, sibling.id))
+
+			await db.insert(events).values({
+				workspaceId: sibling.workspaceId,
+				actorId,
+				action: 'updated',
+				entityType: 'integration',
+				entityId: sibling.id,
+				data: {
+					reason: 'installation_id_recovered',
+					old_installation_id: expectedOldInstallationId,
+					new_installation_id: newInstallationId,
+					repo,
+					propagated_from: sourceIntegrationId,
+				},
+			})
+			updatedIntegrationIds.push(sibling.id)
+		} catch (err) {
+			logger.warn('Failed to propagate recovered installation id to sibling workspace', {
+				integrationId: sibling.id,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
+	return { updatedIntegrationIds }
 }

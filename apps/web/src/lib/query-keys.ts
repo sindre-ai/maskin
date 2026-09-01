@@ -57,6 +57,10 @@ export const queryKeys = {
 	integrations: {
 		all: (workspaceId: string) => ['integrations', workspaceId] as const,
 		providers: () => ['integrations', 'providers'] as const,
+		githubLinkable: (workspaceId: string) =>
+			['integrations', workspaceId, 'github', 'linkable'] as const,
+		githubPendingSelection: (workspaceId: string, integrationId: string) =>
+			['integrations', workspaceId, 'github', 'pending-selection', integrationId] as const,
 		slackConversations: (integrationId: string, types: string[]) =>
 			['integrations', integrationId, 'slack', 'conversations', [...types].sort()] as const,
 		slackUsers: (integrationId: string) =>
@@ -117,11 +121,12 @@ export const queryKeys = {
 	claudeOauth: {
 		status: (workspaceId: string) => ['claude-oauth', workspaceId, 'status'] as const,
 	},
-	billing: {
-		usage: (workspaceId: string) => ['billing', workspaceId, 'usage'] as const,
-	},
 	briefing: {
 		current: (workspaceId: string) => ['briefing', workspaceId] as const,
+	},
+	billing: {
+		all: (workspaceId: string) => ['billing', workspaceId] as const,
+		usage: (workspaceId: string) => ['billing', workspaceId, 'usage'] as const,
 	},
 	subscriptions: {
 		subscribers: (entityType: string, entityId: string) =>

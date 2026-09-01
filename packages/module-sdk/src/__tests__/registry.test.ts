@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
 	ModuleRegistry,
+	applyModuleDefaults,
 	clearModules,
 	clearWebModules,
 	getAllModules,
@@ -17,7 +18,7 @@ import {
 	registerModule,
 	registerWebModule,
 } from '../registry'
-import type { ModuleDefinition, ModuleWebDefinition } from '../types'
+import type { ModuleDefaultSettings, ModuleDefinition, ModuleWebDefinition } from '../types'
 
 const mockModule: ModuleDefinition = {
 	id: 'work',
@@ -259,60 +260,6 @@ describe('getEnabledModuleIds', () => {
 	})
 })
 
-describe('mergeModuleDefaultSettings', () => {
-	const workModule: ModuleDefinition = {
-		id: 'work',
-		name: 'Work',
-		version: '0.1.0',
-		objectTypes: [],
-		defaultSettings: {
-			display_names: { insight: 'Insight' },
-			statuses: { insight: ['new', 'processing'] },
-		},
-	}
-
-	const crmModule: ModuleDefinition = {
-		id: 'crm',
-		name: 'CRM',
-		version: '0.1.0',
-		objectTypes: [],
-		defaultSettings: {
-			display_names: { contact: 'Person' },
-			statuses: { contact: ['new_lead', 'converted'] },
-		},
-	}
-
-	it('layers enabled modules default display_names and statuses under settings', () => {
-		registerModule(workModule)
-		registerModule(crmModule)
-		const result = mergeModuleDefaultSettings({}, ['work', 'crm'])
-		expect(result.display_names).toEqual({ insight: 'Insight', contact: 'Person' })
-		expect(result.statuses).toEqual({
-			insight: ['new', 'processing'],
-			contact: ['new_lead', 'converted'],
-		})
-	})
-
-	it('lets existing settings values win over module defaults per key', () => {
-		registerModule(crmModule)
-		const result = mergeModuleDefaultSettings({ display_names: { contact: 'Custom Contact' } }, [
-			'crm',
-		])
-		expect(result.display_names).toEqual({ contact: 'Custom Contact' })
-	})
-
-	it('ignores module ids with no registered defaultSettings', () => {
-		registerModule(workModule)
-		const result = mergeModuleDefaultSettings({}, ['work', 'nonexistent'])
-		expect(result.display_names).toEqual({ insight: 'Insight' })
-	})
-
-	it('preserves other settings keys untouched', () => {
-		const result = mergeModuleDefaultSettings({ max_concurrent_sessions: 5 }, [])
-		expect(result.max_concurrent_sessions).toBe(5)
-	})
-})
-
 describe('web module registry', () => {
 	it('registers and retrieves web modules', () => {
 		registerWebModule(mockWebModule)
@@ -359,5 +306,81 @@ describe('web module registry', () => {
 		registerWebModule(mockWebModule)
 		clearWebModules()
 		expect(getAllWebModules()).toHaveLength(0)
+	})
+})
+
+// Shape of the workspace settings slice the merge touches. Declared here so the
+// object literals below carry the optional keys the merge fills in.
+type Settings = {
+	enabled_modules?: string[]
+	display_names?: Record<string, string>
+	statuses?: Record<string, string[]>
+	field_definitions?: Record<string, Array<{ name: string; type: string }>>
+	relationship_types?: string[]
+}
+
+describe('mergeModuleDefaultSettings', () => {
+	const crmDefaults: ModuleDefaultSettings = {
+		display_names: { contact: 'Contact' },
+		statuses: { contact: ['new_lead', 'converted'] },
+		field_definitions: { contact: [{ name: 'email', type: 'text' }] },
+		relationship_types: ['works_at', 'relates_to'],
+	}
+
+	it('returns settings untouched when no module contributes defaults', () => {
+		const settings: Settings = { enabled_modules: ['work'], statuses: { task: ['todo'] } }
+		expect(mergeModuleDefaultSettings(settings, [undefined])).toBe(settings)
+	})
+
+	it('fills in display names, statuses and field definitions the module introduces', () => {
+		const merged = mergeModuleDefaultSettings<Settings>(
+			{ display_names: { task: 'Task' }, statuses: { task: ['todo'] }, field_definitions: {} },
+			[crmDefaults],
+		)
+		expect(merged.display_names).toEqual({ task: 'Task', contact: 'Contact' })
+		expect(merged.statuses).toEqual({ task: ['todo'], contact: ['new_lead', 'converted'] })
+		expect(merged.field_definitions).toEqual({ contact: [{ name: 'email', type: 'text' }] })
+	})
+
+	it('keeps existing values when a module default collides', () => {
+		const merged = mergeModuleDefaultSettings<Settings>(
+			{ display_names: { contact: 'Lead' }, statuses: { contact: ['mine'] } },
+			[crmDefaults],
+		)
+		expect(merged.display_names).toEqual({ contact: 'Lead' })
+		expect(merged.statuses).toEqual({ contact: ['mine'] })
+	})
+
+	it('unions relationship types without duplicates', () => {
+		const merged = mergeModuleDefaultSettings<Settings>(
+			{ relationship_types: ['informs', 'relates_to'] },
+			[crmDefaults],
+		)
+		expect(merged.relationship_types).toEqual(['informs', 'relates_to', 'works_at'])
+	})
+
+	it('merges defaults from several modules at once', () => {
+		const knowledgeDefaults: ModuleDefaultSettings = {
+			display_names: { knowledge: 'Article' },
+			statuses: { knowledge: ['draft'] },
+			relationship_types: ['about'],
+		}
+		const merged = mergeModuleDefaultSettings<Settings>({}, [knowledgeDefaults, crmDefaults])
+		expect(merged.display_names).toEqual({ knowledge: 'Article', contact: 'Contact' })
+		expect(merged.statuses).toEqual({ knowledge: ['draft'], contact: ['new_lead', 'converted'] })
+		expect(merged.relationship_types).toEqual(['about', 'works_at', 'relates_to'])
+	})
+})
+
+describe('applyModuleDefaults', () => {
+	afterEach(() => clearModules())
+
+	it('pulls each enabled module’s defaults out of the registry', () => {
+		registerModule({ ...mockModule2, defaultSettings: { display_names: { contact: 'Contact' } } })
+		const merged = applyModuleDefaults<Settings>({ enabled_modules: ['work', 'crm'] }, [
+			'work',
+			'crm',
+		])
+		expect(merged.display_names).toEqual({ contact: 'Contact' })
 	})
 })
