@@ -62,7 +62,9 @@ test.describe('Agents index', () => {
 			// rest of the page — every role query below would resolve to nothing
 			// while it is open. Dismiss it before asserting on the list.
 			await page.keyboard.press('Escape')
-			await expect(page.getByRole('button', { name: 'Display', exact: true })).toBeVisible()
+			// Not `exact`: a filter is applied by now, so the trigger carries its
+			// active-filter count and its accessible name is "Display 1".
+			await expect(page.getByRole('button', { name: /^Display/ })).toBeVisible()
 
 			await expect(page.getByRole('heading', { name: /^Working$/ })).not.toBeVisible()
 			await expect(page.getByRole('heading', { name: /^Failed$/ })).not.toBeVisible()

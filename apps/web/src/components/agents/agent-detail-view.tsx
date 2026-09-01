@@ -48,7 +48,9 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 			}
 			isRunPending={run.isPending}
 			isPausePending={pause.isPending}
-			runLabel={portrait === 'paused' ? 'Resume' : 'Run'}
+			runLabel="Enable agent"
+			pauseLabel="Disable agent"
+			tone="warning"
 			density="nav"
 		/>
 	)

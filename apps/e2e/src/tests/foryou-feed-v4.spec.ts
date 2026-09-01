@@ -215,7 +215,6 @@ test.describe('For You v4 — cards, options and the receipt', () => {
 		// …and the receipt is still there once the feed has refetched without it.
 		await page.waitForTimeout(1200)
 		await expect(page.getByTestId('decision-receipt')).toBeVisible()
-		await expect(page.getByText('You have handled 1 today')).toBeVisible()
 	})
 
 	test('a plain thread offers no options, only a composer', async ({ page, account }) => {

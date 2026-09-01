@@ -53,7 +53,14 @@ export function AgentDetailHeader({
 				/>
 				<div className="flex min-w-0 flex-1 flex-col gap-1.5">
 					<div className="flex flex-wrap items-center gap-2.5">
-						<h1 className="min-w-0 flex-1 truncate text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
+						{/* Named explicitly: the heading's only child is the edit button,
+						    and a control contributes its *accessible name* to the name of
+						    an ancestor computed from content — so without this the page's
+						    one <h1> announces "Edit agent name" instead of the agent's. */}
+						<h1
+							aria-label={agent.name}
+							className="min-w-0 flex-1 truncate text-xl font-semibold tracking-tight text-foreground sm:text-2xl"
+						>
 							<EditableField
 								value={agent.name}
 								label="Agent name"
