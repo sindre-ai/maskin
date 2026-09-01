@@ -1,5 +1,6 @@
 import { CommentInput } from '@/components/activity/comment-input'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { DecisionOptionCard, DecisionOptionGrid } from '@/components/shared/decision-option-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RelativeTime } from '@/components/shared/relative-time'
@@ -270,16 +271,17 @@ export function FeedCard({
 				)}
 
 				{options.length > 0 && (
-					<div className="grid gap-[9px] [grid-template-columns:repeat(auto-fit,minmax(190px,1fr))]">
+					<DecisionOptionGrid>
 						{options.map((option) => (
-							<OptionCard
+							<DecisionOptionCard
 								key={option.id}
 								option={option}
 								pending={pendingId === option.id}
+								disabled={pendingId !== null}
 								onChoose={() => chooseOption(option)}
 							/>
 						))}
-					</div>
+					</DecisionOptionGrid>
 				)}
 
 				<CommentInput
@@ -312,66 +314,6 @@ function CardShell({ expanded, children }: { expanded: boolean; children: React.
 			)}
 		>
 			{children}
-		</div>
-	)
-}
-
-// One answer, drawn as its own small card: what taking it means, then a
-// full-width bar that commits it. The recommended option is the filled dark
-// bar on the right (mockup's `o.rec`).
-function OptionCard({
-	option,
-	pending,
-	onChoose,
-}: {
-	option: CardAction
-	pending: boolean
-	onChoose: () => void
-}) {
-	const recommended = Boolean(option.recommended)
-	return (
-		<div
-			className={cn(
-				'flex flex-col overflow-hidden rounded-[13px] border border-border bg-card transition-opacity duration-150 hover:opacity-100',
-				recommended ? 'opacity-100' : 'opacity-[0.82]',
-			)}
-		>
-			{option.consequences.length > 0 && (
-				<div className="flex flex-col gap-1.5 px-[13px] pb-2.5 pt-[11px]">
-					{option.consequences.map((consequence) => (
-						<div
-							key={consequence}
-							className="flex gap-[7px] text-[11.5px] leading-[1.45] text-muted-foreground"
-						>
-							<span aria-hidden className="shrink-0 text-border">
-								·
-							</span>
-							<span className="min-w-0 text-pretty">{consequence}</span>
-						</div>
-					))}
-				</div>
-			)}
-			<button
-				type="button"
-				data-action-id={option.id}
-				onClick={onChoose}
-				disabled={pending}
-				className={cn(
-					'mt-auto flex min-h-11 items-center gap-2.5 px-3.5 py-2.5 text-right transition-[background,transform] duration-150 hover:opacity-90 active:scale-[0.985]',
-					recommended
-						? 'bg-primary text-primary-foreground'
-						: 'bg-card text-foreground hover:bg-secondary',
-				)}
-			>
-				<span
-					className={cn(
-						'min-w-0 flex-1 text-right tracking-[-0.01em]',
-						recommended ? 'text-[13.5px] font-bold' : 'text-[12.5px] font-semibold',
-					)}
-				>
-					{pending ? `${option.label}…` : option.label}
-				</span>
-			</button>
 		</div>
 	)
 }

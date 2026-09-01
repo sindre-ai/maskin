@@ -12,6 +12,7 @@ import { ActorAvatar } from '../shared/actor-avatar'
 import { AgentOutput } from '../shared/agent-output'
 import { AttachedFileCard } from '../shared/attached-file-card'
 import { RelativeTime } from '../shared/relative-time'
+import { CommentDecisionBlock } from './comment-decision-block'
 import { CommentInput } from './comment-input'
 import { CommentTaskList, hasTaskList } from './comment-task-list'
 import { MentionSessionCard } from './mention-session-card'
@@ -407,6 +408,26 @@ export function ActivityComment({
 		</button>
 	) : null
 
+	// The ask's own options, under the message that raised them. The timeline
+	// marks a decision comment as needing the reader, so it has to be answerable
+	// here too — badging a call and then sending the reader elsewhere to make it
+	// is the state this replaced.
+	const decisionBlock = isDecisionPoint ? (
+		<CommentDecisionBlock
+			event={event}
+			workspaceId={workspaceId}
+			objectId={objectId}
+			replies={replies}
+		/>
+	) : null
+	const rowFooter =
+		decisionBlock || (isBubble && threadToggle) ? (
+			<>
+				{decisionBlock}
+				{isBubble ? threadToggle : null}
+			</>
+		) : undefined
+
 	return (
 		<div id={`comment-${event.id}`} className="group">
 			<CommentRow
@@ -417,7 +438,7 @@ export function ActivityComment({
 				isUnread={isUnread}
 				isDecisionPoint={isDecisionPoint}
 				variant={variant}
-				footer={isBubble ? threadToggle : undefined}
+				footer={rowFooter}
 			/>
 
 			{mentionSessions.length > 0 && (
