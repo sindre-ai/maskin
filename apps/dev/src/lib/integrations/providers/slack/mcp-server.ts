@@ -875,7 +875,17 @@ export function createSlackMcpServer(ctx: SlackToolContext): McpServer {
 						// Per-match, from Slack's own metadata — so the agent can tell a
 						// public-channel hit from a private one instead of trusting a
 						// blanket claim about the whole result set.
-						is_private: channel?.is_private ?? channel?.is_im ?? channel?.is_mpim ?? undefined,
+						//
+						// OR, not `??`: Slack sets `is_private: false` on DMs and group
+						// DMs, where privacy is carried by `is_im` / `is_mpim` instead. A
+						// `??` chain short-circuits on that `false` and reports a DM hit
+						// as public — the one thing this field exists to prevent. Stays
+						// `undefined` only when the match carries no channel object at
+						// all, so "unknown" remains distinguishable from "public".
+						is_private:
+							channel === undefined
+								? undefined
+								: Boolean(channel.is_private || channel.is_im || channel.is_mpim),
 						permalink: m.permalink,
 					}
 				})

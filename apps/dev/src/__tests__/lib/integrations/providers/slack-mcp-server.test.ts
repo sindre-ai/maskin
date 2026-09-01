@@ -314,6 +314,72 @@ describe('createSlackMcpServer — tool registration', () => {
 	})
 })
 
+describe('createSlackMcpServer — slack_search_messages result shaping', () => {
+	let fetchMock: ReturnType<typeof vi.fn>
+
+	beforeEach(() => {
+		fetchMock = vi.fn()
+		vi.stubGlobal('fetch', fetchMock)
+	})
+	afterEach(() => vi.unstubAllGlobals())
+
+	async function searchWithChannel(channel: unknown) {
+		fetchMock.mockResolvedValue(
+			jsonResponse({
+				ok: true,
+				messages: {
+					total: 1,
+					matches: [{ ts: '1717000000.000100', text: 'the number is 42', channel }],
+				},
+			}),
+		)
+		const tools = toolsOf({ ...baseCtx, userToken: 'xoxp-user-token' })
+		const res = (await tools.slack_search_messages.handler({ query: 'number' }, {})) as {
+			content: { text: string }[]
+		}
+		return (payload(res).matches as Record<string, unknown>[])[0]
+	}
+
+	// The search tool tells the agent to check where a hit came from before
+	// reposting it, and `is_private` is the only per-match signal it has. Slack
+	// stamps `is_private: false` on DMs and group DMs — privacy lives in
+	// `is_im` / `is_mpim` there — so a `??` chain would stop at that `false` and
+	// hand back a DM labelled public.
+	it('marks a DM private even though Slack sends is_private: false', async () => {
+		const match = await searchWithChannel({ id: 'D123', is_private: false, is_im: true })
+		expect(match.is_private).toBe(true)
+	})
+
+	it('marks a group DM private even though Slack sends is_private: false', async () => {
+		const match = await searchWithChannel({ id: 'G123', is_private: false, is_mpim: true })
+		expect(match.is_private).toBe(true)
+	})
+
+	it('marks a private channel private', async () => {
+		const match = await searchWithChannel({ id: 'C123', name: 'founders', is_private: true })
+		expect(match.is_private).toBe(true)
+	})
+
+	it('marks a public channel public', async () => {
+		const match = await searchWithChannel({
+			id: 'C123',
+			name: 'general',
+			is_private: false,
+			is_im: false,
+			is_mpim: false,
+		})
+		expect(match.is_private).toBe(false)
+		expect(match.channel_name).toBe('general')
+	})
+
+	// Absent channel metadata must stay distinguishable from a confirmed public
+	// hit, so the agent can tell "unknown" from "safe to repost".
+	it('leaves is_private undefined when the match carries no channel object', async () => {
+		const match = await searchWithChannel(undefined)
+		expect(match.is_private).toBeUndefined()
+	})
+})
+
 describe('createSlackMcpServer — token separation', () => {
 	let fetchMock: ReturnType<typeof vi.fn>
 
