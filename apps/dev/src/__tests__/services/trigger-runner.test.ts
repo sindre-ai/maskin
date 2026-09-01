@@ -851,6 +851,117 @@ describe('TriggerRunner', () => {
 			await vi.advanceTimersByTimeAsync(2 * 60 * 1000)
 			expect(sessionManager.createSession).toHaveBeenCalled()
 		})
+
+		// The failure paths emit workspace events too, and one of them emits on
+		// the very path that opens the pause: resolveClaudeCredentialsWithFailover
+		// inserts `claude_subscription_failover_triggered` while failing over, and
+		// the same resolution then raises the credentials error that suppresses.
+		// PG NOTIFY is async, so it lands AFTER the pause. An unfiltered
+		// `entity_type === 'workspace'` clear deletes the pause here, and the
+		// workspace goes back to suppress → clear → re-fire → fail forever —
+		// the exact flood this suppression exists to stop.
+		it('does not resume on a workspace event that reports a failure', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			const trigger = cronTrigger('ws-failover')
+			await startWithCron(trigger, new LlmCredentialsUnavailableError('no credentials configured'))
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'session-4',
+			})
+
+			for (const action of [
+				'claude_subscription_failover_triggered',
+				'claude_subscription_backup_exhausted',
+				'workspace_billing_canceled',
+			]) {
+				mockResults.select = []
+				bridge.emit('event', {
+					workspace_id: 'ws-failover',
+					entity_type: 'workspace',
+					entity_id: 'ws-failover',
+					action,
+					actor_id: 'actor-1',
+					event_id: `evt-${action}`,
+				} as PgEvent)
+				await vi.advanceTimersByTimeAsync(0)
+			}
+
+			mockResults.selectQueue = [[trigger], []]
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		// The counterpart guard: the two most important resume signals for a plan
+		// cap are NOT spelled `updated`. Stripe writes `workspace_billing_updated`
+		// for an upgrade and `workspace_credit_topup` for a credit purchase, and a
+		// top-up genuinely un-caps the workspace via canUseCreditBalance. Narrowing
+		// the filter to `updated` would strand an upgrading customer for the rest
+		// of the billing period.
+		it.each(['workspace_billing_updated', 'workspace_credit_topup'])(
+			'resumes immediately on a %s event',
+			async (action) => {
+				vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+				const trigger = cronTrigger('ws-billing')
+				await startWithCron(
+					trigger,
+					new PlanCapExceededError({
+						plan: 'trial',
+						used: 1054,
+						cap: 1000,
+						periodEnd: new Date('2026-01-20T00:00:00Z').getTime(),
+					}),
+				)
+				;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+				;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+					id: 'session-5',
+				})
+
+				await vi.advanceTimersByTimeAsync(2 * 60 * 1000)
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+				mockResults.select = []
+				bridge.emit('event', {
+					workspace_id: 'ws-billing',
+					entity_type: 'workspace',
+					entity_id: 'ws-billing',
+					action,
+					actor_id: 'actor-1',
+					event_id: `evt-${action}`,
+				} as PgEvent)
+				await vi.advanceTimersByTimeAsync(0)
+
+				mockResults.selectQueue = [[trigger], []]
+				await vi.advanceTimersByTimeAsync(2 * 60 * 1000)
+				expect(sessionManager.createSession).toHaveBeenCalled()
+			},
+		)
+
+		// Guards the entity_type half of the filter: a busy workspace emits object
+		// events constantly, and those must not lift a pause.
+		it('does not resume on a non-workspace event', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			const trigger = cronTrigger('ws-busy')
+			await startWithCron(trigger, new LlmCredentialsUnavailableError('no credentials configured'))
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'session-6',
+			})
+
+			mockResults.select = []
+			bridge.emit('event', {
+				workspace_id: 'ws-busy',
+				entity_type: 'object',
+				entity_id: 'obj-1',
+				action: 'updated',
+				actor_id: 'actor-1',
+				event_id: 'evt-obj-1',
+			} as PgEvent)
+			await vi.advanceTimersByTimeAsync(0)
+
+			mockResults.selectQueue = [[trigger], []]
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
 	})
 
 	// In production SessionManager hands off to SessionDispatchQueue and returns,

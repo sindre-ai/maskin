@@ -90,11 +90,54 @@ const PLAN_CAP_FALLBACK_SUPPRESSION_MS = 60 * 60_000
 /**
  * Pause for "this workspace has no LLM credentials". Unlike a plan cap this has
  * no natural expiry — nothing resets it but a human connecting a credential —
- * so we re-check hourly rather than never, and clear the entry outright when the
- * workspace is updated (see `handleEvent`), which is what makes connecting a
- * subscription take effect immediately instead of at the next probe.
+ * so we re-check hourly rather than never, and clear the entry outright on an
+ * entitlement-improving workspace event (see `SUPPRESSION_CLEARING_ACTIONS`).
+ *
+ * Caveat, deliberately stated rather than implied: importing a Claude
+ * subscription via Settings → Keys does NOT currently clear the pause, because
+ * `routes/claude-oauth.ts` writes `workspaces.settings` without inserting any
+ * `events` row at all — so there is no event to match. That is a pre-existing
+ * gap against the "log an event on every mutation" rule, not something this
+ * pause introduced; until it is fixed, that recovery waits out the hour below.
  */
 const NO_CREDENTIALS_SUPPRESSION_MS = 60 * 60_000
+
+/**
+ * Workspace-event actions that mean "this workspace's entitlement may have
+ * IMPROVED", and so should lift an active pause early (see `handleEvent`).
+ *
+ * This is an allowlist rather than a bare `entity_type === 'workspace'` check
+ * because the failure paths emit workspace events too — and one of them emits
+ * on the very path that sets the pause. `resolveClaudeCredentialsWithFailover`
+ * inserts `claude_subscription_failover_triggered` while failing over
+ * (`claude-failover.ts` `recordFailoverTransition`), and the same resolution
+ * then raises `LlmCredentialsUnavailableError` → `not_logged_in` →
+ * `handleDispatchPermanentFailure` → a pause. PG NOTIFY is asynchronous, so
+ * that event routinely lands AFTER the pause is set and would delete it —
+ * suppress, clear, re-fire, fail, repeat, reproducing the very flood this
+ * exists to stop, while logging "suppression cleared — workspace updated" as
+ * if a human had fixed something.
+ *
+ * It is equally NOT a bare `action === 'updated'` check: the two most important
+ * resume signals for a plan cap are not spelled `updated`. A plan upgrade
+ * arrives as `workspace_billing_updated` and a credit purchase as
+ * `workspace_credit_topup` (both `routes/stripe-webhook.ts`), and a top-up
+ * genuinely un-caps the workspace via `canUseCreditBalance`. Filtering to
+ * `updated` alone would strand an upgrading customer for the rest of the pause
+ * — up to a full billing period.
+ *
+ * Deliberately excluded: `workspace_billing_canceled` (`routes/billing.ts`) is
+ * a downgrade, and the two failover actions above are failures, not fixes.
+ */
+const SUPPRESSION_CLEARING_ACTIONS = new Set([
+	// routes/workspaces.ts — settings PATCH, incl. custom_llm and LLM keys.
+	'updated',
+	// routes/stripe-webhook.ts — plan change/renewal, and prepaid credit added.
+	'workspace_billing_updated',
+	'workspace_credit_topup',
+	// lib/claude-oauth-recovery.ts — primary subscription probed healthy again.
+	'claude_subscription_recovered',
+])
 
 export class TriggerRunner {
 	private db: Database
@@ -401,11 +444,14 @@ export class TriggerRunner {
 			return
 		}
 
-		// A workspace update is the signal that an entitlement may have changed —
-		// a plan upgrade, or a Claude subscription imported in Settings → Keys.
-		// Clearing here is what makes either take effect on the next tick rather
-		// than at the end of the pause.
-		if (event.entity_type === 'workspace') {
+		// A workspace event whose action is in SUPPRESSION_CLEARING_ACTIONS is the
+		// signal that an entitlement may have IMPROVED — a plan upgrade, a credit
+		// top-up, a settings PATCH, a recovered subscription. Clearing here is what
+		// makes any of them take effect on the next tick rather than at the end of
+		// the pause. The action filter is load-bearing in both directions; see the
+		// constant for why neither `entity_type === 'workspace'` alone nor
+		// `action === 'updated'` alone is correct.
+		if (event.entity_type === 'workspace' && SUPPRESSION_CLEARING_ACTIONS.has(event.action)) {
 			this.clearWorkspaceSuppression(event.workspace_id)
 		}
 
