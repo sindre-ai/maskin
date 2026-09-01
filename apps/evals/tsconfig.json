@@ -1,0 +1,12 @@
+{
+	"extends": "../../tsconfig.json",
+	"compilerOptions": {
+		"noEmit": true,
+		// Widened to the repo root because this app deliberately imports its
+		// subjects from source across package boundaries (packages/mcp,
+		// packages/db, packages/shared) rather than from their built dist/ —
+		// see the note in src/tools.ts. Harmless under noEmit: nothing is written.
+		"rootDir": "../.."
+	},
+	"include": ["src/**/*.ts"]
+}

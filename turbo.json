@@ -103,7 +103,13 @@
 		"MASKIN_DEV_EXTERNAL",
 		"METHOD_WORKSPACE_ID",
 		"FF_TESTER_ACTOR_IDS",
-		"FF_TESTER_FEATURES"
+		"FF_TESTER_FEATURES",
+		"ANTHROPIC_API_KEY",
+		"EVAL_MODEL",
+		"MASKIN_API_URL",
+		"PROM_REMOTE_WRITE_URL",
+		"PROM_USERNAME",
+		"PROM_PASSWORD"
 	],
 	"tasks": {
 		"build": {
@@ -131,6 +137,14 @@
 			"dependsOn": ["^build"],
 			"cache": false,
 			"env": ["DATABASE_URL"]
+		},
+		"eval": {
+			"dependsOn": ["^build"],
+			"cache": false
+		},
+		"push": {
+			"dependsOn": [],
+			"cache": false
 		},
 		"type-check": {
 			"dependsOn": ["^build"],

@@ -34,6 +34,9 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 ## Reference
 - `docs/reference/README.md` — Canonical documentation for Maskin's primitives — read the matching page before trusting model memory.
 
+## Evals
+- `apps/evals/README.md` — LLM evals over the MCP tool surface: single-turn routing cases plus a live end-to-end "build a Loop" trajectory case. Runs on PRs that touch `packages/mcp/**`, `apps/evals/**` or `packages/shared/src/templates/**`; metrics ship over Prometheus remote_write (`observability/evals/README.md`). Reword a tool description and this is the thing that notices.
+
 ## Observability
 - **Frontend (`apps/web`)** — Grafana Faro (`src/lib/faro.ts`) reports browser-side JS exceptions, unhandled rejections, Core Web Vitals, failed `/api` calls and the TanStack route name into the same Grafana Cloud stack as the backend. It runs **in parallel with** Sentry (`src/lib/sentry.ts`) while we compare the two; do not assume Sentry has been retired. Both are gated on `import.meta.env.PROD` plus a `VITE_*_FORCE_ENABLE` escape hatch, and both are **tree-shaken out entirely** when their `VITE_` config var is absent at build time — so a `VITE_` var missing from `apps/dev/Dockerfile`'s ARG/ENV list means that SDK simply isn't in the production bundle, silently.
 - `apps/agent-server/observability/README.md` — for a host running agent-server as a systemd unit: journald logs, host metrics, `/metrics` scrape, stalled-session alerts

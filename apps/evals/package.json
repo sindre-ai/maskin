@@ -1,0 +1,29 @@
+{
+	"name": "@maskin/evals",
+	"version": "0.0.1",
+	"private": true,
+	"license": "Apache-2.0",
+	"type": "module",
+	"scripts": {
+		"eval": "tsx src/run.ts",
+		"type-check": "tsc --noEmit",
+		"test": "vitest run",
+		"push": "tsx src/push.ts"
+	},
+	"dependencies": {
+		"@anthropic-ai/sdk": "^0.122.0",
+		"@maskin/db": "workspace:*",
+		"@maskin/mcp": "workspace:*",
+		"@maskin/shared": "workspace:*",
+		"@modelcontextprotocol/sdk": "^1.29.0",
+		"snappyjs": "^0.7.0",
+		"zod": "^3.24.0",
+		"zod-to-json-schema": "^3.24.1"
+	},
+	"devDependencies": {
+		"@types/node": "^25.6.0",
+		"tsx": "^4.21.0",
+		"typescript": "^5.7.0",
+		"vitest": "^3.0.0"
+	}
+}

@@ -1,0 +1,205 @@
+name: MCP evals
+
+# A separate workflow rather than a job in ci.yml, because this one is path
+# filtered and ci.yml is not. Every attempt costs real Anthropic API calls, so
+# it runs only when something that could plausibly change how a model routes
+# through the MCP surface has changed: the tool descriptions and schemas
+# themselves, the harness, or the agent system prompts the trajectory cases run
+# under.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/mcp/**'
+      - 'apps/evals/**'
+      - 'packages/shared/src/templates/**'
+      - '.github/workflows/mcp-evals.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/mcp/**'
+      - 'apps/evals/**'
+      - 'packages/shared/src/templates/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    # Trajectory cases are a dozen live turns each against a real stack. The cap
+    # stops a model that never settles from holding the PR open for six hours;
+    # the per-case maxTurns in cases.ts is the finer-grained backstop.
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: maskin_evals
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_evals
+      INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+      MASKIN_API_URL: http://localhost:3000
+      S3_ENDPOINT: http://localhost:8333
+      S3_BUCKET: agent-files
+      S3_ACCESS_KEY: admin
+      S3_SECRET_KEY: admin
+      S3_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v6
+
+      # The `secrets` context is not available in a job-level `if`, so the
+      # guard is a step output.
+      #
+      # The guard keys off whether this run is *entitled* to a secret, not off
+      # whether one happens to be non-empty. Those differ in the case that
+      # matters: a rotated, renamed or environment-scoped ANTHROPIC_API_KEY
+      # leaves an entitled run with an empty secret, and keying off emptiness
+      # alone would skip every future run behind a permanently green check with
+      # nothing but a ::notice:: to show for it. A fork PR genuinely cannot
+      # receive secrets, so that — and only that — is a legitimate skip.
+      - name: Check for an API key
+        id: guard
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          elif [ "$IS_FORK" = "true" ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Fork PR receives no secrets — skipping the eval suite."
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::error::ANTHROPIC_API_KEY is missing on a run entitled to it. This job is the only gate on the MCP tool descriptions; skipping it silently would leave a permanently green check that runs nothing. Set the repository secret, or remove this workflow."
+            exit 1
+          fi
+
+      # SeaweedFS is the S3-compatible backend agent-file writes go to. The
+      # trajectory cases can reach create_workspace_skill, which writes skill
+      # content to it. Same image, credentials and bucket as docker-compose.yml
+      # and the verify-e2e job, including that job's two-stage readiness poll —
+      # the port opens before the filer will accept a bucket PUT.
+      - name: Start SeaweedFS (S3-compatible backend)
+        if: steps.guard.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          docker run -d --name seaweedfs \
+            -p 8333:8333 -p 9333:9333 \
+            -v "$PWD/seaweedfs-s3.json":/etc/seaweedfs/s3.json:ro \
+            chrislusf/seaweedfs \
+            server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data
+          for i in $(seq 1 30); do
+            status=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8333/ || echo 000)
+            if [ "$status" != "000" ]; then break; fi
+            sleep 1
+          done
+          for i in $(seq 1 30); do
+            if curl -sf --aws-sigv4 "aws:amz:us-east-1:s3" \
+              --user "admin:admin" \
+              -X PUT http://localhost:8333/agent-files; then
+              echo "SeaweedFS ready; bucket agent-files created."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::SeaweedFS never accepted the agent-files bucket PUT after 30s."
+          docker logs seaweedfs || true
+          exit 1
+
+      - uses: pnpm/action-setup@v5
+        if: steps.guard.outputs.present == 'true'
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        if: steps.guard.outputs.present == 'true'
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+        if: steps.guard.outputs.present == 'true'
+
+      - name: Cache turbo build outputs
+        if: steps.guard.outputs.present == 'true'
+        uses: ./.github/actions/cache-turbo
+        with:
+          job-name: mcp-evals
+
+      - run: pnpm build
+        if: steps.guard.outputs.present == 'true'
+
+      - run: pnpm db:migrate
+        if: steps.guard.outputs.present == 'true'
+
+      # The trajectory cases drive the real MCP server over `POST /mcp`, so the
+      # API has to be up. Booting the built bundle rather than `tsx src/index.ts`
+      # matches what the integration-tests job does and what actually deploys.
+      - name: Boot the API
+        if: steps.guard.outputs.present == 'true'
+        run: |
+          set -e
+          node apps/dev/dist/index.js > "$RUNNER_TEMP/api.log" 2>&1 &
+          echo "API_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/api/health > /dev/null; then
+              echo "API booted."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::API did not respond to /api/health within 30s."
+          cat "$RUNNER_TEMP/api.log"
+          exit 1
+
+      - name: Run the eval suite
+        if: steps.guard.outputs.present == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          EVAL_MODEL: ${{ vars.EVAL_MODEL }}
+        run: pnpm --filter @maskin/evals eval
+
+      # Everything below runs even when the suite failed its --min gate: a failed
+      # run is exactly the one whose metrics and reasons you want to see.
+      - name: Summarise the run
+        if: always() && steps.guard.outputs.present == 'true'
+        run: |
+          {
+            echo '## MCP eval results'
+            echo '```'
+            cat apps/evals/results/summary.txt 2>/dev/null \
+              || echo '(no summary — the run did not get far enough to write one; see the job log)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Push metrics
+        if: always() && steps.guard.outputs.present == 'true'
+        env:
+          PROM_REMOTE_WRITE_URL: ${{ secrets.PROM_REMOTE_WRITE_URL }}
+          PROM_USERNAME: ${{ secrets.PROM_USERNAME }}
+          PROM_PASSWORD: ${{ secrets.PROM_PASSWORD }}
+        run: pnpm --filter @maskin/evals push
+
+      - name: Upload eval results
+        if: always() && steps.guard.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: apps/evals/results/
+          retention-days: 7
+
+      - name: API log
+        if: failure() && steps.guard.outputs.present == 'true'
+        run: cat "$RUNNER_TEMP/api.log" || true
