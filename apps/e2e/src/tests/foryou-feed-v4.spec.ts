@@ -23,6 +23,8 @@ interface FeedItemInput {
 	objectTitle?: string
 	hoursAgo?: number
 	decision?: boolean
+	/** Comment body under the opening line. Long, to prove nothing is cut. */
+	body?: string
 }
 
 // Every card in the feed exists because an agent @-mentioned the reader, so
@@ -51,8 +53,11 @@ function buildItem(workspaceId: string, input: FeedItemInput) {
 			event_id: 42,
 			actor_id: null,
 			created_at: new Date(Date.now() - (input.hoursAgo ?? 4) * 3_600_000).toISOString(),
-			content: input.title,
-			truncated: false,
+			content: input.body
+				? `${input.title}
+
+${input.body}`
+				: input.title,
 			attention: 3,
 			decision: input.decision
 				? {
@@ -109,6 +114,7 @@ function feed(workspaceId: string) {
 			type: 'insight',
 			status: 'active',
 			hoursAgo: 8,
+			body: `${'Context the reader must be able to finish on the card. '.repeat(20)}The last line of the ask.`,
 		}),
 		buildItem(workspaceId, {
 			id: 'bet-held',
@@ -177,6 +183,12 @@ test.describe('For You v4 — the feed at every ship-gate viewport', () => {
 			// on the composer — see the TODO in feed-card.tsx — this should
 			// tighten back to /Reply to /.
 			await expect(page.getByPlaceholder(/Write a comment/).first()).toBeVisible()
+
+			// A plain mention carries its whole body on the card — nothing is held
+			// behind a "Read the rest" link any more.
+			const fyiCard = cards.filter({ hasText: 'Is the feed too long?' })
+			await expect(fyiCard.getByText('The last line of the ask.')).toBeVisible()
+			await expect(page.getByText('Read the rest')).toHaveCount(0)
 
 			await assertNoHorizontalOverflow(page, `${vp.label} cards`)
 

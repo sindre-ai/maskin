@@ -1107,9 +1107,8 @@ export interface LatestMention {
 	event_id: number
 	actor_id: string | null
 	created_at: string
-	// Truncated server-side; `truncated` says whether anything was cut.
+	// The whole comment body, not a preview.
 	content: string
-	truncated: boolean
 	attention: number | null
 	// Present only when the agent asked for a structured decision. The card
 	// renders its options as the buttons the reader taps.
@@ -1815,9 +1814,9 @@ export interface CreateCommentInput {
 	parent_event_id?: number
 	attachment_file_ids?: string[]
 	/** Structured extras the backend already accepts on `POST /events`
-	 *  (`createCommentSchema.metadata`, a `safeMetadataSchema` record). Today the
-	 *  UI writes `{ chips: string[] }` from the composer's "Attach a decision"
-	 *  affordance; `DecisionChips` renders them under the posted comment. */
+	 *  (`createCommentSchema.metadata`, a `safeMetadataSchema` record). The UI
+	 *  writes `{ refs: string[] }` from "Reference an object". Options for the
+	 *  reader to pick from do not live here — that is `decision`. */
 	metadata?: Record<string, unknown>
 }
 

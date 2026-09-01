@@ -10,6 +10,7 @@ import type { LatestMention, LatestMentionDecision, UnreadItem } from '@/lib/api
 // marked one of them recommended on no evidence. Both are gone: an ask is a
 // decision when the agent said it was, and its options are the ones the agent
 // wrote.
+
 export type CardKind = 'decision' | 'thread'
 
 export interface CardAction {
@@ -70,7 +71,7 @@ export function recommendedAction(item: UnreadItem): CardAction | undefined {
 /**
  * What the card leads with. Every For You item exists because an agent
  * @-mentioned the reader, so the headline is that ask — the decision's title
- * when there is one, else the comment's opening line. The object's own title is
+ * when there is one, else the opening of the comment. The object's own title is
  * the last resort: it is identical across every mention on that object, so ten
  * different asks would otherwise read the same.
  */
@@ -78,42 +79,65 @@ export function cardHeadline(item: UnreadItem): string {
 	const decision = decisionOf(item)
 	if (decision?.title.trim()) return decision.title.trim()
 
-	const firstLine = firstMeaningfulLine(item.latest_mention)
-	if (firstLine) return firstLine
+	const { headline } = mentionParts(item.latest_mention)
+	if (headline) return headline
 
 	return item.object?.title?.trim() || 'Untitled'
 }
 
 /**
- * What the card renders under the headline for a mention with no decision.
- *
- * The headline is already the comment's opening line, so the body is what
- * follows it — returning the whole comment would print that line twice, which
- * for a one-line comment is the entire card duplicated.
+ * What the card renders under the headline for a mention with no decision:
+ * everything the headline did not already take. Returning the whole comment
+ * would print its opening twice.
  */
 export function cardBody(item: UnreadItem): string {
 	if (decisionOf(item)) return ''
-	const mention = item.latest_mention
-	if (!mention) return ''
-
-	const lines = mention.content.split('\n')
-	const headlineIndex = lines.findIndex((raw) => stripMarkdownLead(raw))
-	if (headlineIndex === -1) return ''
-	return lines
-		.slice(headlineIndex + 1)
-		.join('\n')
-		.trim()
+	return mentionParts(item.latest_mention).body
 }
 
-// The opening line of a comment body, skipping markdown scaffolding so a
-// comment that starts with "## Heading" or "- point" still yields prose.
-function firstMeaningfulLine(mention: LatestMention | undefined): string {
-	if (!mention) return ''
-	for (const raw of mention.content.split('\n')) {
-		const line = stripMarkdownLead(raw)
-		if (line) return line
-	}
-	return ''
+// A headline is a headline, not the first paragraph. A decision's title is held
+// to 3-7 words by the API, but a plain comment's opening was written as prose,
+// so the card takes its first sentence and caps that rather than setting three
+// sentences of welcome copy at headline weight.
+const HEADLINE_MAX_WORDS = 9
+
+/**
+ * Splits a mention into the line the card sets as its headline and the body
+ * under it. One function, so the two cannot disagree and print the same words
+ * twice or drop the tail of a sentence the headline only partly used.
+ */
+function mentionParts(mention: LatestMention | undefined): { headline: string; body: string } {
+	if (!mention) return { headline: '', body: '' }
+
+	// Skip markdown scaffolding, so a comment opening with "## Heading" or
+	// "- point" still yields prose.
+	const lines = mention.content.split('\n')
+	const leadIndex = lines.findIndex((raw) => stripMarkdownLead(raw))
+	if (leadIndex === -1) return { headline: '', body: '' }
+
+	const lead = stripMarkdownLead(lines[leadIndex] ?? '')
+	const [sentence, rest] = firstSentence(lead)
+	const headline = capWords(sentence)
+	// A capped headline is an excerpt rather than the sentence, so the body keeps
+	// that sentence whole — the reader never loses the half the headline cut.
+	const under = headline === sentence ? rest : lead
+	return { headline, body: [under, ...lines.slice(leadIndex + 1)].join('\n').trim() }
+}
+
+// The lead sentence, and whatever follows it on that line. A line with no
+// terminator is all headline, and the word cap keeps it in bounds.
+function firstSentence(line: string): [string, string] {
+	const match = line.match(/^.*?[.!?](?=\s|$)/)
+	if (!match) return [line, '']
+	return [match[0].trim(), line.slice(match[0].length).trim()]
+}
+
+// Cuts an overlong opening rather than setting it at headline weight. The caller
+// keeps the whole sentence in the body when this fires, so nothing is lost.
+function capWords(value: string): string {
+	const words = value.split(/\s+/).filter(Boolean)
+	if (words.length <= HEADLINE_MAX_WORDS) return value
+	return `${words.slice(0, HEADLINE_MAX_WORDS).join(' ')}…`
 }
 
 function stripMarkdownLead(raw: string): string {

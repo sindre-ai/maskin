@@ -5,6 +5,7 @@ import {
 	commentDecisionSchema,
 	markReadBodySchema,
 	markUnreadBodySchema,
+	parseCommentDecision,
 	subscribeBodySchema,
 	subscribersQuerySchema,
 	unreadQuerySchema,
@@ -111,9 +112,10 @@ const unreadItemSchema = z.object({
 			event_id: z.number(),
 			actor_id: z.string().uuid().nullable(),
 			created_at: z.string(),
-			// Truncated to MENTION_PREVIEW_CHARS; the full body is on the object.
+			// The whole comment. For You is where the reader decides, so the card
+			// must not send them elsewhere to finish reading the ask; the body is
+			// bounded by createCommentSchema's 2000-character cap.
 			content: z.string(),
-			truncated: z.boolean(),
 			attention: z.number().nullable(),
 			// Present only when the agent asked for a structured decision. The
 			// card renders its options as the buttons the reader taps.
@@ -121,13 +123,6 @@ const unreadItemSchema = z.object({
 		})
 		.optional(),
 })
-
-/**
- * How much of the mention body the feed carries. The card shows a few lines
- * before the reader opens the object, and a feed is N of these — sending full
- * 2000-character bodies for every card would dominate the payload.
- */
-const MENTION_PREVIEW_CHARS = 600
 
 type LatestMention = NonNullable<z.infer<typeof unreadItemSchema>['latest_mention']>
 
@@ -144,17 +139,16 @@ function toLatestMention(event: typeof events.$inferSelect): LatestMention {
 	const data = (event.data ?? {}) as Record<string, unknown>
 	const rawContent = typeof data.content === 'string' ? data.content : ''
 	const attention = Number(data.attention)
-	const decision = commentDecisionSchema.safeParse(data.decision)
+	const decision = parseCommentDecision(data.decision)
 
 	return {
 		event_id: Number(event.id),
 		actor_id: event.actorId ?? null,
 		created_at:
 			event.createdAt instanceof Date ? event.createdAt.toISOString() : String(event.createdAt),
-		content: rawContent.slice(0, MENTION_PREVIEW_CHARS),
-		truncated: rawContent.length > MENTION_PREVIEW_CHARS,
+		content: rawContent,
 		attention: Number.isFinite(attention) ? attention : null,
-		decision: decision.success ? decision.data : null,
+		decision,
 	}
 }
 

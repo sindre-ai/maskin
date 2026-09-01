@@ -1513,7 +1513,6 @@ describe('Subscriptions Integration', () => {
 			expect(item?.latest_mention?.content).toBe('second ask')
 			expect(item?.latest_mention?.attention).toBe(4)
 			expect(item?.latest_mention?.decision).toEqual(decision)
-			expect(item?.latest_mention?.truncated).toBe(false)
 		})
 
 		it('returns a null decision for a plain mention', async () => {
@@ -1575,7 +1574,9 @@ describe('Subscriptions Integration', () => {
 			expect(fields).toContain('decision.ask')
 		})
 
-		it('truncates a long mention body and flags it', async () => {
+		// The card is where the reader answers, so it carries the whole comment.
+		// The body used to be cut at 600 characters with a link to the object.
+		it('carries a long mention body in full', async () => {
 			const appA = appAs(aId)
 			const appB = appAs(bId)
 			const headers = { 'x-workspace-id': workspaceId }
@@ -1592,14 +1593,10 @@ describe('Subscriptions Integration', () => {
 
 			const res = await appA.request(jsonGet('/api/subscriptions/unread', headers))
 			const body = (await res.json()) as {
-				items: Array<{
-					entity_id: string
-					latest_mention?: { content: string; truncated: boolean }
-				}>
+				items: Array<{ entity_id: string; latest_mention?: { content: string } }>
 			}
 			const mention = body.items.find((i) => i.entity_id === obj.id)?.latest_mention
-			expect(mention?.content).toHaveLength(600)
-			expect(mention?.truncated).toBe(true)
+			expect(mention?.content).toHaveLength(1200)
 		})
 	})
 })

@@ -293,3 +293,20 @@ export function validateDecisionProse(decision: CommentDecision): DecisionProseV
 
 	return violations
 }
+
+/**
+ * The decision block carried by a comment's event data, or `null` if there is
+ * none that parses.
+ *
+ * This is the single definition of "this comment asked the reader to make a
+ * call". It exists because there were briefly three: the feed parsed with the
+ * schema while the object timeline and the orphan-thread detector each tested
+ * `x && typeof x === 'object'`, which also admits `[]`, `{}` and `new Date()`.
+ * A comment carrying `decision: {}` therefore rendered as a plain thread in the
+ * feed, as a decision point on the timeline, and counted as `decision_required`
+ * in the ledger. Parse in one place so every surface agrees.
+ */
+export function parseCommentDecision(value: unknown): CommentDecision | null {
+	const parsed = commentDecisionSchema.safeParse(value)
+	return parsed.success ? parsed.data : null
+}

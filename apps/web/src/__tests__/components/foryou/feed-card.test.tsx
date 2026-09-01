@@ -20,8 +20,8 @@ vi.mock('@/hooks/use-events', () => ({
 // The real composer pulls in uploads, drafts, the slash picker and dictation;
 // the card only cares that it renders one, wired to the right object.
 vi.mock('@/components/activity/comment-input', () => ({
-	CommentInput: ({ objectId }: { objectId?: string }) => (
-		<div data-testid="comment-input" data-object-id={objectId} />
+	CommentInput: ({ objectId, parentEventId }: { objectId?: string; parentEventId?: number }) => (
+		<div data-testid="comment-input" data-object-id={objectId} data-parent={parentEventId} />
 	),
 }))
 
@@ -56,7 +56,6 @@ function buildMention(overrides: Partial<LatestMention> = {}): LatestMention {
 		actor_id: 'agent-1',
 		created_at: new Date().toISOString(),
 		content: 'Merge the trigger settings rewrite?',
-		truncated: false,
 		attention: 4,
 		decision: buildDecision(),
 		...overrides,
@@ -186,6 +185,26 @@ describe('FeedCard — full state', () => {
 		expect(screen.getByTestId('comment-input')).toBeInTheDocument()
 	})
 
+	// The reader answers on the card, so the whole comment is on the card. There
+	// used to be a "Read the rest" link to the object for a truncated body.
+	it('renders a long comment body in full, with nothing held behind a link', () => {
+		const tail = 'The last line the reader must not have to click through for.'
+		renderCard({
+			item: buildItem({
+				latest_mention: buildMention({
+					decision: null,
+					content: `Where should this land?
+
+${'Context that runs long. '.repeat(40)}
+
+${tail}`,
+				}),
+			}),
+		})
+		expect(screen.getByText(new RegExp(tail))).toBeInTheDocument()
+		expect(screen.queryByText('Read the rest')).not.toBeInTheDocument()
+	})
+
 	// An item whose events were pruned still has to render something.
 	it('falls back to the object title when there is no mention payload', () => {
 		renderCard({ item: buildItem({ latest_mention: undefined }) })
@@ -203,6 +222,14 @@ describe('FeedCard — full state', () => {
 		await user.click(screen.getByRole('button', { name: 'Merge now' }))
 		await waitFor(() => expect(onDecide).toHaveBeenCalledTimes(1))
 		expect(onDecide.mock.calls[0]?.[0]).toMatchObject({ id: 'merge_now', label: 'Merge now' })
+	})
+
+	// A typed answer belongs under the question, the same as a taken option.
+	// Without it the reply lands as a loose comment on the object and the agent
+	// that asked has to infer which of its asks was just answered.
+	it('threads the composer under the comment that raised the card', () => {
+		renderCard()
+		expect(screen.getByTestId('comment-input')).toHaveAttribute('data-parent', '42')
 	})
 
 	// The option is acknowledged with a 260ms beat before `onDecide` fires, and

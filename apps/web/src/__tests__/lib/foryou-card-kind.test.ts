@@ -4,6 +4,7 @@ import type { LatestMention, LatestMentionDecision, UnreadItem } from '@/lib/api
 import {
 	actionIdFromLabel,
 	cardActions,
+	cardBody,
 	cardHeadline,
 	classifyCardKind,
 	decisionOf,
@@ -34,7 +35,6 @@ function buildMention(overrides: Partial<LatestMention> = {}): LatestMention {
 		actor_id: null,
 		created_at: '2026-09-01T00:00:00.000Z',
 		content: 'Body of the comment.',
-		truncated: false,
 		attention: null,
 		decision: null,
 		...overrides,
@@ -159,6 +159,30 @@ describe('cardHeadline', () => {
 			latest_mention: buildMention({ content: '## Heading\n\n- Can you confirm the date?' }),
 		})
 		expect(cardHeadline(item)).toBe('Heading')
+	})
+
+	// A comment's opening was written as prose, not as a title. Three sentences
+	// of welcome copy set at headline weight is the bug this guards.
+	it('takes only the first sentence of an opening paragraph', () => {
+		const item = buildItem({
+			latest_mention: buildMention({
+				content:
+					"Welcome to Maskin, asd. This is a workspace where you and a team of AI agents share memory. I'm your Chief of Staff.",
+			}),
+		})
+		expect(cardHeadline(item)).toBe('Welcome to Maskin, asd.')
+		expect(cardBody(item)).toBe(
+			"This is a workspace where you and a team of AI agents share memory. I'm your Chief of Staff.",
+		)
+	})
+
+	it('caps a long opening sentence, and keeps it whole in the body', () => {
+		const content =
+			'This is one very long opening sentence that simply refuses to stop before the cap, honestly. And a second one.'
+		const item = buildItem({ latest_mention: buildMention({ content }) })
+		expect(cardHeadline(item)).toBe('This is one very long opening sentence that simply…')
+		// Nothing the headline cut is lost — the body opens with that sentence.
+		expect(cardBody(item)).toBe(content)
 	})
 
 	// An item with no mention payload still has to render something.
