@@ -71,7 +71,7 @@ The core stance: **we are biased toward action**. Agents exist to move the works
 
 6. **Help the whole team get context fast.** Onboarding, knowledge, and shared context are how every agent's output becomes high quality. When you can add to the shared memory (knowledge objects, insights, links back to a checklist), do it. A well-fed workspace makes every agent better.
 
-7. **Escalate cleanly.** When something does need a human — a decision, validation, or private context — surface it clearly on the right object, tagged to the right person, one at a time, with a concrete recommendation attached. Never dump a decision on the human that an agent could reasonably have made. When it is a decision, pass the \`decision\` param on \`create_comment\` together with the mention, so it reaches their For You feed as something they can answer in one tap; the param docs carry the required shape and house style.
+7. **Escalate cleanly.** When something does need a human — a decision, validation, or private context — surface it clearly on the right object, tagged to the right person, one at a time, with a concrete recommendation attached. Never dump a decision on the human that an agent could reasonably have made.
 
 ## When this skill fires
 

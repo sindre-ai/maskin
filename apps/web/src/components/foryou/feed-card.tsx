@@ -11,13 +11,10 @@ import { trackForyouCardAction, trackForyouCardShown } from '@/lib/analytics'
 import type { ActorListItem, EventResponse, UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
+	CARD_ACTIONS,
 	type CardAction,
 	type CardKind,
-	cardActions,
-	cardBody,
-	cardHeadline,
 	classifyCardKind,
-	decisionOf,
 } from '@/lib/foryou-card-kind'
 import { heldNote } from '@/lib/foryou-feed'
 import { Link } from '@tanstack/react-router'
@@ -67,20 +64,9 @@ export function FeedCard({
 	const objectId = item.entity_id
 	const object = item.object
 	const cardKind: CardKind = classifyCardKind(item)
-	const decision = decisionOf(item)
-	// The ask leads, not the object. `cardHeadline` falls back through the
-	// comment's first line to the object title, so a card still reads sensibly
-	// for a mention with no decision and for an item with no mention payload.
-	const title = cardHeadline(item)
-	// The headline is already the comment's opening line, so the body is only
-	// what follows it — otherwise a one-line mention prints twice.
-	const mentionBody = cardBody(item)
+	const title = object?.title?.trim() || 'Untitled'
+	const why = object?.content?.trim() ?? ''
 	const status = object?.status
-	// The object's own name is context now, not the headline — it sits in the
-	// meta line beside the type badge. Suppressed when the headline already fell
-	// back to it, so the card doesn't print the same title twice.
-	const rawObjectTitle = object?.title?.trim() ?? ''
-	const objectTitle = rawObjectTitle === title ? '' : rawObjectTitle
 
 	const { data: actors } = useActors(workspaceId)
 	const driver = useMemo(
@@ -96,10 +82,17 @@ export function FeedCard({
 		trackForyouCardShown({ card_kind: cardKind, card_id: objectId })
 	}, [cardKind, objectId])
 
-	// Options are the ones the agent authored on the comment, recommendation
-	// last so it lands under the filled bar. A plain mention has nothing to
-	// decide and shows only the composer.
-	const options: readonly CardAction[] = useMemo(() => cardActions(item), [item])
+	// Options come from the card's kind — the decision registry is the only
+	// place the app knows what a card can be answered with. A plain thread has
+	// nothing to decide and shows only the composer.
+	const options: readonly CardAction[] = useMemo(() => {
+		if (cardKind === 'thread') return []
+		// The recommendation sits last, as the dark bar on the right (mockup's
+		// `.sort((a, b) => (a.rec ? 1 : 0) - (b.rec ? 1 : 0))`).
+		return [...CARD_ACTIONS[cardKind]].sort(
+			(a, b) => (a.recommended ? 1 : 0) - (b.recommended ? 1 : 0),
+		)
+	}, [cardKind])
 
 	// The card is waiting on an agent once the reader has answered it.
 	const waiting = !decided && replied
@@ -195,7 +188,7 @@ export function FeedCard({
 							params={{ workspaceId, objectId }}
 							className="border-b border-border font-bold text-muted-foreground hover:border-foreground hover:text-foreground"
 						>
-							{objectTitle || 'Open'}
+							Open
 							<ArrowUpRight size={10} className="ml-0.5 inline" aria-hidden />
 						</Link>
 						{driver?.name ? ` · from ${driver.name}` : ''}
@@ -246,34 +239,10 @@ export function FeedCard({
 				>
 					{title}
 				</div>
-				{/* The body is the agent's own words. A decision splits into the
-				    state of the world (summary) and the single call it cannot make
-				    alone (ask), which carries more weight. Anything else renders
-				    the comment as written. */}
-				{decision ? (
-					<div className="-mt-1 flex max-w-[58ch] flex-col gap-2">
-						<p className="text-[13px] leading-[1.55] text-pretty text-muted-foreground">
-							{decision.summary}
-						</p>
-						<p className="text-[13px] font-semibold leading-[1.5] text-pretty text-foreground">
-							{decision.ask}
-						</p>
+				{why && (
+					<div className="-mt-1 max-w-[58ch] text-[13px] leading-[1.55] text-pretty text-muted-foreground">
+						<MarkdownContent content={why} size="sm" mentionActors={actors} />
 					</div>
-				) : (
-					mentionBody && (
-						<div className="-mt-1 max-w-[58ch] text-[13px] leading-[1.55] text-pretty text-muted-foreground">
-							<MarkdownContent content={mentionBody} size="sm" mentionActors={actors} />
-							{item.latest_mention?.truncated && (
-								<Link
-									to="/$workspaceId/objects/$objectId"
-									params={{ workspaceId, objectId }}
-									className="text-[11.5px] font-semibold text-muted-foreground hover:text-foreground"
-								>
-									Read the rest
-								</Link>
-							)}
-						</div>
-					)
 				)}
 
 				{options.length > 0 && (
@@ -340,19 +309,14 @@ function OptionCard({
 				recommended ? 'opacity-100' : 'opacity-[0.82]',
 			)}
 		>
-			{option.consequences.length > 0 && (
+			{option.rationale && (
 				<div className="flex flex-col gap-1.5 px-[13px] pb-2.5 pt-[11px]">
-					{option.consequences.map((consequence) => (
-						<div
-							key={consequence}
-							className="flex gap-[7px] text-[11.5px] leading-[1.45] text-muted-foreground"
-						>
-							<span aria-hidden className="shrink-0 text-border">
-								·
-							</span>
-							<span className="min-w-0 text-pretty">{consequence}</span>
-						</div>
-					))}
+					<div className="flex gap-[7px] text-[11.5px] leading-[1.45] text-muted-foreground">
+						<span aria-hidden className="shrink-0 text-border">
+							·
+						</span>
+						<span className="min-w-0 text-pretty">{option.rationale}</span>
+					</div>
 				</div>
 			)}
 			<button
