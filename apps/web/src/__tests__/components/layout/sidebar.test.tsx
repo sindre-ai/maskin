@@ -2,12 +2,6 @@ import { AppSidebar } from '@/components/layout/sidebar'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-// AppSidebar is the `new-design` boundary for the app shell; these specs assert
-// the v2 chrome, so drive the flag on.
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (id: string) => id === 'new-design',
-}))
-
 vi.mock('@/hooks/use-enabled-modules', () => ({
 	useEnabledModules: vi.fn(() => ['work']),
 }))

@@ -69,7 +69,7 @@ test.describe('Agent detail — Skills and Tools sections', () => {
 			}
 			// No Manage switch on either section: v2 made both editable at rest
 			// (mockup 2448–2467), which is what the per-row controls asserted
-			// below depend on. The mode switch lives in `agents/legacy/`.
+			// below depend on.
 			await expect(skills.getByRole('button', { name: 'Manage' })).toHaveCount(0)
 
 			// Tools section — labelled region, count, each tool's name and its scope.
