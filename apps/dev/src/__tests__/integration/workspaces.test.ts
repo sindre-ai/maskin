@@ -1031,10 +1031,10 @@ describe('Workspaces Integration', () => {
 				.select({ name: triggers.name })
 				.from(triggers)
 				.where(eq(triggers.workspaceId, ws.id))
-			expect(triggerRows).toHaveLength(15)
+			expect(triggerRows).toHaveLength(13)
 		})
 
-		it('seeds the Bet discovery loop, Workspace improvements, Knowledge Wiki, and Competitor intelligence loops wired to their triggers', async () => {
+		it('seeds the Bet discovery loop, Workspace improvements, and Knowledge Wiki loops wired to their triggers', async () => {
 			const app = createApp()
 
 			const createRes = await app.request(
@@ -1050,7 +1050,6 @@ describe('Workspaces Integration', () => {
 
 			expect(loopRows.map((r) => r.title).sort()).toEqual([
 				'Bet discovery loop',
-				'Competitor intelligence',
 				'Knowledge Wiki → digest',
 				'Workspace improvements',
 			])
@@ -1093,17 +1092,6 @@ describe('Workspaces Integration', () => {
 				new Set([
 					triggerIdByName.get('Fold new knowledge into the wiki'),
 					triggerIdByName.get('Compile the twice-weekly digest'),
-				]),
-			)
-
-			const competitorIntelligenceLoop = loopRows.find((r) => r.title === 'Competitor intelligence')
-			const competitorIntelligenceTriggerIds =
-				(competitorIntelligenceLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ??
-				[]
-			expect(new Set(competitorIntelligenceTriggerIds)).toEqual(
-				new Set([
-					triggerIdByName.get('Weekly competitor sweep'),
-					triggerIdByName.get('Monthly list revalidation'),
 				]),
 			)
 		})
