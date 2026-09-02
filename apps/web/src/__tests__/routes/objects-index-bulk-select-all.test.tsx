@@ -255,10 +255,6 @@ vi.mock('@/lib/query-keys', () => ({
 
 import { Route } from '@/routes/_authed/$workspaceId/objects/index'
 
-beforeEach(() => {
-	localStorage.setItem('ff:new-design', 'on')
-})
-
 const RouteOptions = Route as unknown as { component: React.FC }
 const ObjectsPage = RouteOptions.component
 
