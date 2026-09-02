@@ -85,7 +85,7 @@ export const workspaceSettingsSchema = z.object({
 		// (packages/shared/src/schemas/objects.ts) so archive doesn't fire retro or
 		// notification fan-out. Add other terminal states there, not archived.
 		bet: ['signal', 'define', 'active', 'live', 'succeeded', 'failed', 'paused', 'archived'],
-		task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
+		task: ['backlog', 'todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
 		loop: [...LOOP_STATUSES],
 	}),
 	field_definitions: z.record(z.array(fieldDefinitionSchema)).default({
