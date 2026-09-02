@@ -2,6 +2,7 @@ import { Lightbulb, type LucideIcon, SquareCheck, Target } from 'lucide-react'
 
 export const statusColors: Record<string, { bg: string; text: string }> = {
 	new: { bg: 'bg-status-new-bg', text: 'text-status-new-text' },
+	backlog: { bg: 'bg-status-backlog-bg', text: 'text-status-backlog-text' },
 	todo: { bg: 'bg-status-todo-bg', text: 'text-status-todo-text' },
 	processing: { bg: 'bg-status-processing-bg', text: 'text-status-processing-text' },
 	in_progress: { bg: 'bg-status-in_progress-bg', text: 'text-status-in_progress-text' },
@@ -90,6 +91,7 @@ export function typeLabel(type: string): string {
 export const STATUS_LABELS: Record<string, string> = {
 	active: 'Active',
 	in_progress: 'In progress',
+	backlog: 'Backlog',
 	todo: 'To do',
 	define: 'Define',
 	in_review: 'In review',
