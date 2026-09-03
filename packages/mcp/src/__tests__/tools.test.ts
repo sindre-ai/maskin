@@ -90,6 +90,9 @@ const ALL_TOOL_NAMES = [
 	'create_extension',
 	'update_extension',
 	'delete_extension',
+	'linkedin__send_message',
+	'linkedin__list_conversations',
+	'linkedin__reply',
 ]
 
 describe('tool definitions', () => {
