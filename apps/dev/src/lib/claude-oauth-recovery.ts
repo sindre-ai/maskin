@@ -5,15 +5,19 @@ import { trackClaudeSubscriptionRecovered } from './analytics/claude-failover-ev
 import {
 	type OAuthFailoverState,
 	type OAuthSlotData,
+	type OAuthSlotKind,
+	readChain,
 	readFailoverState,
 	readSlots,
+	slotFailure,
+	withSlotFailure,
 	writeFailoverState,
 } from './claude-oauth-slots'
 import { logger } from './logger'
 
 /**
- * AC-U6: after a failover, the next session start must try the primary
- * first AGAIN — but only after ≥5 minutes since the last primary failure.
+ * AC-U6: after a failover, the next session start must try the head of the
+ * chain first AGAIN — but only after ≥5 minutes since that slot last failed.
  * Mid-session swap-back is out of scope; only the next session triggers a
  * recovery attempt.
  */
@@ -31,9 +35,9 @@ export interface ShouldAttemptInput {
 }
 
 /**
- * Pure cooldown gate. Returns true when the workspace is currently routed
- * to backup, has a primary slot to attempt, and the cooldown since the
- * last primary failure has elapsed.
+ * Pure cooldown gate. Returns true when the workspace is currently routed to
+ * something other than the head of its chain, still has that head slot to go
+ * back to, and the cooldown since the head last failed has elapsed.
  */
 export function shouldAttemptPrimaryRecovery({
 	slots,
@@ -41,35 +45,50 @@ export function shouldAttemptPrimaryRecovery({
 	now,
 	cooldownMs = PRIMARY_RECOVERY_COOLDOWN_MS,
 }: ShouldAttemptInput): boolean {
-	if (failover.active_slot !== 'backup') return false
-	if (!slots.primary) return false
-	const lastFailure = failover.last_primary_failure_at
+	const head = chainHead(slots)
+	if (!head) return false
+	if (failover.active_slot === head) return false
+	const lastFailure = slotFailure(failover, head).at
 	if (typeof lastFailure === 'number' && now - lastFailure < cooldownMs) return false
 	return true
+}
+
+/**
+ * The first slot of the chain given an already-read slot map. Mirrors
+ * `readChain(raw)[0]` for callers that hold the map rather than the raw value.
+ */
+function chainHead(slots: ReturnType<typeof readSlots>): OAuthSlotKind | undefined {
+	if (slots.primary) return 'primary'
+	if (slots.backup) return 'backup'
+	const extras = Object.keys(slots)
+		.filter((id) => id !== 'primary' && id !== 'backup' && slots[id])
+		.sort()
+	return extras[0]
 }
 
 export interface AttemptPrimaryRecoveryInput {
 	db: Database
 	workspaceId: string
 	actorId: string
-	healthCheck: (primary: OAuthSlotData) => Promise<RecoveryHealthCheckResult>
+	/** Probes the head of the chain — the slot recovery would switch back to. */
+	healthCheck: (head: OAuthSlotData) => Promise<RecoveryHealthCheckResult>
 	now?: number
 	cooldownMs?: number
 }
 
 export type AttemptPrimaryRecoveryResult =
-	| { recovered: true }
+	| { recovered: true; slot: OAuthSlotKind }
 	| { recovered: false; reason: 'no_workspace' | 'cooldown' | 'unhealthy'; detail?: string }
 
 /**
  * Lazy switch-back orchestrator. Runs a cheap, lock-free precheck of the
- * cooldown gate, then the caller-supplied `healthCheck` against the primary
- * slot (a live token refresh + subscription probe) OUTSIDE any transaction,
- * then locks the workspace row, re-checks the gate under the lock (state may
- * have changed while the network probe was in flight), and either flips
- * `failover.active_slot` to `'primary'` and emits a
- * `claude_subscription_recovered` event, or records a fresh
- * `last_primary_failure_at` and stays on backup.
+ * cooldown gate, then the caller-supplied `healthCheck` against the HEAD of
+ * the slot chain (a live token refresh + subscription probe) OUTSIDE any
+ * transaction, then locks the workspace row, re-checks the gate under the
+ * lock (state may have changed while the network probe was in flight), and
+ * either flips `failover.active_slot` back to the head and emits a
+ * `claude_subscription_recovered` event, or records a fresh failure against
+ * the head and stays where it is.
  *
  * The row lock must never span the network probe: this fires on the exact
  * path where the primary is already degraded (most likely to be slow), and
@@ -114,12 +133,22 @@ export async function attemptPrimaryRecovery(
 		return { recovered: false, reason: 'cooldown' as const }
 	}
 
-	// Safe: gate above guarantees `slots.primary` is defined. Runs the live
+	// Safe: the gate above guarantees the chain has a head. Runs the live
 	// token refresh + subscription probe with no transaction/lock open.
-	const probe = await healthCheck(precheckSlots.primary as OAuthSlotData)
+	const precheckHead = readChain(precheckSettings.claude_oauth)[0] as {
+		id: OAuthSlotKind
+		data: OAuthSlotData
+	}
+	const probe = await healthCheck(precheckHead.data)
 
 	type TxOutcome =
-		| { kind: 'recovered'; priorFailureAt?: number; priorFailureReason?: string }
+		| {
+				kind: 'recovered'
+				slot: OAuthSlotKind
+				previousSlot: OAuthSlotKind
+				priorFailureAt?: number
+				priorFailureReason?: string
+		  }
 		| { kind: 'noop'; result: AttemptPrimaryRecoveryResult }
 
 	const outcome: TxOutcome = await db.transaction(async (tx) => {
@@ -152,12 +181,23 @@ export async function attemptPrimaryRecovery(
 			}
 		}
 
+		// The head may have changed while the probe was in flight (a slot was
+		// disconnected, or a new credential was imported ahead of this one) —
+		// re-read it under the lock rather than trusting the precheck.
+		const head = readChain(oauthRaw)[0]?.id
+		if (!head) {
+			return {
+				kind: 'noop',
+				result: { recovered: false, reason: 'cooldown' as const },
+			}
+		}
+		const priorFailure = slotFailure(failover, head)
+
 		if (probe.healthy) {
-			const nextOAuth = writeFailoverState(oauthRaw, {
-				active_slot: 'primary',
-				last_primary_failure_at: undefined,
-				last_classified_reason: undefined,
-			})
+			const nextOAuth = writeFailoverState(
+				oauthRaw,
+				withSlotFailure({ ...failover, active_slot: head }, head, undefined),
+			)
 			await tx
 				.update(workspaces)
 				.set({
@@ -173,26 +213,28 @@ export async function attemptPrimaryRecovery(
 				entityType: 'workspace',
 				entityId: workspaceId,
 				data: {
-					previous_active_slot: 'backup',
+					previous_active_slot: failover.active_slot,
+					recovered_slot: head,
 					recovered_at: now,
-					prior_failure_at: failover.last_primary_failure_at,
-					prior_failure_reason: failover.last_classified_reason,
+					prior_failure_at: priorFailure.at,
+					prior_failure_reason: priorFailure.reason,
 				},
 			})
 
-			logger.info('Claude primary subscription recovered', { workspaceId, slot: 'primary' })
+			logger.info('Claude head subscription recovered', { workspaceId, slot: head })
 			return {
 				kind: 'recovered',
-				priorFailureAt: failover.last_primary_failure_at,
-				priorFailureReason: failover.last_classified_reason,
+				slot: head,
+				previousSlot: failover.active_slot,
+				priorFailureAt: priorFailure.at,
+				priorFailureReason: priorFailure.reason,
 			}
 		}
 
-		const nextOAuth = writeFailoverState(oauthRaw, {
-			active_slot: 'backup',
-			last_primary_failure_at: now,
-			last_classified_reason: probe.reason,
-		})
+		const nextOAuth = writeFailoverState(
+			oauthRaw,
+			withSlotFailure(failover, head, { at: now, reason: probe.reason }),
+		)
 		await tx
 			.update(workspaces)
 			.set({
@@ -201,8 +243,9 @@ export async function attemptPrimaryRecovery(
 			})
 			.where(eq(workspaces.id, workspaceId))
 
-		logger.info('Claude primary recovery probe failed; staying on backup', {
+		logger.info('Claude head-slot recovery probe failed; staying on the current slot', {
 			workspaceId,
+			activeSlot: failover.active_slot,
 			reason: probe.reason,
 		})
 		return {
@@ -223,7 +266,7 @@ export async function attemptPrimaryRecovery(
 			priorFailureAt: outcome.priorFailureAt,
 			priorFailureReason: outcome.priorFailureReason,
 		})
-		return { recovered: true }
+		return { recovered: true, slot: outcome.slot }
 	}
 	return outcome.result
 }

@@ -380,6 +380,9 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			const stored = getSettings()?.claude_oauth as OAuthSlotStorage
 			expect(stored.failover).toEqual({
 				active_slot: 'backup',
+				// Per-slot record, plus the legacy primary/backup mirrors of it
+				// that a two-slot build would read after a rollback.
+				failures: { primary: { at: bucket, reason: 'auth_failed' } },
 				last_primary_failure_at: bucket,
 				last_classified_reason: 'auth_failed',
 			})

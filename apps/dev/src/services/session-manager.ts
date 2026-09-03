@@ -238,13 +238,13 @@ function claudeRuntimeFailoverReason(
  * when nothing changed.
  *
  * Clears `claude_oauth_runtime_failover_retry_of` whenever the slot resolves
- * back to `primary`. That marker only means anything while the session is
- * still actually running on the backup a prior runtime failover put it on —
- * leaving it stamped after a lazy recovery flips the slot back to primary
- * would make `maybeRetryClaudeOAuthOnBackup`'s gate (which treats a
- * `retry_of` string alone as sufficient, regardless of the current
- * `llm_oauth_slot`) misclassify a later, unrelated primary failure as
- * "backup already exhausted".
+ * back to `primary` — the head of the failover chain. That marker records
+ * that this session exists because an earlier one was pushed off its
+ * subscription; once a lazy recovery has routed the session back to the head,
+ * it describes nothing that is still true. It stays a marker only, never a
+ * gate: whether a failing session has anywhere left to fall over to is
+ * decided by its slot's position in the chain (see
+ * `maybeRetryClaudeOAuthOnNextSlot`), not by its presence.
  */
 export function mergeLaunchRouteConfig(
 	existingConfig: Record<string, unknown>,
@@ -2596,7 +2596,7 @@ export class SessionManager extends EventEmitter {
 		return Boolean(other)
 	}
 
-	private async maybeRetryClaudeOAuthOnBackup(params: {
+	private async maybeRetryClaudeOAuthOnNextSlot(params: {
 		session: typeof sessions.$inferSelect
 		failureReason: { provider: string; reason_code: string } | null
 		stdoutTail: string
@@ -2614,26 +2614,16 @@ export class SessionManager extends EventEmitter {
 		const reason = claudeRuntimeFailoverReason(failureReason, stdoutTail)
 		if (!reason) return
 
-		if (
-			config.llm_oauth_slot === 'backup' ||
-			typeof config.claude_oauth_runtime_failover_retry_of === 'string'
-		) {
-			await recordRuntimeClaudeOAuthBackupExhausted({
-				db: this.db,
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				reason,
-				sourceSessionId: session.id,
-			})
-			await this.insertSystemLog(
-				session.id,
-				'Claude backup subscription also hit a usage limit; no further Claude OAuth fallback is available',
-			)
-			return
-		}
+		// Which subscription this session was actually running on. Whether
+		// there is another one to fall over to is decided by that slot's
+		// position in the workspace's chain (under a row lock, in
+		// recordRuntimeClaudeOAuthFailover) rather than by the slot's name —
+		// a workspace can hold more than two.
+		const failedSlot = config.llm_oauth_slot
+		if (typeof failedSlot !== 'string') return
 
-		if (config.llm_oauth_slot !== 'primary') return
-
+		// One retry per failing session, however long the chain is: the retry
+		// itself fails over again from its own slot if it has to.
 		const [existingRetry] = await this.db
 			.select({ id: sessions.id })
 			.from(sessions)
@@ -2646,25 +2636,44 @@ export class SessionManager extends EventEmitter {
 			.limit(1)
 		if (existingRetry) return
 
-		const didFailover = await recordRuntimeClaudeOAuthFailover({
+		const failover = await recordRuntimeClaudeOAuthFailover({
 			db: this.db,
 			workspaceId: session.workspaceId,
 			actorId: session.actorId,
 			reason,
+			fromSlot: failedSlot,
 			sourceSessionId: session.id,
 		})
-		if (!didFailover) return
+
+		if (!failover.moved) {
+			// `superseded` means another session already moved the workspace on
+			// — nothing to say. Only a genuinely exhausted chain is reported.
+			if (failover.reason !== 'exhausted') return
+			await recordRuntimeClaudeOAuthBackupExhausted({
+				db: this.db,
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				reason,
+				slot: failedSlot,
+				sourceSessionId: session.id,
+			})
+			await this.insertSystemLog(
+				session.id,
+				'The last connected Claude subscription also hit a usage limit; no further Claude OAuth fallback is available',
+			)
+			return
+		}
 
 		await this.insertSystemLog(
 			session.id,
-			'Claude primary subscription hit a usage limit; retrying this session on the backup subscription',
+			'The Claude subscription in use hit a usage limit; retrying this session on the next connected subscription',
 		)
 		await this.createSession(session.workspaceId, {
 			actorId: session.actorId,
 			actionPrompt: session.actionPrompt,
 			config: {
 				...config,
-				llm_oauth_slot: 'backup',
+				llm_oauth_slot: failover.slot,
 				claude_oauth_runtime_failover_retry_of: session.id,
 			},
 			triggerId: session.triggerId ?? undefined,
@@ -2830,7 +2839,7 @@ export class SessionManager extends EventEmitter {
 		}
 
 		if (status === 'failed') {
-			await this.maybeRetryClaudeOAuthOnBackup({ session, failureReason, stdoutTail }).catch(
+			await this.maybeRetryClaudeOAuthOnNextSlot({ session, failureReason, stdoutTail }).catch(
 				(err) =>
 					logger.warn('Failed to retry Claude OAuth session on backup', {
 						sessionId,
