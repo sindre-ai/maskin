@@ -101,15 +101,15 @@ const checkoutRoute = createRoute({
 	},
 })
 
-// The LinkedIn Identity add-on line — €29/connected-identity/month, gated on
+// The LinkedIn Identity add-on line — $49/connected-identity/month, gated on
 // the `linkedin-addon-visible` flag AND ≥1 connected `linkedin-unipile`
 // credential. Null in both the flag-off and zero-identities cases; see
 // `../lib/linkedin-addon.ts`.
 const linkedinIdentityAddonSchema = z
 	.object({
 		count: z.number().int().nonnegative(),
-		unit_price_eur_cents: z.number().int().positive(),
-		monthly_total_eur_cents: z.number().int().nonnegative(),
+		unit_price_usd_cents: z.number().int().positive(),
+		monthly_total_usd_cents: z.number().int().nonnegative(),
 	})
 	.nullable()
 
@@ -225,7 +225,7 @@ app.openapi(usageRoute, async (c) => {
 
 	// LinkedIn Identity add-on line. Gated on the actor-scoped
 	// `linkedin-addon-visible` flag AND ≥1 connected `linkedin-unipile`
-	// credential row. Deliberately DOES NOT touch `usdCentsUsed` — the €29
+	// credential row. Deliberately DOES NOT touch `usdCentsUsed` — the $49
 	// per-connected-identity/month price is a separate SKU line that must not
 	// flow into the inference-token ledger (see bet §Pricing). Short-circuited
 	// on flag-off so a non-tester actor never hits the count query.
