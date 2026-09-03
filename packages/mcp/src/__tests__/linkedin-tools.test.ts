@@ -15,7 +15,11 @@ import { tools } from '../tools'
  * loosens a field.
  */
 
-const LINKEDIN_TOOLS = ['linkedin__send_message', 'linkedin__list_conversations', 'linkedin__reply'] as const
+const LINKEDIN_TOOLS = [
+	'linkedin__send_message',
+	'linkedin__list_conversations',
+	'linkedin__reply',
+] as const
 
 function assertAllFieldsDescribed(schema: z.ZodTypeAny): { field: string; described: boolean }[] {
 	if (!(schema instanceof z.ZodObject)) return []
@@ -29,7 +33,11 @@ function assertAllFieldsDescribed(schema: z.ZodTypeAny): { field: string; descri
 }
 
 function extractDescription(schema: z.ZodTypeAny): string | undefined {
-	const anyDef = (schema as unknown as { _def: { description?: string; innerType?: z.ZodTypeAny; schema?: z.ZodTypeAny } })._def
+	const anyDef = (
+		schema as unknown as {
+			_def: { description?: string; innerType?: z.ZodTypeAny; schema?: z.ZodTypeAny }
+		}
+	)._def
 	if (anyDef.description) return anyDef.description
 	if (anyDef.innerType) return extractDescription(anyDef.innerType)
 	if (anyDef.schema) return extractDescription(anyDef.schema)
@@ -47,7 +55,9 @@ describe('LinkedIn MCP tool registration', () => {
 		})
 
 		it(`${name}: every input field has .describe()`, () => {
-			const tool = (tools as unknown as Record<string, { inputSchema: z.ZodObject<z.ZodRawShape> }>)[name]
+			const tool = (
+				tools as unknown as Record<string, { inputSchema: z.ZodObject<z.ZodRawShape> }>
+			)[name]
 			const audit = assertAllFieldsDescribed(tool.inputSchema)
 			const undocumented = audit.filter((row) => !row.described).map((r) => r.field)
 			expect(undocumented, `Undocumented fields on ${name}: ${undocumented.join(', ')}`).toEqual([])

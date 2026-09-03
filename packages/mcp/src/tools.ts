@@ -1814,10 +1814,7 @@ export const tools = {
 					),
 					last_message_at: z.string().datetime(),
 					unread_count: z.number().int().min(0),
-					preview: z
-						.string()
-						.max(280)
-						.describe('Truncated preview of the most recent message.'),
+					preview: z.string().max(280).describe('Truncated preview of the most recent message.'),
 				}),
 			),
 			next_cursor: z

@@ -142,39 +142,68 @@ afterEach(() => {
 })
 
 function stubCredential(actorId: string, accountId: string, accountStatus?: string) {
-	vi.mocked(getIntegrationCredential).mockImplementation(async (_db, _ws, provider, requestedActor) => {
-		if (provider !== 'linkedin-unipile') return null
-		if (requestedActor !== actorId) return null
-		return {
-			id: `int-${actorId}`,
-			workspaceId: WORKSPACE_ID,
-			provider: 'linkedin-unipile',
-			status: 'connected',
-			credentials: JSON.stringify({ account_id: accountId, account_status: accountStatus }),
-			externalId: null,
-			config: {},
-			metadata: null,
-			actorId,
-			createdBy: actorId,
-			createdAt: new Date(),
-			updatedAt: new Date(),
-		} as never
-	})
+	vi.mocked(getIntegrationCredential).mockImplementation(
+		async (_db, _ws, provider, requestedActor) => {
+			if (provider !== 'linkedin-unipile') return null
+			if (requestedActor !== actorId) return null
+			return {
+				id: `int-${actorId}`,
+				workspaceId: WORKSPACE_ID,
+				provider: 'linkedin-unipile',
+				status: 'connected',
+				credentials: JSON.stringify({ account_id: accountId, account_status: accountStatus }),
+				externalId: null,
+				config: {},
+				metadata: null,
+				actorId,
+				createdBy: actorId,
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			} as never
+		},
+	)
 }
 
-function fakeUnipile(overrides: Partial<{
-	send: (payload: { account_id: string }) => Promise<{ status: number; body: unknown; headers: Record<string, string> }>
-	reply: (payload: { account_id: string; thread_id: string }) => Promise<{ status: number; body: unknown; headers: Record<string, string> }>
-	list: (payload: { account_id: string }) => Promise<{ status: number; body: unknown; headers: Record<string, string> }>
-}>) {
-	const send = overrides.send ?? (async () => ({ status: 200, body: { id: 'msg-1', sent_at: '2026-08-31T12:00:00Z' }, headers: {} }))
+function fakeUnipile(
+	overrides: Partial<{
+		send: (payload: { account_id: string }) => Promise<{
+			status: number
+			body: unknown
+			headers: Record<string, string>
+		}>
+		reply: (payload: { account_id: string; thread_id: string }) => Promise<{
+			status: number
+			body: unknown
+			headers: Record<string, string>
+		}>
+		list: (payload: { account_id: string }) => Promise<{
+			status: number
+			body: unknown
+			headers: Record<string, string>
+		}>
+	}>,
+) {
+	const send =
+		overrides.send ??
+		(async () => ({
+			status: 200,
+			body: { id: 'msg-1', sent_at: '2026-08-31T12:00:00Z' },
+			headers: {},
+		}))
 	const reply = overrides.reply ?? send
-	const list = overrides.list ?? (async () => ({ status: 200, body: { conversations: [] }, headers: {} }))
-	__setUnipileClientForTests(() => ({
-		sendMessage: (payload) => send(payload),
-		reply: (payload) => reply(payload),
-		listConversations: (payload) => list(payload),
-	}) as never)
+	const list =
+		overrides.list ?? (async () => ({ status: 200, body: { conversations: [] }, headers: {} }))
+	// Params are annotated rather than inferred: the `as never` below erases the
+	// contextual type the object literal would otherwise get from UnipileClient,
+	// which leaves these three implicitly `any` under `noImplicitAny`.
+	__setUnipileClientForTests(
+		() =>
+			({
+				sendMessage: (payload: { account_id: string }) => send(payload),
+				reply: (payload: { account_id: string; thread_id: string }) => reply(payload),
+				listConversations: (payload: { account_id: string }) => list(payload),
+			}) as never,
+	)
 }
 
 function req(app: Hono, method: 'GET' | 'POST', path: string, body?: unknown, actorId = ACTOR_A) {
@@ -308,7 +337,11 @@ describe('POST /send-message — idempotency dedup', () => {
 		fakeUnipile({
 			send: async () => {
 				calls++
-				return { status: 200, body: { id: `msg-${calls}`, sent_at: '2026-08-31T12:00:00Z' }, headers: {} }
+				return {
+					status: 200,
+					body: { id: `msg-${calls}`, sent_at: '2026-08-31T12:00:00Z' },
+					headers: {},
+				}
 			},
 		})
 		const db = buildFakeDb()
@@ -380,20 +413,32 @@ describe('two-actor lookup isolation', () => {
 		})
 		const db = buildFakeDb()
 		const appA = buildAppWithFakes({ actorId: ACTOR_A, db })
-		await req(appA, 'POST', '/send-message', {
-			recipient_urn: 'urn:li:person:X',
-			body: 'hi',
-			idempotency_key: 'iso-key-A',
-		}, ACTOR_A)
+		await req(
+			appA,
+			'POST',
+			'/send-message',
+			{
+				recipient_urn: 'urn:li:person:X',
+				body: 'hi',
+				idempotency_key: 'iso-key-A',
+			},
+			ACTOR_A,
+		)
 		expect(seenAccountId).toBe('unipile-A')
 
 		seenAccountId = null
 		const appB = buildAppWithFakes({ actorId: ACTOR_B, db })
-		await req(appB, 'POST', '/send-message', {
-			recipient_urn: 'urn:li:person:Y',
-			body: 'hi',
-			idempotency_key: 'iso-key-B',
-		}, ACTOR_B)
+		await req(
+			appB,
+			'POST',
+			'/send-message',
+			{
+				recipient_urn: 'urn:li:person:Y',
+				body: 'hi',
+				idempotency_key: 'iso-key-B',
+			},
+			ACTOR_B,
+		)
 		expect(seenAccountId).toBe('unipile-B')
 
 		expect(vi.mocked(decrypt)).toHaveBeenCalled()

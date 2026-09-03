@@ -40,9 +40,9 @@ describe('classifyUnipileResponse', () => {
 	})
 
 	it('detects LINKEDIN_ACCOUNT_RESTRICTED via disconnected_account_reason marker on a non-2xx body', () => {
-		expect(
-			classifyUnipileResponse(400, { disconnected_account_reason: 'RESTRICTED' }),
-		).toBe('LINKEDIN_ACCOUNT_RESTRICTED')
+		expect(classifyUnipileResponse(400, { disconnected_account_reason: 'RESTRICTED' })).toBe(
+			'LINKEDIN_ACCOUNT_RESTRICTED',
+		)
 	})
 
 	it('detects LINKEDIN_ACCOUNT_RESTRICTED via error_code marker', () => {
@@ -61,7 +61,9 @@ describe('classifyUnipileResponse', () => {
 	})
 
 	it('returns null for a clean 2xx', () => {
-		expect(classifyUnipileResponse(200, { id: 'msg-1', sent_at: '2026-08-31T12:00:00Z' })).toBeNull()
+		expect(
+			classifyUnipileResponse(200, { id: 'msg-1', sent_at: '2026-08-31T12:00:00Z' }),
+		).toBeNull()
 	})
 })
 

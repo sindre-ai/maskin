@@ -163,9 +163,10 @@ export function classifyUnipileResponse(status: number, body: unknown): LinkedIn
 function isRestrictedBody(body: unknown): boolean {
 	if (!body || typeof body !== 'object') return false
 	const rec = body as Record<string, unknown>
-	const reason = typeof rec.disconnected_account_reason === 'string'
-		? rec.disconnected_account_reason.toUpperCase()
-		: null
+	const reason =
+		typeof rec.disconnected_account_reason === 'string'
+			? rec.disconnected_account_reason.toUpperCase()
+			: null
 	if (reason && UNIPILE_RESTRICTED_MARKERS.disconnectedAccountReasons.includes(reason as never)) {
 		return true
 	}
@@ -173,7 +174,8 @@ function isRestrictedBody(body: unknown): boolean {
 	if (errorCode && UNIPILE_RESTRICTED_MARKERS.errorCodes.includes(errorCode as never)) {
 		return true
 	}
-	const accountStatus = typeof rec.account_status === 'string' ? rec.account_status.toUpperCase() : null
+	const accountStatus =
+		typeof rec.account_status === 'string' ? rec.account_status.toUpperCase() : null
 	if (accountStatus === 'RESTRICTED') return true
 	return false
 }

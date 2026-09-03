@@ -6859,11 +6859,7 @@ ${claudeCredsBlock}`,
 					{ workspaceId: (args as { workspace_id?: string }).workspace_id },
 				)
 				return {
-					_meta: meta(
-						'linkedin__reply',
-						config,
-						(args as { workspace_id?: string }).workspace_id,
-					),
+					_meta: meta('linkedin__reply', config, (args as { workspace_id?: string }).workspace_id),
 					content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 					structuredContent: result as Record<string, unknown>,
 				}

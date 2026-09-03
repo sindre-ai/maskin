@@ -325,7 +325,6 @@ app.openapi(callbackRoute, (async (c) => {
 	return c.json({ ok: true })
 }) as RouteHandler<typeof callbackRoute, Env>)
 
-
 // ── Message verbs (send-message / reply / list-conversations) ─────────────
 
 type StoredLinkedInCredentials = {
@@ -368,7 +367,6 @@ function buildUnipileClient(credentials: StoredLinkedInCredentials): UnipileClie
 export function __setUnipileClientForTests(builder: ClientOverride['build'] | null): void {
 	clientOverride = builder === null ? null : { build: builder }
 }
-
 
 /**
  * Shared preamble: workspace-id header, membership check, credential fetch,
@@ -589,11 +587,9 @@ function handleTerminalError(err: unknown, operation: string, actorId: string): 
 		actorId,
 		error: err instanceof Error ? err.message : String(err),
 	})
-	const generic = new LinkedInIntegrationError(
-		'UNIPILE_UNAVAILABLE',
-		'Unexpected upstream error',
-		{ cause: err },
-	)
+	const generic = new LinkedInIntegrationError('UNIPILE_UNAVAILABLE', 'Unexpected upstream error', {
+		cause: err,
+	})
 	return new Response(JSON.stringify(errorToResponse(generic)), {
 		status: generic.httpStatus,
 		headers: { 'content-type': 'application/json' },
@@ -743,24 +739,23 @@ app.get('/list-conversations', async (c) => {
 	}
 })
 
-function normalizeSendResponse(
-	body: UnipileSendMessageResponse | Record<string, unknown>,
-): { message_id: string; sent_at: string } {
+function normalizeSendResponse(body: UnipileSendMessageResponse | Record<string, unknown>): {
+	message_id: string
+	sent_at: string
+} {
 	const rec = body as Record<string, unknown>
 	const messageId = typeof rec.id === 'string' ? rec.id : ''
 	const sentAt = typeof rec.sent_at === 'string' ? rec.sent_at : new Date().toISOString()
 	if (!messageId) {
-		throw new LinkedInIntegrationError(
-			'UNIPILE_UNAVAILABLE',
-			'Unipile response missing message id',
-		)
+		throw new LinkedInIntegrationError('UNIPILE_UNAVAILABLE', 'Unipile response missing message id')
 	}
 	return { message_id: messageId, sent_at: sentAt }
 }
 
-function normalizeListResponse(
-	body: UnipileListConversationsResponse | Record<string, unknown>,
-): { conversations: UnipileConversation[]; next_cursor?: string } {
+function normalizeListResponse(body: UnipileListConversationsResponse | Record<string, unknown>): {
+	conversations: UnipileConversation[]
+	next_cursor?: string
+} {
 	const rec = body as Record<string, unknown>
 	const conversations = Array.isArray(rec.conversations)
 		? (rec.conversations as UnipileConversation[])
@@ -772,9 +767,11 @@ function normalizeListResponse(
 type SendPayload = { recipient_urn: string; body: string; idempotency_key: string }
 type ReplyPayload = { thread_id: string; body: string; idempotency_key: string }
 
-function validateSendPayload(
-	input: { recipient_urn?: unknown; body?: unknown; idempotency_key?: unknown },
-): { ok: true; payload: SendPayload } | { ok: false; error: string } {
+function validateSendPayload(input: {
+	recipient_urn?: unknown
+	body?: unknown
+	idempotency_key?: unknown
+}): { ok: true; payload: SendPayload } | { ok: false; error: string } {
 	if (typeof input.recipient_urn !== 'string' || input.recipient_urn.length === 0) {
 		return { ok: false, error: 'recipient_urn is required' }
 	}
@@ -798,9 +795,11 @@ function validateSendPayload(
 	}
 }
 
-function validateReplyPayload(
-	input: { thread_id?: unknown; body?: unknown; idempotency_key?: unknown },
-): { ok: true; payload: ReplyPayload } | { ok: false; error: string } {
+function validateReplyPayload(input: {
+	thread_id?: unknown
+	body?: unknown
+	idempotency_key?: unknown
+}): { ok: true; payload: ReplyPayload } | { ok: false; error: string } {
 	if (typeof input.thread_id !== 'string' || input.thread_id.length === 0) {
 		return { ok: false, error: 'thread_id is required' }
 	}
