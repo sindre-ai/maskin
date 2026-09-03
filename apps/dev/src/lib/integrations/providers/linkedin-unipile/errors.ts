@@ -211,3 +211,81 @@ export function computeBackoffMs(policy: RetryPolicy, attemptIndex: number): num
 	const offset = (Math.random() * 2 - 1) * jitterRange
 	return Math.max(0, Math.min(policy.capMs, raw + offset))
 }
+
+/**
+ * Named subclasses, one per code.
+ *
+ * These are the Task 1 (connect-flow) spelling of the same six classes: the
+ * taxonomy above is the wire contract, and these are constructors that fill
+ * in the human-facing message. `client.ts` throws `UnipileUnavailableError`
+ * on a transport failure, so the connect flow never has to know the message
+ * text or the retry policy — both live here.
+ *
+ * A subclass adds no behaviour beyond a default message: every one of them is
+ * a `LinkedInIntegrationError`, so `isLinkedInIntegrationError`,
+ * `RETRY_POLICY_BY_CODE` and the route's `handleTerminalError` treat them
+ * identically to a directly-constructed error with the same code. Prefer the
+ * subclass when the message is the standard one, and the base class when the
+ * route has a more specific message to give.
+ */
+export class CredentialNotConnectedError extends LinkedInIntegrationError {
+	constructor(cause?: unknown) {
+		super(
+			'CREDENTIAL_NOT_CONNECTED',
+			'LinkedIn is not connected for this actor. Ask the workspace member to reconnect at Settings > Integrations.',
+			{ cause },
+		)
+	}
+}
+
+export class CredentialRevokedError extends LinkedInIntegrationError {
+	constructor(cause?: unknown) {
+		super(
+			'CREDENTIAL_REVOKED',
+			'The LinkedIn connection has been revoked. Reconnect at Settings > Integrations.',
+			{ cause },
+		)
+	}
+}
+
+export class RateLimitedUnipileError extends LinkedInIntegrationError {
+	constructor(cause?: unknown) {
+		super('RATE_LIMITED_UNIPILE', 'LinkedIn provider is rate-limited. Try again in ~1 minute.', {
+			cause,
+		})
+	}
+}
+
+export class LinkedinAccountRestrictedError extends LinkedInIntegrationError {
+	constructor(cause?: unknown) {
+		super(
+			'LINKEDIN_ACCOUNT_RESTRICTED',
+			'LinkedIn has restricted this account. Sending will be blocked until LinkedIn lifts the restriction (typically 24-72h).',
+			{ cause },
+		)
+	}
+}
+
+export class UnipileUnavailableError extends LinkedInIntegrationError {
+	constructor(cause?: unknown) {
+		super(
+			'UNIPILE_UNAVAILABLE',
+			'LinkedIn provider is temporarily unavailable. Retry in a few minutes.',
+			{ cause },
+		)
+	}
+}
+
+export class InvalidInputError extends LinkedInIntegrationError {
+	constructor(reason: string, cause?: unknown) {
+		super('INVALID_INPUT', `INVALID_INPUT: ${reason}`, { cause })
+	}
+}
+
+/**
+ * Task 1 spellings of the base class and code union, kept so the connect-flow
+ * modules that predate the taxonomy above don't have to be touched.
+ */
+export type LinkedinUnipileErrorCode = LinkedInErrorCode
+export const LinkedinUnipileError = LinkedInIntegrationError
+export type LinkedinUnipileError = LinkedInIntegrationError

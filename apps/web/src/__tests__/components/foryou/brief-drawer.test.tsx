@@ -76,7 +76,16 @@ function installSpeechSynthesis() {
 	const speak = vi.fn()
 	Object.defineProperty(window, 'speechSynthesis', {
 		configurable: true,
-		value: { speak, cancel: vi.fn() },
+		// Complete enough to stand in for the real thing: the playback hook
+		// probes for voices on mount, and a stub missing `getVoices` throws
+		// inside an effect, failing every test that mounts the drawer.
+		value: {
+			speak,
+			cancel: vi.fn(),
+			getVoices: () => [],
+			addEventListener: vi.fn(),
+			removeEventListener: vi.fn(),
+		},
 	})
 	Object.defineProperty(window, 'SpeechSynthesisUtterance', {
 		configurable: true,
@@ -94,10 +103,8 @@ function installSpeechSynthesis() {
 }
 
 function removeSpeechSynthesis() {
-	// @ts-expect-error — deleting an optional test-only global
-	window.speechSynthesis = undefined
-	// @ts-expect-error — deleting an optional test-only global
-	window.SpeechSynthesisUtterance = undefined
+	Reflect.deleteProperty(window, 'speechSynthesis')
+	Reflect.deleteProperty(window, 'SpeechSynthesisUtterance')
 }
 
 describe('briefSpokenText', () => {
@@ -123,7 +130,12 @@ describe('briefMentionedIds', () => {
 describe('brief playback readouts', () => {
 	it('estimates a duration from the word count and formats it as a clock', () => {
 		expect(estimateDurationMs('')).toBe(0)
-		expect(estimateDurationMs(new Array(170).fill('word').join(' '))).toBe(60_000)
+		// 165 words is a minute of speech at rate 1, and the brief is read at
+		// 0.95 — so the estimate has to come back longer than a flat wpm count,
+		// or the clock would run out before the voice does.
+		expect(estimateDurationMs(new Array(165).fill('word').join(' '))).toBe(
+			Math.round(60_000 / 0.95),
+		)
 		expect(formatClock(60_000)).toBe('1:00')
 		expect(formatClock(5_500)).toBe('0:06')
 	})

@@ -186,6 +186,10 @@ export const integrations = pgTable(
 		config: jsonb('config').notNull().default({}),
 		// Per-row marker keys for managed-package installs; nullable everywhere.
 		metadata: jsonb('metadata'),
+		// Nullable everywhere. Only providers in the actor-scoped allow-list
+		// declared in apps/dev/src/lib/integrations/lookup.ts populate this;
+		// every other provider keeps actor_id = NULL and stays workspace-scoped.
+		actorId: uuid('actor_id').references(() => actors.id),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -193,14 +197,17 @@ export const integrations = pgTable(
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 	},
 	(t) => [
-		uniqueIndex('integrations_ws_provider_external_uniq')
-			.on(t.workspaceId, t.provider, t.externalId)
+		uniqueIndex('integrations_ws_actor_provider_external_uniq')
+			.on(t.workspaceId, t.actorId, t.provider, t.externalId)
 			.where(sql`${t.externalId} IS NOT NULL`),
-		uniqueIndex('integrations_ws_provider_null_external_uniq')
-			.on(t.workspaceId, t.provider)
+		uniqueIndex('integrations_ws_actor_provider_null_external_uniq')
+			.on(t.workspaceId, t.actorId, t.provider)
 			.where(sql`${t.externalId} IS NULL`),
+		index('integrations_ws_provider_idx').on(t.workspaceId, t.provider),
 	],
 )
+export type Integration = typeof integrations.$inferSelect
+export type NewIntegration = typeof integrations.$inferInsert
 
 // ── Slack User Links ───────────────────────────────────────────────────────
 // Per-(Slack team, Slack user) routing into a Maskin actor + default

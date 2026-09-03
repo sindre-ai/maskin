@@ -1,5 +1,4 @@
 import { Composer } from '@/components/chat/chat'
-import { LegacyNewConversationPage } from '@/components/chat/legacy/new-conversation-page'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -9,7 +8,6 @@ import {
 } from '@/components/ui/responsive-popover'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import type { MessageMetadata } from '@/lib/api'
@@ -80,17 +78,7 @@ interface Recipient {
 	description?: string | null
 }
 
-// `new-design` boundary for the New chat screen: the v2 page below, or the
-// pre-v2 page vendored under `components/chat/legacy/`. Note what is *not*
-// behind it — `validateSearch` above, so `objectIds` links resolve on both
-// sides rather than 404ing a user whose flag happens to be off. Resolving is
-// not enough on its own: the pre-v2 page seeds the same ids into its composer
-// selection, so the objects arrive on either branch.
 function NewChatRoute() {
-	return useFeatureFlag('new-design') ? <NewConversationPage /> : <LegacyNewConversationPage />
-}
-
-function NewConversationPage() {
 	const { workspaceId } = useWorkspace()
 	const search = Route.useSearch()
 	const navigate = useNavigate()

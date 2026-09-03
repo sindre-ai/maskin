@@ -208,6 +208,12 @@ export const integrationResponseSchema = z.object({
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
+	// Scopes the provider config now requires that this install's token does not
+	// carry. OAuth tokens never gain scopes retroactively, so a non-empty list
+	// means the integration works but cannot do everything the product expects,
+	// and reconnecting is what fixes it. Scope names only — never the token.
+	missingScopes: z.array(z.string()).optional(),
+	needsReconnect: z.boolean().optional(),
 })
 
 export const providerEventSchema = z.object({

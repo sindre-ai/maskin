@@ -51,20 +51,15 @@ vi.mock('@/components/shared/loading-skeleton', () => ({
 type ViewCapture = { lastProps: Record<string, unknown> | null }
 const viewCapture = globalThis as unknown as { __agentsViewCapture: ViewCapture }
 viewCapture.__agentsViewCapture = { lastProps: null }
-// Both sides of the `new-design` boundary are stubbed with the same capture:
-// the route hands identical props to either list, and these tests are about
-// what the route computes, not which list renders it. Mocking only the v2
-// module would let the flag-off default render the real legacy component,
-// which pulls in its own queries and fails without a QueryClientProvider.
+// The list is stubbed out: these tests are about what the route computes, not
+// how the list renders it. The real component pulls in its own queries and
+// would fail without a QueryClientProvider.
 function captureViewProps(props: Record<string, unknown>) {
 	;(globalThis as unknown as { __agentsViewCapture: ViewCapture }).__agentsViewCapture.lastProps =
 		props
 	return <div data-testid="agents-index-view" />
 }
 vi.mock('@/components/agents/agents-index-view', () => ({
-	AgentsIndexView: captureViewProps,
-}))
-vi.mock('@/components/agents/legacy/agents-index-view', () => ({
 	AgentsIndexView: captureViewProps,
 }))
 

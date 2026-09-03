@@ -18,6 +18,7 @@ async function insertRootCommentAt(opts: {
 	content: string
 	createdAt: Date
 	metadata?: Record<string, unknown>
+	decision?: Record<string, unknown>
 }) {
 	const rows = await db
 		.insert(events)
@@ -31,6 +32,7 @@ async function insertRootCommentAt(opts: {
 				content: opts.content,
 				mentions: opts.mentions,
 				...(opts.metadata ? { metadata: opts.metadata } : {}),
+				...(opts.decision ? { decision: opts.decision } : {}),
 			},
 			createdAt: opts.createdAt,
 		})
@@ -191,7 +193,7 @@ describe('OrphanThreadDetector — integration', () => {
 		expect(capturePosthogEvent).not.toHaveBeenCalled()
 	})
 
-	it('classifies decision-chip metadata as decision_required', async () => {
+	it('classifies a comment carrying a decision block as decision_required', async () => {
 		const actor = getTestActorId()
 		const ws = await insertWorkspace(db, actor)
 		const object = await insertObject(db, ws.id, actor)
@@ -204,7 +206,15 @@ describe('OrphanThreadDetector — integration', () => {
 			mentions: [agent.id],
 			content: 'pick one',
 			createdAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
-			metadata: { chips: ['ship', 'wait', 'kill'] },
+			decision: {
+				title: 'Ship the retry backoff?',
+				summary: '3 sessions stalled last night. The patch is written and tested.',
+				ask: 'This changes what every running session does, so I will not ship it alone.',
+				options: [
+					{ label: 'Ship', recommended: true, consequences: ['Goes out tonight', 'No rollback'] },
+					{ label: 'Hold', consequences: ['Nothing ships', 'Stalls keep happening'] },
+				],
+			},
 		})
 
 		const detector = new OrphanThreadDetector(db)
@@ -213,6 +223,61 @@ describe('OrphanThreadDetector — integration', () => {
 		const ledger = await db.select().from(orphanThreadDetections)
 		expect(ledger).toHaveLength(1)
 		expect(ledger[0].threadKind).toBe('decision_required')
+	})
+
+	// `metadata.chips` was the pre-`decision` way to ask, and stored rows still
+	// carry it. It is not a decision any more, so the ledger must record the
+	// thread as the plain question it reads as — otherwise the escalation signal
+	// keeps firing on a mechanism nothing renders.
+	it('classifies a legacy metadata.chips comment as a question, not a decision', async () => {
+		const actor = getTestActorId()
+		const ws = await insertWorkspace(db, actor)
+		const object = await insertObject(db, ws.id, actor)
+		const agent = await insertActor(db, { type: 'agent', name: 'Agent Legacy' })
+
+		await insertRootCommentAt({
+			workspaceId: ws.id,
+			actorId: actor,
+			entityId: object.id,
+			mentions: [agent.id],
+			content: 'Which one should we take?',
+			createdAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
+			metadata: { chips: ['ship', 'wait', 'kill'] },
+		})
+
+		const detector = new OrphanThreadDetector(db)
+		await detector.tick()
+
+		const ledger = await db.select().from(orphanThreadDetections)
+		expect(ledger).toHaveLength(1)
+		expect(ledger[0].threadKind).toBe('question')
+	})
+
+	// A decision block that does not satisfy the schema is not a decision. This
+	// is the shape a bare `typeof x === 'object'` check used to accept, which
+	// made the detector disagree with the For You feed about the same row.
+	it('classifies a malformed decision block as a question, not a decision', async () => {
+		const actor = getTestActorId()
+		const ws = await insertWorkspace(db, actor)
+		const object = await insertObject(db, ws.id, actor)
+		const agent = await insertActor(db, { type: 'agent', name: 'Agent Malformed' })
+
+		await insertRootCommentAt({
+			workspaceId: ws.id,
+			actorId: actor,
+			entityId: object.id,
+			mentions: [agent.id],
+			content: 'Which one should we take?',
+			createdAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
+			decision: {} as never,
+		})
+
+		const detector = new OrphanThreadDetector(db)
+		await detector.tick()
+
+		const ledger = await db.select().from(orphanThreadDetections)
+		expect(ledger).toHaveLength(1)
+		expect(ledger[0].threadKind).toBe('question')
 	})
 
 	it('ignores threads younger than the reply deadline', async () => {

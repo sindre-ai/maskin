@@ -10,7 +10,6 @@ import {
 	SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { useChatUnreadCount } from '@/hooks/use-chat-unread'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useUnread } from '@/hooks/use-subscriptions'
 import {
 	CHATS_ROUTE,
@@ -23,9 +22,6 @@ import {
 import { useWorkspace } from '@/lib/workspace-context'
 import { Store } from 'lucide-react'
 import { useMemo } from 'react'
-import { NavUser as LegacyNavUser } from './legacy/nav-user'
-import { SidebarActivity as LegacySidebarActivity } from './legacy/sidebar-activity'
-import { WorkspaceSwitcher as LegacyWorkspaceSwitcher } from './legacy/workspace-switcher'
 import { NavUser } from './nav-user'
 import { SidebarActivity } from './sidebar-activity'
 import { SidebarNavItem } from './sidebar-nav-item'
@@ -44,14 +40,6 @@ const marketplaceItem: NavItemDef = {
 
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	const { workspaceId } = useWorkspace()
-	// The single `new-design` boundary for the app shell. The three chrome
-	// components below were rewritten in place for v2; their pre-v2 versions
-	// live in `./legacy/` and are chosen here rather than inside each one, so
-	// the shell has one branch instead of three.
-	const newDesign = useFeatureFlag('new-design')
-	const WorkspaceSwitcherView = newDesign ? WorkspaceSwitcher : LegacyWorkspaceSwitcher
-	const SidebarActivityView = newDesign ? SidebarActivity : LegacySidebarActivity
-	const NavUserView = newDesign ? NavUser : LegacyNavUser
 	const hasObjectTypes = useHasObjectsNavItem()
 	const { data: unread } = useUnread(workspaceId)
 	const unreadCount = unread?.items.length ?? 0
@@ -71,7 +59,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 				    itself — there the workspace tile expands the sidebar. */}
 				<div className="flex items-center gap-1">
 					<div className="min-w-0 flex-1">
-						<WorkspaceSwitcherView />
+						<WorkspaceSwitcher />
 					</div>
 					{/* Named for what it does here, not the generic primitive label —
 					    the SidebarRail is also in the tree and also toggles, and two
@@ -116,8 +104,8 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 				<SidebarMenu>
 					<SidebarNavItem item={marketplaceItem} source="footer" />
 				</SidebarMenu>
-				<SidebarActivityView workspaceId={workspaceId} />
-				<NavUserView />
+				<SidebarActivity workspaceId={workspaceId} />
+				<NavUser />
 			</SidebarFooter>
 			<SidebarRail />
 		</Sidebar>

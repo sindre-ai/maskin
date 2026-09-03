@@ -20,11 +20,6 @@ vi.mock('@/hooks/use-workspaces', () => ({
 	useUpdateWorkspace: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
-// These sections live on the v2 General page, behind `new-design`.
-vi.mock('@/hooks/use-feature-flag', () => ({
-	useFeatureFlag: (id: string) => id === 'new-design',
-}))
-
 vi.mock('@/lib/theme', () => ({
 	useTheme: () => ({ theme: mockTheme.current, setTheme: mockSetTheme }),
 }))

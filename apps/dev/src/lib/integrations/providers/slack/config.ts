@@ -13,14 +13,21 @@ export const config: ProviderConfig = {
 			// alignment server-side; the listing itself is a separate human follow-up
 			// and must be verified against this array before submission.
 			//
-			// The `conversations.history`-equivalent scopes are deliberately excluded
-			// in phase 1: the bot should only see what it's @mentioned in, not the
-			// full backlog of every channel it lives in. `im:history` is the single
-			// exception — DMs are an explicit invitation. If a later phase needs
-			// `channels:history` / `groups:history` / `mpim:history`, add them here
-			// AND re-submit the Marketplace listing, never one or the other.
+			// Phase 1 deliberately excluded the `conversations.history`-equivalent
+			// scopes: the bot was to see only what it was @mentioned in, not the full
+			// backlog of every channel it lives in. **That decision is reversed.**
+			// Agents need to read channel history to do their job — the trigger that
+			// forced it was a Chief of Staff agent that could not resolve a channel id
+			// to a name and had to ask a human to paste ids out of the Slack UI. So
+			// `channels:history` / `groups:history` / `mpim:history` are now granted,
+			// and the Marketplace listing was re-submitted to match. The AC-T8 rule
+			// still stands in both directions: change this array and the listing
+			// together, never one or the other.
 			scopes: [
 				'app_mentions:read',
+				'canvases:read',
+				'canvases:write',
+				'channels:history',
 				'channels:join',
 				'channels:read',
 				'chat:write',
@@ -30,18 +37,44 @@ export const config: ProviderConfig = {
 				// Slack answers every file download with HTTP 403 and attachment ingest
 				// silently degrades to text-only (MASKIN-DEV-A).
 				'files:read',
+				'groups:history',
 				'groups:read',
 				'im:history',
 				'im:read',
 				'im:write',
 				'links:read',
 				'links:write',
+				'mpim:history',
 				'mpim:read',
 				'reactions:read',
 				'reactions:write',
 				'team:read',
+				'users.profile:read',
 				'users:read',
 			],
+			// Slack's `search.messages` has no bot-scope equivalent — search is
+			// user-token-only — so the install additionally requests a user token in
+			// the SAME exchange. Slack then returns `access_token` (xoxb-, the bot) and
+			// `authed_user.access_token` (xoxp-, the installer) side by side, which is
+			// why `credentials.accessToken` stays a bot token and the `xoxb-` guards in
+			// mcp-server.ts / session-manager.ts remain correct.
+			//
+			// These are the GRANULAR search scopes, matching what
+			// docs/integrations/slack/manifest.yml declares under `user`. Slack split
+			// the old blanket `search:read` into per-surface scopes, and asking for a
+			// scope the app manifest does not declare fails the whole authorize with
+			// `invalid_scope` — so this list must stay a subset of the manifest's.
+			// `search:read.files` / `search:read.users` are declared there but not
+			// requested here: `search.messages` does not need them.
+			//
+			// `extraAuthParams` is applied verbatim to the authorize URL by
+			// OAuth2Handler.createAuthorizationUrl, so this needs no handler change.
+			// Comma-separated on purpose: Slack's docs specify commas, and unlike the
+			// `scope` param (which the handler joins with spaces) this is a raw string
+			// we control.
+			extraAuthParams: {
+				user_scope: 'search:read.public,search:read.private,search:read.mpim,search:read.im',
+			},
 			clientIdEnv: 'SLACK_CLIENT_ID',
 			clientSecretEnv: 'SLACK_CLIENT_SECRET',
 		},
@@ -99,10 +132,25 @@ export const config: ProviderConfig = {
 
 /**
  * Slack returns a non-standard token response:
- * { ok, access_token, token_type, scope, bot_user_id, app_id, team: { id, name }, ... }
+ * { ok, access_token, token_type, scope, bot_user_id, app_id, team: { id, name },
+ *   authed_user: { id, access_token, scope, token_type }, ... }
  *
  * Tokens never expire — no refresh_token or expires_in.
  * Scopes are comma-separated (not space-separated).
+ *
+ * `access_token` is the BOT token (xoxb-) and always lands in `accessToken`, the
+ * field every existing caller reads. The installer's USER token (xoxp-) arrives
+ * under `authed_user` when `user_scope` was requested and is stashed separately
+ * as `userAccessToken` — it is used for `search.messages` only, never for
+ * posting, since posting with it would attribute messages to the human who
+ * installed the app.
+ *
+ * `StoredCredentials` has an index signature and the whole object is JSON
+ * -encrypted into one blob, so these extra keys need no schema change — the same
+ * mechanism already carries `teamId` / `botUserId` / `appId`.
+ *
+ * Note the user token is NOT optional-merge-able on reconnect: the callback
+ * replaces the credentials blob wholesale, so it must come from this exchange.
  */
 export const parseTokenResponse = (raw: unknown): Partial<StoredCredentials> => {
 	const data = raw as Record<string, unknown>
@@ -113,6 +161,7 @@ export const parseTokenResponse = (raw: unknown): Partial<StoredCredentials> => 
 		throw new Error('Slack token response missing access_token')
 	}
 	const team = data.team as Record<string, unknown> | undefined
+	const authedUser = data.authed_user as Record<string, unknown> | undefined
 	return {
 		accessToken: data.access_token,
 		tokenType: typeof data.token_type === 'string' ? data.token_type : undefined,
@@ -121,6 +170,10 @@ export const parseTokenResponse = (raw: unknown): Partial<StoredCredentials> => 
 		teamName: typeof team?.name === 'string' ? team.name : undefined,
 		botUserId: typeof data.bot_user_id === 'string' ? data.bot_user_id : undefined,
 		appId: typeof data.app_id === 'string' ? data.app_id : undefined,
+		authedUserId: typeof authedUser?.id === 'string' ? authedUser.id : undefined,
+		userAccessToken:
+			typeof authedUser?.access_token === 'string' ? authedUser.access_token : undefined,
+		userScope: typeof authedUser?.scope === 'string' ? authedUser.scope : undefined,
 	}
 }
 

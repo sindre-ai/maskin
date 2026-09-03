@@ -33,10 +33,10 @@ export interface PendingComment {
 	objectId: string
 	content: string
 	mentions: string[]
-	// Structured extras riding the same comment (today `{ chips }` from the
-	// composer's "Attach a decision"). Queued alongside the attachments so a
-	// comment can carry both — the queue previously dropped it, which forced the
-	// composer to disable one affordance whenever the other was used.
+	// Structured extras riding the same comment (today `{ refs }` from
+	// "Reference an object"). Queued alongside the attachments so a comment can
+	// carry both — the queue previously dropped it, which forced the composer to
+	// disable one affordance whenever the other was used.
 	metadata?: Record<string, unknown>
 	parentEventId?: number
 	files: PendingFile[]

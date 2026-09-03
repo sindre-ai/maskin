@@ -1,11 +1,6 @@
 import { z } from 'zod'
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 200
-// Conversations are created with this placeholder and are given a real,
-// content-derived title moments later by the backend auto-titler
-// (apps/dev/src/services/conversation-titler.ts). It stays only when the
-// workspace has no LLM credential of any kind.
-export const NEW_CONVERSATION_PLACEHOLDER_TITLE = 'New chat'
 // Chat turns run longer than object comments (COMMENT_MAX_LENGTH in events.ts).
 export const MESSAGE_MAX_LENGTH = 8000
 export const MAX_CONVERSATION_PARTICIPANTS = 50

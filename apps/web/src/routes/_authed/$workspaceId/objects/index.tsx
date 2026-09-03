@@ -15,7 +15,6 @@ import {
 import type { DisplayPanelView } from '@/components/objects/data-table/display-panel'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
 import type { FieldDefinition } from '@/components/objects/field-value-input'
-import { LegacyObjectsPage } from '@/components/objects/legacy/objects-page'
 import { ListView, type ListViewHandle } from '@/components/objects/list/list-view'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { type FilterTabItem, FilterTabs } from '@/components/shared/filter-tabs'
@@ -25,7 +24,6 @@ import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useNotifications, useRespondNotification } from '@/hooks/use-notifications'
 import { useObjectStars } from '@/hooks/use-object-stars'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
@@ -164,14 +162,7 @@ const BOARD_MANUAL_SORT = 'boardOrder'
 // do on day one hundred, so they are safe to pre-place in the chip row.
 const DEFAULT_PINNED_FILTERS = ['quick:fresh', 'quick:starred']
 
-// `new-design` boundary for the Objects list: the v2 page below, or the pre-v2
-// one vendored under `components/objects/legacy/`. The route's `validateSearch`
-// is deliberately shared — flags govern the visual layer only.
 function ObjectsRoute() {
-	return useFeatureFlag('new-design') ? <ObjectsPageV2 /> : <LegacyObjectsPage />
-}
-
-function ObjectsPageV2() {
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const searchParams = useSearch({ from: '/_authed/$workspaceId/objects/' })

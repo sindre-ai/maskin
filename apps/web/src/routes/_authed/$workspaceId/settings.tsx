@@ -1,6 +1,4 @@
 import { PageHeader } from '@/components/layout/page-header'
-import { LegacySettingsNav } from '@/components/settings/legacy/settings-nav'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, Outlet, createFileRoute, useMatchRoute } from '@tanstack/react-router'
@@ -27,7 +25,7 @@ const keysNavItem = {
 	exact: false,
 }
 
-function SettingsLayoutV2() {
+function SettingsLayout() {
 	const { workspace, workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
 	const navItems = workspace?.enterprise ? [...settingsNav, keysNavItem] : settingsNav
@@ -72,10 +70,4 @@ function SettingsLayoutV2() {
 			</div>
 		</div>
 	)
-}
-
-// `new-design` boundary for the Settings shell: the v2 six-section nav above,
-// or the pre-v2 nav under `components/settings/legacy/`.
-function SettingsLayout() {
-	return useFeatureFlag('new-design') ? <SettingsLayoutV2 /> : <LegacySettingsNav />
 }

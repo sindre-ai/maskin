@@ -234,11 +234,15 @@ resolved server-side and loaded in `_authed.tsx`'s `beforeLoad`.
 
 **One boundary per feature, as high in the tree as possible** — the shell or a
 route layout, not scattered checks on individual components. No flag is live
-right now; the pattern to copy is the retired `new-design` flag, which was read
-once in `src/routes/_authed/$workspaceId.tsx` and swapped the entire shell
-(sidebar, header, command palette, mobile nav) at that single call site, with
-the pre-v2 components kept under `src/components/*/legacy/`. If you need a third
-call site for one flag, the boundary is in the wrong place — move it up.
+right now; the pattern to copy is the retired `new-design` flag, which shipped
+the v2 redesign: it was read once per route component, each swapping a whole
+page, plus one shell read in `src/components/layout/sidebar.tsx`, with the
+pre-v2 components vendored under sibling `src/components/*/legacy/` directories
+that were deleted with the flag. **One route component = one boundary** — a flag
+governing several pages legitimately has several read sites. What must never
+happen is a *second* check inside a page already on one side of the boundary;
+that means the boundary is too low — move it up rather than add another check.
+See `.claude/rules/feature-flags.md` for the full rule.
 
 Flags cover the **visual layer only**; never gate data fetching, API calls, or
 anything a flag-off user still depends on. Full guide (env vars, the test-only
