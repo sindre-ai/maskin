@@ -1,4 +1,3 @@
-import { createHmac } from 'node:crypto'
 import {
 	type IncomingMessage,
 	type ServerResponse,
@@ -7,25 +6,22 @@ import {
 import type { AddressInfo } from 'node:net'
 
 /**
- * In-process Unipile mock server for tests. Starts on a random port so
- * multiple test suites can run in parallel; the caller passes the resolved
- * base URL to the linkedin-unipile client / route via UNIPILE_BASE_URL.
+ * In-process Unipile mock server for tests, rebuilt against Unipile Hosted
+ * Auth v2 + Messaging v2. Starts on a random port so multiple test suites
+ * can run in parallel; the caller passes the resolved base URL to the
+ * linkedin-unipile client/route via UNIPILE_BASE_URL.
  *
- * Covers the subset of Unipile's API surface this bet touches:
- *   - POST /api/v1/hosted/accounts/link  — Task 2 (this task)
- *   - POST /api/v1/messages              — Task 3
- *   - GET  /api/v1/chats                 — Task 3
- *   - POST /api/v1/chats/:id/messages    — Task 3
+ * Covers the subset of Unipile's v2 API this bet touches:
+ *   - POST /v2/auth/link                                    — hosted-auth
+ *   - POST /v2/:account_id/chats/send                       — new-chat send
+ *   - GET  /v2/:account_id/chats                            — list chats
+ *   - POST /v2/:account_id/chats/:chat_id/messages/send     — reply in thread
  *
- * Task 3 hydrates the messaging responses; the current file returns
- * canned success shapes for all four routes so a Task 3 driver doesn't
- * have to touch the mock again.
- *
- * The mock also exposes `postSignedCallback(url, body)` — a test helper
- * that computes a valid HMAC-SHA256 signature over `body` using the same
- * secret the linkedin-unipile route reads, then POSTs it to `url`. This
- * lets tests drive the Unipile → Maskin webhook leg without duplicating
- * signature-generation logic in every test file.
+ * The v1 handlers (`/api/v1/hosted/accounts/link`, `/api/v1/messages`,
+ * `/api/v1/chats*`) are gone. Signature verification is gone too — v2 uses a
+ * GET redirect callback whose auth is the round-trip `state` binding, not
+ * HMAC; test helpers `simulateCallbackSuccess`/`simulateCallbackError`
+ * replace v1's `postSignedCallback`.
  */
 
 export interface UnipileMockServer {
@@ -37,9 +33,10 @@ export interface UnipileMockServer {
 	resetInbox: () => void
 }
 
-const CANNED_HOSTED_LINK = (name: string, base: string) => ({
-	object: 'HostedAuthUrl',
-	url: `${base}/mock-wizard?integration=${encodeURIComponent(name)}`,
+const CANNED_AUTH_LINK = (state: string, base: string) => ({
+	data: {
+		link: `${base}/mock-wizard?state=${encodeURIComponent(state)}`,
+	},
 })
 
 const CANNED_MESSAGE_RESPONSE = () => ({
@@ -84,24 +81,25 @@ export async function startUnipileMock(): Promise<UnipileMockServer> {
 			res.end(JSON.stringify(body))
 		}
 
-		if (method === 'POST' && url === '/api/v1/hosted/accounts/link') {
-			const name =
-				typeof parsed === 'object' && parsed !== null && 'name' in parsed
-					? String((parsed as { name?: unknown }).name ?? '')
+		if (method === 'POST' && url === '/v2/auth/link') {
+			const state =
+				typeof parsed === 'object' && parsed !== null && 'state' in parsed
+					? String((parsed as { state?: unknown }).state ?? '')
 					: ''
 			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
-			return send(200, CANNED_HOSTED_LINK(name, base))
+			return send(200, CANNED_AUTH_LINK(state, base))
 		}
-		if (method === 'POST' && url === '/api/v1/messages') {
+		// v2 messaging endpoints — account_id is a path segment.
+		if (method === 'POST' && /^\/v2\/[^/]+\/chats\/send$/.test(url)) {
 			return send(200, CANNED_MESSAGE_RESPONSE())
 		}
-		if (method === 'GET' && url.startsWith('/api/v1/chats')) {
+		if (method === 'GET' && /^\/v2\/[^/]+\/chats(\?.*)?$/.test(url)) {
 			return send(200, CANNED_CHATS_RESPONSE())
 		}
-		if (method === 'POST' && /^\/api\/v1\/chats\/[^/]+\/messages$/.test(url)) {
+		if (method === 'POST' && /^\/v2\/[^/]+\/chats\/[^/]+\/messages\/send$/.test(url)) {
 			return send(200, CANNED_MESSAGE_RESPONSE())
 		}
-		if (method === 'GET' && url === '/mock-wizard') {
+		if (method === 'GET' && url.startsWith('/mock-wizard')) {
 			res.statusCode = 200
 			res.setHeader('Content-Type', 'text/html')
 			return res.end('<html><body>mock unipile wizard</body></html>')
@@ -127,25 +125,38 @@ export async function startUnipileMock(): Promise<UnipileMockServer> {
 }
 
 /**
- * Test helper: POST a JSON body to a Maskin callback URL with a valid
- * HMAC-SHA256 signature computed against `secret`. Keeps signature-generation
- * out of every test file.
+ * Test helper: GET the Maskin callback URL with the success query params
+ * Unipile v2 sends after a hosted-wizard completion. `redirect: 'manual'` so
+ * the test sees the 302 rather than following it.
  */
-export async function postSignedCallback(
-	url: string,
-	body: unknown,
-	secret: string,
-	options: { headerName?: string } = {},
+export async function simulateCallbackSuccess(
+	callbackUrl: string,
+	args: { state: string; account_id: string; provider?: string },
 ): Promise<Response> {
-	const rawBody = JSON.stringify(body)
-	const signature = createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex')
-	const headerName = options.headerName ?? 'X-Unipile-Signature'
-	return fetch(url, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			[headerName]: signature,
-		},
-		body: rawBody,
-	})
+	const url = new URL(callbackUrl)
+	url.searchParams.set('state', args.state)
+	url.searchParams.set('account_id', args.account_id)
+	url.searchParams.set('provider', args.provider ?? 'linkedin')
+	return fetch(url.toString(), { method: 'GET', redirect: 'manual' })
+}
+
+/**
+ * Test helper: GET the Maskin callback URL with the error query params
+ * Unipile v2 sends on a hosted-wizard failure.
+ */
+export async function simulateCallbackError(
+	callbackUrl: string,
+	args: {
+		state?: string
+		error_type: string
+		error_title?: string
+		error_detail?: string
+	},
+): Promise<Response> {
+	const url = new URL(callbackUrl)
+	if (args.state) url.searchParams.set('state', args.state)
+	url.searchParams.set('error_type', args.error_type)
+	if (args.error_title) url.searchParams.set('error_title', args.error_title)
+	if (args.error_detail) url.searchParams.set('error_detail', args.error_detail)
+	return fetch(url.toString(), { method: 'GET', redirect: 'manual' })
 }

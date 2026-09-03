@@ -71,6 +71,27 @@ export const LINKEDIN_ERROR_CODES = [
 export const UNIPILE_RESTRICTED_MARKERS = {
 	disconnectedAccountReasons: ['RESTRICTED'] as const,
 	errorCodes: ['account_restricted'] as const,
+	// v2 Hosted Auth surfaces LinkedIn account restrictions on the redirect
+	// callback as `error_type=api/restricted_account`. Added when the callback
+	// flipped from POST-signed body to GET redirect with query params.
+	// https://developer.unipile.com/v2.0/docs/authenticate-with-hosted-auth
+	hostedAuthErrorTypes: ['api/restricted_account'] as const,
+}
+
+/**
+ * Route a Unipile v2 hosted-auth callback `error_type` to a wire code, or
+ * `null` when the type is not an error at all (`api/already_exists` means the
+ * account is already linked and the pending row should adopt the returned
+ * account_id — that path is handled inline in the callback route). Unknown
+ * types map to `UNIPILE_UNAVAILABLE` so a shape drift on Unipile's side does
+ * not silently succeed.
+ */
+export function classifyCallbackErrorType(errorType: string): LinkedInErrorCode | null {
+	if (errorType === 'api/already_exists') return null
+	if (UNIPILE_RESTRICTED_MARKERS.hostedAuthErrorTypes.includes(errorType as never)) {
+		return 'LINKEDIN_ACCOUNT_RESTRICTED'
+	}
+	return 'UNIPILE_UNAVAILABLE'
 }
 
 export class LinkedInIntegrationError extends Error {

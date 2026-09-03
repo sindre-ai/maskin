@@ -1,4 +1,3 @@
-import { createHmac } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
 	type UnipileMockServer,
@@ -9,14 +8,12 @@ import { createTestApp } from '../setup'
 const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111'
 const ACTOR_ID = '22222222-2222-4222-8222-222222222222'
 const INTEGRATION_ID = '33333333-3333-4333-8333-333333333333'
-const WEBHOOK_SECRET = 'test-webhook-secret'
 const ENCRYPTION_KEY = 'a'.repeat(64)
 
 const ORIGINAL_ENV: Record<string, string | undefined> = {}
 const ENV_KEYS = [
 	'UNIPILE_BASE_URL',
 	'UNIPILE_API_KEY',
-	'UNIPILE_WEBHOOK_SECRET',
 	'INTEGRATION_ENCRYPTION_KEY',
 	'MASKIN_PUBLIC_URL',
 	'POSTHOG_API_KEY',
@@ -43,7 +40,6 @@ beforeEach(() => {
 	mock.resetInbox()
 	process.env.UNIPILE_BASE_URL = mock.baseUrl
 	process.env.UNIPILE_API_KEY = 'test-api-key'
-	process.env.UNIPILE_WEBHOOK_SECRET = WEBHOOK_SECRET
 	process.env.INTEGRATION_ENCRYPTION_KEY = ENCRYPTION_KEY
 	process.env.MASKIN_PUBLIC_URL = 'http://localhost:3000'
 	// Turn off PostHog capture so we don't hit the network in tests.
@@ -69,22 +65,16 @@ function jsonPost(path: string, body: unknown, headers: Record<string, string> =
 	})
 }
 
-function rawPost(path: string, body: string, headers: Record<string, string> = {}) {
-	return new Request(`http://localhost${path}`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json', ...headers },
-		body,
-	})
-}
-
-function signBody(body: string, secret = WEBHOOK_SECRET): string {
-	return createHmac('sha256', secret).update(body, 'utf8').digest('hex')
+function callbackGetRequest(query: Record<string, string>) {
+	const url = new URL('http://localhost/api/integrations/linkedin-unipile/callback')
+	for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v)
+	return new Request(url.toString(), { method: 'GET' })
 }
 
 // ── POST /connect ──────────────────────────────────────────────────────────
 
 describe('POST /api/integrations/linkedin-unipile/connect', () => {
-	it('inserts a pending row and returns the Unipile install_url', async () => {
+	it('inserts a pending row and returns the Unipile v2 install_url', async () => {
 		const routes = await importRoutes()
 		const { app, mockResults, calls } = createTestApp(
 			routes,
@@ -118,11 +108,16 @@ describe('POST /api/integrations/linkedin-unipile/connect', () => {
 		expect(inserted.status).toBe('pending')
 		expect(inserted.credentials).toBe('')
 
-		// And that Unipile received a create-link call with the right shape.
-		const linkCall = mock.inbox().find((c) => c.path === '/api/v1/hosted/accounts/link')
+		// And that Unipile received a v2 auth-link call with the right shape.
+		const linkCall = mock.inbox().find((c) => c.path === '/v2/auth/link')
 		expect(linkCall).toBeDefined()
-		expect((linkCall?.body as Record<string, unknown>).providers).toEqual(['LINKEDIN'])
-		expect((linkCall?.body as Record<string, unknown>).name).toBe(INTEGRATION_ID)
+		const linkBody = linkCall?.body as Record<string, unknown>
+		expect(linkBody.providers).toEqual(['linkedin'])
+		expect(linkBody.state).toBe(INTEGRATION_ID)
+		expect(typeof linkBody.expires_on).toBe('string')
+		expect(linkBody.redirect_uri).toBe(
+			'http://localhost:3000/api/integrations/linkedin-unipile/callback',
+		)
 	})
 
 	it('reuses an existing non-connected row instead of inserting a duplicate', async () => {
@@ -159,61 +154,50 @@ describe('POST /api/integrations/linkedin-unipile/connect', () => {
 	})
 })
 
-// ── POST /callback ─────────────────────────────────────────────────────────
+// ── GET /callback ──────────────────────────────────────────────────────────
 
-describe('POST /api/integrations/linkedin-unipile/callback', () => {
-	it('rejects a request with a missing signature', async () => {
+describe('GET /api/integrations/linkedin-unipile/callback', () => {
+	it('redirects to Settings with error when required success params are missing', async () => {
 		const routes = await importRoutes()
 		const { app } = createTestApp(routes, '/api/integrations/linkedin-unipile')
 
-		const body = JSON.stringify({ status: 'CREATION_SUCCESS', account_id: 'acc-1' })
-		const res = await app.request(rawPost('/api/integrations/linkedin-unipile/callback', body))
-		expect(res.status).toBe(401)
+		const res = await app.request(
+			callbackGetRequest({ account_id: 'acc-1' }), // missing state + provider
+		)
+		expect(res.status).toBe(302)
+		expect(res.headers.get('location') ?? '').toContain('linkedin_status=error')
 	})
 
-	it('rejects a request with an invalid signature', async () => {
+	it('redirects to error when provider is not "linkedin"', async () => {
 		const routes = await importRoutes()
 		const { app } = createTestApp(routes, '/api/integrations/linkedin-unipile')
 
-		const body = JSON.stringify({ status: 'CREATION_SUCCESS', account_id: 'acc-1' })
 		const res = await app.request(
-			rawPost('/api/integrations/linkedin-unipile/callback', body, {
-				'X-Unipile-Signature': 'deadbeef',
+			callbackGetRequest({
+				state: INTEGRATION_ID,
+				account_id: 'acc-1',
+				provider: 'whatsapp',
 			}),
 		)
-		expect(res.status).toBe(401)
+		expect(res.status).toBe(302)
+		expect(res.headers.get('location') ?? '').toContain('linkedin_status=error')
+		expect(res.headers.get('location') ?? '').toContain('linkedin_detail=wrong_provider')
 	})
 
-	it('acknowledges a non-CREATION_SUCCESS payload without touching the DB', async () => {
-		const routes = await importRoutes()
-		const { app, calls } = createTestApp(routes, '/api/integrations/linkedin-unipile')
-
-		const body = JSON.stringify({ status: 'CREATION_FAILED', name: INTEGRATION_ID })
-		const res = await app.request(
-			rawPost('/api/integrations/linkedin-unipile/callback', body, {
-				'X-Unipile-Signature': signBody(body),
-			}),
-		)
-		expect(res.status).toBe(200)
-		expect(calls.updates).toHaveLength(0)
-	})
-
-	it('returns 404 when the pending row cannot be found', async () => {
+	it('redirects to error unknown_state when no pending row matches', async () => {
 		const routes = await importRoutes()
 		const { app, mockResults } = createTestApp(routes, '/api/integrations/linkedin-unipile')
 		mockResults.select = []
 
-		const body = JSON.stringify({
-			status: 'CREATION_SUCCESS',
-			account_id: 'acc-1',
-			name: INTEGRATION_ID,
-		})
 		const res = await app.request(
-			rawPost('/api/integrations/linkedin-unipile/callback', body, {
-				'X-Unipile-Signature': signBody(body),
+			callbackGetRequest({
+				state: INTEGRATION_ID,
+				account_id: 'acc-1',
+				provider: 'linkedin',
 			}),
 		)
-		expect(res.status).toBe(404)
+		expect(res.status).toBe(302)
+		expect(res.headers.get('location') ?? '').toContain('linkedin_detail=unknown_state')
 	})
 
 	it('marks the row active with encrypted credentials on the happy path', async () => {
@@ -229,17 +213,16 @@ describe('POST /api/integrations/linkedin-unipile/callback', () => {
 			},
 		]
 
-		const body = JSON.stringify({
-			status: 'CREATION_SUCCESS',
-			account_id: 'unipile-account-42',
-			name: INTEGRATION_ID,
-		})
 		const res = await app.request(
-			rawPost('/api/integrations/linkedin-unipile/callback', body, {
-				'X-Unipile-Signature': signBody(body),
+			callbackGetRequest({
+				state: INTEGRATION_ID,
+				account_id: 'unipile-account-42',
+				provider: 'linkedin',
 			}),
 		)
-		expect(res.status).toBe(200)
+		expect(res.status).toBe(302)
+		expect(res.headers.get('location') ?? '').toContain('linkedin_status=connected')
+		expect(res.headers.get('location') ?? '').toContain('linkedin_detail=unipile-account-42')
 
 		expect(calls.updates).toHaveLength(1)
 		const update = calls.updates[0] as Record<string, unknown>
@@ -252,5 +235,68 @@ describe('POST /api/integrations/linkedin-unipile/callback', () => {
 		// credentials is the encrypted JSON blob — assert on shape (iv:tag:ct)
 		// rather than the exact ciphertext, which contains a random IV.
 		expect(String(update.credentials)).toMatch(/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i)
+	})
+
+	it('adopts an api/already_exists callback into the pending row', async () => {
+		const routes = await importRoutes()
+		const { app, mockResults, calls } = createTestApp(routes, '/api/integrations/linkedin-unipile')
+		mockResults.select = [
+			{
+				id: INTEGRATION_ID,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				provider: 'linkedin-unipile',
+				status: 'pending',
+			},
+		]
+
+		const res = await app.request(
+			callbackGetRequest({
+				state: INTEGRATION_ID,
+				error_type: 'api/already_exists',
+				error_detail: 'existing-unipile-77',
+			}),
+		)
+		expect(res.status).toBe(302)
+		expect(res.headers.get('location') ?? '').toContain('linkedin_status=connected')
+		expect(res.headers.get('location') ?? '').toContain('linkedin_detail=existing-unipile-77')
+
+		expect(calls.updates).toHaveLength(1)
+		const update = calls.updates[0] as Record<string, unknown>
+		expect(update.status).toBe('active')
+		expect(update.externalId).toBe('existing-unipile-77')
+	})
+
+	it('routes api/restricted_account to the restricted-account error surface without flipping status', async () => {
+		const routes = await importRoutes()
+		const { app, calls } = createTestApp(routes, '/api/integrations/linkedin-unipile')
+
+		const res = await app.request(
+			callbackGetRequest({
+				state: INTEGRATION_ID,
+				error_type: 'api/restricted_account',
+				error_detail: 'restricted-by-linkedin',
+			}),
+		)
+		expect(res.status).toBe(302)
+		expect(res.headers.get('location') ?? '').toContain('linkedin_status=error')
+		expect(res.headers.get('location') ?? '').toContain('linkedin_detail=account_restricted')
+		expect(calls.updates).toHaveLength(0)
+	})
+
+	it('routes an unknown error_type to error with the raw value as detail', async () => {
+		const routes = await importRoutes()
+		const { app, calls } = createTestApp(routes, '/api/integrations/linkedin-unipile')
+
+		const res = await app.request(
+			callbackGetRequest({
+				state: INTEGRATION_ID,
+				error_type: 'api/some_new_thing',
+			}),
+		)
+		expect(res.status).toBe(302)
+		expect(res.headers.get('location') ?? '').toContain('linkedin_status=error')
+		expect(res.headers.get('location') ?? '').toContain('linkedin_detail=api%2Fsome_new_thing')
+		expect(calls.updates).toHaveLength(0)
 	})
 })

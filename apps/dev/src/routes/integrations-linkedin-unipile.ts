@@ -2,15 +2,12 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { INTEGRATION_STATUS_ACTIVE, idempotencyRecords, integrations } from '@maskin/db/schema'
 import { and, eq, lt } from 'drizzle-orm'
+import type { Context } from 'hono'
 import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { getIntegrationCredential } from '../lib/integrations/lookup'
-import {
-	WEBHOOK_HEADER_CANDIDATES,
-	createHostedAuthLink,
-	verifyWebhookSignature,
-} from '../lib/integrations/providers/linkedin-unipile/client'
+import { createAuthLink } from '../lib/integrations/providers/linkedin-unipile/client'
 import {
 	LinkedInIntegrationError,
 	RETRY_POLICY_BY_CODE,
@@ -31,27 +28,28 @@ import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 /**
- * LinkedIn (Unipile-backed) integration routes — the whole provider surface.
+ * LinkedIn (Unipile-backed) integration routes — the whole provider surface,
+ * rebuilt against Unipile Hosted Auth v2.
  *
- * Connect flow (Task 1):
- *   - POST /connect            — creates or looks up a pending integrations row
- *                                keyed by (workspace, actor, provider), calls
- *                                Unipile for a hosted-wizard install URL, and
+ * Connect flow (v2 hosted-auth):
+ *   - POST /connect            — creates or looks up a pending integrations
+ *                                row keyed by (workspace, actor, provider),
+ *                                calls Unipile POST /v2/auth/link, and
  *                                returns { install_url } to the UI. Auth: API key.
- *   - POST /callback           — HMAC-SHA256 verify, then in a single Drizzle
- *                                transaction move the pending row to
- *                                status='active' with encrypted { account_id }
- *                                and fire the PostHog integration_connected
- *                                event AFTER the transaction commits. Auth:
- *                                HMAC only (path is exempt from the API-key
- *                                middleware — see app-factory.ts's /callback
+ *   - GET  /callback           — redirect callback with query params
+ *                                (state, account_id, provider) on success
+ *                                or (error_type, error_detail, state) on
+ *                                error. v1's HMAC-signed POST body is gone —
+ *                                auth is the unguessable `state` round-trip
+ *                                binding. Path is exempt from the API-key
+ *                                middleware (see app-factory.ts's callback
  *                                allowlist regex).
  *
- * Message verbs (Task 3), which the MCP tools in packages/mcp/src/server.ts
+ * Message verbs (v2 messaging), which the MCP tools in packages/mcp/src/server.ts
  * proxy to:
- *   - POST /send-message
- *   - POST /reply
- *   - GET  /list-conversations
+ *   - POST /send-message       — POST /v2/{account_id}/chats/send
+ *   - POST /reply              — POST /v2/{account_id}/chats/{chat_id}/messages/send
+ *   - GET  /list-conversations — GET  /v2/{account_id}/chats
  *
  * The verbs share one shape: fetch the actor-scoped credential the connect
  * flow above landed (via `getIntegrationCredential`, on the actor_id column
@@ -190,13 +188,13 @@ app.openapi(connectRoute, (async (c) => {
 	}
 
 	try {
-		const cb = callbackUrl()
-		const link = await createHostedAuthLink({
-			name: integrationId,
-			apiUrl: cb,
-			notifyUrl: cb,
+		const link = await createAuthLink({
+			providers: ['linkedin'],
+			expires_on: new Date(Date.now() + 10 * 60_000).toISOString(),
+			redirect_uri: callbackUrl(),
+			state: integrationId,
 		})
-		return c.json({ install_url: link.url, integration_id: integrationId })
+		return c.json({ install_url: link.data.link, integration_id: integrationId })
 	} catch (err) {
 		logger.error('linkedin-unipile connect: hosted-link creation failed', {
 			workspaceId,
@@ -207,110 +205,89 @@ app.openapi(connectRoute, (async (c) => {
 	}
 }) as RouteHandler<typeof connectRoute, Env>)
 
-// ── POST /callback ─────────────────────────────────────────────────────────
+// ── GET /callback ──────────────────────────────────────────────────────────
+// v2 replaces the v1 HMAC-signed POST body with a browser redirect carrying
+// query params. Auth for the callback is the unguessable `state` round-trip
+// binding, not a signature. On success we 302 back to Settings > Integrations
+// with a status/detail query pair the frontend renders as the connect result.
+
+const CallbackSuccessQuerySchema = z.object({
+	account_id: z.string().min(1),
+	provider: z.string().min(1),
+	state: z.string().min(1),
+})
+
+const CallbackErrorQuerySchema = z.object({
+	error_type: z.string().min(1),
+	error_title: z.string().optional(),
+	error_detail: z.string().optional(),
+	state: z.string().optional(),
+})
 
 const callbackRoute = createRoute({
-	method: 'post',
+	method: 'get',
 	path: '/callback',
 	tags: ['integrations'],
-	summary: 'Unipile Hosted Auth Wizard success callback',
+	summary: 'Unipile Hosted Auth v2 redirect callback',
 	responses: {
-		200: {
-			description: 'Callback accepted.',
-			content: { 'application/json': { schema: z.object({ ok: z.boolean() }) } },
-		},
-		401: {
-			description: 'Signature verification failed.',
-			content: { 'application/json': { schema: errorSchema } },
-		},
-		404: {
-			description: 'No pending integration row matches the callback name.',
-			content: { 'application/json': { schema: errorSchema } },
+		302: {
+			description: 'Redirect to Settings > Integrations with connect status.',
 		},
 	},
 })
 
 app.openapi(callbackRoute, (async (c) => {
 	const db = c.get('db')
+	const query = c.req.query()
 
-	// The raw body is required for HMAC verification, so we read it once and
-	// parse it manually. Hono's built-in json parser would consume the stream
-	// and force us to re-serialize — which fails to reproduce the exact bytes
-	// Unipile signed.
-	const rawBody = await c.req.text()
+	// Error path — Unipile aborted or LinkedIn refused.
+	if (query.error_type) {
+		return handleCallbackError(c, db, query)
+	}
 
-	const provided =
-		WEBHOOK_HEADER_CANDIDATES.map((h) => c.req.header(h)).find(
-			(v): v is string => typeof v === 'string' && v.length > 0,
-		) ?? null
-
-	if (!verifyWebhookSignature(rawBody, provided)) {
-		logger.warn('linkedin-unipile callback: signature verification failed', {
-			headerPresent: provided !== null,
+	const parsed = CallbackSuccessQuerySchema.safeParse(query)
+	if (!parsed.success) {
+		logger.warn('linkedin-unipile callback: malformed success query', {
+			present: Object.keys(query),
 		})
-		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
+		return redirectToSettings(c, 'error', 'invalid_callback')
+	}
+	const { account_id, provider, state } = parsed.data
+	if (provider !== 'linkedin') {
+		logger.warn('linkedin-unipile callback: unexpected provider', { provider, state })
+		return redirectToSettings(c, 'error', 'wrong_provider')
 	}
 
-	let payload: {
-		status?: string
-		account_id?: string
-		name?: string
-	} = {}
-	try {
-		payload = JSON.parse(rawBody) as typeof payload
-	} catch {
-		return c.json(createApiError('BAD_REQUEST', 'Malformed callback body'), 400)
-	}
-
-	if (payload.status !== 'CREATION_SUCCESS' || !payload.account_id || !payload.name) {
-		logger.info('linkedin-unipile callback: non-success status or missing fields', {
-			status: payload.status,
-			hasAccountId: Boolean(payload.account_id),
-			hasName: Boolean(payload.name),
-		})
-		return c.json({ ok: true })
-	}
-
-	// The `name` we passed to Unipile at /connect time IS the integrations row id.
-	// Look up the pending row by that id and confirm it's still awaiting
-	// completion — we deliberately don't fall back to (workspace, actor,
-	// provider) because a stale row that was never re-`/connect`'d shouldn't
-	// silently absorb an unrelated success.
+	// `state` IS integrations.id — we set it at /connect time. A stale row
+	// that was never re-connected must not silently absorb an unrelated success.
 	const [pending] = await db
 		.select()
 		.from(integrations)
-		.where(and(eq(integrations.id, payload.name), eq(integrations.provider, PROVIDER)))
+		.where(and(eq(integrations.id, state), eq(integrations.provider, PROVIDER)))
 		.limit(1)
 
 	if (!pending) {
-		logger.warn('linkedin-unipile callback: no matching integration row', {
-			name: payload.name,
-		})
-		return c.json(createApiError('NOT_FOUND', 'Unknown integration'), 404)
+		logger.warn('linkedin-unipile callback: no matching integration row', { state })
+		return redirectToSettings(c, 'error', 'unknown_state')
 	}
 
-	const encrypted = encrypt(JSON.stringify({ account_id: payload.account_id }))
+	const encrypted = encrypt(JSON.stringify({ account_id }))
 
-	// Single-transaction credential landing — Drizzle's `db.transaction`
-	// keeps the UPDATE and any follow-up DDL inside the same txn scope.
-	// PostHog capture is intentionally OUTSIDE the transaction: the spec's
-	// ordering rule (§Telemetry) is that a rolled-back credential write
-	// must never leak a fake integration_connected signal.
+	// Single-transaction credential landing (spec §Telemetry ordering rule):
+	// the PostHog capture runs AFTER commit so a rolled-back write can never
+	// leak a fake integration_connected signal.
 	await db.transaction(async (tx) => {
 		await tx
 			.update(integrations)
 			.set({
 				credentials: encrypted,
-				externalId: payload.account_id,
+				externalId: account_id,
 				status: CONNECTED_STATUS,
 				updatedAt: new Date(),
 			})
 			.where(eq(integrations.id, pending.id))
 	})
 
-	// Fire the PostHog signal. `capturePosthogEvent` catches every failure
-	// internally so we never mask a successful credential landing with an
-	// analytics error.
 	if (pending.actorId) {
 		await trackIntegrationConnected({
 			provider: PROVIDER,
@@ -324,8 +301,75 @@ app.openapi(callbackRoute, (async (c) => {
 		})
 	}
 
-	return c.json({ ok: true })
+	return redirectToSettings(c, 'connected', account_id)
 }) as RouteHandler<typeof callbackRoute, Env>)
+
+function settingsIntegrationsUrl(): string {
+	const base = (process.env.MASKIN_PUBLIC_URL ?? 'http://localhost:3000').replace(/\/$/, '')
+	return `${base}/settings/integrations`
+}
+
+function redirectToSettings(c: Context, status: 'connected' | 'error', detail: string): Response {
+	const url = new URL(settingsIntegrationsUrl())
+	url.searchParams.set('linkedin_status', status)
+	url.searchParams.set('linkedin_detail', detail)
+	return c.redirect(url.toString(), 302)
+}
+
+async function handleCallbackError(
+	c: Context,
+	db: Database,
+	q: Record<string, string>,
+): Promise<Response> {
+	const parsed = CallbackErrorQuerySchema.safeParse(q)
+	if (!parsed.success) {
+		return redirectToSettings(c, 'error', 'malformed_error')
+	}
+	const { error_type, error_detail, state } = parsed.data
+
+	// `api/already_exists` is a "success with a twist" — the customer already
+	// connected this LinkedIn account previously. `error_detail` carries the
+	// existing Unipile account_id; adopt it into the pending row so the customer
+	// isn't stuck in a reconnect loop.
+	if (error_type === 'api/already_exists' && state && error_detail) {
+		const [pending] = await db
+			.select()
+			.from(integrations)
+			.where(and(eq(integrations.id, state), eq(integrations.provider, PROVIDER)))
+			.limit(1)
+		if (pending) {
+			const encrypted = encrypt(JSON.stringify({ account_id: error_detail }))
+			await db.transaction(async (tx) => {
+				await tx
+					.update(integrations)
+					.set({
+						credentials: encrypted,
+						externalId: error_detail,
+						status: CONNECTED_STATUS,
+						updatedAt: new Date(),
+					})
+					.where(eq(integrations.id, pending.id))
+			})
+			if (pending.actorId) {
+				await trackIntegrationConnected({
+					provider: PROVIDER,
+					workspaceId: pending.workspaceId,
+					actorId: pending.actorId,
+					integrationId: pending.id,
+				})
+			}
+			return redirectToSettings(c, 'connected', error_detail)
+		}
+		logger.warn('linkedin-unipile callback already_exists: no pending row for state', { state })
+		return redirectToSettings(c, 'error', 'unknown_state')
+	}
+
+	if (error_type === 'api/restricted_account') {
+		return redirectToSettings(c, 'error', 'account_restricted')
+	}
+	logger.warn('linkedin-unipile callback: unknown error_type', { error_type, state })
+	return redirectToSettings(c, 'error', error_type)
+}
 
 // ── Message verbs (send-message / reply / list-conversations) ─────────────
 
@@ -852,12 +896,23 @@ function normalizeSendResponse(body: UnipileSendMessageResponse | Record<string,
 	sent_at: string
 } {
 	const rec = body as Record<string, unknown>
-	const messageId = typeof rec.id === 'string' ? rec.id : ''
-	const sentAt = typeof rec.sent_at === 'string' ? rec.sent_at : new Date().toISOString()
-	if (!messageId) {
+	// The v2 migration doc confirms account_id moves to the path but does not
+	// fully spec the response envelope. Accept either `id` or `message_id`;
+	// default `sent_at` to now so a response missing the timestamp doesn't 502
+	// on the caller. The MCP tool contract (Task 3 Zod schemas) stays stable.
+	const inner =
+		rec.data && typeof rec.data === 'object' ? (rec.data as Record<string, unknown>) : rec
+	const messageIdRaw =
+		typeof inner.message_id === 'string'
+			? inner.message_id
+			: typeof inner.id === 'string'
+				? inner.id
+				: ''
+	const sentAtRaw = typeof inner.sent_at === 'string' ? inner.sent_at : new Date().toISOString()
+	if (!messageIdRaw) {
 		throw new LinkedInIntegrationError('UNIPILE_UNAVAILABLE', 'Unipile response missing message id')
 	}
-	return { message_id: messageId, sent_at: sentAt }
+	return { message_id: messageIdRaw, sent_at: sentAtRaw }
 }
 
 function normalizeListResponse(body: UnipileListConversationsResponse | Record<string, unknown>): {
@@ -865,10 +920,23 @@ function normalizeListResponse(body: UnipileListConversationsResponse | Record<s
 	next_cursor?: string
 } {
 	const rec = body as Record<string, unknown>
-	const conversations = Array.isArray(rec.conversations)
-		? (rec.conversations as UnipileConversation[])
-		: []
-	const nextCursor = typeof rec.next_cursor === 'string' ? rec.next_cursor : undefined
+	// v2 envelope isn't fully documented; try `conversations`, `items`, `data`
+	// in order and take the first array we find. Pagination is `cursor` or
+	// `next_cursor` — treat both as opaque strings the caller feeds back.
+	const arr = Array.isArray(rec.conversations)
+		? rec.conversations
+		: Array.isArray(rec.items)
+			? rec.items
+			: Array.isArray(rec.data)
+				? rec.data
+				: []
+	const conversations = arr as UnipileConversation[]
+	const nextCursor =
+		typeof rec.next_cursor === 'string'
+			? rec.next_cursor
+			: typeof rec.cursor === 'string'
+				? rec.cursor
+				: undefined
 	return nextCursor ? { conversations, next_cursor: nextCursor } : { conversations }
 }
 

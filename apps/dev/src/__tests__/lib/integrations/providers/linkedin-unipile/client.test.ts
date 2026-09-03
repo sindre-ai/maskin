@@ -1,18 +1,13 @@
-import { createHmac } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
 	type UnipileMockServer,
 	startUnipileMock,
 } from '../../../../../lib/integrations/providers/linkedin-unipile/__mocks__/unipile-server'
-import {
-	createHostedAuthLink,
-	verifyWebhookSignature,
-} from '../../../../../lib/integrations/providers/linkedin-unipile/client'
+import { createAuthLink } from '../../../../../lib/integrations/providers/linkedin-unipile/client'
 import { UnipileUnavailableError } from '../../../../../lib/integrations/providers/linkedin-unipile/errors'
 
-const WEBHOOK_SECRET = 'test-secret'
 const ORIGINAL_ENV: Record<string, string | undefined> = {}
-const ENV_KEYS = ['UNIPILE_BASE_URL', 'UNIPILE_API_KEY', 'UNIPILE_WEBHOOK_SECRET'] as const
+const ENV_KEYS = ['UNIPILE_BASE_URL', 'UNIPILE_API_KEY'] as const
 
 let mock: UnipileMockServer
 
@@ -33,64 +28,54 @@ beforeEach(() => {
 	mock.resetInbox()
 	process.env.UNIPILE_BASE_URL = mock.baseUrl
 	process.env.UNIPILE_API_KEY = 'test-api-key'
-	process.env.UNIPILE_WEBHOOK_SECRET = WEBHOOK_SECRET
 })
 
-describe('createHostedAuthLink', () => {
-	it('POSTs the LinkedIn provider scope + round-trip name and returns a URL', async () => {
-		const res = await createHostedAuthLink({
-			name: 'integration-abc',
-			apiUrl: 'http://localhost:3000/api/integrations/linkedin-unipile/callback',
-			notifyUrl: 'http://localhost:3000/api/integrations/linkedin-unipile/callback',
+describe('createAuthLink', () => {
+	it('POSTs the v2 hosted-auth link request with providers, expires_on, redirect_uri, state', async () => {
+		const expiresOn = new Date(Date.now() + 10 * 60_000).toISOString()
+		const res = await createAuthLink({
+			providers: ['linkedin'],
+			expires_on: expiresOn,
+			redirect_uri: 'http://localhost:3000/api/integrations/linkedin-unipile/callback',
+			state: 'integration-abc',
 		})
-		expect(res.url).toContain(mock.baseUrl)
-		const recorded = mock.inbox().find((c) => c.path === '/api/v1/hosted/accounts/link')
+		expect(res.data.link).toContain(mock.baseUrl)
+
+		const recorded = mock.inbox().find((c) => c.path === '/v2/auth/link')
 		expect(recorded).toBeDefined()
+		expect(recorded?.method).toBe('POST')
 		const body = recorded?.body as Record<string, unknown>
-		expect(body.providers).toEqual(['LINKEDIN'])
-		expect(body.name).toBe('integration-abc')
-		expect(body.api_url).toBe('http://localhost:3000/api/integrations/linkedin-unipile/callback')
+		expect(body.providers).toEqual(['linkedin'])
+		expect(body.expires_on).toBe(expiresOn)
+		expect(body.redirect_uri).toBe(
+			'http://localhost:3000/api/integrations/linkedin-unipile/callback',
+		)
+		expect(body.state).toBe('integration-abc')
 	})
 
 	it('wraps a network failure as UnipileUnavailableError', async () => {
 		process.env.UNIPILE_BASE_URL = 'http://127.0.0.1:1' // guaranteed unreachable
 		await expect(
-			createHostedAuthLink({
-				name: 'x',
-				apiUrl: 'http://localhost/cb',
-				notifyUrl: 'http://localhost/cb',
+			createAuthLink({
+				providers: ['linkedin'],
+				expires_on: new Date(Date.now() + 60_000).toISOString(),
+				redirect_uri: 'http://localhost/cb',
+				state: 'x',
 			}),
 		).rejects.toBeInstanceOf(UnipileUnavailableError)
 	})
-})
 
-describe('verifyWebhookSignature', () => {
-	it('accepts a valid HMAC-SHA256 hex signature', () => {
-		const body = '{"status":"CREATION_SUCCESS"}'
-		const sig = createHmac('sha256', WEBHOOK_SECRET).update(body, 'utf8').digest('hex')
-		expect(verifyWebhookSignature(body, sig)).toBe(true)
-	})
-
-	it('accepts a signature with a "sha256=" prefix', () => {
-		const body = '{"a":1}'
-		const sig = createHmac('sha256', WEBHOOK_SECRET).update(body, 'utf8').digest('hex')
-		expect(verifyWebhookSignature(body, `sha256=${sig}`)).toBe(true)
-	})
-
-	it('rejects a tampered body', () => {
-		const body = '{"a":1}'
-		const sig = createHmac('sha256', WEBHOOK_SECRET).update(body, 'utf8').digest('hex')
-		expect(verifyWebhookSignature('{"a":2}', sig)).toBe(false)
-	})
-
-	it('rejects a missing signature header', () => {
-		expect(verifyWebhookSignature('body', null)).toBe(false)
-		expect(verifyWebhookSignature('body', '')).toBe(false)
-	})
-
-	it('rejects when the secret is unset', () => {
-		// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
-		delete process.env.UNIPILE_WEBHOOK_SECRET
-		expect(verifyWebhookSignature('body', 'deadbeef')).toBe(false)
+	it('rejects a response missing the nested data.link', async () => {
+		// Point at a server that returns 404 (mock's default) to exercise the
+		// !res.ok path — the client wraps it in UnipileUnavailableError.
+		process.env.UNIPILE_BASE_URL = `${mock.baseUrl}/nonexistent`
+		await expect(
+			createAuthLink({
+				providers: ['linkedin'],
+				expires_on: new Date(Date.now() + 60_000).toISOString(),
+				redirect_uri: 'http://localhost/cb',
+				state: 'y',
+			}),
+		).rejects.toBeInstanceOf(UnipileUnavailableError)
 	})
 })

@@ -1,10 +1,8 @@
 /**
- * Thin HTTP client for the Unipile Hosted Messaging API — narrow surface, only
- * the three verbs the LinkedIn MCP tools need. Task 2 (Unipile Hosted Wizard
- * connect flow) is expected to fold this into a broader provider client that
- * also handles the OAuth wizard callback; when it does, the routes in
- * apps/dev/src/routes/integrations-linkedin-unipile.ts should keep calling
- * the same interface (`UnipileClient`) so no route logic has to move.
+ * Thin HTTP client for the Unipile v2 Messaging API. v1 paths
+ * (`/api/v1/messages`, `/api/v1/chats*`) are gone — v2 puts `account_id` in
+ * the URL path and renames the send-recipients field. See
+ * https://developer.unipile.com/v2.0/docs/migration-messaging-api.
  *
  * Interface, not tight coupling — this is the seam the bet's architecture
  * paragraph names: swapping to Postpress or SocialAPI.ai only means writing a
@@ -41,9 +39,18 @@ export type UnipileListConversationsQuery = {
 	limit?: number
 }
 
+/**
+ * Response envelope Unipile v2 sends on message-send. The migration doc
+ * confirms `account_id` in the path but does not fully spec the response
+ * envelope; the route's normalizer accepts both `id` and `message_id` and
+ * defaults `sent_at` to now if absent. Kept permissive here so a shape drift
+ * on Unipile's side surfaces in the classifier layer, not as a TypeScript
+ * error.
+ */
 export type UnipileSendMessageResponse = {
-	id: string
-	sent_at: string
+	id?: string
+	message_id?: string
+	sent_at?: string
 }
 
 export type UnipileConversation = {
@@ -55,8 +62,11 @@ export type UnipileConversation = {
 }
 
 export type UnipileListConversationsResponse = {
-	conversations: UnipileConversation[]
+	conversations?: UnipileConversation[]
+	items?: UnipileConversation[]
+	data?: UnipileConversation[]
 	next_cursor?: string
+	cursor?: string
 }
 
 export interface UnipileClient {
@@ -79,14 +89,9 @@ export type UnipileHttpClientOptions = {
 
 /**
  * Default fetch-based `UnipileClient`. Reads Unipile's `X-API-KEY` auth
- * header and treats every response as JSON — Unipile returns JSON on both
- * success and error paths per their catalog, so a JSON.parse failure is
- * itself a signal of an upstream misbehaviour and surfaces as a 502-ish
- * `UNIPILE_UNAVAILABLE` at the classifier layer.
- *
- * Task 2 replaces this with a shared client once the Hosted Wizard callback
- * exists — both point at the same base URL and use the same header shape, so
- * the surface stays stable.
+ * header and treats every response as JSON. `UNIPILE_BASE_URL` must NOT
+ * include the `/v2` suffix — the path lives here so this client owns the
+ * v1 → v2 migration surface in a single spot.
  */
 export function createUnipileHttpClient(options: UnipileHttpClientOptions): UnipileClient {
 	const baseUrl = options.baseUrl.replace(/\/+$/, '')
@@ -126,24 +131,31 @@ export function createUnipileHttpClient(options: UnipileHttpClientOptions): Unip
 
 	return {
 		sendMessage(payload) {
-			return call('POST', '/api/v1/messages', {
-				account_id: payload.account_id,
-				recipient: payload.recipient_urn,
+			// v1: POST /api/v1/messages with { account_id, recipient, text }
+			// v2: POST /v2/{account_id}/chats/send with { users_ids, text }
+			// `attendees_ids` → `users_ids` per the migration doc.
+			return call('POST', `/v2/${encodeURIComponent(payload.account_id)}/chats/send`, {
+				users_ids: [payload.recipient_urn],
 				text: payload.body,
 			})
 		},
 		reply(payload) {
-			return call('POST', `/api/v1/chats/${encodeURIComponent(payload.thread_id)}/messages`, {
-				account_id: payload.account_id,
-				text: payload.body,
-			})
+			// v1: POST /api/v1/chats/{id}/messages with { account_id, text }
+			// v2: POST /v2/{account_id}/chats/{chat_id}/messages/send with { text }
+			return call(
+				'POST',
+				`/v2/${encodeURIComponent(payload.account_id)}/chats/${encodeURIComponent(payload.thread_id)}/messages/send`,
+				{ text: payload.body },
+			)
 		},
 		listConversations(query) {
+			// v1: GET /api/v1/chats?account_id=…
+			// v2: GET /v2/{account_id}/chats?cursor=…&limit=…
 			const params = new URLSearchParams()
-			params.set('account_id', query.account_id)
 			if (query.cursor) params.set('cursor', query.cursor)
 			if (typeof query.limit === 'number') params.set('limit', String(query.limit))
-			return call('GET', `/api/v1/chats?${params.toString()}`)
+			const qs = params.toString()
+			return call('GET', `/v2/${encodeURIComponent(query.account_id)}/chats${qs ? `?${qs}` : ''}`)
 		},
 	}
 }
