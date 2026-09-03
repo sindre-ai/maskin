@@ -116,7 +116,7 @@ describe('POST /api/test-grants/:id', () => {
 		expect(written.settings.custom_extensions).toEqual({ demo: 'keep-me' })
 	})
 
-	it('grants byollm_allowed with a valid token', async () => {
+	it('grants enterprise_granted with a valid token', async () => {
 		process.env.MASKIN_TEST_GRANT_TOKEN = TOKEN
 		const ws = buildWorkspace()
 		const { app, mockResults, calls } = createTestApp(testGrantsRoutes, '/api/test-grants')
@@ -127,12 +127,12 @@ describe('POST /api/test-grants/:id', () => {
 			new Request(`http://localhost/api/test-grants/${ws.id}`, {
 				method: 'POST',
 				headers: grant(TOKEN),
-				body: JSON.stringify({ byollm_allowed: true }),
+				body: JSON.stringify({ enterprise_granted: true }),
 			}),
 		)
 
 		expect(res.status).toBe(200)
-		expect((calls.updates[0] as { byollmAllowed: boolean }).byollmAllowed).toBe(true)
+		expect((calls.updates[0] as { enterpriseGranted: boolean }).enterpriseGranted).toBe(true)
 	})
 
 	it('returns 404 for an unknown workspace', async () => {

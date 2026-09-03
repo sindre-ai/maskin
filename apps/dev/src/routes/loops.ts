@@ -74,7 +74,6 @@ const TERMINAL_STATUSES_BY_TYPE: Record<string, string[]> = {
 	bet: [...TERMINAL_BET_STATUSES, 'archived'],
 	task: ['done', 'validated', 'discarded'],
 	insight: ['discarded'],
-	commitment: [], // commitments never terminate — they're standing state
 }
 
 /**

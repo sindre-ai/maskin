@@ -1,5 +1,6 @@
 import { agentServers, sessions } from '@maskin/db/schema'
 import { describe, expect, it, vi } from 'vitest'
+import { LlmCredentialsUnavailableError } from '../../lib/llm-routing'
 import {
 	AgentServerAuthError,
 	type AgentServerClient,
@@ -404,6 +405,65 @@ describe('SessionDispatcher.dispatch', () => {
 		expect(result.kind).toBe('permanent_failure')
 		expect(startSession).not.toHaveBeenCalled()
 		// slot released
+		expect(sess.agentServerId).toBeNull()
+	})
+
+	// The dispatcher's permanent-vs-transient split is itself a classification
+	// decision, so the two branches below are where a regression would be both
+	// silent and directly on the incident path: getting it wrong either strands
+	// a recoverable session or tells a user to reconnect a working subscription.
+	it('fails a dead credential permanently, with the reason attached', async () => {
+		const sess: SessionStub = {
+			id: 's-1',
+			status: 'starting',
+			agentServerId: null,
+			containerId: null,
+			startedAt: null,
+		}
+		const startSession = vi.fn()
+		const { dispatcher, buildStartRequest } = setup([sess], { startSession })
+		buildStartRequest.mockRejectedValueOnce(
+			new LlmCredentialsUnavailableError('the connected Claude subscription was rejected', false),
+		)
+
+		const result = await dispatcher.dispatch('s-1', 'dispatch:s-1')
+
+		expect(result.kind).toBe('permanent_failure')
+		if (result.kind === 'permanent_failure') {
+			expect(result.failureReason?.reason_code).toBe('not_logged_in')
+			// The actionable half: this is the message that sends the user to
+			// Settings → Keys, and it must only appear for a credential we have
+			// actually seen rejected.
+			expect(result.failureReason?.human_message).toMatch(/Connect a Claude subscription/i)
+		}
+		expect(startSession).not.toHaveBeenCalled()
+		expect(sess.agentServerId).toBeNull()
+	})
+
+	it('keeps an unreachable credential check transient so the retry can recover it', async () => {
+		const sess: SessionStub = {
+			id: 's-1',
+			status: 'starting',
+			agentServerId: null,
+			containerId: null,
+			startedAt: null,
+		}
+		const startSession = vi.fn()
+		const { dispatcher, buildStartRequest } = setup([sess], { startSession })
+		// What the 15s CLAUDE_CREDENTIAL_TIMEOUT_MS abort produces: we never
+		// learned anything about the credential, only that we could not ask.
+		buildStartRequest.mockRejectedValueOnce(
+			new LlmCredentialsUnavailableError(
+				'the Claude token endpoint could not be reached to refresh an expired token',
+				true,
+			),
+		)
+
+		const result = await dispatcher.dispatch('s-1', 'dispatch:s-1')
+
+		// Transient, so the queue's backoff gets another attempt at it rather
+		// than closing the session out on our own network blip.
+		expect(result.kind).toBe('transient_failure')
 		expect(sess.agentServerId).toBeNull()
 	})
 

@@ -460,3 +460,107 @@ describe('sessionResultSchema', () => {
 		expect(result.failure_reason).toBeUndefined()
 	})
 })
+
+describe('mcpServerSchema — inferred transport type', () => {
+	// An http entry written without `type` matched neither union branch and
+	// failed with a bare "Invalid input" naming no field, which read as "MCP
+	// servers can't be configured here" rather than "you left out one key".
+	it('infers type "http" for an entry with a url and no type', () => {
+		const result = mcpServerSchema.parse({
+			url: 'https://ubersuggest-mcp.neilpatelapi.com/mcp',
+			headers: { Authorization: 'Bearer ${UBERSUGGEST_TOKEN}' },
+		})
+		expect(result).toMatchObject({
+			type: 'http',
+			url: 'https://ubersuggest-mcp.neilpatelapi.com/mcp',
+			headers: { Authorization: 'Bearer ${UBERSUGGEST_TOKEN}' },
+		})
+	})
+
+	it('still defaults a command-only entry to stdio', () => {
+		expect(mcpServerSchema.parse({ command: 'npx' })).toMatchObject({ type: 'stdio' })
+	})
+
+	it('does not override an explicit type', () => {
+		expect(mcpServerSchema.parse({ type: 'http', url: 'https://example.com' })).toMatchObject({
+			type: 'http',
+		})
+	})
+
+	it('rejects an entry that is neither transport', () => {
+		expect(mcpServerSchema.safeParse({ headers: {} }).success).toBe(false)
+	})
+
+	// Every provider config in this repo states command, args AND url for the
+	// same mcp-remote server, so this is the shape a caller copying one writes.
+	// Inferring http from the url would strip command/args/env and leave an http
+	// client with no Authorization header — connected, zero tools, no error, on
+	// rows already in the database. stdio has always won here; it must keep
+	// winning.
+	it('leaves an entry carrying both url and command as stdio', () => {
+		expect(
+			mcpServerSchema.parse({
+				command: 'npx',
+				args: ['-y', 'mcp-remote', 'https://mcp.linear.app/mcp'],
+				env: { LINEAR_TOKEN: 'x' },
+				url: 'https://mcp.linear.app/mcp',
+			}),
+		).toMatchObject({
+			type: 'stdio',
+			command: 'npx',
+			args: ['-y', 'mcp-remote', 'https://mcp.linear.app/mcp'],
+			env: { LINEAR_TOKEN: 'x' },
+		})
+	})
+
+	// `'type' in server` counts a key explicitly set to undefined as stated and
+	// skips inference, so `{ type: cfg.type, url }` built from a partly-populated
+	// object failed with the same bare "Invalid input" this inference removes.
+	it('infers http when type is present but undefined', () => {
+		expect(mcpServerSchema.parse({ type: undefined, url: 'https://x/mcp' })).toMatchObject({
+			type: 'http',
+			url: 'https://x/mcp',
+		})
+	})
+})
+
+describe('mcpServerSchema — browser CDP endpoint misuse', () => {
+	// Verbatim from the production actor row that caused a customer-reported
+	// "no Playwright in this session": a CDP address configured as an http MCP
+	// server. It parsed fine, so nothing rejected it; the server then sat at
+	// status "pending" forever and the agent had no browser tools.
+	const badEntry = { type: 'http', url: '${BROWSER_CDP_URL}', headers: {} }
+
+	// The type-inference preprocess must not become a way around this guard:
+	// a typeless { url } is now inferred as http, so it has to hit the same
+	// refinement rather than slip past it.
+	it('rejects a CDP endpoint written without an explicit type', () => {
+		expect(mcpServerSchema.safeParse({ url: '${BROWSER_CDP_URL}' }).success).toBe(false)
+	})
+
+	it('rejects a CDP endpoint configured as an http MCP server', () => {
+		const result = mcpServerSchema.safeParse(badEntry)
+		expect(result.success).toBe(false)
+		if (result.success) return
+		const message = result.error.issues.map((i) => i.message).join(' ')
+		expect(message).toContain('not an MCP server')
+		// The error has to carry the fix, or the next person writes it again.
+		expect(message).toContain('--cdp-endpoint')
+		expect(message).toContain('stdio')
+	})
+
+	it('accepts the stdio form that actually reaches the browser', () => {
+		const good = {
+			type: 'stdio',
+			command: 'npx',
+			args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
+			env: {},
+		}
+		expect(mcpServerSchema.safeParse(good).success).toBe(true)
+	})
+
+	it('leaves unrelated http MCP servers alone', () => {
+		const hosted = { type: 'http', url: 'https://mcp.linear.app/mcp', headers: {} }
+		expect(mcpServerSchema.safeParse(hosted).success).toBe(true)
+	})
+})

@@ -1,4 +1,5 @@
 import { expect, test } from '../fixtures/auth.fixture'
+import { clearSeededAutomations } from '../helpers/seed.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 test.describe('Loops list page', () => {
@@ -8,6 +9,7 @@ test.describe('Loops list page', () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await clearSeededAutomations(account.api, account.workspaceId)
 
 			await page.goto(`/${account.workspaceId}/loops`)
 
@@ -19,6 +21,7 @@ test.describe('Loops list page', () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await clearSeededAutomations(account.api, account.workspaceId)
 
 			await account.api.createObject(account.workspaceId, {
 				type: 'loop',
@@ -38,6 +41,7 @@ test.describe('Loops list page', () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await clearSeededAutomations(account.api, account.workspaceId)
 
 			const agent = await account.api.createAgentActor('Relay')
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
@@ -54,7 +58,7 @@ test.describe('Loops list page', () => {
 			// The v2 sidebar has no Triggers entry — the bookmark must land on Loops.
 			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/loops$`), { timeout: 10000 })
 			await expect(page.getByText('Not tied to a loop')).toBeVisible()
-			await expect(page.getByText('Nightly sweep')).toBeVisible()
+			await expect(page.getByText('Nightly sweep', { exact: true })).toBeVisible()
 		})
 
 		test(`a workspace with triggers but no loops still lists them at ${viewport.label}`, async ({
@@ -62,6 +66,7 @@ test.describe('Loops list page', () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await clearSeededAutomations(account.api, account.workspaceId)
 
 			const agent = await account.api.createAgentActor('Relay')
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
@@ -76,7 +81,9 @@ test.describe('Loops list page', () => {
 			await page.goto(`/${account.workspaceId}/loops`)
 
 			// Ungating this section is the whole reason the fold-in is safe.
-			await expect(page.getByText('Unattached watcher')).toBeVisible({ timeout: 10000 })
+			await expect(page.getByText('Unattached watcher', { exact: true })).toBeVisible({
+				timeout: 10000,
+			})
 			await expect(page.getByText('No loops running here yet')).toBeVisible()
 		})
 	}
@@ -245,6 +252,7 @@ test.describe('Loops list page', () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await clearSeededAutomations(account.api, account.workspaceId)
 
 			await page.goto(`/${account.workspaceId}/loops`)
 

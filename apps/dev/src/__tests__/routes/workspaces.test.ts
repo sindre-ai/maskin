@@ -262,10 +262,10 @@ describe('Workspaces Routes', () => {
 			expect(res.status).toBe(404)
 		})
 
-		// `byollm_allowed` is the entitlement that bypasses the plan cap, the
+		// `enterprise_granted` is the entitlement that bypasses the plan cap, the
 		// paid-plan mutex and credit debiting. Every self-signed-up user owns
 		// their own workspace, so owner rights must NOT be enough to set it.
-		describe('byollm_allowed is ops-gated, not owner-gated', () => {
+		describe('enterprise_granted is ops-gated, not owner-gated', () => {
 			const OPS_ACTOR = '11111111-1111-4111-8111-111111111111'
 			const ORIGINAL_ENV = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
 
@@ -293,7 +293,7 @@ describe('Workspaces Routes', () => {
 				]
 
 				const res = await app.request(
-					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: true }),
+					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { enterprise_granted: true }),
 				)
 
 				expect(res.status).toBe(403)
@@ -311,7 +311,7 @@ describe('Workspaces Routes', () => {
 				const res = await app.request(
 					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, {
 						onboarding_enabled: true,
-						byollm_allowed: true,
+						enterprise_granted: true,
 					}),
 				)
 
@@ -320,14 +320,14 @@ describe('Workspaces Routes', () => {
 				expect(calls.updates).toHaveLength(0)
 			})
 
-			it('returns 403 when byollm_allowed is set to false by a non-ops owner', async () => {
+			it('returns 403 when enterprise_granted is set to false by a non-ops owner', async () => {
 				setOpsAllowlist(undefined)
 				const ws = buildWorkspace()
 				const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 				mockResults.selectQueue = [[ws], [{ actorId: 'test-actor-id' }]]
 
 				const res = await app.request(
-					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: false }),
+					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { enterprise_granted: false }),
 				)
 
 				expect(res.status).toBe(403)
@@ -336,7 +336,7 @@ describe('Workspaces Routes', () => {
 			it('allows an ops actor on the allowlist to grant it', async () => {
 				setOpsAllowlist(OPS_ACTOR)
 				const ws = buildWorkspace()
-				const updated = { ...ws, byollmAllowed: true }
+				const updated = { ...ws, enterpriseGranted: true }
 				const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces', OPS_ACTOR)
 				mockResults.selectQueue = [
 					[ws], // workspace exists
@@ -345,12 +345,12 @@ describe('Workspaces Routes', () => {
 				mockResults.update = [updated]
 
 				const res = await app.request(
-					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: true }),
+					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { enterprise_granted: true }),
 				)
 
 				expect(res.status).toBe(200)
 				const body = await res.json()
-				expect(body.byollmAllowed).toBe(true)
+				expect(body.enterprise).toBe(true)
 			})
 
 			it('still lets a plain owner flip onboarding_enabled', async () => {
@@ -375,7 +375,7 @@ describe('Workspaces Routes', () => {
 			const actorId = randomUUID()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.selectQueue = [
-				[{ actorId: 'test-actor-id' }], // isWorkspaceMember(callerId, wsId)
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)(callerId, wsId)
 				[{ type: 'human' }], // target actor type lookup
 				[{ id: wsId, settings: {} }], // workspace row locked FOR UPDATE (trial plan)
 				[{ n: 0 }], // countHumanMembers — 0 < trial cap 1
@@ -433,6 +433,196 @@ describe('Workspaces Routes', () => {
 			const body = await res.json()
 			expect(body).toHaveLength(1)
 			expect(body[0].role).toBe('owner')
+		})
+	})
+
+	describe('PATCH /api/workspaces/:id/members/:actorId', () => {
+		it("changes a member's role and returns 200", async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
+				[{ billingOwnerId: null }], // in-transaction workspace lock + billing-owner guard
+				[{ role: 'member' }], // in-transaction SELECT ... FOR UPDATE of the target
+			]
+			mockResults.update = [{ actorId, role: 'admin', joinedAt: new Date() }]
+			// After update, the route re-fetches the actor for name/type.
+			// selectQueue is exhausted, so the static `select` supplies the actor row.
+			mockResults.select = [{ name: 'Alice', type: 'human' }]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${wsId}/members/${actorId}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.role).toBe('admin')
+			expect(calls.updates[0]).toEqual({ role: 'admin' })
+		})
+
+		it('returns 403 when caller is not a member', async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${wsId}/members/${actorId}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
+		it('returns 404 when the target member does not exist', async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
+				[{ billingOwnerId: null }], // in-transaction SELECT ... FOR UPDATE of the workspace
+				[], // in-transaction SELECT ... FOR UPDATE of the target — no row
+			]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${wsId}/members/${actorId}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 400 when demoting the only owner', async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
+				[{ billingOwnerId: null }], // in-transaction workspace lock + billing-owner guard
+				[{ role: 'owner' }], // in-transaction SELECT ... FOR UPDATE of the target
+				[{ actorId }], // owner count = 1 → last owner guard trips
+			]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${wsId}/members/${actorId}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.code).toBe('BAD_REQUEST')
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('returns 400 when caller targets their own actorId', async () => {
+			const wsId = randomUUID()
+			const selfId = randomUUID()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces', selfId)
+			mockResults.select = [{ role: 'owner', type: 'human' }] // admin/owner gate passes
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${wsId}/members/${selfId}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.code).toBe('BAD_REQUEST')
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('returns 400 when role is not a valid enum value', async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app } = createTestApp(workspacesRoutes, '/api/workspaces')
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${wsId}/members/${actorId}`, { role: 'superuser' }),
+			)
+
+			expect(res.status).toBe(400)
+		})
+	})
+
+	describe('DELETE /api/workspaces/:id/members/:actorId', () => {
+		it('removes a member and returns 200', async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
+				[{ role: 'member' }], // existing member row
+			]
+			mockResults.delete = [{ actorId }]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				new Request(`http://localhost/api/workspaces/${wsId}/members/${actorId}`, {
+					method: 'DELETE',
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.removed).toBe(true)
+		})
+
+		it('returns 403 when caller is not a member', async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.select = []
+
+			const res = await app.request(
+				new Request(`http://localhost/api/workspaces/${wsId}/members/${actorId}`, {
+					method: 'DELETE',
+				}),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
+		// Unlike PATCH, self-targeting is allowed here — leaving a workspace is a
+		// member's own call, so the admin/owner gate is skipped for self-removal.
+		it('lets a member remove themselves without the admin/owner gate', async () => {
+			const wsId = randomUUID()
+			const selfId = randomUUID()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces', selfId)
+			mockResults.selectQueue = [
+				[{ billingOwnerId: randomUUID() }], // workspace row — someone else owns billing
+			]
+			mockResults.delete = [{ actorId: selfId }]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				new Request(`http://localhost/api/workspaces/${wsId}/members/${selfId}`, {
+					method: 'DELETE',
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.removed).toBe(true)
+		})
+
+		it('returns 409 when removing the billing owner', async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
+				[{ billingOwnerId: actorId }], // target is the billing owner
+			]
+
+			const res = await app.request(
+				new Request(`http://localhost/api/workspaces/${wsId}/members/${actorId}`, {
+					method: 'DELETE',
+				}),
+			)
+
+			expect(res.status).toBe(409)
+			const body = await res.json()
+			expect(body.error.code).toBe('CONFLICT')
+			// The guard trips before the delete, so no audit event is written.
+			expect(calls.inserts).toHaveLength(0)
 		})
 	})
 })

@@ -14,10 +14,11 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { getStoredActor } from '@/lib/auth'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
+import { getTypeColor } from '@/lib/constants'
 import { formatSize } from '@/lib/file-utils'
 import { useDraft } from '@/lib/pending-comments-context'
 import { COMMENT_MAX_ATTACHMENTS, COMMENT_MAX_LENGTH } from '@maskin/shared'
-import { ArrowUp, AtSign, Box, ListChecks, Mic, Paperclip, Plus, X } from 'lucide-react'
+import { ArrowUp, AtSign, Box, Mic, Paperclip, Plus, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { MentionedText } from '../shared/mentioned-text'
@@ -27,7 +28,17 @@ interface CommentInputProps {
 	workspaceId: string
 	objectId: string
 	parentEventId?: number
+	// Fires once the comment is actually on the server. Callers that take an
+	// irreversible action on a reply (For You marks the thread read, which drops
+	// the card) must use this one and not `onQueued`.
 	onSubmitted?: () => void
+	// Fires when a comment carrying attachments is handed to the pending-comments
+	// queue, which uploads and POSTs in the background. The comment has NOT been
+	// posted yet and may still fail, so this is for clearing local composer state
+	// only. When it is not supplied the queued path stays silent rather than
+	// falling back to `onSubmitted`, because a caller that never opted in would
+	// otherwise treat a queued draft as a posted one.
+	onQueued?: () => void
 	// Direction the @-mention dropdown opens. Defaults to 'below' (object detail
 	// page, plenty of room underneath). Callers pinned to the viewport bottom
 	// (e.g. ForYouQueueCard) pass 'above' so the dropdown doesn't render
@@ -42,6 +53,14 @@ interface CommentInputProps {
 	// (object detail names the agent that will read the comment) passes it here
 	// rather than stacking a second line beneath the card.
 	hint?: React.ReactNode
+	// `stacked` is the feed composer: an avatar, a growing field, and a control
+	// row carrying the hint. `bar` is the single-row composer the object detail
+	// page pins to the bottom of its document (mockup 1358–1366) — no avatar, no
+	// hint, controls inline with the field.
+	variant?: 'stacked' | 'bar'
+	// Overrides the composer's own placeholder. The bar reads
+	// "Comment — / commands, @ mentions" on object detail.
+	placeholder?: string
 }
 
 function randomDraftId(): string {
@@ -56,21 +75,19 @@ const MAX_INPUT_HEIGHT_PX = 130
 // limit. Keeps the UI quiet for the common short-comment case.
 const COUNTER_VISIBILITY_THRESHOLD = 0.9
 
-// Decision options ride `metadata.chips` on the created event — the same field
-// agents write and `DecisionChips` renders. `createCommentSchema`'s own
-// description is the contract: up to 5 options, 20 characters each.
-const MAX_DECISION_CHIPS = 5
-const MAX_DECISION_CHIP_LENGTH = 20
-
 export function CommentInput({
 	workspaceId,
 	objectId,
 	parentEventId,
 	onSubmitted,
+	onQueued,
 	mentionDropdownPlacement = 'below',
 	focusRef,
 	hint,
+	variant = 'stacked',
+	placeholder,
 }: CommentInputProps) {
+	const isBar = variant === 'bar'
 	const actor = getStoredActor()
 	const createComment = useCreateComment(workspaceId, objectId)
 	const { data: actors } = useActors(workspaceId)
@@ -86,11 +103,11 @@ export function CommentInput({
 	// second search UI; the pick is inserted as the canonical markdown object
 	// link the comment API documents (`[title](/<ws>/objects/<id>)`).
 	const [objectPickerOpen, setObjectPickerOpen] = useState(false)
-	// "Attach a decision" — the options the reader will be offered as
-	// quick-reply chips under the posted comment.
-	const [decisionChips, setDecisionChips] = useState<string[]>([])
-	const [chipDraft, setChipDraft] = useState('')
-	const [decisionOpen, setDecisionOpen] = useState(false)
+	// Objects picked from "Reference an object" ride the comment as chips and
+	// land on the timeline as real references (mockup `refList`).
+	const [references, setReferences] = useState<Array<{ id: string; title: string; type: string }>>(
+		[],
+	)
 
 	const inputRef = useRef<HTMLTextAreaElement>(null)
 	const overlayRef = useRef<HTMLDivElement>(null)
@@ -117,15 +134,31 @@ export function CommentInput({
 	const attachmentLimitReached = attachments.length >= COMMENT_MAX_ATTACHMENTS
 	const isUploadingAny = attachments.some((f) => f.status === 'uploading')
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: content drives the resize, including programmatic setContent (mention insert, post-submit reset)
-	useLayoutEffect(() => {
+	const fitHeight = useCallback(() => {
 		const ta = inputRef.current
 		if (!ta) return
 		ta.style.height = 'auto'
 		const overflows = ta.scrollHeight > MAX_INPUT_HEIGHT_PX
 		ta.style.height = `${Math.min(ta.scrollHeight, MAX_INPUT_HEIGHT_PX)}px`
 		ta.style.overflowY = overflows ? 'auto' : 'hidden'
-	}, [content])
+	}, [])
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: content drives the resize, including programmatic setContent (mention insert, post-submit reset)
+	useLayoutEffect(() => {
+		fitHeight()
+	}, [content, fitHeight])
+
+	// The field's own width also drives how many lines the draft wraps to, and
+	// it settles after first paint — the bar composer shares its row with the
+	// `+`, mic and send buttons, so measuring only on mount leaves the field
+	// several lines too tall on a narrow viewport. Re-fit whenever it resizes.
+	useLayoutEffect(() => {
+		const ta = inputRef.current
+		if (!ta || typeof ResizeObserver === 'undefined') return
+		const observer = new ResizeObserver(() => fitHeight())
+		observer.observe(ta)
+		return () => observer.disconnect()
+	}, [fitHeight])
 
 	const handleScroll = useCallback(() => {
 		const overlay = overlayRef.current
@@ -234,15 +267,19 @@ export function CommentInput({
 	const handleObjectPicked = useCallback(
 		(result: SlashPickerResult) => {
 			if (result.kind === 'object') {
-				const title = result.ref.title?.trim() || 'object'
-				insertAtCursor(`[${title}](/${workspaceId}/objects/${result.ref.id})`)
+				const picked = {
+					id: result.ref.id,
+					title: result.ref.title?.trim() || 'Untitled',
+					type: result.ref.type ?? 'object',
+				}
+				setReferences((prev) => (prev.some((r) => r.id === picked.id) ? prev : [...prev, picked]))
 			} else if (result.kind === 'agent') {
 				insertAtCursor(`@${result.ref.name}`)
 				setMentions((prev) => (prev.includes(result.ref.id) ? prev : [...prev, result.ref.id]))
 			}
 			setObjectPickerOpen(false)
 		},
-		[insertAtCursor, workspaceId],
+		[insertAtCursor],
 	)
 
 	// Opens the @-mention flow the textarea already owns instead of a parallel
@@ -254,30 +291,14 @@ export function CommentInput({
 		setSelectedIndex(0)
 	}, [insertAtCursor])
 
-	const addDecisionChip = useCallback(() => {
-		const next = chipDraft.trim().slice(0, MAX_DECISION_CHIP_LENGTH)
-		if (!next) return
-		setDecisionChips((prev) =>
-			prev.length >= MAX_DECISION_CHIPS || prev.includes(next) ? prev : [...prev, next],
-		)
-		setChipDraft('')
-	}, [chipDraft])
-
-	const removeDecisionChip = useCallback((chip: string) => {
-		setDecisionChips((prev) => prev.filter((c) => c !== chip))
-	}, [])
-
 	// The one place a comment's structured extras are built. Both submit paths
 	// — the direct POST and the attachment queue — spread this, so they cannot
-	// drift apart. The same caps `createCommentSchema` enforces server-side are
-	// re-applied here, since chips can also arrive from a restored draft.
+	// drift apart.
 	const buildMetadata = useCallback((): Record<string, unknown> | undefined => {
-		const chips = decisionChips
-			.map((chip) => chip.trim().slice(0, MAX_DECISION_CHIP_LENGTH))
-			.filter((chip) => chip.length > 0)
-			.slice(0, MAX_DECISION_CHIPS)
-		return chips.length > 0 ? { chips } : undefined
-	}, [decisionChips])
+		const refs = references.map((r) => r.id)
+		if (refs.length === 0) return undefined
+		return { refs }
+	}, [references])
 
 	const overLimit = content.length > COMMENT_MAX_LENGTH
 	const showCounter = content.length >= COMMENT_MAX_LENGTH * COUNTER_VISIBILITY_THRESHOLD
@@ -285,16 +306,23 @@ export function CommentInput({
 	const resetComposer = useCallback(() => {
 		setContent('')
 		setMentions([])
-		setDecisionChips([])
-		setChipDraft('')
-		setDecisionOpen(false)
+		setReferences([])
 		draftIdRef.current = randomDraftId()
 	}, [])
 
 	const handleSubmit = useCallback(() => {
 		const trimmed = content.trim()
+		// References ride along with a comment, they are not a comment on their
+		// own: `createCommentSchema.content` is `.min(1)`, so posting references
+		// with an empty body is a guaranteed 400.
 		if (!trimmed) return
 		if (content.length > COMMENT_MAX_LENGTH) return
+		// The Send button is already disabled while a POST is in flight; Enter has
+		// to obey the same rule. The composer deliberately keeps its text until
+		// the POST succeeds (so a rejected one is not lost), which means a slow
+		// round trip looks exactly like a keypress that did nothing — and the
+		// second Enter posts the same comment twice.
+		if (createComment.isPending) return
 
 		// Reconcile mentions: only include actors whose @Name is still in the text
 		const activeMentions = mentions.filter((id) => {
@@ -343,7 +371,11 @@ export function CommentInput({
 				return
 			}
 			resetComposer()
-			onSubmitted?.()
+			// Deliberately not `onSubmitted` — the upload and the POST are still
+			// ahead of us, and a queued comment can still fail. Telling the caller
+			// it was submitted here let For You mark the thread read and drop the
+			// card for a reply that was never sent.
+			onQueued?.()
 			return
 		}
 
@@ -356,6 +388,7 @@ export function CommentInput({
 		parentEventId,
 		createComment,
 		onSubmitted,
+		onQueued,
 		hasAttachments,
 		draft,
 		buildMetadata,
@@ -433,6 +466,135 @@ export function CommentInput({
 
 	if (!actor) return null
 
+	// `+` menu and its object picker — shared by both composer layouts.
+	const controlsLeft = (
+		<>
+			<SlashPicker
+				workspaceId={workspaceId}
+				open={objectPickerOpen}
+				onOpenChange={setObjectPickerOpen}
+				onSelect={handleObjectPicked}
+				selected={EMPTY_CHAT_SELECTION}
+				initialKindId="item"
+				anchor={
+					<span aria-hidden className="pointer-events-none absolute bottom-1 left-2 h-0 w-0" />
+				}
+			/>
+			<DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<Button
+						type="button"
+						size="icon"
+						variant="outline"
+						className="h-7 w-7 shrink-0 rounded-full text-muted-foreground"
+						aria-label="Add a file, object, or mention"
+					>
+						<Plus size={15} aria-hidden />
+					</Button>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent align="start" className="w-[250px]">
+					<DropdownMenuItem
+						disabled={attachmentLimitReached}
+						onSelect={() => fileInputRef.current?.click()}
+					>
+						<Paperclip size={15} aria-hidden />
+						Attach a file
+					</DropdownMenuItem>
+					<DropdownMenuItem
+						// Opened on the next tick: the menu closes first, and its
+						// focus-return would otherwise land as an outside-click on the
+						// picker and shut it again the moment it mounts.
+						onSelect={() => window.setTimeout(() => setObjectPickerOpen(true), 0)}
+					>
+						<Box size={15} aria-hidden />
+						Reference an object
+					</DropdownMenuItem>
+					<DropdownMenuItem onSelect={startMention}>
+						<AtSign size={15} aria-hidden />
+						Mention an agent
+					</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
+		</>
+	)
+
+	const controlsRight = (
+		<>
+			{dictation.supported ? (
+				<Button
+					type="button"
+					size="icon"
+					variant={dictation.recording ? 'destructive' : 'outline'}
+					className={cn(
+						'h-7 w-7 shrink-0 rounded-full',
+						dictation.recording ? 'animate-pulse' : 'text-muted-foreground',
+					)}
+					onClick={dictation.toggle}
+					aria-pressed={dictation.recording}
+					aria-label={dictation.recording ? 'Stop dictating' : 'Dictate a comment'}
+				>
+					<Mic size={14} aria-hidden />
+				</Button>
+			) : null}
+			<Button
+				size="icon"
+				variant="ghost"
+				className="h-7 w-7 shrink-0 rounded-full"
+				disabled={!content.trim() || createComment.isPending || overLimit}
+				title={isUploadingAny ? 'Send (uploads continue in background)' : 'Send'}
+				aria-label="Send comment"
+				onClick={handleSubmit}
+			>
+				<ArrowUp size={14} />
+			</Button>
+		</>
+	)
+
+	const referenceChips = references.length > 0 && (
+		<ul className={cn('flex flex-wrap gap-1.5', isBar ? 'px-1 pb-[7px]' : 'p-1.5 pb-0')}>
+			{references.map((ref) => (
+				<li
+					key={ref.id}
+					className={cn(
+						'flex items-center gap-1.5',
+						isBar
+							? 'rounded-full border border-brand/25 bg-brand/10 px-2.5 py-1'
+							: 'rounded-lg border border-border bg-background px-2 py-1',
+					)}
+				>
+					<span
+						aria-hidden="true"
+						className={cn('size-[7px] shrink-0 rounded-[2px]', getTypeColor(ref.type).bg)}
+					/>
+					{!isBar && (
+						<span className="font-mono text-[8px] font-bold uppercase tracking-[0.09em] text-muted-foreground">
+							{ref.type}
+						</span>
+					)}
+					<span
+						className={cn(
+							'max-w-[180px] truncate text-[11.5px] font-semibold',
+							isBar ? 'text-brand' : 'text-foreground',
+						)}
+					>
+						{ref.title}
+					</span>
+					<button
+						type="button"
+						aria-label={`Remove reference to ${ref.title}`}
+						onClick={() => setReferences((prev) => prev.filter((r) => r.id !== ref.id))}
+						className={cn(
+							'transition-colors',
+							isBar ? 'text-brand/45 hover:text-brand' : 'text-border hover:text-destructive',
+						)}
+					>
+						<X size={12} />
+					</button>
+				</li>
+			))}
+		</ul>
+	)
+
 	return (
 		<div
 			className={cn(
@@ -450,19 +612,22 @@ export function CommentInput({
 			}}
 			onDrop={handleDrop}
 		>
-			<div className="flex items-start gap-2">
-				<ActorAvatar name={actor.name} type={actor.type} size="sm" className="mt-1" />
+			<div className={cn('flex items-start gap-2', isBar && 'gap-0')}>
+				{!isBar && <ActorAvatar name={actor.name} type={actor.type} size="sm" className="mt-1" />}
 				{/* min-w-0 lets the flex child shrink below its textarea's intrinsic
 				    content width — without it, a long unbroken token (URL, paste)
 				    pushes the row past the card and the page scrolls horizontally
 				    instead of the field growing vertically. */}
 				<div className="min-w-0 flex-1">
+					{isBar && referenceChips}
 					<div
 						className={cn(
-							'rounded-md border transition-colors',
-							overLimit ? 'border-error' : 'border-border',
+							'border transition-colors',
+							isBar ? 'rounded-2xl bg-background shadow-sm' : 'rounded-md',
+							overLimit ? 'border-error' : isBar ? 'border-input' : 'border-border',
 						)}
 					>
+						{!isBar && referenceChips}
 						{hasAttachments && (
 							<ul className="flex flex-wrap gap-1.5 p-1.5">
 								{attachments.map((file) => (
@@ -491,182 +656,62 @@ export function CommentInput({
 								))}
 							</ul>
 						)}
-						<div className="relative">
-							<div
-								ref={overlayRef}
-								aria-hidden
-								className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-2 py-1 text-base"
-								style={{ minHeight: '28px' }}
-							>
-								<MentionedText
-									content={content}
-									actors={mentionableActors}
-									mentionClassName="rounded bg-primary/10 text-primary"
-								/>
-								{/* Trailing zero-width space keeps the overlay height in sync when content ends with a newline */}
-								{content.endsWith('\n') && '​'}
-							</div>
-							{/* wrap="soft" + break-words match the overlay's whitespace-pre-wrap
+						<div className={cn(isBar && 'flex items-center gap-2 px-2 py-1.5')}>
+							{isBar && controlsLeft}
+							<div className={cn('relative', isBar && 'min-w-0 flex-1')}>
+								<div
+									ref={overlayRef}
+									aria-hidden
+									className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-2 py-1 text-base"
+									style={{ minHeight: '28px' }}
+								>
+									<MentionedText
+										content={content}
+										actors={mentionableActors}
+										mentionClassName="rounded bg-primary/10 text-primary"
+									/>
+									{/* Trailing zero-width space keeps the overlay height in sync when content ends with a newline */}
+									{content.endsWith('\n') && '​'}
+								</div>
+								{/* wrap="soft" + break-words match the overlay's whitespace-pre-wrap
 							    break-words so the textarea's scrollHeight (which the
 							    useLayoutEffect resize reads) reflects the wrapped layout
 							    instead of one runaway line. text-base stays for the iOS
 							    Safari zoom-on-focus guard (#655). */}
-							<textarea
-								ref={setTextareaRef}
-								value={content}
-								onChange={handleInput}
-								onKeyDown={handleKeyDown}
-								onScroll={handleScroll}
-								placeholder={
-									isMobile ? 'Write a comment...' : 'Write a comment... Use @ to mention an agent'
-								}
-								rows={1}
-								wrap="soft"
-								aria-invalid={overLimit || undefined}
-								className="relative w-full resize-none overflow-x-hidden overflow-y-hidden break-words border-0 bg-transparent px-2 py-1 text-base text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
-								style={{ minHeight: '28px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
-							/>
+								<textarea
+									ref={setTextareaRef}
+									value={content}
+									onChange={handleInput}
+									onKeyDown={handleKeyDown}
+									onScroll={handleScroll}
+									placeholder={
+										placeholder ??
+										(isMobile
+											? 'Write a comment...'
+											: 'Write a comment... Use @ to mention an agent')
+									}
+									rows={1}
+									wrap="soft"
+									aria-invalid={overLimit || undefined}
+									className="relative w-full resize-none overflow-x-hidden overflow-y-hidden break-words border-0 bg-transparent px-2 py-1 text-base text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
+									style={{ minHeight: '28px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
+								/>
+							</div>
+							{isBar && controlsRight}
 						</div>
-						{(decisionOpen || decisionChips.length > 0) && (
-							<div
-								data-testid="decision-attachment"
-								className="flex flex-col gap-1.5 border-t border-border px-1.5 py-1.5"
-							>
-								<p className="eyebrow">Decision options</p>
-								{decisionChips.length > 0 && (
-									<ul className="flex flex-wrap gap-1.5">
-										{decisionChips.map((chip) => (
-											<li
-												key={chip}
-												className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs text-foreground"
-											>
-												{chip}
-												<button
-													type="button"
-													onClick={() => removeDecisionChip(chip)}
-													aria-label={`Remove option ${chip}`}
-													className="text-muted-foreground hover:text-foreground"
-												>
-													<X size={11} aria-hidden />
-												</button>
-											</li>
-										))}
-									</ul>
-								)}
-								{decisionChips.length < MAX_DECISION_CHIPS && (
-									<div className="flex items-center gap-1.5">
-										<Input
-											value={chipDraft}
-											onChange={(e) => setChipDraft(e.target.value)}
-											onKeyDown={(e) => {
-												if (e.key !== 'Enter') return
-												e.preventDefault()
-												addDecisionChip()
-											}}
-											maxLength={MAX_DECISION_CHIP_LENGTH}
-											placeholder="Add an option…"
-											aria-label="Decision option"
-											className="h-7 flex-1 text-xs"
-										/>
-										<Button
-											type="button"
-											size="sm"
-											variant="outline"
-											className="h-7 text-xs"
-											disabled={chipDraft.trim().length === 0}
-											onClick={addDecisionChip}
-										>
-											Add
-										</Button>
-									</div>
-								)}
-								<p className="text-[11px] text-muted-foreground">
-									They reply by tapping one — or type instead.
-								</p>
+						{/* Control row — `+` menu, hint, mic, send (mockup 457–472). The
+						    bar variant hoists these controls up beside the field
+						    instead, so this row renders only when stacked. */}
+						{!isBar && (
+							<div className="flex items-center gap-2 px-1.5 pb-1.5">
+								{controlsLeft}
+								<span className="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground">
+									{hint ??
+										(isMobile ? 'Tap ↑ to send' : 'Enter to send · @ to mention · + to attach')}
+								</span>
+								{controlsRight}
 							</div>
 						)}
-						{/* Control row — `+` menu, hint, mic, send (mockup 457–472). */}
-						<div className="flex items-center gap-2 px-1.5 pb-1.5">
-							<SlashPicker
-								workspaceId={workspaceId}
-								open={objectPickerOpen}
-								onOpenChange={setObjectPickerOpen}
-								onSelect={handleObjectPicked}
-								selected={EMPTY_CHAT_SELECTION}
-								initialKindId="item"
-								anchor={
-									<span
-										aria-hidden
-										className="pointer-events-none absolute bottom-1 left-2 h-0 w-0"
-									/>
-								}
-							/>
-							<DropdownMenu>
-								<DropdownMenuTrigger asChild>
-									<Button
-										type="button"
-										size="icon"
-										variant="outline"
-										className="h-7 w-7 shrink-0 rounded-full text-muted-foreground"
-										aria-label="Add a file, object, or mention"
-									>
-										<Plus size={15} aria-hidden />
-									</Button>
-								</DropdownMenuTrigger>
-								<DropdownMenuContent align="start" className="w-[250px]">
-									<DropdownMenuItem
-										disabled={attachmentLimitReached}
-										onSelect={() => fileInputRef.current?.click()}
-									>
-										<Paperclip size={15} aria-hidden />
-										Attach a file
-									</DropdownMenuItem>
-									<DropdownMenuItem onSelect={() => setObjectPickerOpen(true)}>
-										<Box size={15} aria-hidden />
-										Reference an object
-									</DropdownMenuItem>
-									<DropdownMenuItem onSelect={startMention}>
-										<AtSign size={15} aria-hidden />
-										Mention an agent
-									</DropdownMenuItem>
-									<DropdownMenuItem onSelect={() => setDecisionOpen(true)}>
-										<ListChecks size={15} aria-hidden />
-										Attach a decision
-									</DropdownMenuItem>
-								</DropdownMenuContent>
-							</DropdownMenu>
-							<span className="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground">
-								{hint ??
-									(isMobile ? 'Tap ↑ to send' : 'Enter to send · @ to mention · + to attach')}
-							</span>
-							{dictation.supported ? (
-								<Button
-									type="button"
-									size="icon"
-									variant={dictation.recording ? 'destructive' : 'outline'}
-									className={cn(
-										'h-7 w-7 shrink-0 rounded-full',
-										dictation.recording ? 'animate-pulse' : 'text-muted-foreground',
-									)}
-									onClick={dictation.toggle}
-									aria-pressed={dictation.recording}
-									aria-label={dictation.recording ? 'Stop dictating' : 'Dictate a comment'}
-								>
-									<Mic size={14} aria-hidden />
-								</Button>
-							) : null}
-							<Button
-								size="icon"
-								variant="ghost"
-								className="h-7 w-7 shrink-0 rounded-full"
-								disabled={!content.trim() || createComment.isPending || overLimit}
-								title={isUploadingAny ? 'Send (uploads continue in background)' : 'Send'}
-								aria-label="Send comment"
-								onClick={handleSubmit}
-							>
-								<ArrowUp size={14} />
-							</Button>
-						</div>
 					</div>
 					{showCounter && (
 						<div

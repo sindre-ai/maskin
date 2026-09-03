@@ -16,7 +16,6 @@ describe('workspaceSettingsSchema', () => {
 			bet: 'Bet',
 			task: 'Task',
 			loop: 'Loop',
-			commitment: 'Commitment',
 		})
 		expect(result.statuses.insight).toEqual([
 			'new',
@@ -37,6 +36,7 @@ describe('workspaceSettingsSchema', () => {
 			'archived',
 		])
 		expect(result.statuses.task).toEqual([
+			'backlog',
 			'todo',
 			'in_progress',
 			'in_review',

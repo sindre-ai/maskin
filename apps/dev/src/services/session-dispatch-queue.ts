@@ -1,5 +1,6 @@
 import type { Database } from '@maskin/db'
 import { events, sessionDispatchAttempts, sessions } from '@maskin/db/schema'
+import type { SessionResultFailureReason } from '@maskin/shared'
 import { and, asc, eq, lte, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 
@@ -20,7 +21,18 @@ export type DispatchResult =
 	| { kind: 'dispatched' }
 	| { kind: 'no_capacity' }
 	| { kind: 'transient_failure'; error: string }
-	| { kind: 'permanent_failure'; error: string }
+	| {
+			kind: 'permanent_failure'
+			error: string
+			/**
+			 * Classification for the session row. When absent the queue falls back
+			 * to the generic `dispatch_failed` reason — correct for "no agent-server
+			 * took it", wrong for a failure the dispatcher already understands (e.g.
+			 * the workspace has no LLM credentials), which is why callers that know
+			 * better pass their own.
+			 */
+			failureReason?: SessionResultFailureReason
+	  }
 
 /**
  * Pluggable dispatch callback. Wired by T6's `SessionDispatcher` at startup.
@@ -55,6 +67,30 @@ export interface SessionDispatchQueueOptions {
 	 * reason, no hint that starting a new session is the recovery.
 	 */
 	appendSystemLog?: (sessionId: string, content: string) => Promise<void>
+	/**
+	 * Notified when a dispatch fails permanently for a reason the dispatcher
+	 * already classified. Exists so a WORKSPACE-level cause — most importantly
+	 * `not_logged_in`, "this workspace has no working LLM credentials" — can
+	 * reach a listener that is able to stop re-provoking it.
+	 *
+	 * Why it is needed at all: `SessionDispatcher` *returns* its failures as
+	 * values rather than throwing, and in production `SessionManager.launchContainer`
+	 * enqueues and returns rather than launching, so nothing about a credential
+	 * failure on this path propagates back to whoever created the session. The
+	 * caller that created it (e.g. `TriggerRunner`) therefore never learns the
+	 * workspace is unusable and keeps firing on schedule — which is exactly the
+	 * flood this hook lets it stop (Sentry MASKIN-DEV-6).
+	 *
+	 * Best-effort and synchronous-safe: a throw here is caught and logged, never
+	 * allowed to leave the session row un-failed.
+	 */
+	onPermanentFailure?: (info: {
+		sessionId: string
+		workspaceId: string
+		/** `undefined` when the dispatcher gave no classification. */
+		reasonCode?: string
+		error: string
+	}) => void
 }
 
 const DEFAULTS = {
@@ -97,6 +133,7 @@ export class SessionDispatchQueue {
 	private readonly batchSize: number
 	private readonly leaseMs: number
 	private readonly appendSystemLog?: (sessionId: string, content: string) => Promise<void>
+	private readonly onPermanentFailure?: SessionDispatchQueueOptions['onPermanentFailure']
 
 	constructor(
 		private db: Database,
@@ -111,6 +148,7 @@ export class SessionDispatchQueue {
 		this.batchSize = opts.batchSize ?? DEFAULTS.batchSize
 		this.leaseMs = opts.leaseMs ?? DEFAULTS.leaseMs
 		this.appendSystemLog = opts.appendSystemLog
+		this.onPermanentFailure = opts.onPermanentFailure
 	}
 
 	/**
@@ -255,7 +293,7 @@ export class SessionDispatchQueue {
 				await this.handleTransientFailure(row, result.error)
 				return
 			case 'permanent_failure':
-				await this.handlePermanentFailure(row, result.error)
+				await this.handlePermanentFailure(row, result.error, result.failureReason)
 				return
 		}
 	}
@@ -324,13 +362,37 @@ export class SessionDispatchQueue {
 	private async handlePermanentFailure(
 		row: typeof sessionDispatchAttempts.$inferSelect,
 		error: string,
+		failureReason?: SessionResultFailureReason,
 	): Promise<void> {
 		await this.markRowFailed(row, error)
-		await this.markSessionFailed(row.sessionId, `Permanent dispatch failure: ${error}`)
+		const workspaceId = await this.markSessionFailed(
+			row.sessionId,
+			`Permanent dispatch failure: ${error}`,
+			failureReason,
+		)
 		logger.error('Session dispatch permanent failure', {
 			sessionId: row.sessionId,
 			error,
 		})
+
+		// `workspaceId` is null only when the session row was already terminal —
+		// the dispatcher raced us to it — in which case there is no live session
+		// to attribute the workspace state to and nothing useful to notify about.
+		if (workspaceId && this.onPermanentFailure) {
+			try {
+				this.onPermanentFailure({
+					sessionId: row.sessionId,
+					workspaceId,
+					reasonCode: failureReason?.reason_code,
+					error,
+				})
+			} catch (err) {
+				logger.warn('onPermanentFailure hook threw', {
+					sessionId: row.sessionId,
+					error: String(err),
+				})
+			}
+		}
 	}
 
 	private async markRowFailed(
@@ -354,29 +416,52 @@ export class SessionDispatchQueue {
 	 * runtime failure. If the session row was already terminal (the dispatcher
 	 * raced us to it) the UPDATE matches zero rows and the event still records
 	 * the dispatch-side observation.
+	 *
+	 * Returns the failed session's workspace id, or null when this call did not
+	 * fail a live session — the UPDATE matched nothing (already terminal) or the
+	 * UPDATE itself threw. Deliberately NOT null for a failure of the event
+	 * insert or the system-log append that follow it: those are reporting on a
+	 * session this call really did fail, and the caller uses a non-null return
+	 * to open a workspace-level pause.
 	 */
-	private async markSessionFailed(sessionId: string, errorMessage: string): Promise<void> {
+	private async markSessionFailed(
+		sessionId: string,
+		errorMessage: string,
+		failureReason?: SessionResultFailureReason,
+	): Promise<string | null> {
+		// A bare `result.error` string renders nowhere: the session detail panel's
+		// FailureCard reads `result.failure_reason`, and use-conversation-activity
+		// reads `failure_reason.human_message`. Without this the user's session
+		// simply stopped, with the real explanation visible only in Sentry
+		// (MASKIN-DEV-4). `dispatch_failed` is the right default for "no
+		// agent-server took it" — a caller that already knows the cause passes
+		// its own, so a credential failure doesn't masquerade as a dispatch one.
+		const resolvedFailureReason: SessionResultFailureReason = failureReason ?? {
+			provider: 'agent-server',
+			reason_code: 'dispatch_failed',
+			human_message: DISPATCH_FAILED_MESSAGE,
+			http_status: null,
+			reset_at: null,
+			verbatim_output: errorMessage,
+		}
+		// Scoped to the UPDATE alone, so a null return means exactly one thing:
+		// the session row was already terminal. Widening this `try` to cover the
+		// bookkeeping below would conflate "already terminal" with "a later write
+		// failed", and the caller acts on that distinction — `handlePermanentFailure`
+		// reads a null as "no live session, nothing to notify about" and skips
+		// `onPermanentFailure`. A transient events-insert error would then quietly
+		// withhold the workspace-level pause and let the trigger keep firing at
+		// full rate: the exact flood the hook exists to stop (Sentry MASKIN-DEV-6).
+		let updated: { id: string; workspaceId: string; actorId: string } | undefined
 		try {
-			const [updated] = await this.db
+			;[updated] = await this.db
 				.update(sessions)
 				.set({
 					status: 'failed',
 					result: {
 						error: errorMessage,
 						exit_code: null,
-						// A bare `result.error` string renders nowhere: the session
-						// detail panel's FailureCard reads `result.failure_reason`, and
-						// use-conversation-activity reads `failure_reason.human_message`.
-						// Without this the user's session simply stopped, with the real
-						// explanation visible only in Sentry (MASKIN-DEV-4).
-						failure_reason: {
-							provider: 'agent-server',
-							reason_code: 'dispatch_failed',
-							human_message: DISPATCH_FAILED_MESSAGE,
-							http_status: null,
-							reset_at: null,
-							verbatim_output: errorMessage,
-						},
+						failure_reason: resolvedFailureReason,
 					},
 					completedAt: new Date(),
 					updatedAt: new Date(),
@@ -389,30 +474,6 @@ export class SessionDispatchQueue {
 					workspaceId: sessions.workspaceId,
 					actorId: sessions.actorId,
 				})
-
-			if (updated) {
-				await this.db.insert(events).values({
-					workspaceId: updated.workspaceId,
-					actorId: updated.actorId,
-					action: 'session_failed',
-					entityType: 'session',
-					entityId: updated.id,
-					data: { error: errorMessage, source: 'dispatch_queue' },
-				})
-
-				// Best-effort, and deliberately after the row is already failed: a
-				// log-write failure must not leave the session stuck non-terminal.
-				if (this.appendSystemLog) {
-					try {
-						await this.appendSystemLog(updated.id, DISPATCH_FAILED_MESSAGE)
-					} catch (err) {
-						logger.warn('Failed to append dispatch-failure log line', {
-							sessionId,
-							error: String(err),
-						})
-					}
-				}
-			}
 		} catch (err) {
 			// Surface but never throw — the row is already marked failed in the
 			// queue, the worker should keep draining the rest of the batch.
@@ -420,7 +481,48 @@ export class SessionDispatchQueue {
 				sessionId,
 				error: String(err),
 			})
+			return null
 		}
+
+		if (!updated) return null
+
+		// Everything below is best-effort reporting on a session that is already
+		// failed. Each failure is logged and swallowed so it cannot cost the
+		// caller the workspace id it needs to open the pause.
+		try {
+			await this.db.insert(events).values({
+				workspaceId: updated.workspaceId,
+				actorId: updated.actorId,
+				action: 'session_failed',
+				entityType: 'session',
+				entityId: updated.id,
+				data: {
+					error: errorMessage,
+					reason_code: resolvedFailureReason.reason_code,
+					source: 'dispatch_queue',
+				},
+			})
+		} catch (err) {
+			logger.error('Failed to record session_failed event from dispatch queue', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
+		// Best-effort, and deliberately after the row is already failed: a
+		// log-write failure must not leave the session stuck non-terminal.
+		if (this.appendSystemLog) {
+			try {
+				await this.appendSystemLog(updated.id, resolvedFailureReason.human_message)
+			} catch (err) {
+				logger.warn('Failed to append dispatch-failure log line', {
+					sessionId,
+					error: String(err),
+				})
+			}
+		}
+
+		return updated.workspaceId
 	}
 
 	private backoffMs(attempt: number): number {

@@ -6,6 +6,20 @@ import { type OAuthSlotKind, resolveActiveSlot, writeSlot } from './claude-oauth
 import { decrypt, encrypt } from './crypto'
 import { logger } from './logger'
 
+/**
+ * Hard ceiling on every network call made while resolving Claude credentials
+ * (this token refresh, and `probeClaudeSubscription` in claude-failover.ts).
+ *
+ * These calls sit on the session-launch path, before the session row leaves
+ * `starting`. A hung socket here is not a slow start — it is a session that
+ * never launches and never fails, invisible until the 10-minute zombie reaper
+ * force-fails it with a generic message. Bounding it well under that window
+ * turns the hang into a classified, reported failure (a refresh timeout is
+ * normalised to a transport error, so it retries the primary rather than
+ * failing over on our own network blip).
+ */
+export const CLAUDE_CREDENTIAL_TIMEOUT_MS = 15_000
+
 export interface ClaudeOAuthTokens {
 	accessToken: string
 	refreshToken: string
@@ -38,6 +52,7 @@ export async function refreshClaudeToken(tokens: ClaudeOAuthTokens): Promise<Cla
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(body),
+		signal: AbortSignal.timeout(CLAUDE_CREDENTIAL_TIMEOUT_MS),
 	})
 
 	if (!res.ok) {

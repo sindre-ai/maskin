@@ -19,14 +19,6 @@ vi.mock('@/hooks/use-workspaces', () => ({
 	useUpdateWorkspace: () => ({ mutate: mockUpdateMutate, isPending: false }),
 }))
 
-vi.mock('@/hooks/use-custom-extensions', () => ({
-	useCustomExtensions: () => [],
-}))
-
-vi.mock('@/hooks/use-enabled-modules', () => ({
-	useEnabledModules: () => ['work'],
-}))
-
 vi.mock('@/lib/theme', () => ({
 	useTheme: () => ({ theme: 'light', setTheme: vi.fn() }),
 }))
@@ -52,12 +44,20 @@ describe('Settings > General > Privacy & data', () => {
 	it('renders the privacy heading, both switches, and the disclosure copy', () => {
 		renderPage()
 
-		expect(screen.getByText('Privacy & data')).toBeInTheDocument()
-		expect(screen.getByText(/Product usage events are sent to PostHog/)).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'PRIVACY & DATA' })).toBeInTheDocument()
+		expect(screen.getByText(/Usage events feed the Synthesizer/)).toBeInTheDocument()
 		expect(
 			screen.getByRole('switch', { name: 'Share product usage with Maskin' }),
 		).toBeInTheDocument()
 		expect(screen.getByRole('switch', { name: 'Anonymize this workspace' })).toBeInTheDocument()
+	})
+
+	// General only carries the two privacy switches — the extension toggles moved
+	// to their own rail section, so no other switch may render here.
+	it('renders no extension switches on General', () => {
+		renderPage()
+
+		expect(screen.getAllByRole('switch')).toHaveLength(2)
 	})
 
 	it('defaults share-usage on and anonymize off when settings.privacy is missing', () => {

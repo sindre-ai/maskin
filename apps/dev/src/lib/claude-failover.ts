@@ -12,6 +12,7 @@ import {
 	headersFrom,
 } from './claude-failure-classifier'
 import {
+	CLAUDE_CREDENTIAL_TIMEOUT_MS,
 	type ClaudeOAuthTokens,
 	type EncryptedOAuthData,
 	decryptOAuthData,
@@ -76,6 +77,10 @@ export async function probeClaudeSubscription(
 ): Promise<ClassifierInput | null> {
 	const res = await fetch(CLAUDE_MESSAGES_URL, {
 		method: 'POST',
+		// Bounded so a hung Anthropic socket can't stall session launch — see
+		// CLAUDE_CREDENTIAL_TIMEOUT_MS. An abort surfaces through `runProbe`'s
+		// catch as a transport error, which classifies as retry_primary.
+		signal: AbortSignal.timeout(CLAUDE_CREDENTIAL_TIMEOUT_MS),
 		headers: {
 			'Content-Type': 'application/json',
 			Authorization: `Bearer ${tokens.accessToken}`,
@@ -98,6 +103,22 @@ export async function probeClaudeSubscription(
 	return { kind: 'http', status: res.status, headers: headersFrom(headerRecord) }
 }
 
+/**
+ * Why `resolveClaudeCredentialsWithFailover` returned `null` for a workspace
+ * that DOES have a slot configured.
+ *
+ * `transient: true` means the credential may well be fine and we simply could
+ * not confirm it — our own socket timed out, the token endpoint returned 5xx.
+ * Those must stay retryable: hard-failing a session on one tells the user to
+ * reconnect a subscription that was never broken, and removes the backoff that
+ * would have recovered on its own. `transient: false` is an auth-class verdict
+ * (revoked, exhausted) that repeats identically on every attempt.
+ */
+export interface UnusableCredentialInfo {
+	transient: boolean
+	detail: string
+}
+
 export interface FailoverParams {
 	db: Database
 	workspaceId: string
@@ -110,6 +131,12 @@ export interface FailoverParams {
 	env?: NodeJS.ProcessEnv
 	/** Passed through to `refreshClaudeTokenIfNeeded`. */
 	bufferMs?: number
+	/**
+	 * Invoked when a CONFIGURED slot yields no usable token, reporting whether
+	 * the failure is worth retrying. Deliberately not called when nothing is
+	 * configured — that is "route absent", not "route broken".
+	 */
+	onUnusable?: (info: UnusableCredentialInfo) => void
 }
 
 export function isClaudeFailoverEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -147,7 +174,7 @@ export function isClaudeFailoverEnabled(env: NodeJS.ProcessEnv = process.env): b
 export async function resolveClaudeCredentialsWithFailover(
 	params: FailoverParams,
 ): Promise<ClaudeCredentials | null> {
-	const { db, workspaceId, actorId, bufferMs } = params
+	const { db, workspaceId, actorId, bufferMs, onUnusable } = params
 	const probe = params.probe ?? probeClaudeSubscription
 	const env = params.env ?? process.env
 	const now = params.now ?? Date.now
@@ -176,7 +203,10 @@ export async function resolveClaudeCredentialsWithFailover(
 			// otherwise fall through to. Classify it the same way the
 			// flag-on path does below instead of only checking expiry.
 			const decision = classifyClaudeFailure(refreshFailure)
-			if (decision.action === 'failover' || tokens.expiresAt <= now()) return null
+			if (decision.action === 'failover' || tokens.expiresAt <= now()) {
+				onUnusable?.(unusableFromRefresh(decision))
+				return null
+			}
 		}
 		return { slot: 'primary', tokens }
 	}
@@ -241,6 +271,7 @@ export async function resolveClaudeCredentialsWithFailover(
 			backup: slots.backup,
 			probe,
 			bufferMs,
+			onUnusable,
 		})
 	}
 
@@ -267,6 +298,7 @@ export async function resolveClaudeCredentialsWithFailover(
 			// launch a session with dead credentials and never reach the
 			// workspace API key / system fallback routes. Signal unusable so
 			// the caller (llm-routing) falls through instead.
+			onUnusable?.(unusableFromRefresh(decision))
 			return null
 		}
 		return { slot: 'primary', tokens: workingTokens }
@@ -546,22 +578,53 @@ async function refreshSlot(
 	slot: OAuthSlotKind,
 	encrypted: EncryptedOAuthData,
 	bufferMs: number | undefined,
-): Promise<ClaudeOAuthTokens | null> {
+): Promise<{ tokens: ClaudeOAuthTokens | null; refreshFailure: ClassifierInput | null }> {
 	const decrypted = decryptOAuthData(encrypted)
 	try {
 		const result = await refreshClaudeTokenIfNeeded(decrypted, bufferMs ?? 10 * 60 * 1000)
 		if (result.refreshed) {
 			await persistRefreshedSlot(db, workspaceId, slot, encryptOAuthTokens(result.tokens))
 		}
-		return result.tokens
+		return { tokens: result.tokens, refreshFailure: null }
 	} catch (err) {
 		logger.warn('Failed to refresh Claude OAuth slot', {
 			workspaceId,
 			slot,
 			error: err instanceof Error ? err.message : String(err),
 		})
-		return null
+		// Carried back rather than discarded so the caller can tell a revoked
+		// refresh token (permanent) from a token endpoint we simply could not
+		// reach (transient, and worth a retry).
+		return { tokens: null, refreshFailure: classifierInputFromError(err) }
 	}
+}
+
+/**
+ * Maps a classified refresh/probe verdict onto the unusable-credential report.
+ * A `failover` verdict is auth-class and will repeat; anything else reaching a
+ * null return is a transient failure over an already-expired token — unusable
+ * right now, but not proof the credential is dead.
+ */
+function unusableFromRefresh(decision: { action: string; reason: string }): UnusableCredentialInfo {
+	return decision.action === 'failover'
+		? {
+				transient: false,
+				detail: `the connected Claude subscription was rejected (${decision.reason})`,
+			}
+		: {
+				transient: true,
+				detail: `the Claude token endpoint could not be reached to refresh an expired token (${decision.reason})`,
+			}
+}
+
+/**
+ * Is a thrown credential error worth retrying? Routes the throw through the
+ * same classifier the null paths use, so a timeout from
+ * CLAUDE_CREDENTIAL_TIMEOUT_MS or a 5xx reads as transient while a 401 does
+ * not. Keeps the throw and null paths agreeing on what "permanent" means.
+ */
+export function isTransientCredentialError(err: unknown): boolean {
+	return classifyClaudeFailure(classifierInputFromError(err)).action !== 'failover'
 }
 
 /**
@@ -577,10 +640,26 @@ async function refreshAndProbeBackup(params: {
 	backup: EncryptedOAuthData
 	probe: SubscriptionProbe
 	bufferMs: number | undefined
+	onUnusable?: (info: UnusableCredentialInfo) => void
 }): Promise<ClaudeCredentials | null> {
-	const { db, workspaceId, actorId, backup, probe, bufferMs } = params
-	const backupTokens = await refreshSlot(db, workspaceId, 'backup', backup, bufferMs)
-	if (!backupTokens) return null
+	const { db, workspaceId, actorId, backup, probe, bufferMs, onUnusable } = params
+	const { tokens: backupTokens, refreshFailure } = await refreshSlot(
+		db,
+		workspaceId,
+		'backup',
+		backup,
+		bufferMs,
+	)
+	if (!backupTokens) {
+		// refreshFailure is always set when tokens are null — the classifier
+		// fallback keeps the type honest without inventing a verdict.
+		onUnusable?.(
+			unusableFromRefresh(
+				classifyClaudeFailure(refreshFailure ?? { kind: 'transport', error: 'network' }),
+			),
+		)
+		return null
+	}
 	const backupProbeInput = await runProbe(probe, backupTokens)
 	if (backupProbeInput) {
 		const backupDecision = classifyClaudeFailure(backupProbeInput)
@@ -590,6 +669,10 @@ async function refreshAndProbeBackup(params: {
 				workspaceId,
 				actorId,
 				reason: backupDecision.reason,
+			})
+			onUnusable?.({
+				transient: false,
+				detail: `the backup Claude subscription was also rejected (${backupDecision.reason})`,
 			})
 			return null
 		}

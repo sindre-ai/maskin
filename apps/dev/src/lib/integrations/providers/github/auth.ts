@@ -1,5 +1,6 @@
 import { createPrivateKey, createSign } from 'node:crypto'
 import { getEnvOrThrow } from '../../env'
+import { ProviderUnreachableError } from '../../errors'
 import type { CustomAuthHandler, StoredCredentials } from '../../types'
 
 function createJwt(appId: string, privateKeyPem: string): string {
@@ -69,17 +70,197 @@ async function postInstallationAccessToken(
 	return { ok: true, status: response.status, token: data.token }
 }
 
+// ── User-authorization (user-to-server) flow ───────────────────────────
+//
+// A GitHub App installs once per org. Sending a *second* workspace to
+// `installations/new` dead-ends: GitHub sees the App is already installed on
+// the org, silently swaps to that install's configure page, and never calls our
+// callback with an `installation_id` — so the workspace can never get a row and
+// the connect attempt is left behind as an orphaned `pending`.
+//
+// `login/oauth/authorize` has no such branch: it always redirects back with
+// `code` + our `state`, installed or not. Exchanging that code for a
+// *user*-to-server token lets us ask GitHub `GET /user/installations` — every
+// installation of this App the authenticated GitHub user can actually reach.
+// That is the correct entitlement boundary (real GitHub org membership) and it
+// is self-service, unlike `POST /github/link`, which can only offer
+// installations reachable from a Maskin workspace the caller already belongs to.
+
+const GITHUB_AUTHORIZE_URL = 'https://github.com/login/oauth/authorize'
+const GITHUB_ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token'
+
+/** One installation of this App that a given GitHub user can reach. */
+export interface UserInstallation {
+	installationId: string
+	ownerLogin: string | null
+}
+
+/** Thrown when the authenticated user can reach no installation of this App.
+ *  The route turns this into a redirect to the App's install page rather than
+ *  an error — "you haven't installed it yet" is a next step, not a failure. */
+export class NoGithubInstallationsError extends Error {
+	constructor() {
+		super('The authenticated GitHub user has no accessible installations of this App')
+		this.name = 'NoGithubInstallationsError'
+	}
+}
+
+/** Thrown when a callback names an `installation_id` the authenticated GitHub
+ *  user cannot actually reach — i.e. someone hand-wrote the callback URL. */
+export class UnauthorizedGithubInstallationError extends Error {
+	constructor(installationId: string) {
+		super(`GitHub installation ${installationId} is not reachable by the authenticated user`)
+		this.name = 'UnauthorizedGithubInstallationError'
+	}
+}
+
+/** The App's own install page — where we send a user with zero installations. */
+export function buildAppInstallUrl(state: string): string {
+	const slug = process.env.GITHUB_APP_SLUG || 'sindre-maskin'
+	return `https://github.com/apps/${slug}/installations/new?state=${encodeURIComponent(state)}`
+}
+
+/** Exchange a user-authorization `code` for a user-to-server access token. */
+export async function exchangeUserCode(code: string, redirectUri: string): Promise<string> {
+	let response: Response
+	try {
+		response = await fetch(GITHUB_ACCESS_TOKEN_URL, {
+			method: 'POST',
+			headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				client_id: getEnvOrThrow('GITHUB_CLIENT_ID'),
+				client_secret: getEnvOrThrow('GITHUB_CLIENT_SECRET'),
+				code,
+				redirect_uri: redirectUri,
+			}),
+		})
+	} catch (err) {
+		throw new ProviderUnreachableError('GitHub user token exchange failed', { cause: err })
+	}
+
+	if (!response.ok) {
+		throw new ProviderUnreachableError(
+			`GitHub user token exchange returned ${response.status}: ${await response.text()}`,
+		)
+	}
+
+	// GitHub reports OAuth-level failures (bad_verification_code, expired code)
+	// as HTTP 200 with an `error` field, so status alone is not enough.
+	const data = (await response.json()) as {
+		access_token?: string
+		error?: string
+		error_description?: string
+	}
+	if (data.error || !data.access_token) {
+		throw new Error(
+			`GitHub user token exchange rejected: ${data.error ?? 'unknown'}${
+				data.error_description ? ` — ${data.error_description}` : ''
+			}`,
+		)
+	}
+	return data.access_token
+}
+
+/** List every installation of this App reachable by the given user token. */
+export async function listUserInstallations(userToken: string): Promise<UserInstallation[]> {
+	// per_page=100 in one shot: this lists installations of *this* App only, so
+	// the count is bounded by how many orgs the user belongs to that installed
+	// Maskin. Paginating past 100 would be dead code for any realistic account.
+	let response: Response
+	try {
+		response = await fetch('https://api.github.com/user/installations?per_page=100', {
+			headers: {
+				Authorization: `Bearer ${userToken}`,
+				Accept: 'application/vnd.github+json',
+				'X-GitHub-Api-Version': '2022-11-28',
+			},
+		})
+	} catch (err) {
+		throw new ProviderUnreachableError('GitHub /user/installations request failed', { cause: err })
+	}
+
+	if (!response.ok) {
+		throw new ProviderUnreachableError(
+			`GitHub /user/installations returned ${response.status}: ${await response.text()}`,
+		)
+	}
+
+	const data = (await response.json()) as {
+		installations?: Array<{ id?: number; account?: { login?: string } }>
+	}
+	return (data.installations ?? [])
+		.filter((i): i is { id: number; account?: { login?: string } } => typeof i.id === 'number')
+		.map((i) => ({
+			installationId: String(i.id),
+			ownerLogin: i.account?.login ?? null,
+		}))
+}
+
 export const githubAuth: CustomAuthHandler = {
-	getInstallUrl(state: string): string {
-		return `https://github.com/apps/${process.env.GITHUB_APP_SLUG || 'sindre-maskin'}/installations/new?state=${encodeURIComponent(state)}`
+	getInstallUrl(state: string, redirectUri: string): string {
+		// User-authorization rather than `installations/new`: this endpoint always
+		// returns to our callback, so an org that already has the App installed is
+		// a normal case here instead of a dead end. A user with no installation at
+		// all still lands correctly — handleCallback routes them to the install
+		// page via NoGithubInstallationsError.
+		const params = new URLSearchParams({
+			client_id: getEnvOrThrow('GITHUB_CLIENT_ID'),
+			redirect_uri: redirectUri,
+			state,
+		})
+		return `${GITHUB_AUTHORIZE_URL}?${params.toString()}`
 	},
 
-	async handleCallback(params: Record<string, string>): Promise<StoredCredentials> {
-		const installationId = params.installation_id
-		if (!installationId) {
-			throw new Error('Missing installation_id in callback')
+	async handleCallback(
+		params: Record<string, string>,
+		redirectUri: string,
+	): Promise<StoredCredentials> {
+		// Every branch below requires a `code`. An `installation_id` arriving on its
+		// own is unverifiable — it is a raw query param, and everything downstream
+		// mints tokens with the App's own JWT, which succeeds for *any* installation
+		// of this App. Honouring it would let anyone bind an org they have no GitHub
+		// access to by hand-writing this callback URL with their own `state`, routing
+		// around the entitlement check this whole flow exists to enforce.
+		//
+		// Requires the App's "Request user authorization (OAuth) during installation"
+		// setting to be ON, so the post-install callback carries a `code` too.
+		const code = params.code
+		if (!code) {
+			throw new Error('Missing authorization code in GitHub callback')
 		}
-		return { installation_id: installationId }
+
+		const userToken = await exchangeUserCode(code, redirectUri)
+		const installations = await listUserInstallations(userToken)
+
+		if (installations.length === 0) {
+			throw new NoGithubInstallationsError()
+		}
+
+		// Fresh install: GitHub names the installation directly, so there is nothing
+		// to disambiguate — but we still confirm the user can reach it rather than
+		// trusting the query param.
+		const named = params.installation_id
+		if (named) {
+			if (!installations.some((i) => i.installationId === named)) {
+				throw new UnauthorizedGithubInstallationError(named)
+			}
+			return { installation_id: named }
+		}
+
+		const [only] = installations
+		if (installations.length === 1 && only) {
+			return { installation_id: only.installationId }
+		}
+
+		// Ambiguous — the user can reach several orgs' installations. Hand the
+		// choices back for the route to park on the pending row; the user picks one
+		// via POST /github/select-installation. Deliberately NOT persisting the user
+		// token: everything downstream mints App installation tokens, so keeping a
+		// user-scoped credential would widen the blast radius for no gain.
+		return {
+			pending_installation_selection: true,
+			installation_choices: installations,
+		}
 	},
 
 	async getAccessToken(credentials: StoredCredentials): Promise<string> {

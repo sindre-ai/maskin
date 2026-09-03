@@ -38,7 +38,7 @@ export const OBJECT_DIFF_FIELDS = [
 	'activeSessionId',
 ] as const
 
-export const WORKSPACE_ADMIN_DIFF_FIELDS = ['onboardingEnabled', 'byollmAllowed'] as const
+export const WORKSPACE_ADMIN_DIFF_FIELDS = ['onboardingEnabled', 'enterpriseGranted'] as const
 
 /**
  * Compare two records and return one FieldChange per whitelisted field whose

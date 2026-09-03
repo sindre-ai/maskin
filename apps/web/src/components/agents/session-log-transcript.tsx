@@ -156,6 +156,17 @@ export function segmentActivityByMessage(logs: SessionLogResponse[]): {
 			// A tagged user turn starts a new segment — the boundary itself
 			// isn't rendered as a step since the triggering message is already
 			// shown as the actual chat bubble right above the dropdown.
+			// A backend turn replay, not a new message from the human. It reopens
+			// the SAME turn, so it must not start a segment — and it retracts the
+			// failed `result` recorded above, because that envelope is being
+			// retried and will never become a chat message. Leaving it recorded
+			// renders the raw API error as the agent's answer, and shifts the
+			// ordinal pairing in useConversationActivity by one for every later
+			// turn in the session.
+			if (event.kind === 'user' && event.isRetry) {
+				if (cursor.current) cursor.current.result = undefined
+				return
+			}
 			if (event.kind === 'user' && event.conversationMessageId !== undefined) {
 				cursor.current = {
 					conversationMessageId: event.conversationMessageId,

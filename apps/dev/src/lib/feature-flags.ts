@@ -16,9 +16,10 @@
 // server-side and are never shipped to the browser.
 
 // Every known flag id. Ids absent from this registry always resolve to false,
-// so a typo in FF_TESTER_FEATURES can't invent a flag. Currently empty — the
-// `new-design` flag was retired once the v2 design shipped to everyone. Add an
-// entry here as the first step of introducing a new flag.
+// so a typo in FF_TESTER_FEATURES can't invent a flag. Add an entry here as the
+// first step of introducing a new flag.
+// Currently empty: `new-design` graduated to everyone and was deleted, which
+// is how a flag ships here — see `.claude/rules/feature-flags.md`.
 export const FLAGS = {} as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

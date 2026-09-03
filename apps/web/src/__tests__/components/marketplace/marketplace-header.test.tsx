@@ -7,7 +7,7 @@ describe('MarketplaceHeaderIdentity', () => {
 	it('shows the marketplace title and count', () => {
 		render(<MarketplaceHeaderIdentity count={4} />)
 		expect(screen.getByRole('heading', { name: 'Marketplace', level: 1 })).toBeInTheDocument()
-		expect(screen.getByTestId('marketplace-count')).toHaveTextContent('4 in the marketplace')
+		expect(screen.getByTestId('marketplace-count')).toHaveTextContent('4 in the catalog')
 	})
 
 	it('omits the count when undefined', () => {

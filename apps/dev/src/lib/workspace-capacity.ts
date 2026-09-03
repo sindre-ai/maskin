@@ -34,7 +34,7 @@ export async function countHumanMembers(db: Queryable, workspaceId: string): Pro
 	return row?.n ?? 0
 }
 
-/** Seat cap for a plan tier. `null` = unlimited (byollm). */
+/** Seat cap for a plan tier. `null` = unlimited (enterprise). */
 export function seatCapForPlan(plan: BillingPlan): number | null {
 	return SEAT_CAPS[plan]
 }
@@ -81,7 +81,7 @@ export function computeEffectiveTier(
 	return ownedPlans.reduce<BillingPlan>((acc, p) => higherTier(acc, p), candidatePlan)
 }
 
-/** Ownership cap for an effective tier. `null` = unlimited (byollm). */
+/** Ownership cap for an effective tier. `null` = unlimited (enterprise). */
 export function ownershipCapForTier(tier: BillingPlan): number | null {
 	return OWNERSHIP_CAPS[tier]
 }

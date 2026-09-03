@@ -14,13 +14,14 @@ export class AnthropicAdapter implements LLMAdapter {
 		messages: LLMMessage[]
 		tools?: LLMTool[]
 		temperature?: number
+		max_tokens?: number
 	}): Promise<LLMResponse> {
 		const systemMessages = options.messages.filter((m) => m.role === 'system')
 		const nonSystemMessages = options.messages.filter((m) => m.role !== 'system')
 
 		const body: Record<string, unknown> = {
 			model: options.model || 'claude-sonnet-4-6',
-			max_tokens: 4096,
+			max_tokens: options.max_tokens ?? 4096,
 			messages: nonSystemMessages.map((m) => ({
 				role: m.role === 'tool' ? 'user' : m.role,
 				content:

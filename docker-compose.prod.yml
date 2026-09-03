@@ -21,9 +21,30 @@ services:
         cat > /tmp/s3.json <<'CONF'
         {"identities":[{"name":"admin","credentials":[{"accessKey":"admin","secretKey":"admin"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
         CONF
-        exec weed server -s3 -s3.config=/tmp/s3.json -dir=/data
+        exec weed server -s3 -s3.config=/tmp/s3.json -dir=/data -metricsPort=9327 -metricsIp=0.0.0.0
     volumes:
       - seaweed_data:/data
+    # Prometheus metrics, scraped by Alloy on the host.
+    # See observability/coolify-host/ for the collector config and the
+    # disk-headroom alert this feeds.
+    #
+    # -metricsPort turns the endpoint ON. Without it `weed` serves no
+    # /metrics at all — the port flag is the switch, not just the address,
+    # so there is nothing to scrape on a default install.
+    #
+    # -metricsIp=0.0.0.0 is NOT redundant. It defaults to `-ip.bind`, which
+    # for `weed server` resolves to the container's own eth0 address (e.g.
+    # 10.0.0.3), not localhost. VERIFIED 2026-08-27 on the Coolify box: with
+    # the port flag alone, `wget http://127.0.0.1:9327/metrics` from inside
+    # the container is refused while the same request to the container IP
+    # succeeds. Binding 0.0.0.0 removes the dependency on an address that
+    # changes whenever Docker reassigns the subnet.
+    ports:
+      # Loopback-only on purpose. The endpoint is unauthenticated and exposes
+      # bucket/volume topology, so the bind address is the security boundary —
+      # the same reasoning as agent-server's loopback /metrics listener. Alloy
+      # runs on this host, so it costs nothing.
+      - "127.0.0.1:9327:9327"
 
   agent-base:
     build:
@@ -36,6 +57,17 @@ services:
     build:
       context: .
       dockerfile: apps/dev/Dockerfile
+      args:
+        # The SPA is built inside this image, so anything the bundle needs must
+        # arrive as a build arg — .git is in .dockerignore, so the build cannot
+        # derive the commit itself the way apps/agent-server/build.mjs does.
+        #
+        # Coolify sets SOURCE_COMMIT for the deployment it is building. It
+        # becomes Faro's app.version, which is what distinguishes one release
+        # from another in Grafana. Empty here (a plain `docker compose build`
+        # outside Coolify) reports as "unknown" rather than silently looking
+        # like a real version — see apps/web/src/lib/faro.ts.
+        VITE_MASKIN_COMMIT_SHA: ${SOURCE_COMMIT:-}
     # No host port publish: Coolify's Traefik proxy routes the domain to this
     # container over the internal network (ports_exposes=3000). Publishing host
     # :3000 collides with the production app when both run on the same server.

@@ -149,6 +149,13 @@ export async function maybeGenerateConversationTitle(ctx: {
 		// small/cheap model. Titling isn't attributable to any one agent.
 		const credentials = resolveChatCredentials({
 			wsSettings,
+			// Absent row => treat as entitled, i.e. refuse the Maskin key.
+			// Titling degrades to a placeholder title, which is the safe
+			// direction when we can't read the workspace.
+			workspace: {
+				enterpriseGranted: ws ? ws.enterpriseGranted : true,
+				billingOwnerId: ws?.billingOwnerId ?? null,
+			},
 			agent: { provider: null, apiKey: null, model: null },
 		})
 		if (!credentials) {

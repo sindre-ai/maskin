@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { mcpServerSchema } from './sessions'
 
 export const eventDefinitionSchema = z.object({
 	entityType: z.string(),
@@ -6,10 +7,35 @@ export const eventDefinitionSchema = z.object({
 	label: z.string(),
 })
 
+/**
+ * The MCP surface a provider exposes, served so that non-browser clients can
+ * discover it. Before this existed the only description of "what JSON attaches
+ * this integration's tools to an agent" lived in a frontend constant, so an
+ * agent driving Maskin over MCP could complete an OAuth handshake and then had
+ * no way to find out that the integration had any tools at all.
+ */
+export const providerMcpInfoSchema = z.object({
+	/** Env var session-manager injects the OAuth access token as. */
+	envKey: z.string(),
+	/**
+	 * True when every agent session in a workspace with this integration active
+	 * already gets `server` attached, so no per-agent config is needed.
+	 */
+	autoInject: z.boolean(),
+	/**
+	 * Paste-ready spec for `tools.mcpServers.<provider>` on an agent. Env
+	 * placeholders (`${TOKEN}`) are expanded inside the session container — pass
+	 * them through verbatim rather than resolving them.
+	 */
+	server: mcpServerSchema.optional(),
+})
+
 export const providerInfoSchema = z.object({
 	name: z.string(),
 	displayName: z.string(),
 	events: z.array(eventDefinitionSchema),
+	/** Absent when the provider has no MCP server. */
+	mcp: providerMcpInfoSchema.optional(),
 })
 
 export const providerParamsSchema = z.object({

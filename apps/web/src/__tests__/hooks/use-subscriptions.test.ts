@@ -14,6 +14,10 @@ vi.mock('@/lib/api', () => ({
 	},
 }))
 
+vi.mock('sonner', () => ({
+	toast: { success: vi.fn(), error: vi.fn() },
+}))
+
 import {
 	useMarkRead,
 	useMarkUnread,
@@ -23,6 +27,7 @@ import {
 	useUnsubscribe,
 } from '@/hooks/use-subscriptions'
 import { api } from '@/lib/api'
+import { toast } from 'sonner'
 import { TestWrapper } from '../setup'
 
 describe('useSubscriptions', () => {
@@ -113,6 +118,18 @@ describe('useSubscriptions', () => {
 			await waitFor(() => expect(result.current.isSuccess).toBe(true))
 			expect(api.subscriptions.subscribe).toHaveBeenCalledWith('ws-1', 'object', 'obj-1')
 		})
+
+		// The button reads its label off `is_subscribed`, which only moves on the
+		// success invalidation — so without a toast a failed write is invisible and
+		// the user goes on believing they are subscribed.
+		it('reports a failed write', async () => {
+			vi.mocked(api.subscriptions.subscribe).mockRejectedValue(new Error('nope'))
+
+			const { result } = renderHook(() => useSubscribe('ws-1'), { wrapper: TestWrapper })
+
+			result.current.mutate({ entityType: 'object', entityId: 'obj-1' })
+			await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Could not subscribe'))
+		})
 	})
 
 	describe('useUnsubscribe', () => {
@@ -124,6 +141,18 @@ describe('useSubscriptions', () => {
 			result.current.mutate({ entityType: 'object', entityId: 'obj-1' })
 			await waitFor(() => expect(result.current.isSuccess).toBe(true))
 			expect(api.subscriptions.unsubscribe).toHaveBeenCalledWith('ws-1', 'object', 'obj-1')
+		})
+
+		// The button reads its label off `is_subscribed`, which only moves on the
+		// success invalidation — so without a toast a failed write is invisible and
+		// the user goes on believing they are subscribed.
+		it('reports a failed write', async () => {
+			vi.mocked(api.subscriptions.unsubscribe).mockRejectedValue(new Error('nope'))
+
+			const { result } = renderHook(() => useUnsubscribe('ws-1'), { wrapper: TestWrapper })
+
+			result.current.mutate({ entityType: 'object', entityId: 'obj-1' })
+			await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Could not unsubscribe'))
 		})
 	})
 

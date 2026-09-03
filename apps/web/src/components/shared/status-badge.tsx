@@ -23,8 +23,9 @@ export function StatusBadge({
 	const label = status.replace(/_/g, ' ')
 
 	// The bare status word, no dot and no pill — a citation pill, the For You
-	// feed's card meta line and its row subtitle carry status as coloured text
-	// rather than as chrome.
+	// feed's card meta line and its row subtitle, and the Objects list row
+	// (mockup 759) carry status as coloured text rather than as chrome. A dot
+	// beside it would double the colour signal inside 11px of space.
 	if (variant === 'word') {
 		return (
 			<span

@@ -13,7 +13,7 @@ import { SidebarTrigger } from '@/components/ui/sidebar'
 import { isHiddenRouteId } from '@/lib/nav-view-keys'
 import { usePageHeader } from '@/lib/page-header-context'
 import { useWorkspace } from '@/lib/workspace-context'
-import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'
+import { Link, useMatches, useNavigate, useRouter } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { Fragment } from 'react'
 
@@ -49,8 +49,12 @@ const routeConfig: Record<string, RouteConfig> = {
 		parent: '/_authed/$workspaceId/settings/',
 	},
 	'/_authed/$workspaceId/settings/': { label: 'Settings' },
+	// "Keys", not "Billing": v2 moved billing to its own route below, and this
+	// static map has no flag access, so a shared label would leave two routes
+	// claiming the same crumb. Under the pre-v2 nav this page is still labelled
+	// "Billing" in the sidebar — the crumb names the page's contents instead.
 	'/_authed/$workspaceId/settings/keys': {
-		label: 'Billing',
+		label: 'Keys',
 		parent: '/_authed/$workspaceId/settings/',
 	},
 	'/_authed/$workspaceId/settings/members': {
@@ -133,7 +137,7 @@ const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
  */
 export function Header() {
 	const matches = useMatches()
-	const { title, subtitle, actions, stickyIdentity } = usePageHeader()
+	const { title, subtitle, actions, titleTabs, stickyIdentity, crumb } = usePageHeader()
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	const router = useRouter()
@@ -168,6 +172,37 @@ export function Header() {
 	const isObjectDetail = leafMatch?.routeId === OBJECT_DETAIL_ROUTE_ID
 	const isDetail = crumbs.length > 1
 	const headingText = title ?? leafConfig?.label
+
+	// A page that publishes its own crumb gets the mockup's compact detail bar
+	// (1033–1039): `Parent › Name` at 12px and the page's own actions, with no
+	// search, split New button or back arrow competing for the row.
+	if (crumb) {
+		return (
+			<header className="flex flex-none flex-wrap items-center gap-2 border-b border-border px-[clamp(16px,3vw,36px)] py-[13px]">
+				<SidebarTrigger className="md:hidden -ml-0.5 h-[30px] w-[30px] shrink-0" />
+				<Link
+					to={crumb.parentTo}
+					params={crumb.parentParams}
+					className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground"
+				>
+					{crumb.parentLabel}
+				</Link>
+				<span aria-hidden="true" className="shrink-0 text-xs text-border-strong">
+					›
+				</span>
+				<span className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground">
+					{crumb.label}
+				</span>
+				{actions}
+				{/* The same split New button every screen carries, last in the row
+				    (mockup 925–946 puts it at `order:10`). */}
+				<NewMenu
+					onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
+					primaryKind={leafConfig?.primary ?? 'chat'}
+				/>
+			</header>
+		)
+	}
 
 	return (
 		<header className="flex min-h-11 flex-none flex-wrap items-center gap-2 gap-y-1.5 border-b border-border px-[clamp(16px,4vw,44px)] py-1.5">
@@ -227,6 +262,11 @@ export function Header() {
 					)}
 				</div>
 			) : null}
+
+			{/* Beside the title, before the right-hand cluster — the Objects type
+			    tabs live in the left cluster (mockup 148–152), not out with search
+			    and New. */}
+			{titleTabs}
 
 			{/* `ml-auto` lives on the group, not on a spacer span: an auto margin
 			    absorbs free space before flex-grow does, so a spacer would starve the

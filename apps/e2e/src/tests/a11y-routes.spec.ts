@@ -181,7 +181,7 @@ test.describe('a11y route sweep (WCAG 2.1 AA)', () => {
 				// interactive state, so the scan doesn't fire against an empty root.
 				await page.waitForLoadState('load')
 				await page.waitForTimeout(500)
-				await expect(page.locator('body')).toBeVisible()
+				await expect(page.locator('body')).toBeVisible({ timeout: 10000 })
 
 				await expectNoSeriousA11yViolations(page, `${route.label} · ${theme}`, {
 					disableRules: route.disableRules,

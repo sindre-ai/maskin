@@ -58,7 +58,23 @@ describe('trackLoopInstalled', () => {
 			actor_id: 'actor-1',
 			component_type_count: 3,
 			component_types: ['actor', 'trigger', 'integration'],
+			source: 'catalogue',
 		})
+	})
+
+	it("emits source 'detail' when the install came from the loop detail page", async () => {
+		await trackLoopInstalled({
+			loopId: 'loop-1',
+			loopSlug: 'customer-continuous-discovery',
+			loopVersion: '1.0.0',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			provisioned: { actors: 1, triggers: 0, skills: 0, integrations: 0 },
+			source: 'detail',
+		})
+
+		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
+		expect(props.source).toBe('detail')
 	})
 
 	it('reports component_type_count 0 with an empty component_types array for an item-less install', async () => {
@@ -89,6 +105,37 @@ describe('trackLoopInstalled', () => {
 		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
 		expect(props.component_type_count).toBe(1)
 		expect(props.component_types).toEqual(['actor'])
+	})
+
+	it('carries a source marker on the wire when the install starts from the detail view', async () => {
+		await trackLoopInstalled({
+			loopId: 'loop-1',
+			loopSlug: 'customer-continuous-discovery',
+			loopVersion: '1.0.0',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			provisioned: { actors: 1, triggers: 0, skills: 0, integrations: 0 },
+			source: 'detail',
+		})
+
+		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
+		expect(props.source).toBe('detail')
+	})
+
+	it("defaults source to 'catalogue' when it is not set (catalog installs stay distinguishable)", async () => {
+		await trackLoopInstalled({
+			loopId: 'loop-1',
+			loopSlug: 'customer-continuous-discovery',
+			loopVersion: '1.0.0',
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			provisioned: { actors: 1, triggers: 0, skills: 0, integrations: 0 },
+		})
+
+		// An explicit 'catalogue' rather than an absent key: a missing property is
+		// indistinguishable from an older event shape, so the default is emitted.
+		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
+		expect(props.source).toBe('catalogue')
 	})
 })
 

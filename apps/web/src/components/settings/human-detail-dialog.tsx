@@ -11,10 +11,21 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useActor, useUpdateActor } from '@/hooks/use-actors'
-import { useRemoveWorkspaceMember } from '@/hooks/use-workspaces'
+import {
+	useRemoveWorkspaceMember,
+	useUpdateWorkspaceMemberRole,
+	useWorkspaceMembers,
+} from '@/hooks/use-workspaces'
 import { ApiError } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -27,6 +38,11 @@ interface HumanDetailDialogProps {
 	onOpenChange: (open: boolean) => void
 }
 
+// 'owner' is intentionally absent: billing ownership moves through
+// POST /workspaces/:id/transfer-ownership, which enforces the plan's ownership
+// cap. The API rejects role='owner' here, so offering it would only ever 400.
+const ROLE_OPTIONS = ['admin', 'member'] as const
+
 export function HumanDetailDialog({
 	actorId,
 	workspaceId,
@@ -36,11 +52,15 @@ export function HumanDetailDialog({
 	const { data: actor } = useActor(actorId ?? '')
 	const updateActor = useUpdateActor(workspaceId)
 	const removeMember = useRemoveWorkspaceMember(workspaceId)
+	const updateRole = useUpdateWorkspaceMemberRole(workspaceId)
+	const { data: members } = useWorkspaceMembers(workspaceId)
+	const member = members?.find((m) => m.actorId === actorId)
 	const { workspace } = useWorkspace()
 
 	const [descriptionDraft, setDescriptionDraft] = useState('')
 	const [systemPromptDraft, setSystemPromptDraft] = useState('')
 	const [confirmingRemove, setConfirmingRemove] = useState(false)
+	const [roleError, setRoleError] = useState<string | null>(null)
 
 	useEffect(() => {
 		setDescriptionDraft(actor?.description ?? '')
@@ -50,11 +70,22 @@ export function HumanDetailDialog({
 	useEffect(() => {
 		if (!open) {
 			setConfirmingRemove(false)
+			setRoleError(null)
 			removeMember.reset()
 		}
 	}, [open, removeMember.reset])
 
 	if (!actorId) return null
+
+	const handleRoleChange = async (nextRole: string) => {
+		if (!member || nextRole === member.role) return
+		setRoleError(null)
+		try {
+			await updateRole.mutateAsync({ actorId: member.actorId, role: nextRole })
+		} catch (err) {
+			setRoleError(err instanceof Error ? err.message : 'Failed to update role')
+		}
+	}
 
 	const handleSave = () => {
 		if (!actor) return
@@ -134,6 +165,36 @@ export function HumanDetailDialog({
 					</DialogDescription>
 				</DialogHeader>
 				<div className="space-y-4">
+					{member && member.role !== 'owner' && (
+						<div>
+							<Label htmlFor="human-role">Role</Label>
+							<Select
+								value={member.role}
+								onValueChange={handleRoleChange}
+								disabled={updateRole.isPending}
+							>
+								<SelectTrigger
+									id="human-role"
+									aria-label={`Role for ${member.name}`}
+									className="w-full"
+								>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									{ROLE_OPTIONS.map((role) => (
+										<SelectItem key={role} value={role}>
+											{role}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+							{roleError && (
+								<p className="mt-1 text-sm text-error" role="alert">
+									{roleError}
+								</p>
+							)}
+						</div>
+					)}
 					<div>
 						<Label htmlFor="human-description">Description</Label>
 						<Input

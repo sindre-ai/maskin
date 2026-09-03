@@ -10,7 +10,9 @@ const STORED_PLAN = JSON.stringify({
 			type: 'feedback',
 			name: 'Feedback',
 			role: 'Submissions from customers',
-			live: false,
+			// `live` is a reading string or null — see loopPlanSchema. A boolean
+			// here fails safeParse, and the loop silently loses its stored plan.
+			live: null,
 			stateChain: ['new', 'triage', 'approved', 'published'],
 			isNew: false,
 		},
@@ -58,7 +60,9 @@ test.describe('Loop detail — PROPOSED EDIT', () => {
 			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/loops/${loop.id}`))
 			await expect(page.getByText('PROPOSED EDIT')).toBeVisible({ timeout: 10000 })
 			await expect(page.getByText('never')).toHaveCSS('text-decoration-line', 'line-through')
-			await expect(page.getByText('before publishing')).toBeVisible()
+			// Exact — the panel also echoes the utterance, which contains this
+			// phrase, and the plain-language summary paraphrases it.
+			await expect(page.getByText('before publishing', { exact: true })).toBeVisible()
 
 			// The human-in-the-loop promise must be readable on a phone, not just
 			// on a desktop-width row.
@@ -122,13 +126,18 @@ test.describe('Loop detail — PROPOSED EDIT', () => {
 		await page.getByRole('button', { name: 'Make the change' }).click()
 		await expect(page.getByText('PROPOSED EDIT')).toBeHidden({ timeout: 10000 })
 
-		// After a reload the stored plan already matches, so the same sentence
-		// yields no diff — the change stuck.
+		// The change stuck: after a reload the loop reads from the applied
+		// snapshot, which now carries the stop the utterance added, alongside
+		// the sentence it was parsed from (the next refinement builds on that
+		// sentence rather than the original).
 		await page.reload()
-		const composerAfter = page.getByPlaceholder('Listening — speak in plain words')
-		await expect(composerAfter).toBeVisible({ timeout: 10000 })
-		await composerAfter.fill(UTTERANCE)
-		await composerAfter.press('Enter')
-		await expect(page).toHaveURL(/chats\/new/, { timeout: 10000 })
+		await expect(page.getByPlaceholder('Listening — speak in plain words')).toBeVisible({
+			timeout: 10000,
+		})
+
+		const stored = await account.api.getObject(loop.id, account.workspaceId)
+		const storedPlan = JSON.parse(String(stored.metadata?.plan)) as { stopForOperator: string }
+		expect(storedPlan.stopForOperator).toContain('before publishing')
+		expect(String(stored.metadata?.plan_source)).toContain(UTTERANCE)
 	})
 })

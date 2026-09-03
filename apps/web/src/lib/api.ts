@@ -20,6 +20,7 @@ export type {
 }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
+import { reportApiFailure } from './faro'
 
 export interface PlanCapContext {
 	plan: string
@@ -55,10 +56,14 @@ type RequestOptions = {
 	body?: unknown
 	headers?: Record<string, string>
 	workspaceId?: string
+	/** Send/receive cookies cross-origin. Only the OAuth connect call needs
+	 *  this: the server sets an HttpOnly nonce cookie there, and the callback
+	 *  requires it back to prove the same browser started the flow. */
+	credentials?: RequestCredentials
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-	const { method = 'GET', body, headers = {}, workspaceId } = opts
+	const { method = 'GET', body, headers = {}, workspaceId, credentials } = opts
 	const apiKey = getApiKey()
 
 	const reqHeaders: Record<string, string> = {
@@ -81,11 +86,20 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		reqHeaders['Content-Type'] = 'application/json'
 	}
 
-	const res = await fetch(`${API_BASE}${path}`, {
-		method,
-		headers: reqHeaders,
-		body: body !== undefined ? JSON.stringify(body) : undefined,
-	})
+	let res: Response
+	try {
+		res = await fetch(`${API_BASE}${path}`, {
+			method,
+			headers: reqHeaders,
+			body: body !== undefined ? JSON.stringify(body) : undefined,
+			...(credentials ? { credentials } : {}),
+		})
+	} catch (err) {
+		// No status to report — offline, DNS, CORS or a dropped connection — but
+		// the user still experienced a broken screen, so it belongs in Faro.
+		reportApiFailure({ method, path, status: 0, code: 'NETWORK_ERROR' })
+		throw err
+	}
 
 	if (!res.ok) {
 		const data = await res.json().catch(() => ({ error: res.statusText }))
@@ -125,6 +139,11 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		const err = new ApiError(res.status, message, fieldErrors)
 		err.code = code
 		err.planCapContext = planCapContext
+		// This is the single chokepoint for every /api call the UI makes, so a
+		// non-2xx here is where a backend problem becomes visible to a user.
+		// Method, path (query stripped), status and the structured error code
+		// only — never the response body or the message, which are free text.
+		reportApiFailure({ method, path, status: res.status, code })
 		throw err
 	}
 
@@ -330,6 +349,8 @@ export const api = {
 
 	workspaces: {
 		list: () => request<WorkspaceWithRole[]>('/workspaces'),
+		create: (data: { name: string }) =>
+			request<WorkspaceResponse>('/workspaces', { method: 'POST', body: data }),
 		update: (id: string, data: UpdateWorkspaceInput) =>
 			request<WorkspaceResponse>(`/workspaces/${id}`, { method: 'PATCH', body: data }),
 		members: {
@@ -339,6 +360,11 @@ export const api = {
 				request<{ added: boolean }>(`/workspaces/${workspaceId}/members`, {
 					method: 'POST',
 					body: data,
+				}),
+			updateRole: (workspaceId: string, actorId: string, role: string) =>
+				request<MemberResponse>(`/workspaces/${workspaceId}/members/${actorId}`, {
+					method: 'PATCH',
+					body: { role },
 				}),
 			remove: (workspaceId: string, actorId: string) =>
 				request<{ removed: true }>(`/workspaces/${workspaceId}/members/${actorId}`, {
@@ -405,6 +431,9 @@ export const api = {
 					method: 'POST',
 					body,
 					workspaceId,
+					// The response carries the Set-Cookie that binds this browser to the
+					// OAuth `state`; without `include` it is dropped and the callback 400s.
+					credentials: 'include',
 				},
 			),
 		complete: (id: string, workspaceId: string, secret: string) =>
@@ -416,6 +445,28 @@ export const api = {
 		disconnect: (id: string, workspaceId: string) =>
 			request<{ deleted: boolean }>(`/integrations/${id}`, {
 				method: 'DELETE',
+				workspaceId,
+			}),
+		githubLinkable: (workspaceId: string) =>
+			request<LinkableGithubInstallation[]>('/integrations/github/linkable', { workspaceId }),
+		githubLink: (workspaceId: string, installationId: string) =>
+			request<IntegrationResponse>('/integrations/github/link', {
+				method: 'POST',
+				body: { installation_id: installationId },
+				workspaceId,
+			}),
+		githubPendingSelection: (workspaceId: string, integrationId: string) =>
+			request<GithubPendingSelection>(`/integrations/github/pending-selection/${integrationId}`, {
+				workspaceId,
+			}),
+		githubSelectInstallation: (
+			workspaceId: string,
+			integrationId: string,
+			installationId: string,
+		) =>
+			request<IntegrationResponse>('/integrations/github/select-installation', {
+				method: 'POST',
+				body: { integration_id: integrationId, installation_id: installationId },
 				workspaceId,
 			}),
 		slackConversations: (id: string, workspaceId: string, types?: string[]) => {
@@ -654,6 +705,9 @@ export const api = {
 
 	briefing: {
 		get: (workspaceId: string) => request<BriefingResponse>('/briefing', { workspaceId }),
+		/** POST because it generates — one model call, only when asked for. */
+		spoken: (workspaceId: string) =>
+			request<SpokenBriefResponse>('/briefing/spoken', { method: 'POST', workspaceId }),
 	},
 
 	subscriptions: {
@@ -945,7 +999,7 @@ export interface ClaudeOAuthImportInput {
 	nickname?: string
 }
 
-export type BillingPlan = 'trial' | 'pro' | 'team' | 'byollm'
+export type BillingPlan = 'trial' | 'pro' | 'team' | 'enterprise'
 export type BillingStatus = 'active' | 'past_due' | 'canceled' | 'incomplete'
 
 export interface BillingCheckoutInput {
@@ -1020,7 +1074,9 @@ export interface UnreadItem {
 	entity_id: string
 	unread_count: number
 	// Count of unread events on the entity that actually @-mention the viewer.
-	// Drives the "Mentioned" pill on the For You card when > 0.
+	// Not rendered: the feed is mentions-only, so this equals unread_count on
+	// every card except an onboarding_session, and a "Mentioned" pill would sit
+	// on nearly all of them. The card shows the mention itself instead.
 	mentioning_unread_count: number
 	// Highest attention score (1-5) among the entity's unread comments. null
 	// when no unread comment carries a score — sorts below scored comments in
@@ -1029,6 +1085,34 @@ export interface UnreadItem {
 	latest_event_id: number | null
 	latest_activity_at: string | null
 	object?: ObjectResponse
+	// The comment that put this item in the feed. Absent only for entities with
+	// no joined event payload (a subscription whose events were pruned).
+	latest_mention?: LatestMention
+}
+
+export interface LatestMentionDecisionOption {
+	label: string
+	consequences: string[]
+	recommended?: boolean
+}
+
+export interface LatestMentionDecision {
+	title: string
+	summary: string
+	ask: string
+	options: LatestMentionDecisionOption[]
+}
+
+export interface LatestMention {
+	event_id: number
+	actor_id: string | null
+	created_at: string
+	// The whole comment body, not a preview.
+	content: string
+	attention: number | null
+	// Present only when the agent asked for a structured decision. The card
+	// renders its options as the buttons the reader taps.
+	decision: LatestMentionDecision | null
 }
 
 export interface UnreadResponse {
@@ -1038,6 +1122,27 @@ export interface UnreadResponse {
 export interface BriefingResponse {
 	workspace_id: string
 	markdown: string
+}
+
+/**
+ * The human-facing brief. `script` is spoken prose written by the workspace's
+ * default agent — no markdown, no ids, nothing for the client to strip.
+ */
+export interface SpokenBriefResponse {
+	workspace_id: string
+	headline: string
+	script: string
+	mentioned_ids: string[]
+	generated_at: string
+	/** Who wrote it. `agent` only when the model actually produced the script. */
+	source: 'agent' | 'fallback'
+	/** Served from the day's cache rather than written just now — orthogonal to
+	 *  `source`, since a cached brief still has an author. */
+	cached: boolean
+	/** Null whenever `source` is `fallback`, so the UI cannot credit an agent
+	 *  that didn't write the prose. */
+	agent: { id: string; name: string } | null
+	model: string | null
 }
 
 export interface UserDisplaySettingsResponse {
@@ -1147,7 +1252,7 @@ export interface WorkspaceResponse {
 	id: string
 	name: string
 	settings: Record<string, unknown>
-	byollmAllowed: boolean
+	enterprise: boolean
 	// Single accountable human payer for this workspace's plan — read-only,
 	// server-set. See apps/dev/src/lib/workspace-capacity.ts.
 	billingOwnerId: string | null
@@ -1158,6 +1263,8 @@ export interface WorkspaceResponse {
 
 export interface WorkspaceWithRole extends WorkspaceResponse {
 	role: string
+	/** People in the workspace, including the caller — the workspace menu's sub-line. */
+	memberCount: number
 }
 
 export interface UpdateWorkspaceInput {
@@ -1233,6 +1340,26 @@ export interface IntegrationResponse {
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
+	/** Scopes this install's token lacks that the provider now requires. Names only. */
+	missingScopes?: string[]
+	/** True when `missingScopes` is non-empty — reconnecting re-consents and fixes it. */
+	needsReconnect?: boolean
+}
+
+/** A GitHub App installation the current actor can bind to this workspace,
+ *  because they already reach it from one of their workspaces. */
+/** Installations a GitHub user proved they can reach, awaiting their choice.
+ *  Parked on a `pending` integration row by the connect callback when the user
+ *  can access more than one — see POST /integrations/github/select-installation. */
+export interface GithubPendingSelection {
+	integrationId: string
+	installations: Array<{ installationId: string; ownerLogin: string | null }>
+}
+
+export interface LinkableGithubInstallation {
+	installationId: string
+	ownerLogin: string | null
+	alreadyLinked: boolean
 }
 
 export interface ProviderEventDefinition {
@@ -1478,6 +1605,46 @@ export interface MessageFinalOutput {
 	is_error?: boolean
 	subtype?: string
 	truncated?: boolean
+	/** Reply was recovered from the turn's log because `result` came back blank. */
+	recovered?: boolean
+	/**
+	 * How a failed turn was read: 'transient' means the model API blipped and
+	 * the turn was replayed, 'permanent' means no replay would have helped.
+	 * Mirrors messageFinalOutputSchema in packages/shared.
+	 */
+	error_kind?: 'transient' | 'permanent'
+	/** Replays spent before giving up on a transient failure. */
+	retries?: number
+	/**
+	 * Why a transient failure was reported instead of replayed. 'unanswered' is
+	 * the one kind with no `result` envelope behind it — see
+	 * finalOutputsFromSession in use-conversation-activity.ts.
+	 */
+	retry?: 'unavailable' | 'undeliverable' | 'unanswered'
+}
+
+export interface MessageQuestionOption {
+	label: string
+	description?: string
+}
+
+export interface MessageQuestionItem {
+	question: string
+	header: string
+	multi_select: boolean
+	options: MessageQuestionOption[]
+}
+
+/** An agent's AskUserQuestion, surfaced into chat as selectable options. */
+export interface MessageQuestion {
+	session_id: string
+	questions: MessageQuestionItem[]
+}
+
+/** Which options the human picked, posted back on their reply message. */
+export interface MessageQuestionAnswer {
+	question_message_id: number
+	answers: Array<{ header: string; selected: string[] }>
 }
 
 export interface MessageMetadata {
@@ -1492,6 +1659,13 @@ export interface MessageMetadata {
 	 */
 	source?: 'final_output'
 	final_output?: MessageFinalOutput
+	/**
+	 * Backend-owned; stripped from anything a client sends, so a forged message
+	 * cannot put an official-looking prompt in an agent's mouth.
+	 */
+	question?: MessageQuestion
+	/** Client-supplied: pairs a human's reply back to the question it answers. */
+	question_answer?: MessageQuestionAnswer
 }
 
 export interface MessageResponse {
@@ -1641,9 +1815,9 @@ export interface CreateCommentInput {
 	parent_event_id?: number
 	attachment_file_ids?: string[]
 	/** Structured extras the backend already accepts on `POST /events`
-	 *  (`createCommentSchema.metadata`, a `safeMetadataSchema` record). Today the
-	 *  UI writes `{ chips: string[] }` from the composer's "Attach a decision"
-	 *  affordance; `DecisionChips` renders them under the posted comment. */
+	 *  (`createCommentSchema.metadata`, a `safeMetadataSchema` record). The UI
+	 *  writes `{ refs: string[] }` from "Reference an object". Options for the
+	 *  reader to pick from do not live here — that is `decision`. */
 	metadata?: Record<string, unknown>
 }
 

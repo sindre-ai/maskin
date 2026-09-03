@@ -1,6 +1,8 @@
 /// <reference types="vitest/globals" />
 import '@testing-library/jest-dom'
 import type { WorkspaceWithRole } from '@/lib/api'
+import { CommandPaletteProvider } from '@/lib/command-palette-context'
+import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
 import { WorkspaceContext, type WorkspaceContextValue } from '@/lib/workspace-context'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
@@ -145,17 +147,52 @@ export function TestWrapper({ children }: { children: ReactNode }) {
 	return React.createElement(QueryClientProvider, { client: queryClient }, children)
 }
 
-export function createWorkspaceWrapper(overrides: Partial<WorkspaceWithRole> = {}) {
+/**
+ * Stands in for the app shell's nav row: renders whatever the page under test
+ * published through `PageHeader` (its crumb label and its actions). Opt in via
+ * `createWorkspaceWrapper(overrides, { renderPageHeader: true })` when the
+ * assertions cover controls the page publishes rather than renders itself.
+ */
+function PageHeaderOutlet({ children }: { children: ReactNode }) {
+	const { crumb, actions } = usePageHeader()
+	return React.createElement(
+		React.Fragment,
+		null,
+		React.createElement('header', null, crumb ? crumb.label : null, actions),
+		children,
+	)
+}
+
+export function createWorkspaceWrapper(
+	overrides: Partial<WorkspaceWithRole> = {},
+	{ renderPageHeader = false }: { renderPageHeader?: boolean } = {},
+) {
 	const workspace = buildWorkspaceWithRole(overrides)
 	const ctxValue: WorkspaceContextValue = {
 		workspace,
 		workspaceId: workspace.id,
 		sseStatus: 'connected',
 	}
+	// The palette provider rides along because shell components (the New menu in
+	// the object page's detail bar) reach for it; the app always has one.
 	return ({ children }: { children: ReactNode }) =>
 		React.createElement(
 			QueryClientProvider,
 			{ client: createTestQueryClient() },
-			React.createElement(WorkspaceContext.Provider, { value: ctxValue }, children),
+			React.createElement(
+				WorkspaceContext.Provider,
+				{ value: ctxValue },
+				React.createElement(
+					CommandPaletteProvider,
+					null,
+					renderPageHeader
+						? React.createElement(
+								PageHeaderProvider,
+								null,
+								React.createElement(PageHeaderOutlet, null, children),
+							)
+						: children,
+				),
+			),
 		)
 }

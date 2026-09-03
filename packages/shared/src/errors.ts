@@ -12,7 +12,7 @@ export const ApiErrorCode = {
 	// Workspace-membership entitlement gates (distinct from PLAN_CAP_EXCEEDED,
 	// which is token-usage-specific and returns 402). These are
 	// authorization-style "not entitled to add more" failures and return 403,
-	// matching how byollmAllowed gate failures are already surfaced. See
+	// matching how enterpriseGranted gate failures are already surfaced. See
 	// apps/dev/src/lib/workspace-capacity.ts.
 	SEAT_CAP_EXCEEDED: 'SEAT_CAP_EXCEEDED',
 	OWNERSHIP_CAP_EXCEEDED: 'OWNERSHIP_CAP_EXCEEDED',

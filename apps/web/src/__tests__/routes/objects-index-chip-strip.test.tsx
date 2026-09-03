@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -19,6 +19,8 @@ const searchState = vi.hoisted(() => ({
 		q: undefined as string | undefined,
 		groupBy: undefined as string | undefined,
 		includeArchived: undefined as 1 | undefined,
+		filterBy: undefined as 'status' | 'driver' | 'attention' | undefined,
+		attention: undefined as 'waiting' | 'working' | undefined,
 	},
 }))
 const navigateMock = vi.hoisted(() => vi.fn())
@@ -54,14 +56,17 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@tanstack/react-query')>()
 	return {
 		...actual,
+		// Only the board query returns `{ columns }`. The rest (tasks and
+		// breaks_into rels, which feed the bet-status derivation) are mapped
+		// over, so they have to be arrays.
 		useQuery: (options: { queryKey?: readonly unknown[] }) => ({
-			data: options?.queryKey?.[0] === 'notifications' ? [] : { columns: [] },
+			data: options?.queryKey?.[1] === 'board' ? { columns: [] } : [],
 			isLoading: false,
 			isSuccess: true,
 			isError: false,
 		}),
 		useInfiniteQuery: () => ({
-			data: { pages: [[]] },
+			data: { pages: [objectsState.rows] },
 			hasNextPage: false,
 			isFetchingNextPage: false,
 			isError: false,
@@ -79,28 +84,154 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 	}
 })
 
+const bulkUpdateCapture = vi.hoisted(() => ({ mutate: vi.fn() }))
 vi.mock('@/hooks/use-objects', () => ({
-	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
+	useBulkUpdateObjects: () => ({ mutate: bulkUpdateCapture.mutate }),
 	useBulkResultHandlers: () => ({ reportBulkResult: vi.fn(), retainOnlyFailed: vi.fn() }),
 }))
 
+const toastCapture = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }))
+vi.mock('sonner', () => ({
+	toast: { error: toastCapture.error, success: toastCapture.success },
+}))
+
+const displaySettings = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }))
 vi.mock('@/hooks/use-user-display-settings', () => ({
-	useUserDisplaySettings: () => ({ data: null, isSuccess: true }),
+	useUserDisplaySettings: () => ({ data: displaySettings.current, isSuccess: true }),
 	useUpdateUserDisplaySettings: () => ({ mutate: vi.fn() }),
 }))
 
-vi.mock('@/components/objects/bulk-action-bar', () => ({ BulkActionBar: () => null }))
+// Rows the infinite query hands back. Mutable so a test can load a list without
+// re-mocking the query layer; defaults to empty, which is what every test that
+// only cares about the chip strip expects.
+const objectsState = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>> }))
+
+// Capture the bulk bar's props so the Archive gate can be asserted without
+// driving a selection through the mocked ListView.
+const bulkBarCapture = vi.hoisted(() => ({ lastProps: null as Record<string, unknown> | null }))
+vi.mock('@/components/objects/bulk-action-bar', () => ({
+	BulkActionBar: (props: Record<string, unknown>) => {
+		bulkBarCapture.lastProps = props
+		return null
+	},
+}))
 vi.mock('@/components/layout/page-header', () => ({
-	PageHeader: ({ title }: { title: string }) => <h1>{title}</h1>,
+	// The type tabs go out as `titleTabs` (the nav row's left cluster, beside
+	// the <h1>), not as `actions` — the stand-in renders both so a regression
+	// back to the right-hand cluster shows up here.
+	PageHeader: ({
+		title,
+		subtitle,
+		actions,
+		titleTabs,
+	}: {
+		title?: string
+		subtitle?: string
+		actions?: React.ReactNode
+		titleTabs?: React.ReactNode
+	}) => (
+		<div data-testid="page-header">
+			<h1>{title}</h1>
+			<span data-testid="page-subtitle">{subtitle}</span>
+			<span data-testid="page-title-tabs">{titleTabs}</span>
+			{actions}
+		</div>
+	),
 }))
 vi.mock('@/components/objects/list/list-view', () => ({
 	ListView: () => <div data-testid="list-view" />,
 }))
+// Capture the board's props so the single-card `→` advance handler can be
+// driven directly — the real BoardView is stubbed out in this suite.
+const boardCapture = vi.hoisted(() => ({ lastProps: null as Record<string, unknown> | null }))
 vi.mock('@/components/objects/board/board-view', () => ({
-	BoardView: () => <div data-testid="board-view" />,
+	BoardView: (props: Record<string, unknown>) => {
+		boardCapture.lastProps = props
+		return <div data-testid="board-view" />
+	},
 }))
+// The chip strip now lives inside the toolbar's single control row (mockup
+// 907–921), so the stand-in renders exactly what the route hands it.
 vi.mock('@/components/objects/data-table/data-table-toolbar', () => ({
-	DataTableToolbar: () => <div data-testid="toolbar" />,
+	DataTableToolbar: ({
+		filterPills,
+		onClearAllFilters,
+		quickChips,
+		filterSections,
+		pinnedFilters,
+		onTogglePinnedFilter,
+	}: {
+		filterPills?: Array<{ id: string; label: string; value: string; onRemove: () => void }>
+		onClearAllFilters?: () => void
+		quickChips?: Array<{ id: string; label: string; active: boolean; onToggle: () => void }>
+		filterSections?: Array<{
+			id: string
+			label: string
+			summary: string
+			options: Array<{
+				id: string
+				label: string
+				count?: number
+				active: boolean
+				onToggle: () => void
+			}>
+		}>
+		pinnedFilters?: string[]
+		onTogglePinnedFilter?: (token: string) => void
+	}) => (
+		<div data-testid="toolbar" data-pinned={(pinnedFilters ?? []).join(',')}>
+			{(quickChips ?? []).map((chip) => (
+				<button
+					key={chip.id}
+					type="button"
+					data-testid="quick-chip"
+					aria-pressed={chip.active}
+					onClick={chip.onToggle}
+				>
+					{chip.label}
+				</button>
+			))}
+			{(filterSections ?? []).map((section) => (
+				<div key={section.id} data-testid="filter-section" data-summary={section.summary}>
+					<span>{section.label}</span>
+					{section.options.map((option) => (
+						<button
+							key={option.id}
+							type="button"
+							data-testid={`option-${section.id}-${option.id}`}
+							aria-pressed={option.active}
+							onClick={option.onToggle}
+						>
+							{option.label}
+							{option.count !== undefined ? ` ${option.count}` : ''}
+						</button>
+					))}
+					{section.options.map((option) => (
+						<button
+							key={`pin-${option.id}`}
+							type="button"
+							data-testid={`pin-${section.id}-${option.id}`}
+							onClick={() => onTogglePinnedFilter?.(`${section.id}:${option.id}`)}
+						/>
+					))}
+				</div>
+			))}
+			{(filterPills ?? []).map((pill) => (
+				<span key={pill.id}>
+					<span>{pill.label}:</span>
+					<span>{pill.value}</span>
+					<button
+						type="button"
+						aria-label={`Remove ${pill.label} filter`}
+						onClick={pill.onRemove}
+					/>
+				</span>
+			))}
+			<button type="button" onClick={onClearAllFilters}>
+				Clear all
+			</button>
+		</div>
+	),
 }))
 vi.mock('@/components/objects/data-table/columns', () => ({ getStaticColumns: () => [] }))
 vi.mock('@/components/objects/data-table/dynamic-columns', () => ({ getDynamicColumns: () => [] }))
@@ -118,6 +249,7 @@ vi.mock('@/lib/analytics', () => ({
 	trackEvent: vi.fn(),
 	trackObjectsListArrived: vi.fn(),
 	trackObjectsListGroupToggled: vi.fn(),
+	trackObjectsBoardArrived: vi.fn(),
 }))
 vi.mock('@/lib/back-nav-tracker', () => ({
 	consumeArrivalNavType: vi.fn().mockReturnValue('direct'),
@@ -131,15 +263,17 @@ vi.mock('@/lib/query-keys', () => ({
 			board: () => ['objects', 'board'],
 		},
 		relationships: { all: (workspaceId: string) => ['relationships', workspaceId] },
+		imports: { detail: (id: string) => ['imports', 'detail', id] },
 		notifications: {
-			list: (workspaceId: string, filters?: unknown) => [
+			all: (workspaceId: string) => ['notifications', workspaceId],
+			list: (workspaceId: string, filters?: Record<string, unknown>) => [
 				'notifications',
 				workspaceId,
 				'list',
 				filters,
 			],
+			detail: (id: string) => ['notifications', 'detail', id],
 		},
-		imports: { detail: (id: string) => ['imports', 'detail', id] },
 		userDisplaySettings: {
 			detail: (workspaceId: string, objectType: string) => [
 				'user-display-settings',
@@ -154,7 +288,8 @@ vi.mock('@/lib/query-keys', () => ({
 import { Route } from '@/routes/_authed/$workspaceId/objects/index'
 
 const RouteOptions = Route as unknown as { component: React.FC }
-const ObjectsPage = RouteOptions.component
+const ObjectsPageComponent = RouteOptions.component
+const ObjectsPage = ObjectsPageComponent
 
 beforeEach(() => {
 	searchState.current = {
@@ -166,8 +301,12 @@ beforeEach(() => {
 		q: undefined,
 		groupBy: undefined,
 		includeArchived: undefined,
+		filterBy: undefined,
+		attention: undefined,
 	}
 	navigateMock.mockClear()
+	objectsState.rows = []
+	bulkBarCapture.lastProps = null
 })
 
 describe('ObjectsPage chip strip — Include: archived', () => {
@@ -225,9 +364,177 @@ describe('ObjectsPage chip strip — Include: archived', () => {
 		expect(lastCall?.[0].search).not.toHaveProperty('driver')
 	})
 
+	// "Clear all" itself is gated on >1 active pill in the toolbar (mockup 920's
+	// `objPillsMany`), so the single-filter case asserts the pill, not the action.
+	// Archive must not be offered where `Show archived` isn't: an archived task
+	// or insight would leave the list with no toggle to bring it back.
+	it('offers the bulk Archive action on the bet tab and withholds it elsewhere', () => {
+		searchState.current.type = 'bet'
+		render(<ObjectsPage />)
+		expect(bulkBarCapture.lastProps?.onArchive).toBeTypeOf('function')
+
+		searchState.current.type = 'task'
+		render(<ObjectsPage />)
+		expect(bulkBarCapture.lastProps?.onArchive).toBeUndefined()
+	})
+
 	it('renders the chip strip when only the archived flag is on (no status/driver)', () => {
 		searchState.current.includeArchived = 1
 		render(<ObjectsPage />)
-		expect(screen.getByRole('button', { name: 'Clear all' })).toBeInTheDocument()
+		expect(screen.getByText('Include:')).toBeInTheDocument()
+	})
+})
+
+// Mockup 658–673: the control row carries the filters the user pinned out of
+// the Display panel; the panel itself holds one collapsible section per axis.
+describe('ObjectsPage — pinned filter chips', () => {
+	it('pins New last 7 days and Starred out of the box', () => {
+		render(<ObjectsPage />)
+		expect(screen.getByTestId('toolbar')).toHaveAttribute(
+			'data-pinned',
+			'quick:fresh,quick:starred',
+		)
+		const labels = screen.getAllByTestId('quick-chip').map((el) => el.textContent)
+		expect(labels).toEqual(['New last 7 days', '★ Starred'])
+	})
+
+	it('builds one filter section per axis, each summarising its current value', () => {
+		render(<ObjectsPage />)
+		const sections = screen.getAllByTestId('filter-section')
+		expect(sections.map((el) => el.textContent?.startsWith('Quick'))).toContain(true)
+		const summaries = sections.map((el) => el.getAttribute('data-summary'))
+		expect(summaries).toEqual(['None', 'Any time', 'Any status', 'Anyone'])
+	})
+
+	it('writes the picked status to the status parameter', async () => {
+		const user = userEvent.setup()
+		render(<ObjectsPage />)
+		await user.click(screen.getByTestId('option-status-active'))
+		await waitFor(() => expect(navigateMock).toHaveBeenCalled())
+		const lastCall = navigateMock.mock.calls.at(-1) as [{ search: Record<string, unknown> }]
+		expect(lastCall?.[0].search.status).toBe('active')
+	})
+
+	it('clears the status when the already-active option is picked again', async () => {
+		const user = userEvent.setup()
+		searchState.current.status = 'active'
+		render(<ObjectsPage />)
+		await user.click(screen.getByTestId('option-status-active'))
+		await waitFor(() => expect(navigateMock).toHaveBeenCalled())
+		const lastCall = navigateMock.mock.calls.at(-1) as [{ search: Record<string, unknown> }]
+		expect(lastCall?.[0].search.status).toBeUndefined()
+	})
+
+	it('turns a quick chip into its URL parameter', async () => {
+		const user = userEvent.setup()
+		render(<ObjectsPage />)
+		await user.click(screen.getByRole('button', { name: 'New last 7 days' }))
+		await waitFor(() => expect(navigateMock).toHaveBeenCalled())
+		const lastCall = navigateMock.mock.calls.at(-1) as [{ search: Record<string, unknown> }]
+		expect(lastCall?.[0].search.fresh).toBe(1)
+	})
+
+	it('adds a pinned option to the chip row', async () => {
+		const user = userEvent.setup()
+		render(<ObjectsPage />)
+		await user.click(screen.getByTestId('pin-status-active'))
+		await waitFor(() =>
+			expect(screen.getByTestId('toolbar')).toHaveAttribute(
+				'data-pinned',
+				'quick:fresh,quick:starred,status:active',
+			),
+		)
+		expect(screen.getAllByTestId('quick-chip').map((el) => el.textContent)).toContain(
+			'Status: active',
+		)
+	})
+
+	// Mockup 6015: a pinned option's chip already shows its on/off state, so the
+	// removable pill for the same filter would be a second control for one bit.
+	it('suppresses the removable pill for a filter whose option is pinned', async () => {
+		const user = userEvent.setup()
+		searchState.current.status = 'active'
+		render(<ObjectsPage />)
+		expect(screen.getByText('Status:')).toBeInTheDocument()
+		await user.click(screen.getByTestId('pin-status-active'))
+		await waitFor(() => expect(screen.queryByText('Status:')).toBeNull())
+	})
+})
+
+describe('ObjectsPage — published screen identity', () => {
+	it('publishes the Objects title and the type-tab strip, with no separate count', () => {
+		render(<ObjectsPage />)
+		expect(screen.getByRole('heading', { name: 'Objects' })).toBeInTheDocument()
+		// No count beside the <h1> — the active type tab carries it instead.
+		expect(screen.getByTestId('page-subtitle')).toBeEmptyDOMElement()
+		expect(screen.getByRole('group', { name: 'Type filter' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'All (0)' })).toBeInTheDocument()
+	})
+})
+
+// The bulk endpoint reports per-row failures as HTTP 200 with
+// `results:[{ok:false,error}]`, so `onError` never fires for them. Without an
+// explicit `ok` check the optimistic patch sits there until `onSettled`
+// refetches and the card snaps back silently — the shape the drag path in
+// `board-view.tsx` already guards against.
+describe('ObjectsPage — board single-card advance', () => {
+	beforeEach(() => {
+		bulkUpdateCapture.mutate.mockReset()
+		toastCapture.error.mockReset()
+		boardCapture.lastProps = null
+		displaySettings.current = null
+	})
+
+	function advance() {
+		// The board branch is gated on a resolved type filter with configured
+		// statuses; the view itself comes from persisted display settings, not
+		// the search param.
+		searchState.current.type = 'bet'
+		displaySettings.current = { settings: { view: 'board' } }
+		render(<ObjectsPage />)
+		const onAdvance = boardCapture.lastProps?.onAdvance as (id: string, status: string) => void
+		expect(onAdvance).toBeTypeOf('function')
+		onAdvance('obj-1', 'done')
+		return bulkUpdateCapture.mutate.mock.calls.at(-1) as [
+			unknown,
+			{
+				onSuccess?: (d: { results: Array<{ id: string; ok: boolean; error?: string }> }) => void
+				onError?: (e: Error) => void
+			},
+		]
+	}
+
+	it('toasts the server error when the response reports a per-id failure', () => {
+		const [, opts] = advance()
+		opts.onSuccess?.({ results: [{ id: 'obj-1', ok: false, error: "Invalid status 'done'" }] })
+		expect(toastCapture.error).toHaveBeenCalledWith("Invalid status 'done'")
+	})
+
+	it('toasts when the response omits the advanced id entirely', () => {
+		const [, opts] = advance()
+		opts.onSuccess?.({ results: [{ id: 'other', ok: true }] })
+		expect(toastCapture.error).toHaveBeenCalledWith('Failed to move object')
+	})
+
+	it('stays silent when the server confirms the move', () => {
+		const [, opts] = advance()
+		opts.onSuccess?.({ results: [{ id: 'obj-1', ok: true }] })
+		expect(toastCapture.error).not.toHaveBeenCalled()
+	})
+
+	it('toasts when the mutation itself rejects', () => {
+		const [, opts] = advance()
+		opts.onError?.(new Error('Network blew up'))
+		expect(toastCapture.error).toHaveBeenCalledWith('Failed to move object')
+	})
+})
+
+describe('ObjectsPage bulk edit', () => {
+	it("publishes the type tabs into the nav row's left cluster, not its actions slot", () => {
+		render(<ObjectsPage />)
+
+		// `titleTabs` lands beside the <h1>; `actions` lands past the search
+		// field. The tabs belong in the first (mockup 146-153).
+		expect(screen.getByTestId('page-title-tabs').textContent).not.toBe('')
 	})
 })

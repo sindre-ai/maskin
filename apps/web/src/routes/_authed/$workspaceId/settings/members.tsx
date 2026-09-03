@@ -9,6 +9,7 @@ import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
+	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog'
@@ -26,11 +27,17 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
-import { useAddWorkspaceMember, useWorkspaceMembers } from '@/hooks/use-workspaces'
-import { ApiError } from '@/lib/api'
+import {
+	useAddWorkspaceMember,
+	useRemoveWorkspaceMember,
+	useUpdateWorkspaceMemberRole,
+	useWorkspaceMembers,
+} from '@/hooks/use-workspaces'
+import { ApiError, type MemberResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { Bot, Plus, UserPlus } from 'lucide-react'
+import { Bot, Plus, Trash2, UserPlus } from 'lucide-react'
 import { useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/members')({
@@ -38,32 +45,46 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/members')({
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
+// Deliberately excludes 'owner'. The backend body schema is
+// z.enum(['admin','member']) — ownership is claimed through
+// POST /{id}/transfer-ownership, which enforces the plan's ownership cap.
+const ROLE_OPTIONS = ['admin', 'member'] as const
+
 function MembersPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: members, isLoading } = useWorkspaceMembers(workspaceId)
 	const addMember = useAddWorkspaceMember(workspaceId)
+	const updateRole = useUpdateWorkspaceMemberRole(workspaceId)
+	const removeMember = useRemoveWorkspaceMember(workspaceId)
 	const navigate = useNavigate()
 	const [showAddDialog, setShowAddDialog] = useState(false)
 	const [actorId, setActorId] = useState('')
-	const [role, setRole] = useState('member')
+	const [newMemberRole, setNewMemberRole] = useState('member')
+	const [addError, setAddError] = useState<string | null>(null)
 	const [activeHumanId, setActiveHumanId] = useState<string | null>(null)
+	const [pendingRemoval, setPendingRemoval] = useState<MemberResponse | null>(null)
+	const [removeError, setRemoveError] = useState<string | null>(null)
+	const [roleError, setRoleError] = useState<string | null>(null)
 
 	const handleAdd = async (e: React.FormEvent) => {
 		e.preventDefault()
 		if (!actorId.trim()) return
+		setAddError(null)
 		try {
-			await addMember.mutateAsync({ actor_id: actorId.trim(), role })
+			await addMember.mutateAsync({ actor_id: actorId.trim(), role: newMemberRole })
 			setActorId('')
+			setNewMemberRole('member')
 			setShowAddDialog(false)
-		} catch {
-			// Keep the dialog open — addMember.error renders the failure below.
+		} catch (err) {
+			setAddError(
+				err instanceof ApiError && err.code === 'SEAT_CAP_EXCEEDED'
+					? "This workspace has reached its plan's member limit. Upgrade to add more."
+					: err instanceof Error
+						? err.message
+						: 'Failed to add member',
+			)
 		}
 	}
-
-	const addMemberError =
-		addMember.error instanceof ApiError && addMember.error.code === 'SEAT_CAP_EXCEEDED'
-			? "This workspace has reached its plan's member limit. Upgrade to add more."
-			: addMember.error?.message
 
 	const handleCreateAgent = () => {
 		navigate({
@@ -72,12 +93,39 @@ function MembersPage() {
 		})
 	}
 
+	const handleRoleChange = async (member: MemberResponse, nextRole: string) => {
+		if (nextRole === member.role) return
+		setRoleError(null)
+		try {
+			await updateRole.mutateAsync({ actorId: member.actorId, role: nextRole })
+		} catch (err) {
+			setRoleError(err instanceof Error ? err.message : 'Failed to update role')
+		}
+	}
+
+	const handleRemove = async () => {
+		if (!pendingRemoval) return
+		setRemoveError(null)
+		try {
+			await removeMember.mutateAsync(pendingRemoval.actorId)
+			setPendingRemoval(null)
+		} catch (err) {
+			setRemoveError(err instanceof Error ? err.message : 'Failed to remove member')
+		}
+	}
+
+	const count = members?.length ?? 0
+
 	return (
-		<div>
-			<div className="flex justify-end mb-4">
+		<div className="max-w-[580px]">
+			<div className="mb-3 flex items-center gap-2">
+				<h2 className="text-sm font-bold text-foreground">Members</h2>
+				<span className="text-xs text-muted-foreground">
+					{count} {count === 1 ? 'person or agent' : 'people & agents'}
+				</span>
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
-						<Button variant="outline" size="sm">
+						<Button variant="outline" size="sm" className="ml-auto">
 							<Plus size={14} className="mr-1" />
 							Add member
 						</Button>
@@ -95,7 +143,104 @@ function MembersPage() {
 				</DropdownMenu>
 			</div>
 
-			<Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+			{roleError && (
+				<p className="mb-3 text-sm text-error" role="alert">
+					{roleError}
+				</p>
+			)}
+
+			{isLoading ? (
+				<ListSkeleton />
+			) : !members?.length ? (
+				<EmptyState
+					title="No members"
+					description="Invite a teammate or create an agent to get started."
+				/>
+			) : (
+				<div className="flex flex-col">
+					{members.map((member) => {
+						const isOwner = member.role === 'owner'
+						return (
+							<div
+								key={member.actorId}
+								className="flex items-center gap-3 rounded-lg border-b border-border px-2 py-2.5 transition-colors hover:bg-muted"
+							>
+								<button
+									type="button"
+									className="flex min-w-0 flex-1 items-center gap-3 text-left"
+									onClick={() => {
+										if (member.type === 'agent') {
+											navigate({
+												to: '/$workspaceId/agents/$agentId',
+												params: { workspaceId, agentId: member.actorId },
+											})
+										} else {
+											setActiveHumanId(member.actorId)
+										}
+									}}
+								>
+									<ActorAvatar name={member.name} type={member.type} size="md" />
+									<span className="min-w-0 flex-1">
+										<span className="block truncate text-sm font-medium">{member.name}</span>
+										<span className="block truncate text-xs capitalize text-muted-foreground">
+											{member.type}
+										</span>
+									</span>
+								</button>
+								{isOwner ? (
+									// The owner's role is not editable here, and `ROLE_OPTIONS` deliberately
+									// excludes 'owner', so a Select would render a blank trigger with no
+									// matching item. Both mutations are backend-400s for this row anyway
+									// (role change wants transfer-ownership; removal wants the billing
+									// owner moved first), so render the role and drop the remove control
+									// rather than offer two buttons that can only fail.
+									<span className="w-28 shrink-0 px-3 text-xs text-muted-foreground">
+										{member.role}
+									</span>
+								) : (
+									<Select
+										value={member.role}
+										onValueChange={(value) => handleRoleChange(member, value)}
+										disabled={updateRole.isPending}
+									>
+										<SelectTrigger className="w-28 shrink-0" aria-label={`Role for ${member.name}`}>
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											{ROLE_OPTIONS.map((role) => (
+												<SelectItem key={role} value={role}>
+													{role}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								)}
+								<Button
+									variant="ghost"
+									size="icon"
+									className={cn('shrink-0', isOwner && 'invisible')}
+									aria-label={`Remove ${member.name}`}
+									disabled={isOwner}
+									onClick={() => {
+										setRemoveError(null)
+										setPendingRemoval(member)
+									}}
+								>
+									<Trash2 size={14} />
+								</Button>
+							</div>
+						)
+					})}
+				</div>
+			)}
+
+			<Dialog
+				open={showAddDialog}
+				onOpenChange={(open) => {
+					setShowAddDialog(open)
+					if (!open) setAddError(null)
+				}}
+			>
 				<DialogContent>
 					<DialogHeader>
 						<DialogTitle>Add member</DialogTitle>
@@ -112,60 +257,67 @@ function MembersPage() {
 							className="font-mono"
 							autoFocus
 						/>
-						<Select value={role} onValueChange={setRole}>
-							<SelectTrigger>
+						<Select value={newMemberRole} onValueChange={setNewMemberRole}>
+							<SelectTrigger aria-label="Role for the new member">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="member">member</SelectItem>
-								<SelectItem value="admin">admin</SelectItem>
+								{ROLE_OPTIONS.map((role) => (
+									<SelectItem key={role} value={role}>
+										{role}
+									</SelectItem>
+								))}
 							</SelectContent>
 						</Select>
-						{addMemberError && <FormError error={addMemberError} />}
-						<div className="flex justify-end gap-2">
+						{addError && <FormError error={addError} />}
+						<DialogFooter>
 							<Button type="button" variant="ghost" onClick={() => setShowAddDialog(false)}>
 								Cancel
 							</Button>
 							<Button type="submit" disabled={!actorId.trim() || addMember.isPending}>
 								Add
 							</Button>
-						</div>
+						</DialogFooter>
 					</form>
 				</DialogContent>
 			</Dialog>
 
-			{isLoading ? (
-				<ListSkeleton />
-			) : !members?.length ? (
-				<EmptyState title="No members" />
-			) : (
-				<div className="space-y-1">
-					{members.map((member) => (
-						<button
+			<Dialog
+				open={!!pendingRemoval}
+				onOpenChange={(open) => {
+					if (!open) {
+						setPendingRemoval(null)
+						setRemoveError(null)
+					}
+				}}
+			>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>Remove member</DialogTitle>
+						<DialogDescription>
+							Remove {pendingRemoval?.name} from this workspace? They will lose access immediately.
+						</DialogDescription>
+					</DialogHeader>
+					{removeError && (
+						<p className="text-sm text-error" role="alert">
+							{removeError}
+						</p>
+					)}
+					<DialogFooter>
+						<Button type="button" variant="ghost" onClick={() => setPendingRemoval(null)}>
+							Cancel
+						</Button>
+						<Button
 							type="button"
-							key={member.actorId}
-							className="flex w-full items-center gap-3 rounded px-3 py-2 text-left transition-colors hover:bg-bg-hover cursor-pointer"
-							onClick={() => {
-								if (member.type === 'agent') {
-									navigate({
-										to: '/$workspaceId/agents/$agentId',
-										params: { workspaceId, agentId: member.actorId },
-									})
-								} else {
-									setActiveHumanId(member.actorId)
-								}
-							}}
+							variant="destructive"
+							onClick={handleRemove}
+							disabled={removeMember.isPending}
 						>
-							<ActorAvatar name={member.name} type={member.type} size="md" />
-							<div className="flex-1">
-								<p className="text-sm font-medium text-foreground">{member.name}</p>
-								<p className="text-xs text-muted-foreground">{member.type}</p>
-							</div>
-							<span className="text-xs text-muted-foreground">{member.role}</span>
-						</button>
-					))}
-				</div>
-			)}
+							Remove
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
 
 			{activeHumanId && (
 				<HumanDetailDialog
