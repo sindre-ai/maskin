@@ -28,6 +28,12 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Check, Copy, Link2, Plus } from 'lucide-react'
 import { useState } from 'react'
 
+const SLACK_HISTORY_SCOPES: readonly string[] = [
+	'channels:history',
+	'groups:history',
+	'mpim:history',
+]
+
 export const Route = createFileRoute('/_authed/$workspaceId/settings/integrations')({
 	component: IntegrationsPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
@@ -201,9 +207,18 @@ function ProviderRow({
 	const missingCount = integration?.missingScopes?.length ?? 0
 	const needsReconnect = Boolean(integration?.needsReconnect) && missingCount > 0
 
+	// Slack agents need channel history to dedupe threads and load context. When
+	// that specific slice of scopes is missing the generic "grant N permissions"
+	// copy is too abstract to prompt action — name what the reconnect unlocks.
+	const missingSlackHistoryScopes =
+		provider.name === 'slack' &&
+		integration?.missingScopes?.some((scope) => SLACK_HISTORY_SCOPES.includes(scope))
+
 	const connectedLabel = isConnected
 		? needsReconnect
-			? `Update needed — reconnect to grant ${missingCount} new permission${missingCount === 1 ? '' : 's'}`
+			? missingSlackHistoryScopes
+				? 'Reconnect required — Slack agents need history access to read channel backlog.'
+				: `Update needed — reconnect to grant ${missingCount} new permission${missingCount === 1 ? '' : 's'}`
 			: provider.externalIdDisplay === 'email' && integration.externalId
 				? `Connected as ${integration.externalId}`
 				: `Connected${integration.externalId ? ` · Installation ${integration.externalId}` : ''}`
