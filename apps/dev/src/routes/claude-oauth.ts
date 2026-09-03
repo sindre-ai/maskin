@@ -4,9 +4,12 @@ import type { Database } from '@maskin/db'
 import { workspaceMembers, workspaces } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import {
+	ACCOUNT_LOOKUP_RETRY_MS,
 	type ClaudeAccountIdentity,
 	type ClaudeOAuthTokens,
+	decryptAccountIdentity,
 	decryptOAuthData,
+	encryptAccountIdentity,
 	encryptOAuthTokens,
 	fetchClaudeAccount,
 	getValidOAuthToken,
@@ -311,7 +314,9 @@ app.openapi(statusRoute, (async (c) => {
 	const slotResponse: Record<string, z.infer<typeof slotStatusSchema>> = {}
 	for (const [position, entry] of chain.entries()) {
 		const failure = slotFailure(failover, entry.id)
-		const account = accounts.get(entry.id) ?? entry.data.account
+		const account =
+			accounts.get(entry.id) ??
+			(entry.data.account ? decryptAccountIdentity(entry.data.account) : undefined)
 		slotResponse[entry.id] = {
 			slot: entry.id,
 			position,
@@ -380,18 +385,25 @@ async function backfillAccountLabels(
 	workspaceId: string,
 	chain: Array<{ id: OAuthSlotKind; data: OAuthSlotData }>,
 ): Promise<Map<OAuthSlotKind, ClaudeAccountIdentity>> {
+	const now = Date.now()
 	const learned = new Map<OAuthSlotKind, ClaudeAccountIdentity>()
 	const candidates = chain.filter(
-		(entry) => !entry.data.account && entry.data.expiresAt > Date.now(),
+		(entry) =>
+			entry.data.expiresAt > now &&
+			(!entry.data.account || now - entry.data.account.fetchedAt > ACCOUNT_LOOKUP_RETRY_MS),
 	)
 	if (candidates.length === 0) return learned
 
 	await Promise.all(
 		candidates.map(async (entry) => {
+			// Every ATTEMPT is recorded, not just every success. Without that, a
+			// subscription whose identity we can't read — a shape we don't
+			// parse, a revoked token — would be asked about again on every
+			// settings page load for the rest of time.
+			let account: ClaudeAccountIdentity = { fetchedAt: now }
 			try {
 				const tokens = decryptOAuthData(entry.data)
-				const account = await fetchClaudeAccount(tokens.accessToken)
-				if (account) learned.set(entry.id, account)
+				account = (await fetchClaudeAccount(tokens.accessToken)) ?? account
 			} catch (err) {
 				logger.debug('Could not read the Claude account identity for a slot', {
 					workspaceId,
@@ -399,6 +411,7 @@ async function backfillAccountLabels(
 					error: err instanceof Error ? err.message : String(err),
 				})
 			}
+			learned.set(entry.id, account)
 		}),
 	)
 	if (learned.size === 0) return learned
@@ -419,10 +432,15 @@ async function backfillAccountLabels(
 			let nextOAuth = latestSettings.claude_oauth
 			for (const [slot, account] of learned) {
 				const stored = readSlots(nextOAuth)[slot]
-				// The slot may have been disconnected or replaced while the
-				// lookups were in flight; only label what is still there.
-				if (!stored || stored.account) continue
-				nextOAuth = writeSlot(nextOAuth, slot, { ...stored, account })
+				// The slot may have been disconnected, replaced, or labelled by a
+				// concurrent request while the lookups were in flight; only write
+				// over an identity that is still missing or past its retry window.
+				if (!stored) continue
+				if (stored.account && now - stored.account.fetchedAt <= ACCOUNT_LOOKUP_RETRY_MS) continue
+				nextOAuth = writeSlot(nextOAuth, slot, {
+					...stored,
+					account: encryptAccountIdentity(account),
+				})
 			}
 			if (nextOAuth === latestSettings.claude_oauth) return
 			await tx

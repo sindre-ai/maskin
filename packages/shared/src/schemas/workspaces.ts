@@ -52,10 +52,13 @@ const claudeOAuthLegacySlotSchema = z
 		// credit-checkout and plan-cap paths.
 		nickname: z.string().optional(),
 		// Who Anthropic says the subscription belongs to, read best-effort for
-		// display. Distinct from `nickname`: this one is not ours to edit.
+		// display. Distinct from `nickname`: this one is not ours to edit. The
+		// email is encrypted at rest — this blob is returned wholesale by
+		// `GET /api/workspaces`. `fetchedAt` is present on every attempt, so an
+		// entry with neither name nor email means "we asked and could not tell".
 		account: z
 			.object({
-				email: z.string().optional(),
+				encryptedEmail: z.string().optional(),
 				organization: z.string().optional(),
 				fetchedAt: z.number(),
 			})

@@ -23,7 +23,7 @@ import { insertWorkspace } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
-import { fetchClaudeAccount } from '../../lib/claude-oauth'
+import { ACCOUNT_LOOKUP_RETRY_MS, fetchClaudeAccount } from '../../lib/claude-oauth'
 
 const { default: claudeOauthRoutes } = await import('../../routes/claude-oauth')
 
@@ -399,6 +399,13 @@ describe('Claude OAuth Routes — slot writes (integration)', () => {
 })
 
 describe('Claude OAuth Routes — more than two subscriptions (integration)', () => {
+	beforeEach(() => {
+		// Several tests below assert how MANY account lookups happened, so the
+		// shared module mock has to start each one at zero.
+		vi.mocked(fetchClaudeAccount).mockClear()
+		vi.mocked(fetchClaudeAccount).mockResolvedValue(undefined)
+	})
+
 	function importBody(suffix: string, slot?: string) {
 		return {
 			accessToken: `access-${suffix}`,
@@ -697,10 +704,76 @@ describe('Claude OAuth Routes — more than two subscriptions (integration)', ()
 		})
 		await makeApp().request(jsonGet('/api/claude-oauth/status', { 'x-workspace-id': ws.id }))
 
+		// The row must hold the email ENCRYPTED — `GET /api/workspaces` returns
+		// this blob wholesale to every workspace member, and to anything
+		// holding a workspace API key.
 		const oauth = (await readClaudeOAuth(ws.id)) as {
-			primary?: { account?: { email?: string } }
+			primary?: { account?: { encryptedEmail?: string; email?: string } }
 		}
-		expect(oauth.primary?.account?.email).toBe('owner@example.com')
+		expect(oauth.primary?.account?.encryptedEmail).toBeDefined()
+		expect(oauth.primary?.account?.encryptedEmail).not.toContain('owner@example.com')
+		expect(oauth.primary?.account?.email).toBeUndefined()
+
+		// ...and the API still renders it.
+		const res = await makeApp().request(
+			jsonGet('/api/claude-oauth/status', { 'x-workspace-id': ws.id }),
+		)
+		const body = (await res.json()) as { slots: Record<string, { account_email?: string }> }
+		expect(body.slots.primary?.account_email).toBe('owner@example.com')
+	})
+
+	it('asks about an unreadable identity once a day, not on every page load', async () => {
+		// The profile response shape is not ours to control. Without recording
+		// the ATTEMPT, a shape we cannot parse would re-ask on every settings
+		// page load for the rest of time.
+		const ws = await seedChain(1)
+		// Importing does its own lookup — count only what the status route asks.
+		vi.mocked(fetchClaudeAccount).mockClear()
+		vi.mocked(fetchClaudeAccount).mockResolvedValue(undefined)
+
+		await makeApp().request(jsonGet('/api/claude-oauth/status', { 'x-workspace-id': ws.id }))
+		expect(vi.mocked(fetchClaudeAccount)).toHaveBeenCalledTimes(1)
+
+		// The attempt is stored with no email, which is what stops the retry.
+		const oauth = (await readClaudeOAuth(ws.id)) as {
+			primary?: { account?: { fetchedAt?: number; encryptedEmail?: string } }
+		}
+		expect(oauth.primary?.account?.fetchedAt).toEqual(expect.any(Number))
+		expect(oauth.primary?.account?.encryptedEmail).toBeUndefined()
+
+		await makeApp().request(jsonGet('/api/claude-oauth/status', { 'x-workspace-id': ws.id }))
+		expect(vi.mocked(fetchClaudeAccount)).toHaveBeenCalledTimes(1)
+	})
+
+	it('re-asks once the retry window has elapsed', async () => {
+		const ws = await seedChain(1)
+		vi.mocked(fetchClaudeAccount).mockClear()
+		vi.mocked(fetchClaudeAccount).mockResolvedValue(undefined)
+		await makeApp().request(jsonGet('/api/claude-oauth/status', { 'x-workspace-id': ws.id }))
+		expect(vi.mocked(fetchClaudeAccount)).toHaveBeenCalledTimes(1)
+
+		// Age the recorded attempt past the retry window.
+		const stale = Date.now() - ACCOUNT_LOOKUP_RETRY_MS - 1
+		const [row] = await db.select().from(workspaces).where(eq(workspaces.id, ws.id)).limit(1)
+		const settings = (row?.settings ?? {}) as Record<string, unknown>
+		const oauth = settings.claude_oauth as { primary: { account: { fetchedAt: number } } }
+		oauth.primary.account.fetchedAt = stale
+		await db
+			.update(workspaces)
+			.set({ settings: { ...settings, claude_oauth: oauth } })
+			.where(eq(workspaces.id, ws.id))
+
+		vi.mocked(fetchClaudeAccount).mockResolvedValueOnce({
+			email: 'owner@example.com',
+			fetchedAt: Date.now(),
+		})
+		const res = await makeApp().request(
+			jsonGet('/api/claude-oauth/status', { 'x-workspace-id': ws.id }),
+		)
+
+		expect(vi.mocked(fetchClaudeAccount)).toHaveBeenCalledTimes(2)
+		const body = (await res.json()) as { slots: Record<string, { account_email?: string }> }
+		expect(body.slots.primary?.account_email).toBe('owner@example.com')
 	})
 
 	it('still renders /status when the account lookup fails', async () => {
