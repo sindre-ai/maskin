@@ -445,6 +445,19 @@ describe('createSlackMcpServer — discovery and membership tools', () => {
 			expect(out).toMatchObject({ ok: true, already_reacted: true })
 		})
 
+		it('does NOT swallow an unrelated error that merely mentions already_reacted', async () => {
+			// The idempotency branch keys off Slack's parsed `error` code, so prose
+			// containing the token must still surface as a failure.
+			queueSlackResponses({ ok: false, error: 'internal_error: not already_reacted' })
+			await expect(
+				callTool('slack_add_reaction', {
+					channel: 'C0GENERAL01',
+					timestamp: '1717000000.000100',
+					emoji: 'eyes',
+				}),
+			).rejects.toThrow(/internal_error/)
+		})
+
 		it('rejects an emoji shortcode that is not a valid Slack name', async () => {
 			await expect(
 				callTool('slack_add_reaction', {

@@ -10,6 +10,7 @@ import {
 	slackGet,
 	slackPost,
 } from './client'
+import { SlackApiError } from './slack-api'
 
 const SLACK_API_BASE = 'https://slack.com/api'
 const REQUEST_TIMEOUT_MS = 10_000
@@ -194,10 +195,9 @@ async function withScopeHint<T>(op: () => Promise<T>): Promise<T> {
 	try {
 		return await op()
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err)
-		if (message.includes('missing_scope')) {
+		if (err instanceof SlackApiError && err.code === 'missing_scope') {
 			throw new Error(
-				`${message} — this Slack install predates the scope. Reconnect Slack from Settings → Integrations to re-consent.`,
+				`${err.message} — this Slack install predates the scope. Reconnect Slack from Settings → Integrations to re-consent.`,
 			)
 		}
 		throw err
@@ -467,9 +467,10 @@ export function createSlackMcpServer(ctx: SlackPostContext): McpServer {
 				)
 			} catch (err) {
 				// Reacting twice is a no-op, not a failure — report it as success so
-				// a retried tool call doesn't read as a broken integration.
-				const message = err instanceof Error ? err.message : String(err)
-				if (!message.includes('already_reacted')) throw err
+				// a retried tool call doesn't read as a broken integration. Keyed on
+				// Slack's parsed `error` code: a substring match on the message would
+				// report success if that token ever appeared in an unrelated error.
+				if (!(err instanceof SlackApiError) || err.code !== 'already_reacted') throw err
 				return jsonResult({ ok: true, channel: channelId, emoji, already_reacted: true })
 			}
 			return jsonResult({ ok: true, channel: channelId, emoji, already_reacted: false })
