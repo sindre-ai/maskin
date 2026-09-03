@@ -1,6 +1,4 @@
 import { PageHeader } from '@/components/layout/page-header'
-import { LoopActivity } from '@/components/loops/loop-activity'
-import { LoopChanges } from '@/components/loops/loop-changes'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
 import { LoopFlow } from '@/components/loops/loop-flow'
 import { LOOP_PILL_STYLES, isLiveLoopPill } from '@/components/loops/loop-pill'
@@ -11,8 +9,10 @@ import {
 	readStoredPlan,
 } from '@/components/loops/loop-proposed-edit'
 import { LoopStats } from '@/components/loops/loop-stats'
-import { LoopSummary } from '@/components/loops/loop-summary'
 import { LoopUtteranceInput } from '@/components/loops/loop-utterance-input'
+import { ObjectDetailBody } from '@/components/objects/object-detail-body'
+import { TimelineTab } from '@/components/objects/timeline-tab'
+import { EditableTitle } from '@/components/shared/editable-title'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
@@ -25,7 +25,6 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useActors } from '@/hooks/use-actors'
-import { useEntityEvents } from '@/hooks/use-events'
 import { useLoop, useLoopActivity } from '@/hooks/use-loops'
 import { useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
@@ -81,19 +80,37 @@ function LoopDetailRoute() {
 		{ ids: childIds.join(',') },
 		{ enabled: childIds.length > 0 },
 	)
-	const { data: events } = useEntityEvents(workspaceId, loopId)
 	const { data: activityEvents } = useLoopActivity(loopId, workspaceId)
 	const updateObject = useUpdateObject(workspaceId)
 
 	const composerRef = useRef<HTMLDivElement>(null)
 	const [proposedEdit, setProposedEdit] = useState<ProposedEdit | null>(null)
 
-	const focusComposer = useCallback(() => {
-		const node = composerRef.current
-		if (!node) return
-		node.scrollIntoView({ block: 'end', behavior: 'smooth' })
-		node.querySelector('textarea')?.focus()
-	}, [])
+	// Same shape as `ObjectDetailShell`'s handlers: toast, then rethrow so the
+	// field reopens with the reader's draft instead of silently reverting.
+	const handleUpdateTitle = useCallback(
+		async (title: string) => {
+			try {
+				await updateObject.mutateAsync({ id: loopId, data: { title } })
+			} catch (err) {
+				toast.error('Could not save your changes')
+				throw err
+			}
+		},
+		[loopId, updateObject],
+	)
+
+	const handleUpdateContent = useCallback(
+		async (content: string) => {
+			try {
+				await updateObject.mutateAsync({ id: loopId, data: { content } })
+			} catch (err) {
+				toast.error('Could not save your changes')
+				throw err
+			}
+		},
+		[loopId, updateObject],
+	)
 
 	// An utterance is read back as a diff against the plan snapshot `/loops/new`
 	// wrote to `metadata.plan`. Loops without one (marketplace installs, MCP
@@ -190,7 +207,6 @@ function LoopDetailRoute() {
 	const isPaused = loop.status === 'paused'
 	// Built but never run: no children have entered it and nothing has happened.
 	const isPreFirstRun = childIds.length === 0 && (activityEvents?.length ?? 0) === 0
-	const hasChanges = (events ?? []).some((e) => e.entityId === loopId)
 
 	// Resuming returns the loop to `learning`, the lowest live rung of the
 	// autonomy ladder, matching every server-side creation path
@@ -256,13 +272,23 @@ function LoopDetailRoute() {
 				}
 			/>
 			<div className="mx-auto flex w-full max-w-3xl flex-col">
-				<h1 className="text-2xl font-bold leading-tight tracking-[-0.025em] text-foreground">
-					{loop.name ?? 'Untitled loop'}
-				</h1>
+				<EditableTitle
+					value={loop.name}
+					entityId={loop.id}
+					onChange={object ? handleUpdateTitle : undefined}
+					ariaLabel="Loop title"
+					placeholder="Untitled loop"
+				/>
 
-				<div className="mt-3.5">
-					<LoopSummary loop={loop} onEdit={focusComposer} />
-				</div>
+				{/* The loop's promise, written the same way an object's document body
+				    is — the description IS the summary now. */}
+				{object && (
+					<ObjectDetailBody
+						object={object}
+						workspaceId={workspaceId}
+						onContentChange={handleUpdateContent}
+					/>
+				)}
 
 				{isInstalledFromMarketplace && (
 					<Link
@@ -294,18 +320,25 @@ function LoopDetailRoute() {
 					/>
 				</div>
 
-				<div className="mt-7">
-					<LoopActivity workspaceId={workspaceId} events={activityEvents} />
-				</div>
-
-				<div className="mt-7">
-					<LoopChanges workspaceId={workspaceId} loopId={loop.id} events={events} />
-				</div>
+				{/* The same Activity block object detail carries (mockup 1138–1143):
+				    a mono micro-heading on a hairline rule, then the shared timeline.
+				    A loop is an object, so this is the object's own event stream. */}
+				{object && (
+					<div className="mt-9">
+						<div className="flex items-center gap-2.5">
+							<span className="shrink-0 font-mono text-[10px] font-bold uppercase tracking-[0.11em] text-muted-foreground">
+								Activity
+							</span>
+							<div className="h-px flex-1 bg-muted" />
+						</div>
+						<TimelineTab object={object} />
+					</div>
+				)}
 
 				<LoopUtteranceInput
 					ref={composerRef}
 					loop={loop}
-					showSuggestions={!hasChanges && !proposedEdit}
+					showSuggestions={!proposedEdit}
 					onUtterance={handleUtterance}
 				>
 					{proposedEdit && (

@@ -110,6 +110,45 @@ And the `INTEGRATION_MCP_PRESETS` entry is:
 | `oauth2_custom` | Non-standard auth (GitHub Apps, providers with JWT signing) | Export `CustomAuthHandler` in `auth.ts` |
 | `api_key` | API key-based integrations | Just the config with `headerName` and `envKeyName` |
 
+## Requesting a second (user) token alongside the bot token
+
+Some provider capabilities are unreachable with an app/bot token at all. Slack's
+`search.messages` is the canonical case: `search:read.*` exists **only** as a user
+scope, so no amount of bot scope grants it. The pattern, implemented in
+`providers/slack/`:
+
+1. **Request both in one exchange.** Add the user scopes via `extraAuthParams`
+   (`user_scope` for Slack) — `OAuth2Handler.createAuthorizationUrl` applies that
+   record verbatim, so no handler change is needed.
+2. **Keep the bot token in `credentials.accessToken`.** Stash the user token under
+   a separate key (`userAccessToken`) from `parseTokenResponse`. `StoredCredentials`
+   has an index signature and the blob is encrypted whole, so this needs **no
+   migration**. Critically, it keeps every existing `xoxb-`-style guard correct.
+3. **Never let the user token reach a write path.** It carries the installing
+   human's identity and visibility; writing with it attributes agent actions to
+   that person. Assert the token type at the write boundary, not just at the call
+   sites — see `assertBotToken()` in `providers/slack/mcp-server.ts`.
+4. **Register user-token tools conditionally.** If the stored credential has no
+   user token (an install predating the grant), omit those tools rather than
+   registering ones that always fail.
+5. **Reconnect replaces the credentials blob wholesale** (`routes/integrations.ts`,
+   the `existingSameInstall` branch). The user token can never be merged in from a
+   previous blob — it must arrive in the same exchange, so the user scopes belong
+   in the permanent config, not behind a conditional.
+
+### Adding a scope to an existing provider
+
+Tokens never gain scopes retroactively. Every existing install keeps a valid token
+that simply cannot do the new thing, and nothing fails until someone tries it.
+
+- `GET /api/integrations` returns `missingScopes` / `needsReconnect` per row via
+  `lib/integrations/scope-drift.ts`, and the integrations settings page renders a
+  Reconnect action from it. Adding a scope automatically lights that up — you do
+  not need to write migration code, but you **do** need to tell existing users.
+- Map the provider's `missing_scope` error to text that names reconnecting, so an
+  agent hitting it mid-run reports something actionable instead of concluding the
+  platform is broken.
+
 ## Provider Quirks
 
 Handle provider-specific behavior through these escape hatches:

@@ -1,3 +1,4 @@
+import { EditableTitle } from '@/components/shared/editable-title'
 import { NewMenu } from '@/components/shared/new-menu'
 import { Button } from '@/components/ui/button'
 import type { MemberResponse, ObjectResponse } from '@/lib/api'
@@ -5,7 +6,7 @@ import { cn } from '@/lib/cn'
 import { getStatusColor, getTypeColor, statusLabel, typeIcons, typeLabel } from '@/lib/constants'
 import { useNavigate } from '@tanstack/react-router'
 import { PanelRight } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { OwnerSelect, StatusSelect } from './property-selects'
 
@@ -94,9 +95,6 @@ function StatusPill({ status }: { status: string }) {
 	)
 }
 
-const TITLE_CLASS =
-	'text-[clamp(20px,2.4vw,25px)] font-bold leading-[1.2] tracking-[-0.02em] text-foreground'
-
 export function ObjectDetailIdentity({
 	object,
 	statuses,
@@ -118,42 +116,6 @@ export function ObjectDetailIdentity({
 }) {
 	const Icon = typeIcons[object.type]
 	const typeColor = getTypeColor(object.type)
-
-	// Click-to-edit, the same shape the body uses: the heading stays a real
-	// <h1> at rest and only becomes a field once you ask for it, so the
-	// document reads as the mockup draws it and still renames in place.
-	const [editingTitle, setEditingTitle] = useState(false)
-	const [titleDraft, setTitleDraft] = useState(object.title ?? '')
-	useEffect(() => {
-		if (!editingTitle) setTitleDraft(object.title ?? '')
-	}, [object.title, editingTitle])
-
-	// A route swap reuses this instance, and the effect above deliberately holds
-	// the draft while you are typing — so without this an in-flight edit would
-	// survive the swap and blur would commit the previous object's text onto the
-	// new one. Leaving edit mode as well means the swap lands on the heading.
-	const [trackedObjectId, setTrackedObjectId] = useState(object.id)
-	if (trackedObjectId !== object.id) {
-		setTrackedObjectId(object.id)
-		setTitleDraft(object.title ?? '')
-		setEditingTitle(false)
-	}
-
-	const commitTitle = () => {
-		setEditingTitle(false)
-		const next = titleDraft.trim()
-		if (!next || next === object.title) {
-			setTitleDraft(object.title ?? '')
-			return
-		}
-		const result = onTitleChange?.(next)
-		if (result && typeof (result as Promise<unknown>).then === 'function') {
-			void (result as Promise<unknown>).catch(() => {
-				setTitleDraft(next)
-				setEditingTitle(true)
-			})
-		}
-	}
 
 	return (
 		<div>
@@ -181,51 +143,13 @@ export function ObjectDetailIdentity({
 				/>
 			</div>
 
-			{editingTitle ? (
-				<input
-					// biome-ignore lint/a11y/noAutofocus: the field only exists once the reader asks to rename
-					autoFocus
-					value={titleDraft}
-					aria-label="Object title"
-					onChange={(e) => {
-						setTitleDraft(e.target.value)
-					}}
-					onBlur={commitTitle}
-					onKeyDown={(e) => {
-						if (e.key === 'Enter' && !e.shiftKey) {
-							e.preventDefault()
-							e.currentTarget.blur()
-						}
-						if (e.key === 'Escape') {
-							setTitleDraft(object.title ?? '')
-							setEditingTitle(false)
-						}
-					}}
-					className={cn(TITLE_CLASS, 'mt-2.5 w-full border-none bg-transparent p-0 outline-none')}
-				/>
-			) : (
-				<h1
-					className={cn(
-						'mt-2.5',
-						TITLE_CLASS,
-						onTitleChange && 'cursor-text rounded-lg transition-colors hover:bg-muted/60',
-					)}
-					title={onTitleChange ? 'Click to edit' : undefined}
-					tabIndex={onTitleChange ? 0 : undefined}
-					onClick={onTitleChange ? () => setEditingTitle(true) : undefined}
-					onKeyDown={
-						onTitleChange
-							? (e) => {
-									if (e.key !== 'Enter' && e.key !== ' ') return
-									e.preventDefault()
-									setEditingTitle(true)
-								}
-							: undefined
-					}
-				>
-					{object.title ?? 'Untitled'}
-				</h1>
-			)}
+			<EditableTitle
+				value={object.title}
+				entityId={object.id}
+				onChange={onTitleChange}
+				ariaLabel="Object title"
+				className="mt-2.5"
+			/>
 		</div>
 	)
 }

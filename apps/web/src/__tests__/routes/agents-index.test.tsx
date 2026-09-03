@@ -51,12 +51,16 @@ vi.mock('@/components/shared/loading-skeleton', () => ({
 type ViewCapture = { lastProps: Record<string, unknown> | null }
 const viewCapture = globalThis as unknown as { __agentsViewCapture: ViewCapture }
 viewCapture.__agentsViewCapture = { lastProps: null }
+// The list is stubbed out: these tests are about what the route computes, not
+// how the list renders it. The real component pulls in its own queries and
+// would fail without a QueryClientProvider.
+function captureViewProps(props: Record<string, unknown>) {
+	;(globalThis as unknown as { __agentsViewCapture: ViewCapture }).__agentsViewCapture.lastProps =
+		props
+	return <div data-testid="agents-index-view" />
+}
 vi.mock('@/components/agents/agents-index-view', () => ({
-	AgentsIndexView: (props: Record<string, unknown>) => {
-		;(globalThis as unknown as { __agentsViewCapture: ViewCapture }).__agentsViewCapture.lastProps =
-			props
-		return <div data-testid="agents-index-view" />
-	},
+	AgentsIndexView: captureViewProps,
 }))
 
 import { Route } from '@/routes/_authed/$workspaceId/agents/index'

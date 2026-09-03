@@ -47,9 +47,25 @@ oauth_config:
       - chat:write
       - chat:write.customize
       - users:read
+      # `slack_read_user_profile` returns status/timezone detail, which
+      # users.info alone does not carry.
+      - users.profile:read
       - app_mentions:read
       - reactions:read
       - reactions:write
+      # The canvas tools run on the BOT token like every other non-search tool.
+      # Slack accepts canvases:read/write on either token type; granting them to
+      # the bot is what keeps canvases off the user-token path.
+      - canvases:read
+      - canvases:write
+      # Attachment ingest downloads url_private bytes, and slack_read_canvas
+      # reads a canvas the same way. Without it Slack answers every download
+      # with HTTP 403 (MASKIN-DEV-A).
+      - files:read
+      - commands
+      - links:read
+      - links:write
+      - team:read
     # User token (xoxp-) — required by user-token-only features (Slack search,
     # canvases, file reads). NOT used by the agent-posting path; the runtime
     # guard refuses to post with a user token. Keep these unless you have

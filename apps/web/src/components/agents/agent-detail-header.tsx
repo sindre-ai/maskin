@@ -47,12 +47,20 @@ export function AgentDetailHeader({
 					name={agent.name}
 					type={agent.type}
 					size="xl"
-					className="rounded-2xl"
+					tone="strong"
+					className="size-14 rounded-2xl text-[22px] font-bold"
 					id={agent.id}
 				/>
 				<div className="flex min-w-0 flex-1 flex-col gap-1.5">
 					<div className="flex flex-wrap items-center gap-2.5">
-						<h1 className="min-w-0 flex-1 truncate text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
+						{/* Named explicitly: the heading's only child is the edit button,
+						    and a control contributes its *accessible name* to the name of
+						    an ancestor computed from content — so without this the page's
+						    one <h1> announces "Edit agent name" instead of the agent's. */}
+						<h1
+							aria-label={agent.name}
+							className="min-w-0 flex-1 truncate text-xl font-semibold tracking-tight text-foreground sm:text-2xl"
+						>
 							<EditableField
 								value={agent.name}
 								label="Agent name"
@@ -63,15 +71,16 @@ export function AgentDetailHeader({
 								inputClassName="text-xl font-semibold tracking-tight sm:text-2xl"
 							/>
 						</h1>
-						{/* Dot form of the single status renderer — it pulses while live
-						    (mockup 2360). */}
+						{/* The bare coloured word — no dot, no plate. v2 dropped both here
+						    because the name already carries the eye and the identity row
+						    should read as one line of text (mockup 2321). */}
 						<span className="text-[11px]">
-							<AgentStatusPill status={portrait} pulse />
+							<AgentStatusPill status={portrait} variant="bare" />
 						</span>
 						<Select value={workspace.id} disabled>
 							<SelectTrigger
 								aria-label="Team"
-								className="h-7 rounded-full border-dashed px-2.5 text-[11px] font-medium text-muted-foreground"
+								className="h-[22px] gap-1.5 rounded-full border-dashed bg-muted/40 px-2.5 py-0 text-[11px] font-semibold text-muted-foreground"
 							>
 								<SelectValue />
 							</SelectTrigger>

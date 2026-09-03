@@ -86,39 +86,9 @@ describe('CommentInput', () => {
 		expect(await screen.findByText('Attach a file')).toBeInTheDocument()
 		expect(screen.getByText('Reference an object')).toBeInTheDocument()
 		expect(screen.getByText('Mention an agent')).toBeInTheDocument()
-		expect(screen.getByText('Attach a decision')).toBeInTheDocument()
-	})
-
-	it('attaches decision options and posts them as metadata.chips', async () => {
-		const user = userEvent.setup()
-		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
-
-		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
-		await user.click(await screen.findByText('Attach a decision'))
-
-		const option = screen.getByRole('textbox', { name: 'Decision option' })
-		await user.type(option, 'Ship it{Enter}')
-		await user.type(option, 'Hold{Enter}')
-		expect(screen.getByTestId('decision-attachment')).toHaveTextContent('Ship it')
-
-		// An option can be taken back off before sending.
-		await user.click(screen.getByRole('button', { name: 'Remove option Hold' }))
-		expect(screen.queryByText('Hold')).not.toBeInTheDocument()
-
-		await user.type(
-			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
-			'Which way do we go?',
-		)
-		await user.click(screen.getByRole('button', { name: /send/i }))
-
-		expect(mockMutate).toHaveBeenCalledWith(
-			expect.objectContaining({
-				entity_id: 'obj-1',
-				content: 'Which way do we go?',
-				metadata: { chips: ['Ship it'] },
-			}),
-			expect.any(Object),
-		)
+		// Options for the reader to pick from are a `decision`, which only an
+		// agent authors. The composer used to offer a second, weaker way here.
+		expect(screen.queryByText('Attach a decision')).not.toBeInTheDocument()
 	})
 
 	it('posts picked objects as metadata.refs alongside the comment body', async () => {
@@ -161,31 +131,25 @@ describe('CommentInput', () => {
 		expect(mockMutate).not.toHaveBeenCalled()
 	})
 
-	it('carries an attachment and decision options on the same comment', async () => {
+	it('carries an attachment and the comment body on the same submit', async () => {
 		mockDraftFiles = [
 			{ tempId: 'f-1', name: 'metrics.png', sizeBytes: 1024, status: 'uploaded', progress: 100 },
 		]
 		const user = userEvent.setup()
 		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
 
-		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
-		// Attaching a file no longer locks the decision affordance out.
-		expect(await screen.findByText('Attach a decision')).not.toHaveAttribute('data-disabled', '')
-		await user.click(screen.getByText('Attach a decision'))
-
-		await user.type(screen.getByRole('textbox', { name: 'Decision option' }), 'Ship it{Enter}')
 		await user.type(
 			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
 			'Chart attached — which way?',
 		)
 		await user.click(screen.getByRole('button', { name: /send/i }))
 
-		// The queued path carries the same metadata shape as the direct one, and
-		// the direct mutation is not used when files are in play.
+		// The queued path carries the same shape as the direct one, and the
+		// direct mutation is not used when files are in play.
 		expect(mockDraftSubmit).toHaveBeenCalledWith({
 			content: 'Chart attached — which way?',
 			mentions: [],
-			metadata: { chips: ['Ship it'] },
+			metadata: undefined,
 		})
 		expect(mockMutate).not.toHaveBeenCalled()
 	})

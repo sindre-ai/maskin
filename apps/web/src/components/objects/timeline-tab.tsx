@@ -1,5 +1,4 @@
 import { ActivityComment } from '@/components/activity/activity-comment'
-import { hasDecisionChips } from '@/components/activity/decision-chips'
 import { computeUnreadEventIds } from '@/components/activity/object-activity'
 import { PhaseDivider } from '@/components/activity/phase-divider'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -13,6 +12,7 @@ import { useObjectGraph } from '@/hooks/use-objects'
 import { useMarkRead } from '@/hooks/use-subscriptions'
 import type { ActorListItem, EventResponse, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { hasDecision } from '@/lib/comment-decision'
 import { useWorkspace } from '@/lib/workspace-context'
 import { OBJECT_DIFF_FIELDS, findChange, getChangesFromEventData } from '@maskin/shared'
 import { formatEventDescription } from '@maskin/shared'
@@ -120,11 +120,11 @@ const FILTERS: Array<{ id: StreamFilter; label: string }> = [
 
 /**
  * The mockup's `cnt.decisions` — a comment that asked the reader to choose.
- * Carrying decision chips is what makes a comment a decision; a plain comment,
- * however important, is not one.
+ * Carrying a decision block is what makes a comment a decision; a plain
+ * comment, however important, is not one.
  */
 function isDecisionComment(event: EventResponse): boolean {
-	return hasDecisionChips(event)
+	return hasDecision(event)
 }
 
 // Past-participle inverses for inbound relationships (matches

@@ -1,10 +1,8 @@
-import { LegacyGeneralPage } from '@/components/settings/legacy/general-page'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { cn } from '@/lib/cn'
 import { type Theme, useTheme } from '@/lib/theme'
@@ -19,7 +17,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/')({
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-function GeneralPageV2() {
+function GeneralPage() {
 	const { workspace, workspaceId } = useWorkspace()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 	const [name, setName] = useState(workspace.name)
@@ -167,9 +165,4 @@ function ThemePicker() {
 			</div>
 		</div>
 	)
-}
-
-// `new-design` boundary for Settings → General.
-function GeneralPage() {
-	return useFeatureFlag('new-design') ? <GeneralPageV2 /> : <LegacyGeneralPage />
 }

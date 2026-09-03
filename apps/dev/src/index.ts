@@ -17,6 +17,7 @@ import {
 } from './lib/dev-bootstrap'
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
+import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
@@ -118,6 +119,10 @@ const webhookDeliveriesCleaner = new WebhookDeliveriesCleaner(db)
 webhookDeliveriesCleaner.start()
 logger.info('Webhook deliveries cleaner started')
 
+const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
+briefCacheCleaner.start()
+logger.info('Brief cache cleaner started')
+
 const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()
 logger.info('Webhook deliveries reconciler started')
@@ -145,6 +150,11 @@ const sessionDispatchQueue = new SessionDispatchQueue(db, async () => ({ kind: '
 	// session: the log stream just stops. This puts the reason, and the
 	// "start a new session" recovery, into the transcript itself.
 	appendSystemLog: (sessionId, content) => sessionManager.insertSystemLog(sessionId, content),
+	// In production the dispatch queue — not the createSession promise — is
+	// where a workspace's missing LLM credentials surface, so this is the only
+	// way the trigger runner learns to stop firing against it.
+	onPermanentFailure: ({ workspaceId, reasonCode }) =>
+		triggerRunner.handleDispatchPermanentFailure(workspaceId, reasonCode),
 })
 if (process.env.NODE_ENV === 'production') {
 	const dispatcher = new SessionDispatcher({

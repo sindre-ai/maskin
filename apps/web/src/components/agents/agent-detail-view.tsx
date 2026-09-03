@@ -25,37 +25,60 @@ export function AgentDetailView({ agent }: { agent: ActorResponse }) {
 
 	const sessionsByAgent = useMemo(() => groupSessionsByAgent(sessions ?? []), [sessions])
 	const portrait = getPortraitStatus(agent, deriveAgentStatus(agent.id, sessionsByAgent))
-	const isRunning = portrait === 'running'
 
-	// The agent-level action belongs in the top bar, right-aligned (mockup 2351),
-	// not beside the outcome line in the page body.
+	// The detail bar's one agent-level control is the enable/disable switch
+	// (mockup 2313: `adPaused ? "Enable agent" : "Disable agent"`), bordered and
+	// amber in both states. Both halves already map onto the app's own calls:
+	// `POST /actors/:id/pause` sets agentState `paused` and stops its live
+	// sessions, `POST /actors/:id/run` sets it back to `running` and resumes.
+	// Starting new work is the composer's job at the foot of the page, exactly
+	// as the mockup has it.
+	const isDisabled = portrait === 'paused'
 	const actions = (
 		<AgentRunPauseButton
-			isActive={isRunning}
+			isActive={!isDisabled}
 			onRun={() =>
-				run.mutate({ id: agent.id }, { onError: () => toast.error(`Couldn't start ${agent.name}`) })
+				run.mutate(
+					{ id: agent.id },
+					{ onError: () => toast.error(`Couldn't enable ${agent.name}`) },
+				)
 			}
 			onPause={() =>
-				pause.mutate(agent.id, { onError: () => toast.error(`Couldn't pause ${agent.name}`) })
+				pause.mutate(agent.id, { onError: () => toast.error(`Couldn't disable ${agent.name}`) })
 			}
 			isRunPending={run.isPending}
 			isPausePending={pause.isPending}
-			runLabel={portrait === 'paused' ? 'Resume' : 'Run'}
+			runLabel="Enable agent"
+			pauseLabel="Disable agent"
+			tone="warning"
 			density="nav"
 		/>
 	)
 
 	return (
 		<>
-			<PageHeader title={agent.name} actions={actions} />
+			{/* `Agents › {name}` in the compact detail bar, not a nav-row <h1> — the
+			    screen's own identity block below carries the name (mockup 2309–2315). */}
+			<PageHeader
+				crumb={{
+					parentLabel: 'Agents',
+					parentTo: '/$workspaceId/agents',
+					parentParams: { workspaceId },
+					label: agent.name,
+				}}
+				actions={actions}
+			/>
+			{/* Order is what the agent *is*, then what it did, then how it is
+			    configured: identity → usage → sessions → loops → instructions →
+			    skills → tools (mockup 2442–2490). */}
 			<div className="mx-auto flex max-w-3xl flex-col gap-6">
 				<AgentDetailHeader agent={agent} portrait={portrait} />
 				<AgentUsageBlock agent={agent} workspaceId={workspaceId} />
 				<AgentSessionsSection agent={agent} />
 				<AgentLoopsSection agent={agent} />
+				<AgentInstructionsSection agent={agent} />
 				<AgentSkillsSection agent={agent} />
 				<AgentToolsSection agent={agent} />
-				<AgentInstructionsSection agent={agent} />
 				<AgentComposer agent={agent} />
 			</div>
 		</>

@@ -3,8 +3,8 @@ import { ObjectReference } from '@/components/shared/object-reference'
 import { useActor, useActors } from '@/hooks/use-actors'
 import { useFiles } from '@/hooks/use-files'
 import type { ActorListItem, EventResponse, SessionResponse } from '@/lib/api'
-import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { hasDecision, legacyChipsOf } from '@/lib/comment-decision'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { ChevronDown, Reply } from 'lucide-react'
 import { useState } from 'react'
@@ -12,9 +12,9 @@ import { ActorAvatar } from '../shared/actor-avatar'
 import { AgentOutput } from '../shared/agent-output'
 import { AttachedFileCard } from '../shared/attached-file-card'
 import { RelativeTime } from '../shared/relative-time'
+import { CommentDecisionBlock } from './comment-decision-block'
 import { CommentInput } from './comment-input'
 import { CommentTaskList, hasTaskList } from './comment-task-list'
-import { DecisionChips, hasDecisionChips } from './decision-chips'
 import { MentionSessionCard } from './mention-session-card'
 
 const COMMENT_DISALLOWED_ELEMENTS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
@@ -76,7 +76,7 @@ interface CommentRowProps {
 	isDecisionPoint?: boolean
 	variant?: CommentVariant
 	/** Rendered under the message text — inside the bubble when bubbled, so the
-	 *  decision chips and thread toggle read as part of the message. */
+	 *  thread toggle reads as part of the message. */
 	footer?: React.ReactNode
 }
 
@@ -119,6 +119,7 @@ function CommentRow({
 	const isAgent = actor?.type === 'agent'
 	const clampable = isBubble && content.length > CLAMP_OVER
 	const referencedObjectIds = readReferencedObjectIds(event)
+	const legacyChips = legacyChipsOf(event)
 
 	const avatarClass = isBubble
 		? 'size-[30px] border-[3px] border-background text-[11px]'
@@ -280,6 +281,16 @@ function CommentRow({
 						</div>
 					)}
 					{hasTaskList(event) && <CommentTaskList event={event} workspaceId={workspaceId} />}
+					{/* Options from a comment written before `decision` replaced
+					    `metadata.chips`. They never lived in the comment's own text, so
+					    without this the reader sees a question with its choices missing.
+					    Text, not buttons: the mechanism is gone and these are not a
+					    decision — the reader answers in the composer below. */}
+					{legacyChips.length > 0 && (
+						<p className="text-muted-foreground mt-1.5 text-xs">
+							Options offered: {legacyChips.join(' · ')}
+						</p>
+					)}
 					{attachmentFileIds.length > 0 && (
 						<ul className="mt-1.5 space-y-1">
 							{attachmentFileIds.map((fileId) => {
@@ -347,9 +358,7 @@ export function ActivityComment({
 	const [showReplyInput, setShowReplyInput] = useState(false)
 	const hasReplies = replies.length > 0
 	const actorList = actors ?? []
-	const isDecisionPoint = hasDecisionChips(event)
-	const currentActorId = getStoredActor()?.id
-	const alreadyReplied = !!currentActorId && replies.some((r) => r.actorId === currentActorId)
+	const isDecisionPoint = hasDecision(event)
 	// Collapsed by default when the caller opts in — the toggle carries the
 	// count and a note naming who spoke last, both read off the replies
 	// themselves (mockup 369).
@@ -368,13 +377,6 @@ export function ActivityComment({
 	}
 
 	const isBubble = variant === 'bubble'
-
-	const decisionBlock =
-		isDecisionPoint && !alreadyReplied ? (
-			<div className={cn('mt-1.5', !isBubble && 'ml-7')}>
-				<DecisionChips event={event} objectId={objectId} workspaceId={workspaceId} />
-			</div>
-		) : null
 
 	// Mockup 1288: the thread toggle is a pill inside the message, carrying just
 	// the count. The plain reading keeps the "last from <name>" note, which the
@@ -406,6 +408,26 @@ export function ActivityComment({
 		</button>
 	) : null
 
+	// The ask's own options, under the message that raised them. The timeline
+	// marks a decision comment as needing the reader, so it has to be answerable
+	// here too — badging a call and then sending the reader elsewhere to make it
+	// is the state this replaced.
+	const decisionBlock = isDecisionPoint ? (
+		<CommentDecisionBlock
+			event={event}
+			workspaceId={workspaceId}
+			objectId={objectId}
+			replies={replies}
+		/>
+	) : null
+	const rowFooter =
+		decisionBlock || (isBubble && threadToggle) ? (
+			<>
+				{decisionBlock}
+				{isBubble ? threadToggle : null}
+			</>
+		) : undefined
+
 	return (
 		<div id={`comment-${event.id}`} className="group">
 			<CommentRow
@@ -416,17 +438,8 @@ export function ActivityComment({
 				isUnread={isUnread}
 				isDecisionPoint={isDecisionPoint}
 				variant={variant}
-				footer={
-					isBubble ? (
-						<>
-							{decisionBlock}
-							{threadToggle}
-						</>
-					) : undefined
-				}
+				footer={rowFooter}
 			/>
-
-			{!isBubble && decisionBlock}
 
 			{mentionSessions.length > 0 && (
 				<div className={cn('mt-1 space-y-1', isBubble ? 'ml-[41px]' : 'ml-7')}>

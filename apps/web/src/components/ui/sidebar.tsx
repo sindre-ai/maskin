@@ -1,6 +1,6 @@
 import { Slot } from '@radix-ui/react-slot'
 import { type VariantProps, cva } from 'class-variance-authority'
-import { PanelLeft } from 'lucide-react'
+import { type LucideIcon, PanelLeft } from 'lucide-react'
 import * as React from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -377,8 +377,14 @@ Sidebar.displayName = 'Sidebar'
 
 const SidebarTrigger = React.forwardRef<
 	React.ElementRef<typeof Button>,
-	React.ComponentProps<typeof Button> & { side?: 'left' | 'right' }
->(({ side = 'left', className, onClick, ...props }, ref) => {
+	React.ComponentProps<typeof Button> & {
+		side?: 'left' | 'right'
+		/** Glyph on the button. Defaults to the open-panel mark; a trigger that
+		 *  only ever collapses (the sidebar header's own control) passes the
+		 *  closing variant so the arrow points the way the panel will move. */
+		icon?: LucideIcon
+	}
+>(({ side = 'left', className, onClick, icon: Icon = PanelLeft, ...props }, ref) => {
 	const leftCtx = React.useContext(SidebarContext)
 	const rightCtx = React.useContext(SidebarRightContext)
 	const ctx = side === 'right' && rightCtx ? rightCtx : leftCtx
@@ -400,7 +406,7 @@ const SidebarTrigger = React.forwardRef<
 			}}
 			{...props}
 		>
-			<PanelLeft />
+			<Icon />
 			<span className="sr-only">Toggle Sidebar</span>
 		</Button>
 	)

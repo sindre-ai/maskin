@@ -14,6 +14,27 @@ const AVATAR_PALETTE = [
 	'bg-[var(--st-proposed-bg)] text-[var(--st-proposed-text)]',
 ] as const
 
+// The same ten identities as solid plates: the status *text* token becomes the
+// fill and its tint becomes the glyph. v2 draws an agent's avatar this way
+// wherever the avatar is the row's anchor (mockup 2329's `avStrong` + reversed
+// foreground), and the pairing inverts correctly in dark mode because both
+// halves are tokens.
+const AVATAR_PALETTE_STRONG = [
+	'bg-[var(--st-in_progress-text)] text-[var(--st-in_progress-bg)]',
+	'bg-[var(--st-active-text)] text-[var(--st-active-bg)]',
+	'bg-[var(--st-signal-text)] text-[var(--st-signal-bg)]',
+	'bg-[var(--st-clustered-text)] text-[var(--st-clustered-bg)]',
+	'bg-[var(--st-in_review-text)] text-[var(--st-in_review-bg)]',
+	'bg-[var(--st-validated-text)] text-[var(--st-validated-bg)]',
+	'bg-[var(--st-qualified-text)] text-[var(--st-qualified-bg)]',
+	'bg-[var(--st-scored-text)] text-[var(--st-scored-bg)]',
+	'bg-[var(--st-processing-text)] text-[var(--st-processing-bg)]',
+	'bg-[var(--st-proposed-text)] text-[var(--st-proposed-bg)]',
+] as const
+
+/** Tint plate (the default everywhere) vs the solid plate v2 uses for a row anchor. */
+export type ActorAvatarTone = 'subtle' | 'strong'
+
 export function getActorInitials(name: string): string {
 	const trimmed = (name ?? '').trim()
 	if (!trimmed) return '?'
@@ -38,10 +59,14 @@ function hashString(input: string): number {
 	return hash >>> 0
 }
 
-export function getActorAvatarPaletteClass(seed: string | undefined): string {
+export function getActorAvatarPaletteClass(
+	seed: string | undefined,
+	tone: ActorAvatarTone = 'subtle',
+): string {
 	const key = seed && seed.length > 0 ? seed : '?'
-	const idx = hashString(key) % AVATAR_PALETTE.length
-	return AVATAR_PALETTE[idx] ?? AVATAR_PALETTE[0]
+	const palette = tone === 'strong' ? AVATAR_PALETTE_STRONG : AVATAR_PALETTE
+	const idx = hashString(key) % palette.length
+	return palette[idx] ?? palette[0]
 }
 
 export function ActorAvatar({
@@ -52,6 +77,7 @@ export function ActorAvatar({
 	onClick,
 	id,
 	imageUrl,
+	tone = 'subtle',
 }: {
 	name: string
 	type: string
@@ -62,6 +88,8 @@ export function ActorAvatar({
 	onClick?: () => void
 	id?: string
 	imageUrl?: string
+	/** `strong` fills the plate with the identity colour and reverses the glyph. */
+	tone?: ActorAvatarTone
 }) {
 	// Track the specific url that failed so a caller swapping imageUrl resets the fallback
 	// automatically — without a useEffect that biome flags for missing dep semantics.
@@ -75,7 +103,7 @@ export function ActorAvatar({
 		xl: 'h-[52px] w-[52px] text-lg',
 	}[size]
 	const initials = getActorInitials(name)
-	const paletteClass = getActorAvatarPaletteClass(id ?? name)
+	const paletteClass = getActorAvatarPaletteClass(id ?? name, tone)
 	const showImage = Boolean(imageUrl) && !imageFailed
 
 	const baseClasses = cn(

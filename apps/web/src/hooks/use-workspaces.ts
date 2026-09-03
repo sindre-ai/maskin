@@ -9,6 +9,16 @@ export function useWorkspaces() {
 	})
 }
 
+export function useCreateWorkspace() {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (data: { name: string }) => api.workspaces.create(data),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.workspaces.all() })
+		},
+	})
+}
+
 export function useUpdateWorkspace(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
