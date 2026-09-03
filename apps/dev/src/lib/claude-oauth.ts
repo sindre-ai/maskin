@@ -21,16 +21,79 @@ import { logger } from './logger'
 export const CLAUDE_CREDENTIAL_TIMEOUT_MS = 15_000
 
 /**
+ * Budget for the account-identity lookup. Deliberately far tighter than
+ * CLAUDE_CREDENTIAL_TIMEOUT_MS: that one bounds calls a session cannot start
+ * without, while this one bounds a call that only decides what to *call* a
+ * subscription. It runs on the settings page load and on import, so a slow
+ * profile endpoint must cost a moment, not a quarter of a minute.
+ */
+export const ACCOUNT_LOOKUP_TIMEOUT_MS = 4_000
+
+/**
+ * How long a completed lookup — successful or not — stands before we ask
+ * again. Every attempt is recorded (see `backfillAccountLabels`), so without
+ * this a subscription whose identity we can't read would re-ask on every
+ * single settings page load, forever.
+ */
+export const ACCOUNT_LOOKUP_RETRY_MS = 24 * 60 * 60 * 1000
+
+/**
  * Who the subscription belongs to, as reported by Anthropic — not by us and
  * not by the customer. Displayed next to (never instead of) the user's own
  * `nickname`: one Anthropic account can be connected to several workspaces,
  * and a workspace may want to call it something else.
+ *
+ * This is the in-memory shape. At rest the email is encrypted — see
+ * `StoredAccountIdentity`.
  */
 export interface ClaudeAccountIdentity {
 	email?: string
 	organization?: string
-	/** When we last read it from Anthropic. Also the "we already tried" flag. */
+	/** When we last read it from Anthropic. Also the "we already asked" flag. */
 	fetchedAt: number
+}
+
+/**
+ * The identity as persisted on `workspaces.settings.claude_oauth`.
+ *
+ * The email is encrypted for the same reason the tokens are: that settings
+ * blob is returned wholesale by `GET /api/workspaces` to every workspace
+ * member, and reachable by anything holding a workspace API key — including an
+ * agent container. A nickname is something a person chose to type there; an
+ * account email is personal data we harvested, so it does not go in as
+ * plaintext. The organisation name is a company name, not personal data, and
+ * stays readable in the raw row where it is useful for support.
+ */
+export interface StoredAccountIdentity {
+	encryptedEmail?: string
+	organization?: string
+	fetchedAt: number
+}
+
+/** Encrypt an identity for storage. */
+export function encryptAccountIdentity(identity: ClaudeAccountIdentity): StoredAccountIdentity {
+	return {
+		encryptedEmail: identity.email === undefined ? undefined : encrypt(identity.email),
+		organization: identity.organization,
+		fetchedAt: identity.fetchedAt,
+	}
+}
+
+/**
+ * Decrypt a stored identity. A ciphertext we can no longer read (a rotated
+ * encryption key, a hand-edited row) costs the label, never the request — the
+ * rest of the identity still renders.
+ */
+export function decryptAccountIdentity(stored: StoredAccountIdentity): ClaudeAccountIdentity {
+	let email: string | undefined
+	if (stored.encryptedEmail !== undefined) {
+		try {
+			email = decrypt(stored.encryptedEmail)
+		} catch {
+			email = undefined
+		}
+	}
+	return { email, organization: stored.organization, fetchedAt: stored.fetchedAt }
 }
 
 export interface ClaudeOAuthTokens {
@@ -148,7 +211,8 @@ export function parseAccountIdentity(body: unknown): ClaudeAccountIdentity | und
  * Best-effort by construction: any failure — network, a non-2xx, a body we
  * don't recognise — returns `undefined`, because a missing display label must
  * never be the reason a credential can't be imported or a settings page can't
- * load. Bounded by the same timeout as every other credential-path call.
+ * load. Bounded by ACCOUNT_LOOKUP_TIMEOUT_MS — a label is not worth making
+ * anyone wait for.
  *
  * The endpoint takes the subscription's OAuth access token as a bearer token
  * (its own 401 says so) and needs no additional scope beyond what the token
@@ -163,7 +227,7 @@ export async function fetchClaudeAccount(
 				Authorization: `Bearer ${accessToken}`,
 				'anthropic-beta': 'oauth-2025-04-20',
 			},
-			signal: AbortSignal.timeout(CLAUDE_CREDENTIAL_TIMEOUT_MS),
+			signal: AbortSignal.timeout(ACCOUNT_LOOKUP_TIMEOUT_MS),
 		})
 		if (!res.ok) {
 			logger.debug('Claude account profile lookup returned non-2xx', { status: res.status })
@@ -211,7 +275,7 @@ export interface EncryptedOAuthData {
 	subscriptionType?: string
 	scopes?: string[]
 	nickname?: string
-	account?: ClaudeAccountIdentity
+	account?: StoredAccountIdentity
 }
 
 /**
@@ -225,7 +289,7 @@ export function decryptOAuthData(data: EncryptedOAuthData): ClaudeOAuthTokens {
 		subscriptionType: data.subscriptionType,
 		scopes: data.scopes,
 		nickname: data.nickname,
-		account: data.account,
+		account: data.account && decryptAccountIdentity(data.account),
 	}
 }
 
@@ -240,7 +304,7 @@ export function encryptOAuthTokens(tokens: ClaudeOAuthTokens): EncryptedOAuthDat
 		subscriptionType: tokens.subscriptionType,
 		scopes: tokens.scopes,
 		nickname: tokens.nickname,
-		account: tokens.account,
+		account: tokens.account && encryptAccountIdentity(tokens.account),
 	}
 }
 
