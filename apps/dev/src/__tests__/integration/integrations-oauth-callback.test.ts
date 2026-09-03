@@ -97,6 +97,9 @@ describe('GET /api/integrations/:provider/callback — reconnect against a stabl
 		// stableExternalId, colliding with existingActive and returning 500.
 		const res = await app.request(
 			`/api/integrations/${providerName}/callback?state=${encodeURIComponent(state)}&code=irrelevant`,
+			// The callback requires the state-binding cookie POST /connect sets; this
+			// test seeds the pending row directly, so it supplies the cookie too.
+			{ headers: { cookie: `maskin_oauth_nonce_${providerName}=${nonce}` } },
 		)
 
 		expect(res.status).toBe(302)

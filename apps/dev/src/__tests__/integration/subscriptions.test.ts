@@ -1033,7 +1033,7 @@ describe('Subscriptions Integration', () => {
 	})
 
 	it("agent-to-agent mentions on a shared object never surface in a human watcher's For You", async () => {
-		// The bet's commitment: agent→agent mentions route to the target agent via
+		// The bet's contract: agent→agent mentions route to the target agent via
 		// the per-event notification path and never surface to a human's For You.
 		// Reuse B as a stand-in for "another agent" mentioned in passing.
 		const appA = appAs(aId)
@@ -1178,12 +1178,11 @@ describe('Subscriptions Integration', () => {
 		expect(item.max_unread_attention).toBe(4)
 	})
 
-	it('commitment/Loop status changes — at-risk, breached, or born signalling — never surface in the mentions-only unread feed', async () => {
-		// For You dropped the status_changed/created status arms (formerly
-		// SIGNALLING_LOOP_STATUSES / COMMITMENT_ATTENTION_STATUSES, T2 on
-		// bet/loops-primitive) once the feed became mentions-only. A watcher's
-		// unread feed no longer reacts to a Loop's status at all — transition,
-		// birth, or recovery — only an @-mentioning comment does.
+	it('Loop status changes — paused, born, or recovered — never surface in the mentions-only unread feed', async () => {
+		// For You dropped the status_changed/created status arms once the feed
+		// became mentions-only. A watcher's unread feed no longer reacts to a
+		// Loop's status at all — transition, birth, or recovery — only an
+		// @-mentioning comment does.
 		const appA = appAs(aId)
 		const appB = appAs(bId)
 		const headersA = { 'x-workspace-id': workspaceId }
@@ -1194,9 +1193,9 @@ describe('Subscriptions Integration', () => {
 				'POST',
 				'/api/objects',
 				buildCreateObjectBody({
-					type: 'commitment',
-					title: 'Seeded breached loop',
-					status: 'breached',
+					type: 'loop',
+					title: 'Seeded paused loop',
+					status: 'paused',
 				}),
 				headersA,
 			),
@@ -1221,9 +1220,9 @@ describe('Subscriptions Integration', () => {
 			unreadAfterBirth.items.find((i: { entity_id: string }) => i.entity_id === loop.id),
 		).toBeUndefined()
 
-		// A transition into at-risk: no `status_changed` arm left either.
+		// A transition to another loop status: no `status_changed` arm left either.
 		const patchRes = await appA.request(
-			jsonRequest('PATCH', `/api/objects/${loop.id}`, { status: 'at-risk' }, headersA),
+			jsonRequest('PATCH', `/api/objects/${loop.id}`, { status: 'waiting' }, headersA),
 		)
 		expect(patchRes.status).toBe(200)
 
@@ -1446,6 +1445,159 @@ describe('Subscriptions Integration', () => {
 		expect(rows.some((r) => r.actor_id === bId && r.source === 'mentioned')).toBe(true)
 		// ...and the ghost simply produced no row.
 		expect(rows.some((r) => r.actor_id === ghostActorId)).toBe(false)
+	})
+
+	// The For You card leads with the comment that mentioned the reader, so the
+	// feed has to carry that comment. These run against real Postgres because
+	// the payload is assembled from the aggregate's `latest_event_id` — a
+	// mocked db cannot tell us whether that id is the row we think it is.
+	describe('latest_mention', () => {
+		const decision = {
+			title: 'Merge the trigger rewrite?',
+			summary:
+				'A page 200 people use daily was rewritten and nobody has opened it. I have run the suite.',
+			ask: 'This ships to every workspace at once, so I will not merge it alone.',
+			options: [
+				{ label: 'Send back', consequences: ['Nothing ships today', 'Costs another round'] },
+				{
+					label: 'Merge now',
+					recommended: true,
+					consequences: ['Ships tonight', 'No rollback once migrations run'],
+				},
+			],
+		}
+
+		async function seedObject() {
+			const appA = appAs(aId)
+			const res = await appA.request(
+				jsonRequest('POST', '/api/objects', buildCreateObjectBody(), {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			return (await res.json()) as { id: string }
+		}
+
+		it('returns the newest comment that mentions the reader, with its decision parsed', async () => {
+			const appA = appAs(aId)
+			const appB = appAs(bId)
+			const headers = { 'x-workspace-id': workspaceId }
+			const obj = await seedObject()
+
+			// An older mention, then a newer one. Only the newer should surface.
+			await appB.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{ entity_id: obj.id, content: 'first ask', mentions: [aId] },
+					headers,
+				),
+			)
+			const second = await appB.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{ entity_id: obj.id, content: 'second ask', mentions: [aId], decision, attention: 4 },
+					headers,
+				),
+			)
+			expect(second.status).toBe(201)
+
+			const res = await appA.request(jsonGet('/api/subscriptions/unread', headers))
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as {
+				items: Array<{ entity_id: string; latest_mention?: Record<string, unknown> }>
+			}
+			const item = body.items.find((i) => i.entity_id === obj.id)
+
+			expect(item?.latest_mention).toBeDefined()
+			expect(item?.latest_mention?.content).toBe('second ask')
+			expect(item?.latest_mention?.attention).toBe(4)
+			expect(item?.latest_mention?.decision).toEqual(decision)
+		})
+
+		it('returns a null decision for a plain mention', async () => {
+			const appA = appAs(aId)
+			const appB = appAs(bId)
+			const headers = { 'x-workspace-id': workspaceId }
+			const obj = await seedObject()
+
+			await appB.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{ entity_id: obj.id, content: 'just a question', mentions: [aId] },
+					headers,
+				),
+			)
+
+			const res = await appA.request(jsonGet('/api/subscriptions/unread', headers))
+			const body = (await res.json()) as {
+				items: Array<{ entity_id: string; latest_mention?: Record<string, unknown> }>
+			}
+			const item = body.items.find((i) => i.entity_id === obj.id)
+			expect(item?.latest_mention?.decision).toBeNull()
+			expect(item?.latest_mention?.attention).toBeNull()
+		})
+
+		// The hard-reject gate: a decision that breaks the house style must not
+		// reach the feed as a broken set of buttons, and the agent must be able
+		// to fix every rule in one retry.
+		it('rejects a malformed decision, listing every violated rule at once', async () => {
+			const appB = appAs(bId)
+			const headers = { 'x-workspace-id': workspaceId }
+			const obj = await seedObject()
+
+			const res = await appB.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{
+						entity_id: obj.id,
+						content: 'ask',
+						mentions: [aId],
+						decision: {
+							...decision,
+							title: 'Reviewing',
+							summary: 'It is quite bad.',
+							ask: 'Approval is needed.',
+						},
+					},
+					headers,
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = (await res.json()) as { error?: { details?: Array<{ field: string }> } }
+			const fields = new Set((body.error?.details ?? []).map((d) => d.field))
+			expect(fields).toContain('decision.title')
+			expect(fields).toContain('decision.summary')
+			expect(fields).toContain('decision.ask')
+		})
+
+		// The card is where the reader answers, so it carries the whole comment.
+		// The body used to be cut at 600 characters with a link to the object.
+		it('carries a long mention body in full', async () => {
+			const appA = appAs(aId)
+			const appB = appAs(bId)
+			const headers = { 'x-workspace-id': workspaceId }
+			const obj = await seedObject()
+
+			await appB.request(
+				jsonRequest(
+					'POST',
+					'/api/events',
+					{ entity_id: obj.id, content: 'x'.repeat(1200), mentions: [aId] },
+					headers,
+				),
+			)
+
+			const res = await appA.request(jsonGet('/api/subscriptions/unread', headers))
+			const body = (await res.json()) as {
+				items: Array<{ entity_id: string; latest_mention?: { content: string } }>
+			}
+			const mention = body.items.find((i) => i.entity_id === obj.id)?.latest_mention
+			expect(mention?.content).toHaveLength(1200)
+		})
 	})
 })
 

@@ -40,6 +40,11 @@ export interface BulkActionBarProps {
 	ownerOptions?: BulkActionBarOwnerOption[]
 	onStatusChange?: (status: string) => void
 	onOwnerChange?: (actorId: string) => void
+	/** Rows the current view has loaded — the ceiling `Select all` fills to. */
+	totalCount?: number
+	onSelectAll?: () => void
+	/** Opens a new chat carrying the selected objects as references. */
+	onAskAgent?: () => void
 	onCopyLink?: () => void
 	onCopyTitle?: () => void
 	onCopyTitleAsLink?: () => void
@@ -72,23 +77,13 @@ export function resolvePlatformDevice(): PlatformDevice {
 	return 'desktop'
 }
 
-function usePrefersReducedMotion() {
-	const [reduced, setReduced] = React.useState(false)
-	React.useEffect(() => {
-		if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
-		const mql = window.matchMedia('(prefers-reduced-motion: reduce)')
-		const onChange = () => setReduced(mql.matches)
-		onChange()
-		mql.addEventListener('change', onChange)
-		return () => mql.removeEventListener('change', onChange)
-	}, [])
-	return reduced
-}
-
 export function BulkActionBar({
 	selectedCount,
 	statusOptions = [],
 	ownerOptions = [],
+	totalCount = 0,
+	onSelectAll,
+	onAskAgent,
 	onStatusChange,
 	onOwnerChange,
 	onCopyLink,
@@ -102,7 +97,6 @@ export function BulkActionBar({
 	onClear,
 }: BulkActionBarProps) {
 	const visible = selectedCount > 0
-	const reducedMotion = usePrefersReducedMotion()
 	const [confirmOpen, setConfirmOpen] = React.useState(false)
 	// Bump these keys after each pick so the Selects remount and don't latch onto
 	// the last-chosen value — otherwise re-selecting the same status/owner on a
@@ -121,21 +115,57 @@ export function BulkActionBar({
 		[selectedCount],
 	)
 
+	// Mockup 5036–5039: with rows selected, `a` selects all and `e` archives.
+	// Both are bare letters, so they must never fire while the user is typing.
+	const canSelectAll = !!onSelectAll && totalCount > selectedCount
 	React.useEffect(() => {
 		if (!visible) return
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === 'Escape' && !confirmOpen) onClear()
+			if (e.key === 'Escape' && !confirmOpen) {
+				onClear()
+				return
+			}
+			if (confirmOpen || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.repeat) return
+			// Not necessarily an Element — a keydown dispatched at window/document
+			// targets a non-Element EventTarget, so narrow before touching DOM APIs.
+			const target = e.target instanceof HTMLElement ? e.target : null
+			if (
+				target?.isContentEditable ||
+				(target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+			) {
+				return
+			}
+			// The status and owner pickers live in this same bar. Radix renders their
+			// content as div/button — not INPUT/SELECT — and its typeahead does not stop
+			// propagation, so typing `e` to reach "evaluating" would otherwise land here
+			// as an unconfirmed bulk archive. Bail while any Radix popper is mounted.
+			if (
+				target?.closest(
+					'[data-radix-popper-content-wrapper],[role="menu"],[role="listbox"],[role="dialog"]',
+				) ||
+				document.querySelector('[data-radix-popper-content-wrapper]')
+			) {
+				return
+			}
+			if (e.key === 'a' && canSelectAll) {
+				e.preventDefault()
+				onSelectAll?.()
+				return
+			}
+			if (e.key === 'e' && onArchive) {
+				e.preventDefault()
+				emitCommit('archive')
+				onArchive()
+			}
 		}
 		window.addEventListener('keydown', onKey)
 		return () => window.removeEventListener('keydown', onKey)
-	}, [visible, confirmOpen, onClear])
+	}, [visible, confirmOpen, onClear, canSelectAll, onSelectAll, onArchive, emitCommit])
 
 	// Close the confirm dialog automatically when the selection is cleared.
 	React.useEffect(() => {
 		if (!visible && confirmOpen) setConfirmOpen(false)
 	}, [visible, confirmOpen])
-
-	const transitionClass = reducedMotion ? '' : 'transition-all duration-200 ease-out'
 
 	const plural = selectedCount === 1 ? '' : 's'
 	const copyLinkLabel = `Copy link${plural}`
@@ -153,7 +183,7 @@ export function BulkActionBar({
 					'fixed left-1/2 bottom-10 z-50 -translate-x-1/2',
 					'flex w-[calc(100%-2rem)] max-w-[44rem] items-center gap-2',
 					'overflow-x-auto rounded-xl border border-border bg-popover px-3 py-2 shadow-lg',
-					transitionClass,
+					'transition-[transform,opacity] duration-200 ease-out',
 					visible
 						? 'pointer-events-auto opacity-100 translate-y-0'
 						: 'pointer-events-none opacity-0 translate-y-4',
@@ -165,9 +195,46 @@ export function BulkActionBar({
 				>
 					{selectedCount}
 				</span>
-				<span className="hidden text-sm text-text-secondary sm:inline">selected</span>
+				<span className="hidden text-sm text-muted-foreground sm:inline">selected</span>
+
+				{canSelectAll && (
+					<button
+						type="button"
+						onClick={onSelectAll}
+						title="Select all (a)"
+						className="shrink-0 whitespace-nowrap text-xs font-semibold text-brand hover:underline"
+					>
+						Select all {totalCount}
+					</button>
+				)}
 
 				<div className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+
+				{onAskAgent && (
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						className="shrink-0"
+						onClick={onAskAgent}
+						title="Send these to a new chat as references"
+					>
+						<MessageSquare className="size-4" />
+						Ask an agent
+					</Button>
+				)}
+
+				{onAnswerAsks && askCount > 0 && (
+					<Button
+						type="button"
+						size="sm"
+						className="shrink-0"
+						onClick={onAnswerAsks}
+						aria-label={`Answer ${askCount} asks`}
+					>
+						Answer {askCount} {askCount === 1 ? 'ask' : 'asks'}
+					</Button>
+				)}
 
 				{onStatusChange && statusOptions.length > 0 && (
 					<Select
@@ -180,7 +247,7 @@ export function BulkActionBar({
 					>
 						<SelectTrigger
 							aria-label="Set status"
-							className="shrink-0 text-sm data-[placeholder]:text-text-secondary"
+							className="shrink-0 text-sm data-[placeholder]:text-muted-foreground"
 						>
 							<SelectValue placeholder="Status" />
 						</SelectTrigger>
@@ -206,10 +273,10 @@ export function BulkActionBar({
 					disabled={ownerOptions.length === 0 || !onOwnerChange}
 				>
 					<SelectTrigger
-						aria-label="Set owner"
-						className="shrink-0 text-sm data-[placeholder]:text-text-secondary"
+						aria-label="Set driver"
+						className="shrink-0 text-sm data-[placeholder]:text-muted-foreground"
 					>
-						<SelectValue placeholder="Owner" />
+						<SelectValue placeholder="Driver" />
 					</SelectTrigger>
 					<SelectContent>
 						{ownerOptions.map((opt) => (
@@ -221,19 +288,6 @@ export function BulkActionBar({
 				</Select>
 
 				<div className="ml-auto flex shrink-0 items-center gap-1">
-					{onAnswerAsks && askCount > 0 && (
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							className="shrink-0"
-							onClick={onAnswerAsks}
-							aria-label={`Answer ${askCount} asks`}
-						>
-							<MessageSquare className="size-4" />
-							Answer {askCount} {askCount === 1 ? 'ask' : 'asks'}
-						</Button>
-					)}
 					{onCopyLink && (
 						<Tooltip>
 							<TooltipTrigger asChild>
@@ -319,12 +373,13 @@ export function BulkActionBar({
 							type="button"
 							variant="outline"
 							size="sm"
-							className="shrink-0"
+							className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
 							onClick={() => {
 								emitCommit('archive')
 								onArchive()
 							}}
 							aria-label="Archive selected"
+							title="Archive (e)"
 						>
 							<Archive className="size-4" />
 							Archive

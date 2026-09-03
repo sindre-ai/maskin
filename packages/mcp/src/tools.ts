@@ -591,7 +591,7 @@ export const tools = {
 				.record(z.unknown())
 				.optional()
 				.describe(
-					'MCP server config for agents: { mcpServers: { <name>: { command, args, env } } }. Critical for any agent whose job requires taking action outside Maskin itself — without the relevant MCP server connected here, the agent can have a perfect system_prompt and still be unable to actually do its job.',
+					'MCP server config for agents: { mcpServers: { <name>: { type, command, args, env } | { type: "http", url, headers } } }. Critical for any agent whose job requires taking action outside Maskin itself — without the relevant MCP server connected here, the agent can have a perfect system_prompt and still be unable to actually do its job. To give the agent the tools of a connected integration, call list_integration_providers and copy the `mcp.server` of that provider in under the provider name; connecting the integration by itself does NOT expose any tools unless its `mcp.autoInject` is true. `type` is required on each entry ("stdio" or "http") — omitting it fails validation with a bare "Invalid input".',
 				),
 			llm_config: actorLlmConfigSchema,
 			attach_skill_ids: z
@@ -629,7 +629,7 @@ export const tools = {
 				.record(z.unknown())
 				.optional()
 				.describe(
-					'MCP server config for agents: { mcpServers: { <name>: { command, args, env } } }.',
+					'MCP server config for agents: { mcpServers: { <name>: { type, command, args, env } | { type: "http", url, headers } } }. REPLACES the whole map — read the actor first and merge, or you will silently drop its existing servers. To add the tools of a connected integration, copy the `mcp.server` of that provider from list_integration_providers in under the provider name. `type` is required on each entry ("stdio" or "http").',
 				),
 			llm_config: actorLlmConfigSchema,
 			attach_skill_ids: z
@@ -695,7 +695,7 @@ export const tools = {
 	},
 	get_actor: {
 		description:
-			"Get an actor by ID — returns the full record including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), `skills` (id + name of workspace skills attached to the actor), and `connectedTriggers`/`connectedLoops` (the triggers/loops wired to this actor, same as `list_actors`). When `workspace_id` is given, `status` reflects the actor's membership role in that workspace (owner/admin/member), matching `list_actors`' workspace-scoped `status`. When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply.",
+			"Get an actor by ID. Returns `actor` — the full record, including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), `skills` (id + name of workspace skills attached to the actor), and `connectedTriggers`/`connectedLoops` (the triggers/loops wired to this actor, same as `list_actors`) — alongside `heroCard`, a display-only summary of that same actor with a subset of the fields under camelCased names. The two are the same record, not a full and a truncated copy; read `actor`. When `workspace_id` is given, `status` reflects the actor's membership role in that workspace (owner/admin/member), matching `list_actors`' workspace-scoped `status`. When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply. This tool is read-only — to change any of these fields, including `system_prompt`, `tools` and skill attachments, use `update_actor`.",
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			workspace_id: z
@@ -1036,7 +1036,7 @@ export const tools = {
 	},
 	create_comment: {
 		description:
-			'Primary channel for agent-to-human communication. Post comments here for status updates, questions, findings, decisions, blockers, and anything else a human needs to see. Do NOT bury that dialogue in `bet.content`, `task.content`, or object titles — those fields are the durable spec, not the conversation, and humans don\'t scan them for new information. If you\'re tempted to edit a description to "let someone know" something, that belongs in a comment.\n\nUse both a chart and a task checklist (see the `content` and `metadata` param docs) to keep replies short: one paragraph + a chart of the data you pulled via MCP + the checklist of work this comment represents.',
+			'Primary channel for agent-to-human communication. Post comments here for status updates, questions, findings, decisions, blockers, and anything else a human needs to see. Do NOT bury that dialogue in `bet.content`, `task.content`, or object titles — those fields are the durable spec, not the conversation, and humans don\'t scan them for new information. If you\'re tempted to edit a description to "let someone know" something, that belongs in a comment.\n\nUse both a chart and a task checklist (see the `content` and `metadata` param docs) to keep replies short: one paragraph + a chart of the data you pulled via MCP + the checklist of work this comment represents.\n\nWhen you need a human to make a call rather than just read something, put that human in `mentions` and fill in `decision` — that pair is the only way an ask reaches their For You feed as a decision they can answer in one tap. See the `decision` param docs for the required shape and house style; the API rejects a decision that breaks them, listing every violated rule at once.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			...createCommentSchema.shape,
@@ -1579,7 +1579,8 @@ export const tools = {
 		}),
 	},
 	list_integration_providers: {
-		description: 'List available integration providers and their supported events',
+		description:
+			'List available integration providers, their supported events, and their MCP surface. Each provider that has one returns `mcp: { envKey, autoInject, server }`. `server` is the paste-ready value for the `tools.mcpServers.<provider>` field of an agent — pass it to create_actor/update_actor verbatim, including any `${TOKEN}` placeholders, which are expanded inside the session container. When `autoInject` is true the integration is already wired into every agent session in the workspace and there is nothing to attach — such a provider may return no `server` at all (github is auto-injected as one `github-<owner>` entry per connected organisation, so no single spec describes it). When `autoInject` is false (the default) connecting the integration alone gives the agent NO tools, and attaching `server` to the agent is the required second step.',
 		inputSchema: z.object({}),
 	},
 	connect_integration: {

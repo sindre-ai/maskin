@@ -17,6 +17,7 @@ import {
 } from './lib/dev-bootstrap'
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
+import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
@@ -118,6 +119,10 @@ const webhookDeliveriesCleaner = new WebhookDeliveriesCleaner(db)
 webhookDeliveriesCleaner.start()
 logger.info('Webhook deliveries cleaner started')
 
+const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
+briefCacheCleaner.start()
+logger.info('Brief cache cleaner started')
+
 const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()
 logger.info('Webhook deliveries reconciler started')
@@ -145,6 +150,11 @@ const sessionDispatchQueue = new SessionDispatchQueue(db, async () => ({ kind: '
 	// session: the log stream just stops. This puts the reason, and the
 	// "start a new session" recovery, into the transcript itself.
 	appendSystemLog: (sessionId, content) => sessionManager.insertSystemLog(sessionId, content),
+	// In production the dispatch queue — not the createSession promise — is
+	// where a workspace's missing LLM credentials surface, so this is the only
+	// way the trigger runner learns to stop firing against it.
+	onPermanentFailure: ({ workspaceId, reasonCode }) =>
+		triggerRunner.handleDispatchPermanentFailure(workspaceId, reasonCode),
 })
 if (process.env.NODE_ENV === 'production') {
 	const dispatcher = new SessionDispatcher({
@@ -216,15 +226,37 @@ if (process.env.NODE_ENV === 'production') {
 sessionDispatchQueue.start()
 logger.info('Session dispatch queue started')
 
-const shutdown = (signal: string) => {
+let shuttingDown = false
+const shutdown = async (signal: string) => {
+	// A second signal while the first is still settling is an operator asking
+	// harder, not asking twice. The first gets the graceful path; the second
+	// exits now — otherwise a replay wedged on a hung write leaves SIGKILL as
+	// the only way out.
+	if (shuttingDown) {
+		logger.warn(`Received ${signal} while already shutting down; exiting now`)
+		process.exit(1)
+	}
+	shuttingDown = true
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
 	notifyBridge.stop?.()
+	// A turn replay in backoff holds the human's message and nothing else does:
+	// its state is in-process, so exiting mid-backoff drops the turn silently.
+	// Bounded inside, so a wedged replay cannot block the exit.
+	try {
+		await sessionManager.turnFinalizer.settleForShutdown()
+	} catch (err) {
+		// Documented as never throwing, but an unhandled rejection here would
+		// skip the exit below and hang the shutdown on a technicality.
+		logger.error(
+			`Failed to settle in-flight turn replays: ${err instanceof Error ? err.message : String(err)}`,
+		)
+	}
 	process.exit(0)
 }
-process.on('SIGTERM', () => shutdown('SIGTERM'))
-process.on('SIGINT', () => shutdown('SIGINT'))
+process.on('SIGTERM', () => void shutdown('SIGTERM'))
+process.on('SIGINT', () => void shutdown('SIGINT'))
 
 logger.info(`Starting server on port ${port}`)
 

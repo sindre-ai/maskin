@@ -26,12 +26,13 @@ async function assertNoHorizontalOverflow(page: Page, surface: string, viewport:
 // of which silently fail the parity constraint ("no functionality hidden on
 // iPad"). Each control is asserted by its accessible role/name + the
 // Playwright `toBeVisible` opacity check (ignores opacity:0 and visibility:hidden).
-// Mirrors useIsMobile()'s 768px boundary (apps/web/src/hooks/use-mobile.tsx) —
-// comment-input.tsx shortens its placeholder below that width.
+// Both callers below are the object-detail surface, whose v2 shell passes its
+// own placeholder down to the composer rather than using comment-input.tsx's
+// default (object-detail-shell.tsx). The 768px split still mirrors
+// useIsMobile() (apps/web/src/hooks/use-mobile.tsx), which is what the shell
+// switches on.
 function commentPlaceholderFor(viewport: NamedViewport): string {
-	return viewport.width < 768
-		? 'Write a comment...'
-		: 'Write a comment... Use @ to mention an agent'
+	return viewport.width < 768 ? 'Comment…' : 'Comment — / commands, @ mentions'
 }
 
 async function assertCommentComposerVisible(page: Page, surface: string, viewport: NamedViewport) {
@@ -70,7 +71,7 @@ const SURFACES: Surface[] = [
 		name: 'Object detail (bet)',
 		path: (ws, ids) => `/${ws}/objects/${ids.betId}`,
 		waitFor: async (page) => {
-			await expect(page.getByPlaceholder('Untitled')).toHaveValue('Mobile QA Bet', {
+			await expect(page.getByRole('heading', { level: 1, name: 'Mobile QA Bet' })).toBeVisible({
 				timeout: 10000,
 			})
 		},
@@ -186,7 +187,7 @@ test.describe('Mobile + iPad QA — critical controls ship gate', () => {
 			const ids = await seedObjects(account)
 
 			await page.goto(`/${account.workspaceId}/objects/${ids.betId}`)
-			await expect(page.getByPlaceholder('Untitled')).toHaveValue('Mobile QA Bet', {
+			await expect(page.getByRole('heading', { level: 1, name: 'Mobile QA Bet' })).toBeVisible({
 				timeout: 10000,
 			})
 
@@ -215,7 +216,7 @@ test.describe('Mobile first-test flow — For You → object → comment', () =>
 		//    the brief's flow is "land → object → comment" and the unread feed depends on
 		//    cross-actor activity that this single-actor fixture can't synthesize).
 		await page.goto(`/${account.workspaceId}/objects/${ids.betId}`)
-		await expect(page.getByPlaceholder('Untitled')).toHaveValue('Mobile QA Bet', {
+		await expect(page.getByRole('heading', { level: 1, name: 'Mobile QA Bet' })).toBeVisible({
 			timeout: 10000,
 		})
 		await assertNoHorizontalOverflow(page, 'Object detail (step 2)', VIEWPORTS.mobile)

@@ -51,8 +51,56 @@ export interface ObjectsFilterModelInput {
 	columnVisibility?: VisibilityState
 }
 
-export const DEFAULT_SORT = 'createdAt'
-export const DEFAULT_ORDER = 'desc'
+// The Objects list's resting order, single-sourced. The route's `validateSearch`
+// seeds the URL from these and the Display panel reads them to decide whether
+// the current order is an override worth surfacing — so the two cannot drift.
+export const DEFAULT_SORT = 'updatedAt'
+export const DEFAULT_ORDER: 'asc' | 'desc' = 'desc'
+
+// True when the URL carries no explicit display intent — i.e. it holds only the
+// values the route's `validateSearch` seeds. Both the v2 and the pre-v2 Objects
+// pages gate persisted-display-settings hydration on this, so it lives here
+// rather than being written out twice: `validateSearch` always resolves `sort`,
+// `order` and `groupBy`, so a predicate that tests for their *absence* is
+// permanently false and silently disables saved-view restore.
+export function urlIsInDefaultShape(
+	search: {
+		sort?: string
+		order?: string
+		groupBy?: string
+		status?: string
+		driver?: string
+		q?: string
+		attention?: string
+		includeArchived?: number
+		fresh?: number
+		starred?: number
+		updated?: string
+	},
+	metadataFilters: Record<string, string>,
+): boolean {
+	return (
+		(!search.sort || search.sort === DEFAULT_SORT) &&
+		(!search.order || search.order === DEFAULT_ORDER) &&
+		(!search.groupBy || search.groupBy === 'status') &&
+		!search.status &&
+		!search.driver &&
+		// `q`, `attention` and `includeArchived` are display intent too: a
+		// deep-link carrying any of them is an explicit request, so persisted
+		// settings must not hydrate on top of it.
+		!search.q &&
+		!search.attention &&
+		!search.includeArchived &&
+		// The client-side axes count too: a chip clicked in the moment between
+		// first paint and the display-settings query resolving would otherwise
+		// still look like an untouched URL, and hydration would apply the saved
+		// filters on top of the choice the user just made.
+		!search.fresh &&
+		!search.starred &&
+		!search.updated &&
+		Object.keys(metadataFilters).length === 0
+	)
+}
 
 export function defaultObjectsFilterModel(): ObjectsFilterModel {
 	return { sort: DEFAULT_SORT, order: DEFAULT_ORDER, metadata: {}, includeArchived: false }
@@ -139,7 +187,10 @@ export function toDisplaySettingsBody(
 	> = {
 		sort: model.sort,
 		order: model.order,
-		groupBy: model.groupBy ?? null,
+		// GROUP BY rests on State, so an absent group is the operator's explicit
+		// "None" — persist it as the `none` sentinel the URL uses. `null` would
+		// be indistinguishable from "never chose", which now means State.
+		groupBy: model.groupBy ?? 'none',
 		columnVisibility: model.columnVisibility,
 	}
 	const filters: { status?: string; driver?: string; metadata?: Record<string, string> } = {}

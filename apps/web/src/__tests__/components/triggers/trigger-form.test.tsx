@@ -429,6 +429,20 @@ describe('TriggerForm', () => {
 		expect(field).toHaveValue('action')
 	})
 
+	it("keeps the suggestion chips when the only event is the trigger's own creation", () => {
+		const trigger = buildTriggerResponse()
+		// `POST /api/triggers` writes this event, so every trigger has one from
+		// birth — it is not something the operator changed.
+		useEntityEvents.mockReturnValue({
+			data: [{ id: 1, entityId: trigger.id, action: 'created', actorId: 'a-1', createdAt: null }],
+		})
+		render(<TriggerForm {...defaultProps} isCreated initialValues={trigger} />, {
+			wrapper: TestWrapper,
+		})
+
+		expect(screen.getByRole('button', { name: 'Run it weekly instead' })).toBeInTheDocument()
+	})
+
 	it('drops the suggestion chips once the trigger has a CHANGES transcript', () => {
 		const trigger = buildTriggerResponse()
 		const { rerender } = render(

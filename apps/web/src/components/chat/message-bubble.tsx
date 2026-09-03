@@ -12,6 +12,7 @@ import { cn } from '@/lib/cn'
 import { Bell, Box, Pencil, RotateCcw } from 'lucide-react'
 import { useState } from 'react'
 import { MessageDivider } from './message-divider'
+import { QuestionOptions } from './question-options'
 
 interface MessageBubbleProps {
 	workspaceId: string
@@ -20,6 +21,8 @@ interface MessageBubbleProps {
 	 *  message, rendered as a muted line under the name (mockup screenshots).
 	 *  Only ever present on an agent message. */
 	activity?: React.ReactNode
+	/** A later message in the thread already answered this message's question. */
+	questionAnswered?: boolean
 }
 
 /**
@@ -29,7 +32,12 @@ interface MessageBubbleProps {
  * message — human or agent — renders left-aligned on the page background
  * (not a card, mockup 648–658) with a `REFERENCED` rail beneath the body.
  */
-export function MessageBubble({ workspaceId, message, activity }: MessageBubbleProps) {
+export function MessageBubble({
+	workspaceId,
+	message,
+	activity,
+	questionAnswered = false,
+}: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
 	// Real, persisted, own message (not a system row, not an optimistic
@@ -191,6 +199,19 @@ export function MessageBubble({ workspaceId, message, activity }: MessageBubbleP
 						    path the chat surface was missing. */}
 						<MarkdownContent content={message.content} size="sm" renderVisuals />
 					</div>
+				) : null}
+				{/* An agent's AskUserQuestion, surfaced as pickable options. The
+				    message's own content already renders the questions as markdown
+				    above, so this adds the affordance rather than the information —
+				    which is why it degrades to plain text everywhere else. */}
+				{message.metadata?.question ? (
+					<QuestionOptions
+						conversationId={message.conversationId}
+						workspaceId={workspaceId}
+						questionMessageId={message.id}
+						question={message.metadata.question}
+						answered={questionAnswered}
+					/>
 				) : null}
 				{hasContext ? (
 					<div className="mt-[7px] flex flex-wrap items-center gap-2 border-t border-border-subtle pt-[7px]">

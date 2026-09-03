@@ -14,7 +14,7 @@ import {
 	writeFailoverState,
 	writeSlot,
 } from '../lib/claude-oauth-slots'
-import { byollmEntitled } from '../lib/enterprise-allowlist'
+import { isEnterprise } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import {
 	billingAfterByoTransition,
@@ -375,7 +375,7 @@ app.openapi(importRoute, (async (c) => {
 
 	// Locked read-modify-write — see the disconnect route above for why.
 	//
-	// BYOLLM ↔ paid plan mutex: importing Claude OAuth is a BYOLLM selection,
+	// BYO-LLM ↔ paid plan mutex: importing Claude OAuth is a BYO-LLM selection,
 	// so any live Stripe subscription must be canceled BEFORE the transaction
 	// commits — otherwise a Stripe cancel failure would leave the workspace
 	// with new BYO tokens AND a still-billing paid plan. Sentinel outcomes
@@ -393,7 +393,7 @@ app.openapi(importRoute, (async (c) => {
 		// Every workspace defaults to the Maskin-provided LLM plan; only
 		// ops-flagged exception workspaces may import a BYO Claude subscription.
 		// See PR #970.
-		if (!byollmEntitled(ws)) return 'not-allowed'
+		if (!isEnterprise(ws)) return 'not-allowed'
 
 		const settings = (ws.settings as WorkspaceSettings) ?? {}
 		const currentFailover = readFailoverState(settings.claude_oauth)

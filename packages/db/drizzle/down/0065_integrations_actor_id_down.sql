@@ -9,6 +9,16 @@
 -- readdirSync + .endsWith('.sql') on `drizzle/`) never sees it — same
 -- carve-out `meta/` uses. It is invoked explicitly by the reversibility test
 -- via psql on the migration's SQL content, not via the runner.
+--
+-- PRECONDITION: this rollback FAILS while any actor-scoped rows exist. The
+-- re-created `integrations_ws_provider_null_external_uniq` is unique on
+-- (workspace_id, provider) alone, so two actors holding credentials for the
+-- same provider in one workspace - precisely the state 0065 exists to
+-- allow - violate it. Before rolling back, an operator must decide what
+-- happens to those rows (delete them, or keep one per workspace); there is
+-- no correct automatic answer, so this file deliberately does not choose.
+-- Run it inside a transaction so a failure here leaves the DROPs below
+-- rolled back rather than the table carrying no unique guard at all.
 
 DROP INDEX IF EXISTS "integrations_ws_provider_idx";
 DROP INDEX IF EXISTS "integrations_ws_actor_provider_null_external_uniq";

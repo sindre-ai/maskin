@@ -1,7 +1,7 @@
 import { DataTableToolbar } from '@/components/objects/data-table/data-table-toolbar'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 const { displayPanelProps } = vi.hoisted(() => ({ displayPanelProps: vi.fn() }))
 
@@ -17,15 +17,9 @@ function renderToolbar(overrides: Partial<React.ComponentProps<typeof DataTableT
 		columns: [],
 		columnVisibility: {},
 		onColumnVisibilityChange: vi.fn(),
-		tabs: [
-			{ label: 'All', value: undefined },
-			{ label: 'Bets', value: 'bet' },
-			{ label: 'Tasks', value: 'task' },
-		],
-		typeFilter: undefined,
-		onTypeFilterChange: vi.fn(),
-		search: '',
-		onSearchChange: vi.fn(),
+		quickChips: [],
+		filterPills: [],
+		onClearAllFilters: vi.fn(),
 		statusFilter: undefined,
 		onStatusFilterChange: vi.fn(),
 		statusesByType: {},
@@ -38,70 +32,92 @@ function renderToolbar(overrides: Partial<React.ComponentProps<typeof DataTableT
 		onOrderChange: vi.fn(),
 		groupBy: undefined,
 		onGroupByChange: vi.fn(),
-		onImportClick: vi.fn(),
 		...overrides,
 	}
 	return { ...render(<DataTableToolbar {...props} />), props }
 }
 
 describe('DataTableToolbar', () => {
-	it('renders type tab buttons', () => {
-		renderToolbar()
-		expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Bets' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Tasks' })).toBeInTheDocument()
+	// The type-tab strip moved to the shared nav row (mockup 165–170); the
+	// toolbar's own row carries the filters the user pinned out of the Display
+	// panel, plus a pill per active filter.
+	it('renders a chip per pinned quick filter', () => {
+		renderToolbar({
+			quickChips: [
+				{ id: 'quick:fresh', label: 'New last 7 days', active: false, onToggle: vi.fn() },
+				{ id: 'quick:starred', label: '★ Starred', active: true, onToggle: vi.fn() },
+			],
+		})
+		expect(screen.getByRole('button', { name: 'New last 7 days' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: '★ Starred' })).toHaveAttribute(
+			'aria-pressed',
+			'true',
+		)
 	})
 
-	it('calls onTypeFilterChange when a tab is clicked', async () => {
+	it('toggles the pinned filter a chip stands for', async () => {
 		const user = userEvent.setup()
-		const { props } = renderToolbar()
-
-		await user.click(screen.getByRole('button', { name: 'Bets' }))
-		expect(props.onTypeFilterChange).toHaveBeenCalledWith('bet')
+		const onToggle = vi.fn()
+		renderToolbar({
+			quickChips: [{ id: 'quick:fresh', label: 'New last 7 days', active: false, onToggle }],
+		})
+		await user.click(screen.getByRole('button', { name: 'New last 7 days' }))
+		expect(onToggle).toHaveBeenCalledOnce()
 	})
 
-	it('calls onTypeFilterChange with undefined for All tab', async () => {
+	it('renders no chip row when nothing is pinned', () => {
+		renderToolbar({ quickChips: [] })
+		// Only the mocked Display panel's trigger remains.
+		expect(screen.getAllByRole('button')).toHaveLength(1)
+	})
+
+	it('renders a removable pill per active filter and clears it', async () => {
 		const user = userEvent.setup()
-		const { props } = renderToolbar({ typeFilter: 'bet' })
-
-		await user.click(screen.getByRole('button', { name: 'All' }))
-		expect(props.onTypeFilterChange).toHaveBeenCalledWith(undefined)
+		const onRemove = vi.fn()
+		renderToolbar({
+			filterPills: [{ id: 'status', label: 'Status', value: 'active', onRemove }],
+		})
+		expect(screen.getByText('Status:')).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Remove Status filter' }))
+		expect(onRemove).toHaveBeenCalledOnce()
 	})
 
-	it('renders search input with placeholder', () => {
-		renderToolbar()
-		expect(screen.getByPlaceholderText('Search...')).toBeInTheDocument()
-	})
-
-	it('renders Import button', () => {
-		renderToolbar()
-		expect(screen.getByRole('button', { name: /import/i })).toBeInTheDocument()
-	})
-
-	it('keeps the action cluster on its own row below the xl breakpoint', () => {
-		// Actions cluster must sit on `basis-full` (own row) up to <1280px so
-		// iPad landscape (1024px) wraps predictably, and `xl:basis-auto`
-		// restores the inline single-row layout on wider viewports.
-		renderToolbar()
-		const importBtn = screen.getByRole('button', { name: /import/i })
-		const cluster = importBtn.parentElement
-		expect(cluster).not.toBeNull()
-		expect(cluster?.className).toContain('basis-full')
-		expect(cluster?.className).toContain('xl:basis-auto')
-		expect(cluster?.className).toContain('justify-end')
-	})
-
-	it('calls onImportClick when Import is clicked', async () => {
+	// Mockup 920 (`objPillsMany`): a single pill's own × already clears it.
+	it('shows Clear all only once more than one pill is active', async () => {
 		const user = userEvent.setup()
-		const { props } = renderToolbar()
+		const { unmount } = renderToolbar({
+			filterPills: [{ id: 'status', label: 'Status', value: 'active', onRemove: vi.fn() }],
+		})
+		expect(screen.queryByRole('button', { name: 'Clear all' })).toBeNull()
+		unmount()
 
-		await user.click(screen.getByRole('button', { name: /import/i }))
-		expect(props.onImportClick).toHaveBeenCalledOnce()
+		const { props } = renderToolbar({
+			filterPills: [
+				{ id: 'status', label: 'Status', value: 'active', onRemove: vi.fn() },
+				{ id: 'driver', label: 'Driver', value: 'Ada', onRemove: vi.fn() },
+			],
+		})
+		await user.click(screen.getByRole('button', { name: 'Clear all' }))
+		expect(props.onClearAllFilters).toHaveBeenCalledOnce()
 	})
 
 	it('renders the mocked Display panel', () => {
 		renderToolbar()
 		expect(screen.getByRole('button', { name: 'MockDisplay' })).toBeInTheDocument()
+	})
+
+	it('forwards the filter sections and pin state through to the Display panel', () => {
+		const filterSections = [{ id: 'status', label: 'Status', summary: 'Any status', options: [] }]
+		const onTogglePinnedFilter = vi.fn()
+		renderToolbar({
+			filterSections,
+			pinnedFilters: ['quick:fresh'],
+			onTogglePinnedFilter,
+		})
+		const props = displayPanelProps.mock.calls.at(-1)?.[0] as Record<string, unknown>
+		expect(props.filterSections).toEqual(filterSections)
+		expect(props.pinnedFilters).toEqual(['quick:fresh'])
+		expect(props.onTogglePinnedFilter).toBe(onTogglePinnedFilter)
 	})
 
 	it('forwards metadata filter props through to the Display panel', () => {
@@ -113,46 +129,5 @@ describe('DataTableToolbar', () => {
 		expect(props.fieldDefinitions).toEqual(fieldDefinitions)
 		expect(props.metadataFilters).toEqual(metadataFilters)
 		expect(props.onMetadataFilterChange).toBe(onMetadataFilterChange)
-	})
-
-	it('shows current search value in input', () => {
-		renderToolbar({ search: 'existing' })
-		expect(screen.getByDisplayValue('existing')).toBeInTheDocument()
-	})
-
-	describe('search debounce', () => {
-		beforeEach(() => {
-			vi.useFakeTimers()
-		})
-
-		afterEach(() => {
-			vi.useRealTimers()
-		})
-
-		it('debounces search input by 300ms', () => {
-			const { props } = renderToolbar()
-
-			const input = screen.getByPlaceholderText('Search...')
-			fireEvent.change(input, { target: { value: 'hello' } })
-
-			expect(props.onSearchChange).not.toHaveBeenCalled()
-
-			vi.advanceTimersByTime(300)
-			expect(props.onSearchChange).toHaveBeenCalledWith('hello')
-		})
-
-		it('resets debounce on subsequent typing', () => {
-			const { props } = renderToolbar()
-
-			const input = screen.getByPlaceholderText('Search...')
-			fireEvent.change(input, { target: { value: 'he' } })
-
-			vi.advanceTimersByTime(200)
-			expect(props.onSearchChange).not.toHaveBeenCalled()
-
-			fireEvent.change(input, { target: { value: 'hello' } })
-			vi.advanceTimersByTime(300)
-			expect(props.onSearchChange).toHaveBeenCalledWith('hello')
-		})
 	})
 })

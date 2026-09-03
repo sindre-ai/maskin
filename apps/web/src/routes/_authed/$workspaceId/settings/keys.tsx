@@ -1,4 +1,4 @@
-import { BillingSection } from '@/components/settings/billing-section'
+import { EmptyState } from '@/components/shared/empty-state'
 import { FormError } from '@/components/shared/form-error'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
@@ -18,7 +18,7 @@ import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute } from '@tanstack/react-router'
 import { ChevronDown, ChevronRight, Eye, EyeOff, Pencil, Unplug } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -29,15 +29,10 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/keys')({
 
 function KeysPage() {
 	const { workspace, workspaceId } = useWorkspace()
-	const byollmAllowed = Boolean(workspace.byollmAllowed)
-
+	const enterprise = Boolean(workspace.enterprise)
 	return (
 		<div className="space-y-6">
-			<div className="max-w-4xl">
-				<BillingSection workspaceId={workspaceId} byollmAllowed={byollmAllowed} />
-			</div>
-
-			{byollmAllowed ? (
+			{enterprise ? (
 				<div className="max-w-lg space-y-6">
 					<div className="border-t border-border pt-6">
 						<ClaudeOAuthSection workspaceId={workspaceId} />
@@ -51,7 +46,23 @@ function KeysPage() {
 						<CustomLlmEditor workspace={workspace} workspaceId={workspaceId} />
 					</div>
 				</div>
-			) : null}
+			) : (
+				// Every section above is gated on `enterprise`, so a workspace without
+				// that grant would otherwise render a blank page. `byollm_allowed` is an
+				// ops grant, not a self-serve toggle, so this says who enables it
+				// instead of offering a dead button.
+				<EmptyState
+					title="Bring-your-own-LLM isn't enabled for this workspace"
+					description="Agents run on your Maskin plan. Connecting your own Claude subscription, API keys or a custom endpoint is enabled per workspace by Maskin."
+					action={
+						<Button variant="outline" size="sm" asChild>
+							<Link to="/$workspaceId/settings/billing" params={{ workspaceId }}>
+								View plan and usage
+							</Link>
+						</Button>
+					}
+				/>
+			)}
 		</div>
 	)
 }
@@ -276,7 +287,7 @@ function SlotCard({
 
 	return (
 		<div
-			className="rounded-lg border border-border bg-bg-surface p-3 space-y-2"
+			className="rounded-lg border border-border bg-card p-3 space-y-2"
 			data-slot={slot}
 			data-testid={`slot-${slot}`}
 		>

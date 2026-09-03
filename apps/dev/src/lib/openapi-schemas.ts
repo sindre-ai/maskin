@@ -1,5 +1,10 @@
 import { z } from '@hono/zod-openapi'
-import { actorListItemSchema, agentStateSchema, triggerResponseSchema } from '@maskin/shared'
+import {
+	actorListItemSchema,
+	agentStateSchema,
+	providerMcpInfoSchema,
+	triggerResponseSchema,
+} from '@maskin/shared'
 import { apiErrorSchema } from './errors'
 
 // Re-exported so existing route handlers keep their `from '../lib/openapi-schemas'`
@@ -105,7 +110,10 @@ export const workspaceResponseSchema = z.object({
 	name: z.string(),
 	settings: jsonbField.transform((v) => v ?? {}),
 	onboardingEnabled: z.boolean(),
-	byollmAllowed: z.boolean(),
+	// Effective enterprise status = `isEnterprise()` (the `enterprise_granted`
+	// column OR an enterprise billing owner), not the raw column. Derived, so it
+	// deliberately does not carry the column's name.
+	enterprise: z.boolean(),
 	// Single accountable human payer for this workspace's plan — read-only,
 	// server-set. See apps/dev/src/lib/workspace-capacity.ts. Nullable during
 	// the migration window before every row is backfilled.
@@ -200,6 +208,12 @@ export const integrationResponseSchema = z.object({
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
+	// Scopes the provider config now requires that this install's token does not
+	// carry. OAuth tokens never gain scopes retroactively, so a non-empty list
+	// means the integration works but cannot do everything the product expects,
+	// and reconnecting is what fixes it. Scope names only — never the token.
+	missingScopes: z.array(z.string()).optional(),
+	needsReconnect: z.boolean().optional(),
 })
 
 export const providerEventSchema = z.object({
@@ -211,9 +225,20 @@ export const providerEventSchema = z.object({
 export const providerInfoSchema = z.object({
 	name: z.string(),
 	displayName: z.string(),
-	authType: z.enum(['oauth2', 'oauth2_custom', 'api_key']),
+	// 'manual' is real — providers/skjald mints its own webhook secret locally
+	// and has no auth handshake. It was missing here while apps/web's ProviderInfo
+	// already listed it; the route casts instead of parsing, so the spec simply
+	// under-declared the enum without anything failing.
+	authType: z.enum(['oauth2', 'oauth2_custom', 'api_key', 'manual']),
 	events: z.array(providerEventSchema),
 	externalIdDisplay: z.enum(['email', 'installation']).optional(),
+	// THIS is the schema the /api/integrations/providers route registers as its
+	// response — `providerInfoSchema` in @maskin/shared is a separate, narrower
+	// declaration with no route wired to it. A field added only there is absent
+	// from /api/openapi.json, so a client generated from the spec cannot see it,
+	// even though the handler does return it (the route casts rather than parses,
+	// so nothing complains). Keep any new field on both, or delete the duplicate.
+	mcp: providerMcpInfoSchema.optional(),
 })
 
 export const sessionResponseSchema = z.object({

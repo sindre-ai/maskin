@@ -11,11 +11,22 @@ import { db, getTestActorId, sql } from './global-setup'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const migrationsDir = join(__dirname, '..', '..', '..', '..', '..', 'packages', 'db', 'drizzle')
 
+// Runs a migration file's statements inside one explicit transaction. The
+// production runner (packages/db/src/migrate.ts) gets this for free: neither
+// 0065 nor its down file contains a `--> statement-breakpoint`, so
+// splitStatements yields a single string and postgres.js sends it as one
+// simple query, which Postgres wraps implicitly. Here we make it explicit so
+// a statement that fails mid-file (see the actor-scoped-rows test below)
+// rolls back rather than leaving `integrations` with its old indexes dropped
+// and its new ones not yet created — a state every later test in this file
+// would then fail against, masking the real failure.
 async function runSqlFile(relativePath: string) {
 	const content = readFileSync(join(migrationsDir, relativePath), 'utf-8')
-	for (const statement of splitStatements(content)) {
-		await sql.unsafe(statement)
-	}
+	await sql.begin(async (tx) => {
+		for (const statement of splitStatements(content)) {
+			await tx.unsafe(statement)
+		}
+	})
 }
 
 async function getIndexNames(): Promise<string[]> {
@@ -90,7 +101,7 @@ describe('integrations actor-scoped schema (0065)', () => {
 			.values({
 				workspaceId: ws.id,
 				provider: 'test-legacy-provider',
-				status: 'connected',
+				status: 'active',
 				credentials: 'x',
 				createdBy: actorId,
 			})
@@ -115,7 +126,7 @@ describe('getIntegrationCredential — two actors, same workspace', () => {
 			{
 				workspaceId: ws.id,
 				provider: 'linkedin-unipile',
-				status: 'connected',
+				status: 'active',
 				credentials: 'creds-A',
 				actorId: actorA.id,
 				createdBy,
@@ -123,7 +134,7 @@ describe('getIntegrationCredential — two actors, same workspace', () => {
 			{
 				workspaceId: ws.id,
 				provider: 'linkedin-unipile',
-				status: 'connected',
+				status: 'active',
 				credentials: 'creds-B',
 				actorId: actorB.id,
 				createdBy,
@@ -147,7 +158,7 @@ describe('getIntegrationCredential — two actors, same workspace', () => {
 		await db.insert(integrations).values({
 			workspaceId: ws.id,
 			provider: 'slack',
-			status: 'connected',
+			status: 'active',
 			credentials: 'actor-scoped-slack',
 			actorId: actor.id,
 			createdBy,
@@ -157,22 +168,52 @@ describe('getIntegrationCredential — two actors, same workspace', () => {
 		expect(result).toBeNull()
 	})
 
-	it('filters on status = connected', async () => {
+	// The helper must speak the same status vocabulary as the write paths in
+	// routes/integrations.ts, which only ever write 'active' / 'pending' /
+	// 'awaiting_secret' / 'error' / 'revoked'. A helper filtering on a status
+	// no writer produces matches nothing, silently — so assert both that the
+	// non-live statuses are rejected AND that the one the routes actually
+	// write is accepted.
+	it.each(['pending', 'awaiting_secret', 'error', 'revoked'])(
+		'does not return a credential with status = %s',
+		async (status) => {
+			const createdBy = getTestActorId()
+			const ws = await insertWorkspace(db, createdBy)
+			const actor = await insertActor(db)
+
+			await db.insert(integrations).values({
+				workspaceId: ws.id,
+				provider: 'linkedin-unipile',
+				status,
+				credentials: 'not-live',
+				actorId: actor.id,
+				createdBy,
+			})
+
+			const result = await getIntegrationCredential(db, ws.id, 'linkedin-unipile', actor.id)
+			expect(result).toBeNull()
+		},
+	)
+
+	it('returns the credential for the status the connect routes actually write', async () => {
 		const createdBy = getTestActorId()
 		const ws = await insertWorkspace(db, createdBy)
 		const actor = await insertActor(db)
 
+		// 'active' is the literal every write path in routes/integrations.ts
+		// uses (see :301, :313, :829, :847, :1422, :1443, :1646). If this
+		// helper ever drifts to a status no writer produces, this fails.
 		await db.insert(integrations).values({
 			workspaceId: ws.id,
 			provider: 'linkedin-unipile',
-			status: 'pending',
-			credentials: 'not-yet',
+			status: 'active',
+			credentials: 'live-creds',
 			actorId: actor.id,
 			createdBy,
 		})
 
 		const result = await getIntegrationCredential(db, ws.id, 'linkedin-unipile', actor.id)
-		expect(result).toBeNull()
+		expect(result?.credentials).toBe('live-creds')
 	})
 })
 
@@ -183,34 +224,48 @@ describe('allow-list is the single source of truth', () => {
 })
 
 describe('0065 down migration is reversible', () => {
-	// The reversibility contract: after up → down → up, the table has the
+	// The reversibility contract: after up -> down -> up, the table has the
 	// same shape as after the first up. We run the down migration by hand
 	// against the DB (it lives under `drizzle/down/` so the runner never
 	// executes it), then re-run the forward migration and re-check
 	// everything the up-migration test above verified.
+	//
+	// Both halves mutate schema shared by every later test in this file, so
+	// the re-up is in a `finally` — a failed assertion between down and up
+	// must not strand the rest of the run against the pre-0065 shape.
 	it('round-trips: down restores the pre-0065 index shape, up restores the new one', async () => {
+		// The down migration re-creates a UNIQUE index on
+		// (workspace_id, provider) WHERE external_id IS NULL, which the
+		// actor-scoped rows left behind by earlier tests in this file violate
+		// by construction. Rolling back is only possible once they are gone —
+		// see the test below, which pins that as behaviour rather than
+		// working around it silently here.
+		await sql`DELETE FROM integrations WHERE actor_id IS NOT NULL`
+
 		// Sanity: we're currently AT 0065 (verified by earlier tests).
 		let names = await getIndexNames()
 		expect(names).toContain('integrations_ws_actor_provider_external_uniq')
 
-		// Roll back.
-		await runSqlFile('down/0065_integrations_actor_id_down.sql')
+		try {
+			// Roll back.
+			await runSqlFile('down/0065_integrations_actor_id_down.sql')
 
-		names = await getIndexNames()
-		expect(names).toContain('integrations_ws_provider_external_uniq')
-		expect(names).toContain('integrations_ws_provider_null_external_uniq')
-		expect(names).not.toContain('integrations_ws_actor_provider_external_uniq')
-		expect(names).not.toContain('integrations_ws_actor_provider_null_external_uniq')
-		expect(names).not.toContain('integrations_ws_provider_idx')
+			names = await getIndexNames()
+			expect(names).toContain('integrations_ws_provider_external_uniq')
+			expect(names).toContain('integrations_ws_provider_null_external_uniq')
+			expect(names).not.toContain('integrations_ws_actor_provider_external_uniq')
+			expect(names).not.toContain('integrations_ws_actor_provider_null_external_uniq')
+			expect(names).not.toContain('integrations_ws_provider_idx')
 
-		const dropped = await sql<{ column_name: string }[]>`
-			SELECT column_name FROM information_schema.columns
-			WHERE table_schema = 'public' AND table_name = 'integrations' AND column_name = 'actor_id'
-		`
-		expect(dropped).toHaveLength(0)
-
-		// Re-apply the forward migration and confirm we're back at the 0065 shape.
-		await runSqlFile('0065_integrations_actor_id.sql')
+			const dropped = await sql<{ column_name: string }[]>`
+				SELECT column_name FROM information_schema.columns
+				WHERE table_schema = 'public' AND table_name = 'integrations' AND column_name = 'actor_id'
+			`
+			expect(dropped).toHaveLength(0)
+		} finally {
+			// Unconditional: the remaining tests in this file need the 0065 shape.
+			await runSqlFile('0065_integrations_actor_id.sql')
+		}
 
 		names = await getIndexNames()
 		expect(names).toContain('integrations_ws_actor_provider_external_uniq')
@@ -223,6 +278,54 @@ describe('0065 down migration is reversible', () => {
 		`
 		expect(restored).toHaveLength(1)
 	})
+
+	it('refuses to roll back while actor-scoped rows exist, leaving 0065 intact', async () => {
+		// Rolling back is not unconditionally safe: the pre-0065 unique index
+		// on (workspace_id, provider) cannot be re-created while two actors in
+		// one workspace hold credentials for the same provider — which is
+		// exactly the state 0065 exists to allow. An operator must decide what
+		// happens to those rows first. Asserting it here keeps that
+		// precondition from being discovered during an incident.
+		const createdBy = getTestActorId()
+		const ws = await insertWorkspace(db, createdBy)
+		const actorA = await insertActor(db)
+		const actorB = await insertActor(db)
+
+		await db.insert(integrations).values([
+			{
+				workspaceId: ws.id,
+				provider: 'linkedin-unipile',
+				status: 'active',
+				credentials: 'creds-A',
+				actorId: actorA.id,
+				createdBy,
+			},
+			{
+				workspaceId: ws.id,
+				provider: 'linkedin-unipile',
+				status: 'active',
+				credentials: 'creds-B',
+				actorId: actorB.id,
+				createdBy,
+			},
+		])
+
+		try {
+			await expect(runSqlFile('down/0065_integrations_actor_id_down.sql')).rejects.toThrow(
+				/could not create unique index|duplicate key/i,
+			)
+
+			// runSqlFile is transactional, so the failed down rolled back
+			// whole — the 0065 shape must be untouched, not half-dropped.
+			const names = await getIndexNames()
+			expect(names).toContain('integrations_ws_actor_provider_external_uniq')
+			expect(names).toContain('integrations_ws_actor_provider_null_external_uniq')
+			expect(names).toContain('integrations_ws_provider_idx')
+			expect(names).not.toContain('integrations_ws_provider_null_external_uniq')
+		} finally {
+			await sql`DELETE FROM integrations WHERE actor_id IS NOT NULL`
+		}
+	})
 })
 
 describe('unique index enforces (workspace, actor, provider)', () => {
@@ -234,7 +337,7 @@ describe('unique index enforces (workspace, actor, provider)', () => {
 		await db.insert(integrations).values({
 			workspaceId: ws.id,
 			provider: 'linkedin-unipile',
-			status: 'connected',
+			status: 'active',
 			credentials: 'creds-1',
 			actorId: actor.id,
 			createdBy,
@@ -244,7 +347,7 @@ describe('unique index enforces (workspace, actor, provider)', () => {
 			db.insert(integrations).values({
 				workspaceId: ws.id,
 				provider: 'linkedin-unipile',
-				status: 'connected',
+				status: 'active',
 				credentials: 'creds-2',
 				actorId: actor.id,
 				createdBy,
@@ -263,7 +366,7 @@ describe('unique index enforces (workspace, actor, provider)', () => {
 				{
 					workspaceId: ws.id,
 					provider: 'linkedin-unipile',
-					status: 'connected',
+					status: 'active',
 					credentials: 'creds-A',
 					actorId: actorA.id,
 					createdBy,
@@ -271,7 +374,7 @@ describe('unique index enforces (workspace, actor, provider)', () => {
 				{
 					workspaceId: ws.id,
 					provider: 'linkedin-unipile',
-					status: 'connected',
+					status: 'active',
 					credentials: 'creds-B',
 					actorId: actorB.id,
 					createdBy,

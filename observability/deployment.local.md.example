@@ -1,0 +1,89 @@
+# Deployment record — TEMPLATE
+
+Copy to `deployment.local.md` (sibling of this file) and fill in. That filename
+is **gitignored**: this repo is open source and multi-tenant, so hostnames,
+addresses, stack ids and account numbers must not be committed. They are both an
+unnecessary disclosure and values that stop being true for anyone else.
+
+Keep this current. The point of recording it at all is so a future reader can
+tell configuration from aspiration — "this is what is actually running" is a
+different claim from "this is what the config would do".
+
+**Never put secrets here.** Tokens and passwords belong in `/etc/default/alloy`
+on the host (mode `0600`). Record the *name* of an access policy token and what
+it is scoped to, never its value. This file is gitignored, not encrypted — a
+copied working tree or a stray `git add -f` still exposes it.
+
+---
+
+## Hosts
+
+| | |
+|---|---|
+| Purpose | e.g. agent-server / app + storage |
+| Address | |
+| Hostname | |
+| `instance` label | set explicitly; do not leave it to the hostname |
+| Config path | `/etc/alloy/config.alloy` |
+| Synced by | deploy workflow, or "by hand — drift risk" |
+| Repo config | `apps/agent-server/observability/` or `observability/coolify-host/` |
+
+Duplicate the block per host.
+
+## Which host serves production
+
+Record the evidence, not the assumption — a running control-plane stack is not
+the same as one that has deployed anything. For Coolify:
+
+```sh
+docker exec coolify-db psql -U coolify -d coolify \
+  -c 'select count(*) from applications' \
+  -c 'select count(*) from application_deployment_queues' \
+  -c 'select id, name, ip from servers'
+curl -s http://127.0.0.1:8080/api/http/routers
+```
+
+| Host | applications | deployments | Traefik routers | Verdict |
+|---|---|---|---|---|
+
+## Database
+
+Which database actually serves production, and therefore whether the compose
+`postgres` service is real or vestigial. This decides whether a
+`postgres_exporter` belongs in the Alloy config — see the note in
+`observability/coolify-host/alloy.alloy`.
+
+## Observability backend
+
+| | |
+|---|---|
+| Alloy version | |
+| Grafana Cloud org / stack / region | |
+| Loki endpoint + numeric username | |
+| Prometheus endpoint + numeric username | |
+| Access policy token name(s) and scopes | **names only, never values** |
+| Dashboards installed | |
+
+The Loki and Prometheus usernames are **different numbers**. Record both, and
+check them against each other before first push — swapping them yields a 401
+that reads exactly like a bad token.
+
+## Series budget
+
+Grafana Cloud's free tier allows 10k active series across all hosts. Measured
+per host, so a collector change can be checked against a real number rather than
+an estimate:
+
+```sh
+curl -s localhost:12345/metrics | grep prometheus_remote_storage_samples_in_total
+ip -o link | wc -l   # a Docker host's interface count drives most of the cost
+```
+
+| Host | samples/scrape | notes |
+|---|---|---|
+
+## Open gaps
+
+Things known to be unmonitored or known-broken, with the remediation and why it
+has not been done. A gap that is written down is a decision; one that is not is
+an accident waiting to be discovered mid-incident.

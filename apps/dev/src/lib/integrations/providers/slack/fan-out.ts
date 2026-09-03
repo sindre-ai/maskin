@@ -12,6 +12,7 @@ import { getProvider } from '../../registry'
 import type { NormalizedEvent, WebhookFanOutContext } from '../../types'
 import { maybePromptAccountLink } from './account-link'
 import { extractMentionFields, handleSlackMention, isMentionEntityType } from './mention'
+import { isAllowedSlackHost } from './slack-api'
 import { handleLinkShared } from './unfurl'
 import { publishAppHomeView } from './webhooks'
 
@@ -34,22 +35,6 @@ interface SlackFile {
 const MAX_FILES_PER_EVENT = 20
 /** Slack file download timeout */
 const DOWNLOAD_TIMEOUT_MS = 30_000
-
-// Defense-in-depth: refuse to send the bot token to anything but a Slack-owned host.
-// Node fetch already strips Authorization on cross-origin redirects, so token exfil via
-// a malicious url_private is bounded today — this guard removes a class of regressions
-// if that behaviour ever changes.
-function isAllowedSlackHost(url: string): boolean {
-	let parsed: URL
-	try {
-		parsed = new URL(url)
-	} catch {
-		return false
-	}
-	if (parsed.protocol !== 'https:') return false
-	const host = parsed.hostname.toLowerCase()
-	return host === 'slack.com' || host.endsWith('.slack.com')
-}
 
 function extractSlackFiles(data: Record<string, unknown>): SlackFile[] | null {
 	const event = data.event as Record<string, unknown> | undefined

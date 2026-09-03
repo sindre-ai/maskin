@@ -9,6 +9,16 @@ export function useWorkspaces() {
 	})
 }
 
+export function useCreateWorkspace() {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (data: { name: string }) => api.workspaces.create(data),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.workspaces.all() })
+		},
+	})
+}
+
 export function useUpdateWorkspace(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
@@ -31,6 +41,17 @@ export function useAddWorkspaceMember(workspaceId: string) {
 	return useMutation({
 		mutationFn: (data: { actor_id: string; role?: string }) =>
 			api.workspaces.members.add(workspaceId, data),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.workspaces.members(workspaceId) })
+		},
+	})
+}
+
+export function useUpdateWorkspaceMemberRole(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ actorId, role }: { actorId: string; role: string }) =>
+			api.workspaces.members.updateRole(workspaceId, actorId, role),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.workspaces.members(workspaceId) })
 		},

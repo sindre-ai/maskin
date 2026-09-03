@@ -2,6 +2,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { MarketplaceLoopDetail } from '@/components/marketplace/marketplace-loop-detail'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
 import { useMarketplaceLoop } from '@/hooks/use-marketplace-loops'
@@ -9,14 +10,14 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_authed/$workspaceId/marketplace/$loopId/')({
-	component: MarketplaceLoopDetailPage,
+	component: MarketplaceLoopDetailRoute,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-function MarketplaceLoopDetailPage() {
+function MarketplaceLoopDetailRoute() {
 	const { loopId } = Route.useParams()
 	const { workspaceId } = useWorkspace()
-	const { data, isLoading, isError } = useMarketplaceLoop(loopId)
+	const { data, isLoading, isError, error, refetch } = useMarketplaceLoop(loopId)
 	const { data: installsData } = useInstalledLoops(workspaceId)
 	const install = installsData?.installs.find((row) => row.sourceLoopId === loopId)
 
@@ -33,9 +34,10 @@ function MarketplaceLoopDetailPage() {
 	if (isError) {
 		return (
 			<div className="max-w-3xl mx-auto">
-				<EmptyState
+				<QueryStateError
 					title="Couldn't load this loop"
-					description="Something went wrong loading the catalog. Try refreshing."
+					error={error ?? new Error('Something went wrong loading the catalog.')}
+					onRetry={() => refetch()}
 				/>
 			</div>
 		)
@@ -54,15 +56,15 @@ function MarketplaceLoopDetailPage() {
 
 	return (
 		<>
-			<PageHeader />
-			<div className="max-w-3xl mx-auto">
-				<MarketplaceLoopDetail
-					workspaceId={workspaceId}
-					loop={data.loop}
-					items={data.items}
-					install={install}
-				/>
-			</div>
+			{/* The detail page owns its own scroll region so the action bar stays
+			    pinned above it (mockup 2610–2628). */}
+			<PageHeader scrollLocked />
+			<MarketplaceLoopDetail
+				workspaceId={workspaceId}
+				loop={data.loop}
+				items={data.items}
+				install={install}
+			/>
 		</>
 	)
 }

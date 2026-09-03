@@ -44,6 +44,9 @@ export function useCreateRelationship(workspaceId: string, objectId: string) {
 				})
 			}
 		},
+		onError: () => {
+			toast.error('Failed to link objects')
+		},
 	})
 }
 
@@ -55,6 +58,9 @@ export function useDeleteRelationship(workspaceId: string, objectId: string) {
 			toast.success('Relationship removed')
 			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(objectId) })
+		},
+		onError: () => {
+			toast.error('Failed to remove relationship')
 		},
 	})
 }

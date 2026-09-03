@@ -1,28 +1,45 @@
 import type { FieldDefinition } from '@/components/objects/field-value-input'
-import { type FilterTabItem, FilterTabs } from '@/components/shared/filter-tabs'
+import { FilterChip } from '@/components/shared/filter-chip'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import type { ActorListItem } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import type { VisibilityState } from '@tanstack/react-table'
-import { Search, Upload } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
 import type { ColumnInfo } from './data-table-controls'
+import type { DisplayFilterSectionModel } from './display-filter-section'
 import { DisplayPanel, type DisplayPanelView } from './display-panel'
 
-type Tab = FilterTabItem<string | undefined>
+/** A filter the user pinned out of the Display panel — a one-click toggle in
+ *  the control row (mockup 659–662). */
+export interface ToolbarQuickChip {
+	id: string
+	label: string
+	active: boolean
+	onToggle: () => void
+}
+
+/** One removable filter pill in the control row (mockup 914–918). */
+export interface ToolbarFilterPill {
+	id: string
+	label: string
+	value: string
+	onRemove: () => void
+}
 
 interface DataTableToolbarProps {
 	// Column visibility
 	columns: ColumnInfo[]
 	columnVisibility: VisibilityState
 	onColumnVisibilityChange: (columnId: string, visible: boolean) => void
-	// Tabs
-	tabs: Tab[]
-	typeFilter?: string
-	onTypeFilterChange: (value: string | undefined) => void
-	// Search
-	search?: string
-	onSearchChange: (value: string) => void
+	// Filters the user pinned out of the Display panel, in pin order.
+	quickChips?: ToolbarQuickChip[]
+	// Removable pills for every active filter, plus the Clear all escape hatch.
+	filterPills?: ToolbarFilterPill[]
+	onClearAllFilters?: () => void
+	// Collapsible FILTERS sections rendered inside the Display panel. Built by
+	// the caller so the same models drive both the panel rows and `quickChips`.
+	filterSections?: DisplayFilterSectionModel[]
+	pinnedFilters?: string[]
+	onTogglePinnedFilter?: (token: string) => void
 	// Display panel props
 	statusFilter?: string
 	onStatusFilterChange: (value: string | undefined) => void
@@ -43,25 +60,25 @@ interface DataTableToolbarProps {
 	// Show — per-view visibility flags. Only surfaced when the caller opts in.
 	includeArchived?: boolean
 	onIncludeArchivedChange?: (value: boolean) => void
+	archivedCount?: number
 	// Reset every display axis to defaults. Only surfaced when the caller opts in.
 	onResetToDefault?: () => void
 	// View switcher
 	view?: DisplayPanelView
 	onViewChange?: (view: DisplayPanelView) => void
 	boardSupported?: boolean
-	// Import
-	onImportClick: () => void
 }
 
 export function DataTableToolbar({
 	columns,
 	columnVisibility,
 	onColumnVisibilityChange,
-	tabs,
-	typeFilter,
-	onTypeFilterChange,
-	search,
-	onSearchChange,
+	quickChips = [],
+	filterPills = [],
+	onClearAllFilters,
+	filterSections,
+	pinnedFilters,
+	onTogglePinnedFilter,
 	statusFilter,
 	onStatusFilterChange,
 	statusesByType,
@@ -80,56 +97,64 @@ export function DataTableToolbar({
 	onGroupByChange,
 	includeArchived,
 	onIncludeArchivedChange,
+	archivedCount,
 	onResetToDefault,
 	view,
 	onViewChange,
 	boardSupported,
-	onImportClick,
 }: DataTableToolbarProps) {
-	const [localSearch, setLocalSearch] = useState(search ?? '')
-	const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
-
-	useEffect(() => {
-		setLocalSearch(search ?? '')
-	}, [search])
-
-	useEffect(() => {
-		return () => clearTimeout(debounceRef.current)
-	}, [])
-
-	const handleSearchChange = (value: string) => {
-		setLocalSearch(value)
-		clearTimeout(debounceRef.current)
-		debounceRef.current = setTimeout(() => {
-			onSearchChange(value || '')
-		}, 300)
-	}
+	// "Clear all" only earns its place once more than one pill is active —
+	// with a single pill its own × already does the job (mockup 920).
+	const showClearAll = !!onClearAllFilters && filterPills.length > 1
 
 	return (
-		<div className="flex items-center gap-2 md:gap-3 mb-4 flex-wrap">
-			{/* Type tabs */}
-			<FilterTabs
-				tabs={tabs}
-				value={typeFilter}
-				onChange={onTypeFilterChange}
-				aria-label="Type filter"
-			/>
+		// One control row: pinned chips, then a pill per active filter, then the
+		// Display panel pushed to the right edge (mockup 658–673). Wraps rather
+		// than scrolls — a chip that scrolled out of view would read as absent,
+		// and "absent filter" is the one thing this row exists to disprove.
+		<div className="flex min-h-7 flex-none flex-wrap items-center gap-1 px-0.5 gap-y-1.5">
+			{quickChips.map((chip) => (
+				<button
+					key={chip.id}
+					type="button"
+					aria-pressed={chip.active}
+					onClick={chip.onToggle}
+					className={cn(
+						'inline-flex h-[26px] shrink-0 items-center whitespace-nowrap rounded-md px-2.5',
+						'text-[11.5px] transition-colors hover:bg-muted hover:text-foreground',
+						chip.active
+							? 'bg-muted font-bold text-foreground'
+							: 'font-semibold text-muted-foreground',
+					)}
+				>
+					{chip.label}
+				</button>
+			))}
 
-			{/* Search */}
-			<div className="relative flex-1 min-w-0 max-w-full sm:max-w-xs">
-				<Search
-					size={14}
-					className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+			{filterPills.map((pill) => (
+				<FilterChip
+					key={pill.id}
+					label={pill.label}
+					value={pill.value}
+					onRemove={pill.onRemove}
+					className="shrink-0"
 				/>
-				<Input
-					value={localSearch}
-					onChange={(e) => handleSearchChange(e.target.value)}
-					placeholder="Search..."
-					className="h-8 pl-8 text-sm"
-				/>
-			</div>
+			))}
 
-			{/* Display panel */}
+			{showClearAll && (
+				<Button
+					variant="ghost"
+					size="sm"
+					title="Clear all filters"
+					className="h-[26px] shrink-0 px-1 text-[11.5px] font-semibold text-muted-foreground hover:text-foreground"
+					onClick={onClearAllFilters}
+				>
+					Clear all
+				</Button>
+			)}
+
+			<span className="ml-auto" />
+
 			<DisplayPanel
 				view={view}
 				onViewChange={onViewChange}
@@ -155,20 +180,12 @@ export function DataTableToolbar({
 				onGroupByChange={onGroupByChange}
 				includeArchived={includeArchived}
 				onIncludeArchivedChange={onIncludeArchivedChange}
+				archivedCount={archivedCount}
 				onResetToDefault={onResetToDefault}
+				filterSections={filterSections}
+				pinnedFilters={pinnedFilters}
+				onTogglePinnedFilter={onTogglePinnedFilter}
 			/>
-
-			{/* Actions — Import is occasional; New now lives only in the global
-			 * header (see header.tsx). `basis-full` below xl keeps the action
-			 * cluster on its own predictable row when there isn't enough inline
-			 * room (iPad landscape included); `xl:basis-auto` restores the
-			 * single-row layout on wider viewports. */}
-			<div className="ml-auto flex basis-full items-center justify-end gap-2 xl:basis-auto">
-				<Button variant="ghost" size="sm" className="gap-1.5" onClick={onImportClick}>
-					<Upload size={14} />
-					Import
-				</Button>
-			</div>
 		</div>
 	)
 }

@@ -9,11 +9,11 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_authed/$workspaceId/marketplace/$loopId/$itemId')({
-	component: MarketplaceItemDetailPage,
+	component: MarketplaceItemDetailRoute,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-function MarketplaceItemDetailPage() {
+function MarketplaceItemDetailRoute() {
 	const { loopId, itemId } = Route.useParams()
 	const { workspaceId } = useWorkspace()
 	const { data, isLoading, isError } = useMarketplaceLoop(loopId)
@@ -58,16 +58,14 @@ function MarketplaceItemDetailPage() {
 
 	return (
 		<>
-			<PageHeader />
-			<div className="max-w-3xl mx-auto">
-				<MarketplaceItemDetail
-					workspaceId={workspaceId}
-					item={item}
-					parentLoop={data.loop}
-					install={install}
-					installedEntity={installedEntity}
-				/>
-			</div>
+			<PageHeader scrollLocked />
+			<MarketplaceItemDetail
+				workspaceId={workspaceId}
+				item={item}
+				parentLoop={data.loop}
+				install={install}
+				installedEntity={installedEntity}
+			/>
 		</>
 	)
 }

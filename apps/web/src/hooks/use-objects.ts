@@ -51,29 +51,35 @@ export function useObjects(
 	})
 }
 
-// Server-side text search over `GET /objects/search` — powers the command
-// palette's "Jump to" objects rows and the /search view. Unlike `useObjects`,
-// filtering happens on the server so it isn't limited to whatever page of the
-// list cache happens to be loaded.
-export function useSearchObjects(
-	workspaceId: string,
-	{ q, type, status }: { q: string; type?: string; status?: string },
-) {
-	const params: Record<string, string> = { q }
-	if (type) params.type = type
-	if (status) params.status = status
-	return useQuery({
-		queryKey: queryKeys.objects.search(workspaceId, params),
-		queryFn: () => api.objects.search(workspaceId, params),
-		enabled: !!workspaceId && q.trim().length > 0,
-	})
-}
-
 export function useObject(id: string, options?: { enabled?: boolean }) {
 	return useQuery({
 		queryKey: queryKeys.objects.detail(id),
 		queryFn: () => api.objects.get(id),
 		enabled: !!id && (options?.enabled ?? true),
+	})
+}
+
+// Shared search engine for the command palette's active-query results and the
+// /search view — one server-side ranking so both surfaces show the same order.
+// `enabled` is driven by the trimmed query: no request fires for an empty
+// query (the server schema requires `q`).
+export function useSearchObjects(
+	workspaceId: string,
+	params: { q: string; type?: string; status?: string; limit?: number },
+	options?: { enabled?: boolean },
+) {
+	const q = params.q.trim()
+	const normalized = { q, type: params.type, status: params.status, limit: params.limit }
+	return useQuery({
+		queryKey: queryKeys.objects.search(workspaceId, normalized),
+		queryFn: () =>
+			api.objects.search(
+				workspaceId,
+				Object.fromEntries(
+					Object.entries(normalized).filter(([, v]) => v !== undefined && v !== ''),
+				) as Record<string, string>,
+			),
+		enabled: (options?.enabled ?? true) && q.length >= 1,
 	})
 }
 
@@ -173,6 +179,10 @@ export function useUpdateObject(workspaceId: string) {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
+			// A loop is an object, and `useLoop` reads the loop out of the /loops
+			// list response — without this a rename or an edit to the loop's
+			// promise wouldn't reach the loop pages until the list refetched.
+			queryClient.invalidateQueries({ queryKey: queryKeys.loops.all(workspaceId) })
 		},
 	})
 }
@@ -460,6 +470,9 @@ export function useDeleteObject(workspaceId: string) {
 					bulk_batch_size: 1,
 				})
 			}
+		},
+		onError: () => {
+			toast.error('Failed to delete object')
 		},
 		onSettled: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })

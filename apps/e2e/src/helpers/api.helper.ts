@@ -14,6 +14,7 @@ interface ObjectResponse {
 	title: string
 	content: string | null
 	status: string
+	metadata: Record<string, unknown> | null
 	workspaceId: string
 	createdBy: string
 	createdAt: string
@@ -186,6 +187,14 @@ export class TestAPI {
 		return res.json()
 	}
 
+	async getObject(id: string, workspaceId: string): Promise<ObjectResponse> {
+		const res = await fetch(`${this.baseURL}/api/objects/${id}`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`getObject failed: ${res.status}`)
+		return res.json()
+	}
+
 	async updateObject(
 		id: string,
 		workspaceId: string,
@@ -241,6 +250,11 @@ export class TestAPI {
 			content: string
 			parent_event_id?: number
 			metadata?: Record<string, unknown>
+			mentions?: string[]
+			// The structured ask (`commentDecisionSchema`). The API validates it and
+			// rejects a block that breaks any of its rules, so a spec that seeds a
+			// malformed one fails here rather than rendering nothing later.
+			decision?: Record<string, unknown>
 		},
 	): Promise<EventResponse> {
 		const res = await fetch(`${this.baseURL}/api/events`, {
@@ -410,6 +424,22 @@ export class TestAPI {
 		})
 		if (!res.ok) throw new Error(`createTrigger failed: ${res.status}`)
 		return res.json()
+	}
+
+	async listTriggers(workspaceId: string): Promise<TriggerResponse[]> {
+		const res = await fetch(`${this.baseURL}/api/triggers`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`listTriggers failed: ${res.status}`)
+		return res.json()
+	}
+
+	async deleteTrigger(id: string, workspaceId: string): Promise<void> {
+		const res = await fetch(`${this.baseURL}/api/triggers/${id}`, {
+			method: 'DELETE',
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`deleteTrigger failed: ${res.status}`)
 	}
 
 	async createConversation(

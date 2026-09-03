@@ -1,8 +1,8 @@
 import type { Database } from '@maskin/db'
 import { objects, relationships, workspaces } from '@maskin/db/schema'
-import { COMMITMENT_ATTENTION_STATUSES, buildWebAppHref, stripTrailingSlash } from '@maskin/shared'
+import { buildWebAppHref, stripTrailingSlash } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, desc, eq, gte, inArray, ne, sql } from 'drizzle-orm'
+import { and, desc, eq, gte, inArray, ne } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 
@@ -10,20 +10,8 @@ const MAX_ACTIVE_BETS = 10
 const MAX_PAUSED_BETS = 5
 const MAX_CLOSED_BETS = 5
 const MAX_OPEN_INSIGHTS = 10
-const MAX_COMMITMENTS = 10
 const MAX_LEDGER_LINES = 20
 
-// Commitments are ordered by how loud a signal they carry: `breached` (floor
-// already broken) first, then `at-risk`, then `holding` (steady-state). This
-// mirrors the bet convention where terminal transitions surface ahead of
-// lifecycle noise — the DoD on the original Loops primitive (now the
-// Commitment type post-rename) requires at-risk and breached appear ahead of
-// holding using the composer's existing per-type grouping.
-const COMMITMENT_STATUS_PRIORITY: Record<string, number> = {
-	breached: 0,
-	'at-risk': 1,
-	holding: 2,
-}
 const CLOSED_BETS_DAYS = 30
 const LEDGER_MAX_LINES = 1000
 const TITLE_MAX = 120
@@ -153,57 +141,115 @@ function truncate(s: string | null | undefined, max: number): string {
 }
 
 /**
- * Generate the agent-facing briefing for a workspace. Queries the object graph
- * for active/closed bets, open insights, child-task progress, and the recent
- * workspace learnings ledger, then renders a stable markdown document.
- *
- * This is the `feature_list.json` + `claude-progress.txt` equivalent from
- * Anthropic's Ralph Loop, adapted for knowledge work: always auto-generated,
- * never hand-edited, so it cannot rot.
+ * One bet as the briefing sees it. Strings are pre-truncated to the widths the
+ * documents render at, so the agent doc and the spoken script quote identical
+ * text. `null` means the field was absent; `''` means it was present but blank
+ * — the agent doc distinguishes the two.
  */
-export async function renderWorkspaceBriefing(
+export interface BriefingBetFact {
+	id: string
+	title: string
+	status: string
+	appetite: string | null
+	verdict: string | null
+	excerpt: string
+	/** Child-task rollup. Null when the bet has no `breaks_into` children, and
+	 *  only ever populated for active bets — the other tiers don't render it. */
+	progress: { done: number; total: number } | null
+}
+
+export interface BriefingInsightFact {
+	id: string
+	title: string
+}
+
+export interface BriefingLabels {
+	bet: string
+	task: string
+	insight: string
+}
+
+/**
+ * Everything both briefing documents are built from — one query pass, no
+ * formatting. `formatAgentBriefing` renders the markdown agents receive at
+ * session start; `services/spoken-brief.ts` hands the same facts to the
+ * workspace's default agent to be written as prose for a human to listen to.
+ *
+ * Splitting the two matters because they have different readers. The agent doc
+ * addresses an agent ("It is your map"), lists object ids, and closes with MCP
+ * tool names — none of which belongs in something spoken aloud.
+ */
+export interface BriefingFacts {
+	workspaceId: string
+	/** False when the workspace row is missing — both renderers degrade to a
+	 *  "not found" document rather than throwing. */
+	found: boolean
+	workspaceName: string
+	labels: BriefingLabels
+	activeBets: BriefingBetFact[]
+	pausedBets: BriefingBetFact[]
+	closedBets: BriefingBetFact[]
+	openInsights: BriefingInsightFact[]
+	ledgerLines: string[]
+	closedBetsDays: number
+}
+
+/**
+ * Reads an optional free-text metadata field. Mirrors the original inline
+ * guard exactly — a present-but-whitespace value returns `''` (rendered as an
+ * empty label), an absent or non-string value returns null (label omitted).
+ */
+function metaText(meta: Record<string, unknown>, key: string, max: number): string | null {
+	const raw = meta[key]
+	if (typeof raw !== 'string' || raw.length === 0) return null
+	return truncate(raw, max)
+}
+
+function objectMeta(row: { metadata: unknown }): Record<string, unknown> {
+	return (row.metadata as Record<string, unknown> | null) ?? {}
+}
+
+/**
+ * Query the object graph once and return the briefing's raw material. Shared
+ * by the agent-facing markdown and the human-facing spoken script so the two
+ * can never drift on what the workspace currently looks like.
+ */
+export async function collectBriefingFacts(
 	db: Database,
 	storage: StorageProvider,
 	workspaceId: string,
-): Promise<string> {
+): Promise<BriefingFacts> {
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 	if (!ws) {
-		return `# Workspace ${workspaceId}\n\nWorkspace not found.\n`
+		return {
+			workspaceId,
+			found: false,
+			workspaceName: '',
+			labels: { bet: 'Bet', task: 'Task', insight: 'Insight' },
+			activeBets: [],
+			pausedBets: [],
+			closedBets: [],
+			openInsights: [],
+			ledgerLines: [],
+			closedBetsDays: CLOSED_BETS_DAYS,
+		}
 	}
 
 	const settings = (ws.settings as WorkspaceSettings) ?? ({} as WorkspaceSettings)
 	const displayNames = settings.display_names ?? {}
-	const betLabel = displayNames.bet ?? 'Bet'
-	const taskLabel = displayNames.task ?? 'Task'
-	const insightLabel = displayNames.insight ?? 'Insight'
-	// Fall back to legacy `loop` display name for workspaces that haven't yet
-	// re-seeded post-rename (0-row prod today, but dev/test fixtures still
-	// carry the old key).
-	const commitmentLabel = displayNames.commitment ?? displayNames.loop ?? 'Commitment'
+	const labels: BriefingLabels = {
+		bet: displayNames.bet ?? 'Bet',
+		task: displayNames.task ?? 'Task',
+		insight: displayNames.insight ?? 'Insight',
+		// Fall back to legacy `loop` display name for workspaces that haven't yet
+		// re-seeded post-rename (0-row prod today, but dev/test fixtures still
+		// carry the old key).
+	}
 
 	const since = new Date(Date.now() - CLOSED_BETS_DAYS * 24 * 60 * 60 * 1000)
 
-	// Commitments sort with attention-worthy statuses (breached, at-risk)
-	// ahead of holding so the briefing surfaces "your standing commitments
-	// that need you" at the top of the section. Uses `inArray` so
-	// `COMMITMENT_ATTENTION_STATUSES` stays the single source of truth shared
-	// with the unread-feed join in routes/subscriptions.ts — no drift between
-	// the two surfaces.
-	//
-	// This coarse tier alone is not enough: `.limit(MAX_COMMITMENTS)` is
-	// applied against this ORDER BY at the DB level, so it must fully match
-	// COMMITMENT_STATUS_PRIORITY (breached > at-risk > holding), not just
-	// "attention-worthy vs not". A 2-tier ORDER BY would let a fresher
-	// `at-risk` commitment win one of the MAX_COMMITMENTS slots over an older
-	// `breached` one, because the in-memory 3-tier sort below only re-sorts
-	// whatever already survived the LIMIT. `commitmentBreachedPriority` breaks
-	// the tie within the attention-worthy tier so breached rows are never
-	// truncated in favor of at-risk ones.
-	const commitmentHealthPriority = sql<number>`case when ${inArray(objects.status, [...COMMITMENT_ATTENTION_STATUSES])} then 1 else 0 end`
-	const commitmentBreachedPriority = sql<number>`case when ${eq(objects.status, 'breached')} then 1 else 0 end`
-
 	// Independent queries run in parallel — they don't depend on each other.
-	const [activeBets, pausedBets, closedBets, openInsights, commitments] = await Promise.all([
+	const [activeBets, pausedBets, closedBets, openInsights] = await Promise.all([
 		db
 			.select()
 			.from(objects)
@@ -253,33 +299,7 @@ export async function renderWorkspaceBriefing(
 			)
 			.orderBy(desc(objects.createdAt))
 			.limit(MAX_OPEN_INSIGHTS),
-		// Commitments — polymorphic filter on `type='commitment'` (renamed from
-		// the legacy `loop` type in T1 of bet/loops-first-class), never
-		// `metadata_eq`, so downstream usage checks can still read this as
-		// primitive usage rather than a bespoke query path.
-		db
-			.select()
-			.from(objects)
-			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'commitment')))
-			.orderBy(
-				desc(commitmentHealthPriority),
-				desc(commitmentBreachedPriority),
-				desc(objects.updatedAt),
-			)
-			.limit(MAX_COMMITMENTS),
 	])
-
-	// In-memory sort by health priority (breached → at-risk → holding), then
-	// by recency within a status tier. Unknown statuses sort last so a future
-	// schema addition doesn't silently jump the queue.
-	const sortedCommitments = [...commitments].sort((a, b) => {
-		const aRank = COMMITMENT_STATUS_PRIORITY[a.status] ?? Number.POSITIVE_INFINITY
-		const bRank = COMMITMENT_STATUS_PRIORITY[b.status] ?? Number.POSITIVE_INFINITY
-		if (aRank !== bRank) return aRank - bRank
-		const aTime = a.updatedAt instanceof Date ? a.updatedAt.getTime() : 0
-		const bTime = b.updatedAt instanceof Date ? b.updatedAt.getTime() : 0
-		return bTime - aTime
-	})
 
 	// Child task progress for active bets: one batched relationship query, one
 	// batched object query.
@@ -310,8 +330,54 @@ export async function renderWorkspaceBriefing(
 
 	const ledgerLines = await readLedgerTail(storage, workspaceId, MAX_LEDGER_LINES)
 
+	type ObjectRow = (typeof activeBets)[number]
+	const toBet = (row: ObjectRow, withProgress: boolean): BriefingBetFact => {
+		const meta = objectMeta(row)
+		return {
+			id: row.id,
+			title: truncate(row.title, TITLE_MAX),
+			status: row.status,
+			appetite: metaText(meta, 'appetite', 40),
+			verdict: metaText(meta, 'verdict', EXCERPT_MAX),
+			excerpt: truncate(row.content, EXCERPT_MAX),
+			progress: withProgress ? (progressByBet.get(row.id) ?? null) : null,
+		}
+	}
+
+	return {
+		workspaceId,
+		found: true,
+		workspaceName: ws.name,
+		labels,
+		activeBets: activeBets.map((row) => toBet(row, true)),
+		pausedBets: pausedBets.map((row) => toBet(row, false)),
+		closedBets: closedBets.map((row) => toBet(row, false)),
+		openInsights: openInsights.map((row) => ({
+			id: row.id,
+			title: truncate(row.title, TITLE_MAX),
+		})),
+		ledgerLines,
+		closedBetsDays: CLOSED_BETS_DAYS,
+	}
+}
+
+/**
+ * Render the agent-facing briefing markdown — the document written to
+ * `/agent/workspace/WORKSPACE.md` at session start and returned by
+ * `GET /api/briefing`. Addressed to an agent, not a person: it carries object
+ * ids and closes with the MCP tools to dig further.
+ */
+export function formatAgentBriefing(facts: BriefingFacts): string {
+	if (!facts.found) {
+		return `# Workspace ${facts.workspaceId}\n\nWorkspace not found.\n`
+	}
+
+	const betLabel = facts.labels.bet
+	const taskLabel = facts.labels.task
+	const insightLabel = facts.labels.insight
+
 	const out: string[] = []
-	out.push(`# ${ws.name} — workspace briefing`)
+	out.push(`# ${facts.workspaceName} — workspace briefing`)
 	out.push('')
 	out.push(
 		"This file is auto-generated at session start from the workspace's current state. It is your map — read it first, then use MCP tools to go deeper.",
@@ -320,89 +386,56 @@ export async function renderWorkspaceBriefing(
 
 	out.push(`## Active ${betLabel.toLowerCase()}s`)
 	out.push('')
-	if (activeBets.length === 0) {
+	if (facts.activeBets.length === 0) {
 		const emptyHint =
-			openInsights.length > 0
+			facts.openInsights.length > 0
 				? ` Consider proposing one from an open ${insightLabel.toLowerCase()}.`
 				: ''
 		out.push(`_No active ${betLabel.toLowerCase()}s.${emptyHint}_`)
 	} else {
-		for (const bet of activeBets) {
-			const counts = progressByBet.get(bet.id)
-			const taskNote = counts
-				? ` · ${counts.done}/${counts.total} ${taskLabel.toLowerCase()}s done`
+		for (const bet of facts.activeBets) {
+			const taskNote = bet.progress
+				? ` · ${bet.progress.done}/${bet.progress.total} ${taskLabel.toLowerCase()}s done`
 				: ''
-			const meta = (bet.metadata as Record<string, unknown> | null) ?? {}
-			const appetite =
-				typeof meta.appetite === 'string' && meta.appetite.length > 0
-					? ` · appetite: ${truncate(meta.appetite, 40)}`
-					: ''
-			out.push(`- **${truncate(bet.title, TITLE_MAX)}** [${bet.status}]${appetite}${taskNote}`)
-			const excerpt = truncate(bet.content, EXCERPT_MAX)
-			if (excerpt) out.push(`  ${excerpt}`)
+			const appetite = bet.appetite === null ? '' : ` · appetite: ${bet.appetite}`
+			out.push(`- **${bet.title}** [${bet.status}]${appetite}${taskNote}`)
+			if (bet.excerpt) out.push(`  ${bet.excerpt}`)
 			out.push(`  id: \`${bet.id}\``)
 		}
 	}
 	out.push('')
 
-	if (pausedBets.length > 0) {
+	if (facts.pausedBets.length > 0) {
 		out.push(`## Paused ${betLabel.toLowerCase()}s`)
 		out.push('')
 		out.push(
 			'_Explicitly set aside — not part of the current cycle. Revisit only if a new signal changes the calculus._',
 		)
-		for (const bet of pausedBets) {
-			out.push(`- **${truncate(bet.title, TITLE_MAX)}**`)
+		for (const bet of facts.pausedBets) {
+			out.push(`- **${bet.title}**`)
 		}
 		out.push('')
 	}
 
-	out.push(`## Recently closed ${betLabel.toLowerCase()}s (last ${CLOSED_BETS_DAYS} days)`)
+	out.push(`## Recently closed ${betLabel.toLowerCase()}s (last ${facts.closedBetsDays} days)`)
 	out.push('')
-	if (closedBets.length === 0) {
-		out.push(`_None in the last ${CLOSED_BETS_DAYS} days._`)
+	if (facts.closedBets.length === 0) {
+		out.push(`_None in the last ${facts.closedBetsDays} days._`)
 	} else {
-		for (const bet of closedBets) {
-			const meta = (bet.metadata as Record<string, unknown> | null) ?? {}
-			const verdict =
-				typeof meta.verdict === 'string' && meta.verdict.length > 0
-					? ` — ${truncate(meta.verdict, EXCERPT_MAX)}`
-					: ''
-			out.push(`- **${truncate(bet.title, TITLE_MAX)}** [${bet.status}]${verdict}`)
+		for (const bet of facts.closedBets) {
+			const verdict = bet.verdict === null ? '' : ` — ${bet.verdict}`
+			out.push(`- **${bet.title}** [${bet.status}]${verdict}`)
 		}
 	}
 	out.push('')
-
-	// Silent when empty — matches the paused-bets pattern. An empty commitment
-	// set (the day-1 state before any bet has graduated) should not shout at
-	// the reader with a placeholder line.
-	if (sortedCommitments.length > 0) {
-		out.push(`## ${commitmentLabel}s`)
-		out.push('')
-		for (const commitment of sortedCommitments) {
-			const meta = (commitment.metadata as Record<string, unknown> | null) ?? {}
-			const floor =
-				typeof meta.floor === 'string' && meta.floor.length > 0
-					? ` · floor: ${truncate(meta.floor, 60)}`
-					: ''
-			const cadence =
-				typeof meta.cadence === 'string' && meta.cadence.length > 0
-					? ` · cadence: ${truncate(meta.cadence, 40)}`
-					: ''
-			out.push(
-				`- **${truncate(commitment.title, TITLE_MAX)}** [${commitment.status}]${floor}${cadence}`,
-			)
-		}
-		out.push('')
-	}
 
 	out.push(`## Open ${insightLabel.toLowerCase()}s`)
 	out.push('')
-	if (openInsights.length === 0) {
+	if (facts.openInsights.length === 0) {
 		out.push(`_No open ${insightLabel.toLowerCase()}s._`)
 	} else {
-		for (const insight of openInsights) {
-			out.push(`- ${truncate(insight.title, TITLE_MAX)}`)
+		for (const insight of facts.openInsights) {
+			out.push(`- ${insight.title}`)
 		}
 		out.push('')
 		out.push(
@@ -413,10 +446,10 @@ export async function renderWorkspaceBriefing(
 
 	out.push('## Recent workspace learnings')
 	out.push('')
-	if (ledgerLines.length === 0) {
+	if (facts.ledgerLines.length === 0) {
 		out.push('_No prior session learnings yet._')
 	} else {
-		for (const line of ledgerLines) {
+		for (const line of facts.ledgerLines) {
 			out.push(`- ${line}`)
 		}
 	}
@@ -435,4 +468,21 @@ export async function renderWorkspaceBriefing(
 	out.push('')
 
 	return out.join('\n')
+}
+
+/**
+ * Generate the agent-facing briefing for a workspace. Queries the object graph
+ * for active/closed bets, open insights, child-task progress, and the recent
+ * workspace learnings ledger, then renders a stable markdown document.
+ *
+ * This is the `feature_list.json` + `claude-progress.txt` equivalent from
+ * Anthropic's Ralph Loop, adapted for knowledge work: always auto-generated,
+ * never hand-edited, so it cannot rot.
+ */
+export async function renderWorkspaceBriefing(
+	db: Database,
+	storage: StorageProvider,
+	workspaceId: string,
+): Promise<string> {
+	return formatAgentBriefing(await collectBriefingFacts(db, storage, workspaceId))
 }

@@ -11,7 +11,7 @@ import {
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
-import { mergeModuleDefaultSettings } from '@maskin/module-sdk'
+import { applyModuleDefaults } from '@maskin/module-sdk'
 import {
 	CHIEF_OF_STAFF_DEFAULT,
 	DEFAULT_WORKSPACE_AGENTS,
@@ -25,7 +25,7 @@ import {
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { isEnterpriseActor } from '../lib/enterprise-allowlist'
+import { isEnterpriseActor } from '../lib/enterprise'
 import { logger } from '../lib/logger'
 import { buildChiefOfStaffKickoffPrompt } from '../lib/onboarding/chief-of-staff-kickoff'
 import {
@@ -690,7 +690,7 @@ export async function provisionWorkspace(params: {
 			: params.settings
 
 	const parsedSettings = workspaceSettingsSchema.parse(requestedSettings ?? {})
-	const settings = mergeModuleDefaultSettings(parsedSettings, parsedSettings.enabled_modules)
+	const settings = applyModuleDefaults(parsedSettings, parsedSettings.enabled_modules)
 
 	let chiefOfStaffId: string | undefined
 

@@ -2,6 +2,9 @@ import { generateKeyPairSync } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
 	DiscoveryError,
+	NoGithubInstallationsError,
+	UnauthorizedGithubInstallationError,
+	buildAppInstallUrl,
 	fetchInstallationOwnerLogin,
 	githubAuth,
 	mintInstallationTokenWithRecovery,
@@ -57,28 +60,166 @@ describe('GitHub provider config', () => {
 
 describe('githubAuth', () => {
 	describe('getInstallUrl', () => {
-		it('returns GitHub App installation URL with state', () => {
-			const url = githubAuth.getInstallUrl('my-state')
+		const originalClientId = process.env.GITHUB_CLIENT_ID
+
+		beforeAll(() => {
+			process.env.GITHUB_CLIENT_ID = 'Iv1.testclientid'
+		})
+
+		afterAll(() => {
+			process.env.GITHUB_CLIENT_ID = originalClientId
+		})
+
+		// `installations/new` dead-ends for an org that already has the App —
+		// GitHub swaps to the configure page and never calls our callback. The
+		// user-authorization endpoint always returns, which is what lets a second
+		// workspace connect an already-installed org.
+		it('points at user authorization, not the App install page', () => {
+			const url = githubAuth.getInstallUrl('my-state', 'https://app.test/api/cb')
+			expect(url).toContain('https://github.com/login/oauth/authorize')
+			expect(url).not.toContain('/installations/new')
+		})
+
+		it('includes client id, redirect uri and state', () => {
+			const url = new URL(githubAuth.getInstallUrl('my-state', 'https://app.test/api/cb'))
+			expect(url.searchParams.get('client_id')).toBe('Iv1.testclientid')
+			expect(url.searchParams.get('redirect_uri')).toBe('https://app.test/api/cb')
+			expect(url.searchParams.get('state')).toBe('my-state')
+		})
+
+		it('URL-encodes the state parameter', () => {
+			const raw = 'state with spaces&special=chars'
+			const url = new URL(githubAuth.getInstallUrl(raw, 'https://app.test/api/cb'))
+			expect(url.searchParams.get('state')).toBe(raw)
+		})
+	})
+
+	describe('buildAppInstallUrl', () => {
+		it('returns the App install page with the state preserved', () => {
+			const url = buildAppInstallUrl('my-state')
 			expect(url).toContain('https://github.com/apps/')
 			expect(url).toContain('/installations/new')
 			expect(url).toContain('state=my-state')
 		})
-
-		it('URL-encodes the state parameter', () => {
-			const url = githubAuth.getInstallUrl('state with spaces&special=chars')
-			expect(url).toContain(encodeURIComponent('state with spaces&special=chars'))
-		})
 	})
 
 	describe('handleCallback', () => {
-		it('extracts installation_id from params', async () => {
-			const result = await githubAuth.handleCallback({ installation_id: 'inst-42' })
-			expect(result).toEqual({ installation_id: 'inst-42' })
+		const originalFetch = globalThis.fetch
+		const originalClientId = process.env.GITHUB_CLIENT_ID
+		const originalSecret = process.env.GITHUB_CLIENT_SECRET
+
+		beforeAll(() => {
+			process.env.GITHUB_CLIENT_ID = 'Iv1.testclientid'
+			process.env.GITHUB_CLIENT_SECRET = 'test-client-secret'
 		})
 
-		it('throws when installation_id is missing', async () => {
-			await expect(githubAuth.handleCallback({})).rejects.toThrow(
-				'Missing installation_id in callback',
+		afterEach(() => {
+			globalThis.fetch = originalFetch
+		})
+
+		afterAll(() => {
+			process.env.GITHUB_CLIENT_ID = originalClientId
+			process.env.GITHUB_CLIENT_SECRET = originalSecret
+		})
+
+		/** Stub the token exchange, then /user/installations. */
+		function stubGithub(installations: Array<{ id: number; login: string }>) {
+			globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+				const url = String(input)
+				if (url.includes('login/oauth/access_token')) {
+					return new Response(JSON.stringify({ access_token: 'ghu_usertoken' }), { status: 200 })
+				}
+				if (url.includes('/user/installations')) {
+					return new Response(
+						JSON.stringify({
+							installations: installations.map((i) => ({ id: i.id, account: { login: i.login } })),
+						}),
+						{ status: 200 },
+					)
+				}
+				throw new Error(`Unexpected fetch: ${url}`)
+			}) as unknown as typeof fetch
+		}
+
+		// A fresh install names the installation directly. We honour it, but only
+		// after confirming the authenticated user can actually reach it.
+		it('uses the supplied installation_id once the user is shown to reach it', async () => {
+			stubGithub([
+				{ id: 146523409, login: 'sindre-ai' },
+				{ id: 154364583, login: 'vaerksted-ai' },
+			])
+			const result = await githubAuth.handleCallback(
+				{ code: 'abc', installation_id: '154364583' },
+				'https://app.test/api/cb',
+			)
+			expect(result).toEqual({ installation_id: '154364583' })
+		})
+
+		// The hole this closes: installation_id is a raw query param, and every
+		// downstream token mint uses the App's own JWT, which succeeds for any
+		// installation of the App. Trusting it would let anyone bind an org they
+		// have no GitHub access to by hand-writing this callback URL.
+		it('refuses an installation_id the authenticated user cannot reach', async () => {
+			stubGithub([{ id: 154364583, login: 'vaerksted-ai' }])
+			await expect(
+				githubAuth.handleCallback(
+					{ code: 'abc', installation_id: '146523409' },
+					'https://app.test/api/cb',
+				),
+			).rejects.toBeInstanceOf(UnauthorizedGithubInstallationError)
+		})
+
+		it('refuses a bare installation_id with no code to verify it against', async () => {
+			globalThis.fetch = vi.fn(async () => {
+				throw new Error('must not call GitHub without a code')
+			}) as unknown as typeof fetch
+			await expect(
+				githubAuth.handleCallback({ installation_id: '146523409' }, 'https://app.test/api/cb'),
+			).rejects.toThrow('Missing authorization code')
+		})
+
+		it('resolves the single installation a user can reach', async () => {
+			stubGithub([{ id: 146523409, login: 'sindre-ai' }])
+			const result = await githubAuth.handleCallback({ code: 'abc' }, 'https://app.test/api/cb')
+			expect(result).toEqual({ installation_id: '146523409' })
+		})
+
+		it('returns the candidate list when the user can reach several', async () => {
+			stubGithub([
+				{ id: 146523409, login: 'sindre-ai' },
+				{ id: 154364583, login: 'vaerksted-ai' },
+			])
+			const result = await githubAuth.handleCallback({ code: 'abc' }, 'https://app.test/api/cb')
+			expect(result.pending_installation_selection).toBe(true)
+			expect(result.installation_choices).toEqual([
+				{ installationId: '146523409', ownerLogin: 'sindre-ai' },
+				{ installationId: '154364583', ownerLogin: 'vaerksted-ai' },
+			])
+			// The user token is a means to an end — never persisted.
+			expect(result).not.toHaveProperty('accessToken')
+			expect(JSON.stringify(result)).not.toContain('ghu_usertoken')
+		})
+
+		it('signals no installations so the route can send the user to install', async () => {
+			stubGithub([])
+			await expect(
+				githubAuth.handleCallback({ code: 'abc' }, 'https://app.test/api/cb'),
+			).rejects.toBeInstanceOf(NoGithubInstallationsError)
+		})
+
+		it('throws when GitHub rejects the code with HTTP 200', async () => {
+			globalThis.fetch = vi.fn(
+				async () =>
+					new Response(JSON.stringify({ error: 'bad_verification_code' }), { status: 200 }),
+			) as unknown as typeof fetch
+			await expect(
+				githubAuth.handleCallback({ code: 'abc' }, 'https://app.test/api/cb'),
+			).rejects.toThrow('bad_verification_code')
+		})
+
+		it('throws when no code is present', async () => {
+			await expect(githubAuth.handleCallback({}, 'https://app.test/api/cb')).rejects.toThrow(
+				'Missing authorization code',
 			)
 		})
 	})

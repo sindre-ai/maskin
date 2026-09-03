@@ -4,6 +4,7 @@ import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { SAFE_METADATA_FIELD_NAME_RE, readChanges, reversePatch } from '@maskin/shared'
 import { Cron } from 'croner'
 import { type SQL, and, eq, sql } from 'drizzle-orm'
+import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { SessionManager } from './session-manager'
 
@@ -39,6 +40,105 @@ export function calculateBackoffUntil(failureCount: number, now: Date): Date {
 	return new Date(now.getTime() + delayMs)
 }
 
+/**
+ * A workspace-wide pause on spawning trigger sessions, set when starting a
+ * session fails for a reason that is a property of the WORKSPACE rather than of
+ * the individual trigger — an exhausted plan cap, or no LLM credentials at all.
+ *
+ * Why this exists: the per-trigger backoff above (`triggerFailures`) is driven
+ * by session *outcome* events, and a plan cap is checked inside `createSession`
+ * BEFORE a session row exists. No session row means no `session_failed` event,
+ * which means `recordTriggerFailure` never runs and the backoff gate never
+ * engages — so an over-cap workspace re-fired every one of its cron triggers,
+ * at full rate, forever: ~372 identical failures a day from a single trial
+ * workspace (Sentry MASKIN-DEV-K).
+ *
+ * The credentials case reaches this map by TWO routes, because the two
+ * session-start paths report it differently:
+ *
+ *  - Local Docker (`launchContainer`) throws, so it arrives through
+ *    `handleSessionCreateFailure` like the plan cap does.
+ *  - Production (`SessionDispatchQueue` → `SessionDispatcher`) *returns* the
+ *    failure as a value, and `SessionManager` has already returned by then, so
+ *    nothing rejects here at all. That path arrives through
+ *    `handleDispatchPermanentFailure`, wired as the queue's `onPermanentFailure`
+ *    in `index.ts`. Without it this suppression would be inert in production
+ *    for exactly the workspace it was written for — ~82/day from one enterprise
+ *    workspace with no credentials connected (MASKIN-DEV-6).
+ *
+ * Deliberately NOT implemented as `triggers.enabled = false`: that is lossy.
+ * Once flipped we cannot tell "Maskin paused this for billing" apart from "the
+ * user turned it off", so a workspace that later upgrades would find its
+ * automations silently still off with no safe way to restore them. This map is
+ * advisory, expires on its own, and never mutates user intent.
+ */
+interface WorkspaceSuppression {
+	/** Firing resumes on its own once `now >= until`. */
+	until: Date
+	reason: string
+}
+
+/**
+ * Fallback pause for a cap with no known reset time. `PlanCapExceededError`
+ * normally carries `periodEnd` (Stripe's `current_period_end`), but it is
+ * nullable — a workspace whose Stripe webhook has not landed yet has no period
+ * at all. One hour keeps a capped workspace quiet without stranding it for a
+ * whole billing cycle on missing metadata.
+ */
+const PLAN_CAP_FALLBACK_SUPPRESSION_MS = 60 * 60_000
+
+/**
+ * Pause for "this workspace has no LLM credentials". Unlike a plan cap this has
+ * no natural expiry — nothing resets it but a human connecting a credential —
+ * so we re-check hourly rather than never, and clear the entry outright on an
+ * entitlement-improving workspace event (see `SUPPRESSION_CLEARING_ACTIONS`).
+ *
+ * Caveat, deliberately stated rather than implied: importing a Claude
+ * subscription via Settings → Keys does NOT currently clear the pause, because
+ * `routes/claude-oauth.ts` writes `workspaces.settings` without inserting any
+ * `events` row at all — so there is no event to match. That is a pre-existing
+ * gap against the "log an event on every mutation" rule, not something this
+ * pause introduced; until it is fixed, that recovery waits out the hour below.
+ */
+const NO_CREDENTIALS_SUPPRESSION_MS = 60 * 60_000
+
+/**
+ * Workspace-event actions that mean "this workspace's entitlement may have
+ * IMPROVED", and so should lift an active pause early (see `handleEvent`).
+ *
+ * This is an allowlist rather than a bare `entity_type === 'workspace'` check
+ * because the failure paths emit workspace events too — and one of them emits
+ * on the very path that sets the pause. `resolveClaudeCredentialsWithFailover`
+ * inserts `claude_subscription_failover_triggered` while failing over
+ * (`claude-failover.ts` `recordFailoverTransition`), and the same resolution
+ * then raises `LlmCredentialsUnavailableError` → `not_logged_in` →
+ * `handleDispatchPermanentFailure` → a pause. PG NOTIFY is asynchronous, so
+ * that event routinely lands AFTER the pause is set and would delete it —
+ * suppress, clear, re-fire, fail, repeat, reproducing the very flood this
+ * exists to stop, while logging "suppression cleared — workspace updated" as
+ * if a human had fixed something.
+ *
+ * It is equally NOT a bare `action === 'updated'` check: the two most important
+ * resume signals for a plan cap are not spelled `updated`. A plan upgrade
+ * arrives as `workspace_billing_updated` and a credit purchase as
+ * `workspace_credit_topup` (both `routes/stripe-webhook.ts`), and a top-up
+ * genuinely un-caps the workspace via `canUseCreditBalance`. Filtering to
+ * `updated` alone would strand an upgrading customer for the rest of the pause
+ * — up to a full billing period.
+ *
+ * Deliberately excluded: `workspace_billing_canceled` (`routes/billing.ts`) is
+ * a downgrade, and the two failover actions above are failures, not fixes.
+ */
+const SUPPRESSION_CLEARING_ACTIONS = new Set([
+	// routes/workspaces.ts — settings PATCH, incl. custom_llm and LLM keys.
+	'updated',
+	// routes/stripe-webhook.ts — plan change/renewal, and prepaid credit added.
+	'workspace_billing_updated',
+	'workspace_credit_topup',
+	// lib/claude-oauth-recovery.ts — primary subscription probed healthy again.
+	'claude_subscription_recovered',
+])
+
 export class TriggerRunner {
 	private db: Database
 	private bridge: PgNotifyBridge
@@ -48,6 +148,8 @@ export class TriggerRunner {
 	private eventHandler: ((event: PgEvent) => void) | null = null
 	private sessionEventHandler: ((event: PgEvent) => void) | null = null
 	private triggerFailures: Map<string, TriggerFailureState> = new Map()
+	/** workspaceId -> active workspace-wide pause. See `WorkspaceSuppression`. */
+	private workspaceSuppressions: Map<string, WorkspaceSuppression> = new Map()
 	// A session's terminal outcome can be reported more than once: e.g.
 	// SessionManager.stopSession() writes a provisional session_failed row,
 	// and the agent-server's own genuine completion report — if it arrives,
@@ -122,6 +224,7 @@ export class TriggerRunner {
 			clearTimeout(timeout)
 		}
 		this.processedSessionOutcomes.clear()
+		this.workspaceSuppressions.clear()
 	}
 
 	private recordTriggerFailure(triggerId: string): void {
@@ -137,6 +240,155 @@ export class TriggerRunner {
 		logger.warn(
 			`Trigger '${triggerId}' failure #${count}, in backoff until ${backoffUntil.toISOString()}`,
 		)
+	}
+
+	/**
+	 * True when this workspace is inside an active pause. Expired entries are
+	 * dropped on read, which is what makes firing resume with no timer, no
+	 * background sweep, and no restart.
+	 */
+	private isWorkspaceSuppressed(workspaceId: string, triggerName?: string): boolean {
+		const suppression = this.workspaceSuppressions.get(workspaceId)
+		if (!suppression) return false
+		if (suppression.until <= new Date()) {
+			this.workspaceSuppressions.delete(workspaceId)
+			logger.info(`Workspace ${workspaceId} trigger suppression expired — resuming`)
+			return false
+		}
+		// debug, not info: this is the hot path once a pause is active — it runs
+		// on every scheduled tick of every trigger in the workspace, and logging
+		// it at info would reproduce at the log layer exactly the flood this
+		// suppression exists to stop.
+		logger.debug(
+			`Trigger${triggerName ? ` '${triggerName}'` : ''} skipped — workspace ${workspaceId} suppressed until ${suppression.until.toISOString()} (${suppression.reason})`,
+		)
+		return true
+	}
+
+	/**
+	 * Lifts a pause early. Called when a workspace is updated, so upgrading a
+	 * plan or connecting a Claude subscription resumes automations on the next
+	 * tick instead of after the pause runs out.
+	 */
+	private clearWorkspaceSuppression(workspaceId: string): void {
+		if (this.workspaceSuppressions.delete(workspaceId)) {
+			logger.info(`Workspace ${workspaceId} trigger suppression cleared — workspace updated`)
+		}
+	}
+
+	/**
+	 * The single `.catch()` for every `createSession` call in this file.
+	 *
+	 * Splits session-creation failures into two kinds:
+	 *
+	 *  - A workspace-level entitlement state (over cap, no credentials). Expected,
+	 *    actionable only by the customer, and permanent until they act — so it
+	 *    pauses the whole workspace and logs `warn` ONCE per pause. Reporting
+	 *    these at `error` on every repeat is what made two customer config
+	 *    states into 3,675 Sentry events.
+	 *  - Anything else. Still `error`, and now rare enough to be worth alerting on.
+	 */
+	private handleSessionCreateFailure(
+		workspaceId: string,
+		err: unknown,
+		triggerName?: string,
+	): void {
+		const now = new Date()
+
+		if (err instanceof PlanCapExceededError) {
+			// `periodEnd` is Unix MILLISECONDS. Stripe writes `current_period_end`
+			// in seconds, but checkPlanCap converts it before constructing this
+			// error (llm-routing.ts `effectivePeriodEnd` takes and returns ms) —
+			// so it needs no scaling here. Multiplying by 1000 would push `until`
+			// tens of thousands of years out and make the pause permanent.
+			const until =
+				err.periodEnd !== null && err.periodEnd > now.getTime()
+					? new Date(err.periodEnd)
+					: new Date(now.getTime() + PLAN_CAP_FALLBACK_SUPPRESSION_MS)
+			this.suppressWorkspace(
+				workspaceId,
+				{
+					until,
+					reason: `${err.plan} plan cap exceeded ($${(err.used / 100).toFixed(2)} of $${(err.cap / 100).toFixed(2)})`,
+				},
+				triggerName,
+			)
+			return
+		}
+
+		// `transient` means we could not REACH the provider to check, not that the
+		// workspace is misconfigured. Pausing on that would take a workspace's
+		// automations offline for an hour over a network blip, so let those fall
+		// through to the error branch and retry on the next tick.
+		if (err instanceof LlmCredentialsUnavailableError && !err.transient) {
+			this.suppressWorkspace(
+				workspaceId,
+				{
+					until: new Date(now.getTime() + NO_CREDENTIALS_SUPPRESSION_MS),
+					reason: 'no LLM credentials connected for this workspace',
+				},
+				triggerName,
+			)
+			return
+		}
+
+		logger.error('Container session creation failed', {
+			workspaceId,
+			trigger: triggerName,
+			error: String(err),
+		})
+	}
+
+	/**
+	 * Entry point for the OTHER session-start path: in production
+	 * `SessionManager` hands off to `SessionDispatchQueue` and returns, and the
+	 * dispatcher reports failures as return values rather than throws — so a
+	 * workspace with no LLM credentials never rejects the `createSession`
+	 * promise that `handleSessionCreateFailure` is attached to. Without this the
+	 * credential branch there is dead in production, and the trigger keeps firing
+	 * on schedule against a workspace that cannot start a session
+	 * (Sentry MASKIN-DEV-6). Wired in `index.ts` as the queue's
+	 * `onPermanentFailure`.
+	 *
+	 * Only `not_logged_in` pauses. Every other permanent dispatch failure
+	 * (no agent-server took it, a deleted actor) is about the session or the
+	 * fleet, not the workspace's entitlement, and the existing per-trigger
+	 * backoff — which DOES engage here, because this path emits `session_failed`
+	 * — is the right response to those.
+	 *
+	 * A `not_logged_in` reaching this point is always the non-transient kind:
+	 * `SessionDispatcher` returns `permanent_failure` with that classification
+	 * only when `!err.transient`, and routes transient credential errors back
+	 * through its retry path instead.
+	 */
+	handleDispatchPermanentFailure(workspaceId: string, reasonCode?: string): void {
+		if (reasonCode !== 'not_logged_in') return
+		this.suppressWorkspace(workspaceId, {
+			until: new Date(Date.now() + NO_CREDENTIALS_SUPPRESSION_MS),
+			reason: 'no LLM credentials connected for this workspace',
+		})
+	}
+
+	/**
+	 * Records a pause. Only the transition into a pause logs — a workspace
+	 * already suppressed for the same reason stays quiet, so the log carries one
+	 * line per workspace per billing period rather than one per trigger per tick.
+	 */
+	private suppressWorkspace(
+		workspaceId: string,
+		suppression: WorkspaceSuppression,
+		triggerName?: string,
+	): void {
+		const existing = this.workspaceSuppressions.get(workspaceId)
+		this.workspaceSuppressions.set(workspaceId, suppression)
+		if (existing && existing.until > new Date() && existing.reason === suppression.reason) return
+
+		logger.warn('Trigger sessions paused for workspace', {
+			workspaceId,
+			trigger: triggerName,
+			reason: suppression.reason,
+			until: suppression.until.toISOString(),
+		})
 	}
 
 	private resetTriggerBackoff(triggerId: string): void {
@@ -191,6 +443,19 @@ export class TriggerRunner {
 			await this.handleTriggerChange(event)
 			return
 		}
+
+		// A workspace event whose action is in SUPPRESSION_CLEARING_ACTIONS is the
+		// signal that an entitlement may have IMPROVED — a plan upgrade, a credit
+		// top-up, a settings PATCH, a recovered subscription. Clearing here is what
+		// makes any of them take effect on the next tick rather than at the end of
+		// the pause. The action filter is load-bearing in both directions; see the
+		// constant for why neither `entity_type === 'workspace'` alone nor
+		// `action === 'updated'` alone is correct.
+		if (event.entity_type === 'workspace' && SUPPRESSION_CLEARING_ACTIONS.has(event.action)) {
+			this.clearWorkspaceSuppression(event.workspace_id)
+		}
+
+		if (this.isWorkspaceSuppressed(event.workspace_id)) return
 
 		// Find matching event triggers for this workspace
 		const matchingTriggers = await this.db
@@ -366,7 +631,7 @@ export class TriggerRunner {
 							)
 					}
 				})
-				.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
+				.catch((err) => this.handleSessionCreateFailure(event.workspace_id, err, trigger.name))
 		}
 	}
 
@@ -453,6 +718,11 @@ export class TriggerRunner {
 	}
 
 	private async fireCronTrigger(trigger: typeof triggers.$inferSelect): Promise<void> {
+		// Checked before the scope query and the `trigger_fired` event insert:
+		// a suppressed workspace should cost nothing per tick, and must not
+		// write an audit row claiming a trigger fired when no session follows.
+		if (this.isWorkspaceSuppressed(trigger.workspaceId, trigger.name)) return
+
 		const cronBackoff = this.triggerFailures.get(trigger.id)
 		if (cronBackoff && cronBackoff.backoffUntil > new Date()) {
 			logger.info(
@@ -508,7 +778,7 @@ export class TriggerRunner {
 				triggerId: trigger.id,
 				createdBy: trigger.createdBy,
 			})
-			.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
+			.catch((err) => this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name))
 	}
 
 	private async queryScopeMatches(
@@ -534,6 +804,12 @@ export class TriggerRunner {
 		const scheduledAt = new Date(config.scheduled_at as string)
 		const delay = Math.max(0, scheduledAt.getTime() - Date.now())
 
+		// Deliberately NOT gated on isWorkspaceSuppressed: a reminder is one-shot,
+		// so skipping it here would consume its timeout and drop it permanently
+		// rather than defer it — and being one-shot it cannot produce the
+		// repeating volume the suppression exists to stop. It still routes its
+		// failure through handleSessionCreateFailure so an over-cap reminder is
+		// classified (and can open a pause) rather than paging.
 		const timeout = setTimeout(async () => {
 			logger.info(`Reminder trigger '${trigger.name}' firing`)
 
@@ -558,7 +834,7 @@ export class TriggerRunner {
 					triggerId: trigger.id,
 					createdBy: trigger.createdBy,
 				})
-				.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
+				.catch((err) => this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name))
 
 			// Auto-disable after firing
 			await this.db

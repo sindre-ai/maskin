@@ -8,13 +8,11 @@ describe('Workspace settings', () => {
 			insight: 'Insight',
 			bet: 'Bet',
 			task: 'Task',
-			commitment: 'Commitment',
 			loop: 'Loop',
 		})
 		expect(settings.statuses.insight).toContain('new')
 		expect(settings.statuses.bet).toContain('signal')
 		expect(settings.statuses.task).toContain('todo')
-		expect(settings.statuses.commitment).toContain('holding')
 		expect(settings.statuses.loop).toContain('draft')
 		expect(settings.relationship_types).toContain('informs')
 	})

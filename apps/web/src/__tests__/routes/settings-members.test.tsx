@@ -1,13 +1,19 @@
-import { render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockUseWorkspaceMembers = vi.fn()
+const mockUpdateRoleMutateAsync = vi.fn().mockResolvedValue({})
+const mockRemoveMutateAsync = vi.fn().mockResolvedValue({ removed: true })
+const mockAddMutateAsync = vi.fn().mockResolvedValue({ added: true })
+
+const mockNavigate = vi.fn()
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
 		createFileRoute: () => (options: Record<string, unknown>) => options,
+		useNavigate: () => mockNavigate,
 	}
 })
 
@@ -17,7 +23,12 @@ vi.mock('@/lib/workspace-context', () => ({
 
 vi.mock('@/hooks/use-workspaces', () => ({
 	useWorkspaceMembers: (...args: unknown[]) => mockUseWorkspaceMembers(...args),
-	useAddWorkspaceMember: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	useAddWorkspaceMember: () => ({ mutateAsync: mockAddMutateAsync, isPending: false }),
+	useUpdateWorkspaceMemberRole: () => ({
+		mutateAsync: mockUpdateRoleMutateAsync,
+		isPending: false,
+	}),
+	useRemoveWorkspaceMember: () => ({ mutateAsync: mockRemoveMutateAsync, isPending: false }),
 }))
 
 vi.mock('@/components/shared/actor-avatar', () => ({
@@ -34,6 +45,10 @@ vi.mock('@/components/shared/loading-skeleton', () => ({
 
 vi.mock('@/components/shared/route-error', () => ({
 	RouteError: () => <div>Error</div>,
+}))
+
+vi.mock('@/components/settings/human-detail-dialog', () => ({
+	HumanDetailDialog: () => <div data-testid="human-detail-dialog" />,
 }))
 
 import { Route } from '@/routes/_authed/$workspaceId/settings/members'
@@ -57,7 +72,7 @@ describe('MembersPage', () => {
 		expect(screen.getByText('No members')).toBeInTheDocument()
 	})
 
-	it('renders member list with names and roles', () => {
+	it('renders member table with names and roles', () => {
 		mockUseWorkspaceMembers.mockReturnValue({
 			data: [
 				{ actorId: 'a1', name: 'Alice', type: 'human', role: 'admin', joinedAt: null },
@@ -66,15 +81,63 @@ describe('MembersPage', () => {
 			isLoading: false,
 		})
 		render(<MembersPage />)
-		// Names appear in both avatar mock and member row, so use getAllByText
 		expect(screen.getAllByText('Alice').length).toBeGreaterThanOrEqual(1)
 		expect(screen.getAllByText('Bot One').length).toBeGreaterThanOrEqual(1)
-		expect(screen.getByText('admin')).toBeInTheDocument()
+		expect(screen.getByRole('combobox', { name: /Role for Alice/i })).toHaveTextContent('admin')
+		expect(screen.getByRole('combobox', { name: /Role for Bot One/i })).toHaveTextContent('member')
 	})
 
-	it('renders "Add member" button', () => {
-		mockUseWorkspaceMembers.mockReturnValue({ data: [], isLoading: false })
+	it('renders the member count line beside the inline Members header', () => {
+		mockUseWorkspaceMembers.mockReturnValue({
+			data: [
+				{ actorId: 'a1', name: 'Alice', type: 'human', role: 'admin', joinedAt: null },
+				{ actorId: 'a2', name: 'Bot One', type: 'agent', role: 'member', joinedAt: null },
+			],
+			isLoading: false,
+		})
+		render(<MembersPage />)
+		expect(screen.getByRole('heading', { name: 'Members' })).toBeInTheDocument()
+		expect(screen.getByText('2 people & agents')).toBeInTheDocument()
+	})
+
+	it('navigates to agent detail when an agent row is clicked', () => {
+		mockUseWorkspaceMembers.mockReturnValue({
+			data: [{ actorId: 'a2', name: 'Bot One', type: 'agent', role: 'member', joinedAt: null }],
+			isLoading: false,
+		})
+		render(<MembersPage />)
+
+		fireEvent.click(screen.getAllByText('Bot One')[1])
+
+		expect(mockNavigate).toHaveBeenCalledWith({
+			to: '/$workspaceId/agents/$agentId',
+			params: { workspaceId: 'ws-1', agentId: 'a2' },
+		})
+	})
+
+	it('renders an "Add member" trigger and a remove action per row', () => {
+		mockUseWorkspaceMembers.mockReturnValue({
+			data: [{ actorId: 'a1', name: 'Alice', type: 'human', role: 'member', joinedAt: null }],
+			isLoading: false,
+		})
 		render(<MembersPage />)
 		expect(screen.getByRole('button', { name: /Add member/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Remove Alice/ })).toBeInTheDocument()
+	})
+
+	it('opens confirmation and calls remove mutation when the user confirms', async () => {
+		mockUseWorkspaceMembers.mockReturnValue({
+			data: [{ actorId: 'a1', name: 'Alice', type: 'human', role: 'member', joinedAt: null }],
+			isLoading: false,
+		})
+		render(<MembersPage />)
+
+		fireEvent.click(screen.getByRole('button', { name: /Remove Alice/ }))
+
+		const dialog = await screen.findByRole('dialog')
+		expect(within(dialog).getByText(/Remove Alice from this workspace/)).toBeInTheDocument()
+
+		fireEvent.click(within(dialog).getByRole('button', { name: 'Remove' }))
+		await waitFor(() => expect(mockRemoveMutateAsync).toHaveBeenCalledWith('a1'))
 	})
 })

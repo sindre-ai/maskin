@@ -26,10 +26,9 @@ beforeEach(() => setEnv({}))
 afterEach(() => setEnv({}))
 
 describe('GET /api/feature-flags', () => {
-	// `FLAGS` is empty since `new-design` was retired, so the endpoint resolves
-	// an empty map — and, critically, an id left behind in someone's
-	// FF_TESTER_FEATURES cannot resurrect a flag the registry no longer knows.
-	it('returns an empty flag map while no flags are registered', async () => {
+	// The registry is empty while no flag is in flight, so the route answers
+	// with an empty map rather than failing.
+	it('resolves the live registry when no env is set', async () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
@@ -38,7 +37,7 @@ describe('GET /api/feature-flags', () => {
 	})
 
 	it('never invents a flag from an unregistered id in FF_TESTER_FEATURES', async () => {
-		setEnv({ FF_TESTER_FEATURES: 'new-design', FF_TESTER_ACTOR_IDS: TESTER })
+		setEnv({ FF_TESTER_FEATURES: 'not-a-real-flag', FF_TESTER_ACTOR_IDS: TESTER })
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))

@@ -26,7 +26,7 @@ describe('hasActivePaidPlan', () => {
 	it('returns false when status is canceled', () => {
 		expect(
 			hasActivePaidPlan({
-				billing: { plan: 'byollm', status: 'canceled', stripe_subscription_id: 'sub_x' },
+				billing: { plan: 'enterprise', status: 'canceled', stripe_subscription_id: 'sub_x' },
 			}),
 		).toBe(false)
 	})
@@ -77,11 +77,11 @@ describe('billingAfterByoTransition', () => {
 	})
 
 	it('leaves an already-canceled, subscription-less block untouched', () => {
-		const current = { plan: 'byollm' as const, status: 'canceled' as const }
+		const current = { plan: 'enterprise' as const, status: 'canceled' as const }
 		expect(billingAfterByoTransition(current)).toEqual(current)
 	})
 
-	it('rolls plan to byollm, status to canceled, and drops the subscription id', () => {
+	it('rolls plan to enterprise, status to canceled, and drops the subscription id', () => {
 		const current = {
 			plan: 'pro' as const,
 			status: 'active' as const,
@@ -90,7 +90,7 @@ describe('billingAfterByoTransition', () => {
 			hard_cap_usd_cents: 6_000,
 		}
 		expect(billingAfterByoTransition(current)).toEqual({
-			plan: 'byollm',
+			plan: 'enterprise',
 			status: 'canceled',
 			stripe_subscription_id: null,
 			stripe_customer_id: 'cus_99',
@@ -100,7 +100,7 @@ describe('billingAfterByoTransition', () => {
 })
 
 describe('billingAfterCancel', () => {
-	it('entitled workspace lands on byollm, same as billingAfterByoTransition', () => {
+	it('entitled workspace lands on enterprise, same as billingAfterByoTransition', () => {
 		const current = {
 			plan: 'pro' as const,
 			status: 'active' as const,
@@ -109,7 +109,7 @@ describe('billingAfterCancel', () => {
 			hard_cap_usd_cents: 6_000,
 		}
 		expect(billingAfterCancel(current, true)).toEqual({
-			plan: 'byollm',
+			plan: 'enterprise',
 			status: 'canceled',
 			stripe_subscription_id: null,
 			stripe_customer_id: 'cus_99',
@@ -117,7 +117,7 @@ describe('billingAfterCancel', () => {
 		})
 	})
 
-	it('non-entitled workspace falls back to trial (byollm has no working LLM without entitlement)', () => {
+	it('non-entitled workspace falls back to trial (enterprise has no working LLM without entitlement)', () => {
 		const current = {
 			plan: 'pro' as const,
 			status: 'active' as const,

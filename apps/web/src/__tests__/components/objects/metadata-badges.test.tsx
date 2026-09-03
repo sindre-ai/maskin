@@ -35,13 +35,13 @@ describe('MetadataBadgesView', () => {
 	it('shows remove button when onRemove provided', () => {
 		const object = buildObjectResponse({ metadata: { priority: 'high' } })
 		render(<MetadataBadgesView object={object} onRemove={vi.fn()} />)
-		expect(screen.getByTitle('Remove field')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Remove priority field' })).toBeInTheDocument()
 	})
 
 	it('does not show remove button when onRemove is not provided', () => {
 		const object = buildObjectResponse({ metadata: { priority: 'high' } })
 		render(<MetadataBadgesView object={object} />)
-		expect(screen.queryByTitle('Remove field')).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /Remove .* field/ })).not.toBeInTheDocument()
 	})
 
 	it('calls onRemove with correct key', async () => {
@@ -51,7 +51,7 @@ describe('MetadataBadgesView', () => {
 
 		render(<MetadataBadgesView object={object} onRemove={onRemove} />)
 
-		await user.click(screen.getByTitle('Remove field'))
+		await user.click(screen.getByRole('button', { name: 'Remove priority field' }))
 		expect(onRemove).toHaveBeenCalledWith('priority')
 	})
 

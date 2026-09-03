@@ -31,18 +31,196 @@ jobs:
             git reset --hard origin/main
 
             pnpm install --frozen-lockfile
+
+            # Pin the commit being deployed into the build's cache key.
+            #
+            # build.mjs bakes this SHA into dist/index.js as maskin_build_info's
+            # `commit` label. It would resolve the same value on its own via
+            # `git rev-parse HEAD` (we build inside the work tree, just after
+            # the reset above) — but git HEAD is invisible to turbo, so without
+            # this export a source tree identical to an earlier build replays
+            # that build's cached bundle, carrying the OLDER commit. Exported
+            # here and declared in apps/agent-server/turbo.json `env`, so a new
+            # commit always misses the cache.
+            export MASKIN_COMMIT_SHA="$(git rev-parse HEAD)"
+
             pnpm turbo run build --filter=@maskin/agent-server...
+
+            # Sync the systemd unit from the repo before restarting.
+            #
+            # agent-server is NOT containerised — it runs as a plain Node
+            # process started by systemd (ExecStart=/usr/bin/node ...), so how
+            # it runs lives in a unit file under /etc, separate from the code
+            # under /opt/maskin. Without this step the deploy updates the code
+            # and never the unit, so any change to restart behaviour, kill
+            # mode, journald rate limiting or environment sits in the repo
+            # doing nothing until somebody remembers to ssh in and copy it.
+            # That drift is silent and can persist for months.
+            #
+            # (The agent-base / browser-sidecar images DO ship automatically,
+            # but those are the images sessions run inside — not this service.)
+            UNIT_SRC=apps/agent-server/systemd/maskin-agent-server.service
+            UNIT_DST=/etc/systemd/system/maskin-agent-server.service
+
+            # Roll the unit back to its previous version. Used by BOTH failure
+            # paths below, because `systemctl restart` succeeding proves very
+            # little: this unit is Type=simple, so restart returns 0 as soon as
+            # systemd forks, and Restart=on-failure means even a crash-loop
+            # reports success. The health check is the real verdict, so it needs
+            # the same rollback the restart failure gets.
+            #
+            # Note this restores the UNIT only. The code was already replaced by
+            # the git reset above, so a rollback here fixes a bad unit edit, not
+            # a bad commit — the box is left running the previous unit against
+            # the new code.
+            restore_unit() {
+              [ "$UNIT_ROLLBACK" = 1 ] || return 1
+              echo "restoring previous unit file" >&2
+              mv "$UNIT_DST.bak" "$UNIT_DST" || {
+                echo "could not restore $UNIT_DST from .bak — fix by hand" >&2
+                return 0
+              }
+              systemctl daemon-reload || true
+              if systemctl restart maskin-agent-server; then
+                echo "rolled back to previous unit; service is running on it" >&2
+              else
+                echo "rolled back to previous unit and it STILL will not start" >&2
+              fi
+              return 0
+            }
+
+            UNIT_ROLLBACK=0
+
+            if cmp -s "$UNIT_SRC" "$UNIT_DST"; then
+              echo "unit file unchanged"
+            else
+              echo "unit file changed — verifying and installing"
+
+              # Check the unit parses BEFORE installing it, and only on the
+              # deploys that actually change it. Running it unconditionally
+              # would let an unrelated host change fail every deploy: verify
+              # resolves ExecStart= and exits 1 if the binary has moved (node
+              # reinstalled outside /usr/bin, nvm, a systemd upgrade
+              # tightening a check), which would abort after the build with
+              # the service still on old code and nothing restarted.
+              #
+              # Gate on the OUTPUT, not just the exit code. systemd-analyze
+              # exits 1 for a fatal problem (missing ExecStart), but merely
+              # WARNS with exit 0 on an unrecognised directive such as
+              # KillMode=typo — which systemd then silently ignores at
+              # runtime. Exit-code-only gating means a green deploy can
+              # install a unit whose settings are not in effect, and the
+              # damage shows up on the NEXT deploy: a dropped KillMode=process
+              # SIGKILLs every live microVM. Nobody reads the log of a green
+              # job, so the warning has to fail the build.
+              #
+              # This unit currently verifies clean (no output). If a future
+              # systemd version starts emitting a benign warning here, filter
+              # that specific line rather than reverting to exit-code gating.
+              if ! VERIFY_OUT=$(systemd-analyze verify "$UNIT_SRC" 2>&1); then
+                [ -n "$VERIFY_OUT" ] && echo "$VERIFY_OUT" >&2
+                echo "systemd-analyze verify rejected $UNIT_SRC" >&2
+                exit 1
+              fi
+              if [ -n "$VERIFY_OUT" ]; then
+                echo "$VERIFY_OUT" >&2
+                echo "systemd-analyze verify emitted warnings for $UNIT_SRC — refusing to install, since systemd ignores unrecognised directives silently" >&2
+                exit 1
+              fi
+
+              # Keep the outgoing unit so a failed deploy can be undone. The
+              # new unit is committed to /etc before the restart below, so
+              # without this a bad edit leaves the service down AND its
+              # previous definition gone — recoverable only by hand.
+              if [ -f "$UNIT_DST" ]; then
+                cp -p "$UNIT_DST" "$UNIT_DST.bak"
+                UNIT_ROLLBACK=1
+              fi
+
+              install -m 644 -o root -g root "$UNIT_SRC" "$UNIT_DST"
+            fi
+
+            # Unconditional, and deliberately outside the branch above. `cmp`
+            # compares the repo file to the file on DISK, not to what systemd
+            # has LOADED. If a previous deploy died between install and reload
+            # (ssh drop, command_timeout), the new unit is on disk but never
+            # loaded — and every later deploy would then print "unit file
+            # unchanged" and skip the reload forever, while the service runs
+            # the old definition. daemon-reload is cheap and idempotent, so
+            # running it every time removes that trap entirely.
+            systemctl daemon-reload
 
             # KillMode=process on this unit means a restart only replaces the
             # dispatcher — live microVM sessions are left running untouched.
-            systemctl restart maskin-agent-server
+            if ! systemctl restart maskin-agent-server; then
+              echo "maskin-agent-server failed to restart" >&2
+              restore_unit || echo "no previous unit to restore" >&2
+              exit 1
+            fi
 
+            HEALTHY=0
             for i in $(seq 1 15); do
               if curl -sf http://localhost:3001/health > /dev/null; then
-                echo "maskin-agent-server healthy after restart"
-                exit 0
+                HEALTHY=1
+                break
               fi
               sleep 2
             done
-            echo "maskin-agent-server did not become healthy within 30s after restart" >&2
-            exit 1
+
+            if [ "$HEALTHY" != 1 ]; then
+              echo "maskin-agent-server did not become healthy within 30s after restart" >&2
+              restore_unit || echo "no previous unit to restore" >&2
+              exit 1
+            fi
+
+            echo "maskin-agent-server healthy after restart"
+
+            # Only now is the new unit known good. Drop the backup so a LATER
+            # deploy cannot overwrite a known-good .bak with a known-bad unit
+            # and leave rollback restoring something that does not work.
+            rm -f "$UNIT_DST.bak"
+
+            # Sync the Alloy collector config, for exactly the reason the unit
+            # file is synced above: /etc/alloy/config.alloy is a second file
+            # outside /opt/maskin that a code deploy never sees, so the repo
+            # copy and the live copy drift silently. Collector drift is quieter
+            # than unit drift — a stale config just ships less, with every
+            # component still reporting healthy.
+            #
+            # Runs AFTER the health gate on purpose: agent-server is already
+            # confirmed up, so a collector problem fails the workflow loudly
+            # without ever standing between a good commit and a running
+            # service. Skipped entirely on hosts with no Alloy installed.
+            #
+            # Credentials live in /etc/default/alloy and are NOT touched here.
+            ALLOY_SRC=apps/agent-server/observability/alloy.alloy
+            ALLOY_DST=/etc/alloy/config.alloy
+
+            if [ ! -f "$ALLOY_DST" ]; then
+              echo "no $ALLOY_DST on this host — skipping collector config sync"
+            elif cmp -s "$ALLOY_SRC" "$ALLOY_DST"; then
+              echo "alloy config unchanged"
+            else
+              echo "alloy config changed — validating and installing"
+
+              # Structural validation only: it catches a misspelled attribute
+              # or a dangling component reference, not a wrong URL or a
+              # credential in the wrong slot.
+              if ! alloy validate "$ALLOY_SRC"; then
+                echo "alloy validate rejected $ALLOY_SRC — leaving the live config in place" >&2
+                exit 1
+              fi
+
+              cp -p "$ALLOY_DST" "$ALLOY_DST.bak"
+              install -m 644 -o root -g root "$ALLOY_SRC" "$ALLOY_DST"
+
+              if systemctl reload-or-restart alloy; then
+                echo "alloy reloaded onto the new config"
+                rm -f "$ALLOY_DST.bak"
+              else
+                echo "alloy failed to reload — restoring previous config" >&2
+                mv "$ALLOY_DST.bak" "$ALLOY_DST"
+                systemctl reload-or-restart alloy || true
+                exit 1
+              fi
+            fi

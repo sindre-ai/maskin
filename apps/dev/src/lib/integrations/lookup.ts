@@ -29,8 +29,11 @@ export const actorScopedProviders = new Set<string>(['linkedin-unipile'])
  *   for `actorId`. This makes it safe to thread an actorId through every call
  *   site — the allow-list is what decides whether it's honored.
  *
- * In both cases `status = 'connected'` is required, so pending or failed
- * connections never leak to a caller expecting live credentials.
+ * In both cases `status = 'active'` is required, so pending, errored or
+ * revoked connections never leak to a caller expecting live credentials.
+ * `'active'` is the vocabulary every write path in routes/integrations.ts
+ * uses and every other reader filters on — this helper must not invent its
+ * own status value, or it silently matches nothing.
  */
 export async function getIntegrationCredential(
 	db: Database,
@@ -47,7 +50,7 @@ export async function getIntegrationCredential(
 			and(
 				eq(integrations.workspaceId, workspaceId),
 				eq(integrations.provider, provider),
-				eq(integrations.status, 'connected'),
+				eq(integrations.status, 'active'),
 				requiresActor ? eq(integrations.actorId, actorId as string) : isNull(integrations.actorId),
 			),
 		)

@@ -9,7 +9,7 @@ redeploy of `apps/web`.
 
 ```
 FF_TESTER_ACTOR_IDS=<uuid>,<uuid>                  # actors who get early access
-FF_TESTER_FEATURES=some-flag,new-model             # flag ids those actors see
+FF_TESTER_FEATURES=some-flag,other-flag            # flag ids those actors see
 ```
 
 Both are comma-separated and optional; empty means every flag is off for
@@ -45,17 +45,23 @@ individual components.
 ```tsx
 const someFlag = useFeatureFlag('some-flag')
 ...
-{someFlag ? <AppSidebar /> : <LegacyAppSidebar />}
+{someFlag ? <ObjectsPageV2 /> : <LegacyObjectsPage />}
 ```
 
-`FLAGS` is currently empty — `new-design` was retired when the v2 design shipped
-to everyone, following exactly the checklist below. The shape it had is the one
-to copy: `apps/web/src/routes/_authed/$workspaceId.tsx` read the flag once and
-swapped the whole shell (sidebar, header, command palette) at that single site,
-with the pre-v2 components parked under `components/*/legacy/`.
+No flag is live right now. The pattern to copy is the retired `new-design`
+flag, which shipped the v2 redesign: its read sites were route components, each
+swapping a whole page, plus one shell read in `layout/sidebar.tsx`, with the
+pre-v2 components vendored under sibling `legacy/` directories that were deleted
+with the flag. Deliberately *outside* the boundary were the routes'
+`validateSearch`, the shared filter and grouping helpers, the data-fetching
+hooks, and every additive component variant — so both branches ran on one search
+schema and one data layer, per the rule below.
 
-**If you reach a third call site for one flag, stop — the boundary is in the
-wrong place.** Move it up rather than adding another check.
+**One route component = one boundary.** A flag governing more than two pages
+will have more than two read sites, because a page is the highest point at which
+its own branch can be chosen. What must never happen is a *second* check inside a
+page already on one side of the boundary — that is the signal the boundary is in
+the wrong place, and the fix is to move it up rather than add another check.
 
 When a feature rewrites components in place, keep the old ones under a clearly
 marked `legacy/` directory with a header comment saying which flag governs them

@@ -1,0 +1,168 @@
+# Grafana alert rules for the stalled-session detector.
+#
+# WHAT THIS DETECTS: a session that took a user turn and produced nothing back.
+# No 4xx, no 5xx, no exception — the session sits in `running` until a timeout
+# backstop fires hours later, and today we hear about it from a customer. See
+# ../../src/lib/stall-tracker.ts for the predicate and why it has three arms.
+#
+# HOW TO APPLY IT. Grafana Cloud has no filesystem, so the file-provisioning
+# path (`/etc/grafana/provisioning/alerting/`) that works on self-hosted
+# Grafana is NOT available to us. This file is therefore the source of truth
+# and is imported, not read in place. Either:
+#
+#   grafanactl resources push alertrules --path apps/agent-server/observability/alerts
+#
+# or, without grafanactl, POST it through the Alerting Provisioning API:
+#
+#   curl -X POST \
+#     -H "Authorization: Bearer $GRAFANA_CLOUD_TOKEN" \
+#     -H 'Content-Type: application/yaml' \
+#     --data-binary @stalled-sessions.yaml \
+#     "$GRAFANA_URL/api/v1/provisioning/alert-rules/export?format=yaml"
+#
+# Rules imported this way are editable in the UI, which means the UI can drift
+# from this file. If you change a rule in the UI, export it back over this file
+# (Alert rule -> Export -> YAML) in the same PR as the behaviour change.
+#
+# BEFORE APPLYING, substitute the two placeholders:
+#   ${PROM_DATASOURCE_UID}  the Prometheus datasource UID (Connections ->
+#                           Data sources -> your Prom stack -> UID in the URL)
+#   ${CONTACT_POINT}        the notification target, e.g. `maskin-oncall-slack`
+#
+# NOT ALERTED ON: reason="no_output". It is recorded as a gauge and left
+# unrouted on purpose — a long silent tool call or model response is
+# indistinguishable from a wedge from outside the guest, and we do not yet have
+# the data to pick a threshold that separates them. Watch the panel for a week,
+# then set its threshold from the observed distribution and add a third rule
+# here. An alert that cries wolf gets muted, and then it may as well not exist.
+
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: agent-server-stalled-sessions
+    folder: Maskin
+    # Evaluated every minute against a 15s scrape. The gauges are computed at
+    # scrape time from an injected clock, so there is no staleness of our own
+    # to account for here — only Prometheus's.
+    interval: 1m
+    rules:
+      - uid: maskin-sessions-never-seeded
+        title: Agent session never seeded with its first turn
+        condition: alert
+        # WHY THIS IS SEPARATE FROM `undelivered`: the seedInteractiveTurn bug
+        # (see .claude/rules/known-pitfalls.md) was that apps/dev's dispatch
+        # path never called writeInput at all. No turn was ever enqueued, so
+        # there was no pending turn to measure silence against — a predicate
+        # built only on the input/output asymmetry cannot see it. That session
+        # sat in `running` with zero logs for two hours. This arm is the only
+        # thing that catches it.
+        data:
+          - refId: stalled
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: ${PROM_DATASOURCE_UID}
+            model:
+              refId: stalled
+              # `max by (instance)` rather than `sum`: this must survive a
+              # second agent-server box being added without the threshold
+              # silently meaning something different.
+              expr: max by (instance) (maskin_sessions_stalled{reason="never_seeded"})
+              instant: true
+          - refId: alert
+            datasourceUid: __expr__
+            model:
+              refId: alert
+              type: threshold
+              expression: stalled
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+        # One count is enough — this is near-silent in normal operation, since
+        # apps/dev seeds the first turn immediately after dispatch. `for: 2m`
+        # only guards against a scrape landing in the window between spawn and
+        # seed on a box under load.
+        for: 2m
+        # A scrape gap must not resolve a real stall. `NoData` keeping the
+        # alerting state is deliberate: a down agent-server is itself a reason
+        # to look.
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: page
+          service: agent-server
+        annotations:
+          summary: >-
+            {{ $labels.instance }}: {{ $values.stalled.Value }} interactive session(s) live with no turn
+            ever delivered and no output.
+          description: >-
+            An interactive session has been alive past the stall threshold with zero turns
+            enqueued and zero output — the shape of the seedInteractiveTurn bug, where the
+            dispatch path never seeds the first turn and the guest blocks forever on stdin
+            nothing writes to.
+
+            The metric is a COUNT and carries no session id, on purpose (cardinality). To
+            find which session, pivot to the logs — the walkthrough is in
+            apps/agent-server/observability/README.md, "Pivoting from a stall alert to the
+            session id".
+
+            IMPORTANT: this alert clearing right after a deploy is NOT evidence of a fix.
+            The detector's state is in-memory; a restart moves live sessions into
+            maskin_sessions_unobserved, where they are counted as unknown, not healthy.
+          runbook_url: https://github.com/maskin/maskin/blob/main/apps/agent-server/observability/README.md
+        # Routed directly to a contact point rather than left to the default
+        # notification policy, so adding an unrelated policy later cannot
+        # silently redirect a page.
+        notification_settings:
+          receiver: ${CONTACT_POINT}
+
+      - uid: maskin-sessions-undelivered
+        title: Agent session turn never reached the guest
+        condition: alert
+        # The dead-socket shape (PRs #1450-#1454): the turn was enqueued and
+        # written, the write resolved against the kernel buffer, and the guest's
+        # acked high-water mark never advanced. A healthy guest re-dials on its
+        # 90s idle timeout and acks on every connect, so a session sitting here
+        # past the threshold is not consuming input at all.
+        data:
+          - refId: stalled
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: ${PROM_DATASOURCE_UID}
+            model:
+              refId: stalled
+              expr: max by (instance) (maskin_sessions_stalled{reason="undelivered"})
+              instant: true
+          - refId: alert
+            datasourceUid: __expr__
+            model:
+              refId: alert
+              type: threshold
+              expression: stalled
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+        for: 2m
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: page
+          service: agent-server
+        annotations:
+          summary: >-
+            {{ $labels.instance }}: {{ $values.stalled.Value }} session(s) with a user turn the guest never
+            acknowledged.
+          description: >-
+            A user turn was delivered to the input queue and the guest's acked high-water
+            mark never advanced past it — the turn is not reaching the CLI. The user is
+            seeing silence.
+
+            Find the session id via the LogQL pivot in
+            apps/agent-server/observability/README.md, "Pivoting from a stall alert to the
+            session id". The relevant guest lines are `input-stream:` on
+            {source="msb-exec"}, and the host-side view is `input: turn written to stream`
+            / `input: stream registered` with a static `after`.
+
+            IMPORTANT: this alert clearing right after a deploy is NOT evidence of a fix —
+            see maskin_sessions_unobserved.
+          runbook_url: https://github.com/maskin/maskin/blob/main/apps/agent-server/observability/README.md
+        # Routed directly to a contact point rather than left to the default
+        # notification policy, so adding an unrelated policy later cannot
+        # silently redirect a page.
+        notification_settings:
+          receiver: ${CONTACT_POINT}

@@ -139,15 +139,17 @@ vi.mock('@/lib/query-keys', () => ({
 		relationships: {
 			all: (workspaceId: string) => ['relationships', workspaceId],
 		},
+		imports: { detail: (id: string) => ['imports', 'detail', id] },
 		notifications: {
-			list: (workspaceId: string, filters?: unknown) => [
+			all: (workspaceId: string) => ['notifications', workspaceId],
+			list: (workspaceId: string, filters?: Record<string, unknown>) => [
 				'notifications',
 				workspaceId,
 				'list',
 				filters,
 			],
+			detail: (id: string) => ['notifications', 'detail', id],
 		},
-		imports: { detail: (id: string) => ['imports', 'detail', id] },
 		userDisplaySettings: {
 			detail: (workspaceId: string, objectType: string) => [
 				'user-display-settings',
@@ -208,7 +210,8 @@ vi.mock('@/components/objects/list/list-view', async () => {
 import { Route } from '@/routes/_authed/$workspaceId/objects/index'
 
 const RouteOptions = Route as unknown as { component: React.FC }
-const ObjectsPage = RouteOptions.component
+const ObjectsPageComponent = RouteOptions.component
+const ObjectsPage = ObjectsPageComponent
 
 async function setBackNav(isBack: boolean) {
 	const { wasRecentBackNav, consumeArrivalNavType } = await import('@/lib/back-nav-tracker')

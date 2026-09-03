@@ -7,13 +7,17 @@ import {
 	toBoardParams,
 	toDisplaySettingsBody,
 	toListParams,
+	urlIsInDefaultShape,
 } from '@/lib/objects-filter-model'
 
 const baseModel = (): ObjectsFilterModel => defaultObjectsFilterModel()
 
 describe('objects-filter-model', () => {
 	describe('defaultObjectsFilterModel', () => {
-		it('defaults to sort=createdAt, order=desc, empty metadata, archived off', () => {
+		it('defaults to the route-wide sort/order, empty metadata, archived off', () => {
+			// Single-sourced with the route: the Objects list rests on last-updated.
+			expect(DEFAULT_SORT).toBe('updatedAt')
+			expect(DEFAULT_ORDER).toBe('desc')
 			const model = defaultObjectsFilterModel()
 			expect(model).toEqual({
 				sort: DEFAULT_SORT,
@@ -175,13 +179,13 @@ describe('objects-filter-model', () => {
 	})
 
 	describe('toDisplaySettingsBody', () => {
-		it('always persists sort/order/columnVisibility and nulls an absent groupBy', () => {
+		it('always persists sort/order/columnVisibility and marks an absent groupBy as none', () => {
 			const model = { ...fromUrlSearch({ columnVisibility: { createdBy: false } }) }
 			const body = toDisplaySettingsBody(model)
 			expect(body).toMatchObject({
 				sort: DEFAULT_SORT,
 				order: DEFAULT_ORDER,
-				groupBy: null,
+				groupBy: 'none',
 				columnVisibility: { createdBy: false },
 			})
 			expect(body.filters).toBeUndefined()
@@ -208,5 +212,40 @@ describe('objects-filter-model', () => {
 				metadata: { priority: '5' },
 			})
 		})
+	})
+})
+
+describe('urlIsInDefaultShape', () => {
+	// Regression guard: the route's `validateSearch` always resolves `sort`,
+	// `order` and `groupBy`, so a fresh load never has them absent. A predicate
+	// that only accepts absence reads as "user expressed intent" on every load
+	// and silently disables persisted-display-settings hydration.
+	it('accepts the values validateSearch seeds on a fresh load', () => {
+		expect(
+			urlIsInDefaultShape({ sort: DEFAULT_SORT, order: DEFAULT_ORDER, groupBy: 'status' }, {}),
+		).toBe(true)
+	})
+
+	it('accepts a fully absent search', () => {
+		expect(urlIsInDefaultShape({}, {})).toBe(true)
+	})
+
+	it('rejects an explicit sort override', () => {
+		expect(urlIsInDefaultShape({ sort: 'createdAt', order: DEFAULT_ORDER }, {})).toBe(false)
+	})
+
+	it('rejects an explicit order override', () => {
+		expect(urlIsInDefaultShape({ sort: DEFAULT_SORT, order: 'asc' }, {})).toBe(false)
+	})
+
+	it('rejects an explicit grouping other than the default', () => {
+		expect(urlIsInDefaultShape({ groupBy: 'none' }, {})).toBe(false)
+		expect(urlIsInDefaultShape({ groupBy: 'driver' }, {})).toBe(false)
+	})
+
+	it('rejects status, driver and metadata filters', () => {
+		expect(urlIsInDefaultShape({ status: 'active' }, {})).toBe(false)
+		expect(urlIsInDefaultShape({ driver: 'actor-1' }, {})).toBe(false)
+		expect(urlIsInDefaultShape({}, { priority: '5' })).toBe(false)
 	})
 })

@@ -5,6 +5,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './app.css'
 import { initBackNavTracker } from './lib/back-nav-tracker'
+import { initFaro, setFaroView } from './lib/faro'
 import { consumeMagicLink } from './lib/magic-link'
 import { initPosthog } from './lib/posthog'
 import { queryClient } from './lib/query'
@@ -13,6 +14,9 @@ import { ThemeProvider } from './lib/theme'
 import { routeTree } from './routeTree.gen'
 
 initSentry()
+// Faro runs alongside Sentry, not instead of it — see lib/faro.ts. Init both
+// before anything else so a crash during boot is still reported.
+initFaro()
 // Consume any #key=... fragment before the router mounts so the auth guard sees the key.
 consumeMagicLink()
 initPosthog()
@@ -26,6 +30,16 @@ const router = createRouter({
 	routeTree,
 	context: { queryClient },
 	defaultPreloadStaleTime: 0,
+})
+
+// Name the screen in Faro so an error reports the route it happened on.
+// `@grafana/faro-react` only instruments react-router, so this is wired from
+// TanStack Router's own subscription. The leaf match's `routeId` is the route
+// *template* (`/_authed/$workspaceId/objects/$objectId`), so no ids and no
+// free text leave the browser.
+router.subscribe('onResolved', () => {
+	const routeId = router.state.matches.at(-1)?.routeId
+	if (routeId) setFaroView(routeId)
 })
 
 declare module '@tanstack/react-router' {

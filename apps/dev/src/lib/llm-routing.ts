@@ -1,10 +1,18 @@
 import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
+import type { SessionResultFailureReason } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from './billing-defaults'
-import { type SubscriptionProbe, resolveClaudeCredentialsWithFailover } from './claude-failover'
-import type { OAuthSlotKind } from './claude-oauth-slots'
-import { isEnterpriseWorkspace } from './enterprise-allowlist'
+import {
+	type SubscriptionProbe,
+	type UnusableCredentialInfo,
+	isClaudeFailoverEnabled,
+	isTransientCredentialError,
+	resolveClaudeCredentialsWithFailover,
+} from './claude-failover'
+import { type OAuthSlotKind, readSlots, resolveActiveSlot } from './claude-oauth-slots'
+import { isEnterprise } from './enterprise'
+import { logger } from './logger'
 import type { WorkspaceSettings } from './types'
 
 const DEFAULT_CHAT_MODEL: Record<'anthropic' | 'openai' | 'ollama', string> = {
@@ -28,10 +36,21 @@ export type LlmRoute =
 
 /**
  * Workspaces on these plans are routed through Maskin's funded OR account.
- * Trial is included so BYOLLM-less users can try the product without their
+ * Trial is included so BYO-LLM-less users can try the product without their
  * own credentials — capped low via `MASKIN_TRIAL_HARD_CAP_USD_CENTS`.
  */
 const MASKIN_PLAN_ROUTED_PLANS = new Set(['pro', 'team', 'trial'])
+
+/**
+ * True when Maskin funds this workspace's LLM usage. Every route that reaches
+ * for `MASKIN_FALLBACK_OPENROUTER_KEY` on a workspace's behalf must be gated
+ * on this — a `enterprise` workspace pays for its own credentials by definition,
+ * so silently spending Maskin's OpenRouter account for it is both a billing
+ * leak and a violation of the entitlement the customer bought.
+ */
+function isMaskinPlanRouted(billing: WorkspaceSettings['billing']): boolean {
+	return MASKIN_PLAN_ROUTED_PLANS.has(billing?.plan ?? 'trial')
+}
 
 export interface LlmRoutingResult {
 	route: LlmRoute
@@ -161,6 +180,12 @@ interface PlanCapContext {
 	used: number
 	/** USD cents. */
 	cap: number
+	/**
+	 * Unix MILLISECONDS, not seconds. Stripe stores `current_period_end` in
+	 * seconds, but `checkPlanCap` converts it (and `effectivePeriodEnd` derives
+	 * its fallback in ms) before building this context, so consumers must use
+	 * the value as-is. Null when Stripe has written no period at all yet.
+	 */
 	periodEnd: number | null
 }
 
@@ -174,6 +199,7 @@ export class PlanCapExceededError extends Error {
 	readonly plan: MaskinPlan
 	readonly used: number
 	readonly cap: number
+	/** Unix MILLISECONDS (already converted from Stripe's seconds), or null. */
 	readonly periodEnd: number | null
 
 	constructor(ctx: PlanCapContext) {
@@ -207,7 +233,7 @@ function effectivePlanCap(plan: MaskinPlan, hardCapCents: number | undefined): n
 
 export function getWorkspacePlanCap(wsSettings: WorkspaceSettings): number | null {
 	const billing = wsSettings.billing
-	const plan = (billing?.plan ?? 'trial') as MaskinPlan | 'byollm'
+	const plan = (billing?.plan ?? 'trial') as MaskinPlan | 'enterprise'
 	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return null
 	return effectivePlanCap(plan as MaskinPlan, billing?.hard_cap_usd_cents ?? undefined)
 }
@@ -263,11 +289,19 @@ export async function checkPlanCap(params: {
 	db: Database
 	workspaceId: string
 	wsSettings: WorkspaceSettings
+	/**
+	 * The workspace's enterprise status, which is exempt from the cap. Passed
+	 * in rather than re-derived: `isEnterprise()` needs the workspace row, and
+	 * both callers (`resolveLlmRoute`, `SessionManager.createSession`'s
+	 * pre-flight) have already loaded it. Re-reading here would put a second
+	 * lookup on the session-dispatch path and let the two disagree.
+	 */
+	enterprise: boolean
 }): Promise<void> {
 	const billing = params.wsSettings.billing
-	const plan = (billing?.plan ?? 'trial') as MaskinPlan | 'byollm'
+	const plan = (billing?.plan ?? 'trial') as MaskinPlan | 'enterprise'
 	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return
-	if (await isEnterpriseWorkspace(params.db, params.workspaceId)) return
+	if (params.enterprise) return
 
 	const maskinPlan = plan as MaskinPlan
 	const cap = effectivePlanCap(maskinPlan, billing?.hard_cap_usd_cents ?? undefined)
@@ -327,9 +361,17 @@ function buildCustomLlmEnv(custom: WorkspaceSettings['custom_llm']): Record<stri
 function buildMaskinPlanEnv(
 	billing: WorkspaceSettings['billing'],
 	fallback: FallbackConfig,
+	enterprise: boolean,
 ): Record<string, string> | null {
-	const plan = billing?.plan ?? 'trial'
-	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return null
+	// Enterprise is never Maskin-funded, whatever the stored plan says. The plan
+	// alone is not a safe gate: `plan: 'enterprise'` is only written once a BYO
+	// credential is connected (`billingAfterByoTransition`), and an absent
+	// billing block defaults to 'trial' — so an entitled workspace whose BYO
+	// credential is missing, expired or broken would otherwise land here and
+	// spend Maskin's OpenRouter key. It gets no credentials instead, which
+	// surfaces as a real error rather than a silent billing leak.
+	if (enterprise) return null
+	if (!isMaskinPlanRouted(billing)) return null
 	if (!fallback.apiKey) return null
 	return {
 		ANTHROPIC_BASE_URL: fallback.baseUrl ?? 'https://openrouter.ai/api',
@@ -356,19 +398,36 @@ function buildMaskinPlanEnv(
  * available (session fails to start rather than silently consuming Maskin tokens).
  *
  * Routes 1 (anthropic branch only), 2, 3, and 4 are all BYO credentials and are
- * only reachable when `byollmAllowed` is true — every workspace defaults to the
+ * only reachable when `enterprise` is true — every workspace defaults to the
  * Maskin plan, and only ops-flagged exception workspaces may bring their own
  * Claude subscription / endpoint / key. See PR #970.
  *
  * Returns null if the agent uses a non-anthropic provider (e.g. OpenAI native);
  * caller continues to handle OPENAI_API_KEY injection itself (also gated on
- * `byollmAllowed` — see session-manager.ts).
+ * `enterprise` — see session-manager.ts).
  *
  * `agent.model`, when set, is forwarded as ANTHROPIC_MODEL on routes #1, #3,
  * and #4 (the routes that don't already carry an explicit model of their
  * own). Routes #2 and #5 already source their model from workspace/operator
  * config and are left as-is.
  */
+/**
+ * Is a Claude OAuth slot configured at all — i.e. does the slot that
+ * `resolveClaudeCredentialsWithFailover` would actually read hold data?
+ *
+ * Existence only, never liveness. The flag branch mirrors that function
+ * (claude-failover.ts): with failover ON the active slot is what counts, with
+ * it OFF `active_slot` is ignored and `primary` is read directly, so that
+ * turning the flag off as a kill-switch routes back to primary. Both the
+ * pre-flight and the post-hoc "the OAuth route produced nothing" check below
+ * go through here so the two can't drift apart.
+ */
+function hasConfiguredOAuthSlot(claudeOauth: unknown, env?: NodeJS.ProcessEnv): boolean {
+	return isClaudeFailoverEnabled(env)
+		? Boolean(resolveActiveSlot(claudeOauth))
+		: Boolean(readSlots(claudeOauth).primary)
+}
+
 export async function resolveLlmRoute(params: {
 	db: Database
 	workspaceId: string
@@ -376,7 +435,7 @@ export async function resolveLlmRoute(params: {
 	wsSettings: WorkspaceSettings
 	agent: AgentLlmConfig
 	/** Workspace entitlement to BYO LLM credentials. Defaults false. */
-	byollmAllowed: boolean
+	enterprise: boolean
 	/**
 	 * Overrides the default `probeClaudeSubscription` probe used by the
 	 * failover path when `MASKIN_CLAUDE_FAILOVER_ENABLED=true`. Only tests
@@ -385,15 +444,31 @@ export async function resolveLlmRoute(params: {
 	 * Anthropic Messages API probe.
 	 */
 	claudeProbe?: SubscriptionProbe
+	/**
+	 * Overrides `process.env` when reading the failover flag. Tests only —
+	 * production callers omit it.
+	 */
+	env?: NodeJS.ProcessEnv
 }): Promise<LlmRoutingResult | null> {
-	const { db, workspaceId, actorId, wsSettings, agent, byollmAllowed, claudeProbe } = params
+	const { db, workspaceId, actorId, wsSettings, agent, enterprise, claudeProbe } = params
+
+	/** Set when route #2 failed; folded into the error when nothing else resolves. */
+	let oauthFailure: string | null = null
+	/**
+	 * Whether that failure is worth retrying. A workspace whose subscription is
+	 * revoked fails identically on every attempt; one whose token endpoint timed
+	 * out may well succeed on the next. The dispatcher keys its
+	 * permanent-vs-transient decision off this, so defaulting it wrong either
+	 * strands a recoverable session or burns five retries on a dead one.
+	 */
+	let oauthFailureTransient = false
 
 	// 1. Agent-level override — only handled here for anthropic; non-anthropic
 	//    providers fall through to caller (matches existing behavior). The
 	//    anthropic branch is a BYO credential, so it's gated like routes 2-4.
 	if (agent.apiKey) {
 		if (agent.provider === 'anthropic') {
-			if (byollmAllowed) {
+			if (enterprise) {
 				const envVars: Record<string, string> = { ANTHROPIC_API_KEY: agent.apiKey }
 				if (agent.model) {
 					envVars.ANTHROPIC_MODEL = agent.model
@@ -406,18 +481,24 @@ export async function resolveLlmRoute(params: {
 		}
 	}
 
-	if (byollmAllowed) {
+	if (enterprise) {
 		// 2. Claude OAuth subscription — checked first among BYO routes so a
 		//    connected Pro/Max subscription is always preferred over custom endpoints
 		//    and never consumes maskin plan tokens. Primary→backup failover kicks in
 		//    when MASKIN_CLAUDE_FAILOVER_ENABLED is set; otherwise legacy
 		//    primary-only behaviour applies.
 		try {
+			/** Set by the resolver when a configured slot yields nothing usable. */
+			const unusableRef: { current: UnusableCredentialInfo | null } = { current: null }
 			const oauthResult = await resolveClaudeCredentialsWithFailover({
 				db,
 				workspaceId,
 				actorId,
 				probe: claudeProbe,
+				env: params.env,
+				onUnusable: (info) => {
+					unusableRef.current = info
+				},
 			})
 			if (oauthResult) {
 				const envVars: Record<string, string> = {
@@ -436,9 +517,54 @@ export async function resolveLlmRoute(params: {
 				}
 				return { route: LLM_ROUTE_OAUTH, envVars, oauthSlot: oauthResult.slot }
 			}
-		} catch {
-			// Swallow OAuth errors and let the next route take over — the warning
-			// is logged by the caller for parity with the previous behavior.
+
+			// `resolveClaudeCredentialsWithFailover` reports an unusable
+			// credential two ways: it throws, or it returns null (an expired
+			// token behind a transient refresh failure, a probe that classified
+			// as failover with no backup to fall to, a backup that failed its
+			// own probe). Only the throw used to be recorded — so a workspace
+			// with a connected-but-dead subscription and no other route fell
+			// through this whole ladder silently and launched a container with
+			// no ANTHROPIC_* env at all. That is the incident this file exists
+			// to prevent, reached by its most common real-world shape.
+			//
+			// Guarded on a slot actually being configured: a null from a
+			// workspace with no OAuth at all is simply "route not configured",
+			// which is not a failure and must keep falling through.
+			if (hasConfiguredOAuthSlot(wsSettings.claude_oauth, params.env)) {
+				oauthFailure =
+					unusableRef.current?.detail ??
+					'the connected Claude subscription did not yield a usable token (expired, revoked, or failed its health check)'
+				// Absent a report, assume permanent: every known null path that is
+				// actually transient calls onUnusable, so a silent null is an
+				// auth-class shape we would rather fail fast than retry blindly.
+				oauthFailureTransient = unusableRef.current?.transient ?? false
+				logger.warn('Claude OAuth route resolved to no usable token', {
+					workspaceId,
+					actorId,
+					transient: oauthFailureTransient,
+				})
+			}
+		} catch (err) {
+			// The next route still takes over — a workspace with a custom endpoint
+			// or an API key behind a dead subscription should keep working. But the
+			// reason is no longer swallowed: when NO route resolves, this is the
+			// only description of why, and losing it is what left session failures
+			// reading as a generic "stuck in starting state".
+			const message = err instanceof Error ? err.message : String(err)
+			// Same guard as the null branch above: a throw from a workspace with
+			// no OAuth configured at all (a DB error, a decrypt failure after a
+			// key rotation) is not "your subscription is dead" and must not be
+			// reported to the user as one.
+			if (hasConfiguredOAuthSlot(wsSettings.claude_oauth, params.env)) {
+				oauthFailure = message
+				oauthFailureTransient = isTransientCredentialError(err)
+			}
+			logger.warn('Claude OAuth route unavailable — falling through to next route', {
+				workspaceId,
+				actorId,
+				error: message,
+			})
 		}
 
 		// 3. Workspace custom_llm
@@ -463,14 +589,190 @@ export async function resolveLlmRoute(params: {
 	//    never counted against the cap when the user has their own LLM configured.
 	//    The cap check here is defense-in-depth; the pre-flight in `createSession`
 	//    is what surfaces 402 to the user before a session row is created.
-	const fallback = readFallbackConfig()
-	const maskinPlanEnv = buildMaskinPlanEnv(wsSettings.billing, fallback)
+	const fallback = readFallbackConfig(params.env)
+	const maskinPlanEnv = buildMaskinPlanEnv(wsSettings.billing, fallback, enterprise)
 	if (maskinPlanEnv) {
-		await checkPlanCap({ db, workspaceId, wsSettings })
+		await checkPlanCap({ db, workspaceId, wsSettings, enterprise })
 		return { route: LLM_ROUTE_MASKIN_PLAN, envVars: maskinPlanEnv }
 	}
 
+	if (oauthFailure) {
+		// Every route was tried and the only one that had credentials at all
+		// failed. Returning null here would launch a container with no
+		// ANTHROPIC_* env at all, which dies inside the sandbox with a message
+		// no one reads. Throw so the caller can put the real reason on the
+		// session row.
+		throw new LlmCredentialsUnavailableError(
+			`Claude subscription credentials could not be resolved and no other LLM route is configured: ${oauthFailure}`,
+			oauthFailureTransient,
+		)
+	}
+
 	return null
+}
+
+/**
+ * No usable LLM credential could be resolved for a session. Distinct from
+ * `resolveLlmRoute` returning `null` (which means "this caller handles the
+ * remaining non-anthropic providers itself"): this is terminal, and carries
+ * the reason the credential that *was* configured didn't work.
+ *
+ * Surfaces on the session row as `result.failure_reason.reason_code =
+ * 'not_logged_in'` so the UI and any agent reading `get_session` see why,
+ * rather than the zombie reaper's generic stall message.
+ */
+export class LlmCredentialsUnavailableError extends Error {
+	/** Operator-facing detail, persisted as `failure_reason.verbatim_output`. */
+	readonly detail: string
+
+	/**
+	 * True when the credential could not be CONFIRMED rather than shown to be
+	 * dead — our own 15s timeout, a 5xx from the token endpoint. The dispatcher
+	 * keeps retrying these instead of hard-failing the session, because telling
+	 * a user to reconnect a subscription that was never broken is worse than a
+	 * slow start, and the retry usually succeeds.
+	 */
+	readonly transient: boolean
+
+	constructor(detail: string, transient = false) {
+		super(detail)
+		this.name = 'LlmCredentialsUnavailableError'
+		this.detail = detail
+		this.transient = transient
+	}
+
+	/** What the user and any agent reading `get_session` see. */
+	static readonly humanMessage =
+		'This session could not start because no working LLM credentials are connected for this workspace. Connect a Claude subscription in Settings → Keys, then start a new session.'
+
+	/**
+	 * Shown when we could not reach Anthropic to check. Deliberately does NOT
+	 * tell the user to reconnect anything — the credential may be perfectly
+	 * fine, and sending them to Settings → Keys over a network blip is the
+	 * misdiagnosis this whole change exists to stop.
+	 */
+	static readonly transientHumanMessage =
+		'This session could not start because Maskin could not reach Anthropic to verify the credentials for this workspace. This is usually temporary — try starting the session again in a few minutes.'
+
+	toFailureReason(): SessionResultFailureReason {
+		return {
+			provider: 'maskin',
+			reason_code: 'not_logged_in',
+			human_message: this.transient
+				? LlmCredentialsUnavailableError.transientHumanMessage
+				: LlmCredentialsUnavailableError.humanMessage,
+			http_status: null,
+			reset_at: null,
+			verbatim_output: this.detail,
+		}
+	}
+}
+
+/**
+ * Offline pre-flight for the LLM routes, run BEFORE a session is marked
+ * `starting`.
+ *
+ * Deliberately makes no network call: it answers "is any route even
+ * configured for this workspace", not "is the credential live". That keeps it
+ * cheap enough to run on every launch, and it is the check that catches the
+ * failure mode where a workspace has nothing to route to — previously that
+ * session went to `starting`, got no env vars, and died in the sandbox (or,
+ * when credential resolution hung, never died at all).
+ *
+ * Liveness is still the probe's job inside `resolveLlmRoute`; that path is now
+ * bounded by CLAUDE_CREDENTIAL_TIMEOUT_MS and reports through
+ * `LlmCredentialsUnavailableError`.
+ *
+ * Returns `null` when at least one route is configured, or a description of
+ * what's missing when none is. Mirrors `resolveLlmRoute`'s priority order —
+ * if you add a route there, add it here.
+ */
+/**
+ * The one user-facing sentence for "this workspace has nothing to route to".
+ * Shared by every gap the pre-flight reports so the wording can't drift.
+ */
+const NO_CREDENTIALS_HUMAN_MESSAGE =
+	'This session could not start because the workspace has no LLM credentials connected. Connect a Claude subscription in Settings → Keys, then start a new session.'
+
+export function preflightLlmCredentials(params: {
+	wsSettings: WorkspaceSettings
+	agent: AgentLlmConfig
+	enterprise: boolean
+	env?: NodeJS.ProcessEnv
+}): { humanMessage: string; detail: string } | null {
+	const { wsSettings, agent, enterprise } = params
+
+	// 1. Agent-level override — mirrors resolveLlmRoute's route #1 INCLUDING its
+	//    early return. That function handles only the anthropic provider here;
+	//    for any other provider with an agent key it returns `null` immediately,
+	//    BEFORE routes 2-5. So the Maskin plan is unreachable for such an agent
+	//    and must not be counted as a route for it — checking step 5 anyway is
+	//    how an unentitled openai agent used to pass this gate and then launch
+	//    into a container with no LLM env at all.
+	//
+	//    Of the non-anthropic providers only openai is ever injected
+	//    (session-manager sets OPENAI_API_KEY, gated on `enterprise`).
+	//    `llmProvider` is free text, so anything else has no injection site and
+	//    therefore no route.
+	if (agent.apiKey && agent.provider !== 'anthropic') {
+		if (enterprise && agent.provider === 'openai') return null
+		return {
+			humanMessage: NO_CREDENTIALS_HUMAN_MESSAGE,
+			detail: enterprise
+				? `This agent is configured with a '${agent.provider ?? 'unknown'}' API key, which Maskin has no way to pass to the session. Use an Anthropic or OpenAI key, or connect a Claude subscription for the workspace.`
+				: 'This agent has its own API key, but the workspace is not entitled to bring its own LLM credentials.',
+		}
+	}
+
+	// Anthropic from here on. This branch deliberately does NOT early-return
+	// when the workspace is unentitled: resolveLlmRoute falls through to routes
+	// 2-5 in that case, so the Maskin plan can still carry the session.
+	if (agent.apiKey && enterprise) return null
+
+	if (enterprise) {
+		// 2. Claude OAuth. Which slot counts depends on the failover flag, and
+		//    it has to be read the same way `resolveClaudeCredentialsWithFailover`
+		//    reads it. With the flag OFF that function ignores `active_slot` and
+		//    goes straight to `primary` — deliberately, so disabling the flag as
+		//    an incident kill-switch forces routing back to primary. Checking
+		//    `active_slot` unconditionally here would refuse to launch a
+		//    workspace left on `active_slot: 'backup'` after the switch was
+		//    thrown, which is precisely the state the switch exists to recover.
+		if (hasConfiguredOAuthSlot(wsSettings.claude_oauth, params.env)) return null
+
+		// 3. Workspace custom_llm (same completeness bar as buildCustomLlmEnv).
+		const custom = wsSettings.custom_llm
+		if (
+			custom?.enabled &&
+			custom.base_url?.trim() &&
+			custom.api_key?.trim() &&
+			custom.model?.trim()
+		) {
+			return null
+		}
+
+		// 4. Workspace anthropic api key.
+		if (wsSettings.llm_keys?.anthropic) return null
+
+		// 4b. Workspace OpenAI key. Not part of resolveLlmRoute's ladder — it is
+		//     injected directly by session-manager after that call returns — but
+		//     it is a real route, so a workspace holding only this one must not
+		//     be refused a launch.
+		if (wsSettings.llm_keys?.openai) return null
+	}
+
+	// 5. Maskin plan.
+	if (buildMaskinPlanEnv(wsSettings.billing, readFallbackConfig(params.env), enterprise) !== null)
+		return null
+
+	// The enterprise wording deliberately does not mention the stored plan: an
+	// enterprise workspace is never Maskin-funded, whatever its plan says, so
+	// "it is not on a Maskin-funded plan" would send whoever reads this failure
+	// off to check billing instead of connecting a credential.
+	const detail = enterprise
+		? 'No Claude subscription, custom LLM endpoint, or Anthropic/OpenAI API key is configured for this workspace. Enterprise workspaces bring their own LLM and are never routed onto the Maskin-funded plan, so there is no fallback to use.'
+		: 'This workspace is not on a Maskin-funded plan and is not entitled to bring its own LLM credentials.'
+	return { humanMessage: NO_CREDENTIALS_HUMAN_MESSAGE, detail }
 }
 
 export interface ChatCredentials {
@@ -508,8 +810,15 @@ export interface ChatCredentials {
 export function resolveChatCredentials(params: {
 	wsSettings: WorkspaceSettings
 	agent: AgentLlmConfig
+	/**
+	 * The workspace's BYO-LLM entitlement columns. Required, not optional —
+	 * `billing.plan` alone cannot answer "may this workspace spend Maskin's
+	 * key", so a caller that omitted it would silently reopen the leak this
+	 * gate exists to close. Both call sites already `select()` the full row.
+	 */
+	workspace: { enterpriseGranted: boolean | null; billingOwnerId: string | null }
 }): ChatCredentials | null {
-	const { wsSettings, agent } = params
+	const { wsSettings, agent, workspace } = params
 
 	if (agent.apiKey && agent.provider) {
 		const provider = agent.provider as ChatCredentials['provider']
@@ -542,6 +851,21 @@ export function resolveChatCredentials(params: {
 		return { provider: 'anthropic', apiKey: wsAnthropic, model: DEFAULT_CHAT_MODEL.anthropic }
 	}
 
+	// System fallback — Maskin's own funded OpenRouter account. Only workspaces
+	// whose plan Maskin funds may draw on it. A `enterprise` workspace brings its
+	// own credentials; if none of the routes above matched, it has none
+	// configured, and the correct answer is "no chat-callable credential"
+	// rather than quietly billing Maskin.
+	// Two independent reasons a workspace may not draw on Maskin's key, and
+	// both are needed. `billing.plan === 'enterprise'` is the *result* of
+	// connecting a BYO credential — but `billingAfterByoTransition()` leaves
+	// `billing` undefined when the workspace never had a billing block, so an
+	// entitled workspace can be BYO in every meaningful sense while its plan
+	// still reads as the `trial` default. `isEnterprise()` (the
+	// `enterprise_granted` column OR an enterprise billing owner) is what catches
+	// that case, and mirrors the `enterprise` param `resolveLlmRoute` takes.
+	if (!isMaskinPlanRouted(wsSettings.billing)) return null
+	if (isEnterprise(workspace)) return null
 	const fallback = readFallbackConfig()
 	if (!fallback.apiKey) return null
 	return {
