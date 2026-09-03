@@ -586,7 +586,18 @@ describe('createSlackMcpServer — discovery and membership tools', () => {
 		})
 
 		it('rewrites not_in_channel with the slack_join_channel hint', async () => {
+			// Channel id, not "#name": a name would spend this queued error on the
+			// conversations.list lookup resolveChannelId does first, and the
+			// conversations.history call under test would never see it.
 			queueSlackResponses({ ok: false, error: 'not_in_channel' })
+			await expect(
+				callTool('slack_get_channel_history', { channel: 'C075JBZ65RT' }),
+			).rejects.toThrow(/slack_join_channel first/)
+		})
+
+		it('still rewrites not_in_channel when the channel is given as a #name', async () => {
+			// First response resolves the name, second is the history failure.
+			queueSlackResponses({ ok: true, channels: CHANNELS }, { ok: false, error: 'not_in_channel' })
 			await expect(
 				callTool('slack_get_channel_history', { channel: '#maskin-app' }),
 			).rejects.toThrow(/slack_join_channel first/)

@@ -309,7 +309,9 @@ function mapHistoryMessage(
  */
 function rewriteNotInChannel(err: unknown, channelRef: string): Error {
 	const message = err instanceof Error ? err.message : String(err)
-	if (message.includes('not_in_channel')) {
+	// Keyed off Slack's parsed `error` code, not a substring of the message —
+	// same discipline the review required on `slack_add_reaction`.
+	if (err instanceof SlackApiError && err.code === 'not_in_channel') {
 		const name = channelRef.trim().replace(/^#/, '')
 		return new Error(
 			`The bot is not a member of #${name}. Call slack_join_channel first, then retry.`,
@@ -866,6 +868,11 @@ export function createSlackMcpServer(ctx: SlackPostContext): McpServer {
 		},
 		async (args) => {
 			assertBotToken(ctx)
+			if (args.users.length < 1 || args.users.length > 8) {
+				throw new Error(
+					`slack_open_conversation takes 1-8 user ids (got ${args.users.length}). 1 opens a DM; 2-8 open a group DM.`,
+				)
+			}
 			const usersParam = args.users.join(',')
 			let json: OpenConversationResponse
 			try {
@@ -876,8 +883,7 @@ export function createSlackMcpServer(ctx: SlackPostContext): McpServer {
 					}),
 				)
 			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err)
-				if (message.includes('user_not_found')) {
+				if (err instanceof SlackApiError && err.code === 'user_not_found') {
 					throw new Error(
 						`Slack could not resolve one of the users in [${args.users.join(', ')}] — resolve via slack_list_users and retry.`,
 					)
