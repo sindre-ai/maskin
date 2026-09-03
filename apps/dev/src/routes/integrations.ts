@@ -1673,7 +1673,7 @@ const githubTokenRoute = createRoute({
 						'a 404 on the cached installation id triggers re-discovery for this repo ' +
 						'and mints against the fresh install (mid-session App-reinstall recovery). ' +
 						'Ignored when the flag is off — behavior is identical to the legacy path.',
-					example: 'sindre-ai/maskin',
+					example: 'vaerksted-ai/maskin',
 				}),
 		}),
 		headers: workspaceIdHeader,
