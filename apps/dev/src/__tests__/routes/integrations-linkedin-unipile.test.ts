@@ -1,8 +1,8 @@
 import { createHmac } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-	startUnipileMock,
 	type UnipileMockServer,
+	startUnipileMock,
 } from '../../lib/integrations/providers/linkedin-unipile/__mocks__/unipile-server'
 import { createTestApp } from '../setup'
 
@@ -47,6 +47,7 @@ beforeEach(() => {
 	process.env.INTEGRATION_ENCRYPTION_KEY = ENCRYPTION_KEY
 	process.env.MASKIN_PUBLIC_URL = 'http://localhost:3000'
 	// Turn off PostHog capture so we don't hit the network in tests.
+	// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
 	delete process.env.POSTHOG_API_KEY
 })
 
@@ -94,9 +95,13 @@ describe('POST /api/integrations/linkedin-unipile/connect', () => {
 		mockResults.insert = [{ id: INTEGRATION_ID }]
 
 		const res = await app.request(
-			jsonPost('/api/integrations/linkedin-unipile/connect', {}, {
-				'x-workspace-id': WORKSPACE_ID,
-			}),
+			jsonPost(
+				'/api/integrations/linkedin-unipile/connect',
+				{},
+				{
+					'x-workspace-id': WORKSPACE_ID,
+				},
+			),
 		)
 
 		expect(res.status).toBe(200)
@@ -140,9 +145,13 @@ describe('POST /api/integrations/linkedin-unipile/connect', () => {
 		]
 
 		const res = await app.request(
-			jsonPost('/api/integrations/linkedin-unipile/connect', {}, {
-				'x-workspace-id': WORKSPACE_ID,
-			}),
+			jsonPost(
+				'/api/integrations/linkedin-unipile/connect',
+				{},
+				{
+					'x-workspace-id': WORKSPACE_ID,
+				},
+			),
 		)
 
 		expect(res.status).toBe(200)
@@ -207,12 +216,9 @@ describe('POST /api/integrations/linkedin-unipile/callback', () => {
 		expect(res.status).toBe(404)
 	})
 
-	it('marks the row connected with encrypted credentials on the happy path', async () => {
+	it('marks the row active with encrypted credentials on the happy path', async () => {
 		const routes = await importRoutes()
-		const { app, mockResults, calls } = createTestApp(
-			routes,
-			'/api/integrations/linkedin-unipile',
-		)
+		const { app, mockResults, calls } = createTestApp(routes, '/api/integrations/linkedin-unipile')
 		mockResults.select = [
 			{
 				id: INTEGRATION_ID,
@@ -237,7 +243,11 @@ describe('POST /api/integrations/linkedin-unipile/callback', () => {
 
 		expect(calls.updates).toHaveLength(1)
 		const update = calls.updates[0] as Record<string, unknown>
-		expect(update.status).toBe('connected')
+		// 'active' — not 'connected'. This must match the literal every reader
+		// filters on (lib/integrations/lookup.ts, oauth/token-manager.ts,
+		// routes/integrations.ts); see the integration test for the round-trip
+		// proof that getIntegrationCredential can actually find this row.
+		expect(update.status).toBe('active')
 		expect(update.externalId).toBe('unipile-account-42')
 		// credentials is the encrypted JSON blob — assert on shape (iv:tag:ct)
 		// rather than the exact ciphertext, which contains a random IV.

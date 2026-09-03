@@ -1,6 +1,10 @@
 import { createHmac } from 'node:crypto'
+import {
+	type IncomingMessage,
+	type ServerResponse,
+	createServer as createHttpServer,
+} from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { type IncomingMessage, createServer as createHttpServer, type ServerResponse } from 'node:http'
 
 /**
  * In-process Unipile mock server for tests. Starts on a random port so

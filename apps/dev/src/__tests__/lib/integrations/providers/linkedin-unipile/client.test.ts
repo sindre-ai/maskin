@@ -1,14 +1,14 @@
 import { createHmac } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
+	type UnipileMockServer,
+	startUnipileMock,
+} from '../../../../../lib/integrations/providers/linkedin-unipile/__mocks__/unipile-server'
+import {
 	createHostedAuthLink,
 	verifyWebhookSignature,
 } from '../../../../../lib/integrations/providers/linkedin-unipile/client'
 import { UnipileUnavailableError } from '../../../../../lib/integrations/providers/linkedin-unipile/errors'
-import {
-	startUnipileMock,
-	type UnipileMockServer,
-} from '../../../../../lib/integrations/providers/linkedin-unipile/__mocks__/unipile-server'
 
 const WEBHOOK_SECRET = 'test-secret'
 const ORIGINAL_ENV: Record<string, string | undefined> = {}
@@ -89,6 +89,7 @@ describe('verifyWebhookSignature', () => {
 	})
 
 	it('rejects when the secret is unset', () => {
+		// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
 		delete process.env.UNIPILE_WEBHOOK_SECRET
 		expect(verifyWebhookSignature('body', 'deadbeef')).toBe(false)
 	})

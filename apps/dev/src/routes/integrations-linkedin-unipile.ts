@@ -1,16 +1,16 @@
-import { OpenAPIHono, createRoute, z, type RouteHandler } from '@hono/zod-openapi'
+import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { integrations } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
-import { logger } from '../lib/logger'
 import {
 	WEBHOOK_HEADER_CANDIDATES,
 	createHostedAuthLink,
 	verifyWebhookSignature,
 } from '../lib/integrations/providers/linkedin-unipile/client'
+import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 
 /**
@@ -23,7 +23,7 @@ import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
  *                       returns { install_url } to the UI. Auth: API key.
  *   - POST /callback  — HMAC-SHA256 verify, then in a single Drizzle
  *                       transaction move the pending row to
- *                       status='connected' with encrypted { account_id }
+ *                       status='active' with encrypted { account_id }
  *                       and fire the PostHog integration_connected event
  *                       AFTER the transaction commits. Auth: HMAC only
  *                       (path is exempt from the API-key middleware —
@@ -56,6 +56,19 @@ type Env = {
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 const PROVIDER = 'linkedin-unipile'
+
+/**
+ * The status a successfully-landed credential row carries.
+ *
+ * MUST stay `'active'`. Every reader in the codebase filters on that literal —
+ * `lib/integrations/lookup.ts`'s `getIntegrationCredential` (the helper this
+ * provider's downstream tools use), `oauth/token-manager.ts`, and every
+ * `routes/integrations.ts` list query. `integrations.status` is a plain `text`
+ * column with no enum or CHECK constraint, so writing any other value is
+ * accepted by Postgres and then silently matches nothing on read: the connect
+ * flow appears to succeed and the integration is invisible forever.
+ */
+const CONNECTED_STATUS = 'active'
 
 function callbackUrl(): string {
 	const base = (process.env.MASKIN_PUBLIC_URL ?? 'http://localhost:3000').replace(/\/$/, '')
@@ -114,7 +127,10 @@ app.openapi(connectRoute, (async (c) => {
 	let integrationId: string
 	if (existing[0]) {
 		integrationId = existing[0].id
-		if (existing[0].status !== 'connected') {
+		// 'active' is the shared vocabulary — see CONNECTED_STATUS. Re-running
+		// the wizard against an already-active row must NOT demote it to
+		// pending, or the credential goes unreadable until the callback lands.
+		if (existing[0].status !== CONNECTED_STATUS) {
 			await db
 				.update(integrations)
 				.set({ status: 'pending', updatedAt: new Date() })
@@ -152,10 +168,7 @@ app.openapi(connectRoute, (async (c) => {
 			actorId,
 			error: err instanceof Error ? err.message : String(err),
 		})
-		return c.json(
-			createApiError('INTERNAL_ERROR', 'Failed to start LinkedIn connect flow'),
-			500,
-		)
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to start LinkedIn connect flow'), 500)
 	}
 }) as RouteHandler<typeof connectRoute, Env>)
 
@@ -254,7 +267,7 @@ app.openapi(callbackRoute, (async (c) => {
 			.set({
 				credentials: encrypted,
 				externalId: payload.account_id,
-				status: 'connected',
+				status: CONNECTED_STATUS,
 				updatedAt: new Date(),
 			})
 			.where(eq(integrations.id, pending.id))
