@@ -32,6 +32,15 @@ export interface ReadErrorBody {
 		reason: string
 		next: ReadErrorNext
 	}
+	/**
+	 * The MCP SDK types `structuredContent` as `{ [x: string]: unknown }`, and a
+	 * plain interface is not assignable to that. Without this signature a handler
+	 * that returns `toolErrorResponse(...)` from a catch beside a success return
+	 * fails to type-check on the union — the error is reported against the
+	 * handler, not against this type, so it reads as a bug in the tool. `error`
+	 * above stays the only field anything reads or writes.
+	 */
+	[key: string]: unknown
 }
 
 /**
