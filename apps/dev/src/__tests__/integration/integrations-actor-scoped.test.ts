@@ -2,9 +2,13 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { splitStatements } from '@maskin/db/migrate-utils'
-import { integrations } from '@maskin/db/schema'
+import { INTEGRATION_STATUS_ACTIVE, integrations } from '@maskin/db/schema'
 import { describe, expect, it } from 'vitest'
 import { actorScopedProviders, getIntegrationCredential } from '../../lib/integrations/lookup'
+import {
+	LINKEDIN_IDENTITY_PROVIDER,
+	getConnectedLinkedInIdentityCount,
+} from '../../lib/linkedin-addon'
 import { insertActor, insertWorkspace } from '../factories'
 import { db, getTestActorId, sql } from './global-setup'
 
@@ -381,5 +385,86 @@ describe('unique index enforces (workspace, actor, provider)', () => {
 				},
 			]),
 		).resolves.toBeDefined()
+	})
+})
+
+describe('getConnectedLinkedInIdentityCount — status vocabulary', () => {
+	// Regression: the SKU count filtered `status = 'connected'` while the only
+	// writer writes 'active', so the count was permanently 0 and the €29 add-on
+	// line could never render for any workspace. Every test at the time mocked
+	// the count away, so nothing caught it. This exercises the real predicate
+	// against real rows.
+	it('counts rows written with the status the connect callback actually writes', async () => {
+		const createdBy = getTestActorId()
+		const ws = await insertWorkspace(db, createdBy)
+		const actorA = await insertActor(db)
+		const actorB = await insertActor(db)
+
+		await db.insert(integrations).values([
+			{
+				workspaceId: ws.id,
+				provider: LINKEDIN_IDENTITY_PROVIDER,
+				status: INTEGRATION_STATUS_ACTIVE,
+				credentials: 'creds-A',
+				actorId: actorA.id,
+				createdBy,
+			},
+			{
+				workspaceId: ws.id,
+				provider: LINKEDIN_IDENTITY_PROVIDER,
+				status: INTEGRATION_STATUS_ACTIVE,
+				credentials: 'creds-B',
+				actorId: actorB.id,
+				createdBy,
+			},
+		])
+
+		expect(await getConnectedLinkedInIdentityCount(db, ws.id)).toBe(2)
+	})
+
+	it('excludes pending and revoked rows, and rows from other workspaces', async () => {
+		const createdBy = getTestActorId()
+		const ws = await insertWorkspace(db, createdBy)
+		const otherWs = await insertWorkspace(db, createdBy)
+		const actorA = await insertActor(db)
+		const actorB = await insertActor(db)
+		const actorC = await insertActor(db)
+
+		await db.insert(integrations).values([
+			{
+				workspaceId: ws.id,
+				provider: LINKEDIN_IDENTITY_PROVIDER,
+				status: INTEGRATION_STATUS_ACTIVE,
+				credentials: 'live',
+				actorId: actorA.id,
+				createdBy,
+			},
+			{
+				workspaceId: ws.id,
+				provider: LINKEDIN_IDENTITY_PROVIDER,
+				status: 'pending',
+				credentials: '',
+				actorId: actorB.id,
+				createdBy,
+			},
+			{
+				workspaceId: ws.id,
+				provider: LINKEDIN_IDENTITY_PROVIDER,
+				status: 'revoked',
+				credentials: 'dead',
+				actorId: actorC.id,
+				createdBy,
+			},
+			{
+				workspaceId: otherWs.id,
+				provider: LINKEDIN_IDENTITY_PROVIDER,
+				status: INTEGRATION_STATUS_ACTIVE,
+				credentials: 'elsewhere',
+				actorId: actorA.id,
+				createdBy,
+			},
+		])
+
+		expect(await getConnectedLinkedInIdentityCount(db, ws.id)).toBe(1)
 	})
 })

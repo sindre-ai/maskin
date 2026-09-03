@@ -40,15 +40,11 @@ describe('readSessionActorContext', () => {
 	})
 
 	it('returns null when MASKIN_ACTOR_ID is blank after trimming', () => {
-		expect(
-			readSessionActorContext({ MASKIN_ACTOR_ID: '   ', MASKIN_API_KEY: API_KEY }),
-		).toBeNull()
+		expect(readSessionActorContext({ MASKIN_ACTOR_ID: '   ', MASKIN_API_KEY: API_KEY })).toBeNull()
 	})
 
 	it('returns null when MASKIN_API_KEY is blank after trimming', () => {
-		expect(
-			readSessionActorContext({ MASKIN_ACTOR_ID: ACTOR_ID, MASKIN_API_KEY: '   ' }),
-		).toBeNull()
+		expect(readSessionActorContext({ MASKIN_ACTOR_ID: ACTOR_ID, MASKIN_API_KEY: '   ' })).toBeNull()
 	})
 
 	// Guards against a bad env writer stuffing an actor label or session id

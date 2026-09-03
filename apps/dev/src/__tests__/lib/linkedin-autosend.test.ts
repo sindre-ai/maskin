@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { FLAGS, parseFeatureFlagConfig } from '../../lib/feature-flags'
 import {
 	buildLinkedinAutosendIdempotencyKey,
 	isSalesRepLinkedinAutosendEnabled,
 } from '../../lib/linkedin-autosend'
-import { FLAGS, parseFeatureFlagConfig } from '../../lib/feature-flags'
 
 const DRIVER_ACTOR = '9f1e7a53-2b8c-4d0e-8a3f-6c0b71d5e924'
 const OTHER_ACTOR = 'c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f'

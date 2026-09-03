@@ -38,9 +38,11 @@ vi.mock('../../lib/integrations/providers/linkedin-unipile/errors', async () => 
 	return { ...actual, delay: () => Promise.resolve() }
 })
 
+// vi.fn(), not plain functions — the isolation test below asserts on
+// `vi.mocked(decrypt)`, which throws "not a spy" against a bare function.
 vi.mock('../../lib/crypto', () => ({
-	decrypt: (s: string) => s,
-	encrypt: (s: string) => s,
+	decrypt: vi.fn((s: string) => s),
+	encrypt: vi.fn((s: string) => s),
 }))
 
 vi.mock('../../lib/workspace-auth', () => ({
@@ -59,6 +61,7 @@ import integrationsLinkedinUnipileRoutes, {
 } from '../integrations-linkedin-unipile'
 
 type FakeDb = {
+	rows: IdempotencyRow[]
 	select: ReturnType<typeof vi.fn>
 	insert: ReturnType<typeof vi.fn>
 	update: ReturnType<typeof vi.fn>
@@ -72,43 +75,78 @@ type IdempotencyRow = {
 	path: string
 	status: number
 	response: unknown
+	createdAt?: Date
 }
 
 /**
- * Build a fake DB with an in-memory idempotency_records table. The select()
- * side ignores the opaque drizzle predicate and returns whatever is in the
- * store — every idempotency-tracked test uses a single unique key per
- * verb-path, so at most one row can match. Insert enforces PK uniqueness
- * (code '23505') to exercise the race-collapse fallback path.
+ * Build a fake DB with an in-memory idempotency_records table.
+ *
+ * The drizzle predicates are opaque objects, so instead of parsing them the
+ * fake tracks `currentKey` — the key of the most recent insert attempt. That
+ * is faithful to the code under test: `withIdempotency` derives one scopedKey
+ * per call and uses that same key for every subsequent select/update/delete.
+ *
+ * Insert enforces PK uniqueness (code '23505'), which is what makes the claim
+ * atomic and therefore what serialises concurrent callers. Update mutates the
+ * stored row so a completed claim really does replay its recorded response.
+ *
+ * `update().set().where()` is both awaitable and `.returning()`-able because
+ * the code uses it two ways: an unconditional completion write, and a
+ * conditional stale-claim takeover. `returning: []` means "no stale row
+ * matched" — correct for every test here, since none of them let a claim age
+ * past the TTL.
  */
 function buildFakeDb(initial: IdempotencyRow[] = []): FakeDb {
 	const rows: IdempotencyRow[] = [...initial]
+	let currentKey: string | null = null
+	const find = () => rows.find((r) => r.key === currentKey)
 	return {
+		rows,
 		select: vi.fn(() => ({
 			from: () => ({
 				where: (_predicate: unknown) => ({
-					limit: (_n: number) => Promise.resolve(rows.length > 0 ? [rows[0]] : []),
+					limit: (_n: number) => {
+						const row = find()
+						return Promise.resolve(row ? [row] : [])
+					},
 				}),
 			}),
 		})),
 		insert: vi.fn(() => ({
 			values: (row: IdempotencyRow) => {
+				currentKey = row.key
 				if (rows.some((r) => r.key === row.key)) {
 					const err = new Error('duplicate key value violates unique constraint')
 					;(err as Error & { code: string }).code = '23505'
 					throw err
 				}
-				rows.push(row)
+				rows.push({ createdAt: new Date(), ...row })
 				return Promise.resolve()
 			},
 		})),
 		update: vi.fn(() => ({
-			set: () => ({
-				where: () => Promise.resolve(),
+			set: (values: Partial<IdempotencyRow>) => ({
+				where: () => {
+					// A completion write (carries `status`) always applies. A
+					// takeover write carries only `createdAt` and is conditional on
+					// the claim being stale — no test here ages a claim past the
+					// TTL, so it matches nothing and must not mutate the row.
+					if ('status' in values) {
+						const row = find()
+						if (row) Object.assign(row, values)
+					}
+					return Object.assign(Promise.resolve(undefined), {
+						returning: () => Promise.resolve([]),
+					})
+				},
 			}),
 		})),
 		delete: vi.fn(() => ({
-			where: () => ({ returning: () => Promise.resolve([]) }),
+			where: () => {
+				const idx = rows.findIndex((r) => r.key === currentKey)
+				if (idx >= 0) rows.splice(idx, 1)
+				return Promise.resolve()
+			},
 		})),
 	}
 }
@@ -150,7 +188,7 @@ function stubCredential(actorId: string, accountId: string, accountStatus?: stri
 				id: `int-${actorId}`,
 				workspaceId: WORKSPACE_ID,
 				provider: 'linkedin-unipile',
-				status: 'connected',
+				status: 'active',
 				credentials: JSON.stringify({ account_id: accountId, account_status: accountStatus }),
 				externalId: null,
 				config: {},
@@ -365,6 +403,121 @@ describe('POST /send-message — idempotency dedup', () => {
 		expect(secondJson.replayed).toBe(true)
 		expect(calls).toBe(1)
 	})
+
+	// Regression: the ledger used to be check-then-act (SELECT, send, INSERT),
+	// so two concurrent calls with one key both missed the SELECT and both sent.
+	// The loser then reported replayed:true having already delivered a second
+	// LinkedIn message. The claim row must be written before the send.
+	it('never sends twice when two calls with the same key overlap', async () => {
+		stubCredential(ACTOR_A, 'unipile-A')
+		let calls = 0
+		let releaseFirst: () => void = () => {}
+		const firstInFlight = new Promise<void>((resolve) => {
+			releaseFirst = resolve
+		})
+		fakeUnipile({
+			send: async () => {
+				calls++
+				if (calls === 1) await firstInFlight
+				return {
+					status: 200,
+					body: { id: `msg-${calls}`, sent_at: '2026-08-31T12:00:00Z' },
+					headers: {},
+				}
+			},
+		})
+		const db = buildFakeDb()
+		const app = buildAppWithFakes({ actorId: ACTOR_A, db })
+		const body = {
+			recipient_urn: 'urn:li:person:X',
+			body: 'hi',
+			idempotency_key: 'concurrent-key',
+		}
+
+		const firstPromise = req(app, 'POST', '/send-message', body)
+		// Let the first request claim the key and reach the (blocked) send.
+		await new Promise((r) => setTimeout(r, 0))
+		const second = await req(app, 'POST', '/send-message', body)
+
+		// The duplicate must be refused, not served — the winner's response does
+		// not exist yet, so there is nothing legitimate to replay.
+		expect(second.status).toBe(502)
+		expect(calls).toBe(1)
+
+		releaseFirst()
+		const firstJson = (await (await firstPromise).json()) as { message_id: string }
+		expect(firstJson.message_id).toBe('msg-1')
+		expect(calls).toBe(1)
+	})
+
+	// Regression: method and path were absent from the scoped key, so a reply
+	// reusing the send's {contact_id}:{draft_id} key replayed the send's stored
+	// response and was never delivered.
+	it('does not let a reply replay a send that used the same caller key', async () => {
+		stubCredential(ACTOR_A, 'unipile-A')
+		const sent: string[] = []
+		fakeUnipile({
+			send: async () => {
+				sent.push('send')
+				return { status: 200, body: { id: 'msg-send' }, headers: {} }
+			},
+			reply: async () => {
+				sent.push('reply')
+				return { status: 200, body: { id: 'msg-reply' }, headers: {} }
+			},
+		})
+		const db = buildFakeDb()
+		const app = buildAppWithFakes({ actorId: ACTOR_A, db })
+		const sharedKey = 'contact-1:draft-1'
+
+		await req(app, 'POST', '/send-message', {
+			recipient_urn: 'urn:li:person:X',
+			body: 'hi',
+			idempotency_key: sharedKey,
+		})
+		const reply = await req(app, 'POST', '/reply', {
+			thread_id: 'thread-1',
+			body: 'following up',
+			idempotency_key: sharedKey,
+		})
+
+		const replyJson = (await reply.json()) as { message_id: string; replayed: boolean }
+		expect(replyJson.replayed).toBe(false)
+		expect(replyJson.message_id).toBe('msg-reply')
+		expect(sent).toEqual(['send', 'reply'])
+	})
+
+	// A failed send must release its claim, or a transient upstream error would
+	// poison the key until the nightly purge and block every legitimate retry.
+	it('releases the claim when the send fails, so a retry can proceed', async () => {
+		stubCredential(ACTOR_A, 'unipile-A')
+		let calls = 0
+		fakeUnipile({
+			// 400 → INVALID_INPUT, which is terminal. A 5xx would be retried
+			// internally by callUnipileWithRetry and never surface as a failure.
+			send: async () => {
+				calls++
+				if (calls === 1) return { status: 400, body: { message: 'bad urn' }, headers: {} }
+				return { status: 200, body: { id: 'msg-2' }, headers: {} }
+			},
+		})
+		const db = buildFakeDb()
+		const app = buildAppWithFakes({ actorId: ACTOR_A, db })
+		const body = {
+			recipient_urn: 'urn:li:person:X',
+			body: 'hi',
+			idempotency_key: 'retry-key',
+		}
+
+		const failed = await req(app, 'POST', '/send-message', body)
+		expect(failed.status).toBe(400)
+		expect(db.rows).toHaveLength(0)
+
+		const retried = await req(app, 'POST', '/send-message', body)
+		const retriedJson = (await retried.json()) as { message_id: string; replayed: boolean }
+		expect(retriedJson.message_id).toBe('msg-2')
+		expect(retriedJson.replayed).toBe(false)
+	})
 })
 
 describe('two-actor lookup isolation', () => {
@@ -376,7 +529,7 @@ describe('two-actor lookup isolation', () => {
 					id: 'int-A',
 					workspaceId: WORKSPACE_ID,
 					provider: 'linkedin-unipile',
-					status: 'connected',
+					status: 'active',
 					credentials: JSON.stringify({ account_id: 'unipile-A' }),
 					externalId: null,
 					config: {},
@@ -392,7 +545,7 @@ describe('two-actor lookup isolation', () => {
 					id: 'int-B',
 					workspaceId: WORKSPACE_ID,
 					provider: 'linkedin-unipile',
-					status: 'connected',
+					status: 'active',
 					credentials: JSON.stringify({ account_id: 'unipile-B' }),
 					externalId: null,
 					config: {},

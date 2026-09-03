@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { type Integration, integrations } from '@maskin/db/schema'
+import { INTEGRATION_STATUS_ACTIVE, type Integration, integrations } from '@maskin/db/schema'
 import { and, eq, isNull } from 'drizzle-orm'
 
 /**
@@ -50,7 +50,7 @@ export async function getIntegrationCredential(
 			and(
 				eq(integrations.workspaceId, workspaceId),
 				eq(integrations.provider, provider),
-				eq(integrations.status, 'active'),
+				eq(integrations.status, INTEGRATION_STATUS_ACTIVE),
 				requiresActor ? eq(integrations.actorId, actorId as string) : isNull(integrations.actorId),
 			),
 		)

@@ -172,6 +172,34 @@ export const events = pgTable(
 
 // ── Integrations ───────────────────────────────────────────────────────────
 
+/**
+ * The complete status vocabulary for an `integrations` row. Applied to the
+ * column via `$type<>()` below so a reader that filters on a literal outside
+ * this union is a compile error rather than a query that silently matches
+ * nothing — the failure mode that shipped a permanently-hidden LinkedIn
+ * billing line (a reader filtering `'connected'`, a writer writing `'active'`).
+ *
+ * `active` is the only value that means "credentials are live and usable";
+ * every reader fetching usable credentials must filter on
+ * `INTEGRATION_STATUS_ACTIVE` rather than re-spelling the literal.
+ */
+export type IntegrationStatus =
+	| 'active'
+	| 'pending'
+	| 'revoked'
+	| 'error'
+	| 'awaiting_secret'
+	/**
+	 * Written only by `buildIntegrationInsert` (loop provisioning): a row
+	 * installed from a snapshot, which by construction carries no credentials
+	 * and needs the user to re-run OAuth. Matches no credential reader, which
+	 * is the intent — it must never be mistaken for a live connection.
+	 */
+	| 'inactive'
+
+/** The one status meaning "connected and usable". See `IntegrationStatus`. */
+export const INTEGRATION_STATUS_ACTIVE = 'active' satisfies IntegrationStatus
+
 export const integrations = pgTable(
 	'integrations',
 	{
@@ -180,7 +208,7 @@ export const integrations = pgTable(
 			.references(() => workspaces.id)
 			.notNull(),
 		provider: text('provider').notNull(),
-		status: text('status').notNull(),
+		status: text('status').$type<IntegrationStatus>().notNull(),
 		externalId: text('external_id'),
 		credentials: text('credentials').notNull(),
 		config: jsonb('config').notNull().default({}),

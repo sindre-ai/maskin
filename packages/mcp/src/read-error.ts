@@ -19,7 +19,41 @@ export type ReadErrorKind =
 	| 'permission'
 	| 'rate_limit'
 	| 'server'
+	/**
+	 * A terminal, provider-side condition that retrying cannot clear and will
+	 * often make worse — a disconnected credential, or an account the upstream
+	 * platform has restricted. Distinct from `permission` (which is about the
+	 * caller's Maskin access) and from `unknown` (whose guidance suggests one
+	 * retry). Only reachable when the backend sends a machine-readable
+	 * `error.code`; see `TERMINAL_PROVIDER_CODES`.
+	 */
+	| 'provider_terminal'
 	| 'unknown'
+
+/**
+ * Backend `error.code` values that must never be retried. These come from the
+ * LinkedIn/Unipile taxonomy in
+ * `apps/dev/src/lib/integrations/providers/linkedin-unipile/errors.ts`, whose
+ * HTTP statuses (424 CREDENTIAL_NOT_CONNECTED, 423 LINKEDIN_ACCOUNT_RESTRICTED)
+ * match no branch of the status-based classification below and would otherwise
+ * land in `unknown`.
+ */
+const TERMINAL_PROVIDER_CODES = new Set<string>([
+	'CREDENTIAL_NOT_CONNECTED',
+	'CREDENTIAL_REVOKED',
+	'LINKEDIN_ACCOUNT_RESTRICTED',
+])
+
+/**
+ * Recover the backend's machine-readable `error.code`, which `apiFetch`
+ * attaches to the thrown Error (server.ts). Returns null for errors raised
+ * anywhere else.
+ */
+export function apiErrorCodeOf(err: unknown): string | null {
+	if (!err || typeof err !== 'object') return null
+	const code = (err as { apiErrorCode?: unknown }).apiErrorCode
+	return typeof code === 'string' && code.length > 0 ? code : null
+}
 
 export interface ReadErrorNext {
 	tool: string
@@ -77,13 +111,20 @@ export function reasonFromError(err: unknown, kind: ReadErrorKind): string {
 			return `Rate limited: ${detail}`
 		case 'server':
 			return `Upstream error: ${detail}`
+		case 'provider_terminal':
+			return `Connection unavailable: ${detail}`
 		default:
 			return `Unexpected error: ${detail}`
 	}
 }
 
 export function classifyReadError(err: unknown): ReadErrorKind {
+	// Code first: a terminal provider condition outranks its HTTP status, and
+	// its statuses (423/424) match none of the branches below anyway.
+	const code = apiErrorCodeOf(err)
+	if (code !== null && TERMINAL_PROVIDER_CODES.has(code)) return 'provider_terminal'
 	const status = parseApiErrorStatus(err)
+	if (status === 423 || status === 424) return 'provider_terminal'
 	if (status === 404) return 'not_found'
 	if (status === 400 || status === 422) return 'invalid_param'
 	if (status === 401 || status === 403) return 'permission'
@@ -108,6 +149,8 @@ interface ToolGuidance {
 	notFound: ReadErrorNext
 	invalidParam: ReadErrorNext
 	permission?: ReadErrorNext
+	/** Overrides the default do-not-retry guidance for `provider_terminal`. */
+	providerTerminal?: ReadErrorNext
 }
 
 const DEFAULT_PERMISSION: ReadErrorNext = {
@@ -384,6 +427,40 @@ const GUIDANCE: Record<string, ToolGuidance> = {
 			hint: 'list_extensions({ workspace_id: "<uuid>" }) — workspace_id defaults to the configured workspace when omitted.',
 		},
 	},
+	// The three LinkedIn tools call toolErrorResponse directly from their
+	// handlers rather than through the READ_TOOL_NAMES branch, so without
+	// entries here they fell back to list_workspaces guidance — useless advice
+	// for a failed send.
+	linkedin__send_message: {
+		notFound: {
+			tool: 'linkedin__list_conversations',
+			hint: 'linkedin__list_conversations() to confirm the recipient is reachable, then retry with a valid recipient_urn.',
+		},
+		invalidParam: {
+			tool: 'linkedin__send_message',
+			hint: 'linkedin__send_message({ recipient_urn: "<urn>", text: "<message>", idempotency_key: "<contact_id>:<draft_id>" }) — recipient_urn and text are required.',
+		},
+	},
+	linkedin__reply: {
+		notFound: {
+			tool: 'linkedin__list_conversations',
+			hint: 'linkedin__list_conversations() to get a current thread_id — the thread may have been deleted or archived.',
+		},
+		invalidParam: {
+			tool: 'linkedin__reply',
+			hint: 'linkedin__reply({ thread_id: "<id>", text: "<message>", idempotency_key: "<contact_id>:<draft_id>" }) — thread_id and text are required. Use a different idempotency_key than the original send.',
+		},
+	},
+	linkedin__list_conversations: {
+		notFound: {
+			tool: 'list_integrations',
+			hint: 'list_integrations() to confirm this actor has a connected linkedin-unipile credential in the workspace.',
+		},
+		invalidParam: {
+			tool: 'linkedin__list_conversations',
+			hint: 'linkedin__list_conversations({ limit: 25 }) — limit must be a positive integer when provided.',
+		},
+	},
 	get_started: {
 		notFound: {
 			tool: 'list_workspaces',
@@ -431,6 +508,16 @@ export function pickNext(toolName: string, kind: ReadErrorKind): ReadErrorNext {
 				tool: toolName,
 				hint: 'Retry the same call after a short delay — the upstream API returned a transient server error.',
 			}
+		case 'provider_terminal':
+			// Deliberately no retry advice. For a restricted account, retrying
+			// worsens the upstream restriction; for a missing or revoked
+			// credential, no number of retries will produce one.
+			return (
+				guidance.providerTerminal ?? {
+					tool: 'list_integrations',
+					hint: 'Do NOT retry — this needs a human. The account is disconnected or restricted upstream. Check list_integrations, then have the owning actor reconnect it in Settings > Integrations, and report this to the user instead of calling the tool again.',
+				}
+			)
 		default:
 			// Unrecognized error shape — do NOT reuse `notFound` guidance here.
 			// An unclassified error is as likely to be a bug as a missing

@@ -41,7 +41,8 @@ export function buildLinkedinAutosendIdempotencyKey({
 }: LinkedinAutosendIdempotencyKeyInput): string {
 	const contact = contactId.trim()
 	const draft = draftId.trim()
-	if (!contact) throw new Error('contactId is required to build the LinkedIn autosend idempotency key')
+	if (!contact)
+		throw new Error('contactId is required to build the LinkedIn autosend idempotency key')
 	if (!draft) throw new Error('draftId is required to build the LinkedIn autosend idempotency key')
 	return `${contact}:${draft}`
 }

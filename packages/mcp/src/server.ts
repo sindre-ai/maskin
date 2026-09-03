@@ -352,8 +352,12 @@ async function apiFetch(
 	if (!response.ok) {
 		const errorText = await response.text()
 		let message: string
+		let apiErrorCode: string | null = null
 		try {
 			const errorData = JSON.parse(errorText)
+			if (typeof errorData.error?.code === 'string' && errorData.error.code.length > 0) {
+				apiErrorCode = errorData.error.code
+			}
 			if (errorData.error?.message) {
 				const parts = [errorData.error.message]
 				if (errorData.error.details?.length) {
@@ -375,7 +379,18 @@ async function apiFetch(
 		} catch {
 			message = errorText
 		}
-		throw new Error(`API error ${response.status}: ${message}`)
+		const error = new Error(`API error ${response.status}: ${message}`)
+		// Preserve the machine-readable `error.code` the backend sent alongside
+		// the prose. Without it the LinkedIn taxonomy (CREDENTIAL_NOT_CONNECTED,
+		// LINKEDIN_ACCOUNT_RESTRICTED, …) is unrecoverable downstream, and
+		// classifyReadError falls back to "unknown" — whose guidance tells the
+		// caller to retry, the one action a restricted LinkedIn account must
+		// never take. Attached as a property rather than folded into the message
+		// so `parseApiErrorStatus`'s regex keeps working unchanged.
+		if (apiErrorCode !== null) {
+			;(error as Error & { apiErrorCode?: string }).apiErrorCode = apiErrorCode
+		}
+		throw error
 	}
 
 	return response

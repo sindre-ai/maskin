@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { integrations } from '@maskin/db/schema'
+import { INTEGRATION_STATUS_ACTIVE, integrations } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 
 /**
@@ -31,15 +31,20 @@ export interface LinkedInIdentityAddonLine {
 
 /**
  * Counts connected LinkedIn identities for a workspace. Filters on
- * `status = 'connected'` to match what Task 2's Unipile hosted-wizard callback
- * writes on `CREATION_SUCCESS`; rows in other states (`pending` during the
- * wizard round-trip, `revoked` after a disconnect) do NOT count toward the
- * add-on.
+ * `INTEGRATION_STATUS_ACTIVE` — the literal the Unipile hosted-wizard callback
+ * writes on `CREATION_SUCCESS` (see `CONNECTED_STATUS` in
+ * `routes/integrations-linkedin-unipile.ts`) and the one every other reader in
+ * the codebase agrees on. Rows in other states (`pending` during the wizard
+ * round-trip, `revoked` after a disconnect) do NOT count toward the add-on.
  *
- * Reads only from the pre-refactor `integrations` schema — no dependency on
- * `actor_id` (which lands in Task 1's PR #1466). Each row already represents
- * one connected identity per the existing `(workspace_id, provider, external_id)`
- * uniqueness guard.
+ * Do not re-spell this as a bare string: a status literal no writer produces
+ * makes the count silently zero and hides the add-on line for every workspace.
+ * The shared constant plus the `IntegrationStatus` union on the column make
+ * that a compile error instead.
+ *
+ * Each row is one connected identity — the actor-scoped unique index
+ * (`integrations_ws_actor_provider_null_external_uniq`) permits at most one
+ * `linkedin-unipile` credential per (workspace, actor).
  */
 export async function getConnectedLinkedInIdentityCount(
 	db: Database,
@@ -52,7 +57,7 @@ export async function getConnectedLinkedInIdentityCount(
 			and(
 				eq(integrations.workspaceId, workspaceId),
 				eq(integrations.provider, LINKEDIN_IDENTITY_PROVIDER),
-				eq(integrations.status, 'connected'),
+				eq(integrations.status, INTEGRATION_STATUS_ACTIVE),
 			),
 		)
 	return rows[0]?.n ?? 0

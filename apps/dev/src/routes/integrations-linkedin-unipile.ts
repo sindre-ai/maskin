@@ -1,7 +1,7 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { idempotencyRecords, integrations } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { INTEGRATION_STATUS_ACTIVE, idempotencyRecords, integrations } from '@maskin/db/schema'
+import { and, eq, lt } from 'drizzle-orm'
 import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
@@ -93,15 +93,17 @@ const PROVIDER = 'linkedin-unipile'
 /**
  * The status a successfully-landed credential row carries.
  *
- * MUST stay `'active'`. Every reader in the codebase filters on that literal —
- * `lib/integrations/lookup.ts`'s `getIntegrationCredential` (the helper this
- * provider's downstream tools use), `oauth/token-manager.ts`, and every
- * `routes/integrations.ts` list query. `integrations.status` is a plain `text`
- * column with no enum or CHECK constraint, so writing any other value is
- * accepted by Postgres and then silently matches nothing on read: the connect
- * flow appears to succeed and the integration is invisible forever.
+ * Aliases the shared `INTEGRATION_STATUS_ACTIVE` so this provider cannot drift
+ * from the vocabulary every reader filters on — `lib/integrations/lookup.ts`'s
+ * `getIntegrationCredential`, `lib/linkedin-addon.ts`'s SKU count,
+ * `oauth/token-manager.ts`, and every `routes/integrations.ts` list query.
+ *
+ * The column is typed `IntegrationStatus`, so an invented literal is now a
+ * compile error. It used to be plain `text`: writing any other value was
+ * accepted by Postgres and then silently matched nothing on read, leaving the
+ * connect flow apparently successful and the integration invisible forever.
  */
-const CONNECTED_STATUS = 'active'
+const CONNECTED_STATUS = INTEGRATION_STATUS_ACTIVE
 
 function callbackUrl(): string {
 	const base = (process.env.MASKIN_PUBLIC_URL ?? 'http://localhost:3000').replace(/\/$/, '')
@@ -485,12 +487,48 @@ function extractUpstreamMessage(body: unknown, code: string): string {
 }
 
 /**
- * Idempotency dedup path (spec §5). Callers pass an `idempotency_key`
- * scoped to their draft/contact; the server prefixes it with the provider
- * name and actor id so keys never collide across actors or providers. On
- * cache hit, the winner's response is replayed with `replayed: true`. On
- * cache miss, the work runs; the response is persisted, and a concurrent
- * duplicate that lost the primary-key race replays the winner too.
+ * Sentinel `status` for a claim row whose work is still running. Real
+ * responses are persisted with the HTTP status they carried (200), so 0 is
+ * unambiguous and needs no extra column.
+ */
+const IN_FLIGHT_STATUS = 0
+
+/**
+ * How long a claim row may sit in-flight before another request may take it
+ * over. A send is bounded well under this: `callUnipileWithRetry` caps at 3
+ * attempts with a 30s backoff ceiling, so the worst realistic case is ~1
+ * minute. A row still claimed after five minutes therefore means the original
+ * process died between claiming and recording, and the key would otherwise be
+ * poisoned until the nightly purge.
+ */
+const IN_FLIGHT_CLAIM_TTL_MS = 5 * 60 * 1000
+
+/**
+ * Idempotency dedup path (spec §5). Callers pass an `idempotency_key` scoped
+ * to their draft/contact; the server prefixes it with the provider name, the
+ * actor id, and the verb so keys never collide across actors, providers, or
+ * operations.
+ *
+ * The verb is part of the key on purpose. `buildLinkedinAutosendIdempotencyKey`
+ * mints `{contact_id}:{draft_id}`, and the same (contact, draft) pair recurs
+ * across a send and a later reply — with a verb-blind key the reply would
+ * replay the send's stored response, report success, and never be delivered.
+ *
+ * CLAIM BEFORE WORK. The row is inserted *before* `run()` executes, not after.
+ * The natural ordering — SELECT, run, INSERT — is check-then-act: two
+ * concurrent calls with the same key both miss the SELECT, both perform the
+ * side effect, and the one that loses the primary-key race reports
+ * `replayed: true` having already sent a second LinkedIn message. Since the
+ * whole point of the ledger is that a send happens at most once, the claim has
+ * to be what serialises the callers, and the primary key is what makes the
+ * claim atomic.
+ *
+ * Three outcomes on a duplicate:
+ *   - winner finished → replay its stored response.
+ *   - winner still in flight → surface a retryable error. We must not run,
+ *     because that is the duplicate send this function exists to prevent.
+ *   - winner's claim is older than the TTL → take it over (guarded by a
+ *     conditional UPDATE, so two simultaneous takeovers can't both win).
  */
 async function withIdempotency<T extends Record<string, unknown>>(opts: {
 	db: Database
@@ -500,37 +538,107 @@ async function withIdempotency<T extends Record<string, unknown>>(opts: {
 	path: string
 	run: () => Promise<T>
 }): Promise<T & { replayed: boolean }> {
-	const scopedKey = `${IDEMPOTENCY_SCOPE_PREFIX}${opts.actorId}:${opts.callerKey}`
-	const cached = await opts.db
-		.select()
-		.from(idempotencyRecords)
-		.where(eq(idempotencyRecords.key, scopedKey))
-		.limit(1)
-	if (cached[0]) {
-		return replayResponse<T>(cached[0].response)
-	}
-	const fresh = await opts.run()
+	const scopedKey = `${IDEMPOTENCY_SCOPE_PREFIX}${opts.actorId}:${opts.method}:${opts.path}:${opts.callerKey}`
+
+	let claimed = false
 	try {
 		await opts.db.insert(idempotencyRecords).values({
 			key: scopedKey,
 			actorId: opts.actorId,
 			method: opts.method,
 			path: opts.path,
-			status: 200,
-			response: fresh,
+			status: IN_FLIGHT_STATUS,
+			response: {},
 		})
-		return { ...(fresh as object), replayed: false } as T & { replayed: boolean }
+		claimed = true
 	} catch (err) {
-		if (isPrimaryKeyViolation(err)) {
-			const winner = await opts.db
-				.select()
-				.from(idempotencyRecords)
-				.where(eq(idempotencyRecords.key, scopedKey))
-				.limit(1)
-			if (winner[0]) return replayResponse<T>(winner[0].response)
+		if (!isPrimaryKeyViolation(err)) throw err
+	}
+
+	if (!claimed) {
+		const [winner] = await opts.db
+			.select()
+			.from(idempotencyRecords)
+			.where(eq(idempotencyRecords.key, scopedKey))
+			.limit(1)
+
+		// Gone between the failed insert and this read — purged, or the owner
+		// released it after a failure. Treat as retryable rather than racing again.
+		if (!winner) {
+			throw new LinkedInIntegrationError(
+				'UNIPILE_UNAVAILABLE',
+				'Idempotency claim vanished mid-flight. Retry the request.',
+			)
+		}
+
+		if (winner.status !== IN_FLIGHT_STATUS) {
+			return replayResponse<T>(winner.response)
+		}
+
+		const staleCutoff = new Date(Date.now() - IN_FLIGHT_CLAIM_TTL_MS)
+		const takenOver = await opts.db
+			.update(idempotencyRecords)
+			.set({ createdAt: new Date() })
+			.where(
+				and(
+					eq(idempotencyRecords.key, scopedKey),
+					eq(idempotencyRecords.status, IN_FLIGHT_STATUS),
+					lt(idempotencyRecords.createdAt, staleCutoff),
+				),
+			)
+			.returning({ key: idempotencyRecords.key })
+
+		if (takenOver.length === 0) {
+			// Another request holds a live claim. Refusing here is the entire
+			// point: proceeding would send the message a second time.
+			throw new LinkedInIntegrationError(
+				'UNIPILE_UNAVAILABLE',
+				'A request with this idempotency key is already in flight. Retry shortly.',
+			)
+		}
+		logger.warn('Took over a stale LinkedIn idempotency claim', {
+			actorId: opts.actorId,
+			method: opts.method,
+			path: opts.path,
+		})
+	}
+
+	let fresh: T
+	try {
+		fresh = await opts.run()
+	} catch (err) {
+		// Release the claim so a retry isn't blocked by work that never
+		// produced a side effect to dedup. Best-effort: if this fails the row
+		// simply ages out via the TTL above.
+		try {
+			await opts.db.delete(idempotencyRecords).where(eq(idempotencyRecords.key, scopedKey))
+		} catch (releaseErr) {
+			logger.warn('Failed to release LinkedIn idempotency claim after an error', {
+				actorId: opts.actorId,
+				error: releaseErr instanceof Error ? releaseErr.message : String(releaseErr),
+			})
 		}
 		throw err
 	}
+
+	try {
+		await opts.db
+			.update(idempotencyRecords)
+			.set({ status: 200, response: fresh, createdAt: new Date() })
+			.where(eq(idempotencyRecords.key, scopedKey))
+	} catch (err) {
+		// The side effect already happened. Do NOT rethrow — that would hand
+		// the caller a failure for work that succeeded and invite a retry that
+		// re-sends. The claim row stays in-flight and blocks duplicates until
+		// it ages out, which is the safe direction to fail.
+		logger.error('LinkedIn send succeeded but its idempotency record was not persisted', {
+			actorId: opts.actorId,
+			method: opts.method,
+			path: opts.path,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
+	return { ...(fresh as object), replayed: false } as T & { replayed: boolean }
 }
 
 function replayResponse<T extends Record<string, unknown>>(
