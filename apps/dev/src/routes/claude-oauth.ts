@@ -5,12 +5,20 @@ import { workspaceMembers, workspaces } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { type ClaudeOAuthTokens, encryptOAuthTokens, getValidOAuthToken } from '../lib/claude-oauth'
 import {
-	type OAuthFailoverState,
+	MAX_OAUTH_SLOTS,
 	type OAuthSlotKind,
 	clearSlot,
+	isSlotId,
+	nextFreeSlotId,
+	nextSlotAfter,
+	promoteSlot,
+	readChain,
 	readFailoverState,
 	readSlots,
 	resolveActiveSlot,
+	slotFailure,
+	slotIndexOf,
+	withSlotFailure,
 	writeFailoverState,
 	writeSlot,
 } from '../lib/claude-oauth-slots'
@@ -36,13 +44,31 @@ type Env = {
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
-const slotKindSchema = z.enum(['primary', 'backup'])
+/**
+ * A slot id: `primary`, `backup`, or `slot_3`…`slot_10`. Kept as a validated
+ * string rather than an enum so the chain can grow without a schema change —
+ * `isSlotId` (claude-oauth-slots.ts) owns which ids exist.
+ */
+const slotKindSchema = z.string().refine(isSlotId, {
+	message: 'slot must be primary, backup, or slot_3 … slot_10',
+})
+
+/** Import target: an existing slot, or `new` to append to the chain. */
+const importSlotSchema = z.string().refine((v) => v === 'new' || isSlotId(v), {
+	message: 'slot must be primary, backup, slot_3 … slot_10, or new',
+})
 
 const slotStatusSchema = z.object({
+	slot: z.string(),
+	/** Position in the failover chain — 0 is the one sessions try first. */
+	position: z.number(),
 	subscription_type: z.string().optional(),
 	expires_at: z.number(),
 	fingerprint: z.string(),
 	nickname: z.string().optional(),
+	/** When this slot was last classified unusable, and why. */
+	failure_at: z.number().optional(),
+	failure_reason: z.string().optional(),
 })
 
 // Free-text label users attach to a slot so multiple credentials are
@@ -57,12 +83,17 @@ const statusResponseSchema = z.object({
 	valid: z.boolean(),
 	subscription_type: z.string().optional(),
 	expires_at: z.number().optional(),
-	// New shape for T8: per-slot info + the failover state T1 persists.
-	slots: z.object({
-		primary: slotStatusSchema.optional(),
-		backup: slotStatusSchema.optional(),
-	}),
-	active_slot: slotKindSchema,
+	// Per-slot info keyed by slot id. `primary` and `backup` are still the
+	// first two keys, so callers written against the two-slot shape keep
+	// working; `chain` is what a client should iterate to render them in
+	// failover order.
+	slots: z.record(slotStatusSchema),
+	chain: z.array(z.string()),
+	/** How many more subscriptions this workspace can connect. */
+	slots_remaining: z.number(),
+	active_slot: z.string(),
+	// Legacy mirrors of the first two slots' failure records — kept so the
+	// existing status consumers don't have to learn `slots[id].failure_*`.
 	last_primary_failure_at: z.number().optional(),
 	last_classified_reason: z.string().optional(),
 	last_backup_failure_at: z.number().optional(),
@@ -156,15 +187,28 @@ app.openapi(disconnectRoute, (async (c) => {
 		}
 
 		const wasActiveSlot = readFailoverState(settings.claude_oauth).active_slot === slot
+		// The slot session-start would try after this one, decided BEFORE the
+		// removal so the chain still contains the slot being removed.
+		const successor =
+			nextSlotAfter(settings.claude_oauth, slot) ?? readChain(settings.claude_oauth)[0]?.id
 		let nextOAuth = clearSlot(settings.claude_oauth, slot)
 
 		if (nextOAuth && wasActiveSlot) {
 			// We just disconnected the slot session-start would have read next.
-			// Repoint active_slot to whichever slot still has data so a healthy
-			// remaining slot isn't orphaned by a stale pointer.
-			const remainingSlot: OAuthSlotKind = slot === 'primary' ? 'backup' : 'primary'
-			if (readSlots(nextOAuth)[remainingSlot]) {
-				nextOAuth = writeFailoverState(nextOAuth, { active_slot: remainingSlot })
+			// Repoint active_slot at the next slot still holding data (falling
+			// back to the head of what's left) so a healthy remaining slot isn't
+			// orphaned by a stale pointer.
+			const remaining = readSlots(nextOAuth)
+			const repointed = successor && remaining[successor] ? successor : readChain(nextOAuth)[0]?.id
+			if (repointed) {
+				// Clear the failure recorded against the slot we're pointing at:
+				// it's about to serve every session, and a stale reason from
+				// before would read as "unhealthy" with no failover left to
+				// explain it. Other slots keep their records.
+				nextOAuth = writeFailoverState(nextOAuth, {
+					...withSlotFailure(readFailoverState(nextOAuth), repointed, undefined),
+					active_slot: repointed,
+				})
 			}
 		}
 
@@ -227,7 +271,9 @@ app.openapi(statusRoute, (async (c) => {
 		connected: false,
 		valid: false,
 		slots: {},
-		active_slot: 'primary' as const,
+		chain: [] as string[],
+		slots_remaining: MAX_OAUTH_SLOTS,
+		active_slot: 'primary',
 	}
 
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
@@ -236,42 +282,26 @@ app.openapi(statusRoute, (async (c) => {
 	}
 
 	const settings = (ws.settings as WorkspaceSettings) ?? {}
-	const slots = readSlots(settings.claude_oauth)
+	const chain = readChain(settings.claude_oauth)
 	const failover = readFailoverState(settings.claude_oauth)
 
-	const slotResponse: {
-		primary?: {
-			subscription_type?: string
-			expires_at: number
-			fingerprint: string
-			nickname?: string
-		}
-		backup?: {
-			subscription_type?: string
-			expires_at: number
-			fingerprint: string
-			nickname?: string
-		}
-	} = {}
-	if (slots.primary) {
-		slotResponse.primary = {
-			subscription_type: slots.primary.subscriptionType,
-			expires_at: slots.primary.expiresAt,
-			fingerprint: slotFingerprint(slots.primary),
-			nickname: slots.primary.nickname,
-		}
-	}
-	if (slots.backup) {
-		slotResponse.backup = {
-			subscription_type: slots.backup.subscriptionType,
-			expires_at: slots.backup.expiresAt,
-			fingerprint: slotFingerprint(slots.backup),
-			nickname: slots.backup.nickname,
-		}
+	if (chain.length === 0) {
+		return c.json(emptyResponse)
 	}
 
-	if (!slots.primary && !slots.backup) {
-		return c.json(emptyResponse)
+	const slotResponse: Record<string, z.infer<typeof slotStatusSchema>> = {}
+	for (const [position, entry] of chain.entries()) {
+		const failure = slotFailure(failover, entry.id)
+		slotResponse[entry.id] = {
+			slot: entry.id,
+			position,
+			subscription_type: entry.data.subscriptionType,
+			expires_at: entry.data.expiresAt,
+			fingerprint: slotFingerprint(entry.data),
+			nickname: entry.data.nickname,
+			failure_at: failure.at,
+			failure_reason: failure.reason,
+		}
 	}
 
 	// Refresh the currently-active slot to surface the canonical `valid` flag
@@ -289,7 +319,7 @@ app.openapi(statusRoute, (async (c) => {
 		}
 	} catch {
 		// Active slot exists but couldn't refresh — surface as connected/invalid.
-		const activeData = slots[failover.active_slot]
+		const activeData = chain.find((entry) => entry.id === failover.active_slot)?.data
 		subscriptionType = activeData?.subscriptionType
 		expiresAt = activeData?.expiresAt
 	}
@@ -300,6 +330,8 @@ app.openapi(statusRoute, (async (c) => {
 		subscription_type: subscriptionType,
 		expires_at: expiresAt,
 		slots: slotResponse,
+		chain: chain.map((entry) => entry.id),
+		slots_remaining: MAX_OAUTH_SLOTS - chain.length,
 		active_slot: failover.active_slot,
 		last_primary_failure_at: failover.last_primary_failure_at,
 		last_classified_reason: failover.last_classified_reason,
@@ -309,9 +341,10 @@ app.openapi(statusRoute, (async (c) => {
 }) as RouteHandler<typeof statusRoute, Env>)
 
 // ── POST /api/claude-oauth/import ───────────────────────────────────────────
-// Accept raw tokens directly (from credentials.json paste). The `slot` field
-// is optional for back-compat with the legacy single-slot importer — old
-// clients keep working and the resolver treats the legacy shape as primary.
+// Accept raw tokens directly (from credentials.json paste). `slot` names the
+// slot to write: an existing id, `new` to append the credential to the end of
+// the failover chain, or omitted (back-compat with the legacy single-slot
+// importer, which only ever wrote the primary).
 
 const importRoute = createRoute({
 	method: 'post',
@@ -329,7 +362,7 @@ const importRoute = createRoute({
 						expiresAt: z.number(),
 						subscriptionType: z.string().optional(),
 						scopes: z.array(z.string()).optional(),
-						slot: slotKindSchema.optional(),
+						slot: importSlotSchema.optional(),
 						nickname: nicknameSchema.optional(),
 					}),
 				},
@@ -343,7 +376,7 @@ const importRoute = createRoute({
 				'application/json': {
 					schema: z.object({
 						success: z.boolean(),
-						slot: slotKindSchema,
+						slot: z.string(),
 						subscription_type: z.string().optional(),
 						expires_at: z.number(),
 						nickname: z.string().optional(),
@@ -353,6 +386,10 @@ const importRoute = createRoute({
 		},
 		403: {
 			description: 'Not a workspace member',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'The workspace already holds the maximum number of subscriptions',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -370,7 +407,6 @@ app.openapi(importRoute, (async (c) => {
 
 	const body = c.req.valid('json')
 	const { slot: requestedSlot, ...tokenFields } = body
-	const slot: OAuthSlotKind = requestedSlot ?? 'primary'
 	const tokens: ClaudeOAuthTokens = tokenFields
 
 	// Locked read-modify-write — see the disconnect route above for why.
@@ -381,7 +417,13 @@ app.openapi(importRoute, (async (c) => {
 	// with new BYO tokens AND a still-billing paid plan. Sentinel outcomes
 	// let the outer handler translate the txn result into the right HTTP
 	// status without throwing across the transaction boundary.
-	type ImportOutcome = 'ok' | 'not-found' | 'not-allowed' | 'stripe-config' | 'stripe-cancel'
+	type ImportOutcome =
+		| { kind: 'ok'; slot: OAuthSlotKind }
+		| { kind: 'not-found' }
+		| { kind: 'not-allowed' }
+		| { kind: 'chain-full' }
+		| { kind: 'stripe-config' }
+		| { kind: 'stripe-cancel' }
 	const outcome: ImportOutcome = await db.transaction(async (tx) => {
 		const [ws] = await tx
 			.select()
@@ -389,34 +431,54 @@ app.openapi(importRoute, (async (c) => {
 			.where(eq(workspaces.id, workspaceId))
 			.for('update')
 			.limit(1)
-		if (!ws) return 'not-found'
+		if (!ws) return { kind: 'not-found' }
 		// Every workspace defaults to the Maskin-provided LLM plan; only
 		// ops-flagged exception workspaces may import a BYO Claude subscription.
 		// See PR #970.
-		if (!isEnterprise(ws)) return 'not-allowed'
+		if (!isEnterprise(ws)) return { kind: 'not-allowed' }
 
 		const settings = (ws.settings as WorkspaceSettings) ?? {}
 		const currentFailover = readFailoverState(settings.claude_oauth)
 		const currentlyResolvable = resolveActiveSlot(settings.claude_oauth) !== undefined
 
+		// `new` appends to the chain; an explicit id overwrites that slot;
+		// omitted stays on the legacy single-slot behaviour.
+		let slot: OAuthSlotKind
+		if (!requestedSlot) {
+			slot = 'primary'
+		} else if (requestedSlot === 'new') {
+			const free = nextFreeSlotId(settings.claude_oauth)
+			if (!free) return { kind: 'chain-full' }
+			slot = free
+		} else {
+			slot = requestedSlot
+		}
+
 		// Reset failover state (clearing any stale reason/failure timestamp) in
 		// three cases: re-importing the slot that's already active (fresh
-		// credentials deserve a clean slate), restoring the default primary
-		// after a failover to backup, or nothing was resolvable beforehand (a
-		// dangling active_slot pointer). Anything else — e.g. routine
-		// credential rotation of an inactive slot while a different slot is
-		// currently active and healthy — must leave `active_slot` and the
-		// recorded failure state untouched; it must not silently steal traffic
-		// away from a slot that's serving fine.
+		// credentials deserve a clean slate), importing into a slot EARLIER in
+		// the chain than the active one (a repaired primary should take traffic
+		// back), or nothing was resolvable beforehand (a dangling active_slot
+		// pointer). Anything else — e.g. routine credential rotation of a slot
+		// further down the chain while an earlier one is serving fine — must
+		// leave `active_slot` untouched; it must not silently steal traffic
+		// away from a slot that's working.
 		const isReimportOfActiveSlot = currentFailover.active_slot === slot
-		const isPrimaryRecovery = slot === 'primary' && currentFailover.active_slot === 'backup'
+		const isEarlierSlotRecovery =
+			slotIndexOf(slot) < slotIndexOf(currentFailover.active_slot) && currentlyResolvable
 		const shouldResetFailoverState =
-			isReimportOfActiveSlot || isPrimaryRecovery || !currentlyResolvable
+			isReimportOfActiveSlot || isEarlierSlotRecovery || !currentlyResolvable
 
 		const withSlot = writeSlot(settings.claude_oauth, slot, encryptOAuthTokens(tokens))
-		const nextOAuth = shouldResetFailoverState
-			? writeFailoverState(withSlot, { active_slot: slot })
-			: withSlot
+		// Fresh credentials for a slot always clear that slot's recorded
+		// failure, whether or not traffic moves back to it — otherwise the
+		// settings page keeps showing "authentication failed" against a
+		// credential the user has just replaced.
+		const clearedFailure = withSlotFailure(currentFailover, slot, undefined)
+		const nextOAuth = writeFailoverState(withSlot, {
+			...clearedFailure,
+			active_slot: shouldResetFailoverState ? slot : currentFailover.active_slot,
+		})
 
 		const nextSettings: Record<string, unknown> = {
 			...settings,
@@ -432,7 +494,7 @@ app.openapi(importRoute, (async (c) => {
 					workspaceId,
 					error: err instanceof Error ? err.message : String(err),
 				})
-				return 'stripe-config'
+				return { kind: 'stripe-config' }
 			}
 			try {
 				await cancelActivePaidSubscription(
@@ -446,7 +508,7 @@ app.openapi(importRoute, (async (c) => {
 					subscriptionId: settings.billing?.stripe_subscription_id,
 					error: err instanceof Error ? err.message : String(err),
 				})
-				return 'stripe-cancel'
+				return { kind: 'stripe-cancel' }
 			}
 			const downgrade = billingAfterByoTransition(settings.billing)
 			if (downgrade) nextSettings.billing = downgrade
@@ -463,13 +525,13 @@ app.openapi(importRoute, (async (c) => {
 				updatedAt: new Date(),
 			})
 			.where(eq(workspaces.id, workspaceId))
-		return 'ok'
+		return { kind: 'ok', slot }
 	})
 
-	if (outcome === 'not-found') {
+	if (outcome.kind === 'not-found') {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
-	if (outcome === 'not-allowed') {
+	if (outcome.kind === 'not-allowed') {
 		return c.json(
 			createApiError(
 				'FORBIDDEN',
@@ -478,22 +540,31 @@ app.openapi(importRoute, (async (c) => {
 			403,
 		)
 	}
-	if (outcome === 'stripe-config') {
+	if (outcome.kind === 'chain-full') {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				`This workspace already has ${MAX_OAUTH_SLOTS} Claude subscriptions connected — disconnect one first`,
+			),
+			409,
+		)
+	}
+	if (outcome.kind === 'stripe-config') {
 		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
 	}
-	if (outcome === 'stripe-cancel') {
+	if (outcome.kind === 'stripe-cancel') {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to cancel paid subscription'), 500)
 	}
 
 	logger.info('Claude OAuth tokens imported for workspace', {
 		workspaceId,
-		slot,
+		slot: outcome.slot,
 		subscriptionType: tokens.subscriptionType,
 	})
 
 	return c.json({
 		success: true,
-		slot,
+		slot: outcome.slot,
 		subscription_type: tokens.subscriptionType,
 		expires_at: tokens.expiresAt,
 		nickname: tokens.nickname,
@@ -585,10 +656,65 @@ app.openapi(renameRoute, (async (c) => {
 	return c.json({ success: true })
 }) as RouteHandler<typeof renameRoute, Env>)
 
+// ── POST /api/claude-oauth/promote ──────────────────────────────────────────
+// Move a slot to the head of the failover chain. The on-disk slot ids stay put
+// (`primary` is always position 0, so session-start reads it first) — it is the
+// CREDENTIAL DATA that rotates between them, which is what makes the user-facing
+// order and the storage order the same thing.
+
+const promoteRoute = createRoute({
+	method: 'post',
+	path: '/promote',
+	tags: ['claude-oauth'],
+	summary: 'Move a subscription to the front of the failover chain',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: { 'application/json': { schema: z.object({ slot: slotKindSchema }) } },
+		},
+	},
+	responses: {
+		200: {
+			description: 'Chain reordered',
+			content: { 'application/json': { schema: z.object({ success: z.boolean() }) } },
+		},
+		403: {
+			description: 'Not a workspace member',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found or slot not connected',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(promoteRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { slot } = c.req.valid('json')
+
+	const member = await requireWorkspaceMember(db, workspaceId, actorId)
+	if (!member) {
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
+
+	const result = await promoteToHead(db, workspaceId, slot)
+	if (result === 'not_found') {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+	if (result === 'slot_empty') {
+		return c.json(createApiError('NOT_FOUND', 'Slot not connected'), 404)
+	}
+
+	logger.info('Claude OAuth slot promoted to the head of the chain', { workspaceId, slot })
+	return c.json({ success: true })
+}) as RouteHandler<typeof promoteRoute, Env>)
+
 // ── POST /api/claude-oauth/swap ─────────────────────────────────────────────
-// Swap the data in the primary and backup slots. The on-disk keys
-// (`primary` / `backup`) stay stable so session-start always reads
-// `primary` first — the user-facing designation IS the data placement.
+// Back-compat sibling of /promote for the two-slot case: swap the primary and
+// backup designations. Equivalent to promoting `backup`.
 
 const swapRoute = createRoute({
 	method: 'post',
@@ -628,8 +754,37 @@ app.openapi(swapRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
-	// Locked read-modify-write — see the disconnect route above for why.
-	const result = await db.transaction(async (tx) => {
+	const result = await promoteToHead(db, workspaceId, 'backup', { requirePrimary: true })
+	if (result === 'not_found') {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+	if (result === 'slot_empty') {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Both primary and backup slots must be connected to swap'),
+			400,
+		)
+	}
+
+	logger.info('Claude OAuth slots swapped for workspace', { workspaceId })
+	return c.json({ success: true })
+}) as RouteHandler<typeof swapRoute, Env>)
+
+/**
+ * Rotate `slot`'s credential to the head of the chain under a row lock — see
+ * the disconnect route for why the read-modify-write must be locked.
+ *
+ * The failover state is reset to "start from the head again, with a clean
+ * slate": the per-slot failure records are keyed by slot id and the data under
+ * those ids has just moved, so keeping them would attribute one credential's
+ * failure to another.
+ */
+async function promoteToHead(
+	db: Database,
+	workspaceId: string,
+	slot: OAuthSlotKind,
+	opts: { requirePrimary?: boolean } = {},
+): Promise<'ok' | 'not_found' | 'slot_empty'> {
+	return db.transaction(async (tx) => {
 		const [ws] = await tx
 			.select()
 			.from(workspaces)
@@ -640,14 +795,13 @@ app.openapi(swapRoute, (async (c) => {
 
 		const settings = (ws.settings as WorkspaceSettings) ?? {}
 		const slots = readSlots(settings.claude_oauth)
-		if (!slots.primary || !slots.backup) return 'incomplete' as const
+		if (!slots[slot]) return 'slot_empty' as const
+		if (opts.requirePrimary && !slots.primary) return 'slot_empty' as const
 
-		// Swap the data, then reset failover state — what was unhealthy is now
-		// the backup, so the next session-start should try primary fresh.
-		let nextOAuth = writeSlot(settings.claude_oauth, 'primary', slots.backup)
-		nextOAuth = writeSlot(nextOAuth, 'backup', slots.primary)
-		const resetFailover: OAuthFailoverState = { active_slot: 'primary' }
-		nextOAuth = writeFailoverState(nextOAuth, resetFailover)
+		const promoted = promoteSlot(settings.claude_oauth, slot)
+		if (!promoted) return 'slot_empty' as const
+		const head = readChain(promoted)[0]?.id ?? 'primary'
+		const nextOAuth = writeFailoverState(promoted, { active_slot: head })
 
 		await tx
 			.update(workspaces)
@@ -659,19 +813,6 @@ app.openapi(swapRoute, (async (c) => {
 
 		return 'ok' as const
 	})
-
-	if (result === 'not_found') {
-		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
-	}
-	if (result === 'incomplete') {
-		return c.json(
-			createApiError('BAD_REQUEST', 'Both primary and backup slots must be connected to swap'),
-			400,
-		)
-	}
-
-	logger.info('Claude OAuth slots swapped for workspace', { workspaceId })
-	return c.json({ success: true })
-}) as RouteHandler<typeof swapRoute, Env>)
+}
 
 export default app

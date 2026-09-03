@@ -124,6 +124,27 @@ describe('refreshClaudeToken', () => {
 		expect(result.scopes).toEqual(['read', 'write'])
 	})
 
+	it('carries the slot nickname through a refresh', async () => {
+		// The refreshed record is persisted over the slot wholesale, so a
+		// nickname dropped here is a nickname deleted from the workspace.
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve({
+						access_token: 'new-access',
+						refresh_token: 'new-refresh',
+						expires_in: 7200,
+					}),
+			}),
+		)
+
+		const result = await refreshClaudeToken(makeTokens({ nickname: 'Work account' }))
+
+		expect(result.nickname).toBe('Work account')
+	})
+
 	it('preserves original refresh_token when response omits it', async () => {
 		vi.stubGlobal(
 			'fetch',

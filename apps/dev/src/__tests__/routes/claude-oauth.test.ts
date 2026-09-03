@@ -162,9 +162,10 @@ describe('Claude OAuth Routes', () => {
 				}
 			}
 			expect(update.settings.claude_oauth.failover.active_slot).toBe('backup')
-			expect(update.settings.claude_oauth.failover.last_classified_reason).toBe(
-				'quota_exhausted_weekly',
-			)
+			// The failure record belonged to the primary, which no longer
+			// exists — it goes with it, so the settings page can't report a
+			// disconnected credential as unhealthy.
+			expect(update.settings.claude_oauth.failover.last_classified_reason).toBeUndefined()
 		})
 
 		it('returns 403 when not a workspace member', async () => {
@@ -213,15 +214,21 @@ describe('Claude OAuth Routes', () => {
 			expect(body.valid).toBe(true)
 			expect(body.active_slot).toBe('primary')
 			expect(body.slots.primary).toEqual({
+				slot: 'primary',
+				position: 0,
 				subscription_type: 'max-5x',
 				expires_at: 1_800_000_000_000,
 				fingerprint: expectedFingerprint('primary-access', 'primary-refresh'),
 			})
 			expect(body.slots.backup).toEqual({
+				slot: 'backup',
+				position: 1,
 				subscription_type: 'pro',
 				expires_at: 1_900_000_000_000,
 				fingerprint: expectedFingerprint('backup-access', 'backup-refresh'),
 			})
+			expect(body.chain).toEqual(['primary', 'backup'])
+			expect(body.slots_remaining).toBe(8)
 		})
 
 		it('surfaces failover state when active_slot=backup with a classified reason', async () => {
@@ -280,6 +287,8 @@ describe('Claude OAuth Routes', () => {
 				connected: false,
 				valid: false,
 				slots: {},
+				chain: [],
+				slots_remaining: 10,
 				active_slot: 'primary',
 			})
 		})
@@ -407,9 +416,14 @@ describe('Claude OAuth Routes', () => {
 				}
 			}
 			// Importing into backup should NOT force session-start back onto the
-			// still-broken primary by resetting active_slot to 'primary'.
+			// still-broken primary by resetting active_slot to 'primary'...
 			expect(update.settings.claude_oauth.failover.active_slot).toBe('backup')
-			expect(update.settings.claude_oauth.failover.last_classified_reason).toBeUndefined()
+			// ...nor erase WHY the primary is still broken. Failure records are
+			// per slot now, so replacing one credential leaves the others'
+			// history (and their recovery cooldowns) intact.
+			expect(update.settings.claude_oauth.failover.last_classified_reason).toBe(
+				'quota_exhausted_weekly',
+			)
 		})
 
 		it('returns 403 when not a workspace member', async () => {

@@ -13,7 +13,7 @@ async function importClaudeOAuth(
 		refreshToken: string
 		expiresAt: number
 		subscriptionType?: string
-		slot?: 'primary' | 'backup'
+		slot?: string
 	},
 ) {
 	const res = await fetch(`${BASE}/api/claude-oauth/import`, {
@@ -68,9 +68,25 @@ async function mockFailedOverStatus(page: Page) {
 				subscription_type: 'pro',
 				expires_at: expiresAt,
 				slots: {
-					primary: { subscription_type: 'max-5x', expires_at: expiresAt, fingerprint: 'e2eprim1' },
-					backup: { subscription_type: 'pro', expires_at: expiresAt, fingerprint: 'e2ebckp1' },
+					primary: {
+						slot: 'primary',
+						position: 0,
+						subscription_type: 'max-5x',
+						expires_at: expiresAt,
+						fingerprint: 'e2eprim1',
+						failure_at: Date.now() - 2 * 60 * 1000,
+						failure_reason: 'quota_exhausted_weekly',
+					},
+					backup: {
+						slot: 'backup',
+						position: 1,
+						subscription_type: 'pro',
+						expires_at: expiresAt,
+						fingerprint: 'e2ebckp1',
+					},
 				},
+				chain: ['primary', 'backup'],
+				slots_remaining: 8,
 				active_slot: 'backup',
 				last_primary_failure_at: Date.now() - 2 * 60 * 1000,
 				last_classified_reason: 'quota_exhausted_weekly',
@@ -125,17 +141,17 @@ test.describe('Claude subscription failover — settings UI', () => {
 
 		await page.goto(`/${account.workspaceId}/settings/keys`)
 
-		// Sanity: backup is empty
-		const backup = page.getByTestId('slot-backup')
-		await expect(backup).toContainText('Add a backup')
+		// Sanity: only the primary is connected, and the dashed card invites the
+		// next subscription in the chain.
+		await expect(page.getByTestId('slot-add')).toContainText('Add another subscription')
 
-		// Open the paste flow from the empty backup card
-		await page.getByRole('button', { name: 'Import backup credentials' }).click()
+		// Open the paste flow from the dashed add card
+		await page.getByRole('button', { name: 'Import another subscription' }).click()
 		const pasteFlow = page.getByTestId('paste-flow')
 		await expect(pasteFlow).toBeVisible()
 
-		// Backup radio should be pre-selected
-		await expect(page.getByRole('radio', { name: /Backup/ })).toHaveAttribute(
+		// It defaults to appending, which lands in the backup position here
+		await expect(page.getByRole('radio', { name: 'Add as Backup' })).toHaveAttribute(
 			'aria-checked',
 			'true',
 		)
@@ -157,7 +173,9 @@ test.describe('Claude subscription failover — settings UI', () => {
 
 		// Backup slot should now render in connected state with a Disconnect action.
 		// SlotCard renders "Connected" for a healthy slot ("Unhealthy" only when
-		// a failover reason line is present) — see keys.tsx's `isUnhealthy` check.
+		// a failure reason is recorded against it) — see keys.tsx's
+		// `isUnhealthy` check.
+		const backup = page.getByTestId('slot-backup')
 		await expect(backup).toContainText('Connected', { timeout: 10_000 })
 
 		// AC-U5: reload — designation persists

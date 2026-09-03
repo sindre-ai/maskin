@@ -2,7 +2,7 @@ import type { Database } from '@maskin/db'
 import { workspaces } from '@maskin/db/schema'
 import { CLAUDE_OAUTH_CLIENT_ID, CLAUDE_TOKEN_URL } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
-import { type OAuthSlotKind, resolveActiveSlot, writeSlot } from './claude-oauth-slots'
+import { type OAuthSlotKind, readSlots, resolveActiveSlot, writeSlot } from './claude-oauth-slots'
 import { decrypt, encrypt } from './crypto'
 import { logger } from './logger'
 
@@ -67,6 +67,11 @@ export async function refreshClaudeToken(tokens: ClaudeOAuthTokens): Promise<Cla
 		expiresAt: Date.now() + data.expires_in * 1000,
 		subscriptionType: tokens.subscriptionType,
 		scopes: data.scope?.split(' ') ?? tokens.scopes,
+		// The nickname is user-authored metadata that happens to ride along in
+		// the token record. Rebuilding the record without it here is what made
+		// nicknames vanish on their own: the refreshed blob is persisted over
+		// the slot wholesale, so anything dropped here is dropped from storage.
+		nickname: tokens.nickname,
 	}
 }
 
@@ -149,7 +154,16 @@ export async function persistRefreshedSlot(
 			.limit(1)
 		if (!latest) return
 		const latestSettings = (latest.settings as Record<string, unknown>) ?? {}
-		const nextOAuth = writeSlot(latestSettings.claude_oauth, slot, encrypted)
+		// Second line of defence for the nickname: this function only ever
+		// persists refreshed TOKENS, so it must never be the thing that clears
+		// a label. A rename racing a refresh would otherwise be lost, since
+		// `encrypted` was built from a snapshot taken before the lock.
+		const stored = readSlots(latestSettings.claude_oauth)[slot]
+		const merged: EncryptedOAuthData =
+			encrypted.nickname === undefined && stored?.nickname !== undefined
+				? { ...encrypted, nickname: stored.nickname }
+				: encrypted
+		const nextOAuth = writeSlot(latestSettings.claude_oauth, slot, merged)
 		await tx
 			.update(workspaces)
 			.set({
