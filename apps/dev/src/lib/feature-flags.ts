@@ -18,9 +18,19 @@
 // Every known flag id. Ids absent from this registry always resolve to false,
 // so a typo in FF_TESTER_FEATURES can't invent a flag. Add an entry here as the
 // first step of introducing a new flag.
-// Currently empty: `new-design` graduated to everyone and was deleted, which
-// is how a flag ships here — see `.claude/rules/feature-flags.md`.
-export const FLAGS = {} as const
+export const FLAGS = {
+	/**
+	 * LinkedIn Identity add-on visibility on the plan surface
+	 * (Settings > Billing). When off, the €29/connected-identity/month line is
+	 * hidden regardless of how many `linkedin-unipile` credentials the
+	 * workspace has connected. Actor-scoped rollout — add the pilot workspace
+	 * admin's actor id to `FF_TESTER_ACTOR_IDS` and this flag id to
+	 * `FF_TESTER_FEATURES` to reveal. The line still stays hidden when the
+	 * flag is on but no credentials are connected (see
+	 * `apps/dev/src/lib/linkedin-addon.ts`).
+	 */
+	LINKEDIN_ADDON_VISIBLE: 'linkedin-addon-visible',
+} as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
 
