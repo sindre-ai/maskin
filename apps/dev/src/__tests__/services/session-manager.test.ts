@@ -4009,34 +4009,38 @@ describe('SessionManager', () => {
 			})
 			const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
 
+			// The workspace row is read twice on this path: once to look for a
+			// slot after `backup` in the chain (there is none — that is what
+			// makes it exhausted), then again to record the exhaustion.
+			const exhaustedWorkspace = {
+				id: session.workspaceId,
+				settings: {
+					claude_oauth: {
+						primary: {
+							encryptedAccessToken: 'primary-access',
+							encryptedRefreshToken: 'primary-refresh',
+							expiresAt: 1_800_000_000_000,
+						},
+						backup: {
+							encryptedAccessToken: 'backup-access',
+							encryptedRefreshToken: 'backup-refresh',
+							expiresAt: 1_900_000_000_000,
+						},
+						failover: {
+							active_slot: 'backup',
+							last_primary_failure_at: 1_783_005_600_000,
+							last_classified_reason: 'quota_exhausted_5h',
+						},
+					},
+				},
+			}
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
 				[], // hasOtherActiveSessions
-				[
-					{
-						id: session.workspaceId,
-						settings: {
-							claude_oauth: {
-								primary: {
-									encryptedAccessToken: 'primary-access',
-									encryptedRefreshToken: 'primary-refresh',
-									expiresAt: 1_800_000_000_000,
-								},
-								backup: {
-									encryptedAccessToken: 'backup-access',
-									encryptedRefreshToken: 'backup-refresh',
-									expiresAt: 1_900_000_000_000,
-								},
-								failover: {
-									active_slot: 'backup',
-									last_primary_failure_at: 1_783_005_600_000,
-									last_classified_reason: 'quota_exhausted_5h',
-								},
-							},
-						},
-					},
-				], // recordRuntimeClaudeOAuthBackupExhausted locked workspace read
+				[], // existing retry-of-this-session lookup (none)
+				[exhaustedWorkspace], // recordRuntimeClaudeOAuthFailover locked read
+				[exhaustedWorkspace], // recordRuntimeClaudeOAuthBackupExhausted locked read
 			]
 			mockResults.insertQueue = [
 				[], // completion event
@@ -4461,13 +4465,11 @@ describe('mergeLaunchRouteConfig()', () => {
 
 	it('clears a stale claude_oauth_runtime_failover_retry_of marker once the slot resolves back to primary', () => {
 		// Regression test: a retry session created during a runtime failover is
-		// stamped with llm_oauth_slot: 'backup' + claude_oauth_runtime_failover_retry_of.
-		// If primary recovers before that retry session's container actually
-		// launches, the slot resolves back to 'primary' here — the stale
-		// retry_of marker must not survive, or maybeRetryClaudeOAuthOnBackup's
-		// gate (`llm_oauth_slot === 'backup' || typeof retry_of === 'string'`)
-		// would misclassify a later, unrelated primary failure as
-		// "backup already exhausted".
+		// stamped with the slot it fell over to + claude_oauth_runtime_failover_retry_of.
+		// If the head of the chain recovers before that retry session's
+		// container actually launches, the slot resolves back to 'primary'
+		// here — the stale retry_of marker must not survive, since it would
+		// then describe a failover this session is no longer running under.
 		const existingConfig = {
 			llm_route: 'claude_oauth',
 			llm_oauth_slot: 'backup',
