@@ -901,7 +901,7 @@ describe('GET /api/billing/usage', () => {
 			expect(await res.json()).toMatchObject({ linkedin_identity_addon: null })
 		})
 
-		it('shows the add-on line with count × €29 when the flag is on and identities are connected', async () => {
+		it('shows the add-on line with count × $49 when the flag is on and identities are connected', async () => {
 			enableFlag()
 			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 			const workspaceId = randomUUID()
@@ -918,8 +918,8 @@ describe('GET /api/billing/usage', () => {
 			expect(await res.json()).toMatchObject({
 				linkedin_identity_addon: {
 					count: 3,
-					unit_price_eur_cents: 2900,
-					monthly_total_eur_cents: 8700,
+					unit_price_usd_cents: 4900,
+					monthly_total_usd_cents: 14_700,
 				},
 			})
 		})
@@ -929,7 +929,7 @@ describe('GET /api/billing/usage', () => {
 			// (flat per-account) and inference (per-token) MUST be reported as
 			// distinct lines. Ledger conflation would either double-bill the
 			// customer or eat into their token cap. The token sum comes solely
-			// from the sessions query; the €29/identity math never touches it.
+			// from the sessions query; the $49/identity math never touches it.
 			enableFlag()
 			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 			const workspaceId = randomUUID()
@@ -943,7 +943,7 @@ describe('GET /api/billing/usage', () => {
 					},
 				],
 				[{ totalCostUsd: '1.23', inputTokens: 100, outputTokens: 50 }], // sessions sum → 123 cents
-				[{ n: 5 }], // 5 identities × €29 = €145 = 14_500 EUR cents; must NOT contribute to usd_cents_used
+				[{ n: 5 }], // 5 identities × $49 = $245 = 24_500 USD cents; must NOT contribute to usd_cents_used
 			]
 
 			const res = await app.request(
@@ -954,8 +954,8 @@ describe('GET /api/billing/usage', () => {
 			expect(body.usd_cents_used).toBe(123)
 			expect(body.linkedin_identity_addon).toEqual({
 				count: 5,
-				unit_price_eur_cents: 2900,
-				monthly_total_eur_cents: 14_500,
+				unit_price_usd_cents: 4900,
+				monthly_total_usd_cents: 24_500,
 			})
 		})
 

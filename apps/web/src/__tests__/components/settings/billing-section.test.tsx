@@ -443,8 +443,8 @@ describe('BillingSection', () => {
 		expect(screen.queryByTestId('linkedin-identity-addon')).not.toBeInTheDocument()
 	})
 
-	it('renders LinkedIn Identity with count × €29 arithmetic and the buyer-framing copy', async () => {
-		// The line renders exactly what the backend sends — the €29 unit price
+	it('renders LinkedIn Identity with count × $49 arithmetic and the buyer-framing copy', async () => {
+		// The line renders exactly what the backend sends — the $49 unit price
 		// is Sebk-locked (pricing memo). The buyer-framing paragraph is copied
 		// verbatim from bet §Pricing so buyers see the same framing at the
 		// moment they're asked to pay.
@@ -457,8 +457,8 @@ describe('BillingSection', () => {
 			stripe_subscription_id: 'sub_x',
 			linkedin_identity_addon: {
 				count: 2,
-				unit_price_eur_cents: 2900,
-				monthly_total_eur_cents: 5800,
+				unit_price_usd_cents: 4900,
+				monthly_total_usd_cents: 9800,
 			},
 		})
 
@@ -469,7 +469,7 @@ describe('BillingSection', () => {
 		)
 
 		await screen.findByText('LinkedIn Identity')
-		expect(screen.getByText('€29/mo × 2 = €58.00')).toBeInTheDocument()
-		expect(screen.getByText(/€29\/month covers connectivity to LinkedIn/)).toBeInTheDocument()
+		expect(screen.getByText('$49/mo × 2 = $98.00')).toBeInTheDocument()
+		expect(screen.getByText(/\$49\/month covers connectivity to LinkedIn/)).toBeInTheDocument()
 	})
 })

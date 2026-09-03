@@ -390,7 +390,7 @@ describe('unique index enforces (workspace, actor, provider)', () => {
 
 describe('getConnectedLinkedInIdentityCount — status vocabulary', () => {
 	// Regression: the SKU count filtered `status = 'connected'` while the only
-	// writer writes 'active', so the count was permanently 0 and the €29 add-on
+	// writer writes 'active', so the count was permanently 0 and the $49 add-on
 	// line could never render for any workspace. Every test at the time mocked
 	// the count away, so nothing caught it. This exercises the real predicate
 	// against real rows.

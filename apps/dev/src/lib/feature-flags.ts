@@ -21,7 +21,7 @@
 export const FLAGS = {
 	/**
 	 * LinkedIn Identity add-on visibility on the plan surface
-	 * (Settings > Billing). When off, the €29/connected-identity/month line is
+	 * (Settings > Billing). When off, the $49/connected-identity/month line is
 	 * hidden regardless of how many `linkedin-unipile` credentials the
 	 * workspace has connected. Actor-scoped rollout — add the pilot workspace
 	 * admin's actor id to `FF_TESTER_ACTOR_IDS` and this flag id to
