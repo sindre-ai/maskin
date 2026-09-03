@@ -205,12 +205,13 @@ async function withScopeHint<T>(op: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Turn `#general`, `general`, or `C0123456789` into a channel ID.
+ * Turn `#general`, `general`, `mpdm-alice--bob--1`, or `C0123456789` into a
+ * channel ID.
  *
- * `chat.postMessage` accepts `#name` directly, but `conversations.join`,
- * `reactions.add` and `chat.getPermalink` all require an ID — so agents would
- * otherwise have to hand-copy one out of the Slack UI, which is the exact
- * friction these tools exist to remove.
+ * Public + private channels are the common case; the DM/MPIM fallback exists
+ * so the read-history tools can resolve MPIMs referenced by their `mpdm-…`
+ * name. True 1:1 DMs have no name and must be referenced by their D-prefixed
+ * ID directly (which the regex above passes straight through).
  */
 async function resolveChannelId(ctx: SlackPostContext, ref: string): Promise<string> {
 	const trimmed = ref.trim()
@@ -218,10 +219,16 @@ async function resolveChannelId(ctx: SlackPostContext, ref: string): Promise<str
 	if (CHANNEL_ID_RE.test(trimmed)) return trimmed
 
 	const name = trimmed.replace(/^#/, '').toLowerCase()
-	const conversations = await withScopeHint(() =>
+	const channels = await withScopeHint(() =>
 		listSlackConversations(ctx.integrationId, ctx.botToken, ['public_channel', 'private_channel']),
 	)
-	const match = conversations.find((c) => c.name.toLowerCase() === name)
+	let match = channels.find((c) => c.name.toLowerCase() === name)
+	if (!match) {
+		const dms = await withScopeHint(() =>
+			listSlackConversations(ctx.integrationId, ctx.botToken, ['im', 'mpim']),
+		)
+		match = dms.find((c) => c.name.toLowerCase() === name)
+	}
 	if (!match) {
 		throw new Error(
 			`No channel named #${name} is visible to this Slack app. Call slack_list_channels to see what is available — private channels only appear once the bot has been invited to them.`,
@@ -230,22 +237,107 @@ async function resolveChannelId(ctx: SlackPostContext, ref: string): Promise<str
 	return match.id
 }
 
+// ── Read-history + fold-in tool internals ──────────────────────────────────
+
+interface RawSlackMessage {
+	ts: string
+	user?: string
+	text?: string
+	thread_ts?: string
+	reply_count?: number
+	latest_reply?: string
+	subtype?: string
+	bot_id?: string
+}
+
+interface HistoryResponse {
+	ok: boolean
+	messages?: RawSlackMessage[]
+	has_more?: boolean
+	response_metadata?: { next_cursor?: string }
+}
+
+interface OpenConversationResponse {
+	ok: boolean
+	channel?: { id?: string; is_open?: boolean }
+	no_op?: boolean
+	already_open?: boolean
+}
+
+interface ChannelInfoResponse {
+	ok: boolean
+	channel?: {
+		id?: string
+		name?: string
+		is_channel?: boolean
+		is_group?: boolean
+		is_im?: boolean
+		is_mpim?: boolean
+		is_private?: boolean
+		is_archived?: boolean
+		is_member?: boolean
+		num_members?: number
+		created?: number
+		topic?: { value?: string }
+		purpose?: { value?: string }
+	}
+}
+
+function mapHistoryMessage(
+	m: RawSlackMessage,
+	includeReplyCounts: boolean,
+): Record<string, unknown> {
+	const out: Record<string, unknown> = {
+		ts: m.ts,
+		user: m.user ?? null,
+		text: m.text ?? '',
+	}
+	if (m.thread_ts) out.thread_ts = m.thread_ts
+	if (includeReplyCounts && typeof m.reply_count === 'number') {
+		out.reply_count = m.reply_count
+		if (m.latest_reply) out.latest_reply = m.latest_reply
+	}
+	if (m.subtype) out.subtype = m.subtype
+	if (m.bot_id) out.bot_id = m.bot_id
+	return out
+}
+
+/**
+ * Rewrite Slack's `not_in_channel` into the actionable "join first" hint used
+ * by every tool that reads or writes into a channel the bot might not be in.
+ * Anything else is re-thrown unchanged.
+ */
+function rewriteNotInChannel(err: unknown, channelRef: string): Error {
+	const message = err instanceof Error ? err.message : String(err)
+	if (message.includes('not_in_channel')) {
+		const name = channelRef.trim().replace(/^#/, '')
+		return new Error(
+			`The bot is not a member of #${name}. Call slack_join_channel first, then retry.`,
+		)
+	}
+	return err instanceof Error ? err : new Error(message)
+}
+
 /**
  * Build a fresh MCP server per request. Identity (`agentLabel`, `iconUrl`) and
  * the integration (`botToken`, `integrationId`) are bound at server-construction
  * time so a single connection can't be reused across workspaces by mistake.
  *
- * Tools fall into three groups:
- *   - write:      `slack_send_message`, `slack_add_reaction`
- *   - discovery:  `slack_list_channels`, `slack_list_users`, `slack_get_permalink`
- *   - membership: `slack_join_channel`
+ * Tools fall into four groups:
+ *   - write:        `slack_send_message`, `slack_add_reaction`,
+ *                   `slack_update_message`, `slack_delete_message`
+ *   - discovery:    `slack_list_channels`, `slack_list_users`,
+ *                   `slack_get_permalink`, `slack_conversations_info`
+ *   - membership:   `slack_join_channel`, `slack_open_conversation`
+ *   - read-history: `slack_get_channel_history`, `slack_get_thread_replies`
  *
- * There is deliberately no history/backlog tool. `channels:history`,
- * `groups:history` and `mpim:history` are excluded from the provider's scopes
- * on purpose (see config.ts) — the bot sees what it is @mentioned in, not the
- * full backlog of every channel it lives in. Adding a read-history tool means
- * adding those scopes AND re-submitting the Marketplace listing, never one
- * without the other.
+ * The read-history pair returns a bounded `HistoryMessage` shape (no
+ * `blocks`/`attachments`/`files`/`reactions`/`edited`) and surfaces
+ * `truncated` + `next_cursor` so pagination is agent-driven rather than
+ * consumed inside the tool. `slack_update_message` and `slack_delete_message`
+ * can only modify the bot's own posts — Slack enforces server-side and we
+ * rewrite `cant_update_message` / `cant_delete_message` into an actionable
+ * hint.
  */
 export function createSlackMcpServer(ctx: SlackPostContext): McpServer {
 	const server = new McpServer({ name: 'maskin-slack', version: '0.1.0' })
@@ -502,6 +594,357 @@ export function createSlackMcpServer(ctx: SlackPostContext): McpServer {
 				}),
 			)
 			return jsonResult({ ok: true, channel: channelId, permalink: json.permalink })
+		},
+	)
+
+	server.registerTool(
+		'slack_get_channel_history',
+		{
+			description:
+				'Read recent messages from a Slack channel, DM, or MPIM the bot can see. Bounded, member-only, agent-driven pagination — `truncated` and `next_cursor` are surfaced but not auto-followed, so agents can decide whether to page further without blowing the tool-call context. Returns a minimal message shape (ts, user, text, and — when include_thread_reply_counts is true — thread reply counts so you can decide whether a follow-up `slack_get_thread_replies` is warranted).',
+			inputSchema: {
+				channel: z
+					.string()
+					.min(1)
+					.describe(
+						'Channel ID (`C0123456789`) or name (`#general` / `general`). For DMs, pass the D-prefixed conversation ID from `slack_list_channels` with types=["im"].',
+					),
+				oldest: z
+					.string()
+					.optional()
+					.describe(
+						'Slack timestamp (e.g. `1717000000.000100`) to start FROM (exclusive). Omit to fetch newest-first from now.',
+					),
+				latest: z
+					.string()
+					.optional()
+					.describe('Slack timestamp to end AT (exclusive). Omit for now.'),
+				limit: z
+					.number()
+					.int()
+					.min(1)
+					.max(200)
+					.optional()
+					.describe(
+						'Max messages to return. Default 50, max 200. Server enforces a single-page cap; the tool sets `truncated: true` in the response if `has_more` came back from Slack.',
+					),
+				include_thread_reply_counts: z
+					.boolean()
+					.optional()
+					.describe(
+						'Default true. When true, `reply_count` and `latest_reply` are included per message so agents know which parents warrant a follow-up `slack_get_thread_replies` call.',
+					),
+			},
+		},
+		async (args) => {
+			assertBotToken(ctx)
+			const channelId = await resolveChannelId(ctx, args.channel)
+			const includeReplyCounts = args.include_thread_reply_counts ?? true
+			const params: Record<string, string> = {
+				channel: channelId,
+				limit: String(args.limit ?? 50),
+				inclusive: 'false',
+			}
+			if (args.oldest) params.oldest = args.oldest
+			if (args.latest) params.latest = args.latest
+
+			let json: HistoryResponse
+			try {
+				json = await withScopeHint(() =>
+					slackGet<HistoryResponse>('conversations.history', ctx.botToken, params),
+				)
+			} catch (err) {
+				throw rewriteNotInChannel(err, args.channel)
+			}
+
+			const raw = json.messages ?? []
+			const messages = raw.map((m) => mapHistoryMessage(m, includeReplyCounts))
+			logger.info('Slack conversations.history succeeded', {
+				workspaceId: ctx.workspaceId,
+				actorId: ctx.actorId,
+				channel: channelId,
+				returned: messages.length,
+				truncated: Boolean(json.has_more),
+			})
+			return jsonResult({
+				matched: raw.length,
+				returned: messages.length,
+				truncated: Boolean(json.has_more),
+				next_cursor: json.response_metadata?.next_cursor ?? null,
+				messages,
+			})
+		},
+	)
+
+	server.registerTool(
+		'slack_get_thread_replies',
+		{
+			description:
+				'Read the replies to a Slack thread. Returns the parent message flagged `is_parent: true` followed by replies in oldest-first order (Slack default). Uses the same minimal message shape as `slack_get_channel_history` and surfaces `truncated` / `next_cursor` for agent-driven pagination.',
+			inputSchema: {
+				channel: z
+					.string()
+					.min(1)
+					.describe(
+						'Channel ID (`C0123456789`) or name. Same resolution as slack_get_channel_history.',
+					),
+				thread_ts: z
+					.string()
+					.min(1)
+					.describe(
+						"The `ts` of the thread parent message. This is the `thread_ts` field returned by slack_get_channel_history — NOT a reply's own `ts`.",
+					),
+				limit: z
+					.number()
+					.int()
+					.min(1)
+					.max(200)
+					.optional()
+					.describe('Max replies to return. Default 50, max 200.'),
+			},
+		},
+		async (args) => {
+			assertBotToken(ctx)
+			const channelId = await resolveChannelId(ctx, args.channel)
+			const params: Record<string, string> = {
+				channel: channelId,
+				ts: args.thread_ts,
+				limit: String(args.limit ?? 50),
+			}
+			let json: HistoryResponse
+			try {
+				json = await withScopeHint(() =>
+					slackGet<HistoryResponse>('conversations.replies', ctx.botToken, params),
+				)
+			} catch (err) {
+				throw rewriteNotInChannel(err, args.channel)
+			}
+			const raw = json.messages ?? []
+			const messages = raw.map((m, i) => {
+				const mapped = mapHistoryMessage(m, true)
+				if (i === 0) mapped.is_parent = true
+				return mapped
+			})
+			logger.info('Slack conversations.replies succeeded', {
+				workspaceId: ctx.workspaceId,
+				actorId: ctx.actorId,
+				channel: channelId,
+				thread_ts: args.thread_ts,
+				returned: messages.length,
+				truncated: Boolean(json.has_more),
+			})
+			return jsonResult({
+				matched: raw.length,
+				returned: messages.length,
+				truncated: Boolean(json.has_more),
+				next_cursor: json.response_metadata?.next_cursor ?? null,
+				messages,
+			})
+		},
+	)
+
+	server.registerTool(
+		'slack_update_message',
+		{
+			description:
+				"Replace the text of a Slack message the bot previously posted. Slack replaces content in full (not a diff) — pass the complete new text. The bot can only edit its OWN messages: `cant_update_message` is returned if the target wasn't posted by this bot token.",
+			inputSchema: {
+				channel: z
+					.string()
+					.min(1)
+					.describe(
+						'Channel ID (`C0123456789`) or name. Same resolution as slack_send_message.',
+					),
+				ts: z
+					.string()
+					.min(1)
+					.describe(
+						'The `ts` of the message to update. Returned by slack_send_message (or by slack_get_channel_history for a prior bot-authored message).',
+					),
+				text: z
+					.string()
+					.min(1)
+					.max(40000)
+					.describe(
+						'Replacement message text. Same 40k Slack cap as slack_send_message. Slack replaces the message content in full — pass the complete new text, not a diff.',
+					),
+			},
+		},
+		async (args) => {
+			assertBotToken(ctx)
+			const channelId = await resolveChannelId(ctx, args.channel)
+			try {
+				await withScopeHint(() =>
+					slackPost('chat.update', ctx.botToken, {
+						channel: channelId,
+						ts: args.ts,
+						text: args.text,
+					}),
+				)
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err)
+				if (message.includes('cant_update_message')) {
+					const name = args.channel.trim().replace(/^#/, '')
+					throw new Error(
+						`Cannot update message ${args.ts} in #${name}: it was not posted by the Maskin bot. slack_update_message can only edit the bot's own messages.`,
+					)
+				}
+				throw rewriteNotInChannel(err, args.channel)
+			}
+			logger.info('Slack chat.update succeeded', {
+				workspaceId: ctx.workspaceId,
+				actorId: ctx.actorId,
+				channel: channelId,
+				ts: args.ts,
+			})
+			return jsonResult({ channel: channelId, ts: args.ts, updated: true })
+		},
+	)
+
+	server.registerTool(
+		'slack_delete_message',
+		{
+			description:
+				"Delete a Slack message the bot previously posted. Permanent — no undo. The bot can only delete its OWN messages: `cant_delete_message` is returned if the target wasn't posted by this bot token. Enterprise workspaces with compliance exports may disallow deletes entirely.",
+			inputSchema: {
+				channel: z.string().min(1).describe('Channel ID or name.'),
+				ts: z
+					.string()
+					.min(1)
+					.describe('The `ts` of the message to delete. Bot can only delete its own messages.'),
+			},
+		},
+		async (args) => {
+			assertBotToken(ctx)
+			const channelId = await resolveChannelId(ctx, args.channel)
+			try {
+				await withScopeHint(() =>
+					slackPost('chat.delete', ctx.botToken, {
+						channel: channelId,
+						ts: args.ts,
+					}),
+				)
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err)
+				if (message.includes('cant_delete_message')) {
+					const name = args.channel.trim().replace(/^#/, '')
+					throw new Error(
+						`Cannot delete message ${args.ts} in #${name}: it was not posted by the Maskin bot. slack_delete_message can only remove the bot's own messages.`,
+					)
+				}
+				throw rewriteNotInChannel(err, args.channel)
+			}
+			logger.info('Slack chat.delete succeeded', {
+				workspaceId: ctx.workspaceId,
+				actorId: ctx.actorId,
+				channel: channelId,
+				ts: args.ts,
+			})
+			return jsonResult({ channel: channelId, ts: args.ts, deleted: true })
+		},
+	)
+
+	server.registerTool(
+		'slack_open_conversation',
+		{
+			description:
+				'Open a 1:1 DM (1 user) or group DM (2-8 users) with people in the workspace. Idempotent: reopening an existing conversation returns the same channel id with `is_new: false`. Group DMs (>1 users) require the `mpim:write` scope — if that scope is not granted for this install, the call will surface via `withScopeHint` as a reconnect instruction.',
+			inputSchema: {
+				users: z
+					.array(z.string().min(1))
+					.min(1)
+					.max(8)
+					.describe(
+						'Slack user IDs (`U0123456789`) to open the conversation with. 1 user = 1:1 DM; 2-8 users = group DM. Find ids via `slack_list_users`.',
+					),
+				return_im: z
+					.boolean()
+					.optional()
+					.describe(
+						'Default true. When true, returns the full DM channel object; when false, only the channel id. Mirrors the Slack API knob.',
+					),
+			},
+		},
+		async (args) => {
+			assertBotToken(ctx)
+			const usersParam = args.users.join(',')
+			let json: OpenConversationResponse
+			try {
+				json = await withScopeHint(() =>
+					slackPost<OpenConversationResponse>('conversations.open', ctx.botToken, {
+						users: usersParam,
+						return_im: args.return_im ?? true,
+					}),
+				)
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err)
+				if (message.includes('user_not_found')) {
+					throw new Error(
+						`Slack could not resolve one of the users in [${args.users.join(', ')}] — resolve via slack_list_users and retry.`,
+					)
+				}
+				throw err
+			}
+			const channelId = json.channel?.id ?? ''
+			const isNew = !json.no_op
+			logger.info('Slack conversations.open succeeded', {
+				workspaceId: ctx.workspaceId,
+				actorId: ctx.actorId,
+				users: args.users,
+				channel: channelId,
+				is_new: isNew,
+			})
+			return jsonResult({ channel_id: channelId, is_new: isNew, users: args.users })
+		},
+	)
+
+	server.registerTool(
+		'slack_conversations_info',
+		{
+			description:
+				"Read a Slack conversation's metadata — id, name, kind, topic, purpose, membership, and (optionally) member count. Bounded shape: enterprise-shared / previous-names / pending-shared fields and topic/purpose creator metadata are intentionally not exposed.",
+			inputSchema: {
+				channel: z
+					.string()
+					.min(1)
+					.describe('Channel ID or name. Same resolution as slack_get_channel_history.'),
+				include_num_members: z
+					.boolean()
+					.optional()
+					.describe(
+						'Default false. When true, includes `num_members`. Adds a small Slack-side cost — omit if the agent only needs topic/purpose.',
+					),
+			},
+		},
+		async (args) => {
+			assertBotToken(ctx)
+			const channelId = await resolveChannelId(ctx, args.channel)
+			const params: Record<string, string> = {
+				channel: channelId,
+				include_num_members: args.include_num_members ? 'true' : 'false',
+			}
+			const json = await withScopeHint(() =>
+				slackGet<ChannelInfoResponse>('conversations.info', ctx.botToken, params),
+			)
+			const c = json.channel ?? {}
+			const info: Record<string, unknown> = {
+				id: c.id ?? channelId,
+				name: c.name ?? null,
+				is_channel: Boolean(c.is_channel),
+				is_group: Boolean(c.is_group),
+				is_im: Boolean(c.is_im),
+				is_mpim: Boolean(c.is_mpim),
+				is_private: Boolean(c.is_private),
+				is_archived: Boolean(c.is_archived),
+				is_member: Boolean(c.is_im) || Boolean(c.is_mpim) || Boolean(c.is_member),
+				topic: c.topic?.value ?? null,
+				purpose: c.purpose?.value ?? null,
+				created: c.created ?? null,
+			}
+			if (args.include_num_members && typeof c.num_members === 'number') {
+				info.num_members = c.num_members
+			}
+			return jsonResult({ channel: info })
 		},
 	)
 
