@@ -13,12 +13,17 @@ vi.mock('../../lib/claude-oauth', async () => {
 	return {
 		...actual,
 		getValidOAuthToken: vi.fn().mockResolvedValue(null),
+		// The account lookup is a live call to Anthropic's profile endpoint —
+		// stubbed off by default so these tests exercise storage, not network.
+		fetchClaudeAccount: vi.fn().mockResolvedValue(undefined),
 	}
 })
 
 import { insertWorkspace } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
+
+import { fetchClaudeAccount } from '../../lib/claude-oauth'
 
 const { default: claudeOauthRoutes } = await import('../../routes/claude-oauth')
 
@@ -624,6 +629,92 @@ describe('Claude OAuth Routes — more than two subscriptions (integration)', ()
 		)
 		const body = (await res.json()) as { slots: Record<string, { nickname?: string }> }
 		expect(body.slots.primary?.nickname).toBe('Work account')
+	})
+
+	it('keeps a slot nickname across a credential replacement', async () => {
+		const ws = await seedChain(1)
+		await makeApp().request(
+			jsonRequest(
+				'PATCH',
+				'/api/claude-oauth/nickname',
+				{ slot: 'primary', nickname: 'Work account' },
+				{ 'x-workspace-id': ws.id },
+			),
+		)
+
+		// Re-paste credentials into the same slot, carrying no nickname — what
+		// the settings UI sends when someone replaces an expired subscription.
+		await makeApp().request(
+			jsonRequest('POST', '/api/claude-oauth/import', importBody('rotated', 'primary'), {
+				'x-workspace-id': ws.id,
+			}),
+		)
+
+		const oauth = (await readClaudeOAuth(ws.id)) as {
+			primary?: { nickname?: string; encryptedAccessToken: string }
+		}
+		expect(oauth.primary?.nickname).toBe('Work account')
+	})
+
+	it('stores the Anthropic account identity and returns it from /status', async () => {
+		vi.mocked(fetchClaudeAccount).mockResolvedValueOnce({
+			email: 'owner@example.com',
+			organization: 'Example Inc',
+			fetchedAt: 1_800_000_000_000,
+		})
+		const ws = await insertWorkspace(db, getTestActorId(), {
+			enterpriseGranted: true,
+			settings: { enabled_modules: ['work'] },
+		})
+
+		await makeApp().request(
+			jsonRequest('POST', '/api/claude-oauth/import', importBody('identified'), {
+				'x-workspace-id': ws.id,
+			}),
+		)
+
+		const res = await makeApp().request(
+			jsonGet('/api/claude-oauth/status', { 'x-workspace-id': ws.id }),
+		)
+		const body = (await res.json()) as {
+			slots: Record<string, { account_email?: string; account_organization?: string }>
+		}
+		expect(body.slots.primary?.account_email).toBe('owner@example.com')
+		expect(body.slots.primary?.account_organization).toBe('Example Inc')
+	})
+
+	it('backfills the account identity for a slot connected before we read it', async () => {
+		// Existing installs have no stored identity; the settings page fills it
+		// in once, rather than waiting for the credential to be re-imported.
+		const ws = await seedChain(1)
+		expect((await readClaudeOAuth(ws.id)) as { primary?: { account?: unknown } }).toMatchObject({
+			primary: {},
+		})
+
+		vi.mocked(fetchClaudeAccount).mockResolvedValueOnce({
+			email: 'owner@example.com',
+			fetchedAt: 1_800_000_000_000,
+		})
+		await makeApp().request(jsonGet('/api/claude-oauth/status', { 'x-workspace-id': ws.id }))
+
+		const oauth = (await readClaudeOAuth(ws.id)) as {
+			primary?: { account?: { email?: string } }
+		}
+		expect(oauth.primary?.account?.email).toBe('owner@example.com')
+	})
+
+	it('still renders /status when the account lookup fails', async () => {
+		const ws = await seedChain(2)
+		vi.mocked(fetchClaudeAccount).mockRejectedValue(new Error('network down'))
+
+		const res = await makeApp().request(
+			jsonGet('/api/claude-oauth/status', { 'x-workspace-id': ws.id }),
+		)
+
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as { chain: string[] }
+		expect(body.chain).toEqual(['primary', 'backup'])
+		vi.mocked(fetchClaudeAccount).mockResolvedValue(undefined)
 	})
 
 	it('keeps every stored slot parseable by the workspace settings schema', async () => {

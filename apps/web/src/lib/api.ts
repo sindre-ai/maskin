@@ -981,6 +981,13 @@ export interface ClaudeOAuthSlotInfo {
 	expires_at: number
 	fingerprint?: string
 	nickname?: string
+	/**
+	 * Who Anthropic says the subscription belongs to. Read from Anthropic, not
+	 * editable here — it identifies the credential, while `nickname` is
+	 * whatever this workspace prefers to call it.
+	 */
+	account_email?: string
+	account_organization?: string
 	/** When this subscription was last rejected, and the classified reason. */
 	failure_at?: number
 	failure_reason?: string
