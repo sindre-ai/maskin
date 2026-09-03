@@ -51,6 +51,16 @@ const claudeOAuthLegacySlotSchema = z
 		// slot, which is how `billing` silently read back as undefined on the
 		// credit-checkout and plan-cap paths.
 		nickname: z.string().optional(),
+		// Who Anthropic says the subscription belongs to, read best-effort for
+		// display. Distinct from `nickname`: this one is not ours to edit.
+		account: z
+			.object({
+				email: z.string().optional(),
+				organization: z.string().optional(),
+				fetchedAt: z.number(),
+			})
+			.strict()
+			.optional(),
 	})
 	.strict()
 

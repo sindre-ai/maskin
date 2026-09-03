@@ -349,6 +349,74 @@ describe('Settings > Keys > Claude Subscriptions', () => {
 		)
 	})
 
+	it('shows the Anthropic account the subscription belongs to', async () => {
+		mockStatus.mockResolvedValue(
+			statusFixture([
+				{
+					slot: 'primary',
+					account_email: 'owner@example.com',
+					account_organization: 'Example Inc',
+				},
+			]),
+		)
+
+		renderPage()
+
+		expect(await screen.findByTestId('slot-primary-account')).toHaveTextContent(
+			'owner@example.com · Example Inc',
+		)
+	})
+
+	it('shows the account alongside a nickname, not instead of it', async () => {
+		// One Anthropic account can be connected to several workspaces, so the
+		// workspace's own label has to survive knowing the account.
+		mockStatus.mockResolvedValue(
+			statusFixture([
+				{ slot: 'primary', nickname: 'Work account', account_email: 'owner@example.com' },
+			]),
+		)
+
+		renderPage()
+
+		expect(await screen.findByTestId('slot-primary-nickname')).toHaveValue('Work account')
+		expect(screen.getByTestId('slot-primary-account')).toHaveTextContent('owner@example.com')
+	})
+
+	it('renders no account line when Anthropic did not tell us', async () => {
+		mockStatus.mockResolvedValue(statusFixture([{ slot: 'primary' }]))
+
+		renderPage()
+
+		await screen.findByTestId('slot-primary')
+		expect(screen.queryByTestId('slot-primary-account')).not.toBeInTheDocument()
+	})
+
+	it('does not discard a half-typed nickname when the status refetches', async () => {
+		// Reported as "the nickname just disappears once in a while": any
+		// sibling mutation on this page invalidates the status query, and the
+		// refetch used to reset the field under the user's cursor.
+		const user = userEvent.setup()
+		mockStatus.mockResolvedValue(statusFixture([{ slot: 'primary' }, { slot: 'backup' }]))
+		mockDisconnect.mockResolvedValue({ success: true })
+
+		renderPage()
+
+		const input = await screen.findByTestId('slot-primary-nickname')
+		await user.click(input)
+		await user.type(input, 'Half typed')
+
+		// Force the refetch a sibling mutation would cause, without blurring.
+		mockStatus.mockResolvedValue(
+			statusFixture([{ slot: 'primary' }, { slot: 'backup', nickname: 'Other' }]),
+		)
+		await user.click(
+			within(screen.getByTestId('slot-backup')).getByRole('button', { name: /Disconnect/ }),
+		)
+		await waitFor(() => expect(mockDisconnect).toHaveBeenCalled())
+
+		expect(input).toHaveValue('Half typed')
+	})
+
 	it('saves a trimmed nickname on blur', async () => {
 		const user = userEvent.setup()
 		mockStatus.mockResolvedValue(statusFixture([{ slot: 'primary', subscription_type: 'max-5x' }]))

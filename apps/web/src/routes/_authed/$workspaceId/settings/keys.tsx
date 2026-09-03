@@ -288,11 +288,20 @@ function SlotCard({
 	const renameMutation = useMutation({
 		mutationFn: (nickname: string) => api.claudeOauth.rename(workspaceId, slot, nickname),
 		onSuccess,
-		onError: () => setNicknameDraft(info.nickname ?? ''),
+		onError: () => {
+			editingNickname.current = false
+			setNicknameDraft(info.nickname ?? '')
+		},
 	})
 
 	const [nicknameDraft, setNicknameDraft] = useState(info.nickname ?? '')
+	// True from focus until the rename settles. Any status refetch that lands
+	// in that window — a sibling mutation on this page invalidates the same
+	// query — must not reset the field to the server's value and delete what
+	// the user is halfway through typing.
+	const editingNickname = useRef(false)
 	useEffect(() => {
+		if (editingNickname.current) return
 		setNicknameDraft(info.nickname ?? '')
 	}, [info.nickname])
 
@@ -300,12 +309,21 @@ function SlotCard({
 
 	const handleNicknameBlur = () => {
 		const trimmed = nicknameDraft.trim()
-		if (trimmed !== (info.nickname ?? '')) {
-			renameMutation.mutate(trimmed)
+		if (trimmed === (info.nickname ?? '')) {
+			editingNickname.current = false
+			return
 		}
+		renameMutation.mutate(trimmed, {
+			// Release the guard only once the server has the new value, so the
+			// refetch this mutation triggers can't roll the field back either.
+			onSettled: () => {
+				editingNickname.current = false
+			},
+		})
 	}
 
 	const label = slotLabel(position)
+	const accountLine = [info.account_email, info.account_organization].filter(Boolean).join(' · ')
 	const isActive = activeSlot === slot
 	const reasonCopy = info.failure_reason ? FAILOVER_REASON_COPY[info.failure_reason] : undefined
 	// A recorded failure only means "unhealthy" while something else is
@@ -349,6 +367,9 @@ function SlotCard({
 						onBlur={handleNicknameBlur}
 						onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 						placeholder={NICKNAME_PLACEHOLDER}
+						onFocus={() => {
+							editingNickname.current = true
+						}}
 						maxLength={60}
 						size={Math.max(nicknameDraft.length, NICKNAME_PLACEHOLDER.length)}
 						disabled={renameMutation.isPending}
@@ -395,6 +416,19 @@ function SlotCard({
 					<span className="text-xs font-mono text-muted-foreground">id {info.fingerprint}</span>
 				)}
 			</div>
+			{accountLine && (
+				// Anthropic's own name for this subscription. Shown alongside the
+				// nickname rather than instead of it: the same Anthropic account
+				// can be connected to several workspaces, each of which may want
+				// to call it something different.
+				<p
+					className="text-xs text-muted-foreground truncate"
+					title={accountLine}
+					data-testid={`slot-${slot}-account`}
+				>
+					{accountLine}
+				</p>
+			)}
 			{unhealthyLine && <p className="text-xs text-warning">{unhealthyLine}</p>}
 			<div className="flex flex-wrap gap-2 pt-1">
 				{position > 0 && (
