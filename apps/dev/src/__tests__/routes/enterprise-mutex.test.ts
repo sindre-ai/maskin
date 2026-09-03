@@ -14,15 +14,23 @@ vi.mock('../../lib/stripe', async () => {
 		verifyStripeWebhook: vi.fn(),
 	}
 })
-vi.mock('../../lib/claude-oauth', () => ({
-	encryptOAuthTokens: vi.fn().mockReturnValue({
-		encryptedAccessToken: 'enc-access',
-		encryptedRefreshToken: 'enc-refresh',
-		expiresAt: 9_999_999_999,
-		subscriptionType: 'pro',
-	}),
-	getValidOAuthToken: vi.fn(),
-}))
+// Only what reaches outside the process is stubbed: encryption (no key in
+// unit tests), the token refresh, and the account lookup.
+vi.mock('../../lib/claude-oauth', async () => {
+	const actual =
+		await vi.importActual<typeof import('../../lib/claude-oauth')>('../../lib/claude-oauth')
+	return {
+		...actual,
+		encryptOAuthTokens: vi.fn().mockReturnValue({
+			encryptedAccessToken: 'enc-access',
+			encryptedRefreshToken: 'enc-refresh',
+			expiresAt: 9_999_999_999,
+			subscriptionType: 'pro',
+		}),
+		getValidOAuthToken: vi.fn(),
+		fetchClaudeAccount: vi.fn().mockResolvedValue(undefined),
+	}
+})
 
 import type Stripe from 'stripe'
 import { verifyStripeWebhook } from '../../lib/stripe'
