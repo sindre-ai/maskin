@@ -46,7 +46,7 @@ describe('actorScopedProviders', () => {
 
 describe('getIntegrationCredential', () => {
 	it('returns the row when the query resolves one', async () => {
-		const row = { id: 'row-1', workspaceId: 'ws', provider: 'slack', status: 'connected' }
+		const row = { id: 'row-1', workspaceId: 'ws', provider: 'slack', status: 'active' }
 		const { db } = makeFakeDb([row])
 		const result = await getIntegrationCredential(db as never, 'ws', 'slack', null)
 		expect(result).toEqual(row)
@@ -74,7 +74,7 @@ describe('getIntegrationCredential', () => {
 			workspaceId: 'ws',
 			provider: 'linkedin-unipile',
 			actorId: 'actor-1',
-			status: 'connected',
+			status: 'active',
 		}
 		const { db, whereSpy } = makeFakeDb([row])
 		const result = await getIntegrationCredential(db as never, 'ws', 'linkedin-unipile', 'actor-1')
@@ -86,7 +86,7 @@ describe('getIntegrationCredential', () => {
 		// The allow-list — not the caller — decides whether actorId is honored.
 		// This lets every call site thread an actorId through without accidentally
 		// converting a workspace-scoped provider into an actor-scoped one.
-		const row = { id: 'row-shared', workspaceId: 'ws', provider: 'slack', status: 'connected' }
+		const row = { id: 'row-shared', workspaceId: 'ws', provider: 'slack', status: 'active' }
 		const { db, whereSpy } = makeFakeDb([row])
 		const result = await getIntegrationCredential(db as never, 'ws', 'slack', 'ignored-actor')
 		expect(result).toEqual(row)
