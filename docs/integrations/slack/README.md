@@ -57,11 +57,23 @@ built per request by `createSlackMcpServer()` in
 | `slack_join_channel` | `conversations.join` | `channels:join` |
 | `slack_add_reaction` | `reactions.add` | `reactions:write` |
 | `slack_get_permalink` | `chat.getPermalink` | — |
+| `slack_get_channel_history` | `conversations.history` | `channels:history` / `groups:history` / `mpim:history` / `im:history` |
+| `slack_get_thread_replies` | `conversations.replies` | `channels:history` / `groups:history` / `mpim:history` / `im:history` |
+| `slack_update_message` | `chat.update` | `chat:write` |
+| `slack_delete_message` | `chat.delete` | `chat:write` |
+| `slack_open_conversation` | `conversations.open` | `im:write` (1:1 DM); group DMs need `mpim:write` — separate bet |
+| `slack_conversations_info` | `conversations.info` | `channels:read` / `groups:read` / `im:read` / `mpim:read` |
 
 Every one of these scopes is already in `manifest.yml` and in the provider's
 `scopes` array, so adding the tools needed **no manifest change and no
-re-authorisation**. `withScopeHint()` still rewrites a `missing_scope` error
-into a reconnect instruction, for installs predating a scope.
+re-authorisation** for the five discovery tools that shipped in PR #1456.
+The two read-history tools (`slack_get_channel_history` /
+`slack_get_thread_replies`) do need the three new history scopes
+(`channels:history` / `groups:history` / `mpim:history`) — existing installs
+degrade gracefully via `withScopeHint()`, which rewrites Slack's
+`missing_scope` into a "Reconnect Slack from Settings → Integrations"
+instruction. The four fold-in tools ride on scopes already granted, so they
+require no reconnect.
 
 `slack_list_channels` and `slack_list_users` share the 5-minute lookup cache in
 `providers/slack/client.ts` with the REST routes that back the trigger-filter
@@ -69,14 +81,62 @@ UI, keyed by integration id — which is why `SlackPostContext` carries
 `integrationId`.
 
 Channel arguments accept either an ID (`C0123456789`) or a name (`#general`);
-`resolveChannelId()` looks the name up via `conversations.list`, so agents never
-need a human to copy an ID out of the Slack UI.
+`resolveChannelId()` looks the name up via `conversations.list`, with a small
+DM/MPIM fallback so the read-history tools can resolve MPIMs referenced by
+their `mpdm-…` name. True 1:1 DMs have no name and must be referenced by
+their D-prefixed ID directly.
 
-### No history tool, on purpose
+### History tools — bounded, member-only, agent-driven pagination
 
-There is deliberately **no** tool that reads channel backlog. `channels:history`,
-`groups:history` and `mpim:history` appear in `manifest.yml` but are excluded
-from the provider's requested `scopes` — the bot sees what it is @mentioned in,
-not everything said in every channel it lives in. Adding a read-history tool
-means adding those scopes to the provider config **and** re-submitting the
-Marketplace listing, never one without the other.
+`slack_get_channel_history` and `slack_get_thread_replies` read messages the
+bot can see. **Member-only:** the bot sees history in channels, DMs, and
+MPIMs it is a member of; private channels still require an `/invite`. When
+the bot is not in a channel the tool returns Slack's `not_in_channel`,
+rewritten to the actionable *"call `slack_join_channel` first"* hint.
+
+**Bounded returned shape.** Each message maps to `{ ts, user, text,
+thread_ts?, reply_count?, latest_reply?, subtype?, bot_id? }`. Slack's
+`blocks`, `attachments`, `files`, `reactions`, and `edited` are
+intentionally not exposed — if a follow-up bet needs one of them, expose it
+explicitly then.
+
+**Agent-driven pagination.** The tools do not auto-follow cursors. Each
+response includes `truncated` (from Slack's `has_more`) and `next_cursor`
+(from `response_metadata.next_cursor`). Callers decide whether to page
+further; the tool caps a single call to Slack's `limit` (default 50, max
+200) so a busy channel cannot blow the tool-call context.
+
+`slack_get_thread_replies` includes the parent message flagged
+`is_parent: true` so the agent does not have to make a second call to see
+what it is replying to.
+
+### Write-side edit / delete tools
+
+`slack_update_message` replaces the target message's content in full — pass
+the complete new text, not a diff. `slack_delete_message` is permanent.
+**The bot can only update or delete its OWN messages** (Slack API
+constraint). When the target message was not posted by this bot token,
+Slack returns `cant_update_message` / `cant_delete_message`, which the tools
+rewrite to *"it was not posted by the Maskin bot"*. Enterprise workspaces
+with compliance exports enabled may disallow deletes entirely; Slack's
+`compliance_exports_prevent_deletion` passes through unchanged.
+
+### 1:1 and group DM open
+
+`slack_open_conversation` opens a conversation between the bot and 1–8
+users (comma-joined as Slack's `users` param). One user → 1:1 DM on the
+already-granted `im:write` scope. Multiple users → group DM on
+`mpim:write`, which is **not granted** today, so multi-user calls surface
+as a reconnect instruction via `withScopeHint()`. Requesting `mpim:write`
+is a separate follow-on bet. Returns `{ channel_id, is_new, users }`;
+`is_new: false` when Slack returned the existing DM channel.
+
+### Channel info
+
+`slack_conversations_info` returns a bounded channel-info shape:
+`{ id, name, is_channel, is_group, is_im, is_mpim, is_private, is_archived,
+is_member, topic, purpose, num_members?, created }`. Enterprise-shared /
+org-shared fields (`previous_names`, `pending_shared`, `shared_team_ids`,
+`pending_connected_team_ids`, topic/purpose creator metadata) are
+intentionally not exposed. `include_num_members: true` adds `num_members`
+(defaults to false to skip the small Slack-side cost).

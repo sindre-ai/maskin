@@ -141,6 +141,7 @@ describe('createSlackMcpServer — slack_send_message', () => {
 		)._registeredTools.slack_send_message
 		await tool.handler({ channel: 'C123', text: 'hi' }, {})
 		const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)
+		expect(body.username).toBe('Maskin')
 		expect('blocks' in body).toBe(false)
 	})
 
@@ -301,6 +302,12 @@ describe('createSlackMcpServer — discovery and membership tools', () => {
 			['slack_join_channel', { channel: 'C0GENERAL01' }],
 			['slack_add_reaction', { channel: 'C0GENERAL01', timestamp: '1.1', emoji: 'eyes' }],
 			['slack_get_permalink', { channel: 'C0GENERAL01', message_ts: '1.1' }],
+			['slack_get_channel_history', { channel: 'C0GENERAL01' }],
+			['slack_get_thread_replies', { channel: 'C0GENERAL01', thread_ts: '1.1' }],
+			['slack_update_message', { channel: 'C0GENERAL01', ts: '1.1', text: 'hi' }],
+			['slack_delete_message', { channel: 'C0GENERAL01', ts: '1.1' }],
+			['slack_open_conversation', { users: ['U1'] }],
+			['slack_conversations_info', { channel: 'C0GENERAL01' }],
 		]
 		for (const [name, args] of calls) {
 			await expect(registered[name].handler(args, {})).rejects.toThrow(/not a bot token/)
@@ -315,11 +322,17 @@ describe('createSlackMcpServer — discovery and membership tools', () => {
 		).sort()
 		expect(names).toEqual([
 			'slack_add_reaction',
+			'slack_conversations_info',
+			'slack_delete_message',
+			'slack_get_channel_history',
 			'slack_get_permalink',
+			'slack_get_thread_replies',
 			'slack_join_channel',
 			'slack_list_channels',
 			'slack_list_users',
+			'slack_open_conversation',
 			'slack_send_message',
+			'slack_update_message',
 		])
 	})
 
@@ -410,7 +423,7 @@ describe('createSlackMcpServer — discovery and membership tools', () => {
 		})
 
 		it('explains how to find the channel when the name is not visible', async () => {
-			queueSlackResponses({ ok: true, channels: CHANNELS })
+			queueSlackResponses({ ok: true, channels: CHANNELS }, { ok: true, channels: [] })
 			await expect(callTool('slack_join_channel', { channel: '#nope' })).rejects.toThrow(
 				/slack_list_channels/,
 			)
@@ -482,6 +495,359 @@ describe('createSlackMcpServer — discovery and membership tools', () => {
 			const [url] = fetchMock.mock.calls[0] as [string]
 			expect(url).toContain('chat.getPermalink')
 			expect(url).toContain('message_ts=1717000000.000100')
+		})
+	})
+
+	describe('slack_get_channel_history', () => {
+		const RAW_MESSAGES = [
+			{ ts: '1717000003.000100', user: 'U1', text: 'latest' },
+			{
+				ts: '1717000002.000100',
+				user: 'U2',
+				text: 'thread parent',
+				thread_ts: '1717000002.000100',
+				reply_count: 4,
+				latest_reply: '1717000002.000900',
+			},
+			{ ts: '1717000001.000100', user: null, text: 'joined', subtype: 'channel_join' },
+		]
+
+		it('calls conversations.history with channel + default limit and returns the bounded HistoryMessage shape', async () => {
+			queueSlackResponses({ ok: true, messages: RAW_MESSAGES })
+			const out = await callTool('slack_get_channel_history', { channel: 'C0GENERAL01' })
+
+			const [url] = fetchMock.mock.calls[0] as [string]
+			expect(url).toContain('conversations.history')
+			expect(url).toContain('channel=C0GENERAL01')
+			expect(url).toContain('limit=50')
+			expect(out).toMatchObject({
+				matched: 3,
+				returned: 3,
+				truncated: false,
+				next_cursor: null,
+			})
+			expect(out.messages).toEqual([
+				{ ts: '1717000003.000100', user: 'U1', text: 'latest' },
+				{
+					ts: '1717000002.000100',
+					user: 'U2',
+					text: 'thread parent',
+					thread_ts: '1717000002.000100',
+					reply_count: 4,
+					latest_reply: '1717000002.000900',
+				},
+				{
+					ts: '1717000001.000100',
+					user: null,
+					text: 'joined',
+					subtype: 'channel_join',
+				},
+			])
+		})
+
+		it('resolves #maskin-app to its channel id before calling conversations.history', async () => {
+			queueSlackResponses({ ok: true, channels: CHANNELS }, { ok: true, messages: [] })
+			await callTool('slack_get_channel_history', { channel: '#maskin-app' })
+
+			const [historyUrl] = fetchMock.mock.calls[1] as [string]
+			expect(historyUrl).toContain('conversations.history')
+			expect(historyUrl).toContain('channel=C075JBZ65RT')
+		})
+
+		it('passes oldest + latest through when supplied', async () => {
+			queueSlackResponses({ ok: true, messages: [] })
+			await callTool('slack_get_channel_history', {
+				channel: 'C0GENERAL01',
+				oldest: '1710000000.000000',
+				latest: '1720000000.000000',
+			})
+			const [url] = fetchMock.mock.calls[0] as [string]
+			expect(url).toContain('oldest=1710000000.000000')
+			expect(url).toContain('latest=1720000000.000000')
+		})
+
+		it('surfaces truncated + next_cursor when Slack returns has_more', async () => {
+			queueSlackResponses({
+				ok: true,
+				messages: [{ ts: '1', user: 'U', text: 'a' }],
+				has_more: true,
+				response_metadata: { next_cursor: 'dXNlcjpVMDAwMQ==' },
+			})
+			const out = await callTool('slack_get_channel_history', { channel: 'C0GENERAL01' })
+			expect(out.truncated).toBe(true)
+			expect(out.next_cursor).toBe('dXNlcjpVMDAwMQ==')
+		})
+
+		it('rewrites missing_scope into a reconnect prompt', async () => {
+			queueSlackResponses({ ok: false, error: 'missing_scope' })
+			await expect(
+				callTool('slack_get_channel_history', { channel: 'C0GENERAL01' }),
+			).rejects.toThrow(/Reconnect Slack/)
+		})
+
+		it('rewrites not_in_channel with the slack_join_channel hint', async () => {
+			queueSlackResponses({ ok: false, error: 'not_in_channel' })
+			await expect(
+				callTool('slack_get_channel_history', { channel: '#maskin-app' }),
+			).rejects.toThrow(/slack_join_channel first/)
+		})
+
+		it('drops reply_count + latest_reply from the shape when include_thread_reply_counts is false', async () => {
+			queueSlackResponses({ ok: true, messages: RAW_MESSAGES })
+			const out = await callTool('slack_get_channel_history', {
+				channel: 'C0GENERAL01',
+				include_thread_reply_counts: false,
+			})
+			for (const m of out.messages) {
+				expect(m).not.toHaveProperty('reply_count')
+				expect(m).not.toHaveProperty('latest_reply')
+			}
+		})
+	})
+
+	describe('slack_get_thread_replies', () => {
+		const THREAD = [
+			{
+				ts: '1717000002.000100',
+				user: 'U2',
+				text: 'parent',
+				thread_ts: '1717000002.000100',
+				reply_count: 2,
+			},
+			{
+				ts: '1717000002.000500',
+				user: 'U3',
+				text: 'first reply',
+				thread_ts: '1717000002.000100',
+			},
+			{
+				ts: '1717000002.000700',
+				user: 'U4',
+				text: 'second reply',
+				thread_ts: '1717000002.000100',
+			},
+		]
+
+		it('calls conversations.replies with channel + ts and returns the parent + replies', async () => {
+			queueSlackResponses({ ok: true, messages: THREAD })
+			const out = await callTool('slack_get_thread_replies', {
+				channel: 'C0GENERAL01',
+				thread_ts: '1717000002.000100',
+			})
+			const [url] = fetchMock.mock.calls[0] as [string]
+			expect(url).toContain('conversations.replies')
+			expect(url).toContain('channel=C0GENERAL01')
+			expect(url).toContain('ts=1717000002.000100')
+			expect(out.matched).toBe(3)
+			expect(out.messages).toHaveLength(3)
+		})
+
+		it('flags the parent message with is_parent: true', async () => {
+			queueSlackResponses({ ok: true, messages: THREAD })
+			const out = await callTool('slack_get_thread_replies', {
+				channel: 'C0GENERAL01',
+				thread_ts: '1717000002.000100',
+			})
+			expect(out.messages[0].is_parent).toBe(true)
+			expect(out.messages[1]).not.toHaveProperty('is_parent')
+			expect(out.messages[2]).not.toHaveProperty('is_parent')
+		})
+
+		it('rewrites missing_scope into a reconnect prompt', async () => {
+			queueSlackResponses({ ok: false, error: 'missing_scope' })
+			await expect(
+				callTool('slack_get_thread_replies', {
+					channel: 'C0GENERAL01',
+					thread_ts: '1717000002.000100',
+				}),
+			).rejects.toThrow(/Reconnect Slack/)
+		})
+	})
+
+	describe('slack_update_message', () => {
+		it('calls chat.update with channel + ts + text and returns { channel, ts, updated }', async () => {
+			queueSlackResponses({ ok: true, channel: 'C0GENERAL01', ts: '1717000003.000100' })
+			const out = await callTool('slack_update_message', {
+				channel: 'C0GENERAL01',
+				ts: '1717000003.000100',
+				text: 'edited',
+			})
+			const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+			expect(url).toBe('https://slack.com/api/chat.update')
+			expect(JSON.parse(init.body as string)).toEqual({
+				channel: 'C0GENERAL01',
+				ts: '1717000003.000100',
+				text: 'edited',
+			})
+			expect(out).toEqual({ channel: 'C0GENERAL01', ts: '1717000003.000100', updated: true })
+		})
+
+		it('rewrites cant_update_message into the bot-authored-only hint', async () => {
+			queueSlackResponses(
+				{ ok: true, channels: CHANNELS },
+				{ ok: false, error: 'cant_update_message' },
+			)
+			await expect(
+				callTool('slack_update_message', {
+					channel: '#general',
+					ts: '1717000003.000100',
+					text: 'edited',
+				}),
+			).rejects.toThrow(/not posted by the Maskin bot/)
+		})
+
+		it('rewrites missing_scope into a reconnect prompt', async () => {
+			queueSlackResponses({ ok: false, error: 'missing_scope' })
+			await expect(
+				callTool('slack_update_message', {
+					channel: 'C0GENERAL01',
+					ts: '1717000003.000100',
+					text: 'edited',
+				}),
+			).rejects.toThrow(/Reconnect Slack/)
+		})
+	})
+
+	describe('slack_delete_message', () => {
+		it('calls chat.delete with channel + ts and returns { channel, ts, deleted }', async () => {
+			queueSlackResponses({ ok: true })
+			const out = await callTool('slack_delete_message', {
+				channel: 'C0GENERAL01',
+				ts: '1717000003.000100',
+			})
+			const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+			expect(url).toBe('https://slack.com/api/chat.delete')
+			expect(JSON.parse(init.body as string)).toEqual({
+				channel: 'C0GENERAL01',
+				ts: '1717000003.000100',
+			})
+			expect(out).toEqual({ channel: 'C0GENERAL01', ts: '1717000003.000100', deleted: true })
+		})
+
+		it('rewrites cant_delete_message into the bot-authored-only hint', async () => {
+			queueSlackResponses({ ok: false, error: 'cant_delete_message' })
+			await expect(
+				callTool('slack_delete_message', {
+					channel: 'C0GENERAL01',
+					ts: '1717000003.000100',
+				}),
+			).rejects.toThrow(/not posted by the Maskin bot/)
+		})
+	})
+
+	describe('slack_open_conversation', () => {
+		it('calls conversations.open with users comma-joined and returns { channel_id, is_new, users }', async () => {
+			queueSlackResponses({ ok: true, channel: { id: 'D0PRIVATE01' } })
+			const out = await callTool('slack_open_conversation', { users: ['U1', 'U2'] })
+
+			const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+			expect(url).toBe('https://slack.com/api/conversations.open')
+			expect(JSON.parse(init.body as string)).toEqual({
+				users: 'U1,U2',
+				return_im: true,
+			})
+			expect(out).toEqual({ channel_id: 'D0PRIVATE01', is_new: true, users: ['U1', 'U2'] })
+		})
+
+		it('rewrites user_not_found into the slack_list_users hint', async () => {
+			queueSlackResponses({ ok: false, error: 'user_not_found' })
+			await expect(callTool('slack_open_conversation', { users: ['UNOPE'] })).rejects.toThrow(
+				/slack_list_users/,
+			)
+		})
+
+		it('rejects >8 users at the Zod boundary before hitting Slack', async () => {
+			const server = createSlackMcpServer(ctx)
+			const registered = (
+				server as unknown as {
+					_registeredTools: Record<
+						string,
+						{ handler: (args: unknown, extra: unknown) => Promise<unknown> }
+					>
+				}
+			)._registeredTools.slack_open_conversation
+			const nineUsers = ['U1', 'U2', 'U3', 'U4', 'U5', 'U6', 'U7', 'U8', 'U9']
+			await expect(registered.handler({ users: nineUsers }, {})).rejects.toThrow()
+			expect(fetchMock).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('slack_conversations_info', () => {
+		it('calls conversations.info and returns the bounded shape, dropping enterprise-shared fields', async () => {
+			queueSlackResponses({
+				ok: true,
+				channel: {
+					id: 'C0GENERAL01',
+					name: 'general',
+					is_channel: true,
+					is_private: false,
+					is_archived: false,
+					is_member: true,
+					created: 1500000000,
+					topic: { value: 'about', creator: 'U1', last_set: 1500000001 },
+					purpose: { value: 'purpose', creator: 'U2', last_set: 1500000002 },
+					previous_names: ['random'],
+					shared_team_ids: ['T1', 'T2'],
+					pending_shared: [],
+					pending_connected_team_ids: [],
+				},
+			})
+			const out = await callTool('slack_conversations_info', { channel: 'C0GENERAL01' })
+
+			const [url] = fetchMock.mock.calls[0] as [string]
+			expect(url).toContain('conversations.info')
+			expect(url).toContain('channel=C0GENERAL01')
+			expect(url).toContain('include_num_members=false')
+			expect(out.channel).toEqual({
+				id: 'C0GENERAL01',
+				name: 'general',
+				is_channel: true,
+				is_group: false,
+				is_im: false,
+				is_mpim: false,
+				is_private: false,
+				is_archived: false,
+				is_member: true,
+				topic: 'about',
+				purpose: 'purpose',
+				created: 1500000000,
+			})
+			// Verify explicitly-dropped fields
+			expect(out.channel).not.toHaveProperty('previous_names')
+			expect(out.channel).not.toHaveProperty('shared_team_ids')
+			expect(out.channel).not.toHaveProperty('pending_shared')
+			expect(out.channel).not.toHaveProperty('pending_connected_team_ids')
+			expect(out.channel).not.toHaveProperty('num_members')
+		})
+
+		it('passes include_num_members=true and returns num_members when Slack provides it', async () => {
+			queueSlackResponses({
+				ok: true,
+				channel: {
+					id: 'C0GENERAL01',
+					name: 'general',
+					is_channel: true,
+					is_member: true,
+					num_members: 42,
+					topic: { value: '' },
+					purpose: { value: '' },
+					created: 1500000000,
+				},
+			})
+			const out = await callTool('slack_conversations_info', {
+				channel: 'C0GENERAL01',
+				include_num_members: true,
+			})
+			const [url] = fetchMock.mock.calls[0] as [string]
+			expect(url).toContain('include_num_members=true')
+			expect(out.channel.num_members).toBe(42)
+		})
+
+		it("passes channel_not_found through so the caller sees Slack's own error", async () => {
+			queueSlackResponses({ ok: false, error: 'channel_not_found' })
+			await expect(callTool('slack_conversations_info', { channel: 'C0NOEXIST0' })).rejects.toThrow(
+				/channel_not_found/,
+			)
 		})
 	})
 })
