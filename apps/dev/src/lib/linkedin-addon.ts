@@ -11,35 +11,37 @@ import { and, eq, sql } from 'drizzle-orm'
 export const LINKEDIN_IDENTITY_PROVIDER = 'linkedin-unipile'
 
 /**
- * €29/connected identity/month — Sebk-locked (LinkedIn MCP pricing memo,
- * bet §Pricing). Displayed at this exact literal on the plan surface; the
- * Stripe Product + Price configured under `STRIPE_PRICE_LINKEDIN_IDENTITY`
- * MUST be created at €29/month (EUR) to match. Stored in EUR cents so it
- * lines up with Stripe's minor-unit API for later checkout wiring.
+ * $49/connected identity/month — Sebk-locked at $49 USD on 2026-09-02 (see
+ * the LinkedIn MCP pricing memo). Displayed at this exact literal on the plan
+ * surface; the Stripe Product + Price configured under
+ * `STRIPE_PRICE_LINKEDIN_IDENTITY` MUST be created at $49/month (USD) to
+ * match. Stored in USD cents so it lines up with Stripe's minor-unit API for
+ * later checkout wiring.
  */
-export const LINKEDIN_IDENTITY_UNIT_PRICE_EUR_CENTS = 2900
+export const LINKEDIN_IDENTITY_UNIT_PRICE_USD_CENTS = 4900
 
 /** The row the plan surface renders when the add-on is active for a workspace. */
 export interface LinkedInIdentityAddonLine {
 	/** Number of connected `linkedin-unipile` credentials on the workspace. */
 	count: number
-	/** Per-connected-identity monthly price, EUR cents. */
-	unit_price_eur_cents: number
-	/** count × unit_price_eur_cents, EUR cents. */
-	monthly_total_eur_cents: number
+	/** Per-connected-identity monthly price, USD cents. */
+	unit_price_usd_cents: number
+	/** count × unit_price_usd_cents, USD cents. */
+	monthly_total_usd_cents: number
 }
 
 /**
  * Counts connected LinkedIn identities for a workspace. Filters on
- * `status = 'connected'` to match what Task 2's Unipile hosted-wizard callback
- * writes on `CREATION_SUCCESS`; rows in other states (`pending` during the
- * wizard round-trip, `revoked` after a disconnect) do NOT count toward the
- * add-on.
+ * `status = 'active'` to match what Task 2's Unipile hosted-wizard callback
+ * actually writes on `CREATION_SUCCESS` — the callback ships
+ * `CONNECTED_STATUS = 'active'` because no other reader in the repo (route
+ * list queries, token-manager, `getIntegrationCredential`) recognises
+ * `'connected'`. Rows in other states (`pending` during the wizard
+ * round-trip, `revoked` after a disconnect) do NOT count toward the add-on.
  *
  * Reads only from the pre-refactor `integrations` schema — no dependency on
- * `actor_id` (which lands in Task 1's PR #1466). Each row already represents
- * one connected identity per the existing `(workspace_id, provider, external_id)`
- * uniqueness guard.
+ * `actor_id`. Each row already represents one connected identity per the
+ * existing `(workspace_id, provider, external_id)` uniqueness guard.
  */
 export async function getConnectedLinkedInIdentityCount(
 	db: Database,
@@ -52,7 +54,7 @@ export async function getConnectedLinkedInIdentityCount(
 			and(
 				eq(integrations.workspaceId, workspaceId),
 				eq(integrations.provider, LINKEDIN_IDENTITY_PROVIDER),
-				eq(integrations.status, 'connected'),
+				eq(integrations.status, 'active'),
 			),
 		)
 	return rows[0]?.n ?? 0
@@ -75,7 +77,7 @@ export function resolveLinkedInIdentityAddon(input: {
 	if (input.connectedCount <= 0) return null
 	return {
 		count: input.connectedCount,
-		unit_price_eur_cents: LINKEDIN_IDENTITY_UNIT_PRICE_EUR_CENTS,
-		monthly_total_eur_cents: input.connectedCount * LINKEDIN_IDENTITY_UNIT_PRICE_EUR_CENTS,
+		unit_price_usd_cents: LINKEDIN_IDENTITY_UNIT_PRICE_USD_CENTS,
+		monthly_total_usd_cents: input.connectedCount * LINKEDIN_IDENTITY_UNIT_PRICE_USD_CENTS,
 	}
 }
