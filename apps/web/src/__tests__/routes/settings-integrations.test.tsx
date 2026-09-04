@@ -456,4 +456,101 @@ describe('IntegrationsPage', () => {
 			expect(screen.queryByText('Choose a GitHub organization')).not.toBeInTheDocument()
 		})
 	})
+
+	// Slack agents need channel history to dedupe threads and load context, so
+	// when the stored token is missing one of those scopes the card swaps the
+	// generic "grant N permissions" copy for a Slack-specific one that names
+	// what reconnecting unlocks. The Reconnect button re-triggers the same
+	// OAuth flow an operator would hit from the reactive withScopeHint error.
+	describe('slack reconnect-required label', () => {
+		const slackProvider = { name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] }
+
+		it('renders the Slack-specific label when a history scope is missing', () => {
+			mockUseIntegrations.mockReturnValue({
+				data: [
+					buildIntegrationResponse({
+						provider: 'slack',
+						status: 'active',
+						missingScopes: ['channels:history'],
+						needsReconnect: true,
+					}),
+				],
+				isLoading: false,
+			})
+			mockUseProviders.mockReturnValue({ data: [slackProvider], isLoading: false })
+			render(<IntegrationsPage />)
+
+			expect(
+				screen.getByText(
+					'Reconnect required — Slack agents need history access to read channel backlog.',
+				),
+			).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Reconnect' })).toBeInTheDocument()
+		})
+
+		it('hides the Reconnect button and Slack-specific label when all three history scopes are granted', () => {
+			mockUseIntegrations.mockReturnValue({
+				data: [
+					buildIntegrationResponse({
+						provider: 'slack',
+						status: 'active',
+						missingScopes: [],
+						needsReconnect: false,
+					}),
+				],
+				isLoading: false,
+			})
+			mockUseProviders.mockReturnValue({ data: [slackProvider], isLoading: false })
+			render(<IntegrationsPage />)
+
+			expect(screen.getByText('Connected')).toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: 'Reconnect' })).not.toBeInTheDocument()
+			expect(
+				screen.queryByText(/Slack agents need history access to read channel backlog/),
+			).not.toBeInTheDocument()
+		})
+
+		it('clicking Reconnect re-triggers the OAuth flow for Slack', async () => {
+			const user = userEvent.setup()
+			mockUseIntegrations.mockReturnValue({
+				data: [
+					buildIntegrationResponse({
+						provider: 'slack',
+						status: 'active',
+						missingScopes: ['channels:history', 'groups:history', 'mpim:history'],
+						needsReconnect: true,
+					}),
+				],
+				isLoading: false,
+			})
+			mockUseProviders.mockReturnValue({ data: [slackProvider], isLoading: false })
+			render(<IntegrationsPage />)
+
+			await user.click(screen.getByRole('button', { name: 'Reconnect' }))
+			expect(mockConnect).toHaveBeenCalledWith({ provider: 'slack' })
+		})
+
+		it('falls through to the generic copy when Slack is missing only a non-history scope', () => {
+			mockUseIntegrations.mockReturnValue({
+				data: [
+					buildIntegrationResponse({
+						provider: 'slack',
+						status: 'active',
+						missingScopes: ['reactions:write'],
+						needsReconnect: true,
+					}),
+				],
+				isLoading: false,
+			})
+			mockUseProviders.mockReturnValue({ data: [slackProvider], isLoading: false })
+			render(<IntegrationsPage />)
+
+			expect(
+				screen.getByText('Update needed — reconnect to grant 1 new permission'),
+			).toBeInTheDocument()
+			expect(
+				screen.queryByText(/Slack agents need history access to read channel backlog/),
+			).not.toBeInTheDocument()
+		})
+	})
 })

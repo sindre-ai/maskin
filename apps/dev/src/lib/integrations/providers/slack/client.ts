@@ -1,4 +1,5 @@
 import { logger } from '../../../logger'
+import { SlackApiError } from './slack-api'
 
 const SLACK_API_BASE = 'https://slack.com/api'
 const CACHE_TTL_MS = 5 * 60_000
@@ -15,6 +16,14 @@ export interface SlackConversation {
 	is_im: boolean
 	is_mpim: boolean
 	is_channel: boolean
+	/**
+	 * Whether the bot itself is a member. `chat.postMessage` fails with
+	 * `not_in_channel` on a public channel the bot hasn't joined, so agents need
+	 * this to know whether to call `slack_join_channel` first. Slack omits the
+	 * field for IM/MPIM conversations — those are always writable — so it is
+	 * coerced to `true` there rather than reporting a misleading `false`.
+	 */
+	is_member: boolean
 }
 
 export interface SlackUser {
@@ -56,7 +65,7 @@ interface SlackResponse {
 	response_metadata?: { next_cursor?: string }
 }
 
-async function slackGet<T extends SlackResponse>(
+export async function slackGet<T extends SlackResponse>(
 	path: string,
 	accessToken: string,
 	params: Record<string, string>,
@@ -76,7 +85,12 @@ async function slackGet<T extends SlackResponse>(
 	}
 	const json = (await res.json()) as T
 	if (!json.ok) {
-		throw new Error(`Slack ${path} failed: ${json.error ?? 'unknown error'}`)
+		// Throw the typed error so callers can branch on Slack's machine-readable
+		// `error` code (`already_reacted`, `missing_scope`, …) instead of
+		// substring-matching a free-form message — a match that would report
+		// success if Slack ever nested the token inside an unrelated diagnostic.
+		const code = json.error ?? 'unknown_error'
+		throw new SlackApiError(code, `Slack ${path} failed: ${code}`)
 	}
 	return json
 }
@@ -121,6 +135,7 @@ export async function listSlackConversations(
 				is_im: Boolean(c.is_im),
 				is_mpim: Boolean(c.is_mpim),
 				is_channel: Boolean(c.is_channel),
+				is_member: Boolean(c.is_im) || Boolean(c.is_mpim) || Boolean(c.is_member),
 			})
 		}
 
@@ -207,7 +222,12 @@ export async function slackPost<T extends SlackResponse>(
 	}
 	const json = (await res.json()) as T
 	if (!json.ok) {
-		throw new Error(`Slack ${path} failed: ${json.error ?? 'unknown error'}`)
+		// Throw the typed error so callers can branch on Slack's machine-readable
+		// `error` code (`already_reacted`, `missing_scope`, …) instead of
+		// substring-matching a free-form message — a match that would report
+		// success if Slack ever nested the token inside an unrelated diagnostic.
+		const code = json.error ?? 'unknown_error'
+		throw new SlackApiError(code, `Slack ${path} failed: ${code}`)
 	}
 	return json
 }

@@ -8,7 +8,6 @@ import { createApiError } from '../lib/errors'
 import {
 	createSlackMcpServer,
 	isSlackBotToken,
-	isSlackUserToken,
 } from '../lib/integrations/providers/slack/mcp-server'
 import type { StoredCredentials } from '../lib/integrations/types'
 import { logger } from '../lib/logger'
@@ -24,26 +23,15 @@ type Env = {
 const app = new Hono<Env>()
 
 /**
- * Resolve the tokens for the workspace's active Slack integration.
- *
- * Returns null when there is no active integration or the stored credential is
- * not a bot token — that guard prevents posting as a human when OAuth scope
- * drift left an `xoxp-` token in `accessToken`.
- *
- * The installer's user token, when present, comes back alongside it. It exists
- * only to satisfy `search.messages`, which Slack does not expose to bot tokens
- * at all; every other tool uses the bot token. An install that predates the
- * `user_scope` grant simply has no user token, and `createSlackMcpServer` then
- * omits the two search tools rather than registering tools that always fail.
+ * Resolve the bot token for the workspace's active Slack integration. Returns
+ * null when there is no active integration or the stored credential is not a
+ * bot token — the guard prevents posting as a user when the OAuth scope drift
+ * left an `xoxp-` token in the row.
  */
-async function resolveSlackTokens(
+async function resolveSlackBotToken(
 	db: Database,
 	workspaceId: string,
-): Promise<{
-	botToken: string
-	userToken: string | undefined
-	slackTeamId: string | undefined
-} | null> {
+): Promise<{ botToken: string; integrationId: string; slackTeamId: string | undefined } | null> {
 	const [integration] = await db
 		.select()
 		.from(integrations)
@@ -80,23 +68,9 @@ async function resolveSlackTokens(
 		return null
 	}
 
-	// Stashed by the provider's parseTokenResponse from `authed_user.access_token`.
-	// Validate the prefix rather than trusting the field name — a bot token in
-	// this slot would silently widen what search runs as.
-	const rawUserToken = credentials.userAccessToken
-	const userToken = isSlackUserToken(rawUserToken as string | undefined)
-		? (rawUserToken as string)
-		: undefined
-	if (rawUserToken && !userToken) {
-		logger.warn('Ignoring stored Slack user token — unexpected prefix', {
-			workspaceId,
-			integrationId: integration.id,
-		})
-	}
-
 	return {
 		botToken: accessToken as string,
-		userToken,
+		integrationId: integration.id,
 		slackTeamId: integration.externalId ?? undefined,
 	}
 }
@@ -135,7 +109,7 @@ app.post('/', async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Actor is not a member of this workspace'), 403)
 	}
 
-	const resolved = await resolveSlackTokens(db, workspaceId)
+	const resolved = await resolveSlackBotToken(db, workspaceId)
 	if (!resolved) {
 		return c.json(
 			createApiError(
@@ -153,7 +127,7 @@ app.post('/', async (c) => {
 
 	const mcpServer = createSlackMcpServer({
 		botToken: resolved.botToken,
-		userToken: resolved.userToken,
+		integrationId: resolved.integrationId,
 		agentLabel,
 		iconUrl,
 		workspaceId,
@@ -183,10 +157,6 @@ app.post('/', async (c) => {
 		workspaceId,
 		actorId,
 		method: (body as { method?: string })?.method,
-		// Tells us, from logs alone, whether this workspace's tool list included
-		// the search tools — the usual explanation for "the agent couldn't search"
-		// is an install that predates the user_scope grant.
-		searchEnabled: Boolean(resolved.userToken),
 	})
 
 	await mcpServer.connect(transport)

@@ -11,6 +11,12 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
  * re-consent is needed, so it has to be visible and actionable at every ship
  * gate viewport and in both colour schemes.
  *
+ * Two copies exist. A Slack install missing any of `channels:history` /
+ * `groups:history` / `mpim:history` gets named, actionable copy about history
+ * access; anything else gets the generic "grant N new permissions" count. The
+ * default stub below is missing history scopes — the realistic case for a token
+ * predating the six-tool surface — so it renders the Slack-specific copy.
+ *
  * `GET /api/integrations` is stubbed because reproducing a genuinely stale
  * token would mean completing a real Slack OAuth round-trip. The backend half
  * (that a stale install actually reports `needsReconnect`) is covered against
@@ -68,9 +74,12 @@ test.describe('Settings — Integrations scope-drift reconnect prompt', () => {
 			await page.waitForLoadState('load')
 			await page.waitForTimeout(300)
 
-			// Names the count so the message is specific rather than a generic warning.
+			// This stub is missing history scopes, so the Slack-specific copy wins
+			// over the generic count — it names what the reconnect actually unlocks.
 			await expect(
-				page.getByText('Update needed — reconnect to grant 3 new permissions'),
+				page.getByText(
+					'Reconnect required — Slack agents need history access to read channel backlog.',
+				),
 			).toBeVisible()
 
 			// Reachable on touch: toBeVisible() also fails on opacity:0 / hover-only
@@ -104,7 +113,9 @@ test.describe('Settings — Integrations scope-drift reconnect prompt', () => {
 			await page.waitForLoadState('load')
 			await page.waitForTimeout(300)
 
-			const label = page.getByText('Update needed — reconnect to grant 3 new permissions')
+			const label = page.getByText(
+				'Reconnect required — Slack agents need history access to read channel backlog.',
+			)
 			await expect(label).toBeVisible()
 
 			// Not transparent and not the same colour as the surface behind it.
@@ -142,9 +153,27 @@ test.describe('Settings — Integrations scope-drift reconnect prompt', () => {
 		await page.waitForTimeout(300)
 
 		await expect(page.getByText(/Update needed/)).toHaveCount(0)
+		await expect(page.getByText(/Slack agents need history access/)).toHaveCount(0)
 		await expect(page.getByRole('button', { name: 'Reconnect' })).toHaveCount(0)
 		// Still connected, so Disconnect remains.
 		await expect(page.getByRole('button', { name: 'Disconnect' })).toBeVisible()
+	})
+
+	test('generic count copy when the missing scopes are not history scopes', async ({
+		page,
+		account,
+	}) => {
+		await stubStaleSlack(page, account.workspaceId, {
+			missingScopes: ['search:read', 'reactions:write'],
+		})
+		await page.setViewportSize({ width: 1024, height: 768 })
+		await page.goto(`/${account.workspaceId}/settings/integrations`)
+		await page.waitForLoadState('load')
+		await page.waitForTimeout(300)
+
+		await expect(
+			page.getByText('Update needed — reconnect to grant 2 new permissions'),
+		).toBeVisible()
 	})
 
 	test('singular wording when exactly one scope is missing', async ({ page, account }) => {
