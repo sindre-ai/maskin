@@ -113,6 +113,7 @@ import {
 	type SessionUsage,
 	extractSessionUsage,
 	parseUsageFromLogChunks,
+	readSessionStdoutTail,
 	sumRunningSessionUsage,
 } from './usage-parser'
 import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace-briefing'
@@ -4383,7 +4384,6 @@ export class SessionManager extends EventEmitter {
 		opts: { stoppedByUser?: boolean } = {},
 	): Promise<boolean> {
 		const stoppedByUser = opts.stoppedByUser ?? false
-		const status = exitCode === 0 ? 'completed' : 'failed'
 
 		// Extract token / cost usage from the remote session's stdout tail.
 		// Unlike the local Docker path, there is no in-memory tail buffer for a
@@ -4403,9 +4403,55 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		// Classify the same way the local Docker path does in handleCompletion.
+		// Until this existed, a remote session was the ONLY completion path that
+		// never ran the credit/quota classifier: it wrote `{ exit_code }` and
+		// stopped. So a subscription that hit its limit produced a session with
+		// no `failure_reason` and — worse — never reached
+		// maybeRetryClaudeOAuthOnNextSlot, so the workspace stayed pointed at the
+		// spent subscription and every following session landed on it too. In
+		// production, where sessions run on agent-servers rather than local
+		// Docker, that meant runtime failover effectively never ran at all,
+		// however many subscriptions were connected.
+		//
+		// Same shape of gap as the interactive seed turn documented in
+		// .claude/rules/known-pitfalls.md — a step that reads as "part of
+		// container teardown" but is really its own action, implemented on the
+		// local path and missed on the dispatched one.
+		//
+		// Best-effort, like the usage read above: a DB hiccup here must not throw
+		// out of this method. stopSession() calls it after the remote sandbox is
+		// already dead, so a throw would surface as a spurious "stop failed" 400
+		// for a stop that actually succeeded. No tail simply means no
+		// classification — the session still reaches a terminal state.
+		let stdoutTail = ''
+		if (!stoppedByUser) {
+			try {
+				stdoutTail = await readSessionStdoutTail(this.db, sessionId)
+			} catch (err) {
+				logger.warn('Failed to read stdout tail for remote session classification', {
+					sessionId,
+					error: String(err),
+				})
+			}
+		}
+		const failureReason: SessionResultFailureReason | null =
+			!stoppedByUser && exitCode !== null
+				? classifyCreditExhaustion(stdoutTail, { includeAmbiguousSignals: exitCode !== 0 })
+				: null
+		if (failureReason) {
+			logger.info('Remote session credit-exhaustion classified', {
+				sessionId,
+				reason_code: failureReason.reason_code,
+				provider: failureReason.provider,
+				exitCode,
+			})
+		}
+		const status = exitCode === 0 && !failureReason ? 'completed' : 'failed'
+
 		const result: SessionResult = stoppedByUser
 			? { exit_code: exitCode, stopped_by_user: true }
-			: { exit_code: exitCode }
+			: { exit_code: exitCode, ...(failureReason ? { failure_reason: failureReason } : {}) }
 
 		// A thrown DB error here (distinct from a clean 0-row CAS miss) must not
 		// permanently strand the session: giving up immediately would skip the
@@ -4625,13 +4671,30 @@ export class SessionManager extends EventEmitter {
 				action: `session_${status}`,
 				entityType: 'session',
 				entityId: sessionId,
-				data: { exit_code: exitCode, stopped_by_user: stoppedByUser },
+				data: {
+					exit_code: exitCode,
+					stopped_by_user: stoppedByUser,
+					...(failureReason ? { failure_reason: failureReason } : {}),
+				},
 			})
 		} catch (err) {
 			logger.error('Failed to insert remote session completion event', {
 				sessionId,
 				error: String(err),
 			})
+		}
+
+		if (status === 'failed') {
+			await this.maybeRetryClaudeOAuthOnNextSlot({
+				session: updated,
+				failureReason,
+				stdoutTail,
+			}).catch((err) =>
+				logger.warn('Failed to retry remote Claude OAuth session on the next subscription', {
+					sessionId,
+					error: String(err),
+				}),
+			)
 		}
 
 		const remoteLlmRoute = (updated.config as Record<string, unknown>)?.llm_route
