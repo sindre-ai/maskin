@@ -37,11 +37,11 @@ export function formatCredits(cents: number): string {
 	return `$${(cents / 100).toFixed(2)}`
 }
 
-// Whole-dollar format used on the LinkedIn Identity add-on line ("$49/mo"). The
-// unit price is a round-dollar constant ($49) locked by Sebk; a `.toFixed(0)`
-// keeps the label tight. Total-line uses `.toFixed(2)` to make the arithmetic
-// visible even at count=1 ("$49.00").
-export function formatUsd(cents: number, opts: { withCents?: boolean } = {}): string {
+// Whole-dollar format used on the LinkedIn Identity add-on line ("$49/mo").
+// The unit price is a round-dollar constant ($49) locked by Sebk on
+// 2026-09-02; a `.toFixed(0)` keeps the label tight. Total-line uses
+// `.toFixed(2)` to make the arithmetic visible even at count=1 ("$49.00").
+export function formatDollars(cents: number, opts: { withCents?: boolean } = {}): string {
 	const value = cents / 100
 	return `$${opts.withCents ? value.toFixed(2) : value.toFixed(0)}`
 }
@@ -526,8 +526,8 @@ function UsageBanner({
 // backend returns a non-null `linkedin_identity_addon` (see
 // apps/dev/src/lib/linkedin-addon.ts).
 function LinkedInIdentityAddonLineRow({ line }: { line: LinkedInIdentityAddonLine }) {
-	const unit = formatUsd(line.unit_price_usd_cents)
-	const total = formatUsd(line.monthly_total_usd_cents, { withCents: true })
+	const unit = formatDollars(line.unit_price_usd_cents)
+	const total = formatDollars(line.monthly_total_usd_cents, { withCents: true })
 	return (
 		<div data-testid="linkedin-identity-addon" className="pt-2 border-t border-border space-y-1">
 			<div className="flex items-center justify-between gap-2 text-xs">

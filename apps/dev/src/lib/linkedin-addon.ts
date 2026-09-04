@@ -11,11 +11,12 @@ import { and, eq, sql } from 'drizzle-orm'
 export const LINKEDIN_IDENTITY_PROVIDER = 'linkedin-unipile'
 
 /**
- * $49/connected identity/month — Sebk-locked (LinkedIn MCP pricing memo,
- * bet §Pricing). Displayed at this exact literal on the plan surface; the
- * Stripe Product + Price configured under `STRIPE_PRICE_LINKEDIN_IDENTITY`
- * MUST be created at $49/month (USD) to match. Stored in USD cents so it
- * lines up with Stripe's minor-unit API for later checkout wiring.
+ * $49/connected identity/month — Sebk-locked at $49 USD on 2026-09-02 (see
+ * the LinkedIn MCP pricing memo). Displayed at this exact literal on the plan
+ * surface; the Stripe Product + Price configured under
+ * `STRIPE_PRICE_LINKEDIN_IDENTITY` MUST be created at $49/month (USD) to
+ * match. Stored in USD cents so it lines up with Stripe's minor-unit API for
+ * later checkout wiring.
  */
 export const LINKEDIN_IDENTITY_UNIT_PRICE_USD_CENTS = 4900
 

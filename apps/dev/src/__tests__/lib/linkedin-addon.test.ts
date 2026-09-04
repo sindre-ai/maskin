@@ -33,8 +33,9 @@ describe('resolveLinkedInIdentityAddon', () => {
 	})
 
 	it('pins the $49 unit price and provider name so drift trips a test rather than a customer', () => {
-		// Sebk-locked in the pricing memo (bet §Pricing). Any change here must be
-		// paired with an operator update to the Stripe Product/Price ID stored under
+		// Sebk-locked at $49 USD in the pricing memo (bet §Pricing, updated
+		// 2026-09-02). Any change here must be paired with an operator update
+		// to the Stripe Product/Price ID stored under
 		// STRIPE_PRICE_LINKEDIN_IDENTITY, or the plan surface will display a
 		// different number than Stripe charges.
 		expect(LINKEDIN_IDENTITY_UNIT_PRICE_USD_CENTS).toBe(4900)

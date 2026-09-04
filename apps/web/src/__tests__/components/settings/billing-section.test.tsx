@@ -445,9 +445,9 @@ describe('BillingSection', () => {
 
 	it('renders LinkedIn Identity with count × $49 arithmetic and the buyer-framing copy', async () => {
 		// The line renders exactly what the backend sends — the $49 unit price
-		// is Sebk-locked (pricing memo). The buyer-framing paragraph is copied
-		// verbatim from bet §Pricing so buyers see the same framing at the
-		// moment they're asked to pay.
+		// is Sebk-locked at $49 USD in the pricing memo (updated 2026-09-02).
+		// The buyer-framing paragraph is copied verbatim from bet §Pricing so
+		// buyers see the same framing at the moment they're asked to pay.
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
 			plan: 'pro',
