@@ -30,14 +30,6 @@ export const CLAUDE_CREDENTIAL_TIMEOUT_MS = 15_000
 export const ACCOUNT_LOOKUP_TIMEOUT_MS = 4_000
 
 /**
- * How long a completed lookup — successful or not — stands before we ask
- * again. Every attempt is recorded (see `backfillAccountLabels`), so without
- * this a subscription whose identity we can't read would re-ask on every
- * single settings page load, forever.
- */
-export const ACCOUNT_LOOKUP_RETRY_MS = 24 * 60 * 60 * 1000
-
-/**
  * Who the subscription belongs to, as reported by Anthropic — not by us and
  * not by the customer. Displayed next to (never instead of) the user's own
  * `nickname`: one Anthropic account can be connected to several workspaces,
