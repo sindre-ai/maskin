@@ -395,6 +395,11 @@ export class SessionManager extends EventEmitter {
 			// will produce a chat message, which it never will.
 			retryTurn: (sessionId, payload) =>
 				this.writeInput(sessionId, payload, undefined, undefined, { maskin_retry: true }),
+			// An interactive session never exits on a spent subscription, so the
+			// session-exit failover below never sees one. This is the same move,
+			// reached from the per-turn path.
+			onSubscriptionLimit: (sessionId, reason) =>
+				this.failOverInteractiveSession(sessionId, reason),
 		})
 	}
 
@@ -2594,6 +2599,60 @@ export class SessionManager extends EventEmitter {
 			)
 			.limit(1)
 		return Boolean(other)
+	}
+
+	/**
+	 * Move a live interactive session's workspace onto its next Claude
+	 * subscription. Returns the slot moved to, or `null` when nothing moved —
+	 * the flag is off, the session isn't on the OAuth route, another session
+	 * already moved the workspace on, or this was the last subscription.
+	 *
+	 * Deliberately does NOT stop and relaunch the container. The running
+	 * session keeps the credentials it started with, so the next session is
+	 * what picks up the new subscription, and the human is told exactly that.
+	 * Relaunching a live conversation mid-turn is a larger change than moving
+	 * the pointer — and moving the pointer is what stops the NEXT session
+	 * landing on the same spent subscription.
+	 */
+	private async failOverInteractiveSession(
+		sessionId: string,
+		reason: string,
+	): Promise<string | null> {
+		if (!isClaudeFailoverEnabled()) return null
+
+		const [session] = await this.db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		if (!session) return null
+
+		const config = ((session.config as Record<string, unknown>) ?? {}) as Record<string, unknown>
+		if (config.llm_route !== LLM_ROUTE_OAUTH) return null
+		const failedSlot = config.llm_oauth_slot
+		if (typeof failedSlot !== 'string') return null
+
+		const failover = await recordRuntimeClaudeOAuthFailover({
+			db: this.db,
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			reason,
+			fromSlot: failedSlot,
+			sourceSessionId: session.id,
+		})
+		if (failover.moved) return failover.slot
+
+		if (failover.reason === 'exhausted') {
+			await recordRuntimeClaudeOAuthBackupExhausted({
+				db: this.db,
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				reason,
+				slot: failedSlot,
+				sourceSessionId: session.id,
+			})
+		}
+		return null
 	}
 
 	private async maybeRetryClaudeOAuthOnNextSlot(params: {
