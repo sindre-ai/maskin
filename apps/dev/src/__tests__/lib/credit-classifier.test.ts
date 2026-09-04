@@ -196,3 +196,50 @@ describe('classifyCreditExhaustion', () => {
 		})
 	})
 })
+
+describe('classifyCreditExhaustion — OpenRouter error envelopes', () => {
+	// Before these, the only OpenRouter failure we recognised was the literal
+	// string "insufficient credits"; a rate-limited session classified as null,
+	// so nothing was recorded and nothing could fail over on it.
+	it('classifies a 402 envelope as insufficient credits', () => {
+		const tail =
+			'POST https://openrouter.ai/api/v1/chat/completions\n{"error":{"code":402,"message":"Prompt tokens limit exceeded"}}'
+
+		expect(classifyCreditExhaustion(tail)).toMatchObject({
+			provider: 'openrouter',
+			reason_code: 'insufficient_credits',
+			http_status: 402,
+		})
+	})
+
+	it('classifies a 429 envelope as a rate limit', () => {
+		const tail =
+			'POST https://openrouter.ai/api/v1/chat/completions\n{"error":{"code":429,"message":"Rate limit exceeded"}}'
+
+		expect(classifyCreditExhaustion(tail)).toMatchObject({
+			provider: 'openrouter',
+			reason_code: 'rate_limit_error',
+			http_status: 429,
+		})
+	})
+
+	it('ignores an error envelope from some other service', () => {
+		// The tail is a whole session's stdout and routinely carries other
+		// APIs' error bodies — the OpenRouter host is what makes it ours.
+		const tail = '{"error":{"code":429,"message":"Rate limit exceeded"}} from api.example.com'
+
+		expect(classifyCreditExhaustion(tail)).toBeNull()
+	})
+
+	it('leaves an unmapped OpenRouter status unclassified', () => {
+		const tail = 'https://openrouter.ai/api\n{"error":{"code":418,"message":"teapot"}}'
+
+		expect(classifyCreditExhaustion(tail)).toBeNull()
+	})
+
+	it('does not classify an OpenRouter envelope when ambiguous signals are off', () => {
+		const tail = 'https://openrouter.ai/api\n{"error":{"code":402,"message":"no credits"}}'
+
+		expect(classifyCreditExhaustion(tail, { includeAmbiguousSignals: false })).toBeNull()
+	})
+})

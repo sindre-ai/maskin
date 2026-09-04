@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import { sessionLogs, sessions } from '@maskin/db/schema'
 import { MESSAGE_MAX_LENGTH, parseResultLine, scanTurnLine, splitLines } from '@maskin/shared'
 import { and, desc, eq, like, lte } from 'drizzle-orm'
+import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { logger } from '../lib/logger'
 import { detectPseudoToolCalls } from '../lib/pseudo-tool-call'
 import { classifyTurnError } from '../lib/turn-error-classifier'
@@ -168,6 +169,15 @@ const permanentErrorMessage = (detail: string): string =>
 	`I couldn't complete that turn — the model API returned an error:\n\n${detail}`
 
 /**
+ * What the human reads when the turn died on a subscription limit and we moved
+ * the workspace to the next one. Says what to do next, because this session's
+ * container is still on the old subscription — a new session picks up the new
+ * one.
+ */
+const subscriptionMovedMessage = (detail: string): string =>
+	`That Claude subscription is out of capacity, so I've switched this workspace to the next one. Start a new session to continue — this one is still on the old subscription.\n\nThe error was:\n\n${detail}`
+
+/**
  * A replayed turn we are waiting on, plus everything needed to report it if it
  * never comes back. Held rather than closed over so any of the three things
  * that can end the wait — the turn answering, the session going away, the
@@ -234,6 +244,16 @@ export type InteractiveTurnFinalizerOptions = {
 	delay?: (ms: number) => Promise<void>
 	/** Test seam: how long a replayed turn has to answer. */
 	replyTimeoutMs?: number
+	/**
+	 * Called when a turn dies on a subscription limit rather than on anything a
+	 * replay could fix. Moves the workspace onto its next Claude subscription;
+	 * resolves to the slot it moved to, or `null` when nothing moved.
+	 *
+	 * Injected rather than reached for directly, matching `retryTurn` and
+	 * `seedInteractiveTurn` (session-dispatcher.ts): this class runs on the
+	 * log-ingest path and must not import the session manager.
+	 */
+	onSubscriptionLimit?: (sessionId: string, reason: string) => Promise<string | null>
 }
 
 export class InteractiveTurnFinalizer {
@@ -260,12 +280,14 @@ export class InteractiveTurnFinalizer {
 	 */
 	private readonly pseudoToolCallNudges = new Map<string, number>()
 	private readonly retryTurn?: RetryTurnFn
+	private readonly onSubscriptionLimit?: InteractiveTurnFinalizerOptions['onSubscriptionLimit']
 	private readonly delay: (ms: number) => Promise<void>
 	private readonly replyTimeoutMs: number
 
 	constructor(db: Database, options: InteractiveTurnFinalizerOptions = {}) {
 		this.db = db
 		this.retryTurn = options.retryTurn
+		this.onSubscriptionLimit = options.onSubscriptionLimit
 		this.delay =
 			options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
 		this.replyTimeoutMs = options.replyTimeoutMs ?? REPLAY_ANSWER_TIMEOUT_MS
@@ -638,6 +660,36 @@ export class InteractiveTurnFinalizer {
 	}
 
 	/**
+	 * Move the workspace onto its next Claude subscription when a turn died
+	 * because the current one is out of quota (or its credentials stopped
+	 * working). Returns the slot moved to, or `null` when this wasn't a
+	 * subscription limit, nothing was wired up, or there was nowhere to go.
+	 *
+	 * Never throws: this runs inside log ingest, and a failover that cannot be
+	 * recorded must still leave the human with the error message.
+	 */
+	private async failOverOnSubscriptionLimit(
+		sessionId: string,
+		detail: string,
+	): Promise<string | null> {
+		if (!this.onSubscriptionLimit) return null
+		// Reuse the session-exit classifier so both paths agree on what counts
+		// as "the subscription is spent" rather than keeping a second list.
+		const failure = classifyCreditExhaustion(detail, { includeAmbiguousSignals: false })
+		if (!failure || failure.provider !== 'anthropic') return null
+		try {
+			return await this.onSubscriptionLimit(sessionId, failure.reason_code)
+		} catch (err) {
+			logger.warn(
+				`Interactive session ${sessionId} hit a subscription limit but the failover could not be recorded: ${
+					err instanceof Error ? err.message : String(err)
+				}`,
+			)
+			return null
+		}
+	}
+
+	/**
 	 * A turn that closed with `is_error: true`: replay it if that stands a
 	 * chance of working, otherwise tell the human in words.
 	 *
@@ -668,15 +720,22 @@ export class InteractiveTurnFinalizer {
 			logger.warn(
 				`Interactive session ${sessionId} turn failed permanently (log ${logId}): ${detail}`,
 			)
+			// A subscription that ran out mid-conversation is not the same as a
+			// turn that can never work. Until this branch existed, the two were
+			// reported identically and the workspace stayed pointed at the dead
+			// subscription: the failover only ever ran at session exit, which an
+			// interactive session does not reach (see turn-error-classifier.ts).
+			const movedTo = await this.failOverOnSubscriptionLimit(sessionId, detail)
 			await this.postTurnMessage(
 				sessionId,
 				gate,
 				conversationId,
 				result,
 				logId,
-				permanentErrorMessage(detail),
+				movedTo ? subscriptionMovedMessage(detail) : permanentErrorMessage(detail),
 				{
 					error_kind: 'permanent',
+					...(movedTo ? { subscription_moved_to: movedTo } : {}),
 				},
 			)
 			return

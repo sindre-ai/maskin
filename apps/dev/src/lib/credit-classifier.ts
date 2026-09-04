@@ -142,5 +142,50 @@ export function classifyCreditExhaustion(
 		}
 	}
 
+	return classifyOpenRouterEnvelope(tail)
+}
+
+/**
+ * OpenRouter returns a JSON envelope — `{"error":{"code":<http status>,…}}` —
+ * rather than the plain-text banners the Claude CLI prints. Until this existed
+ * the only OpenRouter failure we recognised was the literal string
+ * `insufficient credits`, so a rate-limited or provider-rejected session
+ * classified as `null`: no failure reason recorded, nothing to fail over on,
+ * and a human left reading a raw envelope.
+ *
+ * Keyed on the OpenRouter host appearing in the same tail, because `"error":
+ * {"code": 429}` on its own is a shape plenty of other APIs share — and the
+ * tail here is the whole session's stdout, which routinely contains other
+ * services' error bodies. That does mean an envelope logged without the host
+ * nearby is still missed; widening it further would trade this classifier's
+ * one job for false positives on unrelated tool output.
+ */
+function classifyOpenRouterEnvelope(tail: string): SessionResultFailureReason | null {
+	if (!tail.includes('openrouter.ai')) return null
+
+	const match = /"error"\s*:\s*\{[^}]*"code"\s*:\s*(\d{3})/.exec(tail)
+	if (!match) return null
+	const status = Number(match[1])
+
+	if (status === 402) {
+		return {
+			provider: 'openrouter',
+			reason_code: 'insufficient_credits',
+			human_message: 'OpenRouter: insufficient credits',
+			http_status: 402,
+			reset_at: null,
+			verbatim_output: null,
+		}
+	}
+	if (status === 429) {
+		return {
+			provider: 'openrouter',
+			reason_code: 'rate_limit_error',
+			human_message: 'OpenRouter rate limit reached',
+			http_status: 429,
+			reset_at: null,
+			verbatim_output: null,
+		}
+	}
 	return null
 }

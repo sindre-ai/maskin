@@ -82,6 +82,21 @@ describe('Interactive turn finalizer', () => {
 		return log
 	}
 
+	/** `feed`, but for a finalizer built with its own options in a test. */
+	async function feedInstance(
+		instance: InteractiveTurnFinalizer,
+		sessionId: string,
+		content: string,
+	) {
+		const [log] = await db
+			.insert(sessionLogs)
+			.values({ sessionId, stream: 'stdout', content })
+			.returning()
+		if (!log) throw new Error('failed to insert log')
+		await instance.onStdout(sessionId, content, log.id)
+		return log
+	}
+
 	async function messagesFor(conversation: string) {
 		return db
 			.select()
@@ -711,6 +726,80 @@ ${surviving}
 			expect(
 				(rows[0]?.metadata as { final_output?: { error_kind?: string } })?.final_output?.error_kind,
 			).toBe('permanent')
+		})
+
+		it('moves the workspace to the next subscription when a turn hits a limit', async () => {
+			// An interactive session never exits, so the session-exit failover
+			// never sees a spent subscription. Without this the workspace stayed
+			// pointed at the dead one and the next session landed on it too.
+			const moved: Array<{ sessionId: string; reason: string }> = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				delay: async () => {},
+				onSubscriptionLimit: async (sessionId, reason) => {
+					moved.push({ sessionId, reason })
+					return 'backup'
+				},
+			})
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+
+			await feedInstance(
+				instance,
+				session.id,
+				`${resultLine({ is_error: true, result: "You've hit your weekly limit" })}\n`,
+			)
+			await instance.settlePendingRetries()
+
+			expect(moved).toEqual([{ sessionId: session.id, reason: 'weekly_limit' }])
+			const rows = await messagesFor(conversationId)
+			expect(rows[0]?.content).toContain('switched this workspace to the next one')
+			expect(rows[0]?.content).toContain('Start a new session')
+			expect(
+				(rows[0]?.metadata as { final_output?: { subscription_moved_to?: string } })?.final_output
+					?.subscription_moved_to,
+			).toBe('backup')
+		})
+
+		it('reports the plain error when there is no subscription to move to', async () => {
+			const instance = new InteractiveTurnFinalizer(db, {
+				delay: async () => {},
+				onSubscriptionLimit: async () => null,
+			})
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+
+			await feedInstance(
+				instance,
+				session.id,
+				`${resultLine({ is_error: true, result: "You've hit your weekly limit" })}\n`,
+			)
+			await instance.settlePendingRetries()
+
+			const rows = await messagesFor(conversationId)
+			expect(rows[0]?.content).toContain("You've hit your weekly limit")
+			expect(rows[0]?.content).not.toContain('switched this workspace')
+		})
+
+		it('does not treat a non-limit permanent failure as a subscription limit', async () => {
+			const moved: string[] = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				delay: async () => {},
+				onSubscriptionLimit: async (sessionId) => {
+					moved.push(sessionId)
+					return 'backup'
+				},
+			})
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+
+			await feedInstance(
+				instance,
+				session.id,
+				`${resultLine({ is_error: true, result: 'invalid_request_error: bad tool schema' })}\n`,
+			)
+			await instance.settlePendingRetries()
+
+			expect(moved).toEqual([])
 		})
 
 		it('reports a transient failure it cannot replay', async () => {
