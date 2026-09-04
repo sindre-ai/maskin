@@ -4,12 +4,8 @@ import type { Database } from '@maskin/db'
 import { workspaceMembers, workspaces } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import {
-	ACCOUNT_LOOKUP_RETRY_MS,
-	type ClaudeAccountIdentity,
 	type ClaudeOAuthTokens,
 	decryptAccountIdentity,
-	decryptOAuthData,
-	encryptAccountIdentity,
 	encryptOAuthTokens,
 	fetchClaudeAccount,
 	getValidOAuthToken,
@@ -17,7 +13,6 @@ import {
 } from '../lib/claude-oauth'
 import {
 	MAX_OAUTH_SLOTS,
-	type OAuthSlotData,
 	type OAuthSlotKind,
 	clearSlot,
 	isSlotId,
@@ -304,19 +299,12 @@ app.openapi(statusRoute, (async (c) => {
 		return c.json(emptyResponse)
 	}
 
-	// Label any slot connected before we started reading the account identity
-	// (or whose earlier lookup failed). Best-effort and self-limiting: it only
-	// runs for slots that have no label AND a token that hasn't expired, so a
-	// settings page load costs at most one profile call per unlabelled slot,
-	// once.
-	const accounts = await backfillAccountLabels(db, workspaceId, chain)
-
 	const slotResponse: Record<string, z.infer<typeof slotStatusSchema>> = {}
 	for (const [position, entry] of chain.entries()) {
 		const failure = slotFailure(failover, entry.id)
-		const account =
-			accounts.get(entry.id) ??
-			(entry.data.account ? decryptAccountIdentity(entry.data.account) : undefined)
+		// Identity is captured at import time; a slot connected before that
+		// existed simply has none until its credentials are next imported.
+		const account = entry.data.account ? decryptAccountIdentity(entry.data.account) : undefined
 		slotResponse[entry.id] = {
 			slot: entry.id,
 			position,
@@ -366,99 +354,6 @@ app.openapi(statusRoute, (async (c) => {
 		last_backup_classified_reason: failover.last_backup_classified_reason,
 	})
 }) as RouteHandler<typeof statusRoute, Env>)
-
-/**
- * Fill in the Anthropic account identity for connected slots that don't have
- * one yet, returning what was learned (keyed by slot id) so the caller can
- * render it without re-reading the row.
- *
- * Deliberately conservative:
- *   - only slots with NO stored identity are looked up, so this is a one-time
- *     cost per slot rather than a per-page-load one;
- *   - only slots whose access token is still valid, so nothing here triggers a
- *     token refresh or a chain of them;
- *   - every failure is swallowed — a settings page must render whether or not
- *     Anthropic can tell us who the subscription belongs to.
- */
-async function backfillAccountLabels(
-	db: Database,
-	workspaceId: string,
-	chain: Array<{ id: OAuthSlotKind; data: OAuthSlotData }>,
-): Promise<Map<OAuthSlotKind, ClaudeAccountIdentity>> {
-	const now = Date.now()
-	const learned = new Map<OAuthSlotKind, ClaudeAccountIdentity>()
-	const candidates = chain.filter(
-		(entry) =>
-			entry.data.expiresAt > now &&
-			(!entry.data.account || now - entry.data.account.fetchedAt > ACCOUNT_LOOKUP_RETRY_MS),
-	)
-	if (candidates.length === 0) return learned
-
-	await Promise.all(
-		candidates.map(async (entry) => {
-			// Every ATTEMPT is recorded, not just every success. Without that, a
-			// subscription whose identity we can't read — a shape we don't
-			// parse, a revoked token — would be asked about again on every
-			// settings page load for the rest of time.
-			let account: ClaudeAccountIdentity = { fetchedAt: now }
-			try {
-				const tokens = decryptOAuthData(entry.data)
-				account = (await fetchClaudeAccount(tokens.accessToken)) ?? account
-			} catch (err) {
-				logger.debug('Could not read the Claude account identity for a slot', {
-					workspaceId,
-					slot: entry.id,
-					error: err instanceof Error ? err.message : String(err),
-				})
-			}
-			learned.set(entry.id, account)
-		}),
-	)
-	if (learned.size === 0) return learned
-
-	// One locked read-modify-write for everything learned — see the disconnect
-	// route for why the lock is needed. Non-fatal: if this write loses a race
-	// the labels are simply looked up again on the next load.
-	try {
-		await db.transaction(async (tx) => {
-			const [latest] = await tx
-				.select()
-				.from(workspaces)
-				.where(eq(workspaces.id, workspaceId))
-				.for('update')
-				.limit(1)
-			if (!latest) return
-			const latestSettings = (latest.settings as Record<string, unknown>) ?? {}
-			let nextOAuth = latestSettings.claude_oauth
-			for (const [slot, account] of learned) {
-				const stored = readSlots(nextOAuth)[slot]
-				// The slot may have been disconnected, replaced, or labelled by a
-				// concurrent request while the lookups were in flight; only write
-				// over an identity that is still missing or past its retry window.
-				if (!stored) continue
-				if (stored.account && now - stored.account.fetchedAt <= ACCOUNT_LOOKUP_RETRY_MS) continue
-				nextOAuth = writeSlot(nextOAuth, slot, {
-					...stored,
-					account: encryptAccountIdentity(account),
-				})
-			}
-			if (nextOAuth === latestSettings.claude_oauth) return
-			await tx
-				.update(workspaces)
-				.set({
-					settings: { ...latestSettings, claude_oauth: nextOAuth },
-					updatedAt: new Date(),
-				})
-				.where(eq(workspaces.id, workspaceId))
-		})
-	} catch (err) {
-		logger.debug('Could not persist Claude account labels', {
-			workspaceId,
-			error: err instanceof Error ? err.message : String(err),
-		})
-	}
-	return learned
-}
 
 // ── POST /api/claude-oauth/import ───────────────────────────────────────────
 // Accept raw tokens directly (from credentials.json paste). `slot` names the
