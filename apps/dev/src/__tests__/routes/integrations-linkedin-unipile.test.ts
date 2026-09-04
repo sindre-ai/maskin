@@ -16,6 +16,7 @@ const ENV_KEYS = [
 	'UNIPILE_API_KEY',
 	'INTEGRATION_ENCRYPTION_KEY',
 	'MASKIN_PUBLIC_URL',
+	'FRONTEND_URL',
 	'POSTHOG_API_KEY',
 ] as const
 
@@ -42,6 +43,7 @@ beforeEach(() => {
 	process.env.UNIPILE_API_KEY = 'test-api-key'
 	process.env.INTEGRATION_ENCRYPTION_KEY = ENCRYPTION_KEY
 	process.env.MASKIN_PUBLIC_URL = 'http://localhost:3000'
+	process.env.FRONTEND_URL = 'http://localhost:5173'
 	// Turn off PostHog capture so we don't hit the network in tests.
 	// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
 	delete process.env.POSTHOG_API_KEY
@@ -63,6 +65,37 @@ function jsonPost(path: string, body: unknown, headers: Record<string, string> =
 		headers: { 'Content-Type': 'application/json', ...headers },
 		body: JSON.stringify(body),
 	})
+}
+
+// The callback authenticates on `state` = `<integrationId>.<nonce>`, where the
+// nonce lives in the row's encrypted credentials blob. These helpers build the
+// two halves so each test states which of the two it is exercising.
+const NONCE = 'n'.repeat(64)
+
+async function encryptBlob(blob: unknown): Promise<string> {
+	const { encrypt } = await import('../../lib/crypto')
+	return encrypt(JSON.stringify(blob))
+}
+
+async function pendingRow(
+	overrides: { nonce?: string; expiresAt?: string; accountId?: string } = {},
+) {
+	return {
+		id: INTEGRATION_ID,
+		workspaceId: WORKSPACE_ID,
+		actorId: ACTOR_ID,
+		provider: 'linkedin-unipile',
+		status: 'pending',
+		credentials: await encryptBlob({
+			...(overrides.accountId ? { account_id: overrides.accountId } : {}),
+			auth_nonce: overrides.nonce ?? NONCE,
+			nonce_expires_at: overrides.expiresAt ?? new Date(Date.now() + 600_000).toISOString(),
+		}),
+	}
+}
+
+function stateFor(nonce = NONCE) {
+	return `${INTEGRATION_ID}.${nonce}`
 }
 
 function callbackGetRequest(query: Record<string, string>) {
@@ -106,14 +139,20 @@ describe('POST /api/integrations/linkedin-unipile/connect', () => {
 		expect(inserted.actorId).toBe(ACTOR_ID)
 		expect(inserted.provider).toBe('linkedin-unipile')
 		expect(inserted.status).toBe('pending')
-		expect(inserted.credentials).toBe('')
+		// The pending row now carries the encrypted auth nonce (iv:tag:ct) that
+		// authenticates the callback — it is no longer an empty placeholder.
+		expect(String(inserted.credentials)).toMatch(/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i)
 
 		// And that Unipile received a v2 auth-link call with the right shape.
 		const linkCall = mock.inbox().find((c) => c.path === '/v2/auth/link')
 		expect(linkCall).toBeDefined()
 		const linkBody = linkCall?.body as Record<string, unknown>
 		expect(linkBody.providers).toEqual(['linkedin'])
-		expect(linkBody.state).toBe(INTEGRATION_ID)
+		// `state` is `<integrationId>.<nonce>` — the id alone is readable by every
+		// workspace member via GET /api/integrations and cannot authenticate.
+		const state = String(linkBody.state)
+		expect(state.startsWith(`${INTEGRATION_ID}.`)).toBe(true)
+		expect(state.slice(INTEGRATION_ID.length + 1).length).toBeGreaterThanOrEqual(32)
 		expect(typeof linkBody.expires_on).toBe('string')
 		expect(linkBody.redirect_uri).toBe(
 			'http://localhost:3000/api/integrations/linkedin-unipile/callback',
@@ -174,7 +213,7 @@ describe('GET /api/integrations/linkedin-unipile/callback', () => {
 
 		const res = await app.request(
 			callbackGetRequest({
-				state: INTEGRATION_ID,
+				state: stateFor(),
 				account_id: 'acc-1',
 				provider: 'whatsapp',
 			}),
@@ -191,7 +230,7 @@ describe('GET /api/integrations/linkedin-unipile/callback', () => {
 
 		const res = await app.request(
 			callbackGetRequest({
-				state: INTEGRATION_ID,
+				state: stateFor(),
 				account_id: 'acc-1',
 				provider: 'linkedin',
 			}),
@@ -203,19 +242,11 @@ describe('GET /api/integrations/linkedin-unipile/callback', () => {
 	it('marks the row active with encrypted credentials on the happy path', async () => {
 		const routes = await importRoutes()
 		const { app, mockResults, calls } = createTestApp(routes, '/api/integrations/linkedin-unipile')
-		mockResults.select = [
-			{
-				id: INTEGRATION_ID,
-				workspaceId: WORKSPACE_ID,
-				actorId: ACTOR_ID,
-				provider: 'linkedin-unipile',
-				status: 'pending',
-			},
-		]
+		mockResults.select = [await pendingRow()]
 
 		const res = await app.request(
 			callbackGetRequest({
-				state: INTEGRATION_ID,
+				state: stateFor(),
 				account_id: 'unipile-account-42',
 				provider: 'linkedin',
 			}),
@@ -240,19 +271,11 @@ describe('GET /api/integrations/linkedin-unipile/callback', () => {
 	it('adopts an api/already_exists callback into the pending row', async () => {
 		const routes = await importRoutes()
 		const { app, mockResults, calls } = createTestApp(routes, '/api/integrations/linkedin-unipile')
-		mockResults.select = [
-			{
-				id: INTEGRATION_ID,
-				workspaceId: WORKSPACE_ID,
-				actorId: ACTOR_ID,
-				provider: 'linkedin-unipile',
-				status: 'pending',
-			},
-		]
+		mockResults.select = [await pendingRow()]
 
 		const res = await app.request(
 			callbackGetRequest({
-				state: INTEGRATION_ID,
+				state: stateFor(),
 				error_type: 'api/already_exists',
 				error_detail: 'existing-unipile-77',
 			}),
@@ -273,7 +296,7 @@ describe('GET /api/integrations/linkedin-unipile/callback', () => {
 
 		const res = await app.request(
 			callbackGetRequest({
-				state: INTEGRATION_ID,
+				state: stateFor(),
 				error_type: 'api/restricted_account',
 				error_detail: 'restricted-by-linkedin',
 			}),
@@ -284,13 +307,122 @@ describe('GET /api/integrations/linkedin-unipile/callback', () => {
 		expect(calls.updates).toHaveLength(0)
 	})
 
+	// ── state binding ────────────────────────────────────────────────────────
+	// `state` is the only thing authenticating this route (it is a browser
+	// redirect, so no API key rides along). These four pin that it is secret,
+	// single-use and expiring — the id on its own was none of the three.
+
+	it('rejects a state whose nonce does not match the stored one', async () => {
+		const routes = await importRoutes()
+		const { app, mockResults, calls } = createTestApp(routes, '/api/integrations/linkedin-unipile')
+		mockResults.select = [await pendingRow()]
+
+		const res = await app.request(
+			callbackGetRequest({
+				state: stateFor('w'.repeat(64)),
+				account_id: 'attacker-account',
+				provider: 'linkedin',
+			}),
+		)
+		expect(res.status).toBe(302)
+		expect(res.headers.get('location') ?? '').toContain('linkedin_detail=unknown_state')
+		// The credential must be untouched — this is the co-member hijack path:
+		// GET /api/integrations hands every workspace member the integration id.
+		expect(calls.updates).toHaveLength(0)
+	})
+
+	it('rejects a bare integration id with no nonce attached', async () => {
+		const routes = await importRoutes()
+		const { app, mockResults, calls } = createTestApp(routes, '/api/integrations/linkedin-unipile')
+		mockResults.select = [await pendingRow()]
+
+		const res = await app.request(
+			callbackGetRequest({
+				state: INTEGRATION_ID,
+				account_id: 'attacker-account',
+				provider: 'linkedin',
+			}),
+		)
+		expect(res.status).toBe(302)
+		expect(res.headers.get('location') ?? '').toContain('linkedin_detail=unknown_state')
+		expect(calls.updates).toHaveLength(0)
+	})
+
+	it('rejects a state whose nonce has expired', async () => {
+		const routes = await importRoutes()
+		const { app, mockResults, calls } = createTestApp(routes, '/api/integrations/linkedin-unipile')
+		mockResults.select = [
+			await pendingRow({ expiresAt: new Date(Date.now() - 1_000).toISOString() }),
+		]
+
+		const res = await app.request(
+			callbackGetRequest({
+				state: stateFor(),
+				account_id: 'unipile-account-42',
+				provider: 'linkedin',
+			}),
+		)
+		expect(res.status).toBe(302)
+		expect(res.headers.get('location') ?? '').toContain('linkedin_detail=unknown_state')
+		expect(calls.updates).toHaveLength(0)
+	})
+
+	it('does not rebind an already-connected row whose nonce was consumed', async () => {
+		const routes = await importRoutes()
+		const { app, mockResults, calls } = createTestApp(routes, '/api/integrations/linkedin-unipile')
+		// A landed credential holds only { account_id } — the nonce is gone,
+		// which is what makes the callback URL in browser history inert.
+		mockResults.select = [
+			{
+				id: INTEGRATION_ID,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				provider: 'linkedin-unipile',
+				status: 'active',
+				credentials: await encryptBlob({ account_id: 'legit-account-1' }),
+			},
+		]
+
+		const res = await app.request(
+			callbackGetRequest({
+				state: stateFor(),
+				account_id: 'attacker-account',
+				provider: 'linkedin',
+			}),
+		)
+		expect(res.status).toBe(302)
+		expect(res.headers.get('location') ?? '').toContain('linkedin_detail=unknown_state')
+		expect(calls.updates).toHaveLength(0)
+	})
+
+	it('redirects to the workspace-scoped frontend settings route, not the API host', async () => {
+		const routes = await importRoutes()
+		const { app, mockResults } = createTestApp(routes, '/api/integrations/linkedin-unipile')
+		mockResults.select = [await pendingRow()]
+
+		const res = await app.request(
+			callbackGetRequest({
+				state: stateFor(),
+				account_id: 'unipile-account-42',
+				provider: 'linkedin',
+			}),
+		)
+		const location = res.headers.get('location') ?? ''
+		// FRONTEND_URL + /$workspaceId/settings/integrations — the SPA route.
+		// MASKIN_PUBLIC_URL is the API origin and 404s; a missing workspace
+		// segment 404s too, since the route is workspace-scoped.
+		expect(location.startsWith('http://localhost:5173/')).toBe(true)
+		expect(location).toContain(`/${WORKSPACE_ID}/settings/integrations`)
+		expect(location).not.toContain('localhost:3000')
+	})
+
 	it('routes an unknown error_type to error with the raw value as detail', async () => {
 		const routes = await importRoutes()
 		const { app, calls } = createTestApp(routes, '/api/integrations/linkedin-unipile')
 
 		const res = await app.request(
 			callbackGetRequest({
-				state: INTEGRATION_ID,
+				state: stateFor(),
 				error_type: 'api/some_new_thing',
 			}),
 		)

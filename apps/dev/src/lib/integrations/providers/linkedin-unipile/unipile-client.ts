@@ -40,19 +40,32 @@ export type UnipileListConversationsQuery = {
 }
 
 /**
- * Response envelope Unipile v2 sends on message-send. The migration doc
- * confirms `account_id` in the path but does not fully spec the response
- * envelope; the route's normalizer accepts both `id` and `message_id` and
- * defaults `sent_at` to now if absent. Kept permissive here so a shape drift
- * on Unipile's side surfaces in the classifier layer, not as a TypeScript
- * error.
+ * Response envelope Unipile v2 sends on message-send, per the v2 reference:
+ *   - start-chat (`/chats/send`)              → { object: 'ChatStarted', chat_id, message_id }
+ *   - in-chat send (`/chats/:id/messages/send`) → { object: 'MessageSent', message_id }
+ *
+ * `message_id` is `string | string[] | null` — an array when attachments are
+ * delivered as separate messages, null when nothing was sent. `id` is kept
+ * only as a tolerated alias; v2 does not emit it. The route's
+ * `normalizeSendResponse` reads all three forms and never turns an
+ * unreadable id on a 2xx into an error — the message is already gone.
  */
 export type UnipileSendMessageResponse = {
+	object?: string
+	chat_id?: string
+	message_id?: string | string[] | null
+	/** Not emitted by v2; tolerated alias only. */
 	id?: string
-	message_id?: string
 	sent_at?: string
 }
 
+/**
+ * The MCP-facing conversation shape. This is OUR contract with agents, not
+ * Unipile's wire shape — v2 chats arrive as { id, user_id,
+ * last_message_timestamp, unread_count, last_message } and are mapped onto
+ * this by `normalizeListResponse` in the route. Keeping the two separate is
+ * what let the v1→v2 wire change land without agents seeing a shape change.
+ */
 export type UnipileConversation = {
 	thread_id: string
 	participants: Array<{ recipient_urn: string; display_name: string }>
@@ -61,10 +74,14 @@ export type UnipileConversation = {
 	preview: string
 }
 
+/**
+ * v2 returns the page under `data`. `conversations`/`items` remain as
+ * tolerated aliases; elements are raw wire chats, not `UnipileConversation`.
+ */
 export type UnipileListConversationsResponse = {
-	conversations?: UnipileConversation[]
-	items?: UnipileConversation[]
-	data?: UnipileConversation[]
+	data?: unknown[]
+	items?: unknown[]
+	conversations?: unknown[]
 	next_cursor?: string
 	cursor?: string
 }

@@ -326,7 +326,7 @@ describe('POST /send-message — six error classes', () => {
 		expect(calls).toBe(3)
 	})
 
-	it('UNIPILE_UNAVAILABLE — surfaces after 3 attempts on 5xx', async () => {
+	it('UNIPILE_UNAVAILABLE — a 5xx on a SEND is not replayed', async () => {
 		stubCredential(ACTOR_A, 'unipile-A')
 		let calls = 0
 		fakeUnipile({
@@ -342,6 +342,29 @@ describe('POST /send-message — six error classes', () => {
 			body: 'hi',
 			idempotency_key: 'k-5',
 		})
+		const json = (await res.json()) as { error?: { code?: string } }
+		expect(json.error?.code).toBe('UNIPILE_UNAVAILABLE')
+		// Exactly one attempt. A 5xx on a send is ambiguous — Unipile may have
+		// already handed the message to LinkedIn and failed only on the way back
+		// — so replaying it inside the single idempotency claim would deliver the
+		// message twice while the caller sees one success. 429 is different (see
+		// the RATE_LIMITED case above): rejected before execution, so still safe
+		// to retry.
+		expect(calls).toBe(1)
+	})
+
+	it('UNIPILE_UNAVAILABLE — a 5xx on a READ still retries, since reads cannot duplicate', async () => {
+		stubCredential(ACTOR_A, 'unipile-A')
+		let calls = 0
+		fakeUnipile({
+			list: async () => {
+				calls++
+				return { status: 503, body: {}, headers: {} }
+			},
+		})
+		const db = buildFakeDb()
+		const app = buildAppWithFakes({ actorId: ACTOR_A, db })
+		const res = await req(app, 'GET', '/list-conversations')
 		const json = (await res.json()) as { error?: { code?: string } }
 		expect(json.error?.code).toBe('UNIPILE_UNAVAILABLE')
 		expect(calls).toBe(3)
@@ -595,6 +618,139 @@ describe('two-actor lookup isolation', () => {
 		expect(seenAccountId).toBe('unipile-B')
 
 		expect(vi.mocked(decrypt)).toHaveBeenCalled()
+	})
+})
+
+// ── v2 wire-shape translation ────────────────────────────────────────────
+// These pin the response shapes against the Unipile v2 reference pages
+// (Start a Chat / Send a Message / List Chats), which the mock server now
+// mirrors verbatim. Getting these wrong is invisible: the call returns 200
+// and the caller acts on the result.
+
+describe('v2 response normalization', () => {
+	it('reads message_id and chat_id from a v2 ChatStarted envelope', async () => {
+		stubCredential(ACTOR_A, 'unipile-A')
+		fakeUnipile({
+			send: async () => ({
+				status: 200,
+				body: { object: 'ChatStarted', chat_id: 'chat-9', message_id: 'msg-9' },
+				headers: {},
+			}),
+		})
+		const db = buildFakeDb()
+		const app = buildAppWithFakes({ actorId: ACTOR_A, db })
+		const res = await req(app, 'POST', '/send-message', {
+			recipient_urn: 'urn:li:person:X',
+			body: 'hi',
+			idempotency_key: 'k-shape-1',
+		})
+		const json = (await res.json()) as { message_id?: string; chat_id?: string }
+		expect(json.message_id).toBe('msg-9')
+		// Without chat_id the agent has no thread to follow up in — v2 returns
+		// the new conversation id here and nowhere else.
+		expect(json.chat_id).toBe('chat-9')
+	})
+
+	it('takes the first id when v2 returns message_id as an array', async () => {
+		stubCredential(ACTOR_A, 'unipile-A')
+		fakeUnipile({
+			send: async () => ({
+				status: 200,
+				body: { object: 'ChatStarted', chat_id: 'chat-1', message_id: ['msg-a', 'msg-b'] },
+				headers: {},
+			}),
+		})
+		const db = buildFakeDb()
+		const app = buildAppWithFakes({ actorId: ACTOR_A, db })
+		const res = await req(app, 'POST', '/send-message', {
+			recipient_urn: 'urn:li:person:X',
+			body: 'hi',
+			idempotency_key: 'k-shape-2',
+		})
+		expect(res.status).toBe(200)
+		expect(((await res.json()) as { message_id?: string }).message_id).toBe('msg-a')
+	})
+
+	it('reports success — not a retryable error — when a 2xx carries no message id', async () => {
+		stubCredential(ACTOR_A, 'unipile-A')
+		let calls = 0
+		fakeUnipile({
+			send: async () => {
+				calls++
+				// v2 documents message_id as string | string[] | null.
+				return { status: 200, body: { object: 'ChatStarted', message_id: null }, headers: {} }
+			},
+		})
+		const db = buildFakeDb()
+		const app = buildAppWithFakes({ actorId: ACTOR_A, db })
+		const res = await req(app, 'POST', '/send-message', {
+			recipient_urn: 'urn:li:person:X',
+			body: 'hi',
+			idempotency_key: 'k-shape-3',
+		})
+		// LinkedIn accepted the message. Calling this a retryable 502 would
+		// release the idempotency claim and let the caller send a SECOND copy
+		// — the duplicate-outreach pattern that gets accounts restricted.
+		expect(res.status).toBe(200)
+		expect(((await res.json()) as { message_id?: string }).message_id).toBe('')
+		expect(calls).toBe(1)
+	})
+
+	it('maps v2 chat objects onto the MCP conversation shape', async () => {
+		stubCredential(ACTOR_A, 'unipile-A')
+		fakeUnipile({
+			list: async () => ({
+				status: 200,
+				// v2 nests the page under `data`, and a chat is { id, user_id,
+				// last_message_timestamp, unread_count, last_message } — NOT v1's
+				// { thread_id, attendees }.
+				body: {
+					data: [
+						{
+							object: 'Chat',
+							id: 'chat-42',
+							name: 'Ada Lovelace',
+							user_id: 'user-42',
+							unread_count: 3,
+							last_message_timestamp: '2026-09-01T10:00:00.000Z',
+							last_message: { text: 'Thanks!' },
+						},
+					],
+				},
+				headers: {},
+			}),
+		})
+		const db = buildFakeDb()
+		const app = buildAppWithFakes({ actorId: ACTOR_A, db })
+		const res = await req(app, 'GET', '/list-conversations')
+		const json = (await res.json()) as {
+			conversations?: Array<Record<string, unknown>>
+		}
+		const [conv] = json.conversations ?? []
+		expect(conv).toBeDefined()
+		// A bare cast of the v2 item would leave every one of these undefined,
+		// and the agent would feed thread_id: undefined straight into reply().
+		expect(conv?.thread_id).toBe('chat-42')
+		expect(conv?.unread_count).toBe(3)
+		expect(conv?.last_message_at).toBe('2026-09-01T10:00:00.000Z')
+		expect(conv?.preview).toBe('Thanks!')
+		expect(conv?.participants).toEqual([{ recipient_urn: 'user-42', display_name: 'Ada Lovelace' }])
+	})
+
+	it('fails loudly when the conversation list has no recognisable array', async () => {
+		stubCredential(ACTOR_A, 'unipile-A')
+		fakeUnipile({
+			list: async () => ({ status: 200, body: { object: 'ChatList' }, headers: {} }),
+		})
+		const db = buildFakeDb()
+		const app = buildAppWithFakes({ actorId: ACTOR_A, db })
+		const res = await req(app, 'GET', '/list-conversations')
+		// An empty array here would read as "this user has no LinkedIn
+		// conversations", which an agent will report to a human as fact. A read
+		// has no side effect, so erroring is the safe direction.
+		const json = (await res.json()) as { error?: { code?: string }; conversations?: unknown[] }
+		expect(json.conversations).toBeUndefined()
+		expect(json.error?.code).toBe('UNIPILE_UNAVAILABLE')
 	})
 })
 

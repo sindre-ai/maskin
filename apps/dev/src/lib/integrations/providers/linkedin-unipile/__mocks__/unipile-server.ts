@@ -39,16 +39,42 @@ const CANNED_AUTH_LINK = (state: string, base: string) => ({
 	},
 })
 
-const CANNED_MESSAGE_RESPONSE = () => ({
-	object: 'Message',
-	id: `mock-msg-${Date.now()}`,
-	sent_at: new Date().toISOString(),
+// Shapes below are copied from the Unipile v2 reference pages, not invented.
+// An invented mock is worse than no mock: it makes the suite green against a
+// payload production will never send.
+
+/** `POST /v2/:account_id/chats/send` — reference: "Start a Chat". */
+const CANNED_START_CHAT_RESPONSE = () => ({
+	object: 'ChatStarted',
+	chat_id: `mock-chat-${Date.now()}`,
+	message_id: `mock-msg-${Date.now()}`,
 })
 
+/** `POST /v2/:account_id/chats/:chat_id/messages/send` — reference: "Send a Message". */
+const CANNED_SEND_MESSAGE_RESPONSE = () => ({
+	object: 'MessageSent',
+	message_id: `mock-msg-${Date.now()}`,
+})
+
+/** `GET /v2/:account_id/chats` — reference: "List Chats". Page nests under `data`. */
 const CANNED_CHATS_RESPONSE = () => ({
 	object: 'ChatList',
-	items: [],
-	cursor: null,
+	data: [
+		{
+			object: 'Chat',
+			id: 'mock-chat-1',
+			name: 'Ada Lovelace',
+			user_id: 'mock-user-1',
+			type: '1to1',
+			is_1to1: true,
+			is_group: false,
+			is_archived: false,
+			unread_count: 2,
+			last_message_timestamp: '2026-09-01T10:00:00.000Z',
+			last_message: { object: 'MessagePreview', text: 'Thanks for reaching out!' },
+			provider: 'linkedin',
+		},
+	],
 })
 
 async function readBody(req: IncomingMessage): Promise<string> {
@@ -91,13 +117,13 @@ export async function startUnipileMock(): Promise<UnipileMockServer> {
 		}
 		// v2 messaging endpoints — account_id is a path segment.
 		if (method === 'POST' && /^\/v2\/[^/]+\/chats\/send$/.test(url)) {
-			return send(200, CANNED_MESSAGE_RESPONSE())
+			return send(200, CANNED_START_CHAT_RESPONSE())
 		}
 		if (method === 'GET' && /^\/v2\/[^/]+\/chats(\?.*)?$/.test(url)) {
 			return send(200, CANNED_CHATS_RESPONSE())
 		}
 		if (method === 'POST' && /^\/v2\/[^/]+\/chats\/[^/]+\/messages\/send$/.test(url)) {
-			return send(200, CANNED_MESSAGE_RESPONSE())
+			return send(200, CANNED_SEND_MESSAGE_RESPONSE())
 		}
 		if (method === 'GET' && url.startsWith('/mock-wizard')) {
 			res.statusCode = 200

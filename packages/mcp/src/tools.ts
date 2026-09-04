@@ -1771,7 +1771,17 @@ export const tools = {
 				),
 		}),
 		outputSchema: z.object({
-			message_id: z.string().describe('LinkedIn-side message id, stable across replays.'),
+			message_id: z
+				.string()
+				.describe(
+					'LinkedIn-side message id, stable across replays. Empty string on the rare send that Unipile accepts without returning a readable id — the message WAS sent, so do not retry.',
+				),
+			chat_id: z
+				.string()
+				.optional()
+				.describe(
+					'Id of the conversation this message started. Pass as thread_id to linkedin__reply to continue it.',
+				),
 			sent_at: z
 				.string()
 				.datetime()

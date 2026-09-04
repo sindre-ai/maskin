@@ -1,6 +1,12 @@
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { INTEGRATION_STATUS_ACTIVE, idempotencyRecords, integrations } from '@maskin/db/schema'
+import {
+	INTEGRATION_STATUS_ACTIVE,
+	type Integration,
+	idempotencyRecords,
+	integrations,
+} from '@maskin/db/schema'
 import { and, eq, lt } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { trackIntegrationConnected } from '../lib/analytics/integration-events'
@@ -108,6 +114,91 @@ function callbackUrl(): string {
 	return `${base}/api/integrations/linkedin-unipile/callback`
 }
 
+// ── Hosted-auth `state` binding ───────────────────────────────────────────
+// The callback is unauthenticated (it is a browser redirect, so no API key
+// can ride along) — `state` is the ONLY thing binding the response to the
+// request we made. It therefore has to be secret, single-use and expiring.
+//
+// `integrations.id` alone satisfies none of those: `GET /api/integrations`
+// returns whole rows to every workspace member, so a co-member can read the
+// id and re-point a colleague's LinkedIn identity at their own Unipile
+// account; and a state that never expires or gets consumed means the
+// callback URL sitting in browser history rebinds a live integration every
+// time it is replayed.
+//
+// So `state` is `<integrationId>.<nonce>`: the id locates the row without a
+// scan, and the nonce authenticates the caller. The nonce lives in the
+// row's own encrypted `credentials` blob — it never leaves the server
+// (`routes/integrations.ts` strips `credentials` from every list response)
+// and needs no migration. Landing a credential overwrites the blob, which
+// is what consumes it.
+const AUTH_NONCE_TTL_MS = 10 * 60_000
+
+type StoredAuthBlob = {
+	account_id?: string
+	auth_nonce?: string
+	nonce_expires_at?: string
+}
+
+/**
+ * Decrypt a row's credentials blob. Returns `{}` for the empty string a
+ * freshly-inserted pending row carries, and for an undecryptable blob (an
+ * encryption-key rotation) — in both cases the caller has no valid nonce to
+ * compare against and must reject, which is the safe direction.
+ */
+function readStoredAuthBlob(raw: string): StoredAuthBlob {
+	if (!raw) return {}
+	try {
+		const parsed: unknown = JSON.parse(decrypt(raw))
+		return parsed && typeof parsed === 'object' ? (parsed as StoredAuthBlob) : {}
+	} catch {
+		return {}
+	}
+}
+
+/** Split on the LAST dot — UUIDs contain no dots, but be explicit about it. */
+function parseCallbackState(state: string): { integrationId: string; nonce: string } | null {
+	const i = state.lastIndexOf('.')
+	if (i <= 0 || i === state.length - 1) return null
+	return { integrationId: state.slice(0, i), nonce: state.slice(i + 1) }
+}
+
+function nonceMatches(stored: string | undefined, presented: string): boolean {
+	if (!stored) return false
+	const a = Buffer.from(stored, 'utf8')
+	const b = Buffer.from(presented, 'utf8')
+	// timingSafeEqual throws on a length mismatch, so guard first. The length
+	// itself is not a secret (every nonce we mint is the same width).
+	return a.length === b.length && timingSafeEqual(a, b)
+}
+
+/**
+ * Resolve the `state` a callback arrived with to the pending row that minted
+ * it, verifying the nonce and its expiry. Every rejection is deliberately
+ * reported to the user as the same opaque `unknown_state` — distinguishing
+ * "no such row" from "bad nonce" would hand an attacker an oracle.
+ */
+async function resolveCallbackState(
+	db: Database,
+	state: string,
+): Promise<{ ok: true; row: Integration } | { ok: false; reason: string }> {
+	const parts = parseCallbackState(state)
+	if (!parts) return { ok: false, reason: 'malformed_state' }
+	const [row] = await db
+		.select()
+		.from(integrations)
+		.where(and(eq(integrations.id, parts.integrationId), eq(integrations.provider, PROVIDER)))
+		.limit(1)
+	if (!row) return { ok: false, reason: 'no_row' }
+	const blob = readStoredAuthBlob(row.credentials)
+	if (!nonceMatches(blob.auth_nonce, parts.nonce)) return { ok: false, reason: 'bad_nonce' }
+	const expiresAt = blob.nonce_expires_at ? Date.parse(blob.nonce_expires_at) : Number.NaN
+	if (!Number.isFinite(expiresAt) || expiresAt < Date.now()) {
+		return { ok: false, reason: 'expired_nonce' }
+	}
+	return { ok: true, row }
+}
+
 // ── POST /connect ──────────────────────────────────────────────────────────
 
 const connectRoute = createRoute({
@@ -157,18 +248,35 @@ app.openapi(connectRoute, (async (c) => {
 		)
 		.limit(1)
 
+	// Mint the nonce that authenticates the callback. It is written to the row
+	// BEFORE the wizard link is handed out, so a callback can never arrive for
+	// a nonce we have not yet persisted.
+	const authNonce = randomBytes(32).toString('hex')
+	const nonceExpiresAt = new Date(Date.now() + AUTH_NONCE_TTL_MS).toISOString()
+
 	let integrationId: string
 	if (existing[0]) {
 		integrationId = existing[0].id
 		// 'active' is the shared vocabulary — see CONNECTED_STATUS. Re-running
 		// the wizard against an already-active row must NOT demote it to
 		// pending, or the credential goes unreadable until the callback lands.
-		if (existing[0].status !== CONNECTED_STATUS) {
-			await db
-				.update(integrations)
-				.set({ status: 'pending', updatedAt: new Date() })
-				.where(eq(integrations.id, integrationId))
-		}
+		// For the same reason the existing account_id is carried across when the
+		// nonce is written in: reconnecting must not blind the live credential.
+		const prior = readStoredAuthBlob(existing[0].credentials)
+		await db
+			.update(integrations)
+			.set({
+				credentials: encrypt(
+					JSON.stringify({
+						...(prior.account_id ? { account_id: prior.account_id } : {}),
+						auth_nonce: authNonce,
+						nonce_expires_at: nonceExpiresAt,
+					}),
+				),
+				...(existing[0].status === CONNECTED_STATUS ? {} : { status: 'pending' as const }),
+				updatedAt: new Date(),
+			})
+			.where(eq(integrations.id, integrationId))
 	} else {
 		const [row] = await db
 			.insert(integrations)
@@ -177,7 +285,9 @@ app.openapi(connectRoute, (async (c) => {
 				actorId,
 				provider: PROVIDER,
 				status: 'pending',
-				credentials: '',
+				credentials: encrypt(
+					JSON.stringify({ auth_nonce: authNonce, nonce_expires_at: nonceExpiresAt }),
+				),
 				createdBy: actorId,
 			})
 			.returning({ id: integrations.id })
@@ -192,7 +302,7 @@ app.openapi(connectRoute, (async (c) => {
 			providers: ['linkedin'],
 			expires_on: new Date(Date.now() + 10 * 60_000).toISOString(),
 			redirect_uri: callbackUrl(),
-			state: integrationId,
+			state: `${integrationId}.${authNonce}`,
 		})
 		return c.json({ install_url: link.data.link, integration_id: integrationId })
 	} catch (err) {
@@ -258,19 +368,16 @@ app.openapi(callbackRoute, (async (c) => {
 		return redirectToSettings(c, 'error', 'wrong_provider')
 	}
 
-	// `state` IS integrations.id — we set it at /connect time. A stale row
-	// that was never re-connected must not silently absorb an unrelated success.
-	const [pending] = await db
-		.select()
-		.from(integrations)
-		.where(and(eq(integrations.id, state), eq(integrations.provider, PROVIDER)))
-		.limit(1)
-
-	if (!pending) {
-		logger.warn('linkedin-unipile callback: no matching integration row', { state })
+	const resolved = await resolveCallbackState(db, state)
+	if (!resolved.ok) {
+		logger.warn('linkedin-unipile callback: state rejected', { reason: resolved.reason })
 		return redirectToSettings(c, 'error', 'unknown_state')
 	}
+	const pending = resolved.row
 
+	// Landing the credential drops auth_nonce/nonce_expires_at from the blob,
+	// which is what makes the state single-use: a replay of this exact URL now
+	// resolves to 'bad_nonce' instead of rebinding a live integration.
 	const encrypted = encrypt(JSON.stringify({ account_id }))
 
 	// Single-transaction credential landing (spec §Telemetry ordering rule):
@@ -301,16 +408,31 @@ app.openapi(callbackRoute, (async (c) => {
 		})
 	}
 
-	return redirectToSettings(c, 'connected', account_id)
+	return redirectToSettings(c, 'connected', account_id, pending.workspaceId)
 }) as RouteHandler<typeof callbackRoute, Env>)
 
-function settingsIntegrationsUrl(): string {
-	const base = (process.env.MASKIN_PUBLIC_URL ?? 'http://localhost:3000').replace(/\/$/, '')
-	return `${base}/settings/integrations`
+/**
+ * Where the browser lands after the wizard. This is the SPA, not the API —
+ * MASKIN_PUBLIC_URL is the backend origin and would 404 — and the settings
+ * route is workspace-scoped (`apps/web/src/routes/_authed/$workspaceId/
+ * settings/integrations.tsx`), matching what every other OAuth callback in
+ * routes/integrations.ts already builds.
+ *
+ * When the state never resolved to a row there is no workspace to address,
+ * so we hand the user to the app root and let it route them.
+ */
+function settingsIntegrationsUrl(workspaceId?: string): string {
+	const base = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '')
+	return workspaceId ? `${base}/${workspaceId}/settings/integrations` : `${base}/`
 }
 
-function redirectToSettings(c: Context, status: 'connected' | 'error', detail: string): Response {
-	const url = new URL(settingsIntegrationsUrl())
+function redirectToSettings(
+	c: Context,
+	status: 'connected' | 'error',
+	detail: string,
+	workspaceId?: string,
+): Response {
+	const url = new URL(settingsIntegrationsUrl(workspaceId))
 	url.searchParams.set('linkedin_status', status)
 	url.searchParams.set('linkedin_detail', detail)
 	return c.redirect(url.toString(), 302)
@@ -332,12 +454,9 @@ async function handleCallbackError(
 	// existing Unipile account_id; adopt it into the pending row so the customer
 	// isn't stuck in a reconnect loop.
 	if (error_type === 'api/already_exists' && state && error_detail) {
-		const [pending] = await db
-			.select()
-			.from(integrations)
-			.where(and(eq(integrations.id, state), eq(integrations.provider, PROVIDER)))
-			.limit(1)
-		if (pending) {
+		const resolved = await resolveCallbackState(db, state)
+		if (resolved.ok) {
+			const pending = resolved.row
 			const encrypted = encrypt(JSON.stringify({ account_id: error_detail }))
 			await db.transaction(async (tx) => {
 				await tx
@@ -358,16 +477,23 @@ async function handleCallbackError(
 					integrationId: pending.id,
 				})
 			}
-			return redirectToSettings(c, 'connected', error_detail)
+			return redirectToSettings(c, 'connected', error_detail, pending.workspaceId)
 		}
-		logger.warn('linkedin-unipile callback already_exists: no pending row for state', { state })
+		logger.warn('linkedin-unipile callback already_exists: state rejected', {
+			reason: resolved.reason,
+		})
 		return redirectToSettings(c, 'error', 'unknown_state')
 	}
 
 	if (error_type === 'api/restricted_account') {
 		return redirectToSettings(c, 'error', 'account_restricted')
 	}
-	logger.warn('linkedin-unipile callback: unknown error_type', { error_type, state })
+	// Log the integration id only — `state` carries the auth nonce, and a
+	// secret that reaches the log line is no longer a secret.
+	logger.warn('linkedin-unipile callback: unknown error_type', {
+		error_type,
+		integrationId: state ? parseCallbackState(state)?.integrationId : undefined,
+	})
 	return redirectToSettings(c, 'error', error_type)
 }
 
@@ -498,9 +624,17 @@ async function markIntegrationRevoked(db: Database, integrationId: string): Prom
  * `RATE_LIMITED_UNIPILE` and `UNIPILE_UNAVAILABLE`; everything else is
  * terminal at the first classification. Backoff is exponential with jitter
  * as configured per class in errors.ts.
+ *
+ * `mutating` marks a call that sends a LinkedIn message. A 5xx/timeout on a
+ * send is NOT safe to replay: Unipile may already have handed the message to
+ * LinkedIn and failed only on the way back, so a retry inside the single
+ * idempotency claim delivers the message twice with the caller seeing one
+ * success. 429 stays retryable either way — a rate-limited request is
+ * rejected before execution, so replaying it cannot duplicate anything.
  */
 async function callUnipileWithRetry<T>(
 	call: () => Promise<{ status: number; body: unknown; headers: Record<string, string> }>,
+	opts: { mutating?: boolean } = {},
 ): Promise<{ status: number; body: T; headers: Record<string, string> }> {
 	let lastAttemptError: LinkedInIntegrationError | null = null
 	for (let attempt = 0; ; attempt++) {
@@ -511,10 +645,17 @@ async function callUnipileWithRetry<T>(
 		}
 		const message = extractUpstreamMessage(result.body, code)
 		lastAttemptError = new LinkedInIntegrationError(code, message, { httpStatus: result.status })
-		const policy = RETRY_POLICY_BY_CODE[code]
+		const replaySafe = !opts.mutating || code === 'RATE_LIMITED_UNIPILE'
+		const policy = replaySafe ? RETRY_POLICY_BY_CODE[code] : null
 		if (!policy || attempt + 1 >= policy.maxAttempts) {
 			throw lastAttemptError
 		}
+		// A silent retry loop makes a duplicate undiagnosable after the fact.
+		logger.warn('linkedin-unipile: retrying upstream call', {
+			code,
+			attempt: attempt + 1,
+			maxAttempts: policy.maxAttempts,
+		})
 		await delay(computeBackoffMs(policy, attempt))
 	}
 }
@@ -783,12 +924,14 @@ app.post('/send-message', async (c) => {
 			run: async () => {
 				const upstream = await callUnipileWithRetry<
 					UnipileSendMessageResponse | Record<string, unknown>
-				>(() =>
-					client.sendMessage({
-						account_id: pre.credentials.account_id,
-						recipient_urn: validation.payload.recipient_urn,
-						body: validation.payload.body,
-					}),
+				>(
+					() =>
+						client.sendMessage({
+							account_id: pre.credentials.account_id,
+							recipient_urn: validation.payload.recipient_urn,
+							body: validation.payload.body,
+						}),
+					{ mutating: true },
 				)
 				return normalizeSendResponse(upstream.body)
 			},
@@ -834,12 +977,14 @@ app.post('/reply', async (c) => {
 			run: async () => {
 				const upstream = await callUnipileWithRetry<
 					UnipileSendMessageResponse | Record<string, unknown>
-				>(() =>
-					client.reply({
-						account_id: pre.credentials.account_id,
-						thread_id: validation.payload.thread_id,
-						body: validation.payload.body,
-					}),
+				>(
+					() =>
+						client.reply({
+							account_id: pre.credentials.account_id,
+							thread_id: validation.payload.thread_id,
+							body: validation.payload.body,
+						}),
+					{ mutating: true },
 				)
 				return normalizeSendResponse(upstream.body)
 			},
@@ -891,46 +1036,122 @@ app.get('/list-conversations', async (c) => {
 	}
 })
 
+/**
+ * Unipile v2 send responses, per the reference pages:
+ *   - start-chat  POST /v2/{account}/chats/send          → { object: 'ChatStarted', chat_id, message_id }
+ *   - in-chat     POST /v2/{account}/chats/{id}/messages/send → { object: 'MessageSent', message_id }
+ *
+ * `message_id` is documented as `string | string[] | null` — an array when
+ * attachments go out as separate messages, null when no message was sent.
+ */
 function normalizeSendResponse(body: UnipileSendMessageResponse | Record<string, unknown>): {
 	message_id: string
+	chat_id?: string
 	sent_at: string
 } {
 	const rec = body as Record<string, unknown>
-	// The v2 migration doc confirms account_id moves to the path but does not
-	// fully spec the response envelope. Accept either `id` or `message_id`;
-	// default `sent_at` to now so a response missing the timestamp doesn't 502
-	// on the caller. The MCP tool contract (Task 3 Zod schemas) stays stable.
 	const inner =
 		rec.data && typeof rec.data === 'object' ? (rec.data as Record<string, unknown>) : rec
-	const messageIdRaw =
-		typeof inner.message_id === 'string'
-			? inner.message_id
-			: typeof inner.id === 'string'
-				? inner.id
-				: ''
-	const sentAtRaw = typeof inner.sent_at === 'string' ? inner.sent_at : new Date().toISOString()
-	if (!messageIdRaw) {
-		throw new LinkedInIntegrationError('UNIPILE_UNAVAILABLE', 'Unipile response missing message id')
+	const raw = inner.message_id ?? inner.id
+	const messageId =
+		typeof raw === 'string' ? raw : Array.isArray(raw) && typeof raw[0] === 'string' ? raw[0] : ''
+	const chatId = typeof inner.chat_id === 'string' ? inner.chat_id : undefined
+	const sentAt = typeof inner.sent_at === 'string' ? inner.sent_at : new Date().toISOString()
+
+	if (!messageId) {
+		// We got here on a 2xx: LinkedIn ACCEPTED the message. Throwing a
+		// retryable error here would release the idempotency claim and let the
+		// caller send a SECOND copy — the duplicate-outreach pattern that gets
+		// LinkedIn accounts restricted. An unreadable id is a success we cannot
+		// fully describe, not a failure: report it, and log loudly enough that
+		// a real envelope drift is diagnosable.
+		logger.error('linkedin-unipile send: 2xx with no readable message id', {
+			responseKeys: Object.keys(inner),
+		})
 	}
-	return { message_id: messageIdRaw, sent_at: sentAtRaw }
+	return { message_id: messageId, sent_at: sentAt, ...(chatId ? { chat_id: chatId } : {}) }
 }
 
+/**
+ * A single chat in a v2 `GET /v2/{account}/chats` response. Field names are
+ * from the v2 reference — v1's `thread_id`/`attendees` are gone: the id is
+ * `id`, the timestamp is `last_message_timestamp`, and booleans are `is_*`.
+ * Unknown keys pass through so a Unipile addition can't fail the parse.
+ */
+const V2ChatSchema = z
+	.object({
+		id: z.string(),
+		name: z.string().optional(),
+		user_id: z.string().optional(),
+		last_message_timestamp: z.string().optional(),
+		unread_count: z.number().optional(),
+		last_message: z.object({ text: z.string().optional() }).passthrough().nullish(),
+	})
+	.passthrough()
+
+/**
+ * Map v2 wire chats onto the MCP-facing conversation shape. The MCP contract
+ * (`thread_id`, `participants`, …) is deliberately unchanged — agents see the
+ * same fields; only the translation from the wire moved to v2.
+ *
+ * `participants` is populated from `user_id`, which v2 sets on 1-to-1 chats
+ * only. Group chats carry `participants_count` but no member list on this
+ * endpoint, so they map to an empty array rather than a fabricated one.
+ */
 function normalizeListResponse(body: UnipileListConversationsResponse | Record<string, unknown>): {
 	conversations: UnipileConversation[]
 	next_cursor?: string
 } {
 	const rec = body as Record<string, unknown>
-	// v2 envelope isn't fully documented; try `conversations`, `items`, `data`
-	// in order and take the first array we find. Pagination is `cursor` or
-	// `next_cursor` — treat both as opaque strings the caller feeds back.
-	const arr = Array.isArray(rec.conversations)
-		? rec.conversations
+	// v2 nests the page under `data`. `conversations`/`items` are kept as
+	// tolerated aliases only so a tenant on an older build doesn't hard-fail.
+	const arr = Array.isArray(rec.data)
+		? rec.data
 		: Array.isArray(rec.items)
 			? rec.items
-			: Array.isArray(rec.data)
-				? rec.data
-				: []
-	const conversations = arr as UnipileConversation[]
+			: Array.isArray(rec.conversations)
+				? rec.conversations
+				: null
+
+	if (arr === null) {
+		// A read has no side effect, so failing loudly is safe — and far better
+		// than handing an agent an empty inbox it will report as "no messages".
+		logger.error('linkedin-unipile list: no conversation array in response', {
+			responseKeys: Object.keys(rec),
+		})
+		throw new LinkedInIntegrationError(
+			'UNIPILE_UNAVAILABLE',
+			'Unipile conversation list had an unrecognised shape',
+		)
+	}
+
+	const conversations: UnipileConversation[] = []
+	let skipped = 0
+	for (const item of arr) {
+		const parsed = V2ChatSchema.safeParse(item)
+		if (!parsed.success) {
+			skipped++
+			continue
+		}
+		const chat = parsed.data
+		conversations.push({
+			thread_id: chat.id,
+			participants: chat.user_id
+				? [{ recipient_urn: chat.user_id, display_name: chat.name ?? '' }]
+				: [],
+			last_message_at: chat.last_message_timestamp ?? '',
+			unread_count: chat.unread_count ?? 0,
+			preview: chat.last_message?.text ?? '',
+		})
+	}
+	if (skipped > 0) {
+		// Dropping silently would look like a short page to the caller.
+		logger.warn('linkedin-unipile list: dropped unparseable chats', {
+			skipped,
+			total: arr.length,
+		})
+	}
+
 	const nextCursor =
 		typeof rec.next_cursor === 'string'
 			? rec.next_cursor
