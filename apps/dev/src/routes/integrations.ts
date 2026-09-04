@@ -21,6 +21,7 @@ import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
+import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
 import { type OAuthStatePayload, decodeState, encodeState } from '../lib/integrations/oauth/state'
@@ -73,6 +74,8 @@ import type {
 import { ClaimReleasedError, commitWebhookDelivery } from '../lib/integrations/webhooks/commit'
 import { WebhookHandler } from '../lib/integrations/webhooks/handler'
 import { verifyTimestampSignature } from '../lib/integrations/webhooks/signatures'
+import { LINKEDIN_IDENTITY_PROVIDER } from '../lib/linkedin-addon'
+import { syncLinkedInAddonQuantity } from '../lib/linkedin-addon-billing'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -1575,6 +1578,22 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 			data: { status: 'revoked', reason: 'user_disconnected' },
 		})
 	})
+
+	// Drop the disconnected identity off the $49 add-on. Runs after the status
+	// flip commits, because the sync recomputes quantity from the count of
+	// `active` rows — running it first would still count the row being
+	// revoked and leave the customer billed for it. Quantity changes carry
+	// `proration_behavior: 'none'`, so the identity stays paid for through the
+	// end of the period it was connected in.
+	if (existing.provider === LINKEDIN_IDENTITY_PROVIDER) {
+		await syncLinkedInAddonQuantity(db, existing.workspaceId)
+	}
+
+	// Agents hold a copied snapshot of the provider's MCP server config, which
+	// outlives the credential behind it. Left in place, the agent boots with
+	// the server attached, advertises its tools, and fails every call — so it
+	// reports a broken platform instead of a missing connection.
+	await detachProviderMcpServers(db, existing.workspaceId, existing.provider, actorId)
 
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteIntegrationRoute, Env>)
