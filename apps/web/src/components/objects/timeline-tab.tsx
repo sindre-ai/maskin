@@ -206,7 +206,17 @@ function prevStatusOf(event: EventResponse): string | null {
 	return typeof value === 'string' ? value : null
 }
 
-export function TimelineTab({ object }: { object: ObjectResponse }) {
+export function TimelineTab({
+	object,
+	additionalEvents,
+}: {
+	object: ObjectResponse
+	/** Extra events to merge into the stream — used by the loop detail page to
+	 * fold in agent-work events (session lifecycle, trigger fires) that don't
+	 * carry `entityId = object.id` and so aren't returned by the object graph.
+	 * Deduped against the graph events by event id. */
+	additionalEvents?: EventResponse[]
+}) {
 	const { workspaceId } = useWorkspace()
 	const {
 		data: graph,
@@ -214,7 +224,13 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 		isError: isGraphError,
 		error: graphError,
 	} = useObjectGraph(workspaceId, object.id)
-	const events = graph?.events
+	const events = useMemo(() => {
+		const base = graph?.events ?? []
+		if (!additionalEvents || additionalEvents.length === 0) return base
+		const seen = new Set(base.map((e) => e.id))
+		const extra = additionalEvents.filter((e) => !seen.has(e.id))
+		return extra.length === 0 ? base : [...base, ...extra]
+	}, [graph?.events, additionalEvents])
 	const relationships = graph?.relationships
 	const connectedObjects = graph?.connected_objects
 

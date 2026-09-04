@@ -220,6 +220,47 @@ describe('TimelineTab', () => {
 		expect(within(items[2]).getByText(/session/i)).toBeInTheDocument()
 	})
 
+	// Loop detail passes agent-work events (session lifecycle, trigger fires)
+	// via `additionalEvents` because those rows carry `entityId = session.id`
+	// (or trigger.id), not the loop id, so the object graph doesn't surface
+	// them. Without this, the loop's own row events alone leave the timeline
+	// effectively empty.
+	it('merges additionalEvents alongside graph events, deduping by id', () => {
+		const object = buildObjectResponse({ id: 'loop-1', type: 'bet' })
+		const graphEvent = buildEventResponse({
+			id: 1,
+			action: 'created',
+			entityType: 'bet',
+			entityId: 'loop-1',
+			actorId: 'actor-1',
+			createdAt: '2026-01-01T00:00:00Z',
+		})
+		const extraEvent = buildEventResponse({
+			id: 2,
+			action: 'trigger_fired',
+			entityType: 'trigger',
+			entityId: 'trigger-1',
+			actorId: 'actor-2',
+			createdAt: '2026-01-02T00:00:00Z',
+		})
+		// A duplicate id must not double up.
+		const duplicateOfGraph = buildEventResponse({
+			id: 1,
+			action: 'created',
+			entityType: 'bet',
+			entityId: 'loop-1',
+			actorId: 'actor-1',
+			createdAt: '2026-01-01T00:00:00Z',
+		})
+		mockGraph([graphEvent], [], [], object)
+
+		render(<TimelineTab object={object} additionalEvents={[extraEvent, duplicateOfGraph]} />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+
+		expect(screen.getAllByRole('listitem')).toHaveLength(2)
+	})
+
 	it('renders an empty state when there is nothing to show', () => {
 		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
 		mockGraph([], [], [], object)
