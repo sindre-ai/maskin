@@ -331,7 +331,7 @@ function LoopDetailRoute() {
 							</span>
 							<div className="h-px flex-1 bg-muted" />
 						</div>
-						<TimelineTab object={object} />
+						<TimelineTab object={object} additionalEvents={activityEvents} />
 					</div>
 				)}
 
