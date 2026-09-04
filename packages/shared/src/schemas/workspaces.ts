@@ -177,6 +177,21 @@ export const workspaceSettingsSchema = z.object({
 			// the customer's money, not forfeited — but is only spendable while
 			// `canUseCreditBalance()` (pro/team + status active) is true.
 			credit_balance_cents: z.number().int().nonnegative().optional(),
+			// ── LinkedIn Identity add-on ($49/connected identity/month) ──
+			// Two shapes, because the add-on has to bill a workspace that may
+			// not have a plan subscription to hang an item on:
+			//   pro/team — an item on the plan subscription itself, so the
+			//     $49 lines lands on the same invoice as the plan. Only
+			//     `linkedin_addon_item_id` is set.
+			//   trial — its own single-line subscription created by its own
+			//     Checkout, since there is no plan subscription. BOTH ids are
+			//     set, and `linkedin_addon_subscription_id` is what tells the
+			//     Stripe webhook that an incoming subscription event is the
+			//     add-on's and must not be mistaken for a plan change.
+			// Quantity always equals the count of `active` linkedin-unipile
+			// integration rows on the workspace — see lib/linkedin-addon.ts.
+			linkedin_addon_subscription_id: z.string().nullable().optional(),
+			linkedin_addon_item_id: z.string().nullable().optional(),
 		})
 		.optional(),
 	// North Star onboarding prompt answer — stored when a user submits the

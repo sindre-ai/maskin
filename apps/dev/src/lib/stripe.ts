@@ -13,6 +13,14 @@ export interface StripeEnv {
 	proHardCapUsdCents: number
 	/** USD cents. */
 	teamHardCapUsdCents: number
+	/**
+	 * Recurring $49/month price for one connected LinkedIn identity. Optional,
+	 * unlike the plan prices: a deployment that has not created the Stripe
+	 * Product yet still boots, and the add-on simply cannot be billed — every
+	 * call site checks for null and says so, rather than throwing at boot and
+	 * taking the whole API down over a feature most workspaces do not use.
+	 */
+	priceLinkedinIdentity: string | null
 }
 
 interface CheckoutInputs {
@@ -76,6 +84,7 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 		priceTeam: env.STRIPE_PRICE_TEAM as string,
 		proHardCapUsdCents: parseCapCents('MASKIN_PRO_HARD_CAP_USD_CENTS'),
 		teamHardCapUsdCents: parseCapCents('MASKIN_TEAM_HARD_CAP_USD_CENTS'),
+		priceLinkedinIdentity: env.STRIPE_PRICE_LINKEDIN_IDENTITY || null,
 	}
 }
 
@@ -102,6 +111,19 @@ export function resetStripeClientForTests() {
 
 export function priceIdForPlan(plan: PaidMaskinPlan, env: StripeEnv): string {
 	return plan === 'pro' ? env.pricePro : env.priceTeam
+}
+
+/**
+ * True when the price is the LinkedIn add-on's. The Stripe webhook uses this
+ * to tell an add-on subscription from a plan subscription: both arrive as
+ * `customer.subscription.*` on the same customer, and without this check a
+ * trial workspace's add-on subscription would overwrite
+ * `stripe_subscription_id` (making the add-on look like the plan) and its
+ * cancellation would run the plan-downgrade path.
+ */
+export function isLinkedInAddonPrice(priceId: string | null, env: StripeEnv): boolean {
+	if (!priceId || !env.priceLinkedinIdentity) return false
+	return priceId === env.priceLinkedinIdentity
 }
 
 export function planForPriceId(priceId: string, env: StripeEnv): PaidMaskinPlan | null {
@@ -273,4 +295,63 @@ export function mapSubscriptionStatus(
 export function priceIdFromSubscription(subscription: Stripe.Subscription): string | null {
 	const item = subscription.items?.data?.[0]
 	return item?.price?.id ?? null
+}
+
+/**
+ * Metadata discriminator marking a Checkout Session (and the subscription it
+ * creates) as the LinkedIn Identity add-on's own. A trial workspace has no
+ * plan subscription to attach an item to, so it gets a second, single-line
+ * subscription — and the webhook has to be able to tell the two apart on the
+ * same customer. `isLinkedInAddonPrice` is the primary discriminator; this
+ * metadata is the belt-and-braces one, and survives a price id rotation.
+ */
+export const LINKEDIN_ADDON_METADATA_KIND = 'linkedin_identity_addon'
+
+interface LinkedInAddonCheckoutInputs {
+	workspaceId: string
+	quantity: number
+	successUrl: string
+	cancelUrl: string
+	/** Reused when the workspace already has a Stripe customer; null creates one. */
+	existingCustomerId?: string | null
+}
+
+/**
+ * Checkout Session for the LinkedIn add-on as a standalone subscription.
+ * Only used when the workspace has NO plan subscription (trial) — a pro/team
+ * workspace gets the add-on as an item on the plan subscription instead, so
+ * the $49 lands on the same invoice as the plan rather than billing
+ * separately on its own anniversary.
+ */
+export async function createLinkedInAddonCheckoutSession(
+	stripe: Stripe,
+	inputs: LinkedInAddonCheckoutInputs,
+	env: StripeEnv,
+): Promise<Stripe.Checkout.Session> {
+	if (!env.priceLinkedinIdentity) {
+		throw new Error('STRIPE_PRICE_LINKEDIN_IDENTITY is not configured')
+	}
+	const metadata = {
+		workspace_id: inputs.workspaceId,
+		kind: LINKEDIN_ADDON_METADATA_KIND,
+	}
+	const params: Stripe.Checkout.SessionCreateParams = {
+		mode: 'subscription',
+		client_reference_id: inputs.workspaceId,
+		success_url: inputs.successUrl,
+		cancel_url: inputs.cancelUrl,
+		line_items: [{ price: env.priceLinkedinIdentity, quantity: inputs.quantity }],
+		metadata,
+		subscription_data: { metadata },
+	}
+	if (inputs.existingCustomerId) {
+		params.customer = inputs.existingCustomerId
+	}
+	const session = await stripe.checkout.sessions.create(params)
+	logger.info('LinkedIn add-on checkout session created', {
+		workspaceId: inputs.workspaceId,
+		quantity: inputs.quantity,
+		sessionId: session.id,
+	})
+	return session
 }
