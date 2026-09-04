@@ -35,6 +35,7 @@ describe('useSlackConversations', () => {
 				is_private: false,
 				is_im: false,
 				is_mpim: false,
+				is_member: true,
 				is_channel: true,
 			},
 		])
