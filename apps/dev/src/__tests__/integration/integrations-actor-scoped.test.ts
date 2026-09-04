@@ -152,6 +152,146 @@ describe('getIntegrationCredential — two actors, same workspace', () => {
 		expect(rowB?.credentials).toBe('creds-B')
 	})
 
+	// ── fallbackToAnyActor ────────────────────────────────────────────
+	// An agent never goes through a connect flow, so it never has a LinkedIn
+	// row of its own. Without the fallback its MCP tool calls resolve to null
+	// and report CREDENTIAL_NOT_CONNECTED — the credential is unreachable from
+	// precisely the surface it exists to serve.
+	it('falls back to another actor’s connected identity when the caller has none', async () => {
+		const createdBy = getTestActorId()
+		const ws = await insertWorkspace(db, createdBy)
+		const human = await insertActor(db)
+		const agent = await insertActor(db)
+
+		await db.insert(integrations).values({
+			workspaceId: ws.id,
+			provider: 'linkedin-unipile',
+			status: 'active',
+			credentials: 'creds-human',
+			actorId: human.id,
+			createdBy,
+		})
+
+		expect(await getIntegrationCredential(db, ws.id, 'linkedin-unipile', agent.id)).toBeNull()
+		const row = await getIntegrationCredential(db, ws.id, 'linkedin-unipile', agent.id, {
+			fallbackToAnyActor: true,
+		})
+		expect(row?.credentials).toBe('creds-human')
+	})
+
+	it('still prefers the caller’s own identity over the fallback', async () => {
+		const createdBy = getTestActorId()
+		const ws = await insertWorkspace(db, createdBy)
+		const first = await insertActor(db)
+		const second = await insertActor(db)
+
+		await db.insert(integrations).values({
+			workspaceId: ws.id,
+			provider: 'linkedin-unipile',
+			status: 'active',
+			credentials: 'creds-first',
+			actorId: first.id,
+			createdBy,
+		})
+		await db.insert(integrations).values({
+			workspaceId: ws.id,
+			provider: 'linkedin-unipile',
+			status: 'active',
+			credentials: 'creds-second',
+			actorId: second.id,
+			createdBy,
+		})
+
+		// `second` connected later, so the oldest-first fallback would pick
+		// `first` — it must not, because `second` has its own.
+		const row = await getIntegrationCredential(db, ws.id, 'linkedin-unipile', second.id, {
+			fallbackToAnyActor: true,
+		})
+		expect(row?.credentials).toBe('creds-second')
+	})
+
+	// Whose LinkedIn an agent sends as must not depend on Postgres row order:
+	// it would change silently the moment a second person connects.
+	it('picks the oldest connected identity deterministically', async () => {
+		const createdBy = getTestActorId()
+		const ws = await insertWorkspace(db, createdBy)
+		const older = await insertActor(db)
+		const newer = await insertActor(db)
+
+		await db.insert(integrations).values({
+			workspaceId: ws.id,
+			provider: 'linkedin-unipile',
+			status: 'active',
+			credentials: 'creds-older',
+			actorId: older.id,
+			createdBy,
+			createdAt: new Date('2026-01-01T00:00:00Z'),
+		})
+		await db.insert(integrations).values({
+			workspaceId: ws.id,
+			provider: 'linkedin-unipile',
+			status: 'active',
+			credentials: 'creds-newer',
+			actorId: newer.id,
+			createdBy,
+			createdAt: new Date('2026-06-01T00:00:00Z'),
+		})
+
+		const agent = await insertActor(db)
+		const row = await getIntegrationCredential(db, ws.id, 'linkedin-unipile', agent.id, {
+			fallbackToAnyActor: true,
+		})
+		expect(row?.credentials).toBe('creds-older')
+	})
+
+	// A revoked identity is not a usable one — the fallback must not resurrect
+	// a disconnected account just because it is the only row left.
+	it('never falls back to a non-active row', async () => {
+		const createdBy = getTestActorId()
+		const ws = await insertWorkspace(db, createdBy)
+		const human = await insertActor(db)
+		const agent = await insertActor(db)
+
+		await db.insert(integrations).values({
+			workspaceId: ws.id,
+			provider: 'linkedin-unipile',
+			status: 'revoked',
+			credentials: 'creds-revoked',
+			actorId: human.id,
+			createdBy,
+		})
+
+		expect(
+			await getIntegrationCredential(db, ws.id, 'linkedin-unipile', agent.id, {
+				fallbackToAnyActor: true,
+			}),
+		).toBeNull()
+	})
+
+	// The fallback must not leak across workspace boundaries.
+	it('never falls back to an identity in a different workspace', async () => {
+		const createdBy = getTestActorId()
+		const wsA = await insertWorkspace(db, createdBy)
+		const wsB = await insertWorkspace(db, createdBy)
+		const human = await insertActor(db)
+		const agent = await insertActor(db)
+
+		await db.insert(integrations).values({
+			workspaceId: wsA.id,
+			provider: 'linkedin-unipile',
+			status: 'active',
+			credentials: 'creds-ws-a',
+			actorId: human.id,
+			createdBy,
+		})
+
+		expect(
+			await getIntegrationCredential(db, wsB.id, 'linkedin-unipile', agent.id, {
+				fallbackToAnyActor: true,
+			}),
+		).toBeNull()
+	})
+
 	it('skips actor-scoped rows for unscoped providers', async () => {
 		const createdBy = getTestActorId()
 		const ws = await insertWorkspace(db, createdBy)
