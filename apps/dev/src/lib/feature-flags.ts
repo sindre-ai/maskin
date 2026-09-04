@@ -33,7 +33,7 @@ export const FLAGS = {
 	/**
 	 * Sales Rep loop's `Draft next LinkedIn touch` step: off means "draft
 	 * posted for human review only" (today's behaviour); on means "draft posted
-	 * → sent via `linkedin__send_message` with an idempotency key derived from
+	 * → sent via `linkedin_send_message` with an idempotency key derived from
 	 * `(contact_id, draft_id)`". Per-actor, so the workspace admin can opt in
 	 * their own Sales Rep driver-actor without flipping every workspace at
 	 * once. See the parent bet [First-party LinkedIn MCP — Unipile-backed,
@@ -41,7 +41,7 @@ export const FLAGS = {
 	 * — this flag is the "human-fire path stays available (feature flag on the
 	 * loop) so early customers can opt in gradually" gate from the spec's
 	 * §Behavioral shape. Behavioural (not visual-layer) — the invocation
-	 * surface Task 3 delivers (`linkedin__send_message`) reads this via
+	 * surface Task 3 delivers (`linkedin_send_message`) reads this via
 	 * `resolveFlags(driverActorId, config)` on each Sales Rep loop tick.
 	 * Retire once autosend is the default for every workspace with a
 	 * connected `linkedin-unipile` credential.

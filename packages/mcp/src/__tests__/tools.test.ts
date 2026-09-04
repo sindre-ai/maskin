@@ -90,9 +90,10 @@ const ALL_TOOL_NAMES = [
 	'create_extension',
 	'update_extension',
 	'delete_extension',
-	'linkedin__send_message',
-	'linkedin__reply',
-	'linkedin__list_conversations',
+	// No linkedin__* entries: those three tools moved to the provider's own MCP
+	// server (apps/dev/src/lib/integrations/providers/linkedin-unipile/
+	// mcp-server.ts) so they appear only when LinkedIn is connected. Their
+	// schemas are asserted in that package's linkedin-mcp-server test.
 ]
 
 describe('tool definitions', () => {

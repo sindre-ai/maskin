@@ -1,38 +1,28 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import {
-	INTEGRATION_STATUS_ACTIVE,
-	type Integration,
-	idempotencyRecords,
-	integrations,
-} from '@maskin/db/schema'
-import { and, eq, lt } from 'drizzle-orm'
+import { INTEGRATION_STATUS_ACTIVE, type Integration, integrations } from '@maskin/db/schema'
+import { and, eq } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
-import { getIntegrationCredential } from '../lib/integrations/lookup'
 import { createAuthLink } from '../lib/integrations/providers/linkedin-unipile/client'
 import {
 	LinkedInIntegrationError,
-	RETRY_POLICY_BY_CODE,
-	classifyUnipileResponse,
-	computeBackoffMs,
-	delay,
-	isAccountStatusRevoked,
 	isLinkedInIntegrationError,
 } from '../lib/integrations/providers/linkedin-unipile/errors'
-import type {
-	UnipileClient,
-	UnipileConversation,
-	UnipileListConversationsResponse,
-	UnipileSendMessageResponse,
-} from '../lib/integrations/providers/linkedin-unipile/unipile-client'
-import { createUnipileHttpClient } from '../lib/integrations/providers/linkedin-unipile/unipile-client'
+import {
+	listLinkedInConversations,
+	replyToLinkedInThread,
+	sendLinkedInMessage,
+} from '../lib/integrations/providers/linkedin-unipile/operations'
+import {
+	startLinkedInAddonCheckout,
+	syncLinkedInAddonQuantity,
+} from '../lib/linkedin-addon-billing'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
-import { isWorkspaceMember } from '../lib/workspace-auth'
 /**
  * LinkedIn (Unipile-backed) integration routes — the whole provider surface,
  * rebuilt against Unipile Hosted Auth v2.
@@ -304,12 +294,18 @@ app.openapi(connectRoute, (async (c) => {
 			redirect_uri: callbackUrl(),
 			state: `${integrationId}.${authNonce}`,
 		})
-		return c.json({ install_url: link.data.link, integration_id: integrationId })
+		return c.json({ install_url: link.link, integration_id: integrationId })
 	} catch (err) {
+		// `cause` carries the real Unipile status/body (or the schema-drift
+		// detail); `message` is only the class's stock human-facing text, which
+		// reads as "temporarily unavailable" for every failure mode including a
+		// 200 we could not parse. Log both.
+		const cause = err instanceof LinkedInIntegrationError ? err.cause : undefined
 		logger.error('linkedin-unipile connect: hosted-link creation failed', {
 			workspaceId,
 			actorId,
 			error: err instanceof Error ? err.message : String(err),
+			cause: cause instanceof Error ? cause.message : cause ? String(cause) : undefined,
 		})
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to start LinkedIn connect flow'), 500)
 	}
@@ -408,6 +404,30 @@ app.openapi(callbackRoute, (async (c) => {
 		})
 	}
 
+	// Bill the identity. Ordering matters: the credential is already committed
+	// above, so a Stripe failure here leaves a working connection that is not
+	// yet billed (self-healing on the next connect/disconnect sync) rather than
+	// a paid line with no connection. `syncLinkedInAddonQuantity` swallows its
+	// own Stripe errors for the same reason.
+	const sync = await syncLinkedInAddonQuantity(db, pending.workspaceId)
+	if (sync.status === 'checkout_required') {
+		// Trial workspace: no plan subscription to attach the $49 item to, so
+		// the add-on gets its own single-line subscription via its own Checkout.
+		// Cancelling that Checkout returns to Settings with the connection
+		// intact but unbilled — the integrations page surfaces that state, and
+		// the next sync retries.
+		const settingsUrl = settingsIntegrationsUrl(pending.workspaceId)
+		const checkoutUrl = await startLinkedInAddonCheckout(db, pending.workspaceId, {
+			successUrl: `${settingsUrl}?linkedin_status=connected&linkedin_detail=${encodeURIComponent(account_id)}`,
+			cancelUrl: `${settingsUrl}?linkedin_status=unbilled&linkedin_detail=checkout_canceled`,
+		})
+		if (checkoutUrl) return c.redirect(checkoutUrl, 302)
+		logger.warn('LinkedIn connected on a workspace with no way to bill the add-on', {
+			workspaceId: pending.workspaceId,
+			integrationId: pending.id,
+		})
+	}
+
 	return redirectToSettings(c, 'connected', account_id, pending.workspaceId)
 }) as RouteHandler<typeof callbackRoute, Env>)
 
@@ -496,357 +516,15 @@ async function handleCallbackError(
 	})
 	return redirectToSettings(c, 'error', error_type)
 }
-
 // ── Message verbs (send-message / reply / list-conversations) ─────────────
-
-type StoredLinkedInCredentials = {
-	account_id: string
-	account_status?: string
-}
-
-const IDEMPOTENCY_SCOPE_PREFIX = `${PROVIDER}:`
-
-type ClientOverride = {
-	build: (credentials: StoredLinkedInCredentials) => UnipileClient
-}
-
-let clientOverride: ClientOverride | null = null
-
-/**
- * Build (or return the injected) Unipile client. Tests inject a client via
- * `__setUnipileClientForTests` so the routes don't have to touch the real
- * fetch during unit tests.
- */
-function buildUnipileClient(credentials: StoredLinkedInCredentials): UnipileClient {
-	if (clientOverride) return clientOverride.build(credentials)
-	const baseUrl = process.env.UNIPILE_BASE_URL
-	const apiKey = process.env.UNIPILE_API_KEY
-	if (!baseUrl || !apiKey) {
-		throw new LinkedInIntegrationError(
-			'UNIPILE_UNAVAILABLE',
-			'Unipile client is not configured (missing UNIPILE_BASE_URL or UNIPILE_API_KEY)',
-		)
-	}
-	return createUnipileHttpClient({ baseUrl, apiKey })
-}
-
-/**
- * Test-only seam: allow a Vitest suite to replace the client used by the
- * routes without spinning up a fake fetch. Must be reset in `afterEach` of
- * every test that touches it. Not exported from the package's public entry
- * points — only route-level tests should reach in.
- */
-export function __setUnipileClientForTests(builder: ClientOverride['build'] | null): void {
-	clientOverride = builder === null ? null : { build: builder }
-}
-
-/**
- * Shared preamble: workspace-id header, membership check, credential fetch,
- * Unipile client construction. Every handler runs this before hitting the
- * verb-specific logic. Returns a tagged union so handlers can short-circuit
- * on the well-typed error path.
- */
-type Preamble =
-	| { ok: true; workspaceId: string; actorId: string; credentials: StoredLinkedInCredentials }
-	| { ok: false; error: LinkedInIntegrationError }
-
-async function preamble(db: Database, actorId: string, workspaceId: string): Promise<Preamble> {
-	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
-		return {
-			ok: false,
-			error: new LinkedInIntegrationError(
-				'CREDENTIAL_NOT_CONNECTED',
-				'Actor is not a member of the requested workspace',
-			),
-		}
-	}
-	const row = await getIntegrationCredential(db, workspaceId, PROVIDER, actorId)
-	if (!row) {
-		return {
-			ok: false,
-			error: new LinkedInIntegrationError(
-				'CREDENTIAL_NOT_CONNECTED',
-				'No connected LinkedIn account for this actor. Reconnect at Settings > Integrations.',
-			),
-		}
-	}
-	let parsed: StoredLinkedInCredentials
-	try {
-		parsed = JSON.parse(decrypt(row.credentials as string)) as StoredLinkedInCredentials
-	} catch (err) {
-		return {
-			ok: false,
-			error: new LinkedInIntegrationError(
-				'CREDENTIAL_REVOKED',
-				'Stored LinkedIn credentials could not be decrypted',
-				{ cause: err },
-			),
-		}
-	}
-	if (!parsed.account_id) {
-		return {
-			ok: false,
-			error: new LinkedInIntegrationError(
-				'CREDENTIAL_NOT_CONNECTED',
-				'Stored LinkedIn credentials are missing account_id',
-			),
-		}
-	}
-	if (isAccountStatusRevoked(parsed.account_status)) {
-		await markIntegrationRevoked(db, row.id)
-		return {
-			ok: false,
-			error: new LinkedInIntegrationError(
-				'CREDENTIAL_REVOKED',
-				`LinkedIn account status is ${parsed.account_status}. Reconnect to continue.`,
-			),
-		}
-	}
-	return { ok: true, workspaceId, actorId, credentials: parsed }
-}
-
-async function markIntegrationRevoked(db: Database, integrationId: string): Promise<void> {
-	try {
-		await db
-			.update(integrations)
-			.set({ status: 'revoked' })
-			.where(eq(integrations.id, integrationId))
-	} catch (err) {
-		logger.warn('Failed to flip integration status to revoked', {
-			integrationId,
-			error: err instanceof Error ? err.message : String(err),
-		})
-	}
-}
-
-/**
- * Wrap a Unipile call in the retry policy for its error class. Retries only
- * `RATE_LIMITED_UNIPILE` and `UNIPILE_UNAVAILABLE`; everything else is
- * terminal at the first classification. Backoff is exponential with jitter
- * as configured per class in errors.ts.
- *
- * `mutating` marks a call that sends a LinkedIn message. A 5xx/timeout on a
- * send is NOT safe to replay: Unipile may already have handed the message to
- * LinkedIn and failed only on the way back, so a retry inside the single
- * idempotency claim delivers the message twice with the caller seeing one
- * success. 429 stays retryable either way — a rate-limited request is
- * rejected before execution, so replaying it cannot duplicate anything.
- */
-async function callUnipileWithRetry<T>(
-	call: () => Promise<{ status: number; body: unknown; headers: Record<string, string> }>,
-	opts: { mutating?: boolean } = {},
-): Promise<{ status: number; body: T; headers: Record<string, string> }> {
-	let lastAttemptError: LinkedInIntegrationError | null = null
-	for (let attempt = 0; ; attempt++) {
-		const result = await call()
-		const code = classifyUnipileResponse(result.status, result.body)
-		if (code === null) {
-			return { status: result.status, body: result.body as T, headers: result.headers }
-		}
-		const message = extractUpstreamMessage(result.body, code)
-		lastAttemptError = new LinkedInIntegrationError(code, message, { httpStatus: result.status })
-		const replaySafe = !opts.mutating || code === 'RATE_LIMITED_UNIPILE'
-		const policy = replaySafe ? RETRY_POLICY_BY_CODE[code] : null
-		if (!policy || attempt + 1 >= policy.maxAttempts) {
-			throw lastAttemptError
-		}
-		// A silent retry loop makes a duplicate undiagnosable after the fact.
-		logger.warn('linkedin-unipile: retrying upstream call', {
-			code,
-			attempt: attempt + 1,
-			maxAttempts: policy.maxAttempts,
-		})
-		await delay(computeBackoffMs(policy, attempt))
-	}
-}
-
-function extractUpstreamMessage(body: unknown, code: string): string {
-	if (body && typeof body === 'object') {
-		const rec = body as Record<string, unknown>
-		if (typeof rec.message === 'string' && rec.message.length > 0) return rec.message
-		if (typeof rec.error === 'string' && rec.error.length > 0) return rec.error
-		const detail = rec.detail
-		if (typeof detail === 'string' && detail.length > 0) return detail
-	}
-	return `Unipile responded with ${code}`
-}
-
-/**
- * Sentinel `status` for a claim row whose work is still running. Real
- * responses are persisted with the HTTP status they carried (200), so 0 is
- * unambiguous and needs no extra column.
- */
-const IN_FLIGHT_STATUS = 0
-
-/**
- * How long a claim row may sit in-flight before another request may take it
- * over. A send is bounded well under this: `callUnipileWithRetry` caps at 3
- * attempts with a 30s backoff ceiling, so the worst realistic case is ~1
- * minute. A row still claimed after five minutes therefore means the original
- * process died between claiming and recording, and the key would otherwise be
- * poisoned until the nightly purge.
- */
-const IN_FLIGHT_CLAIM_TTL_MS = 5 * 60 * 1000
-
-/**
- * Idempotency dedup path (spec §5). Callers pass an `idempotency_key` scoped
- * to their draft/contact; the server prefixes it with the provider name, the
- * actor id, and the verb so keys never collide across actors, providers, or
- * operations.
- *
- * The verb is part of the key on purpose. `buildLinkedinAutosendIdempotencyKey`
- * mints `{contact_id}:{draft_id}`, and the same (contact, draft) pair recurs
- * across a send and a later reply — with a verb-blind key the reply would
- * replay the send's stored response, report success, and never be delivered.
- *
- * CLAIM BEFORE WORK. The row is inserted *before* `run()` executes, not after.
- * The natural ordering — SELECT, run, INSERT — is check-then-act: two
- * concurrent calls with the same key both miss the SELECT, both perform the
- * side effect, and the one that loses the primary-key race reports
- * `replayed: true` having already sent a second LinkedIn message. Since the
- * whole point of the ledger is that a send happens at most once, the claim has
- * to be what serialises the callers, and the primary key is what makes the
- * claim atomic.
- *
- * Three outcomes on a duplicate:
- *   - winner finished → replay its stored response.
- *   - winner still in flight → surface a retryable error. We must not run,
- *     because that is the duplicate send this function exists to prevent.
- *   - winner's claim is older than the TTL → take it over (guarded by a
- *     conditional UPDATE, so two simultaneous takeovers can't both win).
- */
-async function withIdempotency<T extends Record<string, unknown>>(opts: {
-	db: Database
-	actorId: string
-	callerKey: string
-	method: string
-	path: string
-	run: () => Promise<T>
-}): Promise<T & { replayed: boolean }> {
-	const scopedKey = `${IDEMPOTENCY_SCOPE_PREFIX}${opts.actorId}:${opts.method}:${opts.path}:${opts.callerKey}`
-
-	let claimed = false
-	try {
-		await opts.db.insert(idempotencyRecords).values({
-			key: scopedKey,
-			actorId: opts.actorId,
-			method: opts.method,
-			path: opts.path,
-			status: IN_FLIGHT_STATUS,
-			response: {},
-		})
-		claimed = true
-	} catch (err) {
-		if (!isPrimaryKeyViolation(err)) throw err
-	}
-
-	if (!claimed) {
-		const [winner] = await opts.db
-			.select()
-			.from(idempotencyRecords)
-			.where(eq(idempotencyRecords.key, scopedKey))
-			.limit(1)
-
-		// Gone between the failed insert and this read — purged, or the owner
-		// released it after a failure. Treat as retryable rather than racing again.
-		if (!winner) {
-			throw new LinkedInIntegrationError(
-				'UNIPILE_UNAVAILABLE',
-				'Idempotency claim vanished mid-flight. Retry the request.',
-			)
-		}
-
-		if (winner.status !== IN_FLIGHT_STATUS) {
-			return replayResponse<T>(winner.response)
-		}
-
-		const staleCutoff = new Date(Date.now() - IN_FLIGHT_CLAIM_TTL_MS)
-		const takenOver = await opts.db
-			.update(idempotencyRecords)
-			.set({ createdAt: new Date() })
-			.where(
-				and(
-					eq(idempotencyRecords.key, scopedKey),
-					eq(idempotencyRecords.status, IN_FLIGHT_STATUS),
-					lt(idempotencyRecords.createdAt, staleCutoff),
-				),
-			)
-			.returning({ key: idempotencyRecords.key })
-
-		if (takenOver.length === 0) {
-			// Another request holds a live claim. Refusing here is the entire
-			// point: proceeding would send the message a second time.
-			throw new LinkedInIntegrationError(
-				'UNIPILE_UNAVAILABLE',
-				'A request with this idempotency key is already in flight. Retry shortly.',
-			)
-		}
-		logger.warn('Took over a stale LinkedIn idempotency claim', {
-			actorId: opts.actorId,
-			method: opts.method,
-			path: opts.path,
-		})
-	}
-
-	let fresh: T
-	try {
-		fresh = await opts.run()
-	} catch (err) {
-		// Release the claim so a retry isn't blocked by work that never
-		// produced a side effect to dedup. Best-effort: if this fails the row
-		// simply ages out via the TTL above.
-		try {
-			await opts.db.delete(idempotencyRecords).where(eq(idempotencyRecords.key, scopedKey))
-		} catch (releaseErr) {
-			logger.warn('Failed to release LinkedIn idempotency claim after an error', {
-				actorId: opts.actorId,
-				error: releaseErr instanceof Error ? releaseErr.message : String(releaseErr),
-			})
-		}
-		throw err
-	}
-
-	try {
-		await opts.db
-			.update(idempotencyRecords)
-			.set({ status: 200, response: fresh, createdAt: new Date() })
-			.where(eq(idempotencyRecords.key, scopedKey))
-	} catch (err) {
-		// The side effect already happened. Do NOT rethrow — that would hand
-		// the caller a failure for work that succeeded and invite a retry that
-		// re-sends. The claim row stays in-flight and blocks duplicates until
-		// it ages out, which is the safe direction to fail.
-		logger.error('LinkedIn send succeeded but its idempotency record was not persisted', {
-			actorId: opts.actorId,
-			method: opts.method,
-			path: opts.path,
-			error: err instanceof Error ? err.message : String(err),
-		})
-	}
-	return { ...(fresh as object), replayed: false } as T & { replayed: boolean }
-}
-
-function replayResponse<T extends Record<string, unknown>>(
-	stored: unknown,
-): T & { replayed: boolean } {
-	const body = (stored && typeof stored === 'object' ? stored : {}) as T
-	return { ...(body as object), replayed: true } as T & { replayed: boolean }
-}
-
-/**
- * Postgres primary-key / unique-index violation detection. The postgres-js
- * driver surfaces `err.code === '23505'` (SQLSTATE for unique_violation);
- * drizzle re-throws that error object unchanged. We only need the SQLSTATE
- * check — the constraint name isn't stable across environments.
- */
-function isPrimaryKeyViolation(err: unknown): boolean {
-	if (!err || typeof err !== 'object') return false
-	const rec = err as Record<string, unknown>
-	if (rec.code === '23505') return true
-	const cause = rec.cause as Record<string, unknown> | undefined
-	if (cause && cause.code === '23505') return true
-	return false
-}
+//
+// The decision logic — credential lookup, error classification, retry policy,
+// idempotency dedup, response normalisation — lives in
+// `lib/integrations/providers/linkedin-unipile/operations.ts`, because the
+// in-process MCP server (`routes/integrations-linkedin-unipile-mcp.ts`) is a
+// second caller of the same three operations. What remains here is the HTTP
+// shell: read the header, call the operation, map a thrown
+// `LinkedInIntegrationError` onto its status code.
 
 function readWorkspaceIdHeader(req: { header(name: string): string | undefined }): string | null {
 	const raw = req.header('x-workspace-id') ?? req.header('X-Workspace-Id')
@@ -892,8 +570,6 @@ function handleTerminalError(err: unknown, operation: string, actorId: string): 
 // ── POST /api/integrations/linkedin-unipile/send-message ─────────────
 
 app.post('/send-message', async (c) => {
-	const db = c.get('db')
-	const actorId = c.get('actorId')
 	const workspaceId = readWorkspaceIdHeader(c.req)
 	if (!workspaceId) {
 		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
@@ -904,39 +580,9 @@ app.post('/send-message', async (c) => {
 	} catch {
 		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON in request body'), 400)
 	}
-	const validation = validateSendPayload(body)
-	if (!validation.ok) {
-		return c.json(
-			errorToResponse(new LinkedInIntegrationError('INVALID_INPUT', validation.error)),
-			400,
-		)
-	}
-	const pre = await preamble(db, actorId, workspaceId)
-	if (!pre.ok) return handleTerminalError(pre.error, 'send-message', actorId)
+	const actorId = c.get('actorId')
 	try {
-		const client = buildUnipileClient(pre.credentials)
-		const result = await withIdempotency({
-			db,
-			actorId,
-			callerKey: validation.payload.idempotency_key,
-			method: 'POST',
-			path: '/api/integrations/linkedin-unipile/send-message',
-			run: async () => {
-				const upstream = await callUnipileWithRetry<
-					UnipileSendMessageResponse | Record<string, unknown>
-				>(
-					() =>
-						client.sendMessage({
-							account_id: pre.credentials.account_id,
-							recipient_urn: validation.payload.recipient_urn,
-							body: validation.payload.body,
-						}),
-					{ mutating: true },
-				)
-				return normalizeSendResponse(upstream.body)
-			},
-		})
-		return c.json(result)
+		return c.json(await sendLinkedInMessage({ db: c.get('db'), actorId, workspaceId }, body))
 	} catch (err) {
 		return handleTerminalError(err, 'send-message', actorId)
 	}
@@ -945,8 +591,6 @@ app.post('/send-message', async (c) => {
 // ── POST /api/integrations/linkedin-unipile/reply ────────────────────
 
 app.post('/reply', async (c) => {
-	const db = c.get('db')
-	const actorId = c.get('actorId')
 	const workspaceId = readWorkspaceIdHeader(c.req)
 	if (!workspaceId) {
 		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
@@ -957,51 +601,17 @@ app.post('/reply', async (c) => {
 	} catch {
 		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON in request body'), 400)
 	}
-	const validation = validateReplyPayload(body)
-	if (!validation.ok) {
-		return c.json(
-			errorToResponse(new LinkedInIntegrationError('INVALID_INPUT', validation.error)),
-			400,
-		)
-	}
-	const pre = await preamble(db, actorId, workspaceId)
-	if (!pre.ok) return handleTerminalError(pre.error, 'reply', actorId)
+	const actorId = c.get('actorId')
 	try {
-		const client = buildUnipileClient(pre.credentials)
-		const result = await withIdempotency({
-			db,
-			actorId,
-			callerKey: validation.payload.idempotency_key,
-			method: 'POST',
-			path: '/api/integrations/linkedin-unipile/reply',
-			run: async () => {
-				const upstream = await callUnipileWithRetry<
-					UnipileSendMessageResponse | Record<string, unknown>
-				>(
-					() =>
-						client.reply({
-							account_id: pre.credentials.account_id,
-							thread_id: validation.payload.thread_id,
-							body: validation.payload.body,
-						}),
-					{ mutating: true },
-				)
-				return normalizeSendResponse(upstream.body)
-			},
-		})
-		return c.json(result)
+		return c.json(await replyToLinkedInThread({ db: c.get('db'), actorId, workspaceId }, body))
 	} catch (err) {
 		return handleTerminalError(err, 'reply', actorId)
 	}
 })
 
 // ── GET /api/integrations/linkedin-unipile/list-conversations ────────
-// Reads only — NOT idempotency-tracked (spec §5 residual: reads don't need
-// dedup, only mutating verbs do).
 
 app.get('/list-conversations', async (c) => {
-	const db = c.get('db')
-	const actorId = c.get('actorId')
 	const workspaceId = readWorkspaceIdHeader(c.req)
 	if (!workspaceId) {
 		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
@@ -1017,207 +627,21 @@ app.get('/list-conversations', async (c) => {
 			400,
 		)
 	}
-	const pre = await preamble(db, actorId, workspaceId)
-	if (!pre.ok) return handleTerminalError(pre.error, 'list-conversations', actorId)
+	const actorId = c.get('actorId')
 	try {
-		const client = buildUnipileClient(pre.credentials)
-		const upstream = await callUnipileWithRetry<
-			UnipileListConversationsResponse | Record<string, unknown>
-		>(() =>
-			client.listConversations({
-				account_id: pre.credentials.account_id,
-				cursor,
-				limit,
-			}),
+		return c.json(
+			await listLinkedInConversations({ db: c.get('db'), actorId, workspaceId }, { limit, cursor }),
 		)
-		return c.json(normalizeListResponse(upstream.body))
 	} catch (err) {
 		return handleTerminalError(err, 'list-conversations', actorId)
 	}
 })
 
-/**
- * Unipile v2 send responses, per the reference pages:
- *   - start-chat  POST /v2/{account}/chats/send          → { object: 'ChatStarted', chat_id, message_id }
- *   - in-chat     POST /v2/{account}/chats/{id}/messages/send → { object: 'MessageSent', message_id }
- *
- * `message_id` is documented as `string | string[] | null` — an array when
- * attachments go out as separate messages, null when no message was sent.
- */
-function normalizeSendResponse(body: UnipileSendMessageResponse | Record<string, unknown>): {
-	message_id: string
-	chat_id?: string
-	sent_at: string
-} {
-	const rec = body as Record<string, unknown>
-	const inner =
-		rec.data && typeof rec.data === 'object' ? (rec.data as Record<string, unknown>) : rec
-	const raw = inner.message_id ?? inner.id
-	const messageId =
-		typeof raw === 'string' ? raw : Array.isArray(raw) && typeof raw[0] === 'string' ? raw[0] : ''
-	const chatId = typeof inner.chat_id === 'string' ? inner.chat_id : undefined
-	const sentAt = typeof inner.sent_at === 'string' ? inner.sent_at : new Date().toISOString()
-
-	if (!messageId) {
-		// We got here on a 2xx: LinkedIn ACCEPTED the message. Throwing a
-		// retryable error here would release the idempotency claim and let the
-		// caller send a SECOND copy — the duplicate-outreach pattern that gets
-		// LinkedIn accounts restricted. An unreadable id is a success we cannot
-		// fully describe, not a failure: report it, and log loudly enough that
-		// a real envelope drift is diagnosable.
-		logger.error('linkedin-unipile send: 2xx with no readable message id', {
-			responseKeys: Object.keys(inner),
-		})
-	}
-	return { message_id: messageId, sent_at: sentAt, ...(chatId ? { chat_id: chatId } : {}) }
-}
-
-/**
- * A single chat in a v2 `GET /v2/{account}/chats` response. Field names are
- * from the v2 reference — v1's `thread_id`/`attendees` are gone: the id is
- * `id`, the timestamp is `last_message_timestamp`, and booleans are `is_*`.
- * Unknown keys pass through so a Unipile addition can't fail the parse.
- */
-const V2ChatSchema = z
-	.object({
-		id: z.string(),
-		name: z.string().optional(),
-		user_id: z.string().optional(),
-		last_message_timestamp: z.string().optional(),
-		unread_count: z.number().optional(),
-		last_message: z.object({ text: z.string().optional() }).passthrough().nullish(),
-	})
-	.passthrough()
-
-/**
- * Map v2 wire chats onto the MCP-facing conversation shape. The MCP contract
- * (`thread_id`, `participants`, …) is deliberately unchanged — agents see the
- * same fields; only the translation from the wire moved to v2.
- *
- * `participants` is populated from `user_id`, which v2 sets on 1-to-1 chats
- * only. Group chats carry `participants_count` but no member list on this
- * endpoint, so they map to an empty array rather than a fabricated one.
- */
-function normalizeListResponse(body: UnipileListConversationsResponse | Record<string, unknown>): {
-	conversations: UnipileConversation[]
-	next_cursor?: string
-} {
-	const rec = body as Record<string, unknown>
-	// v2 nests the page under `data`. `conversations`/`items` are kept as
-	// tolerated aliases only so a tenant on an older build doesn't hard-fail.
-	const arr = Array.isArray(rec.data)
-		? rec.data
-		: Array.isArray(rec.items)
-			? rec.items
-			: Array.isArray(rec.conversations)
-				? rec.conversations
-				: null
-
-	if (arr === null) {
-		// A read has no side effect, so failing loudly is safe — and far better
-		// than handing an agent an empty inbox it will report as "no messages".
-		logger.error('linkedin-unipile list: no conversation array in response', {
-			responseKeys: Object.keys(rec),
-		})
-		throw new LinkedInIntegrationError(
-			'UNIPILE_UNAVAILABLE',
-			'Unipile conversation list had an unrecognised shape',
-		)
-	}
-
-	const conversations: UnipileConversation[] = []
-	let skipped = 0
-	for (const item of arr) {
-		const parsed = V2ChatSchema.safeParse(item)
-		if (!parsed.success) {
-			skipped++
-			continue
-		}
-		const chat = parsed.data
-		conversations.push({
-			thread_id: chat.id,
-			participants: chat.user_id
-				? [{ recipient_urn: chat.user_id, display_name: chat.name ?? '' }]
-				: [],
-			last_message_at: chat.last_message_timestamp ?? '',
-			unread_count: chat.unread_count ?? 0,
-			preview: chat.last_message?.text ?? '',
-		})
-	}
-	if (skipped > 0) {
-		// Dropping silently would look like a short page to the caller.
-		logger.warn('linkedin-unipile list: dropped unparseable chats', {
-			skipped,
-			total: arr.length,
-		})
-	}
-
-	const nextCursor =
-		typeof rec.next_cursor === 'string'
-			? rec.next_cursor
-			: typeof rec.cursor === 'string'
-				? rec.cursor
-				: undefined
-	return nextCursor ? { conversations, next_cursor: nextCursor } : { conversations }
-}
-
-type SendPayload = { recipient_urn: string; body: string; idempotency_key: string }
-type ReplyPayload = { thread_id: string; body: string; idempotency_key: string }
-
-function validateSendPayload(input: {
-	recipient_urn?: unknown
-	body?: unknown
-	idempotency_key?: unknown
-}): { ok: true; payload: SendPayload } | { ok: false; error: string } {
-	if (typeof input.recipient_urn !== 'string' || input.recipient_urn.length === 0) {
-		return { ok: false, error: 'recipient_urn is required' }
-	}
-	if (typeof input.body !== 'string' || input.body.length === 0 || input.body.length > 8000) {
-		return { ok: false, error: 'body must be a non-empty string, max 8000 chars' }
-	}
-	if (
-		typeof input.idempotency_key !== 'string' ||
-		input.idempotency_key.length === 0 ||
-		input.idempotency_key.length > 128
-	) {
-		return { ok: false, error: 'idempotency_key must be a non-empty string, max 128 chars' }
-	}
-	return {
-		ok: true,
-		payload: {
-			recipient_urn: input.recipient_urn,
-			body: input.body,
-			idempotency_key: input.idempotency_key,
-		},
-	}
-}
-
-function validateReplyPayload(input: {
-	thread_id?: unknown
-	body?: unknown
-	idempotency_key?: unknown
-}): { ok: true; payload: ReplyPayload } | { ok: false; error: string } {
-	if (typeof input.thread_id !== 'string' || input.thread_id.length === 0) {
-		return { ok: false, error: 'thread_id is required' }
-	}
-	if (typeof input.body !== 'string' || input.body.length === 0 || input.body.length > 8000) {
-		return { ok: false, error: 'body must be a non-empty string, max 8000 chars' }
-	}
-	if (
-		typeof input.idempotency_key !== 'string' ||
-		input.idempotency_key.length === 0 ||
-		input.idempotency_key.length > 128
-	) {
-		return { ok: false, error: 'idempotency_key must be a non-empty string, max 128 chars' }
-	}
-	return {
-		ok: true,
-		payload: {
-			thread_id: input.thread_id,
-			body: input.body,
-			idempotency_key: input.idempotency_key,
-		},
-	}
-}
-
 export default app
+
+/**
+ * Re-exported from `operations.ts`, its new home. Route-level test suites
+ * predate the extraction and import the seam from this module; keeping the
+ * re-export means the move did not become a test-file rewrite.
+ */
+export { __setUnipileClientForTests } from '../lib/integrations/providers/linkedin-unipile/operations'

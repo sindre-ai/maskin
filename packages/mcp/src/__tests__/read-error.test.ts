@@ -396,26 +396,22 @@ describe('provider_terminal — codes that must never be retried', () => {
 	})
 
 	it('never advises a retry for a provider_terminal error', () => {
-		for (const tool of ['linkedin__send_message', 'linkedin__reply', 'unknown_tool']) {
+		for (const tool of ['create_object', 'update_object', 'unknown_tool']) {
 			const next = pickNext(tool, 'provider_terminal')
 			expect(next.hint).toMatch(/do not retry/i)
 			expect(next.hint).not.toMatch(/retry (the same call|once)/i)
 		}
 	})
 
-	it('routes a failed LinkedIn send to LinkedIn guidance, not list_workspaces', () => {
-		expect(pickNext('linkedin__send_message', 'not_found').tool).toBe(
-			'linkedin__list_conversations',
-		)
-		expect(pickNext('linkedin__reply', 'invalid_param').tool).toBe('linkedin__reply')
-	})
-
+	// LinkedIn's tools moved to the provider's own MCP server, but its six-class
+	// codes still arrive here as upstream errors carrying an HTTP status, so the
+	// classification must keep handling them.
 	it('builds a full envelope for a restricted account', () => {
 		const body = buildReadErrorBody(
-			'linkedin__send_message',
+			'create_object',
 			errWithCode(423, 'LINKEDIN_ACCOUNT_RESTRICTED'),
 		)
-		expect(body.error.tool).toBe('linkedin__send_message')
+		expect(body.error.tool).toBe('create_object')
 		expect(body.error.reason).toMatch(/connection unavailable/i)
 		expect(body.error.next.hint).toMatch(/do not retry/i)
 	})

@@ -427,40 +427,6 @@ const GUIDANCE: Record<string, ToolGuidance> = {
 			hint: 'list_extensions({ workspace_id: "<uuid>" }) — workspace_id defaults to the configured workspace when omitted.',
 		},
 	},
-	// The three LinkedIn tools call toolErrorResponse directly from their
-	// handlers rather than through the READ_TOOL_NAMES branch, so without
-	// entries here they fell back to list_workspaces guidance — useless advice
-	// for a failed send.
-	linkedin__send_message: {
-		notFound: {
-			tool: 'linkedin__list_conversations',
-			hint: 'linkedin__list_conversations() to confirm the recipient is reachable, then retry with a valid recipient_urn.',
-		},
-		invalidParam: {
-			tool: 'linkedin__send_message',
-			hint: 'linkedin__send_message({ recipient_urn: "<urn>", text: "<message>", idempotency_key: "<contact_id>:<draft_id>" }) — recipient_urn and text are required.',
-		},
-	},
-	linkedin__reply: {
-		notFound: {
-			tool: 'linkedin__list_conversations',
-			hint: 'linkedin__list_conversations() to get a current thread_id — the thread may have been deleted or archived.',
-		},
-		invalidParam: {
-			tool: 'linkedin__reply',
-			hint: 'linkedin__reply({ thread_id: "<id>", text: "<message>", idempotency_key: "<contact_id>:<draft_id>" }) — thread_id and text are required. Use a different idempotency_key than the original send.',
-		},
-	},
-	linkedin__list_conversations: {
-		notFound: {
-			tool: 'list_integrations',
-			hint: 'list_integrations() to confirm this actor has a connected linkedin-unipile credential in the workspace.',
-		},
-		invalidParam: {
-			tool: 'linkedin__list_conversations',
-			hint: 'linkedin__list_conversations({ limit: 25 }) — limit must be a positive integer when provided.',
-		},
-	},
 	get_started: {
 		notFound: {
 			tool: 'list_workspaces',
