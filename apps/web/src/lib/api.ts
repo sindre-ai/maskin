@@ -1383,6 +1383,7 @@ export interface SlackConversation {
 	is_im: boolean
 	is_mpim: boolean
 	is_channel: boolean
+	is_member: boolean
 }
 
 export interface SlackUser {

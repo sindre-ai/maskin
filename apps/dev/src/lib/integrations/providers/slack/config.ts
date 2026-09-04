@@ -9,9 +9,9 @@ export const config: ProviderConfig = {
 		config: {
 			authorizationUrl: 'https://slack.com/oauth/v2/authorize',
 			tokenUrl: 'https://slack.com/api/oauth.v2.access',
-			// Bot scopes match the Marketplace listing exactly — AC-T8 enforces this
-			// alignment server-side; the listing itself is a separate human follow-up
-			// and must be verified against this array before submission.
+			// Bot scopes the app requests at OAuth consent. Every scope below is
+			// bound to a tool or an event subscription; do not add speculative
+			// ones. Any change here changes what an install re-consent grants.
 			//
 			// Phase 1 deliberately excluded the `conversations.history`-equivalent
 			// scopes: the bot was to see only what it was @mentioned in, not the full
@@ -23,6 +23,20 @@ export const config: ProviderConfig = {
 			// and the Marketplace listing was re-submitted to match. The AC-T8 rule
 			// still stands in both directions: change this array and the listing
 			// together, never one or the other.
+			//
+			// History scopes (`channels:history`, `groups:history`, `mpim:history`,
+			// `im:history`): backs `slack_get_channel_history` and
+			// `slack_get_thread_replies` — bounded, agent-driven pagination.
+			// The bot only sees history in conversations it is a member of.
+			// Write-side scopes: `chat:write` backs `slack_send_message`,
+			// `slack_update_message` (own messages only) and `slack_delete_message`
+			// (own messages only); `chat:write.customize` lets `slack_send_message`
+			// set `username` + `icon_url` per post; `im:write` backs
+			// `slack_open_conversation` for 1:1 DMs (group DMs need `mpim:write`,
+			// which is a separate follow-on bet). Read scopes
+			// (`channels:read` / `groups:read` / `im:read` / `mpim:read`) back
+			// `slack_conversations_info` and the `conversations.list` lookup that
+			// `slack_list_channels` and `resolveChannelId` share.
 			scopes: [
 				'app_mentions:read',
 				'canvases:read',
