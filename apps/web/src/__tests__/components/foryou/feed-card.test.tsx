@@ -8,7 +8,12 @@ vi.mock('@tanstack/react-router', async () => {
 })
 
 vi.mock('@/hooks/use-actors', () => ({
-	useActors: () => ({ data: [{ id: 'agent-1', name: 'Code Reviewer', type: 'agent' }] }),
+	useActors: () => ({
+		data: [
+			{ id: 'agent-1', name: 'Code Reviewer', type: 'agent' },
+			{ id: 'human-1', name: 'Magnus', type: 'human' },
+		],
+	}),
 	useActor: () => ({ data: undefined }),
 }))
 
@@ -272,5 +277,57 @@ describe('FeedCard — decided state', () => {
 		expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
 		// The card's own controls are gone once it has been answered.
 		expect(screen.queryByRole('button', { name: 'Send back' })).not.toBeInTheDocument()
+	})
+})
+
+// Regression: a comment authored by one actor on an object driven by another
+// was rendering the driver's name in the "from …" attribution, so the reader
+// saw a card that read as coming from themselves (or from whoever owned the
+// object) instead of from the actor who actually wrote it.
+describe('FeedCard — mention author vs object driver', () => {
+	// Driver is Magnus (the human reader), sender is Code Reviewer (the agent
+	// that pinged him). Every surface that names the message's author must
+	// name Code Reviewer, not Magnus.
+	const magnusDriven = buildItem({
+		object: {
+			id: 'task-1',
+			workspaceId: 'ws-1',
+			type: 'task',
+			title: 'Trigger settings rewrite',
+			content: 'A page people use every day was rewritten, and no human has opened it.',
+			status: 'in_review',
+			metadata: null,
+			driver: 'human-1',
+			activeSessionId: null,
+			createdBy: 'human-1',
+			createdAt: null,
+			updatedAt: null,
+		},
+		latest_mention: buildMention({ actor_id: 'agent-1' }),
+	})
+
+	it('attributes the collapsed row to the mention author, not the object driver', () => {
+		renderCard({ expanded: false, item: magnusDriven })
+		expect(screen.getByText('Code Reviewer')).toBeInTheDocument()
+		expect(screen.queryByText('Magnus')).not.toBeInTheDocument()
+	})
+
+	it('attributes the expanded meta line to the mention author, not the object driver', () => {
+		renderCard({ item: magnusDriven })
+		expect(screen.getByText(/from Code Reviewer/)).toBeInTheDocument()
+		expect(screen.queryByText(/from Magnus/)).not.toBeInTheDocument()
+	})
+
+	it('threads the receipt back to the mention author, not the object driver', () => {
+		renderCard({ item: magnusDriven, decided: { id: 'merge_now', label: 'Merge now' } })
+		const receipt = screen.getByTestId('decision-receipt')
+		expect(receipt).toHaveTextContent('Sent to Code Reviewer')
+		expect(receipt).not.toHaveTextContent('Sent to Magnus')
+	})
+
+	it('waits on the mention author once the reader has answered, not the driver', () => {
+		renderCard({ expanded: false, replied: true, item: magnusDriven })
+		expect(screen.getByText('Waiting on Code Reviewer')).toBeInTheDocument()
+		expect(screen.queryByText('Waiting on Magnus')).not.toBeInTheDocument()
 	})
 })

@@ -84,11 +84,17 @@ export function FeedCard({
 	const objectTitle = rawObjectTitle === title ? '' : rawObjectTitle
 
 	const { data: actors } = useActors(workspaceId)
-	const driver = useMemo(
-		() => (object?.driver ? actors?.find((actor) => actor.id === object.driver) : undefined),
-		[actors, object?.driver],
+	// Attribution follows the author of the comment that raised the card, NOT
+	// the object's driver — the two can differ (e.g. an agent replies to a
+	// human's task and the human is the driver, the agent is the sender).
+	// Confusing them prints the reader's own name back at them on a card
+	// authored by someone else.
+	const senderId = item.latest_mention?.actor_id
+	const sender = useMemo(
+		() => (senderId ? actors?.find((actor) => actor.id === senderId) : undefined),
+		[actors, senderId],
 	)
-	const who = driver?.name ?? 'the agent'
+	const who = sender?.name ?? 'the agent'
 
 	const impressionFired = useRef(false)
 	useEffect(() => {
@@ -137,7 +143,7 @@ export function FeedCard({
 	if (decided) {
 		return (
 			<CardShell expanded={false}>
-				<DecisionReceipt decided={decided} who={driver?.name} />
+				<DecisionReceipt decided={decided} who={sender?.name} />
 			</CardShell>
 		)
 	}
@@ -163,7 +169,7 @@ export function FeedCard({
 							) : (
 								status && <StatusBadge status={status} variant="word" />
 							)}
-							<span className="min-w-0 truncate">{driver?.name ?? ''}</span>
+							<span className="min-w-0 truncate">{sender?.name ?? ''}</span>
 							{held && <span className="shrink-0 text-warning">{held}</span>}
 						</span>
 					</button>
@@ -199,7 +205,7 @@ export function FeedCard({
 							{objectTitle || 'Open'}
 							<ArrowUpRight size={10} className="ml-0.5 inline" aria-hidden />
 						</Link>
-						{driver?.name ? ` · from ${driver.name}` : ''}
+						{sender?.name ? ` · from ${sender.name}` : ''}
 					</span>
 					<TimelineHistory workspaceId={workspaceId} objectId={objectId} item={item} />
 					{waiting ? (
