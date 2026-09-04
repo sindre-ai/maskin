@@ -17,9 +17,12 @@ import { createIntegrationApp, db, getTestActorId, sql } from './global-setup'
  * through `getIntegrationCredential`.
  *
  * v2 replaces v1's HMAC-signed POST callback with a browser redirect callback
- * carrying `state` + `account_id` + `provider` query params. `state` is our
- * pending integrations.id — round-trip auth is that unguessable binding, not
- * a signature.
+ * carrying `state` + `account_id` + `provider` query params. `state` is
+ * `<integrationId>.<nonce>`: the id locates the pending row without a scan,
+ * the 32-byte nonce is minted per-connect, stored in the row's encrypted
+ * credentials blob, checked with timingSafeEqual on the callback, expires
+ * after 10 minutes, and is consumed by the credential write — see
+ * `routes/integrations-linkedin-unipile.ts` for the rationale.
  *
  * The point of this file is the last step: the mocked-DB route tests can
  * only assert the literal the handler happens to write, so they cannot catch
@@ -92,6 +95,18 @@ function callbackGet(query: Record<string, string>) {
 	return app.request(url.pathname + url.search, { method: 'GET' })
 }
 
+/**
+ * Read the `state` that /connect handed to Unipile from the mock inbox. The
+ * route mints it as `<integrationId>.<nonce>` and stores the nonce in the
+ * row's encrypted credentials blob, so tests can't reconstruct it — they have
+ * to observe what the route actually sent and echo that back on the callback.
+ */
+function capturedWizardState(): string {
+	const authReq = mock.inbox().find((c) => c.path === '/v2/auth/link')
+	const body = (authReq?.body as { state?: unknown }) ?? {}
+	return typeof body.state === 'string' ? body.state : ''
+}
+
 describe('linkedin-unipile v2 connect → callback round-trip', () => {
 	it('lands a credential that getIntegrationCredential can actually read back', async () => {
 		const actorId = getTestActorId()
@@ -110,13 +125,17 @@ describe('linkedin-unipile v2 connect → callback round-trip', () => {
 		expect(authReq).toBeDefined()
 		const body = authReq?.body as Record<string, unknown>
 		expect(body.providers).toEqual(['linkedin'])
-		expect(body.state).toBe(integration_id)
+		// State is <integrationId>.<32-byte-hex-nonce> — the nonce authenticates
+		// the callback and is minted per-connect, so we assert the shape rather
+		// than the exact string.
+		expect(body.state).toMatch(new RegExp(`^${integration_id}\\.[0-9a-f]{64}$`))
+		const wizardState = String(body.state)
 
 		// Pending row exists but is deliberately NOT yet readable as a credential.
 		expect(await getIntegrationCredential(db, ws.id, 'linkedin-unipile', actorId)).toBeNull()
 
 		const cbRes = await callbackGet({
-			state: integration_id,
+			state: wizardState,
 			account_id: 'unipile-account-42',
 			provider: 'linkedin',
 		})
@@ -172,10 +191,11 @@ describe('linkedin-unipile v2 connect → callback round-trip', () => {
 	it('adopts an api/already_exists callback into the pending row', async () => {
 		const actorId = getTestActorId()
 		const ws = await insertWorkspace(db, actorId)
-		const { integration_id } = (await (await connect(ws.id)).json()) as { integration_id: string }
+		await connect(ws.id)
+		const wizardState = capturedWizardState()
 
 		const cbRes = await callbackGet({
-			state: integration_id,
+			state: wizardState,
 			error_type: 'api/already_exists',
 			error_detail: 'existing-unipile-77',
 		})
@@ -213,7 +233,7 @@ describe('linkedin-unipile v2 connect → callback round-trip', () => {
 
 		const { integration_id } = (await (await connect(ws.id)).json()) as { integration_id: string }
 		await callbackGet({
-			state: integration_id,
+			state: capturedWizardState(),
 			account_id: 'unipile-account-42',
 			provider: 'linkedin',
 		})
@@ -249,7 +269,7 @@ describe('linkedin-unipile v2 connect → callback round-trip', () => {
 		const ws = await insertWorkspace(db, actorId)
 		const { integration_id } = (await (await connect(ws.id)).json()) as { integration_id: string }
 		await callbackGet({
-			state: integration_id,
+			state: capturedWizardState(),
 			account_id: 'unipile-account-42',
 			provider: 'linkedin',
 		})
