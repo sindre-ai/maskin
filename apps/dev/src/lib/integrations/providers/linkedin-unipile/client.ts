@@ -61,9 +61,16 @@ export const CreateAuthLinkRequestSchema = z.object({
 export type CreateAuthLinkRequest = z.infer<typeof CreateAuthLinkRequestSchema>
 
 export const CreateAuthLinkResponseSchema = z.object({
-	data: z.object({
-		link: z.string().url().describe('URL to redirect the user to for the Unipile-hosted wizard.'),
-	}),
+	/**
+	 * Top-level, NOT nested under `data`. v2 renamed v1's `url` to `link` but
+	 * did not move it — the live response is
+	 * `{"object":"HostedAuthLink","link":"https://auth.unipile.com/?token=..."}`.
+	 * Verified against api.unipile.com on 2026-09-04. The in-process mock in
+	 * `__mocks__/unipile-server.ts` mirrors this shape; if the two ever drift
+	 * again the suite passes while every real connect fails, because the mock
+	 * is the only thing the tests check the schema against.
+	 */
+	link: z.string().url().describe('URL to redirect the user to for the Unipile-hosted wizard.'),
 })
 export type CreateAuthLinkResponse = z.infer<typeof CreateAuthLinkResponseSchema>
 
@@ -71,8 +78,8 @@ export type CreateAuthLinkResponse = z.infer<typeof CreateAuthLinkResponseSchema
  * Create a Unipile v2 hosted-auth link. v1's `POST /api/v1/hosted/accounts/link`
  * with `{ api_url, notify_url, name }` is replaced by
  * `POST /v2/auth/link` with `{ providers, expires_on, redirect_uri, state }`
- * and the response nests the URL under `data.link` (v1 returned `url` at
- * the top level).
+ * and the response returns the wizard URL as top-level `link` (v1 called the
+ * same top-level field `url`).
  */
 export async function createAuthLink(
 	req: CreateAuthLinkRequest,
@@ -104,10 +111,20 @@ export async function createAuthLink(
 			new Error(`Unipile create auth link failed: HTTP ${res.status} ${text}`),
 		)
 	}
-	const parsed = CreateAuthLinkResponseSchema.safeParse(await res.json())
+	const payload = await res.json()
+	const parsed = CreateAuthLinkResponseSchema.safeParse(payload)
 	if (!parsed.success) {
+		// Name the keys we actually got. A shape drift and a real Unipile
+		// outage both surface as UnipileUnavailableError, so without this the
+		// log says "temporarily unavailable" for a 200 response and the next
+		// drift costs the same debugging round this one did. Keys only — the
+		// body carries the wizard token.
+		const keys =
+			payload && typeof payload === 'object'
+				? Object.keys(payload as object).join(', ')
+				: typeof payload
 		throw new UnipileUnavailableError(
-			new Error('Unipile auth-link response failed schema validation'),
+			new Error(`Unipile auth-link response failed schema validation (top-level keys: ${keys})`),
 		)
 	}
 	return parsed.data

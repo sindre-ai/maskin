@@ -37,7 +37,16 @@ export type UnipileListConversationsQuery = {
 	account_id: string
 	cursor?: string
 	limit?: number
+	/** Defaults to `DEFAULT_LINKEDIN_INBOX`. */
+	inbox_id?: string
 }
+
+/**
+ * LinkedIn's primary inbox. `GET /v2/{account_id}/inboxes` lists the rest
+ * (CLASSIC_ARCHIVED, …); the primary one is what "my conversations" means and
+ * is the only inbox this surface reads today.
+ */
+export const DEFAULT_LINKEDIN_INBOX = 'CLASSIC_PRIMARY'
 
 /**
  * Response envelope Unipile v2 sends on message-send, per the v2 reference:
@@ -86,6 +95,49 @@ export type UnipileListConversationsResponse = {
 	cursor?: string
 }
 
+/** `GET /v2/{account_id}/chats/{chat_id}/messages` */
+export type UnipileListMessagesQuery = {
+	account_id: string
+	chat_id: string
+	cursor?: string
+	limit?: number
+}
+
+/** `GET /v2/{account_id}/users/me/relations` — the account's connections. */
+export type UnipileListRelationsQuery = {
+	account_id: string
+	cursor?: string
+	limit?: number
+}
+
+/**
+ * `POST /v2/{account_id}/linkedin/search`
+ *
+ * Unipile takes a LinkedIn search URL rather than structured filters, so the
+ * caller supplies either `keywords` (we build the URL) or an explicit `url`
+ * copied from a LinkedIn search the user already refined in the browser.
+ */
+export type UnipileSearchPeopleQuery = {
+	account_id: string
+	keywords?: string
+	url?: string
+	cursor?: string
+	limit?: number
+}
+
+/** `GET /v2/{account_id}/users/{identifier}` */
+export type UnipileGetProfileQuery = {
+	account_id: string
+	/** Public identifier ("janedoe"), provider id, or `me`. */
+	identifier: string
+}
+
+/** Every paged v2 read returns its page under `data` with a `next_cursor`. */
+export type UnipilePagedResponse = {
+	data?: unknown[]
+	next_cursor?: string
+}
+
 export interface UnipileClient {
 	sendMessage(
 		payload: UnipileSendMessagePayload,
@@ -96,6 +148,25 @@ export interface UnipileClient {
 	listConversations(
 		query: UnipileListConversationsQuery,
 	): Promise<UnipileHttpResult<UnipileListConversationsResponse | Record<string, unknown>>>
+	listMessages(
+		query: UnipileListMessagesQuery,
+	): Promise<UnipileHttpResult<UnipilePagedResponse | Record<string, unknown>>>
+	listRelations(
+		query: UnipileListRelationsQuery,
+	): Promise<UnipileHttpResult<UnipilePagedResponse | Record<string, unknown>>>
+	searchPeople(
+		query: UnipileSearchPeopleQuery,
+	): Promise<UnipileHttpResult<UnipilePagedResponse | Record<string, unknown>>>
+	getProfile(query: UnipileGetProfileQuery): Promise<UnipileHttpResult<Record<string, unknown>>>
+}
+
+/**
+ * Build the LinkedIn people-search URL Unipile's search endpoint expects.
+ * Exported so a test can pin the shape — an agent passes plain keywords and
+ * must never have to know LinkedIn's URL format.
+ */
+export function buildPeopleSearchUrl(keywords: string): string {
+	return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(keywords)}`
 }
 
 export type UnipileHttpClientOptions = {
@@ -167,12 +238,62 @@ export function createUnipileHttpClient(options: UnipileHttpClientOptions): Unip
 		},
 		listConversations(query) {
 			// v1: GET /api/v1/chats?account_id=…
-			// v2: GET /v2/{account_id}/chats?cursor=…&limit=…
+			// v2: GET /v2/{account_id}/inboxes/{inbox_id}/chats?cursor=…&limit=…
+			//
+			// NOT `/v2/{account_id}/chats` — that route exists but LinkedIn does
+			// not implement it, and Unipile answers 501 `api/not_implemented`
+			// with "Use List inbox Chats endpoint for this provider." Verified
+			// against api.unipile.com on 2026-09-04: the inbox route returns real
+			// conversations for the same account the bare route rejects.
 			const params = new URLSearchParams()
 			if (query.cursor) params.set('cursor', query.cursor)
 			if (typeof query.limit === 'number') params.set('limit', String(query.limit))
 			const qs = params.toString()
-			return call('GET', `/v2/${encodeURIComponent(query.account_id)}/chats${qs ? `?${qs}` : ''}`)
+			const inbox = encodeURIComponent(query.inbox_id ?? DEFAULT_LINKEDIN_INBOX)
+			return call(
+				'GET',
+				`/v2/${encodeURIComponent(query.account_id)}/inboxes/${inbox}/chats${qs ? `?${qs}` : ''}`,
+			)
+		},
+		listMessages(query) {
+			// GET /v2/{account_id}/chats/{chat_id}/messages
+			const params = new URLSearchParams()
+			if (query.cursor) params.set('cursor', query.cursor)
+			if (typeof query.limit === 'number') params.set('limit', String(query.limit))
+			const qs = params.toString()
+			const acc = encodeURIComponent(query.account_id)
+			const chat = encodeURIComponent(query.chat_id)
+			return call('GET', `/v2/${acc}/chats/${chat}/messages${qs ? `?${qs}` : ''}`)
+		},
+		listRelations(query) {
+			// GET /v2/{account_id}/users/me/relations
+			//
+			// NOT `/users/relations`: that path matches the `/users/{identifier}`
+			// route and resolves "relations" as a profile name, answering 200
+			// with a single unrelated person. A wrong-but-successful response is
+			// worse than a 404 — it looks like it works.
+			const params = new URLSearchParams()
+			if (query.cursor) params.set('cursor', query.cursor)
+			if (typeof query.limit === 'number') params.set('limit', String(query.limit))
+			const qs = params.toString()
+			const acc = encodeURIComponent(query.account_id)
+			return call('GET', `/v2/${acc}/users/me/relations${qs ? `?${qs}` : ''}`)
+		},
+		searchPeople(query) {
+			// POST /v2/{account_id}/linkedin/search with a LinkedIn search URL.
+			const params = new URLSearchParams()
+			if (query.cursor) params.set('cursor', query.cursor)
+			if (typeof query.limit === 'number') params.set('limit', String(query.limit))
+			const qs = params.toString()
+			const acc = encodeURIComponent(query.account_id)
+			const url = query.url ?? buildPeopleSearchUrl(query.keywords ?? '')
+			return call('POST', `/v2/${acc}/linkedin/search${qs ? `?${qs}` : ''}`, { url })
+		},
+		getProfile(query) {
+			// GET /v2/{account_id}/users/{identifier}; `me` returns the account's
+			// own profile.
+			const acc = encodeURIComponent(query.account_id)
+			return call('GET', `/v2/${acc}/users/${encodeURIComponent(query.identifier)}`)
 		},
 	}
 }

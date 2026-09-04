@@ -14,8 +14,12 @@ import type { AddressInfo } from 'node:net'
  * Covers the subset of Unipile's v2 API this bet touches:
  *   - POST /v2/auth/link                                    — hosted-auth
  *   - POST /v2/:account_id/chats/send                       — new-chat send
- *   - GET  /v2/:account_id/chats                            — list chats
+ *   - GET  /v2/:account_id/inboxes/:inbox_id/chats           — list chats
  *   - POST /v2/:account_id/chats/:chat_id/messages/send     — reply in thread
+ *   - GET  /v2/:account_id/chats/:chat_id/messages          — read a thread
+ *   - GET  /v2/:account_id/users/me/relations               — connections
+ *   - POST /v2/:account_id/linkedin/search                  — people search
+ *   - GET  /v2/:account_id/users/:identifier                — one profile
  *
  * The v1 handlers (`/api/v1/hosted/accounts/link`, `/api/v1/messages`,
  * `/api/v1/chats*`) are gone. Signature verification is gone too — v2 uses a
@@ -33,10 +37,14 @@ export interface UnipileMockServer {
 	resetInbox: () => void
 }
 
+// Verified against the live api.unipile.com response on 2026-09-04:
+// `{"object":"HostedAuthLink","link":"https://auth.unipile.com/?token=..."}`.
+// `link` is top-level — it is NOT nested under `data` (this mock and the
+// client schema both had it nested, so the suite was green while every real
+// connect failed schema validation and reported "temporarily unavailable").
 const CANNED_AUTH_LINK = (state: string, base: string) => ({
-	data: {
-		link: `${base}/mock-wizard?state=${encodeURIComponent(state)}`,
-	},
+	object: 'HostedAuthLink',
+	link: `${base}/mock-wizard?state=${encodeURIComponent(state)}`,
 })
 
 // Shapes below are copied from the Unipile v2 reference pages, not invented.
@@ -56,7 +64,14 @@ const CANNED_SEND_MESSAGE_RESPONSE = () => ({
 	message_id: `mock-msg-${Date.now()}`,
 })
 
-/** `GET /v2/:account_id/chats` — reference: "List Chats". Page nests under `data`. */
+/**
+ * `GET /v2/:account_id/inboxes/:inbox_id/chats` — reference: "List inbox
+ * Chats". Page nests under `data`.
+ *
+ * The bare `/v2/:account_id/chats` route this mock used to serve is one
+ * LinkedIn does not implement — the live API answers 501 there. Serving it
+ * here made the suite green against a route production can never call.
+ */
 const CANNED_CHATS_RESPONSE = () => ({
 	object: 'ChatList',
 	data: [
@@ -75,6 +90,96 @@ const CANNED_CHATS_RESPONSE = () => ({
 			provider: 'linkedin',
 		},
 	],
+})
+
+/**
+ * `GET /v2/:account_id/chats/:chat_id/messages` — reference: "List Messages".
+ * Field names are copied from a live api.unipile.com response (2026-09-04):
+ * `text`, `timestamp`, `sender_id`, `is_sender`.
+ */
+const CANNED_MESSAGES_RESPONSE = () => ({
+	data: [
+		{
+			object: 'Message',
+			id: 'mock-msg-1',
+			chat_id: 'mock-chat-1',
+			sender_id: 'mock-user-1',
+			text: 'Thanks for reaching out!',
+			timestamp: '2026-09-01T10:00:00.000Z',
+			is_sender: false,
+		},
+		{
+			object: 'Message',
+			id: 'mock-msg-2',
+			chat_id: 'mock-chat-1',
+			sender_id: 'mock-user-me',
+			text: 'Happy to help — what are you working on?',
+			timestamp: '2026-09-01T10:05:00.000Z',
+			is_sender: true,
+		},
+	],
+	next_cursor: 'mock-cursor-msg',
+})
+
+/**
+ * `GET /v2/:account_id/users/me/relations` — reference: "List Relations".
+ * The person nests under `user`; the outer object is the relation itself.
+ */
+const CANNED_RELATIONS_RESPONSE = () => ({
+	data: [
+		{
+			object: 'UserRelation',
+			id: 'mock-relation-1',
+			created_at: '2026-08-01T00:00:00.000Z',
+			user: {
+				object: 'User',
+				id: 'mock-user-1',
+				type: 'individual',
+				display_name: 'Ada Lovelace',
+				first_name: 'Ada',
+				last_name: 'Lovelace',
+				description: 'Mathematician',
+				public_identifier: 'adalovelace',
+				profile_url: 'https://www.linkedin.com/in/adalovelace',
+			},
+		},
+	],
+	next_cursor: 'mock-cursor-rel',
+})
+
+/**
+ * `POST /v2/:account_id/linkedin/search` — reference: "LinkedIn Search".
+ * Search results are flat (no `user` wrapper) and carry `headline` +
+ * `network_distance` where a relation carries `description` and neither.
+ */
+const CANNED_SEARCH_RESPONSE = () => ({
+	data: [
+		{
+			object: 'PeopleSearchResult',
+			id: 'mock-user-2',
+			display_name: 'Grace Hopper',
+			headline: 'Rear Admiral, compiler pioneer',
+			network_distance: 'SECOND_DEGREE',
+			location: 'New York',
+			public_identifier: 'gracehopper',
+			profile_url: 'https://www.linkedin.com/in/gracehopper',
+		},
+	],
+	next_cursor: 'mock-cursor-search',
+})
+
+/** `GET /v2/:account_id/users/:identifier` — reference: "Get Profile". */
+const CANNED_PROFILE_RESPONSE = () => ({
+	object: 'UserProfile',
+	id: 'mock-user-2',
+	type: 'individual',
+	display_name: 'Grace Hopper',
+	first_name: 'Grace',
+	last_name: 'Hopper',
+	description: 'Rear Admiral, compiler pioneer',
+	public_identifier: 'gracehopper',
+	profile_url: 'https://www.linkedin.com/in/gracehopper',
+	location: 'New York',
 })
 
 async function readBody(req: IncomingMessage): Promise<string> {
@@ -119,11 +224,29 @@ export async function startUnipileMock(): Promise<UnipileMockServer> {
 		if (method === 'POST' && /^\/v2\/[^/]+\/chats\/send$/.test(url)) {
 			return send(200, CANNED_START_CHAT_RESPONSE())
 		}
-		if (method === 'GET' && /^\/v2\/[^/]+\/chats(\?.*)?$/.test(url)) {
+		if (method === 'GET' && /^\/v2\/[^/]+\/inboxes\/[^/]+\/chats(\?.*)?$/.test(url)) {
 			return send(200, CANNED_CHATS_RESPONSE())
 		}
 		if (method === 'POST' && /^\/v2\/[^/]+\/chats\/[^/]+\/messages\/send$/.test(url)) {
 			return send(200, CANNED_SEND_MESSAGE_RESPONSE())
+		}
+		// Read surfaces. The messages route must be tested BEFORE the send route
+		// above would ever be reached by a GET, and the relations route before
+		// the generic `/users/:identifier` one — `/users/me/relations` also
+		// matches `/users/:identifier` with identifier="me", which is exactly
+		// the collision that makes `/users/relations` answer 200 with one
+		// unrelated profile on the live API.
+		if (method === 'GET' && /^\/v2\/[^/]+\/chats\/[^/]+\/messages(\?.*)?$/.test(url)) {
+			return send(200, CANNED_MESSAGES_RESPONSE())
+		}
+		if (method === 'GET' && /^\/v2\/[^/]+\/users\/me\/relations(\?.*)?$/.test(url)) {
+			return send(200, CANNED_RELATIONS_RESPONSE())
+		}
+		if (method === 'POST' && /^\/v2\/[^/]+\/linkedin\/search(\?.*)?$/.test(url)) {
+			return send(200, CANNED_SEARCH_RESPONSE())
+		}
+		if (method === 'GET' && /^\/v2\/[^/]+\/users\/[^/]+(\?.*)?$/.test(url)) {
+			return send(200, CANNED_PROFILE_RESPONSE())
 		}
 		if (method === 'GET' && url.startsWith('/mock-wizard')) {
 			res.statusCode = 200
