@@ -1019,6 +1019,12 @@ export interface BillingBuyCreditsInput {
 	cancel_url: string
 }
 
+export interface LinkedInIdentityAddonLine {
+	count: number
+	unit_price_usd_cents: number
+	monthly_total_usd_cents: number
+}
+
 export interface BillingUsageResponse {
 	plan: BillingPlan
 	status: BillingStatus
@@ -1031,6 +1037,13 @@ export interface BillingUsageResponse {
 	stripe_customer_id: string | null
 	stripe_subscription_id: string | null
 	credit_balance_cents: number
+	// $49/connected LinkedIn identity/month, shown as its own SKU on the plan
+	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the caller's
+	// `linkedin-addon-visible` flag is off OR the workspace has no connected
+	// linkedin-unipile credentials. Deliberately separate from
+	// `credit_balance_cents` and `usd_cents_used`: connectivity and inference
+	// are billed as distinct lines.
+	linkedin_identity_addon: LinkedInIdentityAddonLine | null
 }
 
 // Types derived from backend response schemas

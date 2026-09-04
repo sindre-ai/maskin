@@ -56,6 +56,17 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
 		},
 	},
+	// Served in-process by apps/dev, like Slack's — not a hosted third-party
+	// endpoint. The credential it uses is per-actor, so the agent sends as the
+	// workspace member whose API key the session runs under.
+	'linkedin-unipile': {
+		type: 'http',
+		url: '${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp',
+		headers: {
+			Authorization: 'Bearer ${MASKIN_API_KEY}',
+			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+		},
+	},
 	gmail: {
 		type: 'http',
 		url: 'https://gmailmcp.googleapis.com/mcp/v1',

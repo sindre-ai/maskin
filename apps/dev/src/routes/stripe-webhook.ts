@@ -14,13 +14,43 @@ import { and, eq, sql } from 'drizzle-orm'
 import type Stripe from 'stripe'
 import { isEnterprise } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
+
+/**
+ * Is this subscription the LinkedIn add-on's own, rather than the workspace
+ * plan's? Two independent signals, either sufficient:
+ *
+ *   - its price is the configured add-on price, or
+ *   - its id already matches the add-on subscription id we stored.
+ *
+ * Two, because each covers the other's blind spot. The price check fails if
+ * `STRIPE_PRICE_LINKEDIN_IDENTITY` is rotated or unset in this environment;
+ * the stored-id check fails on `customer.subscription.created`, which is the
+ * first time we ever see the id. Getting this wrong in the false-negative
+ * direction is the dangerous one: an add-on event treated as a plan event
+ * rewrites the workspace's plan, cap and period.
+ */
+function isAddonSubscription(
+	sub: { id: string; metadata?: Record<string, string> | null },
+	priceId: string | null,
+	billing: { linkedin_addon_subscription_id?: string | null },
+	env: StripeEnv,
+): boolean {
+	if (sub.metadata?.kind === LINKEDIN_ADDON_METADATA_KIND) return true
+	if (isLinkedInAddonPrice(priceId, env)) return true
+	return Boolean(
+		billing.linkedin_addon_subscription_id && billing.linkedin_addon_subscription_id === sub.id,
+	)
+}
+
 import { billingAfterCancel, settingsAfterPaidPlanActivation } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import {
 	CREDIT_TOPUP_METADATA_KIND,
+	LINKEDIN_ADDON_METADATA_KIND,
 	getStripeClient,
 	hardCapForPlan,
 	isHandledStripeEvent,
+	isLinkedInAddonPrice,
 	mapSubscriptionStatus,
 	planForPriceId,
 	priceIdFromSubscription,
@@ -346,6 +376,20 @@ async function applyEvent(
 						: (session.subscription?.id ?? null)
 				const customerId =
 					typeof session.customer === 'string' ? session.customer : (session.customer?.id ?? null)
+				if (session.metadata?.kind === LINKEDIN_ADDON_METADATA_KIND) {
+					// The LinkedIn add-on's OWN subscription (trial workspaces, which
+					// have no plan subscription to hang an item on). It must never
+					// touch plan/status/period_* — writing `stripe_subscription_id`
+					// here would make a $49 add-on look like the workspace's plan,
+					// and `settingsAfterPaidPlanActivation` would then grant
+					// maskin_plan LLM routing to a workspace that never bought it.
+					next = {
+						...next,
+						stripe_customer_id: customerId ?? next.stripe_customer_id,
+						linkedin_addon_subscription_id: subscriptionId ?? next.linkedin_addon_subscription_id,
+					}
+					break
+				}
 				// Clear stale period bounds so the billing route's fallback shows a
 				// future reset time while we wait for customer.subscription.created to
 				// arrive with the real Stripe period. Only clear when period_end is
@@ -368,6 +412,19 @@ async function applyEvent(
 			case 'customer.subscription.updated': {
 				const sub = event.data.object as Stripe.Subscription
 				const priceId = priceIdFromSubscription(sub)
+				if (isAddonSubscription(sub, priceId, next, stripeEnv)) {
+					// Add-on subscription, not the plan. Record its ids and stop:
+					// falling through would set `plan` from a null lookup, reset
+					// `hard_cap_usd_cents`, and overwrite the plan's period bounds
+					// with the add-on's — silently changing what the workspace is
+					// entitled to because it connected LinkedIn.
+					next = {
+						...next,
+						linkedin_addon_subscription_id: sub.id,
+						linkedin_addon_item_id: sub.items?.data?.[0]?.id ?? next.linkedin_addon_item_id,
+					}
+					break
+				}
 				const plan = priceId ? planForPriceId(priceId, stripeEnv) : null
 				planMutated = true
 				next = {
@@ -386,6 +443,18 @@ async function applyEvent(
 			}
 			case 'customer.subscription.deleted': {
 				const sub = event.data.object as Stripe.Subscription
+				if (isAddonSubscription(sub, priceIdFromSubscription(sub), next, stripeEnv)) {
+					// Cancelling the $49 add-on is not cancelling the plan. Without
+					// this guard `billingAfterCancel` would run and drop a paying
+					// workspace to trial (or enterprise) because it disconnected
+					// its last LinkedIn identity.
+					next = {
+						...next,
+						linkedin_addon_subscription_id: null,
+						linkedin_addon_item_id: null,
+					}
+					break
+				}
 				planMutated = true
 				// `plan: 'enterprise'` is NOT safe to write unconditionally here.
 				// It sits at the top of PLAN_TIER_ORDER with null (unlimited)

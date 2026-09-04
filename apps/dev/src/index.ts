@@ -8,6 +8,7 @@ import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
+import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import {
 	type DevBootstrapResult,
@@ -126,6 +127,10 @@ const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()
 logger.info('Webhook deliveries reconciler started')
 
+const purgeIdempotencyJob = new PurgeIdempotencyJob(db)
+purgeIdempotencyJob.start()
+logger.info('Purge idempotency job started')
+
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
@@ -234,6 +239,7 @@ const shutdown = async (signal: string) => {
 	shuttingDown = true
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
+	purgeIdempotencyJob.stop()
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.

@@ -19,7 +19,41 @@ export type ReadErrorKind =
 	| 'permission'
 	| 'rate_limit'
 	| 'server'
+	/**
+	 * A terminal, provider-side condition that retrying cannot clear and will
+	 * often make worse — a disconnected credential, or an account the upstream
+	 * platform has restricted. Distinct from `permission` (which is about the
+	 * caller's Maskin access) and from `unknown` (whose guidance suggests one
+	 * retry). Only reachable when the backend sends a machine-readable
+	 * `error.code`; see `TERMINAL_PROVIDER_CODES`.
+	 */
+	| 'provider_terminal'
 	| 'unknown'
+
+/**
+ * Backend `error.code` values that must never be retried. These come from the
+ * LinkedIn/Unipile taxonomy in
+ * `apps/dev/src/lib/integrations/providers/linkedin-unipile/errors.ts`, whose
+ * HTTP statuses (424 CREDENTIAL_NOT_CONNECTED, 423 LINKEDIN_ACCOUNT_RESTRICTED)
+ * match no branch of the status-based classification below and would otherwise
+ * land in `unknown`.
+ */
+const TERMINAL_PROVIDER_CODES = new Set<string>([
+	'CREDENTIAL_NOT_CONNECTED',
+	'CREDENTIAL_REVOKED',
+	'LINKEDIN_ACCOUNT_RESTRICTED',
+])
+
+/**
+ * Recover the backend's machine-readable `error.code`, which `apiFetch`
+ * attaches to the thrown Error (server.ts). Returns null for errors raised
+ * anywhere else.
+ */
+export function apiErrorCodeOf(err: unknown): string | null {
+	if (!err || typeof err !== 'object') return null
+	const code = (err as { apiErrorCode?: unknown }).apiErrorCode
+	return typeof code === 'string' && code.length > 0 ? code : null
+}
 
 export interface ReadErrorNext {
 	tool: string
@@ -32,6 +66,15 @@ export interface ReadErrorBody {
 		reason: string
 		next: ReadErrorNext
 	}
+	/**
+	 * The MCP SDK types `structuredContent` as `{ [x: string]: unknown }`, and a
+	 * plain interface is not assignable to that. Without this signature a handler
+	 * that returns `toolErrorResponse(...)` from a catch beside a success return
+	 * fails to type-check on the union — the error is reported against the
+	 * handler, not against this type, so it reads as a bug in the tool. `error`
+	 * above stays the only field anything reads or writes.
+	 */
+	[key: string]: unknown
 }
 
 /**
@@ -68,13 +111,20 @@ export function reasonFromError(err: unknown, kind: ReadErrorKind): string {
 			return `Rate limited: ${detail}`
 		case 'server':
 			return `Upstream error: ${detail}`
+		case 'provider_terminal':
+			return `Connection unavailable: ${detail}`
 		default:
 			return `Unexpected error: ${detail}`
 	}
 }
 
 export function classifyReadError(err: unknown): ReadErrorKind {
+	// Code first: a terminal provider condition outranks its HTTP status, and
+	// its statuses (423/424) match none of the branches below anyway.
+	const code = apiErrorCodeOf(err)
+	if (code !== null && TERMINAL_PROVIDER_CODES.has(code)) return 'provider_terminal'
 	const status = parseApiErrorStatus(err)
+	if (status === 423 || status === 424) return 'provider_terminal'
 	if (status === 404) return 'not_found'
 	if (status === 400 || status === 422) return 'invalid_param'
 	if (status === 401 || status === 403) return 'permission'
@@ -99,6 +149,8 @@ interface ToolGuidance {
 	notFound: ReadErrorNext
 	invalidParam: ReadErrorNext
 	permission?: ReadErrorNext
+	/** Overrides the default do-not-retry guidance for `provider_terminal`. */
+	providerTerminal?: ReadErrorNext
 }
 
 const DEFAULT_PERMISSION: ReadErrorNext = {
@@ -422,6 +474,16 @@ export function pickNext(toolName: string, kind: ReadErrorKind): ReadErrorNext {
 				tool: toolName,
 				hint: 'Retry the same call after a short delay — the upstream API returned a transient server error.',
 			}
+		case 'provider_terminal':
+			// Deliberately no retry advice. For a restricted account, retrying
+			// worsens the upstream restriction; for a missing or revoked
+			// credential, no number of retries will produce one.
+			return (
+				guidance.providerTerminal ?? {
+					tool: 'list_integrations',
+					hint: 'Do NOT retry — this needs a human. The account is disconnected or restricted upstream. Check list_integrations, then have the owning actor reconnect it in Settings > Integrations, and report this to the user instead of calling the tool again.',
+				}
+			)
 		default:
 			// Unrecognized error shape — do NOT reuse `notFound` guidance here.
 			// An unclassified error is as likely to be a bug as a missing
