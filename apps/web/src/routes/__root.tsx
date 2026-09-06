@@ -2,7 +2,7 @@ import { OfflineBanner } from '@/components/shared/offline-banner'
 import { RouteError } from '@/components/shared/route-error'
 import { useTheme } from '@/lib/theme'
 import type { QueryClient } from '@tanstack/react-query'
-import { Outlet, createRootRouteWithContext } from '@tanstack/react-router'
+import { HeadContent, Outlet, createRootRouteWithContext } from '@tanstack/react-router'
 import { Toaster } from 'sonner'
 
 interface RouterContext {
@@ -14,6 +14,7 @@ function RootComponent() {
 
 	return (
 		<div className="min-h-screen bg-background text-foreground">
+			<HeadContent />
 			<OfflineBanner />
 			<Outlet />
 			<Toaster
