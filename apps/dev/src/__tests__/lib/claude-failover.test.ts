@@ -129,7 +129,9 @@ beforeEach(() => {
 	// `afterEach` pair mutates the single process-wide `process.env` object
 	// other test files share, and can clobber env vars another file's test
 	// set up concurrently.
-	vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', '')
+	// Failover defaults to on now — flipping the env explicitly for tests that
+	// want the legacy primary-only path. Empty would leave the default in place.
+	vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
 	trackFailoverTriggeredMock.mockClear()
 	trackBackupExhaustedMock.mockClear()
 	trackRecoveredMock.mockClear()
@@ -141,15 +143,19 @@ afterEach(() => {
 })
 
 describe('isClaudeFailoverEnabled', () => {
-	it('defaults to false', () => {
-		expect(isClaudeFailoverEnabled({})).toBe(false)
+	it('defaults to true when the env var is unset', () => {
+		expect(isClaudeFailoverEnabled({})).toBe(true)
 	})
-	it('true only for the literal "true"', () => {
-		expect(isClaudeFailoverEnabled({ MASKIN_CLAUDE_FAILOVER_ENABLED: 'TRUE' })).toBe(true)
+	it('is false only for the literal string "false"', () => {
+		// Missing env used to mean "off", which was exactly the failure mode
+		// this classifier is here to fix — a fresh preview or dev restart
+		// silently shipping with failover disabled. Kept as a runtime
+		// kill-switch, but the sense is inverted: opt out explicitly.
+		expect(isClaudeFailoverEnabled({ MASKIN_CLAUDE_FAILOVER_ENABLED: 'false' })).toBe(false)
+		expect(isClaudeFailoverEnabled({ MASKIN_CLAUDE_FAILOVER_ENABLED: 'FALSE' })).toBe(false)
 		expect(isClaudeFailoverEnabled({ MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' })).toBe(true)
-		expect(isClaudeFailoverEnabled({ MASKIN_CLAUDE_FAILOVER_ENABLED: '1' })).toBe(false)
-		expect(isClaudeFailoverEnabled({ MASKIN_CLAUDE_FAILOVER_ENABLED: 'yes' })).toBe(false)
-		expect(isClaudeFailoverEnabled({ MASKIN_CLAUDE_FAILOVER_ENABLED: '' })).toBe(false)
+		expect(isClaudeFailoverEnabled({ MASKIN_CLAUDE_FAILOVER_ENABLED: '' })).toBe(true)
+		expect(isClaudeFailoverEnabled({ MASKIN_CLAUDE_FAILOVER_ENABLED: '0' })).toBe(true)
 	})
 })
 
@@ -173,7 +179,7 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 				workspaceId: WORKSPACE_ID,
 				actorId: ACTOR_ID,
 				probe,
-				env: {},
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'false' },
 			})
 
 			expect(result?.slot).toBe('primary')
@@ -207,7 +213,7 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 				db,
 				workspaceId: WORKSPACE_ID,
 				actorId: ACTOR_ID,
-				env: {},
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'false' },
 			})
 
 			expect(result?.slot).toBe('primary')
@@ -244,7 +250,7 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 					db,
 					workspaceId: WORKSPACE_ID,
 					actorId: ACTOR_ID,
-					env: {},
+					env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'false' },
 				})
 
 				expect(result).toBeNull()
@@ -273,7 +279,7 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 					db,
 					workspaceId: WORKSPACE_ID,
 					actorId: ACTOR_ID,
-					env: {},
+					env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'false' },
 				})
 
 				expect(result?.slot).toBe('primary')
@@ -301,7 +307,7 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 					db,
 					workspaceId: WORKSPACE_ID,
 					actorId: ACTOR_ID,
-					env: {},
+					env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'false' },
 				})
 
 				expect(result).toBeNull()
@@ -380,6 +386,9 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 			const stored = getSettings()?.claude_oauth as OAuthSlotStorage
 			expect(stored.failover).toEqual({
 				active_slot: 'backup',
+				// Per-slot record, plus the legacy primary/backup mirrors of it
+				// that a two-slot build would read after a rollback.
+				failures: { primary: { at: bucket, reason: 'auth_failed' } },
 				last_primary_failure_at: bucket,
 				last_classified_reason: 'auth_failed',
 			})
@@ -808,7 +817,7 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 				actorId: ACTOR_ID,
 				// Flag off: primary-only, no backup to fall to, so this is the
 				// shape that reaches llm-routing as a terminal failure.
-				env: {},
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'false' },
 				onUnusable: (info) => unusable.push(info),
 			})
 

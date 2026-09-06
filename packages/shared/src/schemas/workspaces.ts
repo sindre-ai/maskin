@@ -45,14 +45,52 @@ const claudeOAuthLegacySlotSchema = z
 		expiresAt: z.number(),
 		subscriptionType: z.string().optional(),
 		scopes: z.array(z.string()).optional(),
+		// User-authored label for the slot. Omitting it here did NOT strip it
+		// (the schema is strict, not stripping) — it failed the whole
+		// `workspaceSettingsSchema` parse for any workspace that had named a
+		// slot, which is how `billing` silently read back as undefined on the
+		// credit-checkout and plan-cap paths.
+		nickname: z.string().optional(),
+		// Who Anthropic says the subscription belongs to, read best-effort for
+		// display. Distinct from `nickname`: this one is not ours to edit. The
+		// email is encrypted at rest — this blob is returned wholesale by
+		// `GET /api/workspaces`. `fetchedAt` is present on every attempt, so an
+		// entry with neither name nor email means "we asked and could not tell".
+		account: z
+			.object({
+				encryptedEmail: z.string().optional(),
+				organization: z.string().optional(),
+				fetchedAt: z.number(),
+			})
+			.strict()
+			.optional(),
+	})
+	.strict()
+
+// Slot ids are chain positions: `primary`, `backup`, then `slot_3`… — see
+// apps/dev/src/lib/claude-oauth-slots.ts, which owns the ordering.
+const claudeOAuthExtraSlotIdSchema = z.string().regex(/^slot_(?:[3-9]|10)$/)
+
+const claudeOAuthSlotFailureSchema = z
+	.object({
+		at: z.number().optional(),
+		reason: z.string().optional(),
 	})
 	.strict()
 
 const claudeOAuthFailoverStateSchema = z
 	.object({
+		// A slot id, no longer only the first two — a workspace can hold up to
+		// MAX_OAUTH_SLOTS subscriptions and any of them can be the active one.
+		active_slot: z.string(),
+		// Per-slot failure records keyed by slot id. The four `last_*` fields
+		// below are legacy mirrors of the primary/backup entries, still written
+		// so a rollback to a two-slot build reads the same state.
+		failures: z.record(claudeOAuthSlotFailureSchema).optional(),
 		last_primary_failure_at: z.number().optional(),
-		active_slot: z.enum(['primary', 'backup']),
 		last_classified_reason: z.string().optional(),
+		last_backup_failure_at: z.number().optional(),
+		last_backup_classified_reason: z.string().optional(),
 	})
 	.strict()
 
@@ -65,12 +103,22 @@ const claudeOAuthSlotStorageSchema = z
 	.object({
 		primary: claudeOAuthLegacySlotSchema.optional(),
 		backup: claudeOAuthLegacySlotSchema.optional(),
+		// Slots beyond the second. `primary`/`backup` stay top-level keys so
+		// existing rows need no migration and an older build still finds them.
+		extras: z.record(claudeOAuthExtraSlotIdSchema, claudeOAuthLegacySlotSchema).optional(),
 		failover: claudeOAuthFailoverStateSchema.optional(),
 	})
 	.strict()
-	.refine((v) => v.primary !== undefined || v.backup !== undefined || v.failover !== undefined, {
-		message: 'claude_oauth must define at least one of primary, backup, or failover',
-	})
+	.refine(
+		(v) =>
+			v.primary !== undefined ||
+			v.backup !== undefined ||
+			v.extras !== undefined ||
+			v.failover !== undefined,
+		{
+			message: 'claude_oauth must define at least one of primary, backup, extras, or failover',
+		},
+	)
 
 export const workspaceSettingsSchema = z.object({
 	display_names: z.record(z.string()).default({
@@ -119,8 +167,8 @@ export const workspaceSettingsSchema = z.object({
 		.default({}),
 	// claude_oauth has two valid on-disk shapes — legacy single-slot (kept for
 	// back-compat per AC-T1 of the subscription-failover bet, no migration of
-	// existing rows) and the new primary/backup/failover shape introduced by
-	// T1. Resolver lives in apps/dev/src/lib/claude-oauth-slots.ts.
+	// existing rows) and the slot-chain shape (primary, backup, extras,
+	// failover). Resolver lives in apps/dev/src/lib/claude-oauth-slots.ts.
 	claude_oauth: z.union([claudeOAuthLegacySlotSchema, claudeOAuthSlotStorageSchema]).optional(),
 	// Privacy & data block surfaced in workspace Settings → General.
 	// `share_usage` toggles posthog opt-in capturing; `anonymize_workspace` swaps

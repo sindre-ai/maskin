@@ -22,10 +22,13 @@ import {
 } from './claude-oauth'
 import { attemptPrimaryRecovery, shouldAttemptPrimaryRecovery } from './claude-oauth-recovery'
 import {
-	type OAuthFailoverState,
 	type OAuthSlotKind,
+	nextSlotAfter,
+	readChain,
 	readFailoverState,
 	readSlots,
+	slotFailure,
+	withSlotFailure,
 	writeFailoverState,
 } from './claude-oauth-slots'
 import { logger } from './logger'
@@ -38,13 +41,26 @@ import { logger } from './logger'
  */
 const FAILURE_WINDOW_BUCKET_MS = 60_000
 
-/** Feature-flag env var — AC-T5. Flag off → legacy primary-only path. */
+/**
+ * Runtime kill-switch for Claude subscription failover. Default is ON: only the
+ * literal string `false` disables it, so a fresh preview, a dev restart, or a
+ * new service missing the `turbo.json` passthrough still fails over instead of
+ * silently regressing to primary-only. Keep the switch because a classifier
+ * misdiagnosis could thrash a workspace through its chain on a bad signal —
+ * flipping this to `false` at runtime restores the legacy path without a code
+ * roll.
+ */
 export const CLAUDE_FAILOVER_FLAG_ENV = 'MASKIN_CLAUDE_FAILOVER_ENABLED'
 
-/** Emitted on the workspace when the primary fails over to the backup. */
+/** Emitted on the workspace when one slot fails over to the next in the chain. */
 export const FAILOVER_TRIGGERED_ACTION = 'claude_subscription_failover_triggered'
 
-/** Emitted when the backup subscription also rejects a runtime session. */
+/**
+ * Emitted when the LAST subscription in the chain also rejects a session —
+ * there is nothing left to fall over to. Named `backup_exhausted` from when
+ * the chain was exactly two slots long; the action string is kept so the
+ * existing analytics and alerting keep matching.
+ */
 export const BACKUP_EXHAUSTED_ACTION = 'claude_subscription_backup_exhausted'
 
 export interface ClaudeCredentials {
@@ -140,36 +156,46 @@ export interface FailoverParams {
 }
 
 export function isClaudeFailoverEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-	return (env[CLAUDE_FAILOVER_FLAG_ENV] ?? '').trim().toLowerCase() === 'true'
+	return (env[CLAUDE_FAILOVER_FLAG_ENV] ?? '').trim().toLowerCase() !== 'false'
 }
 
 /**
  * Session-start entry point for Claude subscription credentials.
  *
- * Flag off (AC-T5): always primary-only, regardless of whatever
- * `active_slot` a prior (flag-on) failover may have persisted — reads the
- * primary slot directly rather than through the slot resolver, so disabling
- * the flag as an incident kill-switch actually forces routing back to
- * primary instead of silently continuing to serve backup. No probe, no
+ * Flag off (kill-switch flipped to `false`): always primary-only, regardless
+ * of whatever `active_slot` a prior (flag-on) failover may have persisted —
+ * reads the primary slot directly rather than through the slot resolver, so
+ * flipping the kill-switch as an incident lever actually forces routing back
+ * to primary instead of silently continuing to serve backup. No probe, no
  * event, no state write. Returns `null` when nothing is configured or the
  * primary can't be refreshed.
  *
- * Flag on: reads slots + failover state. If `active_slot === 'primary'`
- * (or the row still has the legacy shape), probes the primary token and
- * classifies the response via T4. On a `failover` verdict AND a backup
- * being connected, flips `active_slot` to backup and emits
- * `claude_subscription_failover_triggered` under one `db.transaction` +
- * `SELECT … FOR UPDATE` on the workspaces row; the failure-window bucket
- * (60s) + classified reason form the de-dup key so a second concurrent
- * session in the same window sees the same bucket+reason under the lock
- * and skips the insert (AC-T2). AC-U4: with only a primary connected the
- * `failover` verdict returns the primary tokens unchanged — the caller
- * (session container) falls back to today's hard-failure behaviour.
+ * Flag on: reads the slot chain (`primary`, `backup`, then any further
+ * `slot_N` credentials, in that order) and the failover state, then walks
+ * FORWARD from the active slot. Each slot is refreshed and probed; the first
+ * one that answers healthily is returned. A `failover` verdict from T4's
+ * classifier advances to the next slot in the chain, flipping `active_slot`
+ * and emitting `claude_subscription_failover_triggered` under one
+ * `db.transaction` + `SELECT … FOR UPDATE` on the workspaces row; the
+ * failure-window bucket (60s) + classified reason form the de-dup key so a
+ * second concurrent session in the same window sees the same bucket+reason
+ * under the lock and skips the insert (AC-T2).
  *
- * If `active_slot === 'backup'`, T7's lazy recovery (`attemptPrimaryRecovery`)
- * is attempted once the cooldown has elapsed (AC-U6). Otherwise we refresh
- * and probe the backup before returning it, so a dead backup can fall through
- * to the next LLM route instead of launching a doomed container.
+ * Two end-of-chain cases, deliberately different:
+ *   - the ONLY configured slot fails (AC-U4) → its tokens are returned
+ *     unchanged, so the caller (session container) keeps today's hard-failure
+ *     behaviour rather than silently falling through to another LLM route.
+ *   - the LAST slot of a chain of two or more fails → the chain really is
+ *     exhausted, so `claude_subscription_backup_exhausted` is recorded and
+ *     `null` returned, letting llm-routing fall through.
+ *
+ * A `retry_primary` (transient) verdict never advances the chain — that is
+ * the classifier's whole point — so a network blip against one subscription
+ * doesn't burn through everything the workspace has connected.
+ *
+ * When the active slot is not the head of the chain, T7's lazy recovery
+ * (`attemptPrimaryRecovery`) is attempted first, once the cooldown has
+ * elapsed (AC-U6).
  */
 export async function resolveClaudeCredentialsWithFailover(
 	params: FailoverParams,
@@ -187,9 +213,10 @@ export async function resolveClaudeCredentialsWithFailover(
 
 	if (!isClaudeFailoverEnabled(env)) {
 		if (!slots.primary) return null
-		const { tokens, refreshFailure } = await loadAndRefreshPrimary(
+		const { tokens, refreshFailure } = await loadAndRefreshSlot(
 			db,
 			workspaceId,
+			'primary',
 			slots.primary,
 			bufferMs,
 		)
@@ -211,154 +238,272 @@ export async function resolveClaudeCredentialsWithFailover(
 		return { slot: 'primary', tokens }
 	}
 
+	const chain = readChain(wsSettings.claude_oauth)
+	if (chain.length === 0) return null
 	const failover = readFailoverState(wsSettings.claude_oauth)
 
-	// Already flipped to backup on an earlier session.
-	if (failover.active_slot === 'backup') {
-		if (!slots.backup) return null
+	let startIndex = chain.findIndex((entry) => entry.id === failover.active_slot)
+	// A dangling `active_slot` (the slot it names was disconnected without the
+	// pointer being repointed) reads as "no credentials", as it did before the
+	// chain generalised — the disconnect route repoints, so this is only
+	// reachable through a hand-edited row.
+	if (startIndex < 0) return null
 
-		if (shouldAttemptPrimaryRecovery({ slots, failover, now: now() })) {
-			let recoveredTokens: ClaudeOAuthTokens | null = null
-			let recoveredNeedsPersist = false
-			const recovery = await attemptPrimaryRecovery({
-				db,
-				workspaceId,
-				actorId,
-				now: now(),
-				healthCheck: async (primary) => {
-					const decrypted = decryptOAuthData(primary)
-					try {
-						const { tokens, refreshed } = await refreshClaudeTokenIfNeeded(
-							decrypted,
-							bufferMs ?? 10 * 60 * 1000,
-						)
-						const probeResult = await runProbe(probe, tokens)
-						if (probeResult) {
-							const decision = classifyClaudeFailure(probeResult)
-							return { healthy: false, reason: decision.reason }
-						}
-						recoveredTokens = tokens
-						recoveredNeedsPersist = refreshed
-						return { healthy: true }
-					} catch (err) {
-						const decision = classifyClaudeFailure(classifierInputFromError(err))
-						return { healthy: false, reason: decision.reason }
-					}
-				},
-			})
-
-			if (recovery.recovered && recoveredTokens) {
-				if (recoveredNeedsPersist) {
-					// Persist AFTER attemptPrimaryRecovery's transaction has released
-					// its row lock — persisting from inside `healthCheck` (which runs
-					// under that lock) would open a second transaction competing for
-					// the same lock and deadlock against itself.
-					await persistRefreshedSlot(
-						db,
-						workspaceId,
-						'primary',
-						encryptOAuthTokens(recoveredTokens),
-					)
-				}
-				return { slot: 'primary', tokens: recoveredTokens }
-			}
-		}
-
-		return refreshAndProbeBackup({
+	// AC-U6: once we've moved off the head of the chain, the next session start
+	// tries the head again — but only after the cooldown since its last failure.
+	if (startIndex > 0 && shouldAttemptPrimaryRecovery({ slots, failover, now: now() })) {
+		const recovered = await attemptChainHeadRecovery({
 			db,
 			workspaceId,
 			actorId,
-			backup: slots.backup,
 			probe,
 			bufferMs,
-			onUnusable,
+			now: now(),
 		})
+		if (recovered) return recovered
+		// The head is still unhealthy; carry on from where we were.
+		startIndex = chain.findIndex((entry) => entry.id === failover.active_slot)
+		if (startIndex < 0) return null
 	}
 
-	if (!slots.primary) return null
+	// Why the previous slot in the chain was abandoned — carried into the
+	// transition record written when we move onto the next one.
+	let lastReason: string | undefined
 
-	const { tokens: workingTokens, refreshFailure } = await loadAndRefreshPrimary(
-		db,
-		workspaceId,
-		slots.primary,
-		bufferMs,
-	)
+	for (const [index, entry] of chain.entries()) {
+		if (index < startIndex) continue
+		const isLast = index === chain.length - 1
+		const previous = chain[index - 1]
 
-	const probeInput: ClassifierInput | null =
-		refreshFailure ?? (await runProbe(probe, workingTokens))
+		if (previous && index > startIndex) {
+			// Moving to this slot is itself the failover transition — record it
+			// (and its event) before we spend a network round trip on it.
+			await recordFailoverTransition({
+				db,
+				workspaceId,
+				actorId,
+				fromSlot: previous.id,
+				toSlot: entry.id,
+				bucket: Math.floor(now() / FAILURE_WINDOW_BUCKET_MS) * FAILURE_WINDOW_BUCKET_MS,
+				reason: lastReason ?? 'unknown',
+			})
+		}
 
-	if (!probeInput) return { slot: 'primary', tokens: workingTokens }
+		const { tokens, refreshFailure } = await loadAndRefreshSlot(
+			db,
+			workspaceId,
+			entry.id,
+			entry.data,
+			bufferMs,
+		)
+		const probeInput: ClassifierInput | null = refreshFailure ?? (await runProbe(probe, tokens))
+		if (!probeInput) {
+			// This slot answered healthily. If it was carrying a failure record
+			// from an earlier session, drop it — otherwise the settings page
+			// would keep reporting a credential as unhealthy long after it
+			// recovered, since nothing else clears a record for a slot that is
+			// already the active one.
+			await clearSlotFailureRecord(db, workspaceId, entry.id)
+			return { slot: entry.id, tokens }
+		}
 
-	const decision = classifyClaudeFailure(probeInput)
-	if (decision.action === 'retry_primary') {
-		if (refreshFailure && workingTokens.expiresAt <= now()) {
-			// The refresh itself failed transiently (network/5xx) AND the
-			// fallback token is actually expired — not just inside the
-			// proactive refresh buffer. Handing it back as "success" would
-			// launch a session with dead credentials and never reach the
-			// workspace API key / system fallback routes. Signal unusable so
-			// the caller (llm-routing) falls through instead.
-			onUnusable?.(unusableFromRefresh(decision))
+		const decision = classifyClaudeFailure(probeInput)
+		if (decision.action === 'retry_primary') {
+			if (refreshFailure && tokens.expiresAt <= now()) {
+				// The refresh itself failed transiently (network/5xx) AND the
+				// fallback token is actually expired — not just inside the
+				// proactive refresh buffer. Handing it back as "success" would
+				// launch a session with dead credentials and never reach the
+				// workspace API key / system fallback routes. Signal unusable so
+				// the caller (llm-routing) falls through instead.
+				onUnusable?.(unusableFromRefresh(decision))
+				return null
+			}
+			// Transient: this slot is presumed fine, and burning the rest of the
+			// chain on a blip is exactly what the classifier exists to prevent.
+			return { slot: entry.id, tokens }
+		}
+
+		// decision.action === 'failover' — AC-U2 / AC-T3.
+		if (isLast) {
+			if (chain.length === 1) {
+				// AC-U4: a lone credential → no silent fallback to nothing.
+				return { slot: entry.id, tokens }
+			}
+			await recordChainExhausted({
+				db,
+				workspaceId,
+				actorId,
+				slot: entry.id,
+				reason: decision.reason,
+				now: now(),
+			})
+			onUnusable?.({
+				transient: false,
+				detail: `the last Claude subscription in the failover chain was also rejected (${decision.reason})`,
+			})
 			return null
 		}
-		return { slot: 'primary', tokens: workingTokens }
+		lastReason = decision.reason
 	}
 
-	// decision.action === 'failover' — AC-U2 / AC-T3.
-	// AC-U4: only a primary is connected → no silent fallback to nothing.
-	if (!slots.backup) return { slot: 'primary', tokens: workingTokens }
-
-	const bucket = Math.floor(now() / FAILURE_WINDOW_BUCKET_MS) * FAILURE_WINDOW_BUCKET_MS
-	await recordFailoverTransition({
-		db,
-		workspaceId,
-		actorId,
-		bucket,
-		reason: decision.reason,
-	})
-
-	return refreshAndProbeBackup({ db, workspaceId, actorId, backup: slots.backup, probe, bufferMs })
+	return null
 }
 
 /**
- * Decrypt the primary slot, refresh if needed, and persist any refresh.
- * `refreshFailure` is set (and `tokens` left at the pre-refresh, possibly
- * stale value) when the refresh call itself throws — callers decide whether
- * the stale token is still safe to hand back based on its real `expiresAt`.
+ * Drop a slot's recorded failure once it has proved healthy again. A no-op
+ * (and no write) when the slot has no record, so this costs nothing on the
+ * overwhelmingly common healthy path. Failures are swallowed: a session start
+ * must not be blocked by bookkeeping.
  */
-async function loadAndRefreshPrimary(
+async function clearSlotFailureRecord(
 	db: Database,
 	workspaceId: string,
-	primary: EncryptedOAuthData,
+	slot: OAuthSlotKind,
+): Promise<void> {
+	try {
+		await db.transaction(async (tx) => {
+			const [latest] = await tx
+				.select()
+				.from(workspaces)
+				.where(eq(workspaces.id, workspaceId))
+				.for('update')
+				.limit(1)
+			if (!latest) return
+			const latestSettings = (latest.settings as Record<string, unknown>) ?? {}
+			const existing = readFailoverState(latestSettings.claude_oauth)
+			const recorded = slotFailure(existing, slot)
+			if (recorded.at === undefined && recorded.reason === undefined) return
+			const nextOAuth = writeFailoverState(
+				latestSettings.claude_oauth,
+				withSlotFailure(existing, slot, undefined),
+			)
+			await tx
+				.update(workspaces)
+				.set({
+					settings: { ...latestSettings, claude_oauth: nextOAuth },
+					updatedAt: new Date(),
+				})
+				.where(eq(workspaces.id, workspaceId))
+		})
+	} catch (err) {
+		logger.warn('Failed to clear a recovered Claude OAuth slot failure record', {
+			workspaceId,
+			slot,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
+}
+
+/**
+ * Decrypt a slot, refresh if needed, and persist any refresh. `refreshFailure`
+ * is set (and `tokens` left at the pre-refresh, possibly stale value) when the
+ * refresh call itself throws — callers decide whether the stale token is still
+ * safe to hand back based on its real `expiresAt`.
+ */
+async function loadAndRefreshSlot(
+	db: Database,
+	workspaceId: string,
+	slot: OAuthSlotKind,
+	encrypted: EncryptedOAuthData,
 	bufferMs: number | undefined,
 ): Promise<{ tokens: ClaudeOAuthTokens; refreshFailure: ClassifierInput | null }> {
-	const primaryTokens = decryptOAuthData(primary)
+	const stored = decryptOAuthData(encrypted)
 	try {
-		const result = await refreshClaudeTokenIfNeeded(primaryTokens, bufferMs ?? 10 * 60 * 1000)
+		const result = await refreshClaudeTokenIfNeeded(stored, bufferMs ?? 10 * 60 * 1000)
 		if (result.refreshed) {
-			await persistRefreshedSlot(db, workspaceId, 'primary', encryptOAuthTokens(result.tokens))
+			await persistRefreshedSlot(db, workspaceId, slot, encryptOAuthTokens(result.tokens))
 		}
 		return { tokens: result.tokens, refreshFailure: null }
 	} catch (err) {
-		return { tokens: primaryTokens, refreshFailure: classifierInputFromError(err) }
+		logger.warn('Failed to refresh Claude OAuth slot', {
+			workspaceId,
+			slot,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		// Carried back rather than discarded so the caller can tell a revoked
+		// refresh token (permanent) from a token endpoint we simply could not
+		// reach (transient, and worth a retry).
+		return { tokens: stored, refreshFailure: classifierInputFromError(err) }
 	}
 }
 
 /**
- * Flip `active_slot` to backup and insert the failover event. Wrapped in a
- * `SELECT … FOR UPDATE` on the workspaces row so concurrent session-starts
- * in the same failure window serialize; the second tx sees the bucket +
- * reason already recorded and skips the event insert (AC-T2). The slot
- * flip itself is idempotent — both sessions still return backup.
+ * T7's lazy switch-back, run when the active slot is not the head of the
+ * chain: refresh + probe the head OUTSIDE any lock, and flip `active_slot`
+ * back to it if it answers healthily. Returns the head's credentials on a
+ * successful recovery, `null` when it's still unhealthy (or another caller
+ * won the race).
+ */
+async function attemptChainHeadRecovery(params: {
+	db: Database
+	workspaceId: string
+	actorId: string
+	probe: SubscriptionProbe
+	bufferMs: number | undefined
+	now: number
+}): Promise<ClaudeCredentials | null> {
+	const { db, workspaceId, actorId, probe, bufferMs, now } = params
+	let recoveredTokens: ClaudeOAuthTokens | null = null
+	let recoveredNeedsPersist = false
+
+	const recovery = await attemptPrimaryRecovery({
+		db,
+		workspaceId,
+		actorId,
+		now,
+		healthCheck: async (head) => {
+			const decrypted = decryptOAuthData(head)
+			try {
+				const { tokens, refreshed } = await refreshClaudeTokenIfNeeded(
+					decrypted,
+					bufferMs ?? 10 * 60 * 1000,
+				)
+				const probeResult = await runProbe(probe, tokens)
+				if (probeResult) {
+					const decision = classifyClaudeFailure(probeResult)
+					return { healthy: false, reason: decision.reason }
+				}
+				recoveredTokens = tokens
+				recoveredNeedsPersist = refreshed
+				return { healthy: true }
+			} catch (err) {
+				const decision = classifyClaudeFailure(classifierInputFromError(err))
+				return { healthy: false, reason: decision.reason }
+			}
+		},
+	})
+
+	if (!recovery.recovered || !recoveredTokens) return null
+
+	if (recoveredNeedsPersist) {
+		// Persist AFTER attemptPrimaryRecovery's transaction has released its
+		// row lock — persisting from inside `healthCheck` (which runs under
+		// that lock) would open a second transaction competing for the same
+		// lock and deadlock against itself.
+		await persistRefreshedSlot(db, workspaceId, recovery.slot, encryptOAuthTokens(recoveredTokens))
+	}
+	return { slot: recovery.slot, tokens: recoveredTokens }
+}
+
+/**
+ * Flip `active_slot` forward to the next slot in the chain and insert the
+ * failover event. Wrapped in a `SELECT … FOR UPDATE` on the workspaces row so
+ * concurrent session-starts in the same failure window serialize; the second
+ * tx sees the bucket + reason already recorded and skips the event insert
+ * (AC-T2). The slot flip itself is idempotent — both sessions still land on
+ * the same next slot.
  */
 async function recordFailoverTransition(params: {
 	db: Database
 	workspaceId: string
 	actorId: string
+	fromSlot: OAuthSlotKind
+	toSlot: OAuthSlotKind
 	bucket: number
 	reason: string
 }): Promise<void> {
-	const { db, workspaceId, actorId, bucket, reason } = params
+	const { db, workspaceId, actorId, fromSlot, toSlot, bucket, reason } = params
 	const inserted = await db.transaction(async (tx) => {
 		const [latest] = await tx
 			.select()
@@ -369,17 +514,15 @@ async function recordFailoverTransition(params: {
 		if (!latest) return false
 		const latestSettings = (latest.settings as Record<string, unknown>) ?? {}
 		const existing = readFailoverState(latestSettings.claude_oauth)
+		const recorded = slotFailure(existing, fromSlot)
 		const alreadyRecorded =
-			existing.active_slot === 'backup' &&
-			existing.last_primary_failure_at === bucket &&
-			existing.last_classified_reason === reason
+			existing.active_slot === toSlot && recorded.at === bucket && recorded.reason === reason
 		if (alreadyRecorded) return false
 
-		const nextState: OAuthFailoverState = {
-			active_slot: 'backup',
-			last_primary_failure_at: bucket,
-			last_classified_reason: reason,
-		}
+		const nextState = withSlotFailure({ ...existing, active_slot: toSlot }, fromSlot, {
+			at: bucket,
+			reason,
+		})
 		const nextOAuth = writeFailoverState(latestSettings.claude_oauth, nextState)
 		await tx
 			.update(workspaces)
@@ -395,13 +538,15 @@ async function recordFailoverTransition(params: {
 			action: FAILOVER_TRIGGERED_ACTION,
 			entityType: 'workspace',
 			entityId: workspaceId,
-			data: { reason, failure_window: bucket },
+			data: { reason, failure_window: bucket, from_slot: fromSlot, to_slot: toSlot },
 		})
 		return true
 	})
 	if (!inserted) return
-	logger.info('Claude subscription failed over to backup', {
+	logger.info('Claude subscription failed over to the next slot', {
 		workspaceId,
+		fromSlot,
+		toSlot,
 		reason,
 		failure_window: bucket,
 	})
@@ -418,17 +563,63 @@ async function recordFailoverTransition(params: {
 	})
 }
 
+/**
+ * Record that the last slot in the chain was rejected too — nothing is left
+ * to fall over to. Keeps `active_slot` where it is (there is nowhere forward
+ * to point it) and stamps the slot's failure so the settings UI can say which
+ * credential died and why.
+ */
+async function recordChainExhausted(params: {
+	db: Database
+	workspaceId: string
+	actorId: string
+	slot: OAuthSlotKind
+	reason: string
+	now: number
+}): Promise<void> {
+	const { db, workspaceId, actorId, slot, reason, now } = params
+	await recordRuntimeClaudeOAuthBackupExhausted({
+		db,
+		workspaceId,
+		actorId,
+		reason,
+		now,
+		slot,
+	})
+}
+
+/**
+ * Outcome of a mid-session runtime failover attempt. `exhausted` and
+ * `superseded` are deliberately distinct: the first means the workspace has
+ * genuinely run out of subscriptions (worth telling the user about), the
+ * second means another session already moved the pointer on (say nothing).
+ */
+export type RuntimeFailoverOutcome =
+	| { moved: true; slot: OAuthSlotKind }
+	| { moved: false; reason: 'exhausted' | 'superseded' | 'no_workspace' }
+
+/**
+ * Mid-session runtime failover: a live session on `fromSlot` hit a usage limit
+ * or an auth rejection. Flips `active_slot` onto the next slot in the chain
+ * and records the event.
+ */
 export async function recordRuntimeClaudeOAuthFailover(params: {
 	db: Database
 	workspaceId: string
 	actorId: string
 	reason: string
+	/** The slot the failing session was running on. Defaults to the head. */
+	fromSlot?: OAuthSlotKind
 	now?: number
 	sourceSessionId?: string
-}): Promise<boolean> {
+}): Promise<RuntimeFailoverOutcome> {
 	const { db, workspaceId, actorId, reason, sourceSessionId } = params
 	const now = params.now ?? Date.now()
-	let didFailover = false
+	// Written from inside the transaction callback; TS can't narrow a union
+	// assigned in a closure, so the two halves are tracked separately and
+	// composed into the outcome afterwards.
+	let movedTo: OAuthSlotKind | null = null
+	let blocked: 'exhausted' | 'superseded' | 'no_workspace' = 'no_workspace'
 
 	await db.transaction(async (tx) => {
 		const [latest] = await tx
@@ -440,15 +631,26 @@ export async function recordRuntimeClaudeOAuthFailover(params: {
 		if (!latest) return
 
 		const latestSettings = (latest.settings as Record<string, unknown>) ?? {}
-		const slots = readSlots(latestSettings.claude_oauth)
 		const existing = readFailoverState(latestSettings.claude_oauth)
-		if (existing.active_slot !== 'primary' || !slots.backup) return
-
-		const nextState: OAuthFailoverState = {
-			active_slot: 'backup',
-			last_primary_failure_at: now,
-			last_classified_reason: reason,
+		const fromSlot = params.fromSlot ?? readChain(latestSettings.claude_oauth)[0]?.id
+		if (!fromSlot) return
+		// Only the session running on the CURRENTLY active slot may advance the
+		// pointer — otherwise a straggler finishing on an abandoned slot would
+		// drag the workspace backwards or skip a slot nobody has tried yet.
+		if (existing.active_slot !== fromSlot) {
+			blocked = 'superseded'
+			return
 		}
+		const toSlot = nextSlotAfter(latestSettings.claude_oauth, fromSlot)
+		if (!toSlot) {
+			blocked = 'exhausted'
+			return
+		}
+
+		const nextState = withSlotFailure({ ...existing, active_slot: toSlot }, fromSlot, {
+			at: now,
+			reason,
+		})
 		const nextOAuth = writeFailoverState(latestSettings.claude_oauth, nextState)
 		await tx
 			.update(workspaces)
@@ -467,16 +669,19 @@ export async function recordRuntimeClaudeOAuthFailover(params: {
 			data: {
 				reason,
 				failure_window: now,
+				from_slot: fromSlot,
+				to_slot: toSlot,
 				trigger: 'runtime_session_failure',
 				...(sourceSessionId ? { source_session_id: sourceSessionId } : {}),
 			},
 		})
-		didFailover = true
+		movedTo = toSlot
 	})
 
-	if (didFailover) {
-		logger.info('Claude subscription failed over to backup after runtime session failure', {
+	if (movedTo) {
+		logger.info('Claude subscription failed over after runtime session failure', {
 			workspaceId,
+			toSlot: movedTo,
 			reason,
 			sourceSessionId,
 		})
@@ -490,14 +695,20 @@ export async function recordRuntimeClaudeOAuthFailover(params: {
 		})
 	}
 
-	return didFailover
+	return movedTo ? { moved: true, slot: movedTo } : { moved: false, reason: blocked }
 }
 
+/**
+ * Record that the workspace has run out of Claude subscriptions to try: the
+ * last slot in the chain was rejected too. `slot` names the credential that
+ * was rejected (the active one by default).
+ */
 export async function recordRuntimeClaudeOAuthBackupExhausted(params: {
 	db: Database
 	workspaceId: string
 	actorId: string
 	reason: string
+	slot?: OAuthSlotKind
 	now?: number
 	sourceSessionId?: string
 }): Promise<void> {
@@ -515,18 +726,17 @@ export async function recordRuntimeClaudeOAuthBackupExhausted(params: {
 
 		const latestSettings = (latest.settings as Record<string, unknown>) ?? {}
 		const existing = readFailoverState(latestSettings.claude_oauth)
-		const alreadyRecorded =
-			existing.active_slot === 'backup' &&
-			existing.last_backup_failure_at === now &&
-			existing.last_backup_classified_reason === reason
+		const slot = params.slot ?? existing.active_slot
+		const recorded = slotFailure(existing, slot)
+		const alreadyRecorded = recorded.at === now && recorded.reason === reason
 
 		if (!alreadyRecorded) {
-			const nextState: OAuthFailoverState = {
-				...existing,
-				active_slot: 'backup',
-				last_backup_failure_at: now,
-				last_backup_classified_reason: reason,
-			}
+			// `active_slot` stays put: there is no slot after this one to point
+			// it at, and moving it would orphan the chain.
+			const nextState = withSlotFailure({ ...existing, active_slot: slot }, slot, {
+				at: now,
+				reason,
+			})
 			const nextOAuth = writeFailoverState(latestSettings.claude_oauth, nextState)
 			await tx
 				.update(workspaces)
@@ -546,13 +756,14 @@ export async function recordRuntimeClaudeOAuthBackupExhausted(params: {
 			data: {
 				reason,
 				failure_window: now,
+				slot,
 				trigger: 'runtime_session_failure',
 				...(sourceSessionId ? { source_session_id: sourceSessionId } : {}),
 			},
 		})
 	})
 
-	logger.info('Claude backup subscription exhausted after runtime session failure', {
+	logger.info('Claude subscription chain exhausted after runtime session failure', {
 		workspaceId,
 		reason,
 		sourceSessionId,
@@ -564,39 +775,6 @@ export async function recordRuntimeClaudeOAuthBackupExhausted(params: {
 		failureWindow: now,
 		sourceSessionId,
 	})
-}
-
-/**
- * Refresh the requested slot's tokens if they're about to expire, persist
- * the refreshed blob via T5's slot-safe helper, and return the fresh
- * plaintext tokens. Returns `null` when a refresh unexpectedly throws — the
- * caller treats that as "no credentials for this slot".
- */
-async function refreshSlot(
-	db: Database,
-	workspaceId: string,
-	slot: OAuthSlotKind,
-	encrypted: EncryptedOAuthData,
-	bufferMs: number | undefined,
-): Promise<{ tokens: ClaudeOAuthTokens | null; refreshFailure: ClassifierInput | null }> {
-	const decrypted = decryptOAuthData(encrypted)
-	try {
-		const result = await refreshClaudeTokenIfNeeded(decrypted, bufferMs ?? 10 * 60 * 1000)
-		if (result.refreshed) {
-			await persistRefreshedSlot(db, workspaceId, slot, encryptOAuthTokens(result.tokens))
-		}
-		return { tokens: result.tokens, refreshFailure: null }
-	} catch (err) {
-		logger.warn('Failed to refresh Claude OAuth slot', {
-			workspaceId,
-			slot,
-			error: err instanceof Error ? err.message : String(err),
-		})
-		// Carried back rather than discarded so the caller can tell a revoked
-		// refresh token (permanent) from a token endpoint we simply could not
-		// reach (transient, and worth a retry).
-		return { tokens: null, refreshFailure: classifierInputFromError(err) }
-	}
 }
 
 /**
@@ -625,59 +803,6 @@ function unusableFromRefresh(decision: { action: string; reason: string }): Unus
  */
 export function isTransientCredentialError(err: unknown): boolean {
 	return classifyClaudeFailure(classifierInputFromError(err)).action !== 'failover'
-}
-
-/**
- * Refresh the backup slot, probe it, and classify the response. Returns the
- * backup credentials when healthy, or `null` when the refresh fails or the
- * backup itself reports a failover-worthy failure (recording
- * `claude_subscription_backup_exhausted` in that last case).
- */
-async function refreshAndProbeBackup(params: {
-	db: Database
-	workspaceId: string
-	actorId: string
-	backup: EncryptedOAuthData
-	probe: SubscriptionProbe
-	bufferMs: number | undefined
-	onUnusable?: (info: UnusableCredentialInfo) => void
-}): Promise<ClaudeCredentials | null> {
-	const { db, workspaceId, actorId, backup, probe, bufferMs, onUnusable } = params
-	const { tokens: backupTokens, refreshFailure } = await refreshSlot(
-		db,
-		workspaceId,
-		'backup',
-		backup,
-		bufferMs,
-	)
-	if (!backupTokens) {
-		// refreshFailure is always set when tokens are null — the classifier
-		// fallback keeps the type honest without inventing a verdict.
-		onUnusable?.(
-			unusableFromRefresh(
-				classifyClaudeFailure(refreshFailure ?? { kind: 'transport', error: 'network' }),
-			),
-		)
-		return null
-	}
-	const backupProbeInput = await runProbe(probe, backupTokens)
-	if (backupProbeInput) {
-		const backupDecision = classifyClaudeFailure(backupProbeInput)
-		if (backupDecision.action === 'failover') {
-			await recordRuntimeClaudeOAuthBackupExhausted({
-				db,
-				workspaceId,
-				actorId,
-				reason: backupDecision.reason,
-			})
-			onUnusable?.({
-				transient: false,
-				detail: `the backup Claude subscription was also rejected (${backupDecision.reason})`,
-			})
-			return null
-		}
-	}
-	return { slot: 'backup', tokens: backupTokens }
 }
 
 async function runProbe(

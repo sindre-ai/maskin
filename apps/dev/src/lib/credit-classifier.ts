@@ -142,5 +142,37 @@ export function classifyCreditExhaustion(
 		}
 	}
 
+	return classifyOpenRouterEnvelope(tail)
+}
+
+/**
+ * Parse an OpenRouter JSON envelope `{"error":{"code":<http status>,…}}` from
+ * the stdout tail. Host-gated because a bare `"error":{"code":429}` is a shape
+ * plenty of other APIs share, and the tail is the whole session's stdout.
+ */
+function classifyOpenRouterEnvelope(tail: string): SessionResultFailureReason | null {
+	if (!tail.includes('openrouter.ai')) return null
+
+	const match = /"error"\s*:\s*\{[^}]*"code"\s*:\s*(\d{3})/.exec(tail)
+	if (!match) return null
+	const status = Number(match[1])
+
+	const base = { provider: 'openrouter', reset_at: null, verbatim_output: null } as const
+	if (status === 402) {
+		return {
+			...base,
+			reason_code: 'insufficient_credits',
+			human_message: 'OpenRouter: insufficient credits',
+			http_status: 402,
+		}
+	}
+	if (status === 429) {
+		return {
+			...base,
+			reason_code: 'rate_limit_error',
+			human_message: 'OpenRouter rate limit reached',
+			http_status: 429,
+		}
+	}
 	return null
 }

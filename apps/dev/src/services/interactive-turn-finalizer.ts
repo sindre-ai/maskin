@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import { sessionLogs, sessions } from '@maskin/db/schema'
 import { MESSAGE_MAX_LENGTH, parseResultLine, scanTurnLine, splitLines } from '@maskin/shared'
 import { and, desc, eq, like, lte } from 'drizzle-orm'
+import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { logger } from '../lib/logger'
 import { detectPseudoToolCalls } from '../lib/pseudo-tool-call'
 import { classifyTurnError } from '../lib/turn-error-classifier'
@@ -167,6 +168,10 @@ const PSEUDO_TOOL_CALL_UNANSWERED_MESSAGE =
 const permanentErrorMessage = (detail: string): string =>
 	`I couldn't complete that turn — the model API returned an error:\n\n${detail}`
 
+/** Live session keeps its old credentials — the pointer moves for the next one. */
+const subscriptionMovedMessage = (detail: string): string =>
+	`That Claude subscription is out of capacity, so I've switched this workspace to the next one. Start a new session to continue — this one is still on the old subscription.\n\nThe error was:\n\n${detail}`
+
 /**
  * A replayed turn we are waiting on, plus everything needed to report it if it
  * never comes back. Held rather than closed over so any of the three things
@@ -234,6 +239,12 @@ export type InteractiveTurnFinalizerOptions = {
 	delay?: (ms: number) => Promise<void>
 	/** Test seam: how long a replayed turn has to answer. */
 	replyTimeoutMs?: number
+	/**
+	 * Injected — this class runs on the log-ingest path and must not import
+	 * the session manager. Resolves to the slot moved to, or `null` if nothing
+	 * moved (no chain left, another session already moved, wired-off).
+	 */
+	onSubscriptionLimit?: (sessionId: string, reason: string) => Promise<string | null>
 }
 
 export class InteractiveTurnFinalizer {
@@ -260,12 +271,14 @@ export class InteractiveTurnFinalizer {
 	 */
 	private readonly pseudoToolCallNudges = new Map<string, number>()
 	private readonly retryTurn?: RetryTurnFn
+	private readonly onSubscriptionLimit?: InteractiveTurnFinalizerOptions['onSubscriptionLimit']
 	private readonly delay: (ms: number) => Promise<void>
 	private readonly replyTimeoutMs: number
 
 	constructor(db: Database, options: InteractiveTurnFinalizerOptions = {}) {
 		this.db = db
 		this.retryTurn = options.retryTurn
+		this.onSubscriptionLimit = options.onSubscriptionLimit
 		this.delay =
 			options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
 		this.replyTimeoutMs = options.replyTimeoutMs ?? REPLAY_ANSWER_TIMEOUT_MS
@@ -637,6 +650,25 @@ export class InteractiveTurnFinalizer {
 		}
 	}
 
+	/** Move the workspace onto its next Claude subscription; `null` if nothing moved. */
+	private async failOverOnSubscriptionLimit(
+		sessionId: string,
+		detail: string,
+	): Promise<string | null> {
+		if (!this.onSubscriptionLimit) return null
+		// Reuse the session-exit classifier so both paths agree on "spent".
+		const failure = classifyCreditExhaustion(detail, { includeAmbiguousSignals: false })
+		if (!failure || failure.provider !== 'anthropic') return null
+		try {
+			return await this.onSubscriptionLimit(sessionId, failure.reason_code)
+		} catch (err) {
+			logger.warn(
+				`Interactive session ${sessionId} hit a subscription limit but the failover could not be recorded: ${err instanceof Error ? err.message : String(err)}`,
+			)
+			return null
+		}
+	}
+
 	/**
 	 * A turn that closed with `is_error: true`: replay it if that stands a
 	 * chance of working, otherwise tell the human in words.
@@ -668,15 +700,19 @@ export class InteractiveTurnFinalizer {
 			logger.warn(
 				`Interactive session ${sessionId} turn failed permanently (log ${logId}): ${detail}`,
 			)
+			// Session-exit failover never sees an interactive turn (see
+			// turn-error-classifier.ts), so route the same move from here.
+			const movedTo = await this.failOverOnSubscriptionLimit(sessionId, detail)
 			await this.postTurnMessage(
 				sessionId,
 				gate,
 				conversationId,
 				result,
 				logId,
-				permanentErrorMessage(detail),
+				movedTo ? subscriptionMovedMessage(detail) : permanentErrorMessage(detail),
 				{
 					error_kind: 'permanent',
+					...(movedTo ? { subscription_moved_to: movedTo } : {}),
 				},
 			)
 			return

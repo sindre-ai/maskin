@@ -1,18 +1,37 @@
 import { createHash } from 'node:crypto'
 import { vi } from 'vitest'
 
-vi.mock('../../lib/claude-oauth', () => ({
-	encryptOAuthTokens: vi.fn().mockImplementation((tokens: { nickname?: string }) => ({
-		encryptedAccessToken: 'enc-access',
-		encryptedRefreshToken: 'enc-refresh',
-		expiresAt: 1_800_000_000_000,
-		subscriptionType: 'pro',
-		nickname: tokens.nickname,
-	})),
-	getValidOAuthToken: vi.fn(),
-}))
+// Only the three functions that reach outside the process are stubbed —
+// encryption (no key in unit tests), the token refresh, and the account
+// lookup. Everything else, `preserveSlotLabels` in particular, runs for real
+// so these tests exercise the label-preservation logic rather than a copy of
+// it.
+vi.mock('../../lib/claude-oauth', async () => {
+	const actual =
+		await vi.importActual<typeof import('../../lib/claude-oauth')>('../../lib/claude-oauth')
+	return {
+		...actual,
+		encryptOAuthTokens: vi
+			.fn()
+			.mockImplementation((tokens: { nickname?: string; account?: unknown }) => ({
+				encryptedAccessToken: 'enc-access',
+				encryptedRefreshToken: 'enc-refresh',
+				expiresAt: 1_800_000_000_000,
+				subscriptionType: 'pro',
+				nickname: tokens.nickname,
+				account: tokens.account,
+			})),
+		decryptOAuthData: vi.fn().mockReturnValue({
+			accessToken: 'plain-access',
+			refreshToken: 'plain-refresh',
+			expiresAt: 1_800_000_000_000,
+		}),
+		getValidOAuthToken: vi.fn(),
+		fetchClaudeAccount: vi.fn().mockResolvedValue(undefined),
+	}
+})
 
-import { getValidOAuthToken } from '../../lib/claude-oauth'
+import { fetchClaudeAccount, getValidOAuthToken } from '../../lib/claude-oauth'
 import { buildWorkspace, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -23,6 +42,7 @@ const wsId = '00000000-0000-0000-0000-000000000001'
 const headers = { 'x-workspace-id': wsId }
 
 const mockGetValid = getValidOAuthToken as ReturnType<typeof vi.fn>
+const mockFetchAccount = fetchClaudeAccount as ReturnType<typeof vi.fn>
 
 function expectedFingerprint(accessToken: string, refreshToken: string) {
 	return createHash('sha256').update(`${accessToken}:${refreshToken}`).digest('hex').slice(0, 8)
@@ -162,9 +182,10 @@ describe('Claude OAuth Routes', () => {
 				}
 			}
 			expect(update.settings.claude_oauth.failover.active_slot).toBe('backup')
-			expect(update.settings.claude_oauth.failover.last_classified_reason).toBe(
-				'quota_exhausted_weekly',
-			)
+			// The failure record belonged to the primary, which no longer
+			// exists — it goes with it, so the settings page can't report a
+			// disconnected credential as unhealthy.
+			expect(update.settings.claude_oauth.failover.last_classified_reason).toBeUndefined()
 		})
 
 		it('returns 403 when not a workspace member', async () => {
@@ -213,15 +234,21 @@ describe('Claude OAuth Routes', () => {
 			expect(body.valid).toBe(true)
 			expect(body.active_slot).toBe('primary')
 			expect(body.slots.primary).toEqual({
+				slot: 'primary',
+				position: 0,
 				subscription_type: 'max-5x',
 				expires_at: 1_800_000_000_000,
 				fingerprint: expectedFingerprint('primary-access', 'primary-refresh'),
 			})
 			expect(body.slots.backup).toEqual({
+				slot: 'backup',
+				position: 1,
 				subscription_type: 'pro',
 				expires_at: 1_900_000_000_000,
 				fingerprint: expectedFingerprint('backup-access', 'backup-refresh'),
 			})
+			expect(body.chain).toEqual(['primary', 'backup'])
+			expect(body.slots_remaining).toBe(8)
 		})
 
 		it('surfaces failover state when active_slot=backup with a classified reason', async () => {
@@ -280,6 +307,8 @@ describe('Claude OAuth Routes', () => {
 				connected: false,
 				valid: false,
 				slots: {},
+				chain: [],
+				slots_remaining: 10,
 				active_slot: 'primary',
 			})
 		})
@@ -407,9 +436,110 @@ describe('Claude OAuth Routes', () => {
 				}
 			}
 			// Importing into backup should NOT force session-start back onto the
-			// still-broken primary by resetting active_slot to 'primary'.
+			// still-broken primary by resetting active_slot to 'primary'...
 			expect(update.settings.claude_oauth.failover.active_slot).toBe('backup')
-			expect(update.settings.claude_oauth.failover.last_classified_reason).toBeUndefined()
+			// ...nor erase WHY the primary is still broken. Failure records are
+			// per slot now, so replacing one credential leaves the others'
+			// history (and their recovery cooldowns) intact.
+			expect(update.settings.claude_oauth.failover.last_classified_reason).toBe(
+				'quota_exhausted_weekly',
+			)
+		})
+
+		it('keeps the existing nickname when replacing a slot with no nickname given', async () => {
+			// Re-pasting credentials is a credential rotation, not a rename —
+			// this is the second way a nickname used to vanish on its own.
+			const workspace = buildWorkspace({
+				id: wsId,
+				settings: {
+					claude_oauth: newShapeOAuth({
+						primary: {
+							encryptedAccessToken: 'primary-access',
+							encryptedRefreshToken: 'primary-refresh',
+							expiresAt: 1_900_000_000_000,
+							subscriptionType: 'max-5x',
+							nickname: 'Work account',
+						},
+					}),
+				},
+			})
+			const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			await app.request(jsonRequest('POST', '/api/claude-oauth/import', baseImport, headers))
+
+			const update = calls.updates[0] as {
+				settings: { claude_oauth: { primary: { nickname?: string } } }
+			}
+			expect(update.settings.claude_oauth.primary.nickname).toBe('Work account')
+		})
+
+		it('lets an import that carries a nickname rename the slot', async () => {
+			const workspace = buildWorkspace({
+				id: wsId,
+				settings: {
+					claude_oauth: newShapeOAuth({
+						primary: {
+							encryptedAccessToken: 'primary-access',
+							encryptedRefreshToken: 'primary-refresh',
+							expiresAt: 1_900_000_000_000,
+							nickname: 'Old name',
+						},
+					}),
+				},
+			})
+			const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			await app.request(
+				jsonRequest(
+					'POST',
+					'/api/claude-oauth/import',
+					{ ...baseImport, nickname: 'New name' },
+					headers,
+				),
+			)
+
+			const update = calls.updates[0] as {
+				settings: { claude_oauth: { primary: { nickname?: string } } }
+			}
+			expect(update.settings.claude_oauth.primary.nickname).toBe('New name')
+		})
+
+		it('stores the Anthropic account identity alongside the tokens', async () => {
+			mockFetchAccount.mockResolvedValueOnce({
+				email: 'owner@example.com',
+				organization: 'Example Inc',
+				fetchedAt: 1_800_000_000_000,
+			})
+			const workspace = buildWorkspace({ id: wsId, settings: {} })
+			const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			await app.request(jsonRequest('POST', '/api/claude-oauth/import', baseImport, headers))
+
+			const update = calls.updates[0] as {
+				settings: { claude_oauth: { primary: { account?: { email?: string } } } }
+			}
+			expect(update.settings.claude_oauth.primary.account).toEqual({
+				email: 'owner@example.com',
+				organization: 'Example Inc',
+				fetchedAt: 1_800_000_000_000,
+			})
+		})
+
+		it('imports normally when the account lookup fails', async () => {
+			// A display label must never be able to block a credential import.
+			mockFetchAccount.mockRejectedValueOnce(new Error('network down'))
+			const workspace = buildWorkspace({ id: wsId, settings: {} })
+			const { app, mockResults } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/claude-oauth/import', baseImport, headers),
+			)
+
+			expect(res.status).toBe(200)
 		})
 
 		it('returns 403 when not a workspace member', async () => {

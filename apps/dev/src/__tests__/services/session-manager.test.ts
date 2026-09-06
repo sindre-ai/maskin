@@ -2226,9 +2226,11 @@ describe('SessionManager', () => {
 			const session = buildSession({ status: 'completed', result: { exit_code: 0 } })
 			mockResults.update = [] // .returning() → no row: UPDATE matched nothing (already terminal)
 			// 1st select: markRemoteSessionComplete's own usage extraction (reads
-			// session_logs) — empty means "no usage found". 2nd select: the best-
-			// effort lookup used only to enrich the dropped-signal log line.
-			mockResults.selectQueue = [[], [session]]
+			// session_logs) — empty means "no usage found". 2nd select: the stdout
+			// tail read for credit classification (also session_logs; empty means
+			// nothing to classify). 3rd select: the best-effort lookup used only to
+			// enrich the dropped-signal log line.
+			mockResults.selectQueue = [[], [], [session]]
 			const warnSpy = vi.spyOn(logger, 'warn')
 
 			await manager.markRemoteSessionComplete(session.id, 1)
@@ -2243,6 +2245,24 @@ describe('SessionManager', () => {
 					currentResult: { exit_code: 0 },
 				}),
 			)
+		})
+
+		it('still reaches a terminal state when the stdout tail read for classification throws', async () => {
+			// The tail read added for credit classification is best-effort: it runs
+			// before the CAS update, and stopSession() calls this method after the
+			// remote sandbox is already dead. A throw escaping here would surface
+			// as a spurious "stop failed" 400 for a stop that actually succeeded.
+			const session = buildSession({ status: 'running' })
+			mockResults.updateQueue = [[session], []]
+			// 1st select: usage extraction. 2nd select: the tail read, which throws.
+			mockResults.selectErrorQueue = [undefined, new Error('connection reset')]
+
+			await expect(manager.markRemoteSessionComplete(session.id, 137)).resolves.toBe(true)
+
+			const eventInsert = calls.inserts.find(
+				(v) => (v as Record<string, unknown>).action === 'session_failed',
+			)
+			expect(eventInsert).toBeDefined()
 		})
 
 		it('inserts exactly one session_failed event when the CAS update matches a row (nonzero exit code)', async () => {
@@ -2313,10 +2333,12 @@ describe('SessionManager', () => {
 				new Error('connection reset'),
 				new Error('connection reset'),
 			]
-			// 1st select: usage extraction (empty = no-op). 2nd select: the fallback
-			// lookup itself throws — the DB is still unreachable.
+			// 1st select: usage extraction (empty = no-op). 2nd select: the stdout
+			// tail read for credit classification (also a no-op here; it swallows
+			// its own errors). 3rd select: the fallback lookup itself throws — the
+			// DB is still unreachable.
 			mockResults.selectQueue = [[]]
-			mockResults.selectErrorQueue = [undefined, new Error('connection reset')]
+			mockResults.selectErrorQueue = [undefined, undefined, new Error('connection reset')]
 			const initialInsertCount = calls.inserts.length
 
 			await expect(manager.markRemoteSessionComplete('some-session-id', 137)).resolves.toBe(false)
@@ -4009,34 +4031,38 @@ describe('SessionManager', () => {
 			})
 			const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
 
+			// The workspace row is read twice on this path: once to look for a
+			// slot after `backup` in the chain (there is none — that is what
+			// makes it exhausted), then again to record the exhaustion.
+			const exhaustedWorkspace = {
+				id: session.workspaceId,
+				settings: {
+					claude_oauth: {
+						primary: {
+							encryptedAccessToken: 'primary-access',
+							encryptedRefreshToken: 'primary-refresh',
+							expiresAt: 1_800_000_000_000,
+						},
+						backup: {
+							encryptedAccessToken: 'backup-access',
+							encryptedRefreshToken: 'backup-refresh',
+							expiresAt: 1_900_000_000_000,
+						},
+						failover: {
+							active_slot: 'backup',
+							last_primary_failure_at: 1_783_005_600_000,
+							last_classified_reason: 'quota_exhausted_5h',
+						},
+					},
+				},
+			}
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
 				[], // hasOtherActiveSessions
-				[
-					{
-						id: session.workspaceId,
-						settings: {
-							claude_oauth: {
-								primary: {
-									encryptedAccessToken: 'primary-access',
-									encryptedRefreshToken: 'primary-refresh',
-									expiresAt: 1_800_000_000_000,
-								},
-								backup: {
-									encryptedAccessToken: 'backup-access',
-									encryptedRefreshToken: 'backup-refresh',
-									expiresAt: 1_900_000_000_000,
-								},
-								failover: {
-									active_slot: 'backup',
-									last_primary_failure_at: 1_783_005_600_000,
-									last_classified_reason: 'quota_exhausted_5h',
-								},
-							},
-						},
-					},
-				], // recordRuntimeClaudeOAuthBackupExhausted locked workspace read
+				[], // existing retry-of-this-session lookup (none)
+				[exhaustedWorkspace], // recordRuntimeClaudeOAuthFailover locked read
+				[exhaustedWorkspace], // recordRuntimeClaudeOAuthBackupExhausted locked read
 			]
 			mockResults.insertQueue = [
 				[], // completion event
@@ -4101,7 +4127,8 @@ describe('SessionManager', () => {
 			// failover (resolveClaudeCredentialsWithFailover) but previously did
 			// NOT gate this runtime mid-session retry path — an operator using
 			// the flag as an incident kill-switch would still see failover
-			// triggered here. Flag left unset (default off) for this test.
+			// triggered here. Flag flipped to `false` explicitly (it defaults on).
+			vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'false')
 			const session = buildSession({
 				status: 'running',
 				config: { llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },
@@ -4461,13 +4488,11 @@ describe('mergeLaunchRouteConfig()', () => {
 
 	it('clears a stale claude_oauth_runtime_failover_retry_of marker once the slot resolves back to primary', () => {
 		// Regression test: a retry session created during a runtime failover is
-		// stamped with llm_oauth_slot: 'backup' + claude_oauth_runtime_failover_retry_of.
-		// If primary recovers before that retry session's container actually
-		// launches, the slot resolves back to 'primary' here — the stale
-		// retry_of marker must not survive, or maybeRetryClaudeOAuthOnBackup's
-		// gate (`llm_oauth_slot === 'backup' || typeof retry_of === 'string'`)
-		// would misclassify a later, unrelated primary failure as
-		// "backup already exhausted".
+		// stamped with the slot it fell over to + claude_oauth_runtime_failover_retry_of.
+		// If the head of the chain recovers before that retry session's
+		// container actually launches, the slot resolves back to 'primary'
+		// here — the stale retry_of marker must not survive, since it would
+		// then describe a failover this session is no longer running under.
 		const existingConfig = {
 			llm_route: 'claude_oauth',
 			llm_oauth_slot: 'backup',
