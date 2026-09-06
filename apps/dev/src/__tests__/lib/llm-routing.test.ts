@@ -864,6 +864,8 @@ describe('preflightLlmCredentials', () => {
 	const noEnv: NodeJS.ProcessEnv = {}
 	/** Failover on — `active_slot` is what the resolver will read. */
 	const failoverEnv: NodeJS.ProcessEnv = { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' }
+	/** Kill-switch flipped — legacy primary-only path. */
+	const failoverOffEnv: NodeJS.ProcessEnv = { MASKIN_CLAUDE_FAILOVER_ENABLED: 'false' }
 
 	const slotData = () => ({
 		encryptedAccessToken: 'a',
@@ -1033,7 +1035,7 @@ describe('preflightLlmCredentials', () => {
 				},
 				agent: {},
 				enterprise: true,
-				env: noEnv,
+				env: failoverOffEnv,
 			}),
 		).toBeNull()
 	})
@@ -1047,7 +1049,7 @@ describe('preflightLlmCredentials', () => {
 			},
 			agent: {},
 			enterprise: true,
-			env: noEnv,
+			env: failoverOffEnv,
 		})
 		expect(gap).not.toBeNull()
 	})
