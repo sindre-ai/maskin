@@ -2604,16 +2604,10 @@ export class SessionManager extends EventEmitter {
 
 	/**
 	 * Move a live interactive session's workspace onto its next Claude
-	 * subscription. Returns the slot moved to, or `null` when nothing moved —
-	 * the flag is off, the session isn't on the OAuth route, another session
-	 * already moved the workspace on, or this was the last subscription.
-	 *
-	 * Deliberately does NOT stop and relaunch the container. The running
-	 * session keeps the credentials it started with, so the next session is
-	 * what picks up the new subscription, and the human is told exactly that.
-	 * Relaunching a live conversation mid-turn is a larger change than moving
-	 * the pointer — and moving the pointer is what stops the NEXT session
-	 * landing on the same spent subscription.
+	 * subscription and return the slot moved to (or `null` if nothing moved).
+	 * Deliberately does NOT relaunch the container — the running session keeps
+	 * its old credentials, only the pointer moves so the NEXT session lands on
+	 * the new subscription. The human is told exactly that.
 	 */
 	private async failOverInteractiveSession(
 		sessionId: string,
@@ -4403,27 +4397,12 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
-		// Classify the same way the local Docker path does in handleCompletion.
-		// Until this existed, a remote session was the ONLY completion path that
-		// never ran the credit/quota classifier: it wrote `{ exit_code }` and
-		// stopped. So a subscription that hit its limit produced a session with
-		// no `failure_reason` and — worse — never reached
-		// maybeRetryClaudeOAuthOnNextSlot, so the workspace stayed pointed at the
-		// spent subscription and every following session landed on it too. In
-		// production, where sessions run on agent-servers rather than local
-		// Docker, that meant runtime failover effectively never ran at all,
-		// however many subscriptions were connected.
-		//
-		// Same shape of gap as the interactive seed turn documented in
-		// .claude/rules/known-pitfalls.md — a step that reads as "part of
-		// container teardown" but is really its own action, implemented on the
-		// local path and missed on the dispatched one.
-		//
-		// Best-effort, like the usage read above: a DB hiccup here must not throw
-		// out of this method. stopSession() calls it after the remote sandbox is
-		// already dead, so a throw would surface as a spurious "stop failed" 400
-		// for a stop that actually succeeded. No tail simply means no
-		// classification — the session still reaches a terminal state.
+		// Mirror handleCompletion's classification + failover on this path — the
+		// remote completion path is what production uses, and until this existed
+		// it wrote `{ exit_code }` and returned, so failover never ran (see
+		// known-pitfalls.md "The Remote Completion Path Skipped Classification").
+		// Tail read is best-effort: stopSession() calls this after the sandbox is
+		// already dead, so a throw would surface as a spurious "stop failed" 400.
 		let stdoutTail = ''
 		if (!stoppedByUser) {
 			try {
