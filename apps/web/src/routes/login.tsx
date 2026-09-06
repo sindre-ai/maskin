@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuth } from '@/hooks/use-auth'
+import { useDocumentHead } from '@/hooks/use-document-head'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 
@@ -10,6 +11,12 @@ export const Route = createFileRoute('/login')({
 })
 
 function LoginPage() {
+	useDocumentHead({
+		title: 'Sign in to Maskin — AI workspace for teams and agents',
+		description:
+			'Sign in to your Maskin workspace to keep running multiplayer AI loops with your team and agents.',
+	})
+
 	const { login } = useAuth()
 	const [email, setEmail] = useState('')
 	const [password, setPassword] = useState('')

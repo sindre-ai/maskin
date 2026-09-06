@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuth } from '@/hooks/use-auth'
+import { useDocumentHead } from '@/hooks/use-document-head'
 import { trackEvent } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import { buildSignupCaptureKnowledge } from '@maskin/shared'
@@ -13,6 +14,12 @@ export const Route = createFileRoute('/signup')({
 })
 
 function SignupPage() {
+	useDocumentHead({
+		title: 'Sign up for Maskin — open-source AI workspace',
+		description:
+			'Create your Maskin workspace to run multiplayer AI loops with agents, bets, and MCP-native tools. Free during open beta.',
+	})
+
 	const { signup } = useAuth()
 	const [name, setName] = useState('')
 	const [organization, setOrganization] = useState('')
