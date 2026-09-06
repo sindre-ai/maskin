@@ -1093,9 +1093,12 @@ export function buildApp(deps: AppDeps): Hono {
 
 		// Inject AGENT_SERVER_URL so agent-run.sh can stream interactive input
 		// from this server (agentServerInternalHost is computed once above).
+		// TZ pins agent sessions to Copenhagen local time so injected currentDate
+		// and in-guest `date` calls agree; per-workspace TZ is a follow-on insight.
 		const sessionEnv: Record<string, string> = {
 			...body.env,
 			AGENT_SERVER_URL: `http://${agentServerInternalHost}:${deps.env.PORT}`,
+			TZ: 'Europe/Copenhagen',
 		}
 
 		// AC-T1/AC-T6: provision a Chromium CDP sidecar only when the flag is on.
