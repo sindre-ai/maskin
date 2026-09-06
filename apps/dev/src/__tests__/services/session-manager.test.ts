@@ -4127,7 +4127,8 @@ describe('SessionManager', () => {
 			// failover (resolveClaudeCredentialsWithFailover) but previously did
 			// NOT gate this runtime mid-session retry path — an operator using
 			// the flag as an incident kill-switch would still see failover
-			// triggered here. Flag left unset (default off) for this test.
+			// triggered here. Flag flipped to `false` explicitly (it defaults on).
+			vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'false')
 			const session = buildSession({
 				status: 'running',
 				config: { llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },

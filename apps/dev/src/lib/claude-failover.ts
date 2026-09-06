@@ -41,7 +41,15 @@ import { logger } from './logger'
  */
 const FAILURE_WINDOW_BUCKET_MS = 60_000
 
-/** Feature-flag env var — AC-T5. Flag off → legacy primary-only path. */
+/**
+ * Runtime kill-switch for Claude subscription failover. Default is ON: only the
+ * literal string `false` disables it, so a fresh preview, a dev restart, or a
+ * new service missing the `turbo.json` passthrough still fails over instead of
+ * silently regressing to primary-only. Keep the switch because a classifier
+ * misdiagnosis could thrash a workspace through its chain on a bad signal —
+ * flipping this to `false` at runtime restores the legacy path without a code
+ * roll.
+ */
 export const CLAUDE_FAILOVER_FLAG_ENV = 'MASKIN_CLAUDE_FAILOVER_ENABLED'
 
 /** Emitted on the workspace when one slot fails over to the next in the chain. */
@@ -148,17 +156,17 @@ export interface FailoverParams {
 }
 
 export function isClaudeFailoverEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-	return (env[CLAUDE_FAILOVER_FLAG_ENV] ?? '').trim().toLowerCase() === 'true'
+	return (env[CLAUDE_FAILOVER_FLAG_ENV] ?? '').trim().toLowerCase() !== 'false'
 }
 
 /**
  * Session-start entry point for Claude subscription credentials.
  *
- * Flag off (AC-T5): always primary-only, regardless of whatever
- * `active_slot` a prior (flag-on) failover may have persisted — reads the
- * primary slot directly rather than through the slot resolver, so disabling
- * the flag as an incident kill-switch actually forces routing back to
- * primary instead of silently continuing to serve backup. No probe, no
+ * Flag off (kill-switch flipped to `false`): always primary-only, regardless
+ * of whatever `active_slot` a prior (flag-on) failover may have persisted —
+ * reads the primary slot directly rather than through the slot resolver, so
+ * flipping the kill-switch as an incident lever actually forces routing back
+ * to primary instead of silently continuing to serve backup. No probe, no
  * event, no state write. Returns `null` when nothing is configured or the
  * primary can't be refreshed.
  *
