@@ -152,6 +152,9 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 		status?.connected && head && status.active_slot !== head.slot && head.failure_reason,
 	)
 	const reasonCopy = head?.failure_reason ? FAILOVER_REASON_COPY[head.failure_reason] : undefined
+	// -1 when `active_slot` isn't in the rendered chain. slotLabel(-1) reads
+	// "Fallback 0"; stay vague rather than name a position we haven't found.
+	const activePosition = connectedSlots.findIndex((info) => info.slot === status?.active_slot)
 
 	const closePaste = useCallback(() => setPasteSlot(null), [])
 
@@ -176,9 +179,7 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 				<FailoverBanner
 					reasonCopy={reasonCopy}
 					reasonCode={head.failure_reason ?? ''}
-					activeLabel={slotLabel(
-						connectedSlots.findIndex((info) => info.slot === status?.active_slot),
-					)}
+					activeLabel={activePosition >= 0 ? slotLabel(activePosition) : 'another subscription'}
 				/>
 			)}
 
