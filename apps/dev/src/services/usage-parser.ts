@@ -154,18 +154,11 @@ export async function sumRunningSessionUsage(
 }
 
 /**
- * Reads the tail of a session's stdout from `session_logs` and returns it as
- * one string, in arrival order.
- *
- * A session running on a remote agent-server has no in-memory `stdoutTail`
- * buffer — the local Docker path builds that from the container's log stream,
- * but a microsandbox session's stdout reaches us over the agent-server's HTTP
- * log-ingest endpoint and lands only in `session_logs`. So this is the sole
- * source `markRemoteSessionComplete` has for `classifyCreditExhaustion`.
- *
- * Deliberately stdout-only, matching what the local path accumulates — so the
- * two completion paths classify from the same material and can't disagree
- * about whether a session hit a usage limit.
+ * DB-backed equivalent of the in-memory `stdoutTail` for the remote path — a
+ * microsandbox session's stdout only lands in `session_logs`. Stdout-only so
+ * both completion paths classify from the same material. Ordered by `id`
+ * (bigserial, monotonic) rather than `createdAt` — the latter ties within a
+ * millisecond and shuffles chunks.
  */
 export async function readSessionStdoutTail(db: Database, sessionId: string): Promise<string> {
 	const rows = await db
@@ -175,10 +168,6 @@ export async function readSessionStdoutTail(db: Database, sessionId: string): Pr
 		.orderBy(desc(sessionLogs.id))
 		.limit(MAX_LOG_ROWS_FETCHED)
 
-	if (rows.length === 0) return ''
-	// Newest-first from the query; flip to arrival order. Ordered by `id`
-	// (bigserial, monotonic) rather than `createdAt`, which ties at
-	// millisecond granularity and would shuffle chunks within a tie.
 	return rows
 		.map((r) => r.content)
 		.reverse()

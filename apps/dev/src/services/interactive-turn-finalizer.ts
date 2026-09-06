@@ -168,12 +168,7 @@ const PSEUDO_TOOL_CALL_UNANSWERED_MESSAGE =
 const permanentErrorMessage = (detail: string): string =>
 	`I couldn't complete that turn — the model API returned an error:\n\n${detail}`
 
-/**
- * What the human reads when the turn died on a subscription limit and we moved
- * the workspace to the next one. Says what to do next, because this session's
- * container is still on the old subscription — a new session picks up the new
- * one.
- */
+/** Live session keeps its old credentials — the pointer moves for the next one. */
 const subscriptionMovedMessage = (detail: string): string =>
 	`That Claude subscription is out of capacity, so I've switched this workspace to the next one. Start a new session to continue — this one is still on the old subscription.\n\nThe error was:\n\n${detail}`
 
@@ -245,13 +240,9 @@ export type InteractiveTurnFinalizerOptions = {
 	/** Test seam: how long a replayed turn has to answer. */
 	replyTimeoutMs?: number
 	/**
-	 * Called when a turn dies on a subscription limit rather than on anything a
-	 * replay could fix. Moves the workspace onto its next Claude subscription;
-	 * resolves to the slot it moved to, or `null` when nothing moved.
-	 *
-	 * Injected rather than reached for directly, matching `retryTurn` and
-	 * `seedInteractiveTurn` (session-dispatcher.ts): this class runs on the
-	 * log-ingest path and must not import the session manager.
+	 * Injected — this class runs on the log-ingest path and must not import
+	 * the session manager. Resolves to the slot moved to, or `null` if nothing
+	 * moved (no chain left, another session already moved, wired-off).
 	 */
 	onSubscriptionLimit?: (sessionId: string, reason: string) => Promise<string | null>
 }
@@ -659,31 +650,20 @@ export class InteractiveTurnFinalizer {
 		}
 	}
 
-	/**
-	 * Move the workspace onto its next Claude subscription when a turn died
-	 * because the current one is out of quota (or its credentials stopped
-	 * working). Returns the slot moved to, or `null` when this wasn't a
-	 * subscription limit, nothing was wired up, or there was nowhere to go.
-	 *
-	 * Never throws: this runs inside log ingest, and a failover that cannot be
-	 * recorded must still leave the human with the error message.
-	 */
+	/** Move the workspace onto its next Claude subscription; `null` if nothing moved. */
 	private async failOverOnSubscriptionLimit(
 		sessionId: string,
 		detail: string,
 	): Promise<string | null> {
 		if (!this.onSubscriptionLimit) return null
-		// Reuse the session-exit classifier so both paths agree on what counts
-		// as "the subscription is spent" rather than keeping a second list.
+		// Reuse the session-exit classifier so both paths agree on "spent".
 		const failure = classifyCreditExhaustion(detail, { includeAmbiguousSignals: false })
 		if (!failure || failure.provider !== 'anthropic') return null
 		try {
 			return await this.onSubscriptionLimit(sessionId, failure.reason_code)
 		} catch (err) {
 			logger.warn(
-				`Interactive session ${sessionId} hit a subscription limit but the failover could not be recorded: ${
-					err instanceof Error ? err.message : String(err)
-				}`,
+				`Interactive session ${sessionId} hit a subscription limit but the failover could not be recorded: ${err instanceof Error ? err.message : String(err)}`,
 			)
 			return null
 		}
@@ -720,11 +700,8 @@ export class InteractiveTurnFinalizer {
 			logger.warn(
 				`Interactive session ${sessionId} turn failed permanently (log ${logId}): ${detail}`,
 			)
-			// A subscription that ran out mid-conversation is not the same as a
-			// turn that can never work. Until this branch existed, the two were
-			// reported identically and the workspace stayed pointed at the dead
-			// subscription: the failover only ever ran at session exit, which an
-			// interactive session does not reach (see turn-error-classifier.ts).
+			// Session-exit failover never sees an interactive turn (see
+			// turn-error-classifier.ts), so route the same move from here.
 			const movedTo = await this.failOverOnSubscriptionLimit(sessionId, detail)
 			await this.postTurnMessage(
 				sessionId,

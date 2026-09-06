@@ -146,19 +146,9 @@ export function classifyCreditExhaustion(
 }
 
 /**
- * OpenRouter returns a JSON envelope — `{"error":{"code":<http status>,…}}` —
- * rather than the plain-text banners the Claude CLI prints. Until this existed
- * the only OpenRouter failure we recognised was the literal string
- * `insufficient credits`, so a rate-limited or provider-rejected session
- * classified as `null`: no failure reason recorded, nothing to fail over on,
- * and a human left reading a raw envelope.
- *
- * Keyed on the OpenRouter host appearing in the same tail, because `"error":
- * {"code": 429}` on its own is a shape plenty of other APIs share — and the
- * tail here is the whole session's stdout, which routinely contains other
- * services' error bodies. That does mean an envelope logged without the host
- * nearby is still missed; widening it further would trade this classifier's
- * one job for false positives on unrelated tool output.
+ * Parse an OpenRouter JSON envelope `{"error":{"code":<http status>,…}}` from
+ * the stdout tail. Host-gated because a bare `"error":{"code":429}` is a shape
+ * plenty of other APIs share, and the tail is the whole session's stdout.
  */
 function classifyOpenRouterEnvelope(tail: string): SessionResultFailureReason | null {
 	if (!tail.includes('openrouter.ai')) return null
@@ -167,24 +157,21 @@ function classifyOpenRouterEnvelope(tail: string): SessionResultFailureReason | 
 	if (!match) return null
 	const status = Number(match[1])
 
+	const base = { provider: 'openrouter', reset_at: null, verbatim_output: null } as const
 	if (status === 402) {
 		return {
-			provider: 'openrouter',
+			...base,
 			reason_code: 'insufficient_credits',
 			human_message: 'OpenRouter: insufficient credits',
 			http_status: 402,
-			reset_at: null,
-			verbatim_output: null,
 		}
 	}
 	if (status === 429) {
 		return {
-			provider: 'openrouter',
+			...base,
 			reason_code: 'rate_limit_error',
 			human_message: 'OpenRouter rate limit reached',
 			http_status: 429,
-			reset_at: null,
-			verbatim_output: null,
 		}
 	}
 	return null
