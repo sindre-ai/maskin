@@ -1096,6 +1096,7 @@ export function buildApp(deps: AppDeps): Hono {
 		const sessionEnv: Record<string, string> = {
 			...body.env,
 			AGENT_SERVER_URL: `http://${agentServerInternalHost}:${deps.env.PORT}`,
+			TZ: 'Europe/Copenhagen',
 		}
 
 		// AC-T1/AC-T6: provision a Chromium CDP sidecar only when the flag is on.
