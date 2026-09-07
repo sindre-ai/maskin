@@ -3779,6 +3779,43 @@ describe('tool handlers', () => {
 			})
 		})
 
+		it('get_actor returns the full record under `actor`, not only the heroCard', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors/a-1')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								id: 'a-1',
+								type: 'agent',
+								name: 'Designer',
+								email: null,
+								role: 'member',
+								system_prompt: 'You are the Designer.',
+								skills: [{ id: 's-1', name: 'write-knowledge' }],
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('get_actor')
+			const result = (await handler({ id: 'a-1', workspace_id: 'ws-1' })) as {
+				content: Array<{ text: string }>
+				structuredContent: { heroCard: unknown; actor?: Record<string, unknown> }
+			}
+			// The record must be reachable from structuredContent under its
+			// documented snake_case name — a caller that only sees the heroCard
+			// reads the response as having lost fields.
+			expect(result.structuredContent.actor).toMatchObject({
+				id: 'a-1',
+				system_prompt: 'You are the Designer.',
+				skills: [{ id: 's-1', name: 'write-knowledge' }],
+			})
+			// Both channels describe the same record.
+			expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent.actor)
+		})
+
 		it('get_actor includes connectedTriggers/connectedLoops when workspace_id is given', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
@@ -3900,6 +3937,55 @@ describe('tool handlers', () => {
 				title: 'Maskin',
 				status: 'owner',
 			})
+		})
+
+		it('list_workspaces strips credentials and billing from settings, keeping the schema', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/workspaces')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{
+									id: 'ws-1',
+									name: 'Mesh Firm',
+									role: 'owner',
+									createdAt: '2026-02-01T00:00:00.000Z',
+									settings: {
+										billing: { plan: 'pro', stripe_customer_id: 'cus_X' },
+										llm_keys: { openai: 'sk-secret' },
+										claude_oauth: { primary: { encryptedAccessToken: 'nope' } },
+										custom_llm: { model: 'gpt', api_key: 'sk-also-secret', enabled: false },
+										statuses: { bet: ['signal', 'active'] },
+										display_names: { bet: 'Bet' },
+										// A schema container whose own keys must survive verbatim,
+										// including one that reads like a secret word.
+										field_definitions: { monkey: [{ name: 'key', type: 'text' }] },
+									},
+								},
+							]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_workspaces')
+			const result = (await handler({})) as {
+				content: Array<{ text: string }>
+				structuredContent: { workspaces: Array<{ settings: Record<string, unknown> }> }
+			}
+			const settings = result.structuredContent.workspaces[0].settings
+			expect(settings.billing).toBeUndefined()
+			expect(settings.llm_keys).toBeUndefined()
+			expect(settings.claude_oauth).toBeUndefined()
+			expect(settings.custom_llm).toEqual({ model: 'gpt', enabled: false })
+			expect(settings.statuses).toEqual({ bet: ['signal', 'active'] })
+			expect(settings.display_names).toEqual({ bet: 'Bet' })
+			expect(settings.field_definitions).toEqual({ monkey: [{ name: 'key', type: 'text' }] })
+			// The text channel must not leak what structuredContent redacted.
+			expect(result.content[0].text).not.toContain('sk-secret')
+			expect(result.content[0].text).not.toContain('sk-also-secret')
+			expect(result.content[0].text).not.toContain('cus_X')
 		})
 
 		it('passes limit/offset to /api/actors and uses X-Total-Count for the +N more footer', async () => {

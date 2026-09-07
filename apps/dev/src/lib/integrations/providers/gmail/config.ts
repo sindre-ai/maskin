@@ -60,6 +60,11 @@ export const config: ProviderConfig = {
 		command: 'npx',
 		args: ['-y', 'mcp-remote', 'https://gmailmcp.googleapis.com/mcp/v1'],
 		envKey: 'GMAIL_TOKEN',
+		server: {
+			type: 'http',
+			url: 'https://gmailmcp.googleapis.com/mcp/v1',
+			headers: { Authorization: 'Bearer ${GMAIL_TOKEN}' },
+		},
 	},
 
 	externalIdDisplay: 'email',

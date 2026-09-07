@@ -31,7 +31,8 @@ import {
 	RotateCcw,
 	SlidersHorizontal,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { DisplayFilterSection, type DisplayFilterSectionModel } from './display-filter-section'
 
 export interface DisplayPanelColumn {
 	id: string
@@ -41,26 +42,17 @@ export interface DisplayPanelColumn {
 
 export type DisplayPanelView = 'list' | 'board'
 
-/** Which single property the toolbar's value-chip row drives (mockup 932–937).
- *  The mockup also offers `Loop`; `ObjectResponse` carries no loop association,
- *  so that axis is omitted until the API grows one. */
-export type DisplayPanelFilterAxis = 'status' | 'driver' | 'attention'
-
-export const FILTER_BY_AXES: Array<{ id: DisplayPanelFilterAxis; label: string }> = [
-	{ id: 'status', label: 'Status' },
-	{ id: 'attention', label: 'Attention' },
-	{ id: 'driver', label: 'Driver' },
-]
-
 export interface DisplayPanelProps {
 	// View (List | Board)
 	view?: DisplayPanelView
 	onViewChange?: (view: DisplayPanelView) => void
 	// Whether the active type supports board view (false hides Board and forces List)
 	boardSupported?: boolean
-	// FILTER BY — which property the toolbar chip row shows values for.
-	filterBy?: DisplayPanelFilterAxis
-	onFilterByChange?: (value: DisplayPanelFilterAxis) => void
+	// FILTERS — collapsible axis rows, built by the caller so the same models
+	// also drive the toolbar's pinned-chip row.
+	filterSections?: DisplayFilterSectionModel[]
+	pinnedFilters?: string[]
+	onTogglePinnedFilter?: (token: string) => void
 	// Column visibility (Properties section)
 	columns?: DisplayPanelColumn[]
 	columnVisibility?: VisibilityState
@@ -176,8 +168,9 @@ export function DisplayPanel({
 	view = 'list',
 	onViewChange,
 	boardSupported = true,
-	filterBy,
-	onFilterByChange,
+	filterSections,
+	pinnedFilters,
+	onTogglePinnedFilter,
 	columns = [],
 	columnVisibility,
 	onColumnVisibilityChange,
@@ -244,16 +237,12 @@ export function DisplayPanel({
 		activeMetadataFilterCount +
 		(includeArchived ? 1 : 0)
 	const hasActiveFilters = activeFilterCount > 0
+	const pinnedTokenSet = useMemo(() => new Set(pinnedFilters ?? []), [pinnedFilters])
 	const showShow = !!onIncludeArchivedChange
 
 	const showMetadataFilters = !!onMetadataFilterChange && metadataFields.length > 0
 	const showOrdering = !!sort && !!order && !!onSortChange && !!onOrderChange && columns.length > 0
 	const showGrouping = !!onGroupByChange && columns.length > 0
-	const showFilters =
-		!!onStatusFilterChange ||
-		!!onDriverFilterChange ||
-		showMetadataFilters ||
-		activeMetadataFilterCount > 0
 	const hideableColumns = columns.filter((col) => col.canHide)
 	const showProperties = !!onColumnVisibilityChange && hideableColumns.length > 0
 	const activeOrderingColumns =
@@ -317,9 +306,6 @@ export function DisplayPanel({
 	// mobile (the iconOnly variant already carries the filter count pill).
 	const isNonDefaultSort = !!sort && (sort !== DEFAULT_SORT || order !== DEFAULT_ORDER)
 	const hasGrouping = !!groupBy
-	const showInlineReading = !iconOnly && (isNonDefaultSort || hasGrouping || includeArchived)
-	const inlineSortLabel = sortLabel ?? sort
-	const inlineGroupLabel = groupLabel ?? groupBy
 
 	const trigger = (
 		<ResponsivePopover open={open} onOpenChange={setOpen}>
@@ -340,14 +326,17 @@ export function DisplayPanel({
 						)}
 					</Button>
 				) : (
-					/* Mockup 692: a quiet text affordance with a caret, not a bordered
-					   button. The active-filter count stays — the toolbar's removable
-					   pills only cover the axes it renders, so this is the one place
-					   a filter set from anywhere is always countable. */
+					/* The v2 Display affordance, identical on the three screens that carry
+					   it (mockup 669 / 1259 / 2059): a 28px *borderless* text control with
+					   a quiet caret, filling only on hover. It sits at the end of a row of
+					   filter chips, and a border here would read as one more chip. The
+					   active-filter count stays — the toolbar's removable pills only cover
+					   the axes it renders, so this is the one place a filter set from
+					   anywhere is always countable. */
 					<Button
 						variant="ghost"
 						size="sm"
-						className="h-7 gap-1.5 px-3 text-xs font-semibold text-muted-foreground hover:text-foreground"
+						className="h-7 gap-1.5 rounded-lg px-3 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground"
 					>
 						Display
 						{hasActiveFilters && (
@@ -407,206 +396,48 @@ export function DisplayPanel({
 						</>
 					)}
 
-					{/* FILTER BY — which single property the toolbar chip row drives. */}
-					{onFilterByChange && (
-						<>
-							<div className="p-1.5">
-								<div className="px-2.5 pt-1 pb-1">
-									<SectionHeader>Filter by</SectionHeader>
-								</div>
-								{FILTER_BY_AXES.map((axis) => (
-									<button
-										key={axis.id}
-										type="button"
-										aria-pressed={filterBy === axis.id}
-										onClick={() => onFilterByChange(axis.id)}
-										className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-accent"
-									>
-										<span
-											className={cn(
-												'min-w-0 flex-1 truncate',
-												filterBy === axis.id ? 'font-semibold text-foreground' : 'text-foreground',
-											)}
-										>
-											{axis.label}
-										</span>
-										{filterBy === axis.id && <Check size={12} className="opacity-60" />}
-									</button>
-								))}
-							</div>
-							<Separator />
-						</>
-					)}
-
-					{/* Filters */}
-					{showFilters && (
+					{/* Ordering */}
+					{showOrdering && (
 						<>
 							<div className="p-3 space-y-2">
-								<div className="flex items-center justify-between">
-									<SectionHeader>Filters</SectionHeader>
-									{hasActiveFilters && (
+								<SectionHeader>Ordering</SectionHeader>
+								<PickerRow label="Sort by" value={sortLabel} placeholder="Sort">
+									<DropdownMenu>
+										<DropdownMenuTrigger asChild>
+											<Button
+												variant="outline"
+												size="sm"
+												className="h-7 flex-1 justify-between gap-1.5 px-2 text-xs"
+											>
+												<span className="truncate capitalize">{sortLabel ?? defaultSortLabel}</span>
+												<ChevronDown size={12} className="shrink-0 opacity-60" />
+											</Button>
+										</DropdownMenuTrigger>
+										<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
+											{orderingColumns.map((col) => (
+												<DropdownMenuItem
+													key={col.id}
+													onClick={() => onSortChange?.(col.id)}
+													className="capitalize"
+												>
+													<span className="flex-1">{col.label}</span>
+													{sort === col.id && <Check size={12} className="opacity-60" />}
+												</DropdownMenuItem>
+											))}
+										</DropdownMenuContent>
+									</DropdownMenu>
+									{sort !== BOARD_MANUAL_SORT && (
 										<button
 											type="button"
-											className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-											onClick={() => {
-												if (onResetFilters) {
-													onResetFilters()
-												} else {
-													onStatusFilterChange?.(undefined)
-													onDriverFilterChange?.(undefined)
-													for (const f of metadataFields) {
-														onMetadataFilterChange?.(f.name, undefined)
-													}
-												}
-											}}
+											aria-label={order === 'asc' ? 'Ascending' : 'Descending'}
+											title={order === 'asc' ? 'Ascending' : 'Descending'}
+											onClick={() => onOrderChange?.(order === 'asc' ? 'desc' : 'asc')}
+											className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-border-strong transition-colors"
 										>
-											Reset
+											{order === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
 										</button>
 									)}
-								</div>
-
-								{/* Status — grouped by type with separators, multi-select */}
-								{onStatusFilterChange && (
-									<div className="flex items-center gap-2">
-										<span className="w-16 shrink-0 text-xs text-muted-foreground">Status</span>
-										<DropdownMenu>
-											<DropdownMenuTrigger asChild disabled={!hasStatuses}>
-												<Button
-													variant={activeStatuses.length > 0 ? 'outline' : 'ghost'}
-													size="sm"
-													className={cn(
-														'h-7 gap-1.5 px-2 text-xs',
-														activeStatuses.length === 0 &&
-															'text-muted-foreground hover:text-foreground',
-													)}
-												>
-													<span className="truncate capitalize">{statusTriggerLabel}</span>
-													{hasStatuses && <ChevronDown size={12} className="shrink-0 opacity-60" />}
-												</Button>
-											</DropdownMenuTrigger>
-											<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
-												{typeEntries.map(([type, statuses], i) => (
-													<div key={type}>
-														{i > 0 && <DropdownMenuSeparator />}
-														<DropdownMenuLabel className="capitalize text-xs font-medium text-muted-foreground py-1">
-															{type}
-														</DropdownMenuLabel>
-														{statuses.map((status) => (
-															<DropdownMenuCheckboxItem
-																key={status}
-																checked={activeStatuses.includes(status)}
-																onCheckedChange={() => toggleStatus(status)}
-																className="capitalize"
-															>
-																{status.replace(/_/g, ' ')}
-															</DropdownMenuCheckboxItem>
-														))}
-													</div>
-												))}
-											</DropdownMenuContent>
-										</DropdownMenu>
-										{activeStatuses.length > 0 && (
-											<button
-												type="button"
-												aria-label="Clear Status filter"
-												title="Clear Status filter"
-												onClick={() => onStatusFilterChange?.(undefined)}
-												className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-											>
-												Clear
-											</button>
-										)}
-									</div>
-								)}
-
-								{/* Filter by Driver */}
-								{onDriverFilterChange && (
-									<div className="flex items-center gap-2">
-										<span className="w-16 shrink-0 text-xs text-muted-foreground">Driver</span>
-										<DropdownMenu>
-											<DropdownMenuTrigger asChild disabled={!hasOwners}>
-												<Button
-													variant={activeDrivers.length > 0 ? 'outline' : 'ghost'}
-													size="sm"
-													className={cn(
-														'h-7 gap-1.5 px-2 text-xs',
-														activeDrivers.length === 0 &&
-															'text-muted-foreground hover:text-foreground',
-													)}
-												>
-													<span className="truncate">{driverTriggerLabel}</span>
-													{hasOwners && <ChevronDown size={12} className="shrink-0 opacity-60" />}
-												</Button>
-											</DropdownMenuTrigger>
-											<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
-												{driverOptions.map((actor) => (
-													<DropdownMenuCheckboxItem
-														key={actor.id}
-														checked={activeDrivers.includes(actor.id)}
-														onCheckedChange={() => toggleDriver(actor.id)}
-													>
-														{actor.name}
-													</DropdownMenuCheckboxItem>
-												))}
-											</DropdownMenuContent>
-										</DropdownMenu>
-										{activeDrivers.length > 0 && (
-											<button
-												type="button"
-												aria-label="Clear Driver filter"
-												title="Clear Driver filter"
-												onClick={() => onDriverFilterChange?.(undefined)}
-												className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-											>
-												Clear
-											</button>
-										)}
-									</div>
-								)}
-
-								{/* Metadata filters — one row per custom field of the active type */}
-								{showMetadataFilters &&
-									filterableMetadataFields.map((field) => {
-										const current = metadataFilters?.[field.name] ?? ''
-										return (
-											<div key={field.name} className="flex items-center gap-2">
-												<span
-													className="w-16 shrink-0 truncate text-xs capitalize text-muted-foreground"
-													title={field.name}
-												>
-													{field.name.replace(/_/g, ' ')}
-												</span>
-												<FieldValueInput
-													type={field.type}
-													fieldDef={field}
-													value={current}
-													onChange={(value) =>
-														onMetadataFilterChange?.(field.name, value || undefined)
-													}
-													placeholder="Any"
-													className="flex-1"
-												/>
-												{current !== '' && (
-													<button
-														type="button"
-														aria-label={`Clear ${field.name} filter`}
-														title={`Clear ${field.name} filter`}
-														onClick={() => onMetadataFilterChange?.(field.name, undefined)}
-														className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-													>
-														Clear
-													</button>
-												)}
-											</div>
-										)
-									})}
-								{unfilterableFieldCount > 0 && (
-									<p className="text-[11px] text-muted-foreground">
-										{unfilterableFieldCount} field{unfilterableFieldCount === 1 ? '' : 's'} can't be
-										filtered — field names must start with a letter and contain only letters,
-										numbers, and underscores.
-									</p>
-								)}
+								</PickerRow>
 							</div>
 							<Separator />
 						</>
@@ -652,48 +483,194 @@ export function DisplayPanel({
 						</>
 					)}
 
-					{/* Ordering */}
-					{showOrdering && (
+					{/* FILTERS — one collapsible row per axis, each expanding into its
+					 * values with counts and a Pin control (mockup 682–706). Pinning is
+					 * what lets this panel stay closed: the filters an operator actually
+					 * reaches for graduate to the toolbar's chip row. */}
+					{((filterSections?.length ?? 0) > 0 ||
+						showMetadataFilters ||
+						activeMetadataFilterCount > 0 ||
+						// Legacy consumers drive status/driver straight off these callbacks.
+						(!filterSections?.length && (!!onStatusFilterChange || !!onDriverFilterChange))) && (
 						<>
-							<div className="p-3 space-y-2">
-								<SectionHeader>Ordering</SectionHeader>
-								<PickerRow label="Sort by" value={sortLabel} placeholder="Sort">
-									<DropdownMenu>
-										<DropdownMenuTrigger asChild>
-											<Button
-												variant="outline"
-												size="sm"
-												className="h-7 flex-1 justify-between gap-1.5 px-2 text-xs"
-											>
-												<span className="truncate capitalize">{sortLabel ?? defaultSortLabel}</span>
-												<ChevronDown size={12} className="shrink-0 opacity-60" />
-											</Button>
-										</DropdownMenuTrigger>
-										<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
-											{orderingColumns.map((col) => (
-												<DropdownMenuItem
-													key={col.id}
-													onClick={() => onSortChange?.(col.id)}
-													className="capitalize"
-												>
-													<span className="flex-1">{col.label}</span>
-													{sort === col.id && <Check size={12} className="opacity-60" />}
-												</DropdownMenuItem>
-											))}
-										</DropdownMenuContent>
-									</DropdownMenu>
-									{sort !== BOARD_MANUAL_SORT && (
+							<div className="p-1.5">
+								<div className="flex items-center justify-between px-2.5 pt-1 pb-1">
+									<SectionHeader>Filters</SectionHeader>
+									{hasActiveFilters && onResetFilters && (
 										<button
 											type="button"
-											aria-label={order === 'asc' ? 'Ascending' : 'Descending'}
-											title={order === 'asc' ? 'Ascending' : 'Descending'}
-											onClick={() => onOrderChange?.(order === 'asc' ? 'desc' : 'asc')}
-											className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-border-strong transition-colors"
+											className="text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+											onClick={onResetFilters}
 										>
-											{order === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
+											Reset
 										</button>
 									)}
-								</PickerRow>
+								</div>
+								{/* Legacy value pickers, for consumers that have not moved to
+								    `filterSections` yet (the Agents index still drives status from
+								    here). Rendered only in their absence so the two never stack. */}
+								{!filterSections?.length && (
+									<div className="space-y-2 p-3 pt-0">
+										{/* Status — grouped by type with separators, multi-select */}
+										{onStatusFilterChange && (
+											<div className="flex items-center gap-2">
+												<span className="w-16 shrink-0 text-xs text-muted-foreground">Status</span>
+												<DropdownMenu>
+													<DropdownMenuTrigger asChild disabled={!hasStatuses}>
+														<Button
+															variant={activeStatuses.length > 0 ? 'outline' : 'ghost'}
+															size="sm"
+															className={cn(
+																'h-7 gap-1.5 px-2 text-xs',
+																activeStatuses.length === 0 &&
+																	'text-muted-foreground hover:text-foreground',
+															)}
+														>
+															<span className="truncate capitalize">{statusTriggerLabel}</span>
+															{hasStatuses && (
+																<ChevronDown size={12} className="shrink-0 opacity-60" />
+															)}
+														</Button>
+													</DropdownMenuTrigger>
+													<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
+														{typeEntries.map(([type, statuses], i) => (
+															<div key={type}>
+																{i > 0 && <DropdownMenuSeparator />}
+																<DropdownMenuLabel className="capitalize text-xs font-medium text-muted-foreground py-1">
+																	{type}
+																</DropdownMenuLabel>
+																{statuses.map((status) => (
+																	<DropdownMenuCheckboxItem
+																		key={status}
+																		checked={activeStatuses.includes(status)}
+																		onCheckedChange={() => toggleStatus(status)}
+																		className="capitalize"
+																	>
+																		{status.replace(/_/g, ' ')}
+																	</DropdownMenuCheckboxItem>
+																))}
+															</div>
+														))}
+													</DropdownMenuContent>
+												</DropdownMenu>
+												{activeStatuses.length > 0 && (
+													<button
+														type="button"
+														aria-label="Clear Status filter"
+														title="Clear Status filter"
+														onClick={() => onStatusFilterChange?.(undefined)}
+														className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+													>
+														Clear
+													</button>
+												)}
+											</div>
+										)}
+
+										{/* Filter by Driver */}
+										{onDriverFilterChange && (
+											<div className="flex items-center gap-2">
+												<span className="w-16 shrink-0 text-xs text-muted-foreground">Driver</span>
+												<DropdownMenu>
+													<DropdownMenuTrigger asChild disabled={!hasOwners}>
+														<Button
+															variant={activeDrivers.length > 0 ? 'outline' : 'ghost'}
+															size="sm"
+															className={cn(
+																'h-7 gap-1.5 px-2 text-xs',
+																activeDrivers.length === 0 &&
+																	'text-muted-foreground hover:text-foreground',
+															)}
+														>
+															<span className="truncate">{driverTriggerLabel}</span>
+															{hasOwners && (
+																<ChevronDown size={12} className="shrink-0 opacity-60" />
+															)}
+														</Button>
+													</DropdownMenuTrigger>
+													<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
+														{driverOptions.map((actor) => (
+															<DropdownMenuCheckboxItem
+																key={actor.id}
+																checked={activeDrivers.includes(actor.id)}
+																onCheckedChange={() => toggleDriver(actor.id)}
+															>
+																{actor.name}
+															</DropdownMenuCheckboxItem>
+														))}
+													</DropdownMenuContent>
+												</DropdownMenu>
+												{activeDrivers.length > 0 && (
+													<button
+														type="button"
+														aria-label="Clear Driver filter"
+														title="Clear Driver filter"
+														onClick={() => onDriverFilterChange?.(undefined)}
+														className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+													>
+														Clear
+													</button>
+												)}
+											</div>
+										)}
+									</div>
+								)}
+								{(filterSections ?? []).map((section) => (
+									<DisplayFilterSection
+										key={section.id}
+										section={section}
+										pinnedTokens={pinnedTokenSet}
+										onTogglePin={onTogglePinnedFilter}
+									/>
+								))}
+								{/* Custom-field filters — one row per workspace-defined field of
+								    the active type. The mockup has no equivalent (its fixture
+								    workspace defines none), so these keep the value-input shape
+								    they already had rather than being folded into the option
+								    lists above: a free-text or date field has no enumerable set
+								    of options to list, count, or pin. */}
+								{showMetadataFilters &&
+									filterableMetadataFields.map((field) => {
+										const current = metadataFilters?.[field.name] ?? ''
+										return (
+											<div key={field.name} className="flex items-center gap-2 px-2.5 py-1">
+												<span
+													className="w-16 shrink-0 truncate text-xs capitalize text-muted-foreground"
+													title={field.name}
+												>
+													{field.name.replace(/_/g, ' ')}
+												</span>
+												<FieldValueInput
+													type={field.type}
+													fieldDef={field}
+													value={current}
+													onChange={(value) =>
+														onMetadataFilterChange?.(field.name, value || undefined)
+													}
+													placeholder="Any"
+													className="flex-1"
+												/>
+												{current !== '' && (
+													<button
+														type="button"
+														aria-label={`Clear ${field.name} filter`}
+														title={`Clear ${field.name} filter`}
+														onClick={() => onMetadataFilterChange?.(field.name, undefined)}
+														className="text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+													>
+														Clear
+													</button>
+												)}
+											</div>
+										)
+									})}
+								{unfilterableFieldCount > 0 && (
+									<p className="px-2.5 pb-1 text-[11px] text-muted-foreground">
+										{unfilterableFieldCount} field{unfilterableFieldCount === 1 ? '' : 's'} can't be
+										filtered — field names must start with a letter and contain only letters,
+										numbers, and underscores.
+									</p>
+								)}
 							</div>
 							<Separator />
 						</>
@@ -783,43 +760,9 @@ export function DisplayPanel({
 		</ResponsivePopover>
 	)
 
-	// Keep a stable wrapper regardless of `showInlineReading`. Switching the
-	// returned root between `trigger` and `<div>{trigger}…</div>` would tear
-	// down and remount the ResponsivePopover subtree — a toggle inside the
-	// panel (e.g. Include archived) that flips `showInlineReading` would
-	// close the panel mid-interaction because the internal open state lives
-	// in the primitive that just got unmounted.
-	return (
-		<div className="inline-flex items-center gap-2">
-			{trigger}
-			{showInlineReading && (
-				<span
-					className="hidden sm:inline-flex items-center gap-1 text-xs"
-					aria-label="Active display settings"
-				>
-					{isNonDefaultSort && (
-						<>
-							<span className="capitalize text-foreground">{inlineSortLabel}</span>
-							{order === 'asc' ? (
-								<ArrowUp size={12} className="text-foreground" />
-							) : (
-								<ArrowDown size={12} className="text-foreground" />
-							)}
-						</>
-					)}
-					{isNonDefaultSort && hasGrouping && <span className="text-muted-foreground">·</span>}
-					{hasGrouping && (
-						<>
-							<span className="text-muted-foreground">grouped by</span>
-							<span className="capitalize text-foreground">{inlineGroupLabel}</span>
-						</>
-					)}
-					{(isNonDefaultSort || hasGrouping) && includeArchived && (
-						<span className="text-muted-foreground">·</span>
-					)}
-					{includeArchived && <span className="text-foreground">+ archived</span>}
-				</span>
-			)}
-		</div>
-	)
+	// The v2 toolbar carries no sort/group reading beside the trigger: the
+	// panel's own ORDERING and GROUPING rows already name the current choice,
+	// and a second copy outside the panel competed with the chip row for the
+	// same space. The wrapper stays so callers' layout assumptions hold.
+	return <div className="inline-flex items-center gap-2">{trigger}</div>
 }

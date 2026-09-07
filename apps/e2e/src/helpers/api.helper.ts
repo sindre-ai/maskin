@@ -250,6 +250,11 @@ export class TestAPI {
 			content: string
 			parent_event_id?: number
 			metadata?: Record<string, unknown>
+			mentions?: string[]
+			// The structured ask (`commentDecisionSchema`). The API validates it and
+			// rejects a block that breaks any of its rules, so a spec that seeds a
+			// malformed one fails here rather than rendering nothing later.
+			decision?: Record<string, unknown>
 		},
 	): Promise<EventResponse> {
 		const res = await fetch(`${this.baseURL}/api/events`, {

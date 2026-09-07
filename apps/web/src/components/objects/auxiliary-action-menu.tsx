@@ -179,9 +179,9 @@ export function AuxiliaryActionMenu({
 
 	const trigger = (
 		<Button
-			variant="ghost"
+			variant="outline"
 			size="icon"
-			className="h-7 w-7 text-muted-foreground"
+			className="size-7 rounded-lg text-muted-foreground"
 			aria-label="More actions"
 		>
 			<MoreHorizontal size={15} />

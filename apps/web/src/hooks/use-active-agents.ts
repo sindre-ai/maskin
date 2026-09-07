@@ -1,6 +1,6 @@
 import { useActors } from '@/hooks/use-actors'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
-import { getActiveAgentSessions } from '@/lib/agent-status'
+import { ACTIVE_STATUSES, getActiveAgentSessions } from '@/lib/agent-status'
 import { useMemo } from 'react'
 
 export interface ActiveAgent {
@@ -40,8 +40,17 @@ export function useActiveAgents(workspaceId: string) {
 			})
 	}, [sessionsQuery.data, actorsQuery.data])
 
+	// `agents` is one row per *agent* — getActiveAgentSessions collapses an
+	// actor's live sessions down to its most recent one — so it cannot answer
+	// "how many sessions are running". That count has to come off the raw list.
+	const activeSessionCount = useMemo(
+		() => (sessionsQuery.data ?? []).filter((s) => ACTIVE_STATUSES.has(s.status)).length,
+		[sessionsQuery.data],
+	)
+
 	return {
 		agents,
+		activeSessionCount,
 		isLoading: sessionsQuery.isLoading,
 		isError: sessionsQuery.isError,
 	}

@@ -97,6 +97,7 @@ import {
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { detectUnhealthyMcpServers, formatUnhealthyMcpWarning } from '../lib/mcp-health'
+import { stampMaskinSessionHeader } from '../lib/mcp-session-header'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import {
 	AgentServerAuthError,
@@ -2093,14 +2094,24 @@ export class SessionManager extends EventEmitter {
 		const gatedAgentToolsMcpServers = stripFailedIdentities(agentToolsMcpServers, preflightVerdicts)
 		const gatedSessionMcpServers = stripFailedIdentities(sessionMcpServers, preflightVerdicts)
 
+		// Stamp the session id onto every Maskin MCP entry so `POST /mcp` can
+		// attribute each tool call to this session (see routes/mcp.ts
+		// `resolveSessionIdentity`). Done here at launch rather than in the stored
+		// agent config so it also covers agents backfilled by
+		// 0014_backfill_maskin_mcp_on_agents.sql — no data migration needed. The
+		// `${SESSION_ID}` placeholder is expanded by the same `envsubst` pass in
+		// agent-run.sh's setup_mcps() that already expands ${MASKIN_API_KEY}.
+		const stampedAgentToolsMcpServers = stampMaskinSessionHeader(gatedAgentToolsMcpServers)
+		const stampedSessionMcpServers = stampMaskinSessionHeader(gatedSessionMcpServers) ?? {}
+
 		if (agentTools && Object.keys(agentTools).length > 0) {
-			const gatedAgentTools = gatedAgentToolsMcpServers
-				? { ...agentTools, mcpServers: gatedAgentToolsMcpServers }
+			const gatedAgentTools = stampedAgentToolsMcpServers
+				? { ...agentTools, mcpServers: stampedAgentToolsMcpServers }
 				: agentTools
 			envVars.AGENT_MCP_JSON = JSON.stringify(gatedAgentTools)
 		}
-		if (Object.keys(gatedSessionMcpServers).length > 0) {
-			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers: gatedSessionMcpServers })
+		if (Object.keys(stampedSessionMcpServers).length > 0) {
+			envVars.MCP_SERVERS_JSON = JSON.stringify({ mcpServers: stampedSessionMcpServers })
 		}
 
 		const previewGuestPorts = Array.isArray(sessionConfig.previewGuestPorts)

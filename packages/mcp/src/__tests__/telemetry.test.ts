@@ -269,3 +269,206 @@ describe('MCP telemetry wrapper', () => {
 		expect(mutations).toHaveLength(0)
 	})
 })
+
+// The env branch that resolves a container-launched server's session id used to
+// read `MASKIN_SESSION_ID`, which nothing in the repo ever sets — so it was
+// dead, and every stdio server in an agent container fell through to a random
+// id that cannot join back to the `sessions` row. These pin the var names.
+describe('session id resolution', () => {
+	const ORIGINAL = { ...process.env }
+
+	afterEach(() => {
+		process.env = { ...ORIGINAL }
+		vi.resetModules()
+	})
+
+	/** Replace the env with both session vars cleared, then apply `vars`. */
+	function setEnv(vars: Record<string, string>) {
+		const { SESSION_ID: _a, MASKIN_SESSION_ID: _b, ...rest } = ORIGINAL
+		process.env = { ...rest, ...vars }
+	}
+
+	async function loadFresh() {
+		vi.resetModules()
+		return await import('../telemetry')
+	}
+
+	it('uses SESSION_ID — the var the agent container actually sets', async () => {
+		setEnv({ SESSION_ID: '33333333-3333-4333-8333-333333333333' })
+		const mod = await loadFresh()
+		expect(mod.__sessionId()).toBe('33333333-3333-4333-8333-333333333333')
+		expect(mod.__sessionSource()).toBe('maskin-session')
+	})
+
+	it('lets MASKIN_SESSION_ID override, for a host that uses SESSION_ID itself', async () => {
+		setEnv({ SESSION_ID: 'host-owned', MASKIN_SESSION_ID: 'maskin-owned' })
+		const mod = await loadFresh()
+		expect(mod.__sessionId()).toBe('maskin-owned')
+		expect(mod.__sessionSource()).toBe('maskin-session')
+	})
+
+	it('falls back to a per-process id, flagged as such, outside a container', async () => {
+		setEnv({})
+		const mod = await loadFresh()
+		expect(mod.__sessionId()).toMatch(/^mcp-/)
+		// Must not claim `maskin-session`: nothing here joins to a sessions row.
+		expect(mod.__sessionSource()).toBe('process')
+	})
+
+	it('ignores a blank SESSION_ID rather than grouping on an empty id', async () => {
+		setEnv({ SESSION_ID: '   ' })
+		const mod = await loadFresh()
+		expect(mod.__sessionId()).toMatch(/^mcp-/)
+		expect(mod.__sessionSource()).toBe('process')
+	})
+})
+
+describe('recordToolCallResponseSize — shape fields', () => {
+	// `vi.resetModules()` above means a statically imported telemetry module
+	// would be a different instance from the one the server tests drive, and
+	// the per-process seq counter lives in module state. Import per test.
+	const TARGET = { apiBaseUrl: 'http://localhost:3000', apiKey: 'ank_testkey', workspaceId: wsId }
+
+	type SizeEvent = Extract<TelemetryEvent, { event_type: 'tool_call_response_size' }>
+
+	async function load() {
+		vi.resetModules()
+		const mod = await import('../telemetry')
+		mod.__resetToolCallSeq()
+		const events: TelemetryEvent[] = []
+		const sink: TelemetrySink = (e) => events.push(e)
+		const size = (event: Omit<Parameters<typeof mod.recordToolCallResponseSize>[2], never>) => {
+			mod.recordToolCallResponseSize(sink, TARGET, event)
+			return events[events.length - 1] as SizeEvent
+		}
+		return { mod, sink, events, size }
+	}
+
+	it('carries the row count and heaviest field alongside the byte totals', async () => {
+		const { size } = await load()
+		const event = size({
+			tool_name: 'list_objects',
+			content: [{ type: 'text', text: 'ok' }],
+			structured_content: {
+				objects: [
+					{ id: 'a', content: 'x'.repeat(300) },
+					{ id: 'b', content: 'y'.repeat(300) },
+				],
+			},
+			truncated: false,
+		})
+		expect(event.row_count).toBe(2)
+		expect(event.top_fields?.[0]).toBe('content')
+		expect(event.content_block_count).toBe(1)
+		expect(event.max_row_bytes).toBeGreaterThan(300)
+	})
+
+	it('omits shape fields rather than sending null when they do not apply', async () => {
+		// The ingest schema types these as optional numbers. A null would fail
+		// validation and cost the whole event, byte totals included.
+		const { size } = await load()
+		const event = size({
+			tool_name: 'get_objects',
+			content: undefined,
+			structured_content: { id: 'a' },
+			truncated: false,
+		})
+		expect(event.row_count).toBeUndefined()
+		expect(event.max_row_bytes).toBeUndefined()
+		expect(event.content_block_count).toBeUndefined()
+	})
+
+	it('reads the shared seq without advancing it', async () => {
+		// Both events for one call must report the same position. Incrementing
+		// here as well would double every call's seq and break the join.
+		const { mod, sink, size } = await load()
+		mod.recordToolCall(sink, TARGET, {
+			tool_name: 'list_objects',
+			has_rich_render: false,
+			duration_ms: 1,
+		})
+		const args = {
+			tool_name: 'list_objects',
+			content: undefined,
+			structured_content: undefined,
+			truncated: false,
+		}
+		const first = size({ ...args, seq: mod.currentToolCallSeq() })
+		const second = size({ ...args, seq: mod.currentToolCallSeq() })
+		expect(first.seq).toBe(1)
+		expect(second.seq).toBe(1)
+	})
+
+	it('records argument key names so a broad call is distinguishable from a narrow one', async () => {
+		const { size } = await load()
+		const event = size({
+			tool_name: 'list_objects',
+			content: undefined,
+			structured_content: undefined,
+			truncated: false,
+			args: { limit: 100, type: 'insight' },
+		})
+		expect(event.arg_keys).toEqual(['limit', 'type'])
+	})
+
+	it('never lets a response value reach the event', async () => {
+		const { size } = await load()
+		const event = size({
+			tool_name: 'list_objects',
+			content: [{ type: 'text', text: 'Acquire the Nakatomi account' }],
+			structured_content: { objects: [{ id: 'a', title: 'Acquire the Nakatomi account' }] },
+			truncated: false,
+			args: { query: 'Acquire the Nakatomi account' },
+		})
+		expect(JSON.stringify(event)).not.toContain('Nakatomi')
+	})
+})
+
+// `recordMutation` used to stamp the module-scope SESSION_ID while
+// `recordToolCall` had been moved onto the per-target override. On the HTTP
+// transport that constant is the apps/dev PROCESS's id, so one call's two
+// events landed under two different session ids — and the summary query groups
+// by `session_id` with `HAVING bool_or(event_type = 'tool_call')`, which drops
+// the mutation-only group and reports `mutation_session_pct` as 0 for every
+// containerised agent. These pin both emitters to the same identity.
+describe('recordMutation — session identity', () => {
+	const BASE = { apiBaseUrl: 'http://localhost:3000', apiKey: 'ank_testkey', workspaceId: wsId }
+
+	async function load() {
+		vi.resetModules()
+		const mod = await import('../telemetry')
+		const events: TelemetryEvent[] = []
+		const sink: TelemetrySink = (e) => events.push(e)
+		return { mod, sink, events }
+	}
+
+	it('uses the host-supplied session id, not the process id', async () => {
+		const { mod, sink, events } = await load()
+		const target = { ...BASE, sessionId: 'sess-http-1', sessionSource: 'maskin-session' as const }
+		mod.recordMutation(sink, target, { tool_name: 'update_objects', mutation_kind: 'update' })
+		expect(events[0]).toMatchObject({ event_type: 'mutation', session_id: 'sess-http-1' })
+	})
+
+	it('stamps the same session id as the tool_call for the same call', async () => {
+		const { mod, sink, events } = await load()
+		const target = { ...BASE, sessionId: 'sess-http-2', sessionSource: 'maskin-session' as const }
+		mod.recordToolCall(sink, target, {
+			tool_name: 'update_objects',
+			has_rich_render: false,
+			duration_ms: 5,
+			transport: 'http',
+		})
+		mod.recordMutation(sink, target, { tool_name: 'update_objects', mutation_kind: 'update' })
+		const [toolCall, mutation] = events
+		// The join the summary query depends on. If these diverge,
+		// `mutation_session_pct` silently reads 0 for all HTTP traffic.
+		expect(mutation.session_id).toBe(toolCall.session_id)
+		expect(mutation.session_id).toBe('sess-http-2')
+	})
+
+	it('falls back to the process id on stdio, where no override is supplied', async () => {
+		const { mod, sink, events } = await load()
+		mod.recordMutation(sink, BASE, { tool_name: 'create_objects', mutation_kind: 'create' })
+		expect(events[0].session_id).toBe(mod.__sessionId())
+	})
+})

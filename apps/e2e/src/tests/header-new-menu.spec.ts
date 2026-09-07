@@ -122,7 +122,14 @@ test.describe('Header New menu', () => {
 		await expect(page.getByPlaceholder('Run a command or jump to…')).toBeVisible()
 	})
 
-	test('hides "Create an object" but keeps the menu on an object-detail page', async ({
+	// v2 gives the object page the same split New button as every other screen
+	// (mockup 925–946), so its menu offers the same sections. The pre-v2
+	// contract that hid "Create an object" here is superseded — see
+	// sticky-nav-bet.spec.ts, which pins the same behaviour from the other side.
+	// The pre-v2 branch still hides it: `Header` only passes
+	// `hideObjectSection` on the non-crumb path, which is the branch the
+	// legacy object document renders through.
+	test('keeps "Create an object" and the rest of the menu on an object-detail page', async ({
 		page,
 		account,
 	}) => {
@@ -143,7 +150,6 @@ test.describe('Header New menu', () => {
 		await headerNewTrigger(page).click()
 
 		await expect(page.getByRole('menuitem', { name: /new chat/i })).toBeVisible()
-		await expect(newMenu(page).getByText('Create an object')).toHaveCount(0)
-		await expect(page.getByRole('menuitem', { name: /^new task/i })).toHaveCount(0)
+		await expect(newMenu(page).getByText('Create an object')).toHaveCount(1)
 	})
 })

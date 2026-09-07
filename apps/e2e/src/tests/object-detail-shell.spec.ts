@@ -45,19 +45,19 @@ test.describe('Object detail shell — document sections', () => {
 				timeout: 15000,
 			})
 
-			// Ask banner renders the agent's open question.
-			await expect(page.getByText('Open question')).toBeVisible()
-			await expect(page.getByText(ASK)).toBeVisible()
+			// Ask banner renders the agent's open question. The lead and the
+			// question run together on one line (mockup 1097–1104).
+			await expect(page.getByText(/Open question/)).toBeVisible()
+			await expect(page.getByText(new RegExp(ASK))).toBeVisible()
 
 			// "Answer it ↓" moves focus to the answer control.
 			await page.getByRole('button', { name: /answer it/i }).click()
-			await expect(page.getByPlaceholder(/write a comment/i)).toBeFocused()
+			await expect(page.getByPlaceholder(/^Comment/)).toBeFocused()
 
-			// Body: content, kv rows from public metadata.
+			// Body: the document content. Custom fields are the drawer's, not the
+			// body's — the mockup lists them under CUSTOM FIELDS (1447–1455).
 			await expect(page.getByText(/Paragraph of context/)).toBeVisible()
-			// The metadata badge row echoes the same key, so scope to the kv term.
-			await expect(page.getByRole('term').filter({ hasText: /^priority$/ })).toBeVisible()
-			await expect(page.getByRole('definition').filter({ hasText: /^high$/ })).toBeVisible()
+			await expect(page.getByRole('term', { name: 'priority' })).toHaveCount(0)
 
 			// Document fold: title visible, markdown hidden until opened.
 			await expect(page.getByText(FOLD_TITLE)).toBeVisible()

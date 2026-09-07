@@ -41,6 +41,7 @@ import { clearAuth, getStoredActor } from '@/lib/auth'
 
 describe('NavUser', () => {
 	beforeEach(() => {
+		mockNavigate.mockReset()
 		vi.mocked(getStoredActor).mockReturnValue({
 			id: 'actor-1',
 			name: 'Alice',
@@ -76,20 +77,48 @@ describe('NavUser', () => {
 		expect(screen.getByText('User')).toBeInTheDocument()
 	})
 
-	it('renders Settings menu item', async () => {
+	it('renders the profile menu as a plain word list, no icons', async () => {
 		const user = userEvent.setup()
 		render(<NavUser />)
 
 		await user.click(screen.getByText('Alice'))
-		expect(screen.getByText('Settings')).toBeInTheDocument()
+		const items = screen.getAllByRole('menuitem')
+		expect(items.map((i) => i.textContent)).toEqual(['Your profile', 'Settings', 'Sign out'])
+		for (const item of items) {
+			expect(item.querySelector('svg')).toBeNull()
+		}
 	})
 
-	it('renders Sign out menu item', async () => {
+	it('shows the email under the name in the dropdown header', async () => {
 		const user = userEvent.setup()
 		render(<NavUser />)
 
 		await user.click(screen.getByText('Alice'))
-		expect(screen.getByText('Sign out')).toBeInTheDocument()
+		expect(screen.getByText('alice@test.com')).toBeInTheDocument()
+	})
+
+	it('sends Your profile to the profile route, not to workspace settings', async () => {
+		const user = userEvent.setup()
+		render(<NavUser />)
+
+		await user.click(screen.getByText('Alice'))
+		await user.click(screen.getByRole('menuitem', { name: 'Your profile' }))
+		expect(mockNavigate).toHaveBeenCalledWith({
+			to: '/$workspaceId/profile',
+			params: { workspaceId: 'ws-1' },
+		})
+	})
+
+	it('sends Settings to workspace settings', async () => {
+		const user = userEvent.setup()
+		render(<NavUser />)
+
+		await user.click(screen.getByText('Alice'))
+		await user.click(screen.getByRole('menuitem', { name: 'Settings' }))
+		expect(mockNavigate).toHaveBeenCalledWith({
+			to: '/$workspaceId/settings',
+			params: { workspaceId: 'ws-1' },
+		})
 	})
 
 	it('calls clearAuth and navigates to /login on sign out', async () => {

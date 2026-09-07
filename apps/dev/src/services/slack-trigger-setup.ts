@@ -6,10 +6,10 @@ import { and, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { decrypt } from '../lib/crypto'
 import {
+	type SlackJoinResult,
 	joinSlackChannel,
 	listSlackConversations,
 	slackPost,
-	type SlackJoinResult,
 } from '../lib/integrations/providers/slack/client'
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import type { StoredCredentials } from '../lib/integrations/types'
@@ -125,9 +125,7 @@ async function runSlackTriggerSetupInner(
 
 	for (const channelId of channelIds) {
 		const isPrivate = privacyById.get(channelId) ?? false
-		const previousStatus = previous?.join_attempts.find(
-			(a) => a.channel_id === channelId,
-		)?.status
+		const previousStatus = previous?.join_attempts.find((a) => a.channel_id === channelId)?.status
 		const alreadyJoined = previousStatus === 'joined' || previousStatus === 'already_in'
 
 		let status: JoinStatus

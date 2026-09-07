@@ -10,10 +10,14 @@ import { z } from 'zod'
 //   - mutation:     every successful in-chat mutation (update_objects / delete_object).
 //                   Counted per `session_id` to power the "20% of MCP sessions include
 //                   at least one in-chat mutation" metric.
-//   - tool_call_response_size: byte + token splits of `content` vs `structuredContent`
-//                   on every tool response. Fan-out to PostHog as
-//                   `mcp_tool_call_response_size` for the response-scoping bet's
-//                   p95-per-tool baseline.
+//   - tool_call_response_size: how big a tool response was, and why. Byte +
+//                   token splits of `content` vs `structuredContent` give the
+//                   p95-per-tool baseline; the shape fields (`row_count`,
+//                   `max_row_bytes`, `top_fields`) say whether a heavy response
+//                   is heavy from row count or row width, and which fields to
+//                   trim. `seq` + `arg_keys` join it to the `tool_call` event
+//                   for the same call. Fan-out to PostHog as
+//                   `mcp_tool_call_response_size`.
 //
 // Tool name is constrained loosely (1–128 chars, identifier-ish characters).
 // The MCP server is the producer, but we still validate at the boundary because
@@ -26,6 +30,46 @@ const toolNameSchema = z
 
 const sessionIdSchema = z.string().min(1).max(128).optional()
 
+// Argument KEY NAMES only — never values. Constrained to identifier-like
+// strings and a bounded count so a misbehaving or hostile client can't smuggle
+// free text (which is exactly what this field exists to keep out) through the
+// boundary by passing an object whose keys are sentences.
+const argKeysSchema = z
+	.array(
+		z
+			.string()
+			.min(1)
+			.max(64)
+			.regex(/^[A-Za-z0-9_.-]+$/, 'arg key must be identifier-like'),
+	)
+	.max(64)
+	.optional()
+	// Degrade, don't reject. `arg_keys` is optional analytics riding along on an
+	// event whose primary job is the pre-existing `mcp_telemetry` row (tool
+	// name, rich-render flag, duration). Failing the whole body would 400 the
+	// request before the handler runs and silently discard that row — and the
+	// client sink logs one line per process lifetime, so the loss would be
+	// invisible. A tool declaring a param the regex rejects (custom extensions
+	// define their own schemas) must cost us the key list, not the event.
+	.catch([])
+
+// Response field names, ranked by bytes. Same constraints as `arg_keys` and
+// the same degrade-don't-reject behaviour: a rejected name must cost the name,
+// not the size event it rides on.
+const MAX_TOP_FIELDS = 8
+
+const fieldNamesSchema = z
+	.array(
+		z
+			.string()
+			.min(1)
+			.max(64)
+			.regex(/^[A-Za-z0-9_.-]+$/, 'field name must be identifier-like'),
+	)
+	.max(MAX_TOP_FIELDS)
+	.optional()
+	.catch([])
+
 export const recordMcpToolCallSchema = z.object({
 	event_type: z.literal('tool_call'),
 	tool_name: toolNameSchema,
@@ -36,6 +80,25 @@ export const recordMcpToolCallSchema = z.object({
 		.int()
 		.min(0)
 		.max(60 * 60 * 1000),
+	// Trace fields. Optional so an older MCP server build keeps validating.
+	// `seq` orders calls within a session; wall-clock can't, because these
+	// events are fire-and-forget and can be ingested out of order.
+	seq: z.number().int().min(1).optional(),
+	arg_keys: argKeysSchema,
+	ok: z.boolean().optional(),
+	transport: z.enum(['stdio', 'http']).optional(),
+	// How the client resolved `session_id`. Only the client knows this: a
+	// container-launched stdio server holds a real `sessions.id`, a standalone
+	// one holds a per-process correlation id, and the two are indistinguishable
+	// from the id alone. Absent from an older build, which the route treats as
+	// the conservative `process`.
+	//
+	// `unknown` means the id groups nothing: it is a per-request throwaway
+	// minted because the caller supplied no identity at all. It is load-bearing
+	// rather than cosmetic — the ingest route stores NO `session_id` for these
+	// rows, keeping them out of the per-session metric they would otherwise
+	// distort. See the `sessionId` comment in `routes/telemetry.ts`.
+	session_source: z.enum(['maskin-session', 'process', 'unknown']).optional(),
 })
 
 export const recordMcpMutationSchema = z.object({
@@ -61,7 +124,63 @@ export const recordMcpToolCallResponseSizeSchema = z.object({
 	structured_content_bytes: z.number().int().min(0),
 	structured_content_tokens: z.number().int().min(0),
 	truncated: z.boolean(),
+	// Shape fields — the "why is it big" half. All optional so an older MCP
+	// server build keeps validating. `seq` and `arg_keys` are the join back to
+	// the `tool_call` event for the same call: size alone can't distinguish a
+	// broad `list_objects` from a narrow one, and that distinction is the whole
+	// point of a size investigation.
+	seq: z.number().int().min(1).optional(),
+	// Which transport the emitting server was exposed over. `http` means the
+	// server ran in-process behind `POST /mcp`, where `seq` is deliberately
+	// omitted (the paired `tool_call` event is numbered elsewhere) and
+	// `session_id` is the per-request identity threaded in by `routes/mcp.ts`
+	// rather than the MCP process's own. Optional so an older MCP server build
+	// keeps validating.
+	transport: z.enum(['stdio', 'http']).optional(),
+	arg_keys: argKeysSchema,
+	row_count: z.number().int().min(0).optional(),
+	max_row_bytes: z.number().int().min(0).optional(),
+	content_block_count: z.number().int().min(0).optional(),
+	// Field NAMES only, never values — same bar and same regex as `arg_keys`,
+	// and it matters more here: these are keys off a *response* row, which can
+	// include a workspace-authored `data` jsonb whose keys are free text.
+	top_fields: fieldNamesSchema,
+	// Positionally aligned with `top_fields`. Bounded to the same length so a
+	// client can't ship an unbounded number array through the boundary.
+	//
+	// The two arrays are validated INDEPENDENTLY, so `.catch([])` can fire on
+	// one and not the other and leave them misaligned — 8 names beside 0 byte
+	// counts. That is worse than dropping both: a dashboard joining them by
+	// position would confidently attribute the wrong size to every named
+	// field. `alignTopFields` below re-imposes the invariant at the consumer;
+	// it can't be a `.transform` here because this object is a member of a
+	// `z.discriminatedUnion`, which (zod 3) accepts only bare ZodObjects.
+	top_field_bytes: z.array(z.number().int().min(0)).max(MAX_TOP_FIELDS).optional().catch([]),
+	// True when the producer's shape measurement faulted, making every shape
+	// field above a fallback rather than an observation. Without it, a fault is
+	// indistinguishable from a correct measurement of a tool that has no row
+	// array — both arrive as nulls and empty lists. Optional, and absent on an
+	// older MCP server build, which is the same thing as "no fault reported".
+	shape_error: z.boolean().optional(),
 })
+
+/**
+ * Return `top_fields`/`top_field_bytes` only if they are positionally aligned,
+ * and `[]`/`[]` otherwise. Aligned-or-nothing: a ranking with no sizes can't
+ * answer "which field do I trim", so half the pair is not worth keeping.
+ *
+ * Callers must use this rather than reading the two fields directly — see the
+ * note on `top_field_bytes`.
+ */
+export function alignTopFields(
+	names: string[] | undefined,
+	bytes: number[] | undefined,
+): { topFields: string[]; topFieldBytes: number[] } {
+	const n = names ?? []
+	const b = bytes ?? []
+	if (n.length !== b.length) return { topFields: [], topFieldBytes: [] }
+	return { topFields: n, topFieldBytes: b }
+}
 
 // MCP misfire events for the agent-reach-signal bet: one row per real MCP
 // runtime error we can bucket into a demand signal. Persisted in

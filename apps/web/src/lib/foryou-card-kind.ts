@@ -1,119 +1,145 @@
-import type { UnreadItem } from '@/lib/api'
+import type { LatestMention, LatestMentionDecision, UnreadItem } from '@/lib/api'
 
-// The three action-UI weights the For You redesign renders per card.
-// - `decision`  → shaded footer with full-width primary/secondary buttons (heavier stakes)
-// - `sign_off`  → flat chip-row in the body (lighter — approve/send back)
-// - `proposed_bet` → flat chip-row in the body (lighter — open/refine/dismiss)
-// - `thread`    → fallback for anything that isn't decision-shaped (regular reply chips)
-export type CardKind = 'decision' | 'sign_off' | 'proposed_bet' | 'thread'
+// The two action-UI weights a For You card renders.
+// - `decision` → the agent asked for a call, and authored the options
+// - `thread`   → a plain mention with no decision attached; composer only
+//
+// This used to be four kinds inferred from the object's own type and status
+// (`task` + `in_review` → decision, and so on), paired with a hardcoded
+// CARD_ACTIONS registry that invented "Approve / Send back" for every card and
+// marked one of them recommended on no evidence. Both are gone: an ask is a
+// decision when the agent said it was, and its options are the ones the agent
+// wrote.
 
-// Statuses that signal a bet is a proposed/early-stage bet (not yet shaped).
-// A bet in one of these needs a "yes / refine / dismiss" call, not an approval.
-const PROPOSED_BET_STATUSES = new Set(['signal', 'proposed', 'define', 'clustered'])
-
-// A task waiting on review can be either a bet-level decision the human owns
-// (Design/Architecture/Copy — tagged `metadata.decision_type`) or an agent
-// asking for a light-touch sign-off. `in_review` is the only task status the
-// workspace schema exposes for either — the `decision_type` metadata is what
-// splits the two. Bets themselves have no `in_review` status (see the API
-// error the parent bet-qa surfaced), so `decision` never keys off `bet.status`.
-const REVIEW_TASK_STATUSES = new Set(['in_review'])
-
-function hasDecisionType(item: UnreadItem): boolean {
-	const decisionType = item.object?.metadata?.decision_type
-	return typeof decisionType === 'string' && decisionType.length > 0
-}
-
-export function classifyCardKind(item: UnreadItem): CardKind {
-	const type = item.object?.type
-	const status = item.object?.status
-	if (!type || !status) return 'thread'
-	if (type === 'task' && REVIEW_TASK_STATUSES.has(status)) {
-		return hasDecisionType(item) ? 'decision' : 'sign_off'
-	}
-	if (type === 'bet' && PROPOSED_BET_STATUSES.has(status)) return 'proposed_bet'
-	return 'thread'
-}
+export type CardKind = 'decision' | 'thread'
 
 export interface CardAction {
-	// Stable id T6 emits as `action_id` on `foryou_card_action`.
+	// Stable id emitted as `action_id` on `foryou_card_action`. Derived from the
+	// label, since agent-authored options have no id of their own.
 	id: string
-	// User-facing label.
 	label: string
-	// Primary shows filled/dark; secondary shows outline/light.
-	tone: 'primary' | 'secondary'
-	// One-line rationale under the label on the in-stream AskCard's option rows.
-	// Only the decision actions carry one; sign_off / proposed_bet / quick-reply
-	// stay chip-shaped with no rationale.
-	rationale?: string
-	// Marks the option the card recommends — rendered as the mockup's `REC`
-	// chip (mockup 419–424). It is a property of the *action registry* below,
-	// the same static class of data as `label` and `rationale`; no per-item
-	// recommendation is computed from the object, and nothing in the API
-	// returns one, so exactly one option per kind carries it.
+	// What taking this option means — the agent's own consequence lines, one
+	// clause each, including the downside.
+	consequences: readonly string[]
+	// The option the agent would take. Exactly one per decision, enforced by the
+	// API when the comment is posted.
 	recommended?: boolean
 }
 
-// Kind → ordered list of affordances. First is always the primary action.
-// Labels match the Designer's prototype (foryou-directions-A-B.html).
-export const CARD_ACTIONS: Record<Exclude<CardKind, 'thread'>, readonly CardAction[]> = {
-	decision: [
-		{
-			id: 'approve',
-			label: 'Approve',
-			tone: 'primary',
-			rationale: 'I agree with the direction — proceed',
-			recommended: true,
-		},
-		{
-			id: 'send_back',
-			label: 'Send back',
-			tone: 'secondary',
-			rationale: 'Needs changes before I sign off',
-		},
-	],
-	sign_off: [
-		{ id: 'sign_off', label: 'Sign off', tone: 'primary', recommended: true },
-		{ id: 'send_back', label: 'Send back', tone: 'secondary' },
-		{ id: 'snooze_24h', label: 'Snooze 24h', tone: 'secondary' },
-	],
-	proposed_bet: [
-		{ id: 'open_bet', label: 'Open bet', tone: 'primary', recommended: true },
-		{ id: 'refine', label: 'Refine first', tone: 'secondary' },
-		{ id: 'dismiss', label: 'Dismiss', tone: 'secondary' },
-	],
-} as const
+/** Slug an option label into a stable analytics id: "7-day window" → `7_day_window`. */
+export function actionIdFromLabel(label: string): string {
+	return (
+		label
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '_')
+			.replace(/^_+|_+$/g, '') || 'option'
+	)
+}
 
-// Fallback chips used when a card doesn't map to a specific action-UI kind
-// (decision / sign_off / proposed_bet). Keeps the pre-redesign feel on plain
-// threads so we don't regress non-decision items.
-export const QUICK_REPLY_CHIPS: readonly CardAction[] = [
-	{ id: 'on_it', label: 'On it', tone: 'secondary' },
-	{ id: 'approved', label: 'Approved', tone: 'secondary' },
-	{ id: 'looks_good', label: 'Looks good', tone: 'secondary' },
-	{ id: 'need_context', label: 'Need more context', tone: 'secondary' },
-]
+/** The decision an agent attached to the comment behind this card, if any. */
+export function decisionOf(item: UnreadItem): LatestMentionDecision | null {
+	return item.latest_mention?.decision ?? null
+}
 
-// Chips offered *after* a decision has been committed on a decision card. The
-// mockup drops any quick reply that echoes an option the user just picked
-// (`cuAfterQuick`, mockup 5962) — "Approved" reads as noise right under a
-// receipt that already says "You chose Approve" — and falls back to a
-// forward-looking pair when the filter empties the row.
-export const AFTER_DECISION_FALLBACK_CHIPS: readonly CardAction[] = [
-	{ id: 'rollback_plan', label: 'Show me the rollback plan', tone: 'secondary' },
-	{ id: 'loop_me_in', label: 'Loop me on the results', tone: 'secondary' },
-]
+export function classifyCardKind(item: UnreadItem): CardKind {
+	return decisionOf(item) ? 'decision' : 'thread'
+}
 
-export function afterDecisionChips(
-	options: readonly CardAction[] = CARD_ACTIONS.decision,
-	chips: readonly CardAction[] = QUICK_REPLY_CHIPS,
-): readonly CardAction[] {
-	const heads = options
-		.map((option) => option.label.split(' ')[0]?.toLowerCase() ?? '')
-		.filter((head) => head.length > 0)
-	const kept = chips.filter((chip) => {
-		const label = chip.label.toLowerCase()
-		return !heads.some((head) => label.includes(head))
-	})
-	return kept.length > 0 ? kept : AFTER_DECISION_FALLBACK_CHIPS
+/**
+ * The card's options, in render order. The recommended one sits last, where the
+ * layout puts the filled bar.
+ */
+export function cardActions(item: UnreadItem): readonly CardAction[] {
+	const decision = decisionOf(item)
+	if (!decision) return []
+	return decision.options
+		.map((option) => ({
+			id: actionIdFromLabel(option.label),
+			label: option.label,
+			consequences: option.consequences,
+			recommended: option.recommended,
+		}))
+		.sort((a, b) => (a.recommended ? 1 : 0) - (b.recommended ? 1 : 0))
+}
+
+/** The option the agent recommends, for "take every suggested option". */
+export function recommendedAction(item: UnreadItem): CardAction | undefined {
+	const actions = cardActions(item)
+	return actions.find((action) => action.recommended)
+}
+
+/**
+ * What the card leads with. Every For You item exists because an agent
+ * @-mentioned the reader, so the headline is that ask — the decision's title
+ * when there is one, else the opening of the comment. The object's own title is
+ * the last resort: it is identical across every mention on that object, so ten
+ * different asks would otherwise read the same.
+ */
+export function cardHeadline(item: UnreadItem): string {
+	const decision = decisionOf(item)
+	if (decision?.title.trim()) return decision.title.trim()
+
+	const { headline } = mentionParts(item.latest_mention)
+	if (headline) return headline
+
+	return item.object?.title?.trim() || 'Untitled'
+}
+
+/**
+ * What the card renders under the headline for a mention with no decision:
+ * everything the headline did not already take. Returning the whole comment
+ * would print its opening twice.
+ */
+export function cardBody(item: UnreadItem): string {
+	if (decisionOf(item)) return ''
+	return mentionParts(item.latest_mention).body
+}
+
+// A headline is a headline, not the first paragraph. A decision's title is held
+// to 3-7 words by the API, but a plain comment's opening was written as prose,
+// so the card takes its first sentence and caps that rather than setting three
+// sentences of welcome copy at headline weight.
+const HEADLINE_MAX_WORDS = 9
+
+/**
+ * Splits a mention into the line the card sets as its headline and the body
+ * under it. One function, so the two cannot disagree and print the same words
+ * twice or drop the tail of a sentence the headline only partly used.
+ */
+function mentionParts(mention: LatestMention | undefined): { headline: string; body: string } {
+	if (!mention) return { headline: '', body: '' }
+
+	// Skip markdown scaffolding, so a comment opening with "## Heading" or
+	// "- point" still yields prose.
+	const lines = mention.content.split('\n')
+	const leadIndex = lines.findIndex((raw) => stripMarkdownLead(raw))
+	if (leadIndex === -1) return { headline: '', body: '' }
+
+	const lead = stripMarkdownLead(lines[leadIndex] ?? '')
+	const [sentence, rest] = firstSentence(lead)
+	const headline = capWords(sentence)
+	// A capped headline is an excerpt rather than the sentence, so the body keeps
+	// that sentence whole — the reader never loses the half the headline cut.
+	const under = headline === sentence ? rest : lead
+	return { headline, body: [under, ...lines.slice(leadIndex + 1)].join('\n').trim() }
+}
+
+// The lead sentence, and whatever follows it on that line. A line with no
+// terminator is all headline, and the word cap keeps it in bounds.
+function firstSentence(line: string): [string, string] {
+	const match = line.match(/^.*?[.!?](?=\s|$)/)
+	if (!match) return [line, '']
+	return [match[0].trim(), line.slice(match[0].length).trim()]
+}
+
+// Cuts an overlong opening rather than setting it at headline weight. The caller
+// keeps the whole sentence in the body when this fires, so nothing is lost.
+function capWords(value: string): string {
+	const words = value.split(/\s+/).filter(Boolean)
+	if (words.length <= HEADLINE_MAX_WORDS) return value
+	return `${words.slice(0, HEADLINE_MAX_WORDS).join(' ')}…`
+}
+
+function stripMarkdownLead(raw: string): string {
+	return raw.replace(/^\s*(?:[#>*-]+|\d+\.)\s*/, '').trim()
 }

@@ -20,18 +20,11 @@
 // first step of introducing a new flag.
 export const FLAGS = {
 	/**
-	 * v2 UI surfaces that have not been tested yet. Off means the pre-v2
-	 * rendering under `apps/web/src/components/objects/legacy/`; on means the new
-	 * one. Retire it (and delete those directories) once the v2 surfaces have
-	 * been through testing — see `.claude/rules/feature-flags.md`.
-	 */
-	NEW_DESIGN: 'new-design',
-	/**
-	 * Gates the Slack trigger-save setup UX: auto-join public channels via
-	 * `conversations.join`, post a confirmation-in-channel card, and render the
-	 * `SlackTriggerSetupStatus` banner on the trigger form. Off means the
-	 * pre-bet save behaviour — no join, no confirmation, no banner. Retire
-	 * once the bet ships everywhere; see the parent bet spec §10.
+	 * Slack setup UX v2 — channel-picker membership indicators, per-row hints,
+	 * >2000-channel truncation footer, error state, and the picker-usage
+	 * PostHog event. Enabled per tester actor; roll to Marketplace-live
+	 * workspaces once the dogfood workspace (mesh-firm) has proven it out.
+	 * See parent bet 'Slack setup UX' for the shape spec.
 	 */
 	SLACK_SETUP_UX_V2: 'slack-setup-ux-v2',
 } as const

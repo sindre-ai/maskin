@@ -1,5 +1,4 @@
 import { PageHeader } from '@/components/layout/page-header'
-import { LegacyMarketplacePage } from '@/components/marketplace/legacy/marketplace-page'
 import { LoopGrid } from '@/components/marketplace/loop-grid'
 import { MarketplaceHeaderIdentity } from '@/components/marketplace/marketplace-header'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -9,7 +8,6 @@ import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
 import { useInstalledMarketplaceItems, useMarketplaceLoops } from '@/hooks/use-marketplace-loops'
 import type {
@@ -57,14 +55,7 @@ function buildUseCaseItems(counts: MarketplaceLoopCounts | undefined): FilterIte
 		.map((key) => ({ value: key, label: key }))
 }
 
-// `new-design` boundary for the marketplace catalogue: the v2 page below, or the
-// pre-v2 one vendored under `components/marketplace/legacy/`. Both branches run
-// on the same hooks and data layer — flags govern the visual layer only.
 function MarketplaceRoute() {
-	return useFeatureFlag('new-design') ? <MarketplacePage /> : <LegacyMarketplacePage />
-}
-
-function MarketplacePage() {
 	const { workspaceId } = useWorkspace()
 	const [activeFilter, setActiveFilter] = useState<FilterValue>('all')
 	const [query, setQuery] = useState('')

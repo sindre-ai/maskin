@@ -12,6 +12,13 @@ interface ObjectAskBannerProps {
 	actorType?: string
 }
 
+/**
+ * The open ask, one line under the title (mockup 1097–1104): avatar, a bolded
+ * lead ("<Agent> asks · ") running straight into the question on a single
+ * truncated line, and the jump-to-answer button. It is a pointer to the ask
+ * further down the timeline, not the ask itself — so it never wraps to two
+ * lines and never grows past 26px of button.
+ */
 export function ObjectAskBanner({
 	question,
 	onAnswerClick,
@@ -20,25 +27,30 @@ export function ObjectAskBanner({
 	actorType,
 }: ObjectAskBannerProps) {
 	return (
-		<div className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-ask-border bg-ask-surface p-3">
+		<div className="mt-3.5 flex flex-wrap items-center gap-2 rounded-[11px] border border-ask-border bg-ask-surface px-[11px] py-[9px]">
 			{actorName && (
 				<ActorAvatar
 					id={actorId}
 					name={actorName}
 					type={actorType ?? 'agent'}
-					size="md"
-					className="shrink-0"
+					size="sm"
+					className="size-5 shrink-0 text-[8.5px]"
 				/>
 			)}
-			<div className="min-w-0 flex-1">
-				<p className="text-[12.5px] font-bold text-warning">
-					{actorName ? `${actorName} asks` : 'Open question'}
-				</p>
-				<p className="mt-0.5 truncate text-[11.5px] text-warning/90">{question}</p>
-			</div>
-			<Button size="sm" onClick={onAnswerClick} className="shrink-0" data-ask-answer>
+			<p className="min-w-0 flex-1 truncate text-[11.5px] leading-[1.45] text-muted-foreground">
+				<span className="font-bold text-foreground">
+					{actorName ? `${actorName} asks` : 'Open question'} ·{' '}
+				</span>
+				{question}
+			</p>
+			<Button
+				size="sm"
+				onClick={onAnswerClick}
+				className="h-[26px] shrink-0 gap-1.5 rounded-lg px-[11px] text-[11.5px] font-semibold"
+				data-ask-answer
+			>
 				Answer it
-				<ArrowDown size={14} />
+				<ArrowDown size={12} />
 			</Button>
 		</div>
 	)

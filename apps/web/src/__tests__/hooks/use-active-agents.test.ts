@@ -56,6 +56,25 @@ describe('useActiveAgents', () => {
 		expect(planner?.name).toBe('Planner')
 	})
 
+	it('counts every active session, not the deduped agent rows', () => {
+		// Three live sessions held by two agents, plus a completed one that must
+		// not count: the sidebar sub-line reads this number, the tile reads
+		// `agents.length`, and the two must be allowed to disagree.
+		mockSessions.mockReturnValue([
+			buildSessionResponse({ id: 's-1', actorId: 'a-1', status: 'running' }),
+			buildSessionResponse({ id: 's-2', actorId: 'a-1', status: 'running' }),
+			buildSessionResponse({ id: 's-3', actorId: 'a-2', status: 'pending' }),
+			buildSessionResponse({ id: 's-4', actorId: 'a-2', status: 'completed' }),
+		])
+		mockActors.mockReturnValue([
+			{ id: 'a-1', name: 'Planner', type: 'agent' },
+			{ id: 'a-2', name: 'Reviewer', type: 'agent' },
+		])
+		const { result } = renderHook(() => useActiveAgents('ws-1'), { wrapper: TestWrapper })
+		expect(result.current.agents).toHaveLength(2)
+		expect(result.current.activeSessionCount).toBe(3)
+	})
+
 	it('falls back to "Agent" when actor missing from list', () => {
 		mockSessions.mockReturnValue([buildSessionResponse({ actorId: 'unknown', status: 'running' })])
 		mockActors.mockReturnValue([])

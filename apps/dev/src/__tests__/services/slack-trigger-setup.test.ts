@@ -17,13 +17,10 @@ vi.mock('../../lib/analytics/posthog', () => ({
 }))
 
 import {
-	_resetSlackCaches,
 	type SlackConversation,
+	_resetSlackCaches,
 } from '../../lib/integrations/providers/slack/client'
-import {
-	extractSlackChannelIds,
-	runSlackTriggerSetup,
-} from '../../services/slack-trigger-setup'
+import { extractSlackChannelIds, runSlackTriggerSetup } from '../../services/slack-trigger-setup'
 import { buildIntegration } from '../factories'
 import { createTestContext } from '../setup'
 
@@ -147,17 +144,23 @@ describe('runSlackTriggerSetup', () => {
 		expect(firstPostBody.text).toBe(
 			'Maskin is now listening here for "Sales alerts" — @-mention me or reply to fire.',
 		)
-		expect(firstPostBody.attachments[0].blocks[1].elements.map((e: { text: { text: string } }) => e.text.text)).toEqual([
-			'View trigger',
-			'Pause',
-		])
+		expect(
+			firstPostBody.attachments[0].blocks[1].elements.map(
+				(e: { text: { text: string } }) => e.text.text,
+			),
+		).toEqual(['View trigger', 'Pause'])
 
 		// PostHog: one auto_join.attempted per channel + one message.posted per channel.
-		const attempts = capturePosthogEventMock.mock.calls.filter((c) => c[0] === 'slack.auto_join.attempted')
+		const attempts = capturePosthogEventMock.mock.calls.filter(
+			(c) => c[0] === 'slack.auto_join.attempted',
+		)
 		const posts = capturePosthogEventMock.mock.calls.filter((c) => c[0] === 'slack.message.posted')
 		expect(attempts).toHaveLength(2)
 		expect(posts).toHaveLength(2)
-		expect(posts[0][2]).toMatchObject({ confirmation_type: 'trigger_setup', trigger_id: TRIGGER_ID })
+		expect(posts[0][2]).toMatchObject({
+			confirmation_type: 'trigger_setup',
+			trigger_id: TRIGGER_ID,
+		})
 	})
 
 	it('skips the join API call and records not_public for a private channel', async () => {
@@ -179,9 +182,7 @@ describe('runSlackTriggerSetup', () => {
 
 		// Only the conversations.list call should have fired — no join, no post.
 		expect(
-			fetchMock.mock.calls.filter((c) =>
-				(c[0] as string).includes('/api/conversations.join'),
-			),
+			fetchMock.mock.calls.filter((c) => (c[0] as string).includes('/api/conversations.join')),
 		).toHaveLength(0)
 		expect(
 			fetchMock.mock.calls.filter((c) => (c[0] as string).includes('/api/chat.postMessage')),
@@ -285,9 +286,7 @@ describe('extractSlackChannelIds', () => {
 	})
 
 	it('returns an empty list for non-Slack triggers, so the route skips the setup service', () => {
-		expect(
-			extractSlackChannelIds({ entity_type: 'task', action: 'created' }),
-		).toEqual([])
+		expect(extractSlackChannelIds({ entity_type: 'task', action: 'created' })).toEqual([])
 		expect(extractSlackChannelIds(null)).toEqual([])
 	})
 

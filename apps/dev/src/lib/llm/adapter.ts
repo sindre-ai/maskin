@@ -28,5 +28,8 @@ export interface LLMAdapter {
 		messages: LLMMessage[]
 		tools?: LLMTool[]
 		temperature?: number
+		/** Caps the completion. Anthropic requires a value and defaults to
+		 *  4096; OpenAI-shaped providers omit the field when unset. */
+		max_tokens?: number
 	}): Promise<LLMResponse>
 }

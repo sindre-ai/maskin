@@ -43,7 +43,7 @@ export interface ChildTaskLike {
 	activeSessionId: string | null
 }
 
-const OPEN_STATUSES = new Set(['todo', 'in_progress', 'in_review'])
+const OPEN_STATUSES = new Set(['backlog', 'todo', 'in_progress', 'in_review'])
 const WIP_STATUSES = new Set(['in_progress', 'in_review'])
 const DONE_STATUSES = new Set(['done', 'completed'])
 

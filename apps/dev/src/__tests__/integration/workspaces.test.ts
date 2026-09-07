@@ -201,6 +201,62 @@ describe('Workspaces Integration', () => {
 			expect(body.settings.display_names).toBeDefined()
 		})
 
+		it('enables the work, knowledge and crm extensions with their defaults', async () => {
+			const app = createApp()
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Extensions Default' }),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.settings.enabled_modules).toEqual(['work', 'knowledge', 'crm'])
+
+			// The row that actually landed in Postgres carries each enabled
+			// module's own defaults, so the Knowledge/People/Companies tabs have
+			// statuses and display names behind them from the first render.
+			const [row] = await db
+				.select({ settings: workspacesTable.settings })
+				.from(workspacesTable)
+				.where(eq(workspacesTable.id, body.id))
+			const settings = row?.settings as {
+				enabled_modules: string[]
+				display_names: Record<string, string>
+				statuses: Record<string, string[]>
+				field_definitions: Record<string, Array<{ name: string }>>
+				relationship_types: string[]
+			}
+			expect(settings.enabled_modules).toEqual(['work', 'knowledge', 'crm'])
+			expect(settings.display_names).toMatchObject({
+				knowledge: 'Knowledge',
+				contact: 'Person',
+				company: 'Company',
+			})
+			expect(settings.statuses.knowledge).toEqual(['draft', 'validated', 'deprecated'])
+			expect(settings.statuses.contact).toContain('new_lead')
+			expect(settings.statuses.company).toContain('prospect')
+			expect(settings.field_definitions.contact?.map((f) => f.name)).toContain('linkedin_url')
+			expect(settings.relationship_types).toEqual(
+				expect.arrayContaining(['informs', 'about', 'works_at']),
+			)
+		})
+
+		it('honours an explicit enabled_modules list on create', async () => {
+			const app = createApp()
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', {
+					name: 'Work Only',
+					settings: { enabled_modules: ['work'] },
+				}),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.settings.enabled_modules).toEqual(['work'])
+			expect(body.settings.statuses.contact).toBeUndefined()
+		})
+
 		it('lists workspaces for the current actor', async () => {
 			const app = createApp()
 
@@ -218,6 +274,44 @@ describe('Workspaces Integration', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body).toHaveLength(2)
+		})
+
+		it('reports a human member count per workspace, excluding seeded agents', async () => {
+			const app = createApp()
+
+			// Creating a workspace also seeds six default agent actors as members.
+			// The count is about people, so a solo workspace must still read 1.
+			const created = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Counted WS' }),
+			)
+			const workspace = await created.json()
+
+			const solo = await app.request(jsonGet('/api/workspaces'))
+			const soloRow = (await solo.json()).find((w: { id: string }) => w.id === workspace.id) as {
+				memberCount: number
+			}
+			expect(soloRow.memberCount).toBe(1)
+
+			// Add a second human — the count moves; adding an agent would not.
+			// A trial workspace seats exactly one human (SEAT_CAPS.trial), so the
+			// add would be rejected on the seat cap and the count would never
+			// move. Raise the plan first, and assert the add actually landed —
+			// otherwise a rejected member reads here as a wrong count.
+			await setWorkspacePlan(db, workspace.id, 'pro')
+			const teammate = await insertActor(db)
+			const added = await app.request(
+				jsonRequest('POST', `/api/workspaces/${workspace.id}/members`, {
+					actor_id: teammate.id,
+					role: 'member',
+				}),
+			)
+			expect(added.status).toBe(201)
+
+			const paired = await app.request(jsonGet('/api/workspaces'))
+			const pairedRow = (await paired.json()).find(
+				(w: { id: string }) => w.id === workspace.id,
+			) as { memberCount: number }
+			expect(pairedRow.memberCount).toBe(2)
 		})
 	})
 
@@ -937,10 +1031,10 @@ describe('Workspaces Integration', () => {
 				.select({ name: triggers.name })
 				.from(triggers)
 				.where(eq(triggers.workspaceId, ws.id))
-			expect(triggerRows).toHaveLength(15)
+			expect(triggerRows).toHaveLength(13)
 		})
 
-		it('seeds the Bet discovery loop, Workspace improvements, Knowledge Wiki, and Competitor intelligence loops wired to their triggers', async () => {
+		it('seeds the Bet discovery loop, Workspace improvements, and Knowledge Wiki loops wired to their triggers', async () => {
 			const app = createApp()
 
 			const createRes = await app.request(
@@ -956,7 +1050,6 @@ describe('Workspaces Integration', () => {
 
 			expect(loopRows.map((r) => r.title).sort()).toEqual([
 				'Bet discovery loop',
-				'Competitor intelligence',
 				'Knowledge Wiki → digest',
 				'Workspace improvements',
 			])
@@ -1001,17 +1094,6 @@ describe('Workspaces Integration', () => {
 					triggerIdByName.get('Compile the twice-weekly digest'),
 				]),
 			)
-
-			const competitorIntelligenceLoop = loopRows.find((r) => r.title === 'Competitor intelligence')
-			const competitorIntelligenceTriggerIds =
-				(competitorIntelligenceLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ??
-				[]
-			expect(new Set(competitorIntelligenceTriggerIds)).toEqual(
-				new Set([
-					triggerIdByName.get('Weekly competitor sweep'),
-					triggerIdByName.get('Monthly list revalidation'),
-				]),
-			)
 		})
 
 		it('re-invoking bootstrapDefaultAgents inserts zero new loop objects', async () => {
@@ -1031,7 +1113,7 @@ describe('Workspaces Integration', () => {
 				.from(objects)
 				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
 
-			expect(loopRows).toHaveLength(4)
+			expect(loopRows).toHaveLength(3)
 		})
 
 		it('leaves three pre-existing workspaces byte-identical when a new workspace is seeded', async () => {

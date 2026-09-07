@@ -1,11 +1,13 @@
-import { usePageHeader } from '@/lib/page-header-context'
+import { type PageHeaderCrumb, usePageHeader } from '@/lib/page-header-context'
 import { useEffect } from 'react'
 
 export function PageHeader({
 	title,
 	subtitle,
 	actions,
+	titleTabs,
 	stickyIdentity,
+	crumb,
 	contentPush,
 	scrollLocked,
 }: {
@@ -15,7 +17,13 @@ export function PageHeader({
 	// Muted count or context that sits beside the title in the nav row.
 	subtitle?: string
 	actions?: React.ReactNode
+	// Controls that sit beside the <h1> in the nav row's left cluster instead
+	// of out by search and New — see PageHeaderContext.
+	titleTabs?: React.ReactNode
 	stickyIdentity?: React.ReactNode
+	// A detail screen's own `Parent › Name` crumb. Publishing one collapses the
+	// shared nav to the compact detail bar the mockup draws above the document.
+	crumb?: PageHeaderCrumb
 	// CSS width value the app shell should be pushed left by while this page
 	// is mounted — see PageHeaderContext.
 	contentPush?: string
@@ -24,8 +32,16 @@ export function PageHeader({
 	// PageHeaderContext.
 	scrollLocked?: boolean
 }) {
-	const { setTitle, setSubtitle, setActions, setStickyIdentity, setContentPush, setScrollLocked } =
-		usePageHeader()
+	const {
+		setTitle,
+		setSubtitle,
+		setActions,
+		setTitleTabs,
+		setStickyIdentity,
+		setCrumb,
+		setContentPush,
+		setScrollLocked,
+	} = usePageHeader()
 
 	useEffect(() => {
 		setTitle(title)
@@ -43,9 +59,19 @@ export function PageHeader({
 	}, [actions, setActions])
 
 	useEffect(() => {
+		setTitleTabs(titleTabs ?? null)
+		return () => setTitleTabs(null)
+	}, [titleTabs, setTitleTabs])
+
+	useEffect(() => {
 		setStickyIdentity(stickyIdentity ?? null)
 		return () => setStickyIdentity(null)
 	}, [stickyIdentity, setStickyIdentity])
+
+	useEffect(() => {
+		setCrumb(crumb)
+		return () => setCrumb(undefined)
+	}, [crumb, setCrumb])
 
 	useEffect(() => {
 		setContentPush(contentPush)

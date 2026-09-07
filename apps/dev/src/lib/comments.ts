@@ -1,5 +1,6 @@
 import type { Database } from '@maskin/db'
 import { events, actors, subscriptions } from '@maskin/db/schema'
+import type { CommentDecision } from '@maskin/shared'
 import { inArray } from 'drizzle-orm'
 import { insertNotificationsWithEvents } from './notifications'
 
@@ -18,6 +19,12 @@ export interface PostCommentInput {
 	parentEventId?: number
 	attachmentFileIds?: string[]
 	metadata?: unknown
+	/**
+	 * Structured decision block (see `commentDecisionSchema`). Validated by the
+	 * caller before it gets here; stored alongside the body so the For You feed
+	 * can render its options as real buttons.
+	 */
+	decision?: CommentDecision
 	attention?: number
 }
 
@@ -68,6 +75,7 @@ export async function postComment(
 					parentEventId: input.parentEventId,
 					attachmentFileIds: input.attachmentFileIds,
 					metadata: input.metadata,
+					decision: input.decision,
 					attention: input.attention,
 				},
 			})

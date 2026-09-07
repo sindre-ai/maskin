@@ -1,5 +1,11 @@
-import { MarkdownContent } from '@/components/shared/markdown-content'
-import { render, screen } from '@testing-library/react'
+import {
+	MarkdownContent,
+	caretOffsetInSource,
+	continueListOnEnter,
+	isIndentContext,
+	shiftIndent,
+} from '@/components/shared/markdown-content'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -46,6 +52,24 @@ describe('MarkdownContent', () => {
 		expect(onChange).toHaveBeenCalledWith('updated')
 	})
 
+	// Regression: the save is optimistic and rolls back silently, so if blur closed
+	// the editor unconditionally a rejected write destroyed the user's rewrite with
+	// no way to recover it.
+	it('reopens the editor with the draft intact when the save rejects', async () => {
+		const user = userEvent.setup()
+		const onChange = vi.fn().mockRejectedValue(new Error('save failed'))
+		render(<MarkdownContent content="original" editable onChange={onChange} />)
+
+		await user.click(screen.getByText('original'))
+		await user.clear(screen.getByRole('textbox'))
+		await user.type(screen.getByRole('textbox'), 'a long rewrite')
+		await user.tab()
+
+		expect(onChange).toHaveBeenCalledWith('a long rewrite')
+		const restored = await screen.findByRole('textbox')
+		expect(restored).toHaveValue('a long rewrite')
+	})
+
 	it('does not call onChange when content unchanged', async () => {
 		const user = userEvent.setup()
 		const onChange = vi.fn()
@@ -63,6 +87,164 @@ describe('MarkdownContent', () => {
 
 		await user.click(screen.getByText('read only'))
 		expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+	})
+
+	it('leaves a link in the body clickable instead of opening the editor', async () => {
+		const user = userEvent.setup()
+		// A hash href — jsdom implements hash navigation, so clicking it does not
+		// print an unimplemented-navigation warning over the rest of the suite.
+		render(<MarkdownContent content="See [the docs](#docs) first." editable />)
+
+		await user.click(screen.getByRole('link', { name: 'the docs' }))
+
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'the docs' })).toBeInTheDocument()
+	})
+
+	it('puts the caret at the end when the click position cannot be mapped', async () => {
+		const user = userEvent.setup()
+		// jsdom implements neither caretPositionFromPoint nor caretRangeFromPoint,
+		// so this exercises the fallback the browser path shares.
+		render(<MarkdownContent content="Some existing prose." editable />)
+
+		await user.click(screen.getByText('Some existing prose.'))
+
+		const editor = screen.getByRole('textbox') as HTMLTextAreaElement
+		expect(editor.selectionStart).toBe('Some existing prose.'.length)
+	})
+
+	it('commits the edit on Cmd+Enter', async () => {
+		const onChange = vi.fn()
+		const user = userEvent.setup()
+		render(<MarkdownContent content="before" editable onChange={onChange} />)
+
+		await user.click(screen.getByText('before'))
+		const editor = screen.getByRole('textbox')
+		await user.type(editor, ' after')
+		await user.keyboard('{Meta>}{Enter}{/Meta}')
+
+		expect(onChange).toHaveBeenCalledWith('before after')
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+	})
+
+	it('carries the list marker onto the next line when Enter is pressed', async () => {
+		const onChange = vi.fn()
+		const user = userEvent.setup()
+		render(<MarkdownContent content="- first" editable onChange={onChange} />)
+
+		await user.click(screen.getByText('first'))
+		await user.keyboard('{Enter}second')
+		await user.keyboard('{Meta>}{Enter}{/Meta}')
+
+		expect(onChange).toHaveBeenCalledWith('- first\n- second')
+	})
+
+	it('indents the current list item on Tab instead of leaving the field', async () => {
+		const onChange = vi.fn()
+		const user = userEvent.setup()
+		render(<MarkdownContent content={'- first\n- second'} editable onChange={onChange} />)
+
+		await user.click(screen.getByText('second'))
+		await user.tab()
+
+		// Still editing — Tab was claimed as indentation, not as focus movement.
+		expect(screen.getByRole('textbox')).toBeInTheDocument()
+		await user.keyboard('{Meta>}{Enter}{/Meta}')
+		expect(onChange).toHaveBeenCalledWith('- first\n  - second')
+	})
+
+	it('lets Tab move focus out when the caret is in plain prose', async () => {
+		const onChange = vi.fn()
+		const user = userEvent.setup()
+		render(<MarkdownContent content="Just a paragraph." editable onChange={onChange} />)
+
+		await user.click(screen.getByText('Just a paragraph.'))
+		expect(screen.getByRole('textbox')).toBeInTheDocument()
+		await user.tab()
+
+		// Focus left, the editor closed, and nothing was rewritten.
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+		expect(onChange).not.toHaveBeenCalled()
+	})
+
+	it('formats the occurrence that was actually selected, not the first match', async () => {
+		// jsdom has no layout, so every rect it reports is empty and the toolbar
+		// declines to place itself. Stub a real one so the mapping this test is
+		// actually about can run.
+		const originalRect = Range.prototype.getBoundingClientRect
+		Range.prototype.getBoundingClientRect = () =>
+			({
+				left: 80,
+				right: 120,
+				top: 40,
+				bottom: 60,
+				width: 40,
+				height: 20,
+				x: 80,
+				y: 40,
+			}) as DOMRect
+		const onChange = vi.fn()
+		const source = 'Ship the retry now, not the retry later.'
+		render(<MarkdownContent content={source} size="doc" editable onChange={onChange} />)
+
+		fireEvent.click(screen.getByText(source))
+		const field = screen.getByRole('textbox') as HTMLTextAreaElement
+		const second = source.indexOf('retry', source.indexOf('retry') + 1)
+		field.setSelectionRange(second, second + 'retry'.length)
+		fireEvent.select(field)
+
+		const bold = await waitFor(() => screen.getByRole('button', { name: 'Bold' }))
+		fireEvent.mouseDown(bold)
+
+		expect(field.value).toBe('Ship the retry now, not the **retry** later.')
+		Range.prototype.getBoundingClientRect = originalRect
+	})
+
+	it('toggles a marker from the keyboard shortcut', () => {
+		const source = 'Ship the retry now.'
+		render(<MarkdownContent content={source} size="doc" editable onChange={vi.fn()} />)
+
+		fireEvent.click(screen.getByText(source))
+		const field = screen.getByRole('textbox') as HTMLTextAreaElement
+		field.setSelectionRange(9, 14)
+		fireEvent.keyDown(field, { key: 'b', ctrlKey: true })
+
+		expect(field.value).toBe('Ship the **retry** now.')
+	})
+
+	// AltGr is Ctrl+Alt on Windows, so the Nordic/German `AltGr+E` (€) reaches the
+	// handler with ctrlKey set. Swallowing it would replace the character the user
+	// typed with a code-marker toggle, mid-sentence.
+	it('ignores an AltGr chord that carries ctrlKey', () => {
+		const source = 'Ship the retry now.'
+		render(<MarkdownContent content={source} size="doc" editable onChange={vi.fn()} />)
+
+		fireEvent.click(screen.getByText(source))
+		const field = screen.getByRole('textbox') as HTMLTextAreaElement
+		field.setSelectionRange(9, 14)
+		const handled = fireEvent.keyDown(field, { key: 'e', ctrlKey: true, altKey: true })
+
+		expect(field.value).toBe(source)
+		expect(handled).toBe(true) // not preventDefault'd — the character still lands
+	})
+
+	// Reading is not editing: a selection in the rendered prose must stay quiet.
+	it('raises the toolbar only while the body is being edited', async () => {
+		const source = 'Ship the retry now.'
+		const { container } = render(
+			<MarkdownContent content={source} size="doc" editable onChange={vi.fn()} />,
+		)
+
+		const paragraph = screen.getByText(source)
+		const range = document.createRange()
+		range.setStart(paragraph.firstChild as Text, 0)
+		range.setEnd(paragraph.firstChild as Text, 4)
+		const selection = window.getSelection()
+		selection?.removeAllRanges()
+		selection?.addRange(range)
+		fireEvent.mouseUp(container.firstChild as HTMLElement)
+
+		expect(screen.queryByRole('button', { name: 'Bold' })).toBeNull()
 	})
 
 	it('suppresses disallowed elements but keeps their text', () => {
@@ -123,5 +305,112 @@ describe('MarkdownContent', () => {
 		expect(chip.tagName).toBe('SPAN')
 		const strong = screen.getByText('important')
 		expect(strong.tagName).toBe('STRONG')
+	})
+})
+
+describe('caretOffsetInSource', () => {
+	it('maps an offset inside a rendered run to the same spot in the source', () => {
+		const source = 'The retry window is still open.'
+		expect(caretOffsetInSource(source, 'The retry window is still open.', 4)).toBe(4)
+	})
+
+	it('locates a run that appears partway through the source', () => {
+		const source = '# Heading\n\nThe body paragraph.'
+		expect(caretOffsetInSource(source, 'The body paragraph.', 4)).toBe(
+			source.indexOf('The body paragraph.') + 4,
+		)
+	})
+
+	it('discounts leading whitespace the renderer added', () => {
+		const source = 'Body text here.'
+		expect(caretOffsetInSource(source, '  Body text here.', 6)).toBe(4)
+	})
+
+	it('clamps an offset past the end of the run', () => {
+		const source = 'Short.'
+		expect(caretOffsetInSource(source, 'Short.', 99)).toBe(6)
+	})
+
+	it('returns null for whitespace-only or unlocatable runs', () => {
+		expect(caretOffsetInSource('anything', '   ', 1)).toBeNull()
+		expect(caretOffsetInSource('anything', 'not in here', 1)).toBeNull()
+	})
+})
+
+describe('continueListOnEnter', () => {
+	it('repeats a bullet marker', () => {
+		expect(continueListOnEnter('- first', 7, 7)).toEqual({
+			value: '- first\n- ',
+			start: 10,
+			end: 10,
+		})
+	})
+
+	it('increments an ordered marker', () => {
+		expect(continueListOnEnter('1. first', 8, 8)?.value).toBe('1. first\n2. ')
+		expect(continueListOnEnter('4) first', 8, 8)?.value).toBe('4) first\n5) ')
+	})
+
+	it('keeps the indent of a nested item', () => {
+		expect(continueListOnEnter('  - nested', 10, 10)?.value).toBe('  - nested\n  - ')
+	})
+
+	it('starts the next task unchecked', () => {
+		expect(continueListOnEnter('- [x] done', 10, 10)?.value).toBe('- [x] done\n- [ ] ')
+	})
+
+	it('ends the list when Enter lands on an empty item', () => {
+		expect(continueListOnEnter('- first\n- ', 10, 10)).toEqual({
+			value: '- first\n',
+			start: 8,
+			end: 8,
+		})
+	})
+
+	it('splits an item when the caret is mid-line', () => {
+		expect(continueListOnEnter('- first', 5, 5)?.value).toBe('- fir\n- st')
+	})
+
+	it('leaves prose and selections to the browser', () => {
+		expect(continueListOnEnter('just prose', 10, 10)).toBeNull()
+		expect(continueListOnEnter('- first', 2, 7)).toBeNull()
+	})
+})
+
+describe('isIndentContext', () => {
+	it('claims Tab on a list line', () => {
+		expect(isIndentContext('- item', 6, 6)).toBe(true)
+		expect(isIndentContext('  1. item', 9, 9)).toBe(true)
+	})
+
+	it('claims Tab across a multi-line selection', () => {
+		expect(isIndentContext('one\ntwo', 1, 6)).toBe(true)
+	})
+
+	it('leaves Tab alone in plain prose', () => {
+		expect(isIndentContext('just prose', 4, 4)).toBe(false)
+	})
+})
+
+describe('shiftIndent', () => {
+	it('indents the caret line and moves the selection with it', () => {
+		expect(shiftIndent('- item', 6, 6, false)).toEqual({
+			value: '  - item',
+			start: 8,
+			end: 8,
+		})
+	})
+
+	it('outdents two spaces, or a tab', () => {
+		expect(shiftIndent('  - item', 8, 8, true).value).toBe('- item')
+		expect(shiftIndent('\t- item', 7, 7, true).value).toBe('- item')
+	})
+
+	it('is a no-op outdenting a line that has no indent', () => {
+		expect(shiftIndent('- item', 6, 6, true)).toEqual({ value: '- item', start: 6, end: 6 })
+	})
+
+	it('shifts every line a selection touches, skipping blank ones', () => {
+		expect(shiftIndent('- one\n\n- two', 2, 10, false).value).toBe('  - one\n\n  - two')
 	})
 })

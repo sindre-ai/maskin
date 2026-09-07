@@ -1,6 +1,4 @@
 import { PageHeader } from '@/components/layout/page-header'
-import { LegacySettingsNav } from '@/components/settings/legacy/settings-nav'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, Outlet, createFileRoute, useMatchRoute } from '@tanstack/react-router'
@@ -27,7 +25,7 @@ const keysNavItem = {
 	exact: false,
 }
 
-function SettingsLayoutV2() {
+function SettingsLayout() {
 	const { workspace, workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
 	const navItems = workspace?.enterprise ? [...settingsNav, keysNavItem] : settingsNav
@@ -40,7 +38,7 @@ function SettingsLayoutV2() {
 			<div className="flex flex-col gap-6 md:flex-row md:gap-8">
 				<nav
 					aria-label="Settings sections"
-					className="md:w-[172px] md:shrink-0 md:border-r md:border-border md:pr-2"
+					className="md:w-[172px] md:shrink-0 md:border-r md:border-border-subtle md:pr-2"
 				>
 					<ul className="flex gap-0.5 overflow-x-auto pb-2 md:flex-col md:pb-0">
 						{navItems.map((item) => {
@@ -72,10 +70,4 @@ function SettingsLayoutV2() {
 			</div>
 		</div>
 	)
-}
-
-// `new-design` boundary for the Settings shell: the v2 six-section nav above,
-// or the pre-v2 nav under `components/settings/legacy/`.
-function SettingsLayout() {
-	return useFeatureFlag('new-design') ? <SettingsLayoutV2 /> : <LegacySettingsNav />
 }

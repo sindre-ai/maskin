@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { vi } from 'vitest'
 
 vi.mock('@/lib/api', () => ({
@@ -43,6 +43,7 @@ describe('SlackTriggerSetupStatus', () => {
 				is_im: false,
 				is_mpim: false,
 				is_channel: true,
+				is_member: false,
 			},
 			{
 				id: 'CGONE',
@@ -51,6 +52,7 @@ describe('SlackTriggerSetupStatus', () => {
 				is_im: false,
 				is_mpim: false,
 				is_channel: true,
+				is_member: false,
 			},
 			{
 				id: 'CGOOD',
@@ -59,11 +61,12 @@ describe('SlackTriggerSetupStatus', () => {
 				is_im: false,
 				is_mpim: false,
 				is_channel: true,
+				is_member: true,
 			},
 		])
 	})
 
-	it('renders yellow failure banner with mapped per-channel copy for setup failures', () => {
+	it('renders yellow failure banner with mapped per-channel copy for setup failures', async () => {
 		const trigger = baseTrigger({
 			metadata: {
 				slack_setup: {
@@ -87,11 +90,7 @@ describe('SlackTriggerSetupStatus', () => {
 
 		render(
 			<TestWrapper>
-				<SlackTriggerSetupStatus
-					trigger={trigger}
-					integrationId="int-1"
-					workspaceId="ws-1"
-				/>
+				<SlackTriggerSetupStatus trigger={trigger} integrationId="int-1" workspaceId="ws-1" />
 			</TestWrapper>,
 		)
 
@@ -99,8 +98,12 @@ describe('SlackTriggerSetupStatus', () => {
 		expect(banner).toHaveAttribute('data-state', 'setup-failure')
 		// `#founders` name is resolved from the useSlackConversations cache; the
 		// exact copy comes from `slack-setup-copy.ts` (spec §3 mapping).
-		expect(banner.textContent).toContain(
-			"Private channel — Slack won't let Maskin auto-join. In Slack: /invite @Maskin #founders",
+		// The channel name arrives once useSlackConversations resolves; until then
+		// the copy falls back to the raw channel id.
+		await waitFor(() =>
+			expect(banner.textContent).toContain(
+				"Private channel — Slack won't let Maskin auto-join. In Slack: /invite @Maskin #founders",
+			),
 		)
 		expect(banner.textContent).toContain(
 			'Channel not found — it may have been archived or renamed.',
@@ -127,11 +130,7 @@ describe('SlackTriggerSetupStatus', () => {
 
 		const { container } = render(
 			<TestWrapper>
-				<SlackTriggerSetupStatus
-					trigger={trigger}
-					integrationId="int-1"
-					workspaceId="ws-1"
-				/>
+				<SlackTriggerSetupStatus trigger={trigger} integrationId="int-1" workspaceId="ws-1" />
 			</TestWrapper>,
 		)
 
@@ -143,11 +142,7 @@ describe('SlackTriggerSetupStatus', () => {
 
 		const { container } = render(
 			<TestWrapper>
-				<SlackTriggerSetupStatus
-					trigger={trigger}
-					integrationId="int-1"
-					workspaceId="ws-1"
-				/>
+				<SlackTriggerSetupStatus trigger={trigger} integrationId="int-1" workspaceId="ws-1" />
 			</TestWrapper>,
 		)
 

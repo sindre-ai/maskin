@@ -150,7 +150,7 @@ interface DetectedType {
 const TASK: ObjectTypeSpec = {
 	type: 'task',
 	name: 'Task',
-	baseChain: ['todo', 'in_progress', 'in_review', 'validated', 'done'],
+	baseChain: ['backlog', 'todo', 'in_progress', 'in_review', 'validated', 'done'],
 	role: 'Unit of work',
 }
 

@@ -102,7 +102,26 @@ export interface McpConfig {
 	 * opts into per agent.
 	 */
 	autoInject?: boolean
-	/** MCP server spec injected when autoInject=true. */
+	/**
+	 * The canonical MCP server spec for this provider — the exact JSON that
+	 * belongs under an agent's `tools.mcpServers.<provider>`.
+	 *
+	 * Required for every provider that declares `mcp`, **independently of
+	 * `autoInject`**. `autoInject` only decides whether session-manager attaches
+	 * it automatically; the spec itself must always be stated, because
+	 * `GET /api/integrations/providers` serves it as the discovery answer to
+	 * "what do I write to give an agent this integration's tools?".
+	 *
+	 * Without it an opt-in provider is invisible to every non-browser client:
+	 * the OAuth handshake completes, the token env var is injected, and the
+	 * agent still gets zero tools with nothing to explain why. `command`/`args`
+	 * above are NOT a substitute — nothing reads them at runtime.
+	 *
+	 * The single exemption is `github`, whose server entries are named per
+	 * installation with literal tokens, so no one spec describes them; see the
+	 * comment in providers/github/config.ts. The route test enumerating which
+	 * providers carry a `server` is what holds that line.
+	 */
 	server?: McpServerSpec
 }
 

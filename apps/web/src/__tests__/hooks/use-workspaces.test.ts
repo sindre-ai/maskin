@@ -35,6 +35,7 @@ function buildWorkspace(
 ): WorkspaceWithRole {
 	return {
 		role: 'owner',
+		memberCount: 1,
 		settings: {},
 		enterprise: false,
 		billingOwnerId: null,

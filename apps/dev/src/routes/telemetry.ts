@@ -2,14 +2,17 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { mcpTelemetry } from '@maskin/db/schema'
 import {
+	alignTopFields,
 	mcpTelemetrySummaryQuerySchema,
 	mcpTelemetrySummarySchema,
 	recordMcpTelemetrySchema,
 } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { recordMcpMisfire } from '../lib/analytics/mcp-misfire'
+import { captureMcpToolCall } from '../lib/analytics/mcp-tool-calls'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 
@@ -65,14 +68,77 @@ app.openapi(recordRoute, (async (c) => {
 	}
 
 	if (body.event_type === 'tool_call') {
+		// A `session_source` of `unknown` means the id is a per-request throwaway
+		// minted because the caller supplied no identity — it groups nothing.
+		// Store NO session id for those rows. The summary query groups by
+		// `session_id` and skips null, so an unattributable call still counts
+		// toward the per-call metric (rich-render rate) while staying out of the
+		// per-session one (`mutation_session_pct`), which it could only distort:
+		// persisting the throwaway would inflate the denominator by one session
+		// per request, and persisting a shared constant instead — the bug this
+		// replaced — collapsed every such caller into a single session that one
+		// mutation could flip. A `mutation` row keyed on the same throwaway is
+		// harmless: its group holds no tool_call, so the HAVING clause in the
+		// summary query drops it rather than counting it in the numerator.
+		const persistedSessionId = body.session_source === 'unknown' ? null : (body.session_id ?? null)
 		await db.insert(mcpTelemetry).values({
 			workspaceId,
 			eventType: 'tool_call',
 			toolName: body.tool_name,
-			sessionId: body.session_id ?? null,
+			sessionId: persistedSessionId,
 			hasRichRender: body.has_rich_render,
 			durationMs: body.duration_ms,
 		})
+		// Trace fan-out for stdio clients (Claude Code, Cursor, …), whose calls
+		// only ever reach us through this sink.
+		//
+		// HTTP-transport events are deliberately skipped: on that path the MCP
+		// server runs in-process behind `POST /mcp` and its sink loops straight
+		// back here, while `routes/mcp.ts` already emits the trace server-side.
+		// Emitting here too would double-count every HTTP tool call. Note the
+		// coupling: removing the server-side trace in `routes/mcp.ts` silently
+		// drops HTTP tool calls from analytics entirely, because this gate goes
+		// on suppressing them. `transport` is optional, so an older MCP server build
+		// (which sends neither field) still gets traced — stdio is the
+		// overwhelmingly likely origin for such a client.
+		if (body.transport !== 'http') {
+			// An id-less client gets a per-request id, never a shared literal.
+			// Collapsing them onto one constant would interleave unrelated
+			// processes into a single apparent session with mixed seq counters —
+			// worse than no grouping. `routes/mcp.ts` mints an `anon-` id for the
+			// same reason; matched here.
+			const sessionId =
+				body.session_id ??
+				`anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+			// `.catch` because this is un-awaited: an unhandled rejection from an
+			// analytics call would take the apps/dev process down.
+			void captureMcpToolCall(workspaceId, {
+				sessionId,
+				// Trust the client's own account of how it resolved the id: only it
+				// can tell a real `sessions.id` from its per-process correlation id.
+				// An older build sends nothing, so fall back to the conservative
+				// `process` — never `maskin-session`, which would claim a join back
+				// to the sessions row that may not exist.
+				// An explicit `unknown` from the client is honoured as-is; only an
+				// older build that sends no source at all falls back to `process`.
+				sessionSource: body.session_id ? (body.session_source ?? 'process') : 'unknown',
+				// Null, not 0: `seq` is 1-based, so 0 is out of band and would sort
+				// ahead of every real call in an ordering query.
+				seq: body.seq ?? null,
+				toolName: body.tool_name,
+				argKeys: body.arg_keys ?? [],
+				ok: body.ok ?? true,
+				// The stdio sink reports failure without a reason, so bucket it the
+				// same way the HTTP path buckets an error it cannot classify. Using
+				// null here instead would make stdio failures indistinguishable from
+				// successes when grouping by `error_class`.
+				errorClass: body.ok === false ? 'unclassified' : null,
+				durationMs: body.duration_ms,
+				responseBytes: null,
+				transport: 'stdio',
+				agentActorId: actorId,
+			}).catch((err) => logger.warn('mcp trace fan-out failed', { error: String(err) }))
+		}
 	} else if (body.event_type === 'mutation') {
 		await db.insert(mcpTelemetry).values({
 			workspaceId,
@@ -100,14 +166,50 @@ app.openapi(recordRoute, (async (c) => {
 		// doesn't earn a schema migration. The Product Analyst's baseline query
 		// reads `mcp_tool_call_response_size` rows directly from PostHog.
 		// Fire-and-forget; `capturePosthogEvent` never throws.
+		//
+		// Read the field ranking through `alignTopFields`, never off `body`
+		// directly: the names and the byte counts are validated independently
+		// at the boundary and can degrade apart into a misaligned pair.
+		const { topFields, topFieldBytes } = alignTopFields(body.top_fields, body.top_field_bytes)
 		void capturePosthogEvent('mcp_tool_call_response_size', workspaceId, {
 			tool_name: body.tool_name,
 			session_id: body.session_id ?? null,
+			// `stdio` and `http` rows are not interchangeable: on `http` there is
+			// no `seq` (see the schema), so a query joining size back to a
+			// `tool_call` must filter on this rather than silently return
+			// nothing for HTTP callers.
+			transport: body.transport ?? null,
 			content_bytes: body.content_bytes,
 			content_tokens: body.content_tokens,
 			structured_content_bytes: body.structured_content_bytes,
 			structured_content_tokens: body.structured_content_tokens,
 			truncated: body.truncated,
+			// Shape dimensions — what to actually cut. `row_count` + `max_row_bytes`
+			// separate "too many rows" from "rows too fat"; `top_fields` names the
+			// heaviest fields so a trim has a target instead of a hunch. Absent
+			// from an older MCP build, and null rather than 0 when the concept
+			// doesn't apply — a tool with no row array is not a tool that returned
+			// zero rows, and collapsing the two would skew every average.
+			seq: body.seq ?? null,
+			arg_keys: body.arg_keys ?? [],
+			row_count: body.row_count ?? null,
+			max_row_bytes: body.max_row_bytes ?? null,
+			content_block_count: body.content_block_count ?? null,
+			top_fields: topFields,
+			top_field_bytes: topFieldBytes,
+			// Whether the shape fields on this row are observations or fallbacks.
+			// Always emitted (never omitted) so a dashboard can filter on it
+			// without having to treat "absent" as a third state.
+			shape_error: body.shape_error ?? false,
+			// Derived here rather than in a dashboard query so the "is each row
+			// too fat?" question is answerable by grouping alone. Guarded against
+			// a zero row count, which is a real and frequent response.
+			bytes_per_row:
+				body.row_count && body.row_count > 0
+					? Math.round(body.structured_content_bytes / body.row_count)
+					: null,
+			total_bytes: body.content_bytes + body.structured_content_bytes,
+			total_tokens: body.content_tokens + body.structured_content_tokens,
 			workspace_id: workspaceId,
 		})
 	}

@@ -89,10 +89,7 @@ import { Route } from '@/routes/_authed/$workspaceId/search'
 const RouteOptions = Route as unknown as { component: React.FC }
 const SearchView = RouteOptions.component
 
-// The v2 surface sits behind `new-design`; these specs cover that branch, so
-// they drive the flag on through the test-only localStorage override.
 beforeEach(() => {
-	localStorage.setItem('ff:new-design', 'on')
 	searchState.current = { q: undefined, type: undefined, status: undefined, group: undefined }
 	navigateMock.mockClear()
 	historyBackMock.mockClear()

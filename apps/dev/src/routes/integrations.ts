@@ -64,6 +64,7 @@ import {
 	slackInteractiveDeliveryId,
 } from '../lib/integrations/providers/slack/interactive'
 import { getProvider, listProviders } from '../lib/integrations/registry'
+import { integrationScopeGaps } from '../lib/integrations/scope-drift'
 import type {
 	NormalizedEvent,
 	ResolvedProvider,
@@ -125,7 +126,31 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 	// Never expose credentials
 	const safe = results.map((r) => {
 		const { credentials, ...rest } = r
-		return rest
+
+		// Flag installs whose token predates a scope the provider now requires.
+		// Only the scope NAMES leave this function — the decrypted blob does not.
+		// Best-effort throughout: a provider we no longer register, an
+		// undecryptable blob (almost always an encryption-key rotation) or an
+		// inactive row must never take the whole integrations list down.
+		let missingScopes: string[] = []
+		if (rest.status === 'active' && credentials) {
+			try {
+				const provider = getProvider(rest.provider)
+				if (provider) {
+					const parsed = JSON.parse(decrypt(credentials as string)) as StoredCredentials
+					missingScopes = integrationScopeGaps(provider.config, parsed).missing
+				}
+			} catch (err) {
+				logger.warn('Could not evaluate integration scope drift', {
+					workspaceId,
+					integrationId: rest.id,
+					provider: rest.provider,
+					error: String(err),
+				})
+			}
+		}
+
+		return { ...rest, missingScopes, needsReconnect: missingScopes.length > 0 }
 	})
 
 	return c.json(serializeArray(safe) as z.infer<typeof integrationResponseSchema>[])
@@ -153,6 +178,17 @@ app.openapi(listProvidersRoute, (async (c) => {
 		authType: p.config.auth.type,
 		events: p.config.events?.definitions ?? [],
 		externalIdDisplay: p.config.externalIdDisplay,
+		// Serve the MCP surface so clients that aren't the web UI can discover
+		// it. `server` is the paste-ready tools.mcpServers.<provider> value; a
+		// provider with autoInject=false is otherwise undiscoverable and reads
+		// as "OAuth connected, zero tools" with nothing explaining the gap.
+		...(p.config.mcp && {
+			mcp: {
+				envKey: p.config.mcp.envKey,
+				autoInject: p.config.mcp.autoInject ?? false,
+				...(p.config.mcp.server && { server: p.config.mcp.server }),
+			},
+		}),
 	}))
 
 	return c.json(providers as z.infer<typeof providerInfoSchema>[])
@@ -1821,6 +1857,7 @@ const slackConversationSchema = z.object({
 	is_im: z.boolean(),
 	is_mpim: z.boolean(),
 	is_channel: z.boolean(),
+	is_member: z.boolean(),
 })
 
 const listSlackConversationsRoute = createRoute({

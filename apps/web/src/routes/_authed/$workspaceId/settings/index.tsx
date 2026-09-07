@@ -1,10 +1,8 @@
-import { LegacyGeneralPage } from '@/components/settings/legacy/general-page'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { cn } from '@/lib/cn'
 import { type Theme, useTheme } from '@/lib/theme'
@@ -19,7 +17,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/')({
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-function GeneralPageV2() {
+function GeneralPage() {
 	const { workspace, workspaceId } = useWorkspace()
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 	const [name, setName] = useState(workspace.name)
@@ -38,7 +36,7 @@ function GeneralPageV2() {
 
 	return (
 		<div className="max-w-[580px]">
-			<h2 className="eyebrow mb-2">WORKSPACE NAME</h2>
+			<h2 className="settings-label mb-[7px]">WORKSPACE NAME</h2>
 			<div className="flex gap-2">
 				<Input
 					type="text"
@@ -92,7 +90,7 @@ function PrivacySection() {
 
 	return (
 		<div>
-			<h2 className="eyebrow mb-1.5">PRIVACY &amp; DATA</h2>
+			<h2 className="settings-label mb-1.5">PRIVACY &amp; DATA</h2>
 			<p className="mb-3 max-w-prose text-xs leading-relaxed text-muted-foreground">
 				Usage events feed the Synthesizer so the team sees how the workspace is really used. No
 				object titles, no content, no PII.
@@ -100,7 +98,9 @@ function PrivacySection() {
 			<div className="space-y-2.5">
 				<div className="flex items-start justify-between gap-4 rounded-xl border border-border bg-card p-3">
 					<div className="min-w-0">
-						<span className="block text-sm font-medium">Share product usage with Maskin</span>
+						<span className="block text-[12.5px] font-semibold">
+							Share product usage with Maskin
+						</span>
 						<span className="text-xs text-muted-foreground">
 							Bet lifecycle, agent sessions, trigger fires. No content, no PII.
 						</span>
@@ -113,7 +113,7 @@ function PrivacySection() {
 				</div>
 				<div className="flex items-start justify-between gap-4 rounded-xl border border-border bg-card p-3">
 					<div className="min-w-0">
-						<span className="block text-sm font-medium">Anonymize this workspace</span>
+						<span className="block text-[12.5px] font-semibold">Anonymize this workspace</span>
 						<span className="text-xs text-muted-foreground">
 							Rotate workspace and actor IDs into hashes before events leave the browser.
 						</span>
@@ -140,7 +140,7 @@ function ThemePicker() {
 
 	return (
 		<div>
-			<h2 className="eyebrow mb-2">APPEARANCE</h2>
+			<h2 className="settings-label mb-2.5">APPEARANCE</h2>
 			<div className="flex w-full gap-1 rounded-xl border border-border bg-card p-1 sm:inline-flex sm:w-auto">
 				{themeOptions.map((option) => {
 					const Icon = option.icon
@@ -153,7 +153,7 @@ function ThemePicker() {
 							className={cn(
 								'flex flex-1 items-center justify-center gap-1.5 rounded-lg px-4 py-1.5 text-[12.5px] font-semibold transition-colors sm:flex-none',
 								isActive
-									? 'bg-secondary text-foreground'
+									? 'bg-primary text-primary-foreground'
 									: 'text-muted-foreground hover:text-foreground',
 							)}
 						>
@@ -165,9 +165,4 @@ function ThemePicker() {
 			</div>
 		</div>
 	)
-}
-
-// `new-design` boundary for Settings → General.
-function GeneralPage() {
-	return useFeatureFlag('new-design') ? <GeneralPageV2 /> : <LegacyGeneralPage />
 }

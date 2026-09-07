@@ -65,11 +65,7 @@ export function SlackTriggerSetupStatus({
 			data-testid="slack-trigger-setup-status"
 			data-state="setup-failure"
 		>
-			<AlertTriangle
-				size={14}
-				className="mt-0.5 shrink-0 text-warning"
-				aria-hidden="true"
-			/>
+			<AlertTriangle size={14} className="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
 			<ul className="space-y-1 text-[12px] leading-snug text-foreground">
 				{failures.map((attempt) => (
 					<li key={`${attempt.channel_id}:${attempt.attempted_at}`}>
@@ -104,8 +100,7 @@ function readSlackSetup(trigger: TriggerResponse | undefined): SlackSetupMetadat
 			channel_id: a.channel_id,
 			status: a.status as SlackSetupJoinAttempt['status'],
 			error: typeof a.error === 'string' ? a.error : undefined,
-			attempted_at:
-				typeof a.attempted_at === 'string' ? a.attempted_at : new Date(0).toISOString(),
+			attempted_at: typeof a.attempted_at === 'string' ? a.attempted_at : new Date(0).toISOString(),
 		})
 	}
 	return {

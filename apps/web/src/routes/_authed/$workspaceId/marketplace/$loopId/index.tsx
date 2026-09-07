@@ -1,11 +1,9 @@
 import { PageHeader } from '@/components/layout/page-header'
-import { LegacyMarketplaceLoopDetailPage } from '@/components/marketplace/legacy/marketplace-loop-detail-page'
 import { MarketplaceLoopDetail } from '@/components/marketplace/marketplace-loop-detail'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
 import { useMarketplaceLoop } from '@/hooks/use-marketplace-loops'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -16,18 +14,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/marketplace/$loopId/
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-// `new-design` boundary for the marketplace loop detail page. The pre-v2 branch
-// lives under `components/marketplace/legacy/` and dies with the flag.
 function MarketplaceLoopDetailRoute() {
-	const { loopId } = Route.useParams()
-	return useFeatureFlag('new-design') ? (
-		<MarketplaceLoopDetailPage />
-	) : (
-		<LegacyMarketplaceLoopDetailPage loopId={loopId} />
-	)
-}
-
-function MarketplaceLoopDetailPage() {
 	const { loopId } = Route.useParams()
 	const { workspaceId } = useWorkspace()
 	const { data, isLoading, isError, error, refetch } = useMarketplaceLoop(loopId)

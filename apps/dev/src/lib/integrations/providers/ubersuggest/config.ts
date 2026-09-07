@@ -23,5 +23,14 @@ export const config: ProviderConfig = {
 		command: 'npx',
 		args: ['-y', 'mcp-remote', 'https://ubersuggest-mcp.neilpatelapi.com/mcp'],
 		envKey: 'UBERSUGGEST_TOKEN',
+		// Stated even though autoInject is off: this is what
+		// GET /api/integrations/providers serves so an agent adding Ubersuggest
+		// to another agent via update_actor knows what to write. Must stay in
+		// sync with INTEGRATION_MCP_PRESETS in apps/web's mcp-servers.tsx.
+		server: {
+			type: 'http',
+			url: 'https://ubersuggest-mcp.neilpatelapi.com/mcp',
+			headers: { Authorization: 'Bearer ${UBERSUGGEST_TOKEN}' },
+		},
 	},
 }

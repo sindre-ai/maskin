@@ -123,6 +123,7 @@ export const queryKeys = {
 	},
 	briefing: {
 		current: (workspaceId: string) => ['briefing', workspaceId] as const,
+		spoken: (workspaceId: string) => ['briefing', workspaceId, 'spoken'] as const,
 	},
 	billing: {
 		all: (workspaceId: string) => ['billing', workspaceId] as const,
