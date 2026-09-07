@@ -1,4 +1,4 @@
-import type { Database } from '@maskin/db'
+import type { Database, Transaction } from '@maskin/db'
 import { events, actors, subscriptions } from '@maskin/db/schema'
 import type { CommentDecision } from '@maskin/shared'
 import { inArray } from 'drizzle-orm'
@@ -55,7 +55,7 @@ export interface PostCommentResult {
  * this resolves, since the action prompt differs per caller.
  */
 export async function postComment(
-	db: Database,
+	db: Database | Transaction,
 	input: PostCommentInput,
 ): Promise<PostCommentResult> {
 	const entityType = input.entityType ?? 'object'
