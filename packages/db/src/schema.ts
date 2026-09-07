@@ -1018,6 +1018,44 @@ export const idempotencyRecords = pgTable(
 	(t) => [index('idempotency_records_created_at_idx').on(t.createdAt)],
 )
 
+// ── LinkedIn Tool Calls (content-hash idempotency) ──────────────────────────
+// Dedup ledger for the LinkedIn (Unipile-backed) content/community tools whose
+// v2 endpoints — unlike the messaging surface — do NOT accept an
+// Idempotency-Key header. Two identical tool-call requests (same actor, same
+// tool, same canonical-JSON request body → same sha256 content hash) collide
+// on the primary key: the first request writes the row and hits Unipile; the
+// second finds the row via ON CONFLICT DO NOTHING and replays the stored
+// response without re-hitting Unipile. Replay-on-hit guards a specific
+// failure mode: a caller that retries after a network blip would otherwise
+// publish the same post twice, comment on the same post twice, etc. The 24h
+// TTL matches the reasonable window for retry — longer would balloon the
+// table, shorter would let real duplicates slip through.
+//
+// `actor_id` is text, NOT uuid: keeping it identical to `idempotencyRecords`'
+// column type isn't the constraint here — the constraint is that the value
+// bound at INSERT time is the caller's actor id as it flows through the MCP
+// context, and text avoids coupling to whether that path is uuid-typed all
+// the way down. `tool` is the wire tool name (e.g. `linkedin_publish_post`).
+// `content_hash` is `sha256(canonical-json(request-body))` — see
+// `apps/dev/src/lib/integrations/providers/linkedin-unipile/operations.ts`
+// for the canonicalisation helper. `response` stores the normalised, tool-
+// facing response payload so a replay returns the exact bytes the first
+// caller received.
+export const linkedinToolCalls = pgTable(
+	'linkedin_tool_calls',
+	{
+		actorId: text('actor_id').notNull(),
+		tool: text('tool').notNull(),
+		contentHash: text('content_hash').notNull(),
+		response: jsonb('response').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.actorId, t.tool, t.contentHash] }),
+		index('linkedin_tool_calls_created_at_idx').on(t.createdAt),
+	],
+)
+
 // ── User Display Settings ───────────────────────────────────────────────────
 //
 // Per-actor, per-workspace, per-object-type display preferences for the

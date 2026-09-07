@@ -54,7 +54,9 @@ function stubClient(
 	__setUnipileClientForTests(() => {
 		const record =
 			(name: string) =>
-			async (args: unknown): Promise<{ status: number; body: unknown; headers: Record<string, string> }> => {
+			async (
+				args: unknown,
+			): Promise<{ status: number; body: unknown; headers: Record<string, string> }> => {
 				calls.push({ name, args })
 				return { status, body: response, headers: {} }
 			}
@@ -154,9 +156,7 @@ describe('sendLinkedInConnectionRequest — happy path', () => {
 describe('sendLinkedInConnectionRequest — error paths', () => {
 	it('surfaces LINKEDIN_INVITE_QUOTA_EXCEEDED from the wire envelope', async () => {
 		stubClient({ error_code: 'invite_quota_exceeded', message: 'weekly limit reached' }, 400)
-		await expect(
-			sendLinkedInConnectionRequest(ctx, { user_id: 'user-46' }),
-		).rejects.toMatchObject({
+		await expect(sendLinkedInConnectionRequest(ctx, { user_id: 'user-46' })).rejects.toMatchObject({
 			code: 'LINKEDIN_INVITE_QUOTA_EXCEEDED',
 			retryable: false,
 		})
@@ -164,9 +164,7 @@ describe('sendLinkedInConnectionRequest — error paths', () => {
 
 	it('surfaces LINKEDIN_ALREADY_CONNECTED from the wire envelope', async () => {
 		stubClient({ error_code: 'already_connected', message: 'already invited' }, 409)
-		await expect(
-			sendLinkedInConnectionRequest(ctx, { user_id: 'user-47' }),
-		).rejects.toMatchObject({
+		await expect(sendLinkedInConnectionRequest(ctx, { user_id: 'user-47' })).rejects.toMatchObject({
 			code: 'LINKEDIN_ALREADY_CONNECTED',
 			retryable: false,
 		})
@@ -177,9 +175,9 @@ describe('sendLinkedInConnectionRequest — error paths', () => {
 		// Unipile call happens.
 		credentialMock.mockResolvedValue(null)
 		const { calls } = stubClient({}, 200)
-		await expect(
-			sendLinkedInConnectionRequest(ctx, { user_id: 'user-48' }),
-		).rejects.toMatchObject({ code: 'CREDENTIAL_NOT_CONNECTED' })
+		await expect(sendLinkedInConnectionRequest(ctx, { user_id: 'user-48' })).rejects.toMatchObject({
+			code: 'CREDENTIAL_NOT_CONNECTED',
+		})
 		expect(calls).toHaveLength(0)
 	})
 
@@ -193,9 +191,9 @@ describe('sendLinkedInConnectionRequest — error paths', () => {
 
 	it('rejects an empty-string user_id without hitting Unipile', async () => {
 		const { calls } = stubClient({}, 200)
-		await expect(
-			sendLinkedInConnectionRequest(ctx, { user_id: '   ' }),
-		).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+		await expect(sendLinkedInConnectionRequest(ctx, { user_id: '   ' })).rejects.toMatchObject({
+			code: 'INVALID_INPUT',
+		})
 		expect(calls).toHaveLength(0)
 	})
 })

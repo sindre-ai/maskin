@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
-import { idempotencyRecords, integrations } from '@maskin/db/schema'
+import { idempotencyRecords, integrations, linkedinToolCalls } from '@maskin/db/schema'
 import { and, eq, lt } from 'drizzle-orm'
 import { z } from 'zod'
 import { decrypt } from '../../../crypto'
@@ -965,6 +966,688 @@ export async function searchLinkedInPeople(
  * connected account's own profile, which is how an agent answers "who am I
  * posting as".
  */
+// ── Content-hash idempotency (Task 7b) ────────────────────────────────────
+//
+// Unipile v2's create-post / comment / reply-to-comment endpoints do NOT
+// accept an Idempotency-Key header. Instead, the four destructive
+// content/community tools dedup on
+// `content_hash = sha256(canonical-json(request-body))`. Two identical calls
+// collide on the `linkedin_tool_calls` primary key
+// (actor_id, tool, content_hash): the first INSERT wins and hits Unipile;
+// the second finds the row via ON CONFLICT DO NOTHING and replays the stored
+// response verbatim, without a second Unipile call.
+//
+// Canonical-JSON via `fast-json-stable-stringify`: sorted keys, no
+// whitespace, UTF-8. Semantically-identical bodies whose key order differs
+// still produce the same hash. The docs are candid that
+// semantically-identical `attachments` ordering could still miss the dedup
+// key — the parent-bet notes accept that for v1 rather than gold-plating.
+
+const LINKEDIN_TOOL_CALLS_TTL_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Canonical-JSON serializer: sorted keys, no whitespace, UTF-8. Two objects
+ * with the same fields in a different order serialize to the same string,
+ * so their sha256 content hashes collide and dedup fires. Arrays keep their
+ * order — swapping `attachments[0]` and `attachments[1]` produces a different
+ * hash by design (the parent-bet notes accept this v1 limitation over
+ * gold-plating). No circular-reference handling — the caller shape is a
+ * plain-object tool request, not an arbitrary graph.
+ */
+export function canonicalJson(value: unknown): string {
+	if (value === null || value === undefined) return JSON.stringify(null)
+	if (typeof value !== 'object') return JSON.stringify(value)
+	if (Array.isArray(value)) {
+		return `[${value.map((v) => canonicalJson(v)).join(',')}]`
+	}
+	const rec = value as Record<string, unknown>
+	const keys = Object.keys(rec).sort()
+	const parts: string[] = []
+	for (const key of keys) {
+		if (rec[key] === undefined) continue
+		parts.push(`${JSON.stringify(key)}:${canonicalJson(rec[key])}`)
+	}
+	return `{${parts.join(',')}}`
+}
+
+export function computeContentHash(body: unknown): string {
+	return createHash('sha256').update(canonicalJson(body)).digest('hex')
+}
+
+async function withContentHashIdempotency<T extends Record<string, unknown>>(opts: {
+	db: Database
+	actorId: string
+	tool: string
+	requestBody: unknown
+	run: () => Promise<T>
+}): Promise<T & { replayed: boolean }> {
+	const contentHash = computeContentHash(opts.requestBody)
+	// Only rows younger than the 24h TTL count as a live claim. An older row
+	// exists — the nightly purge hasn't fired yet — but the caller's 24h retry
+	// window has elapsed, so we deliberately let a second Unipile call happen.
+	// Purge-then-retry ordering is inverted here vs the primary purge loop
+	// because we can decide it at read time; the row will be swept by the
+	// nightly job.
+	const staleCutoff = new Date(Date.now() - LINKEDIN_TOOL_CALLS_TTL_MS)
+	const [prior] = await opts.db
+		.select()
+		.from(linkedinToolCalls)
+		.where(
+			and(
+				eq(linkedinToolCalls.actorId, opts.actorId),
+				eq(linkedinToolCalls.tool, opts.tool),
+				eq(linkedinToolCalls.contentHash, contentHash),
+			),
+		)
+		.limit(1)
+
+	if (prior && prior.createdAt >= staleCutoff) {
+		return replayResponse<T>(prior.response)
+	}
+
+	const fresh = await opts.run()
+
+	try {
+		// If a prior row exists but is past the TTL, replace it so the freshly-
+		// stored response wins on the next read. INSERT ... ON CONFLICT DO
+		// UPDATE would collapse the read + write; the two-step read-then-write
+		// costs a round-trip but keeps the "replayed" branch obviously distinct
+		// from the "new call" branch — a reviewer can see which path ran.
+		if (prior) {
+			await opts.db
+				.update(linkedinToolCalls)
+				.set({ response: fresh, createdAt: new Date() })
+				.where(
+					and(
+						eq(linkedinToolCalls.actorId, opts.actorId),
+						eq(linkedinToolCalls.tool, opts.tool),
+						eq(linkedinToolCalls.contentHash, contentHash),
+					),
+				)
+		} else {
+			await opts.db
+				.insert(linkedinToolCalls)
+				.values({
+					actorId: opts.actorId,
+					tool: opts.tool,
+					contentHash,
+					response: fresh,
+				})
+				.onConflictDoNothing()
+		}
+	} catch (err) {
+		// The side effect already happened. Do NOT rethrow — that would hand the
+		// caller a failure for work that succeeded and invite a retry that
+		// re-publishes. The next duplicate simply won't dedup.
+		logger.error('LinkedIn tool call succeeded but its dedup row was not persisted', {
+			actorId: opts.actorId,
+			tool: opts.tool,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
+	return { ...(fresh as object), replayed: false } as T & { replayed: boolean }
+}
+
+// ── Content / community operations (Task 7b) ──────────────────────────────
+
+export type PublishPostInput = {
+	text?: unknown
+	post_as?: unknown
+	attachments?: unknown
+	can_read?: unknown
+	can_comment?: unknown
+	quoted_post_id?: unknown
+	specifics?: unknown
+}
+
+export type PublishPostResult = {
+	post_id: string
+	post_url?: string
+	published_at: string
+}
+
+function normalizePublishResponse(body: unknown): PublishPostResult {
+	const rec = (body ?? {}) as Record<string, unknown>
+	const inner =
+		rec.data && typeof rec.data === 'object' ? (rec.data as Record<string, unknown>) : rec
+	const postId =
+		typeof inner.post_id === 'string' ? inner.post_id : typeof inner.id === 'string' ? inner.id : ''
+	const postUrl =
+		typeof inner.post_url === 'string'
+			? inner.post_url
+			: typeof inner.share_url === 'string'
+				? inner.share_url
+				: undefined
+	const publishedAt =
+		typeof inner.published_at === 'string' ? inner.published_at : new Date().toISOString()
+	if (!postId) {
+		logger.error('linkedin-unipile publish: 2xx with no readable post id', {
+			responseKeys: Object.keys(inner),
+		})
+	}
+	return postUrl
+		? { post_id: postId, post_url: postUrl, published_at: publishedAt }
+		: { post_id: postId, published_at: publishedAt }
+}
+
+function validatePublishPostInput(
+	input: PublishPostInput,
+	opts: { requirePostAs: boolean },
+):
+	| { ok: true; payload: { text: string; post_as?: string; extras: Record<string, unknown> } }
+	| {
+			ok: false
+			error: string
+	  } {
+	if (typeof input.text !== 'string' || input.text.length === 0) {
+		return { ok: false, error: 'text is required' }
+	}
+	// LinkedIn's post-body limit is 3000 chars. We do NOT clamp here — the
+	// LINKEDIN_POST_TOO_LONG classifier owns that outcome — but reject the
+	// obvious oversized cases before spending a Unipile round-trip.
+	if (input.text.length > 3000) {
+		return { ok: false, error: 'text exceeds LinkedIn 3000-character limit' }
+	}
+	let postAs: string | undefined
+	if (opts.requirePostAs) {
+		if (typeof input.post_as !== 'string' || input.post_as.length === 0) {
+			return { ok: false, error: 'page_id (post_as URN) is required for business-page publish' }
+		}
+		postAs = input.post_as
+	} else if (typeof input.post_as === 'string' && input.post_as.length > 0) {
+		postAs = input.post_as
+	}
+	const extras: Record<string, unknown> = {}
+	if (Array.isArray(input.attachments)) extras.attachments = input.attachments
+	if (typeof input.can_read === 'string') extras.can_read = input.can_read
+	if (typeof input.can_comment === 'string') extras.can_comment = input.can_comment
+	if (typeof input.quoted_post_id === 'string') extras.quoted_post_id = input.quoted_post_id
+	if (input.specifics && typeof input.specifics === 'object') {
+		extras.specifics = input.specifics as Record<string, unknown>
+	}
+	return {
+		ok: true,
+		payload: postAs ? { text: input.text, post_as: postAs, extras } : { text: input.text, extras },
+	}
+}
+
+/**
+ * Publish a LinkedIn post from the connected personal profile. Dedup'd via the
+ * `linkedin_tool_calls` content-hash ledger: two identical requests within the
+ * 24h TTL fire Unipile once and return identical responses.
+ */
+export async function publishLinkedInPost(
+	ctx: LinkedInOperationContext,
+	input: PublishPostInput,
+): Promise<PublishPostResult & { replayed: boolean }> {
+	const validation = validatePublishPostInput(input, { requirePostAs: false })
+	if (!validation.ok) {
+		throw new LinkedInIntegrationError('INVALID_INPUT', validation.error)
+	}
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	if (!pre.ok) throw pre.error
+	const client = buildUnipileClient(pre.credentials)
+	// Hash the tool-facing request, not the Unipile wire body — an equivalent
+	// request should collide even if Unipile renames a field later. `account_id`
+	// is deliberately excluded because it identifies the caller's LinkedIn
+	// credential, not the request semantics.
+	const requestBody = { tool: 'linkedin_publish_post', ...validation.payload }
+	return withContentHashIdempotency({
+		db: ctx.db,
+		actorId: ctx.actorId,
+		tool: 'linkedin_publish_post',
+		requestBody,
+		run: async () => {
+			const upstream = await callUnipileWithRetry<Record<string, unknown>>(
+				() =>
+					client.publishPost({
+						account_id: pre.credentials.account_id,
+						text: validation.payload.text,
+						...(validation.payload.post_as ? { post_as: validation.payload.post_as } : {}),
+						...validation.payload.extras,
+					}),
+				{ mutating: true },
+			)
+			return normalizePublishResponse(upstream.body)
+		},
+	})
+}
+
+/**
+ * Thin wrapper over `publishLinkedInPost` that requires `post_as` (the page
+ * URN). No separate Unipile credential — the same personal LinkedIn account
+ * publishes as a page it admins, so this is a policy-level distinction in the
+ * MCP surface, not a wholesale credential change (see the parent-bet spec's
+ * business-page notes).
+ */
+export async function publishLinkedInBusinessPagePost(
+	ctx: LinkedInOperationContext,
+	input: PublishPostInput,
+): Promise<PublishPostResult & { replayed: boolean }> {
+	const validation = validatePublishPostInput(input, { requirePostAs: true })
+	if (!validation.ok) {
+		throw new LinkedInIntegrationError('INVALID_INPUT', validation.error)
+	}
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	if (!pre.ok) throw pre.error
+	const client = buildUnipileClient(pre.credentials)
+	const requestBody = { tool: 'linkedin_publish_business_page_post', ...validation.payload }
+	return withContentHashIdempotency({
+		db: ctx.db,
+		actorId: ctx.actorId,
+		tool: 'linkedin_publish_business_page_post',
+		requestBody,
+		run: async () => {
+			const upstream = await callUnipileWithRetry<Record<string, unknown>>(
+				() =>
+					client.publishPost({
+						account_id: pre.credentials.account_id,
+						text: validation.payload.text,
+						post_as: validation.payload.post_as,
+						...validation.payload.extras,
+					}),
+				{ mutating: true },
+			)
+			return normalizePublishResponse(upstream.body)
+		},
+	})
+}
+
+export type CommentInput = { post_id?: unknown; text?: unknown }
+export type CommentResult = { comment_id: string; commented_at: string }
+
+function normalizeCommentResponse(body: unknown): CommentResult {
+	const rec = (body ?? {}) as Record<string, unknown>
+	const inner =
+		rec.data && typeof rec.data === 'object' ? (rec.data as Record<string, unknown>) : rec
+	const commentId =
+		typeof inner.comment_id === 'string'
+			? inner.comment_id
+			: typeof inner.id === 'string'
+				? inner.id
+				: ''
+	const commentedAt =
+		typeof inner.commented_at === 'string'
+			? inner.commented_at
+			: typeof inner.created_at === 'string'
+				? inner.created_at
+				: new Date().toISOString()
+	if (!commentId) {
+		logger.error('linkedin-unipile comment: 2xx with no readable comment id', {
+			responseKeys: Object.keys(inner),
+		})
+	}
+	return { comment_id: commentId, commented_at: commentedAt }
+}
+
+export async function commentOnLinkedInPost(
+	ctx: LinkedInOperationContext,
+	input: CommentInput,
+): Promise<CommentResult & { replayed: boolean }> {
+	const postId = typeof input.post_id === 'string' ? input.post_id.trim() : ''
+	const text = typeof input.text === 'string' ? input.text : ''
+	if (!postId) throw new LinkedInIntegrationError('INVALID_INPUT', 'post_id is required')
+	if (!text.length) throw new LinkedInIntegrationError('INVALID_INPUT', 'text is required')
+	if (text.length > 3000) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			'text exceeds LinkedIn 3000-character limit',
+		)
+	}
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	if (!pre.ok) throw pre.error
+	const client = buildUnipileClient(pre.credentials)
+	const requestBody = { tool: 'linkedin_comment_on_post', post_id: postId, text }
+	return withContentHashIdempotency({
+		db: ctx.db,
+		actorId: ctx.actorId,
+		tool: 'linkedin_comment_on_post',
+		requestBody,
+		run: async () => {
+			const upstream = await callUnipileWithRetry<Record<string, unknown>>(
+				() =>
+					client.commentOnPost({
+						account_id: pre.credentials.account_id,
+						post_id: postId,
+						text,
+					}),
+				{ mutating: true },
+			)
+			return normalizeCommentResponse(upstream.body)
+		},
+	})
+}
+
+export type ReplyToCommentInput = { comment_id?: unknown; text?: unknown }
+
+export async function replyToLinkedInComment(
+	ctx: LinkedInOperationContext,
+	input: ReplyToCommentInput,
+): Promise<CommentResult & { replayed: boolean }> {
+	const commentId = typeof input.comment_id === 'string' ? input.comment_id.trim() : ''
+	const text = typeof input.text === 'string' ? input.text : ''
+	if (!commentId) throw new LinkedInIntegrationError('INVALID_INPUT', 'comment_id is required')
+	if (!text.length) throw new LinkedInIntegrationError('INVALID_INPUT', 'text is required')
+	if (text.length > 3000) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			'text exceeds LinkedIn 3000-character limit',
+		)
+	}
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	if (!pre.ok) throw pre.error
+	const client = buildUnipileClient(pre.credentials)
+	const requestBody = { tool: 'linkedin_reply_to_comment', comment_id: commentId, text }
+	return withContentHashIdempotency({
+		db: ctx.db,
+		actorId: ctx.actorId,
+		tool: 'linkedin_reply_to_comment',
+		requestBody,
+		run: async () => {
+			const upstream = await callUnipileWithRetry<Record<string, unknown>>(
+				() =>
+					client.replyToComment({
+						account_id: pre.credentials.account_id,
+						comment_id: commentId,
+						text,
+					}),
+				{ mutating: true },
+			)
+			return normalizeCommentResponse(upstream.body)
+		},
+	})
+}
+
+export type LinkedInComment = {
+	comment_id: string
+	author_urn: string
+	author_name: string
+	text: string
+	created_at: string
+}
+
+const V2CommentSchema = z
+	.object({
+		id: z.string(),
+		text: z.string().nullish(),
+		created_at: z.string().optional(),
+		author: z
+			.object({ id: z.string().optional(), display_name: z.string().optional() })
+			.passthrough()
+			.optional(),
+		author_id: z.string().optional(),
+		author_name: z.string().optional(),
+	})
+	.passthrough()
+
+function normalizeCommentsList(body: unknown): {
+	comments: LinkedInComment[]
+	next_cursor?: string
+} {
+	const { items, nextCursor } = readPage(body, 'post comments')
+	const comments: LinkedInComment[] = []
+	let skipped = 0
+	for (const item of items) {
+		const parsed = V2CommentSchema.safeParse(item)
+		if (!parsed.success) {
+			skipped++
+			continue
+		}
+		const c = parsed.data
+		comments.push({
+			comment_id: c.id,
+			author_urn: c.author?.id ?? c.author_id ?? '',
+			author_name: c.author?.display_name ?? c.author_name ?? '',
+			text: c.text ?? '',
+			created_at: c.created_at ?? '',
+		})
+	}
+	if (skipped > 0) {
+		logger.warn('linkedin-unipile post comments: dropped unparseable rows', {
+			skipped,
+			total: items.length,
+		})
+	}
+	return nextCursor ? { comments, next_cursor: nextCursor } : { comments }
+}
+
+/**
+ * Read comments on a LinkedIn post, newest first, paged. Read-only, so no
+ * content-hash dedup — the parent-bet spec §5 rule ("only mutating verbs
+ * need dedup") applies here as it does to the messaging read tools.
+ */
+export async function readLinkedInPostComments(
+	ctx: LinkedInOperationContext,
+	input: { post_id?: unknown; limit?: number; cursor?: string },
+): Promise<{ comments: LinkedInComment[]; next_cursor?: string }> {
+	const postId = typeof input.post_id === 'string' ? input.post_id.trim() : ''
+	if (!postId) throw new LinkedInIntegrationError('INVALID_INPUT', 'post_id is required')
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	if (!pre.ok) throw pre.error
+	const client = buildUnipileClient(pre.credentials)
+	const upstream = await callUnipileWithRetry<Record<string, unknown>>(() =>
+		client.readPostComments({
+			account_id: pre.credentials.account_id,
+			post_id: postId,
+			limit: input.limit,
+			cursor: input.cursor,
+		}),
+	)
+	return normalizeCommentsList(upstream.body)
+}
+
+export type PostEngagementResult = {
+	post_id: string
+	author_urn?: string
+	published_at?: string
+	text_preview?: string
+	reactions: { total: number; sample: Array<{ user_urn: string; type: string }> }
+	comments: { total: number }
+	/**
+	 * Per-sub-call error markers. `null` on a successful sub-call; the six-class
+	 * code + message on failure. The whole tool call only fails if `retrievePost`
+	 * fails (without base metadata there's nothing meaningful to return); a
+	 * failed `listReactions` mid-cursor or a failed `countComments` leaves the
+	 * partial envelope, with the marker set so the agent can see the degraded
+	 * response.
+	 */
+	partial_errors: {
+		reactions: { code: string; message: string } | null
+		comments: { code: string; message: string } | null
+	}
+	/** True when `partial_errors` carries any non-null marker. */
+	is_partial: boolean
+}
+
+function summarisePost(body: unknown): {
+	author_urn?: string
+	published_at?: string
+	text_preview?: string
+} {
+	const rec = (body ?? {}) as Record<string, unknown>
+	const inner =
+		rec.data && typeof rec.data === 'object' ? (rec.data as Record<string, unknown>) : rec
+	const author =
+		inner.author && typeof inner.author === 'object'
+			? (inner.author as Record<string, unknown>)
+			: undefined
+	const authorUrn =
+		typeof inner.author_urn === 'string'
+			? inner.author_urn
+			: typeof author?.id === 'string'
+				? (author.id as string)
+				: undefined
+	const publishedAt = typeof inner.published_at === 'string' ? inner.published_at : undefined
+	const raw = typeof inner.text === 'string' ? inner.text : ''
+	const textPreview = raw.length > 240 ? `${raw.slice(0, 240)}…` : raw || undefined
+	return {
+		...(authorUrn ? { author_urn: authorUrn } : {}),
+		...(publishedAt ? { published_at: publishedAt } : {}),
+		...(textPreview ? { text_preview: textPreview } : {}),
+	}
+}
+
+async function collectReactions(
+	client: UnipileClient,
+	accountId: string,
+	postId: string,
+	sampleCap = 50,
+	pageCap = 10,
+): Promise<{ total: number; sample: Array<{ user_urn: string; type: string }> }> {
+	const sample: Array<{ user_urn: string; type: string }> = []
+	let total = 0
+	let cursor: string | undefined
+	for (let page = 0; page < pageCap; page++) {
+		const upstream = await callUnipileWithRetry<Record<string, unknown>>(() =>
+			client.listReactions({ account_id: accountId, post_id: postId, cursor, limit: 50 }),
+		)
+		const body = (upstream.body ?? {}) as Record<string, unknown>
+		if (!Array.isArray(body.data)) {
+			logger.error('linkedin-unipile reactions: no data array in response', {
+				responseKeys: Object.keys(body),
+			})
+			throw new LinkedInIntegrationError(
+				'UNIPILE_UNAVAILABLE',
+				'Unipile reactions response had an unrecognised shape',
+			)
+		}
+		for (const item of body.data as unknown[]) {
+			total++
+			if (sample.length < sampleCap && item && typeof item === 'object') {
+				const rec = item as Record<string, unknown>
+				const user = rec.user as Record<string, unknown> | undefined
+				const userUrn =
+					typeof rec.user_id === 'string'
+						? rec.user_id
+						: typeof user?.id === 'string'
+							? (user.id as string)
+							: ''
+				const reactionType =
+					typeof rec.reaction_type === 'string'
+						? rec.reaction_type
+						: typeof rec.type === 'string'
+							? rec.type
+							: 'LIKE'
+				if (userUrn) sample.push({ user_urn: userUrn, type: reactionType })
+			}
+		}
+		const next = typeof body.next_cursor === 'string' ? body.next_cursor : undefined
+		if (!next) return { total, sample }
+		cursor = next
+	}
+	// Hit the page cap. Log so a viral-post enumeration surfaces in dashboards
+	// but return what we have — this is not an error condition.
+	logger.warn('linkedin-unipile reactions: hit page cap, returning partial totals', {
+		postId,
+		pageCap,
+		countedSoFar: total,
+	})
+	return { total, sample }
+}
+
+async function safeCollectReactions(
+	client: UnipileClient,
+	accountId: string,
+	postId: string,
+): Promise<{
+	value: { total: number; sample: Array<{ user_urn: string; type: string }> }
+	error: { code: string; message: string } | null
+}> {
+	try {
+		return { value: await collectReactions(client, accountId, postId), error: null }
+	} catch (err) {
+		if (err instanceof LinkedInIntegrationError) {
+			return {
+				value: { total: 0, sample: [] },
+				error: { code: err.code, message: err.message },
+			}
+		}
+		return {
+			value: { total: 0, sample: [] },
+			error: { code: 'UNIPILE_UNAVAILABLE', message: 'Unexpected error collecting reactions' },
+		}
+	}
+}
+
+async function safeCountComments(
+	client: UnipileClient,
+	accountId: string,
+	postId: string,
+): Promise<{ value: { total: number }; error: { code: string; message: string } | null }> {
+	try {
+		const upstream = await callUnipileWithRetry<Record<string, unknown>>(() =>
+			client.countComments({ account_id: accountId, post_id: postId }),
+		)
+		const body = (upstream.body ?? {}) as Record<string, unknown>
+		const paging = body.paging as Record<string, unknown> | undefined
+		const total =
+			typeof paging?.total_count === 'number'
+				? paging.total_count
+				: typeof body.total === 'number'
+					? body.total
+					: Array.isArray(body.data)
+						? (body.data as unknown[]).length
+						: 0
+		return { value: { total }, error: null }
+	} catch (err) {
+		if (err instanceof LinkedInIntegrationError) {
+			return { value: { total: 0 }, error: { code: err.code, message: err.message } }
+		}
+		return {
+			value: { total: 0 },
+			error: { code: 'UNIPILE_UNAVAILABLE', message: 'Unexpected error counting comments' },
+		}
+	}
+}
+
+/**
+ * Fan-out engagement read: `retrievePost` + `listReactions` (paginated) +
+ * `countComments`. Each sub-call is handled independently — a paginated
+ * `listReactions` failing mid-cursor returns a partial envelope with
+ * `partial_errors.reactions` set and `is_partial: true`, rather than
+ * collapsing the whole tool call. `retrievePost` failing IS terminal: the base
+ * metadata is what the caller was asking for, so returning a synthetic empty
+ * envelope would be worse than an honest failure. Read-only, so no
+ * content-hash dedup — see the read-tools rule in the parent-bet spec §5.
+ *
+ * Impressions are NOT in the envelope. Unipile v2 does not expose them for
+ * third-party posts. If Sebk's open A reverses, follow-on task.
+ */
+export async function getLinkedInPostEngagement(
+	ctx: LinkedInOperationContext,
+	input: { post_id?: unknown },
+): Promise<PostEngagementResult> {
+	const postId = typeof input.post_id === 'string' ? input.post_id.trim() : ''
+	if (!postId) throw new LinkedInIntegrationError('INVALID_INPUT', 'post_id is required')
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	if (!pre.ok) throw pre.error
+	const client = buildUnipileClient(pre.credentials)
+	const acc = pre.credentials.account_id
+	// retrievePost first — if the base post read fails, there's nothing to
+	// return but an empty envelope, so treat that as terminal.
+	const postResp = await callUnipileWithRetry<Record<string, unknown>>(() =>
+		client.retrievePost({ account_id: acc, post_id: postId }),
+	)
+	const summary = summarisePost(postResp.body)
+	// Reactions + comments run concurrently — each is independent, and both
+	// failing degrades to a base-metadata-only envelope rather than a total
+	// failure. `Promise.all` is fine because both `safeCollectReactions` and
+	// `safeCountComments` swallow their own errors.
+	const [reactions, comments] = await Promise.all([
+		safeCollectReactions(client, acc, postId),
+		safeCountComments(client, acc, postId),
+	])
+	const isPartial = reactions.error !== null || comments.error !== null
+	return {
+		post_id: postId,
+		...summary,
+		reactions: reactions.value,
+		comments: comments.value,
+		partial_errors: { reactions: reactions.error, comments: comments.error },
+		is_partial: isPartial,
+	}
+}
+
 export async function getLinkedInProfile(
 	ctx: LinkedInOperationContext,
 	input: { identifier?: unknown },
