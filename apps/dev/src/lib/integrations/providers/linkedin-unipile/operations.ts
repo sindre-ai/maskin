@@ -1587,29 +1587,56 @@ function summarisePost(body: unknown): {
 	}
 }
 
+type ReactionsCollection = {
+	total: number
+	sample: Array<{ user_urn: string; type: string }>
+	error: { code: string; message: string } | null
+}
+
+/**
+ * Paginate `listReactions`, accumulating across pages. A failure part-way
+ * through the cursor does NOT discard what previous pages already yielded —
+ * it stops paginating and returns the counts collected so far alongside the
+ * error marker, which is the whole point of the partial envelope. Never
+ * throws.
+ */
 async function collectReactions(
 	client: UnipileClient,
 	accountId: string,
 	postId: string,
 	sampleCap = 50,
 	pageCap = 10,
-): Promise<{ total: number; sample: Array<{ user_urn: string; type: string }> }> {
+): Promise<ReactionsCollection> {
 	const sample: Array<{ user_urn: string; type: string }> = []
 	let total = 0
 	let cursor: string | undefined
 	for (let page = 0; page < pageCap; page++) {
-		const upstream = await callUnipileWithRetry<Record<string, unknown>>(() =>
-			client.listReactions({ account_id: accountId, post_id: postId, cursor, limit: 50 }),
-		)
-		const body = (upstream.body ?? {}) as Record<string, unknown>
+		let body: Record<string, unknown>
+		try {
+			const upstream = await callUnipileWithRetry<Record<string, unknown>>(() =>
+				client.listReactions({ account_id: accountId, post_id: postId, cursor, limit: 50 }),
+			)
+			body = (upstream.body ?? {}) as Record<string, unknown>
+		} catch (err) {
+			logger.warn('linkedin-unipile reactions: page failed, returning partial totals', {
+				postId,
+				page,
+				countedSoFar: total,
+			})
+			return { total, sample, error: reactionsErrorMarker(err) }
+		}
 		if (!Array.isArray(body.data)) {
 			logger.error('linkedin-unipile reactions: no data array in response', {
 				responseKeys: Object.keys(body),
 			})
-			throw new LinkedInIntegrationError(
-				'UNIPILE_UNAVAILABLE',
-				'Unipile reactions response had an unrecognised shape',
-			)
+			return {
+				total,
+				sample,
+				error: {
+					code: 'UNIPILE_UNAVAILABLE',
+					message: 'Unipile reactions response had an unrecognised shape',
+				},
+			}
 		}
 		for (const item of body.data as unknown[]) {
 			total++
@@ -1632,7 +1659,7 @@ async function collectReactions(
 			}
 		}
 		const next = typeof body.next_cursor === 'string' ? body.next_cursor : undefined
-		if (!next) return { total, sample }
+		if (!next) return { total, sample, error: null }
 		cursor = next
 	}
 	// Hit the page cap. Log so a viral-post enumeration surfaces in dashboards
@@ -1642,7 +1669,12 @@ async function collectReactions(
 		pageCap,
 		countedSoFar: total,
 	})
-	return { total, sample }
+	return { total, sample, error: null }
+}
+
+function reactionsErrorMarker(err: unknown): { code: string; message: string } {
+	if (err instanceof LinkedInIntegrationError) return { code: err.code, message: err.message }
+	return { code: 'UNIPILE_UNAVAILABLE', message: 'Unexpected error collecting reactions' }
 }
 
 async function safeCollectReactions(
@@ -1654,18 +1686,12 @@ async function safeCollectReactions(
 	error: { code: string; message: string } | null
 }> {
 	try {
-		return { value: await collectReactions(client, accountId, postId), error: null }
+		const { total, sample, error } = await collectReactions(client, accountId, postId)
+		return { value: { total, sample }, error }
 	} catch (err) {
-		if (err instanceof LinkedInIntegrationError) {
-			return {
-				value: { total: 0, sample: [] },
-				error: { code: err.code, message: err.message },
-			}
-		}
-		return {
-			value: { total: 0, sample: [] },
-			error: { code: 'UNIPILE_UNAVAILABLE', message: 'Unexpected error collecting reactions' },
-		}
+		// `collectReactions` is written not to throw; this is a backstop so an
+		// unforeseen throw still degrades to a partial envelope, not a failed call.
+		return { value: { total: 0, sample: [] }, error: reactionsErrorMarker(err) }
 	}
 }
 
