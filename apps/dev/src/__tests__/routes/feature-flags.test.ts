@@ -1,7 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { authMiddleware } from '@maskin/auth'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
+import { FLAGS, _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { jsonGet } from '../helpers'
 import { createTestApp, createTestContext } from '../setup'
 
@@ -25,15 +25,18 @@ function setEnv(vars: Partial<Record<(typeof ENV_KEYS)[number], string>>) {
 beforeEach(() => setEnv({}))
 afterEach(() => setEnv({}))
 
+// Every registered flag, off. Derived from FLAGS rather than hardcoded so a
+// flag being added or retired doesn't break these cases — the invariant under
+// test is "off unless the env turns it on", not the size of the registry.
+const ALL_OFF = Object.fromEntries(Object.values(FLAGS).map((id) => [id, false]))
+
 describe('GET /api/feature-flags', () => {
-	// The registry is empty while no flag is in flight, so the route answers
-	// with an empty map rather than failing.
-	it('resolves the live registry when no env is set', async () => {
+	it('resolves every registered flag as off when no env is set', async () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ flags: {} })
+		expect(await res.json()).toEqual({ flags: ALL_OFF })
 	})
 
 	it('never invents a flag from an unregistered id in FF_TESTER_FEATURES', async () => {
@@ -41,7 +44,9 @@ describe('GET /api/feature-flags', () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({ flags: {} })
+		const body = (await res.json()) as { flags: Record<string, boolean> }
+		expect(body.flags).toEqual(ALL_OFF)
+		expect('not-a-real-flag' in body.flags).toBe(false)
 	})
 
 	it('sets Cache-Control: no-store so a rollback is not defeated by a stale cache', async () => {
