@@ -15,6 +15,7 @@ import {
 	useRef,
 	useState,
 } from 'react'
+import { toast } from 'sonner'
 
 export interface PendingFile {
 	tempId: string
@@ -32,10 +33,10 @@ export interface PendingComment {
 	objectId: string
 	content: string
 	mentions: string[]
-	// Structured extras riding the same comment (today `{ chips }` from the
-	// composer's "Attach a decision"). Queued alongside the attachments so a
-	// comment can carry both — the queue previously dropped it, which forced the
-	// composer to disable one affordance whenever the other was used.
+	// Structured extras riding the same comment (today `{ refs }` from
+	// "Reference an object"). Queued alongside the attachments so a comment can
+	// carry both — the queue previously dropped it, which forced the composer to
+	// disable one affordance whenever the other was used.
 	metadata?: Record<string, unknown>
 	parentEventId?: number
 	files: PendingFile[]
@@ -178,11 +179,12 @@ export function PendingCommentsProvider({ workspaceId, children }: ProviderProps
 			} catch (err) {
 				const aborted = controller.signal.aborted
 				if (aborted) return
-				mutateFile(entryId, fileTempId, (prev) => ({
-					...prev,
-					status: 'failed',
-					error: err instanceof Error ? err.message : 'Upload failed',
-				}))
+				const message = err instanceof Error ? err.message : 'Upload failed'
+				mutateFile(entryId, fileTempId, (prev) => ({ ...prev, status: 'failed', error: message }))
+				// Same reason as the post failure below: the per-file 'failed' badge
+				// only renders under ObjectActivity, so on the v2 surface a dead
+				// upload is otherwise invisible and blocks the comment forever.
+				toast.error(message)
 			} finally {
 				abortControllersRef.current.delete(`${entryId}:${fileTempId}`)
 			}
@@ -373,11 +375,13 @@ export function PendingCommentsProvider({ workspaceId, children }: ProviderProps
 						mutate(tempId, () => undefined)
 					}, COMPLETED_DROP_MS)
 				} catch (err) {
-					mutate(tempId, (prev) => ({
-						...prev,
-						status: 'failed',
-						error: err instanceof Error ? err.message : 'Failed to post comment',
-					}))
+					const message = err instanceof Error ? err.message : 'Failed to post comment'
+					mutate(tempId, (prev) => ({ ...prev, status: 'failed', error: message }))
+					// The failed entry only renders where ObjectActivity is mounted, which
+					// the v2 detail surface is not — it renders TimelineTab. Without this
+					// the composer has already cleared and the comment vanishes with no
+					// trace. Toast so the failure reaches the author on every surface.
+					toast.error(message)
 				} finally {
 					advancingRef.current.delete(tempId)
 				}

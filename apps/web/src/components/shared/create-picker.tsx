@@ -33,6 +33,7 @@ import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { TYPE_LABELS, getTypeColor } from '@/lib/constants'
+import { deriveConversationTitle } from '@/lib/conversation-title'
 import { useWorkspace } from '@/lib/workspace-context'
 import { LOOP_STATUSES, type LoopStatus } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
@@ -328,7 +329,7 @@ export function CreatePicker({
 			if (entityKind === null) {
 				if (!routedAgent) return
 				const conversation = await createConversation.mutateAsync({
-					title: trimmed.slice(0, 60),
+					title: deriveConversationTitle(trimmed, routedAgent.name),
 					participant_actor_ids: [routedAgent.id],
 					initial_message: messageContent,
 				})

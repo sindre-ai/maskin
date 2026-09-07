@@ -2,7 +2,10 @@ import { randomBytes } from 'node:crypto'
 import { integrations, triggers, workspaceMembers } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { decrypt } from '../../lib/crypto'
+import { config as slackProviderConfig } from '../../lib/integrations/providers/slack/config'
 import { SLACK_DEFAULT_TRIGGER_MARKER } from '../../lib/integrations/providers/slack/default-triggers'
+import type { StoredCredentials } from '../../lib/integrations/types'
 import { insertActor, insertWorkspace } from '../factories'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
@@ -54,20 +57,49 @@ beforeEach(() => {
  *  - apps.permissions.info → not-ok, so the postInstall tier probe records
  *    'unknown' and proceeds (fail-open by design)
  */
-function mockSlackOAuthFetch(teamId: string) {
+/** The user scopes the provider config actually asks Slack for. */
+const REQUESTED_USER_SCOPE =
+	slackProviderConfig.auth.type === 'oauth2'
+		? (slackProviderConfig.auth.config.extraAuthParams?.user_scope ?? '')
+		: ''
+
+function mockSlackOAuthFetch(
+	teamId: string,
+	opts: { userToken?: string | null; scope?: string; userScope?: string } = {},
+) {
 	vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 		const u = typeof url === 'string' ? url : url.toString()
 		if (u.includes('oauth.v2.access')) {
+			// Slack returns the bot token as `access_token` and the installer's
+			// user token under `authed_user` — both from the one exchange, which is
+			// what lets a single reconnect grant both. `userToken: null` models an
+			// install that predates the `user_scope` grant.
+			const userToken =
+				opts.userToken === null
+					? undefined
+					: (opts.userToken ?? `xoxp-${randomBytes(6).toString('hex')}`)
 			return {
 				ok: true,
 				json: async () => ({
 					ok: true,
 					access_token: `xoxb-${randomBytes(6).toString('hex')}`,
 					token_type: 'bot',
-					scope: 'chat:write,app_mentions:read',
+					scope: opts.scope ?? 'chat:write,app_mentions:read',
 					team: { id: teamId, name: 'Test Team' },
 					bot_user_id: 'U-bot',
 					app_id: 'A-test',
+					authed_user: {
+						id: 'U-installer',
+						...(userToken
+							? {
+									access_token: userToken,
+									// Mirror what the config asks for, so a change to the
+									// requested user scopes doesn't leave this mock granting a
+									// scope name the product no longer uses.
+									scope: opts.userScope ?? REQUESTED_USER_SCOPE,
+								}
+							: {}),
+					},
 				}),
 			} as unknown as Response
 		}
@@ -243,5 +275,105 @@ describe('Slack OAuth reconnect lifecycle (integration)', () => {
 		// Seeding is idempotent: reconnecting while active must not duplicate the
 		// default triggers.
 		expect(await seededTriggers(workspaceId)).toHaveLength(2)
+	})
+
+	// Slack returns the bot and user tokens from one exchange, and the reconnect
+	// branch above replaces the credentials blob WHOLESALE (matched on the stable
+	// team id). So the user token can never be merged in from a previous blob —
+	// if it did not arrive in this exchange, it is gone. Pin that it survives.
+	it('persists the user token from authed_user through a reconnect', async () => {
+		const app = createApp()
+
+		expect((await connectAndCallback(app, workspaceId)).status).toBe(302)
+		const [firstRow] = await slackRowsForTeam(workspaceId, teamId)
+		const firstCreds = JSON.parse(decrypt(firstRow?.credentials as string)) as StoredCredentials
+		expect(firstCreds.accessToken).toMatch(/^xoxb-/)
+		expect(firstCreds.userAccessToken).toMatch(/^xoxp-/)
+		expect(firstCreds.userScope).toBe(REQUESTED_USER_SCOPE)
+		expect(firstCreds.authedUserId).toBe('U-installer')
+
+		// Reconnect with a known user token and confirm it replaced the old one
+		// rather than being dropped or stale-carried.
+		vi.restoreAllMocks()
+		mockSlackOAuthFetch(teamId, { userToken: 'xoxp-second-install' })
+		expect((await connectAndCallback(app, workspaceId)).status).toBe(302)
+
+		const [secondRow] = await slackRowsForTeam(workspaceId, teamId)
+		expect(secondRow?.id).toBe(firstRow?.id)
+		const secondCreds = JSON.parse(decrypt(secondRow?.credentials as string)) as StoredCredentials
+		expect(secondCreds.userAccessToken).toBe('xoxp-second-install')
+		// The bot token must still be the BOT token — the xoxb- guards key off it.
+		expect(secondCreds.accessToken).toMatch(/^xoxb-/)
+	})
+
+	// An install that predates the user_scope grant: Slack sends authed_user with
+	// an id but no token. The bot half must still work; only search is withheld.
+	it('stores no user token when the install did not grant one', async () => {
+		vi.restoreAllMocks()
+		mockSlackOAuthFetch(teamId, { userToken: null })
+		const app = createApp()
+
+		expect((await connectAndCallback(app, workspaceId)).status).toBe(302)
+		const [row] = await slackRowsForTeam(workspaceId, teamId)
+		const creds = JSON.parse(decrypt(row?.credentials as string)) as StoredCredentials
+		expect(creds.accessToken).toMatch(/^xoxb-/)
+		expect(creds.userAccessToken).toBeUndefined()
+	})
+
+	// The reconnect prompt's data source. A token granted before the history and
+	// search scopes were added is still `active` and still works for what it was
+	// granted — the list endpoint is what tells a human it needs re-consent.
+	it('reports scope drift on GET /api/integrations for a stale install', async () => {
+		vi.restoreAllMocks()
+		// Only the two scopes the phase-1 install carried.
+		mockSlackOAuthFetch(teamId, { userToken: null, scope: 'chat:write,app_mentions:read' })
+		const app = createApp()
+		expect((await connectAndCallback(app, workspaceId)).status).toBe(302)
+
+		const listRes = await app.request(
+			new Request('http://localhost/api/integrations', {
+				headers: { 'X-Workspace-Id': workspaceId },
+			}),
+		)
+		expect(listRes.status).toBe(200)
+		const rows = (await listRes.json()) as {
+			provider: string
+			missingScopes?: string[]
+			needsReconnect?: boolean
+		}[]
+		const slackRow = rows.find((r) => r.provider === 'slack')
+
+		expect(slackRow?.needsReconnect).toBe(true)
+		expect(slackRow?.missingScopes).toEqual(
+			expect.arrayContaining(['channels:history', 'groups:history', 'search:read.public']),
+		)
+		// Scope NAMES only — a token must never ride along in the list response.
+		expect(JSON.stringify(slackRow)).not.toContain('xoxb-')
+	})
+
+	it('reports no scope drift for an install that granted everything', async () => {
+		vi.restoreAllMocks()
+		if (slackProviderConfig.auth.type !== 'oauth2') throw new Error('unreachable')
+		// Grant exactly what the config asks for, on both halves of the grant.
+		mockSlackOAuthFetch(teamId, {
+			scope: slackProviderConfig.auth.config.scopes.join(','),
+			userScope: REQUESTED_USER_SCOPE,
+		})
+		const app = createApp()
+		expect((await connectAndCallback(app, workspaceId)).status).toBe(302)
+
+		const listRes = await app.request(
+			new Request('http://localhost/api/integrations', {
+				headers: { 'X-Workspace-Id': workspaceId },
+			}),
+		)
+		const rows = (await listRes.json()) as {
+			provider: string
+			missingScopes?: string[]
+			needsReconnect?: boolean
+		}[]
+		const slackRow = rows.find((r) => r.provider === 'slack')
+		expect(slackRow?.missingScopes).toEqual([])
+		expect(slackRow?.needsReconnect).toBe(false)
 	})
 })

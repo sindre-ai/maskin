@@ -36,6 +36,7 @@ describe('workspaceSettingsSchema', () => {
 			'archived',
 		])
 		expect(result.statuses.task).toEqual([
+			'backlog',
 			'todo',
 			'in_progress',
 			'in_review',

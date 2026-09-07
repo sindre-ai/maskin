@@ -1,4 +1,3 @@
-import { BillingSection } from '@/components/settings/billing-section'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FormError } from '@/components/shared/form-error'
 import { RouteError } from '@/components/shared/route-error'
@@ -7,7 +6,6 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Switch } from '@/components/ui/switch'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import {
 	type ClaudeOAuthImportInput,
@@ -32,18 +30,8 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/keys')({
 function KeysPage() {
 	const { workspace, workspaceId } = useWorkspace()
 	const enterprise = Boolean(workspace.enterprise)
-	// `new-design` boundary for Settings → Keys. v2 moved the plan/credits card
-	// out to its own Billing route; with the flag off it still belongs here,
-	// because the pre-v2 nav links "Billing" at this path and nowhere else.
-	const newDesign = useFeatureFlag('new-design')
-
 	return (
 		<div className="space-y-6">
-			{!newDesign && (
-				<div className="max-w-4xl">
-					<BillingSection workspaceId={workspaceId} enterprise={enterprise} />
-				</div>
-			)}
 			{enterprise ? (
 				<div className="max-w-lg space-y-6">
 					<div className="border-t border-border pt-6">
@@ -58,12 +46,11 @@ function KeysPage() {
 						<CustomLlmEditor workspace={workspace} workspaceId={workspaceId} />
 					</div>
 				</div>
-			) : newDesign ? (
-				// With the flag off, `BillingSection` above already fills this page. With
-				// it on, billing moved to its own route and every remaining section is
-				// gated on `enterprise` — so a workspace without that grant rendered
-				// a blank page. `byollm_allowed` is an ops grant, not a self-serve
-				// toggle, so this says who enables it instead of offering a dead button.
+			) : (
+				// Every section above is gated on `enterprise`, so a workspace without
+				// that grant would otherwise render a blank page. `byollm_allowed` is an
+				// ops grant, not a self-serve toggle, so this says who enables it
+				// instead of offering a dead button.
 				<EmptyState
 					title="Bring-your-own-LLM isn't enabled for this workspace"
 					description="Agents run on your Maskin plan. Connecting your own Claude subscription, API keys or a custom endpoint is enabled per workspace by Maskin."
@@ -75,7 +62,7 @@ function KeysPage() {
 						</Button>
 					}
 				/>
-			) : null}
+			)}
 		</div>
 	)
 }

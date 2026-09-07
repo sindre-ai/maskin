@@ -88,7 +88,12 @@ export function MetadataPropertiesView({
 		return (
 			<div className="space-y-1">
 				<p className="text-xs text-muted-foreground">No custom fields on this object.</p>
-				<Button variant="ghost" size="sm" onClick={() => setShowAddMenu(true)}>
+				<Button
+					variant="outline"
+					size="sm"
+					className="h-auto rounded-lg px-2.5 py-[5px] text-[11.5px] font-semibold text-muted-foreground"
+					onClick={() => setShowAddMenu(true)}
+				>
 					+ Add property
 				</Button>
 			</div>
@@ -130,7 +135,12 @@ export function MetadataPropertiesView({
 					onSaveField={onCreateField ? handleSaveField : undefined}
 				/>
 			) : (
-				<Button variant="ghost" size="sm" className="mt-1" onClick={() => setShowAddMenu(true)}>
+				<Button
+					variant="outline"
+					size="sm"
+					className="mt-1.5 h-auto self-start rounded-lg px-2.5 py-[5px] text-[11.5px] font-semibold text-muted-foreground"
+					onClick={() => setShowAddMenu(true)}
+				>
 					+ Add property
 				</Button>
 			)}
@@ -191,11 +201,11 @@ function PropertyRow({
 	const [editing, setEditing] = useState(false)
 	const type = fieldDef?.type ?? inferType(value)
 	const displayClass =
-		'block w-full text-xs text-muted-foreground hover:text-foreground text-left whitespace-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
+		'block w-full text-left text-[12.5px] text-secondary-foreground whitespace-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
 
 	return (
-		<div className="flex items-center gap-2 py-1 px-2 rounded hover:bg-accent/50 hover:text-accent-foreground group">
-			<span className="w-20 sm:w-28 shrink-0 text-xs text-muted-foreground truncate" title={name}>
+		<div className="group flex items-center gap-2.5 rounded-lg px-2 py-[7px] hover:bg-muted/60">
+			<span className="w-[88px] shrink-0 truncate text-[11.5px] text-muted-foreground" title={name}>
 				{name}
 			</span>
 			<div className="flex-1 min-w-0">
@@ -229,7 +239,9 @@ function PropertyRow({
 				variant="ghost"
 				size="icon"
 				/* Always tappable on touch; fades behind hover on sm+. */
-				className="text-muted-foreground hover:text-error opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shrink-0"
+				/* Hover-only on pointer devices; always tappable on touch, where
+				   there is no hover to reveal it. */
+				className="size-5 shrink-0 text-border opacity-100 transition-opacity hover:text-destructive focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
 				onClick={onRemove}
 				title="Remove property"
 				aria-label={`Remove ${name}`}

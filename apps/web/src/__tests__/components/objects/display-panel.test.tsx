@@ -30,6 +30,28 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof DisplayPanel
 		onOrderChange: vi.fn(),
 		groupBy: undefined,
 		onGroupByChange: vi.fn(),
+		filterSections: [
+			{
+				id: 'quick',
+				label: 'Quick',
+				summary: 'None',
+				options: [
+					{ id: 'fresh', label: 'New last 7 days', count: 3, active: false, onToggle: vi.fn() },
+					{ id: 'starred', label: 'Starred', count: 1, active: false, onToggle: vi.fn() },
+				],
+			},
+			{
+				id: 'status',
+				label: 'Status',
+				summary: 'Any status',
+				options: [
+					{ id: 'active', label: 'active', count: 2, active: false, onToggle: vi.fn() },
+					{ id: 'closed', label: 'closed', count: 1, active: false, onToggle: vi.fn() },
+				],
+			},
+		],
+		pinnedFilters: [],
+		onTogglePinnedFilter: vi.fn(),
 		...overrides,
 	}
 	return { ...render(<DisplayPanel {...props} />), props }
@@ -144,13 +166,13 @@ describe('DisplayPanel', () => {
 		expect(screen.queryByRole('button', { name: /descending/i })).not.toBeInTheDocument()
 	})
 
-	it('clears both filters when Reset is clicked', async () => {
+	it('clears every filter through onResetFilters when Reset is clicked', async () => {
 		const user = userEvent.setup()
-		const { props } = renderPanel({ statusFilter: 'active', driverFilter: 'a1' })
+		const onResetFilters = vi.fn()
+		renderPanel({ statusFilter: 'active', driverFilter: 'a1', onResetFilters })
 		await user.click(screen.getByRole('button', { name: /display/i }))
-		await user.click(screen.getByRole('button', { name: /reset/i }))
-		expect(props.onStatusFilterChange).toHaveBeenCalledWith(undefined)
-		expect(props.onDriverFilterChange).toHaveBeenCalledWith(undefined)
+		await user.click(screen.getByRole('button', { name: /^reset$/i }))
+		expect(onResetFilters).toHaveBeenCalledOnce()
 	})
 
 	it('renders one Properties pill per hideable column, pressed when shown', async () => {
@@ -185,14 +207,47 @@ describe('DisplayPanel', () => {
 		expect(screen.getByText('Ordering')).toBeInTheDocument()
 	})
 
-	it('shows "+ Status" / "+ Driver" affordances when no filter is set', async () => {
+	it('collapses each filter axis to its current value until expanded', async () => {
 		const user = userEvent.setup()
+		renderPanel()
+		await user.click(screen.getByRole('button', { name: /display/i }))
+		// Collapsed: the summary is visible, the options are not.
+		expect(screen.getByText('Any status')).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /^active/ })).toBeNull()
+
+		await user.click(screen.getByRole('button', { name: 'Status filter, Any status' }))
+		expect(screen.getByRole('button', { name: /^active/ })).toBeInTheDocument()
+	})
+
+	it('toggles an option and pins it from the expanded axis', async () => {
+		const user = userEvent.setup()
+		const onToggle = vi.fn()
+		const onTogglePinnedFilter = vi.fn()
 		renderPanel({
-			actors: [{ id: 'a1', name: 'Alice', type: 'human', createdAt: '', updatedAt: '' } as never],
+			onTogglePinnedFilter,
+			filterSections: [
+				{
+					id: 'status',
+					label: 'Status',
+					summary: 'Any status',
+					options: [{ id: 'active', label: 'active', count: 2, active: false, onToggle }],
+				},
+			],
 		})
 		await user.click(screen.getByRole('button', { name: /display/i }))
-		expect(screen.getByRole('button', { name: /\+ Status/i })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /\+ Driver/i })).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Status filter, Any status' }))
+		await user.click(screen.getByRole('button', { name: /^active/ }))
+		expect(onToggle).toHaveBeenCalledOnce()
+		await user.click(screen.getByRole('button', { name: 'Pin active' }))
+		expect(onTogglePinnedFilter).toHaveBeenCalledWith('status:active')
+	})
+
+	it('offers Unpin for an option already pinned', async () => {
+		const user = userEvent.setup()
+		renderPanel({ pinnedFilters: ['quick:starred'] })
+		await user.click(screen.getByRole('button', { name: /display/i }))
+		await user.click(screen.getByRole('button', { name: 'Quick filter, None' }))
+		expect(screen.getByRole('button', { name: 'Unpin Starred' })).toBeInTheDocument()
 	})
 
 	describe('metadata filters', () => {
@@ -383,60 +438,29 @@ describe('DisplayPanel', () => {
 			expect(screen.getByText('2')).toBeInTheDocument()
 		})
 
-		it('renders "+ archived" inline next to the Display trigger when on', () => {
-			renderPanel({ includeArchived: true, onIncludeArchivedChange: vi.fn() })
-			expect(screen.getByText('+ archived')).toBeInTheDocument()
-		})
-
-		it('does not render the inline "+ archived" reading when the flag is off', () => {
-			renderPanel({ includeArchived: false, onIncludeArchivedChange: vi.fn() })
-			expect(screen.queryByText('+ archived')).toBeNull()
-		})
-
-		it('does not render the inline "+ archived" reading on the iconOnly (mobile) trigger', () => {
-			renderPanel({ includeArchived: true, onIncludeArchivedChange: vi.fn(), iconOnly: true })
-			expect(screen.queryByText('+ archived')).toBeNull()
-			// The icon-only trigger still carries the count pill so mobile
-			// users can see the flag is on without opening the panel.
-			expect(screen.getByText('1')).toBeInTheDocument()
-		})
-
 		it('renders sections in the mockup order (694–716)', async () => {
-			// Mockup 926–966 pins FILTER BY → GROUP BY → ORDER BY → SHOW IN LIST →
+			// Mockup 674–716 pins ORDERING → GROUPING → FILTERS → PROPERTIES →
 			// Show archived → Reset all. Guard the DOM order so a future refactor
-			// can't silently slide a section past its neighbour. (The value pickers
-			// — "Filters" — ride directly under the axis they configure.)
+			// can't silently slide a section past its neighbour.
 			const user = userEvent.setup()
 			renderPanel({
 				includeArchived: false,
 				onIncludeArchivedChange: vi.fn(),
-				onFilterByChange: vi.fn(),
-				filterBy: 'status' as const,
 				onResetToDefault: vi.fn(),
 				actors: [{ id: 'a1', name: 'Alice', type: 'human', createdAt: '', updatedAt: '' } as never],
 			})
 			await user.click(screen.getByRole('button', { name: /display/i }))
 			const headers = screen
-				.getAllByText(/^(Filter by|Filters|Grouping|Ordering|Properties|Show archived|Reset all)$/)
+				.getAllByText(/^(Filters|Grouping|Ordering|Properties|Show archived|Reset all)$/)
 				.map((el) => el.textContent)
 			expect(headers).toEqual([
-				'Filter by',
-				'Filters',
-				'Grouping',
 				'Ordering',
+				'Grouping',
+				'Filters',
 				'Properties',
 				'Show archived',
 				'Reset all',
 			])
-		})
-
-		it('calls onFilterByChange when a FILTER BY axis is picked', async () => {
-			const user = userEvent.setup()
-			const onFilterByChange = vi.fn()
-			renderPanel({ filterBy: 'status' as const, onFilterByChange })
-			await user.click(screen.getByRole('button', { name: /display/i }))
-			await user.click(screen.getByRole('button', { name: 'Attention' }))
-			expect(onFilterByChange).toHaveBeenCalledWith('attention')
 		})
 
 		it('keeps the popover open when includeArchived toggles false→true (e.g. via URL commit)', async () => {

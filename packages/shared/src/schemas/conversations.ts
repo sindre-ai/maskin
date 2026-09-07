@@ -1,11 +1,6 @@
 import { z } from 'zod'
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 200
-// Conversations are created with this placeholder and are given a real,
-// content-derived title moments later by the backend auto-titler
-// (apps/dev/src/services/conversation-titler.ts). It stays only when the
-// workspace has no LLM credential of any kind.
-export const NEW_CONVERSATION_PLACEHOLDER_TITLE = 'New chat'
 // Chat turns run longer than object comments (COMMENT_MAX_LENGTH in events.ts).
 export const MESSAGE_MAX_LENGTH = 8000
 export const MAX_CONVERSATION_PARTICIPANTS = 50
@@ -70,6 +65,20 @@ export const messageFinalOutputSchema = z.object({
 	 * result envelope, so the CLI is presumed wedged on stdin.
 	 */
 	retry: z.enum(['unavailable', 'undeliverable', 'unanswered']).optional(),
+	/**
+	 * Set when the turn ended by writing its tool calls out as text rather than
+	 * making them (apps/dev/src/lib/pseudo-tool-call.ts). A separate axis from
+	 * `error_kind`, which says whether a replay could have helped: without this
+	 * marker these notices are indistinguishable from model-API failures, and
+	 * anything querying for those over-counts.
+	 */
+	pseudo_tool_calls: z
+		.object({
+			occurrences: z.number().int().min(0),
+			tags: z.array(z.string().max(64)).max(20),
+			nudges: z.number().int().min(0).max(10),
+		})
+		.optional(),
 	subtype: z.string().max(64).optional(),
 	/** Set when the agent's output exceeded MESSAGE_MAX_LENGTH and was cut. */
 	truncated: z.boolean().optional(),

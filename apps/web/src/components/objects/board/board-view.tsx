@@ -44,6 +44,11 @@ import { deriveColumns } from './derive-columns'
 
 interface BoardViewProps {
 	objectType: string
+	/** Narrows the cards each column renders, for the filter axes that have no
+	 *  server-side equivalent (starred, recency buckets, attention). Without it
+	 *  a chip set in List would silently stop applying the moment the user
+	 *  switched to Board, while still rendering as active in the toolbar. */
+	clientFilter?: (object: ObjectResponse) => boolean
 	objects?: ObjectResponse[]
 	columns?: BoardObjectColumn[]
 	boardParams?: Record<string, string>
@@ -240,6 +245,7 @@ function getDropIndex({
 
 export function BoardView({
 	objectType,
+	clientFilter,
 	objects,
 	columns: initialColumns,
 	boardParams = {},
@@ -308,11 +314,16 @@ export function BoardView({
 	)
 	const columns = useMemo(
 		() =>
-			loadedColumns.map((column) => ({
-				...column,
-				objects: column.objects.map((object) => displayObjectsById.get(object.id) ?? object),
-			})),
-		[loadedColumns, displayObjectsById],
+			loadedColumns.map((column) => {
+				const objects = column.objects
+					.map((object) => displayObjectsById.get(object.id) ?? object)
+					.filter((object) => (clientFilter ? clientFilter(object) : true))
+				// `total` is the column's server-side count, which a client-side
+				// narrowing can't see past its loaded page — report the rendered
+				// count instead so the header never promises cards that aren't there.
+				return clientFilter ? { ...column, objects, total: objects.length } : { ...column, objects }
+			}),
+		[loadedColumns, displayObjectsById, clientFilter],
 	)
 	const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds])
 

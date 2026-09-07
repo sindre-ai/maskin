@@ -55,12 +55,6 @@ import { Route } from '@/routes/_authed/$workspaceId/settings/members'
 
 const MembersPage = (Route as unknown as { component: React.FC }).component
 
-// These specs cover the v2 branch of the `new-design` boundary, so they drive
-// the flag on through the test-only localStorage override.
-beforeEach(() => {
-	localStorage.setItem('ff:new-design', 'on')
-})
-
 describe('MembersPage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()

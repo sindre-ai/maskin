@@ -1,15 +1,21 @@
 import type { FieldDefinition } from '@/components/objects/field-value-input'
 import { FilterChip } from '@/components/shared/filter-chip'
-import { type FilterTabItem, FilterTabs } from '@/components/shared/filter-tabs'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Separator } from '@/components/ui/separator'
 import type { ActorListItem } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import type { VisibilityState } from '@tanstack/react-table'
-import { Search, Upload } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
 import type { ColumnInfo } from './data-table-controls'
-import { DisplayPanel, type DisplayPanelFilterAxis, type DisplayPanelView } from './display-panel'
+import type { DisplayFilterSectionModel } from './display-filter-section'
+import { DisplayPanel, type DisplayPanelView } from './display-panel'
+
+/** A filter the user pinned out of the Display panel — a one-click toggle in
+ *  the control row (mockup 659–662). */
+export interface ToolbarQuickChip {
+	id: string
+	label: string
+	active: boolean
+	onToggle: () => void
+}
 
 /** One removable filter pill in the control row (mockup 914–918). */
 export interface ToolbarFilterPill {
@@ -24,22 +30,16 @@ interface DataTableToolbarProps {
 	columns: ColumnInfo[]
 	columnVisibility: VisibilityState
 	onColumnVisibilityChange: (columnId: string, visible: boolean) => void
-	// Value chips for the active FILTER BY axis (mockup 907–911). Single-select:
-	// picking a chip narrows to that one value; picking it again clears the axis.
-	// Multi-select stays available through the Display panel's own pickers.
-	axisChips?: FilterTabItem<string | undefined>[]
-	axisValue?: string
-	onAxisValueChange?: (value: string | undefined) => void
-	axisLabel?: string
+	// Filters the user pinned out of the Display panel, in pin order.
+	quickChips?: ToolbarQuickChip[]
 	// Removable pills for every active filter, plus the Clear all escape hatch.
 	filterPills?: ToolbarFilterPill[]
 	onClearAllFilters?: () => void
-	// FILTER BY axis picker (lives inside the Display panel)
-	filterBy?: DisplayPanelFilterAxis
-	onFilterByChange?: (value: DisplayPanelFilterAxis) => void
-	// Search
-	search?: string
-	onSearchChange: (value: string) => void
+	// Collapsible FILTERS sections rendered inside the Display panel. Built by
+	// the caller so the same models drive both the panel rows and `quickChips`.
+	filterSections?: DisplayFilterSectionModel[]
+	pinnedFilters?: string[]
+	onTogglePinnedFilter?: (token: string) => void
 	// Display panel props
 	statusFilter?: string
 	onStatusFilterChange: (value: string | undefined) => void
@@ -67,24 +67,18 @@ interface DataTableToolbarProps {
 	view?: DisplayPanelView
 	onViewChange?: (view: DisplayPanelView) => void
 	boardSupported?: boolean
-	// Import
-	onImportClick: () => void
 }
 
 export function DataTableToolbar({
 	columns,
 	columnVisibility,
 	onColumnVisibilityChange,
-	axisChips = [],
-	axisValue,
-	onAxisValueChange,
-	axisLabel = 'Filter values',
+	quickChips = [],
 	filterPills = [],
 	onClearAllFilters,
-	filterBy,
-	onFilterByChange,
-	search,
-	onSearchChange,
+	filterSections,
+	pinnedFilters,
+	onTogglePinnedFilter,
 	statusFilter,
 	onStatusFilterChange,
 	statusesByType,
@@ -108,46 +102,34 @@ export function DataTableToolbar({
 	view,
 	onViewChange,
 	boardSupported,
-	onImportClick,
 }: DataTableToolbarProps) {
-	const [localSearch, setLocalSearch] = useState(search ?? '')
-	const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
-
-	useEffect(() => {
-		setLocalSearch(search ?? '')
-	}, [search])
-
-	useEffect(() => {
-		return () => clearTimeout(debounceRef.current)
-	}, [])
-
-	const handleSearchChange = (value: string) => {
-		setLocalSearch(value)
-		clearTimeout(debounceRef.current)
-		debounceRef.current = setTimeout(() => {
-			onSearchChange(value || '')
-		}, 300)
-	}
-
 	// "Clear all" only earns its place once more than one pill is active —
 	// with a single pill its own × already does the job (mockup 920).
 	const showClearAll = !!onClearAllFilters && filterPills.length > 1
 
 	return (
-		<div className="flex min-h-7 flex-none flex-wrap items-center gap-x-1.5 gap-y-2">
-			{axisChips.length > 0 && onAxisValueChange && (
-				<FilterTabs
-					variant="pill"
-					tabs={axisChips}
-					value={axisValue}
-					onChange={onAxisValueChange}
-					aria-label={axisLabel}
-				/>
-			)}
-
-			{filterPills.length > 0 && (
-				<Separator orientation="vertical" className="mx-1 h-[18px] shrink-0" />
-			)}
+		// One control row: pinned chips, then a pill per active filter, then the
+		// Display panel pushed to the right edge (mockup 658–673). Wraps rather
+		// than scrolls — a chip that scrolled out of view would read as absent,
+		// and "absent filter" is the one thing this row exists to disprove.
+		<div className="flex min-h-7 flex-none flex-wrap items-center gap-1 px-0.5 gap-y-1.5">
+			{quickChips.map((chip) => (
+				<button
+					key={chip.id}
+					type="button"
+					aria-pressed={chip.active}
+					onClick={chip.onToggle}
+					className={cn(
+						'inline-flex h-[26px] shrink-0 items-center whitespace-nowrap rounded-md px-2.5',
+						'text-[11.5px] transition-colors hover:bg-muted hover:text-foreground',
+						chip.active
+							? 'bg-muted font-bold text-foreground'
+							: 'font-semibold text-muted-foreground',
+					)}
+				>
+					{chip.label}
+				</button>
+			))}
 
 			{filterPills.map((pill) => (
 				<FilterChip
@@ -164,65 +146,46 @@ export function DataTableToolbar({
 					variant="ghost"
 					size="sm"
 					title="Clear all filters"
-					className="h-7 shrink-0 px-2 text-xs text-muted-foreground hover:text-foreground"
+					className="h-[26px] shrink-0 px-1 text-[11.5px] font-semibold text-muted-foreground hover:text-foreground"
 					onClick={onClearAllFilters}
 				>
 					Clear all
 				</Button>
 			)}
 
-			{/* Everything after this point is right-aligned (mockup 921). */}
-			<div className="ml-auto flex min-w-0 basis-full items-center justify-end gap-2 sm:basis-auto">
-				<div className="relative min-w-0 max-w-[14rem] flex-1">
-					<Search
-						size={14}
-						className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
-					/>
-					<Input
-						value={localSearch}
-						onChange={(e) => handleSearchChange(e.target.value)}
-						placeholder="Search..."
-						className="h-8 pl-8 text-sm"
-					/>
-				</div>
+			<span className="ml-auto" />
 
-				<DisplayPanel
-					view={view}
-					onViewChange={onViewChange}
-					boardSupported={boardSupported}
-					columns={columns}
-					columnVisibility={columnVisibility}
-					onColumnVisibilityChange={onColumnVisibilityChange}
-					filterBy={filterBy}
-					onFilterByChange={onFilterByChange}
-					statusFilter={statusFilter}
-					onStatusFilterChange={onStatusFilterChange}
-					statusesByType={statusesByType}
-					driverFilter={driverFilter}
-					onDriverFilterChange={onDriverFilterChange}
-					actors={actors}
-					fieldDefinitions={fieldDefinitions}
-					metadataFilters={metadataFilters}
-					onMetadataFilterChange={onMetadataFilterChange}
-					onResetFilters={onResetFilters}
-					sort={sort}
-					onSortChange={onSortChange}
-					order={order}
-					onOrderChange={onOrderChange}
-					groupBy={groupBy}
-					onGroupByChange={onGroupByChange}
-					includeArchived={includeArchived}
-					onIncludeArchivedChange={onIncludeArchivedChange}
-					archivedCount={archivedCount}
-					onResetToDefault={onResetToDefault}
-				/>
-
-				{/* Import is occasional; New lives only in the global header. */}
-				<Button variant="ghost" size="sm" className="gap-1.5" onClick={onImportClick}>
-					<Upload size={14} />
-					Import
-				</Button>
-			</div>
+			<DisplayPanel
+				view={view}
+				onViewChange={onViewChange}
+				boardSupported={boardSupported}
+				columns={columns}
+				columnVisibility={columnVisibility}
+				onColumnVisibilityChange={onColumnVisibilityChange}
+				statusFilter={statusFilter}
+				onStatusFilterChange={onStatusFilterChange}
+				statusesByType={statusesByType}
+				driverFilter={driverFilter}
+				onDriverFilterChange={onDriverFilterChange}
+				actors={actors}
+				fieldDefinitions={fieldDefinitions}
+				metadataFilters={metadataFilters}
+				onMetadataFilterChange={onMetadataFilterChange}
+				onResetFilters={onResetFilters}
+				sort={sort}
+				onSortChange={onSortChange}
+				order={order}
+				onOrderChange={onOrderChange}
+				groupBy={groupBy}
+				onGroupByChange={onGroupByChange}
+				includeArchived={includeArchived}
+				onIncludeArchivedChange={onIncludeArchivedChange}
+				archivedCount={archivedCount}
+				onResetToDefault={onResetToDefault}
+				filterSections={filterSections}
+				pinnedFilters={pinnedFilters}
+				onTogglePinnedFilter={onTogglePinnedFilter}
+			/>
 		</div>
 	)
 }

@@ -40,9 +40,23 @@ export const config: ProviderConfig = {
 		],
 	},
 
+	// GitHub is auto-injected, but not through the generic `autoInject` branch in
+	// session-manager.ts — it takes the provider-specific branch above it, which
+	// writes ONE entry per installation (`github-<owner>`, e.g. github-sindre-ai)
+	// carrying that installation's literal token, so an agent in a multi-org
+	// workspace can target a specific org. `autoInject: true` is still the honest
+	// answer to a client asking "do I have to attach anything?": no.
+	//
+	// Deliberately no `server`, and this is the one provider allowed to omit it.
+	// There is no single paste-ready spec to state: the entry name varies per
+	// installation and the token is baked in, not an env placeholder. A generic
+	// `github` entry using ${GITHUB_TOKEN} would look right and quietly bind to
+	// the FIRST installation only (session-manager.ts aliases the bare var for
+	// backwards compatibility), silently undoing the per-org targeting.
 	mcp: {
 		command: 'npx',
 		args: ['-y', '@modelcontextprotocol/server-github'],
 		envKey: 'GITHUB_TOKEN',
+		autoInject: true,
 	},
 }

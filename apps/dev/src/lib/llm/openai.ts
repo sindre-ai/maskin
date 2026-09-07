@@ -14,6 +14,7 @@ export class OpenAIAdapter implements LLMAdapter {
 		messages: LLMMessage[]
 		tools?: LLMTool[]
 		temperature?: number
+		max_tokens?: number
 	}): Promise<LLMResponse> {
 		const body: Record<string, unknown> = {
 			model: options.model || 'gpt-4o',
@@ -37,6 +38,10 @@ export class OpenAIAdapter implements LLMAdapter {
 
 		if (options.temperature !== undefined) {
 			body.temperature = options.temperature
+		}
+
+		if (options.max_tokens !== undefined) {
+			body.max_tokens = options.max_tokens
 		}
 
 		const response = await fetch(`${this.baseUrl}/chat/completions`, {

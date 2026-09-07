@@ -95,6 +95,7 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 - Fonts: Schibsted Grotesk (sans, variable 400–900) + JetBrains Mono (mono) — self-hosted from `/public/fonts/`, see `src/styles/typography.md`.
 - Base border radius: 10px (`--radius: 0.625rem`) — the `sm`/`md`/`lg`/`xl`/`2xl` scale steps 6/8/10/14/16px, matched to the v2 mockup's chip / menu-item / control / card / modal usage.
 - Micro eyebrow labels (the mockup's "VIEW / SHOW / SORT" markers) ship as the `.eyebrow` utility — 8px mono, 700, 0.11em tracking, uppercase, muted-foreground.
+- Settings section labels ("WORKSPACE NAME", "APPEARANCE", "PRIVACY & DATA") ship as the `.settings-label` utility — 11px sans, 600, 0.04em tracking, uppercase, muted-foreground. Settings is the only surface that uses it; everywhere else the micro label is `.eyebrow`.
 - Subtle transitions: `transition-colors duration-150` at the base layer.
 - Gallery specimen: `/prototypes/gallery` — every page must render from these primitives.
 
@@ -112,7 +113,12 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 - Use `cn()` from `src/lib/cn.ts` (clsx + tailwind-merge) for conditional class merging
 - Icons from `lucide-react`, typically `size={15}` in nav, `size={16}` in content
 - **No raw HTML form elements** — never use `<select>`, always use Radix `Select` from `@/components/ui/select`. DropdownMenu is only for action menus (not form value selection).
-- **No custom size overrides on SelectTrigger** — use the default h-8 bordered trigger everywhere. Layout classes like `flex-1` or `w-fit` are fine, but don't override height/border/text-size.
+- **No custom size overrides on SelectTrigger** — pick one of the primitive's own
+  `size` values instead of restyling the trigger at the call site. `default` is the
+  h-8 bordered trigger every form uses; `chip` is the borderless inline pill the v2
+  object detail meta row rides on. Layout classes like `flex-1` or `w-fit` are fine,
+  but don't override height/border/text-size — a shape the two sizes don't cover is a
+  new `size` on `ui/select.tsx`, not a page-local override.
 
 ### Layout
 - Fixed sidebar (w-56) with solid background (`bg-sidebar`) and right border, left side
@@ -228,11 +234,15 @@ resolved server-side and loaded in `_authed.tsx`'s `beforeLoad`.
 
 **One boundary per feature, as high in the tree as possible** — the shell or a
 route layout, not scattered checks on individual components. No flag is live
-right now; the pattern to copy is the retired `new-design` flag, which was read
-once in `src/routes/_authed/$workspaceId.tsx` and swapped the entire shell
-(sidebar, header, command palette, mobile nav) at that single call site, with
-the pre-v2 components kept under `src/components/*/legacy/`. If you need a third
-call site for one flag, the boundary is in the wrong place — move it up.
+right now; the pattern to copy is the retired `new-design` flag, which shipped
+the v2 redesign: it was read once per route component, each swapping a whole
+page, plus one shell read in `src/components/layout/sidebar.tsx`, with the
+pre-v2 components vendored under sibling `src/components/*/legacy/` directories
+that were deleted with the flag. **One route component = one boundary** — a flag
+governing several pages legitimately has several read sites. What must never
+happen is a *second* check inside a page already on one side of the boundary;
+that means the boundary is too low — move it up rather than add another check.
+See `.claude/rules/feature-flags.md` for the full rule.
 
 Flags cover the **visual layer only**; never gate data fetching, API calls, or
 anything a flag-off user still depends on. Full guide (env vars, the test-only

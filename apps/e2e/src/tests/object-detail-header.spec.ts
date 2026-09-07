@@ -63,7 +63,7 @@ test.describe('Object detail — above-title hero (static shell)', () => {
 			// OwnerSelect — all present and visible in the row. OwnerSelect
 			// wraps a Radix SelectTrigger (role="combobox") which has no
 			// aria-label; locate it via its visible "Driver:" prefix.
-			await expect(page.getByText('bet', { exact: true }).first()).toBeVisible()
+			await expect(page.getByText('Bet', { exact: true }).first()).toBeVisible()
 			await expect(
 				page
 					.getByRole('combobox')
@@ -71,17 +71,16 @@ test.describe('Object detail — above-title hero (static shell)', () => {
 					.first(),
 			).toBeVisible()
 
-			// Breadcrumb: the shared nav row owns the `Objects › …` chain for
-			// detail routes; the in-page bar carries actions only. The chain is
-			// hidden below `md:` (see layout/header.tsx), so only assert it where
-			// it renders.
-			if (vp.width >= 768) {
-				await expect(
-					page.getByRole('navigation', { name: 'breadcrumb' }).getByRole('link', {
-						name: 'Objects',
-					}),
-				).toBeVisible()
-			}
+			// Detail bar (mockup 1033–1035): `Objects › <name>` at every ship-gate
+			// viewport, with the parent crumb a real link back to the list. The
+			// bar replaces the search + New cluster on this route.
+			// The detail bar is the content area's own header — the sidebar also
+			// carries an "Objects" link, so the crumb is scoped to the bar.
+			const detailBar = page.locator('main header').first()
+			await expect(detailBar.getByRole('link', { name: 'Objects' })).toBeVisible()
+			await expect(detailBar.getByText(HEADER_TITLE)).toBeVisible()
+			// The bar replaces the search + New cluster on this route.
+			await expect(detailBar.getByRole('button', { name: /^New$/ })).toHaveCount(0)
 
 			// Overflow menu hosts the actions (Archive + Delete for bets).
 			const overflow = page.getByRole('button', { name: /more actions/i })

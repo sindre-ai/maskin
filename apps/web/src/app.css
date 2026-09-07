@@ -96,6 +96,7 @@
 	--color-border: var(--border);
 	--color-border-strong: var(--border-strong);
 	--color-border-hover: var(--border-hover);
+	--color-border-subtle: var(--border-subtle);
 	--color-input: var(--input);
 	--color-ring: var(--ring);
 	--color-brand: var(--brand);
@@ -127,6 +128,8 @@
 	/* Status badge colors */
 	--color-status-new-bg: var(--st-new-bg);
 	--color-status-new-text: var(--st-new-text);
+	--color-status-backlog-bg: var(--st-backlog-bg);
+	--color-status-backlog-text: var(--st-backlog-text);
 	--color-status-todo-bg: var(--st-todo-bg);
 	--color-status-todo-text: var(--st-todo-text);
 	--color-status-processing-bg: var(--st-processing-bg);
@@ -287,8 +290,16 @@
 	--destructive-foreground: #ffffff;
 
 	--border: #e4e4e7;
+	/* The quietest rule in v2 — the row-to-row hairline inside a long list,
+	   softer than --border so a list of rows reads as one block rather than a
+	   stack of cards (mockup 2327's `border-bottom:1px solid #f7f7f8`). */
+	--border-subtle: #f7f7f8;
 	--border-strong: #c4c4cc;
 	--border-hover: #c4c4cc;
+	/* Hairline that separates panes without drawing a line the eye stops on
+	   (settings rail, chat message meta rules). Sits between the card surface
+	   and --border, nearer the surface. */
+	--border-subtle: #f7f7f8;
 	--input: #e4e4e7;
 	--ring: #a1a1aa;
 
@@ -322,12 +333,18 @@
 
 	/* Semantic */
 	--success: #16a34a;
-	--warning: #b45309;
+	/* amber-800, not amber-700: `text-warning` is routinely drawn on a
+	   `bg-warning/10` tint (#f8eee6 over the light background), where amber-700
+	   lands at 4.39:1 — under WCAG AA for the 12px body sizes these controls
+	   use, and caught by the a11y route sweep on agent detail. */
+	--warning: #92400e;
 	--error: #dc2626;
 
 	/* Status badges */
 	--st-new-bg: #f4f4f5;
 	--st-new-text: #71717a;
+	--st-backlog-bg: #fafafa;
+	--st-backlog-text: #71717a;
 	--st-todo-bg: #f4f4f5;
 	--st-todo-text: #71717a;
 	--st-processing-bg: #fef3c7;
@@ -429,8 +446,12 @@
 	--destructive-foreground: #18181b;
 
 	--border: #27272a;
+	--border-subtle: #212124;
 	--border-strong: #3f3f46;
 	--border-hover: #3f3f46;
+	/* Same relationship inverted: one step up from --card (#18181b) rather
+	   than one step down from --background. */
+	--border-subtle: #1d1d20;
 	--input: #27272a;
 	--ring: #52525b;
 
@@ -459,6 +480,8 @@
 
 	--st-new-bg: #27272a;
 	--st-new-text: #a1a1aa;
+	--st-backlog-bg: #1f1f23;
+	--st-backlog-text: #a1a1aa;
 	--st-todo-bg: #27272a;
 	--st-todo-text: #a1a1aa;
 	--st-processing-bg: #422006;
@@ -609,6 +632,19 @@
 		font-size: 0.5rem; /* 8px — matches the v2 mockup exactly */
 		font-weight: 700;
 		letter-spacing: 0.11em;
+		text-transform: uppercase;
+		color: var(--muted-foreground);
+	}
+
+	/* Settings section label — the mockup's other uppercase label, used only on
+	   the Settings surface ("WORKSPACE NAME", "APPEARANCE", "PRIVACY & DATA",
+	   mockup 2697, 2704, 2710). It is the body sans at 11px with
+	   near-flat tracking, not `.eyebrow`'s 8px mono — Settings labels sit above
+	   full-width form blocks and need to read as headings, not micro-captions. */
+	.settings-label {
+		font-size: 0.6875rem; /* 11px */
+		font-weight: 600;
+		letter-spacing: 0.04em;
 		text-transform: uppercase;
 		color: var(--muted-foreground);
 	}

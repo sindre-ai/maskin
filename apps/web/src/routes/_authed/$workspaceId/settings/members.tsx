@@ -1,5 +1,4 @@
 import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
-import { LegacyMembersPage } from '@/components/settings/legacy/members-page'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FormError } from '@/components/shared/form-error'
@@ -28,7 +27,6 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	useAddWorkspaceMember,
 	useRemoveWorkspaceMember,
@@ -52,7 +50,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/members')({
 // POST /{id}/transfer-ownership, which enforces the plan's ownership cap.
 const ROLE_OPTIONS = ['admin', 'member'] as const
 
-function MembersPageV2() {
+function MembersPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: members, isLoading } = useWorkspaceMembers(workspaceId)
 	const addMember = useAddWorkspaceMember(workspaceId)
@@ -333,9 +331,4 @@ function MembersPageV2() {
 			)}
 		</div>
 	)
-}
-
-// `new-design` boundary for Settings → Members.
-function MembersPage() {
-	return useFeatureFlag('new-design') ? <MembersPageV2 /> : <LegacyMembersPage />
 }

@@ -28,6 +28,11 @@ vi.mock('@/lib/workspace-context', () => ({
 
 vi.mock('@/hooks/use-actors', () => ({
 	useActor: () => ({ data: undefined }),
+	useActors: () => ({ data: [] }),
+}))
+
+vi.mock('@/hooks/use-notifications', () => ({
+	useNotifications: () => ({ data: [] }),
 }))
 
 vi.mock('@/hooks/use-events', () => ({

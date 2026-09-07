@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
+import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../../lib/llm-routing'
 import {
 	TriggerRunner,
 	calculateBackoffUntil,
@@ -712,6 +713,309 @@ describe('TriggerRunner', () => {
 			// Should not fire again
 			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+	})
+
+	// Regression coverage for Sentry MASKIN-DEV-K / MASKIN-DEV-6. The plan cap is
+	// checked inside createSession BEFORE a session row exists, so no
+	// session_failed event is emitted, so the per-trigger `triggerFailures`
+	// backoff never engages. An over-cap workspace re-fired every cron trigger
+	// at full rate indefinitely (~372 identical failures/day in production).
+	//
+	// The credentials case additionally has a production-only route: there
+	// SessionManager hands off to the dispatch queue and returns, so the failure
+	// never rejects a promise here — see the `dispatch permanent failure`
+	// describe block below for that entry point.
+	describe('workspace suppression', () => {
+		const cronTrigger = (workspaceId: string) =>
+			buildTrigger({ workspaceId, type: 'cron', config: { expression: '*/1 * * * *' } })
+
+		/** Boots the runner with one every-minute cron trigger and fires it once. */
+		const startWithCron = async (trigger: ReturnType<typeof buildTrigger>, rejection: unknown) => {
+			mockResults.selectQueue = [[trigger], []]
+			mockResults.insert = []
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockRejectedValue(rejection)
+			await runner.start()
+			await vi.advanceTimersByTimeAsync(60 * 1000)
+		}
+
+		it('stops firing cron triggers after the workspace exceeds its plan cap', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			const trigger = cronTrigger('ws-capped')
+			await startWithCron(
+				trigger,
+				new PlanCapExceededError({
+					plan: 'trial',
+					used: 1054,
+					cap: 1000,
+					// Unix MILLISECONDS — what checkPlanCap actually builds the error
+					// with, having already converted Stripe's seconds. 2 hours out.
+					periodEnd: new Date('2026-01-01T02:00:00Z').getTime(),
+				}),
+			)
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+
+			// 30 further scheduled ticks, none of which should reach createSession.
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('resumes firing once the billing period rolls over', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			const trigger = cronTrigger('ws-capped')
+			await startWithCron(
+				trigger,
+				new PlanCapExceededError({
+					plan: 'trial',
+					used: 1054,
+					cap: 1000,
+					periodEnd: new Date('2026-01-01T02:00:00Z').getTime(),
+				}),
+			)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'session-2',
+			})
+
+			// Still inside the period — suppressed.
+			await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+			// Past periodEnd — the entry expires on read, with no timer or sweep.
+			await vi.advanceTimersByTimeAsync(70 * 60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('stops firing when the workspace has no LLM credentials connected', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			await startWithCron(
+				cronTrigger('ws-nocreds'),
+				new LlmCredentialsUnavailableError('no credentials configured'),
+			)
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('keeps firing when credentials are only transiently unverifiable', async () => {
+			// `transient` means we could not REACH the provider, not that the
+			// workspace is misconfigured — pausing on a network blip would take a
+			// paying customer's automations offline for an hour.
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			await startWithCron(
+				cronTrigger('ws-blip'),
+				new LlmCredentialsUnavailableError('anthropic unreachable', true),
+			)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(3 * 60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('keeps firing after an unrelated session-creation failure', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			await startWithCron(cronTrigger('ws-other'), new Error('docker daemon unreachable'))
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(3 * 60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('resumes immediately when the workspace is updated', async () => {
+			// Connecting a Claude subscription or upgrading a plan emits a
+			// workspace-updated event; automations should resume on the next tick
+			// rather than waiting out the pause.
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			const trigger = cronTrigger('ws-upgrades')
+			await startWithCron(trigger, new LlmCredentialsUnavailableError('no credentials configured'))
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'session-3',
+			})
+
+			await vi.advanceTimersByTimeAsync(2 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+			mockResults.select = []
+			bridge.emit('event', {
+				workspace_id: 'ws-upgrades',
+				entity_type: 'workspace',
+				entity_id: 'ws-upgrades',
+				action: 'updated',
+				actor_id: 'actor-1',
+				event_id: 'evt-ws-1',
+			} as PgEvent)
+			await vi.advanceTimersByTimeAsync(0)
+
+			mockResults.selectQueue = [[trigger], []]
+			await vi.advanceTimersByTimeAsync(2 * 60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		// The failure paths emit workspace events too, and one of them emits on
+		// the very path that opens the pause: resolveClaudeCredentialsWithFailover
+		// inserts `claude_subscription_failover_triggered` while failing over, and
+		// the same resolution then raises the credentials error that suppresses.
+		// PG NOTIFY is async, so it lands AFTER the pause. An unfiltered
+		// `entity_type === 'workspace'` clear deletes the pause here, and the
+		// workspace goes back to suppress → clear → re-fire → fail forever —
+		// the exact flood this suppression exists to stop.
+		it('does not resume on a workspace event that reports a failure', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			const trigger = cronTrigger('ws-failover')
+			await startWithCron(trigger, new LlmCredentialsUnavailableError('no credentials configured'))
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'session-4',
+			})
+
+			for (const action of [
+				'claude_subscription_failover_triggered',
+				'claude_subscription_backup_exhausted',
+				'workspace_billing_canceled',
+			]) {
+				mockResults.select = []
+				bridge.emit('event', {
+					workspace_id: 'ws-failover',
+					entity_type: 'workspace',
+					entity_id: 'ws-failover',
+					action,
+					actor_id: 'actor-1',
+					event_id: `evt-${action}`,
+				} as PgEvent)
+				await vi.advanceTimersByTimeAsync(0)
+			}
+
+			mockResults.selectQueue = [[trigger], []]
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		// The counterpart guard: the two most important resume signals for a plan
+		// cap are NOT spelled `updated`. Stripe writes `workspace_billing_updated`
+		// for an upgrade and `workspace_credit_topup` for a credit purchase, and a
+		// top-up genuinely un-caps the workspace via canUseCreditBalance. Narrowing
+		// the filter to `updated` would strand an upgrading customer for the rest
+		// of the billing period.
+		it.each(['workspace_billing_updated', 'workspace_credit_topup'])(
+			'resumes immediately on a %s event',
+			async (action) => {
+				vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+				const trigger = cronTrigger('ws-billing')
+				await startWithCron(
+					trigger,
+					new PlanCapExceededError({
+						plan: 'trial',
+						used: 1054,
+						cap: 1000,
+						periodEnd: new Date('2026-01-20T00:00:00Z').getTime(),
+					}),
+				)
+				;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+				;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+					id: 'session-5',
+				})
+
+				await vi.advanceTimersByTimeAsync(2 * 60 * 1000)
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+				mockResults.select = []
+				bridge.emit('event', {
+					workspace_id: 'ws-billing',
+					entity_type: 'workspace',
+					entity_id: 'ws-billing',
+					action,
+					actor_id: 'actor-1',
+					event_id: `evt-${action}`,
+				} as PgEvent)
+				await vi.advanceTimersByTimeAsync(0)
+
+				mockResults.selectQueue = [[trigger], []]
+				await vi.advanceTimersByTimeAsync(2 * 60 * 1000)
+				expect(sessionManager.createSession).toHaveBeenCalled()
+			},
+		)
+
+		// Guards the entity_type half of the filter: a busy workspace emits object
+		// events constantly, and those must not lift a pause.
+		it('does not resume on a non-workspace event', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			const trigger = cronTrigger('ws-busy')
+			await startWithCron(trigger, new LlmCredentialsUnavailableError('no credentials configured'))
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'session-6',
+			})
+
+			mockResults.select = []
+			bridge.emit('event', {
+				workspace_id: 'ws-busy',
+				entity_type: 'object',
+				entity_id: 'obj-1',
+				action: 'updated',
+				actor_id: 'actor-1',
+				event_id: 'evt-obj-1',
+			} as PgEvent)
+			await vi.advanceTimersByTimeAsync(0)
+
+			mockResults.selectQueue = [[trigger], []]
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+	})
+
+	// In production SessionManager hands off to SessionDispatchQueue and returns,
+	// and SessionDispatcher reports failures as return values rather than throws
+	// — so a credentials failure never rejects the createSession promise the
+	// classifier is attached to. `handleDispatchPermanentFailure` is the entry
+	// point for that path (wired as the queue's `onPermanentFailure`); without it
+	// the credentials branch above is dead in production (Sentry MASKIN-DEV-6).
+	describe('dispatch permanent failure', () => {
+		const cronTrigger = (workspaceId: string) =>
+			buildTrigger({ workspaceId, type: 'cron', config: { expression: '*/1 * * * *' } })
+
+		const startWithCron = async (trigger: ReturnType<typeof buildTrigger>) => {
+			mockResults.selectQueue = [[trigger], []]
+			mockResults.insert = []
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'session-1',
+			})
+			await runner.start()
+			await vi.advanceTimersByTimeAsync(60 * 1000)
+		}
+
+		it('stops firing after a not_logged_in dispatch failure', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			await startWithCron(cronTrigger('ws-dispatch-nocreds'))
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+
+			runner.handleDispatchPermanentFailure('ws-dispatch-nocreds', 'not_logged_in')
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('keeps firing after an unrelated permanent dispatch failure', async () => {
+			// `dispatch_failed` is about the fleet, not the workspace's
+			// entitlement — and this path DOES emit session_failed, so the existing
+			// per-trigger backoff is the right response to it.
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			await startWithCron(cronTrigger('ws-dispatch-other'))
+
+			runner.handleDispatchPermanentFailure('ws-dispatch-other', 'dispatch_failed')
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(3 * 60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('keeps firing when the dispatcher gave no classification', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			await startWithCron(cronTrigger('ws-dispatch-unclassified'))
+
+			runner.handleDispatchPermanentFailure('ws-dispatch-unclassified', undefined)
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockClear()
+			await vi.advanceTimersByTimeAsync(3 * 60 * 1000)
+			expect(sessionManager.createSession).toHaveBeenCalled()
 		})
 	})
 })

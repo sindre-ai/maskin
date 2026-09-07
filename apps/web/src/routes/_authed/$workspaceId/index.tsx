@@ -19,7 +19,7 @@ import {
 } from '@/hooks/use-user-display-settings'
 import { type CreateCommentInput, type DisplaySettingsBody, type UnreadItem, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { CARD_ACTIONS, classifyCardKind } from '@/lib/foryou-card-kind'
+import { classifyCardKind, recommendedAction } from '@/lib/foryou-card-kind'
 import { type FeedBucket, bucketRank, feedItemKey, feedTailLabel } from '@/lib/foryou-feed'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -301,7 +301,14 @@ function ForYouFeed() {
 			// and with call-site callbacks every reply but the last would fail
 			// silently behind a green receipt claiming it was sent.
 			postReply
-				.mutateAsync({ entity_id: item.entity_id, content: option.label })
+				.mutateAsync({
+					entity_id: item.entity_id,
+					content: option.label,
+					// The answer belongs under the question. Without this it lands as
+					// a loose comment on the object, and the agent that asked has to
+					// infer from timing which of its asks was just answered.
+					...(item.latest_mention ? { parent_event_id: item.latest_mention.event_id } : {}),
+				})
 				.then(() => {
 					// A thread with no high-water mark can't be marked read, so the
 					// reply would go out and the card would come back on the next
@@ -317,6 +324,32 @@ function ForYouFeed() {
 				})
 		},
 		[markItemRead, postReply, undoDecision],
+	)
+
+	// Typing an answer settles the thread exactly as taking an option does, so
+	// it leaves the feed the same way: the card shows "Waiting on <agent>" until
+	// the next fetch drops it. The composer has already posted the comment by
+	// the time this fires — all that is left is the high-water mark, which is
+	// what the card was missing.
+	const handleReplied = useCallback(
+		(item: UnreadItem) => {
+			const key = feedItemKey(item)
+			setRepliedKeys((prev) => new Set(prev).add(key))
+			const forget = () =>
+				setRepliedKeys((prev) => {
+					const next = new Set(prev)
+					next.delete(key)
+					return next
+				})
+			// Same honesty as a taken option: an unmarkable thread comes back on
+			// the next fetch carrying the reader's own answer, so say so rather
+			// than implying it is settled.
+			if (!markItemRead(item, forget)) {
+				forget()
+				toast.warning('Reply sent, but the thread stayed unread.')
+			}
+		},
+		[markItemRead],
 	)
 
 	// Dismissing is marking read: the high-water mark moves and the card leaves
@@ -393,10 +426,11 @@ function ForYouFeed() {
 	const takeSuggested = useCallback(
 		(targets: UnreadItem[]) => {
 			for (const item of targets) {
-				const kind = classifyCardKind(item)
-				if (kind === 'thread') continue
-				const option =
-					CARD_ACTIONS[kind].find((action) => action.recommended) ?? CARD_ACTIONS[kind][0]
+				// Only cards where the agent actually named a recommendation. A
+				// plain mention has nothing to take, and a decision without one
+				// cannot be posted (the API rejects it), so there is nothing to
+				// guess at here.
+				const option = recommendedAction(item)
 				if (!option) continue
 				handleDecide(item, { id: option.id, label: option.label })
 			}
@@ -542,7 +576,7 @@ function ForYouFeed() {
 									decided={decided.get(key)?.option ?? null}
 									onDecide={(option) => handleDecide(item, option)}
 									replied={repliedKeys.has(key)}
-									onReplied={() => setRepliedKeys((prev) => new Set(prev).add(key))}
+									onReplied={() => handleReplied(item)}
 									onMarkRead={() => dismissAll([item], 'Marked as read')}
 								/>
 							)

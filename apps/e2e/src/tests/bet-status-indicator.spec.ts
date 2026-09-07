@@ -30,12 +30,11 @@ test.describe('Bet status indicator', () => {
 		// an editable combobox in the identity row — the derived read-only chip
 		// (idle/progressing/waiting on human) remains on the objects overview
 		// rows (tests below) and is not part of the T1 header surface.
-		const statusControl = page
-			.getByRole('combobox')
-			.filter({ hasNotText: /driver/i })
-			.first()
+		// The hero chip is the only status combobox carrying an accessible name;
+		// the properties drawer's is unnamed, so this cannot drift onto it.
+		const statusControl = page.getByRole('combobox', { name: 'Change status' })
 		await expect(statusControl).toBeVisible()
-		await expect(statusControl).toHaveText('active')
+		await expect(statusControl).toContainText('active')
 		await expect(page.locator('main').getByRole('button', { name: /^Status: /i })).toHaveCount(0)
 	})
 
@@ -72,11 +71,10 @@ test.describe('Bet status indicator', () => {
 		// Header status is the raw-status combobox on T1; the derived chip states
 		// are not rendered on this surface, so neither "progressing" nor "idle"
 		// chip markup may appear.
-		const statusControl = page
-			.getByRole('combobox')
-			.filter({ hasNotText: /driver/i })
-			.first()
-		await expect(statusControl).toHaveText('active')
+		// The hero chip is the only status combobox carrying an accessible name;
+		// the properties drawer's is unnamed, so this cannot drift onto it.
+		const statusControl = page.getByRole('combobox', { name: 'Change status' })
+		await expect(statusControl).toContainText('active')
 		await expect(page.locator('main').getByRole('button', { name: /^Status: /i })).toHaveCount(0)
 	})
 
@@ -111,11 +109,10 @@ test.describe('Bet status indicator', () => {
 		// The "waiting on human" derived chip and its popover are not part of the
 		// T1 header surface (status is the editable combobox); the human-decision
 		// state still surfaces as the indicator on the objects overview rows.
-		const statusControl = page
-			.getByRole('combobox')
-			.filter({ hasNotText: /driver/i })
-			.first()
-		await expect(statusControl).toHaveText('active')
+		// The hero chip is the only status combobox carrying an accessible name;
+		// the properties drawer's is unnamed, so this cannot drift onto it.
+		const statusControl = page.getByRole('combobox', { name: 'Change status' })
+		await expect(statusControl).toContainText('active')
 		await expect(page.locator('main').getByRole('button', { name: /^Status: /i })).toHaveCount(0)
 	})
 

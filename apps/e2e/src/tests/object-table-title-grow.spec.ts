@@ -129,10 +129,10 @@ test.describe('Object title — long titles fill available row width', () => {
 		const titleLink = page.getByRole('link', { name: LONG_TITLE })
 		await expect(titleLink).toBeVisible({ timeout: 10000 })
 
-		// The Related Objects table is still a DataTable: its Title <th> carries
-		// w-full so auto-layout gives it all the leftover width.
-		const titleHead = page.getByRole('columnheader', { name: /^title/i }).first()
-		await expect(titleHead).toBeVisible()
+		// v2 rebuilt the Related tab as grouped rows rather than a DataTable, so
+		// there is no Title <th> to pin here any more. The contract the test
+		// exists for is unchanged and is asserted on the link box below: a long
+		// title takes the leftover width instead of being cut at 300px.
 
 		const linkBox = await titleLink.boundingBox()
 		if (!linkBox) throw new Error('title link has no layout box')

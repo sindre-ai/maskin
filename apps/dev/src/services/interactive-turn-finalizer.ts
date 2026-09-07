@@ -4,6 +4,7 @@ import { sessionLogs, sessions } from '@maskin/db/schema'
 import { MESSAGE_MAX_LENGTH, parseResultLine, scanTurnLine, splitLines } from '@maskin/shared'
 import { and, desc, eq, like, lte } from 'drizzle-orm'
 import { logger } from '../lib/logger'
+import { detectPseudoToolCalls } from '../lib/pseudo-tool-call'
 import { classifyTurnError } from '../lib/turn-error-classifier'
 import type { StreamJsonUserMessage } from './container-manager'
 import { insertConversationMessage } from './conversation-messages'
@@ -118,6 +119,50 @@ const RETRY_UNDELIVERABLE_MESSAGE =
 const RETRY_UNANSWERED_MESSAGE =
 	"I hit a temporary error from the Claude API and ran that again, but the run never came back. Send the message again and I'll pick it up."
 
+/**
+ * How many times one session is nudged for writing tool calls out as text.
+ *
+ * One. The nudge names the mistake precisely and asks for the turn again, so a
+ * model that can recover does it on the first correction; one that cannot is
+ * not going to on the second, and every attempt re-runs the whole turn at full
+ * token cost (the observed failure cost $4.63 to produce nothing). After this
+ * the human is told in plain words instead.
+ */
+const MAX_PSEUDO_TOOL_CALL_NUDGES = 1
+
+/**
+ * The correction written back to the model's stdin as a user turn.
+ *
+ * Addressed to the model, never shown in the chat. States the mistake, its
+ * consequence (the tools did not run), and what to do instead — including the
+ * honest escape hatch, so a model that genuinely cannot reach a tool says so
+ * rather than inventing another transcript of calling it.
+ */
+const PSEUDO_TOOL_CALL_NUDGE =
+	'[system correction] Your last turn ended by writing tool calls out as text — tags like <skill_called> or <tool_call>, along with the results you expected them to return. Those are not tool calls. Nothing ran, no tool returned anything, and the text was withheld from the human rather than posted.  Answer the turn again. Call the tools you need through the real tool-call mechanism and wait for each result before relying on it. Never write a tool call, its arguments, or its result as text or XML — if you cannot call a tool, say so in plain language instead of describing the call. End the turn with the reply for the human: what you found or did, in prose, with no markup and no notes to yourself.'
+
+/**
+ * What the human reads when the nudge did not take.
+ *
+ * Says what went wrong in their terms without quoting the markup back at them
+ * — the raw text is in the session log for us, and is noise to them.
+ */
+const PSEUDO_TOOL_CALL_GIVE_UP_MESSAGE =
+	"I got that turn wrong — I wrote out the tool calls I meant to make instead of running them, so nothing actually ran. I tried again and hit the same problem. Send the message again and I'll pick it up."
+
+/**
+ * What the human reads when the turn was lost and no correction could be
+ * written — nothing can reach the CLI's stdin, or the session has gone.
+ * Distinct from the message above because claiming a retry that never happened
+ * misdescribes what they are looking at.
+ */
+const PSEUDO_TOOL_CALL_UNAVAILABLE_MESSAGE =
+	"I got that turn wrong — I wrote out the tool calls I meant to make instead of running them, so nothing actually ran. Send the message again and I'll pick it up."
+
+/** What the human reads when a correction was written but the turn never came back. */
+const PSEUDO_TOOL_CALL_UNANSWERED_MESSAGE =
+	"I got that turn wrong — I wrote out the tool calls I meant to make instead of running them. I asked myself to run that again, but the run never came back. Send the message again and I'll pick it up."
+
 /** What the human reads for a failure no replay would fix. */
 const permanentErrorMessage = (detail: string): string =>
 	`I couldn't complete that turn — the model API returned an error:\n\n${detail}`
@@ -128,6 +173,25 @@ const permanentErrorMessage = (detail: string): string =>
  * that can end the wait — the turn answering, the session going away, the
  * process exiting — can settle it.
  */
+/**
+ * The marker that says a notice came from a turn which wrote its tool calls out
+ * as text, rather than from a model-API failure.
+ *
+ * Carried separately from `error_kind`, which answers a different question —
+ * whether a replay could have helped — and is a persisted enum shared with
+ * `packages/shared/src/schemas/conversations.ts`. Without this discriminator
+ * both families land in the audit trail as `error_kind: 'transient'`, so
+ * anything querying these messages for model-API failures counts
+ * pseudo-tool-call turns as Claude API errors with no way to separate them.
+ * Same argument as the per-watchdog notice text: don't send someone looking in
+ * the wrong place.
+ */
+type PseudoToolCallMetadata = {
+	occurrences: number
+	tags: string[]
+	nudges: number
+}
+
 type ReplayWatchdog = {
 	timer: NodeJS.Timeout
 	gate: SessionGate
@@ -135,6 +199,15 @@ type ReplayWatchdog = {
 	dedupeKey: string
 	/** The failing turn's log id: only a result NEWER than this can stand it down. */
 	armedAfterLogId: number
+	/**
+	 * What to post if this one never answers. Held per-watchdog because the two
+	 * things that arm one — a model-API failure and a turn that wrote its tool
+	 * calls out as text — are different failures, and telling the human about
+	 * an API error when there was none sends them looking in the wrong place.
+	 */
+	unansweredMessage: string
+	/** Set when this watchdog was armed for a pseudo-tool-call turn, for its notice metadata. */
+	pseudoToolCalls?: PseudoToolCallMetadata
 }
 
 type SessionGate = {
@@ -177,6 +250,15 @@ export class InteractiveTurnFinalizer {
 	private readonly pendingRetries = new Set<Promise<void>>()
 	/** sessionId -> the replayed turn we are waiting on a result line for. */
 	private readonly replayWatchdogs = new Map<string, ReplayWatchdog>()
+	/**
+	 * sessionId -> corrections spent on turns that wrote tool calls as text.
+	 *
+	 * Keyed by session rather than by turn payload (as `retryCounts` is): the
+	 * correction is a NEW user turn, so the turn that answers it has different
+	 * content and would start its own budget, letting a model that keeps
+	 * emitting markup be nudged forever. Cleared when a turn posts normally.
+	 */
+	private readonly pseudoToolCallNudges = new Map<string, number>()
 	private readonly retryTurn?: RetryTurnFn
 	private readonly delay: (ms: number) => Promise<void>
 	private readonly replyTimeoutMs: number
@@ -237,6 +319,7 @@ export class InteractiveTurnFinalizer {
 	/** Drop per-session state when a session goes away. */
 	forgetSession(sessionId: string): void {
 		this.clearRetryCounts(sessionId)
+		this.pseudoToolCallNudges.delete(sessionId)
 		// A replay was written and its turn never came back; the session going
 		// away is proof it never will. Fire the notice instead of dropping the
 		// timer — a discarded watchdog leaves the human in an empty thread,
@@ -338,6 +421,32 @@ export class InteractiveTurnFinalizer {
 			return
 		}
 
+		// A turn can close cleanly and still carry no reply: some models write
+		// the tool calls they meant to make out as text instead of making them,
+		// and the CLI closes on that. `is_error` is false, so nothing above
+		// catches it, and posting it hands the human a transcript of calls that
+		// never ran — plus, in the observed case, the agent's own container
+		// paths and inner monologue. Ask the model to do the turn properly
+		// instead of posting or scrubbing it.
+		const pseudo = detectPseudoToolCalls(text)
+		if (pseudo.detected) {
+			await this.handlePseudoToolCallTurn(
+				sessionId,
+				gate,
+				gate.conversationId,
+				result,
+				logId,
+				pseudo,
+			)
+			return
+		}
+
+		// Cleared here, not with the retry budget above: a turn only proves the
+		// model is emitting real tool calls again once it has produced something
+		// postable, and clearing before the check would refund the budget on the
+		// very turn that spends it.
+		this.pseudoToolCallNudges.delete(sessionId)
+
 		await this.postTurnMessage(
 			sessionId,
 			gate,
@@ -347,6 +456,133 @@ export class InteractiveTurnFinalizer {
 			text,
 			recovered ? { recovered: true } : {},
 		)
+	}
+
+	/**
+	 * A turn that ended by describing tool calls rather than making them: write
+	 * the model a correction and let its next turn be the reply.
+	 *
+	 * Correcting rather than stripping, because the markup is not formatting
+	 * noise around a finished answer — it stands in place of work that never
+	 * happened. Scrubbing the tags would post the sentence or two of prose that
+	 * survived them ("Past the timeout window — checking status.") as though it
+	 * were the reply, which reads as a complete answer while the tools it was
+	 * about still have not run. The nudge is the only response that ends with
+	 * the human getting what they asked for.
+	 *
+	 * Shaped like handleFailedTurn deliberately — same dedupe, same watchdog,
+	 * same not-awaited write — since the two differ only in what they tell the
+	 * model and how many attempts they allow.
+	 */
+	private async handlePseudoToolCallTurn(
+		sessionId: string,
+		gate: SessionGate,
+		conversationId: string,
+		result: ReturnType<typeof parseResultLine> & object,
+		logId: number,
+		pseudo: ReturnType<typeof detectPseudoToolCalls>,
+	): Promise<void> {
+		const dedupeKey = createHash('sha256').update(result.raw).digest('hex').slice(0, 32)
+		if (this.seen.has(dedupeKey)) return
+
+		const detail = `${pseudo.occurrences} occurrence(s) of ${pseudo.tags.join(', ')}`
+		const spent = this.pseudoToolCallNudges.get(sessionId) ?? 0
+
+		if (spent >= MAX_PSEUDO_TOOL_CALL_NUDGES) {
+			logger.warn(
+				`Interactive session ${sessionId} wrote tool calls as text again after ${spent} correction(s) (log ${logId}; ${detail}); telling the human`,
+			)
+			// Reset rather than left spent: the human has been told, so a later
+			// lapse is a new episode and is worth one correction of its own.
+			// Keeping the counter would make every subsequent turn skip straight
+			// to this same message, which repeats itself and never tries to
+			// recover.
+			this.pseudoToolCallNudges.delete(sessionId)
+			await this.postTurnMessage(
+				sessionId,
+				gate,
+				conversationId,
+				result,
+				logId,
+				PSEUDO_TOOL_CALL_GIVE_UP_MESSAGE,
+				{
+					pseudo_tool_calls: { occurrences: pseudo.occurrences, tags: pseudo.tags, nudges: spent },
+				},
+			)
+			return
+		}
+
+		if (!this.retryTurn) {
+			logger.warn(
+				`Interactive session ${sessionId} wrote tool calls as text and cannot be corrected — no stdin writer (log ${logId}; ${detail})`,
+			)
+			await this.postTurnMessage(
+				sessionId,
+				gate,
+				conversationId,
+				result,
+				logId,
+				PSEUDO_TOOL_CALL_UNAVAILABLE_MESSAGE,
+				{ pseudo_tool_calls: { occurrences: pseudo.occurrences, tags: pseudo.tags, nudges: 0 } },
+			)
+			return
+		}
+
+		this.pseudoToolCallNudges.set(sessionId, spent + 1)
+		this.rememberKey(dedupeKey)
+
+		// Stamped on whichever notice this attempt ends up producing, so a
+		// pseudo-tool-call turn is never counted as a model-API failure.
+		const pseudoMetadata = {
+			occurrences: pseudo.occurrences,
+			tags: pseudo.tags,
+			nudges: spent + 1,
+		}
+
+		logger.warn(
+			`Interactive session ${sessionId} wrote tool calls as text (log ${logId}; ${detail}); asking it to run them for real (attempt ${spent + 1}/${MAX_PSEUDO_TOOL_CALL_NUDGES})`,
+		)
+
+		// Not awaited by the caller, for the same reason handleFailedTurn is not:
+		// this runs on the log-ingest path, and holding it open across a stdin
+		// write would stall the live SSE feed for every other consumer.
+		const task = (async () => {
+			// Armed before the write: the failing envelope is already in `seen`,
+			// so this watchdog is the only remaining record that the human is
+			// owed an answer.
+			this.armReplayWatchdog(
+				sessionId,
+				gate,
+				conversationId,
+				dedupeKey,
+				logId,
+				PSEUDO_TOOL_CALL_UNANSWERED_MESSAGE,
+				pseudoMetadata,
+			)
+			try {
+				await this.retryTurn?.(sessionId, {
+					type: 'user',
+					message: { role: 'user', content: PSEUDO_TOOL_CALL_NUDGE },
+				})
+			} catch (err) {
+				this.disarmReplayWatchdog(sessionId)
+				logger.error(
+					`Interactive session ${sessionId} could not be sent a tool-call correction: ${describeError(err)}`,
+				)
+				await this.postRetryNotice(
+					sessionId,
+					gate,
+					conversationId,
+					dedupeKey,
+					'undeliverable',
+					PSEUDO_TOOL_CALL_UNAVAILABLE_MESSAGE,
+					pseudoMetadata,
+				)
+			}
+		})()
+
+		this.pendingRetries.add(task)
+		void task.finally(() => this.pendingRetries.delete(task))
 	}
 
 	/**
@@ -567,6 +803,7 @@ export class InteractiveTurnFinalizer {
 		dedupeKey: string,
 		reason: 'undeliverable' | 'unanswered',
 		content: string,
+		pseudoToolCalls?: PseudoToolCallMetadata,
 	): Promise<void> {
 		try {
 			const created = await insertConversationMessage(this.db, {
@@ -580,6 +817,7 @@ export class InteractiveTurnFinalizer {
 						dedupe_key: `${dedupeKey}-${reason}`,
 						error_kind: 'transient',
 						retry: reason,
+						...(pseudoToolCalls ? { pseudo_tool_calls: pseudoToolCalls } : {}),
 					},
 				},
 				sessionId,
@@ -611,6 +849,8 @@ export class InteractiveTurnFinalizer {
 		conversationId: string,
 		dedupeKey: string,
 		armedAfterLogId: number,
+		unansweredMessage: string = RETRY_UNANSWERED_MESSAGE,
+		pseudoToolCalls?: PseudoToolCallMetadata,
 	): void {
 		this.disarmReplayWatchdog(sessionId)
 		const timer = setTimeout(() => {
@@ -623,6 +863,8 @@ export class InteractiveTurnFinalizer {
 			conversationId,
 			dedupeKey,
 			armedAfterLogId,
+			unansweredMessage,
+			pseudoToolCalls,
 		})
 	}
 
@@ -649,7 +891,8 @@ export class InteractiveTurnFinalizer {
 			watchdog.conversationId,
 			watchdog.dedupeKey,
 			'unanswered',
-			RETRY_UNANSWERED_MESSAGE,
+			watchdog.unansweredMessage,
+			watchdog.pseudoToolCalls,
 		)
 	}
 

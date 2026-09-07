@@ -20,13 +20,6 @@
 // first step of introducing a new flag.
 export const FLAGS = {
 	/**
-	 * v2 UI surfaces that have not been tested yet. Off means the pre-v2
-	 * rendering under `apps/web/src/components/objects/legacy/`; on means the new
-	 * one. Retire it (and delete those directories) once the v2 surfaces have
-	 * been through testing — see `.claude/rules/feature-flags.md`.
-	 */
-	NEW_DESIGN: 'new-design',
-	/**
 	 * Slack setup UX v2 — channel-picker membership indicators, per-row hints,
 	 * >2000-channel truncation footer, error state, and the picker-usage
 	 * PostHog event. Enabled per tester actor; roll to Marketplace-live

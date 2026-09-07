@@ -1,10 +1,11 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// v2 Objects list gate (mockup 850–1028). One control row: the FILTER BY axis
-// chips, removable pills, Clear all, then Display. The filtered-empty state
-// names the filters that produced it and clears them in one action. Selecting
-// a row flips every other row's affordance from a type dot to a checkbox.
+// v2 Objects list gate (mockup 850–1028). One control row: the filters pinned
+// out of the Display panel, removable pills, Clear all, then Display. The
+// filtered-empty state names the filters that produced it and clears them in
+// one action. Selecting a row flips every other row's affordance from its
+// resting star to a checkbox.
 // Run at each ship-gate viewport (375 / 768 / 1024).
 
 test.describe('Objects list — v2 control row', () => {
@@ -90,7 +91,7 @@ test.describe('Objects list — v2 control row', () => {
 			// Segmented List | Board rail first (mockup 694–697), then the sections.
 			await expect(page.getByRole('button', { name: 'List' })).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Board' })).toBeVisible()
-			await expect(page.getByText('Filter by')).toBeVisible()
+			await expect(page.getByText('Filters')).toBeVisible()
 			await expect(page.getByText('Properties')).toBeVisible()
 			await expect(page.getByText('Show archived')).toBeVisible()
 			await expect(page.getByText('Reset all')).toBeVisible()
@@ -154,7 +155,11 @@ test.describe('Objects list — v2 control row', () => {
 			await expect(rows.first()).toContainText('Older bet')
 		})
 
-		test(`switching the FILTER BY axis re-drives the chip row at ${vp.label}`, async ({
+		// The status chip row is gone: the toolbar now carries only the filters the
+		// user pinned out of the Display panel's FILTERS axes. This drives that
+		// whole loop — expand an axis, pin a value, and confirm the chip lands in
+		// the control row, filters when clicked, and survives a reload.
+		test(`pinning a FILTERS value promotes it to the toolbar chip row at ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -165,22 +170,50 @@ test.describe('Objects list — v2 control row', () => {
 				title: 'Axis bet',
 				status: 'active',
 			})
+			await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Signal bet',
+				status: 'signal',
+			})
 
 			await page.goto(`/${account.workspaceId}/objects?type=bet`)
 			await expect(page.getByText('Axis bet')).toBeVisible({ timeout: 15000 })
 
-			// Status is the resting axis, so its values drive the chip row. Match the
-			// chip's "active (n)" label — the group header reads "active n" and would
-			// otherwise tie.
-			await expect(page.getByRole('button', { name: /^active \(\d+\)$/ })).toBeVisible()
+			// Status rests at "Any status" and is collapsed — nothing on the toolbar
+			// names a status until something is pinned.
+			await expect(page.getByRole('button', { name: 'Status: active' })).toHaveCount(0)
 
 			await page.getByRole('button', { name: /^Display/ }).click()
-			await page.getByRole('button', { name: 'Attention' }).click()
+			await page.getByRole('button', { name: /^Status filter,/ }).click()
+
+			// Pin the `active` status, then close the panel. The pin is written
+			// through on a 500ms debounce — wait for that PUT rather than racing it,
+			// so the reload assertion below is deterministic.
+			const pinSaved = page.waitForResponse(
+				(res) => res.url().includes('/user-display-settings/') && res.request().method() === 'PUT',
+			)
+			await page.getByRole('button', { name: 'Pin active' }).click()
+			await expect(page.getByRole('button', { name: 'Unpin active' })).toBeVisible()
+			await pinSaved
 			await page.keyboard.press('Escape')
 
-			await expect(page).toHaveURL(/filterBy=attention/)
-			await expect(page.getByRole('button', { name: /^Waiting on you/ })).toBeVisible()
-			await expect(page.getByRole('button', { name: /^Agent working/ })).toBeVisible()
+			// The pin promotes it to a chip, off by default and reachable without
+			// reopening the panel.
+			const chip = page.getByRole('button', { name: 'Status: active' })
+			await expect(chip).toBeVisible()
+			await expect(chip).toHaveAttribute('aria-pressed', 'false')
+
+			await chip.click()
+			await expect(page).toHaveURL(/[?&]status=active/)
+			await expect(page.getByText('Axis bet')).toBeVisible()
+			await expect(page.getByText('Signal bet')).not.toBeVisible()
+			await expect(chip).toHaveAttribute('aria-pressed', 'true')
+
+			// Pins persist per actor and tab, so the chip is still there on reload.
+			await page.reload()
+			await expect(page.getByRole('button', { name: 'Status: active' })).toBeVisible({
+				timeout: 15000,
+			})
 		})
 	}
 })

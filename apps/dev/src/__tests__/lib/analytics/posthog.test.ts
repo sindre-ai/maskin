@@ -68,4 +68,17 @@ describe('capturePosthogEvent', () => {
 		fetchMock.mockResolvedValueOnce({ ok: false, status: 500 } as Response)
 		await expect(capturePosthogEvent('test.event', 'distinct-1', {})).resolves.toBeUndefined()
 	})
+
+	// PostHog drops events with an empty distinct id but still answers 2xx, so
+	// firing one looks successful, logs nothing, and produces no row. `POST /mcp`
+	// can reach this: both `workspaceId` and `apiKey` default to '' when a caller
+	// sends neither header.
+	it.each([
+		['empty', ''],
+		['whitespace', '   '],
+	])('does not post an event with a %s distinct id', async (_label, distinctId) => {
+		vi.stubEnv('POSTHOG_API_KEY', 'phc_test')
+		await capturePosthogEvent('mcp_tool_call', distinctId, { foo: 'bar' })
+		expect(fetchMock).not.toHaveBeenCalled()
+	})
 })

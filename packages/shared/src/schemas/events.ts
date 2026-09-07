@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { commentDecisionSchema } from './comment-decision'
 import { safeMetadataSchema } from './primitives'
 
 export const eventQuerySchema = z.object({
@@ -53,8 +54,9 @@ export const createCommentSchema = z.object({
 	metadata: safeMetadataSchema
 		.optional()
 		.describe(
-			'To prompt the human for a structured decision, pass { chips: ["Option A", "Option B", "Skip"] } — up to 5 string options, each up to 20 characters. The UI renders them as quick-reply buttons the human can tap, with a free-text fallback. Their reply is threaded under this comment. To surface a live task checklist, pass { tasks: ["<task-uuid>", ...] } — each row renders as a checkbox (checked iff the task\'s status is done/completed/succeeded), a link to the task, and its driver avatar, and updates automatically when the referenced task changes.',
+			'To surface a live task checklist, pass { tasks: ["<task-uuid>", ...] } — each row renders as a checkbox (checked iff the task\'s status is done/completed/succeeded), a link to the task, and its driver avatar, and updates automatically when the referenced task changes. This field does not carry options for the human to pick from: asking for a call is what `decision` is for, and it is the only way to do it.',
 		),
+	decision: commentDecisionSchema.optional(),
 	attention: z
 		.number()
 		.int()
