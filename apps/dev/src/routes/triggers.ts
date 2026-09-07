@@ -312,6 +312,22 @@ app.openapi(updateTriggerRoute, (async (c) => {
 	if (body.target_actor_id) updateData.targetActorId = body.target_actor_id
 	if (body.enabled !== undefined) updateData.enabled = body.enabled
 
+	// PR D — Slack auto-resume. When the resume UX flips a trigger back on it
+	// also passes `clear_auto_paused: true` so the row's `metadata.auto_paused`
+	// is REMOVED (not just skipped). Removal matters: PR C's
+	// `handleMemberLeftChannel` stamps a fresh `previous_enabled` on the next
+	// kick, and a stale `auto_paused` object would keep the red banner
+	// rendering even after the trigger is re-enabled. Sibling metadata keys
+	// (notably PR B's `slack_setup`) are preserved by picking off only
+	// `auto_paused` from the existing object. Safe when metadata is null/empty.
+	if (body.clear_auto_paused === true) {
+		const existing = (trigger.metadata ?? {}) as Record<string, unknown>
+		if ('auto_paused' in existing) {
+			const { auto_paused: _cleared, ...rest } = existing
+			updateData.metadata = rest
+		}
+	}
+
 	const updated = await db.transaction(async (tx) => {
 		const [row] = await tx.update(triggers).set(updateData).where(eq(triggers.id, id)).returning()
 		if (!row) return null

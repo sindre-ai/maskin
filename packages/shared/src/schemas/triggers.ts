@@ -131,6 +131,14 @@ export const updateTriggerSchema = z
 		action_prompt: z.string().min(1).optional(),
 		target_actor_id: z.string().uuid().optional(),
 		enabled: z.boolean().optional(),
+		// Narrow escape hatch for the Slack auto-resume UX (PR D). When true,
+		// the PATCH handler strips `auto_paused` from the row's metadata jsonb —
+		// the resume needs the field REMOVED (not just skipped) so the next
+		// `member_left_channel` handler pass captures a fresh `previous_enabled`
+		// instead of inheriting a stale one. Deliberately narrower than
+		// exposing a generic `metadata` write on this endpoint; other keys on
+		// `metadata` (notably PR B's `slack_setup`) are preserved.
+		clear_auto_paused: z.boolean().optional(),
 	})
 	.superRefine((data, ctx) => {
 		if (!data.type) return

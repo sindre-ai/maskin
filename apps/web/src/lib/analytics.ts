@@ -503,3 +503,26 @@ export function trackLoopCreatedViaLanguage(p: {
 		{ send_instantly: true },
 	)
 }
+
+// PR D — fires when the trigger owner clicks Resume on an auto-paused Slack
+// trigger (either from the dropdown at $triggerId.tsx or the red banner in
+// `SlackTriggerSetupStatus`). Complementary to PR C's backend
+// `slack.trigger.auto_paused` event, so a PostHog funnel can measure
+// pause→resume latency and rate. `time_since_pause_ms` is `now -
+// metadata.auto_paused.paused_at` — computed at the call site so the query
+// doesn't have to join across two events. Fires only on a user-initiated
+// resume of an auto-paused trigger; a plain manual-pause → resume is
+// deliberately NOT tracked here (that's the existing `trigger_updated`).
+export function trackSlackTriggerResumedFromAutoPause(p: {
+	workspace_id: string
+	trigger_id: string
+	channel_id: string
+	time_since_pause_ms: number
+}): void {
+	trackEvent('slack.trigger.resumed_from_auto_pause', {
+		workspace_id: p.workspace_id,
+		trigger_id: p.trigger_id,
+		channel_id: p.channel_id,
+		time_since_pause_ms: p.time_since_pause_ms,
+	})
+}

@@ -238,6 +238,50 @@ describe('Triggers Routes', () => {
 				actorId: testerActorId,
 			})
 		})
+
+		// PR D — the resume UX sends `clear_auto_paused: true` alongside the
+		// enabled-flip. AC requires the field is REMOVED (not just skipped) so
+		// the next `member_left_channel` pass captures a fresh
+		// `previous_enabled`; assert both the removal and that PR B's
+		// `slack_setup` sibling key survives the merge.
+		it('strips metadata.auto_paused on PATCH with clear_auto_paused=true; preserves sibling slack_setup', async () => {
+			const slackSetup = {
+				channel_ids: ['C1'],
+				join_attempts: [{ channel_id: 'C1', status: 'joined', attempted_at: '2026-08-30T12:00:00Z' }],
+				last_setup_at: '2026-08-30T12:00:00Z',
+			}
+			const trigger = buildTrigger({
+				enabled: false,
+				metadata: {
+					slack_setup: slackSetup,
+					auto_paused: {
+						reason: 'slack_member_left',
+						channel_id: 'CKICKED',
+						paused_at: '2026-08-30T14:00:00Z',
+						previous_enabled: true,
+					},
+				},
+			})
+			const { app, mockResults, calls } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
+			mockResults.update = [{ ...trigger, enabled: true, metadata: { slack_setup: slackSetup } }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, {
+					enabled: true,
+					clear_auto_paused: true,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const setArg = calls.updates[0] as Record<string, unknown>
+			expect(setArg.enabled).toBe(true)
+			expect(setArg.metadata).toEqual({ slack_setup: slackSetup })
+			// `not.toHaveProperty` proves the field was REMOVED — a `metadata`
+			// merge that just left auto_paused untouched would keep the red
+			// banner rendering after resume.
+			expect(setArg.metadata).not.toHaveProperty('auto_paused')
+		})
 	})
 
 	describe('DELETE /api/triggers/:id', () => {
