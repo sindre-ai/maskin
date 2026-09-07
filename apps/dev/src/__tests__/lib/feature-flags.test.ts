@@ -34,10 +34,14 @@ describe('parseFeatureFlagConfig', () => {
 })
 
 describe('resolveFlags', () => {
-	it('resolves the live registry — empty while no flag is in flight', () => {
+	it('resolves the live registry — every registered id defaults to false', () => {
 		const c = config({ FF_TESTER_FEATURES: 'anything', FF_TESTER_ACTOR_IDS: TESTER })
-		expect(resolveFlags(TESTER, c)).toEqual({})
-		expect(resolveFlags(NON_TESTER, c)).toEqual({})
+		for (const value of Object.values(resolveFlags(TESTER, c))) {
+			expect(value).toBe(false)
+		}
+		for (const value of Object.values(resolveFlags(NON_TESTER, c))) {
+			expect(value).toBe(false)
+		}
 	})
 
 	it('is false for every flag when the env is empty', () => {
