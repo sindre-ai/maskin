@@ -138,6 +138,69 @@ export type UnipilePagedResponse = {
 	next_cursor?: string
 }
 
+// ── Content / community verbs (Task 7b) ──────────────────────────────────
+//
+// Unipile v2 uses one create-post endpoint (`POST /posts`) for both personal
+// and business-page publishes; `post_as` selects the page URN when publishing
+// as a page. `comment_as` is the equivalent for commenting from a page — not
+// wired in v1 of this bet (the six content tools shape shipping now covers
+// personal-profile commenting; page commenting is a follow-on).
+//
+// Every payload flows straight into a JSON body — no client-side clamping of
+// `text` length, no client-side URN validation. The 3000-char LinkedIn limit
+// is enforced by LinkedIn/Unipile and surfaces as a LINKEDIN_POST_TOO_LONG
+// classification (see errors.ts). Trusting the caller here keeps the seam
+// thin: the moment we start validating shape locally, changing LinkedIn's
+// rules requires a client update rather than an operations-layer one.
+
+export type UnipilePublishPostPayload = {
+	account_id: string
+	text: string
+	/** Present when publishing as a business page; a company URN like `urn:li:organization:12345`. */
+	post_as?: string
+	attachments?: unknown[]
+	can_read?: string
+	can_comment?: string
+	quoted_post_id?: string
+	specifics?: Record<string, unknown>
+}
+
+export type UnipileCommentOnPostPayload = {
+	account_id: string
+	post_id: string
+	text: string
+}
+
+export type UnipileReplyToCommentPayload = {
+	account_id: string
+	comment_id: string
+	text: string
+}
+
+export type UnipileReadPostCommentsQuery = {
+	account_id: string
+	post_id: string
+	cursor?: string
+	limit?: number
+}
+
+export type UnipileRetrievePostQuery = {
+	account_id: string
+	post_id: string
+}
+
+export type UnipileListReactionsQuery = {
+	account_id: string
+	post_id: string
+	cursor?: string
+	limit?: number
+}
+
+export type UnipileCountCommentsQuery = {
+	account_id: string
+	post_id: string
+}
+
 export interface UnipileClient {
 	sendMessage(
 		payload: UnipileSendMessagePayload,
@@ -158,6 +221,26 @@ export interface UnipileClient {
 		query: UnipileSearchPeopleQuery,
 	): Promise<UnipileHttpResult<UnipilePagedResponse | Record<string, unknown>>>
 	getProfile(query: UnipileGetProfileQuery): Promise<UnipileHttpResult<Record<string, unknown>>>
+	// Task 7b content/community verbs — see notes above the payload types.
+	publishPost(
+		payload: UnipilePublishPostPayload,
+	): Promise<UnipileHttpResult<Record<string, unknown>>>
+	commentOnPost(
+		payload: UnipileCommentOnPostPayload,
+	): Promise<UnipileHttpResult<Record<string, unknown>>>
+	replyToComment(
+		payload: UnipileReplyToCommentPayload,
+	): Promise<UnipileHttpResult<Record<string, unknown>>>
+	readPostComments(
+		query: UnipileReadPostCommentsQuery,
+	): Promise<UnipileHttpResult<UnipilePagedResponse | Record<string, unknown>>>
+	retrievePost(query: UnipileRetrievePostQuery): Promise<UnipileHttpResult<Record<string, unknown>>>
+	listReactions(
+		query: UnipileListReactionsQuery,
+	): Promise<UnipileHttpResult<UnipilePagedResponse | Record<string, unknown>>>
+	countComments(
+		query: UnipileCountCommentsQuery,
+	): Promise<UnipileHttpResult<Record<string, unknown>>>
 }
 
 /**
@@ -294,6 +377,67 @@ export function createUnipileHttpClient(options: UnipileHttpClientOptions): Unip
 			// own profile.
 			const acc = encodeURIComponent(query.account_id)
 			return call('GET', `/v2/${acc}/users/${encodeURIComponent(query.identifier)}`)
+		},
+		publishPost(payload) {
+			// POST /v2/{account_id}/posts with {text, post_as?, ...}. Same endpoint
+			// serves personal and business-page publish; `post_as` selects the page
+			// URN when publishing as a page.
+			const { account_id, ...body } = payload
+			return call('POST', `/v2/${encodeURIComponent(account_id)}/posts`, body)
+		},
+		commentOnPost(payload) {
+			// POST /v2/{account_id}/posts/{post_id}/comments with {text}.
+			const acc = encodeURIComponent(payload.account_id)
+			const post = encodeURIComponent(payload.post_id)
+			return call('POST', `/v2/${acc}/posts/${post}/comments`, { text: payload.text })
+		},
+		replyToComment(payload) {
+			// POST /v2/{account_id}/comments/{comment_id}/replies with {text}.
+			const acc = encodeURIComponent(payload.account_id)
+			const comment = encodeURIComponent(payload.comment_id)
+			return call('POST', `/v2/${acc}/comments/${comment}/replies`, { text: payload.text })
+		},
+		readPostComments(query) {
+			// GET /v2/{account_id}/posts/{post_id}/comments (offset paginated).
+			const params = new URLSearchParams()
+			if (query.cursor) params.set('cursor', query.cursor)
+			if (typeof query.limit === 'number') params.set('limit', String(query.limit))
+			const qs = params.toString()
+			const acc = encodeURIComponent(query.account_id)
+			const post = encodeURIComponent(query.post_id)
+			return call('GET', `/v2/${acc}/posts/${post}/comments${qs ? `?${qs}` : ''}`)
+		},
+		retrievePost(query) {
+			// GET /v2/{account_id}/posts/{post_id}. Part of the get_post_engagement
+			// fan-out: this fetches base post metadata alongside listReactions +
+			// countComments.
+			const acc = encodeURIComponent(query.account_id)
+			const post = encodeURIComponent(query.post_id)
+			return call('GET', `/v2/${acc}/posts/${post}`)
+		},
+		listReactions(query) {
+			// GET /v2/{account_id}/posts/{post_id}/reactions (paginated). One leg
+			// of the get_post_engagement fan-out — paginated because a viral post
+			// can accumulate thousands of reactions and Unipile only returns them
+			// one page at a time.
+			const params = new URLSearchParams()
+			if (query.cursor) params.set('cursor', query.cursor)
+			if (typeof query.limit === 'number') params.set('limit', String(query.limit))
+			const qs = params.toString()
+			const acc = encodeURIComponent(query.account_id)
+			const post = encodeURIComponent(query.post_id)
+			return call('GET', `/v2/${acc}/posts/${post}/reactions${qs ? `?${qs}` : ''}`)
+		},
+		countComments(query) {
+			// GET /v2/{account_id}/posts/{post_id}/comments?limit=1 as a stand-in
+			// for a dedicated count endpoint — Unipile v2 exposes total via the
+			// page envelope's `paging.total_count` on the same list route. The
+			// operations layer reads that field rather than counting the items
+			// returned. If Unipile ships a dedicated /comments/count route, only
+			// this method needs to change.
+			const acc = encodeURIComponent(query.account_id)
+			const post = encodeURIComponent(query.post_id)
+			return call('GET', `/v2/${acc}/posts/${post}/comments?limit=1`)
 		},
 	}
 }

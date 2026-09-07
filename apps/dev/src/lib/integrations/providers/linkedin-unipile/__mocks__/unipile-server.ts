@@ -168,6 +168,81 @@ const CANNED_SEARCH_RESPONSE = () => ({
 	next_cursor: 'mock-cursor-search',
 })
 
+// ── Content / community v2 responses (Task 7b) ────────────────────────────
+
+/** `POST /v2/:account_id/posts` — reference: "Create a Post". */
+const CANNED_PUBLISH_POST_RESPONSE = () => ({
+	object: 'PostPublished',
+	post_id: `mock-post-${Date.now()}`,
+	post_url: 'https://www.linkedin.com/feed/update/mock-post',
+	published_at: '2026-09-01T10:00:00.000Z',
+})
+
+/** Simulated LinkedIn post-too-long envelope. */
+const CANNED_POST_TOO_LONG_ERROR = () => ({
+	object: 'Error',
+	error_code: 'post_too_long',
+	message: 'Post body exceeds the LinkedIn 3000-character maximum length',
+})
+
+/** `POST /v2/:account_id/posts/:post_id/comments` — reference: "Comment on Post". */
+const CANNED_COMMENT_RESPONSE = () => ({
+	object: 'CommentCreated',
+	comment_id: `mock-comment-${Date.now()}`,
+	commented_at: '2026-09-01T10:00:00.000Z',
+})
+
+/** `POST /v2/:account_id/comments/:comment_id/replies` — reference: "Reply to Comment". */
+const CANNED_REPLY_TO_COMMENT_RESPONSE = () => ({
+	object: 'CommentReplyCreated',
+	comment_id: `mock-reply-${Date.now()}`,
+	commented_at: '2026-09-01T10:05:00.000Z',
+})
+
+/** `GET /v2/:account_id/posts/:post_id/comments`. */
+const CANNED_POST_COMMENTS_RESPONSE = () => ({
+	object: 'CommentList',
+	data: [
+		{
+			object: 'Comment',
+			id: 'mock-comment-1',
+			text: 'Great post!',
+			created_at: '2026-09-01T10:01:00.000Z',
+			author: { id: 'mock-user-1', display_name: 'Ada Lovelace' },
+		},
+	],
+	paging: { total_count: 1 },
+})
+
+/** `GET /v2/:account_id/posts/:post_id`. */
+const CANNED_RETRIEVE_POST_RESPONSE = () => ({
+	object: 'Post',
+	id: 'mock-post-1',
+	author_urn: 'urn:li:person:mock-user-me',
+	author: { id: 'urn:li:person:mock-user-me', display_name: 'Sebk' },
+	published_at: '2026-09-01T09:00:00.000Z',
+	text: 'Mock post body used by the linkedin-unipile test suite.',
+})
+
+/** `GET /v2/:account_id/posts/:post_id/reactions`. */
+const CANNED_REACTIONS_RESPONSE = () => ({
+	object: 'ReactionList',
+	data: [
+		{
+			object: 'Reaction',
+			user_id: 'mock-user-1',
+			reaction_type: 'LIKE',
+			user: { id: 'mock-user-1', display_name: 'Ada Lovelace' },
+		},
+		{
+			object: 'Reaction',
+			user_id: 'mock-user-2',
+			reaction_type: 'CELEBRATE',
+			user: { id: 'mock-user-2', display_name: 'Grace Hopper' },
+		},
+	],
+})
+
 /** `GET /v2/:account_id/users/:identifier` — reference: "Get Profile". */
 const CANNED_PROFILE_RESPONSE = () => ({
 	object: 'UserProfile',
@@ -190,6 +265,36 @@ async function readBody(req: IncomingMessage): Promise<string> {
 	return Buffer.concat(chunks).toString('utf8')
 }
 
+/**
+ * Overrides for test cases that need a non-happy-path response — LINKEDIN_POST_TOO_LONG
+ * on the two publish routes, network flakes, etc. `setResponseOverride`
+ * plants a single-shot override matched by (method, path-regex) that returns
+ * the given status + body once, then removes itself.
+ */
+type ResponseOverride = {
+	match: (method: string, path: string) => boolean
+	status: number
+	body: unknown
+}
+
+const responseOverrides: ResponseOverride[] = []
+
+export function planPostTooLongResponse(): void {
+	responseOverrides.push({
+		match: (method, path) => method === 'POST' && /^\/v2\/[^/]+\/posts$/.test(path),
+		status: 400,
+		body: CANNED_POST_TOO_LONG_ERROR(),
+	})
+}
+
+export function planResponseOverride(override: ResponseOverride): void {
+	responseOverrides.push(override)
+}
+
+export function clearResponseOverrides(): void {
+	responseOverrides.length = 0
+}
+
 export async function startUnipileMock(): Promise<UnipileMockServer> {
 	const recorded: Array<{ method: string; path: string; body: unknown }> = []
 	const server = createHttpServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -210,6 +315,15 @@ export async function startUnipileMock(): Promise<UnipileMockServer> {
 			res.statusCode = status
 			res.setHeader('Content-Type', 'application/json')
 			res.end(JSON.stringify(body))
+		}
+
+		// Single-shot response overrides fire before any canned route so a test
+		// can inject a specific error envelope on a matching path.
+		const overrideIndex = responseOverrides.findIndex((o) => o.match(method, url))
+		if (overrideIndex !== -1) {
+			const override = responseOverrides[overrideIndex] as ResponseOverride
+			responseOverrides.splice(overrideIndex, 1)
+			return send(override.status, override.body)
 		}
 
 		if (method === 'POST' && url === '/v2/auth/link') {
@@ -244,6 +358,27 @@ export async function startUnipileMock(): Promise<UnipileMockServer> {
 		}
 		if (method === 'POST' && /^\/v2\/[^/]+\/linkedin\/search(\?.*)?$/.test(url)) {
 			return send(200, CANNED_SEARCH_RESPONSE())
+		}
+		// ── Content / community routes (Task 7b) ──────────────────────────
+		// Order matters: nested paths must be tested before the /users/:identifier
+		// catch-all, otherwise "posts" would be resolved as a user handle.
+		if (method === 'POST' && /^\/v2\/[^/]+\/posts$/.test(url)) {
+			return send(200, CANNED_PUBLISH_POST_RESPONSE())
+		}
+		if (method === 'POST' && /^\/v2\/[^/]+\/posts\/[^/]+\/comments$/.test(url)) {
+			return send(200, CANNED_COMMENT_RESPONSE())
+		}
+		if (method === 'POST' && /^\/v2\/[^/]+\/comments\/[^/]+\/replies$/.test(url)) {
+			return send(200, CANNED_REPLY_TO_COMMENT_RESPONSE())
+		}
+		if (method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+\/comments(\?.*)?$/.test(url)) {
+			return send(200, CANNED_POST_COMMENTS_RESPONSE())
+		}
+		if (method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+\/reactions(\?.*)?$/.test(url)) {
+			return send(200, CANNED_REACTIONS_RESPONSE())
+		}
+		if (method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+(\?.*)?$/.test(url)) {
+			return send(200, CANNED_RETRIEVE_POST_RESPONSE())
 		}
 		if (method === 'GET' && /^\/v2\/[^/]+\/users\/[^/]+(\?.*)?$/.test(url)) {
 			return send(200, CANNED_PROFILE_RESPONSE())

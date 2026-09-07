@@ -1,10 +1,26 @@
 import type { Database } from '@maskin/db'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { sendMock, replyMock, listMock } = vi.hoisted(() => ({
+const {
+	sendMock,
+	replyMock,
+	listMock,
+	publishPostMock,
+	publishPageMock,
+	commentMock,
+	replyToCommentMock,
+	readCommentsMock,
+	engagementMock,
+} = vi.hoisted(() => ({
 	sendMock: vi.fn(),
 	replyMock: vi.fn(),
 	listMock: vi.fn(),
+	publishPostMock: vi.fn(),
+	publishPageMock: vi.fn(),
+	commentMock: vi.fn(),
+	replyToCommentMock: vi.fn(),
+	readCommentsMock: vi.fn(),
+	engagementMock: vi.fn(),
 }))
 
 vi.mock('../../../../lib/integrations/providers/linkedin-unipile/operations', () => ({
@@ -15,6 +31,12 @@ vi.mock('../../../../lib/integrations/providers/linkedin-unipile/operations', ()
 	listLinkedInConnections: vi.fn(),
 	searchLinkedInPeople: vi.fn(),
 	getLinkedInProfile: vi.fn(),
+	publishLinkedInPost: publishPostMock,
+	publishLinkedInBusinessPagePost: publishPageMock,
+	commentOnLinkedInPost: commentMock,
+	replyToLinkedInComment: replyToCommentMock,
+	readLinkedInPostComments: readCommentsMock,
+	getLinkedInPostEngagement: engagementMock,
 }))
 
 import { LinkedInIntegrationError } from '../../../../lib/integrations/providers/linkedin-unipile/errors'
@@ -49,6 +71,12 @@ beforeEach(() => {
 	sendMock.mockReset()
 	replyMock.mockReset()
 	listMock.mockReset()
+	publishPostMock.mockReset()
+	publishPageMock.mockReset()
+	commentMock.mockReset()
+	replyToCommentMock.mockReset()
+	readCommentsMock.mockReset()
+	engagementMock.mockReset()
 })
 
 afterEach(() => {
@@ -58,23 +86,45 @@ afterEach(() => {
 describe('createLinkedInMcpServer', () => {
 	it('registers exactly the LinkedIn tool surface', () => {
 		expect(Object.keys(tools(createLinkedInMcpServer(ctx))).sort()).toEqual([
+			'linkedin_comment_on_post',
+			'linkedin_get_post_engagement',
 			'linkedin_get_profile',
 			'linkedin_list_connections',
 			'linkedin_list_conversations',
 			'linkedin_list_messages',
+			'linkedin_publish_business_page_post',
+			'linkedin_publish_post',
+			'linkedin_read_post_comments',
 			'linkedin_reply',
+			'linkedin_reply_to_comment',
 			'linkedin_search_people',
 			'linkedin_send_message',
 		])
 	})
 
-	// Only send/reply may contact anyone. A read tool gaining a write path
-	// would be a silent expansion of what an agent can do to a real person.
-	it('keeps every tool but send and reply read-only', () => {
-		const writeTools = ['linkedin_send_message', 'linkedin_reply']
+	// The seven write tools that carry real-world side effects on LinkedIn.
+	// Adding a read tool that turns into a write is a silent expansion of
+	// agent authority — this test would flip if that happened.
+	it('keeps every non-write tool read-only', () => {
+		const writeTools = [
+			'linkedin_send_message',
+			'linkedin_reply',
+			'linkedin_publish_post',
+			'linkedin_publish_business_page_post',
+			'linkedin_comment_on_post',
+			'linkedin_reply_to_comment',
+		]
 		const registered = Object.keys(tools(createLinkedInMcpServer(ctx)))
 		const reads = registered.filter((t) => !writeTools.includes(t))
-		expect(reads).toHaveLength(5)
+		expect(reads.sort()).toEqual([
+			'linkedin_get_post_engagement',
+			'linkedin_get_profile',
+			'linkedin_list_connections',
+			'linkedin_list_conversations',
+			'linkedin_list_messages',
+			'linkedin_read_post_comments',
+			'linkedin_search_people',
+		])
 	})
 
 	// Carried over from the deleted packages/mcp schema test: an agent picks its
@@ -93,8 +143,54 @@ describe('createLinkedInMcpServer', () => {
 			}
 		}
 		// Guard the guard: a shape read that silently yields nothing would make
-		// this test pass while checking no fields at all.
-		expect(seen.length).toBe(18)
+		// this test pass while checking no fields at all. Empirically counted
+		// after the Task 7b content/community tools landed.
+		expect(seen.length).toBe(39)
+	})
+
+	it('passes the calling actor through to publish_post', async () => {
+		publishPostMock.mockResolvedValue({
+			post_id: 'p1',
+			published_at: '2026-09-01T10:00:00Z',
+			replayed: false,
+		})
+		const res = await callTool('linkedin_publish_post', { text: 'hello world' })
+		expect(res.isError).toBeUndefined()
+		expect(publishPostMock).toHaveBeenCalledWith(
+			expect.objectContaining({ actorId: 'actor-1', workspaceId: 'ws-1' }),
+			expect.objectContaining({ text: 'hello world' }),
+		)
+	})
+
+	it('surfaces LINKEDIN_POST_TOO_LONG from a publish call as a wire-code tool error', async () => {
+		publishPostMock.mockRejectedValue(
+			new LinkedInIntegrationError('LINKEDIN_POST_TOO_LONG', 'Post exceeds 3000 chars'),
+		)
+		const res = await callTool('linkedin_publish_post', { text: 'x' })
+		expect(res.isError).toBe(true)
+		expect(res.content[0].text).toBe('LINKEDIN_POST_TOO_LONG: Post exceeds 3000 chars')
+	})
+
+	it('returns partial engagement envelopes verbatim from the operation', async () => {
+		engagementMock.mockResolvedValue({
+			post_id: 'p1',
+			reactions: { total: 3, sample: [] },
+			comments: { total: 0 },
+			partial_errors: {
+				reactions: null,
+				comments: { code: 'UNIPILE_UNAVAILABLE', message: 'timeout' },
+			},
+			is_partial: true,
+		})
+		const res = await callTool('linkedin_get_post_engagement', { post_id: 'p1' })
+		expect(res.isError).toBeUndefined()
+		expect(JSON.parse(res.content[0].text)).toMatchObject({
+			is_partial: true,
+			comments: { total: 0 },
+			partial_errors: expect.objectContaining({
+				comments: { code: 'UNIPILE_UNAVAILABLE', message: 'timeout' },
+			}),
+		})
 	})
 
 	it('passes the calling actor and workspace through to the operation', async () => {

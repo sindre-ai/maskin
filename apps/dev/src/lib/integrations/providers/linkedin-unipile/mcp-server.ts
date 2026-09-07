@@ -4,10 +4,16 @@ import { z } from 'zod'
 import { logger } from '../../../logger'
 import { isLinkedInIntegrationError } from './errors'
 import {
+	commentOnLinkedInPost,
+	getLinkedInPostEngagement,
 	getLinkedInProfile,
 	listLinkedInConnections,
 	listLinkedInConversations,
 	listLinkedInMessages,
+	publishLinkedInBusinessPagePost,
+	publishLinkedInPost,
+	readLinkedInPostComments,
+	replyToLinkedInComment,
 	replyToLinkedInThread,
 	searchLinkedInPeople,
 	sendLinkedInMessage,
@@ -272,6 +278,203 @@ export function createLinkedInMcpServer(ctx: LinkedInMcpContext): McpServer {
 				return jsonResult(await searchLinkedInPeople(ctx, args))
 			} catch (err) {
 				return toolError('linkedin_search_people', err)
+			}
+		},
+	)
+
+	// ── Content / community tools (Task 7b) ────────────────────────────────
+	// Six tools covering personal + business-page publishing, commenting +
+	// replying-to-comment, reading comments, and engagement (reactions +
+	// comments — impressions unavailable on Unipile v2). The four destructive
+	// tools (publish x2, comment, reply-to-comment) dedup on a content hash
+	// via the `linkedin_tool_calls` ledger.
+
+	server.registerTool(
+		'linkedin_publish_post',
+		{
+			description:
+				'Publish a LinkedIn post from the connected personal profile on behalf of the calling actor. Returns the published post_id and the timestamp LinkedIn accepted it. `replayed: true` in the response means an identical call within the 24h TTL was already sent — the response is the stored one, no new post was published. Errors arrive as "<CODE>: <message>" using the six-class taxonomy plus LINKEDIN_POST_TOO_LONG (post body > 3000 chars — NEVER retry, shorten the text first).',
+			inputSchema: {
+				text: z
+					.string()
+					.min(1)
+					.max(3000)
+					.describe(
+						'Post body. Max 3000 chars — LinkedIn hard limit. Plain text; newlines allowed; @mentions and hashtags render as-is on LinkedIn.',
+					),
+				attachments: z
+					.array(z.unknown())
+					.optional()
+					.describe(
+						'Optional attachments (images/documents/videos). Pass Unipile-compatible attachment descriptors; leave undefined for text-only posts.',
+					),
+				can_read: z
+					.string()
+					.optional()
+					.describe(
+						'Post visibility, e.g. "connections", "public". Defaults to LinkedIn account settings when omitted.',
+					),
+				can_comment: z
+					.string()
+					.optional()
+					.describe(
+						'Who can comment, e.g. "connections", "anyone", "none". Defaults to LinkedIn account settings when omitted.',
+					),
+				quoted_post_id: z
+					.string()
+					.optional()
+					.describe('Post id to quote-share (repost with commentary).'),
+				specifics: z
+					.record(z.unknown())
+					.optional()
+					.describe(
+						'Provider-specific opaque payload passed through to Unipile — reserved for advanced options that do not warrant a named field.',
+					),
+			},
+		},
+		async (args) => {
+			try {
+				return jsonResult(await publishLinkedInPost(ctx, args))
+			} catch (err) {
+				return toolError('linkedin_publish_post', err)
+			}
+		},
+	)
+
+	server.registerTool(
+		'linkedin_publish_business_page_post',
+		{
+			description:
+				'Publish a LinkedIn post as a business page the connected account admins. The `post_as` URN selects the page (e.g. `urn:li:organization:12345`); the same personal LinkedIn account is used — no separate credential. Same dedup + error semantics as linkedin_publish_post. `page_id` is a per-call arg, not a Stripe SKU.',
+			inputSchema: {
+				text: z
+					.string()
+					.min(1)
+					.max(3000)
+					.describe('Post body. Max 3000 chars — LinkedIn hard limit.'),
+				post_as: z
+					.string()
+					.min(1)
+					.describe(
+						'LinkedIn company page URN, e.g. `urn:li:organization:12345`. The connected LinkedIn account must be an admin of the page — Unipile relays the publish under the page identity via `post_as`.',
+					),
+				attachments: z
+					.array(z.unknown())
+					.optional()
+					.describe('Optional Unipile-compatible attachment descriptors.'),
+				can_read: z
+					.string()
+					.optional()
+					.describe('Post visibility, e.g. "public". Defaults to page settings when omitted.'),
+				can_comment: z
+					.string()
+					.optional()
+					.describe('Who can comment, e.g. "anyone", "none". Defaults to page settings.'),
+				quoted_post_id: z
+					.string()
+					.optional()
+					.describe('Post id to quote-share (repost with commentary).'),
+				specifics: z
+					.record(z.unknown())
+					.optional()
+					.describe('Provider-specific opaque payload passed through to Unipile.'),
+			},
+		},
+		async (args) => {
+			try {
+				return jsonResult(await publishLinkedInBusinessPagePost(ctx, args))
+			} catch (err) {
+				return toolError('linkedin_publish_business_page_post', err)
+			}
+		},
+	)
+
+	server.registerTool(
+		'linkedin_comment_on_post',
+		{
+			description:
+				'Post a top-level comment on a LinkedIn post as the connected personal profile. Returns the new comment_id — use it with linkedin_reply_to_comment to thread further. Dedup semantics identical to linkedin_publish_post: an identical call within 24h replays the stored response without hitting Unipile again.',
+			inputSchema: {
+				post_id: z
+					.string()
+					.min(1)
+					.describe(
+						'Post id from linkedin_read_post_comments, linkedin_get_post_engagement, or the LinkedIn share URL slug.',
+					),
+				text: z.string().min(1).max(3000).describe('Comment body. Max 3000 chars.'),
+			},
+		},
+		async (args) => {
+			try {
+				return jsonResult(await commentOnLinkedInPost(ctx, args))
+			} catch (err) {
+				return toolError('linkedin_comment_on_post', err)
+			}
+		},
+	)
+
+	server.registerTool(
+		'linkedin_reply_to_comment',
+		{
+			description:
+				"Reply to an existing LinkedIn comment as the connected personal profile — a threaded reply, not a top-level comment. Use comment_id from linkedin_read_post_comments. Dedup'd on content hash within a 24h window.",
+			inputSchema: {
+				comment_id: z.string().min(1).describe('Comment id from linkedin_read_post_comments.'),
+				text: z.string().min(1).max(3000).describe('Reply body. Max 3000 chars.'),
+			},
+		},
+		async (args) => {
+			try {
+				return jsonResult(await replyToLinkedInComment(ctx, args))
+			} catch (err) {
+				return toolError('linkedin_reply_to_comment', err)
+			}
+		},
+	)
+
+	server.registerTool(
+		'linkedin_read_post_comments',
+		{
+			description:
+				"Read comments on a LinkedIn post, newest first, paged via an opaque cursor. Read-only. Use before linkedin_reply_to_comment to pick the comment_id you're replying to.",
+			inputSchema: {
+				post_id: z.string().min(1).describe('Post id.'),
+				limit: z
+					.number()
+					.int()
+					.min(1)
+					.max(100)
+					.optional()
+					.describe('Max comments per page, 1..100.'),
+				cursor: z
+					.string()
+					.optional()
+					.describe('Opaque pagination cursor returned as next_cursor by a prior call.'),
+			},
+		},
+		async (args) => {
+			try {
+				return jsonResult(await readLinkedInPostComments(ctx, args))
+			} catch (err) {
+				return toolError('linkedin_read_post_comments', err)
+			}
+		},
+	)
+
+	server.registerTool(
+		'linkedin_get_post_engagement',
+		{
+			description:
+				'Fetch engagement metrics for a LinkedIn post: reactions (total + a sample) and comments count, plus base post metadata. Fan-out of three Unipile calls (retrievePost + listReactions + countComments). A sub-call failure sets `partial_errors.<field>` and `is_partial: true` on the envelope — the caller keeps whatever was successfully collected. IMPRESSIONS ARE NOT AVAILABLE on Unipile v2 for third-party posts and are deliberately absent from the response — do not surface a fake impressions number to the user.',
+			inputSchema: {
+				post_id: z.string().min(1).describe('Post id.'),
+			},
+		},
+		async (args) => {
+			try {
+				return jsonResult(await getLinkedInPostEngagement(ctx, args))
+			} catch (err) {
+				return toolError('linkedin_get_post_engagement', err)
 			}
 		},
 	)

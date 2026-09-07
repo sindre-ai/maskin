@@ -65,6 +65,30 @@ describe('classifyUnipileResponse', () => {
 			classifyUnipileResponse(200, { id: 'msg-1', sent_at: '2026-08-31T12:00:00Z' }),
 		).toBeNull()
 	})
+
+	// LINKEDIN_POST_TOO_LONG covers the two shapes Unipile v2 uses when
+	// LinkedIn rejects an over-length post body: a body-level `error_code`
+	// marker (preferred discriminator) and a plain 400 whose message names
+	// the limit. Either surfaces the same wire code so the caller — a
+	// Copywriter loop retrying the same draft — knows to shorten before
+	// re-issuing.
+	it('detects LINKEDIN_POST_TOO_LONG via error_code marker', () => {
+		expect(classifyUnipileResponse(400, { error_code: 'post_too_long', message: 'nope' })).toBe(
+			'LINKEDIN_POST_TOO_LONG',
+		)
+	})
+
+	it('detects LINKEDIN_POST_TOO_LONG via message text when error_code is missing', () => {
+		expect(
+			classifyUnipileResponse(400, {
+				message: 'Post body exceeds the maximum length of 3000 characters.',
+			}),
+		).toBe('LINKEDIN_POST_TOO_LONG')
+	})
+
+	it('marks LINKEDIN_POST_TOO_LONG as non-retryable', () => {
+		expect(RETRY_POLICY_BY_CODE.LINKEDIN_POST_TOO_LONG).toBeNull()
+	})
 })
 
 describe('LinkedInIntegrationError metadata', () => {

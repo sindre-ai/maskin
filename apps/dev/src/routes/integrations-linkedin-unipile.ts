@@ -13,7 +13,13 @@ import {
 	isLinkedInIntegrationError,
 } from '../lib/integrations/providers/linkedin-unipile/errors'
 import {
+	commentOnLinkedInPost,
+	getLinkedInPostEngagement,
 	listLinkedInConversations,
+	publishLinkedInBusinessPagePost,
+	publishLinkedInPost,
+	readLinkedInPostComments,
+	replyToLinkedInComment,
 	replyToLinkedInThread,
 	sendLinkedInMessage,
 } from '../lib/integrations/providers/linkedin-unipile/operations'
@@ -634,6 +640,139 @@ app.get('/list-conversations', async (c) => {
 		)
 	} catch (err) {
 		return handleTerminalError(err, 'list-conversations', actorId)
+	}
+})
+
+// ── Content / community verbs (Task 7b) ─────────────────────────────────
+// Same shape as the message-verb routes: workspace-id header + JSON parse +
+// operation call + terminal-error mapping. Every mutating verb here dedups on
+// the content-hash `linkedin_tool_calls` ledger inside the operation.
+
+async function readJsonBody<T = Record<string, unknown>>(
+	c: Context<Env>,
+): Promise<{ ok: true; body: T } | { ok: false; response: Response }> {
+	try {
+		return { ok: true, body: (await c.req.json()) as T }
+	} catch {
+		return {
+			ok: false,
+			response: c.json(createApiError('BAD_REQUEST', 'Invalid JSON in request body'), 400),
+		}
+	}
+}
+
+app.post('/publish-post', async (c) => {
+	const workspaceId = readWorkspaceIdHeader(c.req)
+	if (!workspaceId) {
+		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
+	}
+	const parsed = await readJsonBody(c)
+	if (!parsed.ok) return parsed.response
+	const actorId = c.get('actorId')
+	try {
+		return c.json(await publishLinkedInPost({ db: c.get('db'), actorId, workspaceId }, parsed.body))
+	} catch (err) {
+		return handleTerminalError(err, 'publish-post', actorId)
+	}
+})
+
+app.post('/publish-business-page-post', async (c) => {
+	const workspaceId = readWorkspaceIdHeader(c.req)
+	if (!workspaceId) {
+		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
+	}
+	const parsed = await readJsonBody(c)
+	if (!parsed.ok) return parsed.response
+	const actorId = c.get('actorId')
+	try {
+		return c.json(
+			await publishLinkedInBusinessPagePost({ db: c.get('db'), actorId, workspaceId }, parsed.body),
+		)
+	} catch (err) {
+		return handleTerminalError(err, 'publish-business-page-post', actorId)
+	}
+})
+
+app.post('/comment-on-post', async (c) => {
+	const workspaceId = readWorkspaceIdHeader(c.req)
+	if (!workspaceId) {
+		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
+	}
+	const parsed = await readJsonBody(c)
+	if (!parsed.ok) return parsed.response
+	const actorId = c.get('actorId')
+	try {
+		return c.json(
+			await commentOnLinkedInPost({ db: c.get('db'), actorId, workspaceId }, parsed.body),
+		)
+	} catch (err) {
+		return handleTerminalError(err, 'comment-on-post', actorId)
+	}
+})
+
+app.post('/reply-to-comment', async (c) => {
+	const workspaceId = readWorkspaceIdHeader(c.req)
+	if (!workspaceId) {
+		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
+	}
+	const parsed = await readJsonBody(c)
+	if (!parsed.ok) return parsed.response
+	const actorId = c.get('actorId')
+	try {
+		return c.json(
+			await replyToLinkedInComment({ db: c.get('db'), actorId, workspaceId }, parsed.body),
+		)
+	} catch (err) {
+		return handleTerminalError(err, 'reply-to-comment', actorId)
+	}
+})
+
+app.get('/read-post-comments', async (c) => {
+	const workspaceId = readWorkspaceIdHeader(c.req)
+	if (!workspaceId) {
+		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
+	}
+	const postId = c.req.query('post_id') ?? ''
+	const cursor = c.req.query('cursor') ?? undefined
+	const limitRaw = c.req.query('limit')
+	const limit = limitRaw ? Number(limitRaw) : undefined
+	if (limit !== undefined && (!Number.isFinite(limit) || limit < 1 || limit > 100)) {
+		return c.json(
+			errorToResponse(
+				new LinkedInIntegrationError('INVALID_INPUT', 'limit must be an integer 1..100'),
+			),
+			400,
+		)
+	}
+	const actorId = c.get('actorId')
+	try {
+		return c.json(
+			await readLinkedInPostComments(
+				{ db: c.get('db'), actorId, workspaceId },
+				{ post_id: postId, limit, cursor },
+			),
+		)
+	} catch (err) {
+		return handleTerminalError(err, 'read-post-comments', actorId)
+	}
+})
+
+app.get('/get-post-engagement', async (c) => {
+	const workspaceId = readWorkspaceIdHeader(c.req)
+	if (!workspaceId) {
+		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
+	}
+	const postId = c.req.query('post_id') ?? ''
+	const actorId = c.get('actorId')
+	try {
+		return c.json(
+			await getLinkedInPostEngagement(
+				{ db: c.get('db'), actorId, workspaceId },
+				{ post_id: postId },
+			),
+		)
+	} catch (err) {
+		return handleTerminalError(err, 'get-post-engagement', actorId)
 	}
 })
 

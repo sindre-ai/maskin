@@ -42,6 +42,7 @@ export type LinkedInErrorCode =
 	| 'CREDENTIAL_REVOKED'
 	| 'RATE_LIMITED_UNIPILE'
 	| 'LINKEDIN_ACCOUNT_RESTRICTED'
+	| 'LINKEDIN_POST_TOO_LONG'
 	| 'UNIPILE_UNAVAILABLE'
 	| 'INVALID_INPUT'
 
@@ -50,9 +51,23 @@ export const LINKEDIN_ERROR_CODES = [
 	'CREDENTIAL_REVOKED',
 	'RATE_LIMITED_UNIPILE',
 	'LINKEDIN_ACCOUNT_RESTRICTED',
+	'LINKEDIN_POST_TOO_LONG',
 	'UNIPILE_UNAVAILABLE',
 	'INVALID_INPUT',
 ] as const satisfies readonly LinkedInErrorCode[]
+
+/**
+ * LinkedIn's post-body hard limit is 3000 characters. Unipile v2's create-post
+ * envelope surfaces a length rejection either with a body marker
+ * (`error_code: 'post_too_long'`) or as a plain 400 whose message names the
+ * limit — the classifier reads both. NEVER retry: retrying resubmits the same
+ * over-limit body and gets rejected again, wasting the idempotency claim.
+ * Caller shortens the text and re-issues with a NEW content hash.
+ */
+export const UNIPILE_POST_TOO_LONG_MARKERS = {
+	errorCodes: ['post_too_long', 'text_too_long'] as const,
+	messageFragments: ['too long', 'exceeds', 'maximum length'] as const,
+}
 
 /**
  * Discriminators used to detect `LINKEDIN_ACCOUNT_RESTRICTED` in a Unipile
@@ -139,6 +154,7 @@ export const RETRY_POLICY_BY_CODE: Record<LinkedInErrorCode, RetryPolicy | null>
 	CREDENTIAL_REVOKED: null,
 	RATE_LIMITED_UNIPILE: { maxAttempts: 3, baseMs: 2_000, capMs: 30_000, jitter: 0.25 },
 	LINKEDIN_ACCOUNT_RESTRICTED: null,
+	LINKEDIN_POST_TOO_LONG: null,
 	UNIPILE_UNAVAILABLE: { maxAttempts: 3, baseMs: 3_000, capMs: 30_000, jitter: 0 },
 	INVALID_INPUT: null,
 }
@@ -148,6 +164,7 @@ const IS_RETRYABLE: Record<LinkedInErrorCode, boolean> = {
 	CREDENTIAL_REVOKED: false,
 	RATE_LIMITED_UNIPILE: true,
 	LINKEDIN_ACCOUNT_RESTRICTED: false,
+	LINKEDIN_POST_TOO_LONG: false,
 	UNIPILE_UNAVAILABLE: true,
 	INVALID_INPUT: false,
 }
@@ -157,6 +174,7 @@ const DEFAULT_HTTP_STATUS: Record<LinkedInErrorCode, number> = {
 	CREDENTIAL_REVOKED: 401,
 	RATE_LIMITED_UNIPILE: 429,
 	LINKEDIN_ACCOUNT_RESTRICTED: 423,
+	LINKEDIN_POST_TOO_LONG: 400,
 	UNIPILE_UNAVAILABLE: 502,
 	INVALID_INPUT: 400,
 }
@@ -172,6 +190,7 @@ const DEFAULT_HTTP_STATUS: Record<LinkedInErrorCode, number> = {
  */
 export function classifyUnipileResponse(status: number, body: unknown): LinkedInErrorCode | null {
 	if (isRestrictedBody(body)) return 'LINKEDIN_ACCOUNT_RESTRICTED'
+	if (isPostTooLongBody(body)) return 'LINKEDIN_POST_TOO_LONG'
 	if (status >= 200 && status < 300) return null
 	if (status === 401) return 'CREDENTIAL_REVOKED'
 	if (status === 404) return 'CREDENTIAL_NOT_CONNECTED'
@@ -179,6 +198,20 @@ export function classifyUnipileResponse(status: number, body: unknown): LinkedIn
 	if (status >= 500 && status < 600) return 'UNIPILE_UNAVAILABLE'
 	if (status >= 400 && status < 500) return 'INVALID_INPUT'
 	return 'UNIPILE_UNAVAILABLE'
+}
+
+function isPostTooLongBody(body: unknown): boolean {
+	if (!body || typeof body !== 'object') return false
+	const rec = body as Record<string, unknown>
+	const errorCode = typeof rec.error_code === 'string' ? rec.error_code.toLowerCase() : null
+	if (errorCode && UNIPILE_POST_TOO_LONG_MARKERS.errorCodes.includes(errorCode as never)) {
+		return true
+	}
+	const message = typeof rec.message === 'string' ? rec.message.toLowerCase() : ''
+	const detail = typeof rec.detail === 'string' ? rec.detail.toLowerCase() : ''
+	const haystack = `${message} ${detail}`
+	if (!haystack.includes('post') && !haystack.includes('text')) return false
+	return UNIPILE_POST_TOO_LONG_MARKERS.messageFragments.some((frag) => haystack.includes(frag))
 }
 
 function isRestrictedBody(body: unknown): boolean {
@@ -294,6 +327,16 @@ export class UnipileUnavailableError extends LinkedInIntegrationError {
 		super(
 			'UNIPILE_UNAVAILABLE',
 			'LinkedIn provider is temporarily unavailable. Retry in a few minutes.',
+			{ cause },
+		)
+	}
+}
+
+export class LinkedinPostTooLongError extends LinkedInIntegrationError {
+	constructor(cause?: unknown) {
+		super(
+			'LINKEDIN_POST_TOO_LONG',
+			'LinkedIn post exceeds the 3000-character limit. Shorten the text before re-issuing.',
 			{ cause },
 		)
 	}
