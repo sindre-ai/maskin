@@ -172,6 +172,34 @@ export const events = pgTable(
 
 // ── Integrations ───────────────────────────────────────────────────────────
 
+/**
+ * The complete status vocabulary for an `integrations` row. Applied to the
+ * column via `$type<>()` below so a reader that filters on a literal outside
+ * this union is a compile error rather than a query that silently matches
+ * nothing — the failure mode that shipped a permanently-hidden LinkedIn
+ * billing line (a reader filtering `'connected'`, a writer writing `'active'`).
+ *
+ * `active` is the only value that means "credentials are live and usable";
+ * every reader fetching usable credentials must filter on
+ * `INTEGRATION_STATUS_ACTIVE` rather than re-spelling the literal.
+ */
+export type IntegrationStatus =
+	| 'active'
+	| 'pending'
+	| 'revoked'
+	| 'error'
+	| 'awaiting_secret'
+	/**
+	 * Written only by `buildIntegrationInsert` (loop provisioning): a row
+	 * installed from a snapshot, which by construction carries no credentials
+	 * and needs the user to re-run OAuth. Matches no credential reader, which
+	 * is the intent — it must never be mistaken for a live connection.
+	 */
+	| 'inactive'
+
+/** The one status meaning "connected and usable". See `IntegrationStatus`. */
+export const INTEGRATION_STATUS_ACTIVE = 'active' satisfies IntegrationStatus
+
 export const integrations = pgTable(
 	'integrations',
 	{
@@ -180,12 +208,16 @@ export const integrations = pgTable(
 			.references(() => workspaces.id)
 			.notNull(),
 		provider: text('provider').notNull(),
-		status: text('status').notNull(),
+		status: text('status').$type<IntegrationStatus>().notNull(),
 		externalId: text('external_id'),
 		credentials: text('credentials').notNull(),
 		config: jsonb('config').notNull().default({}),
 		// Per-row marker keys for managed-package installs; nullable everywhere.
 		metadata: jsonb('metadata'),
+		// Nullable everywhere. Only providers in the actor-scoped allow-list
+		// declared in apps/dev/src/lib/integrations/lookup.ts populate this;
+		// every other provider keeps actor_id = NULL and stays workspace-scoped.
+		actorId: uuid('actor_id').references(() => actors.id),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -193,14 +225,17 @@ export const integrations = pgTable(
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 	},
 	(t) => [
-		uniqueIndex('integrations_ws_provider_external_uniq')
-			.on(t.workspaceId, t.provider, t.externalId)
+		uniqueIndex('integrations_ws_actor_provider_external_uniq')
+			.on(t.workspaceId, t.actorId, t.provider, t.externalId)
 			.where(sql`${t.externalId} IS NOT NULL`),
-		uniqueIndex('integrations_ws_provider_null_external_uniq')
-			.on(t.workspaceId, t.provider)
+		uniqueIndex('integrations_ws_actor_provider_null_external_uniq')
+			.on(t.workspaceId, t.actorId, t.provider)
 			.where(sql`${t.externalId} IS NULL`),
+		index('integrations_ws_provider_idx').on(t.workspaceId, t.provider),
 	],
 )
+export type Integration = typeof integrations.$inferSelect
+export type NewIntegration = typeof integrations.$inferInsert
 
 // ── Slack User Links ───────────────────────────────────────────────────────
 // Per-(Slack team, Slack user) routing into a Maskin actor + default
@@ -981,6 +1016,53 @@ export const idempotencyRecords = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [index('idempotency_records_created_at_idx').on(t.createdAt)],
+)
+
+// ── LinkedIn Tool Calls (content-hash idempotency) ──────────────────────────
+// Dedup ledger for the LinkedIn (Unipile-backed) content/community tools whose
+// v2 endpoints — unlike the messaging surface — do NOT accept an
+// Idempotency-Key header. Two identical tool-call requests (same actor, same
+// tool, same canonical-JSON request body → same sha256 content hash) collide
+// on the primary key: the first request claims the row and hits Unipile; the
+// second loses the insert race and either replays the winner's stored response
+// or, if the winner is still in flight, refuses. Replay-on-hit guards a specific
+// failure mode: a caller that retries after a network blip would otherwise
+// publish the same post twice, comment on the same post twice, etc. The 24h
+// TTL matches the reasonable window for retry — longer would balloon the
+// table, shorter would let real duplicates slip through.
+//
+// `actor_id` is text, NOT uuid: keeping it identical to `idempotencyRecords`'
+// column type isn't the constraint here — the constraint is that the value
+// bound at INSERT time is the caller's actor id as it flows through the MCP
+// context, and text avoids coupling to whether that path is uuid-typed all
+// the way down. `tool` is the wire tool name (e.g. `linkedin_publish_post`).
+// `content_hash` is `sha256(canonical-json(request-body))` — see
+// `apps/dev/src/lib/integrations/providers/linkedin-unipile/operations.ts`
+// for the canonicalisation helper. `response` stores the normalised, tool-
+// facing response payload so a replay returns the exact bytes the first
+// caller received.
+//
+// `status` is what makes the primary key *serialise* callers rather than just
+// deduplicate their bookkeeping: the row is inserted BEFORE the Unipile call
+// (status 0, in flight) and flipped to 200 with the response afterwards. The
+// natural ordering — read, call, write — is check-then-act, and for these
+// tools losing that race means a duplicate public post. Same discipline as
+// `idempotencyRecords`, which this table is the header-less counterpart to.
+export const linkedinToolCalls = pgTable(
+	'linkedin_tool_calls',
+	{
+		actorId: text('actor_id').notNull(),
+		tool: text('tool').notNull(),
+		contentHash: text('content_hash').notNull(),
+		// 0 = in flight (claim held, response not yet stored), 200 = completed.
+		status: integer('status').notNull(),
+		response: jsonb('response').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.actorId, t.tool, t.contentHash] }),
+		index('linkedin_tool_calls_created_at_idx').on(t.createdAt),
+	],
 )
 
 // ── User Display Settings ───────────────────────────────────────────────────

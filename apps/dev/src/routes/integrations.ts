@@ -21,6 +21,7 @@ import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
+import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
 import { type OAuthStatePayload, decodeState, encodeState } from '../lib/integrations/oauth/state'
@@ -73,6 +74,8 @@ import type {
 import { ClaimReleasedError, commitWebhookDelivery } from '../lib/integrations/webhooks/commit'
 import { WebhookHandler } from '../lib/integrations/webhooks/handler'
 import { verifyTimestampSignature } from '../lib/integrations/webhooks/signatures'
+import { LINKEDIN_IDENTITY_PROVIDER } from '../lib/linkedin-addon'
+import { syncLinkedInAddonQuantity } from '../lib/linkedin-addon-billing'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -96,7 +99,7 @@ type Env = {
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
-// ── GET /api/integrations ──────────────────────────────────────────────────
+// ── GET /api/integrations ────────────────────────────────────────
 
 const listIntegrationsRoute = createRoute({
 	method: 'get',
@@ -156,7 +159,7 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 	return c.json(serializeArray(safe) as z.infer<typeof integrationResponseSchema>[])
 }) as RouteHandler<typeof listIntegrationsRoute, Env>)
 
-// ── GET /api/integrations/providers ────────────────────────────────────────
+// ── GET /api/integrations/providers ────────────────────────────────
 
 const listProvidersRoute = createRoute({
 	method: 'get',
@@ -832,9 +835,16 @@ app.openapi(connectRoute, (async (c) => {
 				createdBy: actorId,
 			})
 			.onConflictDoUpdate({
-				target: [integrations.workspaceId, integrations.provider, integrations.externalId],
-				// The matching unique index is partial (WHERE external_id IS NOT NULL),
-				// so Postgres only accepts this conflict target with the same predicate.
+				target: [
+					integrations.workspaceId,
+					integrations.actorId,
+					integrations.provider,
+					integrations.externalId,
+				],
+				// The matching unique index is partial (WHERE external_id IS NOT NULL) and
+				// declared NULLS NOT DISTINCT so a workspace-scoped upsert (actor_id = NULL
+				// on both rows) still collides — Postgres only accepts this conflict target
+				// with the same predicate.
 				targetWhere: isNotNull(integrations.externalId),
 				set: {
 					status: 'active',
@@ -1079,7 +1089,7 @@ app.openapi(connectRoute, (async (c) => {
 	return c.json({ install_url: installUrl })
 }) as RouteHandler<typeof connectRoute, Env>)
 
-// ── GET /api/integrations/:provider/callback ───────────────────────────────
+// ── GET /api/integrations/:provider/callback ─────────────────────────────
 
 const callbackRoute = createRoute({
 	method: 'get',
@@ -1490,7 +1500,7 @@ app.openapi(callbackRoute, (async (c) => {
 	return c.redirect(`${frontendUrl}/${stateData.workspaceId}/settings/integrations`)
 }) as RouteHandler<typeof callbackRoute, Env>)
 
-// ── DELETE /api/integrations/:id ───────────────────────────────────────────
+// ── DELETE /api/integrations/:id ──────────────────────────────────────
 
 const deleteIntegrationRoute = createRoute({
 	method: 'delete',
@@ -1569,10 +1579,26 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 		})
 	})
 
+	// Drop the disconnected identity off the $49 add-on. Runs after the status
+	// flip commits, because the sync recomputes quantity from the count of
+	// `active` rows — running it first would still count the row being
+	// revoked and leave the customer billed for it. Quantity changes carry
+	// `proration_behavior: 'none'`, so the identity stays paid for through the
+	// end of the period it was connected in.
+	if (existing.provider === LINKEDIN_IDENTITY_PROVIDER) {
+		await syncLinkedInAddonQuantity(db, existing.workspaceId)
+	}
+
+	// Agents hold a copied snapshot of the provider's MCP server config, which
+	// outlives the credential behind it. Left in place, the agent boots with
+	// the server attached, advertises its tools, and fails every call — so it
+	// reports a broken platform instead of a missing connection.
+	await detachProviderMcpServers(db, existing.workspaceId, existing.provider, actorId)
+
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteIntegrationRoute, Env>)
 
-// ── POST /api/integrations/:id/complete ─────────────────────────────────────
+// ── POST /api/integrations/:id/complete ─────────────────────────────────
 // Finishes a manual-auth handshake: the user pastes the provider-generated
 // secret (e.g. Skjald's per-webhook HMAC secret) into Maskin over an
 // authenticated session, completing the row the connect route's 'manual'
@@ -1652,7 +1678,7 @@ app.openapi(completeIntegrationRoute, (async (c) => {
 	return c.json({ activated: true })
 }) as RouteHandler<typeof completeIntegrationRoute, Env>)
 
-// ── GET /api/integrations/:id/github-token ─────────────────────────────────
+// ── GET /api/integrations/:id/github-token ──────────────────────────────
 
 const REPO_SLUG_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
 
@@ -1951,7 +1977,7 @@ app.openapi(listSlackConversationsRoute, (async (c) => {
 	}
 }) as RouteHandler<typeof listSlackConversationsRoute, Env>)
 
-// ── GET /api/integrations/:id/slack/users ──────────────────────────────────
+// ── GET /api/integrations/:id/slack/users ────────────────────────────────
 
 const slackUserSchema = z.object({
 	id: z.string(),
@@ -2034,7 +2060,7 @@ app.openapi(listSlackUsersRoute, (async (c) => {
 
 export default app
 
-// ── Webhook handler (mounted separately at /api/webhooks) ──────────────────
+// ── Webhook handler (mounted separately at /api/webhooks) ──────────────────────
 
 // Slack entity types the normalizer emits for inbound user-to-agent traffic.
 // `slack.app_mention` covers `@Maskin` in any channel; `slack.direct_message`
@@ -2165,7 +2191,7 @@ webhookApp.post('/slack-commands', async (c) => {
 	return c.json({ response_type: 'ephemeral', text: result.responseText })
 })
 
-// ── Slack account-link interactivity ──────────────────────────────────────
+// ── Slack account-link interactivity ──────────────────────────────────
 //
 // Slack POSTs Block Kit `block_actions` payloads here when the user interacts
 // with the account-link picker (form-encoded with a `payload` field). The
@@ -2348,7 +2374,7 @@ webhookApp.post('/slack-interactive', async (c) => {
 	return c.json({ ok: true })
 })
 
-// ── Skjald meeting-completed webhook ────────────────────────────────────────
+// ── Skjald meeting-completed webhook ────────────────────────────────────
 // Registered before the generic `/:provider` catch-all so this path-literal
 // route wins. Skjald has no central app-level secret — every desktop install
 // mints its own locally — so this bypasses the generic single-secret
@@ -2918,7 +2944,7 @@ webhookApp.post('/:provider', async (c) => {
 	return c.json({ ok: true, count: totalInserted, workspaces: eligible.length })
 })
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────
 
 /** Lifetime of the state-binding cookie, in seconds. Matches the 10-minute
  *  `state` age check in the callback so neither outlives the other. */
