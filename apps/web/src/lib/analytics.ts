@@ -50,7 +50,10 @@ export type TaxonomyEntityType =
 	| 'file'
 	| 'loop'
 
-type EventSource = 'web' | 'mcp' | 'trigger'
+// `file_viewer` was added so `comment_posted.source` can attribute review
+// comments back to the viewer surface — required for the "≥40% comment-after-
+// view within 24h" success criterion on the file-review viewer bet.
+type EventSource = 'web' | 'mcp' | 'trigger' | 'file_viewer'
 
 interface BaseProps {
 	entity_id: string
@@ -485,6 +488,82 @@ export function trackSearchResultOpened(
 // `send_instantly: true` so the emission is not lost to posthog-js's batching
 // queue — the bet's exit gate keys off this event staying non-zero. Exactly-once
 // per accepted loop is enforced at the call site (the create completion path).
+// File-review viewer events (5). Property schemas are the measurement
+// contract — do not add/rename/reorder fields without updating the shape
+// spec and the PostHog catalog. `file_id` is the file's uuid; `workspace_id`
+// and `actor_id` ride on the PostHog super-properties registered at
+// workspace mount, so they aren't repeated here.
+
+export type FileViewerZoomMode = 'fit' | 'plus' | 'minus' | 'pinch' | 'wheel'
+
+export function trackFileViewerZoomUsed(p: {
+	file_id: string
+	mode: FileViewerZoomMode
+	zoom_level: number
+}): void {
+	trackEvent('file_viewer_zoom_used', {
+		file_id: p.file_id,
+		mode: p.mode,
+		zoom_level: p.zoom_level,
+	})
+}
+
+export function trackFileViewerPageNavigated(p: {
+	file_id: string
+	from_page: number
+	to_page: number
+	total_pages: number
+}): void {
+	trackEvent('file_viewer_page_navigated', {
+		file_id: p.file_id,
+		from_page: p.from_page,
+		to_page: p.to_page,
+		total_pages: p.total_pages,
+	})
+}
+
+export type FileViewerPinVariant = 'deck' | 'mockup' | 'single'
+
+export function trackFileViewerPinPlaced(p: {
+	file_id: string
+	page: number | null
+	variant: FileViewerPinVariant
+}): void {
+	trackEvent('file_viewer_pin_placed', {
+		file_id: p.file_id,
+		page: p.page,
+		variant: p.variant,
+	})
+}
+
+export function trackFileViewerRoundSent(p: {
+	file_id: string
+	comment_count: number
+	attaching_object_id: string
+	driver_id: string
+	round_id: string
+}): void {
+	trackEvent('file_viewer_round_sent', {
+		file_id: p.file_id,
+		comment_count: p.comment_count,
+		attaching_object_id: p.attaching_object_id,
+		driver_id: p.driver_id,
+		round_id: p.round_id,
+	})
+}
+
+export function trackFileViewerCommentResolved(p: {
+	file_id: string
+	comment_id: string
+	resolved_by: string
+}): void {
+	trackEvent('file_viewer_comment_resolved', {
+		file_id: p.file_id,
+		comment_id: p.comment_id,
+		resolved_by: p.resolved_by,
+	})
+}
+
 export function trackLoopCreatedViaLanguage(p: {
 	workspace_id: string
 	loop_id: string
