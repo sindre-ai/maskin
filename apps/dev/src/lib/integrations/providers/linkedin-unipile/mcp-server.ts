@@ -10,6 +10,7 @@ import {
 	listLinkedInMessages,
 	replyToLinkedInThread,
 	searchLinkedInPeople,
+	sendLinkedInConnectionRequest,
 	sendLinkedInMessage,
 } from './operations'
 
@@ -142,6 +143,35 @@ export function createLinkedInMcpServer(ctx: LinkedInMcpContext): McpServer {
 				return jsonResult(await replyToLinkedInThread(ctx, args))
 			} catch (err) {
 				return toolError('linkedin_reply', err)
+			}
+		},
+	)
+
+	server.registerTool(
+		'linkedin_send_connection_request',
+		{
+			description:
+				"Send a LinkedIn connection invitation from the connected identity of the calling actor to a target member. Use this BEFORE linkedin_send_message when linkedin_search_people or linkedin_get_profile reports the target as SECOND_DEGREE or THIRD_DEGREE — LinkedIn does not let you DM a non-connection without an invitation first. On success returns { status: 'sent', sent_at }. Two failure classes matter for agent branching: LINKEDIN_INVITE_QUOTA_EXCEEDED means LinkedIn has spent the connected account's weekly invite quota — stop sending invitations from this identity for the week and tell a human; LINKEDIN_ALREADY_CONNECTED means the target is already a first-degree connection OR has an outstanding invitation from this account — treat it as a successful no-op and move on to linkedin_send_message.",
+			inputSchema: {
+				user_id: z
+					.string()
+					.min(1)
+					.describe(
+						'LinkedIn provider id of the member to invite — the same opaque id that appears as `recipient_urn` on linkedin_search_people / linkedin_list_connections / linkedin_get_profile results (e.g. "ACoAAAxxxxxBxxxxxxxxxxxxxxxxxxxxxxxxxxx"). Pass it through verbatim. It is NOT a "urn:li:person:..." URN and NOT the target\'s public handle: do not construct one or pass "janedoe" here — use linkedin_get_profile with the handle first, then pass its `recipient_urn`.',
+					),
+				message: z
+					.string()
+					.optional()
+					.describe(
+						"Optional personal note attached to the invitation. LinkedIn enforces the length cap on the wire (currently 200 chars); an over-long note surfaces as an INVALID_INPUT / LINKEDIN_INVITE_QUOTA_EXCEEDED error rather than a client-side rejection. Leave omitted for a bare invite, or keep short and specific — LinkedIn's own research shows short, specific notes convert better than generic ones.",
+					),
+			},
+		},
+		async (args) => {
+			try {
+				return jsonResult(await sendLinkedInConnectionRequest(ctx, args))
+			} catch (err) {
+				return toolError('linkedin_send_connection_request', err)
 			}
 		},
 	)

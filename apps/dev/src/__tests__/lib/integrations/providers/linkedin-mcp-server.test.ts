@@ -1,10 +1,11 @@
 import type { Database } from '@maskin/db'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { sendMock, replyMock, listMock } = vi.hoisted(() => ({
+const { sendMock, replyMock, listMock, connectMock } = vi.hoisted(() => ({
 	sendMock: vi.fn(),
 	replyMock: vi.fn(),
 	listMock: vi.fn(),
+	connectMock: vi.fn(),
 }))
 
 vi.mock('../../../../lib/integrations/providers/linkedin-unipile/operations', () => ({
@@ -15,6 +16,7 @@ vi.mock('../../../../lib/integrations/providers/linkedin-unipile/operations', ()
 	listLinkedInConnections: vi.fn(),
 	searchLinkedInPeople: vi.fn(),
 	getLinkedInProfile: vi.fn(),
+	sendLinkedInConnectionRequest: connectMock,
 }))
 
 import { LinkedInIntegrationError } from '../../../../lib/integrations/providers/linkedin-unipile/errors'
@@ -49,6 +51,7 @@ beforeEach(() => {
 	sendMock.mockReset()
 	replyMock.mockReset()
 	listMock.mockReset()
+	connectMock.mockReset()
 })
 
 afterEach(() => {
@@ -64,14 +67,20 @@ describe('createLinkedInMcpServer', () => {
 			'linkedin_list_messages',
 			'linkedin_reply',
 			'linkedin_search_people',
+			'linkedin_send_connection_request',
 			'linkedin_send_message',
 		])
 	})
 
-	// Only send/reply may contact anyone. A read tool gaining a write path
-	// would be a silent expansion of what an agent can do to a real person.
-	it('keeps every tool but send and reply read-only', () => {
-		const writeTools = ['linkedin_send_message', 'linkedin_reply']
+	// Only send/reply/send-connection-request may contact anyone. A read tool
+	// gaining a write path would be a silent expansion of what an agent can
+	// do to a real person.
+	it('keeps every tool but send/reply/send-connection-request read-only', () => {
+		const writeTools = [
+			'linkedin_send_message',
+			'linkedin_reply',
+			'linkedin_send_connection_request',
+		]
 		const registered = Object.keys(tools(createLinkedInMcpServer(ctx)))
 		const reads = registered.filter((t) => !writeTools.includes(t))
 		expect(reads).toHaveLength(5)
@@ -93,8 +102,10 @@ describe('createLinkedInMcpServer', () => {
 			}
 		}
 		// Guard the guard: a shape read that silently yields nothing would make
-		// this test pass while checking no fields at all.
-		expect(seen.length).toBe(18)
+		// this test pass while checking no fields at all. 18 fields from the
+		// original 7 tools + 2 fields (user_id, message) on
+		// linkedin_send_connection_request = 20.
+		expect(seen.length).toBe(20)
 	})
 
 	it('passes the calling actor and workspace through to the operation', async () => {
@@ -150,5 +161,46 @@ describe('createLinkedInMcpServer', () => {
 		expect(res.isError).toBe(true)
 		expect(res.content[0].text).toContain('UNIPILE_UNAVAILABLE')
 		expect(res.content[0].text).not.toContain('socket hang up')
+	})
+
+	it('routes linkedin_send_connection_request to the connection-request operation', async () => {
+		connectMock.mockResolvedValue({
+			status: 'sent',
+			sent_at: '2026-09-07T10:00:00Z',
+			invitation_id: 'inv-1',
+		})
+		const res = await callTool('linkedin_send_connection_request', {
+			user_id: 'ACoAAAxxxxxBxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+			message: "Hey — enjoyed your talk at LinkedIn's dev conf. Would love to connect.",
+		})
+		expect(res.isError).toBeUndefined()
+		expect(JSON.parse(res.content[0].text)).toEqual({
+			status: 'sent',
+			sent_at: '2026-09-07T10:00:00Z',
+			invitation_id: 'inv-1',
+		})
+		expect(connectMock).toHaveBeenCalledWith(
+			expect.objectContaining({ actorId: 'actor-1', workspaceId: 'ws-1' }),
+			expect.objectContaining({
+				user_id: 'ACoAAAxxxxxBxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+				message: expect.stringContaining('enjoyed your talk'),
+			}),
+		)
+	})
+
+	// The two connect-request-specific error codes drive very different agent
+	// behaviour — quota-exceeded stops sending invites for the week; already-
+	// connected pivots straight into linkedin_send_message. Both must carry the
+	// wire code so the agent can branch on it.
+	it.each([
+		['LINKEDIN_INVITE_QUOTA_EXCEEDED', "Weekly quota reached for this LinkedIn account."],
+		['LINKEDIN_ALREADY_CONNECTED', 'Target member is already a connection.'],
+	] as const)('surfaces %s from the connect-request tool as a tool error', async (code, message) => {
+		connectMock.mockRejectedValue(new LinkedInIntegrationError(code, message))
+		const res = await callTool('linkedin_send_connection_request', {
+			user_id: 'ACoAAAxxxxxBxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+		})
+		expect(res.isError).toBe(true)
+		expect(res.content[0].text).toBe(`${code}: ${message}`)
 	})
 })

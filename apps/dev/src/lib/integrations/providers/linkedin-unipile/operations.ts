@@ -16,6 +16,7 @@ import {
 } from './errors'
 import type {
 	UnipileClient,
+	UnipileConnectionRequestResponse,
 	UnipileConversation,
 	UnipileListConversationsResponse,
 	UnipileSendMessageResponse,
@@ -986,4 +987,74 @@ export async function getLinkedInProfile(
 		)
 	}
 	return person
+}
+
+/**
+ * Send a LinkedIn connection-request (invitation) from the connected account
+ * to a target member.
+ *
+ * NOT idempotency-tracked (spec residual on Task 7a). LinkedIn/Unipile give
+ * the wire-level guarantee via `LINKEDIN_ALREADY_CONNECTED` — a duplicate
+ * invite is rejected with that error class on the second call — so an
+ * `idempotency_records` claim would only duplicate a check LinkedIn already
+ * enforces server-side.
+ *
+ * `mutating: true` on the retry policy still holds: a 5xx that arrives
+ * between LinkedIn accepting the invite and Unipile answering us must NOT be
+ * transparently replayed. A replay would either (a) burn a second invite
+ * quota against the same target with no user-visible effect, or (b) return
+ * `LINKEDIN_ALREADY_CONNECTED` and confuse the caller into thinking the
+ * connection existed before the first attempt.
+ */
+export async function sendLinkedInConnectionRequest(
+	ctx: LinkedInOperationContext,
+	input: { user_id?: unknown; message?: unknown },
+): Promise<{ status: 'sent'; sent_at: string; invitation_id?: string }> {
+	const userId = typeof input.user_id === 'string' ? input.user_id.trim() : ''
+	if (!userId) {
+		throw new LinkedInIntegrationError('INVALID_INPUT', 'user_id is required')
+	}
+	// `message` is deliberately unconstrained at the client — LinkedIn
+	// enforces the 200-char invite-note cap on the wire (per Sebk's platform
+	// sign-off 2026-09-07), and a client-side pre-check would drift from
+	// LinkedIn's real behaviour the moment they change it. An empty string
+	// after trim collapses to "no note" so the wire receives a bare invite
+	// rather than an empty-string one.
+	const rawMessage = typeof input.message === 'string' ? input.message : ''
+	const message = rawMessage.trim().length > 0 ? rawMessage : undefined
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	if (!pre.ok) throw pre.error
+	const client = buildUnipileClient(pre.credentials)
+	const upstream = await callUnipileWithRetry<
+		UnipileConnectionRequestResponse | Record<string, unknown>
+	>(
+		() =>
+			client.sendConnectionRequest({
+				account_id: pre.credentials.account_id,
+				user_id: userId,
+				...(message !== undefined ? { message } : {}),
+			}),
+		{ mutating: true },
+	)
+	return normalizeConnectionRequestResponse(upstream.body)
+}
+
+function normalizeConnectionRequestResponse(
+	body: UnipileConnectionRequestResponse | Record<string, unknown>,
+): { status: 'sent'; sent_at: string; invitation_id?: string } {
+	const rec = (body ?? {}) as Record<string, unknown>
+	const inner =
+		rec.data && typeof rec.data === 'object' ? (rec.data as Record<string, unknown>) : rec
+	const invitationId =
+		typeof inner.invitation_id === 'string'
+			? inner.invitation_id
+			: typeof inner.id === 'string'
+				? inner.id
+				: undefined
+	const sentAt = typeof inner.sent_at === 'string' ? inner.sent_at : new Date().toISOString()
+	return {
+		status: 'sent',
+		sent_at: sentAt,
+		...(invitationId ? { invitation_id: invitationId } : {}),
+	}
 }
