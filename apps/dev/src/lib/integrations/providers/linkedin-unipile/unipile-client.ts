@@ -132,6 +132,40 @@ export type UnipileGetProfileQuery = {
 	identifier: string
 }
 
+/**
+ * `POST /v2/{account_id}/users/me/relation-requests` — send a LinkedIn
+ * connection invitation to a member.
+ *
+ * `user_id` is the LinkedIn provider id of the target member — the same
+ * opaque id that `recipient_urn` carries elsewhere on this interface (from
+ * `linkedin_search_people`, `linkedin_list_connections`, etc.). Pass it
+ * through verbatim.
+ *
+ * `message` is the optional invite note. LinkedIn enforces the length limit
+ * server-side (currently 200 chars on the wire); we deliberately do NOT
+ * pre-validate here so a wire-side limit change surfaces as a normal
+ * `INVALID_INPUT` classification rather than a client-side rejection that
+ * lies about the real constraint.
+ */
+export type UnipileConnectionRequestPayload = {
+	account_id: string
+	user_id: string
+	message?: string
+}
+
+/**
+ * Response envelope Unipile v2 sends on a successful connection request.
+ * Fields are optional because the API surface is thinner than messaging —
+ * some tenants get `{ object: 'UserInvitationSent', invitation_id }`, others
+ * a bare 200 with no body. The operation layer treats a 2xx as success
+ * regardless.
+ */
+export type UnipileConnectionRequestResponse = {
+	object?: string
+	invitation_id?: string
+	sent_at?: string
+}
+
 /** Every paged v2 read returns its page under `data` with a `next_cursor`. */
 export type UnipilePagedResponse = {
 	data?: unknown[]
@@ -158,6 +192,9 @@ export interface UnipileClient {
 		query: UnipileSearchPeopleQuery,
 	): Promise<UnipileHttpResult<UnipilePagedResponse | Record<string, unknown>>>
 	getProfile(query: UnipileGetProfileQuery): Promise<UnipileHttpResult<Record<string, unknown>>>
+	sendConnectionRequest(
+		payload: UnipileConnectionRequestPayload,
+	): Promise<UnipileHttpResult<UnipileConnectionRequestResponse | Record<string, unknown>>>
 }
 
 /**
@@ -294,6 +331,16 @@ export function createUnipileHttpClient(options: UnipileHttpClientOptions): Unip
 			// own profile.
 			const acc = encodeURIComponent(query.account_id)
 			return call('GET', `/v2/${acc}/users/${encodeURIComponent(query.identifier)}`)
+		},
+		sendConnectionRequest(payload) {
+			// POST /v2/{account_id}/users/me/relation-requests
+			// Body carries `user_id` (LinkedIn provider id) and the optional
+			// invite `message`. `message` is only serialised when present so a
+			// null-vs-absent distinction on Unipile's side stays visible.
+			const acc = encodeURIComponent(payload.account_id)
+			const body: Record<string, unknown> = { user_id: payload.user_id }
+			if (payload.message !== undefined) body.message = payload.message
+			return call('POST', `/v2/${acc}/users/me/relation-requests`, body)
 		},
 	}
 }

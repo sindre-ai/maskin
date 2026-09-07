@@ -36,6 +36,22 @@
  *                                only surfaces after exhaustion.
  *   INVALID_INPUT                Unipile 400 OR local Zod input rejection.
  *                                NO retry. Logged with body redacted.
+ *
+ * Two connect-request-specific codes join the taxonomy from Task 7a:
+ *
+ *   LINKEDIN_INVITE_QUOTA_EXCEEDED  LinkedIn's weekly invitation quota for
+ *                                   the connected account is spent. NEVER
+ *                                   retry — burning more invitations at the
+ *                                   same account worsens the restriction risk.
+ *                                   Caller stops sending connection requests
+ *                                   from this identity for the week and
+ *                                   notifies a human.
+ *   LINKEDIN_ALREADY_CONNECTED      The target member is already a first-degree
+ *                                   connection OR has a pending invitation
+ *                                   from this account. NEVER retry — this is
+ *                                   the wire-level idempotency guarantee for
+ *                                   connect-requests; the caller should treat
+ *                                   it as a successful no-op.
  */
 export type LinkedInErrorCode =
 	| 'CREDENTIAL_NOT_CONNECTED'
@@ -44,6 +60,8 @@ export type LinkedInErrorCode =
 	| 'LINKEDIN_ACCOUNT_RESTRICTED'
 	| 'UNIPILE_UNAVAILABLE'
 	| 'INVALID_INPUT'
+	| 'LINKEDIN_INVITE_QUOTA_EXCEEDED'
+	| 'LINKEDIN_ALREADY_CONNECTED'
 
 export const LINKEDIN_ERROR_CODES = [
 	'CREDENTIAL_NOT_CONNECTED',
@@ -52,6 +70,8 @@ export const LINKEDIN_ERROR_CODES = [
 	'LINKEDIN_ACCOUNT_RESTRICTED',
 	'UNIPILE_UNAVAILABLE',
 	'INVALID_INPUT',
+	'LINKEDIN_INVITE_QUOTA_EXCEEDED',
+	'LINKEDIN_ALREADY_CONNECTED',
 ] as const satisfies readonly LinkedInErrorCode[]
 
 /**
@@ -76,6 +96,22 @@ export const UNIPILE_RESTRICTED_MARKERS = {
 	// flipped from POST-signed body to GET redirect with query params.
 	// https://developer.unipile.com/v2.0/docs/authenticate-with-hosted-auth
 	hostedAuthErrorTypes: ['api/restricted_account'] as const,
+}
+
+/**
+ * Discriminators for the two connect-request-specific wire errors. LinkedIn
+ * enforces the weekly invite quota and the already-connected check at the
+ * LinkedIn API layer, and Unipile surfaces both as JSON error envelopes on
+ * `POST /users/me/relation-requests`. As with `UNIPILE_RESTRICTED_MARKERS`, a
+ * catalog change is a single-line edit here — nothing else in the classifier
+ * moves.
+ *
+ * Codes are lower-cased at classify time so a `error_code: 'INVITE_QUOTA_EXCEEDED'`
+ * on a live payload matches the same way as the documented lower-case form.
+ */
+export const UNIPILE_CONNECTION_REQUEST_MARKERS = {
+	inviteQuotaExceeded: ['invite_quota_exceeded', 'invitation_limit_reached'] as const,
+	alreadyConnected: ['already_connected', 'already_invited', 'pending_invitation'] as const,
 }
 
 /**
@@ -141,6 +177,12 @@ export const RETRY_POLICY_BY_CODE: Record<LinkedInErrorCode, RetryPolicy | null>
 	LINKEDIN_ACCOUNT_RESTRICTED: null,
 	UNIPILE_UNAVAILABLE: { maxAttempts: 3, baseMs: 3_000, capMs: 30_000, jitter: 0 },
 	INVALID_INPUT: null,
+	// Both connect-request errors are terminal at the first response:
+	// retrying quota-exceeded burns more quota against the same account, and
+	// retrying already-connected accomplishes nothing (LinkedIn has already
+	// answered "no" to that specific invite).
+	LINKEDIN_INVITE_QUOTA_EXCEEDED: null,
+	LINKEDIN_ALREADY_CONNECTED: null,
 }
 
 const IS_RETRYABLE: Record<LinkedInErrorCode, boolean> = {
@@ -150,6 +192,8 @@ const IS_RETRYABLE: Record<LinkedInErrorCode, boolean> = {
 	LINKEDIN_ACCOUNT_RESTRICTED: false,
 	UNIPILE_UNAVAILABLE: true,
 	INVALID_INPUT: false,
+	LINKEDIN_INVITE_QUOTA_EXCEEDED: false,
+	LINKEDIN_ALREADY_CONNECTED: false,
 }
 
 const DEFAULT_HTTP_STATUS: Record<LinkedInErrorCode, number> = {
@@ -159,6 +203,11 @@ const DEFAULT_HTTP_STATUS: Record<LinkedInErrorCode, number> = {
 	LINKEDIN_ACCOUNT_RESTRICTED: 423,
 	UNIPILE_UNAVAILABLE: 502,
 	INVALID_INPUT: 400,
+	// 403 for quota: LinkedIn's answer is "you may not perform this action
+	// right now" — a permissions-shaped no rather than a validation-shaped
+	// one. 409 for already-connected: state conflict, the classic HTTP fit.
+	LINKEDIN_INVITE_QUOTA_EXCEEDED: 403,
+	LINKEDIN_ALREADY_CONNECTED: 409,
 }
 
 /**
@@ -169,9 +218,17 @@ const DEFAULT_HTTP_STATUS: Record<LinkedInErrorCode, number> = {
  * classification as UNIPILE_UNAVAILABLE would trigger the wrong retry
  * behaviour and worsen the restriction. Returns null when the response is
  * successful and carries no restriction marker.
+ *
+ * The connect-request markers (`LINKEDIN_INVITE_QUOTA_EXCEEDED`,
+ * `LINKEDIN_ALREADY_CONNECTED`) run BEFORE the generic 4xx → INVALID_INPUT
+ * fallback so that a 400/409 with a documented error_code lands in the right
+ * class instead of collapsing into a generic "bad request" that would look
+ * like a schema bug to the caller.
  */
 export function classifyUnipileResponse(status: number, body: unknown): LinkedInErrorCode | null {
 	if (isRestrictedBody(body)) return 'LINKEDIN_ACCOUNT_RESTRICTED'
+	if (isInviteQuotaExceededBody(body)) return 'LINKEDIN_INVITE_QUOTA_EXCEEDED'
+	if (isAlreadyConnectedBody(body)) return 'LINKEDIN_ALREADY_CONNECTED'
 	if (status >= 200 && status < 300) return null
 	if (status === 401) return 'CREDENTIAL_REVOKED'
 	if (status === 404) return 'CREDENTIAL_NOT_CONNECTED'
@@ -199,6 +256,24 @@ function isRestrictedBody(body: unknown): boolean {
 		typeof rec.account_status === 'string' ? rec.account_status.toUpperCase() : null
 	if (accountStatus === 'RESTRICTED') return true
 	return false
+}
+
+function readErrorCode(body: unknown): string | null {
+	if (!body || typeof body !== 'object') return null
+	const rec = body as Record<string, unknown>
+	return typeof rec.error_code === 'string' ? rec.error_code.toLowerCase() : null
+}
+
+function isInviteQuotaExceededBody(body: unknown): boolean {
+	const code = readErrorCode(body)
+	if (!code) return false
+	return UNIPILE_CONNECTION_REQUEST_MARKERS.inviteQuotaExceeded.includes(code as never)
+}
+
+function isAlreadyConnectedBody(body: unknown): boolean {
+	const code = readErrorCode(body)
+	if (!code) return false
+	return UNIPILE_CONNECTION_REQUEST_MARKERS.alreadyConnected.includes(code as never)
 }
 
 /**
@@ -302,6 +377,26 @@ export class UnipileUnavailableError extends LinkedInIntegrationError {
 export class InvalidInputError extends LinkedInIntegrationError {
 	constructor(reason: string, cause?: unknown) {
 		super('INVALID_INPUT', `INVALID_INPUT: ${reason}`, { cause })
+	}
+}
+
+export class LinkedinInviteQuotaExceededError extends LinkedInIntegrationError {
+	constructor(cause?: unknown) {
+		super(
+			'LINKEDIN_INVITE_QUOTA_EXCEEDED',
+			"LinkedIn's weekly invitation quota for this account is exhausted. Stop sending connection requests from this identity until the quota resets.",
+			{ cause },
+		)
+	}
+}
+
+export class LinkedinAlreadyConnectedError extends LinkedInIntegrationError {
+	constructor(cause?: unknown) {
+		super(
+			'LINKEDIN_ALREADY_CONNECTED',
+			'This member is already a first-degree connection or has a pending invitation from this account. Treat as a successful no-op.',
+			{ cause },
+		)
 	}
 }
 

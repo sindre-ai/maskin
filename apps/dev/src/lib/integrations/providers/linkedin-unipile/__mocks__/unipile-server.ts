@@ -20,12 +20,21 @@ import type { AddressInfo } from 'node:net'
  *   - GET  /v2/:account_id/users/me/relations               — connections
  *   - POST /v2/:account_id/linkedin/search                  — people search
  *   - GET  /v2/:account_id/users/:identifier                — one profile
+ *   - POST /v2/:account_id/users/me/relation-requests       — connect-request
  *
  * The v1 handlers (`/api/v1/hosted/accounts/link`, `/api/v1/messages`,
  * `/api/v1/chats*`) are gone. Signature verification is gone too — v2 uses a
  * GET redirect callback whose auth is the round-trip `state` binding, not
  * HMAC; test helpers `simulateCallbackSuccess`/`simulateCallbackError`
  * replace v1's `postSignedCallback`.
+ *
+ * Connect-request errors are simulated by request body — the mock inspects
+ * the incoming `user_id` and returns the matching Unipile error envelope
+ * (see `CONNECTION_REQUEST_TRIGGERS` below). This is the same pattern the
+ * live Unipile API uses to signal `invite_quota_exceeded` and
+ * `already_connected` (error envelopes on the same route), so a test that
+ * drives a specific `user_id` exercises the classifier end-to-end without a
+ * separate stub layer.
  */
 
 export interface UnipileMockServer {
@@ -182,6 +191,31 @@ const CANNED_PROFILE_RESPONSE = () => ({
 	location: 'New York',
 })
 
+/**
+ * `POST /v2/:account_id/users/me/relation-requests` — LinkedIn connect
+ * request. The live Unipile API answers with a thin `{ object,
+ * invitation_id }` envelope on success (some tenants return a bare 200);
+ * this mock returns the fuller shape so a test that reads `invitation_id`
+ * exercises the normalizer's happy path.
+ */
+const CANNED_CONNECTION_REQUEST_RESPONSE = () => ({
+	object: 'UserInvitationSent',
+	invitation_id: `mock-invite-${Date.now()}`,
+})
+
+/**
+ * Trigger `user_id` values a test can send to force an error envelope on the
+ * connect-request route. The values match the wire discriminators in
+ * `UNIPILE_CONNECTION_REQUEST_MARKERS` so the classifier exercises its real
+ * detection branches, not a mock-only side path.
+ */
+export const CONNECTION_REQUEST_TRIGGERS = {
+	/** Force the invite-quota-exceeded envelope (400 with error_code marker). */
+	inviteQuotaExceeded: 'mock-trigger-invite-quota-exceeded',
+	/** Force the already-connected envelope (409 with error_code marker). */
+	alreadyConnected: 'mock-trigger-already-connected',
+} as const
+
 async function readBody(req: IncomingMessage): Promise<string> {
 	const chunks: Buffer[] = []
 	for await (const chunk of req) {
@@ -241,6 +275,31 @@ export async function startUnipileMock(): Promise<UnipileMockServer> {
 		}
 		if (method === 'GET' && /^\/v2\/[^/]+\/users\/me\/relations(\?.*)?$/.test(url)) {
 			return send(200, CANNED_RELATIONS_RESPONSE())
+		}
+		// Connect-request route must be checked BEFORE the generic
+		// `/users/:identifier` route below — the URL `/users/me/relation-requests`
+		// also matches `/users/:identifier` with identifier="me" as a prefix,
+		// same collision family that gave us the `/users/relations` bug.
+		if (method === 'POST' && /^\/v2\/[^/]+\/users\/me\/relation-requests$/.test(url)) {
+			const userId =
+				typeof parsed === 'object' && parsed !== null && 'user_id' in parsed
+					? String((parsed as { user_id?: unknown }).user_id ?? '')
+					: ''
+			if (userId === CONNECTION_REQUEST_TRIGGERS.inviteQuotaExceeded) {
+				// Shape mirrors Unipile's own error envelope: `error_code` is
+				// the discriminator the classifier reads.
+				return send(400, {
+					error_code: 'invite_quota_exceeded',
+					message: "LinkedIn's weekly invitation limit for this account is reached.",
+				})
+			}
+			if (userId === CONNECTION_REQUEST_TRIGGERS.alreadyConnected) {
+				return send(409, {
+					error_code: 'already_connected',
+					message: 'Target member is already a connection or has a pending invitation.',
+				})
+			}
+			return send(200, CANNED_CONNECTION_REQUEST_RESPONSE())
 		}
 		if (method === 'POST' && /^\/v2\/[^/]+\/linkedin\/search(\?.*)?$/.test(url)) {
 			return send(200, CANNED_SEARCH_RESPONSE())
