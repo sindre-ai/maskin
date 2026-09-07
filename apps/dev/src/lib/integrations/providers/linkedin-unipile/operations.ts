@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
-import { idempotencyRecords, integrations, linkedinToolCalls } from '@maskin/db/schema'
+import { events, idempotencyRecords, integrations, linkedinToolCalls } from '@maskin/db/schema'
 import { and, eq, lt } from 'drizzle-orm'
 import { z } from 'zod'
 import { decrypt } from '../../../crypto'
@@ -156,7 +156,7 @@ async function preamble(db: Database, actorId: string, workspaceId: string): Pro
 		}
 	}
 	if (isAccountStatusRevoked(parsed.account_status)) {
-		await markIntegrationRevoked(db, row.id)
+		await markIntegrationRevoked(db, row.id, workspaceId, row.actorId ?? actorId)
 		return {
 			ok: false,
 			error: new LinkedInIntegrationError(
@@ -168,12 +168,43 @@ async function preamble(db: Database, actorId: string, workspaceId: string): Pro
 	return { ok: true, workspaceId, actorId, credentials: parsed }
 }
 
-async function markIntegrationRevoked(db: Database, integrationId: string): Promise<void> {
+/**
+ * Flip a credential to `revoked` after Unipile reports the LinkedIn account is
+ * no longer usable, and record it in the audit log.
+ *
+ * The status write and its `events` row go in one transaction. A status change
+ * that leaves no event is invisible twice over: nothing in the audit trail
+ * explains why a working integration stopped working, and the SSE feed never
+ * fires, so every open Settings tab keeps rendering the credential as active
+ * until something else happens to invalidate the cache. `workspaceId` and
+ * `actorId` are passed in rather than re-queried because the caller has just
+ * read the row.
+ *
+ * Best-effort by design: this runs on the failure path of a call the caller is
+ * already about to fail, so a bookkeeping error here must not mask the
+ * CREDENTIAL_REVOKED the caller actually needs to see.
+ */
+async function markIntegrationRevoked(
+	db: Database,
+	integrationId: string,
+	workspaceId: string,
+	actorId: string,
+): Promise<void> {
 	try {
-		await db
-			.update(integrations)
-			.set({ status: 'revoked' })
-			.where(eq(integrations.id, integrationId))
+		await db.transaction(async (tx) => {
+			await tx
+				.update(integrations)
+				.set({ status: 'revoked' })
+				.where(eq(integrations.id, integrationId))
+			await tx.insert(events).values({
+				workspaceId,
+				actorId,
+				action: 'updated',
+				entityType: 'integration',
+				entityId: integrationId,
+				data: { provider: 'linkedin-unipile', status: 'revoked' },
+			})
+		})
 	} catch (err) {
 		logger.warn('Failed to flip integration status to revoked', {
 			integrationId,
@@ -246,6 +277,7 @@ function extractUpstreamMessage(body: unknown, code: string): string {
  * unambiguous and needs no extra column.
  */
 const IN_FLIGHT_STATUS = 0
+const COMPLETED_STATUS = 200
 
 /**
  * How long a claim row may sit in-flight before another request may take it
@@ -1014,6 +1046,31 @@ export function computeContentHash(body: unknown): string {
 	return createHash('sha256').update(canonicalJson(body)).digest('hex')
 }
 
+/**
+ * Content-hash dedup for the four destructive content/community tools. Unipile
+ * v2's create-post / comment / reply endpoints accept no Idempotency-Key
+ * header, so the content hash of the canonical request body stands in for one.
+ *
+ * CLAIM BEFORE WORK, for the same reason `withIdempotency` does it above. The
+ * natural ordering — SELECT prior, run, INSERT ... ON CONFLICT DO NOTHING — is
+ * check-then-act: two concurrent identical calls both miss the SELECT, both
+ * publish, and the loser's row is silently swallowed by the ON CONFLICT, so
+ * the response replayed for the next 24h can belong to a different real post.
+ * A duplicate post on the customer's feed is user-visible and we cannot
+ * retract it. The primary key is what serialises the callers, so the row has
+ * to be claimed before the Unipile call, not written after it.
+ *
+ * Four outcomes on a duplicate:
+ *   - winner finished, row inside the 24h TTL → replay its stored response.
+ *   - winner still in flight → refuse with a retryable error. Running here is
+ *     precisely the duplicate publish this function exists to prevent.
+ *   - winner finished but the row is past the 24h TTL → the caller's retry
+ *     window has elapsed, so take the row over and let a second call happen.
+ *     (The nightly purge sweeps it either way; we decide at read time.)
+ *   - winner's in-flight claim is older than the claim TTL → take it over.
+ * Both takeovers go through one conditional UPDATE guarded on the status and
+ * timestamp we just read, so two simultaneous takeovers cannot both win.
+ */
 async function withContentHashIdempotency<T extends Record<string, unknown>>(opts: {
 	db: Database
 	actorId: string
@@ -1022,63 +1079,106 @@ async function withContentHashIdempotency<T extends Record<string, unknown>>(opt
 	run: () => Promise<T>
 }): Promise<T & { replayed: boolean }> {
 	const contentHash = computeContentHash(opts.requestBody)
-	// Only rows younger than the 24h TTL count as a live claim. An older row
-	// exists — the nightly purge hasn't fired yet — but the caller's 24h retry
-	// window has elapsed, so we deliberately let a second Unipile call happen.
-	// Purge-then-retry ordering is inverted here vs the primary purge loop
-	// because we can decide it at read time; the row will be swept by the
-	// nightly job.
-	const staleCutoff = new Date(Date.now() - LINKEDIN_TOOL_CALLS_TTL_MS)
-	const [prior] = await opts.db
-		.select()
-		.from(linkedinToolCalls)
-		.where(
-			and(
-				eq(linkedinToolCalls.actorId, opts.actorId),
-				eq(linkedinToolCalls.tool, opts.tool),
-				eq(linkedinToolCalls.contentHash, contentHash),
-			),
-		)
-		.limit(1)
+	const rowKey = and(
+		eq(linkedinToolCalls.actorId, opts.actorId),
+		eq(linkedinToolCalls.tool, opts.tool),
+		eq(linkedinToolCalls.contentHash, contentHash),
+	)
 
-	if (prior && prior.createdAt >= staleCutoff) {
-		return replayResponse<T>(prior.response)
+	let claimed = false
+	try {
+		await opts.db.insert(linkedinToolCalls).values({
+			actorId: opts.actorId,
+			tool: opts.tool,
+			contentHash,
+			status: IN_FLIGHT_STATUS,
+			response: {},
+		})
+		claimed = true
+	} catch (err) {
+		if (!isPrimaryKeyViolation(err)) throw err
 	}
 
-	const fresh = await opts.run()
+	if (!claimed) {
+		const [prior] = await opts.db.select().from(linkedinToolCalls).where(rowKey).limit(1)
+
+		// Gone between the failed insert and this read — purged, or the owner
+		// released it after a failure. Retryable rather than racing again.
+		if (!prior) {
+			throw new LinkedInIntegrationError(
+				'UNIPILE_UNAVAILABLE',
+				'Idempotency claim vanished mid-flight. Retry the request.',
+			)
+		}
+
+		const completedCutoff = new Date(Date.now() - LINKEDIN_TOOL_CALLS_TTL_MS)
+		if (prior.status !== IN_FLIGHT_STATUS && prior.createdAt >= completedCutoff) {
+			return replayResponse<T>(prior.response)
+		}
+
+		const takeoverCutoff =
+			prior.status === IN_FLIGHT_STATUS
+				? new Date(Date.now() - IN_FLIGHT_CLAIM_TTL_MS)
+				: completedCutoff
+		const takenOver = await opts.db
+			.update(linkedinToolCalls)
+			.set({ status: IN_FLIGHT_STATUS, response: {}, createdAt: new Date() })
+			.where(
+				and(
+					rowKey,
+					eq(linkedinToolCalls.status, prior.status),
+					lt(linkedinToolCalls.createdAt, takeoverCutoff),
+				),
+			)
+			.returning({ contentHash: linkedinToolCalls.contentHash })
+
+		if (takenOver.length === 0) {
+			// Another request holds a live claim, or beat us to the takeover.
+			// Refusing is the point: proceeding would publish a second time.
+			throw new LinkedInIntegrationError(
+				'UNIPILE_UNAVAILABLE',
+				'A request with this content hash is already in flight. Retry shortly.',
+			)
+		}
+		if (prior.status === IN_FLIGHT_STATUS) {
+			logger.warn('Took over a stale LinkedIn content-hash claim', {
+				actorId: opts.actorId,
+				tool: opts.tool,
+			})
+		}
+	}
+
+	let fresh: T
+	try {
+		fresh = await opts.run()
+	} catch (err) {
+		// Release the claim so a retry isn't blocked by work that never reached
+		// Unipile. Best-effort: if this fails the row ages out via the TTL.
+		// Same trade-off `withIdempotency` makes — a call that threw *after*
+		// Unipile accepted it becomes re-runnable, which we accept because the
+		// alternative blocks every honest retry for 24h.
+		try {
+			await opts.db.delete(linkedinToolCalls).where(rowKey)
+		} catch (releaseErr) {
+			logger.warn('Failed to release LinkedIn content-hash claim after an error', {
+				actorId: opts.actorId,
+				tool: opts.tool,
+				error: releaseErr instanceof Error ? releaseErr.message : String(releaseErr),
+			})
+		}
+		throw err
+	}
 
 	try {
-		// If a prior row exists but is past the TTL, replace it so the freshly-
-		// stored response wins on the next read. INSERT ... ON CONFLICT DO
-		// UPDATE would collapse the read + write; the two-step read-then-write
-		// costs a round-trip but keeps the "replayed" branch obviously distinct
-		// from the "new call" branch — a reviewer can see which path ran.
-		if (prior) {
-			await opts.db
-				.update(linkedinToolCalls)
-				.set({ response: fresh, createdAt: new Date() })
-				.where(
-					and(
-						eq(linkedinToolCalls.actorId, opts.actorId),
-						eq(linkedinToolCalls.tool, opts.tool),
-						eq(linkedinToolCalls.contentHash, contentHash),
-					),
-				)
-		} else {
-			await opts.db
-				.insert(linkedinToolCalls)
-				.values({
-					actorId: opts.actorId,
-					tool: opts.tool,
-					contentHash,
-					response: fresh,
-				})
-				.onConflictDoNothing()
-		}
+		await opts.db
+			.update(linkedinToolCalls)
+			.set({ status: COMPLETED_STATUS, response: fresh, createdAt: new Date() })
+			.where(rowKey)
 	} catch (err) {
 		// The side effect already happened. Do NOT rethrow — that would hand the
 		// caller a failure for work that succeeded and invite a retry that
-		// re-publishes. The next duplicate simply won't dedup.
+		// re-publishes. The claim stays in flight and blocks duplicates until it
+		// ages out, which is the safe direction to fail.
 		logger.error('LinkedIn tool call succeeded but its dedup row was not persisted', {
 			actorId: opts.actorId,
 			tool: opts.tool,

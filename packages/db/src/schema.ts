@@ -1023,9 +1023,9 @@ export const idempotencyRecords = pgTable(
 // v2 endpoints — unlike the messaging surface — do NOT accept an
 // Idempotency-Key header. Two identical tool-call requests (same actor, same
 // tool, same canonical-JSON request body → same sha256 content hash) collide
-// on the primary key: the first request writes the row and hits Unipile; the
-// second finds the row via ON CONFLICT DO NOTHING and replays the stored
-// response without re-hitting Unipile. Replay-on-hit guards a specific
+// on the primary key: the first request claims the row and hits Unipile; the
+// second loses the insert race and either replays the winner's stored response
+// or, if the winner is still in flight, refuses. Replay-on-hit guards a specific
 // failure mode: a caller that retries after a network blip would otherwise
 // publish the same post twice, comment on the same post twice, etc. The 24h
 // TTL matches the reasonable window for retry — longer would balloon the
@@ -1041,12 +1041,21 @@ export const idempotencyRecords = pgTable(
 // for the canonicalisation helper. `response` stores the normalised, tool-
 // facing response payload so a replay returns the exact bytes the first
 // caller received.
+//
+// `status` is what makes the primary key *serialise* callers rather than just
+// deduplicate their bookkeeping: the row is inserted BEFORE the Unipile call
+// (status 0, in flight) and flipped to 200 with the response afterwards. The
+// natural ordering — read, call, write — is check-then-act, and for these
+// tools losing that race means a duplicate public post. Same discipline as
+// `idempotencyRecords`, which this table is the header-less counterpart to.
 export const linkedinToolCalls = pgTable(
 	'linkedin_tool_calls',
 	{
 		actorId: text('actor_id').notNull(),
 		tool: text('tool').notNull(),
 		contentHash: text('content_hash').notNull(),
+		// 0 = in flight (claim held, response not yet stored), 200 = completed.
+		status: integer('status').notNull(),
 		response: jsonb('response').notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},

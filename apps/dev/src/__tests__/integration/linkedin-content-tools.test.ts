@@ -150,6 +150,66 @@ describe('linkedin_tool_calls content-hash idempotency (Task 7b)', () => {
 		expect(second.replayed).toBe(false)
 	})
 
+	it('never publishes twice when two identical calls overlap', async () => {
+		// Regression: the ledger was originally check-then-act (SELECT prior, run,
+		// INSERT ... ON CONFLICT DO NOTHING), so two concurrent identical calls
+		// both missed the SELECT and both published to the customer's feed, and
+		// the loser's row was silently swallowed by the ON CONFLICT — leaving a
+		// stored response that belonged to a different real post. A duplicate
+		// public post is user-visible and we cannot retract it, so the claim must
+		// be taken BEFORE the Unipile call. Mirrors the messaging surface's
+		// overlap test in routes/__tests__/integrations-linkedin-unipile.test.ts.
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		await insertConnectedLinkedInCredential(ws.id, actorId)
+
+		// Hold the first publish open until the second call has gone past the
+		// point where a check-then-act implementation would have read the ledger.
+		let releaseFirst: () => void = () => {}
+		const firstInFlight = new Promise<void>((resolve) => {
+			releaseFirst = resolve
+		})
+		const publishCalls: unknown[] = []
+		const client = stubbedUnipileClient({
+			publishPost: async (payload) => {
+				publishCalls.push(payload)
+				if (publishCalls.length === 1) await firstInFlight
+				return {
+					status: 200,
+					body: {
+						object: 'PostPublished',
+						post_id: `stub-post-${publishCalls.length}`,
+						published_at: '2026-09-01T10:00:00.000Z',
+					},
+					headers: {},
+				}
+			},
+		})
+		client.publishCalls = publishCalls
+		__setUnipileClientForTests(() => client)
+
+		const input = { text: 'Concurrent publish' }
+		const first = publishLinkedInPost({ db, actorId, workspaceId: ws.id }, input)
+		// The loser must not publish. It either replays or refuses as retryable —
+		// both are correct, and both are the opposite of publishing again.
+		const second = publishLinkedInPost({ db, actorId, workspaceId: ws.id }, input).catch(
+			(err: Error) => err,
+		)
+		const secondResult = await second
+		releaseFirst()
+		await first
+
+		expect(publishCalls).toHaveLength(1)
+		if (secondResult instanceof Error) {
+			expect(secondResult.message).toMatch(/already in flight/i)
+		} else {
+			expect(secondResult.replayed).toBe(true)
+		}
+
+		const rows = await db.select().from(linkedinToolCalls)
+		expect(rows).toHaveLength(1)
+	})
+
 	it('diverges hash for different bodies so distinct posts do not collide', async () => {
 		const actorId = getTestActorId()
 		const ws = await insertWorkspace(db, actorId)

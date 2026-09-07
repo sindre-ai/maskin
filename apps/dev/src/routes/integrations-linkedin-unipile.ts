@@ -1,7 +1,12 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { INTEGRATION_STATUS_ACTIVE, type Integration, integrations } from '@maskin/db/schema'
+import {
+	events,
+	INTEGRATION_STATUS_ACTIVE,
+	type Integration,
+	integrations,
+} from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { trackIntegrationConnected } from '../lib/analytics/integration-events'
@@ -291,6 +296,18 @@ app.openapi(connectRoute, (async (c) => {
 			return c.json(createApiError('INTERNAL_ERROR', 'Failed to allocate integration row'), 500)
 		}
 		integrationId = row.id
+		// Every mutation of a first-class entity gets an audit row — the shared
+		// provider path does this at each equivalent point (routes/integrations.ts).
+		// Without it the LinkedIn connect is invisible to both the audit log and
+		// the SSE feed that drives real-time cache invalidation.
+		await db.insert(events).values({
+			workspaceId,
+			actorId,
+			action: 'created',
+			entityType: 'integration',
+			entityId: integrationId,
+			data: { provider: PROVIDER, status: 'pending' },
+		})
 	}
 
 	try {
@@ -395,6 +412,21 @@ app.openapi(callbackRoute, (async (c) => {
 				updatedAt: new Date(),
 			})
 			.where(eq(integrations.id, pending.id))
+		// Audit row inside the same transaction, so a rolled-back credential
+		// landing cannot leave a "connected" event behind. This is the opposite
+		// ordering from the PostHog capture below on purpose: the event row is
+		// part of the write, the telemetry is a report about the write.
+		await tx.insert(events).values({
+			workspaceId: pending.workspaceId,
+			// `actor_id` is nullable on integrations (only actor-scoped providers
+			// set it) but required on events; `created_by` is not null and is the
+			// actor who started this connect, so it is the correct attribution.
+			actorId: pending.actorId ?? pending.createdBy,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: pending.id,
+			data: { provider: PROVIDER, status: CONNECTED_STATUS, external_id: account_id },
+		})
 	})
 
 	if (pending.actorId) {
@@ -494,6 +526,19 @@ async function handleCallbackError(
 						updatedAt: new Date(),
 					})
 					.where(eq(integrations.id, pending.id))
+				await tx.insert(events).values({
+					workspaceId: pending.workspaceId,
+					actorId: pending.actorId ?? pending.createdBy,
+					action: 'updated',
+					entityType: 'integration',
+					entityId: pending.id,
+					data: {
+						provider: PROVIDER,
+						status: CONNECTED_STATUS,
+						external_id: error_detail,
+						adopted_existing_account: true,
+					},
+				})
 			})
 			if (pending.actorId) {
 				await trackIntegrationConnected({

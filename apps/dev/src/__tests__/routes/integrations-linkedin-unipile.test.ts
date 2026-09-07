@@ -132,8 +132,10 @@ describe('POST /api/integrations/linkedin-unipile/connect', () => {
 		expect(body.install_url).toContain(mock.baseUrl)
 		expect(body.integration_id).toBe(INTEGRATION_ID)
 
-		// Confirm the row we inserted matches the spec's shape.
-		expect(calls.inserts).toHaveLength(1)
+		// Two inserts: the pending integration row, then its audit event. Every
+		// mutation of a first-class entity logs one — without it the connect is
+		// invisible to the audit trail and to SSE cache invalidation.
+		expect(calls.inserts).toHaveLength(2)
 		const inserted = calls.inserts[0] as Record<string, unknown>
 		expect(inserted.workspaceId).toBe(WORKSPACE_ID)
 		expect(inserted.actorId).toBe(ACTOR_ID)
@@ -142,6 +144,13 @@ describe('POST /api/integrations/linkedin-unipile/connect', () => {
 		// The pending row now carries the encrypted auth nonce (iv:tag:ct) that
 		// authenticates the callback — it is no longer an empty placeholder.
 		expect(String(inserted.credentials)).toMatch(/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i)
+
+		const event = calls.inserts[1] as Record<string, unknown>
+		expect(event.entityType).toBe('integration')
+		expect(event.action).toBe('created')
+		expect(event.entityId).toBe(INTEGRATION_ID)
+		expect(event.workspaceId).toBe(WORKSPACE_ID)
+		expect(event.actorId).toBe(ACTOR_ID)
 
 		// And that Unipile received a v2 auth-link call with the right shape.
 		const linkCall = mock.inbox().find((c) => c.path === '/v2/auth/link')

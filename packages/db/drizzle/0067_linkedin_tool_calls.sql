@@ -11,9 +11,12 @@
 --
 -- Two identical tool calls (same actor, same tool, same canonical-JSON
 -- request body → same sha256 hash) collide on the primary key. The first
--- INSERT wins and hits Unipile; the second finds the row via
--- ON CONFLICT DO NOTHING and replays the stored `response` verbatim without
--- re-hitting Unipile. Purged nightly after 24h — see
+-- INSERT wins, claims the row, and hits Unipile; the second loses the race and
+-- either replays the winner's stored `response` verbatim or, if the winner is
+-- still in flight, refuses rather than publishing a second time. See migration
+-- 0068, which adds the `status` column that makes the claim possible -- this
+-- table as created here deduplicated bookkeeping but did not serialise
+-- callers. Purged nightly after 24h -- see
 -- `apps/dev/src/jobs/purge-idempotency.ts`.
 --
 -- Read tools (`linkedin_read_post_comments`, `linkedin_get_post_engagement`)
