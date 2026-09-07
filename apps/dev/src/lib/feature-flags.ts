@@ -47,6 +47,14 @@ export const FLAGS = {
 	 * connected `linkedin-unipile` credential.
 	 */
 	SALES_REP_LINKEDIN_AUTOSEND: 'sales_rep__linkedin_autosend',
+	/**
+	 * Slack setup UX v2 — channel-picker membership indicators, per-row hints,
+	 * >2000-channel truncation footer, error state, and the picker-usage
+	 * PostHog event. Enabled per tester actor; roll to Marketplace-live
+	 * workspaces once the dogfood workspace (mesh-firm) has proven it out.
+	 * See parent bet 'Slack setup UX' for the shape spec.
+	 */
+	SLACK_SETUP_UX_V2: 'slack-setup-ux-v2',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

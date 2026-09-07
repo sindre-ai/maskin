@@ -22,24 +22,22 @@ function setEnv(vars: Partial<Record<(typeof ENV_KEYS)[number], string>>) {
 	_resetFeatureFlagConfig()
 }
 
-// The shape of the response body when every registered flag is OFF. Add
-// entries here as new flags land in FLAGS so a shipped-off default is exercised.
-const ALL_FLAGS_OFF = {
-	[FLAGS.LINKEDIN_ADDON_VISIBLE]: false,
-	[FLAGS.SALES_REP_LINKEDIN_AUTOSEND]: false,
-}
-
 beforeEach(() => setEnv({}))
 afterEach(() => setEnv({}))
 
+// Every registered flag, off. Derived from FLAGS rather than hardcoded so a
+// flag being added or retired doesn't break these cases — the invariant under
+// test is "off unless the env turns it on", not the size of the registry.
+const ALL_OFF = Object.fromEntries(Object.values(FLAGS).map((id) => [id, false]))
+
 describe('GET /api/feature-flags', () => {
 	// Every registered flag resolves, and defaults off when no env is set.
-	it('resolves the live registry when no env is set', async () => {
+	it('resolves every registered flag as off when no env is set', async () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ flags: ALL_FLAGS_OFF })
+		expect(await res.json()).toEqual({ flags: ALL_OFF })
 	})
 
 	it('turns a registered flag on for a listed tester', async () => {
@@ -48,7 +46,7 @@ describe('GET /api/feature-flags', () => {
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
 		expect(await res.json()).toEqual({
-			flags: { ...ALL_FLAGS_OFF, [FLAGS.LINKEDIN_ADDON_VISIBLE]: true },
+			flags: { ...ALL_OFF, [FLAGS.LINKEDIN_ADDON_VISIBLE]: true },
 		})
 	})
 
@@ -63,7 +61,7 @@ describe('GET /api/feature-flags', () => {
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
 		expect(await res.json()).toEqual({
-			flags: { ...ALL_FLAGS_OFF, [FLAGS.SALES_REP_LINKEDIN_AUTOSEND]: true },
+			flags: { ...ALL_OFF, [FLAGS.SALES_REP_LINKEDIN_AUTOSEND]: true },
 		})
 	})
 
@@ -72,7 +70,9 @@ describe('GET /api/feature-flags', () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({ flags: ALL_FLAGS_OFF })
+		const body = (await res.json()) as { flags: Record<string, boolean> }
+		expect(body.flags).toEqual(ALL_OFF)
+		expect('not-a-real-flag' in body.flags).toBe(false)
 	})
 
 	it('sets Cache-Control: no-store so a rollback is not defeated by a stale cache', async () => {
