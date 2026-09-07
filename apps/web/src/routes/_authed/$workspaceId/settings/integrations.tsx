@@ -214,6 +214,15 @@ function ProviderRow({
 		provider.name === 'slack' &&
 		integration?.missingScopes?.some((scope) => SLACK_HISTORY_SCOPES.includes(scope))
 
+	// LinkedIn is the one provider that costs money to connect — $49 per
+	// connected identity per month, added to the workspace subscription. A
+	// price has to be stated before the click that incurs it, not only on the
+	// billing page afterwards, so it is rendered on the card in both states:
+	// as a price before connecting, as a statement of what is being billed
+	// after. Kept in sync with LINKEDIN_IDENTITY_UNIT_PRICE_USD_CENTS in
+	// apps/dev/src/lib/linkedin-addon.ts.
+	const isPaidIdentityAddon = provider.name === 'linkedin-unipile'
+
 	const connectedLabel = isConnected
 		? needsReconnect
 			? missingSlackHistoryScopes
@@ -241,6 +250,13 @@ function ProviderRow({
 				>
 					{connectedLabel}
 				</p>
+				{isPaidIdentityAddon && (
+					<p className="text-xs text-muted-foreground">
+						{isConnected
+							? '$49/month per connected identity, billed on your Maskin subscription. Disconnecting stops the charge at the end of the current period.'
+							: '$49/month per connected identity, added to your Maskin subscription.'}
+					</p>
+				)}
 			</div>
 			{isConnected ? (
 				<div className="flex shrink-0 items-center gap-2">

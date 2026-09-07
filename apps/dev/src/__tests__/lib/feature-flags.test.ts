@@ -34,6 +34,19 @@ describe('parseFeatureFlagConfig', () => {
 })
 
 describe('resolveFlags', () => {
+	// Asserts the SHAPE of a live-registry resolve, not a fixed flag set: every
+	// registered id resolves to a boolean, and an id absent from
+	// FF_TESTER_FEATURES stays false even for a tester. Pinning an exact object
+	// here made the suite fail the moment a real flag was registered.
+	it('resolves every registered flag to a boolean, false when not in flight', () => {
+		const c = config({ FF_TESTER_FEATURES: 'anything', FF_TESTER_ACTOR_IDS: TESTER })
+		for (const actor of [TESTER, NON_TESTER]) {
+			const resolved = resolveFlags(actor, c)
+			expect(Object.keys(resolved).sort()).toEqual([...Object.values(FLAGS)].sort())
+			expect(Object.values(resolved).every((v) => v === false)).toBe(true)
+		}
+	})
+
 	it('resolves the live registry — slack-setup-ux-v2 is on for a listed tester', () => {
 		const c = config({ FF_TESTER_FEATURES: FLAGS.SLACK_SETUP_UX_V2, FF_TESTER_ACTOR_IDS: TESTER })
 		// Assert the tester sees slack-setup-ux-v2 ON while every other registered flag
