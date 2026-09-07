@@ -14,6 +14,7 @@ import {
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import type { StoredCredentials } from '../lib/integrations/types'
 import { logger } from '../lib/logger'
+import { setTriggerMetadataKey } from '../lib/trigger-metadata'
 
 // Statuses we persist per-channel in `slack_setup.join_attempts[*].status`.
 // Kept in-sync with `slackSetupJoinStatusSchema` in @maskin/shared.
@@ -125,24 +126,40 @@ async function runSlackTriggerSetupInner(
 
 	for (const channelId of channelIds) {
 		const isPrivate = privacyById.get(channelId) ?? false
-		const previousStatus = previous?.join_attempts.find((a) => a.channel_id === channelId)?.status
-		const alreadyJoined = previousStatus === 'joined' || previousStatus === 'already_in'
 
 		let status: JoinStatus
 		let errorCode: string | undefined
 
 		if (isPrivate) {
 			status = 'not_public'
-		} else if (alreadyJoined) {
-			// Cache the earlier success so a re-run isn't a Slack round-trip. We
-			// still enter the confirmation branch below to dedupe on
-			// `confirmation_posted_at`, which is exactly the property spec §4
-			// asks for.
-			status = 'already_in'
 		} else {
-			const result = await joinSlackChannel(botToken, channelId)
-			status = classifyJoinResult(result)
-			if (!result.ok) errorCode = result.error
+			// Always call `conversations.join`, even when the last run recorded a
+			// success. The call is idempotent (`already_in_channel` instead of an
+			// error), which is precisely why caching the previous status is the
+			// wrong trade: after the bot is kicked and the user hits Resume, a
+			// cached 'joined' would skip the Slack round-trip and re-persist
+			// 'already_in' — leaving the trigger green while the bot is still out
+			// of the channel and the trigger can never fire. Re-posting the
+			// confirmation is separately deduped on `confirmation_posted_at`.
+			try {
+				const result = await joinSlackChannel(botToken, channelId)
+				status = classifyJoinResult(result)
+				if (!result.ok) errorCode = result.error
+			} catch (err) {
+				// Belt-and-braces: `joinSlackChannel` is contractually no-throw, but
+				// one channel must never cost the whole run. Without this, an
+				// unexpected throw skips `persistSetupResult` entirely — dropping
+				// the `confirmation_posted_at` entries for channels already handled
+				// this pass, so the next save re-posts "Maskin is now listening
+				// here" into a customer channel.
+				status = 'error'
+				errorCode = err instanceof Error ? err.message : String(err)
+				logger.warn('Slack join threw unexpectedly', {
+					triggerId,
+					channelId,
+					error: errorCode,
+				})
+			}
 		}
 
 		attempts.push({
@@ -379,17 +396,13 @@ async function persistSetupResult(
 	triggerId: string,
 	slack_setup: SlackSetupMetadata,
 ): Promise<void> {
-	// Merge additively — do not clobber a sibling `metadata.auto_paused`
-	// written by the (future) `member_left_channel` handler.
-	const [row] = await db
-		.select({ metadata: triggers.metadata })
-		.from(triggers)
-		.where(eq(triggers.id, triggerId))
-		.limit(1)
-	const md = (row?.metadata as Record<string, unknown> | null | undefined) ?? {}
+	// Single-statement jsonb merge — see `lib/trigger-metadata.ts`. A JS-side
+	// read-modify-write here would clobber a `metadata.auto_paused` stamped by
+	// `handleMemberLeftChannel` between the read and the write, silently
+	// disabling the trigger with no banner explaining why.
 	await db
 		.update(triggers)
-		.set({ metadata: { ...md, slack_setup } })
+		.set({ metadata: setTriggerMetadataKey('slack_setup', slack_setup) })
 		.where(eq(triggers.id, triggerId))
 }
 

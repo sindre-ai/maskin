@@ -12,7 +12,11 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useActors } from '@/hooks/use-actors'
-import { readAutoPausedInfo, resumeTriggerLabel, useSlackAutoResume } from '@/hooks/use-slack-auto-resume'
+import {
+	readAutoPausedInfo,
+	resumeTriggerLabel,
+	useSlackAutoResume,
+} from '@/hooks/use-slack-auto-resume'
 import {
 	useCreateTrigger,
 	useDeleteTrigger,

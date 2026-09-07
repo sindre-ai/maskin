@@ -104,11 +104,7 @@ export function SlackTriggerSetupStatus({
 				data-testid="slack-trigger-setup-status"
 				data-state="auto-paused"
 			>
-				<AlertTriangle
-					size={14}
-					className="mt-0.5 shrink-0 text-destructive"
-					aria-hidden="true"
-				/>
+				<AlertTriangle size={14} className="mt-0.5 shrink-0 text-destructive" aria-hidden="true" />
 				<div className="flex-1 space-y-2 text-[12px] leading-snug text-foreground">
 					<p>{slackMemberLeftCopy(autoPausedChannelName)}</p>
 					<button

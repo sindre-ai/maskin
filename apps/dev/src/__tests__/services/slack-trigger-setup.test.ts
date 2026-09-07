@@ -22,6 +22,7 @@ import {
 } from '../../lib/integrations/providers/slack/client'
 import { extractSlackChannelIds, runSlackTriggerSetup } from '../../services/slack-trigger-setup'
 import { buildIntegration } from '../factories'
+import { readMetadataSql } from '../helpers'
 import { createTestContext } from '../setup'
 
 const WORKSPACE_ID = '00000000-0000-0000-0000-000000000010'
@@ -44,17 +45,17 @@ function activeSlackIntegration(overrides?: Record<string, unknown>) {
 /**
  * Wire the mock db so `runSlackTriggerSetup` observes:
  *   - one active Slack integration for the workspace,
- *   - the trigger row (used by loadExistingSetup + persistSetupResult).
- * `selectQueue` matches the reads in service order: integration lookup,
- * loadExistingSetup, then a final read inside persistSetupResult before the
- * merge write.
+ *   - the trigger row (used by loadExistingSetup).
+ * `selectQueue` matches the reads in service order: integration lookup, then
+ * loadExistingSetup. `persistSetupResult` does NOT read — it merges the
+ * `slack_setup` key in a single SQL statement so a concurrent `auto_paused`
+ * write cannot be clobbered.
  */
 function stubReads(mockResults: Record<string, unknown>, existingSetup?: Record<string, unknown>) {
 	const md = existingSetup ? { slack_setup: existingSetup } : null
 	mockResults.selectQueue = [
 		[activeSlackIntegration()], // resolveSlackContext
 		[{ metadata: md }], // loadExistingSetup
-		[{ metadata: md }], // persistSetupResult read-before-write
 	]
 }
 
@@ -123,8 +124,9 @@ describe('runSlackTriggerSetup', () => {
 		})
 
 		// Assert the write's metadata shape (spec §2/§4).
-		const written = calls.updates.at(-1) as { metadata: Record<string, unknown> }
-		const setup = written.metadata.slack_setup as {
+		const written = readMetadataSql((calls.updates.at(-1) as { metadata: unknown }).metadata)
+		expect(written.key).toBe('slack_setup')
+		const setup = written.value as {
 			channel_ids: string[]
 			join_attempts: Array<{ channel_id: string; status: string }>
 			confirmation_posted_at: Record<string, string>
@@ -188,8 +190,9 @@ describe('runSlackTriggerSetup', () => {
 			fetchMock.mock.calls.filter((c) => (c[0] as string).includes('/api/chat.postMessage')),
 		).toHaveLength(0)
 
-		const written = calls.updates.at(-1) as { metadata: Record<string, unknown> }
-		const setup = written.metadata.slack_setup as {
+		const written = readMetadataSql((calls.updates.at(-1) as { metadata: unknown }).metadata)
+		expect(written.key).toBe('slack_setup')
+		const setup = written.value as {
 			join_attempts: Array<{ status: string }>
 			confirmation_posted_at?: Record<string, string>
 		}
@@ -205,7 +208,7 @@ describe('runSlackTriggerSetup', () => {
 		).toMatchObject({ outcome: 'not_public', is_private: true })
 	})
 
-	it('is idempotent — a re-run does not re-post the confirmation for an already-joined channel', async () => {
+	it('re-runs the join but does not re-post the confirmation for an already-joined channel', async () => {
 		const { db, mockResults, calls } = createTestContext()
 		stubReads(mockResults, {
 			channel_ids: ['C1'],
@@ -216,7 +219,10 @@ describe('runSlackTriggerSetup', () => {
 		queueFetchResponses(
 			fetchMock,
 			convList([{ id: 'C1', name: 'general' }]),
-			// No join queued — service short-circuits on the cached 'joined' status.
+			// The join IS re-attempted: `conversations.join` is idempotent, and a
+			// cached 'joined' would otherwise leave a re-invited bot unjoined after
+			// a kick + Resume, with the trigger showing green.
+			{ ok: true, already_in_channel: true },
 			// No confirmation queued — dedup on confirmation_posted_at.
 		)
 
@@ -230,13 +236,14 @@ describe('runSlackTriggerSetup', () => {
 
 		expect(
 			fetchMock.mock.calls.filter((c) => (c[0] as string).includes('/api/conversations.join')),
-		).toHaveLength(0)
+		).toHaveLength(1)
 		expect(
 			fetchMock.mock.calls.filter((c) => (c[0] as string).includes('/api/chat.postMessage')),
 		).toHaveLength(0)
 
-		const written = calls.updates.at(-1) as { metadata: Record<string, unknown> }
-		const setup = written.metadata.slack_setup as {
+		const written = readMetadataSql((calls.updates.at(-1) as { metadata: unknown }).metadata)
+		expect(written.key).toBe('slack_setup')
+		const setup = written.value as {
 			join_attempts: Array<{ status: string }>
 			confirmation_posted_at: Record<string, string>
 		}
@@ -249,8 +256,6 @@ describe('runSlackTriggerSetup', () => {
 		// resolveSlackContext returns null → the not-authed branch fires.
 		mockResults.selectQueue = [
 			[], // no integration
-			// persist path still runs one read-before-write.
-			[{ metadata: null }],
 		]
 
 		await runSlackTriggerSetup(db, {
@@ -262,8 +267,9 @@ describe('runSlackTriggerSetup', () => {
 		})
 
 		expect(fetchMock).not.toHaveBeenCalled()
-		const written = calls.updates.at(-1) as { metadata: Record<string, unknown> }
-		const setup = written.metadata.slack_setup as {
+		const written = readMetadataSql((calls.updates.at(-1) as { metadata: unknown }).metadata)
+		expect(written.key).toBe('slack_setup')
+		const setup = written.value as {
 			join_attempts: Array<{ status: string }>
 		}
 		expect(setup.join_attempts.map((a) => a.status)).toEqual(['not_authed', 'not_authed'])

@@ -14,6 +14,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { removeTriggerMetadataKey } from '../lib/trigger-metadata'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 import { extractSlackChannelIds, runSlackTriggerSetup } from '../services/slack-trigger-setup'
 
@@ -321,11 +322,12 @@ app.openapi(updateTriggerRoute, (async (c) => {
 	// (notably PR B's `slack_setup`) are preserved by picking off only
 	// `auto_paused` from the existing object. Safe when metadata is null/empty.
 	if (body.clear_auto_paused === true) {
-		const existing = (trigger.metadata ?? {}) as Record<string, unknown>
-		if ('auto_paused' in existing) {
-			const { auto_paused: _cleared, ...rest } = existing
-			updateData.metadata = rest
-		}
+		// Removal happens in SQL (`metadata - 'auto_paused'`, see
+		// `lib/trigger-metadata.ts`) rather than as a spread of the `trigger` row
+		// read before the transaction — that read is already stale by the time
+		// the UPDATE runs, so spreading it would clobber a `slack_setup` written
+		// by the in-flight setup service.
+		updateData.metadata = removeTriggerMetadataKey('auto_paused')
 	}
 
 	const updated = await db.transaction(async (tx) => {

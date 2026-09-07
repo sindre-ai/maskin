@@ -34,8 +34,7 @@ test.describe('Slack trigger auto-pause banner', () => {
 			if (route.request().method() !== 'GET') return route.fallback()
 			const response = await route.fetch()
 			const body = (await response.json()) as Record<string, unknown>
-			const existingMetadata =
-				(body.metadata as Record<string, unknown> | null | undefined) ?? {}
+			const existingMetadata = (body.metadata as Record<string, unknown> | null | undefined) ?? {}
 			await route.fulfill({
 				response,
 				json: {
@@ -62,9 +61,7 @@ test.describe('Slack trigger auto-pause banner', () => {
 		// The channel name resolves to the raw id here because no
 		// useSlackConversations cache is warm — the copy still renders and
 		// carries the `#`-prefix contract from `slackMemberLeftCopy`.
-		await expect(banner).toContainText(
-			'Auto-paused — Maskin was removed from #',
-		)
+		await expect(banner).toContainText('Auto-paused — Maskin was removed from #')
 		await expect(banner).toContainText('Reinvite the app in Slack, then resume the trigger.')
 		await expect(page.getByTestId('slack-auto-pause-resume')).toBeVisible()
 	})

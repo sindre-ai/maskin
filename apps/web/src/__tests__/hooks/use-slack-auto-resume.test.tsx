@@ -105,10 +105,9 @@ describe('useSlackAutoResume', () => {
 		// Freeze `now` so `time_since_pause_ms` is deterministic. Paused at
 		// 14:00:00Z, resumed at 14:03:00Z → 3 minutes = 180000 ms.
 		const frozenNow = new Date('2026-08-30T14:03:00Z').getTime()
-		const { result } = renderHook(
-			() => useSlackAutoResume(workspaceId, { now: () => frozenNow }),
-			{ wrapper: TestWrapper },
-		)
+		const { result } = renderHook(() => useSlackAutoResume(workspaceId, { now: () => frozenNow }), {
+			wrapper: TestWrapper,
+		})
 
 		await result.current.resume(trigger)
 
@@ -152,10 +151,9 @@ describe('useSlackAutoResume', () => {
 			},
 		})
 
-		const { result } = renderHook(
-			() => useSlackAutoResume(workspaceId, { now: () => 999 }),
-			{ wrapper: TestWrapper },
-		)
+		const { result } = renderHook(() => useSlackAutoResume(workspaceId, { now: () => 999 }), {
+			wrapper: TestWrapper,
+		})
 		await result.current.resume(trigger)
 
 		await waitFor(() => {

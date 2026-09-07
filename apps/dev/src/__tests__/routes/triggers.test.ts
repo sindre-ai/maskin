@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { buildCreateTriggerBody, buildTrigger, buildWorkspaceMember } from '../factories'
-import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
+import { jsonDelete, jsonGet, jsonRequest, readMetadataSql } from '../helpers'
 import { createTestApp } from '../setup'
 
 const { runSlackTriggerSetupMock } = vi.hoisted(() => ({
@@ -247,7 +247,9 @@ describe('Triggers Routes', () => {
 		it('strips metadata.auto_paused on PATCH with clear_auto_paused=true; preserves sibling slack_setup', async () => {
 			const slackSetup = {
 				channel_ids: ['C1'],
-				join_attempts: [{ channel_id: 'C1', status: 'joined', attempted_at: '2026-08-30T12:00:00Z' }],
+				join_attempts: [
+					{ channel_id: 'C1', status: 'joined', attempted_at: '2026-08-30T12:00:00Z' },
+				],
 				last_setup_at: '2026-08-30T12:00:00Z',
 			}
 			const trigger = buildTrigger({
@@ -276,11 +278,14 @@ describe('Triggers Routes', () => {
 			expect(res.status).toBe(200)
 			const setArg = calls.updates[0] as Record<string, unknown>
 			expect(setArg.enabled).toBe(true)
-			expect(setArg.metadata).toEqual({ slack_setup: slackSetup })
-			// `not.toHaveProperty` proves the field was REMOVED — a `metadata`
-			// merge that just left auto_paused untouched would keep the red
-			// banner rendering after resume.
-			expect(setArg.metadata).not.toHaveProperty('auto_paused')
+			// The removal is a single-statement `metadata - 'auto_paused'` rather
+			// than a spread of the row read before the transaction — that read is
+			// already stale by UPDATE time, so spreading it would clobber a
+			// `slack_setup` written concurrently by the setup service. Decode the
+			// expression to assert which key is dropped; that the sibling actually
+			// survives is a Postgres semantic, proven in
+			// `integration/slack-trigger-metadata.test.ts`.
+			expect(readMetadataSql(setArg.metadata)).toEqual({ key: 'auto_paused' })
 		})
 	})
 

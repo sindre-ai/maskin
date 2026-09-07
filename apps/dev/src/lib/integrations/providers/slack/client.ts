@@ -277,15 +277,21 @@ export async function joinSlackChannel(
 		// it into `join_attempts[i].error` for the banner to render.
 		return { ok: false, error: err instanceof Error ? err.message : String(err) }
 	}
-	const json = (await res.json()) as {
-		ok?: boolean
-		error?: string
-		already_in_channel?: boolean
+	// Slack's edge does not always answer with the JSON envelope: a 5xx from a
+	// fronting proxy is HTML, and a rate-limited 429 can carry an empty body.
+	// Parsing outside a guard would throw a SyntaxError straight through this
+	// function's documented no-throw contract and abort the caller's whole
+	// per-channel loop before any outcome is persisted.
+	let json: { ok?: boolean; error?: string; already_in_channel?: boolean }
+	try {
+		json = (await res.json()) as typeof json
+	} catch {
+		return { ok: false, error: res.ok ? 'bad_response' : `http_${res.status}` }
 	}
 	if (json.ok) {
 		return { ok: true, already_in: Boolean(json.already_in_channel) }
 	}
-	return { ok: false, error: json.error ?? 'unknown_error' }
+	return { ok: false, error: json.error ?? (res.ok ? 'unknown_error' : `http_${res.status}`) }
 }
 
 /**

@@ -14,6 +14,7 @@ vi.mock('../../../../lib/analytics/posthog', () => ({
 
 import { handleMemberLeftChannel } from '../../../../lib/integrations/providers/slack/webhooks'
 import { buildIntegration, buildTrigger } from '../../../factories'
+import { readMetadataSql } from '../../../helpers'
 import { createTestContext } from '../../../setup'
 
 const TEAM_ID = 'T123AUTOPAUSE'
@@ -48,9 +49,7 @@ function slackChannelTrigger(overrides?: Record<string, unknown>) {
 		config: {
 			entity_type: 'slack.channel_message',
 			action: 'created',
-			conditions: [
-				{ field: 'event.channel', operator: 'in', value: [CHANNEL_ID, 'C_OTHER'] },
-			],
+			conditions: [{ field: 'event.channel', operator: 'in', value: [CHANNEL_ID, 'C_OTHER'] }],
 		},
 		...overrides,
 	})
@@ -80,11 +79,11 @@ describe('handleMemberLeftChannel', () => {
 	})
 
 	afterEach(() => {
-		delete process.env.SLACK_AUTO_PAUSE_ON_KICK
+		Reflect.deleteProperty(process.env, 'SLACK_AUTO_PAUSE_ON_KICK')
 	})
 
 	it('no-ops when the SLACK_AUTO_PAUSE_ON_KICK kill switch is off', async () => {
-		delete process.env.SLACK_AUTO_PAUSE_ON_KICK
+		Reflect.deleteProperty(process.env, 'SLACK_AUTO_PAUSE_ON_KICK')
 		const { db, mockResults, calls } = createTestContext()
 		// Even with a matching integration + trigger queued, the handler must
 		// short-circuit before any DB read fires — asserted via the empty calls
@@ -148,22 +147,24 @@ describe('handleMemberLeftChannel', () => {
 		// with previous_enabled=true (trigger was enabled before this handler
 		// touched it).
 		expect(calls.updates).toHaveLength(1)
-		const updateSet = calls.updates[0] as {
-			enabled: boolean
-			metadata: {
-				auto_paused: {
-					reason: string
-					channel_id: string
-					paused_at: string
-					previous_enabled: boolean
-				}
-			}
-		}
+		const updateSet = calls.updates[0] as { enabled: boolean; metadata: unknown }
 		expect(updateSet.enabled).toBe(false)
-		expect(updateSet.metadata.auto_paused.reason).toBe('slack_member_left')
-		expect(updateSet.metadata.auto_paused.channel_id).toBe(CHANNEL_ID)
-		expect(updateSet.metadata.auto_paused.previous_enabled).toBe(true)
-		expect(typeof updateSet.metadata.auto_paused.paused_at).toBe('string')
+		// `metadata` is a single-statement jsonb merge, not a plain object — decode
+		// it to assert the key and payload. Whether the merge preserves a sibling
+		// `slack_setup` is a Postgres semantic, proven in
+		// `integration/slack-trigger-metadata.test.ts`.
+		const stamped = readMetadataSql(updateSet.metadata)
+		expect(stamped.key).toBe('auto_paused')
+		const autoPaused = stamped.value as {
+			reason: string
+			channel_id: string
+			paused_at: string
+			previous_enabled: boolean
+		}
+		expect(autoPaused.reason).toBe('slack_member_left')
+		expect(autoPaused.channel_id).toBe(CHANNEL_ID)
+		expect(autoPaused.previous_enabled).toBe(true)
+		expect(typeof autoPaused.paused_at).toBe('string')
 
 		// Two inserts: audit row on events, inbox row on notifications.
 		expect(calls.inserts).toHaveLength(2)
@@ -236,7 +237,9 @@ describe('handleMemberLeftChannel', () => {
 		expect(updateSet.enabled).toBe(false)
 		// previous_enabled reflects the pre-pause state — 'already disabled' means
 		// Task 4's Resume flow shouldn't re-enable the trigger on click.
-		expect(updateSet.metadata.auto_paused.previous_enabled).toBe(false)
+		expect(
+			(readMetadataSql(updateSet.metadata).value as Record<string, unknown>).previous_enabled,
+		).toBe(false)
 	})
 
 	it('short-circuits (no update, no insert) when the trigger is already auto_paused for this channel within the recency window', async () => {

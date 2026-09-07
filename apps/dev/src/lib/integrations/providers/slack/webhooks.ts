@@ -13,6 +13,7 @@ import { capturePosthogEvent } from '../../../analytics/posthog'
 import { decrypt } from '../../../crypto'
 import { frontendBaseUrl } from '../../../file-urls'
 import { logger } from '../../../logger'
+import { setTriggerMetadataKey } from '../../../trigger-metadata'
 import { TokenManager } from '../../oauth/token-manager'
 import type { CustomEventNormalizer } from '../../types'
 import { slackViewsPublish } from './client'
@@ -647,7 +648,9 @@ export async function handleMemberLeftChannel(
 			// time (`already-disabled-still-stamps` per AC), carry the earlier
 			// `previous_enabled` forward.
 			const previousEnabled =
-				typeof existing?.previous_enabled === 'boolean' ? existing.previous_enabled : trigger.enabled
+				typeof existing?.previous_enabled === 'boolean'
+					? existing.previous_enabled
+					: trigger.enabled
 
 			const pausedAt = new Date().toISOString()
 			const autoPaused: AutoPausedMetadata = {
@@ -659,15 +662,17 @@ export async function handleMemberLeftChannel(
 
 			// (d) Single-row txn — cheap, but keeps the enabled flip and the
 			// metadata stamp atomic against a concurrent PATCH from the trigger
-			// form. Merge additively so PR B's `metadata.slack_setup` sibling
-			// (and any future sibling) is preserved.
+			// form. The jsonb merge happens in SQL (see `lib/trigger-metadata.ts`)
+			// rather than as a spread of the `md` read above, so a `slack_setup`
+			// written by `runSlackTriggerSetup` between that read and this write
+			// survives instead of being clobbered.
 			try {
 				await db.transaction(async (tx) => {
 					await tx
 						.update(triggers)
 						.set({
 							enabled: false,
-							metadata: { ...md, auto_paused: autoPaused },
+							metadata: setTriggerMetadataKey('auto_paused', autoPaused),
 						})
 						.where(eq(triggers.id, trigger.id))
 				})

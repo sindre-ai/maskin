@@ -14,7 +14,11 @@ import { maybePromptAccountLink } from './account-link'
 import { extractMentionFields, handleSlackMention, isMentionEntityType } from './mention'
 import { isAllowedSlackHost } from './slack-api'
 import { handleLinkShared } from './unfurl'
-import { handleMemberLeftChannel, publishAppHomeView, type SlackMemberLeftPayload } from './webhooks'
+import {
+	type SlackMemberLeftPayload,
+	handleMemberLeftChannel,
+	publishAppHomeView,
+} from './webhooks'
 
 /**
  * Slack file object shape from Events API message payloads. Slack returns many

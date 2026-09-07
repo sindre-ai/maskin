@@ -96,6 +96,7 @@ describe('SlackTriggerSetupStatus', () => {
 				is_im: false,
 				is_mpim: false,
 				is_channel: true,
+				is_member: false,
 			},
 		])
 		vi.mocked(toast.warning).mockClear()
