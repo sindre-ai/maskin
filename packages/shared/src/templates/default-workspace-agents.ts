@@ -413,6 +413,11 @@ When the Researcher's brief lands as a \`knowledge\` object in \`draft\`, post O
 **Beat 3 — Steady state kicks in.**
 Once the deep briefs land, the Signal Analyst's daily sweep starts clustering the resulting insights into candidate bets in \`signal\`. You surface those via the daily \`Cluster & recommend\` comment on the Workspace improvements loop. The onboarding arc is complete; you're back in steady-state routing mode.
 
+**Beat 6 — Signal Analyst kicks off the first bet (fires: \`Deep-research brief validated → Signal Analyst clustering\`).**
+The seeded \`Deep-research brief validated → Signal Analyst clustering\` trigger is the SECOND action of the extended \`First-pass brief validated → deep research\` trigger (Beat 2). It fires only after deep-research validates — specifically, only once all three deep-research knowledge objects (organization deep dive, competitive landscape, market & category briefs) reach \`status = validated\`, and not concurrently with the deep-research dispatch. Beat 2's action must not dispatch Signal Analyst itself (Magnus 2026-09-06 must-not-drop guardrail: clustering an unvalidated brief clusters an empty knowledge set).
+
+Signal Analyst receives the three validated deep-research knowledge objects (org / competitors / market briefs) as input. Its expected output is exactly ONE candidate bet in \`status = signal\`, with \`informs\` edges pointing back at each of the three deep-research knowledge objects — that edge set is also the idempotency key for this beat (the trigger's actionPrompt exits silently if a signal-stage bet already \`informs\`-links the three briefs). You surface this first candidate bet to the user via Step 6 of the \`continuous-onboarding\` skill (@mention the user on the Bet discovery loop with the promotion decision block); Beat 6 does not surface anything to the user itself.
+
 Silence between beats is fine and expected — the user shouldn't be pinged twice for the same beat, and no beat should be re-fired if it's already been run (each beat's trigger has an idempotency gate).
 
 # Worked examples
@@ -1183,6 +1188,14 @@ If firing:
 		targetActor$id: 'chief_of_staff',
 		enabled: true,
 	},
+	// Extended trigger — Beat 2 (deep-research dispatch) + Beat 6 (Signal Analyst
+	// clustering) are the two actions this trigger enqueues. Action 1 fires here
+	// as Step 2 below (Researcher × 3). Action 2 (Signal Analyst) is chained via
+	// the seeded 'Deep-research brief validated → Signal Analyst clustering'
+	// trigger below — it fires AFTER each of the three deep-research knowledge
+	// objects reaches status = validated, NEVER concurrently with this dispatch.
+	// Rationale: Magnus 2026-09-06 must-not-drop guardrail — clustering an
+	// unvalidated brief clusters an empty knowledge set.
 	{
 		name: 'First-pass brief validated → deep research',
 		type: 'event',
@@ -1207,7 +1220,41 @@ If firing:
    - Organization deep dive — products, positioning, size, recent moves, funding if applicable.
    - Competitive landscape — top 3–5 competitors and how they position vs the user's organization.
    - Market & category — segment size, trends, key dynamics the user's org sits inside.
-3. Do NOT surface anything else to the user beyond the confirmation comment. The briefs land as drafts and the user reviews at their own pace; the Signal Analyst's daily sweep will convert the resulting insights into signal-stage bets.`,
+3. Do NOT surface anything else to the user beyond the confirmation comment. The briefs land as drafts and the user reviews at their own pace.
+4. Beat 6 hand-off (Signal Analyst) is chained separately — do NOT dispatch Signal Analyst from this session. The seeded \`Deep-research brief validated → Signal Analyst clustering\` trigger fires only after deep-research validates — specifically, after each deep-research brief reaches \`status = validated\` — and never concurrently with this dispatch (Magnus 2026-09-06 guardrail: clustering an unvalidated brief clusters an empty knowledge set). Trust the chain.`,
+		targetActor$id: 'chief_of_staff',
+		enabled: true,
+	},
+	// Beat 6 — chained second action of the extended 'First-pass brief validated
+	// → deep research' trigger. Fires AFTER deep-research validates, NEVER
+	// concurrently with the deep-research dispatch (Magnus 2026-09-06 must-not-
+	// drop guardrail). Gate on knowledge status_changed → validated; the
+	// actionPrompt's idempotency check ensures Signal Analyst is dispatched
+	// exactly once per onboarding, only after all three deep-research briefs
+	// (org / competitors / market) are validated.
+	{
+		name: 'Deep-research brief validated → Signal Analyst clustering',
+		type: 'event',
+		config: {
+			action: 'status_changed',
+			entity_type: 'knowledge',
+			filter: {
+				status: 'validated',
+			},
+		},
+		actionPrompt: `A knowledge object just moved to \`validated\`. This is the Beat 6 hand-off: the SECOND action of the extended \`First-pass brief validated → deep research\` trigger, chained via this entry so Signal Analyst fires only after deep-research validates and never concurrently with the deep-research dispatch (Magnus 2026-09-06 must-not-drop guardrail — clustering an unvalidated brief clusters an empty knowledge set).
+
+**Fire only if ALL of these hold:**
+- The just-validated knowledge object is one of the three onboarding deep-research briefs (organization deep dive / competitive landscape / market & category). Read its title + body to classify; if it's some other validated knowledge, exit silently.
+- All three onboarding deep-research briefs are now in \`status = validated\`. Use list_objects(type=knowledge, status=validated) and confirm the org / competitors / market briefs are each present. If any of the three is still \`draft\`, exit silently — Signal Analyst waits until the full set is in.
+- Signal Analyst has NOT already been dispatched for this onboarding. Check list_objects(type=bet, status=signal) — if any candidate bet already has \`informs\` edges pointing at the three deep-research knowledge objects (list_relationships with source_id of a signal-stage bet, type=informs), the hand-off already fired; exit silently. This is the exactly-once idempotency gate for Beat 6.
+
+Otherwise, exit silently. Do NOT surface anything to the user from this trigger unless firing.
+
+If firing:
+1. Find Signal Analyst: list_actors to locate the agent named "Signal Analyst".
+2. Dispatch a Signal Analyst clustering session via run_agent, passing the three validated deep-research knowledge objects (organization / competitors / market briefs) as input. Instruct it to cluster the onboarding insights and stage ONE candidate bet in \`status = signal\` with \`informs\` edges pointing back at each of the three deep-research knowledge objects. Do NOT re-scope Signal Analyst — its clustering behaviour is defined by its own system prompt.
+3. Post ONE short informational comment (attention 2) on the Bet discovery loop noting the Beat 6 hand-off has fired with the three deep-research briefs as context. Do NOT @mention the user here — Chief of Staff surfaces the first candidate bet(s) via Step 6 of the \`continuous-onboarding\` skill once they land in \`signal\`.`,
 		targetActor$id: 'chief_of_staff',
 		enabled: true,
 	},
