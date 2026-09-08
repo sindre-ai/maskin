@@ -2,6 +2,8 @@ import { logger } from '../../../logger'
 import { SlackApiError } from './slack-api'
 
 const SLACK_API_BASE = 'https://slack.com/api'
+/** Slack's repeat-join signal on `conversations.join` — a warning, not an error. */
+const ALREADY_IN_CHANNEL_WARNING = 'already_in_channel'
 const CACHE_TTL_MS = 5 * 60_000
 const MAX_PAGES = 10
 const PAGE_LIMIT = 200
@@ -282,14 +284,26 @@ export async function joinSlackChannel(
 	// Parsing outside a guard would throw a SyntaxError straight through this
 	// function's documented no-throw contract and abort the caller's whole
 	// per-channel loop before any outcome is persisted.
-	let json: { ok?: boolean; error?: string; already_in_channel?: boolean }
+	let json: {
+		ok?: boolean
+		error?: string
+		warning?: string
+		response_metadata?: { warnings?: string[] }
+	}
 	try {
 		json = (await res.json()) as typeof json
 	} catch {
 		return { ok: false, error: res.ok ? 'bad_response' : `http_${res.status}` }
 	}
 	if (json.ok) {
-		return { ok: true, already_in: Boolean(json.already_in_channel) }
+		// A repeat join is NOT signalled by a top-level `already_in_channel`
+		// boolean — Slack reports it as a *warning* alongside the usual ok:true
+		// channel payload, in `warning` and/or `response_metadata.warnings`.
+		// Reading a top-level field here silently yielded already_in:false on
+		// every re-join. Both carriers are checked because Slack populates the
+		// scalar and the array inconsistently across methods.
+		const warnings = [json.warning, ...(json.response_metadata?.warnings ?? [])]
+		return { ok: true, already_in: warnings.includes(ALREADY_IN_CHANNEL_WARNING) }
 	}
 	return { ok: false, error: json.error ?? (res.ok ? 'unknown_error' : `http_${res.status}`) }
 }

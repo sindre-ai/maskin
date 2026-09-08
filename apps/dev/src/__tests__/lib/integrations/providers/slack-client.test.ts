@@ -119,14 +119,42 @@ describe('joinSlackChannel', () => {
 		expect((init.headers as Record<string, string>).Authorization).toBe('Bearer xoxb-test')
 	})
 
-	it('collapses already_in_channel:true to a successful already_in result', async () => {
-		respond({ ok: true, already_in_channel: true })
+	// Slack signals a repeat join as a *warning* riding along with an ordinary
+	// ok:true channel payload — never as a top-level `already_in_channel`
+	// boolean. It populates the scalar `warning` and the
+	// `response_metadata.warnings` array inconsistently, so both are covered.
+	// The service treats `already_in` as idempotent success so a re-run is safe
+	// (spec §2 idempotency).
+	it('reads already_in from the scalar warning field', async () => {
+		respond({ ok: true, channel: { id: 'C0GENERAL01' }, warning: 'already_in_channel' })
 
 		const result = await joinSlackChannel('xoxb-test', 'C0GENERAL01')
 
-		// The service treats `already_in` as idempotent success so a re-run is
-		// safe (spec §2 idempotency).
 		expect(result).toEqual({ ok: true, already_in: true })
+	})
+
+	it('reads already_in from response_metadata.warnings', async () => {
+		respond({
+			ok: true,
+			channel: { id: 'C0GENERAL01' },
+			response_metadata: { warnings: ['already_in_channel'] },
+		})
+
+		const result = await joinSlackChannel('xoxb-test', 'C0GENERAL01')
+
+		expect(result).toEqual({ ok: true, already_in: true })
+	})
+
+	// Regression: the original implementation read a top-level
+	// `already_in_channel` boolean, which Slack does not send. Against the real
+	// API that yielded already_in:false on every re-join, so the persisted status
+	// and the PostHog outcome could never report `already_in`.
+	it('does not treat a top-level already_in_channel field as the signal', async () => {
+		respond({ ok: true, channel: { id: 'C0GENERAL01' }, already_in_channel: true })
+
+		const result = await joinSlackChannel('xoxb-test', 'C0GENERAL01')
+
+		expect(result).toEqual({ ok: true, already_in: false })
 	})
 
 	it('surfaces the is_private error verbatim so the service can classify it', async () => {

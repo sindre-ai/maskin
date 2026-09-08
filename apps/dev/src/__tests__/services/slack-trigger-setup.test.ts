@@ -249,7 +249,7 @@ describe('runSlackTriggerSetup', () => {
 			// The join IS re-attempted: `conversations.join` is idempotent, and a
 			// cached 'joined' would otherwise leave a re-invited bot unjoined after
 			// a kick + Resume, with the trigger showing green.
-			{ ok: true, already_in_channel: true },
+			{ ok: true, channel: { id: 'C1' }, warning: 'already_in_channel' },
 			// No confirmation queued — the claim is lost, so no post is attempted.
 		)
 
