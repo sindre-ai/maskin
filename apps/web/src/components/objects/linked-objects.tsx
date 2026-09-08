@@ -260,6 +260,7 @@ export function AddLinkForm({
 	allObjects,
 	relationshipTypes,
 	existingRelationships,
+	defaultRelationshipType,
 	onCreateRelationship,
 	onClose,
 }: {
@@ -268,10 +269,14 @@ export function AddLinkForm({
 	allObjects: ObjectResponse[]
 	relationshipTypes: string[]
 	existingRelationships: RelationshipResponse[]
+	/** Pre-select this type — the group the CTA row belongs to. */
+	defaultRelationshipType?: string
 	onCreateRelationship: (data: CreateRelationshipInput) => void
 	onClose: () => void
 }) {
-	const [relType, setRelType] = useState(relationshipTypes[0] ?? 'relates_to')
+	const [relType, setRelType] = useState(
+		defaultRelationshipType ?? relationshipTypes[0] ?? 'relates_to',
+	)
 	const [search, setSearch] = useState('')
 
 	const existingIds = new Set(existingRelationships.flatMap((r) => [r.sourceId, r.targetId]))
