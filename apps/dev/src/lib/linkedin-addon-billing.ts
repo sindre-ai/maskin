@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { workspaces } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import type Stripe from 'stripe'
+import { isEnterprise } from './enterprise'
 import {
 	LINKEDIN_IDENTITY_UNIT_PRICE_USD_CENTS,
 	getConnectedLinkedInIdentityCount,
@@ -116,9 +117,19 @@ export async function syncLinkedInAddonQuantity(
 		return { status: 'noop', reason: 'price_not_configured' }
 	}
 
-	const quantity = await getConnectedLinkedInIdentityCount(db, workspaceId)
+	const connectedCount = await getConnectedLinkedInIdentityCount(db, workspaceId)
 	const [row] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 	if (!row) return { status: 'noop', reason: 'workspace_not_found' }
+
+	// Enterprise workspaces get connected identities free. Expressed as a
+	// desired quantity of zero rather than an early return so the rest of this
+	// function does the right thing on its own: a workspace that becomes
+	// enterprise while already carrying a paid item takes the removal branch
+	// below on its next connect/disconnect, and one that is enterprise from the
+	// start never creates an item or asks for a Checkout. Same predicate as the
+	// plan-cap and credit-debit exemptions (see lib/enterprise.ts).
+	const exempt = isEnterprise(row)
+	const quantity = exempt ? 0 : connectedCount
 	const billing = readBilling(row.settings)
 	const stripe = deps?.stripe ?? getStripeClient(env)
 
@@ -147,7 +158,9 @@ export async function syncLinkedInAddonQuantity(
 			return { status: 'synced', quantity }
 		}
 
-		if (quantity === 0) return { status: 'noop', reason: 'nothing_connected' }
+		if (quantity === 0) {
+			return { status: 'noop', reason: exempt ? 'enterprise_exempt' : 'nothing_connected' }
+		}
 
 		// No item yet. Attach one to the plan subscription when there is one.
 		if (billing.stripe_subscription_id) {
@@ -200,6 +213,10 @@ export async function startLinkedInAddonCheckout(
 	const quantity = await getConnectedLinkedInIdentityCount(db, workspaceId)
 	if (quantity === 0) return null
 	const [row] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
+	// Never send an exempt workspace to Checkout. syncLinkedInAddonQuantity
+	// already reports `noop` rather than `checkout_required` for one, so this
+	// is defence in depth for any other caller.
+	if (row && isEnterprise(row)) return null
 	const billing = readBilling(row?.settings)
 	try {
 		const stripe = deps?.stripe ?? getStripeClient(env)
