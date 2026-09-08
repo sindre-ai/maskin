@@ -1,4 +1,5 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { readEventStatusTransition } from '@/components/triggers/trigger-form'
 import { Switch } from '@/components/ui/switch'
 import type { TriggerResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -12,8 +13,9 @@ export function describeTrigger(trigger: Pick<TriggerResponse, 'type' | 'config'
 		const entity = String(config.entity_type ?? 'object')
 		const action = String(config.action ?? 'modified')
 		if (action === 'status_changed') {
-			const from = config.from_status ? String(config.from_status) : 'any'
-			const to = config.to_status ? String(config.to_status) : 'any'
+			const { fromStatus, toStatus } = readEventStatusTransition(config)
+			const from = fromStatus === '__any__' ? 'any' : fromStatus
+			const to = toStatus === '__any__' ? 'any' : toStatus
 			return `When ${entity} changes from ${from} to ${to}`
 		}
 		return `When ${entity} is ${action}`
