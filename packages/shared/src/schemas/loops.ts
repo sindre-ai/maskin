@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { LOOP_STATUSES } from './objects'
+import { LOOP_STATUSES, loopTargetSchema } from './objects'
 
 /**
  * Response schema for `GET /api/loops` — the list-view read shape T3 renders
@@ -59,6 +59,14 @@ export const loopSummarySchema = z.object({
 	 * currently linked to this loop? Reused from the same expression the
 	 * unread-feed uses in `subscriptions.ts`. */
 	waitingOnViewer: z.boolean(),
+	/**
+	 * Loop's targets shape (bet D5). Derived from `metadata.targets` on the
+	 * loop row. `null` when the loop has no targets — the frontend renders no
+	 * `<TargetsAndOwners>` section for a null value. `pace` is never on the
+	 * wire: it derives on render from `actual` / `target` (+ optional
+	 * `pace_policy` per target).
+	 */
+	targets: z.array(loopTargetSchema).nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 })

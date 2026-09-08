@@ -18,9 +18,17 @@
 // Every known flag id. Ids absent from this registry always resolve to false,
 // so a typo in FF_TESTER_FEATURES can't invent a flag. Add an entry here as the
 // first step of introducing a new flag.
-// Currently empty: `new-design` graduated to everyone and was deleted, which
-// is how a flag ships here — see `.claude/rules/feature-flags.md`.
-export const FLAGS = {} as const
+//
+// `loops-v4-polish.targets` gates the D5 delta of the Loops & Loop detail v4
+// UX/UI polish bet (bet/d166-loops-v4-polish): the `<TargetsAndOwners>`
+// section on `/loops/:id`. The bet SPEC calls for an umbrella
+// `loops-v4-polish` + per-delta sub-flags on D5 / D6 / D8; this entry ships
+// D5's sub-flag alone rather than pre-registering IDs the other deltas will
+// own themselves. When D6 / D8 land they add their sub-flags here, and the
+// umbrella lands with the first delta whose read site actually needs it.
+export const FLAGS = {
+	loopsV4PolishTargets: 'loops-v4-polish.targets',
+} as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
 

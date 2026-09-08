@@ -10,6 +10,7 @@ import {
 } from '@/components/loops/loop-proposed-edit'
 import { LoopStats } from '@/components/loops/loop-stats'
 import { LoopUtteranceInput } from '@/components/loops/loop-utterance-input'
+import { TargetsAndOwners } from '@/components/loops/targets-and-owners'
 import { ObjectDetailBody } from '@/components/objects/object-detail-body'
 import { TimelineTab } from '@/components/objects/timeline-tab'
 import { EditableTitle } from '@/components/shared/editable-title'
@@ -25,6 +26,7 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useActors } from '@/hooks/use-actors'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useLoop, useLoopActivity } from '@/hooks/use-loops'
 import { useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
@@ -60,6 +62,10 @@ interface ProposedEdit {
 function LoopDetailRoute() {
 	const { loopId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
+	// Sub-flag for D5 (bet/d166-loops-v4-polish). Off → the Targets & owners
+	// section never renders even when the loop has targets, so a rollback is
+	// a flag flip rather than a code change.
+	const targetsFlag = useFeatureFlag('loops-v4-polish.targets')
 	const {
 		data: loop,
 		isLoading: loopLoading,
@@ -309,6 +315,8 @@ function LoopDetailRoute() {
 						<LoopFirstRunBanner triggers={loopTriggers} />
 					</div>
 				)}
+
+				{targetsFlag && <TargetsAndOwners loop={loop} actors={actors} />}
 
 				<div className="mt-7">
 					<LoopFlow
