@@ -128,6 +128,14 @@ export const loopStepSchema = z.object({
 	 * `escalatesToActorId = null` and disables escalation for the step.
 	 */
 	escalateAfterMs: z.number().int().nonnegative().nullish(),
+	/**
+	 * Loops v4 (D6b). Timestamp of the last escalation comment the reconciler
+	 * posted for this step. Guards against double-posting for the same wait
+	 * spell — the reconciler skips a step whose `lastEscalatedAt` is at or
+	 * after the current wait spell's start. Null on every step until the
+	 * reconciler stamps it.
+	 */
+	lastEscalatedAt: z.string().datetime().nullish(),
 })
 
 export type LoopStep = z.infer<typeof loopStepSchema>

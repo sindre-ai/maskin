@@ -61,4 +61,19 @@ describe('loopStepSchema', () => {
 	it('rejects a non-integer escalateAfterMs', () => {
 		expect(() => loopStepSchema.parse({ ...baseStep, escalateAfterMs: 1.5 })).toThrow()
 	})
+
+	it('parses a step with lastEscalatedAt set (D6b reconciler stamp)', () => {
+		const stamp = '2026-09-08T15:30:00.000Z'
+		const parsed = loopStepSchema.parse({ ...baseStep, lastEscalatedAt: stamp })
+		expect(parsed.lastEscalatedAt).toBe(stamp)
+	})
+
+	it('accepts explicit null on lastEscalatedAt (never-escalated DB row shape)', () => {
+		const parsed = loopStepSchema.parse({ ...baseStep, lastEscalatedAt: null })
+		expect(parsed.lastEscalatedAt).toBeNull()
+	})
+
+	it('rejects a non-ISO lastEscalatedAt', () => {
+		expect(() => loopStepSchema.parse({ ...baseStep, lastEscalatedAt: 'yesterday' })).toThrow()
+	})
 })
