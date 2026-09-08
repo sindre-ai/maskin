@@ -30,6 +30,17 @@ vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
+/** The LinkedIn add-on copy branches on the workspace plan, so the page reads
+ *  billing usage. Default to a non-enterprise plan — the paid "$49/month" copy
+ *  — and let the enterprise tests override it. */
+const mockUseBillingUsage = vi.fn<() => { data: { plan: string } | undefined }>(() => ({
+	data: { plan: 'free' },
+}))
+
+vi.mock('@/hooks/use-billing', () => ({
+	useBillingUsage: () => mockUseBillingUsage(),
+}))
+
 const mockUseLinkableGithub = vi.fn<
 	() => { data: LinkableGithubInstallation[]; isLoading: boolean }
 >(() => ({ data: [], isLoading: false }))
@@ -81,6 +92,7 @@ describe('IntegrationsPage', () => {
 		// value a single test overrides — otherwise ordering leaks state.
 		mockSearch.mockReturnValue({})
 		mockUseGithubPendingSelection.mockReturnValue({ data: undefined, isLoading: false })
+		mockUseBillingUsage.mockReturnValue({ data: { plan: 'free' } })
 	})
 
 	it('shows loading state', () => {
@@ -551,6 +563,44 @@ describe('IntegrationsPage', () => {
 			expect(
 				screen.queryByText(/Slack agents need history access to read channel backlog/),
 			).not.toBeInTheDocument()
+		})
+	})
+
+	describe('linkedin identity add-on pricing copy', () => {
+		const renderLinkedIn = () => {
+			mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+			mockUseProviders.mockReturnValue({
+				data: [
+					{
+						name: 'linkedin-unipile',
+						displayName: 'LinkedIn',
+						authType: 'oauth2',
+						events: [],
+					},
+				],
+				isLoading: false,
+			})
+			render(<IntegrationsPage />)
+		}
+
+		it('states the per-identity price on a non-enterprise plan', () => {
+			mockUseBillingUsage.mockReturnValue({ data: { plan: 'pro' } })
+			renderLinkedIn()
+			expect(screen.getByText(/\$49/)).toBeInTheDocument()
+		})
+
+		it('says the add-on is included instead of priced on an enterprise plan', () => {
+			mockUseBillingUsage.mockReturnValue({ data: { plan: 'enterprise' } })
+			renderLinkedIn()
+			expect(screen.getByText(/Included in your enterprise plan/)).toBeInTheDocument()
+			expect(screen.queryByText(/\$49/)).not.toBeInTheDocument()
+		})
+
+		it('states neither line until the plan is known', () => {
+			mockUseBillingUsage.mockReturnValue({ data: undefined })
+			renderLinkedIn()
+			expect(screen.queryByText(/\$49/)).not.toBeInTheDocument()
+			expect(screen.queryByText(/Included in your enterprise plan/)).not.toBeInTheDocument()
 		})
 	})
 })

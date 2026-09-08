@@ -21,9 +21,9 @@ const env: StripeEnv = {
 }
 
 /** Minimal db stub: one workspace row, and a recorded update. */
-function makeDb(billing: Record<string, unknown>) {
+function makeDb(billing: Record<string, unknown>, workspace: Record<string, unknown> = {}) {
 	const updates: Array<Record<string, unknown>> = []
-	const row = { id: 'ws-1', settings: { billing } }
+	const row = { id: 'ws-1', settings: { billing }, ...workspace }
 	const db = {
 		select: () => ({
 			from: () => ({ where: () => ({ limit: async () => [row] }) }),
@@ -158,5 +158,65 @@ describe('syncLinkedInAddonQuantity', () => {
 
 		expect(res).toEqual({ status: 'noop', reason: 'price_not_configured' })
 		expect(stripe.subscriptionItems.create).not.toHaveBeenCalled()
+	})
+
+	// Enterprise workspaces get connected identities free — the same entitlement
+	// that exempts them from the plan spend cap and from credit debiting.
+	it('never creates an item for an enterprise-granted workspace', async () => {
+		countMock.mockResolvedValue(2)
+		const { db, updates } = makeDb(
+			{ plan: 'pro', stripe_subscription_id: 'sub_plan' },
+			{ enterpriseGranted: true },
+		)
+		const stripe = makeStripe()
+
+		const res = await syncLinkedInAddonQuantity(db, 'ws-1', { stripe: stripe as never, env })
+
+		expect(res).toEqual({ status: 'noop', reason: 'enterprise_exempt' })
+		expect(stripe.subscriptionItems.create).not.toHaveBeenCalled()
+		expect(updates).toHaveLength(0)
+	})
+
+	it('never asks a trial enterprise workspace to run a Checkout', async () => {
+		countMock.mockResolvedValue(1)
+		const { db } = makeDb({ plan: 'trial' }, { enterpriseGranted: true })
+		const stripe = makeStripe()
+
+		const res = await syncLinkedInAddonQuantity(db, 'ws-1', { stripe: stripe as never, env })
+
+		// checkout_required here would send the user into a $49 Stripe Checkout
+		// for something their plan already includes.
+		expect(res).toEqual({ status: 'noop', reason: 'enterprise_exempt' })
+	})
+
+	it('removes an existing item when a billed workspace becomes enterprise', async () => {
+		countMock.mockResolvedValue(3)
+		const { db, updates } = makeDb(
+			{ plan: 'pro', stripe_subscription_id: 'sub_plan', linkedin_addon_item_id: 'si_1' },
+			{ enterpriseGranted: true },
+		)
+		const stripe = makeStripe()
+
+		const res = await syncLinkedInAddonQuantity(db, 'ws-1', { stripe: stripe as never, env })
+
+		// The identities stay connected; only the charge goes away.
+		expect(res).toEqual({ status: 'removed' })
+		expect(stripe.subscriptionItems.del).toHaveBeenCalledWith('si_1', expect.anything())
+		expect(stripe.subscriptionItems.update).not.toHaveBeenCalled()
+		const billing = (updates[0]?.settings as { billing: Record<string, unknown> }).billing
+		expect(billing.linkedin_addon_item_id).toBeNull()
+	})
+
+	it('still bills a workspace that is not enterprise', async () => {
+		countMock.mockResolvedValue(1)
+		const { db } = makeDb(
+			{ plan: 'pro', stripe_subscription_id: 'sub_plan' },
+			{ enterpriseGranted: false, billingOwnerId: 'actor-not-on-the-allowlist' },
+		)
+		const stripe = makeStripe()
+
+		const res = await syncLinkedInAddonQuantity(db, 'ws-1', { stripe: stripe as never, env })
+
+		expect(res).toEqual({ status: 'synced', quantity: 1 })
 	})
 })

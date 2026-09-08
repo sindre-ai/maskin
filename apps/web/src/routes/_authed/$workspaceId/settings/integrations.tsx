@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useBillingUsage } from '@/hooks/use-billing'
 import {
 	useCompleteIntegration,
 	useConnectIntegration,
@@ -221,7 +222,19 @@ function ProviderRow({
 	// as a price before connecting, as a statement of what is being billed
 	// after. Kept in sync with LINKEDIN_IDENTITY_UNIT_PRICE_USD_CENTS in
 	// apps/dev/src/lib/linkedin-addon.ts.
-	const isPaidIdentityAddon = provider.name === 'linkedin-unipile'
+	// Enterprise workspaces get connected identities free, so the price must not
+	// be stated to them. `plan` reads `enterprise` for exactly the workspaces
+	// the backend exempts from the charge — see `isEnterprise()` in
+	// apps/dev/src/lib/enterprise.ts and the exemption in routes/billing.ts.
+	//
+	// Neither line renders until the plan is known: `billingUsage` is undefined
+	// on first render, and defaulting to the paid copy would flash
+	// "$49/month" at an enterprise workspace — the one thing this is here to
+	// avoid — for as long as the query takes.
+	const { data: billingUsage } = useBillingUsage(workspaceId)
+	const isLinkedInIdentityAddon = provider.name === 'linkedin-unipile' && billingUsage !== undefined
+	const isFreeIdentityAddon = isLinkedInIdentityAddon && billingUsage?.plan === 'enterprise'
+	const isPaidIdentityAddon = isLinkedInIdentityAddon && billingUsage?.plan !== 'enterprise'
 
 	const connectedLabel = isConnected
 		? needsReconnect
@@ -250,6 +263,11 @@ function ProviderRow({
 				>
 					{connectedLabel}
 				</p>
+				{isFreeIdentityAddon && (
+					<p className="text-xs text-muted-foreground">
+						Included in your enterprise plan — no per-identity charge.
+					</p>
+				)}
 				{isPaidIdentityAddon && (
 					<p className="text-xs text-muted-foreground">
 						{isConnected
