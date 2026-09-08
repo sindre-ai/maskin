@@ -1413,3 +1413,63 @@ export const DEFAULT_WORKSPACE_LOOPS: SeedLoop[] = [
 		triggerNames: ['Fold new knowledge into the wiki', 'Compile the twice-weekly digest'],
 	},
 ]
+
+/**
+ * Knowledge objects auto-seeded into every new Maskin workspace at bootstrap.
+ *
+ * Symmetric with `DEFAULT_WORKSPACE_AGENTS` / `DEFAULT_WORKSPACE_LOOPS`: each
+ * entry becomes a row in `objects` (type=`knowledge`) the first time the
+ * bootstrap runs against a workspace, and is skipped on every subsequent run.
+ *
+ * Idempotency key is `metadata.seed_slug`, NOT the title — a title-match check
+ * would let a re-bootstrap after a user rename mint a second copy, poisoning
+ * the workspace. The slug is a fixed identifier owned by this template; a
+ * human editing the title in the UI keeps the same slug and therefore the same
+ * row across re-bootstraps.
+ */
+export interface SeedKnowledge {
+	/** Stable identifier stamped into `metadata.seed_slug` — the idempotency key on re-bootstrap. */
+	seedSlug: string
+	title: string
+	/** Markdown body. */
+	body: string
+}
+
+export const ONBOARDING_CHECKLIST_SEED_SLUG = 'onboarding-checklist'
+
+export const DEFAULT_WORKSPACE_KNOWLEDGE: SeedKnowledge[] = [
+	{
+		seedSlug: ONBOARDING_CHECKLIST_SEED_SLUG,
+		title: 'Onboarding checklist — workspace background state & progress',
+		body: `Single source of truth for what needs to be known about the humans, org, product, customers, competitors, market, goals, and sources in this workspace. Each item is a status; every Researcher draft lands as a knowledge object with a \`relates_to\` edge back to this checklist.
+
+## Humans
+- ⬜ Owner — name, role, focus areas
+- ⬜ Co-founders / core team — names, roles
+- ⬜ Team beyond founders — headcount, hires
+
+## Org
+- ⬜ Studio / company profile — product family, traction, stage
+- ⬜ Legal entity & ownership — registration, funding
+
+## Product
+- ⬜ Flagship product + adjacent products, pricing snapshot
+
+## Customers
+- ⬜ Who's using the product — ICP, segments, adoption signals
+
+## Competitors
+- ⬜ Closest competitors & positioning
+
+## Market
+- ⬜ Category & market direction
+
+## Goals & bets
+- ⬜ North star metric — what winning looks like this cycle
+
+## Sources
+- ⬜ Citable source set per topic
+
+Legend: ⬜ Not started · 🟡 Draft awaiting human review · ✅ Confirmed · 🔄 Refresh due (>90 days)`,
+	},
+]
