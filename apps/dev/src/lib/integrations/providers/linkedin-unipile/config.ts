@@ -7,7 +7,7 @@ import type { ProviderConfig } from '../../types'
  * GET /api/integrations/providers (which the Settings > Integrations page
  * reads via `list_integration_providers`). The actual connect + callback
  * routes live in `apps/dev/src/routes/integrations-linkedin-unipile.ts`
- * because the Unipile Hosted Auth Wizard is NOT OAuth2 — see spec §2.
+ * because the LinkedIn Hosted Auth Wizard is NOT OAuth2 — see spec §2.
  *
  * `auth.type = 'oauth2_custom'` is a sentinel here: it keeps the provider
  * out of the generic OAuth2 handler's path (which would try to build an
@@ -19,7 +19,7 @@ export const config: ProviderConfig = {
 	name: 'linkedin-unipile',
 	displayName: 'LinkedIn',
 	description:
-		'Send LinkedIn DMs and read conversations on behalf of the connected member via Unipile.',
+		'Send LinkedIn DMs and read conversations on behalf of the connected member via LinkedIn.',
 
 	auth: {
 		type: 'oauth2_custom',

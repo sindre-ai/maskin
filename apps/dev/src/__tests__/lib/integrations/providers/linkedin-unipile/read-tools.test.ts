@@ -14,7 +14,7 @@ vi.mock('../../../../../lib/crypto', () => ({
 
 import { LinkedInIntegrationError } from '../../../../../lib/integrations/providers/linkedin-unipile/errors'
 import {
-	__setUnipileClientForTests,
+	__setLinkedInClientForTests,
 	getLinkedInProfile,
 	listLinkedInConnections,
 	listLinkedInMessages,
@@ -35,7 +35,7 @@ import { buildPeopleSearchUrl } from '../../../../../lib/integrations/providers/
  * Pinning the real payloads matters more than usual here: three separate bugs
  * in this provider (`data.link`, the `/chats` route, `/users/relations`)
  * shipped green because the mock server agreed with the client while both
- * disagreed with Unipile. A canned response that came from the live API is the
+ * disagreed with LinkedIn. A canned response that came from the live API is the
  * only kind that can catch that.
  */
 
@@ -112,7 +112,7 @@ type Recorded = { name: string; query: Record<string, unknown> }
 
 function stubClient(response: unknown, status = 200) {
 	const calls: Recorded[] = []
-	__setUnipileClientForTests(() => {
+	__setLinkedInClientForTests(() => {
 		const record = (name: string) => async (query: Record<string, unknown>) => {
 			calls.push({ name, query })
 			return { status, body: response, headers: {} }
@@ -139,7 +139,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-	__setUnipileClientForTests(null)
+	__setLinkedInClientForTests(null)
 	vi.restoreAllMocks()
 })
 
@@ -166,7 +166,7 @@ describe('listLinkedInMessages', () => {
 		expect(res.messages[0].from_me).toBe(true)
 	})
 
-	it('rejects a missing thread_id without calling Unipile', async () => {
+	it('rejects a missing thread_id without calling LinkedIn', async () => {
 		const calls = stubClient(LIVE_MESSAGES)
 		await expect(listLinkedInMessages(ctx, {})).rejects.toMatchObject({
 			code: 'INVALID_INPUT',

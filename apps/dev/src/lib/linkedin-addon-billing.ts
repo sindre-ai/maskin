@@ -90,7 +90,7 @@ async function writeBilling(
  * reads the desired quantity from the database every time.
  *
  * Never throws on a Stripe failure: a billing hiccup must not roll back a
- * connect the user already completed in Unipile's wizard, nor block a
+ * connect the user already completed in LinkedIn's wizard, nor block a
  * disconnect. Failures are logged and the next call re-reconciles.
  */
 export async function syncLinkedInAddonQuantity(

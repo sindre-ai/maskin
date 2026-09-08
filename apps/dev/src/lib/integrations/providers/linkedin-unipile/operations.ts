@@ -10,22 +10,22 @@ import { getIntegrationCredential } from '../../lookup'
 import {
 	LinkedInIntegrationError,
 	RETRY_POLICY_BY_CODE,
-	classifyUnipileResponse,
+	classifyLinkedInResponse,
 	computeBackoffMs,
 	delay,
 	isAccountStatusRevoked,
 } from './errors'
 import type {
-	UnipileClient,
-	UnipileConnectionRequestResponse,
-	UnipileConversation,
-	UnipileListConversationsResponse,
-	UnipileSendMessageResponse,
+	LinkedInClient,
+	LinkedInConnectionRequestResponse,
+	LinkedInConversation,
+	LinkedInListConversationsResponse,
+	LinkedInSendMessageResponse,
 } from './unipile-client'
-import { createUnipileHttpClient } from './unipile-client'
+import { createLinkedInHttpClient } from './unipile-client'
 
 /**
- * Provider-side operations for the LinkedIn (Unipile-backed) message verbs.
+ * Provider-side operations for the LinkedIn (LinkedIn-backed) message verbs.
  *
  * These were extracted from `routes/integrations-linkedin-unipile.ts` when
  * LinkedIn gained its own MCP server: the REST routes and the in-process MCP
@@ -53,27 +53,27 @@ type StoredLinkedInCredentials = {
 const IDEMPOTENCY_SCOPE_PREFIX = `${PROVIDER}:`
 
 type ClientOverride = {
-	build: (credentials: StoredLinkedInCredentials) => UnipileClient
+	build: (credentials: StoredLinkedInCredentials) => LinkedInClient
 }
 
 let clientOverride: ClientOverride | null = null
 
 /**
- * Build (or return the injected) Unipile client. Tests inject a client via
- * `__setUnipileClientForTests` so the routes don't have to touch the real
+ * Build (or return the injected) LinkedIn client. Tests inject a client via
+ * `__setLinkedInClientForTests` so the routes don't have to touch the real
  * fetch during unit tests.
  */
-function buildUnipileClient(credentials: StoredLinkedInCredentials): UnipileClient {
+function buildLinkedInClient(credentials: StoredLinkedInCredentials): LinkedInClient {
 	if (clientOverride) return clientOverride.build(credentials)
 	const baseUrl = process.env.UNIPILE_BASE_URL
 	const apiKey = process.env.UNIPILE_API_KEY
 	if (!baseUrl || !apiKey) {
 		throw new LinkedInIntegrationError(
-			'UNIPILE_UNAVAILABLE',
-			'Unipile client is not configured (missing UNIPILE_BASE_URL or UNIPILE_API_KEY)',
+			'LINKEDIN_UNAVAILABLE',
+			'LinkedIn client is not configured (missing UNIPILE_BASE_URL or UNIPILE_API_KEY)',
 		)
 	}
-	return createUnipileHttpClient({ baseUrl, apiKey })
+	return createLinkedInHttpClient({ baseUrl, apiKey })
 }
 
 /**
@@ -82,13 +82,13 @@ function buildUnipileClient(credentials: StoredLinkedInCredentials): UnipileClie
  * every test that touches it. Not exported from the package's public entry
  * points — only route-level tests should reach in.
  */
-export function __setUnipileClientForTests(builder: ClientOverride['build'] | null): void {
+export function __setLinkedInClientForTests(builder: ClientOverride['build'] | null): void {
 	clientOverride = builder === null ? null : { build: builder }
 }
 
 /**
  * Shared preamble: workspace-id header, membership check, credential fetch,
- * Unipile client construction. Every handler runs this before hitting the
+ * LinkedIn client construction. Every handler runs this before hitting the
  * verb-specific logic. Returns a tagged union so handlers can short-circuit
  * on the well-typed error path.
  */
@@ -169,7 +169,7 @@ async function preamble(db: Database, actorId: string, workspaceId: string): Pro
 }
 
 /**
- * Flip a credential to `revoked` after Unipile reports the LinkedIn account is
+ * Flip a credential to `revoked` after LinkedIn reports the LinkedIn account is
  * no longer usable, and record it in the audit log.
  *
  * The status write and its `events` row go in one transaction. A status change
@@ -214,33 +214,33 @@ async function markIntegrationRevoked(
 }
 
 /**
- * Wrap a Unipile call in the retry policy for its error class. Retries only
- * `RATE_LIMITED_UNIPILE` and `UNIPILE_UNAVAILABLE`; everything else is
+ * Wrap a LinkedIn call in the retry policy for its error class. Retries only
+ * `RATE_LIMITED_LINKEDIN` and `LINKEDIN_UNAVAILABLE`; everything else is
  * terminal at the first classification. Backoff is exponential with jitter
  * as configured per class in errors.ts.
  *
  * `mutating` marks a call that sends a LinkedIn message. A 5xx/timeout on a
- * send is NOT safe to replay: Unipile may already have handed the message to
+ * send is NOT safe to replay: LinkedIn may already have handed the message to
  * LinkedIn and failed only on the way back, so a retry inside the single
  * idempotency claim delivers the message twice with the caller seeing one
  * success. 429 stays retryable either way — a rate-limited request is
  * rejected before execution, so replaying it cannot duplicate anything.
  */
-async function callUnipileWithRetry<T>(
+async function callLinkedInWithRetry<T>(
 	call: () => Promise<{ status: number; body: unknown; headers: Record<string, string> }>,
 	opts: { mutating?: boolean } = {},
 ): Promise<{ status: number; body: T; headers: Record<string, string> }> {
 	let lastAttemptError: LinkedInIntegrationError | null = null
 	for (let attempt = 0; ; attempt++) {
 		const result = await call()
-		const code = classifyUnipileResponse(result.status, result.body)
+		const code = classifyLinkedInResponse(result.status, result.body)
 		if (code === null) {
 			return { status: result.status, body: result.body as T, headers: result.headers }
 		}
 		const message = extractUpstreamMessage(result.body, code)
 		lastAttemptError = new LinkedInIntegrationError(code, message, { httpStatus: result.status })
-		const replaySafe = !opts.mutating || code === 'RATE_LIMITED_UNIPILE'
-		// 501 lands in the 5xx band and so classifies as UNIPILE_UNAVAILABLE,
+		const replaySafe = !opts.mutating || code === 'RATE_LIMITED_LINKEDIN'
+		// 501 lands in the 5xx band and so classifies as LINKEDIN_UNAVAILABLE,
 		// but "not implemented" is a permanent statement about the route, not a
 		// transient outage. Retrying it burns three attempts and ~9s of backoff
 		// to arrive at the same answer, and buries the one useful thing in the
@@ -268,7 +268,7 @@ function extractUpstreamMessage(body: unknown, code: string): string {
 		const detail = rec.detail
 		if (typeof detail === 'string' && detail.length > 0) return detail
 	}
-	return `Unipile responded with ${code}`
+	return `LinkedIn responded with ${code}`
 }
 
 /**
@@ -281,7 +281,7 @@ const COMPLETED_STATUS = 200
 
 /**
  * How long a claim row may sit in-flight before another request may take it
- * over. A send is bounded well under this: `callUnipileWithRetry` caps at 3
+ * over. A send is bounded well under this: `callLinkedInWithRetry` caps at 3
  * attempts with a 30s backoff ceiling, so the worst realistic case is ~1
  * minute. A row still claimed after five minutes therefore means the original
  * process died between claiming and recording, and the key would otherwise be
@@ -352,7 +352,7 @@ async function withIdempotency<T extends Record<string, unknown>>(opts: {
 		// released it after a failure. Treat as retryable rather than racing again.
 		if (!winner) {
 			throw new LinkedInIntegrationError(
-				'UNIPILE_UNAVAILABLE',
+				'LINKEDIN_UNAVAILABLE',
 				'Idempotency claim vanished mid-flight. Retry the request.',
 			)
 		}
@@ -378,7 +378,7 @@ async function withIdempotency<T extends Record<string, unknown>>(opts: {
 			// Another request holds a live claim. Refusing here is the entire
 			// point: proceeding would send the message a second time.
 			throw new LinkedInIntegrationError(
-				'UNIPILE_UNAVAILABLE',
+				'LINKEDIN_UNAVAILABLE',
 				'A request with this idempotency key is already in flight. Retry shortly.',
 			)
 		}
@@ -450,14 +450,14 @@ function isPrimaryKeyViolation(err: unknown): boolean {
 }
 
 /**
- * Unipile v2 send responses, per the reference pages:
+ * LinkedIn v2 send responses, per the reference pages:
  *   - start-chat  POST /v2/{account}/chats/send          → { object: 'ChatStarted', chat_id, message_id }
  *   - in-chat     POST /v2/{account}/chats/{id}/messages/send → { object: 'MessageSent', message_id }
  *
  * `message_id` is documented as `string | string[] | null` — an array when
  * attachments go out as separate messages, null when no message was sent.
  */
-function normalizeSendResponse(body: UnipileSendMessageResponse | Record<string, unknown>): {
+function normalizeSendResponse(body: LinkedInSendMessageResponse | Record<string, unknown>): {
 	message_id: string
 	chat_id?: string
 	sent_at: string
@@ -489,7 +489,7 @@ function normalizeSendResponse(body: UnipileSendMessageResponse | Record<string,
  * A single chat in a v2 `GET /v2/{account}/chats` response. Field names are
  * from the v2 reference — v1's `thread_id`/`attendees` are gone: the id is
  * `id`, the timestamp is `last_message_timestamp`, and booleans are `is_*`.
- * Unknown keys pass through so a Unipile addition can't fail the parse.
+ * Unknown keys pass through so a LinkedIn addition can't fail the parse.
  */
 const V2ChatSchema = z
 	.object({
@@ -511,8 +511,8 @@ const V2ChatSchema = z
  * only. Group chats carry `participants_count` but no member list on this
  * endpoint, so they map to an empty array rather than a fabricated one.
  */
-function normalizeListResponse(body: UnipileListConversationsResponse | Record<string, unknown>): {
-	conversations: UnipileConversation[]
+function normalizeListResponse(body: LinkedInListConversationsResponse | Record<string, unknown>): {
+	conversations: LinkedInConversation[]
 	next_cursor?: string
 } {
 	const rec = body as Record<string, unknown>
@@ -533,12 +533,12 @@ function normalizeListResponse(body: UnipileListConversationsResponse | Record<s
 			responseKeys: Object.keys(rec),
 		})
 		throw new LinkedInIntegrationError(
-			'UNIPILE_UNAVAILABLE',
-			'Unipile conversation list had an unrecognised shape',
+			'LINKEDIN_UNAVAILABLE',
+			'LinkedIn conversation list had an unrecognised shape',
 		)
 	}
 
-	const conversations: UnipileConversation[] = []
+	const conversations: LinkedInConversation[] = []
 	let skipped = 0
 	for (const item of arr) {
 		const parsed = V2ChatSchema.safeParse(item)
@@ -591,15 +591,15 @@ function readPage(body: unknown, what: string): { items: unknown[]; nextCursor?:
 			responseKeys: Object.keys(rec),
 		})
 		throw new LinkedInIntegrationError(
-			'UNIPILE_UNAVAILABLE',
-			`Unipile ${what} response had an unrecognised shape`,
+			'LINKEDIN_UNAVAILABLE',
+			`LinkedIn ${what} response had an unrecognised shape`,
 		)
 	}
 	const nextCursor = typeof rec.next_cursor === 'string' ? rec.next_cursor : undefined
 	return { items: rec.data, nextCursor }
 }
 
-/** MCP-facing message shape. Ours, not Unipile's — see `UnipileConversation`. */
+/** MCP-facing message shape. Ours, not LinkedIn's — see `LinkedInConversation`. */
 export type LinkedInMessage = {
 	message_id: string
 	text: string
@@ -815,7 +815,7 @@ export async function sendLinkedInMessage(
 	}
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
 	if (!pre.ok) throw pre.error
-	const client = buildUnipileClient(pre.credentials)
+	const client = buildLinkedInClient(pre.credentials)
 	return withIdempotency({
 		db: ctx.db,
 		actorId: ctx.actorId,
@@ -823,8 +823,8 @@ export async function sendLinkedInMessage(
 		method: 'POST',
 		path: '/api/integrations/linkedin-unipile/send-message',
 		run: async () => {
-			const upstream = await callUnipileWithRetry<
-				UnipileSendMessageResponse | Record<string, unknown>
+			const upstream = await callLinkedInWithRetry<
+				LinkedInSendMessageResponse | Record<string, unknown>
 			>(
 				() =>
 					client.sendMessage({
@@ -849,7 +849,7 @@ export async function replyToLinkedInThread(
 	}
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
 	if (!pre.ok) throw pre.error
-	const client = buildUnipileClient(pre.credentials)
+	const client = buildLinkedInClient(pre.credentials)
 	return withIdempotency({
 		db: ctx.db,
 		actorId: ctx.actorId,
@@ -857,8 +857,8 @@ export async function replyToLinkedInThread(
 		method: 'POST',
 		path: '/api/integrations/linkedin-unipile/reply',
 		run: async () => {
-			const upstream = await callUnipileWithRetry<
-				UnipileSendMessageResponse | Record<string, unknown>
+			const upstream = await callLinkedInWithRetry<
+				LinkedInSendMessageResponse | Record<string, unknown>
 			>(
 				() =>
 					client.reply({
@@ -883,9 +883,9 @@ export async function listLinkedInConversations(
 ): Promise<{ conversations: unknown[]; next_cursor?: string }> {
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
 	if (!pre.ok) throw pre.error
-	const client = buildUnipileClient(pre.credentials)
-	const upstream = await callUnipileWithRetry<
-		UnipileListConversationsResponse | Record<string, unknown>
+	const client = buildLinkedInClient(pre.credentials)
+	const upstream = await callLinkedInWithRetry<
+		LinkedInListConversationsResponse | Record<string, unknown>
 	>(() =>
 		client.listConversations({
 			account_id: pre.credentials.account_id,
@@ -913,8 +913,8 @@ export async function listLinkedInMessages(
 	}
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
 	if (!pre.ok) throw pre.error
-	const client = buildUnipileClient(pre.credentials)
-	const upstream = await callUnipileWithRetry<Record<string, unknown>>(() =>
+	const client = buildLinkedInClient(pre.credentials)
+	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
 		client.listMessages({
 			account_id: pre.credentials.account_id,
 			chat_id: threadId,
@@ -938,8 +938,8 @@ export async function listLinkedInConnections(
 ): Promise<{ people: LinkedInPerson[]; next_cursor?: string }> {
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
 	if (!pre.ok) throw pre.error
-	const client = buildUnipileClient(pre.credentials)
-	const upstream = await callUnipileWithRetry<Record<string, unknown>>(() =>
+	const client = buildLinkedInClient(pre.credentials)
+	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
 		client.listRelations({
 			account_id: pre.credentials.account_id,
 			limit: input.limit,
@@ -980,8 +980,8 @@ export async function searchLinkedInPeople(
 	}
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
 	if (!pre.ok) throw pre.error
-	const client = buildUnipileClient(pre.credentials)
-	const upstream = await callUnipileWithRetry<Record<string, unknown>>(() =>
+	const client = buildLinkedInClient(pre.credentials)
+	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
 		client.searchPeople({
 			account_id: pre.credentials.account_id,
 			keywords: keywords || undefined,
@@ -1000,14 +1000,14 @@ export async function searchLinkedInPeople(
  */
 // ── Content-hash idempotency (Task 7b) ────────────────────────────────────
 //
-// Unipile v2's create-post / comment / reply-to-comment endpoints do NOT
+// LinkedIn v2's create-post / comment / reply-to-comment endpoints do NOT
 // accept an Idempotency-Key header. Instead, the four destructive
 // content/community tools dedup on
 // `content_hash = sha256(canonical-json(request-body))`. Two identical calls
 // collide on the `linkedin_tool_calls` primary key
-// (actor_id, tool, content_hash): the first INSERT wins and hits Unipile;
+// (actor_id, tool, content_hash): the first INSERT wins and hits LinkedIn;
 // the second finds the row via ON CONFLICT DO NOTHING and replays the stored
-// response verbatim, without a second Unipile call.
+// response verbatim, without a second LinkedIn call.
 //
 // Canonical-JSON via `fast-json-stable-stringify`: sorted keys, no
 // whitespace, UTF-8. Semantically-identical bodies whose key order differs
@@ -1047,7 +1047,7 @@ export function computeContentHash(body: unknown): string {
 }
 
 /**
- * Content-hash dedup for the four destructive content/community tools. Unipile
+ * Content-hash dedup for the four destructive content/community tools. LinkedIn
  * v2's create-post / comment / reply endpoints accept no Idempotency-Key
  * header, so the content hash of the canonical request body stands in for one.
  *
@@ -1058,7 +1058,7 @@ export function computeContentHash(body: unknown): string {
  * the response replayed for the next 24h can belong to a different real post.
  * A duplicate post on the customer's feed is user-visible and we cannot
  * retract it. The primary key is what serialises the callers, so the row has
- * to be claimed before the Unipile call, not written after it.
+ * to be claimed before the LinkedIn call, not written after it.
  *
  * Four outcomes on a duplicate:
  *   - winner finished, row inside the 24h TTL → replay its stored response.
@@ -1106,7 +1106,7 @@ async function withContentHashIdempotency<T extends Record<string, unknown>>(opt
 		// released it after a failure. Retryable rather than racing again.
 		if (!prior) {
 			throw new LinkedInIntegrationError(
-				'UNIPILE_UNAVAILABLE',
+				'LINKEDIN_UNAVAILABLE',
 				'Idempotency claim vanished mid-flight. Retry the request.',
 			)
 		}
@@ -1136,7 +1136,7 @@ async function withContentHashIdempotency<T extends Record<string, unknown>>(opt
 			// Another request holds a live claim, or beat us to the takeover.
 			// Refusing is the point: proceeding would publish a second time.
 			throw new LinkedInIntegrationError(
-				'UNIPILE_UNAVAILABLE',
+				'LINKEDIN_UNAVAILABLE',
 				'A request with this content hash is already in flight. Retry shortly.',
 			)
 		}
@@ -1153,9 +1153,9 @@ async function withContentHashIdempotency<T extends Record<string, unknown>>(opt
 		fresh = await opts.run()
 	} catch (err) {
 		// Release the claim so a retry isn't blocked by work that never reached
-		// Unipile. Best-effort: if this fails the row ages out via the TTL.
+		// LinkedIn. Best-effort: if this fails the row ages out via the TTL.
 		// Same trade-off `withIdempotency` makes — a call that threw *after*
-		// Unipile accepted it becomes re-runnable, which we accept because the
+		// LinkedIn accepted it becomes re-runnable, which we accept because the
 		// alternative blocks every honest retry for 24h.
 		try {
 			await opts.db.delete(linkedinToolCalls).where(rowKey)
@@ -1244,7 +1244,7 @@ function validatePublishPostInput(
 	}
 	// LinkedIn's post-body limit is 3000 chars. We do NOT clamp here — the
 	// LINKEDIN_POST_TOO_LONG classifier owns that outcome — but reject the
-	// obvious oversized cases before spending a Unipile round-trip.
+	// obvious oversized cases before spending a LinkedIn round-trip.
 	if (input.text.length > 3000) {
 		return { ok: false, error: 'text exceeds LinkedIn 3000-character limit' }
 	}
@@ -1274,7 +1274,7 @@ function validatePublishPostInput(
 /**
  * Publish a LinkedIn post from the connected personal profile. Dedup'd via the
  * `linkedin_tool_calls` content-hash ledger: two identical requests within the
- * 24h TTL fire Unipile once and return identical responses.
+ * 24h TTL fire LinkedIn once and return identical responses.
  */
 export async function publishLinkedInPost(
 	ctx: LinkedInOperationContext,
@@ -1286,9 +1286,9 @@ export async function publishLinkedInPost(
 	}
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
 	if (!pre.ok) throw pre.error
-	const client = buildUnipileClient(pre.credentials)
-	// Hash the tool-facing request, not the Unipile wire body — an equivalent
-	// request should collide even if Unipile renames a field later. `account_id`
+	const client = buildLinkedInClient(pre.credentials)
+	// Hash the tool-facing request, not the LinkedIn wire body — an equivalent
+	// request should collide even if LinkedIn renames a field later. `account_id`
 	// is deliberately excluded because it identifies the caller's LinkedIn
 	// credential, not the request semantics.
 	const requestBody = { tool: 'linkedin_publish_post', ...validation.payload }
@@ -1298,7 +1298,7 @@ export async function publishLinkedInPost(
 		tool: 'linkedin_publish_post',
 		requestBody,
 		run: async () => {
-			const upstream = await callUnipileWithRetry<Record<string, unknown>>(
+			const upstream = await callLinkedInWithRetry<Record<string, unknown>>(
 				() =>
 					client.publishPost({
 						account_id: pre.credentials.account_id,
@@ -1315,7 +1315,7 @@ export async function publishLinkedInPost(
 
 /**
  * Thin wrapper over `publishLinkedInPost` that requires `post_as` (the page
- * URN). No separate Unipile credential — the same personal LinkedIn account
+ * URN). No separate LinkedIn credential — the same personal LinkedIn account
  * publishes as a page it admins, so this is a policy-level distinction in the
  * MCP surface, not a wholesale credential change (see the parent-bet spec's
  * business-page notes).
@@ -1330,7 +1330,7 @@ export async function publishLinkedInBusinessPagePost(
 	}
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
 	if (!pre.ok) throw pre.error
-	const client = buildUnipileClient(pre.credentials)
+	const client = buildLinkedInClient(pre.credentials)
 	const requestBody = { tool: 'linkedin_publish_business_page_post', ...validation.payload }
 	return withContentHashIdempotency({
 		db: ctx.db,
@@ -1338,7 +1338,7 @@ export async function publishLinkedInBusinessPagePost(
 		tool: 'linkedin_publish_business_page_post',
 		requestBody,
 		run: async () => {
-			const upstream = await callUnipileWithRetry<Record<string, unknown>>(
+			const upstream = await callLinkedInWithRetry<Record<string, unknown>>(
 				() =>
 					client.publishPost({
 						account_id: pre.credentials.account_id,
@@ -1396,7 +1396,7 @@ export async function commentOnLinkedInPost(
 	}
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
 	if (!pre.ok) throw pre.error
-	const client = buildUnipileClient(pre.credentials)
+	const client = buildLinkedInClient(pre.credentials)
 	const requestBody = { tool: 'linkedin_comment_on_post', post_id: postId, text }
 	return withContentHashIdempotency({
 		db: ctx.db,
@@ -1404,7 +1404,7 @@ export async function commentOnLinkedInPost(
 		tool: 'linkedin_comment_on_post',
 		requestBody,
 		run: async () => {
-			const upstream = await callUnipileWithRetry<Record<string, unknown>>(
+			const upstream = await callLinkedInWithRetry<Record<string, unknown>>(
 				() =>
 					client.commentOnPost({
 						account_id: pre.credentials.account_id,
@@ -1436,7 +1436,7 @@ export async function replyToLinkedInComment(
 	}
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
 	if (!pre.ok) throw pre.error
-	const client = buildUnipileClient(pre.credentials)
+	const client = buildLinkedInClient(pre.credentials)
 	const requestBody = { tool: 'linkedin_reply_to_comment', comment_id: commentId, text }
 	return withContentHashIdempotency({
 		db: ctx.db,
@@ -1444,7 +1444,7 @@ export async function replyToLinkedInComment(
 		tool: 'linkedin_reply_to_comment',
 		requestBody,
 		run: async () => {
-			const upstream = await callUnipileWithRetry<Record<string, unknown>>(
+			const upstream = await callLinkedInWithRetry<Record<string, unknown>>(
 				() =>
 					client.replyToComment({
 						account_id: pre.credentials.account_id,
@@ -1524,8 +1524,8 @@ export async function readLinkedInPostComments(
 	if (!postId) throw new LinkedInIntegrationError('INVALID_INPUT', 'post_id is required')
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
 	if (!pre.ok) throw pre.error
-	const client = buildUnipileClient(pre.credentials)
-	const upstream = await callUnipileWithRetry<Record<string, unknown>>(() =>
+	const client = buildLinkedInClient(pre.credentials)
+	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
 		client.readPostComments({
 			account_id: pre.credentials.account_id,
 			post_id: postId,
@@ -1601,7 +1601,7 @@ type ReactionsCollection = {
  * throws.
  */
 async function collectReactions(
-	client: UnipileClient,
+	client: LinkedInClient,
 	accountId: string,
 	postId: string,
 	sampleCap = 50,
@@ -1613,7 +1613,7 @@ async function collectReactions(
 	for (let page = 0; page < pageCap; page++) {
 		let body: Record<string, unknown>
 		try {
-			const upstream = await callUnipileWithRetry<Record<string, unknown>>(() =>
+			const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
 				client.listReactions({ account_id: accountId, post_id: postId, cursor, limit: 50 }),
 			)
 			body = (upstream.body ?? {}) as Record<string, unknown>
@@ -1633,8 +1633,8 @@ async function collectReactions(
 				total,
 				sample,
 				error: {
-					code: 'UNIPILE_UNAVAILABLE',
-					message: 'Unipile reactions response had an unrecognised shape',
+					code: 'LINKEDIN_UNAVAILABLE',
+					message: 'LinkedIn reactions response had an unrecognised shape',
 				},
 			}
 		}
@@ -1674,11 +1674,11 @@ async function collectReactions(
 
 function reactionsErrorMarker(err: unknown): { code: string; message: string } {
 	if (err instanceof LinkedInIntegrationError) return { code: err.code, message: err.message }
-	return { code: 'UNIPILE_UNAVAILABLE', message: 'Unexpected error collecting reactions' }
+	return { code: 'LINKEDIN_UNAVAILABLE', message: 'Unexpected error collecting reactions' }
 }
 
 async function safeCollectReactions(
-	client: UnipileClient,
+	client: LinkedInClient,
 	accountId: string,
 	postId: string,
 ): Promise<{
@@ -1696,12 +1696,12 @@ async function safeCollectReactions(
 }
 
 async function safeCountComments(
-	client: UnipileClient,
+	client: LinkedInClient,
 	accountId: string,
 	postId: string,
 ): Promise<{ value: { total: number }; error: { code: string; message: string } | null }> {
 	try {
-		const upstream = await callUnipileWithRetry<Record<string, unknown>>(() =>
+		const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
 			client.countComments({ account_id: accountId, post_id: postId }),
 		)
 		const body = (upstream.body ?? {}) as Record<string, unknown>
@@ -1721,7 +1721,7 @@ async function safeCountComments(
 		}
 		return {
 			value: { total: 0 },
-			error: { code: 'UNIPILE_UNAVAILABLE', message: 'Unexpected error counting comments' },
+			error: { code: 'LINKEDIN_UNAVAILABLE', message: 'Unexpected error counting comments' },
 		}
 	}
 }
@@ -1736,7 +1736,7 @@ async function safeCountComments(
  * envelope would be worse than an honest failure. Read-only, so no
  * content-hash dedup — see the read-tools rule in the parent-bet spec §5.
  *
- * Impressions are NOT in the envelope. Unipile v2 does not expose them for
+ * Impressions are NOT in the envelope. LinkedIn v2 does not expose them for
  * third-party posts. If Sebk's open A reverses, follow-on task.
  */
 export async function getLinkedInPostEngagement(
@@ -1747,11 +1747,11 @@ export async function getLinkedInPostEngagement(
 	if (!postId) throw new LinkedInIntegrationError('INVALID_INPUT', 'post_id is required')
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
 	if (!pre.ok) throw pre.error
-	const client = buildUnipileClient(pre.credentials)
+	const client = buildLinkedInClient(pre.credentials)
 	const acc = pre.credentials.account_id
 	// retrievePost first — if the base post read fails, there's nothing to
 	// return but an empty envelope, so treat that as terminal.
-	const postResp = await callUnipileWithRetry<Record<string, unknown>>(() =>
+	const postResp = await callLinkedInWithRetry<Record<string, unknown>>(() =>
 		client.retrievePost({ account_id: acc, post_id: postId }),
 	)
 	const summary = summarisePost(postResp.body)
@@ -1784,15 +1784,15 @@ export async function getLinkedInProfile(
 	}
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
 	if (!pre.ok) throw pre.error
-	const client = buildUnipileClient(pre.credentials)
-	const upstream = await callUnipileWithRetry<Record<string, unknown>>(() =>
+	const client = buildLinkedInClient(pre.credentials)
+	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
 		client.getProfile({ account_id: pre.credentials.account_id, identifier }),
 	)
 	const person = toPerson(upstream.body)
 	if (!person) {
 		throw new LinkedInIntegrationError(
-			'UNIPILE_UNAVAILABLE',
-			'Unipile profile response had an unrecognised shape',
+			'LINKEDIN_UNAVAILABLE',
+			'LinkedIn profile response had an unrecognised shape',
 		)
 	}
 	return person
@@ -1802,14 +1802,14 @@ export async function getLinkedInProfile(
  * Send a LinkedIn connection-request (invitation) from the connected account
  * to a target member.
  *
- * NOT idempotency-tracked (spec residual on Task 7a). LinkedIn/Unipile give
+ * NOT idempotency-tracked (spec residual on Task 7a). LinkedIn/LinkedIn give
  * the wire-level guarantee via `LINKEDIN_ALREADY_CONNECTED` — a duplicate
  * invite is rejected with that error class on the second call — so an
  * `idempotency_records` claim would only duplicate a check LinkedIn already
  * enforces server-side.
  *
  * `mutating: true` on the retry policy still holds: a 5xx that arrives
- * between LinkedIn accepting the invite and Unipile answering us must NOT be
+ * between LinkedIn accepting the invite and LinkedIn answering us must NOT be
  * transparently replayed. A replay would either (a) burn a second invite
  * quota against the same target with no user-visible effect, or (b) return
  * `LINKEDIN_ALREADY_CONNECTED` and confuse the caller into thinking the
@@ -1833,9 +1833,9 @@ export async function sendLinkedInConnectionRequest(
 	const message = rawMessage.trim().length > 0 ? rawMessage : undefined
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
 	if (!pre.ok) throw pre.error
-	const client = buildUnipileClient(pre.credentials)
-	const upstream = await callUnipileWithRetry<
-		UnipileConnectionRequestResponse | Record<string, unknown>
+	const client = buildLinkedInClient(pre.credentials)
+	const upstream = await callLinkedInWithRetry<
+		LinkedInConnectionRequestResponse | Record<string, unknown>
 	>(
 		() =>
 			client.sendConnectionRequest({
@@ -1849,7 +1849,7 @@ export async function sendLinkedInConnectionRequest(
 }
 
 function normalizeConnectionRequestResponse(
-	body: UnipileConnectionRequestResponse | Record<string, unknown>,
+	body: LinkedInConnectionRequestResponse | Record<string, unknown>,
 ): { status: 'sent'; sent_at: string; invitation_id?: string } {
 	const rec = (body ?? {}) as Record<string, unknown>
 	const inner =

@@ -7,7 +7,7 @@ import { logger } from '../lib/logger'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 
 /**
- * Streamable-HTTP MCP endpoint for the LinkedIn (Unipile-backed) provider,
+ * Streamable-HTTP MCP endpoint for the LinkedIn (LinkedIn-backed) provider,
  * mounted at `/api/integrations/linkedin-unipile/mcp`. Sibling of
  * `integrations-slack-mcp.ts`, and deliberately built the same way.
  *

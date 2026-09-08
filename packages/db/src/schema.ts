@@ -1019,11 +1019,11 @@ export const idempotencyRecords = pgTable(
 )
 
 // ── LinkedIn Tool Calls (content-hash idempotency) ──────────────────────────
-// Dedup ledger for the LinkedIn (Unipile-backed) content/community tools whose
+// Dedup ledger for the LinkedIn (LinkedIn-backed) content/community tools whose
 // v2 endpoints — unlike the messaging surface — do NOT accept an
 // Idempotency-Key header. Two identical tool-call requests (same actor, same
 // tool, same canonical-JSON request body → same sha256 content hash) collide
-// on the primary key: the first request claims the row and hits Unipile; the
+// on the primary key: the first request claims the row and hits LinkedIn; the
 // second loses the insert race and either replays the winner's stored response
 // or, if the winner is still in flight, refuses. Replay-on-hit guards a specific
 // failure mode: a caller that retries after a network blip would otherwise
@@ -1043,7 +1043,7 @@ export const idempotencyRecords = pgTable(
 // caller received.
 //
 // `status` is what makes the primary key *serialise* callers rather than just
-// deduplicate their bookkeeping: the row is inserted BEFORE the Unipile call
+// deduplicate their bookkeeping: the row is inserted BEFORE the LinkedIn call
 // (status 0, in flight) and flipped to 200 with the response afterwards. The
 // natural ordering — read, call, write — is check-then-act, and for these
 // tools losing that race means a duplicate public post. Same discipline as

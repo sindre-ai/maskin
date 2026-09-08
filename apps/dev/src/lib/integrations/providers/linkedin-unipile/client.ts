@@ -1,8 +1,8 @@
 import { z } from 'zod'
-import { UnipileUnavailableError } from './errors'
+import { LinkedInUnavailableError } from './errors'
 
 /**
- * Thin HTTP client for Unipile's Hosted Auth v2 surface. The v1 flow used
+ * Thin HTTP client for LinkedIn's Hosted Auth v2 surface. The v1 flow used
  * POST /api/v1/hosted/accounts/link + a POST callback with HMAC-SHA256 body
  * signing; v2 replaces both with POST /v2/auth/link and a GET redirect
  * callback whose only auth is the unguessable `state` round-trip binding.
@@ -13,12 +13,12 @@ import { UnipileUnavailableError } from './errors'
  * UNIPILE_API_KEY at request time.
  */
 
-export interface UnipileClientConfig {
+export interface LinkedInClientConfig {
 	baseUrl: string
 	apiKey: string
 }
 
-function resolveConfig(overrides?: Partial<UnipileClientConfig>): UnipileClientConfig {
+function resolveConfig(overrides?: Partial<LinkedInClientConfig>): LinkedInClientConfig {
 	const baseUrl = (overrides?.baseUrl ?? process.env.UNIPILE_BASE_URL ?? '').replace(/\/$/, '')
 	const apiKey = overrides?.apiKey ?? process.env.UNIPILE_API_KEY ?? ''
 	if (!baseUrl) throw new Error('UNIPILE_BASE_URL is required')
@@ -70,12 +70,12 @@ export const CreateAuthLinkResponseSchema = z.object({
 	 * again the suite passes while every real connect fails, because the mock
 	 * is the only thing the tests check the schema against.
 	 */
-	link: z.string().url().describe('URL to redirect the user to for the Unipile-hosted wizard.'),
+	link: z.string().url().describe('URL to redirect the user to for the LinkedIn-hosted wizard.'),
 })
 export type CreateAuthLinkResponse = z.infer<typeof CreateAuthLinkResponseSchema>
 
 /**
- * Create a Unipile v2 hosted-auth link. v1's `POST /api/v1/hosted/accounts/link`
+ * Create a LinkedIn v2 hosted-auth link. v1's `POST /api/v1/hosted/accounts/link`
  * with `{ api_url, notify_url, name }` is replaced by
  * `POST /v2/auth/link` with `{ providers, expires_on, redirect_uri, state }`
  * and the response returns the wizard URL as top-level `link` (v1 called the
@@ -83,7 +83,7 @@ export type CreateAuthLinkResponse = z.infer<typeof CreateAuthLinkResponseSchema
  */
 export async function createAuthLink(
 	req: CreateAuthLinkRequest,
-	overrides?: Partial<UnipileClientConfig>,
+	overrides?: Partial<LinkedInClientConfig>,
 ): Promise<CreateAuthLinkResponse> {
 	const { baseUrl, apiKey } = resolveConfig(overrides)
 	let res: Response
@@ -103,19 +103,19 @@ export async function createAuthLink(
 			}),
 		})
 	} catch (err) {
-		throw new UnipileUnavailableError(err)
+		throw new LinkedInUnavailableError(err)
 	}
 	if (!res.ok) {
 		const text = await res.text().catch(() => '')
-		throw new UnipileUnavailableError(
-			new Error(`Unipile create auth link failed: HTTP ${res.status} ${text}`),
+		throw new LinkedInUnavailableError(
+			new Error(`LinkedIn create auth link failed: HTTP ${res.status} ${text}`),
 		)
 	}
 	const payload = await res.json()
 	const parsed = CreateAuthLinkResponseSchema.safeParse(payload)
 	if (!parsed.success) {
-		// Name the keys we actually got. A shape drift and a real Unipile
-		// outage both surface as UnipileUnavailableError, so without this the
+		// Name the keys we actually got. A shape drift and a real LinkedIn
+		// outage both surface as LinkedInUnavailableError, so without this the
 		// log says "temporarily unavailable" for a 200 response and the next
 		// drift costs the same debugging round this one did. Keys only — the
 		// body carries the wizard token.
@@ -123,8 +123,8 @@ export async function createAuthLink(
 			payload && typeof payload === 'object'
 				? Object.keys(payload as object).join(', ')
 				: typeof payload
-		throw new UnipileUnavailableError(
-			new Error(`Unipile auth-link response failed schema validation (top-level keys: ${keys})`),
+		throw new LinkedInUnavailableError(
+			new Error(`LinkedIn auth-link response failed schema validation (top-level keys: ${keys})`),
 		)
 	}
 	return parsed.data

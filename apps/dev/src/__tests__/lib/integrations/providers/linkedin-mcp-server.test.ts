@@ -185,7 +185,7 @@ describe('createLinkedInMcpServer', () => {
 			comments: { total: 0 },
 			partial_errors: {
 				reactions: null,
-				comments: { code: 'UNIPILE_UNAVAILABLE', message: 'timeout' },
+				comments: { code: 'LINKEDIN_UNAVAILABLE', message: 'timeout' },
 			},
 			is_partial: true,
 		})
@@ -195,7 +195,7 @@ describe('createLinkedInMcpServer', () => {
 			is_partial: true,
 			comments: { total: 0 },
 			partial_errors: expect.objectContaining({
-				comments: { code: 'UNIPILE_UNAVAILABLE', message: 'timeout' },
+				comments: { code: 'LINKEDIN_UNAVAILABLE', message: 'timeout' },
 			}),
 		})
 	})
@@ -231,7 +231,7 @@ describe('createLinkedInMcpServer', () => {
 	it.each([
 		['CREDENTIAL_NOT_CONNECTED', 'Reconnect at Settings > Integrations.'],
 		['LINKEDIN_ACCOUNT_RESTRICTED', 'LinkedIn has restricted this account.'],
-		['RATE_LIMITED_UNIPILE', 'Try again in ~1 minute.'],
+		['RATE_LIMITED_LINKEDIN', 'Try again in ~1 minute.'],
 	] as const)('surfaces %s as a tool error carrying the wire code', async (code, message) => {
 		sendMock.mockRejectedValue(new LinkedInIntegrationError(code, message))
 		const res = await callTool('linkedin_send_message', {
@@ -243,7 +243,7 @@ describe('createLinkedInMcpServer', () => {
 		expect(res.content[0].text).toBe(`${code}: ${message}`)
 	})
 
-	it('maps an unexpected non-taxonomy throw to UNIPILE_UNAVAILABLE rather than leaking it', async () => {
+	it('maps an unexpected non-taxonomy throw to LINKEDIN_UNAVAILABLE rather than leaking it', async () => {
 		replyMock.mockRejectedValue(new Error('socket hang up'))
 		const res = await callTool('linkedin_reply', {
 			thread_id: 't1',
@@ -251,7 +251,7 @@ describe('createLinkedInMcpServer', () => {
 			idempotency_key: 'k2',
 		})
 		expect(res.isError).toBe(true)
-		expect(res.content[0].text).toContain('UNIPILE_UNAVAILABLE')
+		expect(res.content[0].text).toContain('LINKEDIN_UNAVAILABLE')
 		expect(res.content[0].text).not.toContain('socket hang up')
 	})
 

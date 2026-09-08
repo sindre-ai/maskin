@@ -32,7 +32,7 @@ export type ReadErrorKind =
 
 /**
  * Backend `error.code` values that must never be retried. These come from the
- * LinkedIn/Unipile taxonomy in
+ * LinkedIn/LinkedIn taxonomy in
  * `apps/dev/src/lib/integrations/providers/linkedin-unipile/errors.ts`, whose
  * HTTP statuses (424 CREDENTIAL_NOT_CONNECTED, 423 LINKEDIN_ACCOUNT_RESTRICTED)
  * match no branch of the status-based classification below and would otherwise

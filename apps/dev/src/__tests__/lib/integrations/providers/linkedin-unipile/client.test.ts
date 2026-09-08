@@ -1,23 +1,23 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
-	type UnipileMockServer,
-	startUnipileMock,
+	type LinkedInMockServer,
+	startLinkedInMock,
 } from '../../../../../lib/integrations/providers/linkedin-unipile/__mocks__/unipile-server'
 import {
 	CreateAuthLinkResponseSchema,
 	createAuthLink,
 } from '../../../../../lib/integrations/providers/linkedin-unipile/client'
-import { UnipileUnavailableError } from '../../../../../lib/integrations/providers/linkedin-unipile/errors'
-import { createUnipileHttpClient } from '../../../../../lib/integrations/providers/linkedin-unipile/unipile-client'
+import { LinkedInUnavailableError } from '../../../../../lib/integrations/providers/linkedin-unipile/errors'
+import { createLinkedInHttpClient } from '../../../../../lib/integrations/providers/linkedin-unipile/unipile-client'
 
 const ORIGINAL_ENV: Record<string, string | undefined> = {}
 const ENV_KEYS = ['UNIPILE_BASE_URL', 'UNIPILE_API_KEY'] as const
 
-let mock: UnipileMockServer
+let mock: LinkedInMockServer
 
 beforeAll(async () => {
 	for (const key of ENV_KEYS) ORIGINAL_ENV[key] = process.env[key]
-	mock = await startUnipileMock()
+	mock = await startLinkedInMock()
 })
 
 afterAll(async () => {
@@ -57,7 +57,7 @@ describe('createAuthLink', () => {
 		expect(body.state).toBe('integration-abc')
 	})
 
-	it('wraps a network failure as UnipileUnavailableError', async () => {
+	it('wraps a network failure as LinkedInUnavailableError', async () => {
 		process.env.UNIPILE_BASE_URL = 'http://127.0.0.1:1' // guaranteed unreachable
 		await expect(
 			createAuthLink({
@@ -66,11 +66,11 @@ describe('createAuthLink', () => {
 				redirect_uri: 'http://localhost/cb',
 				state: 'x',
 			}),
-		).rejects.toBeInstanceOf(UnipileUnavailableError)
+		).rejects.toBeInstanceOf(LinkedInUnavailableError)
 	})
 
 	// The mock is the only payload the tests above exercise, so a schema that
-	// agrees with the mock and disagrees with Unipile passes everything while
+	// agrees with the mock and disagrees with LinkedIn passes everything while
 	// every real connect 500s. Pin the schema to a payload captured verbatim
 	// from api.unipile.com so the two cannot drift together.
 	it('accepts the literal v2 response shape returned by api.unipile.com', () => {
@@ -91,7 +91,7 @@ describe('createAuthLink', () => {
 
 	it('rejects a response missing the top-level link', async () => {
 		// Point at a server that returns 404 (mock's default) to exercise the
-		// !res.ok path — the client wraps it in UnipileUnavailableError.
+		// !res.ok path — the client wraps it in LinkedInUnavailableError.
 		process.env.UNIPILE_BASE_URL = `${mock.baseUrl}/nonexistent`
 		await expect(
 			createAuthLink({
@@ -100,7 +100,7 @@ describe('createAuthLink', () => {
 				redirect_uri: 'http://localhost/cb',
 				state: 'y',
 			}),
-		).rejects.toBeInstanceOf(UnipileUnavailableError)
+		).rejects.toBeInstanceOf(LinkedInUnavailableError)
 	})
 })
 
@@ -115,7 +115,7 @@ describe('createAuthLink', () => {
  */
 describe('read-surface routes', () => {
 	function client() {
-		return createUnipileHttpClient({ baseUrl: mock.baseUrl, apiKey: 'test-api-key' })
+		return createLinkedInHttpClient({ baseUrl: mock.baseUrl, apiKey: 'test-api-key' })
 	}
 	const account_id = 'acc_1'
 
