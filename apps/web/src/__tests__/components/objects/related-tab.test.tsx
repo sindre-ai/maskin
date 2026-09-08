@@ -82,25 +82,30 @@ describe('RelatedTab', () => {
 		expect(screen.getByRole('link', { name: 'Alpha' })).toBeInTheDocument()
 	})
 
-	it('renders the empty state with an add-link CTA when no relationships exist', () => {
+	it('renders every configured group with its dashed CTA row when no relationships exist', () => {
+		// D11: an empty group is actionable, not just labelled. With no rows, the
+		// tab still iterates over every configured relationship type and hangs the
+		// two dashed CTAs off each one — so a fresh object exposes a Link / Upload
+		// affordance per group, per type, on first read.
 		const owner = buildObjectResponse({ id: 'obj-1', type: 'bet' })
 		mockGraph([], [])
 
 		render(<RelatedTab object={owner} />, { wrapper: createWorkspaceWrapper() })
 
-		expect(screen.getByText(/No related objects yet/i)).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /Link an object/i })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /Upload a file/i })).toBeInTheDocument()
+		const linkCtas = screen.getAllByRole('button', { name: /Link an object as /i })
+		const uploadCtas = screen.getAllByRole('button', { name: /Upload a file as /i })
+		expect(linkCtas.length).toBeGreaterThan(0)
+		expect(linkCtas.length).toBe(uploadCtas.length)
 	})
 
-	it('CTA in the empty state reveals the add-link form', async () => {
+	it("a group's Link CTA reveals the add-link form pre-scoped to that group's type", async () => {
 		const user = userEvent.setup()
 		const owner = buildObjectResponse({ id: 'obj-1', type: 'bet' })
 		mockGraph([], [])
 
 		render(<RelatedTab object={owner} />, { wrapper: createWorkspaceWrapper() })
 
-		await user.click(screen.getByRole('button', { name: /Link an object/i }))
+		await user.click(screen.getAllByRole('button', { name: /Link an object as /i })[0])
 
 		expect(screen.getByPlaceholderText(/Search objects/i)).toBeInTheDocument()
 	})
