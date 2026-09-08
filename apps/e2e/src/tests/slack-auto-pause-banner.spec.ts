@@ -25,31 +25,36 @@ test.describe('Slack trigger auto-pause banner', () => {
 			},
 		})
 
-		// Intercept the trigger detail GET and inject the auto_paused stamp the
-		// backend handler would have written. Handler behaviour itself is unit-
-		// tested in slack-member-left.test.ts; this test proves the UI surface
-		// reads the stamp and flips the banner shape end-to-end through the
-		// router + form.
-		await page.route(`**/api/triggers/${trigger.id}`, async (route) => {
+		// `useTrigger` reads from the LIST endpoint (`GET /api/triggers`) and
+		// finds the row client-side — the detail route is never requested by this
+		// page — so the stamp has to be injected into the list response. Intercept
+		// it and add the `auto_paused` metadata the backend handler would have
+		// written. Handler behaviour itself is unit-tested in
+		// slack-member-left.test.ts; this test proves the UI surface reads the
+		// stamp and flips the banner shape end-to-end through the router + form.
+		await page.route('**/api/triggers', async (route) => {
 			if (route.request().method() !== 'GET') return route.fallback()
 			const response = await route.fetch()
-			const body = (await response.json()) as Record<string, unknown>
-			const existingMetadata = (body.metadata as Record<string, unknown> | null | undefined) ?? {}
+			const rows = (await response.json()) as Array<Record<string, unknown>>
 			await route.fulfill({
 				response,
-				json: {
-					...body,
-					enabled: false,
-					metadata: {
-						...existingMetadata,
-						auto_paused: {
-							reason: 'slack_member_left',
-							channel_id: KICKED_CHANNEL_ID,
-							paused_at: '2026-08-30T14:00:00Z',
-							previous_enabled: true,
-						},
-					},
-				},
+				json: rows.map((row) =>
+					row.id === trigger.id
+						? {
+								...row,
+								enabled: false,
+								metadata: {
+									...((row.metadata as Record<string, unknown> | null | undefined) ?? {}),
+									auto_paused: {
+										reason: 'slack_member_left',
+										channel_id: KICKED_CHANNEL_ID,
+										paused_at: '2026-08-30T14:00:00Z',
+										previous_enabled: true,
+									},
+								},
+							}
+						: row,
+				),
 			})
 		})
 
