@@ -348,6 +348,62 @@ describe('TriggerForm', () => {
 		expect(screen.getByDisplayValue('Original name edited locally')).toBeInTheDocument()
 	})
 
+	// Agents create triggers via MCP, which writes the destination status filter
+	// as `config.filter.status` — NOT `config.to_status`. Before the fix the
+	// summary + trigger row read only the form's `from_status`/`to_status`
+	// fields, so every agent-authored status_changed trigger rendered as
+	// "changes from any status to any status".
+	it('displays filter.status (MCP shape) as the "to" status in the summary', () => {
+		const workspaceWithStatuses = buildWorkspaceWithRole({
+			settings: { statuses: { insight: ['new', 'in_progress', 'done'] } },
+		})
+		const trigger = buildTriggerResponse({
+			type: 'event',
+			config: {
+				entity_type: 'insight',
+				action: 'status_changed',
+				filter: { status: 'in_progress' },
+			},
+			targetActorId: 'agent-2',
+		})
+
+		render(
+			<TriggerForm
+				{...defaultProps}
+				workspace={workspaceWithStatuses}
+				initialValues={trigger}
+				isCreated
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		// Summary text is the "What happens" plain-language read-back; also
+		// verify the target agent (agent-2 = Analyst) is picked, not agents[0].
+		expect(
+			screen.getByText(/changes from any status to in_progress.*"Analyst".*prompted/),
+		).toBeInTheDocument()
+	})
+
+	// A rendered snapshot cannot lock in the initialValues-arrives-late race
+	// on its own, so simulate it with a rerender: first mount with no
+	// initialValues (fresh, cache-miss), then rerender with the trigger loaded.
+	it('re-adopts targetActorId when initialValues arrives after the form mounted', () => {
+		const { rerender } = render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
+
+		// Zero state: no server row → useState fell back to agents[0] = Scout.
+		expect(screen.getByRole('combobox', { name: 'Agent' })).toHaveTextContent('Scout')
+
+		rerender(
+			<TriggerForm
+				{...defaultProps}
+				initialValues={buildTriggerResponse({ targetActorId: 'agent-2' })}
+				isCreated
+			/>,
+		)
+
+		expect(screen.getByRole('combobox', { name: 'Agent' })).toHaveTextContent('Analyst')
+	})
+
 	it('shows error message when error prop set', () => {
 		render(<TriggerForm {...defaultProps} error={new Error('Something broke')} />, {
 			wrapper: TestWrapper,

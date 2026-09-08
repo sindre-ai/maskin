@@ -198,6 +198,27 @@ const TRIGGER_TYPE_INFO: Record<
 	},
 }
 
+// MCP-created triggers write status filters as `config.filter.status` (string
+// or array), while form-created triggers write `config.from_status` /
+// `config.to_status`. Both shapes are valid per the shared schema — read either
+// so agent-authored triggers render correctly.
+export function readEventStatusTransition(config: Record<string, unknown> | null | undefined): {
+	fromStatus: string
+	toStatus: string
+} {
+	const fromStatus = typeof config?.from_status === 'string' ? config.from_status : '__any__'
+	if (typeof config?.to_status === 'string') return { fromStatus, toStatus: config.to_status }
+	const filter = config?.filter
+	if (filter && typeof filter === 'object') {
+		const s = (filter as Record<string, unknown>).status
+		if (typeof s === 'string') return { fromStatus, toStatus: s }
+		if (Array.isArray(s) && s.every((v): v is string => typeof v === 'string') && s.length > 0) {
+			return { fromStatus, toStatus: s.join(' or ') }
+		}
+	}
+	return { fromStatus, toStatus: '__any__' }
+}
+
 function buildTriggerSummary({
 	type,
 	name,
@@ -381,16 +402,14 @@ export function TriggerForm({
 		initialValues?.targetActorId ?? agents[0]?.id ?? '',
 	)
 	const [enabled, setEnabled] = useState(initialValues?.enabled ?? true)
-	const [fromStatus, setFromStatus] = useState(
-		initialValues?.type === 'event' && initConfig.from_status
-			? String(initConfig.from_status)
-			: '__any__',
-	)
-	const [toStatus, setToStatus] = useState(
-		initialValues?.type === 'event' && initConfig.to_status
-			? String(initConfig.to_status)
-			: '__any__',
-	)
+	// Read both `from_status`/`to_status` (form-written) and `filter.status`
+	// (MCP-written) so agent-created triggers don't render as "any → any".
+	const initTransition =
+		initialValues?.type === 'event'
+			? readEventStatusTransition(initConfig)
+			: { fromStatus: '__any__', toStatus: '__any__' }
+	const [fromStatus, setFromStatus] = useState(initTransition.fromStatus)
+	const [toStatus, setToStatus] = useState(initTransition.toStatus)
 	const initialEntityType =
 		initialValues?.type === 'event' && initConfig.entity_type
 			? String(initConfig.entity_type)
@@ -609,6 +628,21 @@ export function TriggerForm({
 	useEffect(() => {
 		if (initialEnabled !== undefined) setEnabled(initialEnabled)
 	}, [initialEnabled])
+
+	// When the trigger record arrives after the form has already mounted (e.g.
+	// deep-linked into a not-yet-cached trigger), useState's one-shot initializer
+	// leaves the agent select stuck on `agents[0]` — which reads as "Workspace
+	// Driver" (or whatever the alphabetical first agent is), not the trigger's
+	// actual target. Same adopted-value guard as `name` above so the user's own
+	// edits aren't clobbered by their own autosave round-trip.
+	const savedTargetActorId = initialValues?.targetActorId
+	const adoptedTargetActorIdRef = useRef(savedTargetActorId)
+	useEffect(() => {
+		if (savedTargetActorId === undefined || savedTargetActorId === adoptedTargetActorIdRef.current)
+			return
+		adoptedTargetActorIdRef.current = savedTargetActorId
+		setTargetActorId(savedTargetActorId)
+	}, [savedTargetActorId])
 
 	// Two rename paths coexist by decision: this field's debounced autosave, and
 	// the language bar below (which hands the utterance to an agent that may
