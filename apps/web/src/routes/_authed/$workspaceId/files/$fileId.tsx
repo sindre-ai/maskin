@@ -1,24 +1,24 @@
-import { FileBody } from '@/components/files/file-body'
 import { PinFileButton } from '@/components/files/pin-file-button'
+import { ViewerStage } from '@/components/files/viewer-stage'
 import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
-import { Skeleton } from '@/components/shared/loading-skeleton'
-import { RelativeTime } from '@/components/shared/relative-time'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
-import { useActors } from '@/hooks/use-actors'
+import { Spinner } from '@/components/ui/spinner'
 import { useFile } from '@/hooks/use-files'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
-import type { AnnotationJson } from '@/lib/annotations'
-import { buildRevisePrompt } from '@/lib/annotations'
-import { ApiError, type FileDetail, api } from '@/lib/api'
+import { ApiError, type FileDetail } from '@/lib/api'
 import { base64ToBytes } from '@/lib/file-utils'
 import { isPinned, togglePinnedFile } from '@/lib/pinned-files'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
-import { Download } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
-import { toast } from 'sonner'
+import { Download, MessageSquare, MoreHorizontal } from 'lucide-react'
+import { useCallback, useMemo } from 'react'
+
+export const Route = createFileRoute('/_authed/$workspaceId/files/$fileId')({
+	component: FileViewerPage,
+	errorComponent: ({ error }) => <RouteError error={error} />,
+})
 
 function downloadFile(file: FileDetail): void {
 	const blob =
@@ -35,23 +35,10 @@ function downloadFile(file: FileDetail): void {
 	URL.revokeObjectURL(url)
 }
 
-export const Route = createFileRoute('/_authed/$workspaceId/files/$fileId')({
-	component: FileViewerPage,
-	errorComponent: ({ error }) => <RouteError error={error} />,
-})
-
-function formatSize(bytes: number): string {
-	if (bytes < 1024) return `${bytes} B`
-	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
 function FileViewerPage() {
 	const { fileId } = Route.useParams()
 	const { workspace, workspaceId } = useWorkspace()
 	const { data: file, isLoading, error } = useFile(workspaceId, fileId)
-	const { data: actors } = useActors(workspaceId)
-	const [isRevising, setIsRevising] = useState(false)
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 	const pinned = useMemo(() => isPinned(workspace, fileId), [workspace, fileId])
 
@@ -62,37 +49,27 @@ function FileViewerPage() {
 		[updateWorkspace, workspace],
 	)
 
-	const designAgent = actors?.find(
-		(a) => a.type === 'agent' && a.name.toLowerCase().includes('design'),
-	)
-
-	const handleReviseWithAnnotations = useCallback(
-		async (annotationJson: AnnotationJson) => {
-			if (!file || !designAgent) return
-			setIsRevising(true)
-			try {
-				await api.sessions.create(workspaceId, {
-					actor_id: designAgent.id,
-					action_prompt: buildRevisePrompt(file, annotationJson),
-					auto_start: true,
-				})
-				toast.success('Design Agent session started')
-			} catch {
-				toast.error('Failed to start Design Agent session')
-			} finally {
-				setIsRevising(false)
-			}
-		},
-		[file, designAgent, workspaceId],
-	)
-
 	if (isLoading) {
 		return (
-			<div className="max-w-3xl mx-auto space-y-4">
-				<Skeleton className="h-8 w-64" />
-				<Skeleton className="h-4 w-full max-w-96" />
-				<Skeleton className="h-32 w-full" />
-			</div>
+			<>
+				<PageHeader
+					scrollLocked
+					crumb={{
+						parentLabel: 'Files',
+						parentTo: '/$workspaceId/files',
+						parentParams: { workspaceId },
+						label: 'Loading…',
+					}}
+				/>
+				<ViewerShell>
+					<div
+						className="flex h-full w-full items-center justify-center bg-muted"
+						data-viewer-state="loading"
+					>
+						<Spinner />
+					</div>
+				</ViewerShell>
+			</>
 		)
 	}
 
@@ -100,49 +77,106 @@ function FileViewerPage() {
 		const is404 = error instanceof ApiError && error.status === 404
 		return (
 			<>
-				<PageHeader />
-				<EmptyState
-					title={is404 ? 'File not found' : 'Failed to load file'}
-					description={
-						is404
-							? 'This file may have been deleted, or you might not have access to it.'
-							: error?.message
-					}
+				<PageHeader
+					scrollLocked
+					crumb={{
+						parentLabel: 'Files',
+						parentTo: '/$workspaceId/files',
+						parentParams: { workspaceId },
+						label: is404 ? 'Not found' : 'Failed to load',
+					}}
 				/>
+				<ViewerShell>
+					<div
+						className="flex h-full w-full items-center justify-center bg-muted p-8"
+						data-viewer-state={is404 ? 'file-404' : 'load-error'}
+					>
+						<EmptyState
+							title={is404 ? 'File not found' : 'Failed to load file'}
+							description={
+								is404
+									? 'This file may have been deleted, or you might not have access to it.'
+									: error?.message
+							}
+						/>
+					</div>
+				</ViewerShell>
 			</>
 		)
 	}
 
 	return (
 		<>
-			<PageHeader />
-			<div className="max-w-3xl mx-auto space-y-6">
-				<header className="space-y-2">
-					<h1 className="text-2xl font-semibold text-foreground break-words">{file.name}</h1>
-					{file.description && <p className="text-sm text-muted-foreground">{file.description}</p>}
-					<div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-						<span className="font-mono break-all">{file.mimeType}</span>
-						<span aria-hidden="true">·</span>
-						<span>{formatSize(file.sizeBytes)}</span>
-						<span aria-hidden="true">·</span>
-						<RelativeTime date={file.createdAt} />
-					</div>
-				</header>
-
-				<div className="flex items-center justify-end gap-2">
-					<PinFileButton file={file} isPinned={pinned} onToggle={handleTogglePin} />
-					<Button variant="outline" size="sm" onClick={() => downloadFile(file)}>
-						<Download size={14} />
-						Download
-					</Button>
-				</div>
-
-				<FileBody
-					file={file}
-					onReviseWithAnnotations={designAgent ? handleReviseWithAnnotations : undefined}
-					isRevising={isRevising}
-				/>
-			</div>
+			<PageHeader
+				scrollLocked
+				crumb={{
+					parentLabel: 'Files',
+					parentTo: '/$workspaceId/files',
+					parentParams: { workspaceId },
+					label: file.name,
+				}}
+				actions={<TopBarActions file={file} isPinned={pinned} onTogglePin={handleTogglePin} />}
+			/>
+			<ViewerShell>
+				<ViewerStage file={file} />
+			</ViewerShell>
 		</>
+	)
+}
+
+// The route's outer container: strips the legacy `max-w-3xl mx-auto` column and
+// gives the stage the full width of the shell. The layout's `[data-scroll-root]`
+// is already `overflow-hidden` because PageHeader publishes `scrollLocked`, so
+// this region is the viewer's only live scroll parent.
+function ViewerShell({ children }: { children: React.ReactNode }) {
+	return (
+		<div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">{children}</div>
+	)
+}
+
+// Right-side cluster on the shared detail bar: pin, download, then the Review
+// toggle and ⋯ menu placeholders. Contents of the ⋯ menu (Pin-to-sidebar /
+// Copy link / View source / Delete) and the Review panel itself land in
+// Slice 3 — Slice 1 owns the slots so the layout math is real, not deferred.
+function TopBarActions({
+	file,
+	isPinned: pinnedFlag,
+	onTogglePin,
+}: {
+	file: FileDetail
+	isPinned: boolean
+	onTogglePin: (id: string) => void
+}) {
+	return (
+		<div className="flex items-center gap-1">
+			<PinFileButton file={file} isPinned={pinnedFlag} onToggle={onTogglePin} />
+			<Button
+				variant="ghost"
+				size="sm"
+				onClick={() => downloadFile(file)}
+				aria-label="Download file"
+			>
+				<Download size={14} />
+			</Button>
+			<Button
+				variant="ghost"
+				size="sm"
+				disabled
+				aria-label="Review panel — wired in Slice 3"
+				title="Review — coming in Slice 3"
+			>
+				<MessageSquare size={14} />
+				Review
+			</Button>
+			<Button
+				variant="ghost"
+				size="sm"
+				disabled
+				aria-label="More actions — wired in Slice 3"
+				title="More — coming in Slice 3"
+			>
+				<MoreHorizontal size={14} />
+			</Button>
+		</div>
 	)
 }

@@ -170,3 +170,26 @@ export function prepareMiniAppHtml(html: string): string {
 	const scrubbed = stripMetaRefresh(stripAgentCsp(html))
 	return injectIntoHtml(scrubbed, CSP_META + DATA_SLOT_BOOTSTRAP)
 }
+
+// postMessage type the viewer stage listens for to learn the natural document
+// dimensions of the sandboxed iframe. Payload is the frame's
+// `documentElement.scrollWidth/scrollHeight` at load + on resize.
+export const VIEWER_DOC_SIZE_MESSAGE = 'maskin:viewer:doc-size'
+
+// One-line reporter script injected into the same platform footer as the CSP
+// and data-slot bootstrap, so `prepareViewerHtml` still passes through a
+// single `injectIntoHtml` call. Runs inside the sandboxed frame (null origin,
+// no allow-same-origin) and posts to `window.parent` with `targetOrigin: '*'`
+// because the frame has no origin of its own. The stage validates the source
+// against its own iframe reference before trusting the payload.
+const VIEWER_DOC_SIZE_REPORTER = `<script>(function(){function s(){try{var d=document.documentElement;parent.postMessage({type:'${VIEWER_DOC_SIZE_MESSAGE}',w:d.scrollWidth,h:d.scrollHeight},'*')}catch(e){}}if(document.readyState==='complete')s();else window.addEventListener('load',s);window.addEventListener('resize',s)})();</script>`
+
+// Viewer-shell variant of `prepareMiniAppHtml`: same CSP + data-slot
+// bootstrap, plus the doc-size reporter so the stage can compute fit-to-
+// screen against the frame's natural document dimensions. One injectIntoHtml
+// call keeps the byte-preserving placement invariant intact — see the header
+// comment on `injectIntoHtml` above.
+export function prepareViewerHtml(html: string): string {
+	const scrubbed = stripMetaRefresh(stripAgentCsp(html))
+	return injectIntoHtml(scrubbed, CSP_META + DATA_SLOT_BOOTSTRAP + VIEWER_DOC_SIZE_REPORTER)
+}
