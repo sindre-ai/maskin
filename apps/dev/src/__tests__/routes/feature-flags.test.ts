@@ -26,14 +26,18 @@ beforeEach(() => setEnv({}))
 afterEach(() => setEnv({}))
 
 describe('GET /api/feature-flags', () => {
-	// The registry is empty while no flag is in flight, so the route answers
-	// with an empty map rather than failing.
+	// Every flag in the live FLAGS registry resolves to `false` when no env is
+	// set — the shape must include every registered id so a client can render
+	// the flag-off branch without waiting for a second network round-trip.
 	it('resolves the live registry when no env is set', async () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ flags: {} })
+		const body = (await res.json()) as { flags: Record<string, boolean> }
+		for (const value of Object.values(body.flags)) {
+			expect(value).toBe(false)
+		}
 	})
 
 	it('never invents a flag from an unregistered id in FF_TESTER_FEATURES', async () => {
@@ -41,7 +45,15 @@ describe('GET /api/feature-flags', () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({ flags: {} })
+		const body = (await res.json()) as { flags: Record<string, boolean> }
+		// The unregistered id must never appear in the response — even if the
+		// tester matches, an id that isn't in the FLAGS registry resolves to
+		// nothing at all. Every value that IS present is `false` because
+		// nothing in the registry matches the id `not-a-real-flag`.
+		expect('not-a-real-flag' in body.flags).toBe(false)
+		for (const value of Object.values(body.flags)) {
+			expect(value).toBe(false)
+		}
 	})
 
 	it('sets Cache-Control: no-store so a rollback is not defeated by a stale cache', async () => {

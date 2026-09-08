@@ -25,7 +25,8 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useActors } from '@/hooks/use-actors'
-import { useLoop, useLoopActivity } from '@/hooks/use-loops'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
+import { useLoop, useLoopActivity, useLoopSteps } from '@/hooks/use-loops'
 import { useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
 import { useTriggers } from '@/hooks/use-triggers'
@@ -81,6 +82,12 @@ function LoopDetailRoute() {
 		{ enabled: childIds.length > 0 },
 	)
 	const { data: activityEvents } = useLoopActivity(loopId, workspaceId)
+	// Loops v4 (D6c). Sub-flag gates the vertical-story renderer on this
+	// route; flag off keeps the shipped `status-columns` LoopFlow variant
+	// unchanged, and the extra /steps fetch never fires. One boundary at the
+	// route level per the feature-flag rule (`.claude/rules/feature-flags.md`).
+	const stepFlowEnabled = useFeatureFlag('loops-v4-polish.step_flow')
+	const { data: loopSteps } = useLoopSteps(loopId, workspaceId, { enabled: stepFlowEnabled })
 	const updateObject = useUpdateObject(workspaceId)
 
 	const composerRef = useRef<HTMLDivElement>(null)
@@ -317,6 +324,8 @@ function LoopDetailRoute() {
 						actors={actors}
 						childObjects={children ?? []}
 						loop={loop}
+						variant={stepFlowEnabled ? 'vertical-story' : 'status-columns'}
+						steps={loopSteps}
 					/>
 				</div>
 

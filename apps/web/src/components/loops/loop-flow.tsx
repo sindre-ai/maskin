@@ -1,6 +1,13 @@
+import { LoopFlowVerticalStory } from '@/components/loops/loop-flow-vertical-story'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { TypeBadge } from '@/components/shared/type-badge'
-import type { ActorListItem, LoopSummary, ObjectResponse, TriggerResponse } from '@/lib/api'
+import type {
+	ActorListItem,
+	LoopStep,
+	LoopSummary,
+	ObjectResponse,
+	TriggerResponse,
+} from '@/lib/api'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { getStatusColor } from '@/lib/constants'
@@ -9,6 +16,16 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { useQueries } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
+
+/**
+ * `LoopFlow` render mode. Default `status-columns` is the shipped kanban-like
+ * pipeline used by marketplace / admin surfaces. `vertical-story` is the
+ * Loops v4 spine used by the loop-detail route once the
+ * `loops-v4-polish.step_flow` sub-flag is on — see `LoopFlowVerticalStory`
+ * for the six-step-kind render (TRIGGER · FIRES → PICKS UP → HANDS OFF →
+ * PUBLISHES → DONE WHEN → ESCALATES TO).
+ */
+export type LoopFlowVariant = 'status-columns' | 'vertical-story'
 
 // Relationship lookups are one request per object shown in the pipeline
 // board (no bulk-by-many-ids endpoint exists yet) — capped so a very active
@@ -177,7 +194,38 @@ function CycleCard({
 	)
 }
 
-export function LoopFlow({
+export function LoopFlow(props: {
+	workspaceId: string
+	triggers: TriggerResponse[]
+	actors: ActorListItem[] | undefined
+	childObjects: ObjectResponse[]
+	loop?: LoopSummary
+	/** Render mode. `status-columns` (default) is the shipped kanban; the
+	 * `/loops/:id` route flips to `vertical-story` behind the
+	 * `loops-v4-polish.step_flow` flag. Marketplace / admin surfaces never
+	 * pass this prop and stay on the default. */
+	variant?: LoopFlowVariant
+	/** Vertical-story steps (required when `variant='vertical-story'`).
+	 * Ignored by the default variant. Passed from the detail route's
+	 * `useLoopSteps` hook. */
+	steps?: LoopStep[]
+}) {
+	// The vertical-story variant reads a wholly separate data shape (steps,
+	// not triggers + status columns), so dispatch to a peer component before
+	// the status-columns aggregation runs. `loop` is required for the empty
+	// spine / DONE WHEN row and the PostHog `loopId` — a null loop under this
+	// variant means the caller is still loading, so render nothing until it
+	// lands rather than a half-populated spine. Kept as a top-level dispatch
+	// (not conditional hooks) so React's rules-of-hooks stay satisfied under
+	// either variant.
+	if (props.variant === 'vertical-story') {
+		if (!props.loop) return null
+		return <LoopFlowVerticalStory loop={props.loop} steps={props.steps ?? []} />
+	}
+	return <LoopFlowStatusColumns {...props} />
+}
+
+function LoopFlowStatusColumns({
 	workspaceId,
 	triggers,
 	actors,

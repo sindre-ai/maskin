@@ -1,7 +1,19 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, readState, relationships, sessions, triggers } from '@maskin/db/schema'
-import { TERMINAL_BET_STATUSES, listLoopsResponseSchema } from '@maskin/shared'
+import {
+	events,
+	actors,
+	objects,
+	readState,
+	relationships,
+	sessions,
+	triggers,
+} from '@maskin/db/schema'
+import {
+	TERMINAL_BET_STATUSES,
+	listLoopStepsResponseSchema,
+	listLoopsResponseSchema,
+} from '@maskin/shared'
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -504,5 +516,166 @@ app.openapi(loopActivityRoute, (async (c) => {
 		events: serializeArray(rows) as z.infer<typeof eventResponseSchema>[],
 	})
 }) as RouteHandler<typeof loopActivityRoute, Env>)
+
+/**
+ * `GET /api/loops/:id/steps` — the loop-detail vertical-story renderer's data
+ * feed (Loops v4 / D6c). Returns one `LoopStep` per trigger id in
+ * `metadata.trigger_ids`, preserved in that order (a spine, not a set). Each
+ * step carries the three Loops v4 fields the renderer keys off
+ * (`handsOffToActorId`, `escalatesToActorId`, `escalateAfterMs`) plus resolved
+ * actor names for the hands-off / escalation targets so the frontend doesn't
+ * need a second lookup, and a per-viewer `waitingOnViewer` + `pendingCount`
+ * derived from sessions currently in `waiting_for_input` for that trigger.
+ *
+ * Returns `{ steps: [] }` — not 404 — for a loop with no triggers or an
+ * unknown id, mirroring `/api/loops` and `/api/loops/:id/activity` so a
+ * foreign / deleted id doesn't leak existence.
+ *
+ * This is a read-only endpoint. Step CRUD lives on the composer path
+ * (POST/PATCH /api/triggers, POST/DELETE /api/relationships) — D6 is a READ
+ * rewrite (see SPEC rabbit hole).
+ */
+const loopStepsRoute = createRoute({
+	method: 'get',
+	path: '/{id}/steps',
+	tags: ['loops'],
+	summary: 'Vertical-story step spine for one loop',
+	description:
+		"Returns the loop's ordered step spine — one row per trigger id in `metadata.trigger_ids`, with hands-off / escalates fields and per-viewer waiting-on-viewer counts pre-resolved so the vertical-story renderer can spread it as-is. Empty array for a loop with no triggers or an unknown id.",
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid() }),
+	},
+	responses: {
+		200: {
+			description: 'Ordered LoopStep spine (may be empty)',
+			content: { 'application/json': { schema: listLoopStepsResponseSchema } },
+		},
+		400: {
+			description: 'Missing workspace ID or malformed loop id',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(loopStepsRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id: loopId } = c.req.valid('param')
+
+	const [loop] = await db
+		.select({ metadata: objects.metadata })
+		.from(objects)
+		.where(
+			and(eq(objects.id, loopId), eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')),
+		)
+		.limit(1)
+
+	if (!loop) {
+		return c.json({ steps: [] })
+	}
+
+	const meta = (loop.metadata as Record<string, unknown> | null) ?? {}
+	const raw = meta.trigger_ids
+	const orderedTriggerIds = Array.isArray(raw)
+		? raw.filter((v): v is string => typeof v === 'string' && UUID_RE.test(v))
+		: []
+
+	if (orderedTriggerIds.length === 0) {
+		return c.json({ steps: [] })
+	}
+
+	// Load every trigger referenced by the loop. Foreign / deleted ids drop
+	// out silently, same tolerance as `/api/loops`.
+	const triggerRows = await db
+		.select({
+			id: triggers.id,
+			name: triggers.name,
+			type: triggers.type,
+			actionPrompt: triggers.actionPrompt,
+			config: triggers.config,
+			targetActorId: triggers.targetActorId,
+			handsOffToActorId: triggers.handsOffToActorId,
+			escalatesToActorId: triggers.escalatesToActorId,
+			escalateAfterMs: triggers.escalateAfterMs,
+		})
+		.from(triggers)
+		.where(and(eq(triggers.workspaceId, workspaceId), inArray(triggers.id, orderedTriggerIds)))
+
+	const triggerById = new Map(triggerRows.map((t) => [t.id, t]))
+
+	// One batched actor lookup for the three per-step actor refs (target /
+	// hands-off / escalates). Missing ids just resolve to null on the step.
+	const actorIds = new Set<string>()
+	for (const t of triggerRows) {
+		if (t.targetActorId) actorIds.add(t.targetActorId)
+		if (t.handsOffToActorId) actorIds.add(t.handsOffToActorId)
+		if (t.escalatesToActorId) actorIds.add(t.escalatesToActorId)
+	}
+	const actorRows =
+		actorIds.size > 0
+			? await db
+					.select({ id: actors.id, name: actors.name, description: actors.description })
+					.from(actors)
+					.where(inArray(actors.id, Array.from(actorIds)))
+			: []
+	const actorById = new Map(actorRows.map((a) => [a.id, a]))
+
+	// Per-step waitingOnViewer + pendingCount derived from sessions currently
+	// in `waiting_for_input` for the trigger. Same shape T1's shared predicate
+	// will formalise (`packages/shared/src/loops/waiting-on-viewer.ts`) — kept
+	// inlined here for D6c so this task doesn't wait on T1 landing; the two
+	// can consolidate later when the shared helper module ships.
+	const pendingRows =
+		orderedTriggerIds.length > 0
+			? await db
+					.select({ triggerId: sessions.triggerId, count: sql<number>`COUNT(*)::int` })
+					.from(sessions)
+					.where(
+						and(
+							eq(sessions.workspaceId, workspaceId),
+							inArray(sessions.triggerId, orderedTriggerIds),
+							eq(sessions.status, 'waiting_for_input'),
+						),
+					)
+					.groupBy(sessions.triggerId)
+			: []
+	const pendingByTrigger = new Map<string, number>()
+	for (const r of pendingRows) {
+		if (r.triggerId) pendingByTrigger.set(r.triggerId, r.count)
+	}
+
+	const steps = orderedTriggerIds
+		.map((triggerId) => {
+			const t = triggerById.get(triggerId)
+			if (!t) return null
+			const agent = t.targetActorId ? (actorById.get(t.targetActorId) ?? null) : null
+			const handsOffToActor = t.handsOffToActorId
+				? (actorById.get(t.handsOffToActorId) ?? null)
+				: null
+			const escalatesToActor = t.escalatesToActorId
+				? (actorById.get(t.escalatesToActorId) ?? null)
+				: null
+			const pendingCount = pendingByTrigger.get(t.id) ?? 0
+			return {
+				triggerId: t.id,
+				triggerName: t.name,
+				triggerActionPrompt: t.actionPrompt,
+				triggerType: t.type,
+				triggerConfig: (t.config as Record<string, unknown> | null) ?? undefined,
+				agent,
+				handsOffToActorId: t.handsOffToActorId,
+				escalatesToActorId: t.escalatesToActorId,
+				escalateAfterMs: t.escalateAfterMs,
+				handsOffToActor,
+				escalatesToActor,
+				waitingOnViewer: pendingCount > 0,
+				pendingCount,
+			}
+		})
+		.filter((s): s is NonNullable<typeof s> => s !== null)
+
+	return c.json({ steps })
+}) as RouteHandler<typeof loopStepsRoute, Env>)
 
 export default app

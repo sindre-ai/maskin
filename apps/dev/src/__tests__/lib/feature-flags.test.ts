@@ -34,10 +34,27 @@ describe('parseFeatureFlagConfig', () => {
 })
 
 describe('resolveFlags', () => {
-	it('resolves the live registry — empty while no flag is in flight', () => {
+	it('resolves the live registry — every registered flag off for a non-tester', () => {
 		const c = config({ FF_TESTER_FEATURES: 'anything', FF_TESTER_ACTOR_IDS: TESTER })
-		expect(resolveFlags(TESTER, c)).toEqual({})
-		expect(resolveFlags(NON_TESTER, c)).toEqual({})
+		// Every flag in the live FLAGS registry resolves to a boolean; a
+		// non-tester + a mismatched FF_TESTER_FEATURES key means every value
+		// is `false`. The `loops-v4-polish.step_flow` sub-flag (D6c) landed
+		// as the first flag in the live registry — this assertion pins
+		// specifically that behaviour so accidentally shipping a flag never
+		// changes ambient defaults.
+		const resolved = resolveFlags(NON_TESTER, c)
+		for (const value of Object.values(resolved)) {
+			expect(value).toBe(false)
+		}
+	})
+
+	it('resolves the loops-v4-polish.step_flow sub-flag from the live registry when enabled for a tester', () => {
+		const c = config({
+			FF_TESTER_FEATURES: 'loops-v4-polish.step_flow',
+			FF_TESTER_ACTOR_IDS: TESTER,
+		})
+		expect(resolveFlags(TESTER, c)['loops-v4-polish.step_flow']).toBe(true)
+		expect(resolveFlags(NON_TESTER, c)['loops-v4-polish.step_flow']).toBe(false)
 	})
 
 	it('is false for every flag when the env is empty', () => {
