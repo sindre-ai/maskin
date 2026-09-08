@@ -70,3 +70,64 @@ export const listLoopsResponseSchema = z.object({
 })
 
 export type ListLoopsResponse = z.infer<typeof listLoopsResponseSchema>
+
+/**
+ * Read shape for one step in a Loop's vertical-story flow (Loops v4, D6c).
+ * A step is a `triggers` row that a Loop's `metadata.trigger_ids` references,
+ * plus the resolved step agent (from `triggers.target_actor_id`). Mirrors the
+ * `LoopStep` TypeScript type in `packages/mcp/src/setup-guidance/types.ts`
+ * that the readiness-check wiring already composes, but adds the three
+ * Loops v4 fields the vertical-story renderer and the escalation reconciler
+ * both key off.
+ *
+ * The three new fields — `handsOffToActorId`, `escalatesToActorId`,
+ * `escalateAfterMs` — are all optional (`.nullish()`), because the DB
+ * columns are nullable and the majority of steps will never set them. When
+ * every one is null, the renderer just omits the HANDS OFF and ESCALATES TO
+ * rows for that step and the reconciler ignores it.
+ *
+ * Sits in this file rather than `objects.ts` (which the task body pointed at)
+ * because every other Loop read shape lives here alongside `loopSummarySchema`;
+ * putting `LoopStep` next to its sibling read shape keeps consumers importing
+ * from one place. Exported through the schemas barrel.
+ */
+export const loopStepAgentSchema = z.object({
+	id: z.string().uuid(),
+	name: z.string().nullish(),
+	description: z.string().nullish(),
+})
+
+export const loopStepSchema = z.object({
+	triggerId: z.string().uuid(),
+	triggerName: z.string().nullish(),
+	/** `triggers.action_prompt` — the prompt handed to the agent when the trigger fires. */
+	triggerActionPrompt: z.string().nullish(),
+	/** Full `triggers.config` JSON — cron scope, event filter, reminder timing. */
+	triggerConfig: z.unknown().optional(),
+	/** Resolved step agent (from `triggers.target_actor_id`). `null` = no agent assigned. */
+	agent: loopStepAgentSchema.nullable(),
+	/**
+	 * Loops v4 (D6a). Target agent (or 'you') the step hands off to when it
+	 * completes. Explicit, not derived from the next step's `agent.id`, so the
+	 * vertical-story renderer treats HANDS OFF as a first-class row rather
+	 * than inferring it from step ordering. Null when the step doesn't hand
+	 * off anywhere — the renderer omits the row entirely.
+	 */
+	handsOffToActorId: z.string().uuid().nullish(),
+	/**
+	 * Loops v4 (D6a). Target agent the D6b reconciler pings via an attention-4
+	 * comment when the step has been waiting on the viewer for longer than
+	 * `escalateAfterMs`. Null when the step has no escalation configured — the
+	 * reconciler skips the row and the renderer's ESCALATES TO row does not
+	 * render.
+	 */
+	escalatesToActorId: z.string().uuid().nullish(),
+	/**
+	 * Loops v4 (D6a). Milliseconds a step may stay in `waitingOnViewer` before
+	 * the reconciler escalates it. Non-negative integer; null pairs with
+	 * `escalatesToActorId = null` and disables escalation for the step.
+	 */
+	escalateAfterMs: z.number().int().nonnegative().nullish(),
+})
+
+export type LoopStep = z.infer<typeof loopStepSchema>
