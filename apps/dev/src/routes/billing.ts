@@ -232,9 +232,15 @@ app.openapi(usageRoute, async (c) => {
 	//
 	// Enterprise workspaces are exempt: connected identities are free for them,
 	// so there is no line and `syncLinkedInAddonQuantity` creates no Stripe
-	// item. `plan === 'enterprise'` is exactly `isEnterprise(workspace)` as
-	// computed above — read it from there rather than re-deriving the predicate.
-	const linkedinExempt = plan === 'enterprise'
+	// item. Deliberately `isEnterprise(workspace)` and NOT the `plan` computed
+	// above: `plan` also reads `'enterprise'` from a *stored*
+	// `settings.billing.plan`, which `billingAfterByoTransition()` writes once
+	// and never rewrites — so a workspace whose entitlement was later revoked
+	// still reports plan `enterprise` while `syncLinkedInAddonQuantity` (which
+	// calls `isEnterprise` directly) resumes billing it. Keying the disclosure
+	// on the same predicate that does the billing is what keeps the two from
+	// disagreeing.
+	const linkedinExempt = isEnterprise(workspace)
 	const linkedinFlagOn =
 		resolveFlags(c.get('actorId'), getFeatureFlagConfig())[FLAGS.LINKEDIN_ADDON_VISIBLE] === true
 	const linkedinConnectedCount =

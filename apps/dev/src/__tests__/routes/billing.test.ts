@@ -959,6 +959,62 @@ describe('GET /api/billing/usage', () => {
 			})
 		})
 
+		it('omits the add-on line for an enterprise workspace, however many identities are connected', async () => {
+			// Connected identities are free on enterprise, so there is no line —
+			// and the route skips the count query entirely rather than computing a
+			// number it will not render.
+			enableFlag()
+			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+			const workspaceId = randomUUID()
+			mockResults.selectQueue = [
+				[{ id: workspaceId, settings: {}, enterpriseGranted: true, ...OWNER_CALLER }],
+			]
+
+			const res = await app.request(
+				jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			expect(await res.json()).toMatchObject({ plan: 'enterprise', linkedin_identity_addon: null })
+		})
+
+		it('still shows the add-on line for a stored enterprise plan without the entitlement', async () => {
+			// `billingAfterByoTransition()` writes `billing.plan = 'enterprise'`
+			// once and never rewrites it, so a workspace whose entitlement was
+			// later revoked still REPORTS plan `enterprise` while
+			// `syncLinkedInAddonQuantity` — which calls `isEnterprise()` directly —
+			// resumes billing it. The disclosure must follow the predicate that
+			// bills, not the reported plan, or the customer is charged $49/identity
+			// by a page telling them it is included.
+			enableFlag()
+			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+			const workspaceId = randomUUID()
+			mockResults.selectQueue = [
+				[
+					{
+						id: workspaceId,
+						settings: { billing: { plan: 'enterprise', status: 'canceled' } },
+						enterpriseGranted: false,
+						billingOwnerId: null,
+						...OWNER_CALLER,
+					},
+				],
+				[{ n: 2 }], // integrations count → 2 connected identities
+			]
+
+			const res = await app.request(
+				jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			expect(await res.json()).toMatchObject({
+				plan: 'enterprise',
+				linkedin_identity_addon: {
+					count: 2,
+					unit_price_usd_cents: 4900,
+					monthly_total_usd_cents: 9_800,
+				},
+			})
+		})
+
 		it('omits the add-on line for a non-tester actor even when the flag id is enabled', async () => {
 			// Actor-scoped flag: the flag is listed in FF_TESTER_FEATURES but the
 			// caller's actor id is not in FF_TESTER_ACTOR_IDS, so the flag resolves

@@ -223,13 +223,18 @@ function ProviderRow({
 	// after. Kept in sync with LINKEDIN_IDENTITY_UNIT_PRICE_USD_CENTS in
 	// apps/dev/src/lib/linkedin-addon.ts.
 	// Enterprise workspaces get connected identities free, so the price must not
-	// be stated to them. `plan` is the server-resolved entitlement (the same
-	// `isEnterprise()` the backend bills on), not a stored Stripe plan — see
-	// apps/dev/src/lib/enterprise.ts.
+	// be stated to them. `plan` reads `enterprise` for exactly the workspaces
+	// the backend exempts from the charge — see `isEnterprise()` in
+	// apps/dev/src/lib/enterprise.ts and the exemption in routes/billing.ts.
+	//
+	// Neither line renders until the plan is known: `billingUsage` is undefined
+	// on first render, and defaulting to the paid copy would flash
+	// "$49/month" at an enterprise workspace — the one thing this is here to
+	// avoid — for as long as the query takes.
 	const { data: billingUsage } = useBillingUsage(workspaceId)
-	const isEnterpriseWorkspace = billingUsage?.plan === 'enterprise'
-	const isPaidIdentityAddon = provider.name === 'linkedin-unipile' && !isEnterpriseWorkspace
-	const isFreeIdentityAddon = provider.name === 'linkedin-unipile' && isEnterpriseWorkspace
+	const isLinkedInIdentityAddon = provider.name === 'linkedin-unipile' && billingUsage !== undefined
+	const isFreeIdentityAddon = isLinkedInIdentityAddon && billingUsage?.plan === 'enterprise'
+	const isPaidIdentityAddon = isLinkedInIdentityAddon && billingUsage?.plan !== 'enterprise'
 
 	const connectedLabel = isConnected
 		? needsReconnect
