@@ -123,10 +123,17 @@ describe('Signup welcome comment — Chief of Staff comments, Researcher gets sp
 		expect(commentEvent).toBeDefined()
 		expect(commentEvent.actorId).toBe(chief.id)
 		const data = commentEvent.data as { content: string; mentions: string[] }
-		expect(data.mentions).toEqual(expect.arrayContaining([researcher.id, humanActorId]))
-		expect(data.mentions).toHaveLength(2)
+		// Researcher is intentionally NOT in `mentions` — the onboarding session
+		// is wired directly in signup-welcome so the standard CommentDispatcher
+		// path would otherwise fire a second Researcher session with the
+		// generic mention prompt.
+		expect(data.mentions).toEqual([humanActorId])
 		expect(data.content).toContain('Ada Testowski')
 		expect(data.content).toContain('@Researcher')
+		// Silences the lint for the seeded Researcher — we don't assert on the
+		// mention list any more but the fixture still needs it in the workspace
+		// so `resolveAgentIdByName` finds it.
+		void researcher
 
 		expect(sessionManager.createSession).toHaveBeenCalledWith(
 			workspaceId,
