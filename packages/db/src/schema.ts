@@ -780,6 +780,42 @@ export const readState = pgTable(
 export type ReadState = typeof readState.$inferSelect
 export type NewReadState = typeof readState.$inferInsert
 
+// ── Star State ────────────────────────────────────────────────────────────
+//
+// Per-actor "starred" flag on a polymorphic (entity_type, entity_id) target.
+// Mirrors `read_state` in shape and reason: server-persisted per-caller state
+// so a toggle from one device shows up on the caller's other devices without
+// a client-only localStorage cache. Presence of the row means starred; unstar
+// is a row DELETE (see services/star-state.ts), no soft-flag or unstarred_at
+// column — boolean semantics match the payload's `is_starred_by_me` scalar.
+//
+// `entity_type = 'object'` at ship; `comment` / `session` are deliberately
+// left open in the schema so the same table backs future starrable entities
+// without a migration, but no code path writes them yet.
+
+export const starState = pgTable(
+	'star_state',
+	{
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		entityType: text('entity_type').notNull(),
+		entityId: uuid('entity_id').notNull(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		starredAt: timestamp('starred_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.actorId, t.entityType, t.entityId] }),
+		index('star_state_lookup_idx').on(t.workspaceId, t.actorId),
+		index('star_state_reverse_idx').on(t.entityType, t.entityId),
+	],
+)
+
+export type StarState = typeof starState.$inferSelect
+export type NewStarState = typeof starState.$inferInsert
+
 // ── Notifications ─────────────────────────────────────────────────────────
 
 export const notifications = pgTable(
