@@ -130,4 +130,23 @@ describe('CONTINUOUS_ONBOARDING_SKILL', () => {
 			/\*\*Confirm all\*\*\s*\(recommended\)\s*\/\s*\*\*Confirm each\*\*\s*\/\s*\*\*Skip\*\*/,
 		)
 	})
+	it('states the driver convention: agents drive knowledge objects, never the human owner', () => {
+		// The seeded `First-pass brief filed -> present for confirmation` trigger gates on
+		// driver = Researcher. The skill must name that, or the model improvises and the
+		// chip-validation card never fires. Regression for 2026-09-08 live-run defect.
+		expect(content).toContain('**Drivers are agents, never humans.**')
+		expect(content).toMatch(/[Nn]ever set a human as `driver`/)
+		expect(content).toMatch(/never ask the user to confirm one/)
+	})
+
+	it('requires the first-pass dispatch to file with driver = Researcher and status draft', () => {
+		expect(content).toMatch(
+			/dispatch prompt MUST tell Researcher to file the brief with `driver` set to Researcher's own actor id/,
+		)
+		expect(content).toContain('First-pass brief filed → present for confirmation')
+	})
+
+	it('names setting a human driver as an anti-pattern', () => {
+		expect(content).toMatch(/Setting the human owner as `driver` on a knowledge object/)
+	})
 })
