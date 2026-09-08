@@ -181,7 +181,14 @@ describe('Events Routes', () => {
 			expect(res.status).toBe(404)
 		})
 
-		it('creates notifications and spawns a session for @mentioned agent actors', async () => {
+		it('creates a needs_input notification for the @mentioned agent but does NOT spawn a session from the route', async () => {
+			// Case-1a mention dispatch moved to the CommentDispatchRunner
+			// subscriber (see `services/trigger-runner.ts`) — the route only
+			// writes the comment event + notification row now, and the
+			// subscriber picks the event up over PG NOTIFY and spawns the
+			// session with `triggerSource: 'comment_fallback'`. The
+			// subscriber's own coverage lives in
+			// `services/comment-dispatch-runner.test.ts`.
 			const objectId = randomUUID()
 			const agentId = randomUUID()
 			const notificationId = randomUUID()
@@ -204,8 +211,6 @@ describe('Events Routes', () => {
 				status: 'pending',
 			}
 			const { app, mockResults, sessionManager } = createSessionTestApp(eventsRoutes, '/api/events')
-			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
-			// Object lookup, then inside transaction: insert comment, select mentioned actors, insert notifications, insert notification events
 			mockResults.selectQueue = [
 				[{ workspaceId: wsId }],
 				[{ id: agentId, type: 'agent', name: 'Bot' }],
@@ -222,21 +227,7 @@ describe('Events Routes', () => {
 			)
 
 			expect(res.status).toBe(201)
-			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
-			expect(sessionManager.createSession).toHaveBeenCalledWith(
-				wsId,
-				expect.objectContaining({
-					actorId: agentId,
-					actionPrompt: expect.stringContaining('Hey @agent'),
-					createdBy: 'test-actor-id',
-					config: expect.objectContaining({
-						mention: expect.objectContaining({
-							object_id: objectId,
-							notification_id: notificationId,
-						}),
-					}),
-				}),
-			)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
 		it('creates no notifications when mentions array is empty', async () => {
@@ -335,7 +326,7 @@ describe('Events Routes', () => {
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
-		it('creates batch notifications and spawns a session per mentioned agent', async () => {
+		it('creates batch notifications for multiple mentioned agents but does NOT spawn sessions from the route', async () => {
 			const objectId = randomUUID()
 			const agent1Id = randomUUID()
 			const agent2Id = randomUUID()
@@ -369,7 +360,6 @@ describe('Events Routes', () => {
 				status: 'pending',
 			}
 			const { app, mockResults, sessionManager } = createSessionTestApp(eventsRoutes, '/api/events')
-			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
 			mockResults.selectQueue = [
 				[{ workspaceId: wsId }],
 				[
@@ -389,12 +379,9 @@ describe('Events Routes', () => {
 			)
 
 			expect(res.status).toBe(201)
-			expect(sessionManager.createSession).toHaveBeenCalledTimes(2)
-			const calledActorIds = (
-				sessionManager.createSession as ReturnType<typeof vi.fn>
-			).mock.calls.map((call) => call[1].actorId)
-			expect(calledActorIds).toContain(agent1Id)
-			expect(calledActorIds).toContain(agent2Id)
+			// Case-1a dispatch (session-per-agent) is now owned by
+			// CommentDispatchRunner; see comment-dispatch-runner.test.ts.
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
 		it('skips notifications and sessions when mentions only contain human actors', async () => {
@@ -1133,17 +1120,12 @@ describe('Events Routes', () => {
 
 				expect(res.status).toBe(201)
 				await flushMicrotasks()
-				// Exactly one session — the @mention path. Thread-reply path drops it.
-				expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
-				expect(sessionManager.createSession).toHaveBeenCalledWith(
-					wsId,
-					expect.objectContaining({
-						actorId: agentAId,
-						config: expect.objectContaining({
-							mention: expect.objectContaining({ notification_id: notificationId }),
-						}),
-					}),
-				)
+				// Case-1a mention dispatch has moved to CommentDispatchRunner, so
+				// this route no longer spawns the @mention session. The
+				// thread-reply spawn (still handled by the route) correctly
+				// excludes an agent who is ALSO @mentioned, so the total from
+				// this route is zero sessions.
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
 			})
 
 			it('does NOT run the thread-reply trigger when the new comment is a root comment', async () => {
@@ -1302,7 +1284,7 @@ describe('Events Routes', () => {
 			})
 		})
 
-		it('still returns 201 when agent session creation fails asynchronously', async () => {
+		it('returns 201 for a mention comment without touching the session manager (dispatch handled by CommentDispatchRunner)', async () => {
 			const objectId = randomUUID()
 			const agentId = randomUUID()
 			const commentEvent = buildEvent({
@@ -1324,9 +1306,6 @@ describe('Events Routes', () => {
 				status: 'pending',
 			}
 			const { app, mockResults, sessionManager } = createSessionTestApp(eventsRoutes, '/api/events')
-			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockRejectedValue(
-				new Error('container build failed'),
-			)
 			mockResults.selectQueue = [
 				[{ workspaceId: wsId }],
 				[{ id: agentId, type: 'agent', name: 'Bot' }],
@@ -1342,8 +1321,12 @@ describe('Events Routes', () => {
 				),
 			)
 
+			// The route no longer spawns sessions; the subscriber does that off
+			// PG NOTIFY. So an async session failure can't affect the 201 the
+			// route returns — the route doesn't touch the session manager at
+			// all for case-1a comments.
 			expect(res.status).toBe(201)
-			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 	})
 })

@@ -7,6 +7,14 @@ interface AgentSessionStartedWithPromptProps {
 	agentId: string
 	agentName: string
 	systemPrompt: string
+	/**
+	 * Why this session was launched — populated when the launch was routed
+	 * through a comment-fallback path (see `session-manager.CreateSessionParams`
+	 * `triggerSource` / `sourceCommentEventId`). Omitted for cron triggers,
+	 * interactive chat, and other paths that don't set it.
+	 */
+	triggerSource?: string
+	sourceCommentEventId?: number
 }
 
 /**
@@ -42,6 +50,10 @@ export async function trackAgentSessionStartedWithPrompt(
 			agent_name: p.agentName,
 			system_prompt_chars: chars,
 			system_prompt_tokens: tokens,
+			...(p.triggerSource !== undefined ? { trigger_source: p.triggerSource } : {}),
+			...(p.sourceCommentEventId !== undefined
+				? { source_comment_event_id: p.sourceCommentEventId }
+				: {}),
 		})
 	} catch (err) {
 		logger.warn('Failed to emit agent_session_started_with_prompt', {

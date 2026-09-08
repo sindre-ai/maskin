@@ -109,6 +109,13 @@ export async function postComment(
 			const agentActors = mentionedActors.filter((a) => a.type === 'agent')
 
 			if (agentActors.length > 0) {
+				// Stamp the source comment's event id onto every notification so
+				// the trigger-runner comment_posted subscriber can correlate each
+				// row back to the comment that generated it — without the tag,
+				// there is no reliable way to pick the right notification when a
+				// commenter has already opened prior needs_input rows against the
+				// same (agent, object) pair. The metadata column is free-form
+				// jsonb, so this is a value-shape addition, not a schema change.
 				const createdNotifications = await insertNotificationsWithEvents(tx, {
 					workspaceId: input.workspaceId,
 					actorId: input.actorId,
@@ -121,6 +128,7 @@ export async function postComment(
 						targetActorId: agent.id,
 						objectId: input.entityId,
 						status: 'pending' as const,
+						metadata: { source_comment_event_id: comment.id },
 					})),
 				})
 

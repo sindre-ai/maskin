@@ -25,7 +25,7 @@ import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionDispatcher } from './services/session-dispatcher'
 import { SessionManager } from './services/session-manager'
-import { TriggerRunner } from './services/trigger-runner'
+import { CommentDispatchRunner, TriggerRunner } from './services/trigger-runner'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
 
@@ -109,6 +109,15 @@ sessionManager.start().then(() => {
 const triggerRunner = new TriggerRunner(db, notifyBridge, sessionManager)
 triggerRunner.start().then(() => {
 	logger.info('Trigger runner started')
+})
+
+// Comment-triggered session dispatch (@-mention case 1a). Attaches to the same
+// PgNotifyBridge as TriggerRunner so at-least-once delivery is shared; the two
+// runners are logically distinct so the comment-fallback path can be paused
+// or diagnosed without touching cron/event triggers.
+const commentDispatchRunner = new CommentDispatchRunner(db, notifyBridge, sessionManager)
+commentDispatchRunner.start().then(() => {
+	logger.info('Comment dispatch runner started')
 })
 
 const gmailWatchRenewer = new GmailWatchRenewer(db)

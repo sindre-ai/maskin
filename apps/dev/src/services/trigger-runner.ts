@@ -1,12 +1,21 @@
 import type { Database } from '@maskin/db'
-import { events, objects, sessions, triggers } from '@maskin/db/schema'
+import { events, actors, notifications, objects, sessions, triggers } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { SAFE_METADATA_FIELD_NAME_RE, readChanges, reversePatch } from '@maskin/shared'
 import { Cron } from 'croner'
-import { type SQL, and, eq, sql } from 'drizzle-orm'
+import { type SQL, and, eq, inArray, sql } from 'drizzle-orm'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { SessionManager } from './session-manager'
+
+/**
+ * Session dispatch source stamped onto every session the comment_posted
+ * subscriber spawns. Threaded through to the `agent_session_started_with_prompt`
+ * PostHog event via `session-manager.CreateSessionParams` so Product Validator
+ * can attribute a launch to the fallback ladder rather than a cron trigger or
+ * an interactive chat.
+ */
+export const COMMENT_FALLBACK_TRIGGER_SOURCE = 'comment_fallback'
 
 /** Cap on scope-match rows appended to the action prompt so the payload stays bounded. */
 const SCOPE_MATCH_LIMIT = 100
@@ -1053,4 +1062,255 @@ export function evaluateCondition(
 		default:
 			return false
 	}
+}
+
+/**
+ * `comment_posted` subscriber for the always-a-responder bet's case-1a mention
+ * dispatch. Mirrors `OrphanThreadDetector` structurally — its own class in a
+ * co-located file, `start`/`stop` lifecycle, holds `db` + `sessionManager`,
+ * emits a single structured log line per handled event — but is event-driven
+ * (attaches to `PgNotifyBridge`) rather than timer-driven.
+ *
+ * Consolidation intent (spec §Solution sketch, Magnus comments 515287 /
+ * 516012 / 516065): every comment→dispatch path flows through here so we have
+ * one code path and one log stream instead of the API route racing an
+ * ad-hoc `sessionManager.createSession(...)` loop on its own. Cases 2 (driver
+ * fallback) and 3 (Chief of Staff fallback) are Task 2's territory — this
+ * subscriber only implements case 1a and the self-authored no-op guard.
+ *
+ * At-least-once delivery is provided by `PgNotifyBridge` + the webhook-delivery
+ * reconciler; the subscriber must therefore stay idempotent per
+ * `(comment_event_id, resolved_actor_id)`. Session spawn is fire-and-forget
+ * (matches the previous route-level behaviour) so a downstream failure never
+ * blocks the subscriber tick.
+ */
+export class CommentDispatchRunner {
+	private db: Database
+	private bridge: PgNotifyBridge
+	private sessionManager: SessionManager
+	private eventHandler: ((event: PgEvent) => void) | null = null
+
+	constructor(db: Database, bridge: PgNotifyBridge, sessionManager: SessionManager) {
+		this.db = db
+		this.bridge = bridge
+		this.sessionManager = sessionManager
+	}
+
+	async start(): Promise<void> {
+		if (this.eventHandler) return
+		this.eventHandler = (event: PgEvent) => {
+			if (event.action !== 'commented' || event.entity_type !== 'object') return
+			this.handleCommentEvent(event).catch((err) =>
+				logger.error('Comment dispatch handling failed', {
+					event_id: event.event_id,
+					error: err instanceof Error ? err.message : String(err),
+				}),
+			)
+		}
+		this.bridge.on('event', this.eventHandler)
+		logger.info('Comment dispatch runner started')
+	}
+
+	async stop(): Promise<void> {
+		if (this.eventHandler) {
+			this.bridge.off('event', this.eventHandler)
+			this.eventHandler = null
+		}
+	}
+
+	private async handleCommentEvent(event: PgEvent): Promise<void> {
+		const eventId = Number(event.event_id)
+		if (!Number.isFinite(eventId)) return
+
+		// The PG NOTIFY payload deliberately drops `events.data` (see
+		// `packages/realtime/src/notify.ts`) to stay under the 8KB limit, so
+		// rehydrate the mention/parent fields from the row directly. Every
+		// query below is scoped by workspace so a mis-delivered NOTIFY frame
+		// can't leak dispatch across workspaces.
+		const [row] = await this.db
+			.select({
+				id: events.id,
+				workspaceId: events.workspaceId,
+				actorId: events.actorId,
+				entityId: events.entityId,
+				data: events.data,
+			})
+			.from(events)
+			.where(eq(events.id, eventId))
+			.limit(1)
+		if (!row) return
+
+		const data = (row.data ?? {}) as {
+			mentions?: unknown
+			parentEventId?: unknown
+			content?: unknown
+			metadata?: { suppress_auto_dispatch?: unknown } | null
+		}
+
+		// Escape hatch for callers that spawn their own bespoke session for a
+		// comment (currently: the signup-welcome flow, which threads a
+		// research-brief prompt through `session-manager` directly). Without
+		// this the subscriber would double-dispatch on those comments — the
+		// bespoke session AND a generic mention session for the same agent.
+		if (data.metadata && data.metadata.suppress_auto_dispatch === true) return
+
+		const mentions = normalizeMentionsList(data.mentions)
+		if (mentions.length === 0) return
+
+		// Resolve the actor type for every mention in one round trip so an
+		// unknown/dangling id is treated as unresolved (not agent, not human)
+		// instead of silently falling through as a human.
+		const mentionedActors = await this.db
+			.select({ id: actors.id, type: actors.type })
+			.from(actors)
+			.where(inArray(actors.id, mentions))
+		const actorTypeById = new Map(mentionedActors.map((a) => [a.id, a.type]))
+
+		// Fetch parent-comment author once so the self-authored guard fires
+		// deterministically regardless of mention order.
+		let parentAuthorId: string | null = null
+		const parentEventId = normalizeParentEventId(data.parentEventId)
+		if (parentEventId !== null) {
+			const [parent] = await this.db
+				.select({ actorId: events.actorId })
+				.from(events)
+				.where(and(eq(events.id, parentEventId), eq(events.workspaceId, row.workspaceId)))
+				.limit(1)
+			parentAuthorId = parent?.actorId ?? null
+		}
+
+		// Pre-fetch every notification the transactional `postComment` write
+		// stamped with this comment's event id, so we can hand each agent the
+		// notification it must mark resolved. Read alongside the mentions loop
+		// (not inside it) so the case-1_mention log line is emitted even for a
+		// human mention whose lookup would come back empty.
+		const notifRows = await this.db
+			.select({ id: notifications.id, targetActorId: notifications.targetActorId })
+			.from(notifications)
+			.where(
+				and(
+					eq(notifications.workspaceId, row.workspaceId),
+					eq(notifications.type, 'needs_input'),
+					sql`${notifications.metadata}->>'source_comment_event_id' = ${String(row.id)}`,
+				),
+			)
+		const notificationIdByAgent = new Map<string, string>()
+		for (const n of notifRows) {
+			if (n.targetActorId) notificationIdByAgent.set(n.targetActorId, n.id)
+		}
+
+		const commenterActorId = row.actorId
+		const content = typeof data.content === 'string' ? data.content : ''
+
+		// De-dupe the mention list before iterating so a comment that repeats
+		// the same id twice still counts as one dispatch per mention (matches
+		// the pre-move behaviour in `postComment`, which fans out per unique
+		// actor id).
+		const uniqueMentions = Array.from(new Set(mentions))
+
+		for (const mentionedActorId of uniqueMentions) {
+			const actorType = actorTypeById.get(mentionedActorId)
+			if (!actorType) continue
+
+			// The mentioned actor authored the parent comment — spawning would
+			// route the reply back to the agent who just spoke, which turns
+			// every reply thread into a self-conversation. Log the no-op case
+			// so PostHog can distinguish "guard fired" from "no matching
+			// mention".
+			if (parentAuthorId && parentAuthorId === mentionedActorId) {
+				logger.info('Comment dispatch resolved', {
+					event_id: row.id,
+					case: 'noop_self_authored',
+					resolved_actor_id: mentionedActorId,
+				})
+				continue
+			}
+
+			if (actorType === 'agent') {
+				const notificationId = notificationIdByAgent.get(mentionedActorId) ?? ''
+				this.sessionManager
+					.createSession(row.workspaceId, {
+						actorId: mentionedActorId,
+						actionPrompt: buildCommentMentionPrompt({
+							objectId: row.entityId,
+							commenterActorId,
+							content,
+							notificationId,
+						}),
+						config: {
+							mention: {
+								object_id: row.entityId,
+								commenter_actor_id: commenterActorId,
+								notification_id: notificationId,
+								comment_event_id: row.id,
+							},
+						},
+						triggerSource: COMMENT_FALLBACK_TRIGGER_SOURCE,
+						sourceCommentEventId: row.id,
+						createdBy: commenterActorId,
+					})
+					.catch((err) =>
+						logger.error('Failed to spawn comment-fallback session for @mentioned agent', {
+							event_id: row.id,
+							agent_id: mentionedActorId,
+							object_id: row.entityId,
+							error: err instanceof Error ? err.message : String(err),
+						}),
+					)
+			}
+
+			// Humans reach here via the auto-subscribe path already run inside
+			// `postComment`'s transaction — no session to spawn, no extra
+			// notification to send from this subscriber.
+			logger.info('Comment dispatch resolved', {
+				event_id: row.id,
+				case: 'case_1_mention',
+				resolved_actor_id: mentionedActorId,
+			})
+		}
+	}
+}
+
+function normalizeMentionsList(raw: unknown): string[] {
+	if (!Array.isArray(raw)) return []
+	return raw.filter((m): m is string => typeof m === 'string' && m.length > 0)
+}
+
+function normalizeParentEventId(raw: unknown): number | null {
+	if (typeof raw === 'number' && Number.isFinite(raw)) return raw
+	if (typeof raw === 'string') {
+		const n = Number(raw)
+		return Number.isFinite(n) ? n : null
+	}
+	return null
+}
+
+function buildCommentMentionPrompt(ctx: {
+	objectId: string
+	commenterActorId: string
+	content: string
+	notificationId: string
+}): string {
+	const lines = [
+		'You were @mentioned in a comment on an object. Read the comment and the object context, then decide what the right response is. The response can be any combination of:',
+		'  - taking an action (updating the object, creating related work, running a tool, kicking off another session, etc.)',
+		'  - posting a comment reply (to answer, discuss, acknowledge, or report what you did)',
+		'  - doing nothing, if no response is warranted',
+		'',
+		"Let the context guide you — what is being asked explicitly, what's implied by the thread, and what would actually be useful. Action and comment aren't mutually exclusive: it's often right to do the work and post a short comment about it, or to comment first and then act, or just one or the other. Pick whatever genuinely fits.",
+		'',
+		`Object ID: ${ctx.objectId}`,
+		`Commenter actor ID: ${ctx.commenterActorId}`,
+		'Comment content:',
+		'"""',
+		ctx.content,
+		'"""',
+		'',
+	]
+	if (ctx.notificationId) {
+		lines.push(
+			`Once you have done whatever you decided to do (including if that's nothing), mark notification ${ctx.notificationId} as resolved.`,
+		)
+	}
+	return lines.join('\n')
 }

@@ -63,6 +63,43 @@ describe('trackAgentSessionStartedWithPrompt', () => {
 		)
 	})
 
+	it('threads trigger_source + source_comment_event_id when the caller sets them', async () => {
+		// The `always-a-responder` bet's comment_posted subscriber uses these
+		// props to attribute a launch to the fallback ladder — without them
+		// Product Validator can't distinguish a comment-fallback session from
+		// a cron trigger or an interactive chat launch.
+		await trackAgentSessionStartedWithPrompt({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-2',
+			agentId: 'agent-1',
+			agentName: 'Bug Triage',
+			systemPrompt: 'x',
+			triggerSource: 'comment_fallback',
+			sourceCommentEventId: 4242,
+		})
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(
+			'agent_session_started_with_prompt',
+			'agent-1',
+			expect.objectContaining({
+				trigger_source: 'comment_fallback',
+				source_comment_event_id: 4242,
+			}),
+		)
+	})
+
+	it('omits trigger_source / source_comment_event_id props when the caller does not set them', async () => {
+		await trackAgentSessionStartedWithPrompt({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-cron',
+			agentId: 'agent-1',
+			agentName: 'Bug Triage',
+			systemPrompt: 'x',
+		})
+		const payload = capturePosthogEventMock.mock.calls.at(-1)?.[2] as Record<string, unknown>
+		expect(payload).not.toHaveProperty('trigger_source')
+		expect(payload).not.toHaveProperty('source_comment_event_id')
+	})
+
 	it('handles an empty systemPrompt without emitting NaN or negative counts', async () => {
 		await trackAgentSessionStartedWithPrompt({
 			workspaceId: 'ws-1',

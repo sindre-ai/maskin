@@ -96,6 +96,12 @@ export async function postSignupWelcomeComment(
 	const displayName = name || 'there'
 	const content = `Hi ${displayName} 👋 Welcome to Maskin — I'm Chief of Staff, I make sure the right agent picks up your work. @Researcher — please put together a first-pass brief on ${displayName}${organization ? ` and ${organization}` : ''} so the workspace has real context from day one. @${displayName} — if anything here looks off or you'd like to add more before Researcher gets started, just reply and I'll make sure it gets folded in.`
 
+	// `suppress_auto_dispatch` tells the CommentDispatchRunner
+	// (`services/trigger-runner.ts`) NOT to spawn a generic mention session for
+	// this comment. The signup flow needs a bespoke research-brief prompt (see
+	// `buildSignupResearchPrompt` below), and without the flag the subscriber
+	// would race a second, generically-prompted Researcher session against the
+	// one this function starts explicitly.
 	const { comment, agentMentions } = await postComment(db, {
 		workspaceId,
 		actorId: chiefOfStaffId,
@@ -103,6 +109,7 @@ export async function postSignupWelcomeComment(
 		content,
 		mentions: [researcherId, humanActorId],
 		attention: 3,
+		metadata: { suppress_auto_dispatch: true },
 	})
 
 	const researcherMention = agentMentions.find((m) => m.agentId === researcherId)

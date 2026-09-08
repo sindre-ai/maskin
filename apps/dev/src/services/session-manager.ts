@@ -190,6 +190,21 @@ export interface CreateSessionParams {
 	autoStart?: boolean
 	/** ID of a prior session whose workspace snapshot should be restored at startup. */
 	sourceSessionId?: string
+	/**
+	 * Why this session was spawned. Threaded onto the
+	 * `agent_session_started_with_prompt` PostHog event so Product Validator can
+	 * attribute a launch to the `always-a-responder` fallback ladder rather than
+	 * a cron trigger or an interactive chat. `'comment_fallback'` is the only
+	 * value emitted today (by the trigger-runner comment_posted subscriber);
+	 * future callers add their own literals.
+	 */
+	triggerSource?: string
+	/**
+	 * `events.id` of the comment whose mention/fallback resolved to this
+	 * session. Populated alongside `triggerSource` by the comment_posted
+	 * subscriber; joined to `events` in PostHog for latency-vs-response analysis.
+	 */
+	sourceCommentEventId?: number
 }
 
 /**
@@ -461,7 +476,18 @@ export class SessionManager extends EventEmitter {
 		workspaceId: string,
 		params: CreateSessionParams,
 	): Promise<typeof sessions.$inferSelect> {
-		const config = params.config ?? {}
+		// Persist trigger-source props onto session.config so launchContainer
+		// can read them without a second signature-plumb — the config blob is
+		// already threaded through the entire session lifecycle. Any explicit
+		// key on `params.config` wins, so a caller that pre-set these values
+		// stays authoritative.
+		const config: Record<string, unknown> = { ...(params.config ?? {}) }
+		if (params.triggerSource !== undefined && config.triggerSource === undefined) {
+			config.triggerSource = params.triggerSource
+		}
+		if (params.sourceCommentEventId !== undefined && config.sourceCommentEventId === undefined) {
+			config.sourceCommentEventId = params.sourceCommentEventId
+		}
 		const interactive = config.interactive === true
 		const conversationId =
 			(config.conversation as { conversation_id?: string } | undefined)?.conversation_id ?? null
@@ -1628,12 +1654,20 @@ export class SessionManager extends EventEmitter {
 		// samples in PostHog. Runs on every launch (start + resume) since both
 		// build a container from the current systemPrompt; session_id keeps the
 		// samples dedup-able downstream.
+		const triggerSourceConfig =
+			typeof sessionConfig.triggerSource === 'string' ? sessionConfig.triggerSource : undefined
+		const sourceCommentEventIdConfig =
+			typeof sessionConfig.sourceCommentEventId === 'number'
+				? sessionConfig.sourceCommentEventId
+				: undefined
 		void trackAgentSessionStartedWithPrompt({
 			workspaceId: session.workspaceId,
 			sessionId: session.id,
 			agentId: agent.id,
 			agentName: agent.name,
 			systemPrompt: resolvedSystemPrompt,
+			triggerSource: triggerSourceConfig,
+			sourceCommentEventId: sourceCommentEventIdConfig,
 		})
 
 		// Interactive sessions have no opening ACTION_PROMPT — the first user turn
