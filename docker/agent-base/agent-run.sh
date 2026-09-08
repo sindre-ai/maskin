@@ -403,9 +403,16 @@ run_agent() {
     log_tee < "$fifo" &
     local tee_pid=$!
 
-    # Inherits this function's stdin, so callers can still redirect it
-    # (the interactive path feeds claude from input-stream.js).
-    "$@" > "$fifo" 2>&1 &
+    # `<&0` is REQUIRED, not redundant. With job control off -- which it is in
+    # any non-interactive script -- the shell assigns /dev/null to the stdin of
+    # a backgrounded command *unless stdin is explicitly redirected*. Without
+    # `<&0` the agent would read EOF immediately instead of this function's
+    # stdin, so `claude --input-format stream-json` would exit with no turn on
+    # both interactive paths (remote: `< <(node /input-stream.js)` at the call
+    # site; local Docker: ContainerManager.attachStdin). The explicit redirect
+    # suppresses the substitution and the caller's stdin is inherited as
+    # intended.
+    "$@" > "$fifo" 2>&1 <&0 &
     local agent_pid=$!
 
     # `|| rc=$?` keeps `set -e` from aborting on a non-zero agent status; the
