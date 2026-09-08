@@ -9,6 +9,7 @@ import type {
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
+import { useState } from 'react'
 import {
 	ITEM_TYPE_LABEL,
 	KIND_LABEL_BASE,
@@ -37,6 +38,7 @@ export function MarketplaceLoopCard({
 	install,
 	items,
 }: MarketplaceLoopCardProps) {
+	const [iconFailed, setIconFailed] = useState(false)
 	const locked = install?.isLocked ?? false
 	const showUpdateBanner = locked && install?.hasUpdate === true
 	const isBundle = loop.item_types.length >= 2
@@ -53,16 +55,29 @@ export function MarketplaceLoopCard({
 
 			<div className="flex items-start gap-3">
 				{/* 38px identity tile (mockup 2588) — the same palette treatment the
-				    detail header uses, so a loop looks like itself in both places. */}
-				<span
-					aria-hidden="true"
-					className={cn(
-						'grid size-[38px] shrink-0 place-items-center rounded-xl text-sm font-bold',
-						getActorAvatarPaletteClass(loop.name),
-					)}
-				>
-					{getActorInitials(loop.name)}
-				</span>
+				    detail header uses, so a loop looks like itself in both places.
+				    Catalog-synced integrations carry a real provider logo; if it
+				    fails to load we fall back to the initials tile rather than
+				    leaving a broken image, so a dead logo URL never costs identity. */}
+				{loop.icon_url && !iconFailed ? (
+					<img
+						src={loop.icon_url}
+						alt=""
+						loading="lazy"
+						onError={() => setIconFailed(true)}
+						className="size-[38px] shrink-0 rounded-xl object-contain"
+					/>
+				) : (
+					<span
+						aria-hidden="true"
+						className={cn(
+							'grid size-[38px] shrink-0 place-items-center rounded-xl text-sm font-bold',
+							getActorAvatarPaletteClass(loop.name),
+						)}
+					>
+						{getActorInitials(loop.name)}
+					</span>
+				)}
 				<div className="min-w-0 flex-1">
 					<h3 className="truncate text-[13.5px] font-bold text-foreground">{loop.name}</h3>
 					<div className={cn(KIND_LABEL_BASE, 'mt-0.5', KIND_LABEL_CLASS[kind])}>

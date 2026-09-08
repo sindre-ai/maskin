@@ -1913,6 +1913,8 @@ export interface MarketplaceLoopSummary {
 	version: string
 	use_case: string | null
 	item_types: MarketplaceItemType[]
+	/** Provider logo for catalog-synced integrations; null for everything else. */
+	icon_url?: string | null
 	created_at: string | null
 	updated_at: string | null
 }

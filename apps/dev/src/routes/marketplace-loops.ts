@@ -79,6 +79,10 @@ const marketplaceLoopSummarySchema = z.object({
 	version: z.string(),
 	use_case: z.string().nullable(),
 	item_types: z.array(itemTypeSchema),
+	// Set only for catalog-synced integrations, whose item snapshot carries a
+	// provider logo. Null everywhere else — the card falls back to the initials
+	// tile every other marketplace element already uses.
+	icon_url: z.string().nullable(),
 	created_at: z.string().nullable(),
 	updated_at: z.string().nullable(),
 })
@@ -126,6 +130,7 @@ function isoOrNull(value: Date | null | undefined): string | null {
 function toMarketplaceLoopSummary(
 	row: MarketplaceLoop,
 	itemTypes: ItemType[],
+	iconUrl: string | null = null,
 ): z.infer<typeof marketplaceLoopSummarySchema> {
 	return {
 		id: row.id,
@@ -135,6 +140,7 @@ function toMarketplaceLoopSummary(
 		version: row.version,
 		use_case: row.useCase,
 		item_types: itemTypes,
+		icon_url: iconUrl,
 		created_at: isoOrNull(row.createdAt),
 		updated_at: isoOrNull(row.updatedAt),
 	}
@@ -151,6 +157,28 @@ function toMarketplaceLoopItem(
 		item_snapshot: row.itemSnapshot as z.infer<typeof jsonbField>,
 		created_at: isoOrNull(row.createdAt),
 	}
+}
+
+/**
+ * Provider logos for catalog-synced integrations. The URL lives in the item
+ * snapshot rather than on `marketplace_loops` so no migration is needed; only
+ * single-item loops can contribute one, which is exactly the catalog shape.
+ */
+async function loadIconUrlByLoop(db: Database, loopIds: string[]): Promise<Map<string, string>> {
+	if (loopIds.length === 0) return new Map()
+	const rows = await db
+		.select({
+			loopId: marketplaceLoopItems.loopId,
+			iconUrl: sql<string | null>`${marketplaceLoopItems.itemSnapshot}->>'icon_url'`,
+		})
+		.from(marketplaceLoopItems)
+		.where(inArray(marketplaceLoopItems.loopId, loopIds))
+
+	const byLoop = new Map<string, string>()
+	for (const row of rows) {
+		if (row.iconUrl && !byLoop.has(row.loopId)) byLoop.set(row.loopId, row.iconUrl)
+	}
+	return byLoop
 }
 
 async function loadItemTypesByLoop(
@@ -265,9 +293,14 @@ app.openapi(listMarketplaceLoopsRoute, (async (c) => {
 
 	const filteredIds = filteredRows.map((r) => r.id)
 	const filteredItemTypes = await loadItemTypesByLoop(db, filteredIds)
+	const filteredIcons = await loadIconUrlByLoop(db, filteredIds)
 
 	const loops = filteredRows.map((row) =>
-		toMarketplaceLoopSummary(row, filteredItemTypes.get(row.id) ?? []),
+		toMarketplaceLoopSummary(
+			row,
+			filteredItemTypes.get(row.id) ?? [],
+			filteredIcons.get(row.id) ?? null,
+		),
 	)
 
 	logger.info('marketplace loops listed', {

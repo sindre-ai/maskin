@@ -9,6 +9,7 @@ import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
+import { SyncOpenConnectorCatalogJob } from './jobs/sync-openconnector-catalog'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import {
 	type DevBootstrapResult,
@@ -131,6 +132,13 @@ const purgeIdempotencyJob = new PurgeIdempotencyJob(db)
 purgeIdempotencyJob.start()
 logger.info('Purge idempotency job started')
 
+// Populates the marketplace Integrations section from the OpenConnector
+// runtime. No-ops (with an operator-facing log line) when the runtime env vars
+// are unset, so a deployment without one simply shows no integrations.
+const syncOpenConnectorCatalogJob = new SyncOpenConnectorCatalogJob(db)
+syncOpenConnectorCatalogJob.start()
+logger.info('OpenConnector catalog sync job started')
+
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
@@ -240,6 +248,7 @@ const shutdown = async (signal: string) => {
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
+	syncOpenConnectorCatalogJob.stop()
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.

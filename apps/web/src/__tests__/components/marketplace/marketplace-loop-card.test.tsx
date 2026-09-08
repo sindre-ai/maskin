@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', () => ({
@@ -257,6 +257,53 @@ describe('MarketplaceLoopCard', () => {
 			const row = screen.getByLabelText('Card composition')
 			expect(row).toHaveTextContent('Skill')
 			expect(screen.queryByText('skill')).not.toBeInTheDocument()
+		})
+	})
+	describe('provider logo', () => {
+		it('renders the provider logo when the catalog supplied one', () => {
+			render(
+				<MarketplaceLoopCard
+					workspaceId={workspaceId}
+					loop={loop({
+						name: 'Stripe',
+						item_types: ['integration'],
+						icon_url: 'https://cdn.example/stripe.svg',
+					})}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			const logo = document.querySelector('img[src="https://cdn.example/stripe.svg"]')
+			expect(logo).not.toBeNull()
+		})
+
+		it('falls back to the initials tile when no logo is supplied', () => {
+			render(
+				<MarketplaceLoopCard
+					workspaceId={workspaceId}
+					loop={loop({ name: 'Stripe', item_types: ['integration'], icon_url: null })}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			expect(document.querySelector('img')).toBeNull()
+			expect(screen.getByText('ST')).toBeInTheDocument()
+		})
+
+		it('falls back to the initials tile when the logo fails to load', () => {
+			render(
+				<MarketplaceLoopCard
+					workspaceId={workspaceId}
+					loop={loop({
+						name: 'Stripe',
+						item_types: ['integration'],
+						icon_url: 'https://cdn.example/broken.svg',
+					})}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			const logo = document.querySelector('img') as HTMLImageElement
+			fireEvent.error(logo)
+			expect(document.querySelector('img')).toBeNull()
+			expect(screen.getByText('ST')).toBeInTheDocument()
 		})
 	})
 })
