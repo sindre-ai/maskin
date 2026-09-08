@@ -291,7 +291,7 @@ export function LoopFlow({
 		.join(' · ')
 
 	return (
-		<div>
+		<div id="loop-flow" data-loop-flow-root>
 			{/* One note line: primitives · triggers on · cycles (mockup 1891). */}
 			<div className="flex items-center gap-2.5 mb-3">
 				<h2 className="shrink-0 text-sm font-semibold text-foreground">The loop, right now</h2>
