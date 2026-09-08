@@ -114,7 +114,12 @@ export function LoopRow({
 										event.stopPropagation()
 										onNoCreditsClick?.()
 									}}
-									className="eyebrow inline-flex shrink-0 items-center rounded-md bg-warning/15 px-1.5 py-0.5 text-warning transition-colors hover:bg-warning/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/40"
+									// NOT `.eyebrow` — that utility hard-codes `color: muted-foreground`
+									// at higher specificity than `text-warning` and wins at runtime,
+									// rendering the pill grey. Mirror the marketplace kind-label base
+									// (`components/marketplace/item-type-label.ts:16`) instead so
+									// `text-warning` actually paints amber in both themes.
+									className="inline-flex shrink-0 items-center rounded-md bg-warning/15 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.05em] text-warning transition-colors hover:bg-warning/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/40"
 								>
 									<span className="hidden sm:inline">{NO_CREDITS_PILL.label}</span>
 									<span className="sm:hidden">{NO_CREDITS_PILL.mobileLabel}</span>
