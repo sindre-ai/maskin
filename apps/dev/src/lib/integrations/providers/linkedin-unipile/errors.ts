@@ -252,9 +252,34 @@ export function classifyLinkedInResponse(status: number, body: unknown): LinkedI
 	if (status === 401) return 'CREDENTIAL_REVOKED'
 	if (status === 404) return 'CREDENTIAL_NOT_CONNECTED'
 	if (status === 429) return 'RATE_LIMITED_LINKEDIN'
+	// 501 `api/not_implemented` is NOT an outage — it is LinkedIn telling us we
+	// called a route it does not implement for this provider ("Use Start a Chat
+	// in the given inbox endpoint", "Use List inbox Chats endpoint"). Left in
+	// the 5xx bucket it becomes a retryable LINKEDIN_UNAVAILABLE, so the route
+	// burns three backoff attempts on a request that can never succeed and then
+	// reports a LinkedIn outage for what is our own wrong URL. INVALID_INPUT is
+	// the existing non-retryable class that says "the request was wrong" — the
+	// taxonomy is a wire contract (see the header) and does not grow for this.
+	if (status === 501 || isNotImplementedBody(body)) return 'INVALID_INPUT'
 	if (status >= 500 && status < 600) return 'LINKEDIN_UNAVAILABLE'
 	if (status >= 400 && status < 500) return 'INVALID_INPUT'
 	return 'LINKEDIN_UNAVAILABLE'
+}
+
+/**
+ * LinkedIn answers a route it does not implement for the calling provider with
+ * `{ status: 501, type: 'api/not_implemented', detail: 'Use … endpoint for this
+ * provider.' }`. The status alone is enough in practice, but the type is read
+ * too because the same envelope has been observed on a 200-shaped error body,
+ * and a wrong-route response that reads as an outage sends the caller chasing
+ * LinkedIn's status page instead of the URL.
+ */
+function isNotImplementedBody(body: unknown): boolean {
+	if (!body || typeof body !== 'object') return false
+	const rec = body as Record<string, unknown>
+	const type = typeof rec.type === 'string' ? rec.type.toLowerCase() : null
+	const errorType = typeof rec.error_type === 'string' ? rec.error_type.toLowerCase() : null
+	return type === 'api/not_implemented' || errorType === 'api/not_implemented'
 }
 
 function isPostTooLongBody(body: unknown): boolean {
