@@ -2,6 +2,8 @@ import { logger } from '../../../logger'
 import { SlackApiError } from './slack-api'
 
 const SLACK_API_BASE = 'https://slack.com/api'
+/** Slack's repeat-join signal on `conversations.join` — a warning, not an error. */
+const ALREADY_IN_CHANNEL_WARNING = 'already_in_channel'
 const CACHE_TTL_MS = 5 * 60_000
 const MAX_PAGES = 10
 const PAGE_LIMIT = 200
@@ -230,6 +232,80 @@ export async function slackPost<T extends SlackResponse>(
 		throw new SlackApiError(code, `Slack ${path} failed: ${code}`)
 	}
 	return json
+}
+
+/**
+ * Result shape for `joinSlackChannel`. Returned as a discriminated union so
+ * the caller can branch on the raw Slack error code (`is_private`,
+ * `not_authed`, `channel_not_found`, `restricted_action`, `already_in_channel`)
+ * without a try/catch — the setup service maps these codes to per-channel
+ * banner copy.
+ */
+export type SlackJoinResult = { ok: true; already_in?: boolean } | { ok: false; error: string }
+
+/**
+ * Join a public Slack channel using the bot token. Idempotent — a re-join
+ * returns `ok:true, already_in:true` rather than an error. Private channels
+ * are rejected by Slack with `{ok:false, error:'is_private'}`; the caller is
+ * expected to detect private-channel picks (via `is_private` on the picker
+ * data) and skip the call entirely rather than rely on this error path.
+ *
+ * Both the trigger-save setup service AND the MCP `slack_join_channel` tool
+ * (from PR #1456) call this helper — see spec §2, "do not duplicate the
+ * fetch".
+ *
+ * https://api.slack.com/methods/conversations.join
+ */
+export async function joinSlackChannel(
+	accessToken: string,
+	channelId: string,
+): Promise<SlackJoinResult> {
+	let res: Response
+	try {
+		res = await fetch(`${SLACK_API_BASE}/conversations.join`, {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${accessToken}`,
+				'Content-Type': 'application/json; charset=utf-8',
+			},
+			body: JSON.stringify({ channel: channelId }),
+			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+		})
+	} catch (err) {
+		if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+			return { ok: false, error: 'timeout' }
+		}
+		// Network-level failure — surface the message so the setup service can log
+		// it into `join_attempts[i].error` for the banner to render.
+		return { ok: false, error: err instanceof Error ? err.message : String(err) }
+	}
+	// Slack's edge does not always answer with the JSON envelope: a 5xx from a
+	// fronting proxy is HTML, and a rate-limited 429 can carry an empty body.
+	// Parsing outside a guard would throw a SyntaxError straight through this
+	// function's documented no-throw contract and abort the caller's whole
+	// per-channel loop before any outcome is persisted.
+	let json: {
+		ok?: boolean
+		error?: string
+		warning?: string
+		response_metadata?: { warnings?: string[] }
+	}
+	try {
+		json = (await res.json()) as typeof json
+	} catch {
+		return { ok: false, error: res.ok ? 'bad_response' : `http_${res.status}` }
+	}
+	if (json.ok) {
+		// A repeat join is NOT signalled by a top-level `already_in_channel`
+		// boolean — Slack reports it as a *warning* alongside the usual ok:true
+		// channel payload, in `warning` and/or `response_metadata.warnings`.
+		// Reading a top-level field here silently yielded already_in:false on
+		// every re-join. Both carriers are checked because Slack populates the
+		// scalar and the array inconsistently across methods.
+		const warnings = [json.warning, ...(json.response_metadata?.warnings ?? [])]
+		return { ok: true, already_in: warnings.includes(ALREADY_IN_CHANNEL_WARNING) }
+	}
+	return { ok: false, error: json.error ?? (res.ok ? 'unknown_error' : `http_${res.status}`) }
 }
 
 /**

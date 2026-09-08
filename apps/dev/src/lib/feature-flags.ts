@@ -98,6 +98,20 @@ export function resolveFlags(
 	return resolved
 }
 
+// Whether a specific flag is on for a specific actor. Same rule as resolveFlags
+// but for a single lookup — used at server-side call sites (e.g. the trigger
+// route deciding whether to fire the Slack setup service post-commit).
+export function isFlagEnabled(
+	actorId: string,
+	flagId: string,
+	config: FeatureFlagConfig = getFeatureFlagConfig(),
+	registry: Record<string, string> = FLAGS,
+): boolean {
+	if (!Object.values(registry).includes(flagId)) return false
+	if (!config.testerFlags.has(flagId)) return false
+	return config.testerActorIds.has(actorId.trim().toLowerCase())
+}
+
 let _config: FeatureFlagConfig | null = null
 
 // Parsed once and memoized — env cannot change without a process restart.
