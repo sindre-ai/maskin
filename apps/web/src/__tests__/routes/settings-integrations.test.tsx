@@ -69,6 +69,27 @@ vi.mock('@/hooks/use-integrations', () => ({
 	useSelectGithubInstallation: () => ({ mutate: mockSelectGithub, isPending: false }),
 }))
 
+/** LinkedIn installs are per-member, so the grouped row resolves who connected
+ *  each one: the caller's own id from useAuth, the display names from useActors. */
+const mockUseAuth = vi.fn<() => { actor: { id: string } | null }>(() => ({
+	actor: { id: 'actor-1' },
+}))
+
+vi.mock('@/hooks/use-auth', () => ({
+	useAuth: () => mockUseAuth(),
+}))
+
+const mockUseActors = vi.fn<() => { data: { id: string; name: string }[] }>(() => ({
+	data: [
+		{ id: 'actor-1', name: 'Magnus' },
+		{ id: 'actor-2', name: 'Colleague' },
+	],
+}))
+
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: () => mockUseActors(),
+}))
+
 vi.mock('@/components/shared/empty-state', () => ({
 	EmptyState: ({ title }: { title: string }) => <div>{title}</div>,
 }))
@@ -93,6 +114,13 @@ describe('IntegrationsPage', () => {
 		mockSearch.mockReturnValue({})
 		mockUseGithubPendingSelection.mockReturnValue({ data: undefined, isLoading: false })
 		mockUseBillingUsage.mockReturnValue({ data: { plan: 'free' } })
+		mockUseAuth.mockReturnValue({ actor: { id: 'actor-1' } })
+		mockUseActors.mockReturnValue({
+			data: [
+				{ id: 'actor-1', name: 'Magnus' },
+				{ id: 'actor-2', name: 'Colleague' },
+			],
+		})
 	})
 
 	it('shows loading state', () => {
@@ -601,6 +629,68 @@ describe('IntegrationsPage', () => {
 			renderLinkedIn()
 			expect(screen.queryByText(/\$49/)).not.toBeInTheDocument()
 			expect(screen.queryByText(/Included in your enterprise plan/)).not.toBeInTheDocument()
+		})
+	})
+	describe('linkedin accounts are listed per member', () => {
+		const LINKEDIN_PROVIDER = {
+			name: 'linkedin-unipile',
+			displayName: 'LinkedIn',
+			authType: 'oauth2',
+			events: [],
+		}
+
+		const renderWith = (integrations: unknown[]) => {
+			mockUseIntegrations.mockReturnValue({ data: integrations, isLoading: false })
+			mockUseProviders.mockReturnValue({ data: [LINKEDIN_PROVIDER], isLoading: false })
+			render(<IntegrationsPage />)
+		}
+
+		const linkedInFor = (actorId: string, externalId: string) =>
+			buildIntegrationResponse({
+				provider: 'linkedin-unipile',
+				status: 'active',
+				actorId,
+				externalId,
+			})
+
+		it('labels each connected account by the member who connected it', async () => {
+			renderWith([linkedInFor('actor-1', 'acct-a'), linkedInFor('actor-2', 'acct-b')])
+			// Two installs default the group to expanded.
+			expect(await screen.findByText('Magnus')).toBeInTheDocument()
+			expect(screen.getByText('Colleague')).toBeInTheDocument()
+			expect(screen.getByText('2 connected accounts')).toBeInTheDocument()
+		})
+
+		it("marks the current member's own account so two rows are tellable apart", async () => {
+			renderWith([linkedInFor('actor-1', 'acct-a'), linkedInFor('actor-2', 'acct-b')])
+			expect(await screen.findByText('(you)')).toBeInTheDocument()
+		})
+
+		it('offers a member who has not connected their own account', async () => {
+			// Only the colleague has connected — this is the case that used to
+			// render a bare "Disconnect" and no way in.
+			mockUseAuth.mockReturnValue({ actor: { id: 'actor-1' } })
+			renderWith([linkedInFor('actor-2', 'acct-b')])
+			const user = userEvent.setup()
+			await user.click(screen.getByRole('button', { name: /LinkedIn/ }))
+			expect(
+				await screen.findByRole('button', { name: /Connect your account/ }),
+			).toBeInTheDocument()
+		})
+
+		it('does not offer a second account to a member who already has one', async () => {
+			renderWith([linkedInFor('actor-1', 'acct-a')])
+			const user = userEvent.setup()
+			await user.click(screen.getByRole('button', { name: /LinkedIn/ }))
+			await screen.findByText('Magnus')
+			expect(screen.queryByRole('button', { name: /Connect your account/ })).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: /Add another/ })).not.toBeInTheDocument()
+		})
+
+		it('still states the per-identity price once accounts are connected', async () => {
+			mockUseBillingUsage.mockReturnValue({ data: { plan: 'pro' } })
+			renderWith([linkedInFor('actor-1', 'acct-a')])
+			expect(await screen.findByText(/\$49/)).toBeInTheDocument()
 		})
 	})
 })

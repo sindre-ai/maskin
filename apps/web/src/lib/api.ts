@@ -1350,6 +1350,9 @@ export interface IntegrationResponse {
 	status: string
 	externalId: string | null
 	config: Record<string, unknown>
+	/** The member this install belongs to, for actor-scoped providers
+	 *  (linkedin-unipile). Null for workspace-wide providers like GitHub. */
+	actorId: string | null
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null

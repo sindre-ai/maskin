@@ -205,6 +205,13 @@ export const integrationResponseSchema = z.object({
 	status: z.string(),
 	externalId: z.string().nullable(),
 	config: jsonbField,
+	// Set only by actor-scoped providers (currently linkedin-unipile), where an
+	// install belongs to one workspace member rather than to the workspace. The
+	// list route is workspace-scoped for every provider, so this is what lets a
+	// client tell "my identity" from "a colleague's" — without it the UI reads
+	// any workspace row as the caller's own and offers Disconnect to someone who
+	// never connected. Null for workspace-wide providers.
+	actorId: z.string().uuid().nullable(),
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),

@@ -247,6 +247,7 @@ export function buildIntegrationResponse(
 		status: 'active',
 		externalId: null,
 		config: {},
+		actorId: null,
 		createdBy: 'actor-1',
 		createdAt: null,
 		updatedAt: null,
