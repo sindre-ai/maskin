@@ -451,7 +451,7 @@ function isPrimaryKeyViolation(err: unknown): boolean {
 
 /**
  * LinkedIn v2 send responses, per the reference pages:
- *   - start-chat  POST /v2/{account}/chats/send          → { object: 'ChatStarted', chat_id, message_id }
+ *   - start-chat  POST /v2/{account}/inboxes/{inbox}/chats/send → { object: 'ChatStarted', chat_id, message_id }
  *   - in-chat     POST /v2/{account}/chats/{id}/messages/send → { object: 'MessageSent', message_id }
  *
  * `message_id` is documented as `string | string[] | null` — an array when

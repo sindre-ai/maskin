@@ -54,7 +54,7 @@ import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
  *
  * Message verbs (v2 messaging), which the MCP tools in packages/mcp/src/server.ts
  * proxy to:
- *   - POST /send-message       — POST /v2/{account_id}/chats/send
+ *   - POST /send-message       — POST /v2/{account_id}/inboxes/{inbox_id}/chats/send
  *   - POST /reply              — POST /v2/{account_id}/chats/{chat_id}/messages/send
  *   - GET  /list-conversations — GET  /v2/{account_id}/chats
  *

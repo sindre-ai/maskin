@@ -13,7 +13,7 @@ import type { AddressInfo } from 'node:net'
  *
  * Covers the subset of LinkedIn's v2 API this bet touches:
  *   - POST /v2/auth/link                                    — hosted-auth
- *   - POST /v2/:account_id/chats/send                       — new-chat send
+ *   - POST /v2/:account_id/inboxes/:inbox_id/chats/send      — new-chat send
  *   - GET  /v2/:account_id/inboxes/:inbox_id/chats           — list chats
  *   - POST /v2/:account_id/chats/:chat_id/messages/send     — reply in thread
  *   - GET  /v2/:account_id/chats/:chat_id/messages          — read a thread
@@ -60,7 +60,22 @@ const CANNED_AUTH_LINK = (state: string, base: string) => ({
 // An invented mock is worse than no mock: it makes the suite green against a
 // payload production will never send.
 
-/** `POST /v2/:account_id/chats/send` — reference: "Start a Chat". */
+/**
+ * LinkedIn's 501 envelope for a route it does not implement for this provider.
+ * Copied from the live response shape, not invented.
+ */
+const CANNED_NOT_IMPLEMENTED = (useInstead: string) => ({
+	status: 501,
+	type: 'api/not_implemented',
+	title: 'Not implemented',
+	detail: `Use ${useInstead} endpoint for this provider.`,
+})
+
+/**
+ * `POST /v2/:account_id/inboxes/:inbox_id/chats/send` — reference: "Start a
+ * Chat from Inbox". NOT the bare `/chats/send` ("Start a Chat"), which is for
+ * providers with no inbox concept and which LinkedIn answers 501 on.
+ */
 const CANNED_START_CHAT_RESPONSE = () => ({
 	object: 'ChatStarted',
 	chat_id: `mock-chat-${Date.now()}`,
@@ -369,8 +384,14 @@ export async function startLinkedInMock(): Promise<LinkedInMockServer> {
 			return send(200, CANNED_AUTH_LINK(state, base))
 		}
 		// v2 messaging endpoints — account_id is a path segment.
-		if (method === 'POST' && /^\/v2\/[^/]+\/chats\/send$/.test(url)) {
+		if (method === 'POST' && /^\/v2\/[^/]+\/inboxes\/[^/]+\/chats\/send$/.test(url)) {
 			return send(200, CANNED_START_CHAT_RESPONSE())
+		}
+		// The bare "Start a Chat" route, served the way the live API serves it:
+		// 501 for a provider that uses inboxes. Answering 200 here is what let
+		// the suite stay green while every new-thread send failed in production.
+		if (method === 'POST' && /^\/v2\/[^/]+\/chats\/send$/.test(url)) {
+			return send(501, CANNED_NOT_IMPLEMENTED('Start a Chat in the given inbox'))
 		}
 		if (method === 'GET' && /^\/v2\/[^/]+\/inboxes\/[^/]+\/chats(\?.*)?$/.test(url)) {
 			return send(200, CANNED_CHATS_RESPONSE())
