@@ -503,3 +503,19 @@ export function trackLoopCreatedViaLanguage(p: {
 		{ send_instantly: true },
 	)
 }
+
+// LOAD-BEARING for the Loops v4 polish bet's Won / Lost falsification metric
+// (Decide ↓ click-through ≥ 30% on sessions where the AskBanner renders). Fires
+// on the D3 AskBanner's Decide click. `loopId` and `pendingCount` are the two
+// fields the bet's PostHog query pairs the event with; camelCase kept
+// intentionally minimal here — this event has no taxonomy join outside its own
+// numerator, and the bet SHAPE names the payload as `{loopId, pendingCount}`.
+export function trackAskBannerDecideClicked(p: {
+	loopId: string
+	pendingCount: number
+}): void {
+	trackEvent('ask_banner_decide_clicked', {
+		loopId: p.loopId,
+		pendingCount: p.pendingCount,
+	})
+}
