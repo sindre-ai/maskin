@@ -25,11 +25,13 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useActors } from '@/hooks/use-actors'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useLoop, useLoopActivity } from '@/hooks/use-loops'
 import { useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
 import { useTriggers } from '@/hooks/use-triggers'
 import { cn } from '@/lib/cn'
+import { nextFireAt, nextFireLabel } from '@/lib/loop-next-fire'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
@@ -82,6 +84,10 @@ function LoopDetailRoute() {
 	)
 	const { data: activityEvents } = useLoopActivity(loopId, workspaceId)
 	const updateObject = useUpdateObject(workspaceId)
+	// Feature-flag boundary for the loops v4 polish bet. Read once at the route
+	// level per the feature-flags rule (`.claude/rules/feature-flags.md`); kept
+	// above the early returns below so the hook order stays stable across renders.
+	const loopsV4Enabled = useFeatureFlag('loops-v4-polish')
 
 	const composerRef = useRef<HTMLDivElement>(null)
 	const [proposedEdit, setProposedEdit] = useState<ProposedEdit | null>(null)
@@ -203,6 +209,20 @@ function LoopDetailRoute() {
 	const loopTriggers = (triggers ?? []).filter((t) => loop.triggerIds.includes(t.id))
 	const installedFromMarketplaceLoopId = object?.metadata?.installed_from_marketplace_loop_id
 	const isInstalledFromMarketplace = typeof installedFromMarketplaceLoopId === 'string'
+
+	// Best-effort derivations against the current LoopSummary shape, feeding
+	// LoopStats' v4 5-tile branch:
+	// - cyclesRunning: `inProgressCount` while the loop is on the live rungs of
+	//   the pill ladder (learning / supervised / fully_autonomous), else 0 —
+	//   matches the SPEC's "count of open cycles where pill.stateSlug === live".
+	// - asksWaiting: derived from `waitingOnViewer` at the loop level; a
+	//   per-step aggregation would need the D6a `LoopStep` extension and is
+	//   not in scope for D4.
+	// - nextFire: earliest enabled cron/reminder trigger's next firing time,
+	//   formatted `in Nm`/`in Nh`/`in Nd`/an absolute date past a week out.
+	const cyclesRunning = isLiveLoopPill(loop.pill) ? loop.inProgressCount : 0
+	const asksWaiting = loop.waitingOnViewer ? 1 : 0
+	const nextFire = nextFireLabel(nextFireAt(loopTriggers))
 	const pill = LOOP_PILL_STYLES[loop.pill]
 	const isPaused = loop.status === 'paused'
 	// Built but never run: no children have entered it and nothing has happened.
@@ -301,7 +321,16 @@ function LoopDetailRoute() {
 				)}
 
 				<div className="mt-5">
-					<LoopStats loop={loop} />
+					{loopsV4Enabled ? (
+						<LoopStats
+							loop={loop}
+							cyclesRunning={cyclesRunning}
+							asksWaiting={asksWaiting}
+							nextFire={nextFire}
+						/>
+					) : (
+						<LoopStats loop={loop} />
+					)}
 				</div>
 
 				{isPreFirstRun && (

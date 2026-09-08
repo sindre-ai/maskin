@@ -95,6 +95,10 @@ export default defineConfig(async () => ({
 		// for it (so the msb bridge/preview-port forwarding can reach this dev
 		// server) — ordinary `pnpm dev`/`pnpm dev:win` stays loopback-only.
 		host: process.env.MASKIN_DEV_EXTERNAL === '1' ? '0.0.0.0' : 'localhost',
+		// Same gate: Vite's host-header check rejects a forwarded hostname
+		// (msb bridges hand a rewritten Host that isn't `localhost`), so open
+		// the allowlist when we're already binding external interfaces.
+		allowedHosts: process.env.MASKIN_DEV_EXTERNAL === '1' ? true : undefined,
 		proxy: {
 			'/api': {
 				target: 'http://localhost:3000',
