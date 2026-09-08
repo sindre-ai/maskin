@@ -28,6 +28,25 @@ export let sql: ReturnType<typeof postgres>
 
 let testActorId: string
 
+// Statements from the marketplace seed-reify migration, cached once at module
+// load. Re-applied in beforeEach — see the hook for why.
+const __setupDirname = dirname(fileURLToPath(import.meta.url))
+const MARKETPLACE_SEED_MIGRATION_PATH = join(
+	__setupDirname,
+	'..',
+	'..',
+	'..',
+	'..',
+	'..',
+	'packages',
+	'db',
+	'drizzle',
+	'0073_seed_marketplace_catalog.sql',
+)
+const marketplaceSeedStatements = splitStatements(
+	readFileSync(MARKETPLACE_SEED_MIGRATION_PATH, 'utf-8'),
+)
+
 /**
  * Creates an integration test app with a real DB, auth bypassed.
  * Call after beforeAll has run so `db` and `testActorId` are set.
@@ -191,6 +210,18 @@ beforeAll(async () => {
 beforeEach(async () => {
 	// Clean all data except the test actor
 	await sql`TRUNCATE session_logs, sessions, events, notifications, triggers, integrations, relationships, read_state, subscriptions, objects, workspace_members, workspaces CASCADE`
+
+	// Re-seed the global marketplace catalog. TRUNCATE workspaces CASCADE
+	// walks the workspace_id FK on marketplace_agents / marketplace_skills
+	// and wipes their workspace_id IS NULL rows too — the ones migration
+	// 0073 seeded during beforeAll. marketplace_loops has no workspace_id
+	// column and survives untouched. Re-executing 0073 restores the
+	// wiped globals via ON CONFLICT DO UPDATE (idempotent), which is what
+	// every downstream marketplace test (catalog list, install-service,
+	// frontend integration) relies on to see a populated catalog.
+	for (const statement of marketplaceSeedStatements) {
+		await sql.unsafe(statement)
+	}
 })
 
 afterAll(async () => {
