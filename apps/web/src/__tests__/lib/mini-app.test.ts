@@ -1,8 +1,10 @@
 import {
 	DATA_SLOT_ID,
 	MINI_APP_CSP,
+	VIEWER_DOC_SIZE_MESSAGE,
 	injectIntoHtml,
 	prepareMiniAppHtml,
+	prepareViewerHtml,
 	stripAgentCsp,
 	stripMetaRefresh,
 } from '@/lib/mini-app'
@@ -264,5 +266,43 @@ describe('data-slot contract', () => {
 
 		removeAppDataGlobal()
 		slot.remove()
+	})
+})
+
+describe('prepareViewerHtml', () => {
+	it('injects the platform CSP + data-slot bootstrap + doc-size reporter in ONE injection', () => {
+		const html = '<!DOCTYPE html><html><head></head><body>hi</body></html>'
+		const result = prepareViewerHtml(html)
+		expect(result).toContain(MINI_APP_CSP)
+		expect(result).toContain(DATA_SLOT_ID)
+		expect(result).toContain(VIEWER_DOC_SIZE_MESSAGE)
+		// One contiguous injection point: the CSP meta, the bootstrap script,
+		// and the reporter script all sit immediately after <head>.
+		const headEnd = result.indexOf('<head>') + '<head>'.length
+		const cspIdx = result.indexOf('<meta http-equiv="Content-Security-Policy"')
+		expect(cspIdx).toBe(headEnd)
+	})
+
+	it('strips agent CSP metas before stamping the platform policy', () => {
+		const html =
+			'<html><head><meta http-equiv="Content-Security-Policy" content="default-src *"></head><body></body></html>'
+		const result = prepareViewerHtml(html)
+		expect(result).not.toContain('default-src *')
+		expect(result).toContain(MINI_APP_CSP)
+	})
+
+	it('doc-size reporter posts a message on load using the shared type name', () => {
+		const html = '<!DOCTYPE html><html><body></body></html>'
+		const result = prepareViewerHtml(html)
+		// The reporter script uses parent.postMessage with our exact type token
+		// so the stage's listener can filter cross-frame chatter deterministically.
+		expect(result).toMatch(
+			new RegExp(`parent\\.postMessage\\(\\{type:'${VIEWER_DOC_SIZE_MESSAGE}'`),
+		)
+	})
+
+	it('keeps the original document content intact', () => {
+		const html = '<!DOCTYPE html><html><body><p>hello</p></body></html>'
+		expect(prepareViewerHtml(html)).toContain('<p>hello</p>')
 	})
 })
