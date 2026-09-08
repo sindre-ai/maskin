@@ -1,7 +1,13 @@
 import { triggers } from '@maskin/db/schema'
 import { and, eq, or, sql } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { removeTriggerMetadataKey, setTriggerMetadataKey } from '../../lib/trigger-metadata'
+import {
+	claimSlackConfirmation,
+	removeTriggerMetadataKey,
+	setSlackSetupPreservingConfirmations,
+	setTriggerMetadataKey,
+	slackConfirmationUnclaimed,
+} from '../../lib/trigger-metadata'
 import { insertActor, insertTrigger, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
@@ -163,6 +169,108 @@ describe('Slack trigger metadata (real Postgres)', () => {
 			// rather than erroring — the PATCH handler fires this branch whenever
 			// `clear_auto_paused` is set, regardless of prior state.
 			expect(await readMetadata(trigger.id)).toEqual({})
+		})
+	})
+
+	describe('confirmation claim', () => {
+		/** Mirrors `claimConfirmation` in the setup service. */
+		async function claim(triggerId: string, channelId: string): Promise<boolean> {
+			const won = await db
+				.update(triggers)
+				.set({ metadata: claimSlackConfirmation(channelId, new Date().toISOString()) })
+				.where(and(eq(triggers.id, triggerId), slackConfirmationUnclaimed(channelId)))
+				.returning({ id: triggers.id })
+			return won.length > 0
+		}
+
+		it('is won exactly once per channel — the second attempt matches no row', async () => {
+			const trigger = await insertTrigger(db, workspaceId, actorId, agentId, { metadata: null })
+
+			// This is the whole point of the helper: two overlapping saves must not
+			// both conclude the channel is unconfirmed and both announce into it.
+			expect(await claim(trigger.id, 'C_ALPHA')).toBe(true)
+			expect(await claim(trigger.id, 'C_ALPHA')).toBe(false)
+
+			const md = (await readMetadata(trigger.id)) as {
+				slack_setup: { confirmation_posted_at: Record<string, string> }
+			}
+			expect(Object.keys(md.slack_setup.confirmation_posted_at)).toEqual(['C_ALPHA'])
+		})
+
+		it('claims different channels independently and preserves a sibling key', async () => {
+			const trigger = await insertTrigger(db, workspaceId, actorId, agentId, {
+				metadata: { auto_paused: AUTO_PAUSED },
+			})
+
+			expect(await claim(trigger.id, 'C_ALPHA')).toBe(true)
+			expect(await claim(trigger.id, 'C_BETA')).toBe(true)
+
+			const md = (await readMetadata(trigger.id)) as {
+				slack_setup: { confirmation_posted_at: Record<string, string> }
+				auto_paused: unknown
+			}
+			expect(Object.keys(md.slack_setup.confirmation_posted_at).sort()).toEqual([
+				'C_ALPHA',
+				'C_BETA',
+			])
+			expect(md.auto_paused).toEqual(AUTO_PAUSED)
+		})
+
+		it('setSlackSetupPreservingConfirmations keeps stored claims a stale run never saw', async () => {
+			const trigger = await insertTrigger(db, workspaceId, actorId, agentId, { metadata: null })
+			await claim(trigger.id, 'C_ALPHA')
+
+			// A run that started before the claim persists its result. Its object
+			// carries no `confirmation_posted_at` at all — if the write overwrote
+			// rather than merged, the claim would vanish and the next save would
+			// re-post "Maskin is now listening here" into C_ALPHA.
+			await db
+				.update(triggers)
+				.set({
+					metadata: setSlackSetupPreservingConfirmations({
+						channel_ids: ['C_ALPHA'],
+						join_attempts: [
+							{ channel_id: 'C_ALPHA', status: 'joined', attempted_at: '2026-09-01T10:00:00.000Z' },
+						],
+						last_setup_at: '2026-09-01T10:00:00.000Z',
+					}),
+				})
+				.where(eq(triggers.id, trigger.id))
+
+			const md = (await readMetadata(trigger.id)) as {
+				slack_setup: {
+					channel_ids: string[]
+					confirmation_posted_at: Record<string, string>
+				}
+			}
+			expect(md.slack_setup.channel_ids).toEqual(['C_ALPHA'])
+			expect(md.slack_setup.confirmation_posted_at.C_ALPHA).toBeTruthy()
+			// And the claim still holds, so no second announcement is possible.
+			expect(await claim(trigger.id, 'C_ALPHA')).toBe(false)
+		})
+
+		it('clearing a trigger to zero channels keeps the confirmation stamps', async () => {
+			const trigger = await insertTrigger(db, workspaceId, actorId, agentId, { metadata: null })
+			await claim(trigger.id, 'C_ALPHA')
+
+			// Removing the last channel clears the outcomes the banner reads, but
+			// re-adding that channel later must not re-announce in it.
+			await db
+				.update(triggers)
+				.set({
+					metadata: setSlackSetupPreservingConfirmations({
+						channel_ids: [],
+						join_attempts: [],
+						last_setup_at: '2026-09-01T11:00:00.000Z',
+					}),
+				})
+				.where(eq(triggers.id, trigger.id))
+
+			const md = (await readMetadata(trigger.id)) as {
+				slack_setup: { join_attempts: unknown[]; confirmation_posted_at: Record<string, string> }
+			}
+			expect(md.slack_setup.join_attempts).toEqual([])
+			expect(md.slack_setup.confirmation_posted_at.C_ALPHA).toBeTruthy()
 		})
 	})
 

@@ -1,8 +1,8 @@
 import type { Database } from '@maskin/db'
-import { integrations, triggers } from '@maskin/db/schema'
+import { events, integrations, triggers } from '@maskin/db/schema'
 import type { SlackSetupJoinAttempt, SlackSetupMetadata } from '@maskin/shared'
 import { buildWebAppHref, resolveWebAppBaseUrl } from '@maskin/shared'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { decrypt } from '../lib/crypto'
 import {
@@ -14,7 +14,11 @@ import {
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import type { StoredCredentials } from '../lib/integrations/types'
 import { logger } from '../lib/logger'
-import { setTriggerMetadataKey } from '../lib/trigger-metadata'
+import {
+	claimSlackConfirmation,
+	setSlackSetupPreservingConfirmations,
+	slackConfirmationUnclaimed,
+} from '../lib/trigger-metadata'
 
 // Statuses we persist per-channel in `slack_setup.join_attempts[*].status`.
 // Kept in-sync with `slackSetupJoinStatusSchema` in @maskin/shared.
@@ -68,11 +72,15 @@ async function runSlackTriggerSetupInner(
 ): Promise<void> {
 	if (channelIds.length === 0) {
 		// Nothing to do — clear stale outcomes so the banner stops showing them.
-		await persistSetupResult(db, triggerId, {
-			channel_ids: [],
-			join_attempts: [],
-			last_setup_at: new Date().toISOString(),
-		})
+		await persistSetupResult(
+			db,
+			{ triggerId, workspaceId, actorId },
+			{
+				channel_ids: [],
+				join_attempts: [],
+				last_setup_at: new Date().toISOString(),
+			},
+		)
 		return
 	}
 
@@ -99,19 +107,23 @@ async function runSlackTriggerSetupInner(
 				actor_id: actorId,
 			})
 		}
-		await persistSetupResult(db, triggerId, {
-			channel_ids: channelIds,
-			join_attempts: attempts,
-			last_setup_at: new Date().toISOString(),
-		})
+		await persistSetupResult(
+			db,
+			{ triggerId, workspaceId, actorId },
+			{
+				channel_ids: channelIds,
+				join_attempts: attempts,
+				last_setup_at: new Date().toISOString(),
+			},
+		)
 		return
 	}
 	const { botToken, integrationId, slackTeamId } = resolved
 
-	// Load current metadata so we can:
-	//   - dedupe confirmation posts per channel (spec §4 idempotency), and
-	//   - skip channels whose last attempt was already 'joined' / 'already_in'.
-	const previous = await loadExistingSetup(db, triggerId)
+	// Note: nothing is loaded up-front to decide whether to post a confirmation.
+	// The dedupe is a claim made atomically at post time (see `claimConfirmation`
+	// below) — a snapshot read here would be stale by the time the loop reaches
+	// the channel, several Slack round-trips later.
 
 	// Resolve which channel ids are private — a private channel picker pick must
 	// skip the join API call and land as 'not_public' (spec §2/§3).
@@ -120,9 +132,6 @@ async function runSlackTriggerSetupInner(
 	for (const c of conversations) privacyById.set(c.id, c.is_private)
 
 	const attempts: SlackSetupJoinAttempt[] = []
-	const confirmationPostedAt: Record<string, string> = {
-		...(previous?.confirmation_posted_at ?? {}),
-	}
 
 	for (const channelId of channelIds) {
 		const isPrivate = privacyById.get(channelId) ?? false
@@ -181,33 +190,48 @@ async function runSlackTriggerSetupInner(
 		})
 
 		// Fire the confirmation only for a fresh successful join or a first-time
-		// verification of a channel the bot was already in. Dedup on the
-		// per-channel `confirmation_posted_at` map — the presence of a timestamp
-		// is the only lock against double-posting.
-		if ((status === 'joined' || status === 'already_in') && !confirmationPostedAt[channelId]) {
-			const posted = await postConfirmation({
-				botToken,
-				channelId,
-				triggerId,
-				triggerName,
-				workspaceId,
-				slackTeamId,
-				actorId,
-			})
-			if (posted) {
-				confirmationPostedAt[channelId] = new Date().toISOString()
+		// verification of a channel the bot was already in.
+		//
+		// The claim is taken BEFORE the post and in a single SQL statement, so
+		// two overlapping saves of the same trigger cannot both decide the
+		// channel is unconfirmed and both announce into it. Claiming first also
+		// means a crash between claim and post costs a missing announcement
+		// rather than a duplicate one — the safer direction to fail in, since
+		// the duplicate lands in a customer's channel.
+		if (status === 'joined' || status === 'already_in') {
+			const claimed = await claimConfirmation(db, triggerId, channelId)
+			if (claimed) {
+				const posted = await postConfirmation({
+					botToken,
+					channelId,
+					triggerId,
+					triggerName,
+					workspaceId,
+					slackTeamId,
+					actorId,
+				})
+				if (!posted) {
+					// Release the claim so a later save retries the announcement.
+					// Losing this release (process death) is the one case that can
+					// permanently skip a confirmation; a duplicate post is worse.
+					await releaseConfirmationClaim(db, triggerId, channelId)
+				}
 			}
 		}
 	}
 
-	await persistSetupResult(db, triggerId, {
-		channel_ids: channelIds,
-		join_attempts: attempts,
-		confirmation_posted_at: Object.keys(confirmationPostedAt).length
-			? confirmationPostedAt
-			: undefined,
-		last_setup_at: new Date().toISOString(),
-	})
+	// `confirmation_posted_at` is deliberately not passed here — it is owned by
+	// the atomic claims above, and `persistSetupResult` unions whatever is
+	// stored rather than overwriting it.
+	await persistSetupResult(
+		db,
+		{ triggerId, workspaceId, actorId },
+		{
+			channel_ids: channelIds,
+			join_attempts: attempts,
+			last_setup_at: new Date().toISOString(),
+		},
+	)
 }
 
 // ── Slack API result → persisted status ──────────────────────────────────
@@ -374,36 +398,120 @@ async function resolveSlackContext(
 	}
 }
 
-async function loadExistingSetup(
+interface SetupAuditContext {
+	triggerId: string
+	workspaceId: string
+	actorId: string
+}
+
+/**
+ * Claim the right to announce in `channelId`, atomically.
+ *
+ * Returns true only if this call is the one that wrote the timestamp. The
+ * guard and the write are one statement, so of two concurrent runs exactly one
+ * sees an unclaimed channel.
+ */
+async function claimConfirmation(
 	db: Database,
 	triggerId: string,
-): Promise<SlackSetupMetadata | null> {
-	const [row] = await db
-		.select({ metadata: triggers.metadata })
-		.from(triggers)
-		.where(eq(triggers.id, triggerId))
-		.limit(1)
-	const md = row?.metadata as Record<string, unknown> | null | undefined
-	const raw = md?.slack_setup as Record<string, unknown> | undefined
-	if (!raw) return null
-	// Cast to the shared shape — the persisted value is the same writer's
-	// output, so field types are known.
-	return raw as unknown as SlackSetupMetadata
+	channelId: string,
+): Promise<boolean> {
+	try {
+		const claimed = await db
+			.update(triggers)
+			.set({ metadata: claimSlackConfirmation(channelId, new Date().toISOString()) })
+			.where(and(eq(triggers.id, triggerId), slackConfirmationUnclaimed(channelId)))
+			.returning({ id: triggers.id })
+		return claimed.length > 0
+	} catch (err) {
+		// Failing closed (no post) beats failing open (a possible duplicate post
+		// into someone's channel). The next save retries.
+		logger.warn('Slack confirmation claim failed', {
+			triggerId,
+			channelId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return false
+	}
+}
+
+/** Undo a claim whose `chat.postMessage` did not land, so a later save retries. */
+async function releaseConfirmationClaim(
+	db: Database,
+	triggerId: string,
+	channelId: string,
+): Promise<void> {
+	try {
+		await db
+			.update(triggers)
+			.set({
+				metadata: sql`jsonb_set(coalesce(${triggers.metadata}, '{}'::jsonb), '{slack_setup,confirmation_posted_at}', coalesce(${triggers.metadata} -> 'slack_setup' -> 'confirmation_posted_at', '{}'::jsonb) - ${channelId}::text)`,
+			})
+			.where(eq(triggers.id, triggerId))
+	} catch (err) {
+		logger.warn('Slack confirmation claim release failed', {
+			triggerId,
+			channelId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
 }
 
 async function persistSetupResult(
 	db: Database,
-	triggerId: string,
-	slack_setup: SlackSetupMetadata,
+	{ triggerId, workspaceId, actorId }: SetupAuditContext,
+	slack_setup: Omit<SlackSetupMetadata, 'confirmation_posted_at'>,
 ): Promise<void> {
 	// Single-statement jsonb merge — see `lib/trigger-metadata.ts`. A JS-side
 	// read-modify-write here would clobber a `metadata.auto_paused` stamped by
 	// `handleMemberLeftChannel` between the read and the write, silently
 	// disabling the trigger with no banner explaining why.
-	await db
+	const updated = await db
 		.update(triggers)
-		.set({ metadata: setTriggerMetadataKey('slack_setup', slack_setup) })
+		.set({ metadata: setSlackSetupPreservingConfirmations(slack_setup) })
 		.where(eq(triggers.id, triggerId))
+		.returning({ id: triggers.id })
+
+	if (updated.length === 0) {
+		// The trigger was deleted between the route's commit and this write.
+		// Nothing to audit, and no events row should claim otherwise.
+		logger.warn('Slack setup result not persisted — trigger row is gone', {
+			triggerId,
+			workspaceId,
+		})
+		return
+	}
+
+	// Audit + real-time. This is the only thing that tells the open trigger
+	// form the setup finished: the save response was sent before any of this
+	// ran, and `sse-invalidation` refetches triggers on an `events` row with
+	// `entityType: 'trigger'`. Without it a failed join sits in the column
+	// unread until the user navigates away and back.
+	try {
+		await db.insert(events).values({
+			workspaceId,
+			actorId,
+			action: 'updated',
+			entityType: 'trigger',
+			entityId: triggerId,
+			// Statuses only — no channel ids or Slack error strings. The events
+			// NOTIFY trigger has an 8KB payload ceiling and a trigger can carry
+			// many channels; the full record is on the row the client refetches.
+			data: {
+				slack_setup: {
+					outcomes: slack_setup.join_attempts.map((a) => a.status),
+					last_setup_at: slack_setup.last_setup_at,
+				},
+			},
+		})
+	} catch (err) {
+		// An audit failure must not undo the setup work already done.
+		logger.warn('Slack setup events insert failed', {
+			triggerId,
+			workspaceId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
 }
 
 async function safeListConversations(integrationId: string, botToken: string) {

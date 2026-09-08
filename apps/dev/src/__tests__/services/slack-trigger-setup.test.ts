@@ -43,20 +43,26 @@ function activeSlackIntegration(overrides?: Record<string, unknown>) {
 }
 
 /**
- * Wire the mock db so `runSlackTriggerSetup` observes:
- *   - one active Slack integration for the workspace,
- *   - the trigger row (used by loadExistingSetup).
- * `selectQueue` matches the reads in service order: integration lookup, then
- * loadExistingSetup. `persistSetupResult` does NOT read — it merges the
- * `slack_setup` key in a single SQL statement so a concurrent `auto_paused`
- * write cannot be clobbered.
+ * Wire the mock db so `runSlackTriggerSetup` observes one active Slack
+ * integration. That is the service's only read — nothing is loaded to decide
+ * whether to post a confirmation; that decision is an atomic claim made by an
+ * UPDATE at post time. `persistSetupResult` likewise merges the `slack_setup`
+ * key in a single statement so a concurrent `auto_paused` write can't be
+ * clobbered.
+ *
+ * `update` is what every claim and the final persist resolve to. A non-empty
+ * array means "this run won the claim"; pass `claimWon: false` to simulate a
+ * channel another run already claimed.
  */
-function stubReads(mockResults: Record<string, unknown>, existingSetup?: Record<string, unknown>) {
-	const md = existingSetup ? { slack_setup: existingSetup } : null
+function stubReads(mockResults: Record<string, unknown>, opts?: { claimWon?: boolean }) {
 	mockResults.selectQueue = [
 		[activeSlackIntegration()], // resolveSlackContext
-		[{ metadata: md }], // loadExistingSetup
 	]
+	// Static `update` is the fallback every UPDATE resolves to — the final
+	// persist must match a row so the audit event fires. A lost claim is
+	// queued ahead of it so only the first UPDATE (the claim) misses.
+	mockResults.update = [{ id: TRIGGER_ID }]
+	if (opts?.claimWon === false) mockResults.updateQueue = [[]]
 }
 
 /** Queue fake fetch responses matching the service's call order:
@@ -129,13 +135,37 @@ describe('runSlackTriggerSetup', () => {
 		const setup = written.value as {
 			channel_ids: string[]
 			join_attempts: Array<{ channel_id: string; status: string }>
-			confirmation_posted_at: Record<string, string>
+			confirmation_posted_at?: Record<string, string>
 			last_setup_at: string
 		}
 		expect(setup.channel_ids).toEqual(['C1', 'C2'])
 		expect(setup.join_attempts.map((a) => a.status)).toEqual(['joined', 'joined'])
-		expect(Object.keys(setup.confirmation_posted_at).sort()).toEqual(['C1', 'C2'])
 		expect(typeof setup.last_setup_at).toBe('string')
+		// The final write must NOT carry `confirmation_posted_at`. That key is
+		// owned by the per-channel atomic claims; including it here would let a
+		// stale snapshot overwrite a claim a concurrent run just made.
+		expect(setup.confirmation_posted_at).toBeUndefined()
+
+		// An `events` row is what tells the open trigger form the async setup
+		// finished — `sse-invalidation` refetches triggers on an events row with
+		// `entityType: 'trigger'`. Without it the outcomes sit unread until the
+		// user navigates away and back.
+		const auditRow = calls.inserts.at(-1) as {
+			entityType: string
+			entityId: string
+			workspaceId: string
+			actorId: string
+			action: string
+			data: { slack_setup: { outcomes: string[] } }
+		}
+		expect(auditRow.entityType).toBe('trigger')
+		expect(auditRow.entityId).toBe(TRIGGER_ID)
+		expect(auditRow.workspaceId).toBe(WORKSPACE_ID)
+		expect(auditRow.actorId).toBe(ACTOR_ID)
+		expect(auditRow.action).toBe('updated')
+		// Statuses only — the events NOTIFY payload has an 8KB ceiling, so no
+		// channel ids and no Slack error strings ride along.
+		expect(auditRow.data.slack_setup.outcomes).toEqual(['joined', 'joined'])
 
 		// Confirmation posts fire (`chat.postMessage`), once per channel.
 		const postMessageCalls = fetchMock.mock.calls.filter(
@@ -210,12 +240,9 @@ describe('runSlackTriggerSetup', () => {
 
 	it('re-runs the join but does not re-post the confirmation for an already-joined channel', async () => {
 		const { db, mockResults, calls } = createTestContext()
-		stubReads(mockResults, {
-			channel_ids: ['C1'],
-			join_attempts: [{ channel_id: 'C1', status: 'joined', attempted_at: '2026-08-01T00:00:00Z' }],
-			confirmation_posted_at: { C1: '2026-08-01T00:00:01Z' },
-			last_setup_at: '2026-08-01T00:00:01Z',
-		})
+		// The claim UPDATE matches zero rows — C1 already carries a
+		// `confirmation_posted_at` stamp, so this run loses and must not post.
+		stubReads(mockResults, { claimWon: false })
 		queueFetchResponses(
 			fetchMock,
 			convList([{ id: 'C1', name: 'general' }]),
@@ -223,7 +250,7 @@ describe('runSlackTriggerSetup', () => {
 			// cached 'joined' would otherwise leave a re-invited bot unjoined after
 			// a kick + Resume, with the trigger showing green.
 			{ ok: true, already_in_channel: true },
-			// No confirmation queued — dedup on confirmation_posted_at.
+			// No confirmation queued — the claim is lost, so no post is attempted.
 		)
 
 		await runSlackTriggerSetup(db, {
@@ -243,12 +270,8 @@ describe('runSlackTriggerSetup', () => {
 
 		const written = readMetadataSql((calls.updates.at(-1) as { metadata: unknown }).metadata)
 		expect(written.key).toBe('slack_setup')
-		const setup = written.value as {
-			join_attempts: Array<{ status: string }>
-			confirmation_posted_at: Record<string, string>
-		}
+		const setup = written.value as { join_attempts: Array<{ status: string }> }
 		expect(setup.join_attempts[0].status).toBe('already_in')
-		expect(setup.confirmation_posted_at.C1).toBe('2026-08-01T00:00:01Z')
 	})
 
 	it('records not_authed for every channel when no active Slack integration exists', async () => {
@@ -257,6 +280,7 @@ describe('runSlackTriggerSetup', () => {
 		mockResults.selectQueue = [
 			[], // no integration
 		]
+		mockResults.update = [{ id: TRIGGER_ID }]
 
 		await runSlackTriggerSetup(db, {
 			triggerId: TRIGGER_ID,

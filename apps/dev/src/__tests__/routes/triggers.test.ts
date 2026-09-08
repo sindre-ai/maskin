@@ -239,6 +239,57 @@ describe('Triggers Routes', () => {
 			})
 		})
 
+		// Removing the last channel must still reach the service: it owns the
+		// branch that clears stale `slack_setup` outcomes. Before this, the route
+		// short-circuited on an empty channel list and that branch was
+		// unreachable, so the form kept showing failures for channels the
+		// trigger no longer listened on.
+		it('fires runSlackTriggerSetup with an empty list when the last channel is removed', async () => {
+			const config = {
+				entity_type: 'slack.channel_message',
+				action: 'created',
+				conditions: [],
+			}
+			const trigger = buildTrigger({ workspaceId: wsId, type: 'event', name: 'Alerts' })
+			const updated = {
+				...trigger,
+				config,
+				metadata: { slack_setup: { channel_ids: ['COLD'], join_attempts: [] } },
+			}
+			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, { type: 'event', config }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(runSlackTriggerSetupMock).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({ triggerId: trigger.id, channelIds: [] }),
+			)
+		})
+
+		// The counterpart guard: an event trigger that never had `slack_setup`
+		// must not reach the service just because it has no channels, or every
+		// non-Slack event trigger would write metadata and an events row on
+		// every save.
+		it('does not fire runSlackTriggerSetup for an event trigger with no channels and no prior setup', async () => {
+			const config = { entity_type: 'object', action: 'created', conditions: [] }
+			const trigger = buildTrigger({ workspaceId: wsId, type: 'event', name: 'Objects' })
+			const { app, mockResults } = createTestApp(triggersRoutes, '/api/triggers')
+			mockResults.selectQueue = [[trigger], [buildWorkspaceMember()]]
+			mockResults.update = [{ ...trigger, config, metadata: null }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/triggers/${trigger.id}`, { type: 'event', config }),
+			)
+
+			expect(res.status).toBe(200)
+			expect(runSlackTriggerSetupMock).not.toHaveBeenCalled()
+		})
+
 		// PR D — the resume UX sends `clear_auto_paused: true` alongside the
 		// enabled-flip. AC requires the field is REMOVED (not just skipped) so
 		// the next `member_left_channel` pass captures a fresh

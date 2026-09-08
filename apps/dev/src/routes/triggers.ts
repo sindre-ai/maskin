@@ -30,9 +30,15 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 /**
  * Kick off the Slack trigger setup service after the DB commit — never inside
- * the transaction (spec §2). Skips non-Slack triggers, cron, and reminder
- * triggers because `extractSlackChannelIds` returns an empty array for anything
- * not carrying `event.channel` / `event.item.channel` conditions.
+ * the transaction (spec §2). `row.type !== 'event'` excludes cron and reminder
+ * triggers; `extractSlackChannelIds` returning an empty array excludes every
+ * other event trigger, since only Slack ones carry `event.channel` /
+ * `event.item.channel` conditions.
+ *
+ * The one case where an empty channel list still runs: a trigger that already
+ * has `metadata.slack_setup`. That is a Slack trigger whose last channel was
+ * just removed, and the service needs to run to clear the outcomes the form
+ * would otherwise keep showing.
  *
  * Gated behind `slack-setup-ux-v2` per spec §10 rollout — flag OFF = today's
  * behaviour (no join, no confirmation, no metadata write).
@@ -40,12 +46,21 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 function kickOffSlackSetup(
 	db: Database,
 	actorId: string,
-	row: { id: string; workspaceId: string; name: string; type: string; config: unknown },
+	row: {
+		id: string
+		workspaceId: string
+		name: string
+		type: string
+		config: unknown
+		metadata?: unknown
+	},
 ): void {
 	if (row.type !== 'event') return
 	if (!isFlagEnabled(actorId, FLAGS.SLACK_SETUP_UX_V2)) return
 	const channelIds = extractSlackChannelIds(row.config as Record<string, unknown> | null)
-	if (channelIds.length === 0) return
+	const hasStaleSetup =
+		(row.metadata as Record<string, unknown> | null | undefined)?.slack_setup !== undefined
+	if (channelIds.length === 0 && !hasStaleSetup) return
 	// Fire-and-forget — the route response is what the frontend awaits, not the
 	// setup outcome. `runSlackTriggerSetup` swallows its own errors so a
 	// rejected promise here would be a runtime bug, not a Slack API failure.
