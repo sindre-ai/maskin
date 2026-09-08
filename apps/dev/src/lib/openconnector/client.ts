@@ -22,34 +22,50 @@ import { logger } from '../logger'
 
 const REQUEST_TIMEOUT_MS = 10_000
 
-/** The subset of each provider that Maskin actually renders or installs. */
+/**
+ * The subset of each provider Maskin actually renders or installs.
+ *
+ * Field names here are Maskin's, not the runtime's. OpenConnector calls the
+ * stable slug `service` and the label `displayName`; we normalise to `id` /
+ * `name` at this boundary so nothing downstream has to know the wire shape.
+ * Verified against a live runtime (GET /v1/providers, 1465 rows).
+ */
 export interface OpenConnectorProvider {
 	id: string
 	name: string
 	category: string | null
 	iconUrl: string | null
-	description: string | null
-	actionCount: number
+	homepageUrl: string | null
+	scenario: string | null
+	authTypes: string[]
 }
 
-// Deliberately permissive: `id` and `name` are the only fields we cannot
-// render a card without, so everything else is optional and degrades to null
-// rather than dropping the provider. `.passthrough()` keeps unknown fields
-// from failing the parse — OpenConnector adding a field must not empty our
-// catalog overnight.
+// Mirrors the runtime's RuntimeProviderMetadata. `service` and `displayName`
+// are the only fields we cannot render a card without; everything else
+// degrades rather than dropping the provider. `.passthrough()` keeps unknown
+// fields from failing the parse.
+//
+// NOTE: there is deliberately no `description` or `actionCount` here — the
+// runtime does not return either. `scenario` is a discovery slug
+// ("cross-border-ecommerce"), not prose, so it is kept as provenance rather
+// than displayed as a description.
 const providerSchema = z
 	.object({
-		id: z.string().min(1),
-		name: z.string().min(1),
-		category: z.string().nullish(),
+		service: z.string().min(1),
+		displayName: z.string().min(1),
 		iconUrl: z.string().nullish(),
-		description: z.string().nullish(),
-		actionCount: z.number().int().nonnegative().nullish(),
+		homepageUrl: z.string().nullish(),
+		scenario: z.string().nullish(),
+		categories: z
+			.array(z.object({ id: z.string(), displayName: z.string() }).passthrough())
+			.nullish(),
+		authTypes: z.array(z.string()).nullish(),
 	})
 	.passthrough()
 
-// Accept either a bare array or the common `{ providers: [...] }` / `{ data:
-// [...] }` envelopes, so a wrapper shape doesn't read as "catalog is empty".
+// The runtime wraps rows as `{ success, message, data, meta }`; a bare array
+// and `{ providers: [...] }` are accepted too so a shape change doesn't read
+// as "catalog is empty".
 const responseSchema = z.union([
 	z.array(providerSchema),
 	z.object({ providers: z.array(providerSchema) }),
@@ -140,18 +156,25 @@ export async function listProviders(
 			payload && typeof payload === 'object'
 				? Object.keys(payload as object).join(', ')
 				: typeof payload
-		logger.warn('OpenConnector provider response failed schema validation', {
+		// error, not warn: unlike an outage this never recovers on its own. The
+		// catalog silently staying empty is exactly how the field-name mismatch
+		// that shipped in the first cut of this client went unnoticed.
+		logger.error('OpenConnector provider response failed schema validation', {
 			topLevelKeys: keys,
+			issues: parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`),
 		})
 		return null
 	}
 
 	return unwrap(parsed.data).map((p) => ({
-		id: p.id,
-		name: p.name,
-		category: p.category ?? null,
+		id: p.service,
+		name: p.displayName,
+		// The runtime returns an ordered category list; the first is the
+		// primary facet and becomes the marketplace filter chip via use_case.
+		category: p.categories?.[0]?.displayName ?? null,
 		iconUrl: p.iconUrl ?? null,
-		description: p.description ?? null,
-		actionCount: p.actionCount ?? 0,
+		homepageUrl: p.homepageUrl ?? null,
+		scenario: p.scenario ?? null,
+		authTypes: p.authTypes ?? [],
 	}))
 }

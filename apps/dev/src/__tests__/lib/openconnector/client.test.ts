@@ -9,13 +9,19 @@ function jsonResponse(body: unknown, status = 200): Response {
 	} as unknown as Response
 }
 
+// Verbatim shape of a row from a live OpenConnector runtime's
+// GET /v1/providers (verified against ghcr.io/oomol-lab/open-connector).
 const PROVIDER = {
-	id: 'stripe',
-	name: 'Stripe',
-	category: 'Payments',
+	service: 'stripe',
+	displayName: 'Stripe',
 	iconUrl: 'https://cdn.example/stripe.svg',
-	description: 'Accept payments',
-	actionCount: 12,
+	homepageUrl: 'https://stripe.com/',
+	categories: [
+		{ id: 'Payments', displayName: 'Payments' },
+		{ id: 'Finance', displayName: 'Finance' },
+	],
+	scenario: 'payments',
+	authTypes: ['oauth2'],
 }
 
 describe('resolveOpenConnectorConfig', () => {
@@ -74,10 +80,12 @@ describe('listProviders', () => {
 			{
 				id: 'stripe',
 				name: 'Stripe',
+				// first category wins — it becomes the marketplace filter chip
 				category: 'Payments',
 				iconUrl: 'https://cdn.example/stripe.svg',
-				description: 'Accept payments',
-				actionCount: 12,
+				homepageUrl: 'https://stripe.com/',
+				scenario: 'payments',
+				authTypes: ['oauth2'],
 			},
 		])
 	})
@@ -94,7 +102,7 @@ describe('listProviders', () => {
 	})
 
 	it('defaults optional fields rather than dropping the provider', async () => {
-		fetchMock.mockResolvedValueOnce(jsonResponse([{ id: 'notion', name: 'Notion' }]))
+		fetchMock.mockResolvedValueOnce(jsonResponse([{ service: 'notion', displayName: 'Notion' }]))
 		const result = await listProviders(config, fetchMock as unknown as typeof fetch)
 		expect(result).toEqual([
 			{
@@ -102,10 +110,21 @@ describe('listProviders', () => {
 				name: 'Notion',
 				category: null,
 				iconUrl: null,
-				description: null,
-				actionCount: 0,
+				homepageUrl: null,
+				scenario: null,
+				authTypes: [],
 			},
 		])
+	})
+
+	// Regression: the first cut of this client expected `id`/`name`, which the
+	// runtime does not return. Every row failed to parse, listProviders() went
+	// null, and the catalog stayed empty with only a log line to show for it.
+	it('rejects the pre-verification field names rather than appearing to work', async () => {
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse([{ id: 'stripe', name: 'Stripe', category: 'Payments' }]),
+		)
+		expect(await listProviders(config, fetchMock as unknown as typeof fetch)).toBeNull()
 	})
 
 	it('keeps providers that carry unknown extra fields', async () => {

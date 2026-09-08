@@ -57,13 +57,19 @@ function slugFor(providerId: string): string {
 
 function snapshotFor(p: OpenConnectorProvider): Record<string, unknown> {
 	return {
-		// `provider` is what buildIntegrationInsert() keys the install on.
+		// `provider` is what buildIntegrationInsert() keys the install on, so it
+		// must be the runtime's stable service slug ("stripe", "17track"), never
+		// the display label.
 		provider: p.id,
 		name: p.name,
-		description: p.description,
+		// The runtime exposes no per-provider description; homepage and scenario
+		// are the real fields available. Left null rather than synthesising copy.
+		description: null,
 		category: p.category,
 		icon_url: p.iconUrl,
-		action_count: p.actionCount,
+		homepage_url: p.homepageUrl,
+		scenario: p.scenario,
+		auth_types: p.authTypes,
 		config: {},
 		// Backend-only provenance marker — how reconciliation finds our rows.
 		source: CATALOG_SOURCE,
@@ -98,7 +104,7 @@ export async function syncOpenConnectorCatalog(db: Database): Promise<void> {
 					.values({
 						name: provider.name,
 						slug,
-						description: provider.description ?? '',
+						description: '',
 						version: CATALOG_VERSION,
 						useCase: provider.category,
 					})
@@ -106,7 +112,7 @@ export async function syncOpenConnectorCatalog(db: Database): Promise<void> {
 						target: marketplaceLoops.slug,
 						set: {
 							name: provider.name,
-							description: provider.description ?? '',
+							description: '',
 							useCase: provider.category,
 							updatedAt: new Date(),
 						},
