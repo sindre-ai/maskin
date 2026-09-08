@@ -14,19 +14,19 @@ vi.mock('../../../../../lib/crypto', () => ({
 
 import {
 	CONNECTION_REQUEST_TRIGGERS,
-	type UnipileMockServer,
-	startUnipileMock,
+	type LinkedInMockServer,
+	startLinkedInMock,
 } from '../../../../../lib/integrations/providers/linkedin-unipile/__mocks__/unipile-server'
 import { LinkedInIntegrationError } from '../../../../../lib/integrations/providers/linkedin-unipile/errors'
 import {
-	__setUnipileClientForTests,
+	__setLinkedInClientForTests,
 	sendLinkedInConnectionRequest,
 } from '../../../../../lib/integrations/providers/linkedin-unipile/operations'
 import type {
-	UnipileClient,
-	UnipileConnectionRequestPayload,
+	LinkedInClient,
+	LinkedInConnectionRequestPayload,
 } from '../../../../../lib/integrations/providers/linkedin-unipile/unipile-client'
-import { createUnipileHttpClient } from '../../../../../lib/integrations/providers/linkedin-unipile/unipile-client'
+import { createLinkedInHttpClient } from '../../../../../lib/integrations/providers/linkedin-unipile/unipile-client'
 
 /**
  * Coverage from the acceptance list (Task 7a):
@@ -36,7 +36,7 @@ import { createUnipileHttpClient } from '../../../../../lib/integrations/provide
  *   - CREDENTIAL_NOT_CONNECTED path (integrations lookup returned null)
  *   - one round-trip integration test through the reshaped mock server
  *
- * The operation-level suite stubs `UnipileClient` directly to keep the tests
+ * The operation-level suite stubs `LinkedInClient` directly to keep the tests
  * quick and deterministic; the integration suite spins up the mock HTTP
  * server so the client + normalizer + classifier are all exercised through
  * real fetch calls against the shape production will actually hit.
@@ -49,9 +49,9 @@ type Recorded = { name: string; args: unknown }
 function stubClient(
 	response: unknown,
 	status = 200,
-): { calls: Recorded[]; last: () => UnipileConnectionRequestPayload | undefined } {
+): { calls: Recorded[]; last: () => LinkedInConnectionRequestPayload | undefined } {
 	const calls: Recorded[] = []
-	__setUnipileClientForTests(() => {
+	__setLinkedInClientForTests(() => {
 		const record =
 			(name: string) =>
 			async (
@@ -69,14 +69,14 @@ function stubClient(
 			searchPeople: record('searchPeople'),
 			getProfile: record('getProfile'),
 			sendConnectionRequest: record('sendConnectionRequest'),
-		} as unknown as UnipileClient
+		} as unknown as LinkedInClient
 	})
 	return {
 		calls,
 		last: () => {
 			const call = calls.at(-1)
 			return call?.name === 'sendConnectionRequest'
-				? (call.args as UnipileConnectionRequestPayload)
+				? (call.args as LinkedInConnectionRequestPayload)
 				: undefined
 		},
 	}
@@ -91,7 +91,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-	__setUnipileClientForTests(null)
+	__setLinkedInClientForTests(null)
 	vi.restoreAllMocks()
 })
 
@@ -113,7 +113,7 @@ describe('sendLinkedInConnectionRequest — happy path', () => {
 		})
 	})
 
-	it('synthesises sent_at when Unipile omits it, and passes user_id + message to the client verbatim', async () => {
+	it('synthesises sent_at when LinkedIn omits it, and passes user_id + message to the client verbatim', async () => {
 		const { last } = stubClient({ object: 'UserInvitationSent', invitation_id: 'inv-43' })
 		const before = Date.now()
 		const res = await sendLinkedInConnectionRequest(ctx, {
@@ -138,7 +138,7 @@ describe('sendLinkedInConnectionRequest — happy path', () => {
 			user_id: 'user-44',
 		})
 		// A null-vs-absent distinction matters on some tenants — sending
-		// { message: null } gets a bare invite rejected by Unipile whereas
+		// { message: null } gets a bare invite rejected by LinkedIn whereas
 		// omitting the key gets the normal path. Absence means absence.
 		expect(last()?.message).toBeUndefined()
 	})
@@ -172,7 +172,7 @@ describe('sendLinkedInConnectionRequest — error paths', () => {
 
 	it('surfaces CREDENTIAL_NOT_CONNECTED when the workspace has no connected identity', async () => {
 		// No integrations row — the preamble short-circuits before any
-		// Unipile call happens.
+		// LinkedIn call happens.
 		credentialMock.mockResolvedValue(null)
 		const { calls } = stubClient({}, 200)
 		await expect(sendLinkedInConnectionRequest(ctx, { user_id: 'user-48' })).rejects.toMatchObject({
@@ -181,7 +181,7 @@ describe('sendLinkedInConnectionRequest — error paths', () => {
 		expect(calls).toHaveLength(0)
 	})
 
-	it('rejects a missing user_id without hitting Unipile', async () => {
+	it('rejects a missing user_id without hitting LinkedIn', async () => {
 		const { calls } = stubClient({}, 200)
 		await expect(sendLinkedInConnectionRequest(ctx, {})).rejects.toMatchObject({
 			code: 'INVALID_INPUT',
@@ -189,7 +189,7 @@ describe('sendLinkedInConnectionRequest — error paths', () => {
 		expect(calls).toHaveLength(0)
 	})
 
-	it('rejects an empty-string user_id without hitting Unipile', async () => {
+	it('rejects an empty-string user_id without hitting LinkedIn', async () => {
 		const { calls } = stubClient({}, 200)
 		await expect(sendLinkedInConnectionRequest(ctx, { user_id: '   ' })).rejects.toMatchObject({
 			code: 'INVALID_INPUT',
@@ -205,11 +205,11 @@ describe('sendLinkedInConnectionRequest — error paths', () => {
 describe('sendLinkedInConnectionRequest — integration through the mock server', () => {
 	const ORIGINAL_ENV: Record<string, string | undefined> = {}
 	const ENV_KEYS = ['UNIPILE_BASE_URL', 'UNIPILE_API_KEY'] as const
-	let mock: UnipileMockServer
+	let mock: LinkedInMockServer
 
 	beforeAll(async () => {
 		for (const key of ENV_KEYS) ORIGINAL_ENV[key] = process.env[key]
-		mock = await startUnipileMock()
+		mock = await startLinkedInMock()
 	})
 
 	afterAll(async () => {
@@ -225,7 +225,7 @@ describe('sendLinkedInConnectionRequest — integration through the mock server'
 		process.env.UNIPILE_BASE_URL = mock.baseUrl
 		process.env.UNIPILE_API_KEY = 'test-api-key'
 		// Route through the real HTTP client — no injected stub.
-		__setUnipileClientForTests(null)
+		__setLinkedInClientForTests(null)
 	})
 
 	it('POSTs to /v2/{account_id}/users/me/relation-requests with the documented body', async () => {
@@ -274,9 +274,9 @@ describe('sendLinkedInConnectionRequest — integration through the mock server'
 // endpoint on the live API — pin the ordering so a future edit to the mock
 // cannot regress into it.
 describe('mock server route ordering — relation-requests wins over /users/:identifier', () => {
-	let mock: UnipileMockServer
+	let mock: LinkedInMockServer
 	beforeAll(async () => {
-		mock = await startUnipileMock()
+		mock = await startLinkedInMock()
 	})
 	afterAll(async () => {
 		await mock.close()
@@ -311,16 +311,16 @@ describe('mock server route ordering — relation-requests wins over /users/:ide
 // A tiny smoke that the HTTP client's new method actually hits the right
 // path on its own — mirrors read-tools' pinning of routes so a wrong
 // endpoint can't ship green.
-describe('createUnipileHttpClient.sendConnectionRequest — pinned route', () => {
-	let mock: UnipileMockServer
+describe('createLinkedInHttpClient.sendConnectionRequest — pinned route', () => {
+	let mock: LinkedInMockServer
 	beforeAll(async () => {
-		mock = await startUnipileMock()
+		mock = await startLinkedInMock()
 	})
 	afterAll(async () => {
 		await mock.close()
 	})
 	it('POSTs /v2/{account}/users/me/relation-requests with { user_id, message }', async () => {
-		const client = createUnipileHttpClient({ baseUrl: mock.baseUrl, apiKey: 'k' })
+		const client = createLinkedInHttpClient({ baseUrl: mock.baseUrl, apiKey: 'k' })
 		const res = await client.sendConnectionRequest({
 			account_id: 'acc',
 			user_id: 'u',
@@ -333,7 +333,7 @@ describe('createUnipileHttpClient.sendConnectionRequest — pinned route', () =>
 		expect(call?.body).toEqual({ user_id: 'u', message: 'hi' })
 	})
 	it('omits the message key when the caller did not pass one', async () => {
-		const client = createUnipileHttpClient({ baseUrl: mock.baseUrl, apiKey: 'k' })
+		const client = createLinkedInHttpClient({ baseUrl: mock.baseUrl, apiKey: 'k' })
 		await client.sendConnectionRequest({ account_id: 'acc', user_id: 'u' })
 		const call = mock.inbox().at(-1)
 		expect(call?.body).toEqual({ user_id: 'u' })

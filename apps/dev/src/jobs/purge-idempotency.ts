@@ -15,7 +15,7 @@ import { logger } from '../lib/logger'
  * sizing (~140k rows steady-state at 200 accounts × 100 sends/day).
  *
  * `linkedin_tool_calls` (Task 7b) is the content-hash ledger for the LinkedIn
- * content/community tools whose Unipile v2 endpoints do not accept an
+ * content/community tools whose LinkedIn v2 endpoints do not accept an
  * Idempotency-Key header. Its TTL is deliberately shorter (24h): longer
  * would balloon the table (content hashes are per unique post/comment body,
  * so cardinality is high), shorter would let a real duplicate slip through
