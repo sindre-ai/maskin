@@ -503,3 +503,23 @@ export function trackLoopCreatedViaLanguage(p: {
 		{ send_instantly: true },
 	)
 }
+
+// Ship-metric event for D8 of the Loops v4 UX/UI polish bet
+// (bet/d166-loops-v4-polish). Fires once per click on the "Mark read" CTA
+// inside the loop-detail TimelineTab's `NEW · {n} unread` divider — used to
+// answer "do admins clear the unread boundary at all, and does the count on
+// the divider match what the click reports". Payload matches the SPEC's
+// wording verbatim: `{loopId, unreadCount}` at emit-time, with `entity_id`
+// / `entity_type` mirrored for cross-stream slicing next to the loop's other
+// events. `workspace_id` / `actor_id` ride via super-properties (fillBase is
+// not used here because we don't own the loop's `entity_type` semantics via
+// BaseProps for a click event).
+export function trackMarkReadClicked(p: { loop_id: string; unread_count: number }): void {
+	trackEvent('mark_read_clicked', {
+		loop_id: p.loop_id,
+		unread_count: p.unread_count,
+		entity_id: p.loop_id,
+		entity_type: 'loop',
+		source: 'web',
+	})
+}

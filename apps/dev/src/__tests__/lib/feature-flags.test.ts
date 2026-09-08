@@ -34,10 +34,17 @@ describe('parseFeatureFlagConfig', () => {
 })
 
 describe('resolveFlags', () => {
-	it('resolves the live registry — empty while no flag is in flight', () => {
-		const c = config({ FF_TESTER_FEATURES: 'anything', FF_TESTER_ACTOR_IDS: TESTER })
-		expect(resolveFlags(TESTER, c)).toEqual({})
-		expect(resolveFlags(NON_TESTER, c)).toEqual({})
+	// Pin the live registry's default-off behaviour without pinning the exact
+	// list of flag ids — sibling PRs on the same bet branch add their own
+	// sub-flags alongside this one, and a hard-coded `toEqual({...})` here
+	// would collide with every one of them. The invariant that matters is
+	// "unrelated env → every registered flag reads false"; the identity of
+	// the registered flags is exercised through `FLAGS` in a per-flag route
+	// test (see `feature-flags.test.ts` under __tests__/routes/).
+	it('resolves the live registry with an unrelated env — every flag reads false', () => {
+		const c = config({ FF_TESTER_FEATURES: 'not-a-real-flag', FF_TESTER_ACTOR_IDS: TESTER })
+		for (const value of Object.values(resolveFlags(TESTER, c))) expect(value).toBe(false)
+		for (const value of Object.values(resolveFlags(NON_TESTER, c))) expect(value).toBe(false)
 	})
 
 	it('is false for every flag when the env is empty', () => {

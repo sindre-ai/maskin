@@ -25,6 +25,7 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useActors } from '@/hooks/use-actors'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useLoop, useLoopActivity } from '@/hooks/use-loops'
 import { useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
@@ -60,6 +61,12 @@ interface ProposedEdit {
 function LoopDetailRoute() {
 	const { loopId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
+	// D8 sub-flag boundary — read once at this route (the loop-detail page is
+	// the highest sensible point per `.claude/rules/feature-flags.md`), then
+	// threaded into TimelineTab as an options prop so the shared component
+	// stays flag-free for Objects and every other consumer. Off preserves the
+	// pre-bet unread divider so a rollback is a flag flip, not a code change.
+	const unreadPolishFlag = useFeatureFlag('loops-v4-polish.unread')
 	const {
 		data: loop,
 		isLoading: loopLoading,
@@ -331,7 +338,10 @@ function LoopDetailRoute() {
 							</span>
 							<div className="h-px flex-1 bg-muted" />
 						</div>
-						<TimelineTab object={object} />
+						<TimelineTab
+							object={object}
+							loopsV4PolishUnread={unreadPolishFlag ? { loopId } : undefined}
+						/>
 					</div>
 				)}
 

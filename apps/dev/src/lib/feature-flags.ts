@@ -18,9 +18,18 @@
 // Every known flag id. Ids absent from this registry always resolve to false,
 // so a typo in FF_TESTER_FEATURES can't invent a flag. Add an entry here as the
 // first step of introducing a new flag.
-// Currently empty: `new-design` graduated to everyone and was deleted, which
-// is how a flag ships here — see `.claude/rules/feature-flags.md`.
-export const FLAGS = {} as const
+//
+// `loops-v4-polish.unread` gates the D8 delta of the Loops & Loop detail v4
+// UX/UI polish bet (bet/d166-loops-v4-polish): the "NEW · {n} unread" red
+// divider + Mark read CTA + EARLIER divider + opacity-75 on read rows +
+// aria-live announcement on the loop-detail TimelineTab. Off preserves the
+// pre-bet unread divider so a rollback is a flag flip, not a code change.
+// The bet SPEC calls for an umbrella `loops-v4-polish` + per-delta sub-flags
+// on D5 / D6 / D8; this entry ships D8's sub-flag alone rather than
+// pre-registering ids the other deltas will own themselves.
+export const FLAGS = {
+	loopsV4PolishUnread: 'loops-v4-polish.unread',
+} as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
 

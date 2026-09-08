@@ -26,14 +26,17 @@ beforeEach(() => setEnv({}))
 afterEach(() => setEnv({}))
 
 describe('GET /api/feature-flags', () => {
-	// The registry is empty while no flag is in flight, so the route answers
-	// with an empty map rather than failing.
-	it('resolves the live registry when no env is set', async () => {
+	// The route resolves the live FLAGS registry for the caller. When no env
+	// is set, every registered flag reads false — the shape stays stable
+	// regardless of which flags are currently registered, so sibling PRs on
+	// the same bet branch that add their own sub-flags don't conflict here.
+	it('resolves the live registry when no env is set — every flag reads false', async () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ flags: {} })
+		const body = (await res.json()) as { flags: Record<string, boolean> }
+		for (const value of Object.values(body.flags)) expect(value).toBe(false)
 	})
 
 	it('never invents a flag from an unregistered id in FF_TESTER_FEATURES', async () => {
@@ -41,7 +44,8 @@ describe('GET /api/feature-flags', () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({ flags: {} })
+		const body = (await res.json()) as { flags: Record<string, boolean> }
+		expect('not-a-real-flag' in body.flags).toBe(false)
 	})
 
 	it('sets Cache-Control: no-store so a rollback is not defeated by a stale cache', async () => {
