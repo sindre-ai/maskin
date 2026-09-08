@@ -26,14 +26,15 @@ beforeEach(() => setEnv({}))
 afterEach(() => setEnv({}))
 
 describe('GET /api/feature-flags', () => {
-	// The registry is empty while no flag is in flight, so the route answers
-	// with an empty map rather than failing.
+	// Pins the live FLAGS registry: every registered flag defaults to false
+	// without env opt-in. Update this assertion whenever `FLAGS` in
+	// `apps/dev/src/lib/feature-flags.ts` changes, so the two files can't drift.
 	it('resolves the live registry when no env is set', async () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ flags: {} })
+		expect(await res.json()).toEqual({ flags: { 'loops-v4-polish.targets': false } })
 	})
 
 	it('never invents a flag from an unregistered id in FF_TESTER_FEATURES', async () => {
@@ -41,7 +42,7 @@ describe('GET /api/feature-flags', () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({ flags: {} })
+		expect(await res.json()).toEqual({ flags: { 'loops-v4-polish.targets': false } })
 	})
 
 	it('sets Cache-Control: no-store so a rollback is not defeated by a stale cache', async () => {

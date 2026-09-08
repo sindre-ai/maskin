@@ -34,10 +34,13 @@ describe('parseFeatureFlagConfig', () => {
 })
 
 describe('resolveFlags', () => {
-	it('resolves the live registry — empty while no flag is in flight', () => {
+	// Pins the live FLAGS registry so a flag can't be dropped (or added) by
+	// accident. Update this assertion whenever `FLAGS` in
+	// `apps/dev/src/lib/feature-flags.ts` changes, so the two files can't drift.
+	it('resolves the live registry — every registered flag defaults to false without env opt-in', () => {
 		const c = config({ FF_TESTER_FEATURES: 'anything', FF_TESTER_ACTOR_IDS: TESTER })
-		expect(resolveFlags(TESTER, c)).toEqual({})
-		expect(resolveFlags(NON_TESTER, c)).toEqual({})
+		expect(resolveFlags(TESTER, c)).toEqual({ 'loops-v4-polish.targets': false })
+		expect(resolveFlags(NON_TESTER, c)).toEqual({ 'loops-v4-polish.targets': false })
 	})
 
 	it('is false for every flag when the env is empty', () => {
