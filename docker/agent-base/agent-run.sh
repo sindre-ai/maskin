@@ -57,6 +57,16 @@ resolve_agent_server_url
 # Only meaningful on the remote microsandbox path (AGENT_SERVER_URL set); the
 # local Docker path manages container lifecycle itself.
 report_complete() {
+  # MUST be the first statement: $? is this script's exit status.
+  local script_rc=$?
+  # If run_agent never captured a real agent status (the agent was killed
+  # before `wait` returned, install_runtime failed, `set -e` aborted us, ...)
+  # then AGENT_EXIT_CODE is still its initial 0 and reporting it would post a
+  # clean success for a session that failed. Fall back to the script's own
+  # status, which is non-zero in exactly those cases.
+  if [ "$AGENT_EXIT_CODE_CAPTURED" != "1" ]; then
+    AGENT_EXIT_CODE=$script_rc
+  fi
   if [ -n "$AGENT_SERVER_URL" ] && [ -n "$SESSION_ID" ]; then
     curl -4 -s --http1.0 --max-time 10 -X POST \
       "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/complete" \
@@ -69,6 +79,13 @@ trap report_complete EXIT
 
 RUNTIME="${AGENT_RUNTIME:-claude-code}"
 AGENT_EXIT_CODE=0
+# Set to 1 only once `wait` has returned the agent's real status. Until then
+# AGENT_EXIT_CODE is a placeholder and report_complete must not trust it.
+AGENT_EXIT_CODE_CAPTURED=0
+# How long to let the log shipper drain after the agent exits, before reaping
+# it. Only reached when something still holds the output fd open (see
+# run_agent_logged); a clean exit EOFs immediately and never waits.
+LOG_DRAIN_GRACE_SECS="${LOG_DRAIN_GRACE_SECS:-15}"
 
 # Install runtime if not already present
 install_runtime() {
@@ -347,20 +364,67 @@ run_agent() {
   # backpressure to the agent, and only forgets lines the server acks. With no
   # AGENT_SERVER_URL (the local Docker path) it just passes stdin to stdout.
   # See docker/agent-base/output-stream.js.
-  # `|| true` because this is a log shipper, not the agent. Line 2 sets
-  # `set -e`, and every call site turns pipefail OFF before `agent | log_tee`,
-  # so the pipeline's status is THIS command's. A non-zero exit here therefore
-  # aborted run_agent before `AGENT_EXIT_CODE=${PIPESTATUS[0]}` ran, and the
-  # EXIT trap reported the initial 0 — a failed session posting clean success,
-  # with everything after run_agent skipped.
-  #
-  # It must be inside this function, not `... | log_tee || true` at the call
-  # site: `|| true` there resets PIPESTATUS, so ${PIPESTATUS[0]} reads 0 and
-  # every real agent failure is masked as success. Verified both ways.
-  # PIPESTATUS[0] refers to the agent, the pipeline's FIRST element, so
-  # swallowing this function's own status cannot affect it.
+  # `|| true` because this is a log shipper, not the agent: its failure must
+  # never become the session's status, and under `set -e` (line 2) an
+  # unguarded non-zero exit here would abort run_agent before the agent's own
+  # status was recorded. run_agent_logged below now reads that status from the
+  # agent's PID rather than from a pipeline, so the shipper's exit is fully
+  # decoupled from it — but this guard still matters, because log_tee runs as a
+  # background job whose failure would otherwise surface at `wait`.
   log_tee() {
     node /output-stream.js || true
+  }
+
+  # Run the agent with its output shipped through log_tee, WITHOUT gating the
+  # agent's exit status on the output channel closing.
+  #
+  # The previous form was `agent 2>&1 | log_tee; AGENT_EXIT_CODE=${PIPESTATUS[0]}`.
+  # A shell pipeline only returns once EVERY member exits, and log_tee exits on
+  # EOF — which arrives only when the LAST holder of the pipe's write end closes
+  # it. Any background process the agent spawned (a dev server, a database, a
+  # watcher) inherits that fd and keeps it open after the agent itself is gone.
+  # log_tee then never EOFs, the pipeline never returns, `AGENT_EXIT_CODE=` never
+  # runs, and the EXIT trap never fires — so the session sat "running" until
+  # SESSION_MAX_DURATION (8h) even though the agent had finished its work.
+  # Session 5bd428eb (2026-09-08) wedged exactly this way after the agent started
+  # the local devstack; ports 3000/5173/5432/8181/8333 were still relayed from
+  # the VM with the agent long done. The same shape swallows the status when the
+  # agent is SIGKILLed mid-pipeline (an OOM kill, session f6022f55 the same day).
+  #
+  # Waiting on the agent's own PID decouples the two: its status is available the
+  # moment it exits, whatever else is still holding the fd. Draining is then
+  # bounded separately, so a lingering holder costs LOG_DRAIN_GRACE_SECS rather
+  # than hours.
+  run_agent_logged() {
+    local fifo
+    fifo="$(mktemp -u /tmp/agent-out.XXXXXX)"
+    mkfifo "$fifo"
+
+    log_tee < "$fifo" &
+    local tee_pid=$!
+
+    # Inherits this function's stdin, so callers can still redirect it
+    # (the interactive path feeds claude from input-stream.js).
+    "$@" > "$fifo" 2>&1 &
+    local agent_pid=$!
+
+    # `|| rc=$?` keeps `set -e` from aborting on a non-zero agent status; the
+    # whole point here is to CAPTURE that status, not die on it.
+    local rc=0
+    wait "$agent_pid" || rc=$?
+    AGENT_EXIT_CODE=$rc
+    AGENT_EXIT_CODE_CAPTURED=1
+
+    # Let the shipper flush what the agent already wrote. If nothing else holds
+    # the write end this EOFs at once; if something does, reap it on a timer so
+    # teardown proceeds regardless.
+    ( sleep "$LOG_DRAIN_GRACE_SECS"; kill "$tee_pid" 2>/dev/null ) &
+    local reaper_pid=$!
+    wait "$tee_pid" 2>/dev/null || true
+    kill "$reaper_pid" 2>/dev/null || true
+    rm -f "$fifo"
+
+    return 0
   }
 
   case "$RUNTIME" in
@@ -394,54 +458,37 @@ run_agent() {
           # status and errors go to stderr. It never exits on its own -- it
           # dies with the VM at teardown -- so claude stdin never sees EOF
           # mid-conversation.
-          set +o pipefail
-          claude -p \
+          run_agent_logged claude -p \
             --input-format stream-json \
             --output-format stream-json \
             --verbose \
             --dangerously-skip-permissions \
             "${mcp_args[@]}" \
-            2>&1 \
-            < <(node /input-stream.js) \
-            | log_tee
-          AGENT_EXIT_CODE=${PIPESTATUS[0]}
-          set -o pipefail
+            < <(node /input-stream.js)
         else
           # Local Docker path: stdin is attached by ContainerManager.attachStdin.
-          set +o pipefail
-          claude -p \
+          run_agent_logged claude -p \
             --input-format stream-json \
             --output-format stream-json \
             --verbose \
             --dangerously-skip-permissions \
-            "${mcp_args[@]}" \
-            2>&1 | log_tee
-          AGENT_EXIT_CODE=${PIPESTATUS[0]}
-          set -o pipefail
+            "${mcp_args[@]}"
         fi
       else
-        set +o pipefail
-        claude -p "$ACTION_PROMPT" \
+        run_agent_logged claude -p "$ACTION_PROMPT" \
           --print \
           --verbose \
           --output-format stream-json \
           --max-turns "$max_turns" \
           --dangerously-skip-permissions \
-          "${mcp_args[@]}" \
-          2>&1 | log_tee
-        AGENT_EXIT_CODE=${PIPESTATUS[0]}
-        set -o pipefail
+          "${mcp_args[@]}"
       fi
       ;;
     codex)
       local approval_mode="${CODEX_APPROVAL_MODE:-full-auto}"
-      set +o pipefail
-      codex \
+      run_agent_logged codex \
         --approval-mode "$approval_mode" \
-        --prompt "$ACTION_PROMPT" \
-        2>&1 | log_tee
-      AGENT_EXIT_CODE=${PIPESTATUS[0]}
-      set -o pipefail
+        --prompt "$ACTION_PROMPT"
       ;;
     custom)
       if [ -z "$CUSTOM_COMMAND" ]; then
@@ -460,10 +507,7 @@ run_agent() {
         echo "[error] CUSTOM_COMMAND is empty after tokenization" >&2
         exit 1
       fi
-      set +o pipefail
-      "${custom_argv[@]}" 2>&1 | log_tee
-      AGENT_EXIT_CODE=${PIPESTATUS[0]}
-      set -o pipefail
+      run_agent_logged "${custom_argv[@]}"
       ;;
   esac
 }
