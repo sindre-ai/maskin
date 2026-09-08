@@ -11,6 +11,7 @@ import { TriggerRow } from '@/components/triggers/trigger-row'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useLoops } from '@/hooks/use-loops'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useTriggers } from '@/hooks/use-triggers'
@@ -69,6 +70,11 @@ function LoopsRoute() {
 	const { data: conversationPages } = useConversationsInfinite(workspaceId)
 	const updateTrigger = useUpdateTrigger(workspaceId)
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
+
+	// Feature-flag boundary for the loops v4 polish bet. Read once at the route
+	// level per the feature-flags rule (`.claude/rules/feature-flags.md`), then
+	// handed to every row component — no scattered flag checks inside them.
+	const loopsV4Enabled = useFeatureFlag('loops-v4-polish')
 
 	const settingsQuery = useUserDisplaySettings(workspaceId, LOOP_SETTINGS_KEY)
 	const upsertSettings = useUpdateUserDisplaySettings(workspaceId)
@@ -242,6 +248,7 @@ function LoopsRoute() {
 											onToggleEnabled={(next) =>
 												updateTrigger.mutate({ id: trigger.id, data: { enabled: next } })
 											}
+											v4Polish={loopsV4Enabled}
 										/>
 									)
 								})}
