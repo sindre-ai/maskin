@@ -18,9 +18,16 @@
 // Every known flag id. Ids absent from this registry always resolve to false,
 // so a typo in FF_TESTER_FEATURES can't invent a flag. Add an entry here as the
 // first step of introducing a new flag.
-// Currently empty: `new-design` graduated to everyone and was deleted, which
-// is how a flag ships here — see `.claude/rules/feature-flags.md`.
-export const FLAGS = {} as const
+export const FLAGS = {
+	// Loops v4 UX polish — sub-flag for D6c (vertical-story LoopFlow variant on
+	// the loop-detail route). When on, `/loops/:id` renders LoopFlow with
+	// `variant="vertical-story"` and the six-step spine reads `loop.steps[]`
+	// with the D6a hands-off + escalates fields. When off, the detail route
+	// keeps rendering the shipped `status-columns` variant unchanged. The
+	// marketplace / admin surfaces always render `status-columns` regardless of
+	// this flag — the flip is scoped to the detail route only.
+	loopsV4StepFlow: 'loops-v4-polish.step_flow',
+} as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
 

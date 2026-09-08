@@ -759,4 +759,147 @@ describe('Loops read API integration', () => {
 		expect(row?.waitingOnViewer).toBe(true)
 		expect(row?.pill).toBe('waiting_on_you')
 	})
+
+	/**
+	 * D6c — `GET /api/loops/:id/steps` feeds the vertical-story renderer's
+	 * spine. Covers:
+	 *   (1) preserves `metadata.trigger_ids` ordering (spine, not set);
+	 *   (2) resolves the D6a hands-off + escalates actor names on each row;
+	 *   (3) sets `waitingOnViewer` + `pendingCount` from live sessions in
+	 *       `waiting_for_input` for that trigger;
+	 *   (4) empty array (no 404) for a loop with no triggers OR an unknown id
+	 *       — mirrors the tolerance of the sibling `/activity` endpoint.
+	 */
+	describe('GET /api/loops/:id/steps — vertical-story spine (D6c)', () => {
+		it('returns spine steps in metadata.trigger_ids order with D6a fields + resolved actor names', async () => {
+			const relay = await insertActor(db, { name: 'Relay', type: 'agent' })
+			const quill = await insertActor(db, { name: 'Quill', type: 'agent' })
+			const sebk = await insertActor(db, { name: 'Sebk', type: 'human' })
+			const magnus = await insertActor(db, { name: 'Magnus', type: 'human' })
+
+			const trigA = await insertTrigger(db, workspaceId, actorId, relay.id, {
+				name: 'Watch inbox',
+				type: 'cron',
+				config: { expression: '0 * * * *' },
+				actionPrompt: 'Scan the inbox',
+				handsOffToActorId: quill.id,
+				escalatesToActorId: sebk.id,
+				escalateAfterMs: 12 * 60 * 60 * 1000,
+			})
+			const trigB = await insertTrigger(db, workspaceId, actorId, quill.id, {
+				name: 'Draft reply',
+				type: 'event',
+				config: { entity_type: 'task', action: 'created' },
+				actionPrompt: 'Draft the reply',
+				handsOffToActorId: magnus.id,
+			})
+
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Reply loop',
+				content: 'The loop replies to inbound',
+				// Deliberately reversed order so the response order proves it
+				// preserves metadata.trigger_ids rather than trigger creation
+				// order.
+				metadata: { trigger_ids: [trigB.id, trigA.id] },
+			})
+
+			const app = makeApp(actorId)
+			const res = await app.request(
+				jsonGet(`/api/loops/${loop.id}/steps`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as {
+				steps: Array<{
+					triggerId: string
+					triggerType: string | null
+					handsOffToActorId: string | null
+					handsOffToActor: { id: string; name: string | null } | null
+					escalatesToActorId: string | null
+					escalatesToActor: { id: string; name: string | null } | null
+					escalateAfterMs: number | null
+					waitingOnViewer: boolean
+					pendingCount: number
+				}>
+			}
+			expect(body.steps.map((s) => s.triggerId)).toEqual([trigB.id, trigA.id])
+			const stepA = body.steps.find((s) => s.triggerId === trigA.id)
+			expect(stepA?.triggerType).toBe('cron')
+			expect(stepA?.handsOffToActorId).toBe(quill.id)
+			expect(stepA?.handsOffToActor?.name).toBe('Quill')
+			expect(stepA?.escalatesToActorId).toBe(sebk.id)
+			expect(stepA?.escalatesToActor?.name).toBe('Sebk')
+			expect(stepA?.escalateAfterMs).toBe(12 * 60 * 60 * 1000)
+			expect(stepA?.waitingOnViewer).toBe(false)
+			expect(stepA?.pendingCount).toBe(0)
+
+			const stepB = body.steps.find((s) => s.triggerId === trigB.id)
+			expect(stepB?.handsOffToActor?.name).toBe('Magnus')
+			expect(stepB?.escalatesToActor).toBeNull()
+			expect(stepB?.escalatesToActorId).toBeNull()
+		})
+
+		it('sets waitingOnViewer=true and pendingCount from sessions in waiting_for_input status', async () => {
+			const relay = await insertActor(db, { name: 'Relay', type: 'agent' })
+			const trig = await insertTrigger(db, workspaceId, actorId, relay.id, {
+				handsOffToActorId: relay.id,
+			})
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Waiting loop',
+				metadata: { trigger_ids: [trig.id] },
+			})
+			// Two sessions on this trigger currently waiting on the viewer,
+			// one completed (must not count).
+			await insertSession(db, workspaceId, relay.id, actorId, {
+				triggerId: trig.id,
+				status: 'waiting_for_input',
+			})
+			await insertSession(db, workspaceId, relay.id, actorId, {
+				triggerId: trig.id,
+				status: 'waiting_for_input',
+			})
+			await insertSession(db, workspaceId, relay.id, actorId, {
+				triggerId: trig.id,
+				status: 'completed',
+			})
+
+			const app = makeApp(actorId)
+			const res = await app.request(
+				jsonGet(`/api/loops/${loop.id}/steps`, { 'x-workspace-id': workspaceId }),
+			)
+			const body = (await res.json()) as {
+				steps: Array<{ triggerId: string; waitingOnViewer: boolean; pendingCount: number }>
+			}
+			expect(body.steps).toHaveLength(1)
+			expect(body.steps[0].waitingOnViewer).toBe(true)
+			expect(body.steps[0].pendingCount).toBe(2)
+		})
+
+		it('returns an empty spine — not a 404 — for a loop with no triggers or an unknown id', async () => {
+			const emptyLoop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'draft',
+				title: 'No steps',
+				metadata: {},
+			})
+
+			const app = makeApp(actorId)
+
+			const emptyRes = await app.request(
+				jsonGet(`/api/loops/${emptyLoop.id}/steps`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(emptyRes.status).toBe(200)
+			expect(((await emptyRes.json()) as { steps: unknown[] }).steps).toEqual([])
+
+			const unknownId = '00000000-0000-0000-0000-000000000000'
+			const unknownRes = await app.request(
+				jsonGet(`/api/loops/${unknownId}/steps`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(unknownRes.status).toBe(200)
+			expect(((await unknownRes.json()) as { steps: unknown[] }).steps).toEqual([])
+		})
+	})
 })
