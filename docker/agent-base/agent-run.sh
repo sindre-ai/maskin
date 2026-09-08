@@ -82,10 +82,33 @@ AGENT_EXIT_CODE=0
 # Set to 1 only once `wait` has returned the agent's real status. Until then
 # AGENT_EXIT_CODE is a placeholder and report_complete must not trust it.
 AGENT_EXIT_CODE_CAPTURED=0
-# How long to let the log shipper drain after the agent exits, before reaping
-# it. Only reached when something still holds the output fd open (see
-# run_agent_logged); a clean exit EOFs immediately and never waits.
-LOG_DRAIN_GRACE_SECS="${LOG_DRAIN_GRACE_SECS:-15}"
+# Bounds the LINGERING-HOLDER case only: a stray process holding the write end
+# of the output fifo means the shipper never sees EOF, so its own give-up clock
+# (gated on stdinEnded) never starts and it would wait forever.
+#
+# It must NOT bound the case where the shipper has EOF'd and is legitimately
+# still delivering. output-stream.js does not exit at EOF -- it exits once its
+# backlog is acked, retrying for OUTPUT_STREAM_GIVE_UP_MS (300s) and then
+# posting a give-up marker. That budget is deliberate: see the comment on
+# GIVE_UP_AFTER_MS in output-stream.js, which records that a ~19s budget was
+# measured as too short to survive a routine agent-server restart, destroying
+# the buffered result envelope -- the agent's reply. So this value must stay
+# ABOVE 300s + the 5s give-up POST, or we cut short the very mechanism that
+# exists to survive that outage.
+#
+# KEEP IN SYNC with OUTPUT_STREAM_GIVE_UP_MS in docker/agent-base/output-stream.js.
+LOG_DRAIN_GRACE_SECS="${LOG_DRAIN_GRACE_SECS:-330}"
+# Validated because this is externally settable: session_config.env_vars passes
+# unreserved keys straight into the container (session-manager.ts). A
+# non-numeric value makes `sleep` fail instantly, which kills the reaper on its
+# first statement and leaves `wait "$tee_pid"` unbounded -- silently restoring
+# the multi-hour wedge this whole change exists to remove.
+case "$LOG_DRAIN_GRACE_SECS" in
+  ''|*[!0-9]*)
+    echo "[system] WARNING: invalid LOG_DRAIN_GRACE_SECS '${LOG_DRAIN_GRACE_SECS}' -- using 330" >&2
+    LOG_DRAIN_GRACE_SECS=330
+    ;;
+esac
 
 # Install runtime if not already present
 install_runtime() {
@@ -364,15 +387,19 @@ run_agent() {
   # backpressure to the agent, and only forgets lines the server acks. With no
   # AGENT_SERVER_URL (the local Docker path) it just passes stdin to stdout.
   # See docker/agent-base/output-stream.js.
-  # `|| true` because this is a log shipper, not the agent: its failure must
-  # never become the session's status, and under `set -e` (line 2) an
-  # unguarded non-zero exit here would abort run_agent before the agent's own
-  # status was recorded. run_agent_logged below now reads that status from the
-  # agent's PID rather than from a pipeline, so the shipper's exit is fully
-  # decoupled from it — but this guard still matters, because log_tee runs as a
-  # background job whose failure would otherwise surface at `wait`.
+  # `exec` so that backgrounding this function yields the NODE pid, not the pid
+  # of a wrapper subshell. That matters twice over: the drain reaper below
+  # signals $! directly, and a wrapper would swallow the signal while node kept
+  # running, orphaned and unreported. (Any trailing command here -- `|| true`
+  # included -- suppresses bash's tail-call exec optimisation and reintroduces
+  # exactly that wrapper, so do not add one.)
+  #
+  # Its non-zero exit no longer needs guarding: run_agent_logged reads the
+  # session's status from the agent's own PID rather than from a pipeline, and
+  # the only `wait` on this pid is already `|| true`. A log shipper that could
+  # not deliver is a degraded session, not a failed agent.
   log_tee() {
-    node /output-stream.js || true
+    exec node /output-stream.js
   }
 
   # Run the agent with its output shipped through log_tee, WITHOUT gating the
@@ -422,10 +449,24 @@ run_agent() {
     AGENT_EXIT_CODE=$rc
     AGENT_EXIT_CODE_CAPTURED=1
 
-    # Let the shipper flush what the agent already wrote. If nothing else holds
-    # the write end this EOFs at once; if something does, reap it on a timer so
-    # teardown proceeds regardless.
-    ( sleep "$LOG_DRAIN_GRACE_SECS"; kill "$tee_pid" 2>/dev/null ) &
+    # Let the shipper finish delivering what the agent already wrote.
+    #
+    # Note this waits on DELIVERY, not on EOF: output-stream.js keeps retrying
+    # an unacked backlog after stdin ends, and exits either when the server acks
+    # it or when its own 300s budget expires and it posts a give-up marker. Both
+    # of those are self-terminating, so on any path where the agent's output
+    # channel actually closed, the reaper below never fires.
+    #
+    # It fires only when EOF never arrives at all -- a process the agent spawned
+    # still holds the write end -- because that is the one case the shipper
+    # cannot resolve itself. SIGTERM (not KILL) so its handler can report the
+    # condition; KILL after a short margin in case that handler is itself stuck,
+    # since the whole point here is to be bounded.
+    ( sleep "$LOG_DRAIN_GRACE_SECS"
+      echo "[system] output fd still held ${LOG_DRAIN_GRACE_SECS}s after the agent exited — reaping the log shipper; some output may be lost" >&2
+      kill "$tee_pid" 2>/dev/null
+      sleep 10
+      kill -9 "$tee_pid" 2>/dev/null ) &
     local reaper_pid=$!
     wait "$tee_pid" 2>/dev/null || true
     kill "$reaper_pid" 2>/dev/null || true
