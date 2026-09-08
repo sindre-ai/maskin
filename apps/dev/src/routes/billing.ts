@@ -229,14 +229,20 @@ app.openapi(usageRoute, async (c) => {
 	// per-connected-identity/month price is a separate SKU line that must not
 	// flow into the inference-token ledger (see bet §Pricing). Short-circuited
 	// on flag-off so a non-tester actor never hits the count query.
+	//
+	// Enterprise workspaces are exempt: connected identities are free for them,
+	// so there is no line and `syncLinkedInAddonQuantity` creates no Stripe
+	// item. `plan === 'enterprise'` is exactly `isEnterprise(workspace)` as
+	// computed above — read it from there rather than re-deriving the predicate.
+	const linkedinExempt = plan === 'enterprise'
 	const linkedinFlagOn =
 		resolveFlags(c.get('actorId'), getFeatureFlagConfig())[FLAGS.LINKEDIN_ADDON_VISIBLE] === true
-	const linkedinConnectedCount = linkedinFlagOn
-		? await getConnectedLinkedInIdentityCount(db, workspaceId)
-		: 0
+	const linkedinConnectedCount =
+		linkedinFlagOn && !linkedinExempt ? await getConnectedLinkedInIdentityCount(db, workspaceId) : 0
 	const linkedinIdentityAddon = resolveLinkedInIdentityAddon({
 		connectedCount: linkedinConnectedCount,
 		flagOn: linkedinFlagOn,
+		exempt: linkedinExempt,
 	})
 
 	logger.info('Billing usage read', {

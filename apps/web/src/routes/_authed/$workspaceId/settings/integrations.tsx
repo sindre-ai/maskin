@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useBillingUsage } from '@/hooks/use-billing'
 import {
 	useCompleteIntegration,
 	useConnectIntegration,
@@ -221,7 +222,14 @@ function ProviderRow({
 	// as a price before connecting, as a statement of what is being billed
 	// after. Kept in sync with LINKEDIN_IDENTITY_UNIT_PRICE_USD_CENTS in
 	// apps/dev/src/lib/linkedin-addon.ts.
-	const isPaidIdentityAddon = provider.name === 'linkedin-unipile'
+	// Enterprise workspaces get connected identities free, so the price must not
+	// be stated to them. `plan` is the server-resolved entitlement (the same
+	// `isEnterprise()` the backend bills on), not a stored Stripe plan — see
+	// apps/dev/src/lib/enterprise.ts.
+	const { data: billingUsage } = useBillingUsage(workspaceId)
+	const isEnterpriseWorkspace = billingUsage?.plan === 'enterprise'
+	const isPaidIdentityAddon = provider.name === 'linkedin-unipile' && !isEnterpriseWorkspace
+	const isFreeIdentityAddon = provider.name === 'linkedin-unipile' && isEnterpriseWorkspace
 
 	const connectedLabel = isConnected
 		? needsReconnect
@@ -250,6 +258,11 @@ function ProviderRow({
 				>
 					{connectedLabel}
 				</p>
+				{isFreeIdentityAddon && (
+					<p className="text-xs text-muted-foreground">
+						Included in your enterprise plan — no per-identity charge.
+					</p>
+				)}
 				{isPaidIdentityAddon && (
 					<p className="text-xs text-muted-foreground">
 						{isConnected
