@@ -8,6 +8,7 @@ import {
 	readState,
 	relationships,
 	sessions,
+	starState,
 	subscriptions,
 	triggers,
 	workspaces,
@@ -79,6 +80,12 @@ import { serialize, serializeArray } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
 import { isWorkspaceHumanAdminOrOwner, isWorkspaceMember } from '../lib/workspace-auth'
 import type { SessionManager } from '../services/session-manager'
+import {
+	getStarredObjectIds,
+	isObjectStarredByActor,
+	starObject,
+	unstarObject,
+} from '../services/star-state'
 import {
 	autoSubscribe,
 	getSubscriberCount,
@@ -692,6 +699,7 @@ const listObjectsRoute = createRoute({
 
 app.openapi(listObjectsRoute, async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
@@ -733,7 +741,22 @@ app.openapi(listObjectsRoute, async (c) => {
 		.offset(useKeyset ? 0 : query.offset)
 		.orderBy(...orderBy)
 
-	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
+	// One secondary query per list request: fetch the actor's star_state rows
+	// for exactly this page of ids and merge into each row as
+	// `is_starred_by_me`. Deliberately not a LEFT JOIN inside the main list
+	// query — mirrors the read_state pattern in subscriptions.ts and keeps the
+	// list SQL untouched for board/dnd/group-by paths.
+	const starredIds = await getStarredObjectIds(db, {
+		actorId,
+		objectIds: results.map((r) => r.id),
+	})
+
+	const payload = results.map((row) => ({
+		...serialize(row),
+		is_starred_by_me: starredIds.has(row.id),
+	})) as z.infer<typeof objectResponseSchema>[]
+
+	return c.json(payload, 200)
 })
 
 // GET /board - List board columns with per-column pagination
@@ -1039,7 +1062,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		description: formatEventDescription(event, { actorsById }),
 	}))
 
-	const [subscribed, unreadCount, subscriberCount, activeSession] = await Promise.all([
+	const [subscribed, unreadCount, subscriberCount, activeSession, starredIds] = await Promise.all([
 		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
 		getUnreadCount(db, { workspaceId, actorId, entityType: 'object', entityId: id }),
 		getSubscriberCount(db, { workspaceId, entityType: 'object', entityId: id }),
@@ -1051,6 +1074,14 @@ app.openapi(getObjectGraphRoute, async (c) => {
 					.limit(1)
 					.then((rows) => rows[0] ?? null)
 			: Promise.resolve(null),
+		// Hydrate the star flag for the primary object plus every connected
+		// object in a single round-trip — the graph payload's connected_objects
+		// array is rendered as list rows on the client, same UX as the top-level
+		// list, so parity is expected.
+		getStarredObjectIds(db, {
+			actorId,
+			objectIds: [id, ...connectedObjects.map((co) => co.id)],
+		}),
 	])
 
 	// Build a title lookup keyed by object id so each relationship can carry the
@@ -1120,13 +1151,17 @@ app.openapi(getObjectGraphRoute, async (c) => {
 				is_subscribed: subscribed,
 				unread_count: unreadCount,
 				subscriber_count: subscriberCount,
+				is_starred_by_me: starredIds.has(object.id),
 			},
 			relationships: rels.map((r) => ({
 				...serialize(r),
 				sourceTitle: titleById.get(r.sourceId) ?? null,
 				targetTitle: titleById.get(r.targetId) ?? null,
 			})),
-			connected_objects: serializeArray(connectedObjects),
+			connected_objects: connectedObjects.map((co) => ({
+				...serialize(co),
+				is_starred_by_me: starredIds.has(co.id),
+			})),
 			events: serializedEvents,
 			files: filesSummary,
 		} as z.infer<typeof objectGraphResponseSchema>,
@@ -1431,7 +1466,7 @@ app.openapi(getObjectRoute, async (c) => {
 		})
 	}
 
-	const [subscribed, unreadCount, subscriberCount, activeSession] = await Promise.all([
+	const [subscribed, unreadCount, subscriberCount, activeSession, starred] = await Promise.all([
 		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
 		getUnreadCount(db, {
 			workspaceId: object.workspaceId,
@@ -1452,6 +1487,7 @@ app.openapi(getObjectRoute, async (c) => {
 					.limit(1)
 					.then((rows) => rows[0] ?? null)
 			: Promise.resolve(null),
+		isObjectStarredByActor(db, { actorId, objectId: id }),
 	])
 
 	return c.json(
@@ -1461,6 +1497,7 @@ app.openapi(getObjectRoute, async (c) => {
 			is_subscribed: subscribed,
 			unread_count: unreadCount,
 			subscriber_count: subscriberCount,
+			is_starred_by_me: starred,
 		} as z.infer<typeof objectResponseSchema>,
 		200,
 	)
@@ -2419,14 +2456,18 @@ app.openapi(deleteObjectRoute, async (c) => {
 	}
 
 	await db.transaction(async (tx) => {
-		// Polymorphic subscription + read_state rows aren't FK'd to objects, so
-		// drop them explicitly to avoid orphans pointing at a freed entity_id.
+		// Polymorphic subscription + read_state + star_state rows aren't FK'd to
+		// objects, so drop them explicitly to avoid orphans pointing at a freed
+		// entity_id.
 		await tx
 			.delete(subscriptions)
 			.where(and(eq(subscriptions.entityType, 'object'), eq(subscriptions.entityId, id)))
 		await tx
 			.delete(readState)
 			.where(and(eq(readState.entityType, 'object'), eq(readState.entityId, id)))
+		await tx
+			.delete(starState)
+			.where(and(eq(starState.entityType, 'object'), eq(starState.entityId, id)))
 
 		await tx.delete(objects).where(eq(objects.id, id))
 
@@ -2441,6 +2482,123 @@ app.openapi(deleteObjectRoute, async (c) => {
 	})
 
 	return c.json({ deleted: true as const }, 200)
+})
+
+// ── POST/DELETE /{id}/star — server-persisted per-actor star toggle ──────
+//
+// Cross-device sync for D5 of the Objects v4 polish bet. Toggle is idempotent
+// on both sides (repeat POST = still starred, repeat DELETE = still not), no
+// request body, actor derived from the API-key middleware. Both writes emit
+// an events row tagged `mutation_type: 'star'` — this is the signal the D5
+// Won criterion (PostHog cross-device check) reads. Do not drop the tag.
+//
+// Cross-workspace guard: the object's workspaceId must match the caller's
+// `X-Workspace-Id` header. A member of workspace A trying to star an object
+// in workspace B gets 403 rather than 404 — the header-scoping check that
+// authMiddleware already applied means we know exactly which workspace the
+// caller claimed to be in, so it's a genuine authorization failure, not a
+// resource-existence question.
+
+const toggleStarResponseSchema = z.object({
+	is_starred_by_me: z.boolean(),
+	starred_at: z.string().nullable(),
+})
+
+const starObjectRoute = createRoute({
+	method: 'post',
+	path: '/{id}/star',
+	tags: ['Objects'],
+	summary: 'Star an object as the current actor (idempotent)',
+	request: {
+		headers: workspaceIdHeader,
+		params: idParamSchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: toggleStarResponseSchema } },
+			description: 'Object is starred (was or is now)',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object is in a different workspace than the caller',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object not found',
+		},
+	},
+})
+
+const unstarObjectRoute = createRoute({
+	method: 'delete',
+	path: '/{id}/star',
+	tags: ['Objects'],
+	summary: 'Unstar an object as the current actor (idempotent)',
+	request: {
+		headers: workspaceIdHeader,
+		params: idParamSchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: toggleStarResponseSchema } },
+			description: 'Object is not starred (was or is now)',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object is in a different workspace than the caller',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Object not found',
+		},
+	},
+})
+
+app.openapi(starObjectRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const [object] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
+	if (!object) return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	if (object.workspaceId !== workspaceId) {
+		return c.json(createApiError('FORBIDDEN', 'Object is not in the caller’s workspace'), 403)
+	}
+
+	const result = await starObject(db, {
+		workspaceId: object.workspaceId,
+		actorId,
+		objectId: id,
+		objectType: object.type,
+	})
+
+	return c.json(
+		{ is_starred_by_me: result.isStarredByMe, starred_at: result.starredAt.toISOString() },
+		200,
+	)
+})
+
+app.openapi(unstarObjectRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const [object] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
+	if (!object) return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	if (object.workspaceId !== workspaceId) {
+		return c.json(createApiError('FORBIDDEN', 'Object is not in the caller’s workspace'), 403)
+	}
+
+	const result = await unstarObject(db, {
+		workspaceId: object.workspaceId,
+		actorId,
+		objectId: id,
+		objectType: object.type,
+	})
+
+	return c.json({ is_starred_by_me: result.isStarredByMe, starred_at: null }, 200)
 })
 
 export default app
