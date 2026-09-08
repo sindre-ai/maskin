@@ -3,12 +3,12 @@ import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PurgeIdempotencyJob } from '../../jobs/purge-idempotency'
 import { encrypt } from '../../lib/crypto'
-import { __setUnipileClientForTests } from '../../lib/integrations/providers/linkedin-unipile/operations'
+import { __setLinkedInClientForTests } from '../../lib/integrations/providers/linkedin-unipile/operations'
 import {
 	getLinkedInPostEngagement,
 	publishLinkedInPost,
 } from '../../lib/integrations/providers/linkedin-unipile/operations'
-import type { UnipileClient } from '../../lib/integrations/providers/linkedin-unipile/unipile-client'
+import type { LinkedInClient } from '../../lib/integrations/providers/linkedin-unipile/unipile-client'
 import { insertWorkspace } from '../factories'
 import { db, getTestActorId, sql } from './global-setup'
 
@@ -16,9 +16,9 @@ import { db, getTestActorId, sql } from './global-setup'
  * Real-Postgres coverage for Task 7b's dedup ledger + purge extension.
  *
  * Two identical `publishLinkedInPost` calls within the 24h TTL must fire
- * Unipile ONCE and return identical responses (with `replayed: true` on the
+ * LinkedIn ONCE and return identical responses (with `replayed: true` on the
  * second call). Two identical calls with a stale prior row (>24h) fire
- * Unipile TWICE. The purge job clears any linkedin_tool_calls row older than
+ * LinkedIn TWICE. The purge job clears any linkedin_tool_calls row older than
  * 24h — the parent-bet spec's TTL — leaving younger rows in place so live
  * dedup keeps working.
  *
@@ -37,11 +37,11 @@ beforeAll(() => {
 })
 
 afterAll(() => {
-	__setUnipileClientForTests(null)
+	__setLinkedInClientForTests(null)
 })
 
 beforeEach(() => {
-	__setUnipileClientForTests(null)
+	__setLinkedInClientForTests(null)
 })
 
 async function insertConnectedLinkedInCredential(workspaceId: string, actorId: string) {
@@ -61,11 +61,11 @@ async function insertConnectedLinkedInCredential(workspaceId: string, actorId: s
 	})
 }
 
-function stubbedUnipileClient(
-	overrides: Partial<UnipileClient> = {},
-): UnipileClient & { publishCalls: unknown[] } {
+function stubbedLinkedInClient(
+	overrides: Partial<LinkedInClient> = {},
+): LinkedInClient & { publishCalls: unknown[] } {
 	const publishCalls: unknown[] = []
-	const client: UnipileClient = {
+	const client: LinkedInClient = {
 		sendMessage: vi.fn(),
 		reply: vi.fn(),
 		listConversations: vi.fn(),
@@ -102,8 +102,8 @@ describe('linkedin_tool_calls content-hash idempotency (Task 7b)', () => {
 		const ws = await insertWorkspace(db, actorId)
 		await insertConnectedLinkedInCredential(ws.id, actorId)
 
-		const client = stubbedUnipileClient()
-		__setUnipileClientForTests(() => client)
+		const client = stubbedLinkedInClient()
+		__setLinkedInClientForTests(() => client)
 
 		const input = { text: 'Hello LinkedIn 👋' }
 		const first = await publishLinkedInPost({ db, actorId, workspaceId: ws.id }, input)
@@ -129,13 +129,13 @@ describe('linkedin_tool_calls content-hash idempotency (Task 7b)', () => {
 		expect(rows).toHaveLength(1)
 	})
 
-	it('fires Unipile twice when the prior dedup row is older than the 24h TTL', async () => {
+	it('fires LinkedIn twice when the prior dedup row is older than the 24h TTL', async () => {
 		const actorId = getTestActorId()
 		const ws = await insertWorkspace(db, actorId)
 		await insertConnectedLinkedInCredential(ws.id, actorId)
 
-		const client = stubbedUnipileClient()
-		__setUnipileClientForTests(() => client)
+		const client = stubbedLinkedInClient()
+		__setLinkedInClientForTests(() => client)
 
 		const input = { text: 'Stale replay test' }
 		await publishLinkedInPost({ db, actorId, workspaceId: ws.id }, input)
@@ -157,7 +157,7 @@ describe('linkedin_tool_calls content-hash idempotency (Task 7b)', () => {
 		// the loser's row was silently swallowed by the ON CONFLICT — leaving a
 		// stored response that belonged to a different real post. A duplicate
 		// public post is user-visible and we cannot retract it, so the claim must
-		// be taken BEFORE the Unipile call. Mirrors the messaging surface's
+		// be taken BEFORE the LinkedIn call. Mirrors the messaging surface's
 		// overlap test in routes/__tests__/integrations-linkedin-unipile.test.ts.
 		const actorId = getTestActorId()
 		const ws = await insertWorkspace(db, actorId)
@@ -170,7 +170,7 @@ describe('linkedin_tool_calls content-hash idempotency (Task 7b)', () => {
 			releaseFirst = resolve
 		})
 		const publishCalls: unknown[] = []
-		const client = stubbedUnipileClient({
+		const client = stubbedLinkedInClient({
 			publishPost: async (payload) => {
 				publishCalls.push(payload)
 				if (publishCalls.length === 1) await firstInFlight
@@ -186,7 +186,7 @@ describe('linkedin_tool_calls content-hash idempotency (Task 7b)', () => {
 			},
 		})
 		client.publishCalls = publishCalls
-		__setUnipileClientForTests(() => client)
+		__setLinkedInClientForTests(() => client)
 
 		const input = { text: 'Concurrent publish' }
 		const first = publishLinkedInPost({ db, actorId, workspaceId: ws.id }, input)
@@ -215,8 +215,8 @@ describe('linkedin_tool_calls content-hash idempotency (Task 7b)', () => {
 		const ws = await insertWorkspace(db, actorId)
 		await insertConnectedLinkedInCredential(ws.id, actorId)
 
-		const client = stubbedUnipileClient()
-		__setUnipileClientForTests(() => client)
+		const client = stubbedLinkedInClient()
+		__setLinkedInClientForTests(() => client)
 
 		await publishLinkedInPost({ db, actorId, workspaceId: ws.id }, { text: 'first' })
 		await publishLinkedInPost({ db, actorId, workspaceId: ws.id }, { text: 'second' })
@@ -264,7 +264,7 @@ describe('get_post_engagement fan-out', () => {
 		await insertConnectedLinkedInCredential(ws.id, actorId)
 
 		let reactionCall = 0
-		const client = stubbedUnipileClient({
+		const client = stubbedLinkedInClient({
 			retrievePost: async () => ({
 				status: 200,
 				body: {
@@ -299,7 +299,7 @@ describe('get_post_engagement fan-out', () => {
 				headers: {},
 			}),
 		})
-		__setUnipileClientForTests(() => client)
+		__setLinkedInClientForTests(() => client)
 
 		const result = await getLinkedInPostEngagement(
 			{ db, actorId, workspaceId: ws.id },
@@ -321,7 +321,7 @@ describe('get_post_engagement fan-out', () => {
 		const ws = await insertWorkspace(db, actorId)
 		await insertConnectedLinkedInCredential(ws.id, actorId)
 
-		const client = stubbedUnipileClient({
+		const client = stubbedLinkedInClient({
 			retrievePost: async () => ({
 				status: 200,
 				body: { id: 'p1', author_urn: 'urn:li:person:me', text: 'A post' },
@@ -340,7 +340,7 @@ describe('get_post_engagement fan-out', () => {
 				headers: {},
 			}),
 		})
-		__setUnipileClientForTests(() => client)
+		__setLinkedInClientForTests(() => client)
 
 		const result = await getLinkedInPostEngagement(
 			{ db, actorId, workspaceId: ws.id },

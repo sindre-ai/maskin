@@ -8,7 +8,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // to list them like GitHub orgs and tell "my account" from "a colleague's" —
 // before this, one member connecting made every member see a bare Disconnect.
 //
-// The rows are route-mocked: a real one needs a completed Unipile hosted-auth
+// The rows are route-mocked: a real one needs a completed LinkedIn hosted-auth
 // handshake against a live LinkedIn account, which no test account can have.
 // The per-actor keying of the write path is covered against real Postgres in
 // apps/dev/src/__tests__/integration/.

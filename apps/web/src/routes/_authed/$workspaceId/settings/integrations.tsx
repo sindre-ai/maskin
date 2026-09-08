@@ -345,7 +345,7 @@ function GroupedProviderRow({
 
 	// LinkedIn installs are per-member: the row carries `actorId`, and the only
 	// human-readable identity we hold for a connected LinkedIn account is who
-	// connected it — the callback stores the opaque Unipile account_id and
+	// connected it — the callback stores the opaque LinkedIn account_id and
 	// writes nothing to `config` (routes/integrations-linkedin-unipile.ts), so
 	// there is no `owner_login` equivalent to label rows with.
 	const isActorScoped = provider.name === 'linkedin-unipile'

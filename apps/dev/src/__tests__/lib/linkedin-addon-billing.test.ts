@@ -132,7 +132,7 @@ describe('syncLinkedInAddonQuantity', () => {
 	})
 
 	// A Stripe outage must not undo a connect the user already completed in
-	// Unipile's wizard — the identity works, and the next sync re-reconciles.
+	// LinkedIn's wizard — the identity works, and the next sync re-reconciles.
 	it('swallows a Stripe failure instead of throwing into the connect flow', async () => {
 		countMock.mockResolvedValue(1)
 		const { db } = makeDb({ plan: 'pro', stripe_subscription_id: 'sub_plan' })

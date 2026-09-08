@@ -3,9 +3,9 @@ import { INTEGRATION_STATUS_ACTIVE, integrations } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 
 /**
- * The Unipile-backed LinkedIn provider — the only provider that today bills
+ * The LinkedIn-backed LinkedIn provider — the only provider that today bills
  * as a per-connected-identity add-on on top of the workspace subscription.
- * Matches the `provider` value Task 2's Unipile connect callback writes into
+ * Matches the `provider` value Task 2's LinkedIn connect callback writes into
  * the `integrations` row on `CREATION_SUCCESS`.
  */
 export const LINKEDIN_IDENTITY_PROVIDER = 'linkedin-unipile'
@@ -32,7 +32,7 @@ export interface LinkedInIdentityAddonLine {
 
 /**
  * Counts connected LinkedIn identities for a workspace. Filters on
- * `INTEGRATION_STATUS_ACTIVE` — the literal the Unipile hosted-wizard callback
+ * `INTEGRATION_STATUS_ACTIVE` — the literal the LinkedIn hosted-wizard callback
  * writes on `CREATION_SUCCESS` (see `CONNECTED_STATUS` in
  * `routes/integrations-linkedin-unipile.ts`) and the one every other reader in
  * the codebase agrees on. Rows in other states (`pending` during the wizard

@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+	LINKEDIN_CONNECTION_REQUEST_MARKERS,
 	LINKEDIN_ERROR_CODES,
+	LINKEDIN_RESTRICTED_MARKERS,
 	LinkedInIntegrationError,
 	RETRY_POLICY_BY_CODE,
-	UNIPILE_CONNECTION_REQUEST_MARKERS,
-	UNIPILE_RESTRICTED_MARKERS,
-	classifyUnipileResponse,
+	classifyLinkedInResponse,
 	computeBackoffMs,
 	isAccountStatusRevoked,
 	isLinkedInIntegrationError,
@@ -17,38 +17,38 @@ import {
  * the mapping so a future re-shuffle can't silently demote a terminal error
  * to a retryable one.
  */
-describe('classifyUnipileResponse', () => {
+describe('classifyLinkedInResponse', () => {
 	it('maps 401 to CREDENTIAL_REVOKED', () => {
-		expect(classifyUnipileResponse(401, {})).toBe('CREDENTIAL_REVOKED')
+		expect(classifyLinkedInResponse(401, {})).toBe('CREDENTIAL_REVOKED')
 	})
 
 	it('maps 404 to CREDENTIAL_NOT_CONNECTED', () => {
-		expect(classifyUnipileResponse(404, {})).toBe('CREDENTIAL_NOT_CONNECTED')
+		expect(classifyLinkedInResponse(404, {})).toBe('CREDENTIAL_NOT_CONNECTED')
 	})
 
-	it('maps 429 to RATE_LIMITED_UNIPILE', () => {
-		expect(classifyUnipileResponse(429, {})).toBe('RATE_LIMITED_UNIPILE')
+	it('maps 429 to RATE_LIMITED_LINKEDIN', () => {
+		expect(classifyLinkedInResponse(429, {})).toBe('RATE_LIMITED_LINKEDIN')
 	})
 
-	it('maps 5xx to UNIPILE_UNAVAILABLE', () => {
-		expect(classifyUnipileResponse(500, {})).toBe('UNIPILE_UNAVAILABLE')
-		expect(classifyUnipileResponse(502, {})).toBe('UNIPILE_UNAVAILABLE')
-		expect(classifyUnipileResponse(503, {})).toBe('UNIPILE_UNAVAILABLE')
+	it('maps 5xx to LINKEDIN_UNAVAILABLE', () => {
+		expect(classifyLinkedInResponse(500, {})).toBe('LINKEDIN_UNAVAILABLE')
+		expect(classifyLinkedInResponse(502, {})).toBe('LINKEDIN_UNAVAILABLE')
+		expect(classifyLinkedInResponse(503, {})).toBe('LINKEDIN_UNAVAILABLE')
 	})
 
 	it('maps other 4xx to INVALID_INPUT', () => {
-		expect(classifyUnipileResponse(400, {})).toBe('INVALID_INPUT')
-		expect(classifyUnipileResponse(422, {})).toBe('INVALID_INPUT')
+		expect(classifyLinkedInResponse(400, {})).toBe('INVALID_INPUT')
+		expect(classifyLinkedInResponse(422, {})).toBe('INVALID_INPUT')
 	})
 
 	it('detects LINKEDIN_ACCOUNT_RESTRICTED via disconnected_account_reason marker on a non-2xx body', () => {
-		expect(classifyUnipileResponse(400, { disconnected_account_reason: 'RESTRICTED' })).toBe(
+		expect(classifyLinkedInResponse(400, { disconnected_account_reason: 'RESTRICTED' })).toBe(
 			'LINKEDIN_ACCOUNT_RESTRICTED',
 		)
 	})
 
 	it('detects LINKEDIN_ACCOUNT_RESTRICTED via error_code marker', () => {
-		expect(classifyUnipileResponse(422, { error_code: 'account_restricted' })).toBe(
+		expect(classifyLinkedInResponse(422, { error_code: 'account_restricted' })).toBe(
 			'LINKEDIN_ACCOUNT_RESTRICTED',
 		)
 	})
@@ -57,7 +57,7 @@ describe('classifyUnipileResponse', () => {
 		// A restricted account can surface on an otherwise-OK response body
 		// (webhook envelope), so the restriction check must run before the
 		// happy-path shortcut.
-		expect(classifyUnipileResponse(200, { account_status: 'RESTRICTED' })).toBe(
+		expect(classifyLinkedInResponse(200, { account_status: 'RESTRICTED' })).toBe(
 			'LINKEDIN_ACCOUNT_RESTRICTED',
 		)
 	})
@@ -67,61 +67,61 @@ describe('classifyUnipileResponse', () => {
 		// classifier picks the specific taxonomy code — collapsing this into
 		// INVALID_INPUT would tell the agent "your body was bad" rather than
 		// "stop sending invites from this account this week".
-		expect(classifyUnipileResponse(400, { error_code: 'invite_quota_exceeded' })).toBe(
+		expect(classifyLinkedInResponse(400, { error_code: 'invite_quota_exceeded' })).toBe(
 			'LINKEDIN_INVITE_QUOTA_EXCEEDED',
 		)
 	})
 
 	it('detects LINKEDIN_INVITE_QUOTA_EXCEEDED via the alternate error_code alias', () => {
-		expect(classifyUnipileResponse(429, { error_code: 'invitation_limit_reached' })).toBe(
+		expect(classifyLinkedInResponse(429, { error_code: 'invitation_limit_reached' })).toBe(
 			'LINKEDIN_INVITE_QUOTA_EXCEEDED',
 		)
 	})
 
 	it('detects LINKEDIN_ALREADY_CONNECTED via error_code on a 409', () => {
-		expect(classifyUnipileResponse(409, { error_code: 'already_connected' })).toBe(
+		expect(classifyLinkedInResponse(409, { error_code: 'already_connected' })).toBe(
 			'LINKEDIN_ALREADY_CONNECTED',
 		)
 	})
 
 	it('detects LINKEDIN_ALREADY_CONNECTED via the pending-invitation alias', () => {
-		expect(classifyUnipileResponse(400, { error_code: 'pending_invitation' })).toBe(
+		expect(classifyLinkedInResponse(400, { error_code: 'pending_invitation' })).toBe(
 			'LINKEDIN_ALREADY_CONNECTED',
 		)
 	})
 
 	it('reads error_code case-insensitively for the connect-request markers', () => {
-		// Live Unipile occasionally shouts the code in uppercase; the marker
+		// Live LinkedIn occasionally shouts the code in uppercase; the marker
 		// list is lowercase, so the classifier normalises before comparing.
-		expect(classifyUnipileResponse(400, { error_code: 'INVITE_QUOTA_EXCEEDED' })).toBe(
+		expect(classifyLinkedInResponse(400, { error_code: 'INVITE_QUOTA_EXCEEDED' })).toBe(
 			'LINKEDIN_INVITE_QUOTA_EXCEEDED',
 		)
-		expect(classifyUnipileResponse(409, { error_code: 'Already_Connected' })).toBe(
+		expect(classifyLinkedInResponse(409, { error_code: 'Already_Connected' })).toBe(
 			'LINKEDIN_ALREADY_CONNECTED',
 		)
 	})
 
 	it('returns null for a clean 2xx', () => {
 		expect(
-			classifyUnipileResponse(200, { id: 'msg-1', sent_at: '2026-08-31T12:00:00Z' }),
+			classifyLinkedInResponse(200, { id: 'msg-1', sent_at: '2026-08-31T12:00:00Z' }),
 		).toBeNull()
 	})
 
-	// LINKEDIN_POST_TOO_LONG covers the two shapes Unipile v2 uses when
+	// LINKEDIN_POST_TOO_LONG covers the two shapes LinkedIn v2 uses when
 	// LinkedIn rejects an over-length post body: a body-level `error_code`
 	// marker (preferred discriminator) and a plain 400 whose message names
 	// the limit. Either surfaces the same wire code so the caller — a
 	// Copywriter loop retrying the same draft — knows to shorten before
 	// re-issuing.
 	it('detects LINKEDIN_POST_TOO_LONG via error_code marker', () => {
-		expect(classifyUnipileResponse(400, { error_code: 'post_too_long', message: 'nope' })).toBe(
+		expect(classifyLinkedInResponse(400, { error_code: 'post_too_long', message: 'nope' })).toBe(
 			'LINKEDIN_POST_TOO_LONG',
 		)
 	})
 
 	it('detects LINKEDIN_POST_TOO_LONG via message text when error_code is missing', () => {
 		expect(
-			classifyUnipileResponse(400, {
+			classifyLinkedInResponse(400, {
 				message: 'Post body exceeds the maximum length of 3000 characters.',
 			}),
 		).toBe('LINKEDIN_POST_TOO_LONG')
@@ -134,8 +134,8 @@ describe('classifyUnipileResponse', () => {
 
 describe('LinkedInIntegrationError metadata', () => {
 	it('carries the classification code + retryable flag', () => {
-		const err = new LinkedInIntegrationError('RATE_LIMITED_UNIPILE', 'slow down')
-		expect(err.code).toBe('RATE_LIMITED_UNIPILE')
+		const err = new LinkedInIntegrationError('RATE_LIMITED_LINKEDIN', 'slow down')
+		expect(err.code).toBe('RATE_LIMITED_LINKEDIN')
 		expect(err.retryable).toBe(true)
 	})
 
@@ -173,8 +173,8 @@ describe('RETRY_POLICY_BY_CODE', () => {
 		expect(RETRY_POLICY_BY_CODE.LINKEDIN_ALREADY_CONNECTED).toBeNull()
 	})
 
-	it('matches spec §4 for RATE_LIMITED_UNIPILE (base 2s, 3 attempts, ±25% jitter, cap 30s)', () => {
-		const p = RETRY_POLICY_BY_CODE.RATE_LIMITED_UNIPILE
+	it('matches spec §4 for RATE_LIMITED_LINKEDIN (base 2s, 3 attempts, ±25% jitter, cap 30s)', () => {
+		const p = RETRY_POLICY_BY_CODE.RATE_LIMITED_LINKEDIN
 		expect(p).not.toBeNull()
 		expect(p?.baseMs).toBe(2_000)
 		expect(p?.maxAttempts).toBe(3)
@@ -182,8 +182,8 @@ describe('RETRY_POLICY_BY_CODE', () => {
 		expect(p?.jitter).toBeCloseTo(0.25)
 	})
 
-	it('matches spec §4 for UNIPILE_UNAVAILABLE (base 3s, 3 attempts, cap 30s)', () => {
-		const p = RETRY_POLICY_BY_CODE.UNIPILE_UNAVAILABLE
+	it('matches spec §4 for LINKEDIN_UNAVAILABLE (base 3s, 3 attempts, cap 30s)', () => {
+		const p = RETRY_POLICY_BY_CODE.LINKEDIN_UNAVAILABLE
 		expect(p).not.toBeNull()
 		expect(p?.baseMs).toBe(3_000)
 		expect(p?.maxAttempts).toBe(3)
@@ -235,18 +235,18 @@ describe('isAccountStatusRevoked', () => {
 	})
 })
 
-describe('UNIPILE_RESTRICTED_MARKERS', () => {
-	it('documents both known Unipile discriminators', () => {
-		expect(UNIPILE_RESTRICTED_MARKERS.disconnectedAccountReasons).toContain('RESTRICTED')
-		expect(UNIPILE_RESTRICTED_MARKERS.errorCodes).toContain('account_restricted')
+describe('LINKEDIN_RESTRICTED_MARKERS', () => {
+	it('documents both known LinkedIn discriminators', () => {
+		expect(LINKEDIN_RESTRICTED_MARKERS.disconnectedAccountReasons).toContain('RESTRICTED')
+		expect(LINKEDIN_RESTRICTED_MARKERS.errorCodes).toContain('account_restricted')
 	})
 })
 
-describe('UNIPILE_CONNECTION_REQUEST_MARKERS', () => {
+describe('LINKEDIN_CONNECTION_REQUEST_MARKERS', () => {
 	it('documents both connect-request error-code discriminators from the spec', () => {
-		expect(UNIPILE_CONNECTION_REQUEST_MARKERS.inviteQuotaExceeded).toContain(
+		expect(LINKEDIN_CONNECTION_REQUEST_MARKERS.inviteQuotaExceeded).toContain(
 			'invite_quota_exceeded',
 		)
-		expect(UNIPILE_CONNECTION_REQUEST_MARKERS.alreadyConnected).toContain('already_connected')
+		expect(LINKEDIN_CONNECTION_REQUEST_MARKERS.alreadyConnected).toContain('already_connected')
 	})
 })

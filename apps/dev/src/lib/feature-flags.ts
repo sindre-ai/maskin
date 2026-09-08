@@ -36,7 +36,7 @@ export const FLAGS = {
 	 * → sent via `linkedin_send_message` with an idempotency key derived from
 	 * `(contact_id, draft_id)`". Per-actor, so the workspace admin can opt in
 	 * their own Sales Rep driver-actor without flipping every workspace at
-	 * once. See the parent bet [First-party LinkedIn MCP — Unipile-backed,
+	 * once. See the parent bet [First-party LinkedIn MCP — LinkedIn-backed,
 	 * customer-auth](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/56c2ffd7-7e45-448b-a409-c08c15755f9a)
 	 * — this flag is the "human-fire path stays available (feature flag on the
 	 * loop) so early customers can opt in gradually" gate from the spec's

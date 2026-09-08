@@ -64,7 +64,7 @@ describe('resolveLinkedInIdentityAddon', () => {
 		// STRIPE_PRICE_LINKEDIN_IDENTITY, or the plan surface will display a
 		// different number than Stripe charges.
 		expect(LINKEDIN_IDENTITY_UNIT_PRICE_USD_CENTS).toBe(4900)
-		// Must match the `provider` value written by Task 2's Unipile hosted-wizard
+		// Must match the `provider` value written by Task 2's LinkedIn hosted-wizard
 		// callback — the SKU-count query joins on this literal.
 		expect(LINKEDIN_IDENTITY_PROVIDER).toBe('linkedin-unipile')
 	})

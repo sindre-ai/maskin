@@ -35,13 +35,13 @@ import {
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 /**
- * LinkedIn (Unipile-backed) integration routes — the whole provider surface,
- * rebuilt against Unipile Hosted Auth v2.
+ * LinkedIn (LinkedIn-backed) integration routes — the whole provider surface,
+ * rebuilt against LinkedIn Hosted Auth v2.
  *
  * Connect flow (v2 hosted-auth):
  *   - POST /connect            — creates or looks up a pending integrations
  *                                row keyed by (workspace, actor, provider),
- *                                calls Unipile POST /v2/auth/link, and
+ *                                calls LinkedIn POST /v2/auth/link, and
  *                                returns { install_url } to the UI. Auth: API key.
  *   - GET  /callback           — redirect callback with query params
  *                                (state, account_id, provider) on success
@@ -60,22 +60,22 @@ import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
  *
  * The verbs share one shape: fetch the actor-scoped credential the connect
  * flow above landed (via `getIntegrationCredential`, on the actor_id column
- * Task 1 added), call Unipile through the thin `UnipileClient`, and translate
+ * Task 1 added), call LinkedIn through the thin `LinkedInClient`, and translate
  * every failure into one of the six `LinkedInIntegrationError` classes before
  * the response leaves this file. This is therefore the single spot that talks
- * to Unipile, decrypts credentials, or applies the idempotency ledger — every
+ * to LinkedIn, decrypts credentials, or applies the idempotency ledger — every
  * ergonomics decision (retry policy, body redaction on log, idempotency key
  * scoping) sits at this layer so the MCP surface stays a dumb passthrough.
  *
  * Design notes rooted in the spec (see the parent bet's technical spec §2):
  *   - LinkedIn tokens NEVER cross Maskin infrastructure. The stored credential
- *     is Unipile's own account_id, which we combine with the workspace-scoped
+ *     is LinkedIn's own account_id, which we combine with the workspace-scoped
  *     MASKIN_UNIPILE_API_KEY on every downstream call.
  *   - The DB commit runs first; the PostHog capture runs after with await
  *     but is fire-and-forget internally (capturePosthogEvent catches every
  *     failure). An unlogged event is strictly better than a rolled-back
  *     credential write — see spec §Telemetry ordering rule.
- *   - We do NOT reuse the generic OAuth2Handler — Unipile's hosted wizard is
+ *   - We do NOT reuse the generic OAuth2Handler — LinkedIn's hosted wizard is
  *     not an OAuth2 authorization-code flow. The provider is registered in
  *     the integration registry with auth.type='oauth2_custom' as a sentinel
  *     so it appears in Settings > Integrations, and this dedicated router is
@@ -122,7 +122,7 @@ function callbackUrl(): string {
 //
 // `integrations.id` alone satisfies none of those: `GET /api/integrations`
 // returns whole rows to every workspace member, so a co-member can read the
-// id and re-point a colleague's LinkedIn identity at their own Unipile
+// id and re-point a colleague's LinkedIn identity at their own LinkedIn
 // account; and a state that never expires or gets consumed means the
 // callback URL sitting in browser history rebinds a live integration every
 // time it is replayed.
@@ -206,13 +206,13 @@ const connectRoute = createRoute({
 	method: 'post',
 	path: '/connect',
 	tags: ['integrations'],
-	summary: 'Start LinkedIn Unipile Hosted Auth Wizard connect flow',
+	summary: 'Start LinkedIn Hosted Auth Wizard connect flow',
 	request: {
 		headers: workspaceIdHeader,
 	},
 	responses: {
 		200: {
-			description: 'Unipile-hosted install URL for the customer to complete LinkedIn auth in.',
+			description: 'LinkedIn-hosted install URL for the customer to complete LinkedIn auth in.',
 			content: {
 				'application/json': {
 					schema: z.object({
@@ -319,7 +319,7 @@ app.openapi(connectRoute, (async (c) => {
 		})
 		return c.json({ install_url: link.link, integration_id: integrationId })
 	} catch (err) {
-		// `cause` carries the real Unipile status/body (or the schema-drift
+		// `cause` carries the real LinkedIn status/body (or the schema-drift
 		// detail); `message` is only the class's stock human-facing text, which
 		// reads as "temporarily unavailable" for every failure mode including a
 		// 200 we could not parse. Log both.
@@ -357,7 +357,7 @@ const callbackRoute = createRoute({
 	method: 'get',
 	path: '/callback',
 	tags: ['integrations'],
-	summary: 'Unipile Hosted Auth v2 redirect callback',
+	summary: 'LinkedIn Hosted Auth v2 redirect callback',
 	responses: {
 		302: {
 			description: 'Redirect to Settings > Integrations with connect status.',
@@ -369,7 +369,7 @@ app.openapi(callbackRoute, (async (c) => {
 	const db = c.get('db')
 	const query = c.req.query()
 
-	// Error path — Unipile aborted or LinkedIn refused.
+	// Error path — LinkedIn aborted or LinkedIn refused.
 	if (query.error_type) {
 		return handleCallbackError(c, db, query)
 	}
@@ -509,7 +509,7 @@ async function handleCallbackError(
 
 	// `api/already_exists` is a "success with a twist" — the customer already
 	// connected this LinkedIn account previously. `error_detail` carries the
-	// existing Unipile account_id; adopt it into the pending row so the customer
+	// existing LinkedIn account_id; adopt it into the pending row so the customer
 	// isn't stuck in a reconnect loop.
 	if (error_type === 'api/already_exists' && state && error_detail) {
 		const resolved = await resolveCallbackState(db, state)
@@ -609,9 +609,13 @@ function handleTerminalError(err: unknown, operation: string, actorId: string): 
 		actorId,
 		error: err instanceof Error ? err.message : String(err),
 	})
-	const generic = new LinkedInIntegrationError('UNIPILE_UNAVAILABLE', 'Unexpected upstream error', {
-		cause: err,
-	})
+	const generic = new LinkedInIntegrationError(
+		'LINKEDIN_UNAVAILABLE',
+		'Unexpected upstream error',
+		{
+			cause: err,
+		},
+	)
 	return new Response(JSON.stringify(errorToResponse(generic)), {
 		status: generic.httpStatus,
 		headers: { 'content-type': 'application/json' },
@@ -828,4 +832,4 @@ export default app
  * predate the extraction and import the seam from this module; keeping the
  * re-export means the move did not become a test-file rewrite.
  */
-export { __setUnipileClientForTests } from '../lib/integrations/providers/linkedin-unipile/operations'
+export { __setLinkedInClientForTests } from '../lib/integrations/providers/linkedin-unipile/operations'

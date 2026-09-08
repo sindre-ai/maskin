@@ -16,7 +16,7 @@ import {
 	resolveExternalId as linearResolveExternalId,
 } from './providers/linear/config'
 import { linearEventNormalizer } from './providers/linear/webhooks'
-import { config as linkedinUnipileConfig } from './providers/linkedin-unipile/config'
+import { config as linkedinConfig } from './providers/linkedin-unipile/config'
 import { config as posthogConfig } from './providers/posthog/config'
 import { config as skjaldConfig } from './providers/skjald/config'
 import { reapSlackUserLinks } from './providers/slack/account-link'
@@ -110,7 +110,7 @@ providers.set('ubersuggest', {
 	customAuth: ubersuggestAuth,
 })
 
-// linkedin-unipile — the connect + callback flow is Unipile's Hosted Auth
+// linkedin-unipile — the connect + callback flow is LinkedIn's Hosted Auth
 // Wizard, not OAuth2. The provider is registered here (so it appears in
 // GET /api/integrations/providers alongside the others) but the connect
 // route lives at apps/dev/src/routes/integrations-linkedin-unipile.ts and
@@ -119,7 +119,7 @@ providers.set('ubersuggest', {
 // NOT run for this provider — it would try to build an OAuth2 authorization
 // URL and fail.
 providers.set('linkedin-unipile', {
-	config: linkedinUnipileConfig,
+	config: linkedinConfig,
 })
 
 // ── Public API ─────────────────────────────────────────────────────────────

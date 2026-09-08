@@ -3,16 +3,16 @@ import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { getIntegrationCredential } from '../../lib/integrations/lookup'
 import {
-	type UnipileMockServer,
+	type LinkedInMockServer,
 	simulateCallbackError,
 	simulateCallbackSuccess,
-	startUnipileMock,
+	startLinkedInMock,
 } from '../../lib/integrations/providers/linkedin-unipile/__mocks__/unipile-server'
 import { insertWorkspace } from '../factories'
 import { createIntegrationApp, db, getTestActorId, sql } from './global-setup'
 
 /**
- * Round-trip coverage for the Unipile Hosted Auth v2 connect flow against
+ * Round-trip coverage for the LinkedIn Hosted Auth v2 connect flow against
  * real Postgres: POST /connect → GET /callback → read the credential back
  * through `getIntegrationCredential`.
  *
@@ -43,18 +43,18 @@ const ENV_KEYS = [
 
 const ORIGINAL_ENV: Record<string, string | undefined> = {}
 
-let mock: UnipileMockServer
+let mock: LinkedInMockServer
 let app: ReturnType<typeof createIntegrationApp>
 let integrationServerBaseUrl: string
 
 beforeAll(async () => {
 	for (const key of ENV_KEYS) ORIGINAL_ENV[key] = process.env[key]
-	mock = await startUnipileMock()
+	mock = await startLinkedInMock()
 
 	const routes = (await import('../../routes/integrations-linkedin-unipile')).default
 	app = createIntegrationApp({ path: '/api/integrations/linkedin-unipile', module: routes })
 	// The integration app under test is served in-process; MASKIN_PUBLIC_URL is
-	// what the route reads to compose the callback URL Unipile redirects back
+	// what the route reads to compose the callback URL LinkedIn redirects back
 	// to. In the round-trip tests we hit that URL directly through app.request,
 	// so the string just needs to be a valid absolute URL — the origin doesn't
 	// have to resolve.
@@ -96,7 +96,7 @@ function callbackGet(query: Record<string, string>) {
 }
 
 /**
- * Read the `state` that /connect handed to Unipile from the mock inbox. The
+ * Read the `state` that /connect handed to LinkedIn from the mock inbox. The
  * route mints it as `<integrationId>.<nonce>` and stores the nonce in the
  * row's encrypted credentials blob, so tests can't reconstruct it — they have
  * to observe what the route actually sent and echo that back on the callback.
@@ -120,7 +120,7 @@ describe('linkedin-unipile v2 connect → callback round-trip', () => {
 		}
 		expect(install_url).toContain(mock.baseUrl)
 
-		// Verify /connect called Unipile v2 with the right shape.
+		// Verify /connect called LinkedIn v2 with the right shape.
 		const authReq = mock.inbox().find((c) => c.path === '/v2/auth/link')
 		expect(authReq).toBeDefined()
 		const body = authReq?.body as Record<string, unknown>
@@ -136,19 +136,19 @@ describe('linkedin-unipile v2 connect → callback round-trip', () => {
 
 		const cbRes = await callbackGet({
 			state: wizardState,
-			account_id: 'unipile-account-42',
+			account_id: 'linkedin-account-42',
 			provider: 'linkedin',
 		})
 		expect(cbRes.status).toBe(302)
 		const location = cbRes.headers.get('location') ?? ''
 		expect(location).toContain('/settings/integrations')
 		expect(location).toContain('linkedin_status=connected')
-		expect(location).toContain('linkedin_detail=unipile-account-42')
+		expect(location).toContain('linkedin_detail=linkedin-account-42')
 
 		const credential = await getIntegrationCredential(db, ws.id, 'linkedin-unipile', actorId)
 		expect(credential).not.toBeNull()
 		expect(credential?.id).toBe(integration_id)
-		expect(credential?.externalId).toBe('unipile-account-42')
+		expect(credential?.externalId).toBe('linkedin-account-42')
 		expect(credential?.actorId).toBe(actorId)
 		expect(credential?.credentials).toMatch(/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i)
 	})
@@ -160,7 +160,7 @@ describe('linkedin-unipile v2 connect → callback round-trip', () => {
 
 		const cbRes = await callbackGet({
 			state: '00000000-0000-0000-0000-000000000000',
-			account_id: 'unipile-account-99',
+			account_id: 'linkedin-account-99',
 			provider: 'linkedin',
 		})
 		expect(cbRes.status).toBe(302)
@@ -179,7 +179,7 @@ describe('linkedin-unipile v2 connect → callback round-trip', () => {
 
 		const cbRes = await callbackGet({
 			state: integration_id,
-			account_id: 'unipile-account-x',
+			account_id: 'linkedin-account-x',
 			provider: 'whatsapp',
 		})
 		expect(cbRes.status).toBe(302)
@@ -197,15 +197,15 @@ describe('linkedin-unipile v2 connect → callback round-trip', () => {
 		const cbRes = await callbackGet({
 			state: wizardState,
 			error_type: 'api/already_exists',
-			error_detail: 'existing-unipile-77',
+			error_detail: 'existing-linkedin-77',
 		})
 		expect(cbRes.status).toBe(302)
 		expect(cbRes.headers.get('location') ?? '').toContain('linkedin_status=connected')
-		expect(cbRes.headers.get('location') ?? '').toContain('linkedin_detail=existing-unipile-77')
+		expect(cbRes.headers.get('location') ?? '').toContain('linkedin_detail=existing-linkedin-77')
 
 		const credential = await getIntegrationCredential(db, ws.id, 'linkedin-unipile', actorId)
 		expect(credential).not.toBeNull()
-		expect(credential?.externalId).toBe('existing-unipile-77')
+		expect(credential?.externalId).toBe('existing-linkedin-77')
 	})
 
 	it('routes api/restricted_account to the restricted-account error surface without flipping status', async () => {
@@ -234,7 +234,7 @@ describe('linkedin-unipile v2 connect → callback round-trip', () => {
 		const { integration_id } = (await (await connect(ws.id)).json()) as { integration_id: string }
 		await callbackGet({
 			state: capturedWizardState(),
-			account_id: 'unipile-account-42',
+			account_id: 'linkedin-account-42',
 			provider: 'linkedin',
 		})
 
@@ -270,7 +270,7 @@ describe('linkedin-unipile v2 connect → callback round-trip', () => {
 		const { integration_id } = (await (await connect(ws.id)).json()) as { integration_id: string }
 		await callbackGet({
 			state: capturedWizardState(),
-			account_id: 'unipile-account-42',
+			account_id: 'linkedin-account-42',
 			provider: 'linkedin',
 		})
 

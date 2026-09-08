@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-	type UnipileMockServer,
-	startUnipileMock,
+	type LinkedInMockServer,
+	startLinkedInMock,
 } from '../../lib/integrations/providers/linkedin-unipile/__mocks__/unipile-server'
 import { createTestApp } from '../setup'
 
@@ -20,13 +20,13 @@ const ENV_KEYS = [
 	'POSTHOG_API_KEY',
 ] as const
 
-let mock: UnipileMockServer
+let mock: LinkedInMockServer
 
-// A single mock Unipile server for the whole suite — starting one per test
+// A single mock LinkedIn server for the whole suite — starting one per test
 // costs ~20ms extra and the mock's inbox is reset before every test.
 beforeAll(async () => {
 	for (const key of ENV_KEYS) ORIGINAL_ENV[key] = process.env[key]
-	mock = await startUnipileMock()
+	mock = await startLinkedInMock()
 })
 
 afterAll(async () => {
@@ -107,7 +107,7 @@ function callbackGetRequest(query: Record<string, string>) {
 // ── POST /connect ──────────────────────────────────────────────────────────
 
 describe('POST /api/integrations/linkedin-unipile/connect', () => {
-	it('inserts a pending row and returns the Unipile v2 install_url', async () => {
+	it('inserts a pending row and returns the LinkedIn v2 install_url', async () => {
 		const routes = await importRoutes()
 		const { app, mockResults, calls } = createTestApp(
 			routes,
@@ -152,7 +152,7 @@ describe('POST /api/integrations/linkedin-unipile/connect', () => {
 		expect(event.workspaceId).toBe(WORKSPACE_ID)
 		expect(event.actorId).toBe(ACTOR_ID)
 
-		// And that Unipile received a v2 auth-link call with the right shape.
+		// And that LinkedIn received a v2 auth-link call with the right shape.
 		const linkCall = mock.inbox().find((c) => c.path === '/v2/auth/link')
 		expect(linkCall).toBeDefined()
 		const linkBody = linkCall?.body as Record<string, unknown>
@@ -256,13 +256,13 @@ describe('GET /api/integrations/linkedin-unipile/callback', () => {
 		const res = await app.request(
 			callbackGetRequest({
 				state: stateFor(),
-				account_id: 'unipile-account-42',
+				account_id: 'linkedin-account-42',
 				provider: 'linkedin',
 			}),
 		)
 		expect(res.status).toBe(302)
 		expect(res.headers.get('location') ?? '').toContain('linkedin_status=connected')
-		expect(res.headers.get('location') ?? '').toContain('linkedin_detail=unipile-account-42')
+		expect(res.headers.get('location') ?? '').toContain('linkedin_detail=linkedin-account-42')
 
 		expect(calls.updates).toHaveLength(1)
 		const update = calls.updates[0] as Record<string, unknown>
@@ -271,7 +271,7 @@ describe('GET /api/integrations/linkedin-unipile/callback', () => {
 		// routes/integrations.ts); see the integration test for the round-trip
 		// proof that getIntegrationCredential can actually find this row.
 		expect(update.status).toBe('active')
-		expect(update.externalId).toBe('unipile-account-42')
+		expect(update.externalId).toBe('linkedin-account-42')
 		// credentials is the encrypted JSON blob — assert on shape (iv:tag:ct)
 		// rather than the exact ciphertext, which contains a random IV.
 		expect(String(update.credentials)).toMatch(/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i)
@@ -286,17 +286,17 @@ describe('GET /api/integrations/linkedin-unipile/callback', () => {
 			callbackGetRequest({
 				state: stateFor(),
 				error_type: 'api/already_exists',
-				error_detail: 'existing-unipile-77',
+				error_detail: 'existing-linkedin-77',
 			}),
 		)
 		expect(res.status).toBe(302)
 		expect(res.headers.get('location') ?? '').toContain('linkedin_status=connected')
-		expect(res.headers.get('location') ?? '').toContain('linkedin_detail=existing-unipile-77')
+		expect(res.headers.get('location') ?? '').toContain('linkedin_detail=existing-linkedin-77')
 
 		expect(calls.updates).toHaveLength(1)
 		const update = calls.updates[0] as Record<string, unknown>
 		expect(update.status).toBe('active')
-		expect(update.externalId).toBe('existing-unipile-77')
+		expect(update.externalId).toBe('existing-linkedin-77')
 	})
 
 	it('routes api/restricted_account to the restricted-account error surface without flipping status', async () => {
@@ -367,7 +367,7 @@ describe('GET /api/integrations/linkedin-unipile/callback', () => {
 		const res = await app.request(
 			callbackGetRequest({
 				state: stateFor(),
-				account_id: 'unipile-account-42',
+				account_id: 'linkedin-account-42',
 				provider: 'linkedin',
 			}),
 		)
@@ -412,7 +412,7 @@ describe('GET /api/integrations/linkedin-unipile/callback', () => {
 		const res = await app.request(
 			callbackGetRequest({
 				state: stateFor(),
-				account_id: 'unipile-account-42',
+				account_id: 'linkedin-account-42',
 				provider: 'linkedin',
 			}),
 		)

@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
- * Route-level tests for the LinkedIn (Unipile-backed) HTTP routes.
+ * Route-level tests for the LinkedIn (LinkedIn-backed) HTTP routes.
  *
  * These tests import the route module which itself depends on
  * `../../lib/integrations/lookup.ts` (introduced by Task 1's PR #1466). When
@@ -13,13 +13,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
  *
  *   1. All six error classes from spec §4 surface with the correct code.
  *   2. Idempotency dedup — a second call with the same key does NOT re-hit
- *      Unipile and returns `replayed: true`.
+ *      LinkedIn and returns `replayed: true`.
  *   3. Two-actor lookup isolation — an actor A's send is routed to actor
- *      A's Unipile account_id, never actor B's, even in the same workspace.
+ *      A's LinkedIn account_id, never actor B's, even in the same workspace.
  *
  * The test setup mocks the credential lookup, workspace-membership check,
  * and decrypt helpers so no real database or crypto material is exercised.
- * A fake Unipile client is injected via the route's test-only setter.
+ * A fake LinkedIn client is injected via the route's test-only setter.
  */
 
 // vi.mock is hoisted to the top of the file — do not move.
@@ -56,8 +56,8 @@ vi.mock('../../lib/logger', () => ({
 import { decrypt } from '../../lib/crypto'
 import { getIntegrationCredential } from '../../lib/integrations/lookup'
 import { isWorkspaceMember } from '../../lib/workspace-auth'
-import integrationsLinkedinUnipileRoutes, {
-	__setUnipileClientForTests,
+import integrationsLinkedinRoutes, {
+	__setLinkedInClientForTests,
 } from '../integrations-linkedin-unipile'
 
 type FakeDb = {
@@ -161,7 +161,7 @@ function buildAppWithFakes(opts: {
 		c.set('actorId' as never, opts.actorId as unknown)
 		await next()
 	})
-	app.route('/api/integrations/linkedin-unipile', integrationsLinkedinUnipileRoutes)
+	app.route('/api/integrations/linkedin-unipile', integrationsLinkedinRoutes)
 	return app
 }
 
@@ -172,11 +172,11 @@ const ACTOR_B = 'actor-b'
 beforeEach(() => {
 	vi.mocked(getIntegrationCredential).mockReset()
 	vi.mocked(isWorkspaceMember).mockResolvedValue(true)
-	__setUnipileClientForTests(null)
+	__setLinkedInClientForTests(null)
 })
 
 afterEach(() => {
-	__setUnipileClientForTests(null)
+	__setLinkedInClientForTests(null)
 })
 
 function stubCredential(actorId: string, accountId: string, accountStatus?: string) {
@@ -202,7 +202,7 @@ function stubCredential(actorId: string, accountId: string, accountStatus?: stri
 	)
 }
 
-function fakeUnipile(
+function fakeLinkedIn(
 	overrides: Partial<{
 		send: (payload: { account_id: string }) => Promise<{
 			status: number
@@ -232,9 +232,9 @@ function fakeUnipile(
 	const list =
 		overrides.list ?? (async () => ({ status: 200, body: { conversations: [] }, headers: {} }))
 	// Params are annotated rather than inferred: the `as never` below erases the
-	// contextual type the object literal would otherwise get from UnipileClient,
+	// contextual type the object literal would otherwise get from LinkedInClient,
 	// which leaves these three implicitly `any` under `noImplicitAny`.
-	__setUnipileClientForTests(
+	__setLinkedInClientForTests(
 		() =>
 			({
 				sendMessage: (payload: { account_id: string }) => send(payload),
@@ -259,7 +259,7 @@ function req(app: Hono, method: 'GET' | 'POST', path: string, body?: unknown, ac
 describe('POST /send-message — six error classes', () => {
 	it('CREDENTIAL_NOT_CONNECTED — no credential row', async () => {
 		vi.mocked(getIntegrationCredential).mockResolvedValue(null)
-		fakeUnipile({})
+		fakeLinkedIn({})
 		const db = buildFakeDb()
 		const app = buildAppWithFakes({ actorId: ACTOR_A, db })
 		const res = await req(app, 'POST', '/send-message', {
@@ -272,8 +272,8 @@ describe('POST /send-message — six error classes', () => {
 	})
 
 	it('CREDENTIAL_REVOKED — account_status RESTRICTED short-circuits pre-flight', async () => {
-		stubCredential(ACTOR_A, 'unipile-A', 'RESTRICTED')
-		fakeUnipile({})
+		stubCredential(ACTOR_A, 'linkedin-A', 'RESTRICTED')
+		fakeLinkedIn({})
 		const db = buildFakeDb()
 		const app = buildAppWithFakes({ actorId: ACTOR_A, db })
 		const res = await req(app, 'POST', '/send-message', {
@@ -285,9 +285,9 @@ describe('POST /send-message — six error classes', () => {
 		expect(json.error?.code).toBe('CREDENTIAL_REVOKED')
 	})
 
-	it('LINKEDIN_ACCOUNT_RESTRICTED — Unipile body marker on send', async () => {
-		stubCredential(ACTOR_A, 'unipile-A')
-		fakeUnipile({
+	it('LINKEDIN_ACCOUNT_RESTRICTED — LinkedIn body marker on send', async () => {
+		stubCredential(ACTOR_A, 'linkedin-A')
+		fakeLinkedIn({
 			send: async () => ({
 				status: 422,
 				body: { error_code: 'account_restricted', message: 'restricted' },
@@ -305,10 +305,10 @@ describe('POST /send-message — six error classes', () => {
 		expect(json.error?.code).toBe('LINKEDIN_ACCOUNT_RESTRICTED')
 	})
 
-	it('RATE_LIMITED_UNIPILE — surfaces after 3 attempts', async () => {
-		stubCredential(ACTOR_A, 'unipile-A')
+	it('RATE_LIMITED_LINKEDIN — surfaces after 3 attempts', async () => {
+		stubCredential(ACTOR_A, 'linkedin-A')
 		let calls = 0
-		fakeUnipile({
+		fakeLinkedIn({
 			send: async () => {
 				calls++
 				return { status: 429, body: {}, headers: {} }
@@ -322,14 +322,14 @@ describe('POST /send-message — six error classes', () => {
 			idempotency_key: 'k-4',
 		})
 		const json = (await res.json()) as { error?: { code?: string } }
-		expect(json.error?.code).toBe('RATE_LIMITED_UNIPILE')
+		expect(json.error?.code).toBe('RATE_LIMITED_LINKEDIN')
 		expect(calls).toBe(3)
 	})
 
-	it('UNIPILE_UNAVAILABLE — a 5xx on a SEND is not replayed', async () => {
-		stubCredential(ACTOR_A, 'unipile-A')
+	it('LINKEDIN_UNAVAILABLE — a 5xx on a SEND is not replayed', async () => {
+		stubCredential(ACTOR_A, 'linkedin-A')
 		let calls = 0
-		fakeUnipile({
+		fakeLinkedIn({
 			send: async () => {
 				calls++
 				return { status: 503, body: {}, headers: {} }
@@ -343,8 +343,8 @@ describe('POST /send-message — six error classes', () => {
 			idempotency_key: 'k-5',
 		})
 		const json = (await res.json()) as { error?: { code?: string } }
-		expect(json.error?.code).toBe('UNIPILE_UNAVAILABLE')
-		// Exactly one attempt. A 5xx on a send is ambiguous — Unipile may have
+		expect(json.error?.code).toBe('LINKEDIN_UNAVAILABLE')
+		// Exactly one attempt. A 5xx on a send is ambiguous — LinkedIn may have
 		// already handed the message to LinkedIn and failed only on the way back
 		// — so replaying it inside the single idempotency claim would deliver the
 		// message twice while the caller sees one success. 429 is different (see
@@ -353,10 +353,10 @@ describe('POST /send-message — six error classes', () => {
 		expect(calls).toBe(1)
 	})
 
-	it('UNIPILE_UNAVAILABLE — a 5xx on a READ still retries, since reads cannot duplicate', async () => {
-		stubCredential(ACTOR_A, 'unipile-A')
+	it('LINKEDIN_UNAVAILABLE — a 5xx on a READ still retries, since reads cannot duplicate', async () => {
+		stubCredential(ACTOR_A, 'linkedin-A')
 		let calls = 0
-		fakeUnipile({
+		fakeLinkedIn({
 			list: async () => {
 				calls++
 				return { status: 503, body: {}, headers: {} }
@@ -366,14 +366,14 @@ describe('POST /send-message — six error classes', () => {
 		const app = buildAppWithFakes({ actorId: ACTOR_A, db })
 		const res = await req(app, 'GET', '/list-conversations')
 		const json = (await res.json()) as { error?: { code?: string } }
-		expect(json.error?.code).toBe('UNIPILE_UNAVAILABLE')
+		expect(json.error?.code).toBe('LINKEDIN_UNAVAILABLE')
 		expect(calls).toBe(3)
 	})
 
-	it('INVALID_INPUT — bad payload rejected before Unipile is called', async () => {
-		stubCredential(ACTOR_A, 'unipile-A')
+	it('INVALID_INPUT — bad payload rejected before LinkedIn is called', async () => {
+		stubCredential(ACTOR_A, 'linkedin-A')
 		let called = false
-		fakeUnipile({
+		fakeLinkedIn({
 			send: async () => {
 				called = true
 				return { status: 200, body: { id: 'x', sent_at: '2026-08-31T12:00:00Z' }, headers: {} }
@@ -392,10 +392,10 @@ describe('POST /send-message — six error classes', () => {
 })
 
 describe('POST /send-message — idempotency dedup', () => {
-	it('replays the winner on a second call with the same key; one Unipile call total', async () => {
-		stubCredential(ACTOR_A, 'unipile-A')
+	it('replays the winner on a second call with the same key; one LinkedIn call total', async () => {
+		stubCredential(ACTOR_A, 'linkedin-A')
 		let calls = 0
-		fakeUnipile({
+		fakeLinkedIn({
 			send: async () => {
 				calls++
 				return {
@@ -432,13 +432,13 @@ describe('POST /send-message — idempotency dedup', () => {
 	// The loser then reported replayed:true having already delivered a second
 	// LinkedIn message. The claim row must be written before the send.
 	it('never sends twice when two calls with the same key overlap', async () => {
-		stubCredential(ACTOR_A, 'unipile-A')
+		stubCredential(ACTOR_A, 'linkedin-A')
 		let calls = 0
 		let releaseFirst: () => void = () => {}
 		const firstInFlight = new Promise<void>((resolve) => {
 			releaseFirst = resolve
 		})
-		fakeUnipile({
+		fakeLinkedIn({
 			send: async () => {
 				calls++
 				if (calls === 1) await firstInFlight
@@ -477,9 +477,9 @@ describe('POST /send-message — idempotency dedup', () => {
 	// reusing the send's {contact_id}:{draft_id} key replayed the send's stored
 	// response and was never delivered.
 	it('does not let a reply replay a send that used the same caller key', async () => {
-		stubCredential(ACTOR_A, 'unipile-A')
+		stubCredential(ACTOR_A, 'linkedin-A')
 		const sent: string[] = []
-		fakeUnipile({
+		fakeLinkedIn({
 			send: async () => {
 				sent.push('send')
 				return { status: 200, body: { id: 'msg-send' }, headers: {} }
@@ -513,11 +513,11 @@ describe('POST /send-message — idempotency dedup', () => {
 	// A failed send must release its claim, or a transient upstream error would
 	// poison the key until the nightly purge and block every legitimate retry.
 	it('releases the claim when the send fails, so a retry can proceed', async () => {
-		stubCredential(ACTOR_A, 'unipile-A')
+		stubCredential(ACTOR_A, 'linkedin-A')
 		let calls = 0
-		fakeUnipile({
+		fakeLinkedIn({
 			// 400 → INVALID_INPUT, which is terminal. A 5xx would be retried
-			// internally by callUnipileWithRetry and never surface as a failure.
+			// internally by callLinkedInWithRetry and never surface as a failure.
 			send: async () => {
 				calls++
 				if (calls === 1) return { status: 400, body: { message: 'bad urn' }, headers: {} }
@@ -544,7 +544,7 @@ describe('POST /send-message — idempotency dedup', () => {
 })
 
 describe('two-actor lookup isolation', () => {
-	it("routes actor A's send to A's Unipile account_id, never B's", async () => {
+	it("routes actor A's send to A's LinkedIn account_id, never B's", async () => {
 		let seenAccountId: string | null = null
 		vi.mocked(getIntegrationCredential).mockImplementation(async (_db, _ws, _provider, actorId) => {
 			if (actorId === ACTOR_A) {
@@ -553,7 +553,7 @@ describe('two-actor lookup isolation', () => {
 					workspaceId: WORKSPACE_ID,
 					provider: 'linkedin-unipile',
 					status: 'active',
-					credentials: JSON.stringify({ account_id: 'unipile-A' }),
+					credentials: JSON.stringify({ account_id: 'linkedin-A' }),
 					externalId: null,
 					config: {},
 					metadata: null,
@@ -569,7 +569,7 @@ describe('two-actor lookup isolation', () => {
 					workspaceId: WORKSPACE_ID,
 					provider: 'linkedin-unipile',
 					status: 'active',
-					credentials: JSON.stringify({ account_id: 'unipile-B' }),
+					credentials: JSON.stringify({ account_id: 'linkedin-B' }),
 					externalId: null,
 					config: {},
 					metadata: null,
@@ -581,7 +581,7 @@ describe('two-actor lookup isolation', () => {
 			}
 			return null
 		})
-		fakeUnipile({
+		fakeLinkedIn({
 			send: async (payload) => {
 				seenAccountId = payload.account_id
 				return { status: 200, body: { id: 'msg-x', sent_at: '2026-08-31T12:00:00Z' }, headers: {} }
@@ -600,7 +600,7 @@ describe('two-actor lookup isolation', () => {
 			},
 			ACTOR_A,
 		)
-		expect(seenAccountId).toBe('unipile-A')
+		expect(seenAccountId).toBe('linkedin-A')
 
 		seenAccountId = null
 		const appB = buildAppWithFakes({ actorId: ACTOR_B, db })
@@ -615,22 +615,22 @@ describe('two-actor lookup isolation', () => {
 			},
 			ACTOR_B,
 		)
-		expect(seenAccountId).toBe('unipile-B')
+		expect(seenAccountId).toBe('linkedin-B')
 
 		expect(vi.mocked(decrypt)).toHaveBeenCalled()
 	})
 })
 
 // ── v2 wire-shape translation ────────────────────────────────────────────
-// These pin the response shapes against the Unipile v2 reference pages
+// These pin the response shapes against the LinkedIn v2 reference pages
 // (Start a Chat / Send a Message / List Chats), which the mock server now
 // mirrors verbatim. Getting these wrong is invisible: the call returns 200
 // and the caller acts on the result.
 
 describe('v2 response normalization', () => {
 	it('reads message_id and chat_id from a v2 ChatStarted envelope', async () => {
-		stubCredential(ACTOR_A, 'unipile-A')
-		fakeUnipile({
+		stubCredential(ACTOR_A, 'linkedin-A')
+		fakeLinkedIn({
 			send: async () => ({
 				status: 200,
 				body: { object: 'ChatStarted', chat_id: 'chat-9', message_id: 'msg-9' },
@@ -652,8 +652,8 @@ describe('v2 response normalization', () => {
 	})
 
 	it('takes the first id when v2 returns message_id as an array', async () => {
-		stubCredential(ACTOR_A, 'unipile-A')
-		fakeUnipile({
+		stubCredential(ACTOR_A, 'linkedin-A')
+		fakeLinkedIn({
 			send: async () => ({
 				status: 200,
 				body: { object: 'ChatStarted', chat_id: 'chat-1', message_id: ['msg-a', 'msg-b'] },
@@ -672,9 +672,9 @@ describe('v2 response normalization', () => {
 	})
 
 	it('reports success — not a retryable error — when a 2xx carries no message id', async () => {
-		stubCredential(ACTOR_A, 'unipile-A')
+		stubCredential(ACTOR_A, 'linkedin-A')
 		let calls = 0
-		fakeUnipile({
+		fakeLinkedIn({
 			send: async () => {
 				calls++
 				// v2 documents message_id as string | string[] | null.
@@ -697,8 +697,8 @@ describe('v2 response normalization', () => {
 	})
 
 	it('maps v2 chat objects onto the MCP conversation shape', async () => {
-		stubCredential(ACTOR_A, 'unipile-A')
-		fakeUnipile({
+		stubCredential(ACTOR_A, 'linkedin-A')
+		fakeLinkedIn({
 			list: async () => ({
 				status: 200,
 				// v2 nests the page under `data`, and a chat is { id, user_id,
@@ -738,8 +738,8 @@ describe('v2 response normalization', () => {
 	})
 
 	it('fails loudly when the conversation list has no recognisable array', async () => {
-		stubCredential(ACTOR_A, 'unipile-A')
-		fakeUnipile({
+		stubCredential(ACTOR_A, 'linkedin-A')
+		fakeLinkedIn({
 			list: async () => ({ status: 200, body: { object: 'ChatList' }, headers: {} }),
 		})
 		const db = buildFakeDb()
@@ -750,14 +750,14 @@ describe('v2 response normalization', () => {
 		// has no side effect, so erroring is the safe direction.
 		const json = (await res.json()) as { error?: { code?: string }; conversations?: unknown[] }
 		expect(json.conversations).toBeUndefined()
-		expect(json.error?.code).toBe('UNIPILE_UNAVAILABLE')
+		expect(json.error?.code).toBe('LINKEDIN_UNAVAILABLE')
 	})
 })
 
 describe('GET /list-conversations — reads are NOT idempotency-tracked', () => {
 	it('does not write to idempotency_records on a read', async () => {
-		stubCredential(ACTOR_A, 'unipile-A')
-		fakeUnipile({
+		stubCredential(ACTOR_A, 'linkedin-A')
+		fakeLinkedIn({
 			list: async () => ({
 				status: 200,
 				body: {

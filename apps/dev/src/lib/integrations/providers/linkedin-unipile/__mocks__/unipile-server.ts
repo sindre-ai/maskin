@@ -6,12 +6,12 @@ import {
 import type { AddressInfo } from 'node:net'
 
 /**
- * In-process Unipile mock server for tests, rebuilt against Unipile Hosted
+ * In-process LinkedIn mock server for tests, rebuilt against LinkedIn Hosted
  * Auth v2 + Messaging v2. Starts on a random port so multiple test suites
  * can run in parallel; the caller passes the resolved base URL to the
  * linkedin-unipile client/route via UNIPILE_BASE_URL.
  *
- * Covers the subset of Unipile's v2 API this bet touches:
+ * Covers the subset of LinkedIn's v2 API this bet touches:
  *   - POST /v2/auth/link                                    — hosted-auth
  *   - POST /v2/:account_id/chats/send                       — new-chat send
  *   - GET  /v2/:account_id/inboxes/:inbox_id/chats           — list chats
@@ -29,18 +29,18 @@ import type { AddressInfo } from 'node:net'
  * replace v1's `postSignedCallback`.
  *
  * Connect-request errors are simulated by request body — the mock inspects
- * the incoming `user_id` and returns the matching Unipile error envelope
+ * the incoming `user_id` and returns the matching LinkedIn error envelope
  * (see `CONNECTION_REQUEST_TRIGGERS` below). This is the same pattern the
- * live Unipile API uses to signal `invite_quota_exceeded` and
+ * live LinkedIn API uses to signal `invite_quota_exceeded` and
  * `already_connected` (error envelopes on the same route), so a test that
  * drives a specific `user_id` exercises the classifier end-to-end without a
  * separate stub layer.
  */
 
-export interface UnipileMockServer {
+export interface LinkedInMockServer {
 	baseUrl: string
 	close: () => Promise<void>
-	/** Return the list of inbound requests recorded by the mock so tests can assert on what Unipile received. */
+	/** Return the list of inbound requests recorded by the mock so tests can assert on what LinkedIn received. */
 	inbox: () => Array<{ method: string; path: string; body: unknown }>
 	/** Reset the recorded inbox between test cases. */
 	resetInbox: () => void
@@ -56,7 +56,7 @@ const CANNED_AUTH_LINK = (state: string, base: string) => ({
 	link: `${base}/mock-wizard?state=${encodeURIComponent(state)}`,
 })
 
-// Shapes below are copied from the Unipile v2 reference pages, not invented.
+// Shapes below are copied from the LinkedIn v2 reference pages, not invented.
 // An invented mock is worse than no mock: it makes the suite green against a
 // payload production will never send.
 
@@ -268,7 +268,7 @@ const CANNED_PROFILE_RESPONSE = () => ({
 
 /**
  * `POST /v2/:account_id/users/me/relation-requests` — LinkedIn connect
- * request. The live Unipile API answers with a thin `{ object,
+ * request. The live LinkedIn API answers with a thin `{ object,
  * invitation_id }` envelope on success (some tenants return a bare 200);
  * this mock returns the fuller shape so a test that reads `invitation_id`
  * exercises the normalizer's happy path.
@@ -281,7 +281,7 @@ const CANNED_CONNECTION_REQUEST_RESPONSE = () => ({
 /**
  * Trigger `user_id` values a test can send to force an error envelope on the
  * connect-request route. The values match the wire discriminators in
- * `UNIPILE_CONNECTION_REQUEST_MARKERS` so the classifier exercises its real
+ * `LINKEDIN_CONNECTION_REQUEST_MARKERS` so the classifier exercises its real
  * detection branches, not a mock-only side path.
  */
 export const CONNECTION_REQUEST_TRIGGERS = {
@@ -329,7 +329,7 @@ export function clearResponseOverrides(): void {
 	responseOverrides.length = 0
 }
 
-export async function startUnipileMock(): Promise<UnipileMockServer> {
+export async function startLinkedInMock(): Promise<LinkedInMockServer> {
 	const recorded: Array<{ method: string; path: string; body: unknown }> = []
 	const server = createHttpServer(async (req: IncomingMessage, res: ServerResponse) => {
 		const method = (req.method ?? 'GET').toUpperCase()
@@ -400,7 +400,7 @@ export async function startUnipileMock(): Promise<UnipileMockServer> {
 					? String((parsed as { user_id?: unknown }).user_id ?? '')
 					: ''
 			if (userId === CONNECTION_REQUEST_TRIGGERS.inviteQuotaExceeded) {
-				// Shape mirrors Unipile's own error envelope: `error_code` is
+				// Shape mirrors LinkedIn's own error envelope: `error_code` is
 				// the discriminator the classifier reads.
 				return send(400, {
 					error_code: 'invite_quota_exceeded',
@@ -445,7 +445,7 @@ export async function startUnipileMock(): Promise<UnipileMockServer> {
 		if (method === 'GET' && url.startsWith('/mock-wizard')) {
 			res.statusCode = 200
 			res.setHeader('Content-Type', 'text/html')
-			return res.end('<html><body>mock unipile wizard</body></html>')
+			return res.end('<html><body>mock linkedin wizard</body></html>')
 		}
 		return send(404, { error: 'not_found', path: url })
 	})
@@ -469,7 +469,7 @@ export async function startUnipileMock(): Promise<UnipileMockServer> {
 
 /**
  * Test helper: GET the Maskin callback URL with the success query params
- * Unipile v2 sends after a hosted-wizard completion. `redirect: 'manual'` so
+ * LinkedIn v2 sends after a hosted-wizard completion. `redirect: 'manual'` so
  * the test sees the 302 rather than following it.
  */
 export async function simulateCallbackSuccess(
@@ -485,7 +485,7 @@ export async function simulateCallbackSuccess(
 
 /**
  * Test helper: GET the Maskin callback URL with the error query params
- * Unipile v2 sends on a hosted-wizard failure.
+ * LinkedIn v2 sends on a hosted-wizard failure.
  */
 export async function simulateCallbackError(
 	callbackUrl: string,

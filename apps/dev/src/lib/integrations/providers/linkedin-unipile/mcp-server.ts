@@ -21,7 +21,7 @@ import {
 } from './operations'
 
 /**
- * In-process MCP server for the LinkedIn (Unipile-backed) provider, served
+ * In-process MCP server for the LinkedIn (LinkedIn-backed) provider, served
  * over Streamable HTTP at `/api/integrations/linkedin-unipile/mcp`. Mirrors
  * `providers/slack/mcp-server.ts` — the established shape for an integration
  * whose tools run against our own backend rather than a hosted third-party
@@ -49,7 +49,7 @@ export interface LinkedInMcpContext {
  * the wire code, rather than throwing. The six classes drive agent behaviour
  * (retry, escalate to a human, pause the send loop for 24h), so the code has
  * to survive into the text the agent reads — `CREDENTIAL_NOT_CONNECTED` tells
- * it to ask for a reconnect, while `RATE_LIMITED_UNIPILE` tells it to wait.
+ * it to ask for a reconnect, while `RATE_LIMITED_LINKEDIN` tells it to wait.
  * A bare thrown exception would collapse all six into one opaque failure.
  */
 function toolError(operation: string, err: unknown) {
@@ -73,7 +73,7 @@ function toolError(operation: string, err: unknown) {
 		content: [
 			{
 				type: 'text' as const,
-				text: `UNIPILE_UNAVAILABLE: Unexpected upstream error in ${operation}`,
+				text: `LINKEDIN_UNAVAILABLE: Unexpected upstream error in ${operation}`,
 			},
 		],
 	}
@@ -96,7 +96,7 @@ export function createLinkedInMcpServer(ctx: LinkedInMcpContext): McpServer {
 					.string()
 					.min(1)
 					.describe(
-						'Provider id of the recipient member, as returned in the `recipient_urn` field of linkedin_list_conversations — an opaque LinkedIn member id like "ACoAAAxxxxxBxxxxxxxxxxxxxxxxxxxxxxxxxxx". Pass it through verbatim. It is NOT a "urn:li:person:..." URN: do not construct one, do not reformat this value, and do not pass a Unipile account_id.',
+						'Provider id of the recipient member, as returned in the `recipient_urn` field of linkedin_list_conversations — an opaque LinkedIn member id like "ACoAAAxxxxxBxxxxxxxxxxxxxxxxxxxxxxxxxxx". Pass it through verbatim. It is NOT a "urn:li:person:..." URN: do not construct one, do not reformat this value, and do not pass a LinkedIn account_id.',
 					),
 				body: z
 					.string()
@@ -315,7 +315,7 @@ export function createLinkedInMcpServer(ctx: LinkedInMcpContext): McpServer {
 	// ── Content / community tools (Task 7b) ────────────────────────────────
 	// Six tools covering personal + business-page publishing, commenting +
 	// replying-to-comment, reading comments, and engagement (reactions +
-	// comments — impressions unavailable on Unipile v2). The four destructive
+	// comments — impressions unavailable on LinkedIn v2). The four destructive
 	// tools (publish x2, comment, reply-to-comment) dedup on a content hash
 	// via the `linkedin_tool_calls` ledger.
 
@@ -336,7 +336,7 @@ export function createLinkedInMcpServer(ctx: LinkedInMcpContext): McpServer {
 					.array(z.unknown())
 					.optional()
 					.describe(
-						'Optional attachments (images/documents/videos). Pass Unipile-compatible attachment descriptors; leave undefined for text-only posts.',
+						'Optional attachments (images/documents/videos). Pass LinkedIn-compatible attachment descriptors; leave undefined for text-only posts.',
 					),
 				can_read: z
 					.string()
@@ -358,7 +358,7 @@ export function createLinkedInMcpServer(ctx: LinkedInMcpContext): McpServer {
 					.record(z.unknown())
 					.optional()
 					.describe(
-						'Provider-specific opaque payload passed through to Unipile — reserved for advanced options that do not warrant a named field.',
+						'Provider-specific opaque payload passed through to LinkedIn — reserved for advanced options that do not warrant a named field.',
 					),
 			},
 		},
@@ -386,12 +386,12 @@ export function createLinkedInMcpServer(ctx: LinkedInMcpContext): McpServer {
 					.string()
 					.min(1)
 					.describe(
-						'LinkedIn company page URN, e.g. `urn:li:organization:12345`. The connected LinkedIn account must be an admin of the page — Unipile relays the publish under the page identity via `post_as`.',
+						'LinkedIn company page URN, e.g. `urn:li:organization:12345`. The connected LinkedIn account must be an admin of the page — LinkedIn relays the publish under the page identity via `post_as`.',
 					),
 				attachments: z
 					.array(z.unknown())
 					.optional()
-					.describe('Optional Unipile-compatible attachment descriptors.'),
+					.describe('Optional LinkedIn-compatible attachment descriptors.'),
 				can_read: z
 					.string()
 					.optional()
@@ -407,7 +407,7 @@ export function createLinkedInMcpServer(ctx: LinkedInMcpContext): McpServer {
 				specifics: z
 					.record(z.unknown())
 					.optional()
-					.describe('Provider-specific opaque payload passed through to Unipile.'),
+					.describe('Provider-specific opaque payload passed through to LinkedIn.'),
 			},
 		},
 		async (args) => {
@@ -423,7 +423,7 @@ export function createLinkedInMcpServer(ctx: LinkedInMcpContext): McpServer {
 		'linkedin_comment_on_post',
 		{
 			description:
-				'Post a top-level comment on a LinkedIn post as the connected personal profile. Returns the new comment_id — use it with linkedin_reply_to_comment to thread further. Dedup semantics identical to linkedin_publish_post: an identical call within 24h replays the stored response without hitting Unipile again.',
+				'Post a top-level comment on a LinkedIn post as the connected personal profile. Returns the new comment_id — use it with linkedin_reply_to_comment to thread further. Dedup semantics identical to linkedin_publish_post: an identical call within 24h replays the stored response without hitting LinkedIn again.',
 			inputSchema: {
 				post_id: z
 					.string()
@@ -495,7 +495,7 @@ export function createLinkedInMcpServer(ctx: LinkedInMcpContext): McpServer {
 		'linkedin_get_post_engagement',
 		{
 			description:
-				'Fetch engagement metrics for a LinkedIn post: reactions (total + a sample) and comments count, plus base post metadata. Fan-out of three Unipile calls (retrievePost + listReactions + countComments). A sub-call failure sets `partial_errors.<field>` and `is_partial: true` on the envelope — the caller keeps whatever was successfully collected. IMPRESSIONS ARE NOT AVAILABLE on Unipile v2 for third-party posts and are deliberately absent from the response — do not surface a fake impressions number to the user.',
+				'Fetch engagement metrics for a LinkedIn post: reactions (total + a sample) and comments count, plus base post metadata. Fan-out of three LinkedIn calls (retrievePost + listReactions + countComments). A sub-call failure sets `partial_errors.<field>` and `is_partial: true` on the envelope — the caller keeps whatever was successfully collected. IMPRESSIONS ARE NOT AVAILABLE on LinkedIn v2 for third-party posts and are deliberately absent from the response — do not surface a fake impressions number to the user.',
 			inputSchema: {
 				post_id: z.string().min(1).describe('Post id.'),
 			},
