@@ -190,6 +190,19 @@ export interface CreateSessionParams {
 	autoStart?: boolean
 	/** ID of a prior session whose workspace snapshot should be restored at startup. */
 	sourceSessionId?: string
+	/**
+	 * Attribution for `agent_session_started_with_prompt` — names the dispatch
+	 * path (e.g. `'comment_fallback'` for the comment-posted subscriber in
+	 * `trigger-runner.ts`). Threaded through so every dispatch route benefits
+	 * without each call site having to remember to emit its own event.
+	 */
+	triggerSource?: string
+	/**
+	 * `events.id` of the source `commented` row when this session is spawned
+	 * by the comment-fallback resolver. Persisted on `sessions.config.mention`
+	 * for existing consumers; also emitted as a PostHog prop.
+	 */
+	sourceCommentEventId?: number
 }
 
 /**
@@ -461,7 +474,19 @@ export class SessionManager extends EventEmitter {
 		workspaceId: string,
 		params: CreateSessionParams,
 	): Promise<typeof sessions.$inferSelect> {
-		const config = params.config ?? {}
+		// Fold `triggerSource` / `sourceCommentEventId` into `config` so
+		// `launchContainer` can read them off the session row later — the two
+		// props are threaded through to `agent_session_started_with_prompt`
+		// from there, meaning every dispatch route benefits without each call
+		// site having to remember to fire the analytics event itself.
+		const baseConfig = params.config ?? {}
+		const config: Record<string, unknown> = { ...baseConfig }
+		if (params.triggerSource !== undefined) {
+			config.trigger_source = params.triggerSource
+		}
+		if (params.sourceCommentEventId !== undefined) {
+			config.source_comment_event_id = params.sourceCommentEventId
+		}
 		const interactive = config.interactive === true
 		const conversationId =
 			(config.conversation as { conversation_id?: string } | undefined)?.conversation_id ?? null
@@ -1628,12 +1653,20 @@ export class SessionManager extends EventEmitter {
 		// samples in PostHog. Runs on every launch (start + resume) since both
 		// build a container from the current systemPrompt; session_id keeps the
 		// samples dedup-able downstream.
+		const sessionCfg = (session.config as Record<string, unknown>) ?? {}
+		const triggerSource =
+			typeof sessionCfg.trigger_source === 'string' ? sessionCfg.trigger_source : undefined
+		const sourceCommentEventIdRaw = sessionCfg.source_comment_event_id
+		const sourceCommentEventId =
+			typeof sourceCommentEventIdRaw === 'number' ? sourceCommentEventIdRaw : undefined
 		void trackAgentSessionStartedWithPrompt({
 			workspaceId: session.workspaceId,
 			sessionId: session.id,
 			agentId: agent.id,
 			agentName: agent.name,
 			systemPrompt: resolvedSystemPrompt,
+			triggerSource,
+			sourceCommentEventId,
 		})
 
 		// Interactive sessions have no opening ACTION_PROMPT — the first user turn
