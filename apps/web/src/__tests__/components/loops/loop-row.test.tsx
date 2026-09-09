@@ -1,7 +1,7 @@
 import { LoopRow } from '@/components/loops/loop-row'
 import type { ActorListItem, LoopSummary } from '@/lib/api'
-import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tanstack/react-router', () => ({
 	Link: ({
@@ -165,5 +165,53 @@ describe('LoopRow', () => {
 
 		const link = screen.getByRole('link')
 		expect(link).toHaveAttribute('href', '/ws-1/loops/loop-1')
+	})
+
+	describe('NO CREDITS pill', () => {
+		it('renders the NO CREDITS overlay alongside PAUSED when the composite flag is on', () => {
+			render(<LoopRow loop={buildLoop({ pill: 'paused' })} actors={[]} showNoCreditsPill />)
+
+			// The PAUSED state label stays; NO CREDITS sits next to it.
+			expect(screen.getByTestId('loop-pill')).toHaveTextContent('Paused')
+			const overlay = screen.getByTestId('loop-pill-no-credits')
+			expect(overlay).toBeInTheDocument()
+			// The visible desktop copy is verbatim per SPEC; NO CR. is present but sm:hidden.
+			expect(overlay.textContent).toContain('NO CREDITS')
+			expect(overlay.textContent).toContain('NO CR.')
+			// A11y — full state name announced regardless of viewport.
+			expect(overlay).toHaveAttribute('aria-label', 'Paused — no credits')
+		})
+
+		it('does not render the overlay when the composite flag is off', () => {
+			render(<LoopRow loop={buildLoop({ pill: 'paused' })} actors={[]} />)
+
+			expect(screen.queryByTestId('loop-pill-no-credits')).not.toBeInTheDocument()
+		})
+
+		it('does not render the overlay on a non-paused row even when the flag is on', () => {
+			render(<LoopRow loop={buildLoop({ pill: 'learning' })} actors={[]} showNoCreditsPill />)
+
+			expect(screen.queryByTestId('loop-pill-no-credits')).not.toBeInTheDocument()
+		})
+
+		it('fires onNoCreditsClick and swallows the row navigation on click', () => {
+			const onClick = vi.fn()
+			render(
+				<LoopRow
+					loop={buildLoop({ pill: 'paused' })}
+					actors={[]}
+					showNoCreditsPill
+					onNoCreditsClick={onClick}
+				/>,
+			)
+
+			const overlay = screen.getByTestId('loop-pill-no-credits')
+			// Click should not propagate to the row Link — clicks bubble through
+			// synthetic events, so this catches a missing stopPropagation.
+			const clickEvent = fireEvent.click(overlay)
+			expect(onClick).toHaveBeenCalledTimes(1)
+			// fireEvent returns whether the default was allowed — false = preventDefault fired.
+			expect(clickEvent).toBe(false)
+		})
 	})
 })
