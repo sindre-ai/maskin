@@ -1,4 +1,5 @@
 import { PageHeader } from '@/components/layout/page-header'
+import { AskBanner } from '@/components/loops/ask-banner'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
 import { LoopFlow } from '@/components/loops/loop-flow'
 import { LOOP_PILL_STYLES, isLiveLoopPill } from '@/components/loops/loop-pill'
@@ -30,12 +31,14 @@ import { useLoop, useLoopActivity, useLoopSteps } from '@/hooks/use-loops'
 import { useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
 import { useTriggers } from '@/hooks/use-triggers'
+import { trackAskBannerDecideClicked } from '@/lib/analytics'
 import { cn } from '@/lib/cn'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
 import { useWorkspace } from '@/lib/workspace-context'
+import { useWaitingOnViewer } from '@maskin/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { MoreHorizontal, Pause, Play } from 'lucide-react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 /** Relationship type marking loop membership — mirrors
@@ -92,6 +95,38 @@ function LoopDetailRoute() {
 
 	const composerRef = useRef<HTMLDivElement>(null)
 	const [proposedEdit, setProposedEdit] = useState<ProposedEdit | null>(null)
+	const loopsV4Polish = useFeatureFlag('loops-v4-polish')
+
+	// D3 AskBanner wiring — the shared `useWaitingOnViewer` (T1) takes a getter
+	// so `packages/shared` stays React-free. Today the loop payload exposes one
+	// loop-level `waitingOnViewer` bit — treat it as a single synthetic
+	// "step is pending" signal. When D6a extends `LoopStep` with per-step
+	// `waitingOnViewer` and exposes `loop.steps[]`, swap this getter to return
+	// the real step array; the AskBanner wiring + aria-live contract below do
+	// not change. Every hook the banner needs is called unconditionally BEFORE
+	// the loading / error / not-found early-returns so hook order is stable
+	// across renders (React rules-of-hooks).
+	const waiting = loop?.waitingOnViewer === true
+	const getLoopStepsForBanner = useCallback(
+		() => (waiting ? [{ waitingOnViewer: true }] : []),
+		[waiting],
+	)
+	const anyStepPending = useWaitingOnViewer(loop?.id ?? '', getLoopStepsForBanner)
+	const firstAgentIdForBanner = loop?.agentIds[0] ?? null
+	const firstAgentActor = useMemo(
+		() => (firstAgentIdForBanner ? actors?.find((a) => a.id === firstAgentIdForBanner) : undefined),
+		[actors, firstAgentIdForBanner],
+	)
+	const loopIdForBanner = loop?.id ?? ''
+	const askBannerVisible = loopsV4Polish && !!loop && anyStepPending
+	const pendingCount = askBannerVisible ? 1 : 0
+	const handleDecideClick = useCallback(() => {
+		const targetEl = document.getElementById('loop-flow')
+		if (targetEl) {
+			targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
+		}
+		trackAskBannerDecideClicked({ loopId: loopIdForBanner, pendingCount })
+	}, [loopIdForBanner, pendingCount])
 
 	// Same shape as `ObjectDetailShell`'s handlers: toast, then rethrow so the
 	// field reopens with the reader's draft instead of silently reverting.
@@ -208,6 +243,18 @@ function LoopDetailRoute() {
 	}
 
 	const loopTriggers = (triggers ?? []).filter((t) => loop.triggerIds.includes(t.id))
+	// D3 AskBanner content sourcing — uses banner-visible hook results computed
+	// above (unconditionally). Today, without per-step ask data (D6a hasn't
+	// landed), fall back to the first (enabled) trigger's action prompt for the
+	// copy line, and the first agent from `loop.agentIds` for the avatar.
+	const firstEnabledTrigger =
+		loopTriggers.find((t) => t.enabled && t.targetActorId === firstAgentIdForBanner) ??
+		loopTriggers[0]
+	const askAgentName = firstAgentActor?.name ?? 'This loop'
+	// Copy pattern per SPEC: `{agentName} asks — {askText}`.
+	const askText = firstEnabledTrigger?.actionPrompt ?? 'is waiting on your input.'
+	const decideJumpHref = '#loop-flow'
+
 	const installedFromMarketplaceLoopId = object?.metadata?.installed_from_marketplace_loop_id
 	const isInstalledFromMarketplace = typeof installedFromMarketplaceLoopId === 'string'
 	const pill = LOOP_PILL_STYLES[loop.pill]
@@ -305,6 +352,32 @@ function LoopDetailRoute() {
 					>
 						Installed from marketplace
 					</Link>
+				)}
+
+				{/* Stable aria-live wrapper for the D3 AskBanner (loops-v4-polish
+				    umbrella flag). The wrapper element is permanent so screen
+				    readers announce the banner appearance without racing the DOM
+				    swap — banner content swaps in and out of the wrapper, the
+				    wrapper does not swap. Never put aria-live on the banner. */}
+				{loopsV4Polish && (
+					<div
+						aria-live="polite"
+						aria-atomic="true"
+						data-testid="ask-banner-live-region"
+						className={cn('mt-5', askBannerVisible ? '' : 'sr-only')}
+					>
+						{askBannerVisible && (
+							<AskBanner
+								agentName={askAgentName}
+								askText={askText}
+								jumpHref={decideJumpHref}
+								onDecideClick={handleDecideClick}
+								pendingCount={pendingCount}
+								avatarId={firstAgentActor?.id}
+								avatarType={firstAgentActor?.type}
+							/>
+						)}
+					</div>
 				)}
 
 				<div className="mt-5">
