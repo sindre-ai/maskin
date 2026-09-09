@@ -3,7 +3,7 @@ import { events } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionManager } from '../../services/session-manager'
-import { TriggerRunner } from '../../services/trigger-runner'
+import { CommentDispatcher, TriggerRunner } from '../../services/trigger-runner'
 import { insertActor, insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
@@ -100,17 +100,25 @@ describe('Comment fallback resolver — case 2 driver dispatch (integration)', (
 	let bridge: EventEmitter & PgNotifyBridge
 	let sessionManager: MockSessionManager
 	let runner: TriggerRunner
+	let dispatcher: CommentDispatcher
 
 	beforeEach(async () => {
 		capturePosthogEvent.mockClear()
 		bridge = new EventEmitter() as EventEmitter & PgNotifyBridge
 		sessionManager = createMockSessionManager()
 		runner = new TriggerRunner(db, bridge, sessionManager as unknown as SessionManager)
+		// The always-a-responder resolver lives on its own subscriber
+		// (`CommentDispatcher`) — production wires it in `index.ts` right after
+		// `TriggerRunner`. Without instantiating + starting it the bridge
+		// receives events but nothing subscribes to the `commented` action.
+		dispatcher = new CommentDispatcher(db, bridge, sessionManager as unknown as SessionManager)
+		dispatcher.start()
 		await runner.start()
 	})
 
 	afterEach(async () => {
 		await runner.stop()
+		dispatcher.stop()
 		vi.restoreAllMocks()
 	})
 
@@ -200,6 +208,7 @@ describe('Comment fallback resolver — burst load safety (integration)', () => 
 	let bridge: EventEmitter & PgNotifyBridge
 	let sessionManager: MockSessionManager
 	let runner: TriggerRunner
+	let dispatcher: CommentDispatcher
 	let errorSpy: ReturnType<typeof vi.spyOn>
 
 	beforeEach(async () => {
@@ -207,12 +216,15 @@ describe('Comment fallback resolver — burst load safety (integration)', () => 
 		bridge = new EventEmitter() as EventEmitter & PgNotifyBridge
 		sessionManager = createMockSessionManager()
 		runner = new TriggerRunner(db, bridge, sessionManager as unknown as SessionManager)
+		dispatcher = new CommentDispatcher(db, bridge, sessionManager as unknown as SessionManager)
+		dispatcher.start()
 		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 		await runner.start()
 	})
 
 	afterEach(async () => {
 		await runner.stop()
+		dispatcher.stop()
 		errorSpy.mockRestore()
 		vi.restoreAllMocks()
 	})
