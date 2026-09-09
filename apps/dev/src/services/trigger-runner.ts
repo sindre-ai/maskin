@@ -4,6 +4,10 @@ import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { SAFE_METADATA_FIELD_NAME_RE, readChanges, reversePatch } from '@maskin/shared'
 import { Cron } from 'croner'
 import { type SQL, and, eq, inArray, sql } from 'drizzle-orm'
+import {
+	type CommentResponderCase,
+	trackCommentResponderResolved,
+} from '../lib/analytics/comment-responder-events'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
@@ -24,6 +28,14 @@ const SCOPE_MATCH_LIMIT = 100
  * objects flowing through loops.
  */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Workspace Chief of Staff — the actor of last resort for case 3 dispatch when
+ * a commented object has no driver (or the only candidate driver is the
+ * comment author). Load-bearing per spec — see
+ * `always-a-responder-rule-shaping.md` §Solution sketch case 3.
+ */
+const CHIEF_OF_STAFF_ACTOR_ID = '2e772113-48d0-410d-82e6-2414881581fc'
 
 interface TriggerFailureState {
 	count: number
@@ -1060,28 +1072,41 @@ export function evaluateCondition(
 //
 // Subscriber for the `commented` action on `object` entities — the internal
 // event shape the shaping spec calls `comment_posted`. Owns the single code
-// path for comment→dispatch:
-//   • agent-actor mention → needs_input notification + agent session
-//     (`triggerSource: 'comment_fallback'`, `sourceCommentEventId: event.id`)
-//   • human-actor mention → needs_input notification
-//   • mentioned actor authored the parent comment → suppress, log `noop_self_authored`
+// path for comment→dispatch, running the always-a-responder fallback ladder
+// end to end with STOP semantics after the first matching case:
+//   • noop_suppressed — `data.metadata.suppress_auto_dispatch === true` short-
+//     circuits BEFORE mention / case 2 / case 3, so a bespoke-dispatch caller
+//     (e.g. signup-welcome) can stamp the escape hatch on its own comment.
+//   • case 1a mention — agent-actor mention → needs_input notification + agent
+//     session; human-actor mention → needs_input notification only. Suppressed
+//     when the mentioned actor authored the parent comment (`noop_self_authored`).
+//   • case 2 driver fallback — no mentions AND joined `objects.driver` on
+//     `event.entity_id` is non-null AND ≠ author AND ≠ parent-comment author.
+//     Silent dispatch via `sessionManager.createSession(...)` with
+//     `triggerSource: 'comment_fallback'` + `sourceCommentEventId`.
+//   • case 3 CoS fallback — no eligible driver. Dispatch to the workspace
+//     Chief of Staff (spec-fixed actor id) with a wrapped routing prompt
+//     (object title + id — not the raw comment) so CoS routes rather than
+//     answers. Suppressed when CoS authored the comment or its parent
+//     (`noop_self_authored`).
 //
 // Structured as a class in the same shape as `OrphanThreadDetector` in
 // `orphan-thread-detector.ts` — one entry method (`handleEvent`) with focused
 // helpers, and its own PgNotifyBridge listener registered on `start()`.
 // Wired in `index.ts` alongside `TriggerRunner` / `OrphanThreadDetector`.
 //
-// Task 2 (fallback resolver) will extend this with cases 2 (driver fallback),
-// 3 (Chief of Staff fallback), a loop-safety guard beyond the self-authored
-// no-op, and the `comment_responder_resolved` PostHog event.
+// Every handled event fires a `comment_responder_resolved` PostHog event
+// alongside the structured log line — so Product Validator can attribute the
+// drop in `orphan_thread_detected` to specific resolver cases in aggregate.
 
-/** Case tag emitted in the structured per-event log line. */
-export type CommentDispatchCase = 'case_1_mention' | 'noop_self_authored'
+/** Case tag emitted in the structured per-event log line + PostHog event. */
+export type CommentDispatchCase = CommentResponderCase
 
 interface CommentEventData {
 	content?: unknown
 	mentions?: unknown
 	parentEventId?: unknown
+	metadata?: { suppress_auto_dispatch?: unknown } | null
 }
 
 export class CommentDispatcher {
@@ -1131,51 +1156,271 @@ export class CommentDispatcher {
 		if (!row) return
 
 		const data = (row.data ?? {}) as CommentEventData
-		const mentions = normalizeMentions(data.mentions)
-		if (mentions.length === 0) {
-			// No mention → Cases 2 (driver) and 3 (CoS) land here in Task 2.
+		const commenterId = row.actorId
+
+		// Bespoke-dispatch escape hatch. A caller that spawns its own session
+		// for a comment (e.g. a future signup flow that threads a specific
+		// prompt through session-manager directly) can stamp
+		// `data.metadata.suppress_auto_dispatch = true` on the comment to
+		// prevent the resolver from double-dispatching a generic case-2/case-3
+		// session on top. Short-circuits BEFORE the mention / case-2 / case-3
+		// branches so nothing downstream can dispatch on a suppressed comment.
+		if (
+			data.metadata &&
+			(data.metadata as { suppress_auto_dispatch?: unknown }).suppress_auto_dispatch === true
+		) {
+			await this.emitResolved(event, eventIdNum, commenterId, 'noop_suppressed', null)
 			return
 		}
-		const commenterId = row.actorId
-		const parentEventIdRaw = data.parentEventId
-		const parentEventId =
-			typeof parentEventIdRaw === 'number' && Number.isFinite(parentEventIdRaw)
-				? parentEventIdRaw
-				: null
 
+		const mentions = normalizeMentionsList(data.mentions)
+		const parentEventId = normalizeParentEventId(data.parentEventId)
 		const parentAuthorId = parentEventId ? await this.parentAuthorId(parentEventId) : null
 
+		if (mentions.length > 0) {
+			await this.handleMentions({
+				event,
+				eventIdNum,
+				workspaceId: event.workspace_id,
+				commenterId,
+				objectId: event.entity_id,
+				mentions,
+				parentAuthorId,
+				content: typeof data.content === 'string' ? data.content : '',
+			})
+			return
+		}
+
+		// No mention → run the case-2 / case-3 fallback ladder. Non-UUID entity
+		// ids (slack channel keys, etc.) never resolve to an object row, so
+		// skip the join and the whole ladder — nothing here applies to
+		// non-object comments (the `matches()` gate already narrows most of
+		// them; this covers stray callers that push non-uuid entity ids).
+		if (!UUID_RE.test(event.entity_id)) return
+
+		await this.handleFallback({
+			event,
+			eventIdNum,
+			workspaceId: event.workspace_id,
+			commenterId,
+			entityId: event.entity_id,
+			content: typeof data.content === 'string' ? data.content : '',
+			parentAuthorId,
+		})
+	}
+
+	private async handleMentions(ctx: {
+		event: PgEvent
+		eventIdNum: number
+		workspaceId: string
+		commenterId: string
+		objectId: string
+		mentions: string[]
+		parentAuthorId: string | null
+		content: string
+	}): Promise<void> {
 		const mentionedActors = await this.db
 			.select({ id: actors.id, type: actors.type })
 			.from(actors)
-			.where(inArray(actors.id, mentions))
+			.where(inArray(actors.id, ctx.mentions))
 
 		// Preserve caller ordering (mentions may contain duplicates or ids that
 		// don't resolve to an actor row; both cases quietly drop out here).
 		const actorById = new Map(mentionedActors.map((a) => [a.id, a]))
 		const seen = new Set<string>()
+		let anyDispatched = false
+		let anyNoopSelfAuthored = false
 
-		for (const mentionId of mentions) {
+		for (const mentionId of ctx.mentions) {
 			if (seen.has(mentionId)) continue
 			seen.add(mentionId)
 			const actor = actorById.get(mentionId)
 			if (!actor) continue
 
-			if (parentAuthorId && actor.id === parentAuthorId) {
-				this.log(event, 'noop_self_authored', actor.id)
+			if (ctx.parentAuthorId && actor.id === ctx.parentAuthorId) {
+				this.log(ctx.event, 'noop_self_authored', actor.id)
+				anyNoopSelfAuthored = true
 				continue
 			}
 
 			await this.dispatchMention({
-				event,
-				eventId: eventIdNum,
-				workspaceId: event.workspace_id,
-				commenterId,
-				objectId: event.entity_id,
+				event: ctx.event,
+				eventId: ctx.eventIdNum,
+				workspaceId: ctx.workspaceId,
+				commenterId: ctx.commenterId,
+				objectId: ctx.objectId,
 				actor,
-				content: typeof data.content === 'string' ? data.content : '',
+				content: ctx.content,
+			})
+			anyDispatched = true
+		}
+
+		// Emit a single `comment_responder_resolved` per handled event. If ALL
+		// resolved mentions were suppressed by the loop-safety guard (parent-
+		// author == mentioned actor), tag it `noop_self_authored`. Otherwise
+		// tag it `case_1_mention` — a mention that couldn't resolve to an
+		// actor row still captures resolver intent, not dispatch success.
+		const finalCase: CommentDispatchCase =
+			!anyDispatched && anyNoopSelfAuthored ? 'noop_self_authored' : 'case_1_mention'
+		await this.emitResolved(ctx.event, ctx.eventIdNum, ctx.commenterId, finalCase, null)
+	}
+
+	private async handleFallback(ctx: {
+		event: PgEvent
+		eventIdNum: number
+		workspaceId: string
+		commenterId: string
+		entityId: string
+		content: string
+		parentAuthorId: string | null
+	}): Promise<void> {
+		const [obj] = await this.db
+			.select({ driver: objects.driver })
+			.from(objects)
+			.where(eq(objects.id, ctx.entityId))
+			.limit(1)
+		const driverId = obj?.driver ?? null
+
+		// Case 2 — driver fallback. Loop-safety option (a): also blocked when
+		// the driver authored the PARENT comment we're replying to — otherwise
+		// an agent that drives its own bet would ping itself on every reply.
+		if (driverId && driverId !== ctx.commenterId && driverId !== ctx.parentAuthorId) {
+			await this.dispatchCommentFallback({
+				workspaceId: ctx.workspaceId,
+				actorId: driverId,
+				sourceCommentEventId: ctx.eventIdNum,
+				entityId: ctx.entityId,
+				actionPrompt: buildCommentFallbackPrompt({
+					entityId: ctx.entityId,
+					commenterActorId: ctx.commenterId,
+					content: ctx.content,
+				}),
+			})
+			await this.emitResolved(
+				ctx.event,
+				ctx.eventIdNum,
+				ctx.commenterId,
+				'case_2_driver_fallback',
+				driverId,
+			)
+			return
+		}
+
+		// Case 3 — Chief of Staff fallback. The wrapped routing prompt is what
+		// stops CoS from silently answering questions the actual owner should
+		// route (spec §Product decisions the human owns).
+		const cosActorId = CHIEF_OF_STAFF_ACTOR_ID
+		if (cosActorId === ctx.commenterId || cosActorId === ctx.parentAuthorId) {
+			await this.emitResolved(
+				ctx.event,
+				ctx.eventIdNum,
+				ctx.commenterId,
+				'noop_self_authored',
+				null,
+			)
+			return
+		}
+
+		await this.dispatchCommentFallback({
+			workspaceId: ctx.workspaceId,
+			actorId: cosActorId,
+			sourceCommentEventId: ctx.eventIdNum,
+			entityId: ctx.entityId,
+			actionPrompt: await this.buildChiefOfStaffRoutingPrompt({
+				entityId: ctx.entityId,
+				commenterActorId: ctx.commenterId,
+				content: ctx.content,
+			}),
+		})
+		await this.emitResolved(
+			ctx.event,
+			ctx.eventIdNum,
+			ctx.commenterId,
+			'case_3_cos_fallback',
+			cosActorId,
+		)
+	}
+
+	private async dispatchCommentFallback(ctx: {
+		workspaceId: string
+		actorId: string
+		sourceCommentEventId: number
+		entityId: string
+		actionPrompt: string
+	}): Promise<void> {
+		try {
+			await this.sessionManager.createSession(ctx.workspaceId, {
+				actorId: ctx.actorId,
+				actionPrompt: ctx.actionPrompt,
+				createdBy: ctx.actorId,
+				triggerSource: 'comment_fallback',
+				sourceCommentEventId: ctx.sourceCommentEventId,
+				config: {
+					comment_fallback: {
+						object_id: ctx.entityId,
+						source_comment_event_id: ctx.sourceCommentEventId,
+					},
+				},
+			})
+		} catch (err) {
+			logger.error('Failed to create comment-fallback session', {
+				workspaceId: ctx.workspaceId,
+				actorId: ctx.actorId,
+				sourceCommentEventId: ctx.sourceCommentEventId,
+				error: err instanceof Error ? err.message : String(err),
 			})
 		}
+	}
+
+	private async buildChiefOfStaffRoutingPrompt(ctx: {
+		entityId: string
+		commenterActorId: string
+		content: string
+	}): Promise<string> {
+		const [row] = await this.db
+			.select({ title: objects.title })
+			.from(objects)
+			.where(eq(objects.id, ctx.entityId))
+			.limit(1)
+		const title = row?.title ?? '(untitled object)'
+		return [
+			`A comment was posted on ${title} (${ctx.entityId}). There is no driver. Decide: assign a driver, forward to a specialist, or answer directly.`,
+			'',
+			`Commenter actor ID: ${ctx.commenterActorId}`,
+			'Original comment:',
+			'"""',
+			ctx.content,
+			'"""',
+		].join('\n')
+	}
+
+	private async emitResolved(
+		event: PgEvent,
+		eventIdNum: number,
+		commentAuthorId: string,
+		kind: CommentDispatchCase,
+		resolvedActorId: string | null,
+	): Promise<void> {
+		// Structured log line — always fires, so the resolver's decisions are
+		// traceable in prod logs even if PostHog is unavailable. The `dedupe_hit`
+		// field is a v1 placeholder (frozen at false, spec §Idempotency) — kept
+		// in the log shape so a future dedupe layer can flip it without
+		// changing the format.
+		logger.info('Comment responder resolved', {
+			event_id: event.event_id,
+			case: kind,
+			resolved_actor_id: resolvedActorId,
+			workspace_id: event.workspace_id,
+			object_id: event.entity_id,
+			dedupe_hit: false,
+		})
+		await trackCommentResponderResolved({
+			workspaceId: event.workspace_id,
+			sourceCommentEventId: eventIdNum,
+			commentAuthorId,
+			case: kind,
+			resolvedActorId,
+		})
 	}
 
 	private async parentAuthorId(parentEventId: number): Promise<string | null> {
@@ -1299,7 +1544,44 @@ export function buildMentionPrompt(ctx: {
 	].join('\n')
 }
 
-function normalizeMentions(raw: unknown): string[] {
+/** Coerce the `mentions` field off comment event data into a string[]. */
+export function normalizeMentionsList(raw: unknown): string[] {
 	if (!Array.isArray(raw)) return []
 	return raw.filter((m): m is string => typeof m === 'string' && m.length > 0)
+}
+
+/**
+ * Parse `data.parentEventId`. Accepts a number or a numeric string (Drizzle
+ * JSONB round-trips bigints as strings in some paths); anything else —
+ * including NaN/Infinity/0 — becomes null so the caller treats the comment as
+ * thread root.
+ */
+export function normalizeParentEventId(raw: unknown): number | null {
+	if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return raw
+	if (typeof raw === 'string' && raw.length > 0) {
+		const n = Number(raw)
+		if (Number.isFinite(n) && n > 0) return n
+	}
+	return null
+}
+
+/**
+ * Prompt handed to the driver on case-2 dispatch. Deliberately terse — the
+ * driver knows their own object; the important part is the comment itself.
+ */
+export function buildCommentFallbackPrompt(ctx: {
+	entityId: string
+	commenterActorId: string
+	content: string
+}): string {
+	return [
+		'A comment was posted on an object you drive that was NOT @mentioning anyone — you are being pinged as the driver of last resort. Read the comment and decide what the right response is: reply in the thread, take an action, or nothing (silence is a valid outcome).',
+		'',
+		`Object ID: ${ctx.entityId}`,
+		`Commenter actor ID: ${ctx.commenterActorId}`,
+		'Comment content:',
+		'"""',
+		ctx.content,
+		'"""',
+	].join('\n')
 }
