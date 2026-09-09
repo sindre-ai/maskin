@@ -41,6 +41,7 @@ import {
 	slackFiltersFromConditions,
 	slackFiltersToConditions,
 } from './slack-filters'
+import { SlackTriggerSetupStatus } from './slack-trigger-setup-status'
 import { TriggerHistory } from './trigger-history'
 
 // --- Types ---
@@ -982,6 +983,11 @@ export function TriggerForm({
 			{type === 'event' && isSlack && (
 				<section className="mt-6">
 					<h2 className="eyebrow">WHERE IT LISTENS</h2>
+					<SlackTriggerSetupStatus
+						trigger={initialValues}
+						integrationId={slackIntegrationId}
+						workspaceId={workspaceId}
+					/>
 					<div className="mt-2.5 rounded-xl border border-border bg-card px-3.5 py-3">
 						<div className="flex flex-wrap items-center gap-2.5">
 							<span className="text-[12.5px] font-bold text-foreground">Slack</span>

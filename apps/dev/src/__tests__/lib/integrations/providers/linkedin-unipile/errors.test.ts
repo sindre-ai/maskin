@@ -36,6 +36,21 @@ describe('classifyLinkedInResponse', () => {
 		expect(classifyLinkedInResponse(503, {})).toBe('LINKEDIN_UNAVAILABLE')
 	})
 
+	// A 501 is LinkedIn saying "wrong route for this provider", not "LinkedIn is
+	// down". Classified as UNAVAILABLE it is retryable, so the route burns three
+	// backoff attempts on a request that can never succeed and then reports an
+	// outage for our own bad URL.
+	it('maps 501 not_implemented to INVALID_INPUT, not LINKEDIN_UNAVAILABLE', () => {
+		expect(classifyLinkedInResponse(501, {})).toBe('INVALID_INPUT')
+		expect(
+			classifyLinkedInResponse(501, {
+				type: 'api/not_implemented',
+				detail: 'Use Start a Chat in the given inbox endpoint for this provider.',
+			}),
+		).toBe('INVALID_INPUT')
+		expect(classifyLinkedInResponse(500, { type: 'api/not_implemented' })).toBe('INVALID_INPUT')
+	})
+
 	it('maps other 4xx to INVALID_INPUT', () => {
 		expect(classifyLinkedInResponse(400, {})).toBe('INVALID_INPUT')
 		expect(classifyLinkedInResponse(422, {})).toBe('INVALID_INPUT')

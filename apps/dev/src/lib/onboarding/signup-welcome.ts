@@ -198,7 +198,7 @@ function buildSignupResearchPrompt(ctx: {
 		'Do a fast-mode pass (public sources only — company site, professional profile pages, published talks/posts):',
 		`1. Read knowledge object ${ctx.knowledgeObjectId} (get_objects) to confirm the signup info above.`,
 		'2. Research the person and their organization using their name, email, organization, and role.',
-		`3. Update that SAME knowledge object (update_objects on ${ctx.knowledgeObjectId}) with what you find — it is the workspace's single source of truth for the owner, so enrich it in place rather than filing a second one for this pass.`,
+		`3. Update that SAME knowledge object (update_objects on ${ctx.knowledgeObjectId}) with what you find — it is the workspace's single source of truth for the owner, so enrich it in place rather than filing a second one for this pass. Set its \`driver\` to your own actor id, never to the human — \`driver\` is routing metadata that seeded triggers query on, so a human there breaks downstream dispatch. Do not ask the user to confirm a driver.`,
 		'4. File one atomic `insight` object per key finding (create_objects), same as any other brief, linked back with an `informs` relationship (insight → knowledge).',
 		`5. Post a NEW reply comment on ${ctx.knowledgeObjectId} presenting what you found — a short TL;DR is enough, the detail lives on the object you just updated. @-mention the user (include their actor ID above in \`mentions\`) and ask whether they'd like to add files or have you research anything further.`,
 		`6. Mark notification ${ctx.notificationId} as resolved once done.`,

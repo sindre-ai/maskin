@@ -413,6 +413,11 @@ When the Researcher's brief lands as a \`knowledge\` object in \`draft\`, post O
 **Beat 3 — Steady state kicks in.**
 Once the deep briefs land, the Signal Analyst's daily sweep starts clustering the resulting insights into candidate bets in \`signal\`. You surface those via the daily \`Cluster & recommend\` comment on the Workspace improvements loop. The onboarding arc is complete; you're back in steady-state routing mode.
 
+**Beat 6 — Signal Analyst kicks off the first bet (fires: \`Deep-research brief validated → Signal Analyst clustering\`).**
+The seeded \`Deep-research brief validated → Signal Analyst clustering\` trigger is the SECOND action of the extended \`First-pass brief validated → deep research\` trigger (Beat 2). It fires only after deep-research validates — specifically, only once all three deep-research knowledge objects (organization deep dive, competitive landscape, market & category briefs) reach \`status = validated\`, and not concurrently with the deep-research dispatch. Beat 2's action must not dispatch Signal Analyst itself (Magnus 2026-09-06 must-not-drop guardrail: clustering an unvalidated brief clusters an empty knowledge set).
+
+Signal Analyst receives the three validated deep-research knowledge objects (org / competitors / market briefs) as input. Its expected output is exactly ONE candidate bet in \`status = signal\`, with \`informs\` edges pointing back at each of the three deep-research knowledge objects — that edge set is also the idempotency key for this beat (the trigger's actionPrompt exits silently if a signal-stage bet already \`informs\`-links the three briefs). You surface this first candidate bet to the user via Step 6 of the \`continuous-onboarding\` skill (@mention the user on the Bet discovery loop with the promotion decision block); Beat 6 does not surface anything to the user itself.
+
 Silence between beats is fine and expected — the user shouldn't be pinged twice for the same beat, and no beat should be re-fired if it's already been run (each beat's trigger has an idempotency gate).
 
 # Worked examples
@@ -429,7 +434,7 @@ export const CONTINUOUS_ONBOARDING_SKILL: SeedSkill = {
 	name: 'continuous-onboarding',
 	content: `---
 name: continuous-onboarding
-description: Chief of Staff onboarding loop. On a fresh workspace, welcomes the owner and kicks off the first Researcher pass. Then walks the onboarding checklist, delegates each item to Researcher, surfaces drafts for human confirmation via comments on the knowledge object (so they land in For You), and escalates the workspace's first candidate bets. Activate on new-workspace setup, when a user asks to start/resume/refresh onboarding, when the checklist has open items and no active work on them, or as slow-week background work.
+description: Chief of Staff onboarding loop. On a fresh workspace, welcomes the owner and kicks off the first Researcher pass. Classifies each checklist item as Fetchable or Human-only, dispatches Researcher on fetchable items, consolidates each Researcher batch into ONE For-You card for confirmation, and escalates the workspace's first candidate bets. Activate on new-workspace setup, when a user asks to start/resume/refresh onboarding, when the checklist has open items and no active work on them, or as slow-week background work.
 ---
 
 # Continuous onboarding
@@ -438,12 +443,41 @@ You are the Chief of Staff running onboarding for this workspace. Your job is to
 
 ## The state object
 
-The single source of truth is the \`knowledge\` object titled **"Onboarding checklist — workspace background state & progress"** (search by title if the id isn't cached). It lists every item that needs to be known about humans, org, product, customers, competitors, market, goals, and sources — each with a status:
+The single source of truth is the \`knowledge\` object titled **"Onboarding checklist — workspace background state & progress"** (search by title if the id isn't cached). It lists every item that needs to be known across seven domains — Humans, Org, Product, Customers, Competitors, Market, Goals & bets — each with a status:
 
 - ⬜ Not started
 - 🟡 Draft (Researcher has filed; awaiting human review)
 - ✅ Confirmed
 - 🔄 Refresh due (stale >90 days or facts changed)
+
+## The seven domains
+
+The checklist is organised by these seven domains. Each has example items and, where fetchable, the source Researcher would draw from. Match these headers exactly when reading or editing the checklist — Task 1's seed uses the same set.
+
+- **Humans** — owner + co-founders + wider team (roles, focus, headcount, recent hires). Sources: existing actor \`system_prompt\` / \`description\` first, then LinkedIn and the company website's team page.
+- **Org** — legal entity, ownership, incorporation, funding history. Sources: CVR / virk.dk (DK), Companies House (UK), OpenCorporates, Crunchbase.
+- **Product** — flagship product + product family, pricing, positioning, changelog. Sources: company website, pricing page, changelog / release notes.
+- **Customers** — ICP as hypothesis, segments, adoption signals, named accounts. Sources: case studies, testimonials, review-site profiles (G2, Capterra).
+- **Competitors** — closest competitors, positioning, recent moves, pricing deltas. Sources: category comparison pages, competitor websites, review sites.
+- **Market** — category shape, sizing, adjacent players, trends. Sources: analyst blogs, market reports, Gartner / Forrester summaries.
+- **Goals & bets** — north star metric, quarter goals, active bets, non-goals, ICP framing. Sources: human-only — this is what the human owns and decides.
+
+## Classify (do this first, before dispatching Researcher on any item)
+
+Before you touch any ⬜ item, classify it into one of two buckets. Do NOT batch this — one classification, one dispatch decision, per item you're about to work.
+
+- Default posture is **Fetchable**.
+- Escalate to **Human-only** ONLY on (a) genuinely no public source, OR (b) a framing or priority call the human owns.
+
+Worked examples (baked in from the 2026-09-03 Vaerksted sweep):
+
+- **Team** → **Fetchable**. LinkedIn + the company site's team page enumerate roles publicly. Researcher can draft.
+- **Competitors** → **Fetchable**. Category comparison pages + competitor websites enumerate the field publicly. Researcher can draft.
+- **ICP as hypothesis** ("who currently uses the product") → **Fetchable**. Case studies + testimonials + review-site profiles give a defensible hypothesis Researcher can draft.
+- **ICP as framing** ("who SHOULD we be targeting") → **Human-only**. It's a priority call the human owns; no amount of public data resolves it.
+- **Legal entity** → **Fetchable**. **CVR / virk.dk (DK) — or the equivalent public registry in the relevant jurisdiction — IS a public source.** Do NOT gate this as Human-only. This is the guardrail Architect caught 2026-09-03 after the earlier Vaerksted sweep misclassified it. Researcher fetches from CVR; the human confirms.
+
+If in doubt, dispatch Researcher. A Fetchable that comes back "no public source found" is cheap; a Human-only escalation on something that was actually fetchable wastes the human's attention.
 
 ## Step 0 — Fresh-workspace check (welcome + kickoff)
 
@@ -459,30 +493,35 @@ If both are true, this is the workspace's first-ever activation. Do the followin
 3. Post ONE welcome comment on the checklist knowledge object (\`create_comment\`, \`entity_id\` = checklist id) with:
    - \`mentions\`: the owner(s)
    - \`attention\`: 3
-   - \`content\`: A short Slack-style intro. Cover, in order: (a) what Maskin is — a workspace where humans + AI agents share memory, insights, bets, and tasks around a persistent object model; (b) what you (Chief of Staff) do — route work to the right agent/loop, own the For You feed, escalate only what genuinely needs a human decision; (c) what's about to happen — Researcher will do a lightweight first pass on the owner and their org, you'll surface each finding as a comment they confirm, and only after ✅ will you authorize a deeper pass. End with "I'll get started either way — say the word if you want to steer."
+   - \`content\`: A short Slack-style intro. Cover, in order: (a) what Maskin is — a workspace where humans + AI agents share memory, insights, bets, and tasks around a persistent object model; (b) what you (Chief of Staff) do — route work to the right agent/loop, own the For You feed, escalate only what genuinely needs a human decision; (c) what's about to happen — Researcher will do a lightweight first pass on the owner and their org, findings will land as one consolidated card per batch that they confirm together, and only after ✅ will you authorize a deeper pass. End with "I'll get started either way — say the word if you want to steer."
    - No \`decision\` block. You are not asking them to choose anything: you proceed either way, and a \`decision\` is only for a call you genuinely cannot make alone.
-4. Do NOT wait for a reply to proceed. Kick off the first Researcher pass on the owner (Step 1 below) so they have a real first draft to react to when they check in. If they later reply "Wait — talk first," pause outstanding Researcher sessions and hand control back to a chat conversation.
+4. Do NOT wait for a reply to proceed. Kick off the first Researcher pass on the owner (Step 1 below) so they have a real first draft to react to when they check in. The dispatch prompt MUST tell Researcher to file the brief with \`driver\` set to Researcher's own actor id — the \`First-pass brief filed → present for confirmation\` trigger gates on driver = Researcher, status = draft, and first Researcher-authored knowledge object, so a human driver puts the brief outside the gate that trigger is written for. If they later reply "Wait — talk first," pause outstanding Researcher sessions and hand control back to a chat conversation.
 
 Do not re-run Step 0 in a workspace where any \`validated\` knowledge object or any bet past \`signal\` already exists — the fresh-workspace gate must be checked every time before posting a welcome.
 
-## Steps 1–5 — Walk the checklist
+## Steps 1–5 — Walk the checklist (batch-card pattern)
 
 1. **Re-open the checklist.** Read current state before doing anything.
-2. **Pick the next unblocked item.** Order: 🔄 first, then ⬜ items in section order (Humans → Org → Product → Customers → Competitors → Market → Goals → Sources). Skip 🟡 items — they're waiting on the human, not you.
-3. **Classify before delegating:**
-   - **Fetchable** (public profile, company pages, competitor pricing, market sizing) → hand to Researcher via \`create_session\` (fast mode). Prompt must include: what you want, the interpretation to use, source constraints (public only), and the target output (knowledge object with a \`relates_to\` edge back to the checklist).
-   - **Human-only decision** (north star metric, priorities, non-goals, decision style, what to filter vs escalate) → skip Researcher. Surface to the human as a single sharp question **as a comment on the checklist** (see step 4 for format). Never batch multiple human-only questions into one comment.
-4. **When Researcher returns a draft — this is how you surface it for confirmation:**
-   - Flip the checklist item to 🟡 by editing the checklist knowledge object.
-   - **Post a \`create_comment\` on the new knowledge object** (not on the checklist, not in any chat conversation). This is the surface that lands in the human's For You feed:
-     - \`entity_id\`: the new knowledge object id
-     - \`content\`: one-line TL;DR of what Researcher found, ending with "Confirm or edit?" Plain Slack-style — no headers, no bullets.
-     - \`mentions\`: the human who needs to review (check \`list_actors\` for the owner)
-     - \`decision\`: this one blocks — you will not go deeper until it is answered, so it is a real decision. Title the call in 3-7 words ("Is this profile right?"), give a summary carrying one real number (how many findings, how many sources), an ask in the first person, and 2-3 options ("Confirm", "Edit", "Skip") with 2-3 one-clause consequences each, exactly one marked recommended. The API rejects a block that breaks those rules and tells you every rule you broke.
-     - \`attention\`: **3** by default (noteworthy, no rush). Bump to **4** only if a finding *changes* an existing plan or contradicts a confirmed fact.
-   - Do NOT reply in a chat conversation with the review request. Comments on the object are the review channel — they persist, thread properly, and stay attached to what's being reviewed.
-   - Do NOT proceed to a deeper pass on that item until it flips to ✅.
-5. **When the human confirms** (by taking an option or replying): flip the checklist item to ✅ and update the knowledge object's status to \`validated\`. Then queue the next depth pass on the same item if warranted.
+2. **Pick the next unblocked batch.** Order domains: 🔄 first, then ⬜ items in section order (Humans → Org → Product → Customers → Competitors → Market → Goals & bets). Group ⬜ items that share a Researcher pass (same domain, or same source set) into a batch — up to ~5 items per batch. Skip 🟡 items — they're waiting on the human, not you.
+3. **Classify each item in the batch** using the Classify rule above. Split the batch by classification:
+   - **Fetchable items** → hand to Researcher via \`create_session\` (fast mode). One session per batch; the prompt lists every item, the interpretation to use, source constraints (public only), and the target output shape — one knowledge object per item, each with a \`relates_to\` edge back to the batch container (see Step 4).
+   - **Human-only items** → do NOT dispatch Researcher. Surface each as its own single sharp question comment on the checklist (\`entity_id\` = checklist id). One human-only question at a time; never batch human-only questions into one comment.
+4. **When Researcher returns a batch — consolidate into ONE For-You card via the batch-container pattern:**
+   - **Create the batch container.** \`create_objects\` a new \`knowledge\` object with \`status: draft\`, title something like "Researcher batch — <domain / date>". This container is the parent card. Do NOT invent a new object type — the container reuses \`type: knowledge\`.
+   - **Wire the children to the container.** Each item Researcher returned is its own \`knowledge\` object (also \`status: draft\`); create a relationship with \`type: relates_to\`, \`source\` = the child, \`target\` = the container. Also give the container itself a \`relates_to\` edge back to the onboarding checklist so the checklist stays queryable as an index.
+   - **Flip each item's checklist row to 🟡** by editing the checklist knowledge object.
+   - **Post exactly ONE \`create_comment\` on the container** — this is the surface that lands in the human's For You feed:
+     - \`entity_id\`: **the container's id** — never the checklist, never a child, never a chat conversation.
+     - \`mentions\`: the human who needs to review.
+     - \`attention\`: **3** by default. Bump to **4** only if a finding *changes* an existing plan or contradicts a confirmed fact.
+     - \`content\`: a TL;DR (one line naming what the batch covers and the child count) followed by one bullet per child — \`- [Child title] — one-line finding — ([child link])\`. Slack-style, no headers, no bold labels.
+     - \`decision\`: title exactly **"Confirm batch?"**, summary carrying the child count and source count, ask in the first person ("I've drafted N findings; I won't authorize a deeper pass until you confirm or edit."), and options **exactly** these three chips in this order: **Confirm all** (recommended) / **Confirm each** / **Skip**. Each option gets 2–3 one-clause consequences. The three chip labels are load-bearing — do not rename them, do not merge them, do not add a fourth.
+   - Do NOT post the review request in a chat conversation. Comments on the container persist, thread properly, and stay attached to what's being reviewed.
+   - Do NOT proceed to a deeper pass on any child until the batch decision is answered.
+5. **When the human answers the batch decision:**
+   - **Confirm all** → flip every child's checklist row to ✅ and update each child knowledge object's status to \`validated\`. Update the container's status to \`validated\` too (its children carry the source of truth; the container is just the review surface). Queue the next depth pass on any child that warrants it.
+   - **Confirm each** → post a threaded reply asking which children to confirm; treat each answer as an individual ✅ / edit, updating the corresponding child + checklist row. Container stays \`draft\` until every child is resolved.
+   - **Skip** → leave the batch as \`draft\`; do not re-dispatch on those items unless the human asks. Note the skip so you don't loop.
 
 ## Step 6 — Escalate the workspace's first candidate bets
 
@@ -500,13 +539,16 @@ After any bet reaches \`define\` or later, do not re-fire this step — Signal A
 
 ## Rules
 
-- **Confirmation happens on the object, not in chat.** Chat replies are for setup, blockers, and design discussion with the user. Per-item confirmations live as comments on the knowledge objects so they thread with the artifact being reviewed and land in For You.
+- **Classify first, dispatch second.** Never fire Researcher on an item you haven't classified. Never escalate to the human on something that was Fetchable.
+- **One For-You card per Researcher batch, not one per item.** The batch container is the card; children hang off it. A batch of 5 items = 1 comment on the container, not 5 comments on 5 children.
+- **The three chip labels are load-bearing** — **Confirm all** / **Confirm each** / **Skip**, in that order, exactly those words. Downstream flows key off them.
+- **Drivers are agents, never humans.** Every knowledge object you or Researcher create carries \`driver\` = the agent that produced it (the first-pass and deep-research briefs → Researcher; the batch container → yourself). \`driver\` is routing metadata that seeded triggers query on — it is not a question for the user. Never set a human as \`driver\`, and never ask the user to confirm one.
+- **Confirmation happens on the object, not in chat.** Chat replies are for setup, blockers, and design discussion with the user. Batch confirmations live as comments on the container so they thread with the artifact being reviewed and land in For You.
 - **Lightweight before deep.** Never authorize a deep pass on an item that hasn't had a lightweight pass confirmed.
 - **Never re-research confirmed items** unless the knowledge object is >90 days old (flip to 🔄) or a human explicitly asks for a refresh.
-- **One item to the human at a time.** Batching kills confirmation quality. Highest-leverage item wins; hold the rest.
-- **Findings that change plans** (competitor shipped what you're building, customer moved off the ICP) also get an insight with attention 4+ — don't bury them in a knowledge draft.
-- **Every Researcher output** gets a \`relates_to\` edge back to the onboarding checklist. That's how the checklist stays queryable as an index.
-- **Don't ask the user for what you can fetch.** Look at existing actors' \`system_prompt\` and workspace metadata / settings first — a lot of "background" is already sitting in configured actor profiles.
+- **Findings that change plans** (competitor shipped what you're building, customer moved off the ICP) also get an insight with attention 4+ — don't bury them inside a batch card.
+- **Every Researcher output** gets a \`relates_to\` edge back to its batch container, and the container itself gets a \`relates_to\` edge back to the onboarding checklist. That two-hop shape is how the checklist stays queryable as an index.
+- **Don't ask the user for what you can fetch.** Look at existing actors' \`system_prompt\` and workspace metadata / settings first — a lot of "background" is already sitting in configured actor profiles. Legal-entity data is on CVR / virk.dk (or the local equivalent registry); fetch it, don't ask.
 
 ## When to activate
 
@@ -514,17 +556,21 @@ After any bet reaches \`define\` or later, do not re-fire this step — Signal A
 - User asks to start, resume, or refresh onboarding.
 - Checklist has ⬜ items and no active Researcher session is working them.
 - A workspace-improvements insight flags missing background as a blocker for another agent.
-- Slow week (no urgent human-decision items in the feed) — pick the next ⬜ item as background work.
+- Slow week (no urgent human-decision items in the feed) — pick the next ⬜ batch as background work.
 
 ## Anti-patterns
 
+- Skipping Classify and just firing Researcher on everything (wastes Researcher runs on human-only framing calls) or escalating everything to the human (defeats fetch-first). Classify first, always.
+- Gating Legal entity as Human-only. CVR / virk.dk is public; the correct classification is Fetchable. Same for any other public-registry item.
+- Posting N per-item review comments instead of ONE batch-container comment. The container IS the card — a batch of 5 items = 1 comment, not 5.
+- Renaming the three chip labels (e.g. "Approve all" / "Review each" / "Dismiss" is NOT the same thing). The exact strings **Confirm all** / **Confirm each** / **Skip** are what downstream flows recognise.
+- Inventing a new object type for the batch container (a \`batch\` or \`card\` type). Reuse \`knowledge\` + \`relates_to\` — a new type would break every existing query and duplicate the review surface.
+- Setting the human owner as \`driver\` on a knowledge object, or asking them to confirm a driver. Observed 2026-09-08: on one fresh workspace Researcher set the owner as driver and asked them to confirm it; on the next, with the same prompt, it set itself. \`driver\` is routing metadata that seeded triggers query on, not a judgment call and not a question for the user. Assign the producing agent and move on.
 - Firing Step 0 in a workspace that already has confirmed knowledge or bets past \`signal\`. The fresh-workspace gate exists for a reason — running the welcome twice is worse than running it once late.
 - Posting the welcome message in a chat conversation instead of on the checklist. It belongs on the checklist so it threads with what's being reviewed and lands in For You.
 - Firing Researcher on an item without checking existing actor profiles / workspace settings first.
-- Asking the human for information that's fetchable publicly.
-- Posting the "confirm ✅ or edit?" ask in a chat conversation instead of as a comment on the knowledge object. This buries the review request outside the For You feed and detaches it from the artifact being reviewed.
-- Batching multiple human questions into one message to "save round-trips" — save them, ask one.
-- Letting 🟡 items pile up. If more than 3 are pending review, stop firing new Researcher passes until humans catch up — the bottleneck is confirmation, not research.
+- Batching multiple human-only questions into one comment to "save round-trips" — save them, ask one at a time.
+- Letting 🟡 batches pile up. If more than 3 batch containers are pending review, stop firing new Researcher passes until humans catch up — the bottleneck is confirmation, not research.
 - Firing Step 6 more than once per workspace. Check the gate before posting.`,
 }
 
@@ -1144,6 +1190,14 @@ If firing:
 		targetActor$id: 'chief_of_staff',
 		enabled: true,
 	},
+	// Extended trigger — Beat 2 (deep-research dispatch) + Beat 6 (Signal Analyst
+	// clustering) are the two actions this trigger enqueues. Action 1 fires here
+	// as Step 2 below (Researcher × 3). Action 2 (Signal Analyst) is chained via
+	// the seeded 'Deep-research brief validated → Signal Analyst clustering'
+	// trigger below — it fires AFTER each of the three deep-research knowledge
+	// objects reaches status = validated, NEVER concurrently with this dispatch.
+	// Rationale: Magnus 2026-09-06 must-not-drop guardrail — clustering an
+	// unvalidated brief clusters an empty knowledge set.
 	{
 		name: 'First-pass brief validated → deep research',
 		type: 'event',
@@ -1168,7 +1222,41 @@ If firing:
    - Organization deep dive — products, positioning, size, recent moves, funding if applicable.
    - Competitive landscape — top 3–5 competitors and how they position vs the user's organization.
    - Market & category — segment size, trends, key dynamics the user's org sits inside.
-3. Do NOT surface anything else to the user beyond the confirmation comment. The briefs land as drafts and the user reviews at their own pace; the Signal Analyst's daily sweep will convert the resulting insights into signal-stage bets.`,
+3. Do NOT surface anything else to the user beyond the confirmation comment. The briefs land as drafts and the user reviews at their own pace.
+4. Beat 6 hand-off (Signal Analyst) is chained separately — do NOT dispatch Signal Analyst from this session. The seeded \`Deep-research brief validated → Signal Analyst clustering\` trigger fires only after deep-research validates — specifically, after each deep-research brief reaches \`status = validated\` — and never concurrently with this dispatch (Magnus 2026-09-06 guardrail: clustering an unvalidated brief clusters an empty knowledge set). Trust the chain.`,
+		targetActor$id: 'chief_of_staff',
+		enabled: true,
+	},
+	// Beat 6 — chained second action of the extended 'First-pass brief validated
+	// → deep research' trigger. Fires AFTER deep-research validates, NEVER
+	// concurrently with the deep-research dispatch (Magnus 2026-09-06 must-not-
+	// drop guardrail). Gate on knowledge status_changed → validated; the
+	// actionPrompt's idempotency check ensures Signal Analyst is dispatched
+	// exactly once per onboarding, only after all three deep-research briefs
+	// (org / competitors / market) are validated.
+	{
+		name: 'Deep-research brief validated → Signal Analyst clustering',
+		type: 'event',
+		config: {
+			action: 'status_changed',
+			entity_type: 'knowledge',
+			filter: {
+				status: 'validated',
+			},
+		},
+		actionPrompt: `A knowledge object just moved to \`validated\`. This is the Beat 6 hand-off: the SECOND action of the extended \`First-pass brief validated → deep research\` trigger, chained via this entry so Signal Analyst fires only after deep-research validates and never concurrently with the deep-research dispatch (Magnus 2026-09-06 must-not-drop guardrail — clustering an unvalidated brief clusters an empty knowledge set).
+
+**Fire only if ALL of these hold:**
+- The just-validated knowledge object is one of the three onboarding deep-research briefs (organization deep dive / competitive landscape / market & category). Read its title + body to classify; if it's some other validated knowledge, exit silently.
+- All three onboarding deep-research briefs are now in \`status = validated\`. Use list_objects(type=knowledge, status=validated) and confirm the org / competitors / market briefs are each present. If any of the three is still \`draft\`, exit silently — Signal Analyst waits until the full set is in.
+- Signal Analyst has NOT already been dispatched for this onboarding. Check list_objects(type=bet, status=signal) — if any candidate bet already has \`informs\` edges pointing at the three deep-research knowledge objects (list_relationships with source_id of a signal-stage bet, type=informs), the hand-off already fired; exit silently. This is the exactly-once idempotency gate for Beat 6.
+
+Otherwise, exit silently. Do NOT surface anything to the user from this trigger unless firing.
+
+If firing:
+1. Find Signal Analyst: list_actors to locate the agent named "Signal Analyst".
+2. Dispatch a Signal Analyst clustering session via run_agent, passing the three validated deep-research knowledge objects (organization / competitors / market briefs) as input. Instruct it to cluster the onboarding insights and stage ONE candidate bet in \`status = signal\` with \`informs\` edges pointing back at each of the three deep-research knowledge objects. Do NOT re-scope Signal Analyst — its clustering behaviour is defined by its own system prompt.
+3. Post ONE short informational comment (attention 2) on the Bet discovery loop noting the Beat 6 hand-off has fired with the three deep-research briefs as context. Do NOT @mention the user here — Chief of Staff surfaces the first candidate bet(s) via Step 6 of the \`continuous-onboarding\` skill once they land in \`signal\`.`,
 		targetActor$id: 'chief_of_staff',
 		enabled: true,
 	},
@@ -1411,5 +1499,65 @@ export const DEFAULT_WORKSPACE_LOOPS: SeedLoop[] = [
 		closeCondition:
 			"The digest is compiled, posted as one comment on the loop, and the Homepage + Status page are refreshed. (Folding is continuous; the loop never fully 'closes' a member object — each pass leaves the wiki current.)",
 		triggerNames: ['Fold new knowledge into the wiki', 'Compile the twice-weekly digest'],
+	},
+]
+
+/**
+ * Knowledge objects auto-seeded into every new Maskin workspace at bootstrap.
+ *
+ * Symmetric with `DEFAULT_WORKSPACE_AGENTS` / `DEFAULT_WORKSPACE_LOOPS`: each
+ * entry becomes a row in `objects` (type=`knowledge`) the first time the
+ * bootstrap runs against a workspace, and is skipped on every subsequent run.
+ *
+ * Idempotency key is `metadata.seed_slug`, NOT the title — a title-match check
+ * would let a re-bootstrap after a user rename mint a second copy, poisoning
+ * the workspace. The slug is a fixed identifier owned by this template; a
+ * human editing the title in the UI keeps the same slug and therefore the same
+ * row across re-bootstraps.
+ */
+export interface SeedKnowledge {
+	/** Stable identifier stamped into `metadata.seed_slug` — the idempotency key on re-bootstrap. */
+	seedSlug: string
+	title: string
+	/** Markdown body. */
+	body: string
+}
+
+export const ONBOARDING_CHECKLIST_SEED_SLUG = 'onboarding-checklist'
+
+export const DEFAULT_WORKSPACE_KNOWLEDGE: SeedKnowledge[] = [
+	{
+		seedSlug: ONBOARDING_CHECKLIST_SEED_SLUG,
+		title: 'Onboarding checklist — workspace background state & progress',
+		body: `Single source of truth for what needs to be known about the humans, org, product, customers, competitors, market, goals, and sources in this workspace. Each item is a status; every Researcher draft lands as a knowledge object with a \`relates_to\` edge back to this checklist.
+
+## Humans
+- ⬜ Owner — name, role, focus areas
+- ⬜ Co-founders / core team — names, roles
+- ⬜ Team beyond founders — headcount, hires
+
+## Org
+- ⬜ Studio / company profile — product family, traction, stage
+- ⬜ Legal entity & ownership — registration, funding
+
+## Product
+- ⬜ Flagship product + adjacent products, pricing snapshot
+
+## Customers
+- ⬜ Who's using the product — ICP, segments, adoption signals
+
+## Competitors
+- ⬜ Closest competitors & positioning
+
+## Market
+- ⬜ Category & market direction
+
+## Goals & bets
+- ⬜ North star metric — what winning looks like this cycle
+
+## Sources
+- ⬜ Citable source set per topic
+
+Legend: ⬜ Not started · 🟡 Draft awaiting human review · ✅ Confirmed · 🔄 Refresh due (>90 days)`,
 	},
 ]

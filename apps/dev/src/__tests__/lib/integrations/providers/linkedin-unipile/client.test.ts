@@ -163,3 +163,48 @@ describe('read-surface routes', () => {
 		expect(mock.inbox().at(-1)?.path).toBe('/v2/acc_1/users/a%2Fb%3Fc')
 	})
 })
+
+/**
+ * Same class of bug as the read surfaces above, on the write side: LinkedIn
+ * does not implement the bare "Start a Chat" route (`/v2/:account/chats/send`)
+ * and answers 501 "Use Start a Chat in the given inbox endpoint" there, so
+ * every attempt to open a NEW thread failed while replies into existing
+ * threads kept working.
+ */
+describe('write-surface routes', () => {
+	function client() {
+		return createLinkedInHttpClient({ baseUrl: mock.baseUrl, apiKey: 'test-api-key' })
+	}
+	const account_id = 'acc_1'
+
+	it('starts a new chat via the inbox-scoped route, NOT the bare /chats/send', async () => {
+		const res = await client().sendMessage({
+			account_id,
+			recipient_urn: 'user-9',
+			body: 'hei',
+		})
+		expect(res.status).toBe(200)
+		const call = mock.inbox().at(-1)
+		expect(call?.method).toBe('POST')
+		expect(call?.path).toBe('/v2/acc_1/inboxes/CLASSIC_PRIMARY/chats/send')
+		expect(call?.path).not.toBe('/v2/acc_1/chats/send')
+		expect(call?.body).toEqual({ users_ids: ['user-9'], text: 'hei' })
+	})
+
+	it('honours an explicit inbox_id', async () => {
+		await client().sendMessage({
+			account_id,
+			recipient_urn: 'user-9',
+			body: 'hei',
+			inbox_id: 'CLASSIC_ARCHIVED',
+		})
+		expect(mock.inbox().at(-1)?.path).toBe('/v2/acc_1/inboxes/CLASSIC_ARCHIVED/chats/send')
+	})
+
+	it('replies into an existing thread on the chat-scoped route', async () => {
+		await client().reply({ account_id, thread_id: 'chat-1', body: 'takk' })
+		const call = mock.inbox().at(-1)
+		expect(call?.path).toBe('/v2/acc_1/chats/chat-1/messages/send')
+		expect(call?.body).toEqual({ text: 'takk' })
+	})
+})

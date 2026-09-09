@@ -25,6 +25,8 @@ export type LinkedInSendMessagePayload = {
 	account_id: string
 	recipient_urn: string
 	body: string
+	/** Defaults to `DEFAULT_LINKEDIN_INBOX`. */
+	inbox_id?: string
 }
 
 export type LinkedInReplyPayload = {
@@ -50,7 +52,7 @@ export const DEFAULT_LINKEDIN_INBOX = 'CLASSIC_PRIMARY'
 
 /**
  * Response envelope LinkedIn v2 sends on message-send, per the v2 reference:
- *   - start-chat (`/chats/send`)              → { object: 'ChatStarted', chat_id, message_id }
+ *   - start-chat (`/inboxes/:id/chats/send`)  → { object: 'ChatStarted', chat_id, message_id }
  *   - in-chat send (`/chats/:id/messages/send`) → { object: 'MessageSent', message_id }
  *
  * `message_id` is `string | string[] | null` — an array when attachments are
@@ -342,12 +344,26 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 	return {
 		sendMessage(payload) {
 			// v1: POST /api/v1/messages with { account_id, recipient, text }
-			// v2: POST /v2/{account_id}/chats/send with { users_ids, text }
-			// `attendees_ids` → `users_ids` per the migration doc.
-			return call('POST', `/v2/${encodeURIComponent(payload.account_id)}/chats/send`, {
-				users_ids: [payload.recipient_urn],
-				text: payload.body,
-			})
+			// v2: POST /v2/{account_id}/inboxes/{inbox_id}/chats/send with
+			//     { users_ids, text }. `attendees_ids` → `users_ids` per the
+			//     migration doc.
+			//
+			// NOT `/v2/{account_id}/chats/send` ("Start a Chat") — that is the
+			// route for providers with no inbox concept. LinkedIn has inboxes,
+			// so it answers 501 `api/not_implemented` there with "Use Start a
+			// Chat in the given inbox endpoint", and every attempt to open a
+			// NEW thread fails while replies into existing threads keep working.
+			// Same trap as `listConversations` below; the correct route is the
+			// "Start a Chat from Inbox" reference page.
+			const inbox = encodeURIComponent(payload.inbox_id ?? DEFAULT_LINKEDIN_INBOX)
+			return call(
+				'POST',
+				`/v2/${encodeURIComponent(payload.account_id)}/inboxes/${inbox}/chats/send`,
+				{
+					users_ids: [payload.recipient_urn],
+					text: payload.body,
+				},
+			)
 		},
 		reply(payload) {
 			// v1: POST /api/v1/chats/{id}/messages with { account_id, text }
