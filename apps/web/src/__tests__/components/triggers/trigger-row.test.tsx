@@ -91,4 +91,24 @@ describe('TriggerRow', () => {
 		render(<TriggerRow trigger={buildTrigger()} workspaceId="ws-1" agentName="Compass" />)
 		expect(screen.queryByRole('switch')).not.toBeInTheDocument()
 	})
+
+	it('renders the trailing chevron by default (flag off)', () => {
+		const { container } = render(
+			<TriggerRow trigger={buildTrigger()} workspaceId="ws-1" agentName="Compass" />,
+		)
+		// lucide-react writes lucide-chevron-right onto the icon <svg> — presence
+		// asserts the pre-v4 layout still ships as-is when the flag is off.
+		expect(container.querySelector('svg.lucide-chevron-right')).toBeTruthy()
+	})
+
+	it('drops the trailing chevron and grows the state label under v4 polish', () => {
+		const { container } = render(
+			<TriggerRow trigger={buildTrigger()} workspaceId="ws-1" agentName="Compass" v4Polish />,
+		)
+		// Chevron gone; state label matches the LoopRow state-pill size class.
+		expect(container.querySelector('svg.lucide-chevron-right')).toBeNull()
+		const label = screen.getByText('On')
+		expect(label.className).toContain('text-xs')
+		expect(label.className).not.toContain('text-[11px]')
+	})
 })

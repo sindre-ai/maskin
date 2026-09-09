@@ -85,6 +85,11 @@ function LoopsRoute() {
 			? billingUsage.credit_balance_cents <= 0
 			: false
 
+	// Feature-flag boundary for the loops v4 polish bet. Read once at the route
+	// level per the feature-flags rule (`.claude/rules/feature-flags.md`), then
+	// handed to every row component — no scattered flag checks inside them.
+	const loopsV4Enabled = useFeatureFlag('loops-v4-polish')
+
 	const settingsQuery = useUserDisplaySettings(workspaceId, LOOP_SETTINGS_KEY)
 	const upsertSettings = useUpdateUserDisplaySettings(workspaceId)
 	const persistedSettings = settingsQuery.data?.settings
@@ -259,6 +264,7 @@ function LoopsRoute() {
 											onToggleEnabled={(next) =>
 												updateTrigger.mutate({ id: trigger.id, data: { enabled: next } })
 											}
+											v4Polish={loopsV4Enabled}
 										/>
 									)
 								})}
