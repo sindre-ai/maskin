@@ -275,6 +275,17 @@ export const triggers = pgTable('triggers', {
 		.references(() => actors.id)
 		.notNull(),
 	enabled: boolean('enabled').notNull().default(true),
+	// Loops v4 vertical-story fields (D6a). All three nullable and dormant on
+	// this task — the reconciler (D6b) and the vertical-story renderer (D6c)
+	// wire them up in stacked follow-up PRs. `hands_off_to_actor_id` is kept
+	// explicit rather than derived from the next step's `target_actor_id` so
+	// the renderer treats HANDS OFF as a first-class row (Architect + Designer
+	// alignment 2026-09-03; SPEC Q2 Option A). `escalates_to_actor_id` +
+	// `escalate_after_ms` together define the fixed-shape escalation the D6b
+	// cron in trigger-runner scans for.
+	handsOffToActorId: uuid('hands_off_to_actor_id').references(() => actors.id),
+	escalatesToActorId: uuid('escalates_to_actor_id').references(() => actors.id),
+	escalateAfterMs: integer('escalate_after_ms'),
 	// Per-row marker keys for managed-package installs; nullable everywhere.
 	metadata: jsonb('metadata'),
 	createdBy: uuid('created_by')
