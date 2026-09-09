@@ -1,6 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, workspaceMembers } from '@maskin/db/schema'
+import { events, subscriptions, workspaceMembers } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { buildSignupCaptureKnowledge } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
@@ -122,18 +122,19 @@ describe('Signup welcome comment — Chief of Staff comments, Researcher gets sp
 			.where(and(eq(events.entityId, created.id), eq(events.action, 'commented')))
 		expect(commentEvent).toBeDefined()
 		expect(commentEvent.actorId).toBe(chief.id)
-		const data = commentEvent.data as { content: string; mentions: string[] }
-		// Researcher is intentionally NOT in `mentions` — the onboarding session
-		// is wired directly in signup-welcome so the standard CommentDispatcher
-		// path would otherwise fire a second Researcher session with the
-		// generic mention prompt.
-		expect(data.mentions).toEqual([humanActorId])
+		const data = commentEvent.data as {
+			content: string
+			mentions: string[]
+			metadata: { suppress_dispatch_actor_ids: string[] }
+		}
+		// Researcher IS a real mention — that is what auto-subscribes it to the
+		// object and makes it count as a thread participant, so a later human
+		// reply reaches it. Only its generic CommentDispatcher session is
+		// suppressed, since signup-welcome wires a bespoke one below.
+		expect(data.mentions).toEqual([researcher.id, humanActorId])
+		expect(data.metadata.suppress_dispatch_actor_ids).toEqual([researcher.id])
 		expect(data.content).toContain('Ada Testowski')
 		expect(data.content).toContain('@Researcher')
-		// Silences the lint for the seeded Researcher — we don't assert on the
-		// mention list any more but the fixture still needs it in the workspace
-		// so `resolveAgentIdByName` finds it.
-		void researcher
 
 		expect(sessionManager.createSession).toHaveBeenCalledWith(
 			workspaceId,
@@ -170,6 +171,13 @@ describe('Signup welcome comment — Chief of Staff comments, Researcher gets sp
 		const item = unread.items.find((i) => i.entity_id === created.id)
 		expect(item).toBeDefined()
 		expect(item?.mentioning_unread_count).toBeGreaterThan(0)
+
+		// Researcher's mention must also auto-subscribe it to the object, so it
+		// sees later activity on the onboarding thread — the whole point of
+		// keeping it in `mentions` rather than dropping it to avoid the
+		// double-dispatch.
+		const subs = await db.select().from(subscriptions).where(eq(subscriptions.entityId, created.id))
+		expect(subs.map((sub) => sub.actorId)).toContain(researcher.id)
 	})
 
 	it('does not trigger a comment or session for a knowledge object that is not signup_capture', async () => {

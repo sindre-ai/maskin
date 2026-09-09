@@ -1114,7 +1114,10 @@ interface CommentEventData {
 	content?: unknown
 	mentions?: unknown
 	parentEventId?: unknown
-	metadata?: { suppress_auto_dispatch?: unknown } | null
+	metadata?: {
+		suppress_auto_dispatch?: unknown
+		suppress_dispatch_actor_ids?: unknown
+	} | null
 }
 
 export class CommentDispatcher {
@@ -1184,6 +1187,15 @@ export class CommentDispatcher {
 		const mentions = normalizeMentionsList(data.mentions)
 		const parentEventId = normalizeParentEventId(data.parentEventId)
 		const parentAuthorId = parentEventId ? await this.parentAuthorId(parentEventId) : null
+		// Per-actor form of the escape hatch above. A caller that has already
+		// wired a bespoke notification + session for ONE mentioned actor names
+		// it here, so that actor keeps every other consequence of being a real
+		// mention — auto-subscribe (`lib/comments.ts`) and thread participation
+		// (`routes/events.ts`) — while only the generic dispatch is skipped.
+		// `lib/onboarding/signup-welcome.ts` is the caller this exists for.
+		const suppressedActorIds = new Set(
+			normalizeMentionsList(data.metadata?.suppress_dispatch_actor_ids),
+		)
 
 		if (mentions.length > 0) {
 			await this.handleMentions({
@@ -1194,6 +1206,7 @@ export class CommentDispatcher {
 				objectId: event.entity_id,
 				mentions,
 				parentAuthorId,
+				suppressedActorIds,
 				content: typeof data.content === 'string' ? data.content : '',
 			})
 			return
@@ -1225,6 +1238,7 @@ export class CommentDispatcher {
 		objectId: string
 		mentions: string[]
 		parentAuthorId: string | null
+		suppressedActorIds: Set<string>
 		content: string
 	}): Promise<void> {
 		const mentionedActors = await this.db
@@ -1238,12 +1252,21 @@ export class CommentDispatcher {
 		const seen = new Set<string>()
 		let anyDispatched = false
 		let anyNoopSelfAuthored = false
+		let anySuppressed = false
 
 		for (const mentionId of ctx.mentions) {
 			if (seen.has(mentionId)) continue
 			seen.add(mentionId)
 			const actor = actorById.get(mentionId)
 			if (!actor) continue
+
+			// Bespoke dispatch already wired by the caller — skip the generic
+			// one, but leave the mention itself intact.
+			if (ctx.suppressedActorIds.has(actor.id)) {
+				this.log(ctx.event, 'noop_suppressed', actor.id)
+				anySuppressed = true
+				continue
+			}
 
 			if (ctx.parentAuthorId && actor.id === ctx.parentAuthorId) {
 				this.log(ctx.event, 'noop_self_authored', actor.id)
@@ -1268,8 +1291,9 @@ export class CommentDispatcher {
 		// author == mentioned actor), tag it `noop_self_authored`. Otherwise
 		// tag it `case_1_mention` — a mention that couldn't resolve to an
 		// actor row still captures resolver intent, not dispatch success.
-		const finalCase: CommentDispatchCase =
-			!anyDispatched && anyNoopSelfAuthored ? 'noop_self_authored' : 'case_1_mention'
+		let finalCase: CommentDispatchCase = 'case_1_mention'
+		if (!anyDispatched && anyNoopSelfAuthored) finalCase = 'noop_self_authored'
+		else if (!anyDispatched && anySuppressed) finalCase = 'noop_suppressed'
 		await this.emitResolved(ctx.event, ctx.eventIdNum, ctx.commenterId, finalCase, null)
 	}
 

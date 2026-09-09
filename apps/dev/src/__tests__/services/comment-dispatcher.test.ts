@@ -322,6 +322,68 @@ describe('CommentDispatcher', () => {
 		expect(dispatchedTo).toContain(COS_ACTOR_ID)
 	})
 
+	it('skips only the named actor when metadata.suppress_dispatch_actor_ids is set', async () => {
+		const bespoke = buildActor({ type: 'agent' })
+		const other = buildActor({ type: 'agent' })
+		const notification = buildNotification({ targetActorId: other.id })
+		mockResults.selectQueue = [
+			[
+				{
+					actorId: 'commenter-1',
+					data: {
+						content: 'hi',
+						mentions: [bespoke.id, other.id],
+						metadata: { suppress_dispatch_actor_ids: [bespoke.id] },
+					},
+				},
+			],
+			[
+				{ id: bespoke.id, type: 'agent' },
+				{ id: other.id, type: 'agent' },
+			],
+		]
+		mockResults.insert = [notification]
+
+		dispatcher.start()
+		await fire(baseEvent())
+
+		// The suppressed actor gets no generic session; the co-mentioned agent
+		// is unaffected.
+		const dispatchedTo = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls.map(
+			(c) => (c[1] as { actorId: string }).actorId,
+		)
+		expect(dispatchedTo).not.toContain(bespoke.id)
+		expect(dispatchedTo).toContain(other.id)
+		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
+			expect.objectContaining({ case: 'case_1_mention' }),
+		)
+	})
+
+	it('emits noop_suppressed when every mention is in suppress_dispatch_actor_ids', async () => {
+		const bespoke = buildActor({ type: 'agent' })
+		mockResults.selectQueue = [
+			[
+				{
+					actorId: 'commenter-1',
+					data: {
+						content: 'hi',
+						mentions: [bespoke.id],
+						metadata: { suppress_dispatch_actor_ids: [bespoke.id] },
+					},
+				},
+			],
+			[{ id: bespoke.id, type: 'agent' }],
+		]
+
+		dispatcher.start()
+		await fire(baseEvent())
+
+		expect(sessionManager.createSession).not.toHaveBeenCalled()
+		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
+			expect.objectContaining({ case: 'noop_suppressed', resolvedActorId: null }),
+		)
+	})
+
 	it('resolves the Chief of Staff per workspace, not from a global id', async () => {
 		mockResults.selectQueue = [
 			[{ actorId: 'human-author', data: { content: 'how goes?', mentions: [] } }],

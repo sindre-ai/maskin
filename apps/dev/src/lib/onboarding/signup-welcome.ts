@@ -56,9 +56,10 @@ async function resolveAgentIdByName(
  * The Researcher notification + session are wired directly here rather than
  * via the standard `CommentDispatcher` (`services/trigger-runner.ts`) mention
  * branch, because the onboarding prompt is domain-specific (a first-pass
- * research brief keyed on the signup metadata). Researcher is deliberately
- * NOT in the comment's `mentions` array — the standard subscriber path would
- * otherwise fire a second Researcher session with the generic mention prompt.
+ * research brief keyed on the signup metadata). Researcher IS still a real
+ * @mention; the comment carries `metadata.suppress_dispatch_actor_ids` so the
+ * dispatcher skips only its generic session, leaving auto-subscribe and thread
+ * participation intact.
  *
  * This must fire every time a user signs up, so it deliberately bypasses the
  * "let the agent decide to do this" pattern that turned out to be
@@ -95,14 +96,19 @@ export async function postSignupWelcomeComment(
 		return
 	}
 
-	// @-mention only the human who just signed up. The human mention is what
-	// makes this comment surface on their For You page — `GET
+	// @-mention both Researcher and the human who just signed up. The human
+	// mention is what makes this comment surface on their For You page — `GET
 	// /api/subscriptions/unread` matches on `events.data.mentions` containing
 	// the viewer's actor id, and postComment auto-subscribes every mentioned
-	// actor. Researcher is intentionally NOT in `mentions` because the
-	// standard `CommentDispatcher` path would otherwise spawn a second
-	// Researcher session with the generic mention prompt in addition to the
-	// bespoke onboarding session below.
+	// actor.
+	//
+	// Researcher stays a real mention because the mention is load-bearing
+	// beyond dispatch: `lib/comments.ts` auto-subscribes it to the object, and
+	// `routes/events.ts` reads prior `data.mentions` to decide who counts as a
+	// thread participant — which is what makes a human reply in this thread
+	// reach Researcher, exactly as the comment body promises. What we suppress
+	// is only the generic dispatch, via `suppress_dispatch_actor_ids` below,
+	// since the bespoke onboarding session is wired directly here.
 	const displayName = name || 'there'
 	const content = `Hi ${displayName} 👋 Welcome to Maskin — I'm Chief of Staff, I make sure the right agent picks up your work. @Researcher — please put together a first-pass brief on ${displayName}${organization ? ` and ${organization}` : ''} so the workspace has real context from day one. @${displayName} — if anything here looks off or you'd like to add more before Researcher gets started, just reply and I'll make sure it gets folded in.`
 
@@ -111,13 +117,16 @@ export async function postSignupWelcomeComment(
 		actorId: chiefOfStaffId,
 		entityId: knowledgeObjectId,
 		content,
-		mentions: [humanActorId],
+		mentions: [researcherId, humanActorId],
+		metadata: { suppress_dispatch_actor_ids: [researcherId] },
 		attention: 3,
 	})
 
 	// Wire Researcher's needs_input notification directly rather than via the
-	// mention path, so its bespoke onboarding session below can reference the
-	// notification id in its prompt.
+	// `CommentDispatcher` mention path, so the bespoke onboarding session below
+	// can reference the notification id in its prompt. Paired with
+	// `suppress_dispatch_actor_ids` above, this is the only notification +
+	// session Researcher gets for this comment.
 	const [researcherNotification] = await db.transaction((tx) =>
 		insertNotificationsWithEvents(tx, {
 			workspaceId,

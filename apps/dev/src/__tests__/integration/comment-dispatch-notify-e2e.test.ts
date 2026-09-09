@@ -177,6 +177,59 @@ describe('Comment dispatch over a real PG NOTIFY bridge (end-to-end transport)',
 		expect(resolved[0][2]).toMatchObject({ case: 'case_3_cos_fallback', resolved_actor_id: cos.id })
 	})
 
+	it('skips the generic mention dispatch for an actor named in suppress_dispatch_actor_ids', async () => {
+		const humanActor = getTestActorId()
+		const ws = await insertWorkspace(db, humanActor)
+		const researcher = await insertActor(db, {
+			type: 'agent',
+			name: 'Researcher',
+			email: 'researcher-suppress@integration.test',
+			apiKey: 'ank_researcher_suppress',
+		})
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: researcher.id, role: 'member' })
+		const object = await insertObject(db, ws.id, humanActor, {
+			type: 'bet',
+			title: 'Onboarding object with a bespoke session already wired',
+		})
+
+		// The shape lib/onboarding/signup-welcome.ts writes: a real @mention
+		// (so the agent is auto-subscribed and counts as a thread participant)
+		// plus a suppression entry so the dispatcher does not add a second,
+		// generic session on top of the bespoke one the caller already made.
+		await db.insert(events).values({
+			workspaceId: ws.id,
+			actorId: humanActor,
+			action: 'commented',
+			entityType: 'object',
+			entityId: object.id,
+			data: {
+				content: '@Researcher please write the brief',
+				mentions: [researcher.id],
+				metadata: { suppress_dispatch_actor_ids: [researcher.id] },
+			},
+		})
+
+		// Give the bridge real time to deliver — asserting a non-event, so a
+		// short wait would pass even if the dispatch were on its way.
+		await vi.waitFor(
+			() =>
+				expect(
+					capturePosthogEvent.mock.calls.filter(
+						(c: unknown[]) => c[0] === 'comment_responder_resolved',
+					).length,
+				).toBeGreaterThan(0),
+			{ timeout: 10_000, interval: 25 },
+		)
+
+		expect(collectDispatchCalls(sessionManager)).toHaveLength(0)
+		const resolved = capturePosthogEvent.mock.calls.filter(
+			(c: unknown[]) => c[0] === 'comment_responder_resolved',
+		)
+		expect(resolved[0][2]).toMatchObject({ case: 'noop_suppressed' })
+	})
+
 	it('ignores a non-comment event that travels the same NOTIFY channel', async () => {
 		const humanActor = getTestActorId()
 		const ws = await insertWorkspace(db, humanActor)
