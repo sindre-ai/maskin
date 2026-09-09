@@ -102,10 +102,34 @@ export const loopStepSchema = z.object({
 	triggerName: z.string().nullish(),
 	/** `triggers.action_prompt` — the prompt handed to the agent when the trigger fires. */
 	triggerActionPrompt: z.string().nullish(),
+	/** `triggers.type` — cron / event / reminder / etc. Renderer uses this to
+	 * pick the eyebrow copy on the TRIGGER · FIRES row. Optional so a legacy
+	 * step without a resolved trigger row (foreign / deleted) doesn't fail
+	 * validation. */
+	triggerType: z.string().nullish(),
 	/** Full `triggers.config` JSON — cron scope, event filter, reminder timing. */
 	triggerConfig: z.unknown().optional(),
 	/** Resolved step agent (from `triggers.target_actor_id`). `null` = no agent assigned. */
 	agent: loopStepAgentSchema.nullable(),
+	/** Resolved hand-off target actor. Populated iff `handsOffToActorId` is set
+	 * and the actor still exists; null otherwise. The renderer prefers this
+	 * name over re-looking-up in the actors list. Defaults to null so the D6a
+	 * expand-slice call sites (which don't know about resolved actors) still
+	 * parse this shape unchanged. */
+	handsOffToActor: loopStepAgentSchema.nullable().default(null),
+	/** Resolved escalation target actor. Populated iff `escalatesToActorId` is
+	 * set and the actor still exists; null otherwise. Defaults to null for
+	 * the same reason `handsOffToActor` does. */
+	escalatesToActor: loopStepAgentSchema.nullable().default(null),
+	/** Per-step per-viewer signal: does the step have any session in
+	 * `waiting_for_input` status right now? Drives the HANDS OFF row's `{n}
+	 * pending` badge in the vertical-story renderer. Defaults to false so
+	 * call sites that don't compute the signal (e.g. the D6a schema tests,
+	 * the T1 shared helpers before they land) still parse this shape. */
+	waitingOnViewer: z.boolean().default(false),
+	/** Count of sessions on this trigger currently in `waiting_for_input`
+	 * status. `0` when `waitingOnViewer` is false. */
+	pendingCount: z.number().int().nonnegative().default(0),
 	/**
 	 * Loops v4 (D6a). Target agent (or 'you') the step hands off to when it
 	 * completes. Explicit, not derived from the next step's `agent.id`, so the
@@ -139,3 +163,14 @@ export const loopStepSchema = z.object({
 })
 
 export type LoopStep = z.infer<typeof loopStepSchema>
+
+/** Response for `GET /api/loops/:id/steps` — the vertical-story renderer's
+ * data feed on the loop-detail page. One step per trigger id in the loop's
+ * `metadata.trigger_ids`, preserved in that order (a spine, not a set).
+ * Returns `{ steps: [] }` — not 404 — for a loop with no triggers or an
+ * unknown id (mirrors `/api/loops` and `/api/loops/:id/activity`). */
+export const listLoopStepsResponseSchema = z.object({
+	steps: z.array(loopStepSchema),
+})
+
+export type ListLoopStepsResponse = z.infer<typeof listLoopStepsResponseSchema>

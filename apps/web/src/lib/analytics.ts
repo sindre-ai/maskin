@@ -526,3 +526,23 @@ export function trackSlackTriggerResumedFromAutoPause(p: {
 		time_since_pause_ms: p.time_since_pause_ms,
 	})
 }
+
+// Loops v4 (D6c): scroll-depth telemetry on the loop-detail vertical-story
+// spine. Fires at 25 / 50 / 75 / 100 percent as the user scrolls the flow
+// container into view — exactly once per depth per mount. Wired to the parent
+// bet's Won-condition "one-scroll read" measurement (the SHAPE flags this
+// event as load-bearing). `depth` is the four-value union rather than a raw
+// number so a typo can't invent a fifth bucket, and `loopId` is the
+// `objects.id` for taxonomy joins on the standard `entity_id` field.
+export function trackLoopsDetailFlowScrollDepth(p: {
+	depth: 25 | 50 | 75 | 100
+	loopId: string
+}): void {
+	trackEvent('loops.detail.flow_scroll_depth', {
+		depth: p.depth,
+		loopId: p.loopId,
+		entity_id: p.loopId,
+		entity_type: 'loop',
+		source: 'web',
+	})
+}
