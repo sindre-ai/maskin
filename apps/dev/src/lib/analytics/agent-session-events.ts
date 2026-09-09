@@ -7,6 +7,19 @@ interface AgentSessionStartedWithPromptProps {
 	agentId: string
 	agentName: string
 	systemPrompt: string
+	/**
+	 * Names the dispatch path that spawned this session. Present for sessions
+	 * spawned by the comment-fallback resolver (`'comment_fallback'`) so
+	 * PostHog queries can attribute a session to comment→dispatch vs. cron,
+	 * event triggers, etc. Absent for every other path.
+	 */
+	triggerSource?: string
+	/**
+	 * `events.id` of the `commented` row that caused this session. Paired with
+	 * `triggerSource` so a resolved comment can be traced end-to-end from
+	 * comment → notification → session.
+	 */
+	sourceCommentEventId?: number
 }
 
 /**
@@ -42,6 +55,8 @@ export async function trackAgentSessionStartedWithPrompt(
 			agent_name: p.agentName,
 			system_prompt_chars: chars,
 			system_prompt_tokens: tokens,
+			trigger_source: p.triggerSource,
+			source_comment_event_id: p.sourceCommentEventId,
 		})
 	} catch (err) {
 		logger.warn('Failed to emit agent_session_started_with_prompt', {
