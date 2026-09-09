@@ -55,43 +55,7 @@ async function seedChain(apiKey: string, workspaceId: string, count: number) {
 	}
 }
 
-test.describe('Claude subscriptions — identity and labels', () => {
-	test('the Anthropic account renders alongside the workspace nickname', async ({
-		page,
-		account,
-	}) => {
-		await grantEnterprise(account.apiKey, account.workspaceId)
-		await importClaudeOAuth(account.apiKey, account.workspaceId, {
-			...credentials('identity'),
-			nickname: 'Work account',
-		})
-
-		// The identity comes from Anthropic, which this stack can't reach with
-		// a fake token — mock the status boundary, as the failover spec does.
-		await page.route('**/api/claude-oauth/status*', async (route) => {
-			const response = await route.fetch()
-			const body = (await response.json()) as {
-				slots: Record<string, Record<string, unknown>>
-			}
-			if (body.slots.primary) {
-				body.slots.primary.account_email = 'owner@example.com'
-				body.slots.primary.account_organization = 'Example Inc'
-			}
-			await route.fulfill({ response, json: body })
-		})
-
-		await page.goto(`/${account.workspaceId}/settings/keys`)
-
-		await expect(page.getByTestId('slot-primary-nickname')).toHaveValue('Work account')
-		await expect(page.getByTestId('slot-primary-account')).toContainText('owner@example.com')
-		await expect(page.getByTestId('slot-primary-account')).toContainText('Example Inc')
-
-		for (const vp of SHIP_GATE_VIEWPORTS) {
-			await page.setViewportSize({ width: vp.width, height: vp.height })
-			await expect(page.getByTestId('slot-primary-account')).toBeVisible()
-		}
-	})
-
+test.describe('Claude subscriptions — nicknames', () => {
 	test('a nickname survives replacing the credentials in that slot', async ({ page, account }) => {
 		await grantEnterprise(account.apiKey, account.workspaceId)
 		await importClaudeOAuth(account.apiKey, account.workspaceId, {

@@ -1,37 +1,32 @@
 import { createHash } from 'node:crypto'
 import { vi } from 'vitest'
 
-// Only the three functions that reach outside the process are stubbed —
-// encryption (no key in unit tests), the token refresh, and the account
-// lookup. Everything else, `preserveSlotLabels` in particular, runs for real
-// so these tests exercise the label-preservation logic rather than a copy of
-// it.
+// Only the functions that reach outside the process are stubbed —
+// encryption (no key in unit tests) and the token refresh. Everything else,
+// `preserveSlotLabels` in particular, runs for real so these tests exercise
+// the label-preservation logic rather than a copy of it.
 vi.mock('../../lib/claude-oauth', async () => {
 	const actual =
 		await vi.importActual<typeof import('../../lib/claude-oauth')>('../../lib/claude-oauth')
 	return {
 		...actual,
-		encryptOAuthTokens: vi
-			.fn()
-			.mockImplementation((tokens: { nickname?: string; account?: unknown }) => ({
-				encryptedAccessToken: 'enc-access',
-				encryptedRefreshToken: 'enc-refresh',
-				expiresAt: 1_800_000_000_000,
-				subscriptionType: 'pro',
-				nickname: tokens.nickname,
-				account: tokens.account,
-			})),
+		encryptOAuthTokens: vi.fn().mockImplementation((tokens: { nickname?: string }) => ({
+			encryptedAccessToken: 'enc-access',
+			encryptedRefreshToken: 'enc-refresh',
+			expiresAt: 1_800_000_000_000,
+			subscriptionType: 'pro',
+			nickname: tokens.nickname,
+		})),
 		decryptOAuthData: vi.fn().mockReturnValue({
 			accessToken: 'plain-access',
 			refreshToken: 'plain-refresh',
 			expiresAt: 1_800_000_000_000,
 		}),
 		getValidOAuthToken: vi.fn(),
-		fetchClaudeAccount: vi.fn().mockResolvedValue(undefined),
 	}
 })
 
-import { fetchClaudeAccount, getValidOAuthToken } from '../../lib/claude-oauth'
+import { getValidOAuthToken } from '../../lib/claude-oauth'
 import { buildWorkspace, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -42,7 +37,6 @@ const wsId = '00000000-0000-0000-0000-000000000001'
 const headers = { 'x-workspace-id': wsId }
 
 const mockGetValid = getValidOAuthToken as ReturnType<typeof vi.fn>
-const mockFetchAccount = fetchClaudeAccount as ReturnType<typeof vi.fn>
 
 function expectedFingerprint(accessToken: string, refreshToken: string) {
 	return createHash('sha256').update(`${accessToken}:${refreshToken}`).digest('hex').slice(0, 8)
@@ -504,42 +498,6 @@ describe('Claude OAuth Routes', () => {
 				settings: { claude_oauth: { primary: { nickname?: string } } }
 			}
 			expect(update.settings.claude_oauth.primary.nickname).toBe('New name')
-		})
-
-		it('stores the Anthropic account identity alongside the tokens', async () => {
-			mockFetchAccount.mockResolvedValueOnce({
-				email: 'owner@example.com',
-				organization: 'Example Inc',
-				fetchedAt: 1_800_000_000_000,
-			})
-			const workspace = buildWorkspace({ id: wsId, settings: {} })
-			const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
-			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
-
-			await app.request(jsonRequest('POST', '/api/claude-oauth/import', baseImport, headers))
-
-			const update = calls.updates[0] as {
-				settings: { claude_oauth: { primary: { account?: { email?: string } } } }
-			}
-			expect(update.settings.claude_oauth.primary.account).toEqual({
-				email: 'owner@example.com',
-				organization: 'Example Inc',
-				fetchedAt: 1_800_000_000_000,
-			})
-		})
-
-		it('imports normally when the account lookup fails', async () => {
-			// A display label must never be able to block a credential import.
-			mockFetchAccount.mockRejectedValueOnce(new Error('network down'))
-			const workspace = buildWorkspace({ id: wsId, settings: {} })
-			const { app, mockResults } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
-			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
-
-			const res = await app.request(
-				jsonRequest('POST', '/api/claude-oauth/import', baseImport, headers),
-			)
-
-			expect(res.status).toBe(200)
 		})
 
 		it('returns 403 when not a workspace member', async () => {

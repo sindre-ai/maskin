@@ -17,9 +17,7 @@ import {
 	type EncryptedOAuthData,
 	decryptOAuthData,
 	encryptOAuthTokens,
-	fetchClaudeAccount,
 	getValidOAuthToken,
-	parseAccountIdentity,
 	persistRefreshedSlot,
 	preserveSlotLabels,
 	refreshClaudeToken,
@@ -147,43 +145,6 @@ describe('refreshClaudeToken', () => {
 		const result = await refreshClaudeToken(makeTokens({ nickname: 'Work account' }))
 
 		expect(result.nickname).toBe('Work account')
-	})
-
-	it('carries a known account identity through a refresh that does not restate it', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi.fn().mockResolvedValue({
-				ok: true,
-				json: () => Promise.resolve({ access_token: 'a', expires_in: 7200 }),
-			}),
-		)
-
-		const result = await refreshClaudeToken(
-			makeTokens({ account: { email: 'owner@example.com', fetchedAt: 1 } }),
-		)
-
-		expect(result.account).toEqual({ email: 'owner@example.com', fetchedAt: 1 })
-	})
-
-	it('prefers an account identity restated by the refresh response', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi.fn().mockResolvedValue({
-				ok: true,
-				json: () =>
-					Promise.resolve({
-						access_token: 'a',
-						expires_in: 7200,
-						account: { email_address: 'new@example.com' },
-					}),
-			}),
-		)
-
-		const result = await refreshClaudeToken(
-			makeTokens({ account: { email: 'old@example.com', fetchedAt: 1 } }),
-		)
-
-		expect(result.account?.email).toBe('new@example.com')
 	})
 
 	it('preserves original refresh_token when response omits it', async () => {
@@ -518,74 +479,12 @@ describe('persistRefreshedSlot', () => {
 	})
 })
 
-describe('parseAccountIdentity', () => {
-	it('reads the account email and organisation name from a nested body', () => {
-		expect(
-			parseAccountIdentity({
-				account: { email_address: 'owner@example.com', uuid: 'x' },
-				organization: { name: 'Example Inc', uuid: 'y' },
-			}),
-		).toMatchObject({ email: 'owner@example.com', organization: 'Example Inc' })
-	})
-
-	it('accepts the flatter shapes an unversioned endpoint might return', () => {
-		expect(parseAccountIdentity({ email: 'owner@example.com' })).toMatchObject({
-			email: 'owner@example.com',
-		})
-		expect(parseAccountIdentity({ account: { emailAddress: 'owner@example.com' } })).toMatchObject({
-			email: 'owner@example.com',
-		})
-	})
-
-	it('returns undefined rather than an empty identity for an unrecognised body', () => {
-		// The response shape is not ours to control, so "we don't know" has to
-		// be representable — an empty label would render as a blank card line.
-		expect(parseAccountIdentity({ unexpected: true })).toBeUndefined()
-		expect(parseAccountIdentity(null)).toBeUndefined()
-		expect(parseAccountIdentity('nope')).toBeUndefined()
-		expect(parseAccountIdentity({ account: { email_address: '   ' } })).toBeUndefined()
-	})
-})
-
-describe('fetchClaudeAccount', () => {
-	afterEach(() => {
-		vi.unstubAllGlobals()
-	})
-
-	it('sends the subscription token as a bearer token', async () => {
-		const fetchMock = vi.fn().mockResolvedValue({
-			ok: true,
-			json: () => Promise.resolve({ account: { email_address: 'owner@example.com' } }),
-		})
-		vi.stubGlobal('fetch', fetchMock)
-
-		const account = await fetchClaudeAccount('tok-123')
-
-		expect(account?.email).toBe('owner@example.com')
-		const [, init] = fetchMock.mock.calls[0]
-		expect(init.headers.Authorization).toBe('Bearer tok-123')
-	})
-
-	it('returns undefined on a non-2xx instead of throwing', async () => {
-		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401 }))
-
-		await expect(fetchClaudeAccount('tok-123')).resolves.toBeUndefined()
-	})
-
-	it('returns undefined when the request fails outright', async () => {
-		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')))
-
-		await expect(fetchClaudeAccount('tok-123')).resolves.toBeUndefined()
-	})
-})
-
 describe('preserveSlotLabels', () => {
 	const stored = {
 		encryptedAccessToken: 'old-a',
 		encryptedRefreshToken: 'old-r',
 		expiresAt: 1,
 		nickname: 'Work account',
-		account: { email: 'owner@example.com', fetchedAt: 1 },
 	}
 	const incoming = {
 		encryptedAccessToken: 'new-a',
@@ -593,11 +492,10 @@ describe('preserveSlotLabels', () => {
 		expiresAt: 2,
 	}
 
-	it('carries both display fields onto a blob that omits them', () => {
+	it('carries the nickname onto a blob that omits it', () => {
 		expect(preserveSlotLabels(incoming, stored)).toEqual({
 			...incoming,
 			nickname: 'Work account',
-			account: { email: 'owner@example.com', fetchedAt: 1 },
 		})
 	})
 

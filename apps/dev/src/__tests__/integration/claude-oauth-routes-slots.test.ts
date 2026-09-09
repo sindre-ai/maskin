@@ -13,17 +13,12 @@ vi.mock('../../lib/claude-oauth', async () => {
 	return {
 		...actual,
 		getValidOAuthToken: vi.fn().mockResolvedValue(null),
-		// The account lookup is a live call to Anthropic's profile endpoint —
-		// stubbed off by default so these tests exercise storage, not network.
-		fetchClaudeAccount: vi.fn().mockResolvedValue(undefined),
 	}
 })
 
 import { insertWorkspace } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
-
-import { fetchClaudeAccount } from '../../lib/claude-oauth'
 
 const { default: claudeOauthRoutes } = await import('../../routes/claude-oauth')
 
@@ -399,13 +394,6 @@ describe('Claude OAuth Routes — slot writes (integration)', () => {
 })
 
 describe('Claude OAuth Routes — more than two subscriptions (integration)', () => {
-	beforeEach(() => {
-		// Several tests below assert how MANY account lookups happened, so the
-		// shared module mock has to start each one at zero.
-		vi.mocked(fetchClaudeAccount).mockClear()
-		vi.mocked(fetchClaudeAccount).mockResolvedValue(undefined)
-	})
-
 	function importBody(suffix: string, slot?: string) {
 		return {
 			accessToken: `access-${suffix}`,
@@ -661,53 +649,6 @@ describe('Claude OAuth Routes — more than two subscriptions (integration)', ()
 			primary?: { nickname?: string; encryptedAccessToken: string }
 		}
 		expect(oauth.primary?.nickname).toBe('Work account')
-	})
-
-	it('stores the Anthropic account identity and returns it from /status', async () => {
-		vi.mocked(fetchClaudeAccount).mockResolvedValueOnce({
-			email: 'owner@example.com',
-			organization: 'Example Inc',
-			fetchedAt: 1_800_000_000_000,
-		})
-		const ws = await insertWorkspace(db, getTestActorId(), {
-			enterpriseGranted: true,
-			settings: { enabled_modules: ['work'] },
-		})
-
-		await makeApp().request(
-			jsonRequest('POST', '/api/claude-oauth/import', importBody('identified'), {
-				'x-workspace-id': ws.id,
-			}),
-		)
-
-		const res = await makeApp().request(
-			jsonGet('/api/claude-oauth/status', { 'x-workspace-id': ws.id }),
-		)
-		const body = (await res.json()) as {
-			slots: Record<string, { account_email?: string; account_organization?: string }>
-		}
-		expect(body.slots.primary?.account_email).toBe('owner@example.com')
-		expect(body.slots.primary?.account_organization).toBe('Example Inc')
-	})
-
-	it('imports normally when the account lookup fails', async () => {
-		// A display label must never be able to block a credential import.
-		vi.mocked(fetchClaudeAccount).mockRejectedValueOnce(new Error('network down'))
-		const ws = await insertWorkspace(db, getTestActorId(), {
-			enterpriseGranted: true,
-			settings: { enabled_modules: ['work'] },
-		})
-
-		const res = await makeApp().request(
-			jsonRequest('POST', '/api/claude-oauth/import', importBody('lookup-down'), {
-				'x-workspace-id': ws.id,
-			}),
-		)
-
-		expect(res.status).toBe(200)
-		const oauth = (await readClaudeOAuth(ws.id)) as { primary?: { account?: unknown } }
-		expect(oauth.primary).toBeDefined()
-		expect(oauth.primary?.account).toBeUndefined()
 	})
 
 	it('keeps every stored slot parseable by the workspace settings schema', async () => {

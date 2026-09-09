@@ -15,7 +15,7 @@ vi.mock('../../lib/stripe', async () => {
 	}
 })
 // Only what reaches outside the process is stubbed: encryption (no key in
-// unit tests), the token refresh, and the account lookup.
+// unit tests) and the token refresh.
 vi.mock('../../lib/claude-oauth', async () => {
 	const actual =
 		await vi.importActual<typeof import('../../lib/claude-oauth')>('../../lib/claude-oauth')
@@ -28,7 +28,6 @@ vi.mock('../../lib/claude-oauth', async () => {
 			subscriptionType: 'pro',
 		}),
 		getValidOAuthToken: vi.fn(),
-		fetchClaudeAccount: vi.fn().mockResolvedValue(undefined),
 	}
 })
 

@@ -324,7 +324,6 @@ function SlotCard({
 	}
 
 	const label = slotLabel(position)
-	const accountLine = [info.account_email, info.account_organization].filter(Boolean).join(' · ')
 	const isActive = activeSlot === slot
 	const reasonCopy = info.failure_reason ? FAILOVER_REASON_COPY[info.failure_reason] : undefined
 	// A recorded failure only means "unhealthy" while something else is
@@ -417,19 +416,6 @@ function SlotCard({
 					<span className="text-xs font-mono text-muted-foreground">id {info.fingerprint}</span>
 				)}
 			</div>
-			{accountLine && (
-				// Anthropic's own name for this subscription. Shown alongside the
-				// nickname rather than instead of it: the same Anthropic account
-				// can be connected to several workspaces, each of which may want
-				// to call it something different.
-				<p
-					className="text-xs text-muted-foreground truncate"
-					title={accountLine}
-					data-testid={`slot-${slot}-account`}
-				>
-					{accountLine}
-				</p>
-			)}
 			{unhealthyLine && <p className="text-xs text-warning">{unhealthyLine}</p>}
 			<div className="flex flex-wrap gap-2 pt-1">
 				{position > 0 && (

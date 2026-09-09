@@ -3,14 +3,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { workspaceMembers, workspaces } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
-import {
-	type ClaudeOAuthTokens,
-	decryptAccountIdentity,
-	encryptOAuthTokens,
-	fetchClaudeAccount,
-	getValidOAuthToken,
-	preserveSlotLabels,
-} from '../lib/claude-oauth'
+import { encryptOAuthTokens, getValidOAuthToken, preserveSlotLabels } from '../lib/claude-oauth'
 import {
 	MAX_OAUTH_SLOTS,
 	type OAuthSlotKind,
@@ -73,9 +66,6 @@ const slotStatusSchema = z.object({
 	expires_at: z.number(),
 	fingerprint: z.string(),
 	nickname: z.string().optional(),
-	/** Who Anthropic says this subscription belongs to. Display only. */
-	account_email: z.string().optional(),
-	account_organization: z.string().optional(),
 	/** When this slot was last classified unusable, and why. */
 	failure_at: z.number().optional(),
 	failure_reason: z.string().optional(),
@@ -302,9 +292,6 @@ app.openapi(statusRoute, (async (c) => {
 	const slotResponse: Record<string, z.infer<typeof slotStatusSchema>> = {}
 	for (const [position, entry] of chain.entries()) {
 		const failure = slotFailure(failover, entry.id)
-		// Identity is captured at import time; a slot connected before that
-		// existed simply has none until its credentials are next imported.
-		const account = entry.data.account ? decryptAccountIdentity(entry.data.account) : undefined
 		slotResponse[entry.id] = {
 			slot: entry.id,
 			position,
@@ -312,8 +299,6 @@ app.openapi(statusRoute, (async (c) => {
 			expires_at: entry.data.expiresAt,
 			fingerprint: slotFingerprint(entry.data),
 			nickname: entry.data.nickname,
-			account_email: account?.email,
-			account_organization: account?.organization,
 			failure_at: failure.at,
 			failure_reason: failure.reason,
 		}
@@ -421,15 +406,7 @@ app.openapi(importRoute, (async (c) => {
 	}
 
 	const body = c.req.valid('json')
-	const { slot: requestedSlot, ...tokenFields } = body
-	// Ask Anthropic who this subscription belongs to BEFORE opening the
-	// transaction — a display lookup must not hold the workspace row lock
-	// across a network call. Guarded here as well as inside
-	// `fetchClaudeAccount`: importing a credential must not be able to fail
-	// because we could not work out what to call it, and that guarantee
-	// shouldn't rest on a promise made in another file.
-	const account = await fetchClaudeAccount(tokenFields.accessToken).catch(() => undefined)
-	const tokens: ClaudeOAuthTokens = { ...tokenFields, account }
+	const { slot: requestedSlot, ...tokens } = body
 
 	// Locked read-modify-write — see the disconnect route above for why.
 	//
