@@ -1899,17 +1899,32 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
-		// Inject per-org GitHub MCP server entries with literal tokens (no envsubst placeholder).
-		// Each installation gets its own named entry (e.g. github-sindre-ai) so agents in
-		// multi-org workspaces can target specific orgs via mcp__github-<owner>__* tools.
-		// We also set bare GITHUB_TOKEN so existing agent configs using ${GITHUB_TOKEN}
-		// continue to work after envsubst expansion.
-		for (const { ownerLogin, token } of resolvedGithubInstalls) {
+		// Inject per-org GitHub MCP server entries pointing at the Maskin-owned
+		// HTTP MCP route (apps/dev's /api/integrations/github/mcp/:integrationId).
+		// Each installation gets its own named entry (e.g. github-sindre-ai) so
+		// agents in multi-org workspaces can target specific orgs via
+		// mcp__github-<owner>__* tools — the log classifier and existing agent
+		// prompts rely on the `github-<owner>` prefix.
+		//
+		// Replaces the third-party stdio subprocess `@modelcontextprotocol/server-github`
+		// that used to carry `GITHUB_PERSONAL_ACCESS_TOKEN` baked into its env at
+		// spawn: that token expired exactly one hour later (GitHub App installation
+		// TTL) with no in-process refresh path, silently 401-ing every tool call
+		// after the mint mark. The new route mints via TokenManager per request,
+		// caches for 50 minutes, and retries once on 401 (see
+		// `providers/github/mcp-server.ts` + `mcp-token-mint.ts`).
+		//
+		// We also set bare GITHUB_TOKEN below so existing agent configs using
+		// ${GITHUB_TOKEN} continue to work after envsubst expansion.
+		const backendUrlPlaceholder = '${MASKIN_API_URL}'
+		for (const { ownerLogin, integrationId } of resolvedGithubInstalls) {
 			autoInjectedMcpServers[`github-${ownerLogin.toLowerCase()}`] = {
-				type: 'stdio',
-				command: 'npx',
-				args: ['-y', '@modelcontextprotocol/server-github'],
-				env: { GITHUB_PERSONAL_ACCESS_TOKEN: token },
+				type: 'http',
+				url: `${backendUrlPlaceholder}/api/integrations/github/mcp/${integrationId}`,
+				headers: {
+					Authorization: 'Bearer ${MASKIN_API_KEY}',
+					'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+				},
 			}
 		}
 		// Register the session's github installs with the log classifier so
@@ -2057,6 +2072,24 @@ export class SessionManager extends EventEmitter {
 			installationId: installationIdByMcpName.get(id.name),
 			writeProbeRepo: writeProbeRepoByMcpName.get(id.name),
 		}))
+		// The auto-injected `github-<owner>` entries are HTTP-based (they point at
+		// apps/dev's own /api/integrations/github/mcp/:id route, which mints per
+		// call and retries once on 401) — they carry no GITHUB_PERSONAL_ACCESS_TOKEN
+		// in their env, so collectGitHubMcpIdentities above cannot see them. Add
+		// them explicitly from `resolvedGithubInstalls`, using the token that was
+		// already minted at line 1824 for each install. This preserves the pre-
+		// launch write-scope probe (and the Slack alert on failure) for those
+		// entries, so a bad grant is still caught before the container boots.
+		for (const install of resolvedGithubInstalls) {
+			const name = `github-${install.ownerLogin.toLowerCase()}`
+			if (preflightIdentities.some((id) => id.name === name)) continue
+			preflightIdentities.push({
+				name,
+				token: install.token,
+				installationId: install.installationId,
+				writeProbeRepo: writeProbeRepoByMcpName.get(name),
+			})
+		}
 		let preflightVerdicts: PreflightVerdict[] = []
 		if (preflightIdentities.length > 0) {
 			preflightVerdicts = await runGitHubPreflight(preflightIdentities)
