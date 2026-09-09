@@ -14,6 +14,7 @@ const settingsNav = [
 	{ label: 'Integrations', to: '/$workspaceId/settings/integrations' as const },
 	{ label: 'Extensions', to: '/$workspaceId/settings/extensions' as const },
 	{ label: 'Skills', to: '/$workspaceId/settings/skills' as const },
+	{ label: 'MCP', to: '/$workspaceId/settings/mcp' as const },
 	{ label: 'Billing', to: '/$workspaceId/settings/billing' as const },
 ]
 
