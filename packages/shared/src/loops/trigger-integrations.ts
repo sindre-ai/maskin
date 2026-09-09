@@ -1,71 +1,102 @@
 /**
- * Static `triggerKind → requiredIntegrations[]` map. Same import used by the
- * D9 `LoopPlanCard` (frontend, to render the "NEEDS THESE CONNECTED" row) and
- * by the `trigger-runner` create-time validation (backend, to reject a
- * trigger whose owning workspace has not connected the providers it needs).
- * One module = one source of truth; the two callsites can never diverge.
+ * Static map `triggerKind → requiredIntegrations[]` consumed by:
+ *  - **LoopPlanCard** (D9 NEEDS THESE CONNECTED row on /loops/new)
+ *  - **trigger-runner** create-time validation (future).
  *
- * ## Scope
+ * Bet SPEC Q3 pins the shape as a shared static map for the frontend, promoted
+ * to a server endpoint only when the map churns. Keys are the trigger `type`
+ * values from **triggerTypeSchema** (**cron** | **event** | **reminder**).
  *
- * "Trigger kind" here is the `triggerTypeSchema` value from
- * `../schemas/triggers.ts` — the discriminant on `triggers.type`. The live
- * schema declares three: `cron`, `event`, `reminder`. None of them
- * intrinsically requires a third-party integration to fire — a cron fires on
- * schedule, an event fires on a workspace event, a reminder fires on a
- * scheduled_at wall clock. The map therefore ships with every kind mapped to
- * `[]`; a future kind (e.g. an inbound-webhook trigger) would add its own
- * entry with the provider(s) that must be connected for it to receive.
- *
- * ## Discrepancy note
- *
- * The bet SPEC ("Loops & Loop detail — v4 UX/UI polish", D9 section) refers
- * to "the four trigger kinds we have today". The live trigger-runner + the
- * `triggerTypeSchema` in `packages/shared/src/schemas/triggers.ts` declare
- * three (`cron`, `event`, `reminder`), and `triggers.test.ts` explicitly
- * rejects a fourth (`'webhook'`). This module ships with all three current
- * kinds — the SPEC's "four" reads as stale. Flagged in the PR body so the
- * bet's driver can reconcile the SPEC (or reintroduce the fourth kind under
- * a separate task) rather than have the module guess.
- *
- * ## Not a server endpoint
- *
- * Per SPEC Q3, the map is deliberately a static frontend/shared constant, not
- * a `GET /api/trigger-integrations` endpoint. Promotion to a server endpoint
- * is reserved for a follow-on bet if the map churns or exceeds ~7 kinds.
+ * Task 1 (Land shared loop helper modules) will expand this file with feature
+ * flag scaffolding + waiting-on-viewer.ts. This D9 pass landed the module
+ * because Task 1 hadn't cut a branch yet — the exports below are stable
+ * (both `TRIGGER_KIND_INTEGRATIONS` and `getRequiredIntegrationsForPlanTrigger`
+ * are what consumers import). If Task 1's PR updates the map, keep those
+ * export names.
  */
 
-import type { z } from 'zod'
-import type { triggerTypeSchema } from '../schemas/triggers'
+/** Provider names align with **ProviderInfo.name** returned by
+ *  **GET /integrations/providers**, so the frontend can look them up in one
+ *  step. */
+export type ProviderName = string
 
-/**
- * Alias for the trigger-kind discriminant. Sourced from
- * `triggerTypeSchema` so the union here can never drift from the schema
- * (adding a fourth kind there without extending the map below produces a
- * type error at the `satisfies` line).
- */
-export type TriggerKind = z.infer<typeof triggerTypeSchema>
+/** The set of trigger kinds today (matches **triggerTypeSchema**). SPEC says
+ *  "four kinds"; only three are enumerated in schemas today — flagged in the
+ *  D9 PR so Task 1 can reconcile.  */
+export type TriggerKind = 'cron' | 'event' | 'reminder'
 
-/**
- * Integration provider names — kept as free strings on purpose. The canonical
- * list lives in `apps/dev/src/lib/integrations/registry.ts`; duplicating a
- * union of provider names here would drift the moment a provider is added or
- * renamed. `KNOWN_PROVIDERS` in `packages/mcp/src/setup-guidance/providers.ts`
- * makes the same call for the same reason.
- */
-export type IntegrationName = string
-
-export const TRIGGER_INTEGRATIONS = {
+/** By kind, integrations that must be connected before any trigger of that
+ *  kind can fire. `event` triggers may need one of many providers depending on
+ *  the `entity_type` — inference for that lives in
+ *  **getRequiredIntegrationsForPlanTrigger** since the map is static per
+ *  SPEC Q3. */
+export const TRIGGER_KIND_INTEGRATIONS: Record<TriggerKind, ProviderName[]> = {
 	cron: [],
 	event: [],
 	reminder: [],
-} as const satisfies Record<TriggerKind, readonly IntegrationName[]>
+}
 
-/**
- * Convenience accessor. Returns `[]` for a kind that isn't in the map, which
- * lets D9's LoopPlanCard render "no integrations required" for a future kind
- * that ships before this map catches up — a soft-fail is safer here than a
- * throw that blacks out the plan card.
- */
-export function requiredIntegrationsFor(kind: string): readonly IntegrationName[] {
-	return (TRIGGER_INTEGRATIONS as Record<string, readonly IntegrationName[]>)[kind] ?? []
+/** Keywords that appear in the plan's freeform **whenClause** or the
+ *  trigger's target agent, mapped to the provider they imply. Providers not
+ *  configured on the server are ignored downstream (**LoopPlanCard** drops
+ *  any provider whose name isn't in the workspace's provider list). */
+const CLAUSE_KEYWORD_TO_PROVIDER: Array<{ keywords: string[]; provider: ProviderName }> = [
+	{ keywords: ['slack'], provider: 'slack' },
+	{ keywords: ['github', 'pull request', 'pr merged', 'commit'], provider: 'github' },
+	{ keywords: ['linear'], provider: 'linear' },
+	{ keywords: ['hubspot', 'pipeline'], provider: 'hubspot' },
+	{ keywords: ['posthog'], provider: 'posthog' },
+	{ keywords: ['skjald', 'transcript'], provider: 'skjald' },
+	{ keywords: ['stripe'], provider: 'stripe' },
+	{ keywords: ['notion'], provider: 'notion' },
+]
+
+export interface PlanTriggerLike {
+	/** The plan's UI-level kind label (**EVENT** | **RECURRING** | **NOTIFY**)
+	 *  — LoopPlan carries these, not the raw schema type. Kept optional so
+	 *  callers with the raw type can pass that instead. */
+	kindLabel?: string
+	whenClause?: string
+	targetAgent?: string
+}
+
+/** Map a LoopPlan trigger's UI kind label to the schema `TriggerKind` so the
+ *  static map can be indexed. Unknown labels fall through as `event`, the
+ *  most conservative default (event triggers may require any provider). */
+export function normalizeTriggerKindLabel(label: string | undefined): TriggerKind {
+	const value = (label ?? '').toLowerCase()
+	if (value === 'recurring' || value === 'cron') return 'cron'
+	if (value === 'reminder') return 'reminder'
+	return 'event'
+}
+
+/** Deduped list of provider names required to run this plan trigger. Combines:
+ *  1. Static per-kind requirements from `TRIGGER_KIND_INTEGRATIONS`.
+ *  2. Content inference on the trigger's `whenClause` + `targetAgent` — a
+ *     sentence like "when someone slacks me…" needs the slack provider even
+ *     though the plan doesn't carry the raw `entity_type`. */
+export function getRequiredIntegrationsForPlanTrigger(trigger: PlanTriggerLike): ProviderName[] {
+	const kind = normalizeTriggerKindLabel(trigger.kindLabel)
+	const providers = new Set<ProviderName>(TRIGGER_KIND_INTEGRATIONS[kind])
+	const haystack = `${trigger.whenClause ?? ''} ${trigger.targetAgent ?? ''}`.toLowerCase()
+	for (const { keywords, provider } of CLAUSE_KEYWORD_TO_PROVIDER) {
+		if (keywords.some((k) => haystack.includes(k))) providers.add(provider)
+	}
+	return Array.from(providers)
+}
+
+/** Deduped list across every trigger in a plan. Ordering preserved from the
+ *  first mention across triggers — important for the footer sentence, which
+ *  reads them left-to-right. */
+export function getRequiredIntegrationsForPlan(triggers: PlanTriggerLike[]): ProviderName[] {
+	const providers: ProviderName[] = []
+	const seen = new Set<ProviderName>()
+	for (const trigger of triggers) {
+		for (const provider of getRequiredIntegrationsForPlanTrigger(trigger)) {
+			if (seen.has(provider)) continue
+			seen.add(provider)
+			providers.push(provider)
+		}
+	}
+	return providers
 }
