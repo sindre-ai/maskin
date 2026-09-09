@@ -111,6 +111,7 @@ describe('Loops read API integration', () => {
 				agentIds: string[]
 				triggerIds: string[]
 				waitingOnViewer: boolean
+				targets: unknown
 			}>
 		}
 		expect(body.loops).toHaveLength(1)
@@ -127,6 +128,62 @@ describe('Loops read API integration', () => {
 		expect(row.agentIds).toEqual([])
 		expect(row.triggerIds).toEqual([])
 		expect(row.waitingOnViewer).toBe(false)
+		// A loop with no metadata.targets reads as null on the response so the
+		// frontend renders no <TargetsAndOwners> section (bet D5).
+		expect(row.targets).toBeNull()
+	})
+
+	it('surfaces metadata.targets on the response, dropping malformed entries (bet D5)', async () => {
+		const ownerActorId = '11111111-1111-4111-8111-111111111111'
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Targets loop',
+			metadata: {
+				targets: [
+					{
+						label: 'Posts published',
+						source: 'posts published this month',
+						actual: 6,
+						target: 8,
+						ownerActorId,
+					},
+					{
+						label: 'LinkedIn impressions',
+						source: 'metric:linkedin.impressions',
+						actual: 4200,
+						target: 5000,
+					},
+					// Malformed row — missing `target` — silently dropped rather
+					// than 500-ing the endpoint. Same tolerance the rest of the
+					// route already gives hand-edited metadata.
+					{ label: 'broken', source: 'foo', actual: 1 },
+				],
+			},
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(
+			jsonGet(`/api/loops?id=${loop.id}`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			loops: Array<{
+				targets: Array<{
+					label: string
+					source: string
+					actual: number
+					target: number
+					ownerActorId?: string
+				}> | null
+			}>
+		}
+		const [row] = body.loops
+		expect(row).toBeDefined()
+		expect(row.targets).toHaveLength(2)
+		expect(row.targets?.[0]?.label).toBe('Posts published')
+		expect(row.targets?.[0]?.ownerActorId).toBe(ownerActorId)
+		expect(row.targets?.[1]?.source).toBe('metric:linkedin.impressions')
 	})
 
 	it('scopes to a single loop when `id` is passed (used by get_loop)', async () => {

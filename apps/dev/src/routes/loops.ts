@@ -1,8 +1,8 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
-	events,
 	actors,
+	events,
 	objects,
 	readState,
 	relationships,
@@ -10,9 +10,11 @@ import {
 	triggers,
 } from '@maskin/db/schema'
 import {
+	type LoopTarget,
 	TERMINAL_BET_STATUSES,
 	listLoopStepsResponseSchema,
 	listLoopsResponseSchema,
+	loopTargetSchema,
 } from '@maskin/shared'
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
@@ -104,6 +106,24 @@ function readClosedStatuses(meta: Record<string, unknown>): Record<string, strin
 		}
 	}
 	return Object.keys(cleaned).length > 0 ? cleaned : null
+}
+
+/**
+ * Extract a loop's `metadata.targets` (bet D5). Returns `null` when the field
+ * is absent, not an array, or every row inside failed Zod validation — the
+ * frontend then renders no `<TargetsAndOwners>` section. Malformed individual
+ * entries are dropped rather than 500-ing the whole `/api/loops` response,
+ * same tolerance the rest of this file already gives hand-edited metadata.
+ */
+function readLoopTargets(meta: Record<string, unknown>): LoopTarget[] | null {
+	const raw = meta.targets
+	if (!Array.isArray(raw)) return null
+	const cleaned: LoopTarget[] = []
+	for (const entry of raw) {
+		const parsed = loopTargetSchema.safeParse(entry)
+		if (parsed.success) cleaned.push(parsed.data)
+	}
+	return cleaned.length > 0 ? cleaned : null
 }
 
 const listLoopsQuerySchema = z.object({
@@ -347,6 +367,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 				typeof meta.close_condition === 'string' && meta.close_condition.length > 0
 					? meta.close_condition
 					: null
+			const targets = readLoopTargets(meta)
 
 			const stats = childStatsByLoop.get(row.id) ?? {
 				inProgressCount: 0,
@@ -393,6 +414,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 				agentIds,
 				triggerIds,
 				waitingOnViewer,
+				targets,
 				createdAt: row.createdAt ? row.createdAt.toISOString() : null,
 				updatedAt: row.updatedAt ? row.updatedAt.toISOString() : null,
 			}
