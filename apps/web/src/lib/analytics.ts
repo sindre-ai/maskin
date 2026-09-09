@@ -562,3 +562,16 @@ export function trackAskBannerDecideClicked(p: {
 		pendingCount: p.pendingCount,
 	})
 }
+
+// Ship-metric event for D8 of the Loops v4 UX/UI polish bet
+// (bet/d166-loops-v4-polish). Fires once per click on the "Mark read" CTA
+// inside the loop-detail TimelineTab's `NEW · {n} unread` divider.
+export function trackMarkReadClicked(p: { loop_id: string; unread_count: number }): void {
+	trackEvent('mark_read_clicked', {
+		loop_id: p.loop_id,
+		unread_count: p.unread_count,
+		entity_id: p.loop_id,
+		entity_type: 'loop',
+		source: 'web',
+	})
+}

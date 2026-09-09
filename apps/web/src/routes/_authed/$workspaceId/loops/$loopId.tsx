@@ -70,6 +70,11 @@ function LoopDetailRoute() {
 	// section never renders even when the loop has targets, so a rollback is
 	// a flag flip rather than a code change.
 	const targetsFlag = useFeatureFlag('loops-v4-polish.targets')
+	// D8 sub-flag boundary — read once at this route, then threaded into
+	// TimelineTab as an options prop so the shared component stays flag-free
+	// for Objects and every other consumer. Off preserves the pre-bet unread
+	// divider so a rollback is a flag flip, not a code change.
+	const unreadPolishFlag = useFeatureFlag('loops-v4-polish.unread')
 	const {
 		data: loop,
 		isLoading: loopLoading,
@@ -448,7 +453,10 @@ function LoopDetailRoute() {
 							</span>
 							<div className="h-px flex-1 bg-muted" />
 						</div>
-						<TimelineTab object={object} />
+						<TimelineTab
+							object={object}
+							loopsV4PolishUnread={unreadPolishFlag ? { loopId } : undefined}
+						/>
 					</div>
 				)}
 
