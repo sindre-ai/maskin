@@ -226,6 +226,35 @@ describe('SessionManager', () => {
 			).rejects.toThrow('Failed to create session')
 		})
 
+		it('persists triggerSource + sourceCommentEventId onto session.config so trackAgentSessionStartedWithPrompt can read them at launch (always-a-responder wiring)', async () => {
+			// End-to-end contract check for the fallback ladder: the comment
+			// resolver passes triggerSource + sourceCommentEventId to createSession,
+			// which must persist them onto session.config so startSession's
+			// `trackAgentSessionStartedWithPrompt` picks them up on the reload
+			// path. If the key shape drifts here, PostHog stops receiving
+			// trigger_source / source_comment_event_id and the funnel can't
+			// attribute launches to the fallback path.
+			const session = buildSession({ status: 'pending' })
+			mockResults.insertQueue = [[session], []]
+
+			await manager.createSession('ws-1', {
+				actorId: 'actor-1',
+				actionPrompt: 'Reply to the comment',
+				createdBy: 'creator-1',
+				autoStart: false,
+				triggerSource: 'comment_fallback',
+				sourceCommentEventId: 9001,
+			})
+
+			const sessionInsert = calls.inserts.find((row) => {
+				if (typeof row !== 'object' || row === null || !('config' in row)) return false
+				const cfg = (row as { config?: Record<string, unknown> }).config
+				return cfg?.trigger_source === 'comment_fallback'
+			}) as { config: { trigger_source: string; source_comment_event_id: number } } | undefined
+			expect(sessionInsert?.config.trigger_source).toBe('comment_fallback')
+			expect(sessionInsert?.config.source_comment_event_id).toBe(9001)
+		})
+
 		it('rejects pre-insert when the workspace is over its plan cap', async () => {
 			// Workspace select returns a pro plan at cap; the cap query then
 			// returns rows whose reported dollar cost sums to ≥ hard_cap_usd_cents.

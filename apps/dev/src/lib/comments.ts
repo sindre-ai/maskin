@@ -2,12 +2,6 @@ import type { Database } from '@maskin/db'
 import { events, actors, subscriptions } from '@maskin/db/schema'
 import type { CommentDecision } from '@maskin/shared'
 import { inArray } from 'drizzle-orm'
-import { insertNotificationsWithEvents } from './notifications'
-
-export interface AgentMention {
-	agentId: string
-	notificationId: string
-}
 
 export interface PostCommentInput {
 	workspaceId: string
@@ -30,7 +24,6 @@ export interface PostCommentInput {
 
 export interface PostCommentResult {
 	comment: typeof events.$inferSelect
-	agentMentions: AgentMention[]
 	/**
 	 * Mention ids from the request that matched no row in `actors`. Callers
 	 * surface these back to the client — an agent posting over MCP typically
@@ -42,17 +35,14 @@ export interface PostCommentResult {
 }
 
 /**
- * Core comment-creation logic: insert the `commented` event, notify
- * @mentioned agents, and auto-subscribe the commenter + mentions. Shared by
- * `POST /api/events` and any backend code that needs to post a comment
- * programmatically (e.g. the signup-welcome onboarding step in
- * `lib/onboarding/signup-welcome.ts`) — both need identical mention/
- * notification/subscription semantics so a mention triggers an agent session
- * regardless of whether the comment came from the HTTP route or from server
- * code.
+ * Core comment-creation logic: insert the `commented` event and auto-subscribe
+ * the commenter + mentions. Shared by `POST /api/events` and any backend code
+ * that needs to post a comment programmatically.
  *
- * Does NOT spawn agent sessions for `agentMentions` — callers do that after
- * this resolves, since the action prompt differs per caller.
+ * Does NOT create notifications or spawn agent sessions — the `comment_posted`
+ * subscriber in `trigger-runner.ts` (`CommentDispatcher`) is the single code
+ * path that owns comment→dispatch and reads the `commented` event off the
+ * `PgNotifyBridge` after this transaction commits.
  */
 export async function postComment(
 	db: Database,
@@ -86,53 +76,24 @@ export async function postComment(
 			throw new Error('Failed to create comment')
 		}
 
-		const agentMentions: AgentMention[] = []
-
 		// Mention ids come straight off the request body, so they can reference
 		// actors that never existed or were deleted since the client rendered the
-		// composer. Resolve them against `actors` once and use the resolved set for
-		// both notifications and subscriptions — inserting an unknown id into
-		// `subscriptions.actor_id` violates its FK and aborts the whole comment.
+		// composer. Resolve them against `actors` here so callers can surface
+		// unresolved ids back to the client and so the auto-subscribe below never
+		// tries to insert an unknown id into `subscriptions.actor_id` (which
+		// would violate its FK and abort the whole comment).
 		let existingMentionedIds: string[] = []
 		let unresolvedMentions: string[] = []
 
 		if (input.mentions?.length) {
 			const mentionedActors = await tx
-				.select({ id: actors.id, type: actors.type })
+				.select({ id: actors.id })
 				.from(actors)
 				.where(inArray(actors.id, input.mentions))
 
 			existingMentionedIds = mentionedActors.map((a) => a.id)
 			const existingSet = new Set(existingMentionedIds)
 			unresolvedMentions = Array.from(new Set(input.mentions)).filter((id) => !existingSet.has(id))
-
-			const agentActors = mentionedActors.filter((a) => a.type === 'agent')
-
-			if (agentActors.length > 0) {
-				const createdNotifications = await insertNotificationsWithEvents(tx, {
-					workspaceId: input.workspaceId,
-					actorId: input.actorId,
-					rows: agentActors.map((agent) => ({
-						workspaceId: input.workspaceId,
-						type: 'needs_input' as const,
-						title: '@mentioned by comment',
-						content: input.content,
-						sourceActorId: input.actorId,
-						targetActorId: agent.id,
-						objectId: input.entityId,
-						status: 'pending' as const,
-					})),
-				})
-
-				for (const notification of createdNotifications) {
-					if (notification.targetActorId) {
-						agentMentions.push({
-							agentId: notification.targetActorId,
-							notificationId: notification.id,
-						})
-					}
-				}
-			}
 		}
 
 		// Auto-subscribe the commenter — anyone who comments on an entity starts
@@ -176,6 +137,6 @@ export async function postComment(
 			}
 		}
 
-		return { comment, agentMentions, unresolvedMentions }
+		return { comment, unresolvedMentions }
 	})
 }

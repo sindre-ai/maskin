@@ -25,7 +25,7 @@ import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionDispatcher } from './services/session-dispatcher'
 import { SessionManager } from './services/session-manager'
-import { TriggerRunner } from './services/trigger-runner'
+import { CommentDispatcher, TriggerRunner } from './services/trigger-runner'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
 
@@ -110,6 +110,9 @@ const triggerRunner = new TriggerRunner(db, notifyBridge, sessionManager)
 triggerRunner.start().then(() => {
 	logger.info('Trigger runner started')
 })
+
+const commentDispatcher = new CommentDispatcher(db, notifyBridge, sessionManager)
+commentDispatcher.start()
 
 const gmailWatchRenewer = new GmailWatchRenewer(db)
 gmailWatchRenewer.start()
