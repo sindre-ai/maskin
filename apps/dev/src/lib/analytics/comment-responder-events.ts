@@ -8,6 +8,7 @@ export type CommentResponderCase =
 	| 'case_3_cos_fallback'
 	| 'noop_self_authored'
 	| 'noop_suppressed'
+	| 'noop_no_responder'
 
 export interface CommentResponderResolvedProps {
 	workspaceId: string

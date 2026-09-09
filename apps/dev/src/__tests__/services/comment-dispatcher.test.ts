@@ -14,7 +14,13 @@ vi.mock('../../lib/analytics/comment-responder-events', () => ({
 	trackCommentResponderResolved: vi.fn().mockResolvedValue(undefined),
 }))
 
+/**
+ * The workspace's own Chief of Staff. Resolved by the dispatcher from
+ * `workspace_members` ⋈ `actors` per workspace — this id is arbitrary test
+ * data, NOT a constant the production code knows about.
+ */
 const COS_ACTOR_ID = '2e772113-48d0-410d-82e6-2414881581fc'
+const COS_LOOKUP_ROWS = [{ actorId: COS_ACTOR_ID }]
 
 describe('CommentDispatcher', () => {
 	let dispatcher: CommentDispatcher
@@ -212,7 +218,7 @@ describe('CommentDispatcher', () => {
 		expect(opts.actorId).toBe('driver-1')
 		expect(opts.triggerSource).toBe('comment_fallback')
 		expect(opts.sourceCommentEventId).toBe(42)
-		expect(opts.actionPrompt as string).not.toContain('There is no driver')
+		expect(opts.actionPrompt as string).not.toContain('has no driver')
 
 		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -230,6 +236,8 @@ describe('CommentDispatcher', () => {
 			// driver lookup — driver IS the author
 			[{ driver: 'human-author' }],
 			// CoS routing prompt: objects.title lookup
+			// workspace Chief of Staff lookup
+			COS_LOOKUP_ROWS,
 			[{ title: 'A bet' }],
 		]
 
@@ -242,7 +250,12 @@ describe('CommentDispatcher', () => {
 			Record<string, unknown>,
 		]
 		expect(opts.actorId).toBe(COS_ACTOR_ID)
-		expect(opts.actionPrompt as string).toContain('There is no driver')
+		expect(opts.actionPrompt as string).toContain('has no driver')
+		// Every id the agent needs is labelled, not inlined in prose — a bare
+		// uuid in a sentence leaves it guessing which id it is.
+		expect(opts.actionPrompt as string).toContain('Object ID: a4f1c9d2-3b58-4e07-9c26-8f5d0a7b1e43')
+		expect(opts.actionPrompt as string).toContain('Object title: A bet')
+		expect(opts.actionPrompt as string).toContain('Commenter actor ID: human-author')
 
 		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
 			expect.objectContaining({ case: 'case_3_cos_fallback', resolvedActorId: COS_ACTOR_ID }),
@@ -255,6 +268,8 @@ describe('CommentDispatcher', () => {
 			// driver lookup — no driver
 			[{ driver: null }],
 			// CoS routing prompt: title lookup
+			// workspace Chief of Staff lookup
+			COS_LOOKUP_ROWS,
 			[{ title: 'Orphan bet' }],
 		]
 
@@ -289,6 +304,8 @@ describe('CommentDispatcher', () => {
 			// driver lookup
 			[{ driver: 'driver-1' }],
 			// CoS routing prompt (fell through to case 3): title lookup
+			// workspace Chief of Staff lookup
+			COS_LOOKUP_ROWS,
 			[{ title: 'Some object' }],
 		]
 
@@ -305,12 +322,77 @@ describe('CommentDispatcher', () => {
 		expect(dispatchedTo).toContain(COS_ACTOR_ID)
 	})
 
+	it('resolves the Chief of Staff per workspace, not from a global id', async () => {
+		mockResults.selectQueue = [
+			[{ actorId: 'human-author', data: { content: 'how goes?', mentions: [] } }],
+			// driver lookup — no driver
+			[{ driver: null }],
+			// workspace Chief of Staff lookup — a DIFFERENT workspace's CoS
+			[{ actorId: 'other-workspace-cos' }],
+			[{ title: 'Signup context' }],
+		]
+
+		dispatcher.start()
+		await fire(baseEvent({ workspace_id: 'ws-2', actor_id: 'human-author' }))
+
+		expect(sessionManager.createSession).toHaveBeenCalledOnce()
+		const [workspaceId, opts] = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock
+			.calls[0] as [string, Record<string, unknown>]
+		expect(workspaceId).toBe('ws-2')
+		expect(opts.actorId).toBe('other-workspace-cos')
+		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
+			expect.objectContaining({
+				case: 'case_3_cos_fallback',
+				resolvedActorId: 'other-workspace-cos',
+			}),
+		)
+	})
+
+	it('emits noop_no_responder when the workspace has no Chief of Staff', async () => {
+		mockResults.selectQueue = [
+			[{ actorId: 'human-author', data: { content: 'anyone?', mentions: [] } }],
+			// driver lookup — no driver
+			[{ driver: null }],
+			// workspace Chief of Staff lookup — none seeded
+			[],
+		]
+
+		dispatcher.start()
+		await fire(baseEvent({ actor_id: 'human-author' }))
+
+		expect(sessionManager.createSession).not.toHaveBeenCalled()
+		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
+			expect.objectContaining({ case: 'noop_no_responder', resolvedActorId: null }),
+		)
+	})
+
+	it('reports noop_no_responder when the fallback session fails to launch', async () => {
+		;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new Error('actor does not exist'),
+		)
+		mockResults.selectQueue = [
+			[{ actorId: 'human-author', data: { content: 'ping', mentions: [] } }],
+			[{ driver: 'driver-1' }],
+		]
+
+		dispatcher.start()
+		await fire(baseEvent({ actor_id: 'human-author' }))
+
+		// The dispatch was attempted and failed — the metric must not claim a
+		// driver answered this comment.
+		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
+			expect.objectContaining({ case: 'noop_no_responder', resolvedActorId: null }),
+		)
+	})
+
 	it('logs noop_self_authored when the only fallback target authored the comment (no dispatch)', async () => {
 		mockResults.selectQueue = [
 			// event data — author is CoS, no mentions
 			[{ actorId: COS_ACTOR_ID, data: { content: 'hi', mentions: [] } }],
 			// driver lookup — no driver, so we fall to case 3
 			[{ driver: null }],
+			// workspace Chief of Staff lookup — resolves to the comment author
+			COS_LOOKUP_ROWS,
 		]
 
 		// Author IS the CoS

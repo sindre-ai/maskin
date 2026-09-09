@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { events, actors, objects, sessions, triggers } from '@maskin/db/schema'
+import { events, actors, objects, sessions, triggers, workspaceMembers } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { SAFE_METADATA_FIELD_NAME_RE, readChanges, reversePatch } from '@maskin/shared'
 import { Cron } from 'croner'
@@ -30,12 +30,20 @@ const SCOPE_MATCH_LIMIT = 100
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
- * Workspace Chief of Staff — the actor of last resort for case 3 dispatch when
- * a commented object has no driver (or the only candidate driver is the
- * comment author). Load-bearing per spec — see
- * `always-a-responder-rule-shaping.md` §Solution sketch case 3.
+ * Name of the Chief of Staff agent seeded into every workspace at creation —
+ * the actor of last resort for case 3 dispatch when a commented object has no
+ * driver (or the only candidate driver is the comment author). Load-bearing
+ * per spec — see `always-a-responder-rule-shaping.md` §Solution sketch case 3.
+ *
+ * Resolved per workspace, NOT hardcoded to one actor id. Every workspace gets
+ * its own Chief of Staff row at creation and keeps it for the workspace's
+ * lifetime, so a single global id is only ever correct in the one workspace it
+ * came from — everywhere else case 3 dispatched to a nonexistent actor and
+ * failed inside `dispatchCommentFallback`'s catch, silently. Resolution
+ * mirrors `lib/onboarding/signup-welcome.ts`'s `resolveAgentIdByName`, which
+ * is how the same agent is already located at signup.
  */
-const CHIEF_OF_STAFF_ACTOR_ID = '2e772113-48d0-410d-82e6-2414881581fc'
+const CHIEF_OF_STAFF_NAME = 'Chief of Staff'
 
 interface TriggerFailureState {
 	count: number
@@ -1285,7 +1293,7 @@ export class CommentDispatcher {
 		// the driver authored the PARENT comment we're replying to — otherwise
 		// an agent that drives its own bet would ping itself on every reply.
 		if (driverId && driverId !== ctx.commenterId && driverId !== ctx.parentAuthorId) {
-			await this.dispatchCommentFallback({
+			const dispatched = await this.dispatchCommentFallback({
 				workspaceId: ctx.workspaceId,
 				actorId: driverId,
 				sourceCommentEventId: ctx.eventIdNum,
@@ -1296,12 +1304,15 @@ export class CommentDispatcher {
 					content: ctx.content,
 				}),
 			})
+			// Only claim the case when a session actually exists — otherwise the
+			// metric reads as "driver was dispatched" for a comment nobody
+			// answered, which is precisely the failure the bet is measuring.
 			await this.emitResolved(
 				ctx.event,
 				ctx.eventIdNum,
 				ctx.commenterId,
-				'case_2_driver_fallback',
-				driverId,
+				dispatched ? 'case_2_driver_fallback' : 'noop_no_responder',
+				dispatched ? driverId : null,
 			)
 			return
 		}
@@ -1309,7 +1320,23 @@ export class CommentDispatcher {
 		// Case 3 — Chief of Staff fallback. The wrapped routing prompt is what
 		// stops CoS from silently answering questions the actual owner should
 		// route (spec §Product decisions the human owns).
-		const cosActorId = CHIEF_OF_STAFF_ACTOR_ID
+		const cosActorId = await this.chiefOfStaffId(ctx.workspaceId)
+
+		// No Chief of Staff seeded in this workspace — there is no responder of
+		// last resort, so report the gap honestly rather than tagging a
+		// case_3_cos_fallback that never dispatched. A workspace in this state
+		// is the only remaining shape where a comment goes unanswered, so it is
+		// exactly what the bet's watch window needs to see.
+		if (!cosActorId) {
+			logger.warn('No Chief of Staff in workspace — comment has no responder', {
+				workspace_id: ctx.workspaceId,
+				object_id: ctx.entityId,
+				source_comment_event_id: ctx.eventIdNum,
+			})
+			await this.emitResolved(ctx.event, ctx.eventIdNum, ctx.commenterId, 'noop_no_responder', null)
+			return
+		}
+
 		if (cosActorId === ctx.commenterId || cosActorId === ctx.parentAuthorId) {
 			await this.emitResolved(
 				ctx.event,
@@ -1321,7 +1348,7 @@ export class CommentDispatcher {
 			return
 		}
 
-		await this.dispatchCommentFallback({
+		const dispatched = await this.dispatchCommentFallback({
 			workspaceId: ctx.workspaceId,
 			actorId: cosActorId,
 			sourceCommentEventId: ctx.eventIdNum,
@@ -1336,9 +1363,32 @@ export class CommentDispatcher {
 			ctx.event,
 			ctx.eventIdNum,
 			ctx.commenterId,
-			'case_3_cos_fallback',
-			cosActorId,
+			dispatched ? 'case_3_cos_fallback' : 'noop_no_responder',
+			dispatched ? cosActorId : null,
 		)
+	}
+
+	/**
+	 * Resolves the workspace's own Chief of Staff. Matched on name + agent type
+	 * through `workspace_members`, the same way `signup-welcome.ts` locates it.
+	 * Oldest membership wins so the answer is stable for the workspace's
+	 * lifetime if a second same-named agent is ever added.
+	 */
+	private async chiefOfStaffId(workspaceId: string): Promise<string | null> {
+		const [row] = await this.db
+			.select({ actorId: workspaceMembers.actorId })
+			.from(workspaceMembers)
+			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+			.where(
+				and(
+					eq(workspaceMembers.workspaceId, workspaceId),
+					eq(actors.name, CHIEF_OF_STAFF_NAME),
+					eq(actors.type, 'agent'),
+				),
+			)
+			.orderBy(actors.createdAt)
+			.limit(1)
+		return row?.actorId ?? null
 	}
 
 	private async dispatchCommentFallback(ctx: {
@@ -1347,7 +1397,7 @@ export class CommentDispatcher {
 		sourceCommentEventId: number
 		entityId: string
 		actionPrompt: string
-	}): Promise<void> {
+	}): Promise<boolean> {
 		try {
 			await this.sessionManager.createSession(ctx.workspaceId, {
 				actorId: ctx.actorId,
@@ -1362,6 +1412,7 @@ export class CommentDispatcher {
 					},
 				},
 			})
+			return true
 		} catch (err) {
 			logger.error('Failed to create comment-fallback session', {
 				workspaceId: ctx.workspaceId,
@@ -1369,6 +1420,7 @@ export class CommentDispatcher {
 				sourceCommentEventId: ctx.sourceCommentEventId,
 				error: err instanceof Error ? err.message : String(err),
 			})
+			return false
 		}
 	}
 
@@ -1383,11 +1435,17 @@ export class CommentDispatcher {
 			.where(eq(objects.id, ctx.entityId))
 			.limit(1)
 		const title = row?.title ?? '(untitled object)'
+		// Every id is on its own labelled line rather than inlined in prose —
+		// a bare uuid inside a sentence reads ambiguously (object? comment?
+		// actor?), so the agent has to guess what to pass to get_objects. Same
+		// labelled shape as `buildCommentFallbackPrompt` for the driver case.
 		return [
-			`A comment was posted on ${title} (${ctx.entityId}). There is no driver. Decide: assign a driver, forward to a specialist, or answer directly.`,
+			'A comment was posted on an object that has no driver — you are being pinged as the responder of last resort. Decide: assign a driver, forward to a specialist, or answer directly.',
 			'',
+			`Object ID: ${ctx.entityId}`,
+			`Object title: ${title}`,
 			`Commenter actor ID: ${ctx.commenterActorId}`,
-			'Original comment:',
+			'Comment content:',
 			'"""',
 			ctx.content,
 			'"""',
