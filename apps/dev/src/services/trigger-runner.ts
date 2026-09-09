@@ -1,11 +1,12 @@
 import type { Database } from '@maskin/db'
-import { events, objects, sessions, triggers } from '@maskin/db/schema'
+import { events, actors, objects, sessions, triggers } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { SAFE_METADATA_FIELD_NAME_RE, readChanges, reversePatch } from '@maskin/shared'
 import { Cron } from 'croner'
-import { type SQL, and, eq, sql } from 'drizzle-orm'
+import { type SQL, and, eq, inArray, sql } from 'drizzle-orm'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
+import { insertNotificationsWithEvents } from '../lib/notifications'
 import type { SessionManager } from './session-manager'
 
 /** Cap on scope-match rows appended to the action prompt so the payload stays bounded. */
@@ -1053,4 +1054,252 @@ export function evaluateCondition(
 		default:
 			return false
 	}
+}
+
+// ─── CommentDispatcher ─────────────────────────────────────────────────────
+//
+// Subscriber for the `commented` action on `object` entities — the internal
+// event shape the shaping spec calls `comment_posted`. Owns the single code
+// path for comment→dispatch:
+//   • agent-actor mention → needs_input notification + agent session
+//     (`triggerSource: 'comment_fallback'`, `sourceCommentEventId: event.id`)
+//   • human-actor mention → needs_input notification
+//   • mentioned actor authored the parent comment → suppress, log `noop_self_authored`
+//
+// Structured as a class in the same shape as `OrphanThreadDetector` in
+// `orphan-thread-detector.ts` — one entry method (`handleEvent`) with focused
+// helpers, and its own PgNotifyBridge listener registered on `start()`.
+// Wired in `index.ts` alongside `TriggerRunner` / `OrphanThreadDetector`.
+//
+// Task 2 (fallback resolver) will extend this with cases 2 (driver fallback),
+// 3 (Chief of Staff fallback), a loop-safety guard beyond the self-authored
+// no-op, and the `comment_responder_resolved` PostHog event.
+
+/** Case tag emitted in the structured per-event log line. */
+export type CommentDispatchCase = 'case_1_mention' | 'noop_self_authored'
+
+interface CommentEventData {
+	content?: unknown
+	mentions?: unknown
+	parentEventId?: unknown
+}
+
+export class CommentDispatcher {
+	private handler: ((event: PgEvent) => void) | null = null
+
+	constructor(
+		private db: Database,
+		private bridge: PgNotifyBridge,
+		private sessionManager: SessionManager,
+	) {}
+
+	start(): void {
+		if (this.handler) return
+		this.handler = (event: PgEvent) => {
+			if (!this.matches(event)) return
+			this.handleEvent(event).catch((err) =>
+				logger.error('Comment dispatch failed', {
+					eventId: event.event_id,
+					error: err instanceof Error ? err.message : String(err),
+				}),
+			)
+		}
+		this.bridge.on('event', this.handler)
+		logger.info('Comment dispatcher started')
+	}
+
+	stop(): void {
+		if (this.handler) {
+			this.bridge.off('event', this.handler)
+			this.handler = null
+		}
+	}
+
+	private matches(event: PgEvent): boolean {
+		return event.entity_type === 'object' && event.action === 'commented'
+	}
+
+	async handleEvent(event: PgEvent): Promise<void> {
+		const eventIdNum = Number(event.event_id)
+		if (!Number.isFinite(eventIdNum)) return
+
+		const [row] = await this.db
+			.select({ actorId: events.actorId, data: events.data })
+			.from(events)
+			.where(eq(events.id, eventIdNum))
+			.limit(1)
+		if (!row) return
+
+		const data = (row.data ?? {}) as CommentEventData
+		const mentions = normalizeMentions(data.mentions)
+		if (mentions.length === 0) {
+			// No mention → Cases 2 (driver) and 3 (CoS) land here in Task 2.
+			return
+		}
+		const commenterId = row.actorId
+		const parentEventIdRaw = data.parentEventId
+		const parentEventId =
+			typeof parentEventIdRaw === 'number' && Number.isFinite(parentEventIdRaw)
+				? parentEventIdRaw
+				: null
+
+		const parentAuthorId = parentEventId ? await this.parentAuthorId(parentEventId) : null
+
+		const mentionedActors = await this.db
+			.select({ id: actors.id, type: actors.type })
+			.from(actors)
+			.where(inArray(actors.id, mentions))
+
+		// Preserve caller ordering (mentions may contain duplicates or ids that
+		// don't resolve to an actor row; both cases quietly drop out here).
+		const actorById = new Map(mentionedActors.map((a) => [a.id, a]))
+		const seen = new Set<string>()
+
+		for (const mentionId of mentions) {
+			if (seen.has(mentionId)) continue
+			seen.add(mentionId)
+			const actor = actorById.get(mentionId)
+			if (!actor) continue
+
+			if (parentAuthorId && actor.id === parentAuthorId) {
+				this.log(event, 'noop_self_authored', actor.id)
+				continue
+			}
+
+			await this.dispatchMention({
+				event,
+				eventId: eventIdNum,
+				workspaceId: event.workspace_id,
+				commenterId,
+				objectId: event.entity_id,
+				actor,
+				content: typeof data.content === 'string' ? data.content : '',
+			})
+		}
+	}
+
+	private async parentAuthorId(parentEventId: number): Promise<string | null> {
+		const [row] = await this.db
+			.select({ actorId: events.actorId })
+			.from(events)
+			.where(eq(events.id, parentEventId))
+			.limit(1)
+		return row?.actorId ?? null
+	}
+
+	private async dispatchMention(ctx: {
+		event: PgEvent
+		eventId: number
+		workspaceId: string
+		commenterId: string
+		objectId: string
+		actor: { id: string; type: string }
+		content: string
+	}): Promise<void> {
+		const [notification] = await this.db.transaction((tx) =>
+			insertNotificationsWithEvents(tx, {
+				workspaceId: ctx.workspaceId,
+				actorId: ctx.commenterId,
+				rows: [
+					{
+						workspaceId: ctx.workspaceId,
+						type: 'needs_input' as const,
+						title: '@mentioned by comment',
+						content: ctx.content,
+						sourceActorId: ctx.commenterId,
+						targetActorId: ctx.actor.id,
+						objectId: ctx.objectId,
+						status: 'pending' as const,
+					},
+				],
+			}),
+		)
+
+		if (!notification) {
+			logger.warn('Comment mention notification not created', {
+				eventId: ctx.eventId,
+				actorId: ctx.actor.id,
+			})
+			return
+		}
+
+		this.log(ctx.event, 'case_1_mention', ctx.actor.id)
+
+		if (ctx.actor.type !== 'agent') return
+
+		this.sessionManager
+			.createSession(ctx.workspaceId, {
+				actorId: ctx.actor.id,
+				actionPrompt: buildMentionPrompt({
+					objectId: ctx.objectId,
+					commenterActorId: ctx.commenterId,
+					content: ctx.content,
+					notificationId: notification.id,
+				}),
+				config: {
+					mention: {
+						object_id: ctx.objectId,
+						commenter_actor_id: ctx.commenterId,
+						notification_id: notification.id,
+						comment_event_id: ctx.eventId,
+					},
+				},
+				triggerSource: 'comment_fallback',
+				sourceCommentEventId: ctx.eventId,
+				createdBy: ctx.commenterId,
+			})
+			.catch((err) =>
+				logger.error('Failed to create session for @mentioned agent', {
+					agentId: ctx.actor.id,
+					objectId: ctx.objectId,
+					notificationId: notification.id,
+					error: String(err),
+				}),
+			)
+	}
+
+	private log(event: PgEvent, kind: CommentDispatchCase, resolvedActorId: string): void {
+		logger.info('Comment dispatch', {
+			event_id: event.event_id,
+			case: kind,
+			resolved_actor_id: resolvedActorId,
+			workspace_id: event.workspace_id,
+			object_id: event.entity_id,
+		})
+	}
+}
+
+/**
+ * Standard @-mention prompt handed to an agent whose case-1 dispatch fires
+ * from `CommentDispatcher`. Kept alongside the dispatcher so the prompt and
+ * the notification-id it references are edited in one place.
+ */
+export function buildMentionPrompt(ctx: {
+	objectId: string
+	commenterActorId: string
+	content: string
+	notificationId: string
+}): string {
+	return [
+		'You were @mentioned in a comment on an object. Read the comment and the object context, then decide what the right response is. The response can be any combination of:',
+		'  - taking an action (updating the object, creating related work, running a tool, kicking off another session, etc.)',
+		'  - posting a comment reply (to answer, discuss, acknowledge, or report what you did)',
+		'  - doing nothing, if no response is warranted',
+		'',
+		"Let the context guide you — what is being asked explicitly, what's implied by the thread, and what would actually be useful. Action and comment aren't mutually exclusive: it's often right to do the work and post a short comment about it, or to comment first and then act, or just one or the other. Pick whatever genuinely fits.",
+		'',
+		`Object ID: ${ctx.objectId}`,
+		`Commenter actor ID: ${ctx.commenterActorId}`,
+		'Comment content:',
+		'"""',
+		ctx.content,
+		'"""',
+		'',
+		`Once you have done whatever you decided to do (including if that's nothing), mark notification ${ctx.notificationId} as resolved.`,
+	].join('\n')
+}
+
+function normalizeMentions(raw: unknown): string[] {
+	if (!Array.isArray(raw)) return []
+	return raw.filter((m): m is string => typeof m === 'string' && m.length > 0)
 }
