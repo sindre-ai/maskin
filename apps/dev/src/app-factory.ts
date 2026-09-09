@@ -38,6 +38,7 @@ import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
 import installedLoopsRoutes from './routes/installed-loops'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
+import integrationsGithubMcpRoutes from './routes/integrations-github-mcp'
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
@@ -326,6 +327,11 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// more specific prefix wins the trie — same ordering as Slack's below.
 	app.route('/api/integrations/linkedin-unipile/mcp', integrationsLinkedinMcpRoutes)
 	app.route('/api/integrations/linkedin-unipile', integrationsLinkedinRoutes)
+	// GitHub MCP is per-integration (:integrationId) so multi-org workspaces
+	// get one MCP entry per installation. Mounted BEFORE the generic
+	// /api/integrations catch-all so the more-specific prefix wins the trie —
+	// same ordering as slack/mcp below.
+	app.route('/api/integrations/github/mcp', integrationsGithubMcpRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
