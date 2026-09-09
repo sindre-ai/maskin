@@ -12,12 +12,13 @@ import {
 	insertTrigger,
 	insertWorkspace,
 } from '../factories'
-import { jsonGet } from '../helpers'
+import { jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId, sql } from './global-setup'
 
 // Load the routes lazily so vitest doesn't pull them in at module resolution
 // time (mirrors the pattern used in subscriptions.test.ts).
 const { default: loopsRoutes } = await import('../../routes/loops')
+const { default: objectsRoutes } = await import('../../routes/objects')
 
 type Env = {
 	Variables: {
@@ -306,6 +307,85 @@ describe('Loops read API integration', () => {
 		const noOverrideRow = body.loops.find((l) => l.id === openLoop.id)
 		expect(noOverrideRow?.inProgressCount).toBe(1)
 		expect(noOverrideRow?.closedCount).toBe(0)
+	})
+
+	it('accepts closed_statuses through the HTTP write path so the counter can honor it end-to-end', async () => {
+		// Regression guard for the safeMetadataSchema tightening (commit
+		// 6d3af742, 2026-03-25) that made the whole write path reject
+		// `closed_statuses: { <type>: [<status>, ...] }` — the exact shape the
+		// reader in this file already parses. Every existing closed_statuses
+		// test in this file uses `insertObject` (direct DB), which bypasses
+		// the Zod validator and hides that the entire feature is
+		// dead-on-arrival via the API. This test intentionally goes through
+		// PATCH /api/objects/:id — the same path update_loop uses in
+		// packages/mcp/src/server.ts — so the write validator stays honest.
+
+		const app = new OpenAPIHono<Env>({
+			defaultHook: (result, c) => {
+				if (!result.success) {
+					return c.json(
+						createApiError(
+							'VALIDATION_ERROR',
+							'Request validation failed',
+							formatZodError(result.error),
+						),
+						400,
+					)
+				}
+				return undefined
+			},
+		})
+		app.use('*', async (c, next) => {
+			c.set('db', db)
+			c.set('actorId', actorId)
+			c.set('actorType', 'human')
+			await next()
+		})
+		app.route('/api/loops', loopsRoutes)
+		app.route('/api/objects', objectsRoutes)
+
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Content pipeline',
+		})
+		const liveContent = await insertObject(db, workspaceId, actorId, {
+			type: 'content',
+			status: 'live',
+			title: 'Shipped article',
+		})
+		const draftContent = await insertObject(db, workspaceId, actorId, {
+			type: 'content',
+			status: 'in_progress',
+			title: 'Still writing',
+		})
+		for (const target of [liveContent, draftContent]) {
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: loop.id,
+				targetType: 'object',
+				targetId: target.id,
+				type: 'in_loop',
+			})
+		}
+
+		const patchRes = await app.request(
+			jsonRequest(
+				'PATCH',
+				`/api/objects/${loop.id}`,
+				{ metadata: { closed_statuses: { content: ['live'] } } },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		expect(patchRes.status).toBe(200)
+
+		const listRes = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		const body = (await listRes.json()) as {
+			loops: Array<{ id: string; inProgressCount: number; closedCount: number }>
+		}
+		const row = body.loops.find((l) => l.id === loop.id)
+		expect(row?.closedCount).toBe(1)
+		expect(row?.inProgressCount).toBe(1)
 	})
 
 	it("closed_statuses can also override a built-in type's terminal set for one loop", async () => {

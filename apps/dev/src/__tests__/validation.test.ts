@@ -287,6 +287,20 @@ describe('Safe metadata validation', () => {
 		})
 		expect(result.success).toBe(false)
 	})
+
+	it("accepts a loop's closed_statuses map (shallow record of string arrays)", () => {
+		const result = safeMetadataSchema.safeParse({
+			closed_statuses: { content: ['live'], task: ['done', 'validated'] },
+		})
+		expect(result.success).toBe(true)
+	})
+
+	it('still rejects nested objects one level deeper than closed_statuses', () => {
+		const result = safeMetadataSchema.safeParse({
+			closed_statuses: { content: { live: true } },
+		})
+		expect(result.success).toBe(false)
+	})
 })
 
 describe('MCP server schema validation', () => {
