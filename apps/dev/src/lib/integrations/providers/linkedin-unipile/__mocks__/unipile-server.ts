@@ -282,6 +282,67 @@ const CANNED_PROFILE_RESPONSE = () => ({
 })
 
 /**
+ * `GET /v2/:account_id/users/me` — the connected account's own profile. R11-A
+ * reads `public_identifier` off this response and persists it on
+ * `integrations.unipile_acc_slug` as the account half of the instance slug
+ * (`linkedin-{unipileAccSlug}-{identitySlug}`, spec §1.3). `provider_id` is
+ * the person URN suffix (`urn:li:person:<suffix>`) used as `identityUrn` on
+ * the personal MCP instance.
+ */
+const CANNED_ME_PROFILE_RESPONSE = () => ({
+	object: 'UserProfile',
+	id: 'mock-user-me',
+	provider_id: 'mock-user-me',
+	type: 'individual',
+	display_name: 'Sebastian Bille',
+	first_name: 'Sebastian',
+	last_name: 'Bille',
+	public_identifier: 'sebastianbille',
+	profile_url: 'https://www.linkedin.com/in/sebastianbille',
+})
+
+/**
+ * `GET /v2/:account_id/linkedin/company/pages` — pages the connected
+ * LinkedIn member admins. R11-A's enumeration path calls this once per
+ * credential and registers one MCP instance per entry. The fixture returns
+ * two admined pages: one messaging-enabled (Maskin) and one publish-only
+ * (Sample) — the two branches spec §2's messaging-suite filter has to cover.
+ * A test override (`planManagedPagesResponse`) can swap the payload for
+ * cases that need a specific fixture (e.g. zero admined pages).
+ */
+const CANNED_MANAGED_PAGES_RESPONSE = () => ({
+	object: 'ManagedCompanyPageList',
+	data: [
+		{
+			object: 'ManagedCompanyPage' as const,
+			object_urn: 'urn:li:organization:11111',
+			public_identifier: 'maskinio',
+			name: 'Maskin',
+			mailbox_id: 'mock-mailbox-maskinio',
+			messaging_enabled: true,
+		},
+		{
+			object: 'ManagedCompanyPage' as const,
+			object_urn: 'urn:li:organization:22222',
+			public_identifier: 'sample-page',
+			name: 'Sample Page',
+			mailbox_id: null,
+			messaging_enabled: false,
+		},
+	],
+})
+
+let managedPagesOverride: null | ReturnType<typeof CANNED_MANAGED_PAGES_RESPONSE> = null
+export function planManagedPagesResponse(
+	body: ReturnType<typeof CANNED_MANAGED_PAGES_RESPONSE>,
+): void {
+	managedPagesOverride = body
+}
+export function clearManagedPagesOverride(): void {
+	managedPagesOverride = null
+}
+
+/**
  * `POST /v2/:account_id/users/me/relation-requests` — LinkedIn connect
  * request. The live LinkedIn API answers with a thin `{ object,
  * invitation_id }` envelope on success (some tenants return a bare 200);
@@ -439,6 +500,16 @@ export async function startLinkedInMock(): Promise<LinkedInMockServer> {
 		if (method === 'POST' && /^\/v2\/[^/]+\/linkedin\/search(\?.*)?$/.test(url)) {
 			return send(200, CANNED_SEARCH_RESPONSE())
 		}
+		// R11-A enumeration route: pages the connected member admins. Must
+		// be tested BEFORE the generic /users/:identifier catch-all below, and
+		// BEFORE the generic /posts routes (the path doesn't overlap those but
+		// grouping the linkedin/ namespace here keeps the R11 additions together).
+		if (
+			method === 'GET' &&
+			/^\/v2\/[^/]+\/linkedin\/company\/pages(\?.*)?$/.test(url)
+		) {
+			return send(200, managedPagesOverride ?? CANNED_MANAGED_PAGES_RESPONSE())
+		}
 		// ── Content / community routes (Task 7b) ──────────────────────────
 		// Order matters: nested paths must be tested before the /users/:identifier
 		// catch-all, otherwise "posts" would be resolved as a user handle.
@@ -459,6 +530,13 @@ export async function startLinkedInMock(): Promise<LinkedInMockServer> {
 		}
 		if (method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+(\?.*)?$/.test(url)) {
 			return send(200, CANNED_RETRIEVE_POST_RESPONSE())
+		}
+		// `/users/me` returns the connected account's own profile — spec §1.4
+		// step 1 reads `public_identifier` off it as the account slug. Must
+		// resolve BEFORE the catch-all `/users/:identifier` route below so it
+		// isn't misread as a lookup of a user literally named "me".
+		if (method === 'GET' && /^\/v2\/[^/]+\/users\/me(\?.*)?$/.test(url)) {
+			return send(200, CANNED_ME_PROFILE_RESPONSE())
 		}
 		if (method === 'GET' && /^\/v2\/[^/]+\/users\/[^/]+(\?.*)?$/.test(url)) {
 			return send(200, CANNED_PROFILE_RESPONSE())

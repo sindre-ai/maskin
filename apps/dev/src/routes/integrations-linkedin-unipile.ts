@@ -13,6 +13,7 @@ import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { createAuthLink } from '../lib/integrations/providers/linkedin-unipile/client'
+import { enumerateLinkedInIdentitiesAndRegister } from '../lib/integrations/providers/linkedin-unipile/enumeration'
 import {
 	LinkedInIntegrationError,
 	isLinkedInIntegrationError,
@@ -21,7 +22,6 @@ import {
 	commentOnLinkedInPost,
 	getLinkedInPostEngagement,
 	listLinkedInConversations,
-	publishLinkedInBusinessPagePost,
 	publishLinkedInPost,
 	readLinkedInPostComments,
 	replyToLinkedInComment,
@@ -399,6 +399,30 @@ app.openapi(callbackRoute, (async (c) => {
 	// resolves to 'bad_nonce' instead of rebinding a live integration.
 	const encrypted = encrypt(JSON.stringify({ account_id }))
 
+	// R11-A · enumerate identities BEFORE the credential-landing transaction so
+	// the resolved `unipile_acc_slug` can be persisted atomically with `status`
+	// flipping to CONNECTED. `enumerateLinkedInIdentitiesAndRegister` throws on
+	// hard failures — a Unipile hiccup here must not silently land the credential
+	// without any registered MCP instances, so we translate the failure into an
+	// error redirect the customer can retry from Settings.
+	let enumerationSlug: string | null = null
+	try {
+		const enumeration = await enumerateLinkedInIdentitiesAndRegister({
+			unipileAccountId: account_id,
+			workspaceId: pending.workspaceId,
+			actorId: pending.actorId ?? pending.createdBy,
+			integrationId: pending.id,
+		})
+		enumerationSlug = enumeration.unipileAccSlug
+	} catch (err) {
+		logger.error('linkedin-unipile callback: identity enumeration failed', {
+			integrationId: pending.id,
+			error: err instanceof Error ? err.message : String(err),
+			code: isLinkedInIntegrationError(err) ? err.code : undefined,
+		})
+		return redirectToSettings(c, 'error', 'enumeration_failed', pending.workspaceId)
+	}
+
 	// Single-transaction credential landing (spec §Telemetry ordering rule):
 	// the PostHog capture runs AFTER commit so a rolled-back write can never
 	// leak a fake integration_connected signal.
@@ -409,6 +433,7 @@ app.openapi(callbackRoute, (async (c) => {
 				credentials: encrypted,
 				externalId: account_id,
 				status: CONNECTED_STATUS,
+				unipileAccSlug: enumerationSlug,
 				updatedAt: new Date(),
 			})
 			.where(eq(integrations.id, pending.id))
@@ -425,7 +450,12 @@ app.openapi(callbackRoute, (async (c) => {
 			action: 'updated',
 			entityType: 'integration',
 			entityId: pending.id,
-			data: { provider: PROVIDER, status: CONNECTED_STATUS, external_id: account_id },
+			data: {
+				provider: PROVIDER,
+				status: CONNECTED_STATUS,
+				external_id: account_id,
+				unipile_acc_slug: enumerationSlug,
+			},
 		})
 	})
 
@@ -722,23 +752,6 @@ app.post('/publish-post', async (c) => {
 		return c.json(await publishLinkedInPost({ db: c.get('db'), actorId, workspaceId }, parsed.body))
 	} catch (err) {
 		return handleTerminalError(err, 'publish-post', actorId)
-	}
-})
-
-app.post('/publish-business-page-post', async (c) => {
-	const workspaceId = readWorkspaceIdHeader(c.req)
-	if (!workspaceId) {
-		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
-	}
-	const parsed = await readJsonBody(c)
-	if (!parsed.ok) return parsed.response
-	const actorId = c.get('actorId')
-	try {
-		return c.json(
-			await publishLinkedInBusinessPagePost({ db: c.get('db'), actorId, workspaceId }, parsed.body),
-		)
-	} catch (err) {
-		return handleTerminalError(err, 'publish-business-page-post', actorId)
 	}
 })
 

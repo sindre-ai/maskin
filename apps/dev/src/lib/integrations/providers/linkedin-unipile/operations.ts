@@ -22,6 +22,7 @@ import type {
 	LinkedInListConversationsResponse,
 	LinkedInSendMessageResponse,
 } from './unipile-client'
+import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
 import { createLinkedInHttpClient } from './unipile-client'
 
 /**
@@ -803,6 +804,23 @@ export interface LinkedInOperationContext {
 	db: Database
 	actorId: string
 	workspaceId: string
+	/**
+	 * R11-A · fan-out identity for the caller of this operation. Set by the
+	 * per-instance MCP tools registered via `registerLinkedInMcpInstance`
+	 * (mcp-server.ts). Handlers pull `identity.identityUrn` from here and inject
+	 * it on the Unipile wire (`poster_urn` / `commenter_urn` etc.) instead of
+	 * accepting the URN as a per-call arg — that is what eliminates the
+	 * cross-identity confusion gap-1 that R11 exists to close (see
+	 * linkedin-mcp-phase2-technical-spec.md §2).
+	 *
+	 * Left OPTIONAL so the legacy REST routes in
+	 * `routes/integrations-linkedin-unipile.ts` (send-message / reply /
+	 * list-conversations) — which the shipped Growth workspace still calls
+	 * before switching over — keep working with the pre-R11 default: the
+	 * connected personal profile. When these REST routes retire (R11 follow-on)
+	 * this will become required.
+	 */
+	identity?: LinkedInMcpInstanceConfig
 }
 
 export async function sendLinkedInMessage(
@@ -816,6 +834,14 @@ export async function sendLinkedInMessage(
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
+	// R11-A · a company-page fan-out instance sends from its own page mailbox,
+	// not the personal inbox. Personal instances and pre-R11 REST callers fall
+	// through to the personal default (`DEFAULT_LINKEDIN_INBOX`), which the
+	// client applies when `inbox_id` is undefined.
+	const inboxId =
+		ctx.identity?.identityType === 'company_page' && ctx.identity.mailboxId
+			? ctx.identity.mailboxId
+			: undefined
 	return withIdempotency({
 		db: ctx.db,
 		actorId: ctx.actorId,
@@ -831,6 +857,7 @@ export async function sendLinkedInMessage(
 						account_id: pre.credentials.account_id,
 						recipient_urn: validation.payload.recipient_urn,
 						body: validation.payload.body,
+						...(inboxId ? { inbox_id: inboxId } : {}),
 					}),
 				{ mutating: true },
 			)
@@ -884,6 +911,13 @@ export async function listLinkedInConversations(
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
+	// R11-A · a page fan-out instance lists its own mailbox's chats, not the
+	// personal one. Personal + pre-R11 REST callers get `undefined` → the client
+	// falls through to `DEFAULT_LINKEDIN_INBOX` (`CLASSIC_PRIMARY`).
+	const inboxId =
+		ctx.identity?.identityType === 'company_page' && ctx.identity.mailboxId
+			? ctx.identity.mailboxId
+			: undefined
 	const upstream = await callLinkedInWithRetry<
 		LinkedInListConversationsResponse | Record<string, unknown>
 	>(() =>
@@ -891,6 +925,7 @@ export async function listLinkedInConversations(
 			account_id: pre.credentials.account_id,
 			limit: input.limit,
 			cursor: input.cursor,
+			...(inboxId ? { inbox_id: inboxId } : {}),
 		}),
 	)
 	return normalizeListResponse(upstream.body)
@@ -1287,6 +1322,15 @@ export async function publishLinkedInPost(
 	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
+	// R11-A · the identity URN is pulled from the fan-out cfg, NOT from the
+	// tool args. A company_page instance always injects its `post_as`; a
+	// personal instance always omits it (the wire treats absence as "post as
+	// the connected personal profile"). Pre-R11 REST callers pass no cfg and
+	// fall through to the legacy per-call `post_as` behaviour so shipped
+	// Growth agents keep working across the migration.
+	const postAsFromCfg =
+		ctx.identity?.identityType === 'company_page' ? ctx.identity.identityUrn : undefined
+	const postAs = postAsFromCfg ?? validation.payload.post_as
 	// Hash the tool-facing request, not the LinkedIn wire body — an equivalent
 	// request should collide even if LinkedIn renames a field later. `account_id`
 	// is deliberately excluded because it identifies the caller's LinkedIn
@@ -1303,47 +1347,7 @@ export async function publishLinkedInPost(
 					client.publishPost({
 						account_id: pre.credentials.account_id,
 						text: validation.payload.text,
-						...(validation.payload.post_as ? { post_as: validation.payload.post_as } : {}),
-						...validation.payload.extras,
-					}),
-				{ mutating: true },
-			)
-			return normalizePublishResponse(upstream.body)
-		},
-	})
-}
-
-/**
- * Thin wrapper over `publishLinkedInPost` that requires `post_as` (the page
- * URN). No separate LinkedIn credential — the same personal LinkedIn account
- * publishes as a page it admins, so this is a policy-level distinction in the
- * MCP surface, not a wholesale credential change (see the parent-bet spec's
- * business-page notes).
- */
-export async function publishLinkedInBusinessPagePost(
-	ctx: LinkedInOperationContext,
-	input: PublishPostInput,
-): Promise<PublishPostResult & { replayed: boolean }> {
-	const validation = validatePublishPostInput(input, { requirePostAs: true })
-	if (!validation.ok) {
-		throw new LinkedInIntegrationError('INVALID_INPUT', validation.error)
-	}
-	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
-	if (!pre.ok) throw pre.error
-	const client = buildLinkedInClient(pre.credentials)
-	const requestBody = { tool: 'linkedin_publish_business_page_post', ...validation.payload }
-	return withContentHashIdempotency({
-		db: ctx.db,
-		actorId: ctx.actorId,
-		tool: 'linkedin_publish_business_page_post',
-		requestBody,
-		run: async () => {
-			const upstream = await callLinkedInWithRetry<Record<string, unknown>>(
-				() =>
-					client.publishPost({
-						account_id: pre.credentials.account_id,
-						text: validation.payload.text,
-						post_as: validation.payload.post_as,
+						...(postAs ? { post_as: postAs } : {}),
 						...validation.payload.extras,
 					}),
 				{ mutating: true },

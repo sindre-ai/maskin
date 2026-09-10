@@ -135,6 +135,45 @@ export type LinkedInGetProfileQuery = {
 }
 
 /**
+ * `GET /v2/{account_id}/linkedin/company/pages` — pages the connected LinkedIn
+ * member admins, per spec §1.4 step 2. This is a v2 LinkedIn-specific route
+ * (not the generic Unipile `pages` route) and returns one entry per admined
+ * page with the URN, the public identifier used as the fan-out slug, the
+ * page's own mailbox id, and whether that mailbox accepts inbound messages.
+ * The R11-A connect-callback path calls it right after `getProfile('me')`
+ * and hands each entry to `registerLinkedInMcpInstance(cfg)` (see spec §2 +
+ * §1.4).
+ */
+export type LinkedInListManagedPagesQuery = {
+	account_id: string
+	cursor?: string
+	limit?: number
+}
+
+/**
+ * One admined page as R11 needs it. `object_urn` is the LinkedIn
+ * `urn:li:organization:{id}` used as `poster_urn`/`commenter_urn` on the wire;
+ * `public_identifier` is the human-readable slug (e.g. `maskinio`) that becomes
+ * the identity half of the instance slug per spec §1.3. `messaging_enabled`
+ * gates the §2 messaging suite: pages that are publish-only never get
+ * `__send_message`/`__reply` registered on their instance.
+ */
+export type LinkedInManagedPage = {
+	object: 'ManagedCompanyPage'
+	object_urn: string
+	public_identifier: string
+	name: string
+	mailbox_id: string | null
+	messaging_enabled: boolean
+}
+
+export type LinkedInListManagedPagesResponse = {
+	object?: string
+	data?: LinkedInManagedPage[]
+	next_cursor?: string
+}
+
+/**
  * `POST /v2/{account_id}/users/me/relation-requests` — send a LinkedIn
  * connection invitation to a member.
  *
@@ -257,6 +296,9 @@ export interface LinkedInClient {
 		query: LinkedInSearchPeopleQuery,
 	): Promise<LinkedInHttpResult<LinkedInPagedResponse | Record<string, unknown>>>
 	getProfile(query: LinkedInGetProfileQuery): Promise<LinkedInHttpResult<Record<string, unknown>>>
+	getManagedCompanyPages(
+		query: LinkedInListManagedPagesQuery,
+	): Promise<LinkedInHttpResult<LinkedInListManagedPagesResponse | Record<string, unknown>>>
 	sendConnectionRequest(
 		payload: LinkedInConnectionRequestPayload,
 	): Promise<LinkedInHttpResult<LinkedInConnectionRequestResponse | Record<string, unknown>>>
@@ -432,6 +474,18 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 			// own profile.
 			const acc = encodeURIComponent(query.account_id)
 			return call('GET', `/v2/${acc}/users/${encodeURIComponent(query.identifier)}`)
+		},
+		getManagedCompanyPages(query) {
+			// GET /v2/{account_id}/linkedin/company/pages — pages the connected
+			// LinkedIn member currently admins. The R11-A connect-callback path
+			// calls this once per credential; every entry becomes its own MCP
+			// instance registered under `linkedin-{acc}-{page_public_identifier}`.
+			const params = new URLSearchParams()
+			if (query.cursor) params.set('cursor', query.cursor)
+			if (typeof query.limit === 'number') params.set('limit', String(query.limit))
+			const qs = params.toString()
+			const acc = encodeURIComponent(query.account_id)
+			return call('GET', `/v2/${acc}/linkedin/company/pages${qs ? `?${qs}` : ''}`)
 		},
 		sendConnectionRequest(payload) {
 			// POST /v2/{account_id}/users/me/relation-requests
