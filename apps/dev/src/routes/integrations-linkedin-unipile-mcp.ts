@@ -1,5 +1,8 @@
 import type { Database } from '@maskin/db'
+import { integrations } from '@maskin/db/schema'
+import { getLinkedInMcpInstancesForIntegration } from '@maskin/mcp/linkedin'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { createApiError } from '../lib/errors'
 import { createLinkedInMcpServer } from '../lib/integrations/providers/linkedin-unipile/mcp-server'
@@ -9,21 +12,29 @@ import { isWorkspaceMember } from '../lib/workspace-auth'
 /**
  * Streamable-HTTP MCP endpoint for the LinkedIn (LinkedIn-backed) provider,
  * mounted at `/api/integrations/linkedin-unipile/mcp`. Sibling of
- * `integrations-slack-mcp.ts`, and deliberately built the same way.
+ * `integrations-slack-mcp.ts`.
  *
- * Why LinkedIn has its own MCP server rather than tools on the platform
- * `maskin` server: an agent's tool list should mirror what the workspace has
- * connected. Tools that lived on the platform server were present in every
- * agent's list whether or not LinkedIn was connected, and invisible in the
- * agent's MCP servers panel, so there was nothing to attach, detach, or see.
+ * R11-A · fan-out. The old flat `linkedin_*` per-credential server is gone.
+ * Every connected LinkedIn identity for the calling actor (their personal
+ * profile plus every admined page) is served as its own MCP instance
+ * registered under `linkedin-{unipileAccSlug}-{identitySlug}`. This handler:
  *
- * NOTE: no credential pre-flight happens here. Slack resolves its workspace
- * bot token in the route because one token serves every caller; LinkedIn's
- * credential is per-actor and is resolved inside each operation, which already
- * returns CREDENTIAL_NOT_CONNECTED as a first-class tool error. Duplicating
- * the lookup here would only change a precise per-tool error into a blanket
- * 400 that hides which actor is unconnected.
+ *   1. Resolves the calling actor's linkedin-unipile credentials in this
+ *      workspace (one credential per (workspace, actor); usually one row).
+ *   2. Reads each credential's registered instances from the in-process
+ *      registry (populated by the connect-callback path and the admin
+ *      refresh-identities endpoint).
+ *   3. Builds a fresh MCP server whose tools are the union of every
+ *      instance's tools per spec §2's filter table.
+ *
+ * `tools/list` returns the empty list — not a 4xx — for a workspace that
+ * has not connected linkedin-unipile yet (matches the `github-*` pattern's
+ * behaviour and lets `get_started`-driven onboarding proceed). Same for a
+ * credential whose enumeration hasn't landed yet: registry-empty → no tools,
+ * which the next connect / refresh call will populate.
  */
+
+const PROVIDER = 'linkedin-unipile'
 
 type Env = {
 	Variables: {
@@ -55,12 +66,24 @@ app.post('/', async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Actor is not a member of this workspace'), 403)
 	}
 
-	const mcpServer = createLinkedInMcpServer({ db, actorId, workspaceId })
+	// Fan-out instances for THIS actor's credentials — LinkedIn is actor-scoped
+	// per spec §Provider, so an agent cannot fetch tools attached to a
+	// colleague's connected identity by pointing at a different workspace
+	// member's credential.
+	const credentialRows = await db
+		.select({ id: integrations.id })
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.actorId, actorId),
+				eq(integrations.provider, PROVIDER),
+			),
+		)
+	const instances = credentialRows.flatMap((row) => getLinkedInMcpInstancesForIntegration(row.id))
 
-	// sessionIdGenerator: undefined = stateless mode. Each POST is
-	// self-contained: tools register synchronously before connect(), so
-	// initialize / tools-list / tools-call all work without cross-request
-	// state. Matches the /mcp and Slack MCP routes.
+	const mcpServer = createLinkedInMcpServer({ db, actorId, workspaceId }, instances)
+
 	const transport = new StreamableHTTPServerTransport({
 		sessionIdGenerator: undefined,
 		enableJsonResponse: true,
@@ -80,6 +103,7 @@ app.post('/', async (c) => {
 		workspaceId,
 		actorId,
 		method: (body as { method?: string })?.method,
+		instances: instances.length,
 	})
 
 	await mcpServer.connect(transport)
