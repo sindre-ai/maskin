@@ -429,6 +429,18 @@ export function trackForyouCardAction(p: {
 	})
 }
 
+// Restores the mark-read side of the For You engagement contract, deleted in
+// PR #1459 when the new-design flag was retired. Client-side and next to the
+// gesture: fired BEFORE the mark-read mutation so an API failure doesn't lose
+// the intent signal, and once per invocation (the server drops the card once
+// read, so there is no natural dedup boundary here — the surface itself is).
+export function trackForyouCardMarkedRead(p: { card_kind: CardKind; card_id: string }): void {
+	trackEvent('foryou_card_marked_read', {
+		card_kind: p.card_kind,
+		card_id: p.card_id,
+	})
+}
+
 // Per-mutation event for the Bulk select bet's ship metric (avg ≥5 objects
 // changed per cleanup session, baseline 1). Fires once per successful object
 // mutation from the three object hooks — single update, single delete, and one

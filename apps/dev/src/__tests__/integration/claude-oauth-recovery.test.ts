@@ -91,7 +91,9 @@ describe('Claude OAuth lazy primary recovery — integration', () => {
 			healthCheck: async () => ({ healthy: true }),
 		})
 
-		expect(result).toEqual({ recovered: true })
+		// The slot recovered onto is reported back — the head of the chain,
+		// which is `primary` here.
+		expect(result).toEqual({ recovered: true, slot: 'primary' })
 
 		const oauth = await readClaudeOAuth(ws.id)
 		expect(oauth?.failover?.active_slot).toBe('primary')
