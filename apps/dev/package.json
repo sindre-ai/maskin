@@ -16,7 +16,7 @@
 		"type-check": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@hono/node-server": "^1.19.13",
+		"@hono/node-server": "^2.0.10",
 		"@hono/zod-openapi": "^0.18.0",
 		"@maskin/auth": "workspace:*",
 		"@maskin/db": "workspace:*",
