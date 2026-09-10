@@ -37,7 +37,7 @@ import { cn } from '@/lib/cn'
 import { nextFireAt, nextFireLabel } from '@/lib/loop-next-fire'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
 import { useWorkspace } from '@/lib/workspace-context'
-import { useWaitingOnViewer } from '@maskin/shared'
+import { isWaitingOnViewer, useWaitingOnViewer } from '@maskin/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { MoreHorizontal, Pause, Play } from 'lucide-react'
 import { useCallback, useMemo, useRef, useState } from 'react'
@@ -113,31 +113,41 @@ function LoopDetailRoute() {
 	const loopsV4Polish = useFeatureFlag('loops-v4-polish')
 
 	// D3 AskBanner wiring — the shared `useWaitingOnViewer` (T1) takes a getter
-	// so `packages/shared` stays React-free. Today the loop payload exposes one
-	// loop-level `waitingOnViewer` bit — treat it as a single synthetic
-	// "step is pending" signal. When D6a extends `LoopStep` with per-step
-	// `waitingOnViewer` and exposes `loop.steps[]`, swap this getter to return
-	// the real step array; the AskBanner wiring + aria-live contract below do
-	// not change. Every hook the banner needs is called unconditionally BEFORE
-	// the loading / error / not-found early-returns so hook order is stable
-	// across renders (React rules-of-hooks).
-	const waiting = loop?.waitingOnViewer === true
-	const getLoopStepsForBanner = useCallback(
-		() => (waiting ? [{ waitingOnViewer: true }] : []),
-		[waiting],
-	)
+	// so `packages/shared` stays React-free. When the `step_flow` sub-flag is on
+	// the getter returns the real per-step array from `useLoopSteps` so the
+	// banner samples the actually-stalled step. When the sub-flag is off, fall
+	// back to the loop-level `waitingOnViewer` bit as a single synthetic step so
+	// the banner still renders under the umbrella flag alone. Every hook the
+	// banner needs is called unconditionally BEFORE the loading / error /
+	// not-found early-returns so hook order is stable across renders (React
+	// rules-of-hooks).
+	const loopWaiting = loop?.waitingOnViewer === true
+	const getLoopStepsForBanner = useCallback(() => {
+		if (stepFlowEnabled) return loopSteps ?? []
+		return loopWaiting ? [{ waitingOnViewer: true }] : []
+	}, [stepFlowEnabled, loopSteps, loopWaiting])
 	const anyStepPending = useWaitingOnViewer(loop?.id ?? '', getLoopStepsForBanner)
 	const firstAgentIdForBanner = loop?.agentIds[0] ?? null
 	const firstAgentActor = useMemo(
 		() => (firstAgentIdForBanner ? actors?.find((a) => a.id === firstAgentIdForBanner) : undefined),
 		[actors, firstAgentIdForBanner],
 	)
+	const firstPendingStep = useMemo(
+		() => (stepFlowEnabled ? (loopSteps?.find(isWaitingOnViewer) ?? null) : null),
+		[stepFlowEnabled, loopSteps],
+	)
+	const pendingStepCount = useMemo(() => {
+		if (!stepFlowEnabled) return null
+		return (loopSteps ?? []).reduce((n, s) => (isWaitingOnViewer(s) ? n + 1 : n), 0)
+	}, [stepFlowEnabled, loopSteps])
 	const loopIdForBanner = loop?.id ?? ''
 	const askBannerVisible = loopsV4Polish && !!loop && anyStepPending
 	// Real count, not a 0/1 flag — this is the dimension the bet's Won
 	// condition is measured on, so a constant 1 would make every session look
-	// identical in PostHog.
-	const pendingCount = askBannerVisible ? (loop?.waitingCount ?? 0) : 0
+	// identical in PostHog. When the step_flow sub-flag is on, count pending
+	// steps from the shared predicate; otherwise fall back to the loop-level
+	// waitingCount so the umbrella-only banner still emits a real number.
+	const pendingCount = askBannerVisible ? (pendingStepCount ?? loop?.waitingCount ?? 0) : 0
 	const handleDecideClick = useCallback(() => {
 		const targetEl = document.getElementById('loop-flow')
 		if (targetEl) {
@@ -261,16 +271,17 @@ function LoopDetailRoute() {
 	}
 
 	const loopTriggers = (triggers ?? []).filter((t) => loop.triggerIds.includes(t.id))
-	// D3 AskBanner content sourcing — uses banner-visible hook results computed
-	// above (unconditionally). Today, without per-step ask data (D6a hasn't
-	// landed), fall back to the first (enabled) trigger's action prompt for the
-	// copy line, and the first agent from `loop.agentIds` for the avatar.
-	const firstEnabledTrigger =
-		loopTriggers.find((t) => t.enabled && t.targetActorId === firstAgentIdForBanner) ??
-		loopTriggers[0]
-	const askAgentName = firstAgentActor?.name ?? 'This loop'
+	// D3 AskBanner content sourcing. When the `step_flow` sub-flag is on, sample
+	// the first pending step from `useLoopSteps` for `agentName`, `askText`, and
+	// the avatar so the banner surfaces the actually-stalled ask. Under the
+	// umbrella flag alone (sub-flag off) the per-step feed is not fetched — fall
+	// back to the loop's first agent for the copy, matching the pre-D6a wiring
+	// so the banner still renders.
+	const askAgentActor = firstPendingStep?.agent ?? firstAgentActor ?? null
+	const askAgentName = askAgentActor?.name ?? 'This loop'
 	// Copy pattern per SPEC: `{agentName} asks — {askText}`.
-	const askText = firstEnabledTrigger?.actionPrompt ?? 'is waiting on your input.'
+	const askText = firstPendingStep?.triggerActionPrompt ?? 'is waiting on your input.'
+	const askAvatarType = firstPendingStep ? 'agent' : firstAgentActor?.type
 	const decideJumpHref = '#loop-flow'
 
 	const installedFromMarketplaceLoopId = object?.metadata?.installed_from_marketplace_loop_id
@@ -407,8 +418,8 @@ function LoopDetailRoute() {
 								jumpHref={decideJumpHref}
 								onDecideClick={handleDecideClick}
 								pendingCount={pendingCount}
-								avatarId={firstAgentActor?.id}
-								avatarType={firstAgentActor?.type}
+								avatarId={askAgentActor?.id}
+								avatarType={askAvatarType}
 							/>
 						)}
 					</div>

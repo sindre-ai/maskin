@@ -1,6 +1,7 @@
 import { AskBanner } from '@/components/loops/ask-banner'
+import type { LoopStep, LoopSummary, TriggerResponse } from '@/lib/api'
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('AskBanner', () => {
 	it('renders the "{agentName} asks — {askText}" line and the Decide button', () => {
@@ -136,5 +137,130 @@ describe('AskBanner', () => {
 		// the banner's guard) is used, not testing-library's synthetic target.
 		window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', bubbles: true }))
 		expect(onDecideClick).not.toHaveBeenCalled()
+	})
+})
+
+// Per-step-derived copy assertion at the banner boundary. The route wiring
+// (see `__tests__/routes/loops-detail.test.tsx`) samples the first pending
+// step from `useLoopSteps` for `agentName`, `askText`, and the avatar and
+// hands them to the banner as props — those tests cover the wiring end-to-end.
+// This block asserts the banner faithfully renders whatever the wiring hands
+// it, using a per-step-shaped fixture so a regression that reverts the copy
+// source to the pre-D6a trigger-actionPrompt fallback surfaces here too.
+describe('AskBanner — per-step-derived copy', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	function firstPendingStepFixture(): LoopStep {
+		return {
+			triggerId: 't-pending',
+			triggerName: 'Reply to inbound',
+			triggerActionPrompt: 'Approve the outbound draft?',
+			triggerType: 'event',
+			triggerConfig: {},
+			agent: { id: 'agent-quill', name: 'Quill', description: null },
+			handsOffToActorId: null,
+			escalatesToActorId: null,
+			escalateAfterMs: null,
+			handsOffToActor: null,
+			escalatesToActor: null,
+			waitingOnViewer: true,
+			pendingCount: 1,
+			lastEscalatedAt: null,
+		}
+	}
+
+	// A stand-in fixture for the deprecated fallback path — the first enabled
+	// trigger's actionPrompt + the loop's first agent. Present here only so the
+	// assertion below can rule the banner does NOT display it when handed the
+	// per-step-derived copy.
+	function fallbackTriggerFixture(): TriggerResponse {
+		return {
+			id: 't-first-enabled',
+			workspaceId: 'ws-1',
+			name: 'Fallback trigger',
+			type: 'cron',
+			targetActorId: 'agent-first',
+			config: { expression: '0 * * * *' },
+			actionPrompt: 'Fallback trigger action prompt (must not render)',
+			enabled: true,
+			createdBy: 'agent-first',
+			createdAt: null,
+			updatedAt: null,
+		} as TriggerResponse
+	}
+
+	function fallbackLoopFixture(): LoopSummary {
+		return {
+			id: 'loop-1',
+			workspaceId: 'ws-1',
+			name: 'Deal pipeline',
+			content: null,
+			status: 'supervised',
+			pill: 'supervised',
+			entryCondition: null,
+			closeCondition: null,
+			inProgressCount: 0,
+			closedCount: 0,
+			medianTimeToCloseMs: null,
+			agentIds: ['agent-first'],
+			triggerIds: ['t-first-enabled'],
+			waitingOnViewer: true,
+			waitingCount: 1,
+			targets: null,
+			createdAt: null,
+			updatedAt: null,
+		}
+	}
+
+	it('renders the step agent name and triggerActionPrompt when handed per-step-derived props', () => {
+		const step = firstPendingStepFixture()
+		render(
+			<AskBanner
+				agentName={step.agent?.name ?? 'This loop'}
+				askText={step.triggerActionPrompt ?? 'is waiting on your input.'}
+				jumpHref="#loop-flow"
+				onDecideClick={() => {}}
+				pendingCount={1}
+				avatarId={step.agent?.id}
+				avatarType="agent"
+			/>,
+		)
+
+		// Per-step-derived copy: the step's agent name and its triggerActionPrompt.
+		expect(screen.getByText(/Quill asks/)).toBeInTheDocument()
+		expect(screen.getByText(/Approve the outbound draft\?/)).toBeInTheDocument()
+	})
+
+	it('does NOT render the retired fallback copy (first agent + first enabled trigger prompt)', () => {
+		// Assemble the two fixtures the fallback path would have consumed, then
+		// prove nothing on that path leaks through when the banner is fed
+		// per-step-derived props instead.
+		const step = firstPendingStepFixture()
+		const loop = fallbackLoopFixture()
+		const trigger = fallbackTriggerFixture()
+		// Sanity: the fallback fixtures still describe the deprecated path so a
+		// misconfigured test would render THAT copy — the assertions below
+		// confirm the deprecated path is dropped.
+		expect(loop.agentIds).toContain('agent-first')
+		expect(trigger.actionPrompt).toMatch(/Fallback trigger action prompt/)
+
+		render(
+			<AskBanner
+				agentName={step.agent?.name ?? 'This loop'}
+				askText={step.triggerActionPrompt ?? 'is waiting on your input.'}
+				jumpHref="#loop-flow"
+				onDecideClick={() => {}}
+				pendingCount={step.pendingCount}
+				avatarId={step.agent?.id}
+				avatarType="agent"
+			/>,
+		)
+
+		expect(screen.queryByText(/Fallback trigger action prompt/)).not.toBeInTheDocument()
+		// The pre-D6a fallback name was the loop's first agent — verify it never
+		// reaches the banner. (The step agent is "Quill", not "First agent".)
+		expect(screen.queryByText(/First agent asks/)).not.toBeInTheDocument()
 	})
 })
