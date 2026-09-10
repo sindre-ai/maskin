@@ -1,10 +1,17 @@
 import type { Database } from '@maskin/db'
+import {
+	deletePostInputShape,
+	editPostInputShape,
+	linkedinAttachmentsArraySchema,
+} from '@maskin/mcp'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { logger } from '../../../logger'
 import { isLinkedInIntegrationError } from './errors'
 import {
 	commentOnLinkedInPost,
+	deleteLinkedInPost,
+	editLinkedInPost,
 	getLinkedInPostEngagement,
 	getLinkedInProfile,
 	listLinkedInConnections,
@@ -104,6 +111,11 @@ export function createLinkedInMcpServer(ctx: LinkedInMcpContext): McpServer {
 					.max(8000)
 					.describe(
 						'Plain-text message body. Max 8000 chars (LinkedIn hard limit). No HTML; newlines allowed.',
+					),
+				attachments: linkedinAttachmentsArraySchema
+					.optional()
+					.describe(
+						'Optional messaging attachments. Each entry carries `send_mode` (native vs file) — LinkedIn inlines "native" attachments in the DM and delivers "file" attachments as a hosted file link. LinkedIn accepts up to 9 images together (carousel) OR exactly one non-image (video or document). Mixed types are rejected.',
 					),
 				idempotency_key: z
 					.string()
@@ -332,11 +344,10 @@ export function createLinkedInMcpServer(ctx: LinkedInMcpContext): McpServer {
 					.describe(
 						'Post body. Max 3000 chars — LinkedIn hard limit. Plain text; newlines allowed; @mentions and hashtags render as-is on LinkedIn.',
 					),
-				attachments: z
-					.array(z.unknown())
+				attachments: linkedinAttachmentsArraySchema
 					.optional()
 					.describe(
-						'Optional attachments (images/documents/videos). Pass LinkedIn-compatible attachment descriptors; leave undefined for text-only posts.',
+						'Optional attachments. LinkedIn accepts up to 9 images together (carousel) OR exactly one non-image (video or document). Mixed types are rejected. Each entry: base64 `content`, `content_type` (one of the LinkedIn-supported MIME types), and `filename`.',
 					),
 				can_read: z
 					.string()
@@ -371,6 +382,45 @@ export function createLinkedInMcpServer(ctx: LinkedInMcpContext): McpServer {
 		},
 	)
 
+	// ── R11-B destructive post CRUD (edit/delete) ─────────────────────────
+	// Two verbs the R11-A fan-out registers per-identity as
+	// `linkedin-{accSlug}-{identitySlug}__edit_post` /
+	// `__delete_post`. R11-A's concrete registrar has not landed yet, so the
+	// current shell registers them under the Phase-1 flat naming; R11-A will
+	// re-namespace on top when its follow-up commits land.
+
+	server.registerTool(
+		'linkedin_edit_post',
+		{
+			description:
+				'Edit the text OR commenting permissions of a LinkedIn post the connected identity already published. Does NOT accept attachments — LinkedIn v2 only allows text + can_comment on edit (attachments are frozen at publish time). Fails with POST_NOT_FOUND if this identity is not the post author. LinkedIn shows an "edited" marker on the post after this call. Two identical edits of the same post_id within 24h dedup on the linkedin_tool_calls ledger keyed on (actor_id, tool_name, target_id).',
+			inputSchema: editPostInputShape,
+		},
+		async (args) => {
+			try {
+				return jsonResult(await editLinkedInPost(ctx, args))
+			} catch (err) {
+				return toolError('linkedin_edit_post', err)
+			}
+		},
+	)
+
+	server.registerTool(
+		'linkedin_delete_post',
+		{
+			description:
+				'Delete a LinkedIn post the connected identity already published. Irreversible. Fails with POST_NOT_FOUND if this identity is not the post author. LinkedIn returns 204 on success; a SECOND call for the same post_id returns POST_NOT_FOUND — treat that as a successful no-op (the response envelope reports `already_deleted: true`). Two identical deletes within 24h dedup on the linkedin_tool_calls ledger.',
+			inputSchema: deletePostInputShape,
+		},
+		async (args) => {
+			try {
+				return jsonResult(await deleteLinkedInPost(ctx, args))
+			} catch (err) {
+				return toolError('linkedin_delete_post', err)
+			}
+		},
+	)
+
 	server.registerTool(
 		'linkedin_publish_business_page_post',
 		{
@@ -388,10 +438,11 @@ export function createLinkedInMcpServer(ctx: LinkedInMcpContext): McpServer {
 					.describe(
 						'LinkedIn company page URN, e.g. `urn:li:organization:12345`. The connected LinkedIn account must be an admin of the page — LinkedIn relays the publish under the page identity via `post_as`.',
 					),
-				attachments: z
-					.array(z.unknown())
+				attachments: linkedinAttachmentsArraySchema
 					.optional()
-					.describe('Optional LinkedIn-compatible attachment descriptors.'),
+					.describe(
+						'Optional attachments. LinkedIn accepts up to 9 images together (carousel) OR exactly one non-image (video or document). Mixed types are rejected.',
+					),
 				can_read: z
 					.string()
 					.optional()

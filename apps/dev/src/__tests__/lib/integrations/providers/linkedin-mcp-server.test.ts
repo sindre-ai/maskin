@@ -40,6 +40,10 @@ vi.mock('../../../../lib/integrations/providers/linkedin-unipile/operations', ()
 	replyToLinkedInComment: replyToCommentMock,
 	readLinkedInPostComments: readCommentsMock,
 	getLinkedInPostEngagement: engagementMock,
+	// R11-B destructive post CRUD; not exercised by the assertions in this
+	// file, but the mock must supply them so the MCP shell's imports resolve.
+	editLinkedInPost: vi.fn(),
+	deleteLinkedInPost: vi.fn(),
 }))
 
 import { LinkedInIntegrationError } from '../../../../lib/integrations/providers/linkedin-unipile/errors'
@@ -91,6 +95,8 @@ describe('createLinkedInMcpServer', () => {
 	it('registers exactly the LinkedIn tool surface', () => {
 		expect(Object.keys(tools(createLinkedInMcpServer(ctx))).sort()).toEqual([
 			'linkedin_comment_on_post',
+			'linkedin_delete_post',
+			'linkedin_edit_post',
 			'linkedin_get_post_engagement',
 			'linkedin_get_profile',
 			'linkedin_list_connections',
@@ -109,7 +115,9 @@ describe('createLinkedInMcpServer', () => {
 
 	// The write tools that carry real-world side effects on LinkedIn.
 	// Adding a read tool that turns into a write is a silent expansion of
-	// agent authority — this test would flip if that happened.
+	// agent authority — this test would flip if that happened. R11-B added
+	// __edit_post and __delete_post: both mutate a live LinkedIn post, so
+	// both belong in this list.
 	it('keeps every non-write tool read-only', () => {
 		const writeTools = [
 			'linkedin_send_message',
@@ -119,6 +127,8 @@ describe('createLinkedInMcpServer', () => {
 			'linkedin_publish_business_page_post',
 			'linkedin_comment_on_post',
 			'linkedin_reply_to_comment',
+			'linkedin_edit_post',
+			'linkedin_delete_post',
 		]
 		const registered = Object.keys(tools(createLinkedInMcpServer(ctx)))
 		const reads = registered.filter((t) => !writeTools.includes(t))
@@ -151,8 +161,12 @@ describe('createLinkedInMcpServer', () => {
 		// Guard the guard: a shape read that silently yields nothing would make
 		// this test pass while checking no fields at all. 39 fields after the
 		// Task 7b content/community tools + 2 fields (user_id, message) on
-		// linkedin_send_connection_request = 41.
-		expect(seen.length).toBe(41)
+		// linkedin_send_connection_request = 41. R11-B adds:
+		//   +1 attachments on linkedin_send_message
+		//   +3 (post_id, text, can_comment) on linkedin_edit_post
+		//   +1 (post_id) on linkedin_delete_post
+		// = 46.
+		expect(seen.length).toBe(46)
 	})
 
 	it('passes the calling actor through to publish_post', async () => {

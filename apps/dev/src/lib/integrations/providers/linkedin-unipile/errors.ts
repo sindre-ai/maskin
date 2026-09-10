@@ -63,6 +63,7 @@ export type LinkedInErrorCode =
 	| 'INVALID_INPUT'
 	| 'LINKEDIN_INVITE_QUOTA_EXCEEDED'
 	| 'LINKEDIN_ALREADY_CONNECTED'
+	| 'POST_NOT_FOUND'
 
 export const LINKEDIN_ERROR_CODES = [
 	'CREDENTIAL_NOT_CONNECTED',
@@ -74,7 +75,32 @@ export const LINKEDIN_ERROR_CODES = [
 	'INVALID_INPUT',
 	'LINKEDIN_INVITE_QUOTA_EXCEEDED',
 	'LINKEDIN_ALREADY_CONNECTED',
+	'POST_NOT_FOUND',
 ] as const satisfies readonly LinkedInErrorCode[]
+
+/**
+ * `POST_NOT_FOUND` covers three failure modes that agents MUST treat the same
+ * way (stop trying — do not retry, do not "verify" by re-issuing):
+ *   1. `post_id` refers to a post that never existed.
+ *   2. `post_id` refers to a post that was already deleted (LinkedIn's
+ *      second-DELETE response).
+ *   3. `post_id` refers to a post authored by a DIFFERENT identity — LinkedIn
+ *      refuses edits and deletes on posts the calling identity did not author.
+ *
+ * All three surface the same wire envelope on LinkedIn's side:
+ *   - status: 400 or 404
+ *   - body:   { error_code: 'post_not_found', ... }  (or a `detail`/`message`
+ *             containing "post not found")
+ *
+ * Bucketed under INVALID_INPUT at wire level (HTTP 400, no retry), distinct
+ * as a named subclass so agents can branch on the code. `__delete_post`'s
+ * operation layer treats `POST_NOT_FOUND` as a SUCCESSFUL NO-OP — deleting a
+ * post that is already gone from LinkedIn is the intended terminal state.
+ */
+export const LINKEDIN_POST_NOT_FOUND_MARKERS = {
+	errorCodes: ['post_not_found'] as const,
+	messageFragments: ['post not found'] as const,
+}
 
 /**
  * LinkedIn's post-body hard limit is 3000 characters. LinkedIn v2's create-post
@@ -199,6 +225,10 @@ export const RETRY_POLICY_BY_CODE: Record<LinkedInErrorCode, RetryPolicy | null>
 	// answered "no" to that specific invite).
 	LINKEDIN_INVITE_QUOTA_EXCEEDED: null,
 	LINKEDIN_ALREADY_CONNECTED: null,
+	// POST_NOT_FOUND is terminal: retrying an edit/delete on a post LinkedIn
+	// says does not exist just gets the same POST_NOT_FOUND back. Delete
+	// operations treat this as a successful no-op at the operations layer.
+	POST_NOT_FOUND: null,
 }
 
 const IS_RETRYABLE: Record<LinkedInErrorCode, boolean> = {
@@ -211,6 +241,7 @@ const IS_RETRYABLE: Record<LinkedInErrorCode, boolean> = {
 	INVALID_INPUT: false,
 	LINKEDIN_INVITE_QUOTA_EXCEEDED: false,
 	LINKEDIN_ALREADY_CONNECTED: false,
+	POST_NOT_FOUND: false,
 }
 
 const DEFAULT_HTTP_STATUS: Record<LinkedInErrorCode, number> = {
@@ -226,6 +257,11 @@ const DEFAULT_HTTP_STATUS: Record<LinkedInErrorCode, number> = {
 	// one. 409 for already-connected: state conflict, the classic HTTP fit.
 	LINKEDIN_INVITE_QUOTA_EXCEEDED: 403,
 	LINKEDIN_ALREADY_CONNECTED: 409,
+	// Bucketed under INVALID_INPUT at wire level (spec §5): the caller made a
+	// request LinkedIn cannot honour — same 400 shape agents already handle
+	// for other input-shaped nos. Distinct code so a `__delete_post` op can
+	// swallow it as a no-op without swallowing every other INVALID_INPUT.
+	POST_NOT_FOUND: 400,
 }
 
 /**
@@ -248,6 +284,13 @@ export function classifyLinkedInResponse(status: number, body: unknown): LinkedI
 	if (isInviteQuotaExceededBody(body)) return 'LINKEDIN_INVITE_QUOTA_EXCEEDED'
 	if (isAlreadyConnectedBody(body)) return 'LINKEDIN_ALREADY_CONNECTED'
 	if (isPostTooLongBody(body)) return 'LINKEDIN_POST_TOO_LONG'
+	// POST_NOT_FOUND detection runs BEFORE the generic 4xx → INVALID_INPUT
+	// fallback so an edit/delete against a missing / already-deleted /
+	// non-authored post lands in its own class instead of collapsing into a
+	// generic "bad request" — `__delete_post` needs to distinguish the two
+	// to treat POST_NOT_FOUND as a successful no-op. Only fires on the 400/404
+	// statuses LinkedIn uses for this (never on a 5xx or an unrelated 4xx).
+	if ((status === 400 || status === 404) && isPostNotFoundBody(body)) return 'POST_NOT_FOUND'
 	if (status >= 200 && status < 300) return null
 	if (status === 401) return 'CREDENTIAL_REVOKED'
 	if (status === 404) return 'CREDENTIAL_NOT_CONNECTED'
@@ -280,6 +323,26 @@ function isNotImplementedBody(body: unknown): boolean {
 	const type = typeof rec.type === 'string' ? rec.type.toLowerCase() : null
 	const errorType = typeof rec.error_type === 'string' ? rec.error_type.toLowerCase() : null
 	return type === 'api/not_implemented' || errorType === 'api/not_implemented'
+}
+
+/**
+ * Detect the POST_NOT_FOUND envelope on an edit/delete response. Fires on
+ * `body.error_code === 'post_not_found'` (case-insensitive) OR when
+ * `message` / `detail` contain the phrase "post not found". Detection intentionally
+ * matches on the phrase regardless of status — the classifier's caller gates
+ * on 400/404 so this cannot fire on an unrelated 500.
+ */
+function isPostNotFoundBody(body: unknown): boolean {
+	if (!body || typeof body !== 'object') return false
+	const rec = body as Record<string, unknown>
+	const errorCode = typeof rec.error_code === 'string' ? rec.error_code.toLowerCase() : null
+	if (errorCode && LINKEDIN_POST_NOT_FOUND_MARKERS.errorCodes.includes(errorCode as never)) {
+		return true
+	}
+	const message = typeof rec.message === 'string' ? rec.message.toLowerCase() : ''
+	const detail = typeof rec.detail === 'string' ? rec.detail.toLowerCase() : ''
+	const haystack = `${message} ${detail}`
+	return LINKEDIN_POST_NOT_FOUND_MARKERS.messageFragments.some((frag) => haystack.includes(frag))
 }
 
 function isPostTooLongBody(body: unknown): boolean {
@@ -465,6 +528,25 @@ export class LinkedinAlreadyConnectedError extends LinkedInIntegrationError {
 			'This member is already a first-degree connection or has a pending invitation from this account. Treat as a successful no-op.',
 			{ cause },
 		)
+	}
+}
+
+/**
+ * Post-not-found / already-deleted / not-authored-by-this-identity — three
+ * failure modes LinkedIn surfaces the same way and that agents MUST treat the
+ * same way (stop trying). The message is deliberately one sentence covering
+ * all three, because we cannot distinguish them from LinkedIn's response and
+ * must not guess at which one it was for the human reading a log line.
+ *
+ * Wire code is `POST_NOT_FOUND`, but the operation layer for `__delete_post`
+ * treats this error as a SUCCESSFUL NO-OP (spec §5) — the post is gone, which
+ * is the intended terminal state. `__edit_post` re-raises unchanged.
+ */
+export class PostNotFoundError extends LinkedInIntegrationError {
+	constructor(cause?: unknown) {
+		super('POST_NOT_FOUND', 'Post not found, already deleted, or not authored by this identity.', {
+			cause,
+		})
 	}
 }
 

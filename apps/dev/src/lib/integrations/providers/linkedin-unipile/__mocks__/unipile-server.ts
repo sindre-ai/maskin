@@ -4,6 +4,14 @@ import {
 	createServer as createHttpServer,
 } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { tryHandlePostsCrud } from './handlers/posts-crud'
+export {
+	CANNED_EDIT_POST_RESPONSE,
+	CANNED_POST_NOT_FOUND_ERROR,
+	clearPostsCrudPending,
+	setNextPostsCrudError,
+} from './handlers/posts-crud'
+export type { PostsCrudErrorTrigger } from './handlers/posts-crud'
 
 /**
  * In-process LinkedIn mock server for tests, rebuilt against LinkedIn Hosted
@@ -444,6 +452,15 @@ export async function startLinkedInMock(): Promise<LinkedInMockServer> {
 		// catch-all, otherwise "posts" would be resolved as a user handle.
 		if (method === 'POST' && /^\/v2\/[^/]+\/posts$/.test(url)) {
 			return send(200, CANNED_PUBLISH_POST_RESPONSE())
+		}
+		// R11-B destructive post CRUD (edit/delete). Delegated to the
+		// `posts-crud` handler so this main switch stays flat as more surfaces
+		// arrive (reactions CRUD in R11-C, message CRUD later). Runs BEFORE
+		// the retrieve-post / comments routes so `/posts/:id` on PATCH+DELETE
+		// dispatches here rather than falling through to the GET-only handlers.
+		{
+			const crud = tryHandlePostsCrud(method, url)
+			if (crud) return send(crud.status, crud.body)
 		}
 		if (method === 'POST' && /^\/v2\/[^/]+\/posts\/[^/]+\/comments$/.test(url)) {
 			return send(200, CANNED_COMMENT_RESPONSE())
