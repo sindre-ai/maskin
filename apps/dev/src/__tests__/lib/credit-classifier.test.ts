@@ -71,6 +71,39 @@ describe('classifyCreditExhaustion', () => {
 			})
 		})
 
+		it('classifies OAuth-revoked banner from real Anthropic 401 output', () => {
+			// Exact result-line the Claude Code CLI wrote when Anthropic
+			// returned 401 authentication_error with body
+			// `"OAuth access token has been revoked."` on a rotated Max token
+			// (observed live 2026-09-10). The runtime failover reason mapping
+			// in session-manager.ts::claudeRuntimeFailoverReason routes this
+			// through the same maybeRetryClaudeOAuthOnNextSlot path as the
+			// spent-subscription banners.
+			const result = classifyCreditExhaustion(
+				'{"type":"result","subtype":"success","is_error":true,"api_error_status":401,"result":"Failed to authenticate. API Error: 401 {\\"type\\":\\"error\\",\\"error\\":{\\"type\\":\\"authentication_error\\",\\"message\\":\\"OAuth access token has been revoked.\\"}}"}',
+			)
+			expect(result).toMatchObject({
+				provider: 'anthropic',
+				reason_code: 'oauth_revoked',
+				http_status: null,
+				verbatim_output: 'OAuth access token has been revoked',
+			})
+		})
+
+		it('classifies OAuth-revoked banner under the strict exit-0 gate too', () => {
+			// A revoked-mid-turn interactive session exits cleanly (is_error:true
+			// but subtype:success), so the exit-0 path must still trip on the
+			// literal CLI banner — it's high-confidence, not one of the bare
+			// substrings the ambiguous gate exists to suppress.
+			const result = classifyCreditExhaustion('OAuth access token has been revoked', {
+				includeAmbiguousSignals: false,
+			})
+			expect(result).toMatchObject({
+				provider: 'anthropic',
+				reason_code: 'oauth_revoked',
+			})
+		})
+
 		it('classifies not logged in banner', () => {
 			const result = classifyCreditExhaustion(
 				'Not logged in · Please run /login\nSession failed with exit code 1',

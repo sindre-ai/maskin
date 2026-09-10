@@ -184,6 +184,61 @@ describe('Remote session completion — Claude subscription failover (Integratio
 		})
 	})
 
+	it('classifies a revoked OAuth token as oauth_revoked, moves the workspace, and starts one retry', async () => {
+		// A credential rotated (or manually revoked) between session-launch and
+		// mid-run reaches production as this exact Anthropic 401 body — captured
+		// live 2026-09-10 from a real Anthropic Max token that had been rotated
+		// out from under us. Before this change the runtime classifier returned
+		// null on it (auth is not a credit signal), so the pointer never moved
+		// and every following session on the same workspace kept trying the
+		// dead credential until the workspace driver noticed hours later.
+		vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
+		const REVOKED_TAIL =
+			'{"type":"result","subtype":"success","is_error":true,"api_error_status":401,"result":"Failed to authenticate. API Error: 401 {\\"type\\":\\"error\\",\\"error\\":{\\"type\\":\\"authentication_error\\",\\"message\\":\\"OAuth access token has been revoked.\\"}}"}\n'
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+			agentServerId,
+			containerId: 'sandbox-under-test',
+			config: { llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },
+		})
+		await insertSessionLog(db, session.id, { stream: 'stdout', content: REVOKED_TAIL })
+
+		const manager = new SessionManager(db, stubStorage())
+		const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
+		try {
+			await manager.markRemoteSessionComplete(session.id, 1)
+		} finally {
+			startSpy.mockRestore()
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id)).limit(1)
+		expect(row?.status).toBe('failed')
+		expect(row?.result).toMatchObject({
+			exit_code: 1,
+			failure_reason: { provider: 'anthropic', reason_code: 'oauth_revoked' },
+		})
+
+		// Pointer moved — same remediation as the spent-subscription cases above.
+		// The retry's session-start refresh will recover an expired-not-revoked
+		// backup in place; a fully-dead backup walks further via unusableFromRefresh.
+		const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
+		const claudeOauth = (ws?.settings as { claude_oauth?: { failover?: { active_slot?: string } } })
+			?.claude_oauth
+		expect(claudeOauth?.failover?.active_slot).toBe('backup')
+
+		const retries = await db
+			.select()
+			.from(sessions)
+			.where(and(eq(sessions.workspaceId, workspaceId), ne(sessions.id, session.id)))
+		expect(retries).toHaveLength(1)
+		expect(retries[0]?.config).toMatchObject({
+			llm_route: 'claude_oauth',
+			llm_oauth_slot: 'backup',
+			claude_oauth_runtime_failover_retry_of: session.id,
+		})
+	})
+
 	it('leaves an ordinary remote failure untouched', async () => {
 		vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
 		const session = await insertSession(db, workspaceId, actorId, actorId, {

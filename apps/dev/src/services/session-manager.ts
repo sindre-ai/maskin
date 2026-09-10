@@ -226,6 +226,12 @@ function claudeRuntimeFailoverReason(
 ): string | null {
 	if (!failureReason || failureReason.provider !== 'anthropic') return null
 	if (failureReason.reason_code === 'not_logged_in') return 'auth_failed'
+	// A revoked credential is a distinct failure mode from a spent one — the
+	// slot's token itself is bad, not the subscription's quota — but the
+	// remediation is the same: fail this session over to the next slot in the
+	// chain. The retry's session-start refresh recovers expired-but-not-revoked
+	// tokens in place; a fully-dead slot walks further via unusableFromRefresh.
+	if (failureReason.reason_code === 'oauth_revoked') return 'oauth_revoked'
 
 	const usageCodes = new Set([
 		'session_limit',
@@ -2746,14 +2752,18 @@ export class SessionManager extends EventEmitter {
 			})
 			await this.insertSystemLog(
 				session.id,
-				'The last connected Claude subscription also hit a usage limit; no further Claude OAuth fallback is available',
+				reason === 'oauth_revoked'
+					? 'The last connected Claude subscription is also unavailable (token revoked); no further Claude OAuth fallback is available'
+					: 'The last connected Claude subscription also hit a usage limit; no further Claude OAuth fallback is available',
 			)
 			return
 		}
 
 		await this.insertSystemLog(
 			session.id,
-			'The Claude subscription in use hit a usage limit; retrying this session on the next connected subscription',
+			reason === 'oauth_revoked'
+				? 'The Claude subscription in use had its OAuth token revoked; retrying this session on the next connected subscription'
+				: 'The Claude subscription in use hit a usage limit; retrying this session on the next connected subscription',
 		)
 		await this.createSession(session.workspaceId, {
 			actorId: session.actorId,

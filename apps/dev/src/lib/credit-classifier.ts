@@ -45,6 +45,21 @@ const CLI_BANNERS: ReadonlyArray<{
 		reasonCode: 'not_logged_in',
 		humanMessage: 'Claude credentials not connected — please import your Claude subscription',
 	},
+	{
+		// The Claude Code CLI prints this line verbatim when Anthropic returns
+		// 401 with `error.type = 'authentication_error'` and the message body
+		// `"OAuth access token has been revoked."`. Observed live 2026-09-10
+		// on a rotated (invalidated) Anthropic Max token. Distinct from the
+		// six banners above, which all mean "spent for now" — this means the
+		// credential itself is bad. Routing it into the same runtime failover
+		// path so the retry lands on the next connected subscription; on that
+		// slot the session-start refresh recovers an expired-but-not-revoked
+		// token in place, and if the whole slot is dead it walks the chain.
+		match: 'OAuth access token has been revoked',
+		reasonCode: 'oauth_revoked',
+		humanMessage:
+			'Claude OAuth token was revoked — moving this workspace to the next connected subscription',
+	},
 ]
 
 /**
