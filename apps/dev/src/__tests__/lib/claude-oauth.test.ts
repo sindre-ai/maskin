@@ -6,9 +6,10 @@ vi.mock('../../lib/crypto', () => ({
 	encrypt: vi.fn((input: string) => input),
 }))
 
-// Mock logger
+// Mock logger — every level the real one exports, so a module that starts
+// logging at a new level doesn't fail with `logger.x is not a function`.
 vi.mock('../../lib/logger', () => ({
-	logger: { info: vi.fn(), warn: vi.fn() },
+	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
 import {
@@ -18,6 +19,7 @@ import {
 	encryptOAuthTokens,
 	getValidOAuthToken,
 	persistRefreshedSlot,
+	preserveSlotLabels,
 	refreshClaudeToken,
 	refreshClaudeTokenIfNeeded,
 } from '../../lib/claude-oauth'
@@ -122,6 +124,27 @@ describe('refreshClaudeToken', () => {
 		expect(result.refreshToken).toBe('new-refresh')
 		expect(result.subscriptionType).toBe('free') // preserves original
 		expect(result.scopes).toEqual(['read', 'write'])
+	})
+
+	it('carries the slot nickname through a refresh', async () => {
+		// The refreshed record is persisted over the slot wholesale, so a
+		// nickname dropped here is a nickname deleted from the workspace.
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve({
+						access_token: 'new-access',
+						refresh_token: 'new-refresh',
+						expires_in: 7200,
+					}),
+			}),
+		)
+
+		const result = await refreshClaudeToken(makeTokens({ nickname: 'Work account' }))
+
+		expect(result.nickname).toBe('Work account')
 	})
 
 	it('preserves original refresh_token when response omits it', async () => {
@@ -453,5 +476,36 @@ describe('persistRefreshedSlot', () => {
 		const { db, mockUpdateWhere } = createMockDb(undefined)
 		await persistRefreshedSlot(db, 'ws-gone', 'primary', fresh)
 		expect(mockUpdateWhere).not.toHaveBeenCalled()
+	})
+})
+
+describe('preserveSlotLabels', () => {
+	const stored = {
+		encryptedAccessToken: 'old-a',
+		encryptedRefreshToken: 'old-r',
+		expiresAt: 1,
+		nickname: 'Work account',
+	}
+	const incoming = {
+		encryptedAccessToken: 'new-a',
+		encryptedRefreshToken: 'new-r',
+		expiresAt: 2,
+	}
+
+	it('carries the nickname onto a blob that omits it', () => {
+		expect(preserveSlotLabels(incoming, stored)).toEqual({
+			...incoming,
+			nickname: 'Work account',
+		})
+	})
+
+	it('lets an incoming value win so a rename still takes effect', () => {
+		expect(preserveSlotLabels({ ...incoming, nickname: 'Renamed' }, stored).nickname).toBe(
+			'Renamed',
+		)
+	})
+
+	it('is a no-op when there is nothing stored to preserve', () => {
+		expect(preserveSlotLabels(incoming, undefined)).toEqual(incoming)
 	})
 })

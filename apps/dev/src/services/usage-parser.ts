@@ -152,3 +152,24 @@ export async function sumRunningSessionUsage(
 		durationMs: totalDuration,
 	}
 }
+
+/**
+ * DB-backed equivalent of the in-memory `stdoutTail` for the remote path — a
+ * microsandbox session's stdout only lands in `session_logs`. Stdout-only so
+ * both completion paths classify from the same material. Ordered by `id`
+ * (bigserial, monotonic) rather than `createdAt` — the latter ties within a
+ * millisecond and shuffles chunks.
+ */
+export async function readSessionStdoutTail(db: Database, sessionId: string): Promise<string> {
+	const rows = await db
+		.select({ content: sessionLogs.content })
+		.from(sessionLogs)
+		.where(and(eq(sessionLogs.sessionId, sessionId), eq(sessionLogs.stream, 'stdout')))
+		.orderBy(desc(sessionLogs.id))
+		.limit(MAX_LOG_ROWS_FETCHED)
+
+	return rows
+		.map((r) => r.content)
+		.reverse()
+		.join('')
+}

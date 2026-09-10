@@ -13,7 +13,7 @@ async function importClaudeOAuth(
 		refreshToken: string
 		expiresAt: number
 		subscriptionType?: string
-		slot?: 'primary' | 'backup'
+		slot?: string
 	},
 ) {
 	const res = await fetch(`${BASE}/api/claude-oauth/import`, {
@@ -39,6 +39,19 @@ async function getWorkspaceSettings(apiKey: string, workspaceId: string) {
 	const ws = list.find((w) => w.id === workspaceId)
 	if (!ws) throw new Error(`Workspace ${workspaceId} not found`)
 	return ws.settings
+}
+
+/**
+ * A reload of the keys page re-runs the auth guard and the feature-flag load
+ * before it even asks for subscription status, so the slot cards can take
+ * longer than Playwright's 5s default to mount on a loaded CI runner. Every
+ * flake this spec has produced was that wait expiring with no card rendered
+ * yet ("element(s) not found"), never a wrong value — so wait for the first
+ * card explicitly and let the assertions that follow stay strict.
+ */
+async function reloadKeysPage(page: Page) {
+	await page.reload()
+	await expect(page.getByTestId('slot-primary')).toBeVisible({ timeout: 15_000 })
 }
 
 const seedPrimary = {
@@ -68,9 +81,25 @@ async function mockFailedOverStatus(page: Page) {
 				subscription_type: 'pro',
 				expires_at: expiresAt,
 				slots: {
-					primary: { subscription_type: 'max-5x', expires_at: expiresAt, fingerprint: 'e2eprim1' },
-					backup: { subscription_type: 'pro', expires_at: expiresAt, fingerprint: 'e2ebckp1' },
+					primary: {
+						slot: 'primary',
+						position: 0,
+						subscription_type: 'max-5x',
+						expires_at: expiresAt,
+						fingerprint: 'e2eprim1',
+						failure_at: Date.now() - 2 * 60 * 1000,
+						failure_reason: 'quota_exhausted_weekly',
+					},
+					backup: {
+						slot: 'backup',
+						position: 1,
+						subscription_type: 'pro',
+						expires_at: expiresAt,
+						fingerprint: 'e2ebckp1',
+					},
 				},
+				chain: ['primary', 'backup'],
+				slots_remaining: 8,
 				active_slot: 'backup',
 				last_primary_failure_at: Date.now() - 2 * 60 * 1000,
 				last_classified_reason: 'quota_exhausted_weekly',
@@ -80,6 +109,12 @@ async function mockFailedOverStatus(page: Page) {
 }
 
 test.describe('Claude subscription failover — settings UI', () => {
+	// These tests seed subscriptions over the API, drive the paste flow and
+	// reload the settings page — more steps than Playwright's 30s default test
+	// timeout comfortably covers on a loaded CI runner, and the reload wait
+	// above needs room to actually elapse rather than starving the budget.
+	test.describe.configure({ timeout: 60_000 })
+
 	test('AC-U3: surfaces failover banner, classified reason, and Unhealthy primary when failed over', async ({
 		page,
 		account,
@@ -125,17 +160,17 @@ test.describe('Claude subscription failover — settings UI', () => {
 
 		await page.goto(`/${account.workspaceId}/settings/keys`)
 
-		// Sanity: backup is empty
-		const backup = page.getByTestId('slot-backup')
-		await expect(backup).toContainText('Add a backup')
+		// Sanity: only the primary is connected, and the dashed card invites the
+		// next subscription in the chain.
+		await expect(page.getByTestId('slot-add')).toContainText('Add another subscription')
 
-		// Open the paste flow from the empty backup card
-		await page.getByRole('button', { name: 'Import backup credentials' }).click()
+		// Open the paste flow from the dashed add card
+		await page.getByRole('button', { name: 'Import another subscription' }).click()
 		const pasteFlow = page.getByTestId('paste-flow')
 		await expect(pasteFlow).toBeVisible()
 
-		// Backup radio should be pre-selected
-		await expect(page.getByRole('radio', { name: /Backup/ })).toHaveAttribute(
+		// It defaults to appending, which lands in the backup position here
+		await expect(page.getByRole('radio', { name: 'Add as Backup' })).toHaveAttribute(
 			'aria-checked',
 			'true',
 		)
@@ -157,13 +192,20 @@ test.describe('Claude subscription failover — settings UI', () => {
 
 		// Backup slot should now render in connected state with a Disconnect action.
 		// SlotCard renders "Connected" for a healthy slot ("Unhealthy" only when
-		// a failover reason line is present) — see keys.tsx's `isUnhealthy` check.
+		// a failure reason is recorded against it) — see keys.tsx's
+		// `isUnhealthy` check.
+		const backup = page.getByTestId('slot-backup')
 		await expect(backup).toContainText('Connected', { timeout: 10_000 })
 
-		// AC-U5: reload — designation persists
-		await page.reload()
-		await expect(page.getByTestId('slot-primary')).toContainText('Connected')
-		await expect(page.getByTestId('slot-backup')).toContainText('Connected')
+		// AC-U5: reload — designation persists. Assert the POSITION labels, not
+		// health: a background session-start in this workspace can reject the
+		// seeded tokens and stamp `auth_failed` on a slot mid-test, flipping its
+		// card to "Unhealthy". That is a true rendering of the credential's
+		// state and irrelevant to what this test is about, which is that the
+		// second subscription is still designated the backup after a reload.
+		await reloadKeysPage(page)
+		await expect(page.getByTestId('slot-primary')).toContainText('Primary')
+		await expect(page.getByTestId('slot-backup')).toContainText('Backup')
 
 		// And the storage shape on disk has the backup slot populated (not the
 		// primary key being overwritten with the just-pasted tokens).
