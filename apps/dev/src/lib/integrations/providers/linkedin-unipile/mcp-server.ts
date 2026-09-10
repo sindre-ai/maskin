@@ -1,5 +1,10 @@
 import type { Database } from '@maskin/db'
-import type { LinkedInMcpInstanceConfig, LinkedInPhase1Verb } from '@maskin/mcp/linkedin'
+import {
+	deletePostInputShape,
+	editPostInputShape,
+	linkedinAttachmentsArraySchema,
+} from '@maskin/mcp'
+import type { LinkedInMcpInstanceConfig, LinkedInVerb } from '@maskin/mcp/linkedin'
 import { toolName, toolsForIdentity } from '@maskin/mcp/linkedin'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
@@ -7,6 +12,8 @@ import { logger } from '../../../logger'
 import { isLinkedInIntegrationError } from './errors'
 import {
 	commentOnLinkedInPost,
+	deleteLinkedInPost,
+	editLinkedInPost,
 	getLinkedInPostEngagement,
 	getLinkedInProfile,
 	listLinkedInConnections,
@@ -119,7 +126,7 @@ export function registerLinkedInMcpInstance(
 	cfg: LinkedInMcpInstanceConfig,
 	ctx: LinkedInMcpContext,
 ): void {
-	const allowed = new Set<LinkedInPhase1Verb>(toolsForIdentity(cfg))
+	const allowed = new Set<LinkedInVerb>(toolsForIdentity(cfg))
 	const opCtx = { db: ctx.db, actorId: ctx.actorId, workspaceId: ctx.workspaceId, identity: cfg }
 
 	if (allowed.has('publish_post')) {
@@ -136,6 +143,11 @@ export function registerLinkedInMcpInstance(
 						.min(1)
 						.max(3000)
 						.describe('Post body. Max 3000 chars — LinkedIn hard limit.'),
+					attachments: linkedinAttachmentsArraySchema
+						.optional()
+						.describe(
+							'Optional attachments. LinkedIn accepts up to 9 images together (carousel) OR exactly one non-image (video or document). Mixed types are rejected.',
+						),
 					can_read: z
 						.string()
 						.optional()
@@ -146,7 +158,6 @@ export function registerLinkedInMcpInstance(
 						.describe('Who can comment, e.g. "connections", "anyone", "none".'),
 					quoted_post_id: z.string().optional().describe('Post id to quote-share.'),
 				},
-			},
 			async (args) => {
 				try {
 					return jsonResult(await publishLinkedInPost(opCtx, args))
@@ -218,6 +229,46 @@ export function registerLinkedInMcpInstance(
 		)
 	}
 
+	if (allowed.has('edit_post')) {
+		server.registerTool(
+			toolName(cfg, 'edit_post'),
+			{
+				description: scopedDescription(
+					'Edit the text or commenting permissions of a LinkedIn post this identity already published. Does NOT accept attachments — LinkedIn v2 only allows text + can_comment on edit (attachments are frozen at publish time). Fails with POST_NOT_FOUND if this identity is not the post author. LinkedIn shows an "edited" marker on the post after this call. Two identical edits of the same post_id within 24h dedup on the linkedin_tool_calls ledger keyed on (actor_id, tool_name, target_id).',
+					cfg,
+				),
+				inputSchema: editPostInputShape,
+			},
+			async (args) => {
+				try {
+					return jsonResult(await editLinkedInPost(opCtx, args))
+				} catch (err) {
+					return toolError(toolName(cfg, 'edit_post'), err)
+				}
+			},
+		)
+	}
+
+	if (allowed.has('delete_post')) {
+		server.registerTool(
+			toolName(cfg, 'delete_post'),
+			{
+				description: scopedDescription(
+					'Delete a LinkedIn post this identity already published. Irreversible. Fails with POST_NOT_FOUND if this identity is not the post author. LinkedIn returns 204 on success; a SECOND call for the same post_id returns POST_NOT_FOUND — treat that as a successful no-op (the response envelope reports `already_deleted: true`). Two identical deletes within 24h dedup on the linkedin_tool_calls ledger.',
+					cfg,
+				),
+				inputSchema: deletePostInputShape,
+			},
+			async (args) => {
+				try {
+					return jsonResult(await deleteLinkedInPost(opCtx, args))
+				} catch (err) {
+					return toolError(toolName(cfg, 'delete_post'), err)
+				}
+			},
+		)
+	}
+
 	if (allowed.has('get_post_engagement')) {
 		server.registerTool(
 			toolName(cfg, 'get_post_engagement'),
@@ -246,6 +297,11 @@ export function registerLinkedInMcpInstance(
 				inputSchema: {
 					recipient_urn: z.string().min(1),
 					body: z.string().min(1).max(8000),
+					attachments: linkedinAttachmentsArraySchema
+						.optional()
+						.describe(
+							'Optional messaging attachments. Each entry carries `send_mode` (native vs file) — LinkedIn inlines "native" attachments in the DM and delivers "file" attachments as a hosted file link. LinkedIn accepts up to 9 images together (carousel) OR exactly one non-image (video or document). Mixed types are rejected.',
+						),
 					idempotency_key: z.string().min(1).max(128),
 				},
 			},

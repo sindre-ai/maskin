@@ -14,8 +14,8 @@
  * `registerLinkedInMcpInstance(server, cfg)`.
  */
 
-import type { LinkedInMcpInstanceConfig, LinkedInPhase1Verb } from '../lib/linkedin-mcp-context'
-import { LINKEDIN_PHASE1_VERBS } from '../lib/linkedin-mcp-context'
+import type { LinkedInMcpInstanceConfig, LinkedInVerb } from '../lib/linkedin-mcp-context'
+import { LINKEDIN_ALL_VERBS } from '../lib/linkedin-mcp-context'
 
 /**
  * §2 filter table. Suites map onto verbs; the identity type / messagingEnabled
@@ -25,38 +25,46 @@ import { LINKEDIN_PHASE1_VERBS } from '../lib/linkedin-mcp-context'
  *   - messaging                           → personal + messagingEnabled pages.
  *   - connections+invitations             → personal only.
  *   - search + profile lookup             → personal only.
+ *
+ * R11-B adds `edit_post` + `delete_post` to POSTS_SUITE — the destructive
+ * post CRUD registered per-identity on every instance (personal + page),
+ * matching the spec §2 rule that every identity gets the full posts suite.
  */
-const POSTS_SUITE: readonly LinkedInPhase1Verb[] = [
+const POSTS_SUITE: readonly LinkedInVerb[] = [
 	'publish_post',
+	'edit_post',
+	'delete_post',
 	'read_post_comments',
 	'comment_on_post',
 	'reply_to_comment',
 	'get_post_engagement',
 ] as const
 
-const MESSAGING_SUITE: readonly LinkedInPhase1Verb[] = [
+const MESSAGING_SUITE: readonly LinkedInVerb[] = [
 	'send_message',
 	'reply',
 	'list_conversations',
 	'list_messages',
 ] as const
 
-const CONNECTIONS_SUITE: readonly LinkedInPhase1Verb[] = [
+const CONNECTIONS_SUITE: readonly LinkedInVerb[] = [
 	'send_connection_request',
 	'list_connections',
 ] as const
 
-const PROFILE_SUITE: readonly LinkedInPhase1Verb[] = ['search_people', 'get_profile'] as const
+const PROFILE_SUITE: readonly LinkedInVerb[] = ['search_people', 'get_profile'] as const
 
 /**
- * Return the subset of Phase 1 verbs registered on the instance described by
- * `cfg`. Preserves the canonical order from `LINKEDIN_PHASE1_VERBS` so a
- * `tools/list` diff is stable across restarts and reconnects.
+ * Return the subset of R11 verbs (Phase 1 + Phase 2) registered on the
+ * instance described by `cfg`. Preserves the canonical order from
+ * `LINKEDIN_ALL_VERBS` so a `tools/list` diff is stable across restarts and
+ * reconnects — Phase 2 verbs appear at the position their entry in
+ * LINKEDIN_ALL_VERBS pins.
  */
 export function toolsForIdentity(
 	cfg: Pick<LinkedInMcpInstanceConfig, 'identityType' | 'messagingEnabled'>,
-): LinkedInPhase1Verb[] {
-	const allowed = new Set<LinkedInPhase1Verb>()
+): LinkedInVerb[] {
+	const allowed = new Set<LinkedInVerb>()
 
 	// Posts suite: every identity registers it.
 	for (const v of POSTS_SUITE) allowed.add(v)
@@ -73,9 +81,18 @@ export function toolsForIdentity(
 	}
 
 	// Canonical order — do NOT sort alphabetically; keep spec order for diff stability.
-	return LINKEDIN_PHASE1_VERBS.filter((v) => allowed.has(v))
+	return LINKEDIN_ALL_VERBS.filter((v) => allowed.has(v))
 }
 
-export { LINKEDIN_PHASE1_VERBS } from '../lib/linkedin-mcp-context'
-export type { LinkedInMcpInstanceConfig, LinkedInPhase1Verb } from '../lib/linkedin-mcp-context'
+export {
+	LINKEDIN_PHASE1_VERBS,
+	LINKEDIN_PHASE2_VERBS,
+	LINKEDIN_ALL_VERBS,
+} from '../lib/linkedin-mcp-context'
+export type {
+	LinkedInMcpInstanceConfig,
+	LinkedInPhase1Verb,
+	LinkedInPhase2Verb,
+	LinkedInVerb,
+} from '../lib/linkedin-mcp-context'
 export { instanceSlug, toolName } from '../lib/linkedin-mcp-context'

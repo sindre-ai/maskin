@@ -100,6 +100,31 @@ export const LINKEDIN_PHASE1_VERBS = [
 export type LinkedInPhase1Verb = (typeof LINKEDIN_PHASE1_VERBS)[number]
 
 /**
+ * Phase 2 verbs added by R11-B: destructive post CRUD (`edit_post`,
+ * `delete_post`). Kept in their own list rather than folded into
+ * `LINKEDIN_PHASE1_VERBS` so R11-A's registrar work stays reviewable against
+ * the 13-verb baseline it named — the R11 fan-out sees the union.
+ *
+ * `edit_post` and `delete_post` are BOTH keyed on `post_id` and belong to the
+ * posts suite in the §2 filter table (personal + every page instance —
+ * see `packages/mcp/src/linkedin/register.ts`). They do NOT accept an
+ * `attachments` field: LinkedIn v2 freezes attachments at publish, and edit
+ * only mutates text + comment permissions.
+ */
+export const LINKEDIN_PHASE2_VERBS = ['edit_post', 'delete_post'] as const
+
+export type LinkedInPhase2Verb = (typeof LINKEDIN_PHASE2_VERBS)[number]
+
+/**
+ * Union of every verb R11 registers per-identity — Phase 1 + Phase 2. The
+ * canonical order is Phase 1 first (preserving the diff-stable order the
+ * baseline pinned), then Phase 2 appended.
+ */
+export const LINKEDIN_ALL_VERBS = [...LINKEDIN_PHASE1_VERBS, ...LINKEDIN_PHASE2_VERBS] as const
+
+export type LinkedInVerb = (typeof LINKEDIN_ALL_VERBS)[number]
+
+/**
  * Compose the instance slug from a config blob. Callers should NOT re-derive
  * this format ad-hoc — the same value has to appear on the instance name, in
  * the tool prefix, and in every log line that talks about the instance.
@@ -117,7 +142,7 @@ export function instanceSlug(
  */
 export function toolName(
 	cfg: Pick<LinkedInMcpInstanceConfig, 'unipileAccSlug' | 'identitySlug'>,
-	verb: LinkedInPhase1Verb,
+	verb: LinkedInVerb,
 ): string {
 	return `${instanceSlug(cfg)}__${verb}`
 }

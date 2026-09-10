@@ -17,6 +17,7 @@ import {
 	computeBackoffMs,
 	delay,
 	isAccountStatusRevoked,
+	isLinkedInIntegrationError,
 } from './errors'
 import type {
 	LinkedInClient,
@@ -813,13 +814,27 @@ function normalizePeople(
 	return nextCursor ? { people, next_cursor: nextCursor } : { people }
 }
 
-type SendPayload = { recipient_urn: string; body: string; idempotency_key: string }
+type SendPayload = {
+	recipient_urn: string
+	body: string
+	idempotency_key: string
+	/**
+	 * Optional messaging attachments. Passed through to the Unipile client
+	 * verbatim; each entry carries `send_mode` (native vs file). Shape is
+	 * validated at the MCP tool boundary via `linkedinAttachmentsArraySchema`
+	 * in `packages/mcp/src/lib/linkedin-attachments.ts`, so this operation
+	 * treats them as opaque objects and lets the tool layer reject
+	 * mixed-type arrays with the exact §4.2 refinement message.
+	 */
+	attachments?: unknown[]
+}
 type ReplyPayload = { thread_id: string; body: string; idempotency_key: string }
 
 function validateSendPayload(input: {
 	recipient_urn?: unknown
 	body?: unknown
 	idempotency_key?: unknown
+	attachments?: unknown
 }): { ok: true; payload: SendPayload } | { ok: false; error: string } {
 	if (typeof input.recipient_urn !== 'string' || input.recipient_urn.length === 0) {
 		return { ok: false, error: 'recipient_urn is required' }
@@ -834,12 +849,20 @@ function validateSendPayload(input: {
 	) {
 		return { ok: false, error: 'idempotency_key must be a non-empty string, max 128 chars' }
 	}
+	let attachments: unknown[] | undefined
+	if (input.attachments !== undefined) {
+		if (!Array.isArray(input.attachments)) {
+			return { ok: false, error: 'attachments must be an array when provided' }
+		}
+		attachments = input.attachments
+	}
 	return {
 		ok: true,
 		payload: {
 			recipient_urn: input.recipient_urn,
 			body: input.body,
 			idempotency_key: input.idempotency_key,
+			...(attachments !== undefined ? { attachments } : {}),
 		},
 	}
 }
@@ -903,7 +926,12 @@ export interface LinkedInOperationContext {
 
 export async function sendLinkedInMessage(
 	ctx: LinkedInOperationContext,
-	input: { recipient_urn?: unknown; body?: unknown; idempotency_key?: unknown },
+	input: {
+		recipient_urn?: unknown
+		body?: unknown
+		idempotency_key?: unknown
+		attachments?: unknown
+	},
 ): Promise<{ message_id: string; chat_id?: string; sent_at: string }> {
 	const validation = validateSendPayload(input)
 	if (!validation.ok) {
@@ -936,6 +964,9 @@ export async function sendLinkedInMessage(
 						recipient_urn: validation.payload.recipient_urn,
 						body: validation.payload.body,
 						...(inboxId ? { inbox_id: inboxId } : {}),
+						...(validation.payload.attachments !== undefined
+							? { attachments: validation.payload.attachments }
+							: {}),
 					}),
 				{ mutating: true },
 			)
@@ -1496,6 +1527,205 @@ export async function commentOnLinkedInPost(
 				{ mutating: true },
 			)
 			return normalizeCommentResponse(upstream.body)
+		},
+	})
+}
+
+// ── R11-B destructive post CRUD (edit/delete) ─────────────────────────────
+//
+// Both verbs mutate a POST identified by `post_id`. Per spec §6, their dedup
+// row is keyed on the extended tuple (actor_id, tool_name, target_id) — an
+// extension of `computeContentHash`'s Phase 1 input where `target_id` is
+// carried as an explicit field on the hashed request body, so retries of
+// "delete post P" collapse to one Unipile call even when the raw payload is
+// otherwise empty.
+//
+// Existing send/publish ledger behaviour is deliberately untouched: their
+// request bodies still hash whatever fields the caller passed. Only the two
+// destructive verbs adopt the target_id-on-the-hashed-body convention, and
+// they do so via the SAME `withContentHashIdempotency` primitive that already
+// serialises concurrent duplicate publishes — no fork of the claim path.
+//
+// `__delete_post` explicitly catches POST_NOT_FOUND and returns a success
+// envelope (`already_deleted: true`) so an agent's retry against a
+// tombstoned id doesn't propagate as an INVALID_INPUT-shaped tool error.
+// `__edit_post` re-raises POST_NOT_FOUND unchanged — an edit against a
+// missing post is a real failure the agent needs to see.
+
+/**
+ * Tool name of the R11-B destructive post CRUD verbs, used both as the ledger
+ * `tool` key and as the flat MCP tool name in the current shell (R11-A will
+ * re-namespace these to `linkedin-{acc}-{identity}__edit_post` /
+ * `__delete_post` in its follow-up commits). Exported so the ledger
+ * assertions in `linkedin-content-tools.test.ts` and the CRUD test can share
+ * one definition.
+ */
+export const LINKEDIN_EDIT_POST_TOOL = 'linkedin_edit_post'
+export const LINKEDIN_DELETE_POST_TOOL = 'linkedin_delete_post'
+
+export type EditPostInput = {
+	post_id?: unknown
+	text?: unknown
+	can_comment?: unknown
+}
+
+export type EditPostResult = {
+	post_id: string
+	edited_at: string
+}
+
+const LINKEDIN_CAN_COMMENT_VALUES = ['anyone', 'connections', 'no_one'] as const
+type LinkedInCanComment = (typeof LINKEDIN_CAN_COMMENT_VALUES)[number]
+
+function normalizeEditResponse(postId: string, body: unknown): EditPostResult {
+	const rec = (body ?? {}) as Record<string, unknown>
+	const inner =
+		rec.data && typeof rec.data === 'object' ? (rec.data as Record<string, unknown>) : rec
+	const editedAt =
+		typeof inner.edited_at === 'string'
+			? inner.edited_at
+			: typeof inner.updated_at === 'string'
+				? inner.updated_at
+				: new Date().toISOString()
+	return { post_id: postId, edited_at: editedAt }
+}
+
+export async function editLinkedInPost(
+	ctx: LinkedInOperationContext,
+	input: EditPostInput,
+): Promise<EditPostResult & { replayed: boolean }> {
+	const postId = typeof input.post_id === 'string' ? input.post_id.trim() : ''
+	if (!postId) throw new LinkedInIntegrationError('INVALID_INPUT', 'post_id is required')
+
+	const text = typeof input.text === 'string' ? input.text : undefined
+	if (text !== undefined && (text.length === 0 || text.length > 3000)) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			'text must be a non-empty string, max 3000 chars',
+		)
+	}
+	let canComment: LinkedInCanComment | undefined
+	if (input.can_comment !== undefined) {
+		if (
+			typeof input.can_comment !== 'string' ||
+			!LINKEDIN_CAN_COMMENT_VALUES.includes(input.can_comment as LinkedInCanComment)
+		) {
+			throw new LinkedInIntegrationError(
+				'INVALID_INPUT',
+				`can_comment must be one of ${LINKEDIN_CAN_COMMENT_VALUES.join(', ')}`,
+			)
+		}
+		canComment = input.can_comment as LinkedInCanComment
+	}
+	if (text === undefined && canComment === undefined) {
+		throw new LinkedInIntegrationError(
+			'INVALID_INPUT',
+			'At least one of text or can_comment is required.',
+		)
+	}
+
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	if (!pre.ok) throw pre.error
+	const client = buildLinkedInClient(pre.credentials)
+
+	// Ledger request body: (tool, target_id) + the mutable fields. `target_id`
+	// is the explicit field spec §6 asks for on hashContentInput for destructive
+	// verbs — including it here means two edits of the SAME post_id with
+	// different text hash differently (the caller wanted two edits, not one)
+	// while a straight retry with the same body collapses to one Unipile call.
+	const requestBody: Record<string, unknown> = {
+		tool: LINKEDIN_EDIT_POST_TOOL,
+		target_id: postId,
+	}
+	if (text !== undefined) requestBody.text = text
+	if (canComment !== undefined) requestBody.can_comment = canComment
+
+	return withContentHashIdempotency({
+		db: ctx.db,
+		actorId: ctx.actorId,
+		tool: LINKEDIN_EDIT_POST_TOOL,
+		requestBody,
+		run: async () => {
+			const upstream = await callLinkedInWithRetry<Record<string, unknown>>(
+				() =>
+					client.editPost({
+						account_id: pre.credentials.account_id,
+						post_id: postId,
+						...(text !== undefined ? { text } : {}),
+						...(canComment !== undefined ? { can_comment: canComment } : {}),
+					}),
+				{ mutating: true },
+			)
+			return normalizeEditResponse(postId, upstream.body)
+		},
+	})
+}
+
+export type DeletePostInput = { post_id?: unknown }
+
+export type DeletePostResult = {
+	post_id: string
+	deleted_at: string
+	/** true when LinkedIn returned POST_NOT_FOUND — the post was already gone. */
+	already_deleted: boolean
+}
+
+export async function deleteLinkedInPost(
+	ctx: LinkedInOperationContext,
+	input: DeletePostInput,
+): Promise<DeletePostResult & { replayed: boolean }> {
+	const postId = typeof input.post_id === 'string' ? input.post_id.trim() : ''
+	if (!postId) throw new LinkedInIntegrationError('INVALID_INPUT', 'post_id is required')
+
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	if (!pre.ok) throw pre.error
+	const client = buildLinkedInClient(pre.credentials)
+
+	// Same target_id-on-the-hashed-body convention as `editLinkedInPost`. For
+	// __delete_post there is nothing else meaningful to hash — the whole
+	// request semantic is "delete this post_id" — so the ledger key collapses
+	// to (actor_id, 'linkedin_delete_post', hash({tool, target_id})), which is
+	// the spec §6 extended tuple with target_id folded into the content hash.
+	const requestBody = {
+		tool: LINKEDIN_DELETE_POST_TOOL,
+		target_id: postId,
+	}
+
+	return withContentHashIdempotency({
+		db: ctx.db,
+		actorId: ctx.actorId,
+		tool: LINKEDIN_DELETE_POST_TOOL,
+		requestBody,
+		run: async () => {
+			try {
+				await callLinkedInWithRetry<Record<string, unknown>>(
+					() =>
+						client.deletePost({
+							account_id: pre.credentials.account_id,
+							post_id: postId,
+						}),
+					{ mutating: true },
+				)
+				return {
+					post_id: postId,
+					deleted_at: new Date().toISOString(),
+					already_deleted: false,
+				}
+			} catch (err) {
+				// POST_NOT_FOUND on delete is a SUCCESSFUL NO-OP (spec §5): the
+				// post is already gone, which is the intended terminal state.
+				// Fold it into the same success envelope with `already_deleted:
+				// true` so the caller can tell the two apart without treating
+				// either as an error worth escalating.
+				if (isLinkedInIntegrationError(err) && err.code === 'POST_NOT_FOUND') {
+					return {
+						post_id: postId,
+						deleted_at: new Date().toISOString(),
+						already_deleted: true,
+					}
+				}
+				throw err
+			}
 		},
 	})
 }
