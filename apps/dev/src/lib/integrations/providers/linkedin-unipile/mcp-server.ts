@@ -133,10 +133,7 @@ export function registerLinkedInMcpInstance(
 		server.registerTool(
 			toolName(cfg, 'publish_post'),
 			{
-				description: scopedDescription(
-					'Publish a LinkedIn post',
-					cfg,
-				),
+				description: scopedDescription('Publish a LinkedIn post', cfg),
 				inputSchema: {
 					text: z
 						.string()
@@ -341,7 +338,7 @@ export function registerLinkedInMcpInstance(
 		server.registerTool(
 			toolName(cfg, 'list_conversations'),
 			{
-				description: scopedDescription("List LinkedIn conversations", cfg),
+				description: scopedDescription('List LinkedIn conversations', cfg),
 				inputSchema: {
 					limit: z.number().int().min(1).max(50).optional(),
 					cursor: z.string().optional(),
@@ -444,7 +441,10 @@ export function registerLinkedInMcpInstance(
 		server.registerTool(
 			toolName(cfg, 'get_profile'),
 			{
-				description: scopedDescription('Fetch one LinkedIn profile by public handle or provider id', cfg),
+				description: scopedDescription(
+					'Fetch one LinkedIn profile by public handle or provider id',
+					cfg,
+				),
 				inputSchema: { identifier: z.string().min(1) },
 			},
 			async (args) => {
