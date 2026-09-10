@@ -165,6 +165,21 @@ describe('LoopFlow variant dispatch', () => {
 		expect(screen.getByText('PICKS UP')).toBeInTheDocument()
 	})
 
+	it('carries the #loop-flow anchor the ask banner scrolls to, with and without steps', () => {
+		// The AskBanner's Decide CTA (and its `d` shortcut) resolve
+		// `document.getElementById('loop-flow')`. That id lived only on the
+		// status-columns variant, so with the step-flow sub-flag on — the exact
+		// state the banner renders in — the button silently did nothing.
+		const loop = buildLoopSummary({ id: 'loop-anchor' })
+		const { container, rerender } = render(
+			<LoopFlowVerticalStory loop={loop} steps={[buildLoopStep({ triggerId: 'trig-1' })]} />,
+		)
+		expect(container.querySelector('#loop-flow')).not.toBeNull()
+
+		rerender(<LoopFlowVerticalStory loop={loop} steps={[]} />)
+		expect(container.querySelector('#loop-flow')).not.toBeNull()
+	})
+
 	it('renders the shipped status-columns variant by default', () => {
 		const loop = buildLoopSummary({ id: 'loop-sc' })
 		render(

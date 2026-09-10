@@ -59,6 +59,12 @@ export const loopSummarySchema = z.object({
 	 * currently linked to this loop? Reused from the same expression the
 	 * unread-feed uses in `subscriptions.ts`. */
 	waitingOnViewer: z.boolean(),
+	/** How many of this loop's child objects have unread activity for the
+	 * viewer — the real number behind `waitingOnViewer`'s boolean. Drives the
+	 * D4 "Asks waiting" tile and the `pendingCount` dimension on
+	 * `ask_banner_decide_clicked`, both of which read 0/1 without it. Always
+	 * `0` when `waitingOnViewer` is false. */
+	waitingCount: z.number().int().nonnegative(),
 	/**
 	 * Loop's targets shape (bet D5). Derived from `metadata.targets` on the
 	 * loop row. `null` when the loop has no targets — the frontend renders no

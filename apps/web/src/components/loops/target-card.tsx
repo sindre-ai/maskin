@@ -25,6 +25,15 @@ interface PaceVerdict {
 	description: string
 }
 
+/**
+ * Pace pills carry their own success/warning/destructive tokens rather than
+ * borrowing the status palette. The status tokens are not ordered by
+ * good-to-bad — `--st-signal-*` (used for "Behind pace") and
+ * `--st-validated-*` (used for "Above target") are the *same* violet in both
+ * light and dark mode, so the one thing the pill exists to say at a glance —
+ * am I ahead or behind — did not come through at all. Green / amber / red is
+ * the ordering the reader already expects, and both modes define all three.
+ */
 function paceVerdict(target: LoopTarget): PaceVerdict {
 	const { actual, target: goal, pace_policy } = target
 	const isMissed = goal > 0 && actual <= 0
@@ -34,15 +43,14 @@ function paceVerdict(target: LoopTarget): PaceVerdict {
 	if (isMissed) {
 		return {
 			label: 'Missed',
-			pillClass:
-				'bg-[var(--st-blocked-bg)] text-[var(--st-blocked-text)] dark:bg-[var(--st-blocked-bg)] dark:text-[var(--st-blocked-text)]',
+			pillClass: 'bg-destructive/10 text-destructive',
 			description: `Missed — ${numbers}`,
 		}
 	}
 	if (ratio >= 1) {
 		return {
 			label: 'Above target',
-			pillClass: 'bg-[var(--st-validated-bg)] text-[var(--st-validated-text)]',
+			pillClass: 'bg-success/15 text-success',
 			description: `Above target — ${numbers}`,
 		}
 	}
@@ -54,13 +62,13 @@ function paceVerdict(target: LoopTarget): PaceVerdict {
 	if (ratio >= onTargetFloor) {
 		return {
 			label: 'On target',
-			pillClass: 'bg-[var(--st-in_progress-bg)] text-[var(--st-in_progress-text)]',
+			pillClass: 'bg-success/10 text-success',
 			description: `On target — ${numbers}`,
 		}
 	}
 	return {
 		label: 'Behind pace',
-		pillClass: 'bg-[var(--st-signal-bg)] text-[var(--st-signal-text)]',
+		pillClass: 'bg-warning/10 text-warning',
 		description: `Behind pace — ${numbers}`,
 	}
 }

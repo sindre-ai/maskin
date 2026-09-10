@@ -251,6 +251,7 @@ export function buildLoopSummary(overrides: Partial<LoopSummary> = {}): LoopSumm
 		agentIds: [],
 		triggerIds: [],
 		waitingOnViewer: false,
+		waitingCount: 0,
 		targets: null,
 		createdAt: null,
 		updatedAt: null,

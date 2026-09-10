@@ -255,20 +255,34 @@ export function creditBalanceCents(billing: WorkspaceSettings['billing']): numbe
 
 /**
  * True once a workspace over its plan cap may keep running by drawing down
- * its prepaid credit balance instead of being hard-blocked. Trial never
- * qualifies — spending credits requires a paid plan with a card on file,
- * which `stripe_customer_id` and an `active` status together represent.
- * `past_due`/`canceled` intentionally still hard-block: a workspace that
- * can't be billed for its base plan shouldn't be allowed to draw down its
- * balance either.
+ * its prepaid credit balance instead of being hard-blocked.
+ *
+ * Any maskin-plan-routed workspace qualifies, trial included: a balance only
+ * exists because somebody paid for it, and `routes/stripe-webhook.ts` credits
+ * a completed top-up unconditionally ("eligibility gates *spending* the
+ * balance later, not receiving money already paid for"). Refusing to spend a
+ * balance the workspace was allowed to buy is money taken for nothing, so the
+ * buy gate in `routes/billing.ts` and this spend gate must agree — they are
+ * deliberately the same predicate modulo the balance>0 check.
+ *
+ * `past_due`/`canceled` still hard-block, and that rationale is unchanged: a
+ * workspace that can't be billed for its base plan shouldn't draw down a
+ * balance either. `incomplete` is allowed because it is the state a fresh
+ * billing block is written in, which every trial workspace sits in.
+ *
+ * `stripe_customer_id` is deliberately NOT required. It used to stand in for
+ * "has a card on file", but the credit-top-up webhook path never wrote one,
+ * so it excluded exactly the workspaces that had just paid.
  */
 export function canUseCreditBalance(
-	plan: MaskinPlan,
+	/** No longer consulted — every maskin-plan tier may spend a balance it was
+	 *  allowed to buy. Kept in the signature so the three call sites (and the
+	 *  session-manager pre-flight) don't all have to change shape for a gate
+	 *  that may well take the plan into account again. */
+	_plan: MaskinPlan,
 	billing: WorkspaceSettings['billing'],
 ): boolean {
-	if (plan === 'trial') return false
-	if (billing?.status !== 'active') return false
-	if (!billing?.stripe_customer_id) return false
+	if (billing?.status === 'past_due' || billing?.status === 'canceled') return false
 	return creditBalanceCents(billing) > 0
 }
 

@@ -817,6 +817,96 @@ describe('Loops read API integration', () => {
 		expect(row?.pill).toBe('waiting_on_you')
 	})
 
+	it('counts every waiting child in `waitingCount`, not just whether any is waiting', async () => {
+		// The D4 "Asks waiting" tile and the `ask_banner_decide_clicked`
+		// dimension both used to read `waitingOnViewer ? 1 : 0`, so they were
+		// pinned at 1 no matter how many asks were open. Asserted against real
+		// Postgres — the boolean cannot catch a regression here because it reads
+		// `true` for one waiting child and for three alike.
+		const otherActor = await insertActor(db)
+
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Three open asks',
+		})
+
+		for (const title of ['First ask', 'Second ask', 'Third ask']) {
+			const child = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'in_review',
+				title,
+			})
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: loop.id,
+				targetType: 'object',
+				targetId: child.id,
+				type: 'in_loop',
+			})
+			await db.insert(events).values({
+				workspaceId,
+				actorId: otherActor.id,
+				action: 'commented',
+				entityType: 'object',
+				entityId: child.id,
+				data: { content: `needs a decision on ${title}` },
+			})
+		}
+
+		// A fourth child with no unread activity must not be counted.
+		const quiet = await insertObject(db, workspaceId, actorId, {
+			type: 'task',
+			status: 'in_review',
+			title: 'Nothing pending',
+		})
+		await insertRelationship(db, actorId, {
+			sourceType: 'object',
+			sourceId: loop.id,
+			targetType: 'object',
+			targetId: quiet.id,
+			type: 'in_loop',
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		const body = (await res.json()) as {
+			loops: Array<{ id: string; waitingOnViewer: boolean; waitingCount: number }>
+		}
+		const row = body.loops.find((l) => l.id === loop.id)
+		expect(row?.waitingOnViewer).toBe(true)
+		expect(row?.waitingCount).toBe(3)
+	})
+
+	it('reports `waitingCount` 0 for a loop with no unread activity', async () => {
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'All caught up',
+		})
+		const child = await insertObject(db, workspaceId, actorId, {
+			type: 'task',
+			status: 'in_review',
+			title: 'Read already',
+		})
+		await insertRelationship(db, actorId, {
+			sourceType: 'object',
+			sourceId: loop.id,
+			targetType: 'object',
+			targetId: child.id,
+			type: 'in_loop',
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		const body = (await res.json()) as {
+			loops: Array<{ id: string; waitingOnViewer: boolean; waitingCount: number }>
+		}
+		const row = body.loops.find((l) => l.id === loop.id)
+		expect(row?.waitingOnViewer).toBe(false)
+		expect(row?.waitingCount).toBe(0)
+	})
+
 	/**
 	 * D6c — `GET /api/loops/:id/steps` feeds the vertical-story renderer's
 	 * spine. Covers:

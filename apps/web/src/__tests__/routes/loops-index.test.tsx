@@ -103,6 +103,7 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		agentIds: [],
 		triggerIds: [],
 		waitingOnViewer: false,
+		waitingCount: 0,
 		targets: null,
 		createdAt: null,
 		updatedAt: null,

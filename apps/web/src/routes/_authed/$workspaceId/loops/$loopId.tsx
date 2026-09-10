@@ -134,7 +134,10 @@ function LoopDetailRoute() {
 	)
 	const loopIdForBanner = loop?.id ?? ''
 	const askBannerVisible = loopsV4Polish && !!loop && anyStepPending
-	const pendingCount = askBannerVisible ? 1 : 0
+	// Real count, not a 0/1 flag — this is the dimension the bet's Won
+	// condition is measured on, so a constant 1 would make every session look
+	// identical in PostHog.
+	const pendingCount = askBannerVisible ? (loop?.waitingCount ?? 0) : 0
 	const handleDecideClick = useCallback(() => {
 		const targetEl = document.getElementById('loop-flow')
 		if (targetEl) {
@@ -278,13 +281,15 @@ function LoopDetailRoute() {
 	// - cyclesRunning: `inProgressCount` while the loop is on the live rungs of
 	//   the pill ladder (learning / supervised / fully_autonomous), else 0 —
 	//   matches the SPEC's "count of open cycles where pill.stateSlug === live".
-	// - asksWaiting: derived from `waitingOnViewer` at the loop level; a
-	//   per-step aggregation would need the D6a `LoopStep` extension and is
-	//   not in scope for D4.
+	// - asksWaiting: `waitingCount` from the loop payload — the real number of
+	//   child objects with unread activity for this viewer. This used to be
+	//   `waitingOnViewer ? 1 : 0`, which capped the tile (and the
+	//   `ask_banner_decide_clicked` dimension below) at 1 no matter how many
+	//   asks were actually open.
 	// - nextFire: earliest enabled cron/reminder trigger's next firing time,
 	//   formatted `in Nm`/`in Nh`/`in Nd`/an absolute date past a week out.
 	const cyclesRunning = isLiveLoopPill(loop.pill) ? loop.inProgressCount : 0
-	const asksWaiting = loop.waitingOnViewer ? 1 : 0
+	const asksWaiting = loop.waitingCount
 	const nextFire = nextFireLabel(nextFireAt(loopTriggers))
 	const pill = LOOP_PILL_STYLES[loop.pill]
 	const isPaused = loop.status === 'paused'

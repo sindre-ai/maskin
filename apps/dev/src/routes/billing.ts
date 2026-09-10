@@ -4,7 +4,7 @@ import { events, workspaces } from '@maskin/db/schema'
 import { CREDIT_TOPUP_MAX_USD, CREDIT_TOPUP_MIN_USD, workspaceSettingsSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
-import { isEnterprise } from '../lib/enterprise'
+import { isEnterprise, isEnterpriseWorkspace } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
 import { FLAGS, getFeatureFlagConfig, resolveFlags } from '../lib/feature-flags'
 import {
@@ -425,13 +425,25 @@ app.openapi(buyCreditsRoute, async (c) => {
 	const billing = settingsParse.success ? settingsParse.data.billing : undefined
 
 	// Same eligibility as spending a balance (`canUseCreditBalance`), minus
-	// the balance>0 check since we're about to add to it: plan must be
-	// pro/team, subscription active, and a Stripe customer already on file
-	// (guaranteed once a paid checkout has completed).
-	const eligible =
-		(billing?.plan === 'pro' || billing?.plan === 'team') &&
-		billing.status === 'active' &&
-		Boolean(billing.stripe_customer_id)
+	// the balance>0 check since we're about to add to it. Any maskin-plan
+	// workspace may top up, trial included — a trial that hits its cap and
+	// wants to pay to keep running is the case this button exists for, and
+	// gating it to pro/team meant the NO CREDITS prompt led to a dead end.
+	//
+	// A Stripe customer is NOT required up front: a first-time buyer has none,
+	// and Stripe Checkout creates one when `customer` is undefined (the
+	// webhook then persists it, same as the subscription path). Requiring it
+	// here made the first purchase impossible, which is the only purchase a
+	// trial workspace can make.
+	//
+	// `past_due`/`canceled` still block, matching the spend gate: a workspace
+	// that can't be billed for its base plan shouldn't be taking on more.
+	const blockedStatus = billing?.status === 'past_due' || billing?.status === 'canceled'
+	// Enterprise workspaces fund their own LLM usage and never draw on a
+	// credit balance, so there is nothing for them to top up. Uses the
+	// db-reading helper because this route's workspace select carries only
+	// `id`/`settings`, not the enterprise-grant columns `isEnterprise` needs.
+	const eligible = !blockedStatus && !(await isEnterpriseWorkspace(db, workspaceId))
 	if (!eligible) {
 		return c.json(
 			createApiError('BAD_REQUEST', 'Workspace is not eligible to buy usage credits'),
@@ -456,7 +468,7 @@ app.openapi(buyCreditsRoute, async (c) => {
 			amountUsdCents: amount_usd_cents,
 			successUrl: success_url,
 			cancelUrl: cancel_url,
-			existingCustomerId: billing?.stripe_customer_id as string,
+			existingCustomerId: billing?.stripe_customer_id ?? undefined,
 		})
 		if (!session.url) {
 			logger.error('Stripe credit top-up checkout session missing url', { sessionId: session.id })

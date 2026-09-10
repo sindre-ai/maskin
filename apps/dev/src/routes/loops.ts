@@ -1,8 +1,8 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
-	actors,
 	events,
+	actors,
 	objects,
 	readState,
 	relationships,
@@ -334,8 +334,17 @@ app.openapi(listLoopsRoute, (async (c) => {
 	// A loop is "waiting on viewer" if ANY of its child objects has unread
 	// events for the viewer — collapse the per-child rows here.
 	const waitingByLoop = new Map<string, boolean>()
+	// How MANY child objects are waiting, not just whether any are. The query
+	// above already emits one row per child (it groups by `r.source_id, o.id`),
+	// so the count is a tally of the rows that came back true — no second
+	// query. `waitingOnViewer` stays the boolean it always was so existing
+	// consumers (the pill) are untouched; `waitingCount` is additive.
+	const waitingCountByLoop = new Map<string, number>()
 	for (const row of waitingRows) {
 		waitingByLoop.set(row.loop_id, waitingByLoop.get(row.loop_id) === true || row.waiting === true)
+		if (row.waiting === true) {
+			waitingCountByLoop.set(row.loop_id, (waitingCountByLoop.get(row.loop_id) ?? 0) + 1)
+		}
 	}
 
 	const LIVE_STATUSES = new Set(['learning', 'supervised', 'fully_autonomous'])
@@ -384,6 +393,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 				),
 			)
 			const waitingOnViewer = waitingByLoop.get(row.id) === true
+			const waitingCount = waitingCountByLoop.get(row.id) ?? 0
 
 			// Composite pill signal. `draft`/`paused` are not "live" — they render
 			// as themselves regardless of read state. The three live statuses
@@ -414,6 +424,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 				agentIds,
 				triggerIds,
 				waitingOnViewer,
+				waitingCount,
 				targets,
 				createdAt: row.createdAt ? row.createdAt.toISOString() : null,
 				updatedAt: row.updatedAt ? row.updatedAt.toISOString() : null,

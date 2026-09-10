@@ -21,6 +21,7 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		agentIds: [],
 		triggerIds: [],
 		waitingOnViewer: false,
+		waitingCount: 0,
 		targets: null,
 		createdAt: null,
 		updatedAt: null,
@@ -144,5 +145,35 @@ describe('TargetsAndOwners', () => {
 		expect(screen.getByText('6')).toBeInTheDocument()
 		expect(screen.getByText('/ 8')).toBeInTheDocument()
 		expect(screen.getByLabelText('Behind pace — 6 of 8')).toBeInTheDocument()
+	})
+	it('gives ahead / on-target / behind / missed visually distinct pills', () => {
+		// The pills used to borrow the status palette, where `--st-signal-*`
+		// ("Behind pace") and `--st-validated-*` ("Above target") are the SAME
+		// violet in both colour schemes — so the one thing the pill exists to
+		// say at a glance did not come through. Assert the four verdicts do not
+		// collapse onto one class, and that behind/above specifically differ.
+		render(
+			<TargetsAndOwners
+				loop={buildLoop({
+					targets: [
+						{ label: 'Ahead', source: 'manual', actual: 12, target: 10 },
+						{ label: 'Holding', source: 'manual', actual: 10, target: 10 },
+						{ label: 'Slipping', source: 'manual', actual: 4, target: 10 },
+						{ label: 'Nothing yet', source: 'manual', actual: 0, target: 10 },
+					],
+				})}
+				actors={[]}
+			/>,
+		)
+
+		const above = screen.getByLabelText('Above target — 12 of 10').className
+		const behind = screen.getByLabelText('Behind pace — 4 of 10').className
+		const missed = screen.getByLabelText('Missed — 0 of 10').className
+
+		expect(above).not.toBe(behind)
+		expect(behind).not.toBe(missed)
+		expect(above).toContain('text-success')
+		expect(behind).toContain('text-warning')
+		expect(missed).toContain('text-destructive')
 	})
 })

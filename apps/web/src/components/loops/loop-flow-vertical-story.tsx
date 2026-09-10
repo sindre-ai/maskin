@@ -169,7 +169,7 @@ export function LoopFlowVerticalStory({ loop, steps }: LoopFlowVerticalStoryProp
 
 	if (steps.length === 0) {
 		return (
-			<div ref={containerRef}>
+			<div ref={containerRef} id="loop-flow" data-loop-flow-root>
 				<div className="mb-3">
 					<h2 className="text-sm font-semibold text-foreground">The loop, right now</h2>
 				</div>
@@ -181,7 +181,7 @@ export function LoopFlowVerticalStory({ loop, steps }: LoopFlowVerticalStoryProp
 	}
 
 	return (
-		<div ref={containerRef}>
+		<div ref={containerRef} id="loop-flow" data-loop-flow-root>
 			<div className="mb-3">
 				<h2 className="text-sm font-semibold text-foreground">The loop, right now</h2>
 			</div>
