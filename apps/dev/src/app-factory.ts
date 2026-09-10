@@ -267,6 +267,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/public/bet-strategist/drafts' && method === 'POST') return next()
 		if (path === '/api/public/bet-strategist/claim' && method === 'POST') return next()
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
+		// R11-C · linkedin-unipile fan-out webhook. Unipile POSTs the
+		// `account.updated` event from outside our network, so it cannot
+		// carry a Maskin API key — authenticated by the shared
+		// `X-Maskin-Webhook-Secret` header enforced inside the handler
+		// against `UNIPILE_WEBHOOK_SECRET`.
+		if (path === '/api/integrations/linkedin-unipile/webhook' && method === 'POST') return next()
 
 		return auth(c, next)
 	})

@@ -29,6 +29,10 @@ import {
 	sendLinkedInMessage,
 } from '../lib/integrations/providers/linkedin-unipile/operations'
 import {
+	buildLinkedInClientForWebhook,
+	handleUnipileAccountUpdated,
+} from '../lib/integrations/providers/linkedin-unipile/webhook'
+import {
 	startLinkedInAddonCheckout,
 	syncLinkedInAddonQuantity,
 } from '../lib/linkedin-addon-billing'
@@ -838,6 +842,90 @@ app.get('/get-post-engagement', async (c) => {
 	}
 })
 
+// ── POST /webhook — unipile.account.updated re-enumeration (R11-C) ───────
+//
+// Path is unauthenticated (Unipile posts here from outside our network).
+// Auth is a shared secret in the `X-Maskin-Webhook-Secret` header —
+// registered against `UNIPILE_WEBHOOK_SECRET`. The dedicated route lives
+// on this router (mounted at `/api/integrations/linkedin-unipile/webhook`)
+// rather than the generic `/api/webhooks/:provider` catch-all because
+// linkedin-unipile's provider config declares no `webhook` block — that
+// path would 400 with "Provider does not support webhooks".
+//
+// This is the fan-out re-enumeration side-effect handler: for any Unipile
+// account.updated payload (new page granted, page renamed, admin revoked,
+// messaging_enabled flipped), we re-run the connect-time enumeration and
+// diff it against the currently-registered MCP instances for the
+// credential. Register-new, deregister-removed. Page rename produces a
+// deregister-then-register pair — the identity slug changes so the
+// instance key changes, semantically identical to a GitHub org rename
+// under `github-*`. See fan-out.ts for the diff engine.
+//
+// Path allowlisted in the api-key middleware (see app-factory.ts's
+// callback allowlist regex) so Unipile can POST here without a Maskin
+// bearer token.
+
+app.post('/webhook', async (c) => {
+	const secret = process.env.UNIPILE_WEBHOOK_SECRET
+	if (!secret) {
+		logger.error('linkedin-unipile webhook: UNIPILE_WEBHOOK_SECRET not configured')
+		return c.json(createApiError('INTERNAL_ERROR', 'Webhook not configured'), 500)
+	}
+	const presented =
+		c.req.header('x-maskin-webhook-secret') ?? c.req.header('X-Maskin-Webhook-Secret')
+	if (!presented || !constantTimeEquals(presented, secret)) {
+		logger.warn('linkedin-unipile webhook: signature verification failed')
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
+	}
+
+	let payload: unknown
+	try {
+		payload = await c.req.json()
+	} catch {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON in webhook payload'), 400)
+	}
+
+	const parsed = parseAccountUpdatedPayload(payload)
+	if (!parsed) {
+		// Unknown Unipile event type — acknowledge so Unipile does not
+		// retry. Log the shape so an unhandled event kind surfaces in the
+		// dev log rather than staying invisible.
+		logger.info('linkedin-unipile webhook: skipped unhandled event', {
+			presentKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
+		})
+		return c.json({ ok: true, skipped: true })
+	}
+
+	const db = c.get('db')
+	const client = buildLinkedInClientForWebhook()
+	const result = await handleUnipileAccountUpdated(db, client, parsed.accountId)
+	return c.json({ ok: true, ...result })
+})
+
+const AccountUpdatedPayloadSchema = z.object({
+	// Unipile v2 puts the event type on `type` (e.g. `account.updated`); the
+	// v1 spelling was `event`. Read both so a shape drift does not silently
+	// no-op every webhook delivery.
+	type: z.string().optional(),
+	event: z.string().optional(),
+	account_id: z.string().min(1),
+})
+
+function parseAccountUpdatedPayload(payload: unknown): { accountId: string } | null {
+	const parsed = AccountUpdatedPayloadSchema.safeParse(payload)
+	if (!parsed.success) return null
+	const kind = parsed.data.type ?? parsed.data.event
+	if (kind && kind !== 'account.updated' && kind !== 'unipile.account.updated') return null
+	return { accountId: parsed.data.account_id }
+}
+
+function constantTimeEquals(a: string, b: string): boolean {
+	const ab = Buffer.from(a, 'utf8')
+	const bb = Buffer.from(b, 'utf8')
+	if (ab.length !== bb.length) return false
+	return timingSafeEqual(ab, bb)
+}
+
 export default app
 
 /**
@@ -846,3 +934,9 @@ export default app
  * re-export means the move did not become a test-file rewrite.
  */
 export { __setLinkedInClientForTests } from '../lib/integrations/providers/linkedin-unipile/operations'
+
+/**
+ * Re-exported so the R11-C page-admin-revoke suite can inject a mock
+ * client for the webhook route without spinning up a fake fetch.
+ */
+export { __setLinkedInWebhookClientForTests } from '../lib/integrations/providers/linkedin-unipile/webhook'

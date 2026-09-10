@@ -63,6 +63,7 @@ export type LinkedInErrorCode =
 	| 'INVALID_INPUT'
 	| 'LINKEDIN_INVITE_QUOTA_EXCEEDED'
 	| 'LINKEDIN_ALREADY_CONNECTED'
+	| 'PAGE_ADMIN_REVOKED'
 
 export const LINKEDIN_ERROR_CODES = [
 	'CREDENTIAL_NOT_CONNECTED',
@@ -74,6 +75,7 @@ export const LINKEDIN_ERROR_CODES = [
 	'INVALID_INPUT',
 	'LINKEDIN_INVITE_QUOTA_EXCEEDED',
 	'LINKEDIN_ALREADY_CONNECTED',
+	'PAGE_ADMIN_REVOKED',
 ] as const satisfies readonly LinkedInErrorCode[]
 
 /**
@@ -127,6 +129,20 @@ export const LINKEDIN_RESTRICTED_MARKERS = {
 export const LINKEDIN_CONNECTION_REQUEST_MARKERS = {
 	inviteQuotaExceeded: ['invite_quota_exceeded', 'invitation_limit_reached'] as const,
 	alreadyConnected: ['already_connected', 'already_invited', 'pending_invitation'] as const,
+}
+
+/**
+ * Discriminators for `PAGE_ADMIN_REVOKED`: LinkedIn revoked this specific
+ * page's admin scope from the connected account. Structurally recoverable —
+ * the ops layer deregisters the affected MCP instance and enqueues an
+ * `unipile.account.updated`-style re-enumeration for the credential (spec
+ * §5). Detected on a 403 to any page-scoped Unipile route AND a body
+ * `error_code` in this list. Retry policy is `null`: retrying makes nothing
+ * better, LinkedIn's answer is stable until the page-admin grant is
+ * re-issued in LinkedIn.
+ */
+export const LINKEDIN_PAGE_ADMIN_REVOKED_MARKERS = {
+	errorCodes: ['page_admin_revoked', 'no_admin_access'] as const,
 }
 
 /**
@@ -199,6 +215,12 @@ export const RETRY_POLICY_BY_CODE: Record<LinkedInErrorCode, RetryPolicy | null>
 	// answered "no" to that specific invite).
 	LINKEDIN_INVITE_QUOTA_EXCEEDED: null,
 	LINKEDIN_ALREADY_CONNECTED: null,
+	// Page-admin revoke is terminal for the current call: LinkedIn removed
+	// the page's admin scope from this account. Retrying gets the same 403
+	// until the page admin re-invites us in LinkedIn; the ops-layer side
+	// effect (deregister-and-re-enumerate) is what makes the loop learn of
+	// the change.
+	PAGE_ADMIN_REVOKED: null,
 }
 
 const IS_RETRYABLE: Record<LinkedInErrorCode, boolean> = {
@@ -211,6 +233,7 @@ const IS_RETRYABLE: Record<LinkedInErrorCode, boolean> = {
 	INVALID_INPUT: false,
 	LINKEDIN_INVITE_QUOTA_EXCEEDED: false,
 	LINKEDIN_ALREADY_CONNECTED: false,
+	PAGE_ADMIN_REVOKED: false,
 }
 
 const DEFAULT_HTTP_STATUS: Record<LinkedInErrorCode, number> = {
@@ -226,6 +249,10 @@ const DEFAULT_HTTP_STATUS: Record<LinkedInErrorCode, number> = {
 	// one. 409 for already-connected: state conflict, the classic HTTP fit.
 	LINKEDIN_INVITE_QUOTA_EXCEEDED: 403,
 	LINKEDIN_ALREADY_CONNECTED: 409,
+	// 403: LinkedIn's own status for the revoked-page-admin envelope.
+	// Surfacing the same class through the same status keeps the wire
+	// self-describing.
+	PAGE_ADMIN_REVOKED: 403,
 }
 
 /**
@@ -248,6 +275,12 @@ export function classifyLinkedInResponse(status: number, body: unknown): LinkedI
 	if (isInviteQuotaExceededBody(body)) return 'LINKEDIN_INVITE_QUOTA_EXCEEDED'
 	if (isAlreadyConnectedBody(body)) return 'LINKEDIN_ALREADY_CONNECTED'
 	if (isPostTooLongBody(body)) return 'LINKEDIN_POST_TOO_LONG'
+	// PAGE_ADMIN_REVOKED must run BEFORE the generic 403 → INVALID_INPUT
+	// fallback: 403 alone would land in the wrong class (retry policy null
+	// either way, but the ops-layer side effect for
+	// PAGE_ADMIN_REVOKED — deregister the instance + enqueue re-enumeration —
+	// only fires when the classifier picks the specific class).
+	if (status === 403 && isPageAdminRevokedBody(body)) return 'PAGE_ADMIN_REVOKED'
 	if (status >= 200 && status < 300) return null
 	if (status === 401) return 'CREDENTIAL_REVOKED'
 	if (status === 404) return 'CREDENTIAL_NOT_CONNECTED'
@@ -332,6 +365,20 @@ function isAlreadyConnectedBody(body: unknown): boolean {
 	const code = readErrorCode(body)
 	if (!code) return false
 	return LINKEDIN_CONNECTION_REQUEST_MARKERS.alreadyConnected.includes(code as never)
+}
+
+/**
+ * Detect the `PAGE_ADMIN_REVOKED` body shape: LinkedIn returns 403 with
+ * `error_code` in `LINKEDIN_PAGE_ADMIN_REVOKED_MARKERS.errorCodes` when the
+ * connected account no longer has admin rights on a page. Exported so the
+ * webhook handler can share the discriminator with the runtime classifier —
+ * a body-marker change (LinkedIn adding a new error_code alias) is a
+ * one-line edit in one place.
+ */
+export function isPageAdminRevokedBody(body: unknown): boolean {
+	const code = readErrorCode(body)
+	if (!code) return false
+	return LINKEDIN_PAGE_ADMIN_REVOKED_MARKERS.errorCodes.includes(code as never)
 }
 
 /**
@@ -463,6 +510,24 @@ export class LinkedinAlreadyConnectedError extends LinkedInIntegrationError {
 		super(
 			'LINKEDIN_ALREADY_CONNECTED',
 			'This member is already a first-degree connection or has a pending invitation from this account. Treat as a successful no-op.',
+			{ cause },
+		)
+	}
+}
+
+/**
+ * Named subclass for `PAGE_ADMIN_REVOKED`. The current call is terminal
+ * (retry policy is null); the ops layer additionally deregisters the
+ * affected LinkedIn MCP instance and enqueues an
+ * `unipile.account.updated`-style re-enumeration for the credential so the
+ * loop sees the change on the NEXT call rather than continuing to attach a
+ * tool that will 403 again.
+ */
+export class PageAdminRevokedError extends LinkedInIntegrationError {
+	constructor(cause?: unknown) {
+		super(
+			'PAGE_ADMIN_REVOKED',
+			"LinkedIn has revoked this account's admin access to the target page. The page has been unregistered; ask a page admin to re-invite the account in LinkedIn to restore it.",
 			{ cause },
 		)
 	}
