@@ -1391,3 +1391,43 @@ export const orphanThreadDetections = pgTable(
 
 export type OrphanThreadDetection = typeof orphanThreadDetections.$inferSelect
 export type NewOrphanThreadDetection = typeof orphanThreadDetections.$inferInsert
+
+// ── Google Meet · create_space idempotency ──────────────────────────────────
+// Backs Maskin-side idempotency for `google_meet__create_space`. Google Meet
+// v2 `spaces.create` accepts no client-side idempotency key, so a caller that
+// retries after a network blip would otherwise provision a fresh space every
+// time. This table takes the place of that header.
+//
+// Two identical calls (same workspace + same `idempotency_key`) collide on
+// the unique index: the first row wins and stores the returned `space_name`;
+// the second finds the winner and returns the cached name rather than a fresh
+// `spaces.create`. Default key is `sha256(actor_id + purpose_normalised +
+// YYYY-MM-DD)` so retries within the same UTC day dedupe automatically; the
+// caller can override for tighter/looser windows.
+//
+// `space_name` is Google's full resource path (`spaces/xyz`). `workspace_id`
+// is the tenant boundary and every read filters on it. `actor_id` is stored
+// for auditability + debugging; it is NOT part of the uniqueness constraint
+// (two actors picking the same override key inside one workspace resolve to
+// the same space — that is by design for the "book the same demo twice"
+// class of retry).
+export const googleMeetSpaceIdempotency = pgTable(
+	'google_meet_space_idempotency',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		idempotencyKey: text('idempotency_key').notNull(),
+		spaceName: text('space_name').notNull(),
+		actorId: uuid('actor_id').references(() => actors.id),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('google_meet_space_idempotency_ws_key_uniq').on(t.workspaceId, t.idempotencyKey),
+		index('google_meet_space_idempotency_created_at_idx').on(t.createdAt),
+	],
+)
+
+export type GoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferSelect
+export type NewGoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferInsert

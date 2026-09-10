@@ -40,6 +40,7 @@ import importsRoutes from './routes/imports'
 import installedLoopsRoutes from './routes/installed-loops'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
+import integrationsGoogleMeetMcpRoutes from './routes/integrations-google-meet-mcp'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import loopsRoutes from './routes/loops'
@@ -338,6 +339,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/linkedin-unipile', integrationsLinkedinRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
+	// google-meet write-path MCP (bet 947e · task 824f) — provisions Meet
+	// spaces + Meet-backed calendar events. Same specific-prefix-first
+	// ordering as Slack and LinkedIn above.
+	app.route('/api/integrations/google-meet/mcp', integrationsGoogleMeetMcpRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
 	// catchall (`/api/webhooks/:provider`) so the more-specific match wins.
 	// Stripe is billing, not an integration provider.

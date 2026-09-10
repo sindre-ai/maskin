@@ -11,6 +11,7 @@ import { gmailEventNormalizer, gmailWebhookVerifier } from './providers/gmail/we
 import { config as googleCalendarConfig } from './providers/google-calendar/config'
 import { revokeGoogleCalendarGrant } from './providers/google-calendar/disconnect'
 import { resolveExternalId as googleCalendarResolveExternalId } from './providers/google-calendar/resolve-id'
+import { config as googleMeetConfig } from './providers/google-meet/config'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
@@ -95,6 +96,16 @@ providers.set('google-calendar', {
 	config: googleCalendarConfig,
 	resolveExternalId: googleCalendarResolveExternalId,
 	preDisconnect: revokeGoogleCalendarGrant,
+})
+
+// google-meet — the OAuth callback additions + People-id resolution +
+// webhook hooks belong to Task 2 (ba9d0c18). This task (824f · write-path
+// tools) only needs the provider registered so `TokenManager.getValidToken`
+// can refresh the workspace's stored Meet credentials. Task 2's PR will
+// extend this entry with `resolveExternalId`, `postInstall`, `webhookFanOut`
+// et al. — the entry key stays `'google-meet'` so the merge collapses cleanly.
+providers.set('google-meet', {
+	config: googleMeetConfig,
 })
 
 providers.set('posthog', {
