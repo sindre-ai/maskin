@@ -161,7 +161,7 @@ export const LINKEDIN_CONNECTION_REQUEST_MARKERS = {
  * Discriminators for `PAGE_ADMIN_REVOKED`: LinkedIn revoked this specific
  * page's admin scope from the connected account. Structurally recoverable —
  * the ops layer deregisters the affected MCP instance and enqueues an
- * `unipile.account.updated`-style re-enumeration for the credential (spec
+ * `account.reconnect`-style re-enumeration for the credential (spec
  * §5). Detected on a 403 to any page-scoped Unipile route AND a body
  * `error_code` in this list. Retry policy is `null`: retrying makes nothing
  * better, LinkedIn's answer is stable until the page-admin grant is
@@ -582,7 +582,7 @@ export class LinkedinAlreadyConnectedError extends LinkedInIntegrationError {
  * Named subclass for `PAGE_ADMIN_REVOKED`. The current call is terminal
  * (retry policy is null); the ops layer additionally deregisters the
  * affected LinkedIn MCP instance and enqueues an
- * `unipile.account.updated`-style re-enumeration for the credential so the
+ * `account.reconnect`-style re-enumeration for the credential so the
  * loop sees the change on the NEXT call rather than continuing to attach a
  * tool that will 403 again.
  */

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
- * R11-C · 403-triggered PAGE_ADMIN_REVOKED safety-net + `unipile.account.updated`
+ * R11-C · 403-triggered PAGE_ADMIN_REVOKED safety-net + `account.reconnect`
  * webhook re-enumeration coverage.
  *
  * Exercises the four moving pieces the task's acceptance criteria pin:
@@ -10,9 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
  *      the `PAGE_ADMIN_REVOKED` class with retry policy `null`.
  *   2. `withPageAdminRevokeSafetyNet` — on that class, the wrapper
  *      deregisters the specific MCP instance, kicks off an
- *      `account.updated`-style re-enumeration, and rethrows
+ *      `account.reconnect`-style re-enumeration, and rethrows
  *      `PageAdminRevokedError` so the agent loop learns of the change.
- *   3. `handleUnipileAccountUpdated` — a re-enumeration where the page
+ *   3. `handleUnipileAccountReconnect` — a re-enumeration where the page
  *      is missing from the enumeration correctly leaves that instance
  *      deregistered.
  *   4. Registry — deregister for one slug never disturbs
@@ -60,7 +60,7 @@ import { withPageAdminRevokeSafetyNet } from '../../lib/integrations/providers/l
 import { createLinkedInHttpClient } from '../../lib/integrations/providers/linkedin-unipile/unipile-client'
 import {
 	__setLinkedInWebhookClientForTests,
-	handleUnipileAccountUpdated,
+	handleUnipileAccountReconnect,
 } from '../../lib/integrations/providers/linkedin-unipile/webhook'
 
 type IntegrationRow = {
@@ -333,7 +333,7 @@ describe('R11-C · 403 safety-net deregister-and-re-enumerate', () => {
 	})
 })
 
-describe('R11-C · unipile.account.updated webhook — diff, register-new, deregister-removed, rename', () => {
+describe('R11-C · account.reconnect webhook — diff, register-new, deregister-removed, rename', () => {
 	let mock: LinkedInMockServer
 
 	beforeEach(async () => {
@@ -368,7 +368,7 @@ describe('R11-C · unipile.account.updated webhook — diff, register-new, dereg
 		])
 	}
 
-	it('registers new identities the enumeration reports (first-time account.updated)', async () => {
+	it('registers new identities the enumeration reports (first-time account.reconnect)', async () => {
 		// Empty registry, mock reports personal + one page.
 		planManagedPagesResponse([
 			{
@@ -383,7 +383,7 @@ describe('R11-C · unipile.account.updated webhook — diff, register-new, dereg
 		const client = createLinkedInHttpClient({ baseUrl: mock.baseUrl, apiKey: 'test-api-key' })
 		const db = seedCredentialDb()
 
-		const result = await handleUnipileAccountUpdated(db, client, CREDENTIAL.unipileAccountId)
+		const result = await handleUnipileAccountReconnect(db, client, CREDENTIAL.unipileAccountId)
 
 		expect(result.appliedTo).toHaveLength(1)
 		const entry = result.appliedTo[0]
@@ -414,7 +414,7 @@ describe('R11-C · unipile.account.updated webhook — diff, register-new, dereg
 		const client = createLinkedInHttpClient({ baseUrl: mock.baseUrl, apiKey: 'test-api-key' })
 		const db = seedCredentialDb()
 
-		await handleUnipileAccountUpdated(db, client, CREDENTIAL.unipileAccountId)
+		await handleUnipileAccountReconnect(db, client, CREDENTIAL.unipileAccountId)
 
 		// Personal stayed (unchanged), gonePage removed.
 		expect(listLinkedInMcpInstances().get(instanceSlug(personal))).toBeDefined()
@@ -446,7 +446,7 @@ describe('R11-C · unipile.account.updated webhook — diff, register-new, dereg
 		const client = createLinkedInHttpClient({ baseUrl: mock.baseUrl, apiKey: 'test-api-key' })
 		const db = seedCredentialDb()
 
-		await handleUnipileAccountUpdated(db, client, CREDENTIAL.unipileAccountId)
+		await handleUnipileAccountReconnect(db, client, CREDENTIAL.unipileAccountId)
 
 		// Old slug gone, new slug present.
 		expect(listLinkedInMcpInstances().get(instanceSlug(oldPage))).toBeUndefined()
@@ -466,7 +466,7 @@ describe('R11-C · unipile.account.updated webhook — diff, register-new, dereg
 		const client = createLinkedInHttpClient({ baseUrl: mock.baseUrl, apiKey: 'test-api-key' })
 		const db = seedCredentialDb()
 
-		const result = await handleUnipileAccountUpdated(db, client, CREDENTIAL.unipileAccountId)
+		const result = await handleUnipileAccountReconnect(db, client, CREDENTIAL.unipileAccountId)
 
 		const entry = result.appliedTo[0]
 		if (entry && 'diff' in entry && 'unchanged' in (entry.diff as object)) {

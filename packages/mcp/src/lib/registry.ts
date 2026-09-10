@@ -13,7 +13,7 @@
  * The registry is intentionally an in-memory Map:
  *   - The identity-derived fields (URN, mailbox id, messaging flag) are cheap
  *     to re-enumerate — the admin refresh-identities endpoint plus the
- *     `unipile.account.updated` webhook (R11-C) both re-run enumeration and
+ *     `account.reconnect` webhook (R11-C) both re-run enumeration and
  *     re-populate this map.
  *   - The one datum that has to survive a process restart is
  *     `integrations.unipile_acc_slug`, which is persisted on the credential row
@@ -79,7 +79,7 @@ export function deregisterLinkedInMcpInstancesForIntegration(integrationId: stri
 
 /**
  * R11-C · Drop exactly one instance keyed by `(integrationId, identitySlug)`
- * on the cfg. Used by the `unipile.account.updated` webhook diff (a page
+ * on the cfg. Used by the `account.reconnect` webhook diff (a page
  * that disappeared from enumeration is deregistered without touching sibling
  * pages on the same credential) and by the 403 safety-net path (the
  * specific page-scoped call that faulted is dropped inline; the credential's

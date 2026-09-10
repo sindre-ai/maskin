@@ -3,10 +3,11 @@
  *
  * Two callers, one path:
  *
- *   - `unipile.account.updated` webhook handler in
+ *   - `account.reconnect` webhook handler in
  *     `apps/dev/src/routes/integrations-linkedin-unipile.ts` — fires when
- *     LinkedIn signals page-admin churn (new page granted, page renamed,
- *     admin revoked, `messaging_enabled` flipped).
+ *     the user re-links the Unipile account (Unipile v2 has no proactive
+ *     event for silent LinkedIn-side page-admin changes; that class is
+ *     caught by the 403 safety-net below, not here).
  *   - 403 safety-net in `operations.ts` — when a page-scoped call 403s
  *     with `error_code: 'page_admin_revoked'`, deregister THAT specific
  *     instance inline and enqueue a re-enumeration for the credential so

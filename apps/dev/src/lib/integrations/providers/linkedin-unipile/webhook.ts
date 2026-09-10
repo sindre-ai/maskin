@@ -1,15 +1,17 @@
 /**
- * R11-C · unipile.account.updated webhook handler + client builder.
+ * R11-C · unipile account.reconnect webhook handler + client builder.
  *
  * Lives in the provider directory (not the route) so the same entry point
  * is reused by:
  *
  *   - `POST /api/integrations/linkedin-unipile/webhook` — the primary
- *     path Unipile fires on page-admin churn.
+ *     path Unipile fires when the user re-links a credential
+ *     (`account.reconnect`, the closest v2 equivalent to v1's
+ *     `account.updated`).
  *   - The 403 safety-net in `operations.ts` — when a page-scoped call
- *     403s with `error_code: 'page_admin_revoked'`, we enqueue an
- *     `account.updated`-style re-enumeration for the credential. In
- *     practice "enqueue" is an inline await on the same handler.
+ *     403s with `error_code: 'page_admin_revoked'`, we enqueue a
+ *     re-enumeration for the credential. In practice "enqueue" is an
+ *     inline await on the same handler.
  *
  * Kept dependency-light: this module resolves the credential from the
  * database, decrypts it, and hands off to the diff engine in
@@ -79,7 +81,7 @@ export function buildLinkedInClientForWebhook(): LinkedInClient {
  * idempotent by contract, so a partial success is better than a full
  * rollback that leaves half the workspaces stale.
  */
-export async function handleUnipileAccountUpdated(
+export async function handleUnipileAccountReconnect(
 	db: Database,
 	client: LinkedInClient,
 	unipileAccountId: string,
@@ -102,7 +104,7 @@ export async function handleUnipileAccountUpdated(
 		)
 
 	if (rows.length === 0) {
-		logger.info('linkedin-unipile account.updated: no matching credential rows', {
+		logger.info('linkedin-unipile account.reconnect: no matching credential rows', {
 			unipileAccountId,
 		})
 		return { appliedTo: [] }
@@ -119,7 +121,7 @@ export async function handleUnipileAccountUpdated(
 		try {
 			credentials = JSON.parse(decrypt(row.credentials)) as { account_id?: string }
 		} catch (err) {
-			logger.warn('linkedin-unipile account.updated: failed to decrypt credentials', {
+			logger.warn('linkedin-unipile account.reconnect: failed to decrypt credentials', {
 				integrationId: row.id,
 				error: err instanceof Error ? err.message : String(err),
 			})
@@ -134,7 +136,7 @@ export async function handleUnipileAccountUpdated(
 			// A credential landed pre-R11 has account_id but no unipileAccSlug
 			// yet — the first webhook fires the R11-A `updateIntegrationAccSlug`
 			// side-effect that fills it in. Skip diffing until then.
-			logger.info('linkedin-unipile account.updated: skipping row without unipile_acc_slug', {
+			logger.info('linkedin-unipile account.reconnect: skipping row without unipile_acc_slug', {
 				integrationId: row.id,
 			})
 			appliedTo.push({

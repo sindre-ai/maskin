@@ -27,7 +27,7 @@ import type {
 	LinkedInSendMessageResponse,
 } from './unipile-client'
 import { createLinkedInHttpClient } from './unipile-client'
-import { buildLinkedInClientForWebhook, handleUnipileAccountUpdated } from './webhook'
+import { buildLinkedInClientForWebhook, handleUnipileAccountReconnect } from './webhook'
 
 /**
  * Provider-side operations for the LinkedIn (LinkedIn-backed) message verbs.
@@ -274,8 +274,8 @@ async function callLinkedInWithRetry<T>(
  *   1. Deregister exactly THAT instance from the shared MCP registry
  *      (`registry.deregisterLinkedInMcpInstance(cfg)`) so future MCP tool
  *      listings do not attach a tool that will 403 again.
- *   2. Enqueue an `unipile.account.updated`-style re-enumeration for the
- *      credential (`webhook.handleUnipileAccountUpdated`), so the loop
+ *   2. Enqueue an `account.reconnect`-style re-enumeration for the
+ *      credential (`webhook.handleUnipileAccountReconnect`), so the loop
  *      sees the full new identity set on the next call. In practice
  *      "enqueue" is an inline `await` — the safety-net is documented as
  *      inline await, NOT a background job. Failures on the re-enum are
@@ -323,11 +323,11 @@ export async function withPageAdminRevokeSafetyNet<T>(
 
 	// (2) Enqueue re-enumeration. Best-effort: an enumeration failure here
 	// must NOT mask the 403 the agent loop needs to see. Errors are logged
-	// inside handleUnipileAccountUpdated / reEnumerateAndSyncLinkedInInstances,
+	// inside handleUnipileAccountReconnect / reEnumerateAndSyncLinkedInInstances,
 	// so we only guard the top-level call.
 	try {
 		const client = buildLinkedInClientForWebhook()
-		await handleUnipileAccountUpdated(db, client, cfg.unipileAccountId)
+		await handleUnipileAccountReconnect(db, client, cfg.unipileAccountId)
 	} catch (err) {
 		logger.warn('linkedin-unipile 403 safety-net: re-enumeration failed', {
 			integrationId: cfg.integrationId,

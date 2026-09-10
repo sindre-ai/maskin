@@ -550,7 +550,7 @@ export async function startLinkedInMock(): Promise<LinkedInMockServer> {
 			return send(200, CANNED_RELATIONS_RESPONSE())
 		}
 		// Enumeration routes — the connect callback (R11-A) and the
-		// unipile.account.updated webhook (R11-C) both call these. Must be
+		// account.reconnect webhook (R11-C) both call these. Must be
 		// checked BEFORE the generic `/users/:identifier` catch-all so
 		// `/users/me` is not resolved as a profile handle. The page list lives
 		// under `/v2/{acc}/linkedin/company/pages` (see the block below and

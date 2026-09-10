@@ -224,7 +224,7 @@ export const integrations = pgTable(
 		// resolved once at connect-time and used as the account half of the
 		// per-identity MCP instance slug `linkedin-{unipile_acc_slug}-{identity_slug}`.
 		// Phase 1 rows that predate R11 carry NULL until the next
-		// `account.updated` webhook or the admin refresh-identities call fills it.
+		// `account.reconnect` webhook or the admin refresh-identities call fills it.
 		unipileAccSlug: text('unipile_acc_slug'),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)

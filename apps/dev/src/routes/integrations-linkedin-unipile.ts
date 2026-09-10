@@ -30,8 +30,9 @@ import {
 } from '../lib/integrations/providers/linkedin-unipile/operations'
 import {
 	buildLinkedInClientForWebhook,
-	handleUnipileAccountUpdated,
+	handleUnipileAccountReconnect,
 } from '../lib/integrations/providers/linkedin-unipile/webhook'
+import { verifyUnipileWebhookSignature } from '../lib/integrations/providers/linkedin-unipile/webhook-signature'
 import {
 	startLinkedInAddonCheckout,
 	syncLinkedInAddonQuantity,
@@ -842,24 +843,38 @@ app.get('/get-post-engagement', async (c) => {
 	}
 })
 
-// ── POST /webhook — unipile.account.updated re-enumeration (R11-C) ───────
+// ── POST /webhook — unipile account.reconnect re-enumeration (R11-C) ────
 //
 // Path is unauthenticated (Unipile posts here from outside our network).
-// Auth is a shared secret in the `X-Maskin-Webhook-Secret` header —
-// registered against `UNIPILE_WEBHOOK_SECRET`. The dedicated route lives
-// on this router (mounted at `/api/integrations/linkedin-unipile/webhook`)
-// rather than the generic `/api/webhooks/:provider` catch-all because
-// linkedin-unipile's provider config declares no `webhook` block — that
-// path would 400 with "Provider does not support webhooks".
+// Auth is Unipile v2's per-endpoint signature: the `unipile-signature`
+// header carries `t=<unix-seconds>,v0=<hex-hmac-sha256>`, and we recompute
+// `HMAC_SHA256(UNIPILE_WEBHOOK_SECRET, "${t}.${rawBody}")` and constant-
+// time compare against v0. `UNIPILE_WEBHOOK_SECRET` holds the per-endpoint
+// secret Unipile returned when the endpoint was created (`wes_...`).
+// Docs: https://developer.unipile.com/v2.0/docs/configure-a-webhook.
+// Signature verification lives in `webhook-signature.ts` so it can be
+// unit-tested in isolation.
 //
-// This is the fan-out re-enumeration side-effect handler: for any Unipile
-// account.updated payload (new page granted, page renamed, admin revoked,
-// messaging_enabled flipped), we re-run the connect-time enumeration and
-// diff it against the currently-registered MCP instances for the
-// credential. Register-new, deregister-removed. Page rename produces a
-// deregister-then-register pair — the identity slug changes so the
-// instance key changes, semantically identical to a GitHub org rename
-// under `github-*`. See fan-out.ts for the diff engine.
+// The dedicated route lives on this router (mounted at
+// `/api/integrations/linkedin-unipile/webhook`) rather than the generic
+// `/api/webhooks/:provider` catch-all because linkedin-unipile's provider
+// config declares no `webhook` block — that path would 400 with
+// "Provider does not support webhooks".
+//
+// This is the fan-out re-enumeration side-effect handler: on an
+// `account.reconnect` event (user re-linked the account, possibly
+// granting new page-admin access or flipping messaging_enabled), we
+// re-run the connect-time enumeration and diff it against the currently-
+// registered MCP instances for the credential. Register-new, deregister-
+// removed. Page rename produces a deregister-then-register pair — the
+// identity slug changes so the instance key changes, semantically
+// identical to a GitHub org rename under `github-*`. See fan-out.ts for
+// the diff engine.
+//
+// Unipile v2 has NO event that fires when LinkedIn silently changes
+// page-admin membership under a stable OAuth session (LinkedIn does not
+// notify Unipile). That class of change is caught by the 403 safety-net
+// in `operations.ts` on the next tool call, not by this webhook.
 //
 // Path allowlisted in the api-key middleware (see app-factory.ts's
 // callback allowlist regex) so Unipile can POST here without a Maskin
@@ -871,25 +886,36 @@ app.post('/webhook', async (c) => {
 		logger.error('linkedin-unipile webhook: UNIPILE_WEBHOOK_SECRET not configured')
 		return c.json(createApiError('INTERNAL_ERROR', 'Webhook not configured'), 500)
 	}
-	const presented =
-		c.req.header('x-maskin-webhook-secret') ?? c.req.header('X-Maskin-Webhook-Secret')
-	if (!presented || !constantTimeEquals(presented, secret)) {
-		logger.warn('linkedin-unipile webhook: signature verification failed')
+
+	// Signature verification MUST run against the raw request body — a
+	// parse-then-reserialise round-trip would change whitespace, key
+	// ordering or escaping and break the HMAC compare. Read once as text,
+	// verify, then JSON.parse.
+	const rawBody = await c.req.text()
+	const signatureHeader = c.req.header('unipile-signature') ?? c.req.header('Unipile-Signature')
+	const verification = verifyUnipileWebhookSignature(rawBody, signatureHeader, secret)
+	if (!verification.ok) {
+		logger.warn('linkedin-unipile webhook: signature verification failed', {
+			reason: verification.reason,
+		})
 		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
 	}
 
 	let payload: unknown
 	try {
-		payload = await c.req.json()
+		payload = JSON.parse(rawBody)
 	} catch {
 		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON in webhook payload'), 400)
 	}
 
-	const parsed = parseAccountUpdatedPayload(payload)
+	const parsed = parseAccountReconnectPayload(payload)
 	if (!parsed) {
-		// Unknown Unipile event type — acknowledge so Unipile does not
-		// retry. Log the shape so an unhandled event kind surfaces in the
-		// dev log rather than staying invisible.
+		// Unknown or unhandled Unipile event type — acknowledge so Unipile
+		// does not retry. Log the shape so an unhandled event kind surfaces
+		// in the dev log rather than staying invisible. Common expected
+		// arrivals here: `account.status.*`, `message.*`, `chat.*`, etc.
+		// If we ever need to react to those, extend `RE_ENUMERATE_EVENTS`
+		// below rather than special-casing here.
 		logger.info('linkedin-unipile webhook: skipped unhandled event', {
 			presentKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
 		})
@@ -898,32 +924,35 @@ app.post('/webhook', async (c) => {
 
 	const db = c.get('db')
 	const client = buildLinkedInClientForWebhook()
-	const result = await handleUnipileAccountUpdated(db, client, parsed.accountId)
+	const result = await handleUnipileAccountReconnect(db, client, parsed.accountId)
 	return c.json({ ok: true, ...result })
 })
 
-const AccountUpdatedPayloadSchema = z.object({
-	// Unipile v2 puts the event type on `type` (e.g. `account.updated`); the
-	// v1 spelling was `event`. Read both so a shape drift does not silently
-	// no-op every webhook delivery.
+/**
+ * Unipile v2 event kinds that should trigger a full re-enumeration of
+ * the credential's identities. Kept as a set so extending it (e.g. adding
+ * `account.add` for defence-in-depth against a lost connect-callback) is
+ * a one-line change. See the v2 event catalog:
+ * https://developer.unipile.com/v2.0/reference/event-types-1.
+ */
+const RE_ENUMERATE_EVENTS = new Set<string>(['account.reconnect'])
+
+const AccountReconnectPayloadSchema = z.object({
+	// Unipile v2 puts the event kind on `type` (docs example:
+	// https://developer.unipile.com/v2.0/docs/webhooks-introduction).
+	// v1 used `event`; accept both so a version drift does not silently
+	// no-op every delivery.
 	type: z.string().optional(),
 	event: z.string().optional(),
 	account_id: z.string().min(1),
 })
 
-function parseAccountUpdatedPayload(payload: unknown): { accountId: string } | null {
-	const parsed = AccountUpdatedPayloadSchema.safeParse(payload)
+function parseAccountReconnectPayload(payload: unknown): { accountId: string } | null {
+	const parsed = AccountReconnectPayloadSchema.safeParse(payload)
 	if (!parsed.success) return null
 	const kind = parsed.data.type ?? parsed.data.event
-	if (kind && kind !== 'account.updated' && kind !== 'unipile.account.updated') return null
+	if (!kind || !RE_ENUMERATE_EVENTS.has(kind)) return null
 	return { accountId: parsed.data.account_id }
-}
-
-function constantTimeEquals(a: string, b: string): boolean {
-	const ab = Buffer.from(a, 'utf8')
-	const bb = Buffer.from(b, 'utf8')
-	if (ab.length !== bb.length) return false
-	return timingSafeEqual(ab, bb)
 }
 
 export default app

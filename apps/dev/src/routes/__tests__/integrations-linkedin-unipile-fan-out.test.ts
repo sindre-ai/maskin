@@ -246,7 +246,7 @@ describe('linkedin-unipile connect-callback fan-out enumeration', () => {
 })
 
 /**
- * R11-C · unipile.account.updated webhook diff coverage. Extends the R11-A
+ * R11-C · account.reconnect webhook diff coverage. Extends the R11-A
  * fan-out suite above with the four diff shapes the webhook has to handle:
  *
  *   - register-new — an unseeded credential enumerates and the identities
@@ -274,7 +274,7 @@ import {
 import { createLinkedInHttpClient } from '../../lib/integrations/providers/linkedin-unipile/unipile-client'
 import {
 	__setLinkedInWebhookClientForTests,
-	handleUnipileAccountUpdated,
+	handleUnipileAccountReconnect,
 } from '../../lib/integrations/providers/linkedin-unipile/webhook'
 
 const R11C_CREDENTIAL = {
@@ -334,7 +334,7 @@ function buildPageCfg(
 	}
 }
 
-describe('R11-C · unipile.account.updated webhook diff coverage', () => {
+describe('R11-C · account.reconnect webhook diff coverage', () => {
 	let mock: LinkedInMockServer
 
 	beforeEach(async () => {
@@ -353,7 +353,7 @@ describe('R11-C · unipile.account.updated webhook diff coverage', () => {
 		__setLinkedInWebhookClientForTests(null)
 	})
 
-	it('registers new identities on first account.updated for an unseeded credential', async () => {
+	it('registers new identities on first account.reconnect for an unseeded credential', async () => {
 		planManagedPagesResponse([
 			{
 				id: 'mock-page-1',
@@ -366,7 +366,7 @@ describe('R11-C · unipile.account.updated webhook diff coverage', () => {
 		])
 		const client = createLinkedInHttpClient({ baseUrl: mock.baseUrl, apiKey: 'test-api-key' })
 
-		await handleUnipileAccountUpdated(fakeDbWithCred(), client, R11C_CREDENTIAL.unipileAccountId)
+		await handleUnipileAccountReconnect(fakeDbWithCred(), client, R11C_CREDENTIAL.unipileAccountId)
 
 		const slugs = getLinkedInMcpInstancesForIntegration(R11C_CREDENTIAL.integrationId)
 			.map((c) => c.identitySlug)
@@ -380,7 +380,7 @@ describe('R11-C · unipile.account.updated webhook diff coverage', () => {
 		planManagedPagesResponse([])
 		const client = createLinkedInHttpClient({ baseUrl: mock.baseUrl, apiKey: 'test-api-key' })
 
-		await handleUnipileAccountUpdated(fakeDbWithCred(), client, R11C_CREDENTIAL.unipileAccountId)
+		await handleUnipileAccountReconnect(fakeDbWithCred(), client, R11C_CREDENTIAL.unipileAccountId)
 
 		expect(listLinkedInMcpInstances().get(instanceSlug(ghost))).toBeUndefined()
 	})
@@ -403,7 +403,7 @@ describe('R11-C · unipile.account.updated webhook diff coverage', () => {
 		])
 		const client = createLinkedInHttpClient({ baseUrl: mock.baseUrl, apiKey: 'test-api-key' })
 
-		await handleUnipileAccountUpdated(fakeDbWithCred(), client, R11C_CREDENTIAL.unipileAccountId)
+		await handleUnipileAccountReconnect(fakeDbWithCred(), client, R11C_CREDENTIAL.unipileAccountId)
 
 		expect(listLinkedInMcpInstances().get(instanceSlug(oldSlug))).toBeUndefined()
 		expect(
