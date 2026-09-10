@@ -14,10 +14,7 @@
  * `registerLinkedInMcpInstance(server, cfg)`.
  */
 
-import type {
-	LinkedInMcpInstanceConfig,
-	LinkedInPhase1Verb,
-} from '../lib/linkedin-mcp-context'
+import type { LinkedInMcpInstanceConfig, LinkedInPhase1Verb } from '../lib/linkedin-mcp-context'
 import { LINKEDIN_PHASE1_VERBS } from '../lib/linkedin-mcp-context'
 
 /**

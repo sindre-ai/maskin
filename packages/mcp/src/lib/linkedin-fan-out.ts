@@ -23,6 +23,7 @@ export {
 export { toolsForIdentity } from '../linkedin/register.js'
 export {
 	__resetLinkedInMcpRegistryForTests,
+	deregisterLinkedInMcpInstance,
 	deregisterLinkedInMcpInstancesForIntegration,
 	getLinkedInMcpInstancesForIntegration,
 	listLinkedInMcpInstances,

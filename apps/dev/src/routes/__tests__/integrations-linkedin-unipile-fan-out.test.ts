@@ -32,7 +32,10 @@ vi.mock('../../lib/integrations/providers/linkedin-unipile/enumeration', async (
 		...actual,
 		enumerateLinkedInIdentitiesAndRegister: (
 			params: Parameters<typeof actual.enumerateLinkedInIdentitiesAndRegister>[0],
-		) => actual.enumerateLinkedInIdentitiesAndRegister(params, { client: fakeLinkedInClientForTests() }),
+		) =>
+			actual.enumerateLinkedInIdentitiesAndRegister(params, {
+				client: fakeLinkedInClientForTests(),
+			}),
 	}
 })
 
@@ -62,9 +65,13 @@ vi.mock('../../lib/integrations/providers/linkedin-unipile/client', () => ({
 	createAuthLink: vi.fn().mockResolvedValue({ link: 'http://mock/wizard' }),
 }))
 
+import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
 import {
 	__resetLinkedInMcpRegistryForTests,
+	getLinkedInMcpInstancesForIntegration,
+	instanceSlug,
 	listLinkedInMcpInstances,
+	registerLinkedInMcpInstance,
 } from '@maskin/mcp/linkedin'
 import integrationsLinkedinRoutes from '../integrations-linkedin-unipile'
 
@@ -235,5 +242,172 @@ describe('linkedin-unipile connect-callback fan-out enumeration', () => {
 		}
 		expect([...listLinkedInMcpInstances().keys()].sort()).toEqual(firstKeys)
 		expect(listLinkedInMcpInstances().size).toBe(3)
+	})
+})
+
+/**
+ * R11-C · unipile.account.updated webhook diff coverage. Extends the R11-A
+ * fan-out suite above with the four diff shapes the webhook has to handle:
+ *
+ *   - register-new — an unseeded credential enumerates and the identities
+ *     land in the registry.
+ *   - deregister-removed — a page that vanished from enumeration is dropped
+ *     without disturbing sibling identities on the same credential.
+ *   - page-rename — a page whose `public_identifier` changed is a
+ *     deregister-then-register pair (identical to a GitHub org rename per
+ *     spec §1.4).
+ *
+ * Uses the real mock HTTP server (`startLinkedInMock`) + a real
+ * `createLinkedInHttpClient` so the request/response shape the webhook
+ * runs against is the one production sees. Registry mutations are
+ * asserted via `getLinkedInMcpInstancesForIntegration` +
+ * `listLinkedInMcpInstances().get(slug)` — the R11-A canonical readers.
+ */
+
+import type { Database } from '@maskin/db'
+import {
+	type LinkedInMockServer,
+	planManagedPagesResponse,
+	resetManagedPagesResponse,
+	startLinkedInMock,
+} from '../../lib/integrations/providers/linkedin-unipile/__mocks__/unipile-server'
+import { createLinkedInHttpClient } from '../../lib/integrations/providers/linkedin-unipile/unipile-client'
+import {
+	__setLinkedInWebhookClientForTests,
+	handleUnipileAccountUpdated,
+} from '../../lib/integrations/providers/linkedin-unipile/webhook'
+
+const R11C_CREDENTIAL = {
+	integrationId: '44444444-4444-4444-4444-444444444444',
+	workspaceId: '55555555-5555-5555-5555-555555555555',
+	actorId: '66666666-6666-6666-6666-666666666666',
+	unipileAccountId: 'unipile-account-fanout',
+	unipileAccSlug: 'sebfan',
+}
+
+type FakeIntegrationRow = {
+	id: string
+	workspaceId: string
+	actorId: string | null
+	provider: string
+	status: string
+	externalId: string
+	credentials: string
+	unipileAccSlug: string | null
+	createdBy: string
+}
+
+function fakeDbWithCred(): Database {
+	const row: FakeIntegrationRow = {
+		id: R11C_CREDENTIAL.integrationId,
+		workspaceId: R11C_CREDENTIAL.workspaceId,
+		actorId: R11C_CREDENTIAL.actorId,
+		provider: 'linkedin-unipile',
+		status: 'active',
+		externalId: R11C_CREDENTIAL.unipileAccountId,
+		credentials: JSON.stringify({ account_id: R11C_CREDENTIAL.unipileAccountId }),
+		unipileAccSlug: R11C_CREDENTIAL.unipileAccSlug,
+		createdBy: R11C_CREDENTIAL.actorId,
+	}
+	const fake = {
+		select: () => ({ from: () => ({ where: () => Promise.resolve([row]) }) }),
+	}
+	return fake as unknown as Database
+}
+
+function buildPageCfg(
+	overrides: Partial<LinkedInMcpInstanceConfig> = {},
+): LinkedInMcpInstanceConfig {
+	return {
+		workspaceId: R11C_CREDENTIAL.workspaceId,
+		actorId: R11C_CREDENTIAL.actorId,
+		integrationId: R11C_CREDENTIAL.integrationId,
+		unipileAccountId: R11C_CREDENTIAL.unipileAccountId,
+		unipileAccSlug: R11C_CREDENTIAL.unipileAccSlug,
+		identityType: 'company_page',
+		identityUrn: 'urn:li:organization:11111111',
+		identitySlug: 'maskinio',
+		displayName: 'Maskin',
+		mailboxId: 'mock-mailbox-1',
+		messagingEnabled: true,
+		...overrides,
+	}
+}
+
+describe('R11-C · unipile.account.updated webhook diff coverage', () => {
+	let mock: LinkedInMockServer
+
+	beforeEach(async () => {
+		mock = await startLinkedInMock()
+		__resetLinkedInMcpRegistryForTests()
+		resetManagedPagesResponse()
+		__setLinkedInWebhookClientForTests(() =>
+			createLinkedInHttpClient({ baseUrl: mock.baseUrl, apiKey: 'test-api-key' }),
+		)
+	})
+
+	afterEach(async () => {
+		await mock.close()
+		__resetLinkedInMcpRegistryForTests()
+		resetManagedPagesResponse()
+		__setLinkedInWebhookClientForTests(null)
+	})
+
+	it('registers new identities on first account.updated for an unseeded credential', async () => {
+		planManagedPagesResponse([
+			{
+				id: 'mock-page-1',
+				provider_id: '11111111',
+				public_identifier: 'maskinio',
+				name: 'Maskin',
+				messaging_enabled: true,
+				mailbox_id: 'mock-mailbox-1',
+			},
+		])
+		const client = createLinkedInHttpClient({ baseUrl: mock.baseUrl, apiKey: 'test-api-key' })
+
+		await handleUnipileAccountUpdated(fakeDbWithCred(), client, R11C_CREDENTIAL.unipileAccountId)
+
+		const slugs = getLinkedInMcpInstancesForIntegration(R11C_CREDENTIAL.integrationId)
+			.map((c) => c.identitySlug)
+			.sort()
+		expect(slugs).toEqual(['maskinio', 'personal'])
+	})
+
+	it('deregisters identities that vanish from the enumeration', async () => {
+		const ghost = buildPageCfg({ identitySlug: 'ghost' })
+		registerLinkedInMcpInstance(ghost)
+		planManagedPagesResponse([])
+		const client = createLinkedInHttpClient({ baseUrl: mock.baseUrl, apiKey: 'test-api-key' })
+
+		await handleUnipileAccountUpdated(fakeDbWithCred(), client, R11C_CREDENTIAL.unipileAccountId)
+
+		expect(listLinkedInMcpInstances().get(instanceSlug(ghost))).toBeUndefined()
+	})
+
+	it('page rename becomes a deregister-then-register pair (same identity, new slug)', async () => {
+		const oldSlug = buildPageCfg({
+			identitySlug: 'old',
+			identityUrn: 'urn:li:organization:XYZ',
+		})
+		registerLinkedInMcpInstance(oldSlug)
+		planManagedPagesResponse([
+			{
+				id: 'p',
+				provider_id: 'XYZ',
+				public_identifier: 'new',
+				name: 'Renamed',
+				messaging_enabled: true,
+				mailbox_id: 'mbx',
+			},
+		])
+		const client = createLinkedInHttpClient({ baseUrl: mock.baseUrl, apiKey: 'test-api-key' })
+
+		await handleUnipileAccountUpdated(fakeDbWithCred(), client, R11C_CREDENTIAL.unipileAccountId)
+
+		expect(listLinkedInMcpInstances().get(instanceSlug(oldSlug))).toBeUndefined()
+		expect(
+			listLinkedInMcpInstances().get(`linkedin-${R11C_CREDENTIAL.unipileAccSlug}-new`),
+		).toBeDefined()
 	})
 })

@@ -78,6 +78,27 @@ export function deregisterLinkedInMcpInstancesForIntegration(integrationId: stri
 }
 
 /**
+ * R11-C · Drop exactly one instance keyed by `(integrationId, identitySlug)`
+ * on the cfg. Used by the `unipile.account.updated` webhook diff (a page
+ * that disappeared from enumeration is deregistered without touching sibling
+ * pages on the same credential) and by the 403 safety-net path (the
+ * specific page-scoped call that faulted is dropped inline; the credential's
+ * other identities keep serving).
+ *
+ * Idempotent — returns `true` when an instance was removed, `false` when
+ * the slug was not registered. Never touches `github-*` (kept in a separate
+ * registry surface); never touches other LinkedIn instances on the same
+ * credential (different `identitySlug` → different key).
+ */
+export function deregisterLinkedInMcpInstance(cfg: LinkedInMcpInstanceConfig): boolean {
+	const byIdentity = REGISTRY.get(cfg.integrationId)
+	if (!byIdentity) return false
+	const removed = byIdentity.delete(cfg.identitySlug)
+	if (removed && byIdentity.size === 0) REGISTRY.delete(cfg.integrationId)
+	return removed
+}
+
+/**
  * All instances registered under one credential. The `/mcp` request handler
  * reads this per HTTP request and hands the configs to
  * `registerLinkedInMcpInstance(server, cfg)` in the app-side registrar to
