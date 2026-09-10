@@ -35,7 +35,7 @@
 		"adm-zip": "^0.5.17",
 		"bcryptjs": "^3.0.3",
 		"croner": "^10.0.1",
-		"csv-parse": "^6.2.1",
+		"csv-parse": "^7.0.2",
 		"dockerode": "^4.0.0",
 		"drizzle-orm": "^0.45.2",
 		"google-auth-library": "^9.15.0",
