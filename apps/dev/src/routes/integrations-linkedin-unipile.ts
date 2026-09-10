@@ -13,6 +13,7 @@ import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { createAuthLink } from '../lib/integrations/providers/linkedin-unipile/client'
+import { enumerateLinkedInIdentitiesAndRegister } from '../lib/integrations/providers/linkedin-unipile/enumeration'
 import {
 	LinkedInIntegrationError,
 	isLinkedInIntegrationError,
@@ -21,13 +22,17 @@ import {
 	commentOnLinkedInPost,
 	getLinkedInPostEngagement,
 	listLinkedInConversations,
-	publishLinkedInBusinessPagePost,
 	publishLinkedInPost,
 	readLinkedInPostComments,
 	replyToLinkedInComment,
 	replyToLinkedInThread,
 	sendLinkedInMessage,
 } from '../lib/integrations/providers/linkedin-unipile/operations'
+import {
+	buildLinkedInClientForWebhook,
+	handleUnipileAccountReconnect,
+} from '../lib/integrations/providers/linkedin-unipile/webhook'
+import { verifyUnipileWebhookSignature } from '../lib/integrations/providers/linkedin-unipile/webhook-signature'
 import {
 	startLinkedInAddonCheckout,
 	syncLinkedInAddonQuantity,
@@ -399,6 +404,30 @@ app.openapi(callbackRoute, (async (c) => {
 	// resolves to 'bad_nonce' instead of rebinding a live integration.
 	const encrypted = encrypt(JSON.stringify({ account_id }))
 
+	// R11-A · enumerate identities BEFORE the credential-landing transaction so
+	// the resolved `unipile_acc_slug` can be persisted atomically with `status`
+	// flipping to CONNECTED. `enumerateLinkedInIdentitiesAndRegister` throws on
+	// hard failures — a Unipile hiccup here must not silently land the credential
+	// without any registered MCP instances, so we translate the failure into an
+	// error redirect the customer can retry from Settings.
+	let enumerationSlug: string | null = null
+	try {
+		const enumeration = await enumerateLinkedInIdentitiesAndRegister({
+			unipileAccountId: account_id,
+			workspaceId: pending.workspaceId,
+			actorId: pending.actorId ?? pending.createdBy,
+			integrationId: pending.id,
+		})
+		enumerationSlug = enumeration.unipileAccSlug
+	} catch (err) {
+		logger.error('linkedin-unipile callback: identity enumeration failed', {
+			integrationId: pending.id,
+			error: err instanceof Error ? err.message : String(err),
+			code: isLinkedInIntegrationError(err) ? err.code : undefined,
+		})
+		return redirectToSettings(c, 'error', 'enumeration_failed', pending.workspaceId)
+	}
+
 	// Single-transaction credential landing (spec §Telemetry ordering rule):
 	// the PostHog capture runs AFTER commit so a rolled-back write can never
 	// leak a fake integration_connected signal.
@@ -409,6 +438,7 @@ app.openapi(callbackRoute, (async (c) => {
 				credentials: encrypted,
 				externalId: account_id,
 				status: CONNECTED_STATUS,
+				unipileAccSlug: enumerationSlug,
 				updatedAt: new Date(),
 			})
 			.where(eq(integrations.id, pending.id))
@@ -425,7 +455,12 @@ app.openapi(callbackRoute, (async (c) => {
 			action: 'updated',
 			entityType: 'integration',
 			entityId: pending.id,
-			data: { provider: PROVIDER, status: CONNECTED_STATUS, external_id: account_id },
+			data: {
+				provider: PROVIDER,
+				status: CONNECTED_STATUS,
+				external_id: account_id,
+				unipile_acc_slug: enumerationSlug,
+			},
 		})
 	})
 
@@ -725,23 +760,6 @@ app.post('/publish-post', async (c) => {
 	}
 })
 
-app.post('/publish-business-page-post', async (c) => {
-	const workspaceId = readWorkspaceIdHeader(c.req)
-	if (!workspaceId) {
-		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
-	}
-	const parsed = await readJsonBody(c)
-	if (!parsed.ok) return parsed.response
-	const actorId = c.get('actorId')
-	try {
-		return c.json(
-			await publishLinkedInBusinessPagePost({ db: c.get('db'), actorId, workspaceId }, parsed.body),
-		)
-	} catch (err) {
-		return handleTerminalError(err, 'publish-business-page-post', actorId)
-	}
-})
-
 app.post('/comment-on-post', async (c) => {
 	const workspaceId = readWorkspaceIdHeader(c.req)
 	if (!workspaceId) {
@@ -825,6 +843,118 @@ app.get('/get-post-engagement', async (c) => {
 	}
 })
 
+// ── POST /webhook — unipile account.reconnect re-enumeration (R11-C) ────
+//
+// Path is unauthenticated (Unipile posts here from outside our network).
+// Auth is Unipile v2's per-endpoint signature: the `unipile-signature`
+// header carries `t=<unix-seconds>,v0=<hex-hmac-sha256>`, and we recompute
+// `HMAC_SHA256(UNIPILE_WEBHOOK_SECRET, "${t}.${rawBody}")` and constant-
+// time compare against v0. `UNIPILE_WEBHOOK_SECRET` holds the per-endpoint
+// secret Unipile returned when the endpoint was created (`wes_...`).
+// Docs: https://developer.unipile.com/v2.0/docs/configure-a-webhook.
+// Signature verification lives in `webhook-signature.ts` so it can be
+// unit-tested in isolation.
+//
+// The dedicated route lives on this router (mounted at
+// `/api/integrations/linkedin-unipile/webhook`) rather than the generic
+// `/api/webhooks/:provider` catch-all because linkedin-unipile's provider
+// config declares no `webhook` block — that path would 400 with
+// "Provider does not support webhooks".
+//
+// This is the fan-out re-enumeration side-effect handler: on an
+// `account.reconnect` event (user re-linked the account, possibly
+// granting new page-admin access or flipping messaging_enabled), we
+// re-run the connect-time enumeration and diff it against the currently-
+// registered MCP instances for the credential. Register-new, deregister-
+// removed. Page rename produces a deregister-then-register pair — the
+// identity slug changes so the instance key changes, semantically
+// identical to a GitHub org rename under `github-*`. See fan-out.ts for
+// the diff engine.
+//
+// Unipile v2 has NO event that fires when LinkedIn silently changes
+// page-admin membership under a stable OAuth session (LinkedIn does not
+// notify Unipile). That class of change is caught by the 403 safety-net
+// in `operations.ts` on the next tool call, not by this webhook.
+//
+// Path allowlisted in the api-key middleware (see app-factory.ts's
+// callback allowlist regex) so Unipile can POST here without a Maskin
+// bearer token.
+
+app.post('/webhook', async (c) => {
+	const secret = process.env.UNIPILE_WEBHOOK_SECRET
+	if (!secret) {
+		logger.error('linkedin-unipile webhook: UNIPILE_WEBHOOK_SECRET not configured')
+		return c.json(createApiError('INTERNAL_ERROR', 'Webhook not configured'), 500)
+	}
+
+	// Signature verification MUST run against the raw request body — a
+	// parse-then-reserialise round-trip would change whitespace, key
+	// ordering or escaping and break the HMAC compare. Read once as text,
+	// verify, then JSON.parse.
+	const rawBody = await c.req.text()
+	const signatureHeader = c.req.header('unipile-signature') ?? c.req.header('Unipile-Signature')
+	const verification = verifyUnipileWebhookSignature(rawBody, signatureHeader, secret)
+	if (!verification.ok) {
+		logger.warn('linkedin-unipile webhook: signature verification failed', {
+			reason: verification.reason,
+		})
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
+	}
+
+	let payload: unknown
+	try {
+		payload = JSON.parse(rawBody)
+	} catch {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON in webhook payload'), 400)
+	}
+
+	const parsed = parseAccountReconnectPayload(payload)
+	if (!parsed) {
+		// Unknown or unhandled Unipile event type — acknowledge so Unipile
+		// does not retry. Log the shape so an unhandled event kind surfaces
+		// in the dev log rather than staying invisible. Common expected
+		// arrivals here: `account.status.*`, `message.*`, `chat.*`, etc.
+		// If we ever need to react to those, extend `RE_ENUMERATE_EVENTS`
+		// below rather than special-casing here.
+		logger.info('linkedin-unipile webhook: skipped unhandled event', {
+			presentKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
+		})
+		return c.json({ ok: true, skipped: true })
+	}
+
+	const db = c.get('db')
+	const client = buildLinkedInClientForWebhook()
+	const result = await handleUnipileAccountReconnect(db, client, parsed.accountId)
+	return c.json({ ok: true, ...result })
+})
+
+/**
+ * Unipile v2 event kinds that should trigger a full re-enumeration of
+ * the credential's identities. Kept as a set so extending it (e.g. adding
+ * `account.add` for defence-in-depth against a lost connect-callback) is
+ * a one-line change. See the v2 event catalog:
+ * https://developer.unipile.com/v2.0/reference/event-types-1.
+ */
+const RE_ENUMERATE_EVENTS = new Set<string>(['account.reconnect'])
+
+const AccountReconnectPayloadSchema = z.object({
+	// Unipile v2 puts the event kind on `type` (docs example:
+	// https://developer.unipile.com/v2.0/docs/webhooks-introduction).
+	// v1 used `event`; accept both so a version drift does not silently
+	// no-op every delivery.
+	type: z.string().optional(),
+	event: z.string().optional(),
+	account_id: z.string().min(1),
+})
+
+function parseAccountReconnectPayload(payload: unknown): { accountId: string } | null {
+	const parsed = AccountReconnectPayloadSchema.safeParse(payload)
+	if (!parsed.success) return null
+	const kind = parsed.data.type ?? parsed.data.event
+	if (!kind || !RE_ENUMERATE_EVENTS.has(kind)) return null
+	return { accountId: parsed.data.account_id }
+}
+
 export default app
 
 /**
@@ -833,3 +963,9 @@ export default app
  * re-export means the move did not become a test-file rewrite.
  */
 export { __setLinkedInClientForTests } from '../lib/integrations/providers/linkedin-unipile/operations'
+
+/**
+ * Re-exported so the R11-C page-admin-revoke suite can inject a mock
+ * client for the webhook route without spinning up a fake fetch.
+ */
+export { __setLinkedInWebhookClientForTests } from '../lib/integrations/providers/linkedin-unipile/webhook'

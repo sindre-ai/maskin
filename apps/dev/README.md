@@ -26,10 +26,15 @@ provider directory at
   https://developer.unipile.com/v2.0/docs.
 - **UNIPILE_API_KEY** — the workspace-agnostic Maskin-owned API key sent as
   `X-API-KEY` on every LinkedIn request.
-- **UNIPILE_WEBHOOK_SECRET** — retained for future account-status webhooks
-  (https://developer.unipile.com/v2.0/docs/webhooks-introduction). v2
-  hosted-auth does NOT consume this — the callback is a GET redirect whose
-  auth is the unguessable `state` round-trip binding, not HMAC.
+- **UNIPILE_WEBHOOK_SECRET** — Unipile v2's per-endpoint signing secret
+  (`wes_...`, returned by `POST /v2/webhooks/endpoints/` at endpoint
+  creation and viewable in the Unipile dashboard). Required by the R11-C
+  fan-out webhook (`POST /api/integrations/linkedin-unipile/webhook`),
+  which verifies the `unipile-signature` HMAC-SHA256 header against this
+  secret. Docs:
+  https://developer.unipile.com/v2.0/docs/configure-a-webhook. Note:
+  this secret is per-webhook-endpoint, not per-application — rotate the
+  secret by deleting the endpoint and creating a new one, then redeploy.
 - **MASKIN_PUBLIC_URL** — public base URL of this API instance. Passed to
   LinkedIn v2 as `redirect_uri` at auth-link creation time
   (`{MASKIN_PUBLIC_URL}/api/integrations/linkedin-unipile/callback`) and

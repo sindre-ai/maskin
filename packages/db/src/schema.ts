@@ -218,6 +218,14 @@ export const integrations = pgTable(
 		// declared in apps/dev/src/lib/integrations/lookup.ts populate this;
 		// every other provider keeps actor_id = NULL and stays workspace-scoped.
 		actorId: uuid('actor_id').references(() => actors.id),
+		// R11-A · Fan-out registration foundation. Populated only for
+		// `provider = 'linkedin-unipile'` rows — the value is
+		// `unipileClient.getProfile({ identifier: 'me' }).public_identifier`,
+		// resolved once at connect-time and used as the account half of the
+		// per-identity MCP instance slug `linkedin-{unipile_acc_slug}-{identity_slug}`.
+		// Phase 1 rows that predate R11 carry NULL until the next
+		// `account.reconnect` webhook or the admin refresh-identities call fills it.
+		unipileAccSlug: text('unipile_acc_slug'),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -232,6 +240,9 @@ export const integrations = pgTable(
 			.on(t.workspaceId, t.actorId, t.provider)
 			.where(sql`${t.externalId} IS NULL`),
 		index('integrations_ws_provider_idx').on(t.workspaceId, t.provider),
+		index('integrations_unipile_acc_slug_idx')
+			.on(t.unipileAccSlug)
+			.where(sql`${t.unipileAccSlug} IS NOT NULL`),
 	],
 )
 export type Integration = typeof integrations.$inferSelect
