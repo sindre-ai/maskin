@@ -438,7 +438,7 @@ export async function resolveLlmRoute(params: {
 	enterprise: boolean
 	/**
 	 * Overrides the default `probeClaudeSubscription` probe used by the
-	 * failover path when `MASKIN_CLAUDE_FAILOVER_ENABLED=true`. Only tests
+	 * failover path. Only tests
 	 * need to pass this — production callers can omit it and
 	 * `resolveClaudeCredentialsWithFailover` falls back to the real
 	 * Anthropic Messages API probe.
@@ -485,8 +485,8 @@ export async function resolveLlmRoute(params: {
 		// 2. Claude OAuth subscription — checked first among BYO routes so a
 		//    connected Pro/Max subscription is always preferred over custom endpoints
 		//    and never consumes maskin plan tokens. Primary→backup failover kicks in
-		//    when MASKIN_CLAUDE_FAILOVER_ENABLED is set; otherwise legacy
-		//    primary-only behaviour applies.
+		//    unless MASKIN_CLAUDE_FAILOVER_ENABLED=false disables it — the flag
+		//    defaults to on and is a runtime kill-switch, not an opt-in.
 		try {
 			/** Set by the resolver when a configured slot yields nothing usable. */
 			const unusableRef: { current: UnusableCredentialInfo | null } = { current: null }

@@ -610,12 +610,21 @@ export const api = {
 		status: (workspaceId: string) =>
 			request<ClaudeOAuthStatusResponse>('/claude-oauth/status', { workspaceId }),
 		disconnect: (workspaceId: string, slot?: ClaudeOAuthSlot) =>
-			request<{ success: boolean }>(slot ? `/claude-oauth?slot=${slot}` : '/claude-oauth', {
-				method: 'DELETE',
-				workspaceId,
-			}),
+			request<{ success: boolean }>(
+				slot ? `/claude-oauth?slot=${encodeURIComponent(slot)}` : '/claude-oauth',
+				{
+					method: 'DELETE',
+					workspaceId,
+				},
+			),
 		swap: (workspaceId: string) =>
 			request<{ success: boolean }>('/claude-oauth/swap', { method: 'POST', workspaceId }),
+		promote: (workspaceId: string, slot: ClaudeOAuthSlot) =>
+			request<{ success: boolean }>('/claude-oauth/promote', {
+				method: 'POST',
+				body: { slot },
+				workspaceId,
+			}),
 		rename: (workspaceId: string, slot: ClaudeOAuthSlot, nickname: string) =>
 			request<{ success: boolean }>('/claude-oauth/nickname', {
 				method: 'PATCH',
@@ -956,13 +965,25 @@ export const api = {
 	},
 }
 
-export type ClaudeOAuthSlot = 'primary' | 'backup'
+/**
+ * A slot id — a position in the workspace's Claude failover chain. The first
+ * two keep their historical names (`primary`, `backup`); the rest are
+ * `slot_3` … `slot_10`. Iterate `ClaudeOAuthStatusResponse.chain` rather than
+ * assuming which ids exist.
+ */
+export type ClaudeOAuthSlot = string
 
 export interface ClaudeOAuthSlotInfo {
+	slot: ClaudeOAuthSlot
+	/** Position in the failover chain — 0 is the one sessions try first. */
+	position: number
 	subscription_type?: string
 	expires_at: number
 	fingerprint?: string
 	nickname?: string
+	/** When this subscription was last rejected, and the classified reason. */
+	failure_at?: number
+	failure_reason?: string
 }
 
 export interface ClaudeOAuthExchangeResponse {
@@ -978,10 +999,11 @@ export interface ClaudeOAuthStatusResponse {
 	subscription_type?: string
 	expires_at?: number
 	valid: boolean
-	slots: {
-		primary?: ClaudeOAuthSlotInfo
-		backup?: ClaudeOAuthSlotInfo
-	}
+	/** Per-slot info keyed by slot id; `chain` gives the failover order. */
+	slots: Record<string, ClaudeOAuthSlotInfo | undefined>
+	chain: ClaudeOAuthSlot[]
+	/** How many more subscriptions this workspace can connect. */
+	slots_remaining: number
 	active_slot: ClaudeOAuthSlot
 	last_primary_failure_at?: number
 	last_classified_reason?: string
@@ -995,7 +1017,8 @@ export interface ClaudeOAuthImportInput {
 	expiresAt: number
 	subscriptionType?: string
 	scopes?: string[]
-	slot?: ClaudeOAuthSlot
+	/** A slot id to overwrite, or `new` to append to the chain. */
+	slot?: ClaudeOAuthSlot | 'new'
 	nickname?: string
 }
 
