@@ -104,7 +104,9 @@ export type LinkedInPhase1Verb = (typeof LINKEDIN_PHASE1_VERBS)[number]
  * this format ad-hoc — the same value has to appear on the instance name, in
  * the tool prefix, and in every log line that talks about the instance.
  */
-export function instanceSlug(cfg: Pick<LinkedInMcpInstanceConfig, 'unipileAccSlug' | 'identitySlug'>): string {
+export function instanceSlug(
+	cfg: Pick<LinkedInMcpInstanceConfig, 'unipileAccSlug' | 'identitySlug'>,
+): string {
 	return `linkedin-${cfg.unipileAccSlug}-${cfg.identitySlug}`
 }
 

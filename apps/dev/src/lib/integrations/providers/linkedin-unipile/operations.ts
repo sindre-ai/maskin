@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import { events, idempotencyRecords, integrations, linkedinToolCalls } from '@maskin/db/schema'
+import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
+import { deregisterLinkedInMcpInstance } from '@maskin/mcp/linkedin'
 import { and, eq, lt } from 'drizzle-orm'
 import { z } from 'zod'
 import { decrypt } from '../../../crypto'
@@ -9,6 +11,7 @@ import { isWorkspaceMember } from '../../../workspace-auth'
 import { getIntegrationCredential } from '../../lookup'
 import {
 	LinkedInIntegrationError,
+	PageAdminRevokedError,
 	RETRY_POLICY_BY_CODE,
 	classifyLinkedInResponse,
 	computeBackoffMs,
@@ -22,8 +25,8 @@ import type {
 	LinkedInListConversationsResponse,
 	LinkedInSendMessageResponse,
 } from './unipile-client'
-import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
 import { createLinkedInHttpClient } from './unipile-client'
+import { buildLinkedInClientForWebhook, handleUnipileAccountUpdated } from './webhook'
 
 /**
  * Provider-side operations for the LinkedIn (LinkedIn-backed) message verbs.
@@ -259,6 +262,81 @@ async function callLinkedInWithRetry<T>(
 		})
 		await delay(computeBackoffMs(policy, attempt))
 	}
+}
+
+/**
+ * R11-C · 403 safety-net for page-scoped Unipile calls (spec §1.4 last
+ * paragraph). Wraps a single page-scoped upstream call for an instance
+ * described by `cfg`; if the response classifies as `PAGE_ADMIN_REVOKED`,
+ * we
+ *
+ *   1. Deregister exactly THAT instance from the shared MCP registry
+ *      (`registry.deregisterLinkedInMcpInstance(cfg)`) so future MCP tool
+ *      listings do not attach a tool that will 403 again.
+ *   2. Enqueue an `unipile.account.updated`-style re-enumeration for the
+ *      credential (`webhook.handleUnipileAccountUpdated`), so the loop
+ *      sees the full new identity set on the next call. In practice
+ *      "enqueue" is an inline `await` — the safety-net is documented as
+ *      inline await, NOT a background job. Failures on the re-enum are
+ *      logged and swallowed: the original 403 must still surface.
+ *   3. Throw `PageAdminRevokedError` so the agent loop learns of the
+ *      change on the current call as well.
+ *
+ * Non-403 outcomes pass through unchanged — this wrapper is composable
+ * on top of `callLinkedInWithRetry` for callers that want both the retry
+ * behaviour AND the safety-net.
+ *
+ * `cfg` is the per-instance `LinkedInMcpInstanceConfig` R11-A threads
+ * through to each per-identity handler. Once fan-out registration is
+ * live, every page-scoped operation runs from a handler that already has
+ * `cfg` in scope; before then, this wrapper is unused by the shipped
+ * operations and only exercised by the R11-C tests.
+ */
+export async function withPageAdminRevokeSafetyNet<T>(
+	db: Database,
+	cfg: LinkedInMcpInstanceConfig,
+	call: () => Promise<{ status: number; body: unknown; headers: Record<string, string> }>,
+): Promise<{ status: number; body: T; headers: Record<string, string> }> {
+	const result = await call()
+	if (result.status !== 403) {
+		return { status: result.status, body: result.body as T, headers: result.headers }
+	}
+	const code = classifyLinkedInResponse(result.status, result.body)
+	if (code !== 'PAGE_ADMIN_REVOKED') {
+		// Some other 403 (invite-quota-exceeded, etc.) — leave to the
+		// caller's normal error path; the safety-net only fires on the
+		// specific class it exists for.
+		return { status: result.status, body: result.body as T, headers: result.headers }
+	}
+
+	// (1) Deregister the affected instance. Sync + returns bool; the
+	// registry-level operation is a Map mutation, so there is nothing to
+	// fail here that we could recover from mid-loop.
+	const removed = deregisterLinkedInMcpInstance(cfg)
+	if (!removed) {
+		logger.info('linkedin-unipile 403 safety-net: instance was already deregistered', {
+			integrationId: cfg.integrationId,
+			identitySlug: cfg.identitySlug,
+		})
+	}
+
+	// (2) Enqueue re-enumeration. Best-effort: an enumeration failure here
+	// must NOT mask the 403 the agent loop needs to see. Errors are logged
+	// inside handleUnipileAccountUpdated / reEnumerateAndSyncLinkedInInstances,
+	// so we only guard the top-level call.
+	try {
+		const client = buildLinkedInClientForWebhook()
+		await handleUnipileAccountUpdated(db, client, cfg.unipileAccountId)
+	} catch (err) {
+		logger.warn('linkedin-unipile 403 safety-net: re-enumeration failed', {
+			integrationId: cfg.integrationId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
+
+	// (3) Surface the 403 to the caller. The registered `cause` carries the
+	// original Unipile body so it stays diagnosable in Sentry / logs.
+	throw new PageAdminRevokedError(result.body)
 }
 
 function extractUpstreamMessage(body: unknown, code: string): string {
