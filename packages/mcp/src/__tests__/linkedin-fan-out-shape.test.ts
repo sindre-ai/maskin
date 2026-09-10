@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
-	LINKEDIN_PHASE1_VERBS,
+	LINKEDIN_ALL_VERBS,
 	__resetLinkedInMcpRegistryForTests,
 	instanceSlug,
 	listLinkedInMcpInstances,
@@ -65,8 +65,8 @@ const pageMessagingDisabled: LinkedInMcpInstanceConfig = {
 }
 
 describe('toolsForIdentity — §2 filter matrix', () => {
-	it('personal registers every Phase 1 verb', () => {
-		expect(toolsForIdentity(personal).sort()).toEqual([...LINKEDIN_PHASE1_VERBS].sort())
+	it('personal registers every R11 verb (Phase 1 + Phase 2)', () => {
+		expect(toolsForIdentity(personal).sort()).toEqual([...LINKEDIN_ALL_VERBS].sort())
 	})
 
 	it('page with messagingEnabled=true registers posts + messaging suites but never personal-only ones', () => {
@@ -109,9 +109,9 @@ describe('toolsForIdentity — §2 filter matrix', () => {
 	})
 
 	it('preserves canonical order (spec order, not alphabetical) — stable tools/list diffs', () => {
-		// `LINKEDIN_PHASE1_VERBS` is the canonical order. For personal, the
-		// filter output must be exactly that order.
-		expect(toolsForIdentity(personal)).toEqual([...LINKEDIN_PHASE1_VERBS])
+		// `LINKEDIN_ALL_VERBS` (Phase 1 + Phase 2 R11-B verbs) is the canonical
+		// order. For personal, the filter output must be exactly that order.
+		expect(toolsForIdentity(personal)).toEqual([...LINKEDIN_ALL_VERBS])
 	})
 })
 

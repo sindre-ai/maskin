@@ -14,9 +14,13 @@ export type {
 	LinkedInIdentityType,
 	LinkedInMcpInstanceConfig,
 	LinkedInPhase1Verb,
+	LinkedInPhase2Verb,
+	LinkedInVerb,
 } from './linkedin-mcp-context.js'
 export {
+	LINKEDIN_ALL_VERBS,
 	LINKEDIN_PHASE1_VERBS,
+	LINKEDIN_PHASE2_VERBS,
 	instanceSlug,
 	toolName,
 } from './linkedin-mcp-context.js'

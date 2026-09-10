@@ -112,6 +112,7 @@ function makeStubClient() {
 		listRelations: vi.fn(),
 		searchPeople: vi.fn(),
 		getProfile: vi.fn(),
+		getManagedCompanyPages: vi.fn(),
 		sendConnectionRequest: vi.fn(),
 		publishPost: vi.fn(),
 		commentOnPost: vi.fn(),
