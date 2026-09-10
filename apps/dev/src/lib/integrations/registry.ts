@@ -1,3 +1,4 @@
+import { logger } from '../logger'
 import type { ResolvedProvider } from './types'
 
 import { githubAuth } from './providers/github/auth'
@@ -11,6 +12,8 @@ import { gmailEventNormalizer, gmailWebhookVerifier } from './providers/gmail/we
 import { config as googleCalendarConfig } from './providers/google-calendar/config'
 import { revokeGoogleCalendarGrant } from './providers/google-calendar/disconnect'
 import { resolveExternalId as googleCalendarResolveExternalId } from './providers/google-calendar/resolve-id'
+import { config as googleMeetConfig } from './providers/google-meet/config'
+import { resolveExternalId as googleMeetResolveExternalId } from './providers/google-meet/resolve-id'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
@@ -95,6 +98,29 @@ providers.set('google-calendar', {
 	config: googleCalendarConfig,
 	resolveExternalId: googleCalendarResolveExternalId,
 	preDisconnect: revokeGoogleCalendarGrant,
+})
+
+// google-meet — provider registration only. The webhook verifier + normalizer,
+// Workspace Events subscription lifecycle, watch-renewer, and MCP tool surface
+// all land in Task 3 (`d1ced369` — read-path MCP tools + async ingest). Wiring
+// the provider here now:
+//  - lets `google-meet` appear in `GET /api/integrations/providers` on day one,
+//  - exercises the generic OAuth machinery + `INTEGRATION_ENCRYPTION_KEY`
+//    decrypt path against a new Google provider (bet smokes S1 + S3),
+//  - lets the callback route persist `config.meet.peopleId` (S12 smoke),
+//  - keeps the row workspace-scoped like Gmail / GCal — Meet is deliberately
+//    NOT added to `actorScopedProviders` in `lib/integrations/lookup.ts`.
+// `postInstall` is a log-and-return stub; Task 3 replaces it with the real
+// `setupMeetWatch` that opens the Workspace Events subscription.
+providers.set('google-meet', {
+	config: googleMeetConfig,
+	resolveExternalId: googleMeetResolveExternalId,
+	postInstall: async (ctx) => {
+		logger.info('Google Meet postInstall stub (Task 3 replaces with setupMeetWatch)', {
+			integrationId: ctx.integrationId,
+			workspaceId: ctx.workspaceId,
+		})
+	},
 })
 
 providers.set('posthog', {
