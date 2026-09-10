@@ -31,7 +31,10 @@ vi.mock('../../lib/integrations/providers/linkedin-unipile/enumeration', async (
 		...actual,
 		enumerateLinkedInIdentitiesAndRegister: (
 			params: Parameters<typeof actual.enumerateLinkedInIdentitiesAndRegister>[0],
-		) => actual.enumerateLinkedInIdentitiesAndRegister(params, { client: fakeLinkedInClientForTests() }),
+		) =>
+			actual.enumerateLinkedInIdentitiesAndRegister(params, {
+				client: fakeLinkedInClientForTests(),
+			}),
 	}
 })
 
@@ -61,10 +64,7 @@ vi.mock('../../lib/integrations/providers/linkedin-unipile/client', () => ({
 	createAuthLink: vi.fn().mockResolvedValue({ link: 'http://mock/wizard' }),
 }))
 
-import {
-	__resetLinkedInMcpRegistryForTests,
-	listLinkedInMcpInstances,
-} from '@maskin/mcp/linkedin'
+import { __resetLinkedInMcpRegistryForTests, listLinkedInMcpInstances } from '@maskin/mcp/linkedin'
 import integrationsLinkedinRoutes from '../integrations-linkedin-unipile'
 
 interface IntegrationRow {

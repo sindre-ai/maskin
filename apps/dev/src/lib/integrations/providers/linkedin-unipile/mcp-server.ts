@@ -158,6 +158,7 @@ export function registerLinkedInMcpInstance(
 						.describe('Who can comment, e.g. "connections", "anyone", "none".'),
 					quoted_post_id: z.string().optional().describe('Post id to quote-share.'),
 				},
+			},
 			async (args) => {
 				try {
 					return jsonResult(await publishLinkedInPost(opCtx, args))

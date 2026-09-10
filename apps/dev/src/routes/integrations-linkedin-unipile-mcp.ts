@@ -80,9 +80,7 @@ app.post('/', async (c) => {
 				eq(integrations.provider, PROVIDER),
 			),
 		)
-	const instances = credentialRows.flatMap((row) =>
-		getLinkedInMcpInstancesForIntegration(row.id),
-	)
+	const instances = credentialRows.flatMap((row) => getLinkedInMcpInstancesForIntegration(row.id))
 
 	const mcpServer = createLinkedInMcpServer({ db, actorId, workspaceId }, instances)
 

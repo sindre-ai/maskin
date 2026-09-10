@@ -187,8 +187,6 @@ describe('registry — R11-A idempotency + retired flat namespace', () => {
 		registerLinkedInMcpInstance(personal)
 		// A revocation flow (R11-C) that drops the page but keeps personal
 		// results in the registry holding only the surviving identity.
-		expect([...listLinkedInMcpInstances().keys()]).toEqual([
-			'linkedin-sebastianbille-personal',
-		])
+		expect([...listLinkedInMcpInstances().keys()]).toEqual(['linkedin-sebastianbille-personal'])
 	})
 })
