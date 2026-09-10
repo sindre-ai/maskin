@@ -168,9 +168,16 @@ const PSEUDO_TOOL_CALL_UNANSWERED_MESSAGE =
 const permanentErrorMessage = (detail: string): string =>
 	`I couldn't complete that turn — the model API returned an error:\n\n${detail}`
 
-/** Live session keeps its old credentials — the pointer moves for the next one. */
+/**
+ * The workspace's active subscription has moved onto the next slot AND this
+ * live session has been stopped, since it launched with the now-spent
+ * credentials and can't be resumed in place. Sending a new message in the
+ * same chat spawns a fresh session on the new credentials — the human doesn't
+ * have to start over anywhere. The error text is included so the human can
+ * see what happened, not to prompt any action.
+ */
 const subscriptionMovedMessage = (detail: string): string =>
-	`That Claude subscription is out of capacity, so I've switched this workspace to the next one. Start a new session to continue — this one is still on the old subscription.\n\nThe error was:\n\n${detail}`
+	`That Claude subscription is out of capacity, so I've switched this workspace to the next connected one and stopped this session. Send your next message here and I'll pick up on the new subscription.\n\nThe error was:\n\n${detail}`
 
 /**
  * A replayed turn we are waiting on, plus everything needed to report it if it
@@ -245,6 +252,17 @@ export type InteractiveTurnFinalizerOptions = {
 	 * moved (no chain left, another session already moved, wired-off).
 	 */
 	onSubscriptionLimit?: (sessionId: string, reason: string) => Promise<string | null>
+	/**
+	 * Injected for the same reason as `onSubscriptionLimit` — no session-manager
+	 * import here. Called right after a live session's pointer has moved onto
+	 * the next Claude slot, to stop the still-running container. The current
+	 * container launched with the now-spent (or revoked) credentials and can't
+	 * be resumed in place; stopping it means the human's next message spawns a
+	 * fresh session that reads the workspace's new `active_slot` and lands on
+	 * the good credential. Best-effort by contract — a stop failure is logged
+	 * and swallowed so the human still sees the moved-subscription message.
+	 */
+	onStopSession?: (sessionId: string, reason: string) => Promise<void>
 }
 
 export class InteractiveTurnFinalizer {
@@ -272,6 +290,7 @@ export class InteractiveTurnFinalizer {
 	private readonly pseudoToolCallNudges = new Map<string, number>()
 	private readonly retryTurn?: RetryTurnFn
 	private readonly onSubscriptionLimit?: InteractiveTurnFinalizerOptions['onSubscriptionLimit']
+	private readonly onStopSession?: InteractiveTurnFinalizerOptions['onStopSession']
 	private readonly delay: (ms: number) => Promise<void>
 	private readonly replyTimeoutMs: number
 
@@ -279,6 +298,7 @@ export class InteractiveTurnFinalizer {
 		this.db = db
 		this.retryTurn = options.retryTurn
 		this.onSubscriptionLimit = options.onSubscriptionLimit
+		this.onStopSession = options.onStopSession
 		this.delay =
 			options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
 		this.replyTimeoutMs = options.replyTimeoutMs ?? REPLAY_ANSWER_TIMEOUT_MS
@@ -715,6 +735,24 @@ export class InteractiveTurnFinalizer {
 					...(movedTo ? { subscription_moved_to: movedTo } : {}),
 				},
 			)
+			// Stop the running container AFTER posting the moved-subscription
+			// notice so the human sees the reason even if the stop itself takes
+			// a moment (or fails). The current session launched with the spent
+			// credentials and cannot be resumed in place; stopping means the
+			// human's next message spawns a fresh session on the new active_slot.
+			// stopSession funnels back into markRemoteSessionComplete which
+			// re-classifies the same tail — that path's runtime failover is
+			// idempotent (CAS on active_slot in recordRuntimeClaudeOAuthFailover),
+			// so no double advance.
+			if (movedTo && this.onStopSession) {
+				try {
+					await this.onStopSession(sessionId, 'subscription_moved')
+				} catch (err) {
+					logger.warn(
+						`Interactive session ${sessionId} could not be stopped after subscription move: ${err instanceof Error ? err.message : String(err)}`,
+					)
+				}
+			}
 			return
 		}
 

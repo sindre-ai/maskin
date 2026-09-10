@@ -752,12 +752,96 @@ ${surviving}
 
 			expect(moved).toEqual([{ sessionId: session.id, reason: 'weekly_limit' }])
 			const rows = await messagesFor(conversationId)
-			expect(rows[0]?.content).toContain('switched this workspace to the next one')
-			expect(rows[0]?.content).toContain('Start a new session')
+			// Copy names the stop explicitly — the current session is going away, so
+			// the human's next message here spawns a fresh session on the new slot.
+			expect(rows[0]?.content).toContain('switched this workspace to the next connected one')
+			expect(rows[0]?.content).toContain('stopped this session')
+			expect(rows[0]?.content).toContain("Send your next message here and I'll pick up")
 			expect(
 				(rows[0]?.metadata as { final_output?: { subscription_moved_to?: string } })?.final_output
 					?.subscription_moved_to,
 			).toBe('backup')
+		})
+
+		it('stops the session after the pointer moves so the next message spawns a fresh one', async () => {
+			// The pointer-move alone is not enough on the live path: the running
+			// container launched with the now-spent credential and can't be
+			// resumed in place. Stopping it means the human's next message spawns
+			// a fresh session that reads the new active_slot.
+			//
+			// onStopSession is wired to sessionManager.stopSession in prod. The
+			// finalizer only calls it after `onSubscriptionLimit` reports a
+			// move — a null-move (no chain left) must NOT stop.
+			const stopped: Array<{ sessionId: string; reason: string }> = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				delay: async () => {},
+				onSubscriptionLimit: async () => 'backup',
+				onStopSession: async (sessionId, reason) => {
+					stopped.push({ sessionId, reason })
+				},
+			})
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+
+			await feedInstance(
+				instance,
+				session.id,
+				`${resultLine({ is_error: true, result: "You've hit your weekly limit" })}\n`,
+			)
+			await instance.settlePendingRetries()
+
+			expect(stopped).toEqual([{ sessionId: session.id, reason: 'subscription_moved' }])
+		})
+
+		it('does not stop the session when nothing moved (chain exhausted)', async () => {
+			// If the whole chain is spent there's nowhere to fall over to and the
+			// current session should keep running so the human can decide (e.g.
+			// import another subscription). onSubscriptionLimit returning null is
+			// the signal — onStopSession must not fire.
+			const stopped: string[] = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				delay: async () => {},
+				onSubscriptionLimit: async () => null,
+				onStopSession: async (sessionId) => {
+					stopped.push(sessionId)
+				},
+			})
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+
+			await feedInstance(
+				instance,
+				session.id,
+				`${resultLine({ is_error: true, result: "You've hit your weekly limit" })}\n`,
+			)
+			await instance.settlePendingRetries()
+
+			expect(stopped).toEqual([])
+		})
+
+		it('does not treat an onStopSession failure as fatal — the human still sees the moved-subscription notice', async () => {
+			// The stop is best-effort. A stopSession error (network blip to the
+			// remote agent-server, or a container that's already gone) must not
+			// prevent the human from seeing why their turn ended.
+			const instance = new InteractiveTurnFinalizer(db, {
+				delay: async () => {},
+				onSubscriptionLimit: async () => 'backup',
+				onStopSession: async () => {
+					throw new Error('agent-server 502')
+				},
+			})
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+
+			await feedInstance(
+				instance,
+				session.id,
+				`${resultLine({ is_error: true, result: "You've hit your weekly limit" })}\n`,
+			)
+			await instance.settlePendingRetries()
+
+			const rows = await messagesFor(conversationId)
+			expect(rows[0]?.content).toContain('switched this workspace to the next connected one')
 		})
 
 		it('reports the plain error when there is no subscription to move to', async () => {

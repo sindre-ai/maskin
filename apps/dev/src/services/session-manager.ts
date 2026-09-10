@@ -420,6 +420,16 @@ export class SessionManager extends EventEmitter {
 			// reached from the per-turn path.
 			onSubscriptionLimit: (sessionId, reason) =>
 				this.failOverInteractiveSession(sessionId, reason),
+			// Stop the still-running container after the pointer has moved. The
+			// current session launched with the now-spent (or revoked) credential
+			// and can't be resumed in place; stopping it means the human's next
+			// message in the same chat spawns a fresh session that picks up the
+			// workspace's new active_slot. Best-effort — the finalizer already
+			// swallowed the stop error and logged it, so no throw handling here.
+			// `reason` is currently unused by stopSession; kept in the callback
+			// signature so a future stop-reason column can pick it up without
+			// re-plumbing the finalizer.
+			onStopSession: (sessionId, _reason) => this.stopSession(sessionId),
 		})
 	}
 
