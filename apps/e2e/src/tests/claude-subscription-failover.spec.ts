@@ -41,6 +41,19 @@ async function getWorkspaceSettings(apiKey: string, workspaceId: string) {
 	return ws.settings
 }
 
+/**
+ * A reload of the keys page re-runs the auth guard and the feature-flag load
+ * before it even asks for subscription status, so the slot cards can take
+ * longer than Playwright's 5s default to mount on a loaded CI runner. Every
+ * flake this spec has produced was that wait expiring with no card rendered
+ * yet ("element(s) not found"), never a wrong value — so wait for the first
+ * card explicitly and let the assertions that follow stay strict.
+ */
+async function reloadKeysPage(page: Page) {
+	await page.reload()
+	await expect(page.getByTestId('slot-primary')).toBeVisible({ timeout: 15_000 })
+}
+
 const seedPrimary = {
 	accessToken: 'e2e-primary-access',
 	refreshToken: 'e2e-primary-refresh',
@@ -96,6 +109,12 @@ async function mockFailedOverStatus(page: Page) {
 }
 
 test.describe('Claude subscription failover — settings UI', () => {
+	// These tests seed subscriptions over the API, drive the paste flow and
+	// reload the settings page — more steps than Playwright's 30s default test
+	// timeout comfortably covers on a loaded CI runner, and the reload wait
+	// above needs room to actually elapse rather than starving the budget.
+	test.describe.configure({ timeout: 60_000 })
+
 	test('AC-U3: surfaces failover banner, classified reason, and Unhealthy primary when failed over', async ({
 		page,
 		account,
@@ -178,10 +197,15 @@ test.describe('Claude subscription failover — settings UI', () => {
 		const backup = page.getByTestId('slot-backup')
 		await expect(backup).toContainText('Connected', { timeout: 10_000 })
 
-		// AC-U5: reload — designation persists
-		await page.reload()
-		await expect(page.getByTestId('slot-primary')).toContainText('Connected')
-		await expect(page.getByTestId('slot-backup')).toContainText('Connected')
+		// AC-U5: reload — designation persists. Assert the POSITION labels, not
+		// health: a background session-start in this workspace can reject the
+		// seeded tokens and stamp `auth_failed` on a slot mid-test, flipping its
+		// card to "Unhealthy". That is a true rendering of the credential's
+		// state and irrelevant to what this test is about, which is that the
+		// second subscription is still designated the backup after a reload.
+		await reloadKeysPage(page)
+		await expect(page.getByTestId('slot-primary')).toContainText('Primary')
+		await expect(page.getByTestId('slot-backup')).toContainText('Backup')
 
 		// And the storage shape on disk has the backup slot populated (not the
 		// primary key being overwritten with the just-pasted tokens).

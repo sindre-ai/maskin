@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { grantEnterprise } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
@@ -55,7 +56,26 @@ async function seedChain(apiKey: string, workspaceId: string, count: number) {
 	}
 }
 
+/**
+ * A reload of the keys page re-runs the auth guard and the feature-flag load
+ * before it even asks for subscription status, so the slot cards can take
+ * longer than Playwright's 5s default to mount on a loaded CI runner. Every
+ * flake this spec has produced was that wait expiring with no card rendered
+ * yet ("element(s) not found"), never a wrong value — so wait for the first
+ * card explicitly and let the assertions that follow stay strict.
+ */
+async function reloadKeysPage(page: Page) {
+	await page.reload()
+	await expect(page.getByTestId('slot-primary')).toBeVisible({ timeout: 15_000 })
+}
+
 test.describe('Claude subscriptions — nicknames', () => {
+	// These tests seed subscriptions over the API, drive the paste flow and
+	// reload the settings page — more steps than Playwright's 30s default test
+	// timeout comfortably covers on a loaded CI runner, and the reload wait
+	// above needs room to actually elapse rather than starving the budget.
+	test.describe.configure({ timeout: 60_000 })
+
 	test('a nickname survives replacing the credentials in that slot', async ({ page, account }) => {
 		await grantEnterprise(account.apiKey, account.workspaceId)
 		await importClaudeOAuth(account.apiKey, account.workspaceId, {
@@ -85,12 +105,14 @@ test.describe('Claude subscriptions — nicknames', () => {
 		await expect(page.getByTestId('paste-flow')).toBeHidden({ timeout: 10_000 })
 		await expect(page.getByTestId('slot-primary-nickname')).toHaveValue('Work account')
 
-		await page.reload()
+		await reloadKeysPage(page)
 		await expect(page.getByTestId('slot-primary-nickname')).toHaveValue('Work account')
 	})
 })
 
 test.describe('Claude subscriptions — more than two', () => {
+	test.describe.configure({ timeout: 60_000 })
+
 	test('a third subscription can be added and renders as a fallback at every ship-gate viewport', async ({
 		page,
 		account,
@@ -126,7 +148,7 @@ test.describe('Claude subscriptions — more than two', () => {
 		await expect(third).toContainText('Fallback 3')
 
 		// Survives a reload — it is stored, not just rendered.
-		await page.reload()
+		await reloadKeysPage(page)
 		await expect(page.getByTestId('slot-slot_3')).toContainText('Connected')
 
 		for (const vp of SHIP_GATE_VIEWPORTS) {
@@ -160,7 +182,7 @@ test.describe('Claude subscriptions — more than two', () => {
 		})
 		await expect(page.getByTestId('slot-primary')).toContainText('In use')
 
-		await page.reload()
+		await reloadKeysPage(page)
 		await expect(page.getByTestId('slot-primary-nickname')).toHaveValue('Account 3')
 		await expect(page.getByTestId('slot-backup-nickname')).toHaveValue('Account 1')
 		await expect(page.getByTestId('slot-slot_3-nickname')).toHaveValue('Account 2')
@@ -187,7 +209,7 @@ test.describe('Claude subscriptions — more than two', () => {
 		await expect(page.getByTestId('slot-slot_3')).toContainText('Backup')
 		await expect(page.getByTestId('slot-slot_3-nickname')).toHaveValue('Account 3')
 
-		await page.reload()
+		await reloadKeysPage(page)
 		await expect(page.getByTestId('slot-primary-nickname')).toHaveValue('Account 1')
 		await expect(page.getByTestId('slot-slot_3-nickname')).toHaveValue('Account 3')
 	})
@@ -206,7 +228,7 @@ test.describe('Claude subscriptions — more than two', () => {
 		await nickname.fill('Spare account')
 		await nickname.blur()
 
-		await page.reload()
+		await reloadKeysPage(page)
 		await expect(page.getByTestId('slot-slot_3-nickname')).toHaveValue('Spare account')
 	})
 })
