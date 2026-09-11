@@ -30,7 +30,7 @@ import { toast } from 'sonner'
 
 // Copy for the To row. The spec ships these strings; keeping them colocated
 // makes them grepable when the layout below references them by name.
-const chatToPh = 'Add person or agent\u2026'
+const chatToPh = 'Add person or agent…'
 const chatGroupNote = 'Everyone sees everything'
 
 interface NewChatSearch {
@@ -119,7 +119,7 @@ function NewChatRoute() {
 		const missing = referencedIds.length - referencedObjects.length
 		if (missing > 0) {
 			toast.warning(
-				`${missing} of ${referencedIds.length} objects couldn't be attached \u2014 they may have been deleted.`,
+				`${missing} of ${referencedIds.length} objects couldn't be attached — they may have been deleted.`,
 			)
 		}
 	}, [referencedIds, referencedObjects])
@@ -344,7 +344,7 @@ function NewChatRoute() {
 	)
 
 	const composerPlaceholder =
-		recipients.length === 1 ? `Message ${recipients[0].name}\u2026` : 'Message this conversation'
+		recipients.length === 1 ? `Message ${recipients[0].name}…` : 'Message this conversation'
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -400,7 +400,7 @@ function NewChatRoute() {
 				{showDropdown ? (
 					<div className="mt-1 rounded-[11px] border border-border bg-card p-1.5">
 						<div className="eyebrow px-1.5 pt-1 pb-1.5">
-							{typedMode ? 'ADD SOMEONE \u2014 PERSON OR AGENT' : 'RECENT'}
+							{typedMode ? 'ADD SOMEONE — PERSON OR AGENT' : 'RECENT'}
 						</div>
 						{dropdownRows.length === 0 ? (
 							<p className="px-1.5 py-4 text-center text-[12px] text-muted-foreground">
@@ -409,9 +409,7 @@ function NewChatRoute() {
 						) : (
 							<ul
 								role="listbox"
-								aria-label={
-									typedMode ? 'Add someone \u2014 person or agent' : 'Recent collaborators'
-								}
+								aria-label={typedMode ? 'Add someone — person or agent' : 'Recent collaborators'}
 								className={cn(
 									'flex list-none flex-col gap-0.5 overflow-y-auto p-0',
 									// Desktop: single column, max 8 rows before scroll.
@@ -458,7 +456,7 @@ function NewChatRoute() {
 												</span>
 												{selected ? (
 													<span aria-hidden className="shrink-0 text-foreground">
-														\u2713
+														✓
 													</span>
 												) : null}
 											</button>
@@ -477,8 +475,8 @@ function NewChatRoute() {
 						What are we working on?
 					</h2>
 					<p className="mt-2 max-w-[52ch] text-[13.5px] leading-relaxed text-balance text-muted-foreground">
-						Your agents are already inside the work \u2014 the loops they run, the objects they
-						keep current, the sessions live right now. You don't have to paste any of it in.
+						Your agents are already inside the work — the loops they run, the objects they keep
+						current, the sessions live right now. You don't have to paste any of it in.
 					</p>
 				</div>
 			</div>
