@@ -23,6 +23,7 @@ import {
 import { createIdempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
 import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
+import adminLinkedinUnipileRoutes from './routes/admin-linkedin-unipile'
 import agentServerReconcileRoutes from './routes/agent-server-reconcile'
 import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
@@ -266,6 +267,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/public/bet-strategist/drafts' && method === 'POST') return next()
 		if (path === '/api/public/bet-strategist/claim' && method === 'POST') return next()
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
+		// R11-C · linkedin-unipile fan-out webhook. Unipile POSTs the
+		// `account.reconnect` event from outside our network, so it cannot
+		// carry a Maskin API key — authenticated by Unipile v2's per-endpoint
+		// `unipile-signature` HMAC header, verified inside the handler
+		// against `UNIPILE_WEBHOOK_SECRET`.
+		if (path === '/api/integrations/linkedin-unipile/webhook' && method === 'POST') return next()
 
 		return auth(c, next)
 	})
@@ -307,6 +314,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/public/landing-events', publicLandingEventsRoutes)
 	app.route('/api/public/bet-strategist', publicBetStrategistRoutes)
 	app.route('/api/admin/landing-funnel', adminLandingFunnelRoutes)
+	// R11-A · workspace-scoped admin re-run of linkedin identity enumeration.
+	// Not surfaced as an MCP tool per spec §10 R11 item 3 — humans/ops only.
+	app.route('/api/admin/linkedin-unipile', adminLinkedinUnipileRoutes)
 	app.route('/api/actors', actorsRoutes)
 	app.route('/api/auth', authRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
