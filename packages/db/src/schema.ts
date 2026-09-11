@@ -1198,6 +1198,11 @@ export const marketplaceLoops = pgTable(
 		status: text('status').notNull().default('published'),
 		sortWeight: integer('sort_weight').notNull().default(0),
 		installCount: integer('install_count').notNull().default(0),
+		// Per-item copy for the install-modal variants; see marketplace design spec
+		// §Copy → "Install modal — per-item copy is catalog metadata". Optional
+		// fields keyed by variant; strings may embed {integration}, {team},
+		// {agents}, {trigger_count} placeholders resolved at render time.
+		installFlowCopy: jsonb('install_flow_copy').notNull().default({}),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
@@ -1449,6 +1454,9 @@ export const marketplaceAgents = pgTable(
 		sortWeight: integer('sort_weight').notNull().default(0),
 		installCount: integer('install_count').notNull().default(0),
 
+		// Per-item install-modal copy; see marketplaceLoops.installFlowCopy.
+		installFlowCopy: jsonb('install_flow_copy').notNull().default({}),
+
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
@@ -1489,6 +1497,9 @@ export const marketplaceSkills = pgTable(
 		status: text('status').notNull().default('published'),
 		sortWeight: integer('sort_weight').notNull().default(0),
 		installCount: integer('install_count').notNull().default(0),
+
+		// Per-item install-modal copy; see marketplaceLoops.installFlowCopy.
+		installFlowCopy: jsonb('install_flow_copy').notNull().default({}),
 
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
