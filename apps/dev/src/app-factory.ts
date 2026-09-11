@@ -43,6 +43,7 @@ import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import loopsRoutes from './routes/loops'
+import marketplaceCatalogRoutes from './routes/marketplace-catalog'
 import marketplaceInstallationsRoutes from './routes/marketplace-installations'
 import marketplaceLoopsRoutes from './routes/marketplace-loops'
 import mcpRoutes from './routes/mcp'
@@ -345,6 +346,13 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/webhooks/stripe', stripeWebhookRoutes)
 	app.route('/api/marketplace', marketplaceLoopsRoutes)
 	app.route('/api/marketplace', marketplaceInstallationsRoutes)
+	// Marketplace catalog list + item detail + recommendation engine — spec
+	// §4, §6.1, §6.2. Mounted alongside marketplaceLoopsRoutes; sibling
+	// sub-apps under the same /api/marketplace prefix — paths do not collide
+	// (this file owns /catalog and /items/{item_kind}/{catalog_id}, the loops
+	// file owns /loops, /loops/:id, /items/:id/install, /items/:id/uninstall,
+	// /items/installed).
+	app.route('/api/marketplace', marketplaceCatalogRoutes)
 	app.route('/api/mini-apps', miniAppRegenRoutes)
 	app.route('/api/webhooks', webhookApp)
 	app.route('/api/billing', billingRoutes)
