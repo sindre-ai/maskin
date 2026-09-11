@@ -13,6 +13,7 @@ import { Route as SignupRouteImport } from './routes/signup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
+import { Route as PrototypesGoogleMeetRouteImport } from './routes/prototypes/google-meet'
 import { Route as PrototypesGalleryRouteImport } from './routes/prototypes/gallery'
 import { Route as PrototypesAboveTitleHeaderRouteImport } from './routes/prototypes/above-title-header'
 import { Route as AuthedWorkspacesRouteImport } from './routes/_authed/workspaces'
@@ -72,6 +73,11 @@ const AuthedIndexRoute = AuthedIndexRouteImport.update({
 const PrototypesGalleryRoute = PrototypesGalleryRouteImport.update({
   id: '/prototypes/gallery',
   path: '/prototypes/gallery',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrototypesGoogleMeetRoute = PrototypesGoogleMeetRouteImport.update({
+  id: '/prototypes/google-meet',
+  path: '/prototypes/google-meet',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PrototypesAboveTitleHeaderRoute =
@@ -288,6 +294,7 @@ export interface FileRoutesByFullPath {
   '/workspaces': typeof AuthedWorkspacesRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
+  '/prototypes/google-meet': typeof PrototypesGoogleMeetRoute
   '/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
   '/$workspaceId/chats': typeof AuthedWorkspaceIdChatsRouteWithChildren
   '/$workspaceId/profile': typeof AuthedWorkspaceIdProfileRoute
@@ -327,6 +334,7 @@ export interface FileRoutesByTo {
   '/workspaces': typeof AuthedWorkspacesRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
+  '/prototypes/google-meet': typeof PrototypesGoogleMeetRoute
   '/': typeof AuthedIndexRoute
   '/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
   '/$workspaceId/profile': typeof AuthedWorkspaceIdProfileRoute
@@ -368,6 +376,7 @@ export interface FileRoutesById {
   '/_authed/workspaces': typeof AuthedWorkspacesRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
+  '/prototypes/google-meet': typeof PrototypesGoogleMeetRoute
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
   '/_authed/$workspaceId/chats': typeof AuthedWorkspaceIdChatsRouteWithChildren
@@ -412,6 +421,7 @@ export interface FileRouteTypes {
     | '/workspaces'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
+    | '/prototypes/google-meet'
     | '/$workspaceId/briefing'
     | '/$workspaceId/chats'
     | '/$workspaceId/profile'
@@ -451,6 +461,7 @@ export interface FileRouteTypes {
     | '/workspaces'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
+    | '/prototypes/google-meet'
     | '/'
     | '/$workspaceId/briefing'
     | '/$workspaceId/profile'
@@ -491,6 +502,7 @@ export interface FileRouteTypes {
     | '/_authed/workspaces'
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
+    | '/prototypes/google-meet'
     | '/_authed/'
     | '/_authed/$workspaceId/briefing'
     | '/_authed/$workspaceId/chats'
@@ -532,6 +544,7 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   PrototypesAboveTitleHeaderRoute: typeof PrototypesAboveTitleHeaderRoute
   PrototypesGalleryRoute: typeof PrototypesGalleryRoute
+  PrototypesGoogleMeetRoute: typeof PrototypesGoogleMeetRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -569,6 +582,13 @@ declare module '@tanstack/react-router' {
       path: '/prototypes/gallery'
       fullPath: '/prototypes/gallery'
       preLoaderRoute: typeof PrototypesGalleryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/prototypes/google-meet': {
+      id: '/prototypes/google-meet'
+      path: '/prototypes/google-meet'
+      fullPath: '/prototypes/google-meet'
+      preLoaderRoute: typeof PrototypesGoogleMeetRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/prototypes/above-title-header': {
@@ -948,6 +968,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   PrototypesAboveTitleHeaderRoute: PrototypesAboveTitleHeaderRoute,
   PrototypesGalleryRoute: PrototypesGalleryRoute,
+  PrototypesGoogleMeetRoute: PrototypesGoogleMeetRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
