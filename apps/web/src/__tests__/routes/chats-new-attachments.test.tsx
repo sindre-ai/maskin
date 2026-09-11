@@ -35,6 +35,7 @@ vi.mock('@/hooks/use-conversations', () => ({
 		mutateAsync: mockCreateConversationMutateAsync,
 		isPending: false,
 	}),
+	useConversationsInfinite: () => ({ data: undefined }),
 }))
 
 vi.mock('@/hooks/use-workspaces', () => ({
@@ -47,7 +48,9 @@ vi.mock('@/hooks/use-actors', () => ({
 	}),
 	// The composer's create picker can spin up a new agent from the "+" menu.
 	useCreateActor: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
-	useDefaultChatAgent: () => null,
+	// Seed Builder so a recipient chip is present without the user picking one —
+	// the file-attach path needs a recipient in order to fire the send handler.
+	useDefaultChatAgent: () => ({ id: 'agent-1', name: 'Builder' }),
 }))
 
 vi.mock('@/hooks/use-files', () => ({
@@ -65,6 +68,7 @@ vi.mock('@/components/chat/slash-picker', () => ({
 vi.mock('@/lib/analytics', () => ({
 	deriveEntryAgentRole: () => 'coach',
 	trackSpecialistSummonedManually: () => {},
+	trackChatSessionStarted: () => {},
 }))
 
 import { Route } from '@/routes/_authed/$workspaceId/chats/new'
@@ -90,9 +94,9 @@ describe('New conversation page — attachments', () => {
 		const user = userEvent.setup()
 		const { container } = render(<NewConversationPage />, { wrapper: createWorkspaceWrapper() })
 
-		// The redesigned page opens already addressed to the workspace's first
-		// agent, so there is no recipient to pick before attaching.
-		await screen.findByRole('button', { name: /Talking to Builder/ })
+		// The redesigned page seeds Builder as an initial chip, so there is no
+		// recipient to pick before attaching.
+		await screen.findByLabelText('Remove Builder')
 
 		const input = getFileInput(container)
 		const pdf = new File(['%PDF-1.4'], 'report.pdf', { type: 'application/pdf' })
