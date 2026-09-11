@@ -1,3 +1,4 @@
+import { TooltipProvider } from '@/components/ui/tooltip'
 import type {
 	ConversationDetailResponse,
 	MessageResponse,
@@ -10,10 +11,25 @@ import type { ReactNode } from 'react'
 import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mockNavigate = vi.fn()
-const mockToastSuccess = vi.fn()
-const mockToastError = vi.fn()
-const mockTrackNav = vi.fn()
+const {
+	mockNavigate,
+	mockToastSuccess,
+	mockToastError,
+	mockTrackNav,
+	mockUpdateMe,
+	mockUseConversation,
+	mockUseConversationMessages,
+	mockUseLoop,
+} = vi.hoisted(() => ({
+	mockNavigate: vi.fn(),
+	mockToastSuccess: vi.fn(),
+	mockToastError: vi.fn(),
+	mockTrackNav: vi.fn(),
+	mockUpdateMe: vi.fn(),
+	mockUseConversation: vi.fn(),
+	mockUseConversationMessages: vi.fn(),
+	mockUseLoop: vi.fn(),
+}))
 
 vi.mock('@tanstack/react-router', () => ({
 	useNavigate: () => mockNavigate,
@@ -39,15 +55,10 @@ vi.mock('@/lib/auth', () => ({
 	getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }),
 }))
 
-const mockUpdateMe = vi.fn()
-
 vi.mock('@/hooks/use-conversations', () => ({
 	useUpdateConversationMe: () => ({ mutate: mockUpdateMe }),
 	useUpdateConversation: () => ({ mutate: vi.fn() }),
 }))
-
-const mockUseConversation = vi.fn()
-const mockUseConversationMessages = vi.fn()
 
 vi.mock('@/hooks/use-conversation', async () => {
 	const actual = await vi.importActual<typeof import('@/hooks/use-conversation')>(
@@ -59,8 +70,6 @@ vi.mock('@/hooks/use-conversation', async () => {
 		useConversationMessages: (...args: unknown[]) => mockUseConversationMessages(...args),
 	}
 })
-
-const mockUseLoop = vi.fn()
 
 vi.mock('@/hooks/use-loops', () => ({
 	useLoop: (...args: unknown[]) => mockUseLoop(...args),
@@ -139,7 +148,11 @@ function TestWrapper({ children }: { children: ReactNode }) {
 				defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
 			}),
 	)
-	return React.createElement(QueryClientProvider, { client: queryClient }, children)
+	return React.createElement(
+		QueryClientProvider,
+		{ client: queryClient },
+		React.createElement(TooltipProvider, null, children),
+	)
 }
 
 function renderHeader() {
