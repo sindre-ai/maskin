@@ -66,19 +66,29 @@ app.post('/', async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Actor is not a member of this workspace'), 403)
 	}
 
-	// Fan-out instances for THIS actor's credentials — LinkedIn is actor-scoped
-	// per spec §Provider, so an agent cannot fetch tools attached to a
-	// colleague's connected identity by pointing at a different workspace
-	// member's credential.
+	// Fan-out instances for every LinkedIn credential registered in this
+	// workspace — NOT filtered by the calling actor. Sessions run under the
+	// AGENT actor's Maskin API key (session-manager sets envVars.MASKIN_API_KEY =
+	// agent.apiKey), and agents never connect their own LinkedIn — humans do.
+	// Filtering on integrations.actorId here (as the earlier version did) meant
+	// the query returned zero rows for every agent call, so the auto-injected
+	// MCP server correctly registered zero tools even after LinkedIn was
+	// connected. The fan-out identity model handles disambiguation at the tool
+	// level, not the credential level: every identity is registered as its own
+	// MCP instance under `linkedin-{unipileAccSlug}-{identitySlug}` with a
+	// scoped tool name (`linkedin-magnus-personal__publish_post`) and a
+	// description that names the identity ("AS Magnus Nødegaard"), so an agent
+	// picks which identity to act as by picking a tool, not by which credential
+	// row happens to be visible. Workspace membership is the auth boundary — the
+	// isWorkspaceMember check above already gates access. Matches how
+	// session-manager auto-injects (workspace-scoped, no actor filter — see
+	// services/session-manager.ts around the active-integrations query) and how
+	// Slack's own MCP is scoped.
 	const credentialRows = await db
 		.select({ id: integrations.id })
 		.from(integrations)
 		.where(
-			and(
-				eq(integrations.workspaceId, workspaceId),
-				eq(integrations.actorId, actorId),
-				eq(integrations.provider, PROVIDER),
-			),
+			and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, PROVIDER)),
 		)
 	const instances = credentialRows.flatMap((row) => getLinkedInMcpInstancesForIntegration(row.id))
 
