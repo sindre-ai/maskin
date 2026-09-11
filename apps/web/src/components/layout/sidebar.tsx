@@ -15,28 +15,15 @@ import {
 	CHATS_ROUTE,
 	CORE_NAV_ITEMS,
 	FOR_YOU_ROUTE,
-	type NavItemDef,
 	OBJECTS_NAV_ITEM,
 	useHasObjectsNavItem,
 } from '@/lib/nav-items'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Store } from 'lucide-react'
 import { useMemo } from 'react'
 import { NavUser } from './nav-user'
 import { SidebarActivity } from './sidebar-activity'
 import { SidebarNavItem } from './sidebar-nav-item'
 import { WorkspaceSwitcher } from './workspace-switcher'
-
-// `navSecondaryDefs` (Marketplace) from the mockup. Agents and Triggers are
-// deliberately absent: Agents is reached through the working-agents card in
-// the footer, triggers through the "Not tied to a loop" group on Loops. Both
-// routes stay mounted, so deep links and bookmarks keep resolving.
-const marketplaceItem: NavItemDef = {
-	key: 'marketplace',
-	label: 'Marketplace',
-	to: '/$workspaceId/marketplace',
-	icon: Store,
-}
 
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	const { workspaceId } = useWorkspace()
@@ -101,9 +88,6 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 				</SidebarGroup>
 			</SidebarContent>
 			<SidebarFooter>
-				<SidebarMenu>
-					<SidebarNavItem item={marketplaceItem} source="footer" />
-				</SidebarMenu>
 				<SidebarActivity workspaceId={workspaceId} />
 				<NavUser />
 			</SidebarFooter>
