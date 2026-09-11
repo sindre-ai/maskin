@@ -25,5 +25,30 @@ export const config: ProviderConfig = {
 		type: 'oauth2_custom',
 	},
 
+	// Served in-process at /api/integrations/linkedin-unipile/mcp, same shape
+	// as Slack's — the workspace's active linkedin-unipile integration is the
+	// credential source, the route resolves it per request. autoInject means
+	// every session for a workspace with LinkedIn connected gets the fan-out
+	// tools without a per-agent MCP config change, matching the bet's product
+	// intent ("first-party LinkedIn → agents can post/DM when the workspace has
+	// connected it"). envKey is retained for symmetry with other providers; the
+	// MCP route authenticates on the Maskin API key in the Authorization
+	// header, not on a per-provider container env var, so nothing reads it at
+	// runtime — but the McpConfig type requires it and setting it keeps the
+	// discovery response (GET /api/integrations/providers) shaped consistently
+	// with slack/gmail/linear.
+	mcp: {
+		envKey: 'LINKEDIN_UNIPILE_TOKEN',
+		autoInject: true,
+		server: {
+			type: 'http',
+			url: '${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp',
+			headers: {
+				Authorization: 'Bearer ${MASKIN_API_KEY}',
+				'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+			},
+		},
+	},
+
 	externalIdDisplay: 'installation',
 }
