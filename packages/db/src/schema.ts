@@ -1180,6 +1180,12 @@ export const marketplaceLoops = pgTable('marketplace_loops', {
 	description: text('description').notNull(),
 	version: text('version').notNull(),
 	useCase: text('use_case'),
+	// Install-time dependency manifest — the install service reads this to
+	// return 424 with a `missing` payload when a workspace tries to install a
+	// loop but is missing the required integrations or MCP installations. See
+	// marketplace-install.ts and Marketplace tech spec §3.2 / §6.3.
+	// Shape: { integrations?: string[], mcp_installations?: string[] }.
+	requires: jsonb('requires').notNull().default({}),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
@@ -1391,3 +1397,162 @@ export const orphanThreadDetections = pgTable(
 
 export type OrphanThreadDetection = typeof orphanThreadDetections.$inferSelect
 export type NewOrphanThreadDetection = typeof orphanThreadDetections.$inferInsert
+
+// ── Marketplace Agents ─────────────────────────────────────────────────────
+//
+// Catalog table for standalone agent archetypes surfaced in the Marketplace
+// (Agents tab). Rows with `workspace_id = NULL` are the global catalog;
+// per-workspace curated entries stay reserved for a v2 override surface. A
+// row here is not a running agent — installing it materialises a workspace-
+// scoped `actors` row (per Marketplace tech spec §3.2) linked through the
+// `marketplace_installations` audit table.
+
+export const marketplaceAgents = pgTable(
+	'marketplace_agents',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id').references(() => workspaces.id),
+
+		slug: text('slug').notNull(),
+		displayName: text('display_name').notNull(),
+		outcomeLine: text('outcome_line').notNull(),
+		description: text('description').notNull(),
+		iconUrl: text('icon_url'),
+
+		// Actor archetype fields — copied to `actors` on install.
+		systemPrompt: text('system_prompt').notNull(),
+		// Skill slugs pre-attached at install as `agentSkills` joins.
+		skillSlugs: jsonb('skill_slugs').notNull().default([]),
+		// Trigger seeds materialised as `triggers` rows on install; shape mirrors
+		// DEFAULT_WORKSPACE_TRIGGERS entries in packages/shared/templates.
+		triggerSeeds: jsonb('trigger_seeds').notNull().default([]),
+
+		team: text('team').notNull(),
+		recommendation: jsonb('recommendation').notNull().default({}),
+		requires: jsonb('requires').notNull().default({}),
+
+		status: text('status').notNull().default('published'),
+		sortWeight: integer('sort_weight').notNull().default(0),
+		installCount: integer('install_count').notNull().default(0),
+
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('marketplace_agents_ws_slug_idx').on(t.workspaceId, t.slug),
+		index('marketplace_agents_team_status_idx').on(t.team, t.status),
+	],
+)
+
+export type MarketplaceAgent = typeof marketplaceAgents.$inferSelect
+export type NewMarketplaceAgent = typeof marketplaceAgents.$inferInsert
+
+// ── Marketplace Skills ─────────────────────────────────────────────────────
+//
+// Catalog table for standalone skill archetypes surfaced in the Marketplace
+// (Skills tab). Installing materialises a workspace-scoped `workspace_skills`
+// row (per Marketplace tech spec §3.2). Same NULL-workspace-scoping rule as
+// `marketplace_agents`.
+
+export const marketplaceSkills = pgTable(
+	'marketplace_skills',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id').references(() => workspaces.id),
+
+		slug: text('slug').notNull(),
+		displayName: text('display_name').notNull(),
+		outcomeLine: text('outcome_line').notNull(),
+		description: text('description').notNull(),
+
+		// Skill body — copied to `workspace_skills.content` on install.
+		content: text('content').notNull(),
+
+		team: text('team').notNull(),
+		recommendation: jsonb('recommendation').notNull().default({}),
+		requires: jsonb('requires').notNull().default({}),
+
+		status: text('status').notNull().default('published'),
+		sortWeight: integer('sort_weight').notNull().default(0),
+		installCount: integer('install_count').notNull().default(0),
+
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('marketplace_skills_ws_slug_idx').on(t.workspaceId, t.slug),
+		index('marketplace_skills_team_status_idx').on(t.team, t.status),
+	],
+)
+
+export type MarketplaceSkill = typeof marketplaceSkills.$inferSelect
+export type NewMarketplaceSkill = typeof marketplaceSkills.$inferInsert
+
+// ── Marketplace Installations ──────────────────────────────────────────────
+//
+// One row per workspace-scoped Marketplace install, for any item_kind. The
+// partial unique index on (workspace_id, item_kind, catalog_slug) WHERE
+// uninstalled_at IS NULL is what makes POST /api/marketplace/install
+// idempotent: a second install of the same slug hits the conflict and the
+// service returns 200 with the existing row instead of duplicating it.
+//
+// Soft-delete via `uninstalled_at` preserves the audit trail for install-
+// count metrics and lets the reinstall path re-emit a fresh row.
+// Uninstall of an agent row also flips `actors.status = 'archived'` (not
+// delete) so historical graph presence survives — see Marketplace tech spec
+// §3.3.
+
+export const marketplaceInstallations = pgTable(
+	'marketplace_installations',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+
+		itemKind: text('item_kind').notNull(),
+		catalogId: uuid('catalog_id').notNull(),
+		catalogSlug: text('catalog_slug').notNull(),
+
+		// Pointers back into the workspace-scoped rows created by this install.
+		// Exactly one is set per row, determined by `item_kind`. Used at
+		// uninstall to reverse cleanly and by the future Manage UI to link out.
+		installedLoopId: uuid('installed_loop_id').references(() => installedLoops.id, {
+			onDelete: 'set null',
+		}),
+		actorId: uuid('actor_id').references(() => actors.id, { onDelete: 'set null' }),
+		workspaceSkillId: uuid('workspace_skill_id').references(() => workspaceSkills.id, {
+			onDelete: 'set null',
+		}),
+		// FK to mcp_installations.id — the MCP Registry table lives outside this
+		// bet and its schema is not imported here, so kept as a bare uuid.
+		mcpInstallationId: uuid('mcp_installation_id'),
+
+		// Trigger row ids created for this install; array of uuids.
+		triggerIds: jsonb('trigger_ids').notNull().default([]),
+
+		source: text('source').notNull(),
+		installedByActorId: uuid('installed_by_actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		installedAt: timestamp('installed_at', { withTimezone: true }).notNull().defaultNow(),
+		uninstalledAt: timestamp('uninstalled_at', { withTimezone: true }),
+	},
+	(t) => [
+		index('marketplace_installations_ws_kind_idx').on(t.workspaceId, t.itemKind),
+		uniqueIndex('marketplace_installations_ws_kind_slug_live_idx')
+			.on(t.workspaceId, t.itemKind, t.catalogSlug)
+			.where(sql`${t.uninstalledAt} IS NULL`),
+		check(
+			'marketplace_installations_item_kind_check',
+			sql`${t.itemKind} IN ('loop', 'agent', 'skill', 'mcp_server')`,
+		),
+		check(
+			'marketplace_installations_source_check',
+			sql`${t.source} IN ('marketplace', 'seed', 'api')`,
+		),
+	],
+)
+
+export type MarketplaceInstallation = typeof marketplaceInstallations.$inferSelect
+export type NewMarketplaceInstallation = typeof marketplaceInstallations.$inferInsert

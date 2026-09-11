@@ -43,6 +43,7 @@ import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import loopsRoutes from './routes/loops'
+import marketplaceInstallationsRoutes from './routes/marketplace-installations'
 import marketplaceLoopsRoutes from './routes/marketplace-loops'
 import mcpRoutes from './routes/mcp'
 import methodRoutes from './routes/method'
@@ -343,6 +344,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// Stripe is billing, not an integration provider.
 	app.route('/api/webhooks/stripe', stripeWebhookRoutes)
 	app.route('/api/marketplace', marketplaceLoopsRoutes)
+	app.route('/api/marketplace', marketplaceInstallationsRoutes)
 	app.route('/api/mini-apps', miniAppRegenRoutes)
 	app.route('/api/webhooks', webhookApp)
 	app.route('/api/billing', billingRoutes)
