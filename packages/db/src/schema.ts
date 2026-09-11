@@ -1173,22 +1173,36 @@ export type NewWorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$in
 // install rows pay nothing and install rows are findable by a partial
 // expression index on `metadata->>'installed_loop_id'`.
 
-export const marketplaceLoops = pgTable('marketplace_loops', {
-	id: uuid('id').defaultRandom().primaryKey(),
-	name: text('name').notNull(),
-	slug: text('slug').notNull().unique(),
-	description: text('description').notNull(),
-	version: text('version').notNull(),
-	useCase: text('use_case'),
-	// Install-time dependency manifest — the install service reads this to
-	// return 424 with a `missing` payload when a workspace tries to install a
-	// loop but is missing the required integrations or MCP installations. See
-	// marketplace-install.ts and Marketplace tech spec §3.2 / §6.3.
-	// Shape: { integrations?: string[], mcp_installations?: string[] }.
-	requires: jsonb('requires').notNull().default({}),
-	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-})
+export const marketplaceLoops = pgTable(
+	'marketplace_loops',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		name: text('name').notNull(),
+		slug: text('slug').notNull().unique(),
+		description: text('description').notNull(),
+		version: text('version').notNull(),
+		useCase: text('use_case'),
+		// Install-time dependency manifest — the install service reads this to
+		// return 424 with a `missing` payload when a workspace tries to install a
+		// loop but is missing the required integrations or MCP installations. See
+		// marketplace-install.ts and Marketplace tech spec §3.2 / §6.3.
+		// Shape: { integrations?: string[], mcp_installations?: string[] }.
+		requires: jsonb('requires').notNull().default({}),
+		// Marketplace curation surface — mirrors the sibling columns on
+		// marketplace_agents / marketplace_skills so the catalog list handler
+		// UNIONs across all four kinds through the same projection (see
+		// Marketplace tech spec §2.2, §5.1 for the team enum, §4.1 for the
+		// recommendation rule bundle, §4.3 for install_count scale).
+		team: text('team').notNull().default('shared'),
+		recommendation: jsonb('recommendation').notNull().default({}),
+		status: text('status').notNull().default('published'),
+		sortWeight: integer('sort_weight').notNull().default(0),
+		installCount: integer('install_count').notNull().default(0),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('marketplace_loops_team_status_idx').on(t.team, t.status)],
+)
 
 export type MarketplaceLoop = typeof marketplaceLoops.$inferSelect
 export type NewMarketplaceLoop = typeof marketplaceLoops.$inferInsert
