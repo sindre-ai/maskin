@@ -43,6 +43,16 @@ interface ThreadHeaderProps {
 
 const LOOP_CHIP_MAX = 24
 
+// Mark-as-unread is fully wired client-side (handler + hook + id-0 onMutate
+// guard) but the API rejects `last_read_message_id: 0` today — the Zod schema
+// at packages/shared/src/schemas/conversations.ts:239 is
+// `z.number().int().positive()`, so every real click 400s at the boundary.
+// Follow-up signal for the backend change (schema + route branch + integration
+// test) is filed at
+// https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1ef70324-6601-4b96-986b-7bac00404dec.
+// When it lands, flip this to `true` — no other change needed.
+const MARK_UNREAD_ENABLED = false
+
 /**
  * Two stacked rows (mockup 559–612): the title row carries navigation and
  * window controls, the meta row carries the participants pill and the
@@ -307,10 +317,12 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 							<Pin size={14} fill={conversation.pinned ? 'currentColor' : 'none'} />
 							<span>{conversation.pinned ? 'Unpin' : 'Pin'}</span>
 						</DropdownMenuItem>
-						<DropdownMenuItem onSelect={handleMarkUnread}>
-							<EyeOff size={14} />
-							<span>Mark as unread</span>
-						</DropdownMenuItem>
+						{MARK_UNREAD_ENABLED ? (
+							<DropdownMenuItem onSelect={handleMarkUnread}>
+								<EyeOff size={14} />
+								<span>Mark as unread</span>
+							</DropdownMenuItem>
+						) : null}
 						<DropdownMenuItem
 							onSelect={() =>
 								updateMe.mutate({
@@ -365,21 +377,23 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 					</TooltipTrigger>
 					<TooltipContent>{conversation.pinned ? 'Unpin' : 'Pin'}</TooltipContent>
 				</Tooltip>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon"
-							className="hidden h-6 w-6 shrink-0 min-[641px]:inline-flex"
-							onClick={handleMarkUnread}
-							aria-label="Mark as unread"
-						>
-							<EyeOff size={14} />
-						</Button>
-					</TooltipTrigger>
-					<TooltipContent>Mark as unread</TooltipContent>
-				</Tooltip>
+				{MARK_UNREAD_ENABLED ? (
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon"
+								className="hidden h-6 w-6 shrink-0 min-[641px]:inline-flex"
+								onClick={handleMarkUnread}
+								aria-label="Mark as unread"
+							>
+								<EyeOff size={14} />
+							</Button>
+						</TooltipTrigger>
+						<TooltipContent>Mark as unread</TooltipContent>
+					</Tooltip>
+				) : null}
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<Button

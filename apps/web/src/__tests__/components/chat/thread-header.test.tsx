@@ -256,21 +256,20 @@ describe('ThreadHeader — v4 actions', () => {
 	})
 
 	describe('Mark as unread', () => {
-		it('calls updateMe with last_read_message_id: 0, toasts, and fires analytics', async () => {
+		// The Mark-as-unread button is gated dormant (MARK_UNREAD_ENABLED = false in
+		// thread-header.tsx) until the backend accepts `last_read_message_id: 0` on
+		// the updateMe route — today the Zod schema rejects it with 400. Follow-up
+		// signal: /objects/1ef70324-6601-4b96-986b-7bac00404dec. When the backend
+		// lands, flip the constant to true and restore the active-behaviour test
+		// (calls updateMe with id-0, toasts "Marked as unread", fires analytics).
+		// The id-0 onMutate guard in useUpdateConversationMe is exercised
+		// independently by the hook test in __tests__/hooks/use-conversations.test.tsx.
+		it('does not render while gated (no inline button, no overflow item)', () => {
 			mockUseConversation.mockReturnValue({ data: buildConversation() })
-			mockUpdateMe.mockImplementation((_vars, opts) => {
-				opts?.onSuccess?.()
-			})
 			renderHeader()
 
-			await userEvent.click(screen.getByRole('button', { name: 'Mark as unread' }))
-
-			expect(mockUpdateMe).toHaveBeenCalledWith(
-				{ id: 'conv-1', data: { last_read_message_id: 0 } },
-				expect.any(Object),
-			)
-			expect(mockTrackNav).toHaveBeenCalledWith({ item_key: 'mark_unread', source: 'top-nav' })
-			expect(mockToastSuccess).toHaveBeenCalledWith('Marked as unread')
+			expect(screen.queryByRole('button', { name: 'Mark as unread' })).not.toBeInTheDocument()
+			expect(mockUpdateMe).not.toHaveBeenCalled()
 		})
 	})
 })
