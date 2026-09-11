@@ -2,16 +2,18 @@ import { randomUUID } from 'node:crypto'
 import {
 	actors,
 	agentSkills,
+	installedLoops,
 	marketplaceAgents,
 	marketplaceInstallations,
+	marketplaceLoops,
 	marketplaceSkills,
 	triggers,
 	workspaceSkills,
 } from '@maskin/db/schema'
 import { eq, inArray } from 'drizzle-orm'
-import { insertWorkspace } from '../factories'
 import { installMarketplaceItem } from '../../services/marketplace-install'
 import { uninstallMarketplaceItem } from '../../services/marketplace-uninstall'
+import { insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 /**
@@ -43,6 +45,20 @@ async function seedAgent() {
 	return row
 }
 
+async function seedLoop() {
+	const [row] = await db
+		.insert(marketplaceLoops)
+		.values({
+			name: 'Weekly Digest',
+			slug: `loop-${randomUUID().slice(0, 8)}`,
+			description: 'A weekly digest loop',
+			version: '1.0.0',
+			useCase: 'ops',
+		})
+		.returning()
+	return row
+}
+
 async function seedSkill() {
 	const [row] = await db
 		.insert(marketplaceSkills)
@@ -57,6 +73,48 @@ async function seedSkill() {
 		.returning()
 	return row
 }
+
+describe('marketplace-uninstall — loop hard-delete + FK safety', () => {
+	it('hard-deletes installed_loops and soft-deletes the audit row without FK 23503', async () => {
+		// Regression coverage for the FK trap the reviewer flagged: uninstall
+		// hard-deletes `installed_loops` while `marketplace_installations.
+		// installed_loop_id` still references it. The FK is ON DELETE SET NULL
+		// (see migration 0070) — without it Postgres raises 23503 and the whole
+		// uninstall aborts. See Marketplace tech spec §3.3.
+		const ws = await insertWorkspace(db, getTestActorId())
+		const loop = await seedLoop()
+
+		const install = await installMarketplaceItem(db, {
+			itemKind: 'loop',
+			catalogId: loop.id,
+			workspaceId: ws.id,
+			installedByActorId: getTestActorId(),
+		})
+		if (install.status !== 'installed') throw new Error('setup failed')
+
+		const installedLoopId = install.installation.installedLoopId ?? ''
+
+		const result = await uninstallMarketplaceItem(db, {
+			installationId: install.installation.id,
+			workspaceId: ws.id,
+			uninstalledByActorId: getTestActorId(),
+		})
+		expect(result.status).toBe('uninstalled')
+
+		const remaining = await db
+			.select()
+			.from(installedLoops)
+			.where(eq(installedLoops.id, installedLoopId))
+		expect(remaining).toEqual([])
+
+		const [audit] = await db
+			.select()
+			.from(marketplaceInstallations)
+			.where(eq(marketplaceInstallations.id, install.installation.id))
+		expect(audit.uninstalledAt).not.toBeNull()
+		expect(audit.installedLoopId).toBeNull()
+	})
+})
 
 describe('marketplace-uninstall — agent archive semantics', () => {
 	it('soft-deletes the install row and archives the actor (not delete)', async () => {
@@ -95,17 +153,14 @@ describe('marketplace-uninstall — agent archive semantics', () => {
 			? (install.installation.triggerIds as string[])
 			: []
 		if (triggerIds.length > 0) {
-			const remaining = await db
-				.select()
-				.from(triggers)
-				.where(inArray(triggers.id, triggerIds))
+			const remaining = await db.select().from(triggers).where(inArray(triggers.id, triggerIds))
 			expect(remaining).toEqual([])
 		}
 	})
 })
 
 describe('marketplace-uninstall — skill fan-out check', () => {
-	it('deletes only the skill install\'s fan-out joins, keeps the skill if other agents reference it', async () => {
+	it("deletes only the skill install's fan-out joins, keeps the skill if other agents reference it", async () => {
 		const ws = await insertWorkspace(db, getTestActorId())
 		const skillCatalog = await seedSkill()
 		const install = await installMarketplaceItem(db, {

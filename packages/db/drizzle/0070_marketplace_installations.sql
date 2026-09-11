@@ -11,9 +11,16 @@ CREATE TABLE IF NOT EXISTS "marketplace_installations" (
 	"item_kind" text NOT NULL,
 	"catalog_id" uuid NOT NULL,
 	"catalog_slug" text NOT NULL,
-	"installed_loop_id" uuid REFERENCES "installed_loops"("id"),
-	"actor_id" uuid REFERENCES "actors"("id"),
-	"workspace_skill_id" uuid REFERENCES "workspace_skills"("id"),
+	-- Reverse pointers into the workspace-scoped rows created at install.
+	-- ON DELETE SET NULL because uninstall hard-deletes some of those rows
+	-- (installed_loops on loop uninstall, workspace_skills when the fan-out
+	-- check finds no other referrers) BEFORE the audit row is soft-deleted in
+	-- the same transaction. A NO ACTION default would raise 23503 and abort
+	-- the uninstall; SET NULL orphans the pointer, which is fine because the
+	-- audit row's item_kind + catalog_slug are the load-bearing history keys.
+	"installed_loop_id" uuid REFERENCES "installed_loops"("id") ON DELETE SET NULL,
+	"actor_id" uuid REFERENCES "actors"("id") ON DELETE SET NULL,
+	"workspace_skill_id" uuid REFERENCES "workspace_skills"("id") ON DELETE SET NULL,
 	"mcp_installation_id" uuid,
 	"trigger_ids" jsonb NOT NULL DEFAULT '[]'::jsonb,
 	"source" text NOT NULL,

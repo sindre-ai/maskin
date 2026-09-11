@@ -1424,9 +1424,13 @@ export const marketplaceInstallations = pgTable(
 		// Pointers back into the workspace-scoped rows created by this install.
 		// Exactly one is set per row, determined by `item_kind`. Used at
 		// uninstall to reverse cleanly and by the future Manage UI to link out.
-		installedLoopId: uuid('installed_loop_id').references(() => installedLoops.id),
-		actorId: uuid('actor_id').references(() => actors.id),
-		workspaceSkillId: uuid('workspace_skill_id').references(() => workspaceSkills.id),
+		installedLoopId: uuid('installed_loop_id').references(() => installedLoops.id, {
+			onDelete: 'set null',
+		}),
+		actorId: uuid('actor_id').references(() => actors.id, { onDelete: 'set null' }),
+		workspaceSkillId: uuid('workspace_skill_id').references(() => workspaceSkills.id, {
+			onDelete: 'set null',
+		}),
 		// FK to mcp_installations.id — the MCP Registry table lives outside this
 		// bet and its schema is not imported here, so kept as a bare uuid.
 		mcpInstallationId: uuid('mcp_installation_id'),

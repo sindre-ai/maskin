@@ -1,8 +1,8 @@
 import type { Database, Transaction } from '@maskin/db'
 import {
+	events,
 	actors,
 	agentSkills,
-	events,
 	installedLoops,
 	integrations,
 	marketplaceAgents,
@@ -49,21 +49,21 @@ export type InstallResult =
 	| {
 			status: 'installed'
 			installation: typeof marketplaceInstallations.$inferSelect
-	}
+	  }
 	| {
 			status: 'already_installed'
 			installation: typeof marketplaceInstallations.$inferSelect
-	}
+	  }
 	| {
 			status: 'requires_not_met'
 			missing: RequiresManifest
-	}
+	  }
 	| {
 			status: 'not_found'
-	}
+	  }
 	| {
 			status: 'mcp_registry_unavailable'
-	}
+	  }
 
 /**
  * Public entry point for the install path. The route layer calls this after
@@ -106,7 +106,11 @@ export async function installMarketplaceItem(
 
 		return { status: 'installed', installation }
 	} catch (err: unknown) {
-		const code = (err as { code?: string }).code
+		// Drizzle wraps the underlying PostgresError inside DrizzleQueryError, so
+		// the driver-level `code` may live on the wrapper's `.cause` rather than
+		// the top-level error. Read both so the 23505 catch fires either way.
+		const code =
+			(err as { code?: string }).code ?? (err as { cause?: { code?: string } }).cause?.code
 		if (code === '23505') {
 			// Partial unique index conflict — someone raced us to install the same
 			// slug. Read the live row and hand it back as an idempotent success.
@@ -180,7 +184,10 @@ async function checkRequires(
 	requires: RequiresManifest,
 ): Promise<RequiresManifest | null> {
 	const wanted = requires.integrations ?? []
-	if (wanted.length === 0 && !(requires.mcp_installations && requires.mcp_installations.length > 0)) {
+	if (
+		wanted.length === 0 &&
+		!(requires.mcp_installations && requires.mcp_installations.length > 0)
+	) {
 		return null
 	}
 
