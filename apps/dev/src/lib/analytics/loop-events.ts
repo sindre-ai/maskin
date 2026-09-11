@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { installedLoops, loopActiveDays, marketplaceLoops } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { logger } from '../logger'
+import type { MarketplaceInstallSource } from './marketplace-events'
 import { capturePosthogEvent } from './posthog'
 
 // Server-side emitters for the managed-marketplace ship metric (two external
@@ -26,11 +27,21 @@ interface LoopInstalledProps {
 		skills: number
 		integrations: number
 	}
-	// Which marketplace surface the install was started from. Absent means the
-	// catalogue card, which is the overwhelming majority; the loop detail page
-	// sends `'detail'`. Emitted as `'catalogue'` when absent so downstream
-	// queries can group on the property without a null branch.
-	source?: 'detail'
+	// Marketplace install-source semantic tag — closes Product Validator
+	// blocker #1 (loop_installed had no source set, so the Marketplace-tab
+	// success metric couldn't distinguish card-triggered installs from
+	// seed-bootstrap installs). Values:
+	//   marketplace → user clicked Install on a Marketplace card or detail page
+	//   seed        → workspace-bootstrap provisioned it at workspace creation
+	//   api         → written through the public API (not via UI)
+	// Transitional union: legacy call sites pass 'detail'/'catalogue' (UI-page
+	// source, pre-bet); those coerce to 'marketplace' on the wire below so the
+	// Marketplace-tab filter matches every card-triggered install regardless
+	// of which UI page hosted the click. PR #2's install service migration
+	// will drop 'detail'/'catalogue' once every call site has moved. Optional
+	// on the type so pre-bet callers still compile; undefined coerces to
+	// 'marketplace' at emit time so the wire always carries a source value.
+	source?: MarketplaceInstallSource | 'detail' | 'catalogue'
 }
 
 // Ordering here is the wire ordering downstream queries will see in
@@ -44,6 +55,17 @@ const PROVISIONED_TO_COMPONENT_TYPE: ReadonlyArray<
 	['integrations', 'integration'],
 ]
 
+function normaliseSource(
+	source: LoopInstalledProps['source'],
+): MarketplaceInstallSource {
+	if (source === 'seed' || source === 'api' || source === 'marketplace') return source
+	// Undefined + the legacy 'detail'/'catalogue' UI-page tags both mean
+	// "user clicked Install on a Marketplace surface"; coerce to 'marketplace'
+	// so the Marketplace-tab success metric picks up every card-triggered
+	// install under one filter.
+	return 'marketplace'
+}
+
 export async function trackLoopInstalled(p: LoopInstalledProps): Promise<void> {
 	const componentTypes = PROVISIONED_TO_COMPONENT_TYPE.filter(
 		([key]) => p.provisioned[key] > 0,
@@ -56,7 +78,7 @@ export async function trackLoopInstalled(p: LoopInstalledProps): Promise<void> {
 		actor_id: p.actorId,
 		component_type_count: componentTypes.length,
 		component_types: componentTypes,
-		source: p.source ?? 'catalogue',
+		source: normaliseSource(p.source),
 	})
 }
 
