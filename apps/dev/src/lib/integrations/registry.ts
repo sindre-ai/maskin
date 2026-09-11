@@ -11,6 +11,19 @@ import { gmailEventNormalizer, gmailWebhookVerifier } from './providers/gmail/we
 import { config as googleCalendarConfig } from './providers/google-calendar/config'
 import { revokeGoogleCalendarGrant } from './providers/google-calendar/disconnect'
 import { resolveExternalId as googleCalendarResolveExternalId } from './providers/google-calendar/resolve-id'
+import { config as googleMeetConfig } from './providers/google-meet/config'
+import { resolveExternalId as googleMeetResolveExternalId } from './providers/google-meet/resolve-id'
+import {
+	fanOutMeetEvent,
+	setupMeetWatch,
+	stopMeetWatch,
+} from './providers/google-meet/watch'
+import {
+	extractMeetDeliveryId,
+	meetEventNormalizer,
+	meetWebhookVerifier,
+	resolveMeetInstallationId,
+} from './providers/google-meet/webhooks'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
@@ -95,6 +108,18 @@ providers.set('google-calendar', {
 	config: googleCalendarConfig,
 	resolveExternalId: googleCalendarResolveExternalId,
 	preDisconnect: revokeGoogleCalendarGrant,
+})
+
+providers.set('google-meet', {
+	config: googleMeetConfig,
+	customWebhookVerifier: meetWebhookVerifier,
+	customNormalizer: meetEventNormalizer,
+	resolveExternalId: googleMeetResolveExternalId,
+	resolveInstallationId: resolveMeetInstallationId,
+	extractDeliveryId: extractMeetDeliveryId,
+	postInstall: setupMeetWatch,
+	webhookFanOut: fanOutMeetEvent,
+	preDisconnect: stopMeetWatch,
 })
 
 providers.set('posthog', {
