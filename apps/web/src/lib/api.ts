@@ -1616,6 +1616,12 @@ export interface ConversationDetailResponse {
 	pinned: boolean
 	archived: boolean
 	last_read_message_id: number | null
+	// The loop this conversation belongs to, when it was started inside a loop
+	// (Loop chip in the thread header links to it). Server-side field is not
+	// wired yet; the frontend treats `null`/`undefined` as "no loop" and renders
+	// no chip, so the payload can start emitting it without a client-side
+	// change.
+	loop_id?: string | null
 	participants: ConversationParticipantResponse[]
 }
 
