@@ -85,8 +85,23 @@ function GoogleMeetPrototype() {
 		)
 	}
 
+	// Meet-tag colour tokens per theme — spec §Design system reuse:
+	// `#00897b` light / `#26a69a` dark, both AA at 12 px on their respective
+	// surface tints. Scoped to this prototype subtree so the tokens don't
+	// leak into the rest of the app until the real integration surfaces ship.
+	const meetTagVars =
+		theme === 'dark'
+			? ({
+					'--meet-tag-fg': '#26a69a',
+					'--meet-tag-bg': 'rgba(38, 166, 154, 0.18)',
+				} as React.CSSProperties)
+			: ({
+					'--meet-tag-fg': '#00897b',
+					'--meet-tag-bg': 'rgba(0, 137, 123, 0.12)',
+				} as React.CSSProperties)
+
 	return (
-		<div className={theme === 'dark' ? 'dark' : ''}>
+		<div className={theme === 'dark' ? 'dark' : ''} style={meetTagVars}>
 			<div className="min-h-screen bg-background text-foreground">
 				<GalleryHeader theme={theme} onThemeChange={setTheme} />
 				<div className="mx-auto max-w-6xl space-y-16 px-4 py-8 md:px-8">
