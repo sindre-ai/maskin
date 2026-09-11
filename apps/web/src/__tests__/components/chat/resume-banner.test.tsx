@@ -59,6 +59,32 @@ describe('ResumeBanner', () => {
 		expect(screen.getByText(/Billing Agent: Update 2/)).toBeInTheDocument()
 	})
 
+	it('stacks the eyebrow + time helper above the bullet list', () => {
+		const { container } = render(
+			<ResumeBanner conversationId="conv-1" messages={agedThread(2)} lastReadMessageId={1} />,
+			{ wrapper: TestWrapper },
+		)
+		const banner = container.firstElementChild
+		expect(banner).not.toBeNull()
+		// Two direct children: the eyebrow/time header row, then the bullet list.
+		const rows = Array.from(banner?.children ?? [])
+		expect(rows).toHaveLength(2)
+		const [header, bullets] = rows
+
+		// Header row carries both the eyebrow copy and the time helper.
+		expect(header).toContainElement(screen.getByText('Picking up where you left off'))
+		expect(header).toContainElement(screen.getByText(/last spoke/))
+
+		// Bullets are a <ul> below the header, and every bullet's arrow glyph
+		// lands inside it — not up in the header.
+		expect(bullets?.tagName).toBe('UL')
+		const arrows = screen.getAllByText('→')
+		expect(arrows.length).toBeGreaterThan(0)
+		for (const arrow of arrows) {
+			expect(bullets).toContainElement(arrow)
+		}
+	})
+
 	it('renders nothing for a fully-read thread', () => {
 		const messages = agedThread(2)
 		const { container } = render(
