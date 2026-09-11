@@ -42,6 +42,7 @@ function catalogRow(overrides: Partial<Record<string, unknown>> = {}) {
 		loop_definition: { steps_summary: '3 steps', ins: ['slack'], outs: ['inbox'], cadence: 'hourly' },
 		skill_slugs: null,
 		trigger_seeds: null,
+		install_flow_copy: {},
 		...overrides,
 	}
 }
@@ -267,6 +268,45 @@ describe('GET /api/marketplace/catalog', () => {
 		const rec = body.bands.recommended.find((c) => c.slug === 'closer')
 		expect(rec?.why_line).toBe('you use slack — this reads it')
 		expect(body.team_grid[0]?.why_line).toBe('you use slack — this reads it')
+	})
+
+	it('passes install_flow_copy through on every card that has it populated', async () => {
+		const loop = catalogRow({
+			slug: 'churn-recovery',
+			install_flow_copy: {
+				needs_decision: {
+					subtitle: 'Choose which team owns this loop.',
+					warning_callout: 'Installing wires up {agents}, {trigger_count} triggers.',
+				},
+				success: {
+					callout: 'Ready. You will get a For-You card when a cycle asks for you.',
+				},
+			},
+		})
+		const bareLoop = catalogRow({ slug: 'bare', install_flow_copy: {} })
+		const { app } = mockDbWithExecute([loop, bareLoop])
+
+		const res = await app.request(
+			jsonGet('/api/marketplace/catalog', { 'x-workspace-id': randomUUID() }),
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			team_grid: Array<{ slug: string; install_flow_copy?: Record<string, unknown> }>
+		}
+		const churn = body.team_grid.find((c) => c.slug === 'churn-recovery')
+		expect(churn?.install_flow_copy).toEqual({
+			needs_decision: {
+				subtitle: 'Choose which team owns this loop.',
+				warning_callout: 'Installing wires up {agents}, {trigger_count} triggers.',
+			},
+			success: {
+				callout: 'Ready. You will get a For-You card when a cycle asks for you.',
+			},
+		})
+		// An empty install_flow_copy is stripped from the response (keeps the
+		// wire small and matches the schema's optional-everywhere shape).
+		const bare = body.team_grid.find((c) => c.slug === 'bare')
+		expect(bare?.install_flow_copy).toBeUndefined()
 	})
 
 	it('returns 400 when X-Workspace-Id header is missing', async () => {

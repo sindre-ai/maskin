@@ -38,6 +38,37 @@ export interface MarketplaceRequiresManifest {
 	mcp_installations?: string[]
 }
 
+/**
+ * Per-item copy the install modal renders across its five variants. Fields
+ * for paths an item never enters are optional / omitted. Strings may embed
+ * the placeholder tokens `{integration}`, `{team}`, `{agents}`,
+ * `{trigger_count}` — the frontend resolves them at render time.
+ *
+ * See Marketplace design spec §Copy → "Install modal — per-item copy is
+ * catalog metadata".
+ */
+export interface MarketplaceInstallFlowCopy {
+	needs_integration?: {
+		subtitle?: string
+		step_1_body?: string
+	}
+	needs_decision?: {
+		subtitle?: string
+		warning_callout?: string
+	}
+	installing?: {
+		step_2_body?: string
+		step_3_body?: string
+	}
+	success?: {
+		subtitle?: string
+		callout?: string
+	}
+	error?: {
+		callout?: string
+	}
+}
+
 export interface MarketplaceCatalogLoopEntry {
 	slug: string
 	name: string
@@ -48,6 +79,7 @@ export interface MarketplaceCatalogLoopEntry {
 	requires?: MarketplaceRequiresManifest
 	recommendation?: Record<string, unknown>
 	sortWeight?: number
+	installFlowCopy?: MarketplaceInstallFlowCopy
 }
 
 export interface MarketplaceCatalogAgentEntry {
@@ -61,6 +93,7 @@ export interface MarketplaceCatalogAgentEntry {
 	requires?: MarketplaceRequiresManifest
 	recommendation?: Record<string, unknown>
 	sortWeight?: number
+	installFlowCopy?: MarketplaceInstallFlowCopy
 }
 
 export interface MarketplaceCatalogSkillEntry {
@@ -72,6 +105,74 @@ export interface MarketplaceCatalogSkillEntry {
 	requires?: MarketplaceRequiresManifest
 	recommendation?: Record<string, unknown>
 	sortWeight?: number
+	installFlowCopy?: MarketplaceInstallFlowCopy
+}
+
+/**
+ * Default install-flow copy for a loop. Loops go through needs-decision →
+ * installing → success (with error on failure). Custom items override any
+ * field they want to differ; anything unset falls back to these strings.
+ * Placeholders `{integration}`, `{team}`, `{agents}`, `{trigger_count}` are
+ * resolved at render time from the item's own metadata.
+ */
+export const DEFAULT_LOOP_INSTALL_FLOW_COPY: MarketplaceInstallFlowCopy = {
+	needs_decision: {
+		subtitle: 'Choose which team owns this loop so its asks land in the right feed.',
+		warning_callout:
+			"Installing wires up the loop's agents, triggers, and integration reads. Nothing writes to a customer without your sign-off.",
+	},
+	installing: {
+		step_2_body: "Wiring the loop's agents into your workspace.",
+		step_3_body: 'Registering triggers so the loop fires on its cadence.',
+	},
+	success: {
+		subtitle: 'Cycle 1 opens the next time a trigger fires.',
+		callout: "The loop is in your workspace. You'll get a For-You card when a cycle asks for you.",
+	},
+	error: {
+		callout:
+			'Something failed while wiring the loop. Nothing was changed in your workspace. Try again, or ping #maskin-help if it keeps happening.',
+	},
+}
+
+export const DEFAULT_AGENT_INSTALL_FLOW_COPY: MarketplaceInstallFlowCopy = {
+	needs_decision: {
+		subtitle: 'Choose which team owns this agent so its work lands in the right feed.',
+		warning_callout:
+			'Installing wires the agent into your workspace with the skills it needs. Nothing writes on your behalf without your sign-off.',
+	},
+	installing: {
+		step_2_body: 'Adding the agent and its skills to your workspace.',
+		step_3_body: "Registering the agent's triggers so it fires on cadence.",
+	},
+	success: {
+		subtitle: 'The agent is available in your workspace.',
+		callout: 'You can pair the agent with a loop, or hand it work directly from any bet or task.',
+	},
+	error: {
+		callout:
+			'Something failed while installing the agent. Nothing was changed in your workspace. Try again, or ping #maskin-help if it keeps happening.',
+	},
+}
+
+export const DEFAULT_SKILL_INSTALL_FLOW_COPY: MarketplaceInstallFlowCopy = {
+	needs_decision: {
+		subtitle: 'Choose which team this skill belongs to so it appears in the right agent library.',
+		warning_callout:
+			'Installing makes the skill available for any agent in this workspace to attach.',
+	},
+	installing: {
+		step_2_body: "Adding the skill to your workspace's shared library.",
+		step_3_body: 'Available for any agent to attach.',
+	},
+	success: {
+		subtitle: 'The skill is in your workspace library.',
+		callout: "Attach it to any agent from that agent's page.",
+	},
+	error: {
+		callout:
+			'Something failed while installing the skill. Nothing was changed in your workspace. Try again, or ping #maskin-help if it keeps happening.',
+	},
 }
 
 /**
@@ -89,6 +190,7 @@ export const MARKETPLACE_CATALOG_LOOPS: MarketplaceCatalogLoopEntry[] = [
 		useCase: 'Insight triage and bet shaping',
 		team: 'product',
 		sortWeight: 100,
+		installFlowCopy: DEFAULT_LOOP_INSTALL_FLOW_COPY,
 	},
 	{
 		slug: 'workspace-improvements',
@@ -99,6 +201,7 @@ export const MARKETPLACE_CATALOG_LOOPS: MarketplaceCatalogLoopEntry[] = [
 		useCase: 'Workspace observability and coaching',
 		team: 'shared',
 		sortWeight: 60,
+		installFlowCopy: DEFAULT_LOOP_INSTALL_FLOW_COPY,
 	},
 	{
 		slug: 'knowledge-wiki-digest',
@@ -109,6 +212,7 @@ export const MARKETPLACE_CATALOG_LOOPS: MarketplaceCatalogLoopEntry[] = [
 		useCase: 'Knowledge management',
 		team: 'shared',
 		sortWeight: 40,
+		installFlowCopy: DEFAULT_LOOP_INSTALL_FLOW_COPY,
 	},
 ]
 
@@ -122,12 +226,14 @@ export const MARKETPLACE_CATALOG_AGENTS: MarketplaceCatalogAgentEntry[] = [
 	{
 		slug: 'driver',
 		displayName: 'Driver',
-		outcomeLine: 'Keeps tasks and bets moving — re-kicks failed sessions and fills missing drivers.',
+		outcomeLine:
+			'Keeps tasks and bets moving — re-kicks failed sessions and fills missing drivers.',
 		description:
 			'Operational sweep agent. Daily pass over the `todo` column that unblocks stuck work, diagnoses session failures from logs, and re-kicks or reassigns drivers with a bias toward action over observation.',
 		skillSlugs: ['maskin-way-of-working'],
 		team: 'shared',
 		sortWeight: 100,
+		installFlowCopy: DEFAULT_AGENT_INSTALL_FLOW_COPY,
 	},
 	{
 		slug: 'strategist',
@@ -138,6 +244,7 @@ export const MARKETPLACE_CATALOG_AGENTS: MarketplaceCatalogAgentEntry[] = [
 		skillSlugs: ['shaped-bet-format', 'maskin-way-of-working'],
 		team: 'product',
 		sortWeight: 95,
+		installFlowCopy: DEFAULT_AGENT_INSTALL_FLOW_COPY,
 	},
 	{
 		slug: 'signal-analyst',
@@ -147,6 +254,7 @@ export const MARKETPLACE_CATALOG_AGENTS: MarketplaceCatalogAgentEntry[] = [
 			'Triages new insights immediately, runs a daily clustering sweep, and re-validates the `signal`-bet inventory weekly.',
 		team: 'product',
 		sortWeight: 80,
+		installFlowCopy: DEFAULT_AGENT_INSTALL_FLOW_COPY,
 	},
 	{
 		slug: 'researcher',
@@ -156,6 +264,7 @@ export const MARKETPLACE_CATALOG_AGENTS: MarketplaceCatalogAgentEntry[] = [
 			'Files insight objects from external sources and internal signals with citation trails Signal Analyst can cluster.',
 		team: 'shared',
 		sortWeight: 70,
+		installFlowCopy: DEFAULT_AGENT_INSTALL_FLOW_COPY,
 	},
 	{
 		slug: 'knowledge-curator',
@@ -165,6 +274,7 @@ export const MARKETPLACE_CATALOG_AGENTS: MarketplaceCatalogAgentEntry[] = [
 			'Folds new knowledge objects into the graph, wires supersedes/contradicts lineage, and compiles the human-readable digest on cadence.',
 		team: 'shared',
 		sortWeight: 50,
+		installFlowCopy: DEFAULT_AGENT_INSTALL_FLOW_COPY,
 	},
 ]
 
@@ -182,6 +292,7 @@ export const MARKETPLACE_CATALOG_SKILLS: MarketplaceCatalogSkillEntry[] = [
 			'One decision per item; never write when nothing is blocked. Attach to any agent that routinely escalates.',
 		team: 'shared',
 		sortWeight: 90,
+		installFlowCopy: DEFAULT_SKILL_INSTALL_FLOW_COPY,
 	},
 	{
 		slug: 'shaped-bet-format',
@@ -191,6 +302,7 @@ export const MARKETPLACE_CATALOG_SKILLS: MarketplaceCatalogSkillEntry[] = [
 			'Pitch summary, appetite, success criteria (won / lost / inconclusive), solution sketch, rabbit-hole notes, and no-goes.',
 		team: 'product',
 		sortWeight: 80,
+		installFlowCopy: DEFAULT_SKILL_INSTALL_FLOW_COPY,
 	},
 	{
 		slug: 'maskin-way-of-working',
@@ -200,6 +312,7 @@ export const MARKETPLACE_CATALOG_SKILLS: MarketplaceCatalogSkillEntry[] = [
 			'Rendering rules, mention conventions, attention-score guidance, and the house style for agents operating in Maskin workspaces.',
 		team: 'shared',
 		sortWeight: 75,
+		installFlowCopy: DEFAULT_SKILL_INSTALL_FLOW_COPY,
 	},
 	{
 		slug: 'continuous-onboarding',
@@ -209,6 +322,7 @@ export const MARKETPLACE_CATALOG_SKILLS: MarketplaceCatalogSkillEntry[] = [
 			'Sequenced prompts and escalations that keep onboarding moving without dumping everything on day one.',
 		team: 'customer',
 		sortWeight: 60,
+		installFlowCopy: DEFAULT_SKILL_INSTALL_FLOW_COPY,
 	},
 ]
 

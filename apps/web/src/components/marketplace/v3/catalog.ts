@@ -45,6 +45,38 @@ export interface InstalledStats {
 	asks_pending: number
 }
 
+/**
+ * Per-item copy for each install-modal variant. The five sub-objects match
+ * the modal's variant IDs; every field is optional so items only fill in the
+ * paths their install flow actually enters. Strings may embed the placeholder
+ * tokens `{integration}`, `{team}`, `{agents}`, `{trigger_count}` — resolved
+ * at render time by `interpolateInstallFlowCopy`.
+ *
+ * Source of truth: Marketplace design spec §Copy → "Install modal — per-item
+ * copy is catalog metadata".
+ */
+export interface InstallFlowCopy {
+	needs_integration?: {
+		subtitle?: string
+		step_1_body?: string
+	}
+	needs_decision?: {
+		subtitle?: string
+		warning_callout?: string
+	}
+	installing?: {
+		step_2_body?: string
+		step_3_body?: string
+	}
+	success?: {
+		subtitle?: string
+		callout?: string
+	}
+	error?: {
+		callout?: string
+	}
+}
+
 export interface CatalogItemCard {
 	item_kind: MarketplaceItemKind
 	catalog_id: string
@@ -61,6 +93,7 @@ export interface CatalogItemCard {
 	why_line?: string
 	loop_summary?: LoopSummary
 	agent_summary?: AgentSummary
+	install_flow_copy?: InstallFlowCopy
 	// UI-only affordances not on the wire; used to render brand-coloured icon
 	// tiles + eyebrows on rich cards. PR #3 can add these to the response, or
 	// the frontend can compute them from slug — either way, the card doesn't
@@ -94,14 +127,125 @@ export interface CatalogListResponse {
 // marketplace-catalog.ts) once PR #1 ships, and PR #3's endpoint serves them
 // from the DB.
 
+// ── install_flow_copy exemplars (design-spec §Copy) ──────────────────────
+//
+// Granola exemplifies the needs-integration path. Churn Recovery exemplifies
+// needs-decision → installing → success + error. Every string below is the
+// verbatim design-spec Copy that install-modal.tsx previously carried as
+// hardcoded literals; wiring them through install_flow_copy is the whole
+// point of this file's plumbing.
+
+const GRANOLA_INSTALL_FLOW_COPY: InstallFlowCopy = {
+	needs_integration: {
+		subtitle: 'MCP server · adds meeting-notes tools to every agent in this workspace',
+		step_1_body:
+			'Grant Maskin read access to your {integration} notebook. You control what stays private.',
+	},
+}
+
+const CHURN_RECOVERY_INSTALL_FLOW_COPY: InstallFlowCopy = {
+	needs_decision: {
+		subtitle: 'Choose which team owns this loop so its asks land in the right feed.',
+		warning_callout:
+			'Installing wires up {agents}, {trigger_count} triggers, and reads from {integration}. Nothing writes to a customer without your sign-off.',
+	},
+	installing: {
+		step_2_body: '{agents} — adding to workspace.',
+		step_3_body: '{trigger_count} triggers on {integration} usage events.',
+	},
+	success: {
+		subtitle: 'Cycle 1 opens the next time {integration} reports a usage drop.',
+		callout:
+			"{agents} are in your workspace. {trigger_count} triggers active. You'll get a For-You card when a cycle asks for you.",
+	},
+	error: {
+		callout:
+			'**{integration} auth expired.** Reconnect {integration} on its integration page, then try again. If it keeps happening, ping #maskin-help.',
+	},
+}
+
+// Generic fallbacks used by non-exemplar seed rows so their install flow
+// still has real strings if a user opens the modal. Loops go through
+// needs-decision + installing + success (+ error); MCP servers go through
+// needs-integration + success; agents/skills go through needs-decision.
+const GENERIC_LOOP_INSTALL_FLOW_COPY: InstallFlowCopy = {
+	needs_decision: {
+		subtitle: 'Choose which team owns this loop so its asks land in the right feed.',
+		warning_callout:
+			'Installing wires the loop into your workspace. Nothing writes to a customer without your sign-off.',
+	},
+	installing: {
+		step_2_body: "Wiring the loop's agents into your workspace.",
+		step_3_body: 'Registering triggers so the loop fires on its cadence.',
+	},
+	success: {
+		subtitle: 'Cycle 1 opens the next time a trigger fires.',
+		callout: "The loop is in your workspace. You'll get a For-You card when a cycle asks for you.",
+	},
+	error: {
+		callout:
+			'Something failed while wiring the loop. Nothing was changed in your workspace. Try again, or ping #maskin-help.',
+	},
+}
+
+const GENERIC_MCP_INSTALL_FLOW_COPY: InstallFlowCopy = {
+	needs_integration: {
+		subtitle: 'MCP server · adds tools every agent in this workspace can call',
+		step_1_body:
+			'Grant Maskin read access to your {integration} account. You control what stays private.',
+	},
+	success: {
+		subtitle: 'Tools are available to every agent in this workspace.',
+		callout: "Pair the tools with an agent from that agent's page.",
+	},
+	error: {
+		callout:
+			'Something failed while connecting {integration}. Nothing was changed in your workspace. Try again, or ping #maskin-help.',
+	},
+}
+
+const GENERIC_AGENT_INSTALL_FLOW_COPY: InstallFlowCopy = {
+	needs_decision: {
+		subtitle: 'Choose which team owns this agent so its work lands in the right feed.',
+		warning_callout: 'Installing wires the agent into your workspace with the skills it needs.',
+	},
+	installing: {
+		step_2_body: 'Adding the agent and its skills to your workspace.',
+		step_3_body: "Registering the agent's triggers so it fires on cadence.",
+	},
+	success: {
+		subtitle: 'The agent is available in your workspace.',
+		callout: 'Pair it with a loop, or hand it work directly from any bet or task.',
+	},
+	error: {
+		callout:
+			'Something failed while installing the agent. Nothing was changed in your workspace. Try again, or ping #maskin-help.',
+	},
+}
+
+const GENERIC_SKILL_INSTALL_FLOW_COPY: InstallFlowCopy = {
+	needs_decision: {
+		subtitle: 'Choose which team this skill belongs to so it appears in the right agent library.',
+		warning_callout:
+			'Installing makes the skill available for any agent in this workspace to attach.',
+	},
+	success: {
+		subtitle: 'The skill is in your workspace library.',
+		callout: "Attach it to any agent from that agent's page.",
+	},
+	error: {
+		callout:
+			'Something failed while installing the skill. Nothing was changed in your workspace. Try again, or ping #maskin-help.',
+	},
+}
+
 const RECOMMENDED: CatalogItemCard[] = [
 	{
 		item_kind: 'mcp_server',
 		catalog_id: 'seed-granola',
 		slug: 'granola',
 		display_name: 'Granola',
-		outcome_line:
-			'MCP server · adds meeting-notes tools to every agent in this workspace',
+		outcome_line: 'MCP server · adds meeting-notes tools to every agent in this workspace',
 		team: 'customer',
 		requires: { integrations: ['granola'] },
 		install_count: 0,
@@ -109,6 +253,7 @@ const RECOMMENDED: CatalogItemCard[] = [
 		brand: 'granola',
 		requires_status: 'needs',
 		requires_label: 'Needs Granola account',
+		install_flow_copy: GRANOLA_INSTALL_FLOW_COPY,
 	},
 	{
 		item_kind: 'loop',
@@ -122,6 +267,7 @@ const RECOMMENDED: CatalogItemCard[] = [
 		why_line: 'Sentinel is idle and PostHog is already connected',
 		requires_status: 'ready',
 		requires_label: 'All integrations ready',
+		install_flow_copy: CHURN_RECOVERY_INSTALL_FLOW_COPY,
 	},
 	{
 		item_kind: 'mcp_server',
@@ -375,12 +521,7 @@ const CATALOG_SEED: CatalogListResponse = {
 		popular_skills: POPULAR_SKILLS,
 		most_installed_tools: MOST_INSTALLED_TOOLS,
 	},
-	team_grid: [
-		...POPULAR_LOOPS,
-		...TOP_AGENTS,
-		...POPULAR_SKILLS,
-		...MOST_INSTALLED_TOOLS,
-	],
+	team_grid: [...POPULAR_LOOPS, ...TOP_AGENTS, ...POPULAR_SKILLS, ...MOST_INSTALLED_TOOLS],
 	tab_counts: { loops: 24, agents: 18, skills: 32, tools: 46 },
 }
 
@@ -388,8 +529,7 @@ const CATALOG_SEED: CatalogListResponse = {
 
 export const marketplaceCatalogKeys = {
 	all: ['marketplace-v3', 'catalog'] as const,
-	list: (team?: MarketplaceTeam) =>
-		['marketplace-v3', 'catalog', { team: team ?? null }] as const,
+	list: (team?: MarketplaceTeam) => ['marketplace-v3', 'catalog', { team: team ?? null }] as const,
 }
 
 /**
