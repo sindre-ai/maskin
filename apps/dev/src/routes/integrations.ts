@@ -2624,6 +2624,27 @@ webhookApp.post('/:provider', async (c) => {
 		return c.json({ ok: true, skipped: true })
 	}
 
+	// Some providers (Google Meet) deliver payloads keyed on an indirect
+	// identifier (People-id via Workspace Events) rather than the row's
+	// external_id. The resolveInstallationId hook is the join that swaps the
+	// placeholder for the real external_id before the integrations lookup.
+	if (resolved.resolveInstallationId) {
+		const resolvedId = await resolved.resolveInstallationId({
+			db,
+			provider: providerName,
+			normalized,
+			payload,
+			headers,
+		})
+		if (!resolvedId) {
+			logger.info(`Meet-shape provider ${providerName} had no matching row for delivered id`, {
+				installationId: normalized.installationId,
+			})
+			return c.json({ ok: true, skipped: true })
+		}
+		normalized.installationId = resolvedId
+	}
+
 	// Find ALL matching active integrations. A single external install (e.g. one
 	// Slack team) can be connected to multiple Maskin workspaces, and each one
 	// needs its own copy of the event so per-workspace triggers fire correctly.
