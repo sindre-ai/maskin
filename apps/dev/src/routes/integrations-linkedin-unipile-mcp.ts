@@ -87,9 +87,7 @@ app.post('/', async (c) => {
 	const credentialRows = await db
 		.select({ id: integrations.id })
 		.from(integrations)
-		.where(
-			and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, PROVIDER)),
-		)
+		.where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, PROVIDER)))
 	const instances = credentialRows.flatMap((row) => getLinkedInMcpInstancesForIntegration(row.id))
 
 	const mcpServer = createLinkedInMcpServer({ db, actorId, workspaceId }, instances)
