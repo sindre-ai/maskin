@@ -292,11 +292,11 @@ function LoopDetailRoute() {
 	// - cyclesRunning: `inProgressCount` while the loop is on the live rungs of
 	//   the pill ladder (learning / supervised / fully_autonomous), else 0 —
 	//   matches the SPEC's "count of open cycles where pill.stateSlug === live".
-	// - asksWaiting: `waitingCount` from the loop payload — the real number of
-	//   child objects with unread activity for this viewer. This used to be
-	//   `waitingOnViewer ? 1 : 0`, which capped the tile (and the
-	//   `ask_banner_decide_clicked` dimension below) at 1 no matter how many
-	//   asks were actually open.
+	// - asksWaiting: `waitingCount` from the loop payload — the count of
+	//   sessions on this loop's triggers currently in `waiting_for_input`.
+	//   Same predicate the D3 AskBanner uses, so the tile and the banner never
+	//   disagree (`ask_banner_decide_clicked.pendingCount` and this tile are
+	//   the same number).
 	// - nextFire: earliest enabled cron/reminder trigger's next firing time,
 	//   formatted `in Nm`/`in Nh`/`in Nd`/an absolute date past a week out.
 	const cyclesRunning = isLiveLoopPill(loop.pill) ? loop.inProgressCount : 0

@@ -1,14 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import {
-	events,
-	actors,
-	objects,
-	readState,
-	relationships,
-	sessions,
-	triggers,
-} from '@maskin/db/schema'
+import { events, actors, objects, relationships, sessions, triggers } from '@maskin/db/schema'
 import {
 	type LoopTarget,
 	TERMINAL_BET_STATUSES,
@@ -158,7 +150,6 @@ const listLoopsRoute = createRoute({
 
 app.openapi(listLoopsRoute, (async (c) => {
 	const db = c.get('db')
-	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { id } = c.req.valid('query')
 
@@ -288,63 +279,43 @@ app.openapi(listLoopsRoute, (async (c) => {
 		}
 	}
 
-	// Per-viewer "waiting on you" flag: does the viewer have any unread event
-	// on any object currently linked to this loop? Reuses the `read_state`
-	// last-read expression pattern from `subscriptions.ts`. Unlike
-	// `getUnreadCount` (which filters `action = 'commented'` to count unread
-	// comments specifically), this matches ANY event on the child object —
-	// a status/lifecycle change is exactly the "needs a human" signal this
-	// flag exists for, and those events are logged with `entity_type` set to
-	// the object's concrete type (task/bet/insight), not `'object'` (that
-	// value is reserved for comment events — see objects.ts's object-detail
-	// route). So we match on `entity_id` alone, which already scopes
-	// precisely to this one object regardless of which entity_type the event
-	// was logged under. `read_state` itself is always keyed by the generic
-	// `entity_type = 'object'` for objects, so that half stays fixed.
-	// A loop with zero child objects always resolves to false.
-	const waitingRows = await db.execute<{ loop_id: string; waiting: boolean }>(
-		sql`
-			SELECT
-				r.source_id AS loop_id,
-				EXISTS (
-					SELECT 1
-					FROM ${events} e
-					WHERE e.workspace_id = ${workspaceId}
-						AND e.entity_id = o.id
-						AND e.actor_id <> ${actorId}
-						AND e.id > COALESCE(
-							(
-								SELECT last_read_event_id FROM ${readState}
-								WHERE actor_id = ${actorId}
-									AND entity_type = 'object'
-									AND entity_id = o.id
-							),
-							0
-						)
-				) AS waiting
-			FROM ${relationships} r
-			JOIN ${objects} o ON o.id = r.target_id
-			WHERE r.type = ${LOOP_MEMBERSHIP_RELATIONSHIP_TYPE}
-				AND r.source_id = ANY(${loopIdArray})
-				AND o.workspace_id = ${workspaceId}
-			GROUP BY r.source_id, o.id
-		`,
-	)
-
-	// A loop is "waiting on viewer" if ANY of its child objects has unread
-	// events for the viewer — collapse the per-child rows here.
-	const waitingByLoop = new Map<string, boolean>()
-	// How MANY child objects are waiting, not just whether any are. The query
-	// above already emits one row per child (it groups by `r.source_id, o.id`),
-	// so the count is a tally of the rows that came back true — no second
-	// query. `waitingOnViewer` stays the boolean it always was so existing
-	// consumers (the pill) are untouched; `waitingCount` is additive.
-	const waitingCountByLoop = new Map<string, number>()
-	for (const row of waitingRows) {
-		waitingByLoop.set(row.loop_id, waitingByLoop.get(row.loop_id) === true || row.waiting === true)
-		if (row.waiting === true) {
-			waitingCountByLoop.set(row.loop_id, (waitingCountByLoop.get(row.loop_id) ?? 0) + 1)
+	// "Waiting on you" flag + count. Same predicate the D3 `AskBanner` uses on
+	// the loop-detail page (`GET /:id/steps` further down this file, and
+	// `packages/shared/src/loops/waiting-on-viewer.ts`): a step is waiting
+	// when at least one session on that step's trigger sits in
+	// `status = 'waiting_for_input'`. Unifying to one predicate here means the
+	// loops-list `waiting_on_you` pill, the loops-list `waitingCount`, the
+	// loop-detail `Asks waiting` tile, and the AskBanner all count exactly
+	// the thing the user thinks they count — an agent step blocked awaiting
+	// their input. Previously this was "any unread event on any child
+	// object", which mixed status-change notifications into the "waiting on
+	// me" signal and let the banner fire while the tile still read 0.
+	const pendingByTrigger = new Map<string, number>()
+	if (allTriggerIds.length > 0) {
+		const pendingRows = await db
+			.select({ triggerId: sessions.triggerId, count: sql<number>`COUNT(*)::int` })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.workspaceId, workspaceId),
+					inArray(sessions.triggerId, allTriggerIds),
+					eq(sessions.status, 'waiting_for_input'),
+				),
+			)
+			.groupBy(sessions.triggerId)
+		for (const row of pendingRows) {
+			if (row.triggerId) pendingByTrigger.set(row.triggerId, row.count)
 		}
+	}
+	const waitingByLoop = new Map<string, boolean>()
+	const waitingCountByLoop = new Map<string, number>()
+	for (const { loopId, triggerIds: perLoopTriggerIds } of perLoopTriggers) {
+		let count = 0
+		for (const tid of perLoopTriggerIds) {
+			count += pendingByTrigger.get(tid) ?? 0
+		}
+		waitingCountByLoop.set(loopId, count)
+		waitingByLoop.set(loopId, count > 0)
 	}
 
 	const LIVE_STATUSES = new Set(['learning', 'supervised', 'fully_autonomous'])
