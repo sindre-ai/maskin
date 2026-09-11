@@ -146,7 +146,16 @@ describe('Integrations Routes', () => {
 					.filter((p) => p.mcp)
 					.map((p) => p.name)
 					.sort(),
-			).toEqual(['github', 'gmail', 'google-calendar', 'linear', 'posthog', 'slack', 'ubersuggest'])
+			).toEqual([
+				'github',
+				'gmail',
+				'google-calendar',
+				'linear',
+				'linkedin-unipile',
+				'posthog',
+				'slack',
+				'ubersuggest',
+			])
 
 			// github is the one exemption — its entries are named per installation
 			// with literal tokens, so there is no single spec to hand out.
