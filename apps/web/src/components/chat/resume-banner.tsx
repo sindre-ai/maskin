@@ -1,7 +1,6 @@
 import { RelativeTime } from '@/components/shared/relative-time'
 import type { MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
-import { RotateCcw } from 'lucide-react'
 import { useRef } from 'react'
 
 /** How stale the last thing you read has to be before this counts as "picking
@@ -72,20 +71,17 @@ export function ResumeBanner({ conversationId, messages, lastReadMessageId }: Re
 	const overflow = unread.length - lines.length
 
 	return (
-		<div className="rounded-xl border border-brand-subtle bg-brand-subtle px-4 py-3">
-			<div className="flex items-center gap-2">
-				<span className="grid h-[17px] w-[17px] shrink-0 place-items-center rounded bg-brand-subtle-foreground text-primary-foreground">
-					<RotateCcw size={9} aria-hidden />
-				</span>
-				<span className="eyebrow text-brand-subtle-foreground">Picking up where you left off</span>
-				<span className="ml-auto flex shrink-0 items-center gap-1 text-[10.5px] text-brand-subtle-foreground">
+		<div className="rounded-lg border-l-2 border-brand bg-muted p-3.5">
+			<div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+				<span className="eyebrow">Picking up where you left off</span>
+				<span className="flex items-center gap-1 text-[11px] text-muted-foreground">
 					last spoke
 					<RelativeTime date={lastRead.createdAt} />
 				</span>
 			</div>
-			<ul className="mt-2 flex flex-col gap-1.5">
+			<ul className="flex flex-col gap-1 text-xs leading-normal text-muted-foreground">
 				{lines.map((m) => (
-					<li key={m.id} className="flex gap-2 text-xs leading-normal text-foreground">
+					<li key={m.id} className="flex gap-2">
 						<span aria-hidden className="shrink-0 text-brand-subtle-foreground">
 							→
 						</span>
@@ -95,7 +91,7 @@ export function ResumeBanner({ conversationId, messages, lastReadMessageId }: Re
 					</li>
 				))}
 				{overflow > 0 ? (
-					<li className="pl-5 text-xs text-muted-foreground">
+					<li className="pl-5">
 						+{overflow} more {overflow === 1 ? 'message' : 'messages'}
 					</li>
 				) : null}
