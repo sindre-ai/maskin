@@ -129,12 +129,14 @@ export function trackChatSessionStarted(
 		entity_type: 'session'
 		entry_point: ChatSessionEntryPoint
 		entry_agent_role: string | null
+		participant_count: number
 	},
 ): void {
 	trackEvent('chat_session_started', {
 		...fillBase(p),
 		entry_point: p.entry_point,
 		entry_agent_role: p.entry_agent_role,
+		participant_count: p.participant_count,
 	})
 }
 

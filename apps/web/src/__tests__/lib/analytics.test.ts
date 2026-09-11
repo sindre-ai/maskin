@@ -183,7 +183,7 @@ describe('v1 taxonomy helpers', () => {
 		)
 	})
 
-	it('chat_session_started carries the entry point + entry_agent_role for the CoS bet', () => {
+	it('chat_session_started carries the entry point + entry_agent_role + participant_count', () => {
 		const capture = captureSpy()
 
 		trackChatSessionStarted({
@@ -191,18 +191,21 @@ describe('v1 taxonomy helpers', () => {
 			entity_type: 'session',
 			entry_point: 'sindre_session',
 			entry_agent_role: 'chief-of-staff',
+			participant_count: 1,
 		})
 		trackChatSessionStarted({
 			entity_id: 'sess-8',
 			entity_type: 'session',
 			entry_point: 'agent_one_shot',
 			entry_agent_role: 'workspace-coach',
+			participant_count: 3,
 		})
 		trackChatSessionStarted({
 			entity_id: 'sess-9',
 			entity_type: 'session',
 			entry_point: 'sindre_session',
 			entry_agent_role: null,
+			participant_count: 2,
 		})
 
 		expect(capture).toHaveBeenNthCalledWith(1, 'chat_session_started', {
@@ -212,6 +215,7 @@ describe('v1 taxonomy helpers', () => {
 			flow_id: null,
 			entry_point: 'sindre_session',
 			entry_agent_role: 'chief-of-staff',
+			participant_count: 1,
 		})
 		expect(capture).toHaveBeenNthCalledWith(2, 'chat_session_started', {
 			entity_id: 'sess-8',
@@ -220,6 +224,7 @@ describe('v1 taxonomy helpers', () => {
 			flow_id: null,
 			entry_point: 'agent_one_shot',
 			entry_agent_role: 'workspace-coach',
+			participant_count: 3,
 		})
 		expect(capture).toHaveBeenNthCalledWith(3, 'chat_session_started', {
 			entity_id: 'sess-9',
@@ -228,6 +233,7 @@ describe('v1 taxonomy helpers', () => {
 			flow_id: null,
 			entry_point: 'sindre_session',
 			entry_agent_role: null,
+			participant_count: 2,
 		})
 	})
 
