@@ -1,7 +1,13 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, readState, relationships, sessions, triggers } from '@maskin/db/schema'
-import { TERMINAL_BET_STATUSES, listLoopsResponseSchema } from '@maskin/shared'
+import { events, actors, objects, relationships, sessions, triggers } from '@maskin/db/schema'
+import {
+	type LoopTarget,
+	TERMINAL_BET_STATUSES,
+	listLoopStepsResponseSchema,
+	listLoopsResponseSchema,
+	loopTargetSchema,
+} from '@maskin/shared'
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -94,6 +100,24 @@ function readClosedStatuses(meta: Record<string, unknown>): Record<string, strin
 	return Object.keys(cleaned).length > 0 ? cleaned : null
 }
 
+/**
+ * Extract a loop's `metadata.targets` (bet D5). Returns `null` when the field
+ * is absent, not an array, or every row inside failed Zod validation — the
+ * frontend then renders no `<TargetsAndOwners>` section. Malformed individual
+ * entries are dropped rather than 500-ing the whole `/api/loops` response,
+ * same tolerance the rest of this file already gives hand-edited metadata.
+ */
+function readLoopTargets(meta: Record<string, unknown>): LoopTarget[] | null {
+	const raw = meta.targets
+	if (!Array.isArray(raw)) return null
+	const cleaned: LoopTarget[] = []
+	for (const entry of raw) {
+		const parsed = loopTargetSchema.safeParse(entry)
+		if (parsed.success) cleaned.push(parsed.data)
+	}
+	return cleaned.length > 0 ? cleaned : null
+}
+
 const listLoopsQuerySchema = z.object({
 	id: z.string().uuid().optional().openapi({
 		description:
@@ -126,7 +150,6 @@ const listLoopsRoute = createRoute({
 
 app.openapi(listLoopsRoute, (async (c) => {
 	const db = c.get('db')
-	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { id } = c.req.valid('query')
 
@@ -256,54 +279,43 @@ app.openapi(listLoopsRoute, (async (c) => {
 		}
 	}
 
-	// Per-viewer "waiting on you" flag: does the viewer have any unread event
-	// on any object currently linked to this loop? Reuses the `read_state`
-	// last-read expression pattern from `subscriptions.ts`. Unlike
-	// `getUnreadCount` (which filters `action = 'commented'` to count unread
-	// comments specifically), this matches ANY event on the child object —
-	// a status/lifecycle change is exactly the "needs a human" signal this
-	// flag exists for, and those events are logged with `entity_type` set to
-	// the object's concrete type (task/bet/insight), not `'object'` (that
-	// value is reserved for comment events — see objects.ts's object-detail
-	// route). So we match on `entity_id` alone, which already scopes
-	// precisely to this one object regardless of which entity_type the event
-	// was logged under. `read_state` itself is always keyed by the generic
-	// `entity_type = 'object'` for objects, so that half stays fixed.
-	// A loop with zero child objects always resolves to false.
-	const waitingRows = await db.execute<{ loop_id: string; waiting: boolean }>(
-		sql`
-			SELECT
-				r.source_id AS loop_id,
-				EXISTS (
-					SELECT 1
-					FROM ${events} e
-					WHERE e.workspace_id = ${workspaceId}
-						AND e.entity_id = o.id
-						AND e.actor_id <> ${actorId}
-						AND e.id > COALESCE(
-							(
-								SELECT last_read_event_id FROM ${readState}
-								WHERE actor_id = ${actorId}
-									AND entity_type = 'object'
-									AND entity_id = o.id
-							),
-							0
-						)
-				) AS waiting
-			FROM ${relationships} r
-			JOIN ${objects} o ON o.id = r.target_id
-			WHERE r.type = ${LOOP_MEMBERSHIP_RELATIONSHIP_TYPE}
-				AND r.source_id = ANY(${loopIdArray})
-				AND o.workspace_id = ${workspaceId}
-			GROUP BY r.source_id, o.id
-		`,
-	)
-
-	// A loop is "waiting on viewer" if ANY of its child objects has unread
-	// events for the viewer — collapse the per-child rows here.
+	// "Waiting on you" flag + count. Same predicate the D3 `AskBanner` uses on
+	// the loop-detail page (`GET /:id/steps` further down this file, and
+	// `packages/shared/src/loops/waiting-on-viewer.ts`): a step is waiting
+	// when at least one session on that step's trigger sits in
+	// `status = 'waiting_for_input'`. Unifying to one predicate here means the
+	// loops-list `waiting_on_you` pill, the loops-list `waitingCount`, the
+	// loop-detail `Asks waiting` tile, and the AskBanner all count exactly
+	// the thing the user thinks they count — an agent step blocked awaiting
+	// their input. Previously this was "any unread event on any child
+	// object", which mixed status-change notifications into the "waiting on
+	// me" signal and let the banner fire while the tile still read 0.
+	const pendingByTrigger = new Map<string, number>()
+	if (allTriggerIds.length > 0) {
+		const pendingRows = await db
+			.select({ triggerId: sessions.triggerId, count: sql<number>`COUNT(*)::int` })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.workspaceId, workspaceId),
+					inArray(sessions.triggerId, allTriggerIds),
+					eq(sessions.status, 'waiting_for_input'),
+				),
+			)
+			.groupBy(sessions.triggerId)
+		for (const row of pendingRows) {
+			if (row.triggerId) pendingByTrigger.set(row.triggerId, row.count)
+		}
+	}
 	const waitingByLoop = new Map<string, boolean>()
-	for (const row of waitingRows) {
-		waitingByLoop.set(row.loop_id, waitingByLoop.get(row.loop_id) === true || row.waiting === true)
+	const waitingCountByLoop = new Map<string, number>()
+	for (const { loopId, triggerIds: perLoopTriggerIds } of perLoopTriggers) {
+		let count = 0
+		for (const tid of perLoopTriggerIds) {
+			count += pendingByTrigger.get(tid) ?? 0
+		}
+		waitingCountByLoop.set(loopId, count)
+		waitingByLoop.set(loopId, count > 0)
 	}
 
 	const LIVE_STATUSES = new Set(['learning', 'supervised', 'fully_autonomous'])
@@ -335,6 +347,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 				typeof meta.close_condition === 'string' && meta.close_condition.length > 0
 					? meta.close_condition
 					: null
+			const targets = readLoopTargets(meta)
 
 			const stats = childStatsByLoop.get(row.id) ?? {
 				inProgressCount: 0,
@@ -351,6 +364,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 				),
 			)
 			const waitingOnViewer = waitingByLoop.get(row.id) === true
+			const waitingCount = waitingCountByLoop.get(row.id) ?? 0
 
 			// Composite pill signal. `draft`/`paused` are not "live" — they render
 			// as themselves regardless of read state. The three live statuses
@@ -381,6 +395,8 @@ app.openapi(listLoopsRoute, (async (c) => {
 				agentIds,
 				triggerIds,
 				waitingOnViewer,
+				waitingCount,
+				targets,
 				createdAt: row.createdAt ? row.createdAt.toISOString() : null,
 				updatedAt: row.updatedAt ? row.updatedAt.toISOString() : null,
 			}
@@ -504,5 +520,166 @@ app.openapi(loopActivityRoute, (async (c) => {
 		events: serializeArray(rows) as z.infer<typeof eventResponseSchema>[],
 	})
 }) as RouteHandler<typeof loopActivityRoute, Env>)
+
+/**
+ * `GET /api/loops/:id/steps` — the loop-detail vertical-story renderer's data
+ * feed (Loops v4 / D6c). Returns one `LoopStep` per trigger id in
+ * `metadata.trigger_ids`, preserved in that order (a spine, not a set). Each
+ * step carries the three Loops v4 fields the renderer keys off
+ * (`handsOffToActorId`, `escalatesToActorId`, `escalateAfterMs`) plus resolved
+ * actor names for the hands-off / escalation targets so the frontend doesn't
+ * need a second lookup, and a per-viewer `waitingOnViewer` + `pendingCount`
+ * derived from sessions currently in `waiting_for_input` for that trigger.
+ *
+ * Returns `{ steps: [] }` — not 404 — for a loop with no triggers or an
+ * unknown id, mirroring `/api/loops` and `/api/loops/:id/activity` so a
+ * foreign / deleted id doesn't leak existence.
+ *
+ * This is a read-only endpoint. Step CRUD lives on the composer path
+ * (POST/PATCH /api/triggers, POST/DELETE /api/relationships) — D6 is a READ
+ * rewrite (see SPEC rabbit hole).
+ */
+const loopStepsRoute = createRoute({
+	method: 'get',
+	path: '/{id}/steps',
+	tags: ['loops'],
+	summary: 'Vertical-story step spine for one loop',
+	description:
+		"Returns the loop's ordered step spine — one row per trigger id in `metadata.trigger_ids`, with hands-off / escalates fields and per-viewer waiting-on-viewer counts pre-resolved so the vertical-story renderer can spread it as-is. Empty array for a loop with no triggers or an unknown id.",
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid() }),
+	},
+	responses: {
+		200: {
+			description: 'Ordered LoopStep spine (may be empty)',
+			content: { 'application/json': { schema: listLoopStepsResponseSchema } },
+		},
+		400: {
+			description: 'Missing workspace ID or malformed loop id',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(loopStepsRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id: loopId } = c.req.valid('param')
+
+	const [loop] = await db
+		.select({ metadata: objects.metadata })
+		.from(objects)
+		.where(
+			and(eq(objects.id, loopId), eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')),
+		)
+		.limit(1)
+
+	if (!loop) {
+		return c.json({ steps: [] })
+	}
+
+	const meta = (loop.metadata as Record<string, unknown> | null) ?? {}
+	const raw = meta.trigger_ids
+	const orderedTriggerIds = Array.isArray(raw)
+		? raw.filter((v): v is string => typeof v === 'string' && UUID_RE.test(v))
+		: []
+
+	if (orderedTriggerIds.length === 0) {
+		return c.json({ steps: [] })
+	}
+
+	// Load every trigger referenced by the loop. Foreign / deleted ids drop
+	// out silently, same tolerance as `/api/loops`.
+	const triggerRows = await db
+		.select({
+			id: triggers.id,
+			name: triggers.name,
+			type: triggers.type,
+			actionPrompt: triggers.actionPrompt,
+			config: triggers.config,
+			targetActorId: triggers.targetActorId,
+			handsOffToActorId: triggers.handsOffToActorId,
+			escalatesToActorId: triggers.escalatesToActorId,
+			escalateAfterMs: triggers.escalateAfterMs,
+		})
+		.from(triggers)
+		.where(and(eq(triggers.workspaceId, workspaceId), inArray(triggers.id, orderedTriggerIds)))
+
+	const triggerById = new Map(triggerRows.map((t) => [t.id, t]))
+
+	// One batched actor lookup for the three per-step actor refs (target /
+	// hands-off / escalates). Missing ids just resolve to null on the step.
+	const actorIds = new Set<string>()
+	for (const t of triggerRows) {
+		if (t.targetActorId) actorIds.add(t.targetActorId)
+		if (t.handsOffToActorId) actorIds.add(t.handsOffToActorId)
+		if (t.escalatesToActorId) actorIds.add(t.escalatesToActorId)
+	}
+	const actorRows =
+		actorIds.size > 0
+			? await db
+					.select({ id: actors.id, name: actors.name, description: actors.description })
+					.from(actors)
+					.where(inArray(actors.id, Array.from(actorIds)))
+			: []
+	const actorById = new Map(actorRows.map((a) => [a.id, a]))
+
+	// Per-step waitingOnViewer + pendingCount derived from sessions currently
+	// in `waiting_for_input` for the trigger. Same shape T1's shared predicate
+	// will formalise (`packages/shared/src/loops/waiting-on-viewer.ts`) — kept
+	// inlined here for D6c so this task doesn't wait on T1 landing; the two
+	// can consolidate later when the shared helper module ships.
+	const pendingRows =
+		orderedTriggerIds.length > 0
+			? await db
+					.select({ triggerId: sessions.triggerId, count: sql<number>`COUNT(*)::int` })
+					.from(sessions)
+					.where(
+						and(
+							eq(sessions.workspaceId, workspaceId),
+							inArray(sessions.triggerId, orderedTriggerIds),
+							eq(sessions.status, 'waiting_for_input'),
+						),
+					)
+					.groupBy(sessions.triggerId)
+			: []
+	const pendingByTrigger = new Map<string, number>()
+	for (const r of pendingRows) {
+		if (r.triggerId) pendingByTrigger.set(r.triggerId, r.count)
+	}
+
+	const steps = orderedTriggerIds
+		.map((triggerId) => {
+			const t = triggerById.get(triggerId)
+			if (!t) return null
+			const agent = t.targetActorId ? (actorById.get(t.targetActorId) ?? null) : null
+			const handsOffToActor = t.handsOffToActorId
+				? (actorById.get(t.handsOffToActorId) ?? null)
+				: null
+			const escalatesToActor = t.escalatesToActorId
+				? (actorById.get(t.escalatesToActorId) ?? null)
+				: null
+			const pendingCount = pendingByTrigger.get(t.id) ?? 0
+			return {
+				triggerId: t.id,
+				triggerName: t.name,
+				triggerActionPrompt: t.actionPrompt,
+				triggerType: t.type,
+				triggerConfig: (t.config as Record<string, unknown> | null) ?? undefined,
+				agent,
+				handsOffToActorId: t.handsOffToActorId,
+				escalatesToActorId: t.escalatesToActorId,
+				escalateAfterMs: t.escalateAfterMs,
+				handsOffToActor,
+				escalatesToActor,
+				waitingOnViewer: pendingCount > 0,
+				pendingCount,
+			}
+		})
+		.filter((s): s is NonNullable<typeof s> => s !== null)
+
+	return c.json({ steps })
+}) as RouteHandler<typeof loopStepsRoute, Env>)
 
 export default app

@@ -95,6 +95,11 @@ export default defineConfig(async () => ({
 		// for it (so the msb bridge/preview-port forwarding can reach this dev
 		// server) — ordinary `pnpm dev`/`pnpm dev:win` stays loopback-only.
 		host: process.env.MASKIN_DEV_EXTERNAL === '1' ? '0.0.0.0' : 'localhost',
+		// Vite 6 blocks any request whose Host header isn't in the allowlist
+		// (DNS-rebinding guard). Under MASKIN_DEV_EXTERNAL, the sandbox forwards
+		// requests through `host.microsandbox.internal`, so widen the allowlist
+		// to `true` (accept any host) — same posture as the manual `--host` flag.
+		...(process.env.MASKIN_DEV_EXTERNAL === '1' ? { allowedHosts: true as const } : {}),
 		proxy: {
 			'/api': {
 				target: 'http://localhost:3000',

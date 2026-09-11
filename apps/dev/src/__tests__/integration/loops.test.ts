@@ -111,6 +111,7 @@ describe('Loops read API integration', () => {
 				agentIds: string[]
 				triggerIds: string[]
 				waitingOnViewer: boolean
+				targets: unknown
 			}>
 		}
 		expect(body.loops).toHaveLength(1)
@@ -127,6 +128,62 @@ describe('Loops read API integration', () => {
 		expect(row.agentIds).toEqual([])
 		expect(row.triggerIds).toEqual([])
 		expect(row.waitingOnViewer).toBe(false)
+		// A loop with no metadata.targets reads as null on the response so the
+		// frontend renders no <TargetsAndOwners> section (bet D5).
+		expect(row.targets).toBeNull()
+	})
+
+	it('surfaces metadata.targets on the response, dropping malformed entries (bet D5)', async () => {
+		const ownerActorId = '11111111-1111-4111-8111-111111111111'
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Targets loop',
+			metadata: {
+				targets: [
+					{
+						label: 'Posts published',
+						source: 'posts published this month',
+						actual: 6,
+						target: 8,
+						ownerActorId,
+					},
+					{
+						label: 'LinkedIn impressions',
+						source: 'metric:linkedin.impressions',
+						actual: 4200,
+						target: 5000,
+					},
+					// Malformed row — missing `target` — silently dropped rather
+					// than 500-ing the endpoint. Same tolerance the rest of the
+					// route already gives hand-edited metadata.
+					{ label: 'broken', source: 'foo', actual: 1 },
+				],
+			},
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(
+			jsonGet(`/api/loops?id=${loop.id}`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			loops: Array<{
+				targets: Array<{
+					label: string
+					source: string
+					actual: number
+					target: number
+					ownerActorId?: string
+				}> | null
+			}>
+		}
+		const [row] = body.loops
+		expect(row).toBeDefined()
+		expect(row.targets).toHaveLength(2)
+		expect(row.targets?.[0]?.label).toBe('Posts published')
+		expect(row.targets?.[0]?.ownerActorId).toBe(ownerActorId)
+		expect(row.targets?.[1]?.source).toBe('metric:linkedin.impressions')
 	})
 
 	it('scopes to a single loop when `id` is passed (used by get_loop)', async () => {
@@ -487,8 +544,6 @@ describe('Loops read API integration', () => {
 	})
 
 	it('composes the `pill` field from lifecycle status + waiting_on_viewer', async () => {
-		const otherActor = await insertActor(db)
-
 		const draft = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
 			status: 'draft',
@@ -515,33 +570,21 @@ describe('Loops read API integration', () => {
 			title: 'Paused loop',
 		})
 
-		// A live loop with unread activity on a member object — this is the only
-		// way to reach `waiting_on_you` now that there's no explicit `waiting`
-		// status; it overrides the autonomy-stage label for live statuses only.
+		// A live loop whose trigger has a session in `waiting_for_input` — the
+		// only way to reach `waiting_on_you` under the D3/Q3 unification (see
+		// the "waiting on you" comment in `routes/loops.ts`). Overrides the
+		// autonomy-stage label for live statuses only.
+		const agent = await insertActor(db, { name: 'Agent', type: 'agent' })
+		const waitingTrig = await insertTrigger(db, workspaceId, actorId, agent.id, {})
 		const waiting = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
 			status: 'supervised',
 			title: 'Waiting loop',
+			metadata: { trigger_ids: [waitingTrig.id] },
 		})
-		const waitingChild = await insertObject(db, workspaceId, actorId, {
-			type: 'task',
-			status: 'in_review',
-			title: 'Needs a look',
-		})
-		await insertRelationship(db, actorId, {
-			sourceType: 'object',
-			sourceId: waiting.id,
-			targetType: 'object',
-			targetId: waitingChild.id,
-			type: 'in_loop',
-		})
-		await db.insert(events).values({
-			workspaceId,
-			actorId: otherActor.id,
-			action: 'status_changed',
-			entityType: 'task',
-			entityId: waitingChild.id,
-			data: { status: 'in_review' },
+		await insertSession(db, workspaceId, agent.id, actorId, {
+			triggerId: waitingTrig.id,
+			status: 'waiting_for_input',
 		})
 
 		const app = makeApp(actorId)
@@ -717,37 +760,26 @@ describe('Loops read API integration', () => {
 		})
 	})
 
-	it('flips `waitingOnViewer` true on an unread status-change event on a child object, not just comments', async () => {
-		const otherActor = await insertActor(db)
-
+	it("flips `waitingOnViewer` true when a session on one of the loop's triggers is `waiting_for_input`", async () => {
+		// Q3 SPEC unification: the loops-list pill, the loops-list waitingCount,
+		// the loop-detail "Asks waiting" tile, and the D3 AskBanner all read the
+		// same predicate — a session on this loop's trigger in
+		// `status = 'waiting_for_input'`. Previously the loops-list pill was
+		// derived from unread events on child objects (a different signal), so
+		// the banner could fire while the tile still read 0. Asserted against
+		// real Postgres because the join spans `objects.metadata.trigger_ids`
+		// (JSONB) → triggers → sessions and a mocked db can't cover it.
+		const agent = await insertActor(db, { name: 'Agent', type: 'agent' })
+		const trig = await insertTrigger(db, workspaceId, actorId, agent.id, {})
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
 			status: 'learning',
 			title: 'Needs attention',
+			metadata: { trigger_ids: [trig.id] },
 		})
-		const childTask = await insertObject(db, workspaceId, actorId, {
-			type: 'task',
-			status: 'in_review',
-			title: 'Agent-driven task',
-		})
-		await insertRelationship(db, actorId, {
-			sourceType: 'object',
-			sourceId: loop.id,
-			targetType: 'object',
-			targetId: childTask.id,
-			type: 'in_loop',
-		})
-
-		// A lifecycle event logged with entity_type set to the object's
-		// concrete type (mirrors how objects.ts logs `status_changed`/
-		// `updated` events) — not a comment, and not entity_type='object'.
-		await db.insert(events).values({
-			workspaceId,
-			actorId: otherActor.id,
-			action: 'status_changed',
-			entityType: 'task',
-			entityId: childTask.id,
-			data: { status: 'in_review' },
+		await insertSession(db, workspaceId, agent.id, actorId, {
+			triggerId: trig.id,
+			status: 'waiting_for_input',
 		})
 
 		const app = makeApp(actorId)
@@ -758,5 +790,219 @@ describe('Loops read API integration', () => {
 		const row = body.loops.find((l) => l.id === loop.id)
 		expect(row?.waitingOnViewer).toBe(true)
 		expect(row?.pill).toBe('waiting_on_you')
+	})
+
+	it("counts every session in `waiting_for_input` across the loop's triggers in `waitingCount`", async () => {
+		// Three separate waiting sessions across two of the loop's triggers,
+		// one completed session (must not count), one session on an unrelated
+		// trigger (must not count either). `waitingCount` should be 3.
+		const agent = await insertActor(db, { name: 'Agent', type: 'agent' })
+		const trigA = await insertTrigger(db, workspaceId, actorId, agent.id, {})
+		const trigB = await insertTrigger(db, workspaceId, actorId, agent.id, {})
+		const trigC = await insertTrigger(db, workspaceId, actorId, agent.id, {})
+		const foreignTrig = await insertTrigger(db, workspaceId, actorId, agent.id, {})
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'Three open asks',
+			metadata: { trigger_ids: [trigA.id, trigB.id, trigC.id] },
+		})
+		await insertSession(db, workspaceId, agent.id, actorId, {
+			triggerId: trigA.id,
+			status: 'waiting_for_input',
+		})
+		await insertSession(db, workspaceId, agent.id, actorId, {
+			triggerId: trigA.id,
+			status: 'waiting_for_input',
+		})
+		await insertSession(db, workspaceId, agent.id, actorId, {
+			triggerId: trigB.id,
+			status: 'waiting_for_input',
+		})
+		await insertSession(db, workspaceId, agent.id, actorId, {
+			triggerId: trigC.id,
+			status: 'completed',
+		})
+		await insertSession(db, workspaceId, agent.id, actorId, {
+			triggerId: foreignTrig.id,
+			status: 'waiting_for_input',
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		const body = (await res.json()) as {
+			loops: Array<{ id: string; waitingOnViewer: boolean; waitingCount: number }>
+		}
+		const row = body.loops.find((l) => l.id === loop.id)
+		expect(row?.waitingOnViewer).toBe(true)
+		expect(row?.waitingCount).toBe(3)
+	})
+
+	it('reports `waitingCount` 0 for a loop with no sessions in `waiting_for_input`', async () => {
+		const agent = await insertActor(db, { name: 'Agent', type: 'agent' })
+		const trig = await insertTrigger(db, workspaceId, actorId, agent.id, {})
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'learning',
+			title: 'All caught up',
+			metadata: { trigger_ids: [trig.id] },
+		})
+		// A completed session on the loop's trigger must not count.
+		await insertSession(db, workspaceId, agent.id, actorId, {
+			triggerId: trig.id,
+			status: 'completed',
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		const body = (await res.json()) as {
+			loops: Array<{ id: string; waitingOnViewer: boolean; waitingCount: number }>
+		}
+		const row = body.loops.find((l) => l.id === loop.id)
+		expect(row?.waitingOnViewer).toBe(false)
+		expect(row?.waitingCount).toBe(0)
+	})
+
+	/**
+	 * D6c — `GET /api/loops/:id/steps` feeds the vertical-story renderer's
+	 * spine. Covers:
+	 *   (1) preserves `metadata.trigger_ids` ordering (spine, not set);
+	 *   (2) resolves the D6a hands-off + escalates actor names on each row;
+	 *   (3) sets `waitingOnViewer` + `pendingCount` from live sessions in
+	 *       `waiting_for_input` for that trigger;
+	 *   (4) empty array (no 404) for a loop with no triggers OR an unknown id
+	 *       — mirrors the tolerance of the sibling `/activity` endpoint.
+	 */
+	describe('GET /api/loops/:id/steps — vertical-story spine (D6c)', () => {
+		it('returns spine steps in metadata.trigger_ids order with D6a fields + resolved actor names', async () => {
+			const relay = await insertActor(db, { name: 'Relay', type: 'agent' })
+			const quill = await insertActor(db, { name: 'Quill', type: 'agent' })
+			const sebk = await insertActor(db, { name: 'Sebk', type: 'human' })
+			const magnus = await insertActor(db, { name: 'Magnus', type: 'human' })
+
+			const trigA = await insertTrigger(db, workspaceId, actorId, relay.id, {
+				name: 'Watch inbox',
+				type: 'cron',
+				config: { expression: '0 * * * *' },
+				actionPrompt: 'Scan the inbox',
+				handsOffToActorId: quill.id,
+				escalatesToActorId: sebk.id,
+				escalateAfterMs: 12 * 60 * 60 * 1000,
+			})
+			const trigB = await insertTrigger(db, workspaceId, actorId, quill.id, {
+				name: 'Draft reply',
+				type: 'event',
+				config: { entity_type: 'task', action: 'created' },
+				actionPrompt: 'Draft the reply',
+				handsOffToActorId: magnus.id,
+			})
+
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Reply loop',
+				content: 'The loop replies to inbound',
+				// Deliberately reversed order so the response order proves it
+				// preserves metadata.trigger_ids rather than trigger creation
+				// order.
+				metadata: { trigger_ids: [trigB.id, trigA.id] },
+			})
+
+			const app = makeApp(actorId)
+			const res = await app.request(
+				jsonGet(`/api/loops/${loop.id}/steps`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as {
+				steps: Array<{
+					triggerId: string
+					triggerType: string | null
+					handsOffToActorId: string | null
+					handsOffToActor: { id: string; name: string | null } | null
+					escalatesToActorId: string | null
+					escalatesToActor: { id: string; name: string | null } | null
+					escalateAfterMs: number | null
+					waitingOnViewer: boolean
+					pendingCount: number
+				}>
+			}
+			expect(body.steps.map((s) => s.triggerId)).toEqual([trigB.id, trigA.id])
+			const stepA = body.steps.find((s) => s.triggerId === trigA.id)
+			expect(stepA?.triggerType).toBe('cron')
+			expect(stepA?.handsOffToActorId).toBe(quill.id)
+			expect(stepA?.handsOffToActor?.name).toBe('Quill')
+			expect(stepA?.escalatesToActorId).toBe(sebk.id)
+			expect(stepA?.escalatesToActor?.name).toBe('Sebk')
+			expect(stepA?.escalateAfterMs).toBe(12 * 60 * 60 * 1000)
+			expect(stepA?.waitingOnViewer).toBe(false)
+			expect(stepA?.pendingCount).toBe(0)
+
+			const stepB = body.steps.find((s) => s.triggerId === trigB.id)
+			expect(stepB?.handsOffToActor?.name).toBe('Magnus')
+			expect(stepB?.escalatesToActor).toBeNull()
+			expect(stepB?.escalatesToActorId).toBeNull()
+		})
+
+		it('sets waitingOnViewer=true and pendingCount from sessions in waiting_for_input status', async () => {
+			const relay = await insertActor(db, { name: 'Relay', type: 'agent' })
+			const trig = await insertTrigger(db, workspaceId, actorId, relay.id, {
+				handsOffToActorId: relay.id,
+			})
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'learning',
+				title: 'Waiting loop',
+				metadata: { trigger_ids: [trig.id] },
+			})
+			// Two sessions on this trigger currently waiting on the viewer,
+			// one completed (must not count).
+			await insertSession(db, workspaceId, relay.id, actorId, {
+				triggerId: trig.id,
+				status: 'waiting_for_input',
+			})
+			await insertSession(db, workspaceId, relay.id, actorId, {
+				triggerId: trig.id,
+				status: 'waiting_for_input',
+			})
+			await insertSession(db, workspaceId, relay.id, actorId, {
+				triggerId: trig.id,
+				status: 'completed',
+			})
+
+			const app = makeApp(actorId)
+			const res = await app.request(
+				jsonGet(`/api/loops/${loop.id}/steps`, { 'x-workspace-id': workspaceId }),
+			)
+			const body = (await res.json()) as {
+				steps: Array<{ triggerId: string; waitingOnViewer: boolean; pendingCount: number }>
+			}
+			expect(body.steps).toHaveLength(1)
+			expect(body.steps[0].waitingOnViewer).toBe(true)
+			expect(body.steps[0].pendingCount).toBe(2)
+		})
+
+		it('returns an empty spine — not a 404 — for a loop with no triggers or an unknown id', async () => {
+			const emptyLoop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'draft',
+				title: 'No steps',
+				metadata: {},
+			})
+
+			const app = makeApp(actorId)
+
+			const emptyRes = await app.request(
+				jsonGet(`/api/loops/${emptyLoop.id}/steps`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(emptyRes.status).toBe(200)
+			expect(((await emptyRes.json()) as { steps: unknown[] }).steps).toEqual([])
+
+			const unknownId = '00000000-0000-0000-0000-000000000000'
+			const unknownRes = await app.request(
+				jsonGet(`/api/loops/${unknownId}/steps`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(unknownRes.status).toBe(200)
+			expect(((await unknownRes.json()) as { steps: unknown[] }).steps).toEqual([])
+		})
 	})
 })

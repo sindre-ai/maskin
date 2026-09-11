@@ -53,6 +53,8 @@ export const queryKeys = {
 		all: (workspaceId: string) => ['loops', workspaceId] as const,
 		activity: (workspaceId: string, loopId: string) =>
 			['loops', workspaceId, 'activity', loopId] as const,
+		steps: (workspaceId: string, loopId: string) =>
+			['loops', workspaceId, 'steps', loopId] as const,
 	},
 	integrations: {
 		all: (workspaceId: string) => ['integrations', workspaceId] as const,

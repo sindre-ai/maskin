@@ -355,6 +355,19 @@ async function applyEvent(
 
 					next = { ...next, credit_balance_cents: balanceAfter }
 
+					// Persist the Stripe customer this top-up ran against when the
+					// workspace doesn't have one yet. A first-time buyer (typically a
+					// trial workspace topping up straight from the NO CREDITS prompt)
+					// arrives with `customer` unset, so Checkout mints one; without
+					// recording it here every later checkout would mint another and
+					// our customer→workspace map would drift. Deliberately additive:
+					// plan/status/period_* stay untouched on this path.
+					const topUpCustomerId =
+						typeof session.customer === 'string' ? session.customer : (session.customer?.id ?? null)
+					if (topUpCustomerId && !next.stripe_customer_id) {
+						next = { ...next, stripe_customer_id: topUpCustomerId }
+					}
+
 					const systemActorId = await getOrCreateStripeSystemActor(tx, workspaceId)
 					await tx.insert(events).values({
 						workspaceId,

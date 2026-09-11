@@ -538,3 +538,52 @@ export function trackSlackTriggerResumedFromAutoPause(p: {
 		time_since_pause_ms: p.time_since_pause_ms,
 	})
 }
+
+// Loops v4 (D6c): scroll-depth telemetry on the loop-detail vertical-story
+// spine. Fires at 25 / 50 / 75 / 100 percent as the user scrolls the flow
+// container into view — exactly once per depth per mount. Wired to the parent
+// bet's Won-condition "one-scroll read" measurement (the SHAPE flags this
+// event as load-bearing). `depth` is the four-value union rather than a raw
+// number so a typo can't invent a fifth bucket, and `loopId` is the
+// `objects.id` for taxonomy joins on the standard `entity_id` field.
+export function trackLoopsDetailFlowScrollDepth(p: {
+	depth: 25 | 50 | 75 | 100
+	loopId: string
+}): void {
+	trackEvent('loops.detail.flow_scroll_depth', {
+		depth: p.depth,
+		loopId: p.loopId,
+		entity_id: p.loopId,
+		entity_type: 'loop',
+		source: 'web',
+	})
+}
+
+// LOAD-BEARING for the Loops v4 polish bet's Won / Lost falsification metric
+// (Decide ↓ click-through ≥ 30% on sessions where the AskBanner renders). Fires
+// on the D3 AskBanner's Decide click. `loopId` and `pendingCount` are the two
+// fields the bet's PostHog query pairs the event with; camelCase kept
+// intentionally minimal here — this event has no taxonomy join outside its own
+// numerator, and the bet SHAPE names the payload as `{loopId, pendingCount}`.
+export function trackAskBannerDecideClicked(p: {
+	loopId: string
+	pendingCount: number
+}): void {
+	trackEvent('ask_banner_decide_clicked', {
+		loopId: p.loopId,
+		pendingCount: p.pendingCount,
+	})
+}
+
+// Ship-metric event for D8 of the Loops v4 UX/UI polish bet
+// (bet/d166-loops-v4-polish). Fires once per click on the "Mark read" CTA
+// inside the loop-detail TimelineTab's `NEW · {n} unread` divider.
+export function trackMarkReadClicked(p: { loop_id: string; unread_count: number }): void {
+	trackEvent('mark_read_clicked', {
+		loop_id: p.loop_id,
+		unread_count: p.unread_count,
+		entity_id: p.loop_id,
+		entity_type: 'loop',
+		source: 'web',
+	})
+}

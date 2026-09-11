@@ -19,6 +19,7 @@ import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
+import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
@@ -137,6 +138,13 @@ logger.info('Purge idempotency job started')
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
+
+// D6b — Loops v4 escalation reconciler. Runs iff BOTH `loops-v4-polish` and
+// `loops-v4-polish.step_flow` are in FF_TESTER_FEATURES; noop otherwise, so
+// unsetting the sub-flag from the env + restarting is the rollback path.
+const loopEscalationReconciler = new LoopEscalationReconciler(db)
+loopEscalationReconciler.start()
+logger.info('Loop escalation reconciler started')
 
 const orphanThreadDetector = new OrphanThreadDetector(db)
 orphanThreadDetector.start()

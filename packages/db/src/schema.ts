@@ -286,6 +286,23 @@ export const triggers = pgTable('triggers', {
 		.references(() => actors.id)
 		.notNull(),
 	enabled: boolean('enabled').notNull().default(true),
+	// Loops v4 vertical-story fields (D6a). All three nullable and dormant on
+	// this task — the reconciler (D6b) and the vertical-story renderer (D6c)
+	// wire them up in stacked follow-up PRs. `hands_off_to_actor_id` is kept
+	// explicit rather than derived from the next step's `target_actor_id` so
+	// the renderer treats HANDS OFF as a first-class row (Architect + Designer
+	// alignment 2026-09-03; SPEC Q2 Option A). `escalates_to_actor_id` +
+	// `escalate_after_ms` together define the fixed-shape escalation the D6b
+	// cron in trigger-runner scans for.
+	handsOffToActorId: uuid('hands_off_to_actor_id').references(() => actors.id),
+	escalatesToActorId: uuid('escalates_to_actor_id').references(() => actors.id),
+	escalateAfterMs: integer('escalate_after_ms'),
+	// D6b idempotency guard: the last time the escalation reconciler posted
+	// an escalation comment for this step. The reconciler skips a step whose
+	// `last_escalated_at` is >= `waitingSince` (the oldest unread event's
+	// timestamp for the hands-off actor), so a new wait spell re-arms
+	// escalation on its own — see `loop-escalation-reconciler.ts`.
+	lastEscalatedAt: timestamp('last_escalated_at', { withTimezone: true }),
 	// Per-row marker keys for managed-package installs; nullable everywhere.
 	metadata: jsonb('metadata'),
 	createdBy: uuid('created_by')

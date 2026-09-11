@@ -37,7 +37,9 @@ interface CreditCheckoutInputs {
 	successUrl: string
 	cancelUrl: string
 	/** Always required — only pro/team workspaces with an active subscription (and thus a Stripe customer) reach this. */
-	existingCustomerId: string
+	/** Undefined for a first-time buyer — Stripe Checkout mints the customer
+	 *  and the webhook persists the id. */
+	existingCustomerId?: string | null
 }
 
 let cachedClient: Stripe | null = null
@@ -189,7 +191,7 @@ export async function createCreditCheckoutSession(
 ): Promise<Stripe.Checkout.Session> {
 	const session = await stripe.checkout.sessions.create({
 		mode: 'payment',
-		customer: inputs.existingCustomerId,
+		customer: inputs.existingCustomerId ?? undefined,
 		client_reference_id: inputs.workspaceId,
 		success_url: inputs.successUrl,
 		cancel_url: inputs.cancelUrl,
