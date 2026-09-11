@@ -1,6 +1,5 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { and, eq, isNull } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 import {

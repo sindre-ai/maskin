@@ -1,8 +1,8 @@
 import type { Database, Transaction } from '@maskin/db'
 import {
+	events,
 	actors,
 	agentSkills,
-	events,
 	installedLoops,
 	marketplaceAgents,
 	marketplaceInstallations,
@@ -10,7 +10,7 @@ import {
 	triggers,
 	workspaceSkills,
 } from '@maskin/db/schema'
-import { and, eq, inArray, ne, sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 
 /**
@@ -37,19 +37,19 @@ export type UninstallResult =
 	| {
 			status: 'uninstalled'
 			installation: typeof marketplaceInstallations.$inferSelect
-	}
+	  }
 	| {
 			status: 'not_found'
-	}
+	  }
 	| {
 			status: 'already_uninstalled'
-	}
+	  }
 	| {
 			status: 'not_owned'
-	}
+	  }
 	| {
 			status: 'mcp_registry_unavailable'
-	}
+	  }
 
 export interface UninstallInput {
 	installationId: string
@@ -83,6 +83,7 @@ export async function uninstallMarketplaceItem(
 			.set({ uninstalledAt: new Date() })
 			.where(eq(marketplaceInstallations.id, row.id))
 			.returning()
+		if (!soft) throw new Error('marketplace_installations soft-delete returned no row')
 		return soft
 	})
 
@@ -123,7 +124,10 @@ async function teardownWorkspaceRows(
 		// actors out but the actor row and its historical graph survive.
 		await tx
 			.update(actors)
-			.set({ agentState: 'idle', metadata: sql`COALESCE(${actors.metadata}, '{}'::jsonb) || '{"status":"archived"}'::jsonb` })
+			.set({
+				agentState: 'idle',
+				metadata: sql`COALESCE(${actors.metadata}, '{}'::jsonb) || '{"status":"archived"}'::jsonb`,
+			})
 			.where(eq(actors.id, row.actorId))
 		// Note: actors table has no `status` column today; the archived flag
 		// lives on metadata. PR #1's schema extension adds a proper `status`

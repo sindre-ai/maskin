@@ -251,6 +251,7 @@ async function materializeLoopInstall(
 			installedVersion: loop.version,
 		})
 		.returning()
+	if (!installedLoop) throw new Error('installed_loops insert returned no row')
 
 	const [installation] = await tx
 		.insert(marketplaceInstallations)
@@ -265,6 +266,7 @@ async function materializeLoopInstall(
 			installedByActorId: input.installedByActorId,
 		})
 		.returning()
+	if (!installation) throw new Error('marketplace_installations insert returned no row')
 
 	return installation
 }
@@ -286,6 +288,7 @@ async function materializeAgentInstall(
 			metadata: { installed_from_marketplace: agent.slug },
 		})
 		.returning()
+	if (!actor) throw new Error('actors insert returned no row')
 
 	// Bind the actor as a workspace member so it is discoverable via
 	// workspace-scoped listings. Role `member` matches the pattern used by
@@ -340,6 +343,7 @@ async function materializeAgentInstall(
 				metadata: { installed_from_marketplace_agent: agent.slug },
 			})
 			.returning()
+		if (!trigger) throw new Error('triggers insert returned no row')
 		triggerIds.push(trigger.id)
 	}
 
@@ -356,6 +360,7 @@ async function materializeAgentInstall(
 			installedByActorId: input.installedByActorId,
 		})
 		.returning()
+	if (!installation) throw new Error('marketplace_installations insert returned no row')
 
 	return installation
 }
@@ -378,6 +383,7 @@ async function materializeSkillInstall(
 			metadata: { installed_from_marketplace: skill.slug },
 		})
 		.returning()
+	if (!workspaceSkill) throw new Error('workspace_skills insert returned no row')
 
 	const [installation] = await tx
 		.insert(marketplaceInstallations)
@@ -392,6 +398,7 @@ async function materializeSkillInstall(
 			installedByActorId: input.installedByActorId,
 		})
 		.returning()
+	if (!installation) throw new Error('marketplace_installations insert returned no row')
 
 	return installation
 }

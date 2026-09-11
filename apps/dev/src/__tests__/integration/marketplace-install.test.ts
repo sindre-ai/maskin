@@ -7,8 +7,8 @@ import {
 	workspaceSkills,
 } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
-import { insertActor, insertWorkspace } from '../factories'
 import { installMarketplaceItem } from '../../services/marketplace-install'
+import { insertActor, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 /**
@@ -18,7 +18,9 @@ import { db, getTestActorId } from './global-setup'
  * covered separately by marketplace-flow.test.ts.
  */
 
-async function insertMarketplaceAgent(overrides: Partial<typeof marketplaceAgents.$inferInsert> = {}) {
+async function insertMarketplaceAgent(
+	overrides: Partial<typeof marketplaceAgents.$inferInsert> = {},
+) {
 	const [row] = await db
 		.insert(marketplaceAgents)
 		.values({
@@ -34,7 +36,9 @@ async function insertMarketplaceAgent(overrides: Partial<typeof marketplaceAgent
 	return row
 }
 
-async function insertMarketplaceSkill(overrides: Partial<typeof marketplaceSkills.$inferInsert> = {}) {
+async function insertMarketplaceSkill(
+	overrides: Partial<typeof marketplaceSkills.$inferInsert> = {},
+) {
 	const [row] = await db
 		.insert(marketplaceSkills)
 		.values({
