@@ -213,7 +213,11 @@ describe('POST /api/billing/checkout', () => {
 })
 
 describe('POST /api/billing/credits/checkout', () => {
-	it('returns 400 when the workspace plan is not pro/team', async () => {
+	it('lets a trial workspace top up — every maskin plan may buy credits', async () => {
+		// Was 400 ("not eligible"): the gate required pro/team, so the NO
+		// CREDITS prompt on a trial workspace led to a dead end — it offered a
+		// top-up the backend then refused. `canUseCreditBalance` was widened to
+		// match, so a trial can spend what it buys.
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.select = [
@@ -221,6 +225,78 @@ describe('POST /api/billing/credits/checkout', () => {
 				id: workspaceId,
 				...OWNER_CALLER,
 				settings: { billing: { plan: 'trial', status: 'active' } },
+			},
+		]
+		vi.mocked(createCreditCheckoutSession).mockResolvedValue({
+			id: 'cs_credit_trial',
+			url: 'https://checkout.stripe.com/c/cs_credit_trial',
+		} as Awaited<ReturnType<typeof createCreditCheckoutSession>>)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/credits/checkout',
+				{
+					amount_usd_cents: 2_500,
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(200)
+		expect(createCreditCheckoutSession).toHaveBeenCalled()
+	})
+
+	it('lets a first-time buyer through with no stripe_customer_id on file', async () => {
+		// Was 400. A workspace that has never paid has no customer id by
+		// definition, and Stripe Checkout mints one when `customer` is
+		// undefined — so requiring it up front made the first purchase (the
+		// only one a trial workspace can make) impossible.
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				...OWNER_CALLER,
+				settings: { billing: { plan: 'pro', status: 'active' } },
+			},
+		]
+		vi.mocked(createCreditCheckoutSession).mockResolvedValue({
+			id: 'cs_credit_first',
+			url: 'https://checkout.stripe.com/c/cs_credit_first',
+		} as Awaited<ReturnType<typeof createCreditCheckoutSession>>)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/credits/checkout',
+				{
+					amount_usd_cents: 2_500,
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(200)
+		expect(vi.mocked(createCreditCheckoutSession).mock.calls[0]?.[1]).toMatchObject({
+			existingCustomerId: undefined,
+		})
+	})
+
+	it('still returns 400 for a past_due workspace', async () => {
+		// Unchanged and deliberate: a workspace that cannot be billed for its
+		// base plan should not be taking on more spend. Matches the spend gate.
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				...OWNER_CALLER,
+				settings: {
+					billing: { plan: 'pro', status: 'past_due', stripe_customer_id: 'cus_x' },
+				},
 			},
 		]
 
@@ -238,32 +314,6 @@ describe('POST /api/billing/credits/checkout', () => {
 		)
 		expect(res.status).toBe(400)
 		expect(createCreditCheckoutSession).not.toHaveBeenCalled()
-	})
-
-	it('returns 400 when the workspace has no stripe_customer_id on file', async () => {
-		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
-		const workspaceId = randomUUID()
-		mockResults.select = [
-			{
-				id: workspaceId,
-				...OWNER_CALLER,
-				settings: { billing: { plan: 'pro', status: 'active' } },
-			},
-		]
-
-		const res = await app.request(
-			jsonRequest(
-				'POST',
-				'/api/billing/credits/checkout',
-				{
-					amount_usd_cents: 2_500,
-					success_url: 'https://app.test/success',
-					cancel_url: 'https://app.test/cancel',
-				},
-				{ 'X-Workspace-Id': workspaceId },
-			),
-		)
-		expect(res.status).toBe(400)
 	})
 
 	it('returns 400 when the amount is below the minimum', async () => {
