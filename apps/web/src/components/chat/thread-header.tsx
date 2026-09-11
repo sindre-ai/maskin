@@ -1,29 +1,57 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Button } from '@/components/ui/button'
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useConversation } from '@/hooks/use-conversation'
+import {
+	flattenMessagesOldestFirst,
+	useConversation,
+	useConversationMessages,
+} from '@/hooks/use-conversation'
 import { useUpdateConversation, useUpdateConversationMe } from '@/hooks/use-conversations'
+import { useLoop } from '@/hooks/use-loops'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { trackNavItemClicked } from '@/lib/analytics'
 import { cn } from '@/lib/cn'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import {
 	Archive,
 	ArchiveRestore,
 	ArrowLeft,
+	Copy,
+	EyeOff,
 	Maximize2,
 	Minimize2,
+	MoreHorizontal,
 	Pin,
 	Plus,
 	X,
 } from 'lucide-react'
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { ParticipantsPopover } from './participants-popover'
 
 interface ThreadHeaderProps {
 	workspaceId: string
 	conversationId: string
 }
+
+const LOOP_CHIP_MAX = 24
+
+// Mark-as-unread is fully wired client-side (handler + hook + id-0 onMutate
+// guard) but the API rejects `last_read_message_id: 0` today — the Zod schema
+// at packages/shared/src/schemas/conversations.ts:239 is
+// `z.number().int().positive()`, so every real click 400s at the boundary.
+// Follow-up signal for the backend change (schema + route branch + integration
+// test) is filed at
+// https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/1ef70324-6601-4b96-986b-7bac00404dec.
+// When it lands, flip this to `true` — no other change needed.
+const MARK_UNREAD_ENABLED = false
 
 /**
  * Two stacked rows (mockup 559–612): the title row carries navigation and
@@ -33,11 +61,14 @@ interface ThreadHeaderProps {
  */
 export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps) {
 	const { data: conversation } = useConversation(conversationId, workspaceId)
+	const messagesQuery = useConversationMessages(conversationId, workspaceId)
 	const isMobile = useIsMobile()
 	const navigate = useNavigate()
 	const { wide } = useSearch({ from: '/_authed/$workspaceId/chats' })
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const updateConversation = useUpdateConversation(workspaceId)
+	const loopId = conversation?.loop_id ?? null
+	const { data: loop } = useLoop(loopId ?? '', workspaceId)
 	const [isEditingTitle, setIsEditingTitle] = useState(false)
 	const [titleDraft, setTitleDraft] = useState('')
 
@@ -66,6 +97,43 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 		updateConversation.mutate({ id: conversationId, data: { title: next } })
 	}
 
+	const handleLoopChipClick = () => {
+		if (!loopId) return
+		trackNavItemClicked({ item_key: 'loop_chip', source: 'top-nav' })
+		navigate({
+			to: '/$workspaceId/loops/$loopId',
+			params: { workspaceId, loopId },
+		})
+	}
+
+	const handleCopyConversation = async () => {
+		trackNavItemClicked({ item_key: 'copy_conversation', source: 'top-nav' })
+		const messages = flattenMessagesOldestFirst(messagesQuery.data).filter(
+			// User + agent turns only — system rows (resume banners, activity, etc.)
+			// aren't part of the copied transcript. `kind === 'message'` is the
+			// server-side guard on chat turns.
+			(m) => m.kind === 'message' && (m.actorType === 'human' || m.actorType === 'agent'),
+		)
+		const text = messages.map((m) => `${m.actorName}: ${m.content}`).join('\n\n')
+		try {
+			await navigator.clipboard.writeText(text)
+			toast.success(`Copied ${messages.length} messages`)
+		} catch {
+			toast.error('Failed to copy conversation')
+		}
+	}
+
+	const handleMarkUnread = () => {
+		trackNavItemClicked({ item_key: 'mark_unread', source: 'top-nav' })
+		updateMe.mutate(
+			{ id: conversationId, data: { last_read_message_id: 0 } },
+			{
+				onSuccess: () => toast.success('Marked as unread'),
+				onError: () => toast.error('Failed to mark as unread'),
+			},
+		)
+	}
+
 	if (!conversation) {
 		return (
 			<div className="flex h-12 shrink-0 items-center border-b border-border px-[var(--chat-gut)]" />
@@ -75,6 +143,12 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 	const participants = conversation.participants
 	const visibleAvatars = participants.slice(0, 3)
 	const overflowCount = participants.length - visibleAvatars.length
+	const loopName = loop?.name ?? null
+	const loopLabel = loopName
+		? loopName.length > LOOP_CHIP_MAX
+			? `${loopName.slice(0, LOOP_CHIP_MAX - 1)}…`
+			: loopName
+		: null
 
 	return (
 		<div className="flex shrink-0 flex-col gap-1 border-b border-border px-[var(--chat-gut)] pt-2 pb-1.5">
@@ -197,7 +271,86 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 						<Plus size={11} className="text-muted-foreground" aria-hidden />
 					</button>
 				</ParticipantsPopover>
+				{loopId && loopLabel ? (
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<button
+								type="button"
+								onClick={handleLoopChipClick}
+								aria-label={`Loop: ${loopName ?? loopLabel}`}
+								className="inline-flex h-[22px] shrink-0 items-center rounded-full border border-border bg-card px-2 text-[11px] font-semibold text-foreground hover:border-[color:var(--border-strong)] hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							>
+								{loopLabel}
+							</button>
+						</TooltipTrigger>
+						<TooltipContent>{loopName ?? loopLabel}</TooltipContent>
+					</Tooltip>
+				) : null}
 				<span className="ml-auto" />
+				{/* At ≤640px, Copy · Pin · Mark-unread · Archive collapse into a
+				    ⋯ menu; Focus + Close stay inline (v4 spec). */}
+				<DropdownMenu>
+					<DropdownMenuTrigger asChild>
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							className="h-6 w-6 shrink-0 min-[641px]:hidden"
+							aria-label="More actions"
+						>
+							<MoreHorizontal size={14} />
+						</Button>
+					</DropdownMenuTrigger>
+					<DropdownMenuContent align="end">
+						<DropdownMenuItem onSelect={handleCopyConversation}>
+							<Copy size={14} />
+							<span>Copy whole conversation</span>
+						</DropdownMenuItem>
+						<DropdownMenuItem
+							onSelect={() =>
+								updateMe.mutate({
+									id: conversationId,
+									data: { pinned: !conversation.pinned },
+								})
+							}
+						>
+							<Pin size={14} fill={conversation.pinned ? 'currentColor' : 'none'} />
+							<span>{conversation.pinned ? 'Unpin' : 'Pin'}</span>
+						</DropdownMenuItem>
+						{MARK_UNREAD_ENABLED ? (
+							<DropdownMenuItem onSelect={handleMarkUnread}>
+								<EyeOff size={14} />
+								<span>Mark as unread</span>
+							</DropdownMenuItem>
+						) : null}
+						<DropdownMenuItem
+							onSelect={() =>
+								updateMe.mutate({
+									id: conversationId,
+									data: { archived: !conversation.archived },
+								})
+							}
+						>
+							{conversation.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
+							<span>{conversation.archived ? 'Unarchive' : 'Archive'}</span>
+						</DropdownMenuItem>
+					</DropdownMenuContent>
+				</DropdownMenu>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							className="hidden h-6 w-6 shrink-0 min-[641px]:inline-flex"
+							onClick={handleCopyConversation}
+							aria-label="Copy whole conversation"
+						>
+							<Copy size={14} />
+						</Button>
+					</TooltipTrigger>
+					<TooltipContent>Copy whole conversation</TooltipContent>
+				</Tooltip>
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<Button
@@ -205,7 +358,7 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 							variant="ghost"
 							size="icon"
 							className={cn(
-								'h-6 w-6 shrink-0',
+								'hidden h-6 w-6 shrink-0 min-[641px]:inline-flex',
 								// Pinned is a *state*, so it holds an indigo plate rather
 								// than swapping to a different glyph (mockup 7804–7806).
 								// PinOff read as "this button unpins" — i.e. as the action,
@@ -224,13 +377,30 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 					</TooltipTrigger>
 					<TooltipContent>{conversation.pinned ? 'Unpin' : 'Pin'}</TooltipContent>
 				</Tooltip>
+				{MARK_UNREAD_ENABLED ? (
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon"
+								className="hidden h-6 w-6 shrink-0 min-[641px]:inline-flex"
+								onClick={handleMarkUnread}
+								aria-label="Mark as unread"
+							>
+								<EyeOff size={14} />
+							</Button>
+						</TooltipTrigger>
+						<TooltipContent>Mark as unread</TooltipContent>
+					</Tooltip>
+				) : null}
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<Button
 							type="button"
 							variant="ghost"
 							size="icon"
-							className="h-6 w-6 shrink-0"
+							className="hidden h-6 w-6 shrink-0 min-[641px]:inline-flex"
 							onClick={() =>
 								updateMe.mutate({ id: conversationId, data: { archived: !conversation.archived } })
 							}
