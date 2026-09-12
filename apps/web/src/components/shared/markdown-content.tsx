@@ -1,5 +1,6 @@
 import { CommentVisual, isVisualLanguage } from '@/components/activity/comment-visual'
 import { Textarea } from '@/components/ui/textarea'
+import { useFile } from '@/hooks/use-files'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { splitMarkdownMarkers } from '@/lib/markdown-markers'
@@ -18,6 +19,74 @@ import {
 } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import { MentionedText } from './mentioned-text'
+
+const UUID_RE_SRC = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+const FILE_VIEWER_PATH_RE = new RegExp(`^/(${UUID_RE_SRC})/files/(${UUID_RE_SRC})/?$`, 'i')
+
+/**
+ * Extracts workspace + file ids from a maskin file viewer URL like
+ * `https://maskin.io/<workspaceId>/files/<fileId>`. The viewer URL is what
+ * `fileViewerUrl()` mints and what agents paste into markdown descriptions —
+ * but it points at an HTML page, not the image bytes, so `<img src>` for it
+ * loads an HTML document and renders as broken. Callers use this to detect
+ * and swap the URL for a data-URI derived from the file's own base64 content.
+ */
+export function parseFileViewerUrl(
+	src: string | undefined,
+): { workspaceId: string; fileId: string } | null {
+	if (!src) return null
+	let pathname: string
+	try {
+		pathname = new URL(src, 'http://x').pathname
+	} catch {
+		return null
+	}
+	const match = FILE_VIEWER_PATH_RE.exec(pathname)
+	if (!match) return null
+	return { workspaceId: match[1].toLowerCase(), fileId: match[2].toLowerCase() }
+}
+
+// MIME types whose bytes must never be rendered as `<img src>` — same closed
+// list as `apps/web/src/components/files/file-body.tsx`'s `UNSAFE_INLINE_MIME`.
+// SVG in particular can carry inline scripts and event handlers.
+const UNSAFE_IMG_MIME = new Set([
+	'text/html',
+	'application/xhtml+xml',
+	'image/svg+xml',
+	'application/javascript',
+	'text/javascript',
+	'application/ecmascript',
+	'text/ecmascript',
+])
+
+function FileViewerImage({
+	workspaceId,
+	fileId,
+	alt,
+	title,
+}: {
+	workspaceId: string
+	fileId: string
+	alt?: string
+	title?: string
+}) {
+	const { data, isError } = useFile(workspaceId, fileId)
+	if (
+		isError ||
+		(data && (!data.mimeType.startsWith('image/') || UNSAFE_IMG_MIME.has(data.mimeType)))
+	) {
+		// Not an inline-safe image (a PDF, an SVG, a fetch failure): fall back
+		// to a link so the URL is still reachable rather than a silent broken img.
+		return (
+			<a href={`/${workspaceId}/files/${fileId}`} title={title}>
+				{alt || 'file'}
+			</a>
+		)
+	}
+	if (!data) return <img alt={alt ?? ''} title={title} />
+	const b64 = data.encoding === 'base64' ? data.content : btoa(data.content)
+	return <img src={`data:${data.mimeType};base64,${b64}`} alt={alt ?? ''} title={title} />
+}
 
 function wrapWithMentions(
 	children: ReactNode,
@@ -571,10 +640,30 @@ export function MarkdownContent({
 			return <pre {...rest}>{children}</pre>
 		}
 
-		if (!mentionActors) return { code, pre }
+		// `<img src>` to a maskin file viewer URL (`/<workspaceId>/files/<fileId>`)
+		// loads an HTML viewer page as bytes and renders as broken. Swap it for a
+		// component that fetches the file and inlines its bytes as a data-URI —
+		// mirrors `apps/web/src/components/files/file-body.tsx`'s inline-image path.
+		const img: Components['img'] = ({ src, alt, title }) => {
+			const parsed = parseFileViewerUrl(typeof src === 'string' ? src : undefined)
+			if (parsed) {
+				return (
+					<FileViewerImage
+						workspaceId={parsed.workspaceId}
+						fileId={parsed.fileId}
+						alt={alt}
+						title={title}
+					/>
+				)
+			}
+			return <img src={src} alt={alt ?? ''} title={title} />
+		}
+
+		if (!mentionActors) return { code, img, pre }
 		const wrap = (children: ReactNode) => wrapWithMentions(children, mentionActors, onMentionClick)
 		return {
 			code,
+			img,
 			pre,
 			p: ({ children }) => <p>{wrap(children)}</p>,
 			li: ({ children }) => <li>{wrap(children)}</li>,
