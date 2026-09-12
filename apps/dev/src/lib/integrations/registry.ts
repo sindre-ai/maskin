@@ -17,6 +17,7 @@ import {
 } from './providers/linear/config'
 import { linearEventNormalizer } from './providers/linear/webhooks'
 import { config as linkedinConfig } from './providers/linkedin-unipile/config'
+import { deleteUnipileAccountOnDisconnect } from './providers/linkedin-unipile/disconnect'
 import { config as posthogConfig } from './providers/posthog/config'
 import { config as skjaldConfig } from './providers/skjald/config'
 import { reapSlackUserLinks } from './providers/slack/account-link'
@@ -120,6 +121,11 @@ providers.set('ubersuggest', {
 // URL and fail.
 providers.set('linkedin-unipile', {
 	config: linkedinConfig,
+	// P3-B: symmetric disconnect. On disconnect, ask Unipile to delete the
+	// upstream account (best-effort; 404/5xx never block the local disconnect).
+	// Closes the recurring-cost leak from insight (3) "Unipile pile-up on
+	// disconnect". Same helper is exported for P3-H (reconnect-orphan cleanup).
+	preDisconnect: deleteUnipileAccountOnDisconnect,
 })
 
 // ── Public API ─────────────────────────────────────────────────────────────

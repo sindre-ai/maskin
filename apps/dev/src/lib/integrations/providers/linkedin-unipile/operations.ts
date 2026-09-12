@@ -9,6 +9,7 @@ import { decrypt } from '../../../crypto'
 import { logger } from '../../../logger'
 import { isWorkspaceMember } from '../../../workspace-auth'
 import { getIntegrationCredential } from '../../lookup'
+import { deleteUnipileAccountBestEffort } from './disconnect'
 import {
 	LinkedInIntegrationError,
 	PageAdminRevokedError,
@@ -325,9 +326,39 @@ export async function withPageAdminRevokeSafetyNet<T>(
 	// must NOT mask the 403 the agent loop needs to see. Errors are logged
 	// inside handleUnipileAccountReconnect / reEnumerateAndSyncLinkedInInstances,
 	// so we only guard the top-level call.
+	//
+	// (2a) P3-B: if the re-enumeration leaves this credential with NO usable
+	// identities upstream (personal profile + every admined page revoked), the
+	// Unipile account is orphaned — call `deleteAccount` best-effort to close
+	// the recurring-cost leak, same semantics as the `preDisconnect` hook.
+	// Deliberately conditional on a zero-identity post-diff, NOT on every
+	// PAGE_ADMIN_REVOKED — a single revoked page leaves the personal identity
+	// (and any sibling pages) still valid, so deleting the whole Unipile
+	// account there would kill the messaging surface too. See PR body's
+	// "R11-C interpretation" risk note.
 	try {
 		const client = buildLinkedInClientForWebhook()
-		await handleUnipileAccountReconnect(db, client, cfg.unipileAccountId)
+		const summary = await handleUnipileAccountReconnect(db, client, cfg.unipileAccountId)
+		// Only delete when EVERY applied row (a) succeeded on the diff (no
+		// `error`), AND (b) reports zero surviving identities (registered +
+		// unchanged both empty). An enumeration failure or an unreadable
+		// credential means we can't confirm the account is orphaned — leaving
+		// it in place is the safe direction. This is the "conditional" reading
+		// of the P3-B "R11-C PAGE_ADMIN_REVOKED calls deleteAccount" AC (see
+		// PR body's "R11-C interpretation" risk note).
+		const canConfirmOrphan =
+			summary.appliedTo.length > 0 &&
+			summary.appliedTo.every((row) => {
+				if ('error' in row.diff) return false
+				return row.diff.registered.length + row.diff.unchanged.length === 0
+			})
+		if (canConfirmOrphan) {
+			await deleteUnipileAccountBestEffort(client, cfg.unipileAccountId, {
+				integrationId: cfg.integrationId,
+				workspaceId: cfg.workspaceId,
+				reason: 'disconnect',
+			})
+		}
 	} catch (err) {
 		logger.warn('linkedin-unipile 403 safety-net: re-enumeration failed', {
 			integrationId: cfg.integrationId,

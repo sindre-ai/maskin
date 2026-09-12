@@ -1554,6 +1554,7 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 				integrationId: existing.id,
 				workspaceId: existing.workspaceId,
 				credentials,
+				externalId: existing.externalId,
 			})
 		}
 	} catch (err) {
