@@ -2,7 +2,6 @@ import { RelativeTime } from '@/components/shared/relative-time'
 import { useActors } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
-import { cn } from '@/lib/cn'
 import { isTriggerChange } from '@/lib/triggers'
 import { formatEventDescription } from '@maskin/shared'
 import { useMemo } from 'react'
@@ -45,8 +44,8 @@ export function TriggerHistory({
 		() =>
 			[...(events ?? [])]
 				.filter((e) => isTriggerChange(e, triggerId))
-				.sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''))
-				.slice(-MAX_CHANGES),
+				.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
+				.slice(0, MAX_CHANGES),
 		[events, triggerId],
 	)
 
@@ -73,25 +72,18 @@ export function TriggerHistory({
 			{changes.length > 0 && (
 				<section className="mt-6">
 					<h2 className="eyebrow">CHANGES</h2>
-					<ul className="mt-3 flex flex-col gap-2.5">
+					<ul className="mt-3 flex flex-col gap-2">
 						{changes.map((event) => {
 							const actor = actorsById.get(event.actorId)
-							const isHuman = actor?.type === 'human'
 							return (
-								<li
-									key={event.id}
-									className={cn('flex', isHuman ? 'justify-end' : 'justify-start')}
-								>
-									<p
-										className={cn(
-											'max-w-[85%] rounded-2xl border px-3.5 py-2.5 text-[13px] leading-relaxed',
-											isHuman
-												? 'border-primary bg-primary text-primary-foreground'
-												: 'border-border bg-card text-foreground',
-										)}
-									>
+								<li key={event.id} className="flex items-baseline gap-3">
+									<span className="w-[38px] shrink-0 font-mono text-[9.5px] font-semibold tracking-[0.05em] text-muted-foreground">
+										{event.createdAt ? <RelativeTime date={event.createdAt} /> : '—'}
+									</span>
+									<span className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
+										{actor && <span className="font-medium text-foreground">{actor.name} </span>}
 										{formatEventDescription(event, { actorsById })}
-									</p>
+									</span>
 								</li>
 							)
 						})}
