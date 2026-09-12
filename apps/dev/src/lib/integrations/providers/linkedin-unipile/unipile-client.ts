@@ -312,6 +312,37 @@ export type LinkedInCountCommentsQuery = {
 	post_id: string
 }
 
+/**
+ * `DELETE /v2/accounts/{account_id}` — Unipile's account-level delete
+ * (P3-B). Payload is the Unipile-issued account id (e.g. `acc_01m2abxf…`),
+ * NOT the LinkedIn public slug in `integrations.unipile_acc_slug`.
+ *
+ * The route is NOT LinkedIn-scoped — it lives at the top-level `/v2/accounts`
+ * surface and hangs off every connected provider (LinkedIn, Gmail, WhatsApp,
+ * …). Grouped here because the LinkedIn-unipile provider is the only current
+ * caller and the client is already the single place that owns the Unipile v2
+ * wire shape; a future non-LinkedIn provider that needs the same call points
+ * at the same seam rather than re-implementing it.
+ *
+ * Best-effort by design: the caller treats 404 (already deleted upstream) as
+ * success and every other non-2xx as a log-and-continue so the local
+ * disconnect never blocks on Unipile's response. See
+ * `preDisconnect` in the linkedin-unipile registry entry.
+ */
+export type LinkedInDeleteAccountPayload = {
+	account_id: string
+}
+
+/**
+ * Response envelope Unipile sends on a successful account delete:
+ *   `{ object: 'AccountDeleted' }` (200)
+ * The object shape is documented; fields are optional so a tolerated body
+ * drift ('object' missing) still parses without turning a 200 into an error.
+ */
+export type LinkedInDeleteAccountResponse = {
+	object?: string
+}
+
 export interface LinkedInClient {
 	sendMessage(
 		payload: LinkedInSendMessagePayload,
@@ -365,6 +396,10 @@ export interface LinkedInClient {
 	deletePost(
 		payload: LinkedInDeletePostPayload,
 	): Promise<LinkedInHttpResult<Record<string, unknown>>>
+	// P3-B symmetric-disconnect + P3-H reconnect-orphan cleanup.
+	deleteAccount(
+		payload: LinkedInDeleteAccountPayload,
+	): Promise<LinkedInHttpResult<LinkedInDeleteAccountResponse | Record<string, unknown>>>
 }
 
 /**
@@ -630,6 +665,17 @@ export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): Li
 			const acc = encodeURIComponent(payload.account_id)
 			const post = encodeURIComponent(payload.post_id)
 			return call('DELETE', `/v2/${acc}/posts/${post}`)
+		},
+		deleteAccount(payload) {
+			// DELETE /v2/accounts/{account_id}. Unipile-level (not LinkedIn-
+			// scoped): the plural `accounts` segment sits at the v2 root, unlike
+			// every other method here whose path starts with the account id.
+			// Verified against api.unipile.com/v2/docs/json 2026-09-12
+			// (operationId: `removeAccount`, pattern `^acc_(.*)$`). Response
+			// envelope is `{ object: 'AccountDeleted' }` on 200; 404 is documented
+			// as "Account not found" and the caller treats it as success (already
+			// deleted upstream).
+			return call('DELETE', `/v2/accounts/${encodeURIComponent(payload.account_id)}`)
 		},
 	}
 }

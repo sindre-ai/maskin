@@ -138,6 +138,7 @@ function makeStubClient() {
 			// Live LinkedIn returns 204 no-content on success.
 			return buildResp(kind, 204, {})
 		},
+		deleteAccount: vi.fn(),
 	}
 
 	return {
