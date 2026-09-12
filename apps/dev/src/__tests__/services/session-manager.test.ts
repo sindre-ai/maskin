@@ -1654,6 +1654,115 @@ describe('SessionManager', () => {
 			})
 		})
 
+		describe('linkedin-unipile auto-inject — envKey-independent server', () => {
+			// The linkedin-unipile provider's stored credential blob is `{ account_id }`
+			// with no accessToken; tokenManager.getValidToken throws `has no access
+			// token` on that shape. Because its auto-injected HTTP MCP server
+			// authenticates on `${MASKIN_API_KEY}` and never references
+			// `${LINKEDIN_UNIPILE_TOKEN}`, session-manager must still inject the
+			// server without a resolved per-provider token. P3-F fix.
+			const linkedinProviderConfig = {
+				config: {
+					name: 'linkedin-unipile',
+					mcp: {
+						envKey: 'LINKEDIN_UNIPILE_TOKEN',
+						autoInject: true,
+						server: {
+							type: 'http' as const,
+							url: '${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp',
+							headers: {
+								Authorization: 'Bearer ${MASKIN_API_KEY}',
+								'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+							},
+						},
+					},
+				},
+			}
+
+			it('auto-injects the linkedin-unipile MCP server even when getValidToken throws (no accessToken in credentials)', async () => {
+				const integration = buildIntegration({
+					provider: 'linkedin-unipile',
+					externalId: 'unipile-acc-123',
+				})
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(linkedinProviderConfig as never)
+				// token-manager.ts L89 throws exactly this when credentials.accessToken
+				// is missing on a non-customAuth, non-api_key provider.
+				mockGetValidToken.mockRejectedValueOnce(
+					new Error(`Integration ${integration.id} has no access token`),
+				)
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+
+				// No per-provider token env var set — none exists to inject
+				expect(createArgs.env.LINKEDIN_UNIPILE_TOKEN).toBeUndefined()
+
+				// But the auto-injected MCP server IS present, because its Authorization
+				// header uses ${MASKIN_API_KEY} not ${LINKEDIN_UNIPILE_TOKEN}
+				expect(createArgs.env.MCP_SERVERS_JSON).toBeDefined()
+				const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+					mcpServers: Record<string, { type: string; url: string; headers: Record<string, string> }>
+				}
+				expect(parsed.mcpServers['integration-linkedin-unipile']).toEqual({
+					type: 'http',
+					url: '${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp',
+					headers: {
+						Authorization: 'Bearer ${MASKIN_API_KEY}',
+						'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+					},
+				})
+			})
+
+			it('resolves the token when the server spec DOES reference the envKey (e.g. PostHog Bearer ${POSTHOG_TOKEN}) and skips on failure', async () => {
+				// Regression guard: a provider whose server template consumes envKey
+				// still needs the token — a failure to resolve must skip the server.
+				const posthogProviderConfig = {
+					config: {
+						name: 'posthog',
+						mcp: {
+							envKey: 'POSTHOG_TOKEN',
+							autoInject: true,
+							server: {
+								type: 'http' as const,
+								url: 'https://mcp.posthog.com/mcp',
+								headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
+							},
+						},
+					},
+				}
+				const integration = buildIntegration({ provider: 'posthog' })
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(posthogProviderConfig as never)
+				mockGetValidToken.mockRejectedValueOnce(new Error('boom'))
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+
+				expect(createArgs.env.POSTHOG_TOKEN).toBeUndefined()
+				const mcpKeys = createArgs.env.MCP_SERVERS_JSON
+					? Object.keys(
+							(
+								JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+									mcpServers: Record<string, unknown>
+								}
+							).mcpServers,
+						)
+					: []
+				expect(mcpKeys).not.toContain('integration-posthog')
+			})
+		})
+
 		it('passes AGENT_MCP_JSON and GITHUB_TOKEN_* together so envsubst can resolve the token reference', async () => {
 			const integration = buildIntegration({
 				provider: 'github',
