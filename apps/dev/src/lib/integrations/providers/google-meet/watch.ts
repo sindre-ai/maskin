@@ -13,7 +13,8 @@ import type {
 	WebhookFanOutContext,
 } from '../../types'
 import { callGoogleApi } from './client'
-import { classifyGoogleApiError, MeetToolError } from './errors'
+import { MeetToolError, classifyGoogleApiError } from './errors'
+import { synthesizeMeetOnlyEvent } from './meet-only-event-mapper'
 import {
 	attachTranscriptFile,
 	ensureMeetMeetingFields,
@@ -350,9 +351,7 @@ interface FanOutPayload {
  * event type and a resource reference; we fetch full artefacts under the
  * host's token below.
  */
-export function parseMeetFanOutPayload(
-	messageData: Record<string, unknown>,
-): FanOutPayload | null {
+export function parseMeetFanOutPayload(messageData: Record<string, unknown>): FanOutPayload | null {
 	const eventType = typeof messageData.eventType === 'string' ? messageData.eventType : undefined
 	if (!eventType) return null
 	const resource = messageData.resource as Record<string, unknown> | undefined
@@ -435,8 +434,7 @@ export async function fanOutMeetEvent(ctx: WebhookFanOutContext): Promise<Normal
 		await writeMeetingMetadata(db, meetingId, {
 			meet_conference_ended_at: new Date().toISOString(),
 			artefact_state: 'pending',
-			google_meet_conference_record_name:
-				parsed.conferenceRecordName ?? undefined,
+			google_meet_conference_record_name: parsed.conferenceRecordName ?? undefined,
 			artefact_last_polled_at: new Date().toISOString(),
 		})
 		emitted.push({
@@ -589,6 +587,52 @@ async function handleTranscriptReady(
 	} catch (err) {
 		logger.warn('Meet transcript file attach failed (metadata still written)', {
 			meetingId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
+
+	// Meet-only mapper flip (bet 947e, Sebk locked 2026-09-13 · decision 548410):
+	// a Meet call with no linked Meetup/Luma event is silent-by-design for the
+	// Event Promoter's Capture attendees trigger (short-id 389b1d48), whose
+	// filter is `entity_type=event, status_changed → wrapped_up`. Synthesise
+	// a matching event object so JTBD #2 fires regardless of whether the meeting
+	// has a Meetup/Luma listing. Idempotent + no-op when a linked event exists;
+	// best-effort so a mapper failure never blocks the transcript write above.
+	try {
+		const [meetingRow] = await db
+			.select({ title: objects.title })
+			.from(objects)
+			.where(eq(objects.id, meetingId))
+			.limit(1)
+		const [integrationRow] = await db
+			.select({ config: integrations.config })
+			.from(integrations)
+			.where(
+				and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, 'google-meet')),
+			)
+			.limit(1)
+		const systemActorId = (integrationRow?.config as { system_actor_id?: string } | null)
+			?.system_actor_id
+		if (!systemActorId) {
+			logger.warn('Meet-only mapper skipped: no system_actor_id on integration config', {
+				workspaceId,
+				meetingId,
+			})
+		} else {
+			await synthesizeMeetOnlyEvent(db, {
+				workspaceId,
+				systemActorId,
+				meetingId,
+				meetingTitle: meetingRow?.title ?? null,
+				conferenceRecordName,
+				participantsStructured,
+				participantsText,
+			})
+		}
+	} catch (err) {
+		logger.warn('Meet-only mapper failed (transcript metadata still written)', {
+			meetingId,
+			conferenceRecordName,
 			error: err instanceof Error ? err.message : String(err),
 		})
 	}
