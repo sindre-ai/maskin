@@ -1407,4 +1407,59 @@ export const orphanThreadDetections = pgTable(
 )
 
 export type OrphanThreadDetection = typeof orphanThreadDetections.$inferSelect
+
+// ── VAT / awaiting_vies ─────────────────────────────────────────────────────
+//
+// Rows written by the Stripe webhook (Task 2) when a Checkout Session
+// completes with a `tax_id.verification.status='pending'` — fulfilment is
+// HELD until Stripe fires `customer.tax_id.updated(verified)` and the row is
+// deleted, at which point credits/subscription land. Row lifecycle:
+//   • verified   → delete + fulfil
+//   • unverified → delete + refund (+ cancel subscription)
+//   • 24h timeout → delete + refund (+ cancel subscription)
+//
+// Architect fold-in: intentionally NO `status` column. Row existence IS the
+// held state and deletion IS the resolved state — adding a status column
+// would double-track a state already carried by row lifecycle and introduce
+// a "resolved but not deleted" failure mode.
+//
+// Researcher fold-in: `reminder_sent_at` is NOT a status column. It's a
+// one-way idempotency marker for the T+2h "still verifying" reminder email
+// (Task 3's sweep) that fires WHILE the row is still open. A row can be
+// reminder_sent_at IS NOT NULL and still open. Row deletion still means
+// resolved. Nullable rather than DEFAULT — the marker is genuinely absent
+// on a fresh row.
+export const awaitingVies = pgTable(
+	'awaiting_vies',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		// Stripe Checkout Session id — natural idempotency key for webhook
+		// replays of the same session.completed event.
+		sessionId: text('session_id').notNull().unique(),
+		// Stripe Customer id — Task 2 looks up rows by this on the tax_id.*
+		// event chain.
+		customerId: text('customer_id').notNull(),
+		// 'topup' | 'subscription' — controls the void path shape (refund on
+		// topup vs cancel-subscription + refund-first-invoice on subscription).
+		kind: text('kind').notNull(),
+		paymentIntentId: text('payment_intent_id'),
+		subscriptionId: text('subscription_id'),
+		currency: text('currency').notNull(),
+		amountTotal: integer('amount_total').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		reminderSentAt: timestamp('reminder_sent_at', { withTimezone: true }),
+		// FK to workspaces so a workspace deletion doesn't leave orphaned held
+		// rows behind — mirrors workspaceCreditLedger's shape.
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+	},
+	(t) => [
+		check('awaiting_vies_kind_check', sql`${t.kind} IN ('topup','subscription')`),
+		index('awaiting_vies_customer_idx').on(t.customerId),
+		index('awaiting_vies_created_at_idx').on(t.createdAt),
+	],
+)
+
+export type AwaitingViesRow = typeof awaitingVies.$inferSelect
 export type NewOrphanThreadDetection = typeof orphanThreadDetections.$inferInsert
