@@ -5,6 +5,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { createApiError } from '../lib/errors'
+import { selfHealLinkedInMcpCredential } from '../lib/integrations/providers/linkedin-unipile/mcp-registry-self-heal'
 import { createLinkedInMcpServer } from '../lib/integrations/providers/linkedin-unipile/mcp-server'
 import { logger } from '../lib/logger'
 import { isWorkspaceMember } from '../lib/workspace-auth'
@@ -19,19 +20,24 @@ import { isWorkspaceMember } from '../lib/workspace-auth'
  * profile plus every admined page) is served as its own MCP instance
  * registered under `linkedin-{unipileAccSlug}-{identitySlug}`. This handler:
  *
- *   1. Resolves the calling actor's linkedin-unipile credentials in this
- *      workspace (one credential per (workspace, actor); usually one row).
- *   2. Reads each credential's registered instances from the in-process
- *      registry (populated by the connect-callback path and the admin
- *      refresh-identities endpoint).
- *   3. Builds a fresh MCP server whose tools are the union of every
+ *   1. Resolves every `linkedin-unipile` credential row in this workspace
+ *      (one credential per (workspace, actor); usually one row).
+ *   2. Self-heals any active credential whose registry entry is still
+ *      empty (see `mcp-registry-self-heal.ts`) — Coolify redeploys wipe
+ *      the registry every time, and boot repopulation may not have
+ *      finished (or may have raced a still-starting Unipile) by the time
+ *      the first `/mcp` request arrives.
+ *   3. Reads each credential's registered instances from the in-process
+ *      registry.
+ *   4. Builds a fresh MCP server whose tools are the union of every
  *      instance's tools per spec §2's filter table.
  *
  * `tools/list` returns the empty list — not a 4xx — for a workspace that
  * has not connected linkedin-unipile yet (matches the `github-*` pattern's
  * behaviour and lets `get_started`-driven onboarding proceed). Same for a
- * credential whose enumeration hasn't landed yet: registry-empty → no tools,
- * which the next connect / refresh call will populate.
+ * credential whose enumeration is still failing inside the negative-cache
+ * window: registry-empty → no tools, which the next connect / refresh call
+ * (or a successful self-heal after the window elapses) will populate.
  */
 
 const PROVIDER = 'linkedin-unipile'
@@ -85,9 +91,23 @@ app.post('/', async (c) => {
 	// services/session-manager.ts around the active-integrations query) and how
 	// Slack's own MCP is scoped.
 	const credentialRows = await db
-		.select({ id: integrations.id })
+		.select({
+			id: integrations.id,
+			workspaceId: integrations.workspaceId,
+			actorId: integrations.actorId,
+			createdBy: integrations.createdBy,
+			externalId: integrations.externalId,
+			status: integrations.status,
+		})
 		.from(integrations)
 		.where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, PROVIDER)))
+
+	// Self-heal any credential whose registry entry is empty. Boot
+	// repopulation covers the common restart case; this covers a boot that
+	// raced a still-starting Unipile plus any credential whose connect-time
+	// enumeration failed and needs a passive retry.
+	await Promise.all(credentialRows.map(selfHealLinkedInMcpCredential))
+
 	const instances = credentialRows.flatMap((row) => getLinkedInMcpInstancesForIntegration(row.id))
 
 	const mcpServer = createLinkedInMcpServer({ db, actorId, workspaceId }, instances)
