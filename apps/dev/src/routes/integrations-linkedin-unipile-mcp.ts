@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { integrations } from '@maskin/db/schema'
+import { INTEGRATION_STATUS_ACTIVE, integrations } from '@maskin/db/schema'
 import { getLinkedInMcpInstancesForIntegration } from '@maskin/mcp/linkedin'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { and, eq } from 'drizzle-orm'
@@ -84,10 +84,22 @@ app.post('/', async (c) => {
 	// session-manager auto-injects (workspace-scoped, no actor filter — see
 	// services/session-manager.ts around the active-integrations query) and how
 	// Slack's own MCP is scoped.
+	// P3-C · Filter on `status = 'active'` so a revoked row's still-registered
+	// fan-out tools disappear from `tools/list` on the very next request, even
+	// if the DELETE hook's `deregisterLinkedInMcpInstancesForIntegration` call
+	// has not run (e.g. after a hot reload with a persisted registry, or during
+	// the DELETE tx). `integrations.status` is the truth (tech principles doc
+	// core principle 3); the registry is a performance cache.
 	const credentialRows = await db
 		.select({ id: integrations.id })
 		.from(integrations)
-		.where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, PROVIDER)))
+		.where(
+			and(
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.provider, PROVIDER),
+				eq(integrations.status, INTEGRATION_STATUS_ACTIVE),
+			),
+		)
 	const instances = credentialRows.flatMap((row) => getLinkedInMcpInstancesForIntegration(row.id))
 
 	const mcpServer = createLinkedInMcpServer({ db, actorId, workspaceId }, instances)

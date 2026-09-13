@@ -226,7 +226,7 @@ describe('preamble identity-scoped credential lookup (P3-G)', () => {
 		expect(client.sendCalls).toHaveLength(0)
 	})
 
-	it('returns CREDENTIAL_NOT_CONNECTED when the identity points at a row in a different workspace', async () => {
+	it('returns INTEGRATION_DISCONNECTED when the identity points at a row in a different workspace', async () => {
 		const owner = getTestActorId()
 		const wsA = await insertWorkspace(db, owner)
 		const wsB = await insertWorkspace(db, owner)
@@ -237,6 +237,12 @@ describe('preamble identity-scoped credential lookup (P3-G)', () => {
 
 		// An identity pinned to a row in wsB must never resolve for a caller in
 		// wsA — the workspace guard on the preamble select is load-bearing.
+		// P3-C amended this from CREDENTIAL_NOT_CONNECTED to INTEGRATION_DISCONNECTED:
+		// the identity-scoped path now collapses "row missing (in this workspace)"
+		// and "row present but not active" into one wire code, because both
+		// tell the caller the same thing — this specific fan-out MCP instance's
+		// credential is not reachable, do not retry. Both codes are fail-closed
+		// and non-retryable, and the workspace guard on the SELECT is unchanged.
 		const identityCrossWs = fakeInstanceConfig({
 			workspaceId: wsB.id,
 			actorId: owner,
@@ -249,7 +255,7 @@ describe('preamble identity-scoped credential lookup (P3-G)', () => {
 				{ db, actorId: owner, workspaceId: wsA.id, identity: identityCrossWs },
 				{ recipient_urn: 'urn:li:person:target', body: 'x', idempotency_key: 'k-x' },
 			),
-		).rejects.toMatchObject({ code: 'CREDENTIAL_NOT_CONNECTED' })
+		).rejects.toMatchObject({ code: 'INTEGRATION_DISCONNECTED' })
 		expect(client.sendCalls).toHaveLength(0)
 	})
 })

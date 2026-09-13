@@ -9,6 +9,7 @@ import {
 	webhookDeliveries,
 	workspaceMembers,
 } from '@maskin/db/schema'
+import { deregisterLinkedInMcpInstancesForIntegration } from '@maskin/mcp/linkedin'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { skjaldTranscriptionCompletedPayloadSchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
@@ -1587,6 +1588,22 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	// end of the period it was connected in.
 	if (existing.provider === LINKEDIN_IDENTITY_PROVIDER) {
 		await syncLinkedInAddonQuantity(db, existing.workspaceId)
+		// P3-C · Drop every fan-out MCP instance owned by this credential row
+		// from the in-process registry, so `tools/list` on the linkedin-unipile
+		// MCP endpoint no longer surfaces this integration's tools. Belt to the
+		// per-call `integrations.status` gate's braces (operations.ts preamble):
+		// the gate keeps a wrong (revoked) credential from reaching Unipile even
+		// on a race, while the deregister keeps a disconnected identity from
+		// appearing to still be there in the tool list. Uses the same code path
+		// R11-C wired for the Unipile-initiated `account.disconnect` webhook.
+		const dropped = deregisterLinkedInMcpInstancesForIntegration(existing.id)
+		if (dropped > 0) {
+			logger.info('Deregistered LinkedIn fan-out instances on disconnect', {
+				workspaceId: existing.workspaceId,
+				integrationId: existing.id,
+				dropped,
+			})
+		}
 	}
 
 	// Agents hold a copied snapshot of the provider's MCP server config, which
