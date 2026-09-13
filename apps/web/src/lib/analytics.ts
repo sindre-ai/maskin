@@ -259,6 +259,39 @@ export function trackChatImageUpload(p: { outcome: 'success' | 'failure' }): voi
 	trackEvent('chat_image_upload', { platform: detectPlatform(), outcome: p.outcome })
 }
 
+// Chat composer `/` unified picker — fires when a Reference row is committed
+// into the composer selection (either an object or a notification). The parent
+// bet's success metric pairs this with turn sends against the same session to
+// measure whether references travel through to a completed exchange, so
+// `object_type` is the row's own `type` column ('bet' | 'task' | 'insight' |
+// 'notification' | any custom object type) and rides alongside the standard
+// `entity_id`. `workspace_id` / `actor_id` come in via the PostHog
+// super-properties registered on workspace mount.
+export type ChatReferenceObjectType = 'notification' | (string & {})
+
+export function trackChatObjectReferenceCreated(p: {
+	entity_id: string
+	object_type: ChatReferenceObjectType
+}): void {
+	trackEvent('chat_object_reference_created', {
+		entity_id: p.entity_id,
+		object_type: p.object_type,
+		source: 'web',
+	})
+}
+
+// Fires when the `/` picker's Reference search endpoint fails. Paired at query
+// time with `chat_object_reference_created` to compute error-rate on the
+// picker; the message is truncated so posthog-js's batching doesn't reject a
+// long payload on a slow network. See the parent bet's "Retry works from the
+// error state" gate.
+export function trackChatSlashPickerError(p: { message: string }): void {
+	trackEvent('chat_slash_picker_error', {
+		message: p.message.slice(0, 200),
+		source: 'web',
+	})
+}
+
 // Sidebar legibility bet — click-through proxy for the qualitative ship metric.
 // `workspace_id` already rides via the PostHog super-property registered on
 // workspace mount; the explicit `workspaceId` here is a duplicate the Analyst

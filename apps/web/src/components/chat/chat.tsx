@@ -4,6 +4,7 @@ import {
 	SlashPicker,
 	type SlashPickerResult,
 } from '@/components/chat/slash-picker'
+import { UnifiedChatSlashPicker } from '@/components/chat/unified-slash-picker'
 import { CreatePicker } from '@/components/shared/create-picker'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { UploadProgress } from '@/components/shared/upload-progress'
@@ -19,18 +20,24 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
 import { useDictation } from '@/hooks/use-dictation'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useUploadFile } from '@/hooks/use-files'
-import { deriveEntryAgentRole, trackSpecialistSummonedManually } from '@/lib/analytics'
+import {
+	deriveEntryAgentRole,
+	trackChatObjectReferenceCreated,
+	trackSpecialistSummonedManually,
+} from '@/lib/analytics'
 import type { ChatSelection, ChatSelectionAction } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { readFileAsBase64 } from '@/lib/file-utils'
-import { ArrowUp, AtSign, Box, Mic, Paperclip, Plus, Sparkles, X } from 'lucide-react'
+import { ArrowUp, AtSign, Box, Hash, Mic, Paperclip, Plus, Sparkles, X } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type FormEvent,
 	type KeyboardEvent,
 	useCallback,
 	useEffect,
+	useMemo,
 	useRef,
 	useState,
 } from 'react'
@@ -51,6 +58,95 @@ function makeTempId() {
 	return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
 		? crypto.randomUUID()
 		: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
+// The three built-in NEWKIND labels that can promote to a type-filter chip when
+// typed as `/task ` / `/bet ` / `/insight `. Any custom workspace type falls
+// through as a normal search query — hardcoded per spec §Create-new rows.
+const CHAT_NEWKIND_LABELS: ReadonlySet<string> = new Set(['task', 'bet', 'insight'])
+
+// Trigger regex verbatim from the spec §Interaction details: `/` at input start
+// or after whitespace, capturing the word-char query up to the caret.
+const UNIFIED_SLASH_TRIGGER_RE = /(?:^|\s)\/([\w-]*)$/
+
+/**
+ * Pure state machine for the `/` composer trigger. Called on every keystroke
+ * inside the textarea when the `chat-slash-picker-v2` flag is on. Returns one
+ * of four verdicts:
+ *
+ *  - `open`: user just typed `/` at a word boundary. `slashStart` is the
+ *    index of that `/`.
+ *  - `promote_to_chip`: the picker was already open and the text now ends
+ *    with `/<label> ` where label is one of {task,bet,insight}. `nextValue`
+ *    is the composer text with the `/label ` slice removed; `nextSlashStart`
+ *    is the new `/` position (`null` when the picker should close and no new
+ *    trigger is left in the text). Picker stays open, chip is set, both
+ *    sections narrow.
+ *  - `close`: the picker was open and something invalidated the trigger
+ *    (the `/` is gone, the caret drifted before it, etc.).
+ *  - `noop`: nothing to change — either the picker wasn't tracking or the
+ *    user is just typing more query chars.
+ */
+type UnifiedSlashOutcome =
+	| { type: 'noop' }
+	| { type: 'open'; slashStart: number }
+	| { type: 'close' }
+	| {
+			type: 'promote_to_chip'
+			objectType: string
+			nextValue: string
+			nextSlashStart: number | null
+			nextCaret: number
+	  }
+
+export function detectUnifiedSlashTransition({
+	next,
+	pos,
+	slashStart,
+	typeFilterChip,
+}: {
+	next: string
+	pos: number
+	slashStart: number | null
+	typeFilterChip: string | null
+}): UnifiedSlashOutcome {
+	// Chip already set — the picker is scoped and further `/` typing is just
+	// query text; we don't promote a second time.
+	if (typeFilterChip === null && slashStart !== null) {
+		// Detect `/<label> ` transformation. Only fires when the current run
+		// starts at slashStart and the last char is a space.
+		const runFromSlash = next.slice(slashStart, pos)
+		const promote = /^\/(task|bet|insight) $/.exec(runFromSlash)
+		if (promote) {
+			const objectType = promote[1]
+			// Splice the `/label ` slice out of the composer. The tail (from
+			// `pos` on) stays put; caret goes to slashStart.
+			const nextValue = next.slice(0, slashStart) + next.slice(pos)
+			return {
+				type: 'promote_to_chip',
+				objectType,
+				nextValue,
+				nextSlashStart: null,
+				nextCaret: slashStart,
+			}
+		}
+	}
+
+	// Recognise a fresh `/` trigger at a word boundary.
+	const uptoCaret = next.slice(0, pos)
+	const match = UNIFIED_SLASH_TRIGGER_RE.exec(uptoCaret)
+	if (match) {
+		// Match index is where `(?:^|\s)` matched — the `/` is one char in.
+		const rawStart = match.index
+		const slashIndex = rawStart === 0 && match[0][0] === '/' ? 0 : rawStart + 1
+		if (slashStart === slashIndex) return { type: 'noop' }
+		return { type: 'open', slashStart: slashIndex }
+	}
+
+	// No trigger matched, but the picker is currently open — the trigger's
+	// `/` was deleted or the caret drifted before it; close.
+	if (slashStart !== null) return { type: 'close' }
+	return { type: 'noop' }
 }
 
 export interface ComposerProps {
@@ -131,6 +227,15 @@ export function Composer({
 	const [sendError, setSendError] = useState<string | null>(null)
 	const [pickerOpen, setPickerOpen] = useState(false)
 	const [pickerKind, setPickerKind] = useState<SlashKindId | null>(null)
+	// v2 unified `/` picker state (gated by `chat-slash-picker-v2`). `slashStart`
+	// points at the `/` in the textarea; when set, everything after it up to the
+	// caret is the picker's live query. `typeFilterChip` is the NEWKIND label
+	// (e.g. 'task') the user promoted by typing `/task ` — it lives outside the
+	// text as a first-class composer chip and narrows both picker sections.
+	const unifiedPickerEnabled = useFeatureFlag('chat-slash-picker-v2')
+	const [unifiedOpen, setUnifiedOpen] = useState(false)
+	const [slashStart, setSlashStart] = useState<number | null>(null)
+	const [typeFilterChip, setTypeFilterChip] = useState<string | null>(null)
 	// In-flight + failed uploads. Only the resolved fileId enters `ChatSelection`
 	// (high-frequency upload events would otherwise churn the selection reducer);
 	// these are the chips shown while bytes are still transferring or after the
@@ -203,32 +308,100 @@ export function Composer({
 
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent<HTMLTextAreaElement>) => {
+			// v2 chip lives outside the text — Backspace on an empty composer
+			// with a chip set clears the chip (spec §Interaction details).
+			if (
+				unifiedPickerEnabled &&
+				e.key === 'Backspace' &&
+				typeFilterChip !== null &&
+				value.length === 0
+			) {
+				e.preventDefault()
+				setTypeFilterChip(null)
+				return
+			}
+			// Escape closes the unified picker without touching the composer text
+			// or the chip; the trigger char stays so the user can continue.
+			if (unifiedPickerEnabled && e.key === 'Escape' && unifiedOpen) {
+				e.preventDefault()
+				setUnifiedOpen(false)
+				setSlashStart(null)
+				return
+			}
 			if (e.key !== 'Enter') return
 			if (e.shiftKey) return
 			if (e.nativeEvent.isComposing) return
+			// Never submit through the composer while the unified picker owns
+			// Enter — the picker's own keydown claims it for the active row.
+			if (unifiedPickerEnabled && unifiedOpen) return
 			e.preventDefault()
 			void handleSubmit()
 		},
-		[handleSubmit],
+		[handleSubmit, unifiedPickerEnabled, unifiedOpen, typeFilterChip, value.length],
 	)
 
 	const handleChange = useCallback(
 		(e: ChangeEvent<HTMLTextAreaElement>) => {
 			const next = e.target.value
 			setValue(next)
-			// Open the picker when the user just typed a `/` at a qualifying
-			// position: either at the very start of the input or immediately
-			// after whitespace. Anything else (middle of a URL, inside a word,
-			// etc.) is left alone so `/` remains a regular character.
 			const pos = e.target.selectionStart
-			if (typeof pos !== 'number' || pos <= 0) return
+			if (typeof pos !== 'number' || pos < 0) return
+
+			// v2: the top-level `/` path routes to `<UnifiedChatSlashPicker>`
+			// (Reference on top, Create-new below). The legacy `turnIntoOpen`
+			// create dropdown stays only under the `+` menu's "Create an object"
+			// entry, so a rollback of the flag flips this composer straight back
+			// to today's shape. Root-cause per Architect tech spec / task body:
+			// the current path opens `turnIntoOpen` at line 215–232 and never
+			// invokes the picker; that's what this branch replaces.
+			if (unifiedPickerEnabled) {
+				const outcome = detectUnifiedSlashTransition({
+					next,
+					pos,
+					slashStart,
+					typeFilterChip,
+				})
+				if (outcome.type === 'promote_to_chip') {
+					// `/task ` transformed → the raw label is stripped from the
+					// textarea and the chip is set. Picker stays open with the
+					// query cleared and the type filter narrowing both sections.
+					setValue(outcome.nextValue)
+					setSlashStart(outcome.nextSlashStart)
+					setTypeFilterChip(outcome.objectType)
+					setUnifiedOpen(true)
+					// Restore caret to right after the removed `/label ` so a
+					// follow-up keystroke lands where the user expects.
+					requestAnimationFrame(() => {
+						const el = textareaRef.current
+						if (el) el.setSelectionRange(outcome.nextCaret, outcome.nextCaret)
+					})
+					return
+				}
+				if (outcome.type === 'open') {
+					setSlashStart(outcome.slashStart)
+					setUnifiedOpen(true)
+					return
+				}
+				if (outcome.type === 'close') {
+					setSlashStart(null)
+					setUnifiedOpen(false)
+					return
+				}
+				// `outcome.type === 'noop'` — either not triggering, or already
+				// tracking the same `/` and the user is just typing more chars.
+				return
+			}
+
+			// Legacy path — pre-v2 behaviour, unchanged: `/` at a word boundary
+			// opens the create-only dropdown.
+			if (pos <= 0) return
 			if (next[pos - 1] !== '/') return
 			const prev = pos >= 2 ? next[pos - 2] : ''
 			if (prev !== '' && !/\s/.test(prev)) return
 			slashPosRef.current = pos - 1
 			setTurnIntoOpen(true)
 		},
-		[setValue],
+		[setValue, unifiedPickerEnabled, slashStart, typeFilterChip],
 	)
 
 	const openPickerForKind = useCallback((kind: SlashKindId) => {
@@ -272,8 +445,21 @@ export function Composer({
 				})
 			} else if (result.kind === 'object') {
 				onDispatchSelection?.({ type: 'add_object', object: result.ref })
-			} else {
+				trackChatObjectReferenceCreated({
+					entity_id: result.ref.id,
+					object_type: result.ref.type ?? 'object',
+				})
+			} else if (result.kind === 'notification') {
 				onDispatchSelection?.({ type: 'add_notification', notification: result.ref })
+				trackChatObjectReferenceCreated({
+					entity_id: result.ref.id,
+					object_type: 'notification',
+				})
+			} else if (result.kind === 'create') {
+				// The `create` kind is surfaced by the unified `/` picker via a
+				// dedicated handler below — the legacy picker never emits it, so
+				// the legacy path here is a no-op. Keeping the switch exhaustive
+				// keeps the discriminated union honest for future callers.
 			}
 			// The `/` that triggered the picker (if any) is dropped as soon as
 			// the user commits a pick — keeping the rest of the in-progress
@@ -282,6 +468,95 @@ export function Composer({
 		},
 		[onDispatchSelection, consumeSlashTrigger],
 	)
+
+	// Compute the picker's live query — text from the char AFTER the `/` up to
+	// the current caret. Falls back to '' when the picker is closed or the
+	// user has typed nothing after the trigger.
+	const unifiedQuery = useMemo(() => {
+		if (!unifiedOpen || slashStart === null) return ''
+		return value.slice(slashStart + 1)
+	}, [unifiedOpen, slashStart, value])
+
+	// Consumes the `/<query>` slice from the textarea after a pick, restoring
+	// the caret to the position where the trigger used to be. The type-filter
+	// chip stays until the user explicitly clears it (backspace / X) — the
+	// spec treats it as a first-class composer chip.
+	const consumeUnifiedSlashRange = useCallback(() => {
+		if (slashStart === null) return
+		const start = slashStart
+		setValue((prev) => {
+			// Delete from the `/` at slashStart through the end (query slice).
+			// The picker's own layout is caret-anchored, so the caret is always
+			// at the end of the value here — no need to compute a separate end.
+			return prev.slice(0, start)
+		})
+		setSlashStart(null)
+		requestAnimationFrame(() => {
+			const el = textareaRef.current
+			if (el) el.setSelectionRange(start, start)
+		})
+	}, [slashStart, setValue])
+
+	const handleUnifiedSelect = useCallback(
+		(selection: {
+			kind: 'reference' | 'create'
+			object?: { id: string; title?: string | null; type?: string | null }
+			objectType?: string
+			seedTitle?: string
+		}) => {
+			if (selection.kind === 'reference' && selection.object) {
+				const object = {
+					id: selection.object.id,
+					title: selection.object.title ?? null,
+					type: selection.object.type ?? null,
+				}
+				onDispatchSelection?.({ type: 'add_object', object })
+				trackChatObjectReferenceCreated({
+					entity_id: object.id,
+					object_type: object.type ?? 'object',
+				})
+				consumeUnifiedSlashRange()
+				setUnifiedOpen(false)
+				return
+			}
+			if (selection.kind === 'create' && selection.objectType) {
+				// Existing create-object flow with the current query seeded as
+				// the new object's title — same shape the `+` menu's "Create an
+				// object" entry uses.
+				const seed = selection.seedTitle?.trim() ?? ''
+				consumeUnifiedSlashRange()
+				setUnifiedOpen(false)
+				setCreateSubtype(selection.objectType)
+				setCreateOpen(true)
+				// The current CreatePicker doesn't accept a seedTitle prop yet;
+				// the placeholder rides in for now — a follow-up bet threads the
+				// seed through the CreatePicker input (spec Rabbit hole).
+				if (seed.length > 0) {
+					// Reserved for future CreatePicker seed prop — currently a no-op
+					// so we don't silently swallow the query. Log it so the
+					// developer console shows what would have been seeded.
+					if (typeof console !== 'undefined') {
+						console.info('[chat] create seed pending prop wiring', {
+							objectType: selection.objectType,
+							seed,
+						})
+					}
+				}
+			}
+		},
+		[onDispatchSelection, consumeUnifiedSlashRange],
+	)
+
+	const handleUnifiedOpenChange = useCallback((next: boolean) => {
+		setUnifiedOpen(next)
+		if (!next) {
+			// Leaving the picker cleans up its state but leaves the composer
+			// text alone — the `/` and any typed query stay so the user can
+			// pick up where they left off. Chip persists too; the user is
+			// still authoring in that scope.
+			setSlashStart(null)
+		}
+	}, [])
 
 	const handlePickerOpenChange = useCallback((next: boolean) => {
 		setPickerOpen(next)
@@ -406,6 +681,35 @@ export function Composer({
 					<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
 				}
 			/>
+			{unifiedPickerEnabled ? (
+				<UnifiedChatSlashPicker
+					workspaceId={workspaceId}
+					open={unifiedOpen}
+					onOpenChange={handleUnifiedOpenChange}
+					query={unifiedQuery}
+					typeFilter={typeFilterChip}
+					onSelect={handleUnifiedSelect}
+					anchor={
+						<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
+					}
+				/>
+			) : null}
+			{unifiedPickerEnabled && typeFilterChip !== null ? (
+				<ul className="flex list-none flex-wrap items-center gap-1 p-0" aria-label="Type filter">
+					<li className="inline-flex items-center gap-1 rounded-full border border-brand/40 bg-brand/10 px-2 py-0.5 text-xs font-semibold text-brand">
+						<Hash size={12} aria-hidden />
+						<span>{typeFilterChip}</span>
+						<button
+							type="button"
+							onClick={() => setTypeFilterChip(null)}
+							aria-label={`Clear ${typeFilterChip} filter`}
+							className="-mr-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-brand hover:bg-brand/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+						>
+							<X size={10} aria-hidden />
+						</button>
+					</li>
+				</ul>
+			) : null}
 			{/* A DropdownMenu rather than a Popover: `/` opens this without a click,
 			    so the list has to be reachable from the keyboard. Radix gives the
 			    menu roving focus, arrow keys and typeahead for free — the Popover
