@@ -124,6 +124,7 @@
 	--color-success: var(--success);
 	--color-warning: var(--warning);
 	--color-error: var(--error);
+	--color-violet: var(--violet);
 
 	/* Status badge colors */
 	--color-status-new-bg: var(--st-new-bg);
@@ -340,6 +341,13 @@
 	--warning: #92400e;
 	--error: #dc2626;
 
+	/* Working-ring accent (violet-500). Named after the spec token, not the
+	   brand indigo — the driver-avatar ring is the ONE surface that carries it,
+	   and reusing --brand there would confuse the ring's "an agent is running
+	   right now" signal with the brand-action visual language it lives next to
+	   on a row. */
+	--violet: #8b5cf6;
+
 	/* Status badges */
 	--st-new-bg: #f4f4f5;
 	--st-new-text: #71717a;
@@ -477,6 +485,11 @@
 	--success: #4ade80;
 	--warning: #fbbf24;
 	--error: #f87171;
+
+	/* Working-ring accent — violet-400, lifted one stop for legibility on the
+	   zinc-950 dark field (same one-stop lift pattern the brand indigo uses
+	   below). */
+	--violet: #a78bfa;
 
 	--st-new-bg: #27272a;
 	--st-new-text: #a1a1aa;
@@ -647,6 +660,57 @@
 		letter-spacing: 0.04em;
 		text-transform: uppercase;
 		color: var(--muted-foreground);
+	}
+
+	/* D2 · Agent-working ring around the driver avatar on Objects list rows.
+	   The wrapper composes a 2px violet conic-gradient ring around its child
+	   avatar, animating clockwise at ~1.6s/rev. The ring lives in a positioned
+	   ::before pseudo-element so it can spin without rotating the child
+	   avatar's initials.
+
+	   The gradient stops at 300deg intentionally: the paused-state (any time
+	   the animation is halted, either mid-loop OR by prefers-reduced-motion)
+	   is a static 300° arc — exactly what the SPEC asks for on reduced motion.
+	   The global @media (prefers-reduced-motion: reduce) rule above zeros the
+	   animation-duration, so no duplicate override here.
+
+	   `will-change: transform` opts the ring onto the compositor layer so the
+	   360°-per-1.6s repaint doesn't thrash the row's paint tree — matters
+	   because the list view is virtualized and many rings can be on-screen at
+	   once. */
+	.actor-avatar-working-ring {
+		position: relative;
+		padding: 2px;
+		border-radius: 9999px;
+	}
+
+	.actor-avatar-working-ring::before {
+		content: "";
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		background: conic-gradient(
+			from 0deg,
+			var(--violet) 0deg,
+			var(--violet) 300deg,
+			transparent 300deg,
+			transparent 360deg
+		);
+		-webkit-mask: radial-gradient(
+			farthest-side,
+			transparent calc(100% - 2px),
+			#000 calc(100% - 2px)
+		);
+		mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+		animation: actor-avatar-ring-spin 1.6s linear infinite;
+		will-change: transform;
+		pointer-events: none;
+	}
+
+	@keyframes actor-avatar-ring-spin {
+		to {
+			transform: rotate(360deg);
+		}
 	}
 
 	/* Full-contrast prose: @tailwindcss/typography sets paragraph/list-item color
