@@ -1,4 +1,5 @@
 import { McpServers } from '@/components/agents/mcp-servers'
+import type { ProviderInfo } from '@/lib/api'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildIntegrationResponse } from '../../factories'
@@ -8,10 +9,50 @@ vi.mock('@/lib/workspace-context', () => ({
 }))
 
 const mockIntegrations = vi.fn()
+const mockProviders = vi.fn()
 
 vi.mock('@/hooks/use-integrations', () => ({
 	useIntegrations: () => ({ data: mockIntegrations() }),
+	useProviders: () => ({ data: mockProviders() }),
 }))
+
+// Same shape /api/integrations/providers serves: autoInject flag + paste-ready
+// http server spec. Kept here so the tests are self-contained; the runtime
+// value comes from apps/dev/src/lib/integrations/providers/<name>/config.ts.
+const linkedinUnipileProvider: ProviderInfo = {
+	name: 'linkedin-unipile',
+	displayName: 'LinkedIn',
+	authType: 'oauth2_custom',
+	events: [],
+	mcp: {
+		envKey: 'LINKEDIN_UNIPILE_TOKEN',
+		autoInject: true,
+		server: {
+			type: 'http',
+			url: '${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp',
+			headers: {
+				Authorization: 'Bearer ${MASKIN_API_KEY}',
+				'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+			},
+		},
+	},
+}
+
+const slackAutoInjectProvider: ProviderInfo = {
+	name: 'slack',
+	displayName: 'Slack',
+	authType: 'oauth2',
+	events: [],
+	mcp: {
+		envKey: 'SLACK_BOT_TOKEN',
+		autoInject: true,
+		server: {
+			type: 'http',
+			url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
+			headers: { Authorization: 'Bearer ${MASKIN_API_KEY}' },
+		},
+	},
+}
 
 const stdioTools = {
 	mcpServers: {
@@ -38,6 +79,7 @@ describe('McpServers', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockIntegrations.mockReturnValue([])
+		mockProviders.mockReturnValue([])
 	})
 
 	it('shows empty message when no servers configured', () => {
@@ -192,6 +234,95 @@ describe('McpServers', () => {
 					env: { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_TOKEN_VAERKSTED_AI}' },
 				}),
 			}),
+		})
+	})
+
+	describe('auto-injected providers', () => {
+		it('renders the linkedin-unipile row when the integration is active and the provider is autoInject', () => {
+			mockIntegrations.mockReturnValue([
+				buildIntegrationResponse({ provider: 'linkedin-unipile', status: 'active' }),
+			])
+			mockProviders.mockReturnValue([linkedinUnipileProvider])
+			render(<McpServers tools={null} onUpdate={vi.fn()} />)
+
+			expect(screen.getByRole('list', { name: /Auto-injected MCP servers/ })).toBeInTheDocument()
+			expect(screen.getByText('LinkedIn')).toBeInTheDocument()
+			expect(screen.getByText(/Attached to every session in this workspace/)).toBeInTheDocument()
+		})
+
+		it('offers no Quick Add for an autoInject provider — the "Add linkedin-unipile" button never appears', () => {
+			mockIntegrations.mockReturnValue([
+				buildIntegrationResponse({ provider: 'linkedin-unipile', status: 'active' }),
+			])
+			mockProviders.mockReturnValue([linkedinUnipileProvider])
+			render(<McpServers tools={null} onUpdate={vi.fn()} />)
+
+			expect(screen.queryByRole('button', { name: /Add linkedin-unipile/ })).not.toBeInTheDocument()
+		})
+
+		it('applies the same treatment to every autoInject provider — Slack too', () => {
+			mockIntegrations.mockReturnValue([
+				buildIntegrationResponse({ provider: 'slack', status: 'active' }),
+			])
+			mockProviders.mockReturnValue([slackAutoInjectProvider])
+			render(<McpServers tools={null} onUpdate={vi.fn()} />)
+
+			expect(screen.getByText('Slack')).toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: /Add slack/ })).not.toBeInTheDocument()
+		})
+
+		it('flags a hand-pasted duplicate of an auto-injected server URL', () => {
+			mockIntegrations.mockReturnValue([
+				buildIntegrationResponse({ provider: 'linkedin-unipile', status: 'active' }),
+			])
+			mockProviders.mockReturnValue([linkedinUnipileProvider])
+			const tools = {
+				mcpServers: {
+					'linkedin-unipile': {
+						type: 'http',
+						url: '${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp',
+						headers: {},
+					},
+				},
+			}
+			render(<McpServers tools={tools} onUpdate={vi.fn()} />)
+
+			expect(screen.getByText(/Already auto-injected/)).toBeInTheDocument()
+			// Not deleted — this is a hint, not an auto-delete.
+			expect(screen.getByText('linkedin-unipile')).toBeInTheDocument()
+		})
+
+		it('renders one row per provider even when several integrations of the same provider are active', () => {
+			mockIntegrations.mockReturnValue([
+				buildIntegrationResponse({
+					id: 'lu-1',
+					provider: 'linkedin-unipile',
+					status: 'active',
+					actorId: 'actor-a',
+				}),
+				buildIntegrationResponse({
+					id: 'lu-2',
+					provider: 'linkedin-unipile',
+					status: 'active',
+					actorId: 'actor-b',
+				}),
+			])
+			mockProviders.mockReturnValue([linkedinUnipileProvider])
+			render(<McpServers tools={null} onUpdate={vi.fn()} />)
+
+			expect(screen.getAllByText('LinkedIn')).toHaveLength(1)
+		})
+
+		it('renders nothing auto-injected when the integration is not active', () => {
+			mockIntegrations.mockReturnValue([
+				buildIntegrationResponse({ provider: 'linkedin-unipile', status: 'revoked' }),
+			])
+			mockProviders.mockReturnValue([linkedinUnipileProvider])
+			render(<McpServers tools={null} onUpdate={vi.fn()} />)
+
+			expect(
+				screen.queryByRole('list', { name: /Auto-injected MCP servers/ }),
+			).not.toBeInTheDocument()
 		})
 	})
 

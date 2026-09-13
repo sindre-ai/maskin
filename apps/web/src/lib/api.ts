@@ -1419,6 +1419,13 @@ export interface ProviderInfo {
 	authType: 'oauth2' | 'oauth2_custom' | 'api_key' | 'manual'
 	events: ProviderEventDefinition[]
 	externalIdDisplay?: 'email' | 'installation'
+	mcp?: {
+		envKey: string
+		autoInject: boolean
+		server?:
+			| { type: 'stdio'; command: string; args: string[]; env?: Record<string, string> }
+			| { type: 'http'; url: string; headers?: Record<string, string> }
+	}
 }
 
 export interface SlackConversation {
