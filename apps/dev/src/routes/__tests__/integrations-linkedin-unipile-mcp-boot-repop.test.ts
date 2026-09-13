@@ -165,9 +165,7 @@ describe('linkedin-unipile MCP registry — boot repopulation (AC 1, 2)', () => 
 			return fakeRegister(integrationId)
 		})
 
-		await repopulateLinkedInMcpRegistryOnBoot(
-			fakeDb([row('cred-broken'), row('cred-healthy')]),
-		)
+		await repopulateLinkedInMcpRegistryOnBoot(fakeDb([row('cred-broken'), row('cred-healthy')]))
 
 		expect(mockedEnumerate).toHaveBeenCalledTimes(2)
 		expect(getLinkedInMcpInstancesForIntegration('cred-broken')).toEqual([])

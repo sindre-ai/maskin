@@ -5,8 +5,8 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { createApiError } from '../lib/errors'
-import { createLinkedInMcpServer } from '../lib/integrations/providers/linkedin-unipile/mcp-server'
 import { selfHealLinkedInMcpCredential } from '../lib/integrations/providers/linkedin-unipile/mcp-registry-self-heal'
+import { createLinkedInMcpServer } from '../lib/integrations/providers/linkedin-unipile/mcp-server'
 import { logger } from '../lib/logger'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 

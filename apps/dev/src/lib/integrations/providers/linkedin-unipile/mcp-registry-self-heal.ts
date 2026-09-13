@@ -1,5 +1,5 @@
-import { getLinkedInMcpInstancesForIntegration, instanceSlug } from '@maskin/mcp/linkedin'
 import { INTEGRATION_STATUS_ACTIVE } from '@maskin/db/schema'
+import { getLinkedInMcpInstancesForIntegration, instanceSlug } from '@maskin/mcp/linkedin'
 import { logger } from '../../../logger'
 import { enumerateLinkedInIdentitiesAndRegister } from './enumeration'
 
