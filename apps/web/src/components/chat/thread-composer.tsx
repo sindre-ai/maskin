@@ -1,7 +1,6 @@
 import { Composer } from '@/components/chat/chat'
-import { useConversation, useSendMessage } from '@/hooks/use-conversation'
+import { useSendMessage } from '@/hooks/use-conversation'
 import type { MessageMetadata } from '@/lib/api'
-import { getStoredActor } from '@/lib/auth'
 import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
 import { useCallback, useReducer, useState } from 'react'
 
@@ -25,7 +24,6 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 	const [selection, dispatch] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
 	const sendMessage = useSendMessage(conversationId, workspaceId)
-	const { data: conversation } = useConversation(conversationId, workspaceId)
 
 	const handleSend = useCallback(
 		async (content: string) => {
@@ -70,16 +68,6 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 		[selection, sendMessage],
 	)
 
-	// Name who you are answering (mockup 7850). "Message this conversation"
-	// gave the composer no subject in a thread whose other party is the whole
-	// point of opening it; an @mention picked in the composer overrides the
-	// name because that mention, not the thread's lead, is who replies.
-	const self = getStoredActor()
-	const counterpart =
-		selection.agent?.name ??
-		conversation?.participants.find((p) => p.actorId !== self?.id)?.actorName
-	const placeholder = counterpart ? `Reply to ${counterpart}…` : 'Message this conversation'
-
 	return (
 		<Composer
 			workspaceId={workspaceId}
@@ -87,7 +75,6 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 			disabled={false}
 			pending={sendMessage.isPending}
 			surface="sheet"
-			placeholder={placeholder}
 			selection={selection}
 			onDispatchSelection={dispatch}
 			onRemoveAgent={() => dispatch({ type: 'remove_agent' })}

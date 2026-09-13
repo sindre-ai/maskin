@@ -24,7 +24,7 @@ import { deriveEntryAgentRole, trackSpecialistSummonedManually } from '@/lib/ana
 import type { ChatSelection, ChatSelectionAction } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { readFileAsBase64 } from '@/lib/file-utils'
-import { ArrowUp, AtSign, Box, Mic, Paperclip, Plus, Sparkles, X } from 'lucide-react'
+import { ArrowUp, Mic, Paperclip, Plus, X } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type FormEvent,
@@ -36,6 +36,14 @@ import {
 } from 'react'
 
 export type ChatSurface = 'sheet' | 'pulse-bar'
+
+/**
+ * Verbatim placeholder for the chat composer (spec `Copy — every user-visible
+ * string`). Inline-hints the `/` reference/create picker and `@` mention picker
+ * so users discover both without a menu. Exported so tests and non-default
+ * chat callers can reference the same string.
+ */
+export const DEFAULT_COMPOSER_PLACEHOLDER = 'Message… / reference or create · @ mention'
 
 interface PendingUpload {
 	tempId: string
@@ -59,7 +67,11 @@ export interface ComposerProps {
 	disabled: boolean
 	pending: boolean
 	surface: ChatSurface
-	placeholder: string
+	/** Visible placeholder for the empty composer. Defaults to the chat-composer
+	 *  hint that inline-advertises the `/` and `@` primitives (spec `Copy —
+	 *  every user-visible string`). Non-chat callers (loop utterance, trigger
+	 *  form) pass their own. */
+	placeholder?: string
 	selection: ChatSelection
 	onDispatchSelection?: (action: ChatSelectionAction) => void
 	onRemoveAgent: () => void
@@ -99,7 +111,7 @@ export function Composer({
 	onSend,
 	disabled,
 	pending,
-	placeholder,
+	placeholder = DEFAULT_COMPOSER_PLACEHOLDER,
 	selection,
 	onDispatchSelection,
 	onRemoveAgent,
@@ -534,23 +546,24 @@ export function Composer({
 								variant="outline"
 								className="h-7 w-7 shrink-0 rounded-full text-muted-foreground"
 								disabled={disabled}
-								aria-label="Add an object, file, or mention"
+								aria-label="Attach a file"
 							>
 								<Plus size={15} aria-hidden />
 							</Button>
 						</DropdownMenuTrigger>
+						{/* Collapsed to a single row per spec — Reference/Mention aliased `/`
+						    and `@`, which the placeholder now inline-advertises. The row
+						    triggers the same hidden <input type="file"> as the Paperclip
+						    button, so file-attach is a second door to the same handler. */}
 						<DropdownMenuContent align="start" className="w-[252px]">
-							<DropdownMenuItem onSelect={() => openPickerForKind('item')}>
-								<Box size={15} aria-hidden />
-								Reference an object
-							</DropdownMenuItem>
-							<DropdownMenuItem onSelect={() => openPickerForKind('agent')}>
-								<AtSign size={15} aria-hidden />
-								Mention an agent
-							</DropdownMenuItem>
-							<DropdownMenuItem onSelect={() => openCreateFor(undefined)}>
-								<Sparkles size={15} aria-hidden />
-								Create an object
+							<DropdownMenuItem onSelect={() => fileInputRef.current?.click()} className="gap-2.5">
+								<Paperclip size={15} aria-hidden />
+								<div className="flex min-w-0 flex-1 flex-col">
+									<span className="truncate text-[12.5px] font-semibold">Attach a file</span>
+									<span className="truncate text-[11.5px] text-muted-foreground">
+										PDF, image, or doc
+									</span>
+								</div>
 							</DropdownMenuItem>
 						</DropdownMenuContent>
 					</DropdownMenu>

@@ -110,10 +110,13 @@ describe('New chat', () => {
 		expect(
 			screen.getByText('answers first, hands it on if someone else owns it'),
 		).toBeInTheDocument()
-		expect(screen.getByLabelText('Message this conversation')).toHaveAttribute(
-			'placeholder',
-			'Message Chief of Staff…',
-		)
+		// The composer no longer inlines the recipient into its placeholder —
+		// the recipient stays on the visible "Talking to …" chip above the
+		// composer, and the placeholder inline-advertises the `/` and `@`
+		// primitives instead (asserted directly in composer-plus-menu.test.tsx).
+		// This route hands the composer no placeholder at all, so it falls back
+		// to Composer's default.
+		expect(screen.getByLabelText('Message this conversation')).not.toHaveAttribute('placeholder')
 	})
 
 	it('attributes a suggestion to the real agent that answers it, not the prototype cast', () => {

@@ -364,7 +364,6 @@ function NewChatRoute() {
 					disabled={createConversation.isPending}
 					pending={createConversation.isPending}
 					surface="sheet"
-					placeholder={recipient ? `Message ${recipient.name}…` : 'Message this conversation'}
 					selection={selection}
 					onDispatchSelection={dispatchSelection}
 					onRemoveAgent={() => dispatchSelection({ type: 'remove_agent' })}
