@@ -80,7 +80,8 @@ UPDATE "marketplace_loops" SET install_flow_copy = $$
 		"callout": "Something failed while wiring the loop. Nothing was changed in your workspace. Try again, or ping #maskin-help if it keeps happening."
 	}
 }
-$$::jsonb WHERE slug IN ('discovery-bet', 'workspace-improvements', 'knowledge-wiki-digest') AND workspace_id IS NULL;
+$$::jsonb WHERE slug IN ('discovery-bet', 'workspace-improvements', 'knowledge-wiki-digest');
+-- marketplace_loops has no workspace_id column (it's global-only, unlike agents/skills), so no workspace_id filter here.
 --> statement-breakpoint
 
 UPDATE "marketplace_agents" SET install_flow_copy = $$
