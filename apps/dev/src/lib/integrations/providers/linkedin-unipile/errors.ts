@@ -56,6 +56,7 @@
 export type LinkedInErrorCode =
 	| 'CREDENTIAL_NOT_CONNECTED'
 	| 'CREDENTIAL_REVOKED'
+	| 'INTEGRATION_DISCONNECTED'
 	| 'RATE_LIMITED_LINKEDIN'
 	| 'LINKEDIN_ACCOUNT_RESTRICTED'
 	| 'LINKEDIN_POST_TOO_LONG'
@@ -69,6 +70,7 @@ export type LinkedInErrorCode =
 export const LINKEDIN_ERROR_CODES = [
 	'CREDENTIAL_NOT_CONNECTED',
 	'CREDENTIAL_REVOKED',
+	'INTEGRATION_DISCONNECTED',
 	'RATE_LIMITED_LINKEDIN',
 	'LINKEDIN_ACCOUNT_RESTRICTED',
 	'LINKEDIN_POST_TOO_LONG',
@@ -230,6 +232,11 @@ export type RetryPolicy = {
 export const RETRY_POLICY_BY_CODE: Record<LinkedInErrorCode, RetryPolicy | null> = {
 	CREDENTIAL_NOT_CONNECTED: null,
 	CREDENTIAL_REVOKED: null,
+	// P3-C: the integration was disconnected in Maskin (user hit Settings >
+	// Disconnect, or the workspace admin revoked). Terminal — retrying just
+	// re-observes the same revoked row. The recovery is a user action
+	// (reconnect at Settings > Integrations), not a wait.
+	INTEGRATION_DISCONNECTED: null,
 	RATE_LIMITED_LINKEDIN: { maxAttempts: 3, baseMs: 2_000, capMs: 30_000, jitter: 0.25 },
 	LINKEDIN_ACCOUNT_RESTRICTED: null,
 	LINKEDIN_POST_TOO_LONG: null,
@@ -256,6 +263,7 @@ export const RETRY_POLICY_BY_CODE: Record<LinkedInErrorCode, RetryPolicy | null>
 const IS_RETRYABLE: Record<LinkedInErrorCode, boolean> = {
 	CREDENTIAL_NOT_CONNECTED: false,
 	CREDENTIAL_REVOKED: false,
+	INTEGRATION_DISCONNECTED: false,
 	RATE_LIMITED_LINKEDIN: true,
 	LINKEDIN_ACCOUNT_RESTRICTED: false,
 	LINKEDIN_POST_TOO_LONG: false,
@@ -270,6 +278,11 @@ const IS_RETRYABLE: Record<LinkedInErrorCode, boolean> = {
 const DEFAULT_HTTP_STATUS: Record<LinkedInErrorCode, number> = {
 	CREDENTIAL_NOT_CONNECTED: 424,
 	CREDENTIAL_REVOKED: 401,
+	// 424 Failed Dependency: same HTTP shape as CREDENTIAL_NOT_CONNECTED (the
+	// downstream credential we depend on is not available), classified as its
+	// own code so agent-side error handlers can distinguish "never connected"
+	// from "was connected, now disconnected in Maskin".
+	INTEGRATION_DISCONNECTED: 424,
 	RATE_LIMITED_LINKEDIN: 429,
 	LINKEDIN_ACCOUNT_RESTRICTED: 423,
 	LINKEDIN_POST_TOO_LONG: 400,
@@ -612,6 +625,35 @@ export class PostNotFoundError extends LinkedInIntegrationError {
 		super('POST_NOT_FOUND', 'Post not found, already deleted, or not authored by this identity.', {
 			cause,
 		})
+	}
+}
+
+/**
+ * P3-C · The fan-out MCP instance's own `integrations` row is missing or not
+ * `active` — the user (or a workspace admin) disconnected the integration in
+ * Maskin. Terminal: retrying re-reads the same revoked row. Recovery is a
+ * reconnect at Settings > Integrations; there is nothing the agent can do in
+ * the meantime, so the fail-closed rule is that the wrong (revoked) credential
+ * MUST NEVER reach Unipile — see linkedin-mcp-phase2-technical-spec.md core
+ * principle 3 ("Access is gated on live credential status, never on cached
+ * registration").
+ *
+ * Distinct from `CREDENTIAL_NOT_CONNECTED` so an agent can tell "your
+ * workspace never connected this integration" from "the integration was
+ * connected, then disconnected while your session was live" — the second
+ * usually means a human just revoked, and the right agent behaviour is to
+ * stop calling the tool and surface the disconnect rather than nag for a
+ * reconnect UX flow the user just deliberately exited.
+ */
+export class IntegrationDisconnectedError extends LinkedInIntegrationError {
+	constructor(identitySlug?: string, cause?: unknown) {
+		super(
+			'INTEGRATION_DISCONNECTED',
+			identitySlug
+				? `LinkedIn identity ${identitySlug} has been disconnected in Maskin. Reconnect at Settings > Integrations to resume.`
+				: 'This LinkedIn integration has been disconnected in Maskin. Reconnect at Settings > Integrations to resume.',
+			{ cause },
+		)
 	}
 }
 

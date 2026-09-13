@@ -135,6 +135,12 @@ async function preamble(
 	}
 	let row: Awaited<ReturnType<typeof getIntegrationCredential>> = null
 	if (options.identity) {
+		// P3-C · Per-call gate: load the identity's own row UNFILTERED by status
+		// (P3-G filtered on active), so a row present-but-revoked lands here and
+		// is separable from a row that never existed. `integrations.status` is
+		// the truth (tech principles doc core principle 3); the in-process
+		// registry is a performance cache and may not have caught up yet — the
+		// gate below fails closed even if the DELETE hook has not run.
 		const [byId] = await db
 			.select()
 			.from(integrations)
@@ -143,7 +149,6 @@ async function preamble(
 					eq(integrations.id, options.identity.integrationId),
 					eq(integrations.workspaceId, workspaceId),
 					eq(integrations.provider, PROVIDER),
-					eq(integrations.status, INTEGRATION_STATUS_ACTIVE),
 				),
 			)
 			.limit(1)
@@ -158,14 +163,26 @@ async function preamble(
 			fallbackToAnyActor: true,
 		})
 	}
+	if (options.identity && (!row || row.status !== INTEGRATION_STATUS_ACTIVE)) {
+		// The fan-out MCP instance was registered against this integrationId, so
+		// a missing row means the integration was deleted, and a non-active row
+		// means the user (or a workspace admin) disconnected. Either way the
+		// answer to "can we call Unipile?" is no, and it is not the shape of a
+		// retry — the row status only changes on a user action.
+		return {
+			ok: false,
+			error: new LinkedInIntegrationError(
+				'INTEGRATION_DISCONNECTED',
+				`LinkedIn identity ${options.identity.identitySlug} has been disconnected in Maskin. Reconnect at Settings > Integrations to resume.`,
+			),
+		}
+	}
 	if (!row) {
 		return {
 			ok: false,
 			error: new LinkedInIntegrationError(
 				'CREDENTIAL_NOT_CONNECTED',
-				options.identity
-					? `LinkedIn identity ${options.identity.identitySlug} is not connected in this workspace. Reconnect at Settings > Integrations.`
-					: 'No LinkedIn account is connected in this workspace. Connect one at Settings > Integrations.',
+				'No LinkedIn account is connected in this workspace. Connect one at Settings > Integrations.',
 			),
 		}
 	}
