@@ -171,6 +171,16 @@ describe('LinkedInIntegrationError metadata', () => {
 		expect(err.retryable).toBe(false)
 	})
 
+	// P3-C: the fan-out MCP instance's own integrations row was revoked or
+	// deleted. Terminal — retrying re-reads the same revoked row. HTTP 424 so
+	// agent-side handlers can distinguish "downstream credential missing" from
+	// the retryable transport-shaped failures.
+	it('marks INTEGRATION_DISCONNECTED as non-retryable with HTTP 424', () => {
+		const err = new LinkedInIntegrationError('INTEGRATION_DISCONNECTED', 'disconnected')
+		expect(err.retryable).toBe(false)
+		expect(err.httpStatus).toBe(424)
+	})
+
 	it('is recognized by isLinkedInIntegrationError', () => {
 		const err = new LinkedInIntegrationError('INVALID_INPUT', 'bad')
 		expect(isLinkedInIntegrationError(err)).toBe(true)
@@ -182,6 +192,7 @@ describe('RETRY_POLICY_BY_CODE', () => {
 	it('has a null policy for every non-retryable class', () => {
 		expect(RETRY_POLICY_BY_CODE.CREDENTIAL_NOT_CONNECTED).toBeNull()
 		expect(RETRY_POLICY_BY_CODE.CREDENTIAL_REVOKED).toBeNull()
+		expect(RETRY_POLICY_BY_CODE.INTEGRATION_DISCONNECTED).toBeNull()
 		expect(RETRY_POLICY_BY_CODE.LINKEDIN_ACCOUNT_RESTRICTED).toBeNull()
 		expect(RETRY_POLICY_BY_CODE.INVALID_INPUT).toBeNull()
 		expect(RETRY_POLICY_BY_CODE.LINKEDIN_INVITE_QUOTA_EXCEEDED).toBeNull()
