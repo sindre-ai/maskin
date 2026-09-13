@@ -60,6 +60,7 @@ import {
 	verifyStripeWebhook,
 } from '../lib/stripe'
 import type { StripeEnv } from '../lib/stripe'
+import { applyVatEventIfHandled, resolveDisputeWorkspaceId } from '../lib/vat-webhook'
 
 const STRIPE_SYSTEM_ACTOR_NAME = 'Stripe'
 
@@ -112,7 +113,7 @@ app.post('/', async (c) => {
 		return c.json({ ok: true, skipped: true, reason: 'unhandled_event_type' })
 	}
 
-	const workspaceId = await resolveWorkspaceId(c.get('db'), event)
+	const workspaceId = await resolveWorkspaceId(c.get('db'), event, stripe)
 	if (!workspaceId) {
 		// We can't link this back to a workspace. Acknowledge so Stripe stops
 		// retrying - silent retries on orphaned events are noise, not a bug.
@@ -164,7 +165,7 @@ app.post('/', async (c) => {
 	}
 
 	try {
-		await applyEvent(db, workspaceId, event, stripeEnv)
+		await applyEvent(db, workspaceId, event, stripeEnv, stripe)
 		if (claimRowId) {
 			// Mark the claim processed so the reconciler doesn't release it after the
 			// 15m stale threshold. Without this, every successful Stripe delivery
@@ -218,9 +219,23 @@ app.post('/', async (c) => {
 	}
 })
 
-async function resolveWorkspaceId(db: Database, event: Stripe.Event): Promise<string | null> {
+async function resolveWorkspaceId(
+	db: Database,
+	event: Stripe.Event,
+	stripe: Stripe,
+): Promise<string | null> {
 	const direct = resolveWorkspaceIdFromEvent(event)
 	if (direct) return direct
+
+	// `charge.dispute.created` carries a Dispute object, which references
+	// a Charge on its `charge` field, not a Customer. The generic customer
+	// extractor below returns null on this shape, which — before this
+	// branch existed — sent every dispute out as `no_workspace` and Delta 5
+	// silently died. Resolve customer via a `charges.retrieve` before
+	// falling through. (CTO deliverability review fix #2, 10 Sep 2026.)
+	if (event.type === 'charge.dispute.created') {
+		return await resolveDisputeWorkspaceId(db, event, stripe)
+	}
 
 	// Fallback: look up by stripe_customer_id stored on settings.billing.
 	// Subscription / invoice events don't always carry metadata, but they
@@ -250,7 +265,21 @@ async function applyEvent(
 	workspaceId: string,
 	event: Stripe.Event,
 	stripeEnv: StripeEnv,
+	stripe: Stripe,
 ): Promise<void> {
+	// VAT-correct-checkout bet (Delta 2 + 2a + Delta 5). Dispatched BEFORE
+	// the workspace transaction below:
+	//   • `customer.tax_id.*` and `charge.dispute.created` mutate their own
+	//     tables (or nothing) — they do not need the `workspaces` row lock.
+	//   • `checkout.session.completed` may need the guard's short-circuit
+	//     branches (pending → UPSERT `awaiting_vies`, unverified → void)
+	//     to complete before falling through. `handled: false` means the
+	//     guard decided "fulfil now" and the existing switch below owns
+	//     the mutation. When the flag is off, the helper returns
+	//     `{ handled: false }` for `checkout.session.completed` unchanged.
+	const vatDispatch = await applyVatEventIfHandled(db, workspaceId, event, stripe)
+	if (vatDispatch.handled) return
+
 	// Concurrent webhook deliveries on the same workspace each do a
 	// SELECT -> mutate JSON -> UPDATE. Without serialization, a later writer
 	// that read before an earlier writer's UPDATE silently clobbers fields
