@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/responsive-popover'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import type { MessageMetadata } from '@/lib/api'
@@ -88,6 +89,10 @@ function NewChatRoute() {
 	const defaultAgent = useDefaultChatAgent()
 	const currentActor = getStoredActor()
 
+	// Task 6321aecf: promote `/` and `@` in the no-recipient composer placeholder
+	// once the `+` menu collapses. Same flag boundary as the DropdownMenu switch
+	// in `<Composer>` — the two changes ship together.
+	const plusMenuAttachOnly = useFeatureFlag('chat-plus-menu-attach-only')
 	const [pickedId, setPickedId] = useState<string | null>(search.agentId ?? null)
 	const [pickerOpen, setPickerOpen] = useState(false)
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
@@ -364,7 +369,13 @@ function NewChatRoute() {
 					disabled={createConversation.isPending}
 					pending={createConversation.isPending}
 					surface="sheet"
-					placeholder={recipient ? `Message ${recipient.name}…` : 'Message this conversation'}
+					placeholder={
+						recipient
+							? `Message ${recipient.name}…`
+							: plusMenuAttachOnly
+								? 'Message… / reference or create · @ mention'
+								: 'Message this conversation'
+					}
 					selection={selection}
 					onDispatchSelection={dispatchSelection}
 					onRemoveAgent={() => dispatchSelection({ type: 'remove_agent' })}
