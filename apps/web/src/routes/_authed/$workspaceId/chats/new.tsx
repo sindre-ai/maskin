@@ -101,6 +101,11 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 	const [recipients, setRecipients] = useState<Recipient[]>([])
 	const [query, setQuery] = useState('')
 	const [activeIndex, setActiveIndex] = useState(0)
+	// Task 6321aecf: promote `/` and `@` in the no-recipient composer placeholder
+	// once the `+` menu collapses. Same flag boundary as the DropdownMenu switch
+	// in `<Composer>` — the two changes ship together. Applied to the
+	// no-recipient case of the v4 new-chat placeholder below.
+	const plusMenuAttachOnly = useFeatureFlag('chat-plus-menu-attach-only')
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
 	const [draft, setDraft] = useState('')
@@ -372,7 +377,11 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 	)
 
 	const composerPlaceholder =
-		recipients.length === 1 ? `Message ${recipients[0].name}…` : 'Message this conversation'
+		recipients.length === 1
+			? `Message ${recipients[0].name}…`
+			: plusMenuAttachOnly
+				? 'Message… / reference or create · @ mention'
+				: 'Message this conversation'
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">

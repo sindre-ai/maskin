@@ -65,6 +65,16 @@ export const FLAGS = {
 	 * See parent bet 'Slack setup UX' for the shape spec.
 	 */
 	SLACK_SETUP_UX_V2: 'slack-setup-ux-v2',
+	/**
+	 * Chat composer `+` menu collapse — replaces the three-item **Reference an
+	 * object** / **Mention an agent** / **Create an object** dropdown with a
+	 * single **Attach a file** row, and promotes the `/` and `@` primitives via
+	 * the composer placeholder. Owned by task **6321aecf**, part of parent bet
+	 * **bet/f21a-chat-composer-completeness** ("Chat composer completeness").
+	 * OFF preserves today's three-item menu and today's placeholder verbatim.
+	 * See `.claude/rules/feature-flags.md` for the boundary rule.
+	 */
+	CHAT_PLUS_MENU_ATTACH_ONLY: 'chat-plus-menu-attach-only',
 	loopsV4Polish: 'loops-v4-polish',
 	loopsV4PolishTargets: 'loops-v4-polish.targets',
 	loopsV4PolishStepFlow: 'loops-v4-polish.step_flow',
