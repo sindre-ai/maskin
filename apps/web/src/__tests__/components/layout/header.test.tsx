@@ -171,6 +171,8 @@ describe('Header', () => {
 			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
+			setNewMenuPrimaryOverride: vi.fn(),
+			setNewMenuDisabled: vi.fn(),
 		})
 
 		render(<Header />)
@@ -190,6 +192,8 @@ describe('Header', () => {
 			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
+			setNewMenuPrimaryOverride: vi.fn(),
+			setNewMenuDisabled: vi.fn(),
 		})
 
 		render(<Header />)
@@ -214,6 +218,8 @@ describe('Header', () => {
 			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
+			setNewMenuPrimaryOverride: vi.fn(),
+			setNewMenuDisabled: vi.fn(),
 		})
 		render(<Header />)
 		const trigger = screen.getByRole('button', { name: /toggle sidebar/i })
@@ -244,6 +250,8 @@ describe('Header', () => {
 			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
+			setNewMenuPrimaryOverride: vi.fn(),
+			setNewMenuDisabled: vi.fn(),
 		})
 
 		const user = userEvent.setup()
@@ -276,6 +284,8 @@ describe('Header', () => {
 			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
+			setNewMenuPrimaryOverride: vi.fn(),
+			setNewMenuDisabled: vi.fn(),
 		})
 
 		const user = userEvent.setup()
@@ -310,6 +320,8 @@ describe('Header', () => {
 			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
+			setNewMenuPrimaryOverride: vi.fn(),
+			setNewMenuDisabled: vi.fn(),
 		})
 
 		render(<Header />)
@@ -384,6 +396,8 @@ describe('Header', () => {
 			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
+			setNewMenuPrimaryOverride: vi.fn(),
+			setNewMenuDisabled: vi.fn(),
 		})
 		vi.mocked(useMatches).mockReturnValue([
 			{
