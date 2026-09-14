@@ -240,6 +240,37 @@ describe('SessionManager.runWatchdog — stalled launches carry a reason (Integr
 		expect(failureReasonOf(row?.result)?.reason_code).toBe('startup_stalled')
 	})
 
+	it('gives a timed-out session a reason instead of a bare error string', async () => {
+		// Eight sessions timed out in one Vaerksted morning carrying only
+		// `{ error: 'Session timed out' }` — no `failure_reason`, so every surface
+		// that reads one showed nothing, and a dropped code review looked
+		// identical to a crash. The distinguishing fact is that the agent RAN, so
+		// the recovery is to check what it produced rather than assume nothing
+		// happened; the message has to say that.
+		const agent = await insertActor(db, { type: 'agent' })
+		const timedOut = await insertSession(db, workspaceId, agent.id, actorId, {
+			status: 'running',
+			containerId: null,
+			startedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+			timeoutAt: new Date(Date.now() - 60 * 1000),
+			config: { llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },
+		})
+
+		const manager = new SessionManager(db, stubStorage())
+		try {
+			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+		} finally {
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, timedOut.id))
+		expect(row?.status).toBe('timeout')
+		const reason = failureReasonOf(row?.result)
+		expect(reason?.reason_code).toBe('session_timeout')
+		expect(reason?.human_message).toMatch(/work may already be done/i)
+		expect(reason?.verbatim_output).toMatch(/running for \d+ minutes/)
+	})
+
 	it('reports a route-resolved stall differently from a pre-route stall', async () => {
 		const agent = await insertActor(db, { type: 'agent' })
 		const stuck = await insertSession(db, workspaceId, agent.id, actorId, {

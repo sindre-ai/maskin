@@ -32,6 +32,12 @@ export type DispatchResult =
 			 * better pass their own.
 			 */
 			failureReason?: SessionResultFailureReason
+			/**
+			 * Epoch ms this workspace becomes usable again, when the cause is a
+			 * wait with a known end (every Claude subscription rate-limited)
+			 * rather than a misconfiguration. Forwarded to `onPermanentFailure`.
+			 */
+			retryAt?: number
 	  }
 
 /**
@@ -102,6 +108,8 @@ export interface SessionDispatchQueueOptions {
 		/** `undefined` when the dispatcher gave no classification. */
 		reasonCode?: string
 		error: string
+		/** See `DispatchResult`'s `retryAt`. */
+		retryAt?: number
 	}) => void
 }
 
@@ -308,7 +316,7 @@ export class SessionDispatchQueue {
 				await this.handleTransientFailure(row, result.error)
 				return
 			case 'permanent_failure':
-				await this.handlePermanentFailure(row, result.error, result.failureReason)
+				await this.handlePermanentFailure(row, result.error, result.failureReason, result.retryAt)
 				return
 		}
 	}
@@ -407,6 +415,7 @@ export class SessionDispatchQueue {
 		row: typeof sessionDispatchAttempts.$inferSelect,
 		error: string,
 		failureReason?: SessionResultFailureReason,
+		retryAt?: number,
 	): Promise<void> {
 		await this.markRowFailed(row, error)
 		const workspaceId = await this.markSessionFailed(
@@ -429,6 +438,7 @@ export class SessionDispatchQueue {
 					workspaceId,
 					reasonCode: failureReason?.reason_code,
 					error,
+					retryAt,
 				})
 			} catch (err) {
 				logger.warn('onPermanentFailure hook threw', {

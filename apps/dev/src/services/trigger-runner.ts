@@ -382,7 +382,28 @@ export class TriggerRunner {
 	 * only when `!err.transient`, and routes transient credential errors back
 	 * through its retry path instead.
 	 */
-	handleDispatchPermanentFailure(workspaceId: string, reasonCode?: string): void {
+	handleDispatchPermanentFailure(workspaceId: string, reasonCode?: string, retryAt?: number): void {
+		// Every connected subscription is rate-limited at once. Unlike the
+		// no-credentials case this has an EXACT end time the provider gave us, so
+		// pause until precisely then: long enough that the workspace stops firing
+		// triggers into a wall for hours, and self-lifting the moment a
+		// subscription is actually back, with no human involved.
+		//
+		// Clamped so a malformed or absurd `resetsAt` cannot strand a workspace:
+		// never longer than the no-credentials pause, and never in the past
+		// (which would make the pause a no-op and reproduce the flood).
+		if (reasonCode === 'all_subscriptions_rate_limited') {
+			const now = Date.now()
+			const bounded =
+				typeof retryAt === 'number' && Number.isFinite(retryAt)
+					? Math.min(Math.max(retryAt, now + 60_000), now + NO_CREDENTIALS_SUPPRESSION_MS)
+					: now + NO_CREDENTIALS_SUPPRESSION_MS
+			this.suppressWorkspace(workspaceId, {
+				until: new Date(bounded),
+				reason: 'every connected Claude subscription is rate-limited',
+			})
+			return
+		}
 		if (reasonCode !== 'not_logged_in') return
 		this.suppressWorkspace(workspaceId, {
 			until: new Date(Date.now() + NO_CREDENTIALS_SUPPRESSION_MS),

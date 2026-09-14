@@ -149,6 +149,11 @@ export class SessionDispatcher {
 					kind: 'permanent_failure',
 					error: err.detail,
 					failureReason: err.toFailureReason(),
+					// "Every subscription is rate-limited until X" is a wait with a
+					// known end. Passing it on lets the trigger runner pause the
+					// workspace until then instead of re-firing into a wall — and
+					// unpause by itself when it passes, with no human involved.
+					retryAt: err.retryAt,
 				}
 			}
 			return {

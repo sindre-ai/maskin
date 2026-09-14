@@ -345,6 +345,19 @@ export const failureReasonCodeSchema = z.enum([
 	// time, resolved route if any) so the stall is at least diagnosable from
 	// the session itself instead of only from server logs.
 	'startup_stalled',
+	// Every connected Claude subscription is rate-limited at once. Distinct from
+	// `not_logged_in` on purpose: the workspace's credentials are fine and there
+	// is nothing to reconnect, so `not_logged_in`'s "connect a Claude
+	// subscription in Settings → Keys" is actively wrong advice — it sends
+	// someone to fix a thing that is not broken while the real answer is a wait
+	// (carried in `reset_at`) or enabling overage on the Anthropic org.
+	'all_subscriptions_rate_limited',
+	// The session hit its wall-clock timeout and was killed mid-run. Written by
+	// SessionManager's watchdog. Distinct from every other code here in that the
+	// work may be PARTIALLY DONE — the agent ran, possibly for hours, and was
+	// interrupted — so the recovery is to look at what it managed before
+	// restarting it, not to assume nothing happened.
+	'session_timeout',
 ])
 export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
 

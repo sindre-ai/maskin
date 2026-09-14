@@ -476,6 +476,10 @@ export async function resolveLlmRoute(params: {
 	 * strands a recoverable session or burns five retries on a dead one.
 	 */
 	let oauthFailureTransient = false
+	// When the chain failed because every subscription is rate-limited (rather
+	// than missing or revoked), the resolver reports the earliest reset. Carried
+	// into the error so the session says "wait until X" instead of "reconnect".
+	let oauthFailureRetryAt: number | undefined
 
 	// 1. Agent-level override — only handled here for anthropic; non-anthropic
 	//    providers fall through to caller (matches existing behavior). The
@@ -553,6 +557,7 @@ export async function resolveLlmRoute(params: {
 				// actually transient calls onUnusable, so a silent null is an
 				// auth-class shape we would rather fail fast than retry blindly.
 				oauthFailureTransient = unusableRef.current?.transient ?? false
+				oauthFailureRetryAt = unusableRef.current?.retryAt
 				logger.warn('Claude OAuth route resolved to no usable token', {
 					workspaceId,
 					actorId,
@@ -619,6 +624,7 @@ export async function resolveLlmRoute(params: {
 		throw new LlmCredentialsUnavailableError(
 			`Claude subscription credentials could not be resolved and no other LLM route is configured: ${oauthFailure}`,
 			oauthFailureTransient,
+			oauthFailureRetryAt,
 		)
 	}
 
@@ -648,11 +654,23 @@ export class LlmCredentialsUnavailableError extends Error {
 	 */
 	readonly transient: boolean
 
-	constructor(detail: string, transient = false) {
+	/**
+	 * Epoch ms the workspace's subscriptions come back, when the failure is
+	 * "all of them are rate-limited" rather than "there are none". Set only for
+	 * that case, and only when the provider gave a reset time. Its presence is
+	 * what tells the rest of the system this is a WAIT, not a misconfiguration:
+	 * the session reports a finite recovery time instead of pointing the user at
+	 * Settings → Keys, and TriggerRunner pauses the workspace until it passes
+	 * rather than firing every trigger into a wall for hours.
+	 */
+	readonly retryAt?: number
+
+	constructor(detail: string, transient = false, retryAt?: number) {
 		super(detail)
 		this.name = 'LlmCredentialsUnavailableError'
 		this.detail = detail
 		this.transient = transient
+		this.retryAt = retryAt
 	}
 
 	/** What the user and any agent reading `get_session` see. */
@@ -668,7 +686,31 @@ export class LlmCredentialsUnavailableError extends Error {
 	static readonly transientHumanMessage =
 		'This session could not start because Maskin could not reach Anthropic to verify the credentials for this workspace. This is usually temporary — try starting the session again in a few minutes.'
 
+	/**
+	 * Shown when every connected subscription is rate-limited at the same time.
+	 * Says what is actually true and what actually helps — nothing here is
+	 * misconfigured, so there is nothing to reconnect.
+	 */
+	static rateLimitedHumanMessage(retryAt?: number): string {
+		const when = retryAt ? ` It comes back at ${new Date(retryAt).toISOString()}.` : ''
+		return `This session could not start because every connected Claude subscription is currently rate-limited.${when} Nothing is misconfigured — connect another subscription, enable overage for your Anthropic organisation, or wait for the limit to reset.`
+	}
+
 	toFailureReason(): SessionResultFailureReason {
+		// A rate-limited chain is not a missing credential. Reporting it as
+		// `not_logged_in` sent people to Settings → Keys to fix a credential that
+		// was working perfectly, which is the "we have credits and it still
+		// fails" confusion in its most expensive form.
+		if (this.retryAt !== undefined) {
+			return {
+				provider: 'anthropic',
+				reason_code: 'all_subscriptions_rate_limited',
+				human_message: LlmCredentialsUnavailableError.rateLimitedHumanMessage(this.retryAt),
+				http_status: null,
+				reset_at: new Date(this.retryAt).toISOString(),
+				verbatim_output: this.detail,
+			}
+		}
 		return {
 			provider: 'maskin',
 			reason_code: 'not_logged_in',

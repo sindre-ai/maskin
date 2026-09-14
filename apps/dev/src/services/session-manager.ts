@@ -221,6 +221,35 @@ function isContainerGoneError(err: unknown): boolean {
 	return /HTTP code 404/.test(message) || /is not running/.test(message)
 }
 
+/**
+ * Why a timed-out session stopped, as a structured reason.
+ *
+ * The row used to carry only `{ error: 'Session timed out' }` — no
+ * `failure_reason` at all — so every surface that reads `failure_reason` (the
+ * session panel, `get_session`, any agent triaging its own history) had
+ * nothing to show and no way to tell a timeout apart from a crash. Eight of
+ * these accumulated in one Vaerksted morning on 2026-09-14, each one a
+ * dropped review or @mention that no one was told about.
+ *
+ * `elapsedLabel` names how long it ran, which is the part that decides what
+ * to do next: a session killed at the two-hour backstop usually did real work
+ * first, so the recovery is to read what it produced before restarting it.
+ */
+function sessionTimeoutFailureReason(elapsedMs: number | null): SessionResultFailureReason {
+	const mins = elapsedMs && elapsedMs > 0 ? Math.round(elapsedMs / 60_000) : null
+	return {
+		provider: 'maskin',
+		reason_code: 'session_timeout',
+		human_message:
+			'This session hit its time limit and was stopped before it finished. Some of its work may already be done — check what it produced before starting a new one.',
+		http_status: null,
+		reset_at: null,
+		verbatim_output: mins
+			? `Killed by the session watchdog after running for ${mins} minutes.`
+			: 'Killed by the session watchdog at its wall-clock limit.',
+	}
+}
+
 function claudeRuntimeFailoverReason(
 	failureReason: { provider: string; reason_code: string } | null,
 	stdoutTail: string,
@@ -3646,7 +3675,12 @@ export class SessionManager extends EventEmitter {
 				.update(sessions)
 				.set({
 					status: 'timeout',
-					result: { error: 'Session timed out' },
+					result: {
+						error: 'Session timed out',
+						failure_reason: sessionTimeoutFailureReason(
+							elapsedMs(session.startedAt, session.createdAt),
+						),
+					},
 					completedAt: now,
 					currentActivity: null,
 					updatedAt: now,
@@ -3746,7 +3780,12 @@ export class SessionManager extends EventEmitter {
 				.update(sessions)
 				.set({
 					status: 'timeout',
-					result: { error: 'Session timed out' },
+					result: {
+						error: 'Session timed out',
+						failure_reason: sessionTimeoutFailureReason(
+							elapsedMs(session.startedAt, session.createdAt),
+						),
+					},
 					completedAt: now,
 					currentActivity: null,
 					updatedAt: now,
