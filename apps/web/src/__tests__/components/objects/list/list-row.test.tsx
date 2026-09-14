@@ -1,7 +1,7 @@
 import { ListRow } from '@/components/objects/list/list-row'
 import { fireEvent, render, screen } from '@testing-library/react'
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
 	buildActorListItem,
 	buildNotificationResponse,
@@ -21,6 +21,18 @@ vi.mock('@tanstack/react-router', () => ({
 	},
 }))
 
+// The list row now owns the star affordance via `useStar` (D5 client
+// migration). Mock the hook so tests can drive isStarred + assert toggle
+// without wiring a QueryClient + WorkspaceContext into every render.
+const toggleMock = vi.fn()
+let mockStarState: { isStarred: boolean; isSaving: boolean } = {
+	isStarred: false,
+	isSaving: false,
+}
+vi.mock('@/hooks/use-star', () => ({
+	useStar: () => ({ ...mockStarState, toggle: toggleMock }),
+}))
+
 const baseProps = {
 	workspaceId: 'ws-1',
 	onSelect: vi.fn(),
@@ -38,27 +50,35 @@ function renderRow(overrides: Partial<React.ComponentProps<typeof ListRow>> = {}
 }
 
 describe('ListRow select affordance', () => {
+	beforeEach(() => {
+		toggleMock.mockClear()
+		mockStarState = { isStarred: false, isSaving: false }
+	})
+
 	// Mockup 756–758: a star at rest, a checkbox once anything is selected.
 	it('shows the resting star alongside a hover-revealed checkbox when nothing is selected', () => {
 		renderRow({ anySelected: false, isSelected: false })
-		expect(screen.getByRole('button', { name: 'Star' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Star this object' })).toBeInTheDocument()
 		const checkbox = screen.getByRole('checkbox', { name: 'Select row' })
 		expect(checkbox).toHaveAttribute('data-state', 'unchecked')
 		expect(checkbox.className).toContain('opacity-0')
 	})
 
-	it('draws a filled star and offers to unstar once the row is starred', () => {
-		const onToggleStar = vi.fn()
-		const { object } = renderRow({
-			anySelected: false,
-			isSelected: false,
-			isStarred: true,
-			onToggleStar,
-		})
-		const star = screen.getByRole('button', { name: 'Unstar' })
+	it('draws a filled star and offers to remove it once the row is starred', () => {
+		mockStarState = { isStarred: true, isSaving: false }
+		renderRow({ anySelected: false, isSelected: false })
+		const star = screen.getByRole('button', { name: 'Starred (click to remove)' })
 		expect(star).toHaveTextContent('★')
+		expect(star).toHaveAttribute('aria-pressed', 'true')
 		fireEvent.click(star)
-		expect(onToggleStar).toHaveBeenCalledWith(object.id)
+		expect(toggleMock).toHaveBeenCalledTimes(1)
+	})
+
+	it('drops opacity to 60% while the server round-trip is in flight', () => {
+		mockStarState = { isStarred: false, isSaving: true }
+		renderRow({ anySelected: false, isSelected: false })
+		const star = screen.getByRole('button', { name: 'Star this object' })
+		expect(star.className).toContain('opacity-60')
 	})
 
 	it('replaces the star with a checkbox on every row once any row is selected', () => {
@@ -76,9 +96,32 @@ describe('ListRow select affordance', () => {
 			'checked',
 		)
 	})
+
+	// SPEC §D5 keyboard shortcut: pressing `s` on the focused row toggles it.
+	it('toggles the star when `s` is pressed on the row', () => {
+		renderRow({ anySelected: false, isSelected: false })
+		const row = screen.getByRole('button', { name: 'Ship the thing' }).closest('div')
+		expect(row).not.toBeNull()
+		if (!row) return
+		fireEvent.keyDown(row, { key: 's' })
+		expect(toggleMock).toHaveBeenCalledTimes(1)
+	})
+
+	it('ignores `s` inside an editable target so metadata fields keep the keystroke', () => {
+		const { container } = renderRow({ anySelected: false, isSelected: false })
+		const input = document.createElement('input')
+		container.appendChild(input)
+		fireEvent.keyDown(input, { key: 's', bubbles: true })
+		expect(toggleMock).not.toHaveBeenCalled()
+	})
 })
 
 describe('ListRow pending ask', () => {
+	beforeEach(() => {
+		toggleMock.mockClear()
+		mockStarState = { isStarred: false, isSaving: false }
+	})
+
 	const ask = buildNotificationResponse({
 		status: 'pending',
 		sourceActorId: 'actor-1',

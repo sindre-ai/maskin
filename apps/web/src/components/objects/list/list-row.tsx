@@ -5,6 +5,7 @@ import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Checkbox } from '@/components/ui/checkbox'
+import { useStar } from '@/hooks/use-star'
 import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
@@ -38,8 +39,6 @@ export interface ListRowProps {
 	 *  Absent for a type the workspace no longer defines, where the raw key is
 	 *  the only honest label left. */
 	typeLabel?: string
-	isStarred?: boolean
-	onToggleStar?: (objectId: string) => void
 }
 
 export function ListRow({
@@ -56,9 +55,8 @@ export function ListRow({
 	columnVisibility,
 	anySelected,
 	typeLabel,
-	isStarred,
-	onToggleStar,
 }: ListRowProps) {
+	const { isStarred, isSaving: isStarSaving, toggle: toggleStar } = useStar(object.id)
 	const driver = object.driver ? actors?.find((a) => a.id === object.driver) : null
 	const isArchived = object.status === 'archived'
 	// Prior status is populated by the archive handler (T6) into metadata.previous_status.
@@ -85,7 +83,6 @@ export function ListRow({
 	const showStar = !selectionMode
 
 	return (
-		// biome-ignore lint/a11y/useKeyWithClickEvents: the row carries a real Link for keyboard navigation; click supplements it (same pattern as ObjectCard).
 		<div
 			data-obj-id={object.id}
 			data-state={isSelected ? 'selected' : undefined}
@@ -98,6 +95,18 @@ export function ListRow({
 					return
 				}
 				onOpen(object.id)
+			}}
+			onKeyDown={(e) => {
+				// SPEC §D5 keyboard shortcut: `s` toggles star on the focused row.
+				// Don't fire when the shift-select or another modifier is held, or
+				// when focus is inside a real editable field (a metadata inline edit
+				// nested in the row would otherwise lose the `s` keystroke).
+				if (e.key !== 's' || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
+				const target = e.target as HTMLElement | null
+				const tag = target?.tagName
+				if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return
+				e.preventDefault()
+				toggleStar()
 			}}
 			className={cn(
 				'group relative flex w-full items-center gap-3 rounded-lg py-2.5 pr-3',
@@ -121,12 +130,12 @@ export function ListRow({
 				{showStar && (
 					<button
 						type="button"
-						aria-label={isStarred ? 'Unstar' : 'Star'}
+						aria-label={isStarred ? 'Starred (click to remove)' : 'Star this object'}
 						aria-pressed={isStarred}
 						onClick={(e) => {
 							e.preventDefault()
 							e.stopPropagation()
-							onToggleStar?.(object.id)
+							toggleStar()
 						}}
 						className={cn(
 							'text-[13px] leading-none transition-colors',
@@ -136,7 +145,12 @@ export function ListRow({
 							// 1024, so at exactly iPad-landscape width the checkbox would go
 							// touch-sized while the star still held the slot.
 							'max-[1024.02px]:hidden pointer-coarse:hidden',
-							isStarred ? 'text-foreground' : 'text-border-strong hover:text-muted-foreground',
+							// Amber-filled when on (SPEC §D5 — parity with detail meta row).
+							// `--ink-3` (border-strong) → `--ink-2` (muted-foreground) on hover
+							// when off, per SPEC.
+							isStarred ? 'text-[#f59e0b]' : 'text-border-strong hover:text-muted-foreground',
+							// SPEC: 60% opacity while the server round-trip is in flight.
+							isStarSaving && 'opacity-60',
 						)}
 					>
 						{isStarred ? '★' : '☆'}
