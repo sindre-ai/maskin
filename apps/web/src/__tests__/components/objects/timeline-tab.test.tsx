@@ -329,8 +329,8 @@ describe('TimelineTab', () => {
 		await user.click(screen.getByRole('button', { name: /2 new updates/ }))
 		expect(scrollIntoView).toHaveBeenCalledTimes(1)
 
-		await user.click(screen.getByRole('button', { name: 'Mark read' }))
-		expect(screen.queryByRole('button', { name: 'Mark read' })).toBeNull()
+		await user.click(screen.getByRole('button', { name: /Mark all read/ }))
+		expect(screen.queryByRole('button', { name: /Mark all read/ })).toBeNull()
 		// Dismissing the divider must also persist the read high-water mark —
 		// a local-only dismiss would let the unread badge come back on remount.
 		expect(vi.mocked(useMarkRead)).toHaveBeenCalledWith('ws-1')
@@ -431,12 +431,12 @@ describe('TimelineTab', () => {
 		expect(screen.queryByRole('button', { name: /agent updates/ })).toBeNull()
 		expect(screen.getAllByRole('listitem')).toHaveLength(2)
 	})
-	// Regression: `visible` runs newest-first, so a status_changed event CLOSES
-	// the phase above it and OPENS the older one below. The older phase must be
-	// labelled with the status the object moved AWAY from (`old`). Labelling it
-	// with `new` made every divider below the top repeat the one above it and
-	// left the oldest phase unlabelled.
-	it('labels each phase divider with the status that phase actually sat in', () => {
+	// D10: phase dividers only fire at lifecycle-phase boundaries. active is in
+	// BUILT and define is in SHAPING, so the define→active transition draws one
+	// divider labelled SHAPING for the older group. The scope→define transition
+	// stays inside SHAPING (both statuses map to SHAPING), so no divider fires
+	// between the two comment rows below.
+	it('emits a phase divider at each lifecycle-phase boundary crossing', () => {
 		const object = buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'active' })
 		mockGraph(
 			[
@@ -461,7 +461,7 @@ describe('TimelineTab', () => {
 					entityType: 'bet',
 					entityId: 'obj-1',
 					createdAt: '2026-01-02T00:00:00Z',
-					data: { changes: [{ field: 'status', old: 'scope', new: 'define' }] },
+					data: { changes: [{ field: 'status', old: 'shaped', new: 'define' }] },
 				}),
 				buildEventResponse({
 					id: 10,
@@ -478,15 +478,12 @@ describe('TimelineTab', () => {
 
 		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
 
-		// Newest phase first: active (current) → define → scope. Each status
-		// appears exactly once; the pre-fix code rendered active, active, define.
-		// Scoped to the dividers themselves: v2 status_changed rows also carry a
-		// status badge with the same word, so an unscoped text query interleaves
-		// them with the phase labels.
-		const labels = screen
-			.getAllByText(/^(active|define|scope)$/)
-			.filter((el) => el.closest('button[aria-expanded]'))
-			.map((el) => el.textContent?.trim())
-		expect(labels).toEqual(['active', 'define', 'scope'])
+		// Two lifecycle groups: BUILT (current: active) at top, SHAPING (define →
+		// shaped) below — so exactly two phase separators, one per group. The
+		// shaped→define transition stays inside SHAPING and produces no divider.
+		const separators = screen.getAllByRole('separator', { name: /phase/i })
+		expect(separators).toHaveLength(2)
+		expect(separators[0]).toHaveAccessibleName(/BUILT phase/)
+		expect(separators[1]).toHaveAccessibleName(/SHAPING phase/)
 	})
 })
