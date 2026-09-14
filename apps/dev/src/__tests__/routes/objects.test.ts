@@ -645,9 +645,10 @@ describe('Objects Routes', () => {
 			// Queue order matches handler call order: 1) object, 2) relationships,
 			// 3) files-membership lookup (endpoint resolves to the `files` table so
 			// it is bucketed as a file — skips connected_objects), 4) events,
-			// 5-7) the three subscription queries fired in parallel (isSubscribed,
-			// getUnreadCount, getSubscriberCount), 8) files summary.
-			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [], [file]]
+			// 5-8) the four parallel queries fired via Promise.all (isSubscribed,
+			// getUnreadCount, getSubscriberCount, getStarredObjectIds), 9) files
+			// summary.
+			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [], [], [file]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -674,8 +675,9 @@ describe('Objects Routes', () => {
 			})
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
 			// 1) object, 2) relationships (empty → skips connected_objects), 3) events,
-			// 4-6) subscription queries, 7) files.
-			mockResults.selectQueue = [[obj], [], [comment], [], [], [], [file]]
+			// 4-7) parallel queries (subscribed, unreadCount, subscriberCount, starredIds),
+			// 8) files.
+			mockResults.selectQueue = [[obj], [], [comment], [], [], [], [], [file]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -753,8 +755,9 @@ describe('Objects Routes', () => {
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
 			// 1) object, 2) relationships, 3) files-membership lookup returns the
 			// file (endpoint id resolves to `files.id`), so no connected_objects
-			// fetch, 4) events, 5-7) subscription queries, 8) files summary.
-			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [], [file]]
+			// fetch, 4) events, 5-8) parallel queries (subscribed, unreadCount,
+			// subscriberCount, starredIds), 9) files summary.
+			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [], [], [file]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
