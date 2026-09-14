@@ -35,6 +35,10 @@ vi.mock('@/hooks/use-conversations', () => ({
 		mutateAsync: mockCreateConversationMutateAsync,
 		isPending: false,
 	}),
+	// Composer's `@` picker walks the conversations cache to build the "Recent
+	// collaborators" section — shortcut it here since it's unrelated to the
+	// attachments path under test.
+	useConversationsInfinite: () => ({ data: { pages: [] } }),
 }))
 
 vi.mock('@/hooks/use-workspaces', () => ({
@@ -65,6 +69,7 @@ vi.mock('@/components/chat/slash-picker', () => ({
 vi.mock('@/lib/analytics', () => ({
 	deriveEntryAgentRole: () => 'coach',
 	trackSpecialistSummonedManually: () => {},
+	trackChatMentionInserted: () => {},
 }))
 
 import { Route } from '@/routes/_authed/$workspaceId/chats/new'
