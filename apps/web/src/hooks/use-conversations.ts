@@ -119,8 +119,7 @@ export function useUpdateConversationMe(workspaceId: string) {
 										...c,
 										...(data.pinned !== undefined ? { pinned: data.pinned } : {}),
 										...(data.archived !== undefined ? { archived: data.archived } : {}),
-										...(data.last_read_message_id !== undefined &&
-										data.last_read_message_id > 0
+										...(data.last_read_message_id !== undefined && data.last_read_message_id > 0
 											? { unread_count: 0 }
 											: {}),
 									}

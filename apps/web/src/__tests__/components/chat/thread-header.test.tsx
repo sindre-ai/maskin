@@ -1,9 +1,5 @@
 import { TooltipProvider } from '@/components/ui/tooltip'
-import type {
-	ConversationDetailResponse,
-	MessageResponse,
-	MessagesListResponse,
-} from '@/lib/api'
+import type { ConversationDetailResponse, MessageResponse, MessagesListResponse } from '@/lib/api'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'

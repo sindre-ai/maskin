@@ -184,12 +184,11 @@ function NewChatRoute() {
 						const enriched = candidates.find((c) => c.id === p.actorId)
 						seen.set(p.actorId, {
 							ts: t,
-							recipient:
-								enriched ?? {
-									id: p.actorId,
-									name: p.actorName,
-									type: p.actorType,
-								},
+							recipient: enriched ?? {
+								id: p.actorId,
+								name: p.actorName,
+								type: p.actorType,
+							},
 						})
 					}
 				}
@@ -216,6 +215,7 @@ function NewChatRoute() {
 	// place to render.
 	const showDropdown = typedMode || dropdownRows.length > 0
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: dropdownRows.length and typedMode ARE the reset triggers — a shorter row set or a mode switch should snap the active row back to the top; setActiveIndex is a stable React setter, so it is deliberately absent.
 	useEffect(() => {
 		setActiveIndex(0)
 	}, [dropdownRows.length, typedMode])
@@ -340,7 +340,15 @@ function NewChatRoute() {
 				throw err
 			}
 		},
-		[recipients, seedObject, seedNotification, selection, createConversation, navigate, workspaceId],
+		[
+			recipients,
+			seedObject,
+			seedNotification,
+			selection,
+			createConversation,
+			navigate,
+			workspaceId,
+		],
 	)
 
 	const composerPlaceholder =
@@ -407,7 +415,10 @@ function NewChatRoute() {
 								No agent by that name
 							</p>
 						) : (
+							// biome-ignore lint/a11y/useFocusableInteractive: focus lives on the query input and moves via arrow keys through activeIndex; the listbox itself is scrolled programmatically, so it should not steal tab order.
+							// biome-ignore lint/a11y/useSemanticElements: swapping to native <select> would drop the chip inline input, RECENT/typed modes, mouse-hover activeIndex sync, and the two-column tablet grid — WAI-ARIA listbox on <ul> is the correct primitive here.
 							<ul
+								// biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: same reason as the useSemanticElements suppression above — the composed listbox must sit on <ul> so screen readers announce it as a list of options paired with the chip input above.
 								role="listbox"
 								aria-label={typedMode ? 'Add someone — person or agent' : 'Recent collaborators'}
 								className={cn(
@@ -426,6 +437,7 @@ function NewChatRoute() {
 										<li key={row.id}>
 											<button
 												type="button"
+												// biome-ignore lint/a11y/useSemanticElements: native <option> would strip the avatar, secondary line, and hover/activeIndex sync — this row is a real button that carries the option semantics on top.
 												role="option"
 												aria-selected={i === activeIndex}
 												onMouseEnter={() => setActiveIndex(i)}

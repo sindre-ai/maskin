@@ -21,8 +21,10 @@ import { queryKeys } from '@/lib/query-keys'
 // settle.
 function makeGate() {
 	let capture: (v: unknown) => void = () => {}
+	// biome-ignore lint/suspicious/noAssignInExpressions: deferred-promise pattern — the Promise executor is the only place the resolver escapes into an outer binding, so the assignment has to live in the callback.
 	const capturePromise = new Promise((res) => (capture = res))
 	let release: (v: unknown) => void = () => {}
+	// biome-ignore lint/suspicious/noAssignInExpressions: deferred-promise pattern — same reason as capturePromise above.
 	const releasePromise = new Promise((res) => (release = res))
 	return { capture, capturePromise, release, releasePromise }
 }
