@@ -163,9 +163,8 @@ export function chatSelectionReducer(
 			return {
 				...state,
 				agents: [...state.agents, action.agent.id],
-				agentNames: name.length > 0
-					? { ...state.agentNames, [action.agent.id]: name }
-					: state.agentNames,
+				agentNames:
+					name.length > 0 ? { ...state.agentNames, [action.agent.id]: name } : state.agentNames,
 			}
 		}
 		case 'remove_agent': {

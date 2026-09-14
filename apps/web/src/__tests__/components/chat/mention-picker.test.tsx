@@ -1,9 +1,9 @@
 import {
+	MENTION_TRIGGER_RE,
+	type MentionPickerActor,
 	buildMentionSections,
 	detectMentionTrigger,
 	reduceMentionPickerKey,
-	MENTION_TRIGGER_RE,
-	type MentionPickerActor,
 } from '@/components/chat/mention-picker'
 import type { ConversationListItemResponse } from '@/lib/api'
 import { describe, expect, it } from 'vitest'
@@ -61,10 +61,7 @@ describe('reduceMentionPickerKey', () => {
 	})
 
 	it('wraps to the last row on ArrowUp from index 0', () => {
-		const result = reduceMentionPickerKey(
-			{ key: 'ArrowUp' },
-			{ flatCount: 4, highlightIndex: 0 },
-		)
+		const result = reduceMentionPickerKey({ key: 'ArrowUp' }, { flatCount: 4, highlightIndex: 0 })
 		expect(result.action).toEqual({ type: 'move', nextIndex: 3 })
 	})
 

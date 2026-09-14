@@ -33,8 +33,9 @@ vi.mock('@/hooks/use-actors', async () => {
 	return { ...actual, useActors: () => ({ data: [] }) }
 })
 vi.mock('@/hooks/use-conversations', async () => {
-	const actual =
-		await vi.importActual<typeof import('@/hooks/use-conversations')>('@/hooks/use-conversations')
+	const actual = await vi.importActual<typeof import('@/hooks/use-conversations')>(
+		'@/hooks/use-conversations',
+	)
 	return { ...actual, useConversationsInfinite: () => ({ data: { pages: [] } }) }
 })
 

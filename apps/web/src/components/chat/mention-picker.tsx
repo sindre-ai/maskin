@@ -104,6 +104,7 @@ export function MentionPicker({
 
 	// Reset the highlight to the first row every time the flat list changes so
 	// the arrow-key state never lands on a stale row (or, worse, past the end).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the length is what drives the reset, not the identity of the rows array.
 	useEffect(() => {
 		setHighlightIndex(0)
 	}, [flatRows.length])
@@ -165,7 +166,6 @@ export function MentionPicker({
 			>
 				<ul
 					ref={listboxRef}
-					role="listbox"
 					aria-label="Mention actor"
 					className="flex max-h-72 flex-col overflow-auto p-1 text-popover-foreground"
 				>
@@ -239,6 +239,7 @@ function PickerBody({
 								<button
 									key={row.id}
 									type="button"
+									// biome-ignore lint/a11y/useSemanticElements: <button role="option"> is the shipped custom-picker pattern here (spec: keyboard nav routed from the composer's own onKeyDown); a native <option> can't carry the click handler + focus semantics.
 									role="option"
 									aria-selected={active}
 									onMouseEnter={() => onHighlight(index)}
@@ -443,10 +444,7 @@ export interface MentionTriggerMatch {
 	query: string
 }
 
-export function detectMentionTrigger(
-	text: string,
-	caretPos: number,
-): MentionTriggerMatch | null {
+export function detectMentionTrigger(text: string, caretPos: number): MentionTriggerMatch | null {
 	if (caretPos <= 0) return null
 	const upToCaret = text.slice(0, caretPos)
 	const match = MENTION_TRIGGER_RE.exec(upToCaret)

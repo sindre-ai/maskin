@@ -260,7 +260,16 @@ function NewChatRoute() {
 				throw err
 			}
 		},
-		[recipient, seedObject, seedNotification, selection, createConversation, navigate, workspaceId],
+		[
+			recipient,
+			seedObject,
+			seedNotification,
+			selection,
+			createConversation,
+			navigate,
+			workspaceId,
+			currentActor?.id,
+		],
 	)
 
 	return (

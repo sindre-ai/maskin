@@ -1,9 +1,9 @@
 import {
 	MentionPicker,
 	type MentionPickerActor,
+	buildMentionSections,
 	detectMentionTrigger,
 	reduceMentionPickerKey,
-	buildMentionSections,
 } from '@/components/chat/mention-picker'
 import { SelectionChips } from '@/components/chat/selection-chips'
 import {
@@ -343,10 +343,7 @@ export function Composer({
 			selfActorId,
 		],
 	)
-	const mentionFlatRows = useMemo(
-		() => mentionSections.flatMap((s) => s.rows),
-		[mentionSections],
-	)
+	const mentionFlatRows = useMemo(() => mentionSections.flatMap((s) => s.rows), [mentionSections])
 	// The picker's own highlightIndex resets whenever the flat list changes;
 	// re-anchor at 0 so the composer's ↵ never fires against a stale row.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: the length is what drives the reset, not the identity of the rows array.

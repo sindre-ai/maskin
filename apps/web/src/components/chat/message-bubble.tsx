@@ -10,8 +10,8 @@ import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { Bell, Box, Pencil, RotateCcw } from 'lucide-react'
 import { Link } from '@tanstack/react-router'
+import { Bell, Box, Pencil, RotateCcw } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
@@ -295,10 +295,7 @@ function MentionPills({
 	selfActorId: string | null
 }) {
 	return (
-		<ul
-			className="flex flex-wrap items-center gap-1.5 p-0"
-			aria-label="Mentions"
-		>
+		<ul className="flex flex-wrap items-center gap-1.5 p-0" aria-label="Mentions">
 			{mentions.map((id) => {
 				const actor = actorLookup.get(id)
 				const name = actor?.name?.trim() || id

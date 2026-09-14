@@ -91,8 +91,7 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 	const firstMentionName =
 		selection.agents.length > 0 ? selection.agentNames[selection.agents[0]] : undefined
 	const counterpart =
-		firstMentionName ??
-		conversation?.participants.find((p) => p.actorId !== self?.id)?.actorName
+		firstMentionName ?? conversation?.participants.find((p) => p.actorId !== self?.id)?.actorName
 	// Task 6321aecf: same boundary as `<Composer>`'s `+` menu switch — when the
 	// flag is ON and there is no named counterpart, promote `/` and `@` in the
 	// placeholder rather than falling back to the generic phrase.
