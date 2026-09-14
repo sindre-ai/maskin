@@ -19,6 +19,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
 import { useDictation } from '@/hooks/use-dictation'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useUploadFile } from '@/hooks/use-files'
 import { deriveEntryAgentRole, trackSpecialistSummonedManually } from '@/lib/analytics'
 import type { ChatSelection, ChatSelectionAction } from '@/lib/chat-selection'
@@ -148,6 +149,11 @@ export function Composer({
 	const [createSubtype, setCreateSubtype] = useState<string | undefined>(undefined)
 	const [turnIntoOpen, setTurnIntoOpen] = useState(false)
 	const objectTypes = useAvailableObjectTypes()
+	// Gates the `+` DropdownMenu collapse (task 6321aecf). OFF preserves the
+	// three-item Reference / Mention / Create menu; ON renders the single
+	// Attach a file row that triggers the same fileInputRef the standalone
+	// Paperclip button uses.
+	const plusMenuAttachOnly = useFeatureFlag('chat-plus-menu-attach-only')
 	const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
 	const uploadFile = useUploadFile(workspaceId)
 	const dictation = useDictation(
@@ -540,18 +546,41 @@ export function Composer({
 							</Button>
 						</DropdownMenuTrigger>
 						<DropdownMenuContent align="start" className="w-[252px]">
-							<DropdownMenuItem onSelect={() => openPickerForKind('item')}>
-								<Box size={15} aria-hidden />
-								Reference an object
-							</DropdownMenuItem>
-							<DropdownMenuItem onSelect={() => openPickerForKind('agent')}>
-								<AtSign size={15} aria-hidden />
-								Mention an agent
-							</DropdownMenuItem>
-							<DropdownMenuItem onSelect={() => openCreateFor(undefined)}>
-								<Sparkles size={15} aria-hidden />
-								Create an object
-							</DropdownMenuItem>
+							{plusMenuAttachOnly ? (
+								// Flag-on shape (task 6321aecf, bet f21a): the Reference /
+								// Mention aliases founders reported broken are removed, and
+								// Create-new moves to the `/` picker (sibling task). The
+								// row triggers the same hidden fileInputRef as the visible
+								// Paperclip sibling, so the file-attach handler that is
+								// already wired for this composer is what runs.
+								<DropdownMenuItem
+									onSelect={() => fileInputRef.current?.click()}
+									className="flex-col items-start gap-0.5"
+								>
+									<span className="flex items-center gap-2">
+										<Paperclip size={15} aria-hidden />
+										Attach a file
+									</span>
+									<span className="pl-[23px] text-xs text-muted-foreground">
+										PDF, image, or doc
+									</span>
+								</DropdownMenuItem>
+							) : (
+								<>
+									<DropdownMenuItem onSelect={() => openPickerForKind('item')}>
+										<Box size={15} aria-hidden />
+										Reference an object
+									</DropdownMenuItem>
+									<DropdownMenuItem onSelect={() => openPickerForKind('agent')}>
+										<AtSign size={15} aria-hidden />
+										Mention an agent
+									</DropdownMenuItem>
+									<DropdownMenuItem onSelect={() => openCreateFor(undefined)}>
+										<Sparkles size={15} aria-hidden />
+										Create an object
+									</DropdownMenuItem>
+								</>
+							)}
 						</DropdownMenuContent>
 					</DropdownMenu>
 					{/* Attach stays a visible sibling rather than a menu row: it is the
