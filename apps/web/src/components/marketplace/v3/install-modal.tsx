@@ -8,9 +8,10 @@
  * nothing changed in the workspace ("Nothing was changed in your workspace.").
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CatalogItemCard } from './catalog'
 import { useInstallMarketplaceItem } from './catalog'
+import { type InterpolationContext, interpolateInstallFlowCopy } from './interpolate'
 
 export type InstallModalVariant =
 	| 'needs-integration'
@@ -29,6 +30,85 @@ interface InstallModalProps {
 	forcedVariant?: InstallModalVariant
 }
 
+// Render integration slugs as brand-cased names so the placeholder resolves
+// to "PostHog" rather than "posthog". Anything not in the map title-cases
+// each segment split by hyphen — fine for slugs we haven't hand-mapped.
+const INTEGRATION_DISPLAY_NAMES: Record<string, string> = {
+	granola: 'Granola',
+	posthog: 'PostHog',
+	intercom: 'Intercom',
+	stripe: 'Stripe',
+	slack: 'Slack',
+	linear: 'Linear',
+	salesforce: 'Salesforce',
+}
+
+function titleCase(slug: string): string {
+	return slug
+		.split('-')
+		.map((s) => (s.length === 0 ? s : s[0].toUpperCase() + s.slice(1)))
+		.join(' ')
+}
+
+function integrationDisplay(slug: string): string {
+	return INTEGRATION_DISPLAY_NAMES[slug] ?? titleCase(slug)
+}
+
+const TEAM_DISPLAY: Record<string, string> = {
+	customer: 'Customer',
+	revenue: 'Revenue',
+	shared: 'Shared',
+	product: 'Product',
+	engineering: 'Engineering',
+	marketing: 'Marketing',
+	growth: 'Growth',
+	finance_ops: 'Finance & Ops',
+}
+
+function buildInterpolationContext(
+	item: CatalogItemCard,
+	selectedTeam?: string,
+): InterpolationContext {
+	const integrationSlug = item.requires?.integrations?.[0]
+	const integrationName = integrationSlug ? integrationDisplay(integrationSlug) : undefined
+
+	// `agents` — best-effort humanization for loops (Churn Recovery seeds a
+	// two-name "Sentinel, Forge" string via the design spec). For agent /
+	// skill items the modal doesn't currently name specific downstream
+	// agents, so this stays undefined — the seed strings for those variants
+	// don't reference {agents}, so no warning fires.
+	const agents = (() => {
+		if (item.item_kind === 'loop') {
+			if (item.slug === 'churn-recovery') return 'Sentinel, Forge'
+		}
+		return undefined
+	})()
+
+	// `trigger_count` — pulled from the loop's summary if available, else
+	// the agent's summary. Undefined otherwise; strings that reference it
+	// on items without a count will warn once, per the visible-but-non-
+	// fatal contract.
+	const trigger_count = (() => {
+		if (item.item_kind === 'loop') {
+			if (item.slug === 'churn-recovery') return 2
+			// Loop summary carries per-cycle asks in the seed shape, not
+			// trigger count — leave undefined so unresolved warns.
+			return undefined
+		}
+		if (item.agent_summary?.triggers_count) return item.agent_summary.triggers_count
+		return undefined
+	})()
+
+	const teamDisplay = selectedTeam ? TEAM_DISPLAY[selectedTeam] ?? titleCase(selectedTeam) : undefined
+
+	return {
+		integration: integrationName,
+		team: teamDisplay,
+		agents,
+		trigger_count,
+	}
+}
+
 export function InstallModal({
 	item,
 	initialVariant,
@@ -43,6 +123,11 @@ export function InstallModal({
 		'customer',
 	)
 	const install = useInstallMarketplaceItem(workspaceId)
+	const ctx = useMemo(
+		() => buildInterpolationContext(item, selectedTeam),
+		[item, selectedTeam],
+	)
+	const copy = item.install_flow_copy
 
 	useEffect(() => {
 		if (forcedVariant) setVariant(forcedVariant)
@@ -124,6 +209,8 @@ export function InstallModal({
 						brand={brand}
 						onClose={onClose}
 						onConnect={beginInstalling}
+						copy={copy?.needs_integration}
+						ctx={ctx}
 					/>
 				)}
 				{variant === 'needs-decision' && (
@@ -134,13 +221,27 @@ export function InstallModal({
 						onSelectTeam={setSelectedTeam}
 						onClose={onClose}
 						onConfirm={beginInstalling}
+						copy={copy?.needs_decision}
+						ctx={ctx}
 					/>
 				)}
 				{variant === 'installing' && (
-					<Installing item={item} titleId={titleId} selectedTeam={selectedTeam} />
+					<Installing
+						item={item}
+						titleId={titleId}
+						selectedTeam={selectedTeam}
+						copy={copy?.installing}
+						ctx={ctx}
+					/>
 				)}
 				{variant === 'success' && (
-					<Success item={item} titleId={titleId} onClose={onClose} />
+					<Success
+						item={item}
+						titleId={titleId}
+						onClose={onClose}
+						copy={copy?.success}
+						ctx={ctx}
+					/>
 				)}
 				{variant === 'error' && (
 					<ErrorVariant
@@ -148,6 +249,8 @@ export function InstallModal({
 						titleId={titleId}
 						onClose={onClose}
 						onRetry={beginInstalling}
+						copy={copy?.error}
+						ctx={ctx}
 					/>
 				)}
 			</div>
@@ -163,12 +266,16 @@ function NeedsIntegration({
 	brand,
 	onClose,
 	onConnect,
+	copy,
+	ctx,
 }: {
 	item: CatalogItemCard
 	titleId: string
 	brand?: string
 	onClose: () => void
 	onConnect: () => void
+	copy?: NonNullable<CatalogItemCard['install_flow_copy']>['needs_integration']
+	ctx: InterpolationContext
 }) {
 	return (
 		<>
@@ -181,7 +288,7 @@ function NeedsIntegration({
 						Install {item.display_name}
 					</h3>
 					<div className="subtitle">
-						MCP server · adds meeting-notes tools to every agent in this workspace
+						{interpolateInstallFlowCopy(copy?.subtitle, ctx)}
 					</div>
 				</div>
 				<button className="close" onClick={onClose} aria-label="Close">
@@ -194,10 +301,7 @@ function NeedsIntegration({
 						<div className="step-badge">1</div>
 						<div>
 							<h4>Connect {item.display_name}</h4>
-							<p>
-								Grant Maskin read access to your {item.display_name} notebook. You control what
-								stays private.
-							</p>
+							<p>{interpolateInstallFlowCopy(copy?.step_1_body, ctx)}</p>
 						</div>
 					</div>
 					<div className="step-item">
@@ -247,6 +351,8 @@ function NeedsDecision({
 	onSelectTeam,
 	onClose,
 	onConfirm,
+	copy,
+	ctx,
 }: {
 	item: CatalogItemCard
 	titleId: string
@@ -254,6 +360,8 @@ function NeedsDecision({
 	onSelectTeam: (team: 'customer' | 'revenue' | 'shared') => void
 	onClose: () => void
 	onConfirm: () => void
+	copy?: NonNullable<CatalogItemCard['install_flow_copy']>['needs_decision']
+	ctx: InterpolationContext
 }) {
 	const teamLabel =
 		selectedTeam === 'customer' ? 'Customer' : selectedTeam === 'revenue' ? 'Revenue' : 'Shared'
@@ -266,7 +374,7 @@ function NeedsDecision({
 						Install {item.display_name}
 					</h3>
 					<div className="subtitle">
-						Choose which team owns this loop so its asks land in the right feed.
+						{interpolateInstallFlowCopy(copy?.subtitle, ctx)}
 					</div>
 				</div>
 				<button className="close" onClick={onClose} aria-label="Close">
@@ -303,10 +411,7 @@ function NeedsDecision({
 				</div>
 				<div className="callout">
 					<WarnIcon />
-					<div>
-						Installing wires up <b>Sentinel</b>, <b>Forge</b>, 2 triggers, and reads from{' '}
-						<b>PostHog</b>. Nothing writes to a customer without your sign-off.
-					</div>
+					<div>{interpolateInstallFlowCopy(copy?.warning_callout, ctx)}</div>
 				</div>
 			</div>
 			<div className="foot">
@@ -358,10 +463,14 @@ function Installing({
 	item,
 	titleId,
 	selectedTeam,
+	copy,
+	ctx,
 }: {
 	item: CatalogItemCard
 	titleId: string
 	selectedTeam: string
+	copy?: NonNullable<CatalogItemCard['install_flow_copy']>['installing']
+	ctx: InterpolationContext
 }) {
 	const teamLabel =
 		selectedTeam === 'customer' ? 'Customer' : selectedTeam === 'revenue' ? 'Revenue' : 'Shared'
@@ -394,14 +503,14 @@ function Installing({
 						</div>
 						<div>
 							<h4>Wiring agents</h4>
-							<p>Sentinel, Forge — adding to workspace.</p>
+							<p>{interpolateInstallFlowCopy(copy?.step_2_body, ctx)}</p>
 						</div>
 					</div>
 					<div className="step-item">
 						<div className="step-badge">3</div>
 						<div>
 							<h4>Registering triggers</h4>
-							<p>2 triggers on PostHog usage events.</p>
+							<p>{interpolateInstallFlowCopy(copy?.step_3_body, ctx)}</p>
 						</div>
 					</div>
 					<div className="step-item">
@@ -432,10 +541,14 @@ function Success({
 	item,
 	titleId,
 	onClose,
+	copy,
+	ctx,
 }: {
 	item: CatalogItemCard
 	titleId: string
 	onClose: () => void
+	copy?: NonNullable<CatalogItemCard['install_flow_copy']>['success']
+	ctx: InterpolationContext
 }) {
 	return (
 		<>
@@ -451,7 +564,7 @@ function Success({
 						{item.display_name} is installed
 					</h3>
 					<div className="subtitle">
-						Cycle 1 opens the next time PostHog reports a usage drop.
+						{interpolateInstallFlowCopy(copy?.subtitle, ctx)}
 					</div>
 				</div>
 				<button className="close" onClick={onClose} aria-label="Close">
@@ -461,10 +574,7 @@ function Success({
 			<div className="body">
 				<div className="callout success" role="status">
 					<CheckIcon />
-					<div>
-						Sentinel and Forge are in your workspace. 2 triggers active. You&apos;ll get a
-						For-You card when a cycle asks for you.
-					</div>
+					<div>{interpolateInstallFlowCopy(copy?.callout, ctx)}</div>
 				</div>
 				<div className="form-block">
 					<label>Next</label>
@@ -493,11 +603,15 @@ function ErrorVariant({
 	titleId,
 	onClose,
 	onRetry,
+	copy,
+	ctx,
 }: {
 	item: CatalogItemCard
 	titleId: string
 	onClose: () => void
 	onRetry: () => void
+	copy?: NonNullable<CatalogItemCard['install_flow_copy']>['error']
+	ctx: InterpolationContext
 }) {
 	return (
 		<>
@@ -521,10 +635,7 @@ function ErrorVariant({
 			<div className="body">
 				<div className="callout error" role="status">
 					<InfoIcon />
-					<div>
-						<b>PostHog auth expired.</b> Reconnect PostHog on its integration page, then try
-						again. If it keeps happening, ping #maskin-help.
-					</div>
+					<div>{interpolateInstallFlowCopy(copy?.callout, ctx)}</div>
 				</div>
 			</div>
 			<div className="foot">

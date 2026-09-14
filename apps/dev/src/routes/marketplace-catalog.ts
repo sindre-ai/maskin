@@ -61,6 +61,51 @@ const agentSummarySchema = z.object({
 	triggers_count: z.number(),
 })
 
+// Install-flow copy — per-item strings the install modal renders. Each variant
+// carries the fields that variant actually uses; fields for paths an item
+// never enters are omitted. Strings may embed the placeholders {integration},
+// {team}, {agents}, {trigger_count}; the frontend resolves them at render
+// time. See Marketplace design spec §Copy → "Install modal — per-item copy is
+// catalog metadata".
+const installFlowCopySchema = z
+	.object({
+		needs_integration: z
+			.object({
+				subtitle: z.string().optional(),
+				step_1_body: z.string().optional(),
+			})
+			.partial()
+			.optional(),
+		needs_decision: z
+			.object({
+				subtitle: z.string().optional(),
+				warning_callout: z.string().optional(),
+			})
+			.partial()
+			.optional(),
+		installing: z
+			.object({
+				step_2_body: z.string().optional(),
+				step_3_body: z.string().optional(),
+			})
+			.partial()
+			.optional(),
+		success: z
+			.object({
+				subtitle: z.string().optional(),
+				callout: z.string().optional(),
+			})
+			.partial()
+			.optional(),
+		error: z
+			.object({
+				callout: z.string().optional(),
+			})
+			.partial()
+			.optional(),
+	})
+	.partial()
+
 const catalogItemCardSchema = z.object({
 	item_kind: itemKindSchema,
 	catalog_id: z.string().uuid(),
@@ -74,6 +119,7 @@ const catalogItemCardSchema = z.object({
 	why_line: z.string().optional(),
 	loop_summary: loopSummarySchema.optional(),
 	agent_summary: agentSummarySchema.optional(),
+	install_flow_copy: installFlowCopySchema.optional(),
 })
 
 const catalogListResponseSchema = z.object({
@@ -90,12 +136,8 @@ const catalogListResponseSchema = z.object({
 const catalogItemDetailResponseSchema = catalogItemCardSchema.extend({
 	description: z.string(),
 	requires_status: z.object({
-		integrations: z.array(
-			z.object({ slug: z.string(), connected: z.boolean() }),
-		),
-		mcp_installations: z.array(
-			z.object({ slug: z.string(), installed: z.boolean() }),
-		),
+		integrations: z.array(z.object({ slug: z.string(), connected: z.boolean() })),
+		mcp_installations: z.array(z.object({ slug: z.string(), installed: z.boolean() })),
 	}),
 })
 
@@ -126,6 +168,7 @@ interface RawCatalogRow {
 	loop_definition: unknown
 	skill_slugs: unknown
 	trigger_seeds: unknown
+	install_flow_copy: unknown
 }
 
 const CATALOG_UNION_SQL = sql`
@@ -144,7 +187,8 @@ const CATALOG_UNION_SQL = sql`
 		install_count,
 		definition AS loop_definition,
 		NULL::jsonb AS skill_slugs,
-		NULL::jsonb AS trigger_seeds
+		NULL::jsonb AS trigger_seeds,
+		install_flow_copy
 	FROM marketplace_loops
 	WHERE status = 'published' AND workspace_id IS NULL
 
@@ -165,7 +209,8 @@ const CATALOG_UNION_SQL = sql`
 		install_count,
 		NULL::jsonb AS loop_definition,
 		skill_slugs,
-		trigger_seeds
+		trigger_seeds,
+		install_flow_copy
 	FROM marketplace_agents
 	WHERE status = 'published' AND workspace_id IS NULL
 
@@ -186,7 +231,8 @@ const CATALOG_UNION_SQL = sql`
 		install_count,
 		NULL::jsonb AS loop_definition,
 		NULL::jsonb AS skill_slugs,
-		NULL::jsonb AS trigger_seeds
+		NULL::jsonb AS trigger_seeds,
+		install_flow_copy
 	FROM marketplace_skills
 	WHERE status = 'published' AND workspace_id IS NULL
 
@@ -207,7 +253,8 @@ const CATALOG_UNION_SQL = sql`
 		install_count,
 		NULL::jsonb AS loop_definition,
 		NULL::jsonb AS skill_slugs,
-		NULL::jsonb AS trigger_seeds
+		NULL::jsonb AS trigger_seeds,
+		install_flow_copy
 	FROM marketplace_mcp_servers
 	WHERE status = 'published'
 `
@@ -227,9 +274,7 @@ async function loadWorkspaceState(
 		db
 			.select({ provider: integrations.provider })
 			.from(integrations)
-			.where(
-				and(eq(integrations.workspaceId, workspaceId), eq(integrations.status, 'connected')),
-			),
+			.where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.status, 'connected'))),
 		db
 			.select({ n: sql<number>`count(*)::int` })
 			.from(actors)
@@ -271,7 +316,7 @@ async function loadWorkspaceState(
 		display_name: string
 	}> = Array.isArray(installRows)
 		? (installRows as never)
-		: ((installRows as { rows?: unknown[] }).rows ?? []) as never
+		: (((installRows as { rows?: unknown[] }).rows ?? []) as never)
 
 	for (const row of rows) {
 		const ref: InstalledItemRef = { slug: row.catalog_slug, display_name: row.display_name }
@@ -322,6 +367,25 @@ function isTeam(value: string): value is (typeof TEAM_VALUES)[number] {
 	return (TEAM_VALUES as readonly string[]).includes(value)
 }
 
+function extractInstallFlowCopy(raw: unknown): CatalogItemCard['install_flow_copy'] {
+	// The DB stores an empty object `{}` for rows that predate the field or
+	// that never enter a variant. Strip empties so the response omits the key
+	// rather than shipping bloat, matching the schema's optional-everywhere
+	// shape.
+	if (!raw || typeof raw !== 'object') return undefined
+	const parsed = installFlowCopySchema.safeParse(raw)
+	if (!parsed.success) return undefined
+	const stripped: Record<string, unknown> = {}
+	for (const [key, value] of Object.entries(parsed.data)) {
+		if (value && typeof value === 'object' && Object.keys(value).length > 0) {
+			stripped[key] = value
+		}
+	}
+	return Object.keys(stripped).length > 0
+		? (stripped as CatalogItemCard['install_flow_copy'])
+		: undefined
+}
+
 function toCard(
 	row: RawCatalogRow,
 	state: WorkspaceState & { installations: Map<string, string> },
@@ -342,18 +406,20 @@ function toCard(
 		installed_installation_id: installationId,
 		install_count: row.install_count,
 		why_line: evaluated.why_line,
-		loop_summary:
-			row.item_kind === 'loop' ? extractLoopSummary(row.loop_definition) : undefined,
+		loop_summary: row.item_kind === 'loop' ? extractLoopSummary(row.loop_definition) : undefined,
 		agent_summary:
 			row.item_kind === 'agent'
 				? extractAgentSummary(row.skill_slugs, row.trigger_seeds)
 				: undefined,
+		install_flow_copy: extractInstallFlowCopy(row.install_flow_copy),
 		_sortWeight: row.sort_weight + evaluated.score_boost,
 		_matched: evaluated.matched,
 	}
 }
 
-function stripInternal(card: CatalogItemCard & { _sortWeight: number; _matched: boolean }): CatalogItemCard {
+function stripInternal(
+	card: CatalogItemCard & { _sortWeight: number; _matched: boolean },
+): CatalogItemCard {
 	// biome-ignore lint/correctness/noUnusedVariables: destructuring to drop sort keys
 	const { _sortWeight, _matched, ...rest } = card
 	return rest
@@ -386,7 +452,10 @@ const catalogListRoute = createRoute({
 			description: 'Catalog payload — spec §6.1',
 			content: { 'application/json': { schema: catalogListResponseSchema } },
 		},
-		400: { description: 'Validation error', content: { 'application/json': { schema: errorSchema } } },
+		400: {
+			description: 'Validation error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		403: {
 			description: 'Not a member of the workspace',
 			content: { 'application/json': { schema: errorSchema } },
@@ -426,7 +495,9 @@ app.openapi(catalogListRoute, (async (c) => {
 
 	// Simple offset cursor — the catalog is a few hundred rows at launch (spec
 	// §4.3), so a keyset seek buys little. Cursor is base64(offset).
-	const startOffset = cursor ? Number.parseInt(Buffer.from(cursor, 'base64').toString('utf8'), 10) : 0
+	const startOffset = cursor
+		? Number.parseInt(Buffer.from(cursor, 'base64').toString('utf8'), 10)
+		: 0
 	const safeOffset = Number.isFinite(startOffset) && startOffset >= 0 ? startOffset : 0
 	const pageEnd = safeOffset + limit
 	const teamGridPage = grid.slice(safeOffset, pageEnd)
@@ -442,7 +513,8 @@ app.openapi(catalogListRoute, (async (c) => {
 				.sort((a, b) => b._sortWeight - a._sortWeight || b.install_count - a.install_count)
 				.slice(0, 6)
 		: []
-	const byInstalls = <T extends { install_count: number }>(a: T, b: T) => b.install_count - a.install_count
+	const byInstalls = <T extends { install_count: number }>(a: T, b: T) =>
+		b.install_count - a.install_count
 	const popularLoops = allCards
 		.filter((c) => c.item_kind === 'loop')
 		.sort(byInstalls)
@@ -499,12 +571,18 @@ const catalogItemDetailRoute = createRoute({
 			description: 'Catalog item detail',
 			content: { 'application/json': { schema: catalogItemDetailResponseSchema } },
 		},
-		400: { description: 'Validation error', content: { 'application/json': { schema: errorSchema } } },
+		400: {
+			description: 'Validation error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		403: {
 			description: 'Not a member of the workspace',
 			content: { 'application/json': { schema: errorSchema } },
 		},
-		404: { description: 'Item not found', content: { 'application/json': { schema: errorSchema } } },
+		404: {
+			description: 'Item not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
