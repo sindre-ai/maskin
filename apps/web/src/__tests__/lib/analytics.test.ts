@@ -4,6 +4,7 @@ import {
 	trackAgentCreated,
 	trackAgentSessionCompleted,
 	trackAgentSessionStarted,
+	trackAskBannerDecideClicked,
 	trackBetArchived,
 	trackBetCreated,
 	trackBetStatusChanged,
@@ -449,6 +450,17 @@ describe('v1 taxonomy helpers', () => {
 			'trigger_updated',
 			expect.objectContaining({ entity_id: 'trg-2', entity_type: 'trigger', source: 'web' }),
 		)
+	})
+
+	it('ask_banner_decide_clicked carries {loopId, pendingCount} for the loops-v4-polish falsification metric', () => {
+		const capture = captureSpy()
+
+		trackAskBannerDecideClicked({ loopId: 'loop-42', pendingCount: 3 })
+
+		expect(capture).toHaveBeenCalledWith('ask_banner_decide_clicked', {
+			loopId: 'loop-42',
+			pendingCount: 3,
+		})
 	})
 
 	it('object_attached_file carries file_id and parent entity type', () => {

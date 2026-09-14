@@ -3,7 +3,9 @@ import type {
 	ActorResponse,
 	AgentState,
 	DisplaySettingsBody,
+	ListLoopStepsResponse,
 	ListLoopsResponse,
+	LoopStep,
 	LoopSummary,
 	SafeMetadata,
 	TriggerResponse,
@@ -14,7 +16,9 @@ export type {
 	ActorResponse,
 	AgentState,
 	DisplaySettingsBody,
+	ListLoopStepsResponse,
 	ListLoopsResponse,
+	LoopStep,
 	LoopSummary,
 	TriggerResponse,
 }
@@ -400,6 +404,8 @@ export const api = {
 		list: (workspaceId: string) => request<ListLoopsResponse>('/loops', { workspaceId }),
 		activity: (id: string, workspaceId: string) =>
 			request<{ events: EventResponse[] }>(`/loops/${id}/activity`, { workspaceId }),
+		steps: (id: string, workspaceId: string) =>
+			request<ListLoopStepsResponse>(`/loops/${id}/steps`, { workspaceId }),
 	},
 
 	triggers: {
@@ -1413,6 +1419,13 @@ export interface ProviderInfo {
 	authType: 'oauth2' | 'oauth2_custom' | 'api_key' | 'manual'
 	events: ProviderEventDefinition[]
 	externalIdDisplay?: 'email' | 'installation'
+	mcp?: {
+		envKey: string
+		autoInject: boolean
+		server?:
+			| { type: 'stdio'; command: string; args: string[]; env?: Record<string, string> }
+			| { type: 'http'; url: string; headers?: Record<string, string> }
+	}
 }
 
 export interface SlackConversation {

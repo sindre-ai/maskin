@@ -16,11 +16,11 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { useIntegrations } from '@/hooks/use-integrations'
-import type { IntegrationResponse } from '@/lib/api'
+import { useIntegrations, useProviders } from '@/hooks/use-integrations'
+import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { githubOwnerLoginToEnvKey } from '@maskin/shared'
-import { FileJson, Globe, Pencil, Plus, Terminal, Trash2, Zap } from 'lucide-react'
+import { FileJson, Globe, Pencil, Plus, Sparkles, Terminal, Trash2, Zap } from 'lucide-react'
 import { useCallback, useState } from 'react'
 
 interface McpServer {
@@ -51,17 +51,6 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 	slack: {
 		type: 'http',
 		url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
-		headers: {
-			Authorization: 'Bearer ${MASKIN_API_KEY}',
-			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
-		},
-	},
-	// Served in-process by apps/dev, like Slack's — not a hosted third-party
-	// endpoint. The credential it uses is per-actor, so the agent sends as the
-	// workspace member whose API key the session runs under.
-	'linkedin-unipile': {
-		type: 'http',
-		url: '${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp',
 		headers: {
 			Authorization: 'Bearer ${MASKIN_API_KEY}',
 			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
@@ -118,8 +107,49 @@ function parseServers(tools: Record<string, unknown> | null): McpServersMap {
 export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProps) {
 	const { workspaceId } = useWorkspace()
 	const { data: integrations } = useIntegrations(workspaceId)
+	const { data: providers } = useProviders()
 	const servers = parseServers(tools)
 	const serverEntries = Object.entries(servers)
+
+	// Providers whose MCP server is auto-attached to every session in a workspace
+	// with an active integration (session-manager reads the same `autoInject`
+	// flag). Rendering them as a read-only row here is the UI mirror: showing an
+	// "Add" button for one would produce a second, hand-pasted mcpServers entry
+	// that connects the same endpoint twice and fans every tool out under two
+	// prefixes. GitHub is excluded because it takes the per-installation branch,
+	// not the generic autoInject one.
+	const autoInjectByProvider = new Map<string, { url: string; provider: ProviderInfo }>()
+	for (const p of providers ?? []) {
+		if (p.name === 'github') continue
+		if (!p.mcp?.autoInject) continue
+		const spec = p.mcp.server
+		if (!spec || spec.type !== 'http' || !spec.url) continue
+		autoInjectByProvider.set(p.name, { url: spec.url, provider: p })
+	}
+
+	// One row per provider (not per integration): auto-inject is workspace-level,
+	// so multiple integrations of the same provider still map to a single
+	// endpoint. Dedupe by provider name.
+	const autoInjectedProviders: ProviderInfo[] = []
+	const seenAutoProviders = new Set<string>()
+	for (const i of integrations ?? []) {
+		if (i.status !== 'active') continue
+		const match = autoInjectByProvider.get(i.provider)
+		if (!match || seenAutoProviders.has(i.provider)) continue
+		seenAutoProviders.add(i.provider)
+		autoInjectedProviders.push(match.provider)
+	}
+
+	// Hand-pasted servers whose URL matches an auto-injected provider's URL —
+	// the agent will otherwise connect the same endpoint twice.
+	const autoInjectUrls = new Set(
+		autoInjectedProviders
+			.map((p) => (p.mcp?.server && p.mcp.server.type === 'http' ? p.mcp.server.url : null))
+			.filter((u): u is string => !!u),
+	)
+	const duplicateServerNames = new Set(
+		serverEntries.filter(([, s]) => !!s.url && autoInjectUrls.has(s.url)).map(([n]) => n),
+	)
 
 	const [addingServer, setAddingServer] = useState(false)
 	const [editingServer, setEditingServer] = useState<string | null>(null)
@@ -201,11 +231,13 @@ export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProp
 		onUpdate({ mcpServers: updated })
 	}, [servers, unaddedGithubInstallations, onUpdate])
 
-	// Quick-add items for static-preset providers (GitHub handled separately above)
+	// Quick-add items for static-preset providers (GitHub handled separately
+	// above; auto-inject providers surface as the read-only row below).
 	const availableQuickAdds: Array<{ id: string; name: string; label: string; preset: McpServer }> =
 		[]
 	for (const i of integrations ?? []) {
 		if (i.status !== 'active' || i.provider === 'github') continue
+		if (autoInjectByProvider.has(i.provider)) continue
 		const preset = INTEGRATION_MCP_PRESETS[i.provider]
 		if (!preset || servers[i.provider]) continue
 		availableQuickAdds.push({ id: i.id, name: i.provider, label: i.provider, preset })
@@ -216,6 +248,15 @@ export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProp
 
 	return (
 		<div>
+			{/* Auto-injected providers — read-only, one row per provider. */}
+			{autoInjectedProviders.length > 0 && (
+				<ul aria-label="Auto-injected MCP servers" className="space-y-2 mb-3">
+					{autoInjectedProviders.map((p) => (
+						<AutoInjectedRow key={p.name} provider={p} />
+					))}
+				</ul>
+			)}
+
 			{/* Server list */}
 			{serverEntries.length > 0 ? (
 				<div className="space-y-2 mb-3">
@@ -236,17 +277,18 @@ export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProp
 								onEdit={() => setEditingServer(name)}
 								onDelete={() => handleDeleteServer(name)}
 								readOnly={readOnly}
+								duplicateOfAutoInject={duplicateServerNames.has(name)}
 							/>
 						),
 					)}
 				</div>
-			) : (
+			) : autoInjectedProviders.length === 0 ? (
 				<p className="text-xs text-muted-foreground mb-3">
 					{readOnly
 						? 'No MCP servers configured.'
 						: 'No MCP servers configured. Add servers to give this agent access to external tools.'}
 				</p>
-			)}
+			) : null}
 
 			{/* Add server controls — hidden in read-only mode */}
 			{!readOnly && (
@@ -310,18 +352,37 @@ export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProp
 	)
 }
 
+function AutoInjectedRow({ provider }: { provider: ProviderInfo }) {
+	return (
+		<li className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-muted/40 px-3 py-2">
+			<Sparkles className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
+			<div className="flex-1 min-w-0">
+				<p className="text-sm font-medium text-foreground truncate">{provider.displayName}</p>
+				<p className="text-xs text-muted-foreground truncate">
+					Attached to every session in this workspace while the integration is connected.
+				</p>
+			</div>
+			<span className="shrink-0 rounded-md bg-accent px-1.5 py-0.5 text-[10.5px] font-medium text-accent-foreground">
+				Auto-injected
+			</span>
+		</li>
+	)
+}
+
 function ServerCard({
 	name,
 	server,
 	onEdit,
 	onDelete,
 	readOnly = false,
+	duplicateOfAutoInject = false,
 }: {
 	name: string
 	server: McpServer
 	onEdit: () => void
 	onDelete: () => void
 	readOnly?: boolean
+	duplicateOfAutoInject?: boolean
 }) {
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const http = isHttpServer(server)
@@ -330,60 +391,71 @@ function ServerCard({
 		: Object.keys(server.env ?? {}).length
 
 	return (
-		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-card px-3 py-2">
-			{http ? (
-				<Globe className="h-4 w-4 text-muted-foreground shrink-0" />
-			) : (
-				<Terminal className="h-4 w-4 text-muted-foreground shrink-0" />
-			)}
-			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground truncate">{name}</p>
-				<p className="text-xs text-muted-foreground truncate">
-					{http ? server.url : `${server.command} ${server.args?.join(' ')}`}
-					{detailCount > 0 && (
-						<span className="ml-2 text-muted-foreground">
-							{detailCount} {http ? 'header' : 'env var'}
-							{detailCount > 1 ? 's' : ''}
-						</span>
-					)}
-				</p>
-			</div>
-			{/* Transport scope, right-aligned (mockup 2496). */}
-			<span className="shrink-0 text-[10.5px] text-muted-foreground">
-				{http ? 'http' : 'stdio'}
-			</span>
-			{!readOnly &&
-				(confirmDelete ? (
-					<div className="flex items-center gap-1 shrink-0">
-						<Button size="sm" variant="destructive" onClick={onDelete}>
-							Delete
-						</Button>
-						<Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
-							Cancel
-						</Button>
-					</div>
+		<div
+			className={`flex flex-col overflow-hidden rounded-md border bg-card ${
+				duplicateOfAutoInject ? 'border-warning' : 'border-border'
+			}`}
+		>
+			<div className="flex items-center gap-3 px-3 py-2">
+				{http ? (
+					<Globe className="h-4 w-4 text-muted-foreground shrink-0" />
 				) : (
-					<div className="flex items-center gap-1 shrink-0">
-						<Button
-							size="icon"
-							variant="ghost"
-							className="text-muted-foreground"
-							onClick={onEdit}
-							aria-label="Edit server"
-						>
-							<Pencil className="h-3.5 w-3.5" />
-						</Button>
-						<Button
-							size="icon"
-							variant="ghost"
-							className="text-muted-foreground hover:text-error"
-							onClick={() => setConfirmDelete(true)}
-							aria-label="Delete server"
-						>
-							<Trash2 className="h-3.5 w-3.5" />
-						</Button>
-					</div>
-				))}
+					<Terminal className="h-4 w-4 text-muted-foreground shrink-0" />
+				)}
+				<div className="flex-1 min-w-0">
+					<p className="text-sm font-medium text-foreground truncate">{name}</p>
+					<p className="text-xs text-muted-foreground truncate">
+						{http ? server.url : `${server.command} ${server.args?.join(' ')}`}
+						{detailCount > 0 && (
+							<span className="ml-2 text-muted-foreground">
+								{detailCount} {http ? 'header' : 'env var'}
+								{detailCount > 1 ? 's' : ''}
+							</span>
+						)}
+					</p>
+				</div>
+				{/* Transport scope, right-aligned (mockup 2496). */}
+				<span className="shrink-0 text-[10.5px] text-muted-foreground">
+					{http ? 'http' : 'stdio'}
+				</span>
+				{!readOnly &&
+					(confirmDelete ? (
+						<div className="flex items-center gap-1 shrink-0">
+							<Button size="sm" variant="destructive" onClick={onDelete}>
+								Delete
+							</Button>
+							<Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
+								Cancel
+							</Button>
+						</div>
+					) : (
+						<div className="flex items-center gap-1 shrink-0">
+							<Button
+								size="icon"
+								variant="ghost"
+								className="text-muted-foreground"
+								onClick={onEdit}
+								aria-label="Edit server"
+							>
+								<Pencil className="h-3.5 w-3.5" />
+							</Button>
+							<Button
+								size="icon"
+								variant="ghost"
+								className="text-muted-foreground hover:text-error"
+								onClick={() => setConfirmDelete(true)}
+								aria-label="Delete server"
+							>
+								<Trash2 className="h-3.5 w-3.5" />
+							</Button>
+						</div>
+					))}
+			</div>
+			{duplicateOfAutoInject && (
+				<p className="border-t border-warning/40 bg-warning/10 px-3 py-1.5 text-xs text-warning">
+					Already auto-injected; remove to avoid duplicate tools.
+				</p>
+			)}
 		</div>
 	)
 }

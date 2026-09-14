@@ -29,10 +29,18 @@ const MAX_BACKFILL_PAGES = 6
  * (LOG_FLUSH_INTERVAL_MS in apps/agent-server/src/index.ts), because
  * production sessions run on a separate agent-server box that batches stdout
  * and POSTs it to apps/dev, which inserts into `session_logs` — the table we
- * read here. Both terms are 1s, so a line surfaces in ~1s typical / ~2s worst
- * case. Lowering only one of the two buys nothing.
+ * read here. The flush term is 1s, so a line surfaces in ~2s typical / ~3s
+ * worst case. Lowering only one of the two buys nothing.
+ *
+ * Raised 1s -> 2s on 2026-09-14 to halve the request volume this hook
+ * generates, after the Cloudflare Worker fronting maskin.io exhausted its
+ * daily request allowance. This hook is the single largest source: it polls
+ * per visible session, and the frontend has no consumer for the server's
+ * live log stream (`GET /api/sessions/:id/logs/stream`), so polling is the
+ * only path for agent output. Wiring that stream up is the real fix and
+ * would let this constant go away entirely.
  */
-const ACTIVE_POLL_MS = 1000
+const ACTIVE_POLL_MS = 2000
 
 /**
  * Poll interval once the session has come to rest awaiting the next user

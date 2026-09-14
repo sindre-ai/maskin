@@ -1,6 +1,12 @@
 import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
-import { events, idempotencyRecords, integrations, linkedinToolCalls } from '@maskin/db/schema'
+import {
+	events,
+	INTEGRATION_STATUS_ACTIVE,
+	idempotencyRecords,
+	integrations,
+	linkedinToolCalls,
+} from '@maskin/db/schema'
 import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
 import { deregisterLinkedInMcpInstance } from '@maskin/mcp/linkedin'
 import { and, eq, lt } from 'drizzle-orm'
@@ -9,6 +15,7 @@ import { decrypt } from '../../../crypto'
 import { logger } from '../../../logger'
 import { isWorkspaceMember } from '../../../workspace-auth'
 import { getIntegrationCredential } from '../../lookup'
+import { deleteUnipileAccountBestEffort } from './disconnect'
 import {
 	LinkedInIntegrationError,
 	PageAdminRevokedError,
@@ -96,12 +103,28 @@ export function __setLinkedInClientForTests(builder: ClientOverride['build'] | n
  * LinkedIn client construction. Every handler runs this before hitting the
  * verb-specific logic. Returns a tagged union so handlers can short-circuit
  * on the well-typed error path.
+ *
+ * When a fan-out MCP tool call reaches us (`ctx.identity` set at register-time
+ * per linkedin-mcp-phase2-technical-spec.md §2), the credential is pinned to
+ * that identity's own `integrations` row — NOT the calling actor's row and NOT
+ * the workspace's oldest-connected row. Without this, `linkedin-{acc}-{identity}__*`
+ * fan-out tool names are cosmetic: two connected humans in one workspace both
+ * fall through to `getIntegrationCredential`'s deterministic "oldest active
+ * wins", so every tool sends as the oldest connected human regardless of what
+ * the tool name promised. The legacy REST routes have no identity and keep the
+ * actor-scoped fallback so a Sales Rep loop that never received a fan-out MCP
+ * row still resolves the workspace's connected identity.
  */
 type Preamble =
 	| { ok: true; workspaceId: string; actorId: string; credentials: StoredLinkedInCredentials }
 	| { ok: false; error: LinkedInIntegrationError }
 
-async function preamble(db: Database, actorId: string, workspaceId: string): Promise<Preamble> {
+async function preamble(
+	db: Database,
+	actorId: string,
+	workspaceId: string,
+	options: { identity?: LinkedInMcpInstanceConfig } = {},
+): Promise<Preamble> {
 	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
 		return {
 			ok: false,
@@ -111,14 +134,50 @@ async function preamble(db: Database, actorId: string, workspaceId: string): Pro
 			),
 		}
 	}
-	// `fallbackToAnyActor`: an agent has no LinkedIn connection of its own and
-	// never will — it does not go through the connect flow — so a strict
-	// actor-scoped read makes the credential unreachable from the MCP tools
-	// that exist to use it. A human connects; every agent in the workspace can
-	// send, exactly as they can with Gmail or Slack.
-	const row = await getIntegrationCredential(db, workspaceId, PROVIDER, actorId, {
-		fallbackToAnyActor: true,
-	})
+	let row: Awaited<ReturnType<typeof getIntegrationCredential>> = null
+	if (options.identity) {
+		// P3-C · Per-call gate: load the identity's own row UNFILTERED by status
+		// (P3-G filtered on active), so a row present-but-revoked lands here and
+		// is separable from a row that never existed. `integrations.status` is
+		// the truth (tech principles doc core principle 3); the in-process
+		// registry is a performance cache and may not have caught up yet — the
+		// gate below fails closed even if the DELETE hook has not run.
+		const [byId] = await db
+			.select()
+			.from(integrations)
+			.where(
+				and(
+					eq(integrations.id, options.identity.integrationId),
+					eq(integrations.workspaceId, workspaceId),
+					eq(integrations.provider, PROVIDER),
+				),
+			)
+			.limit(1)
+		row = byId ?? null
+	} else {
+		// `fallbackToAnyActor`: an agent has no LinkedIn connection of its own and
+		// never will — it does not go through the connect flow — so a strict
+		// actor-scoped read makes the credential unreachable from the MCP tools
+		// that exist to use it. A human connects; every agent in the workspace can
+		// send, exactly as they can with Gmail or Slack.
+		row = await getIntegrationCredential(db, workspaceId, PROVIDER, actorId, {
+			fallbackToAnyActor: true,
+		})
+	}
+	if (options.identity && (!row || row.status !== INTEGRATION_STATUS_ACTIVE)) {
+		// The fan-out MCP instance was registered against this integrationId, so
+		// a missing row means the integration was deleted, and a non-active row
+		// means the user (or a workspace admin) disconnected. Either way the
+		// answer to "can we call Unipile?" is no, and it is not the shape of a
+		// retry — the row status only changes on a user action.
+		return {
+			ok: false,
+			error: new LinkedInIntegrationError(
+				'INTEGRATION_DISCONNECTED',
+				`LinkedIn identity ${options.identity.identitySlug} has been disconnected in Maskin. Reconnect at Settings > Integrations to resume.`,
+			),
+		}
+	}
 	if (!row) {
 		return {
 			ok: false,
@@ -157,6 +216,26 @@ async function preamble(db: Database, actorId: string, workspaceId: string): Pro
 			error: new LinkedInIntegrationError(
 				'CREDENTIAL_NOT_CONNECTED',
 				'Stored LinkedIn credentials are missing account_id',
+			),
+		}
+	}
+	// A mismatch here means a reconnect minted a new Unipile account after this
+	// MCP instance was registered — send it and we send as the wrong account.
+	// Fail closed with CREDENTIAL_NOT_CONNECTED; re-enumeration is left to the
+	// unipile.account.updated webhook path per spec §1.4.
+	if (options.identity && parsed.account_id !== options.identity.unipileAccountId) {
+		logger.warn('LinkedIn identity account_id drifted from registered instance', {
+			workspaceId,
+			integrationId: row.id,
+			registeredUnipileAccountId: options.identity.unipileAccountId,
+			currentAccountId: parsed.account_id,
+			identitySlug: options.identity.identitySlug,
+		})
+		return {
+			ok: false,
+			error: new LinkedInIntegrationError(
+				'CREDENTIAL_NOT_CONNECTED',
+				`LinkedIn identity ${options.identity.identitySlug} has been reconnected under a new account. Reconnect the MCP instance to resume.`,
 			),
 		}
 	}
@@ -325,9 +404,39 @@ export async function withPageAdminRevokeSafetyNet<T>(
 	// must NOT mask the 403 the agent loop needs to see. Errors are logged
 	// inside handleUnipileAccountReconnect / reEnumerateAndSyncLinkedInInstances,
 	// so we only guard the top-level call.
+	//
+	// (2a) P3-B: if the re-enumeration leaves this credential with NO usable
+	// identities upstream (personal profile + every admined page revoked), the
+	// Unipile account is orphaned — call `deleteAccount` best-effort to close
+	// the recurring-cost leak, same semantics as the `preDisconnect` hook.
+	// Deliberately conditional on a zero-identity post-diff, NOT on every
+	// PAGE_ADMIN_REVOKED — a single revoked page leaves the personal identity
+	// (and any sibling pages) still valid, so deleting the whole Unipile
+	// account there would kill the messaging surface too. See PR body's
+	// "R11-C interpretation" risk note.
 	try {
 		const client = buildLinkedInClientForWebhook()
-		await handleUnipileAccountReconnect(db, client, cfg.unipileAccountId)
+		const summary = await handleUnipileAccountReconnect(db, client, cfg.unipileAccountId)
+		// Only delete when EVERY applied row (a) succeeded on the diff (no
+		// `error`), AND (b) reports zero surviving identities (registered +
+		// unchanged both empty). An enumeration failure or an unreadable
+		// credential means we can't confirm the account is orphaned — leaving
+		// it in place is the safe direction. This is the "conditional" reading
+		// of the P3-B "R11-C PAGE_ADMIN_REVOKED calls deleteAccount" AC (see
+		// PR body's "R11-C interpretation" risk note).
+		const canConfirmOrphan =
+			summary.appliedTo.length > 0 &&
+			summary.appliedTo.every((row) => {
+				if ('error' in row.diff) return false
+				return row.diff.registered.length + row.diff.unchanged.length === 0
+			})
+		if (canConfirmOrphan) {
+			await deleteUnipileAccountBestEffort(client, cfg.unipileAccountId, {
+				integrationId: cfg.integrationId,
+				workspaceId: cfg.workspaceId,
+				reason: 'disconnect',
+			})
+		}
 	} catch (err) {
 		logger.warn('linkedin-unipile 403 safety-net: re-enumeration failed', {
 			integrationId: cfg.integrationId,
@@ -937,7 +1046,7 @@ export async function sendLinkedInMessage(
 	if (!validation.ok) {
 		throw new LinkedInIntegrationError('INVALID_INPUT', validation.error)
 	}
-	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
 	// R11-A · a company-page fan-out instance sends from its own page mailbox,
@@ -983,7 +1092,7 @@ export async function replyToLinkedInThread(
 	if (!validation.ok) {
 		throw new LinkedInIntegrationError('INVALID_INPUT', validation.error)
 	}
-	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
 	return withIdempotency({
@@ -1017,7 +1126,7 @@ export async function listLinkedInConversations(
 	ctx: LinkedInOperationContext,
 	input: { limit?: number; cursor?: string } = {},
 ): Promise<{ conversations: unknown[]; next_cursor?: string }> {
-	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
 	// R11-A · a page fan-out instance lists its own mailbox's chats, not the
@@ -1055,7 +1164,7 @@ export async function listLinkedInMessages(
 	if (!threadId) {
 		throw new LinkedInIntegrationError('INVALID_INPUT', 'thread_id is required')
 	}
-	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
 	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
@@ -1080,7 +1189,7 @@ export async function listLinkedInConnections(
 	ctx: LinkedInOperationContext,
 	input: { limit?: number; cursor?: string } = {},
 ): Promise<{ people: LinkedInPerson[]; next_cursor?: string }> {
-	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
 	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
@@ -1122,7 +1231,7 @@ export async function searchLinkedInPeople(
 			'search_url must be a https://www.linkedin.com/ search URL',
 		)
 	}
-	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
 	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
@@ -1428,7 +1537,7 @@ export async function publishLinkedInPost(
 	if (!validation.ok) {
 		throw new LinkedInIntegrationError('INVALID_INPUT', validation.error)
 	}
-	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
 	// R11-A · the identity URN is pulled from the fan-out cfg, NOT from the
@@ -1507,7 +1616,7 @@ export async function commentOnLinkedInPost(
 			'text exceeds LinkedIn 3000-character limit',
 		)
 	}
-	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
 	const requestBody = { tool: 'linkedin_comment_on_post', post_id: postId, text }
@@ -1624,7 +1733,7 @@ export async function editLinkedInPost(
 		)
 	}
 
-	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
 
@@ -1677,7 +1786,7 @@ export async function deleteLinkedInPost(
 	const postId = typeof input.post_id === 'string' ? input.post_id.trim() : ''
 	if (!postId) throw new LinkedInIntegrationError('INVALID_INPUT', 'post_id is required')
 
-	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
 
@@ -1746,7 +1855,7 @@ export async function replyToLinkedInComment(
 			'text exceeds LinkedIn 3000-character limit',
 		)
 	}
-	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
 	const requestBody = { tool: 'linkedin_reply_to_comment', comment_id: commentId, text }
@@ -1834,7 +1943,7 @@ export async function readLinkedInPostComments(
 ): Promise<{ comments: LinkedInComment[]; next_cursor?: string }> {
 	const postId = typeof input.post_id === 'string' ? input.post_id.trim() : ''
 	if (!postId) throw new LinkedInIntegrationError('INVALID_INPUT', 'post_id is required')
-	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
 	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
@@ -2057,7 +2166,7 @@ export async function getLinkedInPostEngagement(
 ): Promise<PostEngagementResult> {
 	const postId = typeof input.post_id === 'string' ? input.post_id.trim() : ''
 	if (!postId) throw new LinkedInIntegrationError('INVALID_INPUT', 'post_id is required')
-	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
 	const acc = pre.credentials.account_id
@@ -2094,7 +2203,7 @@ export async function getLinkedInProfile(
 	if (!identifier) {
 		throw new LinkedInIntegrationError('INVALID_INPUT', 'identifier is required')
 	}
-	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
 	const upstream = await callLinkedInWithRetry<Record<string, unknown>>(() =>
@@ -2143,7 +2252,7 @@ export async function sendLinkedInConnectionRequest(
 	// rather than an empty-string one.
 	const rawMessage = typeof input.message === 'string' ? input.message : ''
 	const message = rawMessage.trim().length > 0 ? rawMessage : undefined
-	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId)
+	const pre = await preamble(ctx.db, ctx.actorId, ctx.workspaceId, { identity: ctx.identity })
 	if (!pre.ok) throw pre.error
 	const client = buildLinkedInClient(pre.credentials)
 	const upstream = await callLinkedInWithRetry<
