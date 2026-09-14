@@ -4,7 +4,10 @@ import {
 	SlashPicker,
 	type SlashPickerResult,
 } from '@/components/chat/slash-picker'
-import { UnifiedChatSlashPicker } from '@/components/chat/unified-slash-picker'
+import {
+	UnifiedChatSlashPicker,
+	type UnifiedChatSlashPickerHandle,
+} from '@/components/chat/unified-slash-picker'
 import { CreatePicker } from '@/components/shared/create-picker'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { UploadProgress } from '@/components/shared/upload-progress'
@@ -236,6 +239,19 @@ export function Composer({
 	const [unifiedOpen, setUnifiedOpen] = useState(false)
 	const [slashStart, setSlashStart] = useState<number | null>(null)
 	const [typeFilterChip, setTypeFilterChip] = useState<string | null>(null)
+	// The picker's active row id — the textarea publishes this as its
+	// `aria-activedescendant` so screen readers announce the highlighted row
+	// while the composer keeps DOM focus (spec §Accessibility). Set by the
+	// picker via `onActiveDescendantChange`; null when no row is active.
+	const [unifiedActiveDescendant, setUnifiedActiveDescendant] = useState<string | null>(null)
+	// Imperative handle: arrow keys and Enter reach the picker through this
+	// ref rather than by bubbling from the textarea to a Portal that isn't
+	// its DOM ancestor.
+	const unifiedPickerRef = useRef<UnifiedChatSlashPickerHandle | null>(null)
+	// Seed title captured on a create-row select — threaded into `<CreatePicker>`
+	// as `defaultText` so the user doesn't retype the query they just typed
+	// (spec's "never dead-ends" contract).
+	const [createSeedTitle, setCreateSeedTitle] = useState<string>('')
 	// In-flight + failed uploads. Only the resolved fileId enters `ChatSelection`
 	// (high-frequency upload events would otherwise churn the selection reducer);
 	// these are the chips shown while bytes are still transferring or after the
@@ -320,6 +336,21 @@ export function Composer({
 				setTypeFilterChip(null)
 				return
 			}
+			// While the unified picker is open, ↑↓ move its active row and ↵
+			// selects it — routed through the imperative handle because focus
+			// stays on the textarea and the picker Portal isn't a DOM ancestor.
+			if (unifiedPickerEnabled && unifiedOpen) {
+				if (e.key === 'ArrowDown') {
+					e.preventDefault()
+					unifiedPickerRef.current?.moveActive(1)
+					return
+				}
+				if (e.key === 'ArrowUp') {
+					e.preventDefault()
+					unifiedPickerRef.current?.moveActive(-1)
+					return
+				}
+			}
 			// Escape closes the unified picker without touching the composer text
 			// or the chip; the trigger char stays so the user can continue.
 			if (unifiedPickerEnabled && e.key === 'Escape' && unifiedOpen) {
@@ -331,9 +362,14 @@ export function Composer({
 			if (e.key !== 'Enter') return
 			if (e.shiftKey) return
 			if (e.nativeEvent.isComposing) return
-			// Never submit through the composer while the unified picker owns
-			// Enter — the picker's own keydown claims it for the active row.
-			if (unifiedPickerEnabled && unifiedOpen) return
+			// Enter fires the picker's active row while the picker is open. If
+			// there's no active row (empty list), swallow Enter rather than
+			// submitting — the visual state promises a selection is pending.
+			if (unifiedPickerEnabled && unifiedOpen) {
+				e.preventDefault()
+				unifiedPickerRef.current?.selectActive()
+				return
+			}
 			e.preventDefault()
 			void handleSubmit()
 		},
@@ -423,6 +459,7 @@ export function Composer({
 	const openCreateFor = useCallback(
 		(subtype: string | undefined) => {
 			setCreateSubtype(subtype)
+			setCreateSeedTitle('')
 			setTurnIntoOpen(false)
 			consumeSlashTrigger()
 			setCreateOpen(true)
@@ -520,28 +557,16 @@ export function Composer({
 				return
 			}
 			if (selection.kind === 'create' && selection.objectType) {
-				// Existing create-object flow with the current query seeded as
-				// the new object's title — same shape the `+` menu's "Create an
-				// object" entry uses.
+				// Existing create-object flow, seeded with the query the user just
+				// typed so the create form opens with the title pre-populated
+				// (spec's "never dead-ends" contract — the user must not retype
+				// what they just typed).
 				const seed = selection.seedTitle?.trim() ?? ''
 				consumeUnifiedSlashRange()
 				setUnifiedOpen(false)
 				setCreateSubtype(selection.objectType)
+				setCreateSeedTitle(seed)
 				setCreateOpen(true)
-				// The current CreatePicker doesn't accept a seedTitle prop yet;
-				// the placeholder rides in for now — a follow-up bet threads the
-				// seed through the CreatePicker input (spec Rabbit hole).
-				if (seed.length > 0) {
-					// Reserved for future CreatePicker seed prop — currently a no-op
-					// so we don't silently swallow the query. Log it so the
-					// developer console shows what would have been seeded.
-					if (typeof console !== 'undefined') {
-						console.info('[chat] create seed pending prop wiring', {
-							objectType: selection.objectType,
-							seed,
-						})
-					}
-				}
 			}
 		},
 		[onDispatchSelection, consumeUnifiedSlashRange],
@@ -683,12 +708,14 @@ export function Composer({
 			/>
 			{unifiedPickerEnabled ? (
 				<UnifiedChatSlashPicker
+					ref={unifiedPickerRef}
 					workspaceId={workspaceId}
 					open={unifiedOpen}
 					onOpenChange={handleUnifiedOpenChange}
 					query={unifiedQuery}
 					typeFilter={typeFilterChip}
 					onSelect={handleUnifiedSelect}
+					onActiveDescendantChange={setUnifiedActiveDescendant}
 					anchor={
 						<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
 					}
@@ -820,6 +847,12 @@ export function Composer({
 					disabled={disabled}
 					rows={1}
 					aria-label={textareaLabel}
+					// Screen readers announce the picker's active row while focus
+					// stays on the textarea (spec §Accessibility). The picker
+					// keeps this in sync via `onActiveDescendantChange`.
+					aria-activedescendant={
+						unifiedPickerEnabled && unifiedOpen ? (unifiedActiveDescendant ?? undefined) : undefined
+					}
 				/>
 				{sendError || externalError ? (
 					<p role="alert" className="px-1 text-error text-xs" aria-live="polite">
@@ -919,6 +952,7 @@ export function Composer({
 				onOpenChange={setCreateOpen}
 				defaultType="object"
 				defaultObjectSubtype={createSubtype}
+				defaultText={createSeedTitle || undefined}
 			/>
 		</div>
 	)

@@ -9,11 +9,11 @@ import { cn } from '@/lib/cn'
 import { useQuery } from '@tanstack/react-query'
 import { Box, Sparkles } from 'lucide-react'
 import {
-	type KeyboardEvent,
 	type ReactNode,
-	useCallback,
+	forwardRef,
 	useEffect,
 	useId,
+	useImperativeHandle,
 	useMemo,
 	useRef,
 	useState,
@@ -78,18 +78,45 @@ export interface UnifiedChatSlashPickerProps {
 	 * triggered the picker. Optional — the picker also fires the event itself.
 	 */
 	onSearchError?: (err: Error) => void
+	/**
+	 * Fires whenever the picker's active row changes. The composer forwards
+	 * the id onto its textarea's `aria-activedescendant` so screen readers
+	 * announce the highlighted option while the composer keeps DOM focus
+	 * (spec §Accessibility). `null` when no row is active (empty list).
+	 */
+	onActiveDescendantChange?: (id: string | null) => void
 }
 
-export function UnifiedChatSlashPicker({
-	workspaceId,
-	open,
-	onOpenChange,
-	query,
-	typeFilter,
-	onSelect,
-	anchor,
-	onSearchError,
-}: UnifiedChatSlashPickerProps) {
+/**
+ * Imperative surface exposed to the composer. Focus stays on the textarea
+ * (spec §Accessibility), so arrow keys and Enter reach the picker through
+ * this handle rather than by bubbling from an anchor the picker Portal is
+ * not a DOM ancestor of.
+ */
+export interface UnifiedChatSlashPickerHandle {
+	/** Move the active row by +1 (ArrowDown) or -1 (ArrowUp). No-op if empty. */
+	moveActive: (delta: number) => void
+	/** Fire `onSelect` for the currently active row. No-op if empty. */
+	selectActive: () => void
+}
+
+export const UnifiedChatSlashPicker = forwardRef<
+	UnifiedChatSlashPickerHandle,
+	UnifiedChatSlashPickerProps
+>(function UnifiedChatSlashPicker(
+	{
+		workspaceId,
+		open,
+		onOpenChange,
+		query,
+		typeFilter,
+		onSelect,
+		anchor,
+		onSearchError,
+		onActiveDescendantChange,
+	},
+	ref,
+) {
 	const isMobile = useIsMobile()
 
 	// 120ms debounce so keystrokes don't fan out into a search-per-char.
@@ -109,28 +136,94 @@ export function UnifiedChatSlashPicker({
 		onError: onSearchError,
 	})
 
+	// A chip narrows the create section to its type; without a chip every
+	// built-in NEWKIND row is offered so the picker never dead-ends.
 	const createRows = useMemo(
-		() =>
-			typeFilter
-				? CREATE_ROWS.filter((row) => row.objectType === typeFilter)
-				: CREATE_ROWS.filter((row) => (typeFilter ? row.objectType === typeFilter : true)),
+		() => (typeFilter ? CREATE_ROWS.filter((row) => row.objectType === typeFilter) : CREATE_ROWS),
 		[typeFilter],
+	)
+
+	// Flat row list drives the composer's keyboard nav (ArrowDown / ArrowUp /
+	// Enter reach us via `useImperativeHandle` — see `UnifiedChatSlashPickerHandle`).
+	// References first, then create rows; skeletons/error/empty visuals are not
+	// focusable rows.
+	const references = referenceQuery.data ?? []
+	const trimmedQuery = query.trim()
+	const rows = useMemo<UnifiedSlashSelection[]>(() => {
+		const refRows: UnifiedSlashSelection[] = references.map((object) => ({
+			kind: 'reference',
+			object,
+		}))
+		const createRowsSelections: UnifiedSlashSelection[] = createRows.map((row) => ({
+			kind: 'create',
+			objectType: row.objectType,
+			seedTitle: trimmedQuery,
+		}))
+		return [...refRows, ...createRowsSelections]
+	}, [references, createRows, trimmedQuery])
+
+	const [activeIndex, setActiveIndex] = useState(0)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset when the visible row list changes
+	useEffect(() => {
+		// Snap the active row to the first reference (or create row when there
+		// are no references) whenever the visible row list changes underneath.
+		setActiveIndex(0)
+	}, [rows])
+
+	const listboxId = useId()
+	const activeRow = rows[activeIndex]
+	const activeDescendantId = activeRow ? rowElementId(listboxId, activeIndex) : null
+
+	// Notify the composer whenever the active descendant changes so it can keep
+	// the textarea's `aria-activedescendant` in sync. Also send null on close
+	// so the attribute clears when the picker isn't showing.
+	useEffect(() => {
+		if (!onActiveDescendantChange) return
+		onActiveDescendantChange(open ? activeDescendantId : null)
+	}, [activeDescendantId, open, onActiveDescendantChange])
+
+	// Latest-ref pattern lets the imperative handle read stable state without
+	// re-creating the handle on every keystroke (React re-registers a fresh
+	// `useImperativeHandle` on every render, which is fine for the composer's
+	// own ref usage but noisy in refactors).
+	const rowsRef = useRef(rows)
+	rowsRef.current = rows
+	const activeIndexRef = useRef(activeIndex)
+	activeIndexRef.current = activeIndex
+	const onSelectRef = useRef(onSelect)
+	onSelectRef.current = onSelect
+
+	useImperativeHandle(
+		ref,
+		() => ({
+			moveActive: (delta: number) => {
+				const total = rowsRef.current.length
+				if (total === 0) return
+				setActiveIndex((prev) => Math.max(0, Math.min(total - 1, prev + delta)))
+			},
+			selectActive: () => {
+				const target = rowsRef.current[activeIndexRef.current]
+				if (target) onSelectRef.current(target)
+			},
+		}),
+		[],
 	)
 
 	const body = (
 		<UnifiedPickerBody
+			listboxId={listboxId}
+			activeDescendantId={activeDescendantId}
 			query={query}
 			typeFilter={typeFilter}
-			references={referenceQuery.data ?? []}
+			references={references}
 			loading={referenceQuery.isFetching && !referenceQuery.data}
 			error={referenceQuery.error ?? null}
 			onRetry={() => referenceQuery.refetch()}
 			createRows={createRows}
-			onSelect={(selection) => {
-				onSelect(selection)
-			}}
+			activeIndex={activeIndex}
+			setActiveIndex={setActiveIndex}
+			onSelect={onSelect}
 			onRequestClose={() => onOpenChange(false)}
-			mobile={isMobile}
 		/>
 	)
 
@@ -168,9 +261,11 @@ export function UnifiedChatSlashPicker({
 			</PopoverContent>
 		</Popover>
 	)
-}
+})
 
 interface UnifiedPickerBodyProps {
+	listboxId: string
+	activeDescendantId: string | null
 	query: string
 	typeFilter: string | null
 	references: ObjectResponse[]
@@ -178,12 +273,15 @@ interface UnifiedPickerBodyProps {
 	error: Error | null
 	onRetry: () => void
 	createRows: { objectType: string; label: string; sub: string }[]
+	activeIndex: number
+	setActiveIndex: (updater: number | ((prev: number) => number)) => void
 	onSelect: (selection: UnifiedSlashSelection) => void
 	onRequestClose: () => void
-	mobile: boolean
 }
 
 function UnifiedPickerBody({
+	listboxId,
+	activeDescendantId,
 	query,
 	typeFilter,
 	references,
@@ -191,82 +289,40 @@ function UnifiedPickerBody({
 	error,
 	onRetry,
 	createRows,
+	activeIndex,
+	setActiveIndex,
 	onSelect,
 	onRequestClose,
-	mobile,
 }: UnifiedPickerBodyProps) {
-	const listboxId = useId()
 	const trimmedQuery = query.trim()
 	const hasQuery = trimmedQuery.length > 0
-
-	// Flat row list drives arrow-key nav + Enter select. Order: references first,
-	// then create rows. Skeletons / error / empty visuals aren't focusable rows.
-	const rows = useMemo<UnifiedSlashSelection[]>(() => {
-		const refRows: UnifiedSlashSelection[] = references.map((object) => ({
-			kind: 'reference',
-			object,
-		}))
-		const createRowsSelections: UnifiedSlashSelection[] = createRows.map((row) => ({
-			kind: 'create',
-			objectType: row.objectType,
-			seedTitle: trimmedQuery,
-		}))
-		return [...refRows, ...createRowsSelections]
-	}, [references, createRows, trimmedQuery])
-
-	const [activeIndex, setActiveIndex] = useState(0)
-	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset when the visible row list changes
-	useEffect(() => {
-		// Snap the active row to the first reference (or create row when there
-		// are no references) whenever the visible row list changes underneath.
-		setActiveIndex(0)
-	}, [rows])
-
-	const handleKeyDown = useCallback(
-		(e: KeyboardEvent<HTMLDivElement>) => {
-			if (e.key === 'Escape') {
-				e.preventDefault()
-				onRequestClose()
-				return
-			}
-			// Touch viewports skip arrow-key nav per spec — the composer's own
-			// keyboard already drives selection through tap.
-			if (mobile) return
-			if (rows.length === 0) return
-			if (e.key === 'ArrowDown') {
-				e.preventDefault()
-				setActiveIndex((prev) => Math.min(rows.length - 1, prev + 1))
-				return
-			}
-			if (e.key === 'ArrowUp') {
-				e.preventDefault()
-				setActiveIndex((prev) => Math.max(0, prev - 1))
-				return
-			}
-			if (e.key === 'Enter') {
-				e.preventDefault()
-				const target = rows[activeIndex]
-				if (target) onSelect(target)
-			}
-		},
-		[mobile, rows, activeIndex, onSelect, onRequestClose],
-	)
 
 	const referenceHeading = referenceHeadingCopy(hasQuery, references.length, typeFilter, query)
 	const createHeading = createHeadingCopy(hasQuery, typeFilter, query)
 	const footer = footerCopy(references.length, createRows.length)
 
 	return (
-		// Custom listbox (per spec §Accessibility): the composer keeps DOM focus,
-		// so a native `<select>` would trap it — we use ARIA listbox semantics on
-		// a floating panel instead and route arrow-key nav through the composer.
+		// Custom listbox (per spec §Accessibility): the composer keeps DOM focus
+		// (`aria-activedescendant` rides on the textarea, forwarded via
+		// `onActiveDescendantChange`). This role stays on the panel so screen
+		// readers still announce it as a listbox; arrow keys and Enter reach the
+		// active row through the outer component's imperative handle, not by
+		// bubbling from a Popover portal that isn't a DOM ancestor of the
+		// textarea. `Escape` closes on mouse focus (touch bottom-sheet path);
+		// on desktop the composer intercepts Escape before it can reach here.
 		// biome-ignore lint/a11y/useSemanticElements: floating listbox, focus stays on the composer textarea
 		<div
 			role="listbox"
+			id={listboxId}
 			aria-label="Reference or create"
-			aria-activedescendant={rows[activeIndex] ? rowElementId(listboxId, activeIndex) : undefined}
+			aria-activedescendant={activeDescendantId ?? undefined}
 			tabIndex={-1}
-			onKeyDown={handleKeyDown}
+			onKeyDown={(e) => {
+				if (e.key === 'Escape') {
+					e.preventDefault()
+					onRequestClose()
+				}
+			}}
 			className="flex flex-col text-popover-foreground"
 		>
 			<div className="max-h-[420px] overflow-auto p-1">
