@@ -319,4 +319,13 @@ export interface PreDisconnectContext {
 	integrationId: string
 	workspaceId: string
 	credentials: StoredCredentials
+	/**
+	 * The provider-issued stable id for this credential — `integrations.external_id`
+	 * (e.g. Unipile's `acc_01m2abxf…` for `linkedin-unipile`, Slack's `team_id`,
+	 * GitHub's installation id). Passed through so provider `preDisconnect` hooks
+	 * can call remote delete-account endpoints keyed on the id the provider owns,
+	 * without re-selecting the integration row. `null` when the row landed as
+	 * `pending` and never enumerated an external id.
+	 */
+	externalId: string | null
 }

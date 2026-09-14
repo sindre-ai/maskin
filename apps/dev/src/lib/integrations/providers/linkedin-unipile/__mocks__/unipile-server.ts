@@ -29,6 +29,7 @@ export type { PostsCrudErrorTrigger } from './handlers/posts-crud'
  *   - POST /v2/:account_id/linkedin/search                  — people search
  *   - GET  /v2/:account_id/users/:identifier                — one profile
  *   - POST /v2/:account_id/users/me/relation-requests       — connect-request
+ *   - DELETE /v2/accounts/:account_id                       — P3-B account delete
  *
  * The v1 handlers (`/api/v1/hosted/accounts/link`, `/api/v1/messages`,
  * `/api/v1/chats*`) are gone. Signature verification is gone too — v2 uses a
@@ -71,7 +72,10 @@ export interface LinkedInMockServer {
 }
 
 /** Named single-shot response triggers. See `LinkedInMockServer.setNext`. */
-export type MockNextTrigger = 'page-admin-revoked'
+export type MockNextTrigger =
+	| 'page-admin-revoked'
+	| 'delete-account-already-gone'
+	| 'delete-account-unavailable'
 
 // Verified against the live api.unipile.com response on 2026-09-04:
 // `{"object":"HostedAuthLink","link":"https://auth.unipile.com/?token=..."}`.
@@ -246,6 +250,42 @@ const CANNED_PAGE_ADMIN_REVOKED_ERROR = () => ({
 	object: 'Error',
 	error_code: 'page_admin_revoked',
 	message: 'The connected LinkedIn account no longer has admin access to this page.',
+})
+
+/**
+ * Unipile v2 `DELETE /v2/accounts/{account_id}` success envelope. Verified
+ * against api.unipile.com/v2/docs/json 2026-09-12 — the wire body is
+ * `{ "object": "AccountDeleted" }` on 200.
+ */
+const CANNED_ACCOUNT_DELETED_RESPONSE = () => ({
+	object: 'AccountDeleted',
+})
+
+/**
+ * Unipile v2 `DELETE /v2/accounts/{account_id}` "already gone" envelope
+ * (404). Shape matches the reference-page documented response — every field
+ * beyond `status` / `type` is best-effort and the classifier is expected to
+ * treat any 404 on this route as "already deleted upstream, log-and-continue"
+ * per the symmetric-disconnect (P3-B) semantics.
+ */
+const CANNED_ACCOUNT_NOT_FOUND_RESPONSE = () => ({
+	status: 404,
+	type: 'errors/AccountNotFound',
+	title: 'Account not found',
+	detail: 'No Unipile account exists for this id — it may already have been deleted.',
+})
+
+/**
+ * Unipile v2 upstream 5xx on account delete. Shape matches the generic
+ * Problem+JSON envelope Unipile serves on internal errors, so a test forcing
+ * this exercises the "other 4xx/5xx → log the error and STILL proceed"
+ * branch of `preDisconnect`.
+ */
+const CANNED_ACCOUNT_DELETE_UNAVAILABLE = () => ({
+	status: 503,
+	type: 'errors/ServiceUnavailable',
+	title: 'Service temporarily unavailable',
+	detail: 'Unipile is temporarily unable to process account deletions.',
 })
 
 /**
@@ -474,6 +514,34 @@ export function planPageAdminRevokedResponse(): void {
 	})
 }
 
+/**
+ * Plant a single-shot 404 on the next `DELETE /v2/accounts/{account_id}`
+ * call. The P3-B disconnect handler treats this as "already deleted
+ * upstream — log-and-continue" and still flips local status. Consumed
+ * once, then removed.
+ */
+export function planAccountDeleteAlreadyGoneResponse(): void {
+	responseOverrides.push({
+		match: (method, path) => method === 'DELETE' && /^\/v2\/accounts\/[^/]+$/.test(path),
+		status: 404,
+		body: CANNED_ACCOUNT_NOT_FOUND_RESPONSE(),
+	})
+}
+
+/**
+ * Plant a single-shot 503 on the next `DELETE /v2/accounts/{account_id}`
+ * call. The P3-B disconnect handler treats this as "log the error, still
+ * proceed with local disconnect" — never blocks the user's disconnect on a
+ * Unipile-side transient. Consumed once, then removed.
+ */
+export function planAccountDeleteUnavailableResponse(): void {
+	responseOverrides.push({
+		match: (method, path) => method === 'DELETE' && /^\/v2\/accounts\/[^/]+$/.test(path),
+		status: 503,
+		body: CANNED_ACCOUNT_DELETE_UNAVAILABLE(),
+	})
+}
+
 export function planResponseOverride(override: ResponseOverride): void {
 	responseOverrides.push(override)
 }
@@ -513,6 +581,15 @@ export async function startLinkedInMock(): Promise<LinkedInMockServer> {
 			return send(override.status, override.body)
 		}
 
+		// P3-B: symmetric-disconnect account delete. Unipile-level route (not
+		// LinkedIn-scoped), so it must be matched at the top before any
+		// account-id-prefixed route. Happy path is 200 with the
+		// `AccountDeleted` envelope; the 404 (already-gone) and 5xx branches
+		// are exercised via `setNext('delete-account-already-gone' |
+		// 'delete-account-unavailable')` planted overrides.
+		if (method === 'DELETE' && /^\/v2\/accounts\/[^/]+$/.test(url)) {
+			return send(200, CANNED_ACCOUNT_DELETED_RESPONSE())
+		}
 		if (method === 'POST' && url === '/v2/auth/link') {
 			const state =
 				typeof parsed === 'object' && parsed !== null && 'state' in parsed
@@ -658,6 +735,14 @@ export async function startLinkedInMock(): Promise<LinkedInMockServer> {
 		setNext: (trigger) => {
 			if (trigger === 'page-admin-revoked') {
 				planPageAdminRevokedResponse()
+				return
+			}
+			if (trigger === 'delete-account-already-gone') {
+				planAccountDeleteAlreadyGoneResponse()
+				return
+			}
+			if (trigger === 'delete-account-unavailable') {
+				planAccountDeleteUnavailableResponse()
 				return
 			}
 			// Compile-time exhaustiveness — a new trigger added to the union
