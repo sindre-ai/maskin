@@ -17,6 +17,7 @@ import {
 import { cn } from '@/lib/cn'
 import { deriveConversationTitle } from '@/lib/conversation-title'
 import { useWorkspace } from '@/lib/workspace-context'
+import { MESSAGE_MAX_MENTIONS } from '@maskin/shared'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { X } from 'lucide-react'
 import {
@@ -290,13 +291,15 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 	const handleSend = useCallback(
 		async (content: string) => {
 			setError(null)
-			// The Composer's "Agent" button (selection.agent) is a separate entry
-			// point from the chip picker above — fold it into the participant
-			// list so tagging an agent there actually adds them to the
-			// conversation, instead of silently doing nothing.
+			// Fold both entry points for participants into the id set:
+			// (1) recipient chips picked in the To row above, and
+			// (2) every actor @-mentioned in the composer's `selection.agents`.
+			// Self-mentions still count as intended participants (they get filtered
+			// from the outgoing `mentions` metadata below, but they came here by
+			// deliberate action, so they join the thread).
 			const ids = new Set<string>()
 			for (const r of recipients) ids.add(r.id)
-			if (selection.agent) ids.add(selection.agent.id)
+			for (const agentId of selection.agents) ids.add(agentId)
 			if (ids.size === 0) {
 				const err = new Error('Add at least one person or agent to start the conversation')
 				setError(err.message)
@@ -338,6 +341,14 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 					...(n.title ? { title: n.title } : {}),
 				}))
 			}
+			// Mentions ride the initial message; filter self so a self-mention
+			// (warning-styled in the composer) never fires the notification write.
+			const mentions = selection.agents
+				.filter((id) => id !== currentActor?.id)
+				.slice(0, MESSAGE_MAX_MENTIONS)
+			if (mentions.length > 0) {
+				metadata.mentions = mentions
+			}
 
 			try {
 				const conversation = await createConversation.mutateAsync({
@@ -373,6 +384,7 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 			createConversation,
 			navigate,
 			workspaceId,
+			currentActor?.id,
 		],
 	)
 
@@ -534,7 +546,7 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 					placeholder={composerPlaceholder}
 					selection={selection}
 					onDispatchSelection={dispatchSelection}
-					onRemoveAgent={() => dispatchSelection({ type: 'remove_agent' })}
+					onRemoveAgent={(id) => dispatchSelection({ type: 'remove_agent', id })}
 					onRemoveObject={(id) => dispatchSelection({ type: 'remove_object', id })}
 					onRemoveNotification={(id) => dispatchSelection({ type: 'remove_notification', id })}
 					onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}

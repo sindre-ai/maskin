@@ -1,3 +1,10 @@
+import {
+	MentionPicker,
+	type MentionPickerActor,
+	buildMentionSections,
+	detectMentionTrigger,
+	reduceMentionPickerKey,
+} from '@/components/chat/mention-picker'
 import { SelectionChips } from '@/components/chat/selection-chips'
 import {
 	type SlashKindId,
@@ -21,15 +28,19 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
+import { useActors } from '@/hooks/use-actors'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
+import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useDictation } from '@/hooks/use-dictation'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useUploadFile } from '@/hooks/use-files'
 import {
 	deriveEntryAgentRole,
+	trackChatMentionInserted,
 	trackChatObjectReferenceCreated,
 	trackSpecialistSummonedManually,
 } from '@/lib/analytics'
+import { getStoredActor } from '@/lib/auth'
 import type { ChatSelection, ChatSelectionAction } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { readFileAsBase64 } from '@/lib/file-utils'
@@ -161,12 +172,19 @@ export interface ComposerProps {
 	placeholder: string
 	selection: ChatSelection
 	onDispatchSelection?: (action: ChatSelectionAction) => void
-	onRemoveAgent: () => void
+	onRemoveAgent: (id: string) => void
 	onRemoveObject: (id: string) => void
 	onRemoveNotification: (id: string) => void
 	onRemoveFile: (fileId: string) => void
 	externalError?: string | null
 	onDismissExternalError?: () => void
+	/**
+	 * The active conversation's participant actor ids — used to seed the
+	 * `In this conversation` section of the `@` mention picker. Callers wiring
+	 * a brand-new-chat surface pass `[]`; the picker falls through to the
+	 * `Recent collaborators` walk instead.
+	 */
+	conversationParticipantIds?: string[]
 	/** Forwarded as `aria-label` on the textarea. Defaults to the surface placeholder. */
 	textareaLabel?: string
 	/** Optional controlled draft. Supply both to let a caller prefill the
@@ -183,15 +201,13 @@ export interface ComposerProps {
  * while a turn is pending — i.e. after a send, until the caller flips
  * `pending` back to false.
  *
- * Exposes three entry points into the shared `<SlashPicker>`:
- *  - `/` typed at the start of the textarea (or immediately after whitespace)
- *    opens the picker at the top-level kind menu.
- *  - The **Agent** button opens the picker pre-filtered to the agent kind.
- *  - The **Objects** button opens the picker pre-filtered to the object kind.
- * All three share a single picker instance and an invisible `PopoverAnchor`
- * pinned to the composer so the popover always lands in the same place. When
- * a pick is committed we delete only the `/` that triggered the picker (if
- * still present) so the rest of the user's in-progress message is preserved.
+ * Entry points into pickers:
+ *  - `/` typed at a word boundary opens the "Turn this into" dropdown.
+ *  - `@` typed at a word boundary opens the mention picker (agents + humans)
+ *    inline at the caret; ↑↓ navigate, ↵ inserts, Escape closes. Textarea
+ *    keeps DOM focus while the picker is open.
+ *  - The `+` menu opens the shared `<SlashPicker>` for object references and
+ *    "Mention an agent" (an alternate path to the same mention flow).
  */
 export function Composer({
 	workspaceId,
@@ -207,6 +223,7 @@ export function Composer({
 	onRemoveFile,
 	externalError,
 	onDismissExternalError,
+	conversationParticipantIds,
 	textareaLabel,
 	value: controlledValue,
 	onValueChange,
@@ -258,6 +275,12 @@ export function Composer({
 	// upload failed, removable in either state.
 	const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
 	const slashPosRef = useRef<number | null>(null)
+	// Position of the `@` that opened the mention picker and the query text
+	// after it. Both null when the picker isn't in `@`-typing mode.
+	const [mentionTrigger, setMentionTrigger] = useState<{ atPos: number; query: string } | null>(
+		null,
+	)
+	const [mentionHighlightIndex, setMentionHighlightIndex] = useState(0)
 	const fileInputRef = useRef<HTMLInputElement | null>(null)
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null)
 	// `/` opens the create list (mockup 761–771). The chosen type seeds the
@@ -276,6 +299,58 @@ export function Composer({
 	const plusMenuAttachOnly = useFeatureFlag('chat-plus-menu-attach-only')
 	const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
 	const uploadFile = useUploadFile(workspaceId)
+	const selfActor = getStoredActor()
+	const selfActorId = selfActor?.id ?? null
+
+	// Pool for the mention picker — cached workspace actors. `useActors` uses
+	// the same query key as every other surface in the app so the picker opens
+	// against warm data (spec: `list_actors({ workspace_id, limit: 100 })` on
+	// chat mount, cached for the session).
+	const { data: workspaceActors } = useActors(workspaceId, { enabled: true })
+	const mentionActors = useMemo<MentionPickerActor[]>(
+		() =>
+			(workspaceActors ?? [])
+				// role !== "system" — filter out Google Calendar / Gmail / Slack / GitHub / Ubersuggest.
+				.filter((a) => !a.isSystem)
+				.map((a) => ({
+					id: a.id,
+					name: a.name,
+					type: a.type,
+					description: a.description,
+					email: a.email,
+				})),
+		[workspaceActors],
+	)
+	const { data: conversationPages } = useConversationsInfinite(workspaceId)
+	const conversationList = useMemo(
+		() => conversationPages?.pages.flatMap((p) => p.conversations) ?? [],
+		[conversationPages],
+	)
+	const mentionSections = useMemo(
+		() =>
+			buildMentionSections({
+				actors: mentionActors,
+				conversations: conversationList,
+				conversationParticipantIds: conversationParticipantIds ?? [],
+				query: mentionTrigger?.query ?? '',
+				selfActorId,
+			}),
+		[
+			mentionActors,
+			conversationList,
+			conversationParticipantIds,
+			mentionTrigger?.query,
+			selfActorId,
+		],
+	)
+	const mentionFlatRows = useMemo(() => mentionSections.flatMap((s) => s.rows), [mentionSections])
+	// The picker's own highlightIndex resets whenever the flat list changes;
+	// re-anchor at 0 so the composer's ↵ never fires against a stale row.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the length is what drives the reset, not the identity of the rows array.
+	useEffect(() => {
+		setMentionHighlightIndex(0)
+	}, [mentionFlatRows.length])
+
 	const dictation = useDictation(
 		useCallback(
 			(text: string) => {
@@ -327,8 +402,66 @@ export function Composer({
 		[canSend, onDismissExternalError, onSend, setValue, value],
 	)
 
+	// Commits the picker's highlighted row into a mention pill: strips the
+	// in-progress `@query` from the textarea, dispatches `add_agent` into the
+	// selection reducer, and fires the `chat_mention_inserted` analytics event
+	// tagged with `kind` (agent | human). The composer never loses DOM focus
+	// while the picker is open, so the caret snaps back to where the `@` was.
+	const commitMention = useCallback(
+		(actor: MentionPickerActor & { kind: 'agent' | 'human' }) => {
+			const trigger = mentionTrigger
+			if (!trigger) return
+			const textarea = textareaRef.current
+			setValue((prev) => {
+				const before = prev.slice(0, trigger.atPos)
+				const after = prev.slice(trigger.atPos + 1 + trigger.query.length)
+				const trimmedAfter = after.startsWith(' ') ? after : ` ${after}`
+				const next = `${before}${trimmedAfter}`
+				requestAnimationFrame(() => {
+					const caret = before.length + 1 // land the caret past the leading space we inserted
+					textarea?.focus()
+					textarea?.setSelectionRange(caret, caret)
+				})
+				return next
+			})
+			onDispatchSelection?.({ type: 'add_agent', agent: { id: actor.id, name: actor.name } })
+			trackChatMentionInserted({
+				entity_id: actor.id,
+				entity_type: 'actor',
+				kind: actor.kind,
+			})
+			setMentionTrigger(null)
+		},
+		[mentionTrigger, onDispatchSelection, setValue],
+	)
+
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent<HTMLTextAreaElement>) => {
+			// While the mention picker is open, route arrow keys / Enter / Escape
+			// through the picker so keyboard nav works without the composer losing
+			// focus. Non-picker keys fall through to the standard textarea handling.
+			if (mentionTrigger) {
+				const result = reduceMentionPickerKey(
+					{ key: e.key },
+					{ flatCount: mentionFlatRows.length, highlightIndex: mentionHighlightIndex },
+				)
+				if (result.handled) {
+					if (result.preventDefault) e.preventDefault()
+					if (result.action?.type === 'move') setMentionHighlightIndex(result.action.nextIndex)
+					else if (result.action?.type === 'commit') {
+						const target = mentionFlatRows[result.action.index]
+						if (target) {
+							commitMention({
+								...target,
+								kind: target.type === 'agent' ? 'agent' : 'human',
+							})
+						}
+					} else if (result.action?.type === 'close') {
+						setMentionTrigger(null)
+					}
+					return
+				}
+			}
 			// v2 chip lives outside the text — Backspace on an empty composer
 			// with a chip set clears the chip (spec §Interaction details).
 			if (
@@ -378,7 +511,17 @@ export function Composer({
 			e.preventDefault()
 			void handleSubmit()
 		},
-		[handleSubmit, unifiedPickerEnabled, unifiedOpen, typeFilterChip, value.length],
+		[
+			handleSubmit,
+			unifiedPickerEnabled,
+			unifiedOpen,
+			typeFilterChip,
+			value.length,
+			mentionTrigger,
+			mentionFlatRows,
+			mentionHighlightIndex,
+			commitMention,
+		],
 	)
 
 	const handleChange = useCallback(
@@ -386,7 +529,29 @@ export function Composer({
 			const next = e.target.value
 			setValue(next)
 			const pos = e.target.selectionStart
-			if (typeof pos !== 'number' || pos < 0) return
+			if (typeof pos !== 'number' || pos < 0) {
+				setMentionTrigger(null)
+				return
+			}
+
+			// `@`-in-composer opens the mention picker whenever the regex from the
+			// acceptance criteria matches the text up to the caret. This also
+			// keeps the picker open across further typing that stays inside a word
+			// after the `@` — the query updates, the picker filters. Clears any
+			// competing `/` picker anchor so the two pickers can't fight over the
+			// same trigger.
+			const mention = detectMentionTrigger(next, pos)
+			if (mention) {
+				setMentionTrigger(mention)
+				setTurnIntoOpen(false)
+				slashPosRef.current = null
+				if (unifiedPickerEnabled) {
+					setUnifiedOpen(false)
+					setSlashStart(null)
+				}
+				return
+			}
+			setMentionTrigger(null)
 
 			// v2: the top-level `/` path routes to `<UnifiedChatSlashPicker>`
 			// (Reference on top, Create-new below). The legacy `turnIntoOpen`
@@ -484,6 +649,12 @@ export function Composer({
 					entity_id: result.ref.id,
 					entity_type: 'agent',
 					agent_role: deriveEntryAgentRole(result.ref.name),
+				})
+				// The `+` menu → "Mention an agent" path also counts as a mention insertion.
+				trackChatMentionInserted({
+					entity_id: result.ref.id,
+					entity_type: 'actor',
+					kind: 'agent',
 				})
 			} else if (result.kind === 'object') {
 				onDispatchSelection?.({ type: 'add_object', object: result.ref })
@@ -705,7 +876,11 @@ export function Composer({
 				open={pickerOpen}
 				onOpenChange={handlePickerOpenChange}
 				onSelect={handlePickerSelect}
-				selected={selection}
+				selected={{
+					agents: selection.agents,
+					objects: selection.objects,
+					notifications: selection.notifications,
+				}}
 				initialKindId={pickerKind}
 				anchor={
 					<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
@@ -742,6 +917,24 @@ export function Composer({
 					</li>
 				</ul>
 			) : null}
+			{/* Inline `@` mention picker — the composer's textarea remains the
+			    focused element, and the picker consumes arrow keys / Enter /
+			    Escape via `handleKeyDown`'s `reduceMentionPickerKey` branch. */}
+			<MentionPicker
+				open={mentionTrigger !== null}
+				onOpenChange={(next) => {
+					if (!next) setMentionTrigger(null)
+				}}
+				actors={mentionActors}
+				conversationParticipantIds={conversationParticipantIds ?? []}
+				query={mentionTrigger?.query ?? ''}
+				workspaceId={workspaceId}
+				selfActorId={selfActorId}
+				onSelect={(actor) => commitMention(actor)}
+				anchor={
+					<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
+				}
+			/>
 			{/* A DropdownMenu rather than a Popover: `/` opens this without a click,
 			    so the list has to be reachable from the keyboard. Radix gives the
 			    menu roving focus, arrow keys and typeahead for free — the Popover
@@ -793,6 +986,7 @@ export function Composer({
 				onRemoveObject={onRemoveObject}
 				onRemoveNotification={onRemoveNotification}
 				onRemoveFile={onRemoveFile}
+				selfActorId={selfActorId}
 			/>
 			{pendingUploads.length > 0 && (
 				<ul
@@ -858,6 +1052,8 @@ export function Composer({
 					aria-activedescendant={
 						unifiedPickerEnabled && unifiedOpen ? (unifiedActiveDescendant ?? undefined) : undefined
 					}
+					aria-controls={mentionTrigger !== null ? 'mention-picker-listbox' : undefined}
+					aria-expanded={mentionTrigger !== null || undefined}
 				/>
 				{sendError || externalError ? (
 					<p role="alert" className="px-1 text-error text-xs" aria-live="polite">
