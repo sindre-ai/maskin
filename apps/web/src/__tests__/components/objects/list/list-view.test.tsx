@@ -52,6 +52,14 @@ vi.mock('@/hooks/use-object-loops', () => ({
 	useObjectLoops: () => ({ data: new Map(), isLoading: false, isError: false }),
 }))
 
+// D5 client migration: ListRow uses `useStar`, which reaches for a
+// QueryClientProvider + WorkspaceContext. Stub the hook so the ListView
+// tests keep their pre-D5 shape (no server-truth wiring needed here — the
+// hook is exercised directly in `use-star.test.ts`).
+vi.mock('@/hooks/use-star', () => ({
+	useStar: () => ({ isStarred: false, isSaving: false, toggle: vi.fn() }),
+}))
+
 // jsdom does not support IntersectionObserver; the sentinel effect needs it.
 // Observed nodes are recorded so a test can assert the infinite-scroll sentinel
 // is actually being watched.

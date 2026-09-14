@@ -3,11 +3,12 @@ import {
 	ObjectDetailIdentity,
 } from '@/components/objects/object-detail-header'
 import type { MemberResponse } from '@/lib/api'
+import { WorkspaceContext, type WorkspaceContextValue } from '@/lib/workspace-context'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event'
 import type { ReactNode } from 'react'
-import { buildObjectResponse } from '../../factories'
+import { buildObjectResponse, buildWorkspaceWithRole } from '../../factories'
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
@@ -45,8 +46,19 @@ function makeWrapper() {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false, gcTime: 0 } },
 	})
+	// D5 client migration: the meta row's star button uses `useStar`, which
+	// reads the current workspace id via context. Wrap so ObjectDetailIdentity
+	// renders under both a QueryClient and a WorkspaceContext.
+	const workspace = buildWorkspaceWithRole({ id: 'ws-1' })
+	const ctx: WorkspaceContextValue = {
+		workspace,
+		workspaceId: workspace.id,
+		sseStatus: 'connected',
+	}
 	return ({ children }: { children: ReactNode }) => (
-		<QueryClientProvider client={client}>{children}</QueryClientProvider>
+		<QueryClientProvider client={client}>
+			<WorkspaceContext.Provider value={ctx}>{children}</WorkspaceContext.Provider>
+		</QueryClientProvider>
 	)
 }
 
