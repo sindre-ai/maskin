@@ -318,13 +318,18 @@ app.openapi(connectRoute, (async (c) => {
 
 	try {
 		// P3-H · reconnect vs fresh connect. Unipile v2 discriminates on which
-		// of `providers` / `account_id` the /v2/auth/link body carries. If the
-		// integrations row already has an `external_id` (i.e. this workspace/
-		// actor has connected LinkedIn before, whether currently active or
-		// previously disconnected) we ask Unipile to re-authenticate that
-		// specific account instead of minting a new one — closes the
-		// account-churn half of insight (3) at the source.
-		const priorAccountId = existing[0]?.externalId ?? null
+		// of `providers` / `account_id` the /v2/auth/link body carries. Ask for
+		// a reconnect ONLY when the existing row is still `active` upstream —
+		// that's the case P3-H is meant to cover (still-live account, expired
+		// wizard). A `revoked` row's externalId points at an account P3-B's
+		// disconnect preHook already deleted upstream, so a reconnect against
+		// it lands the user on Unipile's hosted-auth page with "Account not
+		// found. The account you try to reconnect does not exist." Fall back
+		// to a fresh mint in that case; the callback overwrites the stale
+		// externalId when the new account lands.
+		const existingRow = existing[0]
+		const priorAccountId =
+			existingRow?.status === CONNECTED_STATUS ? (existingRow.externalId ?? null) : null
 		const commonAuthLinkArgs = {
 			expires_on: new Date(Date.now() + 10 * 60_000).toISOString(),
 			redirect_uri: callbackUrl(),

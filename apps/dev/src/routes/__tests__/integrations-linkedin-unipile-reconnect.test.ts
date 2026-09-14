@@ -251,6 +251,33 @@ describe('P3-H · /connect requests a reconnect link when the row has an existin
 		expect(body.providers).toEqual(['linkedin'])
 		expect('account_id' in body).toBe(false)
 	})
+
+	// Regression: connect → disconnect → connect for the same (workspace,
+	// actor). The disconnect hook (P3-B) deletes the Unipile account upstream
+	// and flips the row's status to 'revoked' but leaves external_id in place
+	// as an audit trail. A subsequent /connect must NOT reuse that stale id —
+	// Unipile's hosted-auth page 404s with "Account not found. The account
+	// you try to reconnect does not exist." Fresh-mint instead.
+	it('POSTs /v2/auth/link with { providers: ["linkedin"] } when the prior row is revoked (connect → disconnect → connect)', async () => {
+		const { db } = buildFakeDb([reconnectableRow({ status: 'revoked' })])
+		const app = buildApp(db)
+		app.use('*', async (c, next) => {
+			c.req.raw.headers.set('x-workspace-id', WORKSPACE_ID)
+			await next()
+		})
+
+		const res = await app.request('/api/integrations/linkedin-unipile/connect', {
+			method: 'POST',
+			headers: { 'x-workspace-id': WORKSPACE_ID },
+		})
+		expect(res.status).toBe(200)
+
+		const authLinkCall = mock.inbox().find((c) => c.path === '/v2/auth/link')
+		expect(authLinkCall).toBeDefined()
+		const body = authLinkCall?.body as Record<string, unknown>
+		expect(body.providers).toEqual(['linkedin'])
+		expect('account_id' in body).toBe(false)
+	})
 })
 
 describe('P3-H · /callback on a reconnect', () => {
