@@ -1,5 +1,5 @@
 import { McpServers } from '@/components/agents/mcp-servers'
-import type { ProviderInfo } from '@/lib/api'
+import type { LinkedInIdentitySummary } from '@/lib/api'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildIntegrationResponse } from '../../factories'
@@ -9,49 +9,29 @@ vi.mock('@/lib/workspace-context', () => ({
 }))
 
 const mockIntegrations = vi.fn()
-const mockProviders = vi.fn()
+const mockLinkedInIdentities = vi.fn()
 
 vi.mock('@/hooks/use-integrations', () => ({
 	useIntegrations: () => ({ data: mockIntegrations() }),
-	useProviders: () => ({ data: mockProviders() }),
+	useLinkedInIdentities: () => ({ data: mockLinkedInIdentities() }),
 }))
 
-// Same shape /api/integrations/providers serves: autoInject flag + paste-ready
-// http server spec. Kept here so the tests are self-contained; the runtime
-// value comes from apps/dev/src/lib/integrations/providers/<name>/config.ts.
-const linkedinUnipileProvider: ProviderInfo = {
-	name: 'linkedin-unipile',
-	displayName: 'LinkedIn',
-	authType: 'oauth2_custom',
-	events: [],
-	mcp: {
-		envKey: 'LINKEDIN_UNIPILE_TOKEN',
-		autoInject: true,
-		server: {
-			type: 'http',
-			url: '${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp',
-			headers: {
-				Authorization: 'Bearer ${MASKIN_API_KEY}',
-				'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
-			},
-		},
-	},
+const sebastianIdentity: LinkedInIdentitySummary = {
+	instanceSlug: 'linkedin-sebastianbille-personal',
+	displayName: 'Sebastian Bille',
+	identityType: 'personal',
+	identitySlug: 'personal',
+	unipileAccSlug: 'sebastianbille',
+	integrationId: 'lu-1',
 }
 
-const slackAutoInjectProvider: ProviderInfo = {
-	name: 'slack',
-	displayName: 'Slack',
-	authType: 'oauth2',
-	events: [],
-	mcp: {
-		envKey: 'SLACK_BOT_TOKEN',
-		autoInject: true,
-		server: {
-			type: 'http',
-			url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
-			headers: { Authorization: 'Bearer ${MASKIN_API_KEY}' },
-		},
-	},
+const magnusIdentity: LinkedInIdentitySummary = {
+	instanceSlug: 'linkedin-magnus-noeddegaard-personal',
+	displayName: 'Magnus Nødegaard',
+	identityType: 'personal',
+	identitySlug: 'personal',
+	unipileAccSlug: 'magnus-noeddegaard',
+	integrationId: 'lu-2',
 }
 
 const stdioTools = {
@@ -79,7 +59,7 @@ describe('McpServers', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockIntegrations.mockReturnValue([])
-		mockProviders.mockReturnValue([])
+		mockLinkedInIdentities.mockReturnValue([])
 	})
 
 	it('shows empty message when no servers configured', () => {
@@ -237,92 +217,94 @@ describe('McpServers', () => {
 		})
 	})
 
-	describe('auto-injected providers', () => {
-		it('renders the linkedin-unipile row when the integration is active and the provider is autoInject', () => {
+	describe('LinkedIn per-identity Quick Add', () => {
+		it('renders one button per connected identity, sorted alphabetically by display name', () => {
+			mockLinkedInIdentities.mockReturnValue([sebastianIdentity, magnusIdentity])
+			render(<McpServers tools={null} onUpdate={vi.fn()} />)
+
+			const magnusBtn = screen.getByRole('button', { name: /Add Magnus Nødegaard/ })
+			const sebastianBtn = screen.getByRole('button', { name: /Add Sebastian Bille/ })
+			expect(magnusBtn).toBeInTheDocument()
+			expect(sebastianBtn).toBeInTheDocument()
+			// DOM order = alphabetical.
+			// eslint-disable-next-line no-bitwise
+			expect(
+				magnusBtn.compareDocumentPosition(sebastianBtn) & Node.DOCUMENT_POSITION_FOLLOWING,
+			).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+		})
+
+		it('never renders the deprecated auto-injected read-only row', () => {
 			mockIntegrations.mockReturnValue([
 				buildIntegrationResponse({ provider: 'linkedin-unipile', status: 'active' }),
 			])
-			mockProviders.mockReturnValue([linkedinUnipileProvider])
+			mockLinkedInIdentities.mockReturnValue([sebastianIdentity])
 			render(<McpServers tools={null} onUpdate={vi.fn()} />)
 
-			expect(screen.getByRole('list', { name: /Auto-injected MCP servers/ })).toBeInTheDocument()
-			expect(screen.getByText('LinkedIn')).toBeInTheDocument()
-			expect(screen.getByText(/Attached to every session in this workspace/)).toBeInTheDocument()
+			expect(
+				screen.queryByRole('list', { name: /Auto-injected MCP servers/ }),
+			).not.toBeInTheDocument()
 		})
 
-		it('offers no Quick Add for an autoInject provider — the "Add linkedin-unipile" button never appears', () => {
-			mockIntegrations.mockReturnValue([
-				buildIntegrationResponse({ provider: 'linkedin-unipile', status: 'active' }),
-			])
-			mockProviders.mockReturnValue([linkedinUnipileProvider])
-			render(<McpServers tools={null} onUpdate={vi.fn()} />)
+		it('writes only the clicked identity to mcpServers, keyed on its instance slug', async () => {
+			const user = userEvent.setup()
+			const onUpdate = vi.fn()
+			mockLinkedInIdentities.mockReturnValue([sebastianIdentity, magnusIdentity])
+			render(<McpServers tools={null} onUpdate={onUpdate} />)
 
-			expect(screen.queryByRole('button', { name: /Add linkedin-unipile/ })).not.toBeInTheDocument()
+			await user.click(screen.getByRole('button', { name: /Add Sebastian Bille/ }))
+
+			expect(onUpdate).toHaveBeenCalledWith({
+				mcpServers: {
+					[sebastianIdentity.instanceSlug]: {
+						type: 'http',
+						url: `\${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp/${sebastianIdentity.instanceSlug}`,
+						headers: {
+							Authorization: 'Bearer ${MASKIN_API_KEY}',
+							'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+						},
+					},
+				},
+			})
 		})
 
-		it('applies the same treatment to every autoInject provider — Slack too', () => {
-			mockIntegrations.mockReturnValue([
-				buildIntegrationResponse({ provider: 'slack', status: 'active' }),
-			])
-			mockProviders.mockReturnValue([slackAutoInjectProvider])
-			render(<McpServers tools={null} onUpdate={vi.fn()} />)
-
-			expect(screen.getByText('Slack')).toBeInTheDocument()
-			expect(screen.queryByRole('button', { name: /Add slack/ })).not.toBeInTheDocument()
-		})
-
-		it('flags a hand-pasted duplicate of an auto-injected server URL', () => {
-			mockIntegrations.mockReturnValue([
-				buildIntegrationResponse({ provider: 'linkedin-unipile', status: 'active' }),
-			])
-			mockProviders.mockReturnValue([linkedinUnipileProvider])
+		it('hides an identity button once its instance slug is present in mcpServers', () => {
+			mockLinkedInIdentities.mockReturnValue([sebastianIdentity, magnusIdentity])
 			const tools = {
 				mcpServers: {
-					'linkedin-unipile': {
+					[sebastianIdentity.instanceSlug]: {
 						type: 'http',
-						url: '${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp',
+						url: `\${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp/${sebastianIdentity.instanceSlug}`,
 						headers: {},
 					},
 				},
 			}
 			render(<McpServers tools={tools} onUpdate={vi.fn()} />)
 
-			expect(screen.getByText(/Already auto-injected/)).toBeInTheDocument()
-			// Not deleted — this is a hint, not an auto-delete.
-			expect(screen.getByText('linkedin-unipile')).toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: /Add Sebastian Bille/ })).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: /Add Magnus Nødegaard/ })).toBeInTheDocument()
 		})
 
-		it('renders one row per provider even when several integrations of the same provider are active', () => {
-			mockIntegrations.mockReturnValue([
-				buildIntegrationResponse({
-					id: 'lu-1',
-					provider: 'linkedin-unipile',
-					status: 'active',
-					actorId: 'actor-a',
-				}),
-				buildIntegrationResponse({
-					id: 'lu-2',
-					provider: 'linkedin-unipile',
-					status: 'active',
-					actorId: 'actor-b',
-				}),
-			])
-			mockProviders.mockReturnValue([linkedinUnipileProvider])
+		it('renders no LinkedIn buttons when zero identities are connected', () => {
+			mockLinkedInIdentities.mockReturnValue([])
 			render(<McpServers tools={null} onUpdate={vi.fn()} />)
 
-			expect(screen.getAllByText('LinkedIn')).toHaveLength(1)
+			expect(screen.queryByRole('button', { name: /Add Sebastian Bille/ })).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: /Add Magnus Nødegaard/ })).not.toBeInTheDocument()
+			// And no generic "Add linkedin-unipile" from the integration-based
+			// preset path either — LinkedIn skips the generic branch entirely.
+			expect(screen.queryByRole('button', { name: /Add linkedin-unipile/ })).not.toBeInTheDocument()
 		})
 
-		it('renders nothing auto-injected when the integration is not active', () => {
+		it('never emits a generic "Add linkedin-unipile" preset button even when the integration is active', () => {
 			mockIntegrations.mockReturnValue([
-				buildIntegrationResponse({ provider: 'linkedin-unipile', status: 'revoked' }),
+				buildIntegrationResponse({ provider: 'linkedin-unipile', status: 'active' }),
 			])
-			mockProviders.mockReturnValue([linkedinUnipileProvider])
+			mockLinkedInIdentities.mockReturnValue([sebastianIdentity])
 			render(<McpServers tools={null} onUpdate={vi.fn()} />)
 
-			expect(
-				screen.queryByRole('list', { name: /Auto-injected MCP servers/ }),
-			).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: /Add linkedin-unipile/ })).not.toBeInTheDocument()
+			// Only the per-identity button appears.
+			expect(screen.getByRole('button', { name: /Add Sebastian Bille/ })).toBeInTheDocument()
 		})
 	})
 

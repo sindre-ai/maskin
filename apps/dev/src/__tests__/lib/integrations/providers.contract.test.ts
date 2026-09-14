@@ -1,28 +1,31 @@
-// Cross-provider contract test that pins two class-level invariants for MCP
-// integrations. Both invariants are class fixes for the LinkedIn 2026-09-11
-// failure — a config-shape-only test on a single provider would have missed it.
+// Cross-provider contract test pinning the envKey-independent-provider invariant.
 //
-// Invariant 1 — session-manager auto-inject path.
-// For every provider whose config declares `mcp.autoInject && mcp.server`,
-// building a session container for a workspace with an active integration for
-// that provider MUST attach the provider's `mcp.server` to `MCP_SERVERS_JSON`
-// under the key `integration-<provider>`, AND MUST NOT log the
-// `Failed to load credentials for <provider>` warning. This is the
-// linkedin-unipile shape: the credential blob is `{ account_id }` with no
-// `accessToken`, so `tokenManager.getValidToken` throws. Before **P3-F** that
-// throw was swallowed as a credential-load warning and the autoInject branch
-// was never reached — sessions in workspaces with LinkedIn connected shipped
-// with zero LinkedIn tools. The class-fix contract says: providers whose MCP
-// server template authenticates on `${MASKIN_API_KEY}` (not their own envKey)
-// do not need a per-provider token to auto-inject.
+// **Reshape history.** This file originally asserted the `autoInject` contract
+// PR #1595 restored for linkedin-unipile: for every provider with
+// `mcp.autoInject && mcp.server`, session-manager must attach the server to
+// `MCP_SERVERS_JSON` even when the provider's own token cannot be resolved.
+// P3-K (Magnus 2026-09-14) reversed the auto-inject product decision — no
+// provider auto-injects any more; every provider is user-added per-agent (see
+// the per-identity Quick Add flow in `apps/web/src/components/agents/mcp-servers.tsx`).
 //
-// Invariant 2 — discovery contract.
-// For every provider whose config declares `mcp`, `GET /api/integrations/providers`
-// MUST surface `mcp.autoInject`, and MUST surface `mcp.server` whenever
-// `autoInject` is true. This is the discovery contract PR #1595 restored for
-// linkedin-unipile only — pinned here across every provider so a client driving
-// Maskin over MCP can always discover what auto-attaches for a workspace's
-// active integrations.
+// **What survives.** P3-F's runtime code path — `serverConsumesEnvKey` short-
+// circuiting the `Failed to load credentials for <provider>` warning for
+// providers whose MCP server template does NOT reference their own envKey —
+// stays in `session-manager.ts`. It is no longer user-visible via auto-inject,
+// but it is still load-bearing for any provider a user hand-adds whose HTTP
+// endpoint authenticates on `${MASKIN_API_KEY}` rather than a per-integration
+// token. The linkedin-unipile shape is the reference: its credential blob is
+// `{ account_id }` with no `accessToken`, `TokenManager.getValidToken` throws
+// exactly `Integration <id> has no access token`, and the auto-inject path
+// (still exercised here as a driver, because that's the code that would trip
+// the throw) must not treat that throw as a reason to skip.
+//
+// The invariant is stated as an end-state contract rather than "autoInject
+// attaches": for every registered provider whose `mcp.server` is defined but
+// does NOT reference its own `mcp.envKey`, driving `SessionManager.startSession`
+// with an integration whose credential row has no resolvable per-provider token
+// MUST complete without throwing and MUST NOT log the
+// `Failed to load credentials for <provider>` warning.
 
 import { vi } from 'vitest'
 
@@ -119,12 +122,10 @@ import type { StorageProvider } from '@maskin/storage'
 import { listProviders } from '../../../lib/integrations/registry'
 import type { McpServerSpec } from '../../../lib/integrations/types'
 import { logger } from '../../../lib/logger'
-import integrationsRoutes from '../../../routes/integrations'
 import { AgentStorageManager } from '../../../services/agent-storage'
 import { SessionManager } from '../../../services/session-manager'
 import { buildIntegration, buildSession } from '../../factories'
-import { jsonGet } from '../../helpers'
-import { createTestApp, createTestContext } from '../../setup'
+import { createTestContext } from '../../setup'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -162,21 +163,31 @@ function createMockStorageProvider() {
 const LAUNCHABLE_WS_SETTINGS = { llm_keys: { anthropic: 'sk-ant-test-ws' } }
 
 /**
- * Every provider currently registered whose MCP config asks session-manager to
- * auto-attach a server. GitHub is auto-injected too but takes the dedicated
- * per-installation branch in session-manager and does not declare a top-level
- * `mcp.server` (it fans out per owner). The filter naturally excludes it.
+ * Every currently-registered provider whose MCP server template does NOT
+ * reference its own envKey — i.e. authenticates on `${MASKIN_API_KEY}` or
+ * similar Maskin-side material rather than a per-integration token. These
+ * are the providers P3-F's session-manager short-circuit protects: a
+ * token-resolution failure must not stop the session from booting.
+ *
+ * linkedin-unipile is the load-bearing case: credential blob `{ account_id }`,
+ * no `accessToken`, so `TokenManager.getValidToken` throws
+ * `Integration <id> has no access token`. Slack matches the pattern too — its
+ * MCP server authenticates on `Bearer ${MASKIN_API_KEY}`, not `${SLACK_BOT_TOKEN}`
+ * — but session-manager's Slack branch still refuses to inject a non-bot
+ * token, so the test drives it with a real xoxb- shape.
  */
-const autoInjectProviders = listProviders()
+const envKeyIndependentProviders = listProviders()
 	.map((p) => p.config)
 	.filter(
-		(c): c is typeof c & { mcp: { autoInject: true; envKey: string; server: McpServerSpec } } =>
-			Boolean(c.mcp?.autoInject) && c.mcp?.server != null,
+		(c): c is typeof c & { mcp: { envKey: string; server: McpServerSpec } } =>
+			c.mcp?.server != null &&
+			typeof c.mcp.envKey === 'string' &&
+			!serverConsumesEnvKey(c.mcp.server, c.mcp.envKey),
 	)
 
-// ── Invariant 1 — session-manager auto-inject path ────────────────────────────
+// ── The contract ──────────────────────────────────────────────────────────────
 
-describe('providers.contract — session-manager auto-inject path', () => {
+describe('providers.contract — envKey-independent-provider path', () => {
 	let manager: SessionManager
 	let mockResults: Record<string, unknown>
 	let warnSpy: ReturnType<typeof vi.spyOn>
@@ -206,23 +217,21 @@ describe('providers.contract — session-manager auto-inject path', () => {
 		await manager.stop()
 	})
 
-	// The test list is generated from the real registry so a new autoInject
-	// provider added without a `server` (or without any coverage of its
-	// credential shape) fails this iteration explicitly.
-	it('lists at least the providers that need this contract', () => {
-		const names = autoInjectProviders.map((c) => c.name).sort()
-		// Sanity: the class fix has to cover linkedin-unipile at minimum, plus
-		// the other Maskin-key-authenticated auto-inject providers currently in
-		// the registry. Update this list only when adding a new autoInject
-		// provider with a server spec.
-		expect(names).toEqual(['linkedin-unipile', 'posthog', 'slack'])
+	// Sanity: the class fix has to cover linkedin-unipile at minimum. If a
+	// provider is added later whose server authenticates on the Maskin API
+	// key, it lands in this set automatically and gets a coverage row below.
+	// If linkedin-unipile is ever removed from the registry, this test tells
+	// you before the runtime code goes untested.
+	it('names at least linkedin-unipile as an envKey-independent provider', () => {
+		const names = envKeyIndependentProviders.map((c) => c.name).sort()
+		expect(names).toContain('linkedin-unipile')
 	})
 
-	for (const providerConfig of autoInjectProviders) {
+	for (const providerConfig of envKeyIndependentProviders) {
 		const { name: providerName, mcp } = providerConfig
-		const { server, envKey } = mcp
+		const { server } = mcp
 
-		it(`attaches integration-${providerName} to MCP_SERVERS_JSON with the declared server spec, no credential-load warning`, async () => {
+		it(`does not throw and does not log 'Failed to load credentials' when ${providerName} has no per-integration token`, async () => {
 			const session = buildSession({
 				status: 'pending',
 				interactive: false,
@@ -268,114 +277,40 @@ describe('providers.contract — session-manager auto-inject path', () => {
 				[integration],
 			]
 
-			// Realistic per-provider credential shape:
-			//   * server references its own envKey (e.g. PostHog Bearer
-			//     ${POSTHOG_TOKEN}) — must have a resolvable token.
-			//   * server references only ${MASKIN_API_KEY} (Slack, linkedin-unipile)
-			//     — token-manager may still throw for providers that store no
-			//     accessToken (linkedin-unipile: credential blob `{ account_id }`);
-			//     the class-fix says auto-inject fires anyway.
-			if (serverConsumesEnvKey(server, envKey)) {
-				mockGetValidToken.mockResolvedValueOnce(`test-token-${providerName}`)
-			} else if (providerName === 'slack') {
-				// Slack's server auth doesn't consume SLACK_BOT_TOKEN, but session-
-				// manager's Slack branch still refuses to inject if the stored
-				// token isn't a bot token. Feed the real production shape.
+			// Slack still needs an xoxb- token to survive its own bot-token guard
+			// even though the MCP server doesn't consume it. Every other envKey-
+			// independent provider (currently linkedin-unipile) mirrors the
+			// production shape: credential blob without an accessToken →
+			// getValidToken throws.
+			if (providerName === 'slack') {
 				mockGetValidToken.mockResolvedValueOnce('xoxb-real-bot-token')
 			} else {
-				// linkedin-unipile shape: no accessToken in credentials → token-
-				// manager throws exactly this on Standard OAuth2 flow (see
-				// apps/dev/src/lib/integrations/oauth/token-manager.ts).
 				mockGetValidToken.mockRejectedValueOnce(
 					new Error(`Integration ${integration.id} has no access token`),
 				)
 			}
 
-			await manager.startSession(session.id)
+			// The strongest contract: the session boots. Nothing about a missing
+			// per-provider token when the server authenticates on Maskin's key
+			// should stop that.
+			await expect(manager.startSession(session.id)).resolves.not.toThrow()
 
-			const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
-				env: Record<string, string>
-			}
-			expect(
-				createArgs?.env.MCP_SERVERS_JSON,
-				`session should receive MCP_SERVERS_JSON when a workspace has an active ${providerName} integration`,
-			).toBeDefined()
-			const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
-				mcpServers: Record<string, unknown>
-			}
-			expect(
-				parsed.mcpServers[`integration-${providerName}`],
-				`integration-${providerName} should be auto-injected verbatim from the provider's mcp.server spec`,
-			).toEqual(server)
-
+			// And no `Failed to load credentials` warning: token-manager's throw
+			// is expected for these providers, not an operator-facing incident.
 			const credentialLoadWarn = warnSpy.mock.calls.find(
 				([msg]) =>
 					typeof msg === 'string' && msg === `Failed to load credentials for ${providerName}`,
 			)
 			expect(
 				credentialLoadWarn,
-				`logger.warn('Failed to load credentials for ${providerName}') must not fire — the whole point of the class fix is that a missing per-provider token does NOT block auto-injection when the server authenticates on the Maskin API key`,
+				`logger.warn('Failed to load credentials for ${providerName}') must not fire — the envKey-independent-provider short-circuit lives specifically to keep this quiet when the MCP server authenticates on the Maskin API key rather than a per-provider token`,
 			).toBeUndefined()
+
+			// Server spec still exists on the config so the guard has something
+			// to guard. Not asserting the spec is auto-injected any more (that
+			// invariant went away with autoInject in P3-K) — just that it is
+			// discoverable through the config.
+			expect(server).toBeDefined()
 		})
 	}
-})
-
-// ── Invariant 2 — discovery contract ──────────────────────────────────────────
-
-describe('providers.contract — GET /api/integrations/providers discovery', () => {
-	// github is the sole exemption from the `server` half of the contract: its
-	// entries are fanned out per installation with literal tokens, so there is
-	// no single spec to advertise. The `autoInject` half still holds.
-	const GITHUB_SERVER_EXEMPTION = new Set<string>(['github'])
-
-	it('serves mcp.autoInject for every provider that declares mcp', async () => {
-		const { app } = createTestApp(integrationsRoutes, '/api/integrations')
-		const res = await app.request(jsonGet('/api/integrations/providers'))
-		expect(res.status).toBe(200)
-		const body = (await res.json()) as Array<{
-			name: string
-			mcp?: { autoInject: boolean; server?: unknown }
-		}>
-
-		const declared = listProviders()
-			.map((p) => p.config)
-			.filter((c) => c.mcp != null)
-
-		expect(declared.length).toBeGreaterThan(0)
-
-		for (const cfg of declared) {
-			const entry = body.find((p) => p.name === cfg.name)
-			expect(entry, `${cfg.name} must appear in GET /api/integrations/providers`).toBeDefined()
-			expect(
-				entry?.mcp?.autoInject,
-				`${cfg.name}: discovery must surface mcp.autoInject (found ${JSON.stringify(entry?.mcp)})`,
-			).toBe(cfg.mcp?.autoInject ?? false)
-		}
-	})
-
-	it('serves mcp.server for every provider where autoInject=true (except github, which fans out per installation)', async () => {
-		const { app } = createTestApp(integrationsRoutes, '/api/integrations')
-		const res = await app.request(jsonGet('/api/integrations/providers'))
-		const body = (await res.json()) as Array<{
-			name: string
-			mcp?: { autoInject: boolean; server?: unknown }
-		}>
-
-		const declared = listProviders()
-			.map((p) => p.config)
-			.filter((c) => c.mcp?.autoInject === true)
-
-		for (const cfg of declared) {
-			if (GITHUB_SERVER_EXEMPTION.has(cfg.name)) continue
-			const entry = body.find((p) => p.name === cfg.name)
-			expect(
-				entry?.mcp?.server,
-				`${cfg.name}: discovery must surface mcp.server whenever autoInject is true — otherwise a non-browser client sees "connected, zero tools" with nothing explaining the gap`,
-			).toBeDefined()
-			expect(
-				entry?.mcp?.server,
-				`${cfg.name}: discovery server spec must be the provider's declared mcp.server verbatim`,
-			).toEqual(cfg.mcp?.server)
-		}
-	})
 })

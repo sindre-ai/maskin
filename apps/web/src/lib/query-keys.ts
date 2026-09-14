@@ -67,6 +67,8 @@ export const queryKeys = {
 			['integrations', integrationId, 'slack', 'conversations', [...types].sort()] as const,
 		slackUsers: (integrationId: string) =>
 			['integrations', integrationId, 'slack', 'users'] as const,
+		linkedinIdentities: (workspaceId: string) =>
+			['integrations', workspaceId, 'linkedin-unipile', 'identities'] as const,
 	},
 	notifications: {
 		all: (workspaceId: string) => ['notifications', workspaceId] as const,
