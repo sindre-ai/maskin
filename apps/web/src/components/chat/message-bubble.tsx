@@ -9,8 +9,9 @@ import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { Bell, Box, Pencil, RotateCcw } from 'lucide-react'
+import { Bell, Box, Copy, Pencil, RotateCcw } from 'lucide-react'
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 
@@ -90,7 +91,7 @@ export function MessageBubble({
 			<div className={cn('flex flex-col items-end gap-1.5', editing && 'w-full')}>
 				{hasContext ? (
 					<div className="flex max-w-[min(560px,80%)] flex-wrap items-center justify-end gap-1.5">
-						<span className="eyebrow shrink-0">You attached</span>
+						<span className="eyebrow shrink-0">YOU ATTACHED</span>
 						<OwnContextChips objects={contextObjects} notifications={contextNotifications} />
 					</div>
 				) : null}
@@ -168,8 +169,11 @@ export function MessageBubble({
 		)
 	}
 
+	// Real, persisted, agent-side (non-own) message — the only kind that can
+	// be Copy/Retry'd. Optimistic bubbles (id ≤ 0) get no action row.
+	const canActOnAgent = !isOwn && message.id > 0 && message.kind === 'message'
 	return (
-		<div className="flex items-start gap-[11px]">
+		<div className="group flex items-start gap-[11px]">
 			<ActorAvatar
 				id={message.actorId}
 				name={message.actorName}
@@ -235,6 +239,35 @@ export function MessageBubble({
 								</span>
 							</span>
 						))}
+					</div>
+				) : null}
+				{canActOnAgent ? (
+					<div
+						className="mt-1.5 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100"
+						aria-label="Message actions"
+					>
+						<button
+							type="button"
+							onClick={() => {
+								void navigator.clipboard?.writeText(message.content).then(
+									() => toast.success('Copied to clipboard'),
+									() => toast.error('Copy failed'),
+								)
+							}}
+							aria-label="Copy message"
+							className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
+						>
+							<Copy size={12} aria-hidden />
+						</button>
+						<button
+							type="button"
+							onClick={() => retryMessage.mutate({ messageId: message.id })}
+							disabled={retryMessage.isPending}
+							aria-label="Retry"
+							className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+						>
+							<RotateCcw size={12} aria-hidden />
+						</button>
 					</div>
 				) : null}
 			</div>
