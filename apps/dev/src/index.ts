@@ -15,6 +15,7 @@ import {
 	maybeBootstrapDev,
 	seedMarketplaceIfEmpty,
 } from './lib/dev-bootstrap'
+import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
@@ -54,6 +55,19 @@ try {
 		error: err instanceof Error ? err.message : String(err),
 	})
 }
+
+// Repopulate the in-process LinkedIn MCP fan-out registry from every active
+// `linkedin-unipile` credential in the DB. Fire-and-forget on purpose:
+// every Coolify redeploy of apps/dev wipes the registry, and until this
+// runs `tools/list` on the LinkedIn MCP returns zero tools for a workspace
+// with an active credential — but boot must not block on Unipile latency
+// either, and the self-heal path in the /mcp route covers any credential
+// whose enumeration hasn't landed by the time the first request arrives.
+repopulateLinkedInMcpRegistryOnBoot(db).catch((err) => {
+	logger.error('linkedin-unipile boot repopulation: unexpected failure', {
+		error: err instanceof Error ? err.message : String(err),
+	})
+})
 
 // Real-time: PG NOTIFY → SSE bridge
 // LISTEN/NOTIFY requires a direct (session-mode) connection when using a connection
