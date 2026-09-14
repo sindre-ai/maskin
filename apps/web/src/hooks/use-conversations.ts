@@ -102,6 +102,11 @@ export function useUpdateConversationMe(workspaceId: string) {
 			const snapshots = queryClient.getQueriesData<InfiniteData<ConversationListResponse>>({
 				queryKey: queryKeys.conversations.listInfinitePrefix(workspaceId),
 			})
+			// `last_read_message_id: 0` is the mark-unread cursor reset — the row's
+			// unread state should stay put until the server re-computes it, not
+			// flash to zero. Only a `> 0` cursor is a genuine read-marker advance,
+			// so only that case gets the optimistic `unread_count: 0`. `onSettled`
+			// reconciles the true count via invalidation either way.
 			for (const [key, cache] of snapshots) {
 				if (!cache) continue
 				queryClient.setQueryData<InfiniteData<ConversationListResponse>>(key, {
@@ -114,7 +119,10 @@ export function useUpdateConversationMe(workspaceId: string) {
 										...c,
 										...(data.pinned !== undefined ? { pinned: data.pinned } : {}),
 										...(data.archived !== undefined ? { archived: data.archived } : {}),
-										...(data.last_read_message_id !== undefined ? { unread_count: 0 } : {}),
+										...(data.last_read_message_id !== undefined &&
+										data.last_read_message_id > 0
+											? { unread_count: 0 }
+											: {}),
 									}
 								: c,
 						),
