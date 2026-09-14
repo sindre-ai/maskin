@@ -12,15 +12,16 @@ vi.mock('@tanstack/react-router', async () => {
 			...options,
 			useSearch: () => mockSearch(),
 		}),
-		// The pre-v2 page reads the same search via `useSearch({ from })`.
 		useSearch: () => mockSearch(),
 		useNavigate: () => mockNavigate,
 	}
 })
 
 const mockCreateConversation = vi.fn()
+const mockConversationsInfinite = vi.fn()
 vi.mock('@/hooks/use-conversations', () => ({
 	useCreateConversation: () => ({ mutateAsync: mockCreateConversation, isPending: false }),
+	useConversationsInfinite: () => ({ data: mockConversationsInfinite() }),
 }))
 
 const mockActors = vi.fn()
@@ -34,12 +35,8 @@ vi.mock('@/hooks/use-workspaces', () => ({
 }))
 
 const mockReferencedObjects = vi.fn()
-const objectsFilters = vi.fn()
 vi.mock('@/hooks/use-objects', () => ({
-	useObjects: (_ws: string, filters?: Record<string, string>) => {
-		objectsFilters(filters)
-		return { data: mockReferencedObjects() }
-	},
+	useObjects: () => ({ data: mockReferencedObjects() }),
 }))
 
 const toastCapture = vi.hoisted(() => ({ warning: vi.fn() }))
@@ -51,6 +48,13 @@ vi.mock('@/lib/workspace-context', () => ({
 
 vi.mock('@/lib/auth', () => ({
 	getStoredActor: () => ({ id: 'me-1', name: 'You', type: 'human' }),
+}))
+
+const trackChatSessionStartedMock = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/analytics', () => ({
+	deriveEntryAgentRole: (name: string | null) =>
+		name ? name.toLowerCase().replace(/\s+/g, '-') : null,
+	trackChatSessionStarted: trackChatSessionStartedMock,
 }))
 
 // The real composer pulls the whole chat surface in; this route needs only the
@@ -92,158 +96,173 @@ const CHIEF = {
 	description: 'Starts anywhere and hands it to the agent that owns it',
 }
 const FORGE = { id: 'forge-1', name: 'Forge', type: 'agent', description: 'Ships billing fixes' }
+const SENTINEL = {
+	id: 'sentinel-1',
+	name: 'Sentinel',
+	type: 'agent',
+	description: 'Watches accounts',
+}
+
+function conversationsPage(
+	convs: Array<{
+		id: string
+		lastMessageAt: string | null
+		participants: Array<{ actorId: string; actorName: string; actorType: 'human' | 'agent' }>
+	}>,
+) {
+	return {
+		pages: [
+			{
+				conversations: convs.map((c) => ({
+					id: c.id,
+					workspaceId: 'ws-1',
+					title: '',
+					createdBy: 'me-1',
+					lastMessageAt: c.lastMessageAt,
+					createdAt: c.lastMessageAt,
+					updatedAt: c.lastMessageAt,
+					pinned: false,
+					archived: false,
+					unread_count: 0,
+					snippet: null,
+					snippet_actor_id: null,
+					snippet_actor_name: null,
+					participants: c.participants.map((p) => ({ ...p, joinedAt: null, addedBy: null })),
+				})),
+				has_more: false,
+			},
+		],
+	}
+}
 
 describe('New chat', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockSearch.mockReturnValue({})
-		mockActors.mockReturnValue([CHIEF, FORGE])
+		mockActors.mockReturnValue([CHIEF, FORGE, SENTINEL])
 		mockReferencedObjects.mockReturnValue(undefined)
+		mockConversationsInfinite.mockReturnValue(undefined)
 		mockCreateConversation.mockResolvedValue({ id: 'conv-1' })
 	})
 
-	it('addresses the draft to the workspace default agent and says what it does', () => {
+	it('does not render the removed CHAT_SUGGESTIONS list', () => {
 		render(<NewChatPage />)
-
-		expect(screen.getByRole('heading', { name: 'What are we working on?' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /Talking to Chief of Staff/ })).toBeInTheDocument()
-		expect(
-			screen.getByText('answers first, hands it on if someone else owns it'),
-		).toBeInTheDocument()
-		expect(screen.getByLabelText('Message this conversation')).toHaveAttribute(
-			'placeholder',
-			'Message Chief of Staff…',
-		)
+		expect(screen.queryByText('What needs a decision from me today?')).not.toBeInTheDocument()
+		expect(screen.queryByText('Summarise what the loops did overnight')).not.toBeInTheDocument()
 	})
 
-	it('attributes a suggestion to the real agent that answers it, not the prototype cast', () => {
+	it('seeds the workspace default chat agent as an initial chip', async () => {
 		render(<NewChatPage />)
-
-		// "Forge" is seeded here, so its row keeps the mockup's attribution.
-		expect(
-			screen.getByRole('button', { name: /Why is the retry window still open\?\s*Forge/ }),
-		).toBeInTheDocument()
-		// "Sentinel" is not in this workspace — the row names whoever would
-		// actually answer instead of a name that doesn't exist here.
-		expect(
-			screen.getByRole('button', {
-				name: /Which accounts went quiet this week\?\s*Chief of Staff/,
-			}),
-		).toBeInTheDocument()
+		expect(await screen.findByLabelText('Remove Chief of Staff')).toBeInTheDocument()
 	})
 
-	it('prefills the composer from a suggestion without sending it', async () => {
-		const user = userEvent.setup()
+	it('seeds the ?agentId= URL param as a chip when present', async () => {
+		mockSearch.mockReturnValue({ agentId: 'forge-1' })
 		render(<NewChatPage />)
-
-		await user.click(screen.getByRole('button', { name: /What needs a decision from me today/ }))
-
-		expect(screen.getByLabelText('Message this conversation')).toHaveValue(
-			'What needs a decision from me today?',
-		)
-		expect(mockCreateConversation).not.toHaveBeenCalled()
+		expect(await screen.findByLabelText('Remove Forge')).toBeInTheDocument()
 	})
 
-	it('retargets the draft when another agent is picked', async () => {
-		const user = userEvent.setup()
-		render(<NewChatPage />)
-
-		await user.click(screen.getByRole('button', { name: /Talking to Chief of Staff/ }))
-		// Scoped by the picker row's sub-line — "Forge" alone also matches the
-		// suggestion row it is attributed to.
-		await user.click(screen.getByRole('button', { name: /Forge\s*Ships billing fixes/ }))
-
-		expect(screen.getByRole('button', { name: /Talking to Forge/ })).toBeInTheDocument()
-	})
-
-	it('carries objects handed over by "Ask an agent" into the first message', async () => {
-		mockSearch.mockReturnValue({ objectIds: 'obj-1,obj-2' })
-		mockReferencedObjects.mockReturnValue([
-			{ id: 'obj-1', title: 'Retry window', type: 'bet' },
-			{ id: 'obj-2', title: 'Churned accounts', type: 'insight' },
-		])
-		const user = userEvent.setup()
-		render(<NewChatPage />)
-
-		await user.type(screen.getByLabelText('Message this conversation'), 'What links these?{Enter}')
-
-		expect(mockCreateConversation).toHaveBeenCalledWith(
-			expect.objectContaining({
-				initial_message_metadata: {
-					context_objects: [
-						{ id: 'obj-1', title: 'Retry window', type: 'bet' },
-						{ id: 'obj-2', title: 'Churned accounts', type: 'insight' },
+	it('renders a RECENT eyebrow with recently-collaborated actors on empty query', () => {
+		mockConversationsInfinite.mockReturnValue(
+			conversationsPage([
+				{
+					id: 'c-1',
+					lastMessageAt: '2026-09-01T10:00:00.000Z',
+					participants: [
+						{ actorId: 'me-1', actorName: 'You', actorType: 'human' },
+						{ actorId: 'forge-1', actorName: 'Forge', actorType: 'agent' },
 					],
 				},
-			}),
+			]),
 		)
-	})
-
-	// Regression: the hand-over used to ride the endpoint's default limit of 50,
-	// so a larger selection resolved its first fifty ids and the rest arrived as
-	// nothing at all — no chip, no message, and a URL that still listed them.
-	it('asks for as many referenced objects as the endpoint will return', async () => {
-		mockSearch.mockReturnValue({ objectIds: 'obj-1,obj-2' })
-		mockReferencedObjects.mockReturnValue([
-			{ id: 'obj-1', title: 'Retry window', type: 'bet' },
-			{ id: 'obj-2', title: 'Churned accounts', type: 'insight' },
-		])
 		render(<NewChatPage />)
-
-		expect(objectsFilters).toHaveBeenCalledWith(
-			expect.objectContaining({ ids: 'obj-1,obj-2', limit: '100' }),
-		)
+		expect(screen.getByText('RECENT')).toBeInTheDocument()
+		expect(screen.getByRole('option', { name: /Forge/ })).toBeInTheDocument()
 	})
 
-	// An id can go missing for reasons the cap has nothing to do with — deleted,
-	// or in another workspace. The chat then carries fewer objects than the user
-	// picked, which it has to say rather than quietly shrink the count.
-	it('reports ids that could not be resolved into chips', async () => {
-		mockSearch.mockReturnValue({ objectIds: 'obj-1,obj-2,obj-3' })
-		mockReferencedObjects.mockReturnValue([{ id: 'obj-1', title: 'Retry window', type: 'bet' }])
+	it('omits the RECENT section entirely when the derivation returns zero candidates', () => {
+		mockConversationsInfinite.mockReturnValue({ pages: [] })
 		render(<NewChatPage />)
-
-		await waitFor(() =>
-			expect(toastCapture.warning).toHaveBeenCalledWith(
-				expect.stringContaining("2 of 3 objects couldn't be attached"),
-			),
-		)
+		expect(screen.queryByText('RECENT')).not.toBeInTheDocument()
 	})
 
-	// Regression: ?objectId= used to *replace* the composer's selection rather than
-	// join it, so objects attached after arriving via "Ask an agent" rendered as
-	// chips and were then dropped from the request with no error.
-	it('keeps composer-attached objects alongside the ?objectId= seed', async () => {
-		mockSearch.mockReturnValue({ objectId: 'obj-seed', objectIds: 'obj-1' })
-		mockReferencedObjects.mockReturnValue([{ id: 'obj-1', title: 'Retry window', type: 'bet' }])
+	it('switches the dropdown label to ADD SOMEONE — PERSON OR AGENT once the input has 1+ chars', async () => {
 		const user = userEvent.setup()
 		render(<NewChatPage />)
-
-		await user.type(screen.getByLabelText('Message this conversation'), 'What links these?{Enter}')
-
-		const sent = mockCreateConversation.mock.calls[0][0]
-		const ids = sent.initial_message_metadata.context_objects.map((o: { id: string }) => o.id)
-		expect(ids).toContain('obj-1')
-		expect(ids).toContain('obj-seed')
+		await user.type(screen.getByLabelText('Add recipients'), 'f')
+		expect(screen.getByText('ADD SOMEONE \u2014 PERSON OR AGENT')).toBeInTheDocument()
 	})
 
-	it('titles the conversation from the first message, not the agent', async () => {
+	it('renders the muted empty-match line when the typed query has no matches', async () => {
 		const user = userEvent.setup()
 		render(<NewChatPage />)
+		await user.type(screen.getByLabelText('Add recipients'), 'zzz-nothing')
+		expect(screen.getByText('No agent by that name')).toBeInTheDocument()
+	})
 
-		const composer = screen.getByLabelText('Message this conversation')
-		await user.type(composer, 'Which accounts went quiet this week?{Enter}')
+	it('commits the highlighted row when Enter is pressed in the input', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await screen.findByLabelText('Remove Chief of Staff')
+		const input = screen.getByLabelText('Add recipients')
+		await user.type(input, 'Forge{Enter}')
+		expect(screen.getByLabelText('Remove Forge')).toBeInTheDocument()
+	})
 
-		expect(mockCreateConversation).toHaveBeenCalledWith(
-			expect.objectContaining({
-				title: 'Which accounts went quiet this week?',
-				participant_actor_ids: ['cos-1'],
-				initial_message: 'Which accounts went quiet this week?',
-			}),
+	it('removes a chip via its × button', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		const removeBtn = await screen.findByLabelText('Remove Chief of Staff')
+		await user.click(removeBtn)
+		expect(screen.queryByLabelText('Remove Chief of Staff')).not.toBeInTheDocument()
+	})
+
+	it('pops the last chip when Backspace is pressed on an empty input', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await screen.findByLabelText('Remove Chief of Staff')
+		const input = screen.getByLabelText('Add recipients')
+		await user.click(input)
+		await user.keyboard('{Backspace}')
+		expect(screen.queryByLabelText('Remove Chief of Staff')).not.toBeInTheDocument()
+	})
+
+	it('renders the chatGroupNote inline once 2+ recipients are selected', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await screen.findByLabelText('Remove Chief of Staff')
+		await user.type(screen.getByLabelText('Add recipients'), 'Forge{Enter}')
+		expect(await screen.findByLabelText('Remove Forge')).toBeInTheDocument()
+		expect(screen.getByText('Everyone sees everything')).toBeInTheDocument()
+	})
+
+	it('fires chat_session_started with participant_count=1 on a solo send', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await screen.findByLabelText('Remove Chief of Staff')
+		await user.type(
+			screen.getByLabelText('Message this conversation'),
+			'What are we working on?{Enter}',
 		)
-		expect(mockNavigate).toHaveBeenCalledWith({
-			to: '/$workspaceId/chats/$conversationId',
-			params: { workspaceId: 'ws-1', conversationId: 'conv-1' },
-		})
+		await waitFor(() => expect(trackChatSessionStartedMock).toHaveBeenCalledTimes(1))
+		expect(trackChatSessionStartedMock).toHaveBeenCalledWith(
+			expect.objectContaining({ participant_count: 1 }),
+		)
+	})
+
+	it('fires chat_session_started with participant_count=2 on a group send', async () => {
+		const user = userEvent.setup()
+		render(<NewChatPage />)
+		await screen.findByLabelText('Remove Chief of Staff')
+		await user.type(screen.getByLabelText('Add recipients'), 'Forge{Enter}')
+		await screen.findByLabelText('Remove Forge')
+		await user.type(
+			screen.getByLabelText('Message this conversation'),
+			'What are we working on?{Enter}',
+		)
+		await waitFor(() => expect(trackChatSessionStartedMock).toHaveBeenCalledTimes(1))
+		expect(trackChatSessionStartedMock).toHaveBeenCalledWith(
+			expect.objectContaining({ participant_count: 2 }),
+		)
 	})
 })
