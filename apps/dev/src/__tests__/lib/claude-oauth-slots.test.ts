@@ -3,6 +3,7 @@ import type { EncryptedOAuthData } from '../../lib/claude-oauth'
 import {
 	type OAuthSlotStorage,
 	clearSlot,
+	nextUsableSlotAfter,
 	readFailoverState,
 	readSlots,
 	resolveActiveSlot,
@@ -207,5 +208,84 @@ describe('clearSlot', () => {
 
 	it('clears a legacy row when the only slot is cleared', () => {
 		expect(clearSlot(slot('legacy'), 'primary')).toBeUndefined()
+	})
+})
+
+/**
+ * Reachability of a slot the pointer has already moved past.
+ *
+ * `nextSlotAfter` walks forward only and stops at the end of the chain, which
+ * is why a workspace that had walked to its last subscription reported itself
+ * permanently exhausted — the only route back was a recovery probe aimed at the
+ * chain HEAD, so a healthy middle slot was unreachable no matter how long it had
+ * been fine. `nextUsableSlotAfter` wraps, and skips what the provider told us is
+ * still spent.
+ */
+describe('nextUsableSlotAfter', () => {
+	const NOW = 1_800_000_000_000
+
+	function chainOf(failures: Record<string, { at?: number; reason?: string; reset_at?: number }>) {
+		return {
+			primary: slot('primary'),
+			backup: slot('backup'),
+			extras: { slot_3: slot('three') },
+			failover: { active_slot: 'slot_3', failures },
+		} satisfies OAuthSlotStorage
+	}
+
+	it('wraps from the last slot back to the head', () => {
+		expect(nextUsableSlotAfter(chainOf({}), 'slot_3', NOW)).toBe('primary')
+	})
+
+	it('skips a slot the provider says is still rate-limited', () => {
+		const storage = chainOf({
+			primary: { at: NOW - 1000, reason: 'quota', reset_at: NOW + 60_000 },
+		})
+		expect(nextUsableSlotAfter(storage, 'slot_3', NOW)).toBe('backup')
+	})
+
+	it('takes a slot back once its reset time has passed', () => {
+		// The same record, read after the reset — this is the moment a spent
+		// subscription becomes usable again, and nothing else has to happen for it.
+		const storage = chainOf({ primary: { at: NOW - 60_000, reason: 'quota', reset_at: NOW - 1 } })
+		expect(nextUsableSlotAfter(storage, 'slot_3', NOW)).toBe('primary')
+	})
+
+	it('tries a slot whose failure carries no reset time', () => {
+		// "Failed once, no reset given" must not be read as "dead" — guessing that
+		// is how a healthy subscription becomes permanently unreachable.
+		const storage = chainOf({ primary: { at: NOW - 60_000, reason: 'oauth_revoked' } })
+		expect(nextUsableSlotAfter(storage, 'slot_3', NOW)).toBe('primary')
+	})
+
+	it('returns undefined only when every other slot is still spent', () => {
+		const storage = chainOf({
+			primary: { reset_at: NOW + 60_000 },
+			backup: { reset_at: NOW + 60_000 },
+		})
+		expect(nextUsableSlotAfter(storage, 'slot_3', NOW)).toBeUndefined()
+	})
+
+	it('never hands back the slot it was asked to move off', () => {
+		const single = {
+			primary: slot('primary'),
+			failover: { active_slot: 'primary' },
+		} satisfies OAuthSlotStorage
+		expect(nextUsableSlotAfter(single, 'primary', NOW)).toBeUndefined()
+	})
+})
+
+describe('readFailoverState — reset_at', () => {
+	it('preserves a recorded reset time through a read', () => {
+		// Dropping it here would silently disable every skip downstream: the walk
+		// would re-probe a subscription it already knows is gone until tonight.
+		const storage = {
+			primary: slot('primary'),
+			failover: {
+				active_slot: 'primary',
+				failures: { primary: { at: 1, reason: 'quota', reset_at: 1_789_416_000_000 } },
+			},
+		} satisfies OAuthSlotStorage
+		expect(readFailoverState(storage).failures?.primary?.reset_at).toBe(1_789_416_000_000)
 	})
 })

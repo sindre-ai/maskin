@@ -92,7 +92,10 @@ describe('Remote session completion — Claude subscription failover (Integratio
 	 * slot blobs — stands in for another session in the same burst having
 	 * already won the row lock in `recordRuntimeClaudeOAuthFailover`.
 	 */
-	async function setActiveSlot(slot: string) {
+	async function setActiveSlot(
+		slot: string,
+		failures?: Record<string, { at?: number; reason?: string; reset_at?: number }>,
+	) {
 		const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 		const settings = (ws?.settings ?? {}) as Record<string, unknown>
 		const claudeOauth = (settings.claude_oauth ?? {}) as Record<string, unknown>
@@ -101,7 +104,10 @@ describe('Remote session completion — Claude subscription failover (Integratio
 			.set({
 				settings: {
 					...settings,
-					claude_oauth: { ...claudeOauth, failover: { active_slot: slot } },
+					claude_oauth: {
+						...claudeOauth,
+						failover: { active_slot: slot, ...(failures ? { failures } : {}) },
+					},
 				},
 			})
 			.where(eq(workspaces.id, workspaceId))
@@ -197,13 +203,48 @@ describe('Remote session completion — Claude subscription failover (Integratio
 		})
 	})
 
-	it('starts no retry when the chain is genuinely exhausted', async () => {
+	it('wraps from the last subscription back to the first', async () => {
 		vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
-		// Last slot in the chain, and it is the active one — so the failover
-		// transaction has nowhere forward to go and reports `exhausted` rather
-		// than `superseded`. That is the one case where dropping the work is
-		// correct, and it must stay distinguishable from a straggler.
+		// The workspace has walked to the end of its chain. Before wrapping, this
+		// was terminal: the session failed, `active_slot` stayed on the spent
+		// backup, and every later session landed there too — the state a Vaerksted
+		// workspace was in at 07:53 on 2026-09-14 when it logged "no further
+		// Claude OAuth fallback is available", seven minutes before primary's
+		// limit reset at 08:00 with nothing looking.
 		await setActiveSlot('backup')
+
+		const session = await completeRemoteSessionOnLimit(1, 'backup')
+
+		const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
+		const claudeOauth = (ws?.settings as { claude_oauth?: { failover?: { active_slot?: string } } })
+			?.claude_oauth
+		expect(claudeOauth?.failover?.active_slot).toBe('primary')
+
+		const retries = await db
+			.select()
+			.from(sessions)
+			.where(and(eq(sessions.workspaceId, workspaceId), ne(sessions.id, session.id)))
+		expect(retries).toHaveLength(1)
+		expect(retries[0]?.config).toMatchObject({
+			llm_oauth_slot: 'primary',
+			// Hop 1 of 2 — the next failure on this work stops rather than wrapping
+			// round again. This counter is the only thing bounding the ring.
+			claude_oauth_failover_hops: 1,
+		})
+	})
+
+	it('starts no retry when every subscription is known-spent', async () => {
+		vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
+		// "Exhausted" no longer means "ran off the end of the chain" — the chain
+		// wraps, so being on the last slot is not exhaustion any more, and a test
+		// that only put the pointer on `backup` would now (correctly) see a retry
+		// on `primary`. Genuine exhaustion is every subscription carrying a reset
+		// time still in the future: there is nowhere to go that would not fail the
+		// same way. That is the one case where stopping is right, and it has to
+		// stay distinguishable from a straggler.
+		await setActiveSlot('backup', {
+			primary: { at: Date.now(), reason: 'quota_exhausted', reset_at: Date.now() + 3_600_000 },
+		})
 
 		const session = await completeRemoteSessionOnLimit(1, 'backup')
 

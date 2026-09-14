@@ -23,7 +23,8 @@ import {
 import { attemptPrimaryRecovery, shouldAttemptPrimaryRecovery } from './claude-oauth-recovery'
 import {
 	type OAuthSlotKind,
-	nextSlotAfter,
+	isSlotSpentAt,
+	nextUsableSlotAfter,
 	readChain,
 	readFailoverState,
 	readSlots,
@@ -133,6 +134,14 @@ export async function probeClaudeSubscription(
 export interface UnusableCredentialInfo {
 	transient: boolean
 	detail: string
+	/**
+	 * Epoch ms this becomes worth retrying, when the provider told us. Set only
+	 * for a whole-chain rate-limit exhaustion, where the wait is known and
+	 * finite. Lets a caller pause a workspace until the subscriptions actually
+	 * come back instead of guessing a cooldown — or worse, re-firing every
+	 * trigger into a wall for hours.
+	 */
+	retryAt?: number
 }
 
 export interface FailoverParams {
@@ -172,8 +181,18 @@ export function isClaudeFailoverEnabled(env: NodeJS.ProcessEnv = process.env): b
  *
  * Flag on: reads the slot chain (`primary`, `backup`, then any further
  * `slot_N` credentials, in that order) and the failover state, then walks
- * FORWARD from the active slot. Each slot is refreshed and probed; the first
- * one that answers healthily is returned. A `failover` verdict from T4's
+ * CYCLICALLY from the active slot — forward to the end of the chain, then
+ * wrapping round to the slots before it — skipping any whose recorded
+ * `reset_at` says the provider still has them rate-limited. Each remaining
+ * slot is refreshed and probed; the first one that answers healthily is
+ * returned.
+ *
+ * The walk used to stop at the end of the chain, which made a slot the pointer
+ * had moved past reachable only through `attemptChainHeadRecovery` — and that
+ * probes the chain HEAD alone. A workspace on the last slot with a spent head
+ * therefore could not reach a healthy middle slot, and once the pointer ran off
+ * the end it reported itself permanently exhausted while subscriptions came
+ * back unnoticed. A `failover` verdict from T4's
  * classifier advances to the next slot in the chain, flipping `active_slot`
  * and emitting `claude_subscription_failover_triggered` under one
  * `db.transaction` + `SELECT … FOR UPDATE` on the workspaces row; the
@@ -270,12 +289,65 @@ export async function resolveClaudeCredentialsWithFailover(
 	// transition record written when we move onto the next one.
 	let lastReason: string | undefined
 
-	for (const [index, entry] of chain.entries()) {
-		if (index < startIndex) continue
-		const isLast = index === chain.length - 1
-		const previous = chain[index - 1]
+	// The order this start will try slots in: forward from the active one, then
+	// WRAPPING back round to the ones before it.
+	//
+	// The walk used to be forward-only, so a slot the pointer had already moved
+	// past was unreachable — the only way back was `attemptChainHeadRecovery`
+	// above, which probes the chain HEAD and nothing else. A workspace sitting on
+	// slot_4 with a spent head therefore could not reach a perfectly healthy
+	// slot_2, and once the pointer hit the end of the chain it reported itself
+	// exhausted permanently. On 2026-09-14 a workspace logged "no further Claude
+	// OAuth fallback is available" at 07:53 and had a slot come back at 08:00,
+	// with nothing to go looking. Wrapping is what makes "we can always continue
+	// on another subscription" actually true.
+	//
+	// Slots the provider told us are still spent are skipped rather than probed:
+	// a network round trip to be told `resetsAt` again buys nothing, and on a
+	// seven-day limit it is a round trip we would otherwise repeat for hours.
+	// A slot with no recorded reset time is always tried — see `isSlotSpentAt`.
+	const order: Array<{ id: OAuthSlotKind; data: EncryptedOAuthData }> = []
+	for (let offset = 0; offset < chain.length; offset++) {
+		const entry = chain[(startIndex + offset) % chain.length]
+		if (!entry) continue
+		if (isSlotSpentAt(slotFailure(failover, entry.id), now())) continue
+		order.push(entry)
+	}
 
-		if (previous && index > startIndex) {
+	if (order.length === 0) {
+		// Every subscription is known-spent. Report the EARLIEST reset so the
+		// caller can say when this recovers instead of only that it broke.
+		const earliestReset = Math.min(
+			...chain.map((entry) => slotFailure(failover, entry.id).reset_at ?? Number.POSITIVE_INFINITY),
+		)
+		await recordChainExhausted({
+			db,
+			workspaceId,
+			actorId,
+			slot: failover.active_slot,
+			reason: 'quota_exhausted',
+			now: now(),
+		})
+		onUnusable?.({
+			transient: false,
+			detail: Number.isFinite(earliestReset)
+				? `every connected Claude subscription is rate-limited until ${new Date(earliestReset).toISOString()}`
+				: 'every connected Claude subscription is rate-limited',
+			retryAt: Number.isFinite(earliestReset) ? earliestReset : undefined,
+		})
+		return null
+	}
+
+	for (const [orderIndex, entry] of order.entries()) {
+		const isLast = orderIndex === order.length - 1
+		// The slot we are moving FROM is the previous one in this walk's order —
+		// not `chain[index - 1]`. Those coincided only while the walk ran forward
+		// from the active slot without skipping; with wrapping and skip-if-spent
+		// they diverge, and using the chain neighbour would attribute a transition
+		// to a slot this session never tried.
+		const previous = order[orderIndex - 1]
+
+		if (previous) {
 			// Moving to this slot is itself the failover transition — record it
 			// (and its event) before we spend a network round trip on it.
 			await recordFailoverTransition({
@@ -595,7 +667,18 @@ async function recordChainExhausted(params: {
  * second means another session already moved the pointer on (say nothing).
  */
 export type RuntimeFailoverOutcome =
-	| { moved: true; slot: OAuthSlotKind }
+	| {
+			moved: true
+			slot: OAuthSlotKind
+			/**
+			 * How many subscriptions the workspace has. The caller uses it to stop
+			 * retrying once every one has had a turn — since the chain now WRAPS,
+			 * running off the end no longer terminates a retry chain on its own and
+			 * something has to, or a workspace whose subscriptions are all spent
+			 * would hand work round the ring forever.
+			 */
+			chainLength: number
+	  }
 	| { moved: false; reason: 'exhausted' | 'superseded' | 'no_workspace' }
 
 /**
@@ -610,15 +693,22 @@ export async function recordRuntimeClaudeOAuthFailover(params: {
 	reason: string
 	/** The slot the failing session was running on. Defaults to the head. */
 	fromSlot?: OAuthSlotKind
+	/**
+	 * Epoch ms `fromSlot` becomes usable again, from the provider's `resetsAt`.
+	 * Recorded on the slot so later walks can skip it without a probe instead of
+	 * re-discovering the same limit every few minutes.
+	 */
+	resetAt?: number
 	now?: number
 	sourceSessionId?: string
 }): Promise<RuntimeFailoverOutcome> {
-	const { db, workspaceId, actorId, reason, sourceSessionId } = params
+	const { db, workspaceId, actorId, reason, resetAt, sourceSessionId } = params
 	const now = params.now ?? Date.now()
 	// Written from inside the transaction callback; TS can't narrow a union
 	// assigned in a closure, so the two halves are tracked separately and
 	// composed into the outcome afterwards.
 	let movedTo: OAuthSlotKind | null = null
+	let chainLength = 0
 	let blocked: 'exhausted' | 'superseded' | 'no_workspace' = 'no_workspace'
 
 	await db.transaction(async (tx) => {
@@ -641,7 +731,13 @@ export async function recordRuntimeClaudeOAuthFailover(params: {
 			blocked = 'superseded'
 			return
 		}
-		const toSlot = nextSlotAfter(latestSettings.claude_oauth, fromSlot)
+		// Wraps past the end of the chain and skips slots we know are still
+		// rate-limited. Forward-only meant the last slot had nowhere to go even
+		// when an earlier subscription had already reset — the workspace declared
+		// itself exhausted and stayed that way until a session start happened to
+		// probe the chain head.
+		chainLength = readChain(latestSettings.claude_oauth).length
+		const toSlot = nextUsableSlotAfter(latestSettings.claude_oauth, fromSlot, now)
 		if (!toSlot) {
 			blocked = 'exhausted'
 			return
@@ -650,6 +746,7 @@ export async function recordRuntimeClaudeOAuthFailover(params: {
 		const nextState = withSlotFailure({ ...existing, active_slot: toSlot }, fromSlot, {
 			at: now,
 			reason,
+			...(resetAt !== undefined && { reset_at: resetAt }),
 		})
 		const nextOAuth = writeFailoverState(latestSettings.claude_oauth, nextState)
 		await tx
@@ -695,7 +792,7 @@ export async function recordRuntimeClaudeOAuthFailover(params: {
 		})
 	}
 
-	return movedTo ? { moved: true, slot: movedTo } : { moved: false, reason: blocked }
+	return movedTo ? { moved: true, slot: movedTo, chainLength } : { moved: false, reason: blocked }
 }
 
 /**

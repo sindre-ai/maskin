@@ -63,6 +63,120 @@ const CLI_BANNERS: ReadonlyArray<{
 ]
 
 /**
+ * The structured envelope the Claude Code CLI emits on stdout immediately
+ * before the human-readable banner, e.g.
+ *
+ *   {"type":"rate_limit_event","rate_limit_info":{"status":"rejected",
+ *    "resetsAt":1789416000,"rateLimitType":"seven_day",
+ *    "overageStatus":"rejected","overageDisabledReason":"org_level_disabled",
+ *    "isUsingOverage":false}}
+ *
+ * Everything the banner cannot tell us is in here: WHICH limit was hit, WHEN
+ * it resets, and whether overage could have covered it. Until this was parsed
+ * the classifier matched only the banner, so every limit — a 5-hour one that
+ * clears over lunch and a seven-day one that does not clear until tomorrow
+ * night — was recorded identically as `session_limit` with `reset_at: null`,
+ * and `overageDisabledReason` (the single most actionable field, since it
+ * means the subscription was FORBIDDEN from spending available credit) was
+ * dropped on the floor.
+ */
+interface RateLimitInfo {
+	status?: string
+	resetsAt?: number
+	rateLimitType?: string
+	overageStatus?: string
+	overageDisabledReason?: string
+	isUsingOverage?: boolean
+}
+
+/**
+ * Claude's `rateLimitType` values, mapped to our reason codes.
+ *
+ * NOTE the spelling: the API emits `seven_day`, NOT `weekly`. Code that
+ * matched `"rateLimitType":"weekly"` never fired once in production — it was
+ * written from the name of the limit rather than from an observed payload,
+ * the same way the retired Slack `search:read` scope was. Both spellings are
+ * accepted here so neither a rename nor a rollback silently stops matching.
+ */
+const RATE_LIMIT_TYPE_REASONS: Record<string, { code: FailureReasonCode; message: string }> = {
+	seven_day: { code: 'weekly_limit', message: 'Claude weekly limit reached' },
+	weekly: { code: 'weekly_limit', message: 'Claude weekly limit reached' },
+	five_hour: { code: 'session_limit', message: 'Claude 5-hour limit reached' },
+	opus: { code: 'opus_limit', message: 'Claude Opus limit reached' },
+}
+
+/**
+ * The last rejected `rate_limit_event` in a stdout tail, or null.
+ *
+ * Requires a full structural match — parseable JSON, `type` exactly
+ * `rate_limit_event`, and `rate_limit_info.status` exactly `rejected` — rather
+ * than a bare substring, because an agent session can legitimately echo this
+ * shape in tool output while inspecting its own failures. An `allowed` event is
+ * informational and deliberately ignored.
+ */
+export function parseRateLimitEvent(tail: string): RateLimitInfo | null {
+	// Last one wins: a long session can report several, and only the final
+	// rejection describes the state it actually died in.
+	for (const line of tail.split('\n').reverse()) {
+		if (!line.includes('"rate_limit_event"')) continue
+		let parsed: unknown
+		try {
+			parsed = JSON.parse(line.trim())
+		} catch {
+			continue
+		}
+		if (typeof parsed !== 'object' || parsed === null) continue
+		const envelope = parsed as { type?: unknown; rate_limit_info?: unknown }
+		if (envelope.type !== 'rate_limit_event') continue
+		const info = envelope.rate_limit_info
+		if (typeof info !== 'object' || info === null) continue
+		const rateLimit = info as RateLimitInfo
+		if (rateLimit.status !== 'rejected') continue
+		return rateLimit
+	}
+	return null
+}
+
+/** `resetsAt` is epoch SECONDS; `reset_at` on a failure reason is an ISO string. */
+function resetAtIso(resetsAt: unknown): string | null {
+	if (typeof resetsAt !== 'number' || !Number.isFinite(resetsAt) || resetsAt <= 0) return null
+	const ms = resetsAt * 1000
+	const date = new Date(ms)
+	return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+/**
+ * Turn a rejected rate-limit envelope into a failure reason. Returns null when
+ * the envelope names a limit type we have no mapping for, so the caller falls
+ * through to banner matching rather than inventing a classification.
+ */
+function failureFromRateLimitEvent(info: RateLimitInfo): SessionResultFailureReason | null {
+	const mapped = info.rateLimitType ? RATE_LIMIT_TYPE_REASONS[info.rateLimitType] : undefined
+	if (!mapped) return null
+
+	const resetAt = resetAtIso(info.resetsAt)
+	// Say the one thing a human can act on. A subscription that is merely spent
+	// recovers by itself; one whose org has overage switched off will keep
+	// refusing every session until somebody changes that setting, however much
+	// credit the account holds — which is exactly the state that reads from the
+	// outside as "we have credits and it still fails".
+	const overageNote =
+		info.overageDisabledReason === 'org_level_disabled'
+			? ' — overage is disabled for this Anthropic organisation, so the subscription cannot spend past its limit'
+			: ''
+	const resetNote = resetAt ? ` (resets ${resetAt})` : ''
+
+	return {
+		provider: 'anthropic',
+		reason_code: mapped.code,
+		human_message: `${mapped.message}${resetNote}${overageNote}`,
+		http_status: null,
+		reset_at: resetAt,
+		verbatim_output: JSON.stringify({ type: 'rate_limit_event', rate_limit_info: info }),
+	}
+}
+
+/**
  * Inspects the stdout tail from a failed session and returns a typed failure
  * reason if a credit/quota signal is found, or null if the exit is
  * unclassifiable.
@@ -88,6 +202,16 @@ export function classifyCreditExhaustion(
 	options: { includeAmbiguousSignals?: boolean } = {},
 ): SessionResultFailureReason | null {
 	const { includeAmbiguousSignals = true } = options
+
+	// Step 0: the structured envelope, ahead of the banners it precedes. It is
+	// strictly more informative than the banner for the same event (limit type,
+	// reset time, overage state) and is matched structurally, so it is safe even
+	// on the high-confidence-only path.
+	const rateLimit = parseRateLimitEvent(tail)
+	if (rateLimit) {
+		const fromEnvelope = failureFromRateLimitEvent(rateLimit)
+		if (fromEnvelope) return fromEnvelope
+	}
 
 	for (const banner of CLI_BANNERS) {
 		if (tail.includes(banner.match)) {

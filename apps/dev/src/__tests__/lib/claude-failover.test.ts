@@ -1055,3 +1055,141 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 		})
 	})
 })
+
+/**
+ * Reachability of a subscription the pointer has already moved past.
+ *
+ * The walk used to run forward-only from `active_slot`, with the sole route
+ * backwards being `attemptChainHeadRecovery` — which probes the chain HEAD and
+ * nothing else. So a workspace parked on its last slot could not reach a
+ * healthy middle one however long it had been fine, and once the pointer hit
+ * the end of the chain the workspace reported itself exhausted for good. A
+ * Vaerksted session logged "no further Claude OAuth fallback is available" at
+ * 07:53 on 2026-09-14 and had a subscription come back at 08:00 with nothing
+ * looking for it.
+ */
+describe('resolveClaudeCredentialsWithFailover — cyclic, reset-aware walk', () => {
+	const NOW = 1_800_000_000_000
+	const healthy = async (): Promise<ClassifierInput | null> => null
+
+	function threeSlots(failures: Record<string, { reset_at?: number; reason?: string }>) {
+		return {
+			settings: {
+				claude_oauth: {
+					primary: encryptedSlot({ encryptedAccessToken: 'primary-plain' }),
+					backup: encryptedSlot({ encryptedAccessToken: 'backup-plain' }),
+					extras: { slot_3: encryptedSlot({ encryptedAccessToken: 'third-plain' }) },
+					failover: { active_slot: 'slot_3', failures },
+				} satisfies OAuthSlotStorage,
+			},
+		}
+	}
+
+	it('wraps past the end of the chain to reach a healthy MIDDLE slot', async () => {
+		// The case head recovery structurally cannot serve: the workspace sits on
+		// the last slot, the head is also spent, and the only healthy subscription
+		// is in the middle. Forward-only had nowhere to go and head recovery aims
+		// at `primary` alone, so `backup` was unreachable — the workspace failed
+		// its sessions with a working subscription one position away.
+		//
+		// Asserting `backup` rather than `primary` on purpose: a test that expects
+		// the head passes even with the wrap reverted, because recovery lands
+		// there anyway.
+		const probe = vi.fn(healthy)
+		const { db } = createMockDb(
+			threeSlots({
+				primary: { reset_at: NOW + 6 * 60 * 60 * 1000, reason: 'quota_exhausted_weekly' },
+				slot_3: { reset_at: NOW + 60 * 60 * 1000, reason: 'quota_exhausted' },
+			}),
+		)
+
+		const result = await resolveClaudeCredentialsWithFailover({
+			db,
+			workspaceId: WORKSPACE_ID,
+			actorId: ACTOR_ID,
+			probe,
+			now: () => NOW,
+			env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+		})
+
+		expect(result?.slot).toBe('backup')
+		// Both spent slots were skipped without a round trip, so exactly one probe
+		// was spent — on the slot that could actually answer.
+		expect(probe).toHaveBeenCalledTimes(1)
+	})
+
+	it('reports the earliest reset when every subscription is spent', async () => {
+		const onUnusable = vi.fn()
+		const probe = vi.fn(healthy)
+		const { db } = createMockDb(
+			threeSlots({
+				primary: { reset_at: NOW + 2 * 60 * 60 * 1000, reason: 'quota_exhausted' },
+				backup: { reset_at: NOW + 30 * 60 * 1000, reason: 'quota_exhausted' },
+				slot_3: { reset_at: NOW + 60 * 60 * 1000, reason: 'quota_exhausted' },
+			}),
+		)
+
+		const result = await resolveClaudeCredentialsWithFailover({
+			db,
+			workspaceId: WORKSPACE_ID,
+			actorId: ACTOR_ID,
+			probe,
+			now: () => NOW,
+			env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+			onUnusable,
+		})
+
+		expect(result).toBeNull()
+		// Nothing is probed — we already know the answer for all three.
+		expect(probe).not.toHaveBeenCalled()
+		// The earliest reset is what a caller needs to pause until: the soonest
+		// moment any subscription comes back, not the latest.
+		expect(onUnusable).toHaveBeenCalledWith(
+			expect.objectContaining({ transient: false, retryAt: NOW + 30 * 60 * 1000 }),
+		)
+	})
+
+	it('skips no slots when none carries a reset time', async () => {
+		// No reset info anywhere means nothing is known-spent, so behaviour is
+		// exactly as before: head recovery runs first and lands on primary. A
+		// workspace whose failure records predate `reset_at` must not lose slots.
+		const probe = vi.fn(healthy)
+		const { db } = createMockDb(threeSlots({}))
+
+		const result = await resolveClaudeCredentialsWithFailover({
+			db,
+			workspaceId: WORKSPACE_ID,
+			actorId: ACTOR_ID,
+			probe,
+			now: () => NOW,
+			env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+		})
+
+		expect(result?.slot).toBe('primary')
+	})
+
+	it('does not re-probe the chain head while the provider says it is spent', async () => {
+		// Head recovery runs on a flat 5-minute cooldown. Against a seven-day
+		// limit that is a probe every five minutes for twelve hours, each one
+		// guaranteed to fail. A provider-stated reset time has to beat the guess.
+		const probe = vi.fn(healthy)
+		const { db } = createMockDb(
+			threeSlots({
+				primary: { reset_at: NOW + 12 * 60 * 60 * 1000, reason: 'quota_exhausted_weekly' },
+			}),
+		)
+
+		const result = await resolveClaudeCredentialsWithFailover({
+			db,
+			workspaceId: WORKSPACE_ID,
+			actorId: ACTOR_ID,
+			probe,
+			now: () => NOW,
+			env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+		})
+
+		// Serves the active slot and never touches primary.
+		expect(result?.slot).toBe('slot_3')
+		expect(probe).toHaveBeenCalledTimes(1)
+	})
+})

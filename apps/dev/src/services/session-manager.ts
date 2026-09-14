@@ -55,7 +55,7 @@ import {
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { resolveActiveSlot } from '../lib/claude-oauth-slots'
 import { debitCreditForSession } from '../lib/credit-billing'
-import { classifyCreditExhaustion } from '../lib/credit-classifier'
+import { classifyCreditExhaustion, parseRateLimitEvent } from '../lib/credit-classifier'
 import { isEnterprise } from '../lib/enterprise'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { buildAgentGitIdentity } from '../lib/git-identity'
@@ -247,8 +247,17 @@ function claudeRuntimeFailoverReason(
 	])
 	if (!usageCodes.has(failureReason.reason_code)) return null
 
-	if (stdoutTail.includes('"rateLimitType":"weekly"')) return 'quota_exhausted_weekly'
-	if (stdoutTail.includes('"rateLimitType":"five_hour"')) return 'quota_exhausted_5h'
+	// Read the limit type off the structured envelope rather than a substring.
+	// The previous `"rateLimitType":"weekly"` check never matched anything: the
+	// API emits `seven_day`. Every seven-day exhaustion was therefore filed as a
+	// generic `quota_exhausted`, indistinguishable from a 5-hour one — which is
+	// how a subscription that was gone until tomorrow night got re-probed on a
+	// 5-minute recovery cooldown all day.
+	const rateLimit = parseRateLimitEvent(stdoutTail)
+	if (rateLimit?.rateLimitType === 'seven_day' || rateLimit?.rateLimitType === 'weekly') {
+		return 'quota_exhausted_weekly'
+	}
+	if (rateLimit?.rateLimitType === 'five_hour') return 'quota_exhausted_5h'
 	if (failureReason.reason_code === 'weekly_limit') return 'quota_exhausted_weekly'
 	return 'quota_exhausted'
 }
@@ -2785,14 +2794,56 @@ export class SessionManager extends EventEmitter {
 			.limit(1)
 		if (existingRetry) return
 
+		// When the provider told us when this subscription comes back, record it
+		// on the slot. Later walks then skip it outright instead of spending a
+		// probe to be told the same thing — the difference between re-checking a
+		// seven-day limit every five minutes for twelve hours and not.
+		const resetsAt = parseRateLimitEvent(stdoutTail)?.resetsAt
+		const resetAt =
+			typeof resetsAt === 'number' && Number.isFinite(resetsAt) && resetsAt > 0
+				? resetsAt * 1000
+				: undefined
+
 		const failover = await recordRuntimeClaudeOAuthFailover({
 			db: this.db,
 			workspaceId: session.workspaceId,
 			actorId: session.actorId,
 			reason,
 			fromSlot: failedSlot,
+			resetAt,
 			sourceSessionId: session.id,
 		})
+
+		// How many subscriptions this work has already been handed between. The
+		// chain WRAPS now, so running off its end no longer ends a retry chain by
+		// itself — without a bound, a workspace whose subscriptions are all spent
+		// would pass the same session round the ring indefinitely, burning a
+		// launch each hop. One turn per subscription, then stop.
+		//
+		// A session created before this counter existed still carries
+		// `claude_oauth_runtime_failover_retry_of`, which by definition means it
+		// is already hop 1 — read it that way rather than restarting the count.
+		const priorHops =
+			typeof config.claude_oauth_failover_hops === 'number'
+				? config.claude_oauth_failover_hops
+				: config.claude_oauth_runtime_failover_retry_of
+					? 1
+					: 0
+		if (failover.moved && priorHops >= Math.max(failover.chainLength - 1, 0)) {
+			await recordRuntimeClaudeOAuthBackupExhausted({
+				db: this.db,
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				reason,
+				slot: failedSlot,
+				sourceSessionId: session.id,
+			})
+			await this.insertSystemLog(
+				session.id,
+				'Every connected Claude subscription has been tried for this work; no further Claude OAuth fallback is available',
+			)
+			return
+		}
 
 		const targetSlot = await this.resolveFailoverTargetSlot(
 			session.workspaceId,
@@ -2835,6 +2886,7 @@ export class SessionManager extends EventEmitter {
 				...config,
 				llm_oauth_slot: targetSlot,
 				claude_oauth_runtime_failover_retry_of: session.id,
+				claude_oauth_failover_hops: priorHops + 1,
 			},
 			triggerId: session.triggerId ?? undefined,
 			createdBy: session.createdBy,

@@ -6,6 +6,7 @@ import {
 	type OAuthFailoverState,
 	type OAuthSlotData,
 	type OAuthSlotKind,
+	isSlotSpentAt,
 	readChain,
 	readFailoverState,
 	readSlots,
@@ -48,7 +49,14 @@ export function shouldAttemptPrimaryRecovery({
 	const head = chainHead(slots)
 	if (!head) return false
 	if (failover.active_slot === head) return false
-	const lastFailure = slotFailure(failover, head).at
+	const failure = slotFailure(failover, head)
+	// A provider-stated reset time beats the cooldown. The cooldown is a guess
+	// at "long enough that it might be better now"; `reset_at` is the provider
+	// telling us exactly when, and probing before then is a round trip that can
+	// only fail. Without this a seven-day limit was re-probed every five minutes
+	// for its entire twelve-hour window.
+	if (isSlotSpentAt(failure, now)) return false
+	const lastFailure = failure.at
 	if (typeof lastFailure === 'number' && now - lastFailure < cooldownMs) return false
 	return true
 }

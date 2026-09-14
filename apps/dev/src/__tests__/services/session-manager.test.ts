@@ -90,7 +90,15 @@ const { mockClassifyCreditExhaustion } = vi.hoisted(() => ({
 	mockClassifyCreditExhaustion: vi.fn(),
 }))
 
-vi.mock('../../lib/credit-classifier', () => ({
+// Reaches through to the real module for everything except the one function
+// this suite stubs. A hand-written factory listing only `classifyCreditExhaustion`
+// left every other export `undefined`, so the moment session-manager started
+// calling a second one (`parseRateLimitEvent`) it threw — and because the call
+// site is `maybeRetryClaudeOAuthOnNextSlot(...).catch(...)`, the throw was
+// swallowed and the only symptom was a failover that silently stopped happening.
+// Exactly the class of disappearing-work bug this file's tests exist to catch.
+vi.mock('../../lib/credit-classifier', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../lib/credit-classifier')>()),
 	classifyCreditExhaustion: mockClassifyCreditExhaustion,
 }))
 
@@ -3963,7 +3971,7 @@ describe('SessionManager', () => {
 			).activeSessions.set(session.id, {
 				tempDir: '/tmp/test',
 				stdoutTail:
-					'{"type":"rate_limit_event","rate_limit_info":{"rateLimitType":"five_hour"}}\nYou\'ve hit your limit · resets 3:20pm (UTC)',
+					'{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1788532200,"rateLimitType":"five_hour","overageStatus":"allowed","isUsingOverage":false}}\nYou\'ve hit your limit · resets 3:20pm (UTC)',
 			})
 			const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
 
@@ -4056,7 +4064,7 @@ describe('SessionManager', () => {
 			).activeSessions.set(session.id, {
 				tempDir: '/tmp/test',
 				stdoutTail:
-					'{"type":"rate_limit_event","rate_limit_info":{"rateLimitType":"five_hour"}}\nYou\'ve hit your limit · resets 3:20pm (UTC)',
+					'{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1788532200,"rateLimitType":"five_hour","overageStatus":"allowed","isUsingOverage":false}}\nYou\'ve hit your limit · resets 3:20pm (UTC)',
 			})
 			const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
 
@@ -4129,9 +4137,17 @@ describe('SessionManager', () => {
 						)?.last_backup_classified_reason,
 					),
 			)
+			// The pointer WRAPS to primary rather than sticking on the spent backup.
+			// That is the deliberate change: the last slot in the chain falling back
+			// onto the first is how a workspace recovers when an earlier
+			// subscription has since reset, instead of declaring itself permanently
+			// exhausted while a working credential sits one position away.
+			//
+			// What must NOT happen is this session's work being handed round the
+			// ring forever — that is bounded separately, by the hop count asserted
+			// below, not by the pointer running out of chain.
 			expect(backupUpdate?.settings.claude_oauth.failover).toMatchObject({
-				active_slot: 'backup',
-				last_classified_reason: 'quota_exhausted_5h',
+				active_slot: 'primary',
 				last_backup_classified_reason: 'quota_exhausted_5h',
 			})
 			const backupEvent = calls.inserts.find(
@@ -4147,8 +4163,86 @@ describe('SessionManager', () => {
 					i !== null &&
 					(i as { actionPrompt?: unknown }).actionPrompt === session.actionPrompt,
 			)
+			// The hop bound, not an exhausted chain, is what stops this. With the
+			// chain wrapping there IS somewhere to go (primary) — but this work has
+			// already had its turn on every subscription, so handing it on again
+			// would just start it round the ring.
 			expect(retryInsert).toBeUndefined()
 			expect(startSpy).not.toHaveBeenCalled()
+		})
+
+		it('stamps the hop count on a retry so the ring terminates', async () => {
+			// The counter is what makes the wrap safe. Without it, `nextUsableSlotAfter`
+			// always finds a next slot and every failed retry spawns another, forever.
+			vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
+			const session = buildSession({
+				status: 'running',
+				config: { llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },
+			})
+			const retrySession = buildSession({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				createdBy: session.createdBy,
+				status: 'pending',
+				sourceSessionId: session.id,
+				config: { llm_route: 'claude_oauth', llm_oauth_slot: 'backup' },
+			})
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, {
+				tempDir: '/tmp/test',
+				stdoutTail:
+					'{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1788532200,"rateLimitType":"five_hour","overageStatus":"allowed","isUsingOverage":false}}\nYou\'ve hit your limit · resets 3:20pm (UTC)',
+			})
+			vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
+
+			mockResults.selectQueue = [
+				[session],
+				[],
+				[],
+				[],
+				[
+					{
+						id: session.workspaceId,
+						settings: {
+							claude_oauth: {
+								primary: {
+									encryptedAccessToken: 'primary-access',
+									encryptedRefreshToken: 'primary-refresh',
+									expiresAt: 1_800_000_000_000,
+								},
+								backup: {
+									encryptedAccessToken: 'backup-access',
+									encryptedRefreshToken: 'backup-refresh',
+									expiresAt: 1_900_000_000_000,
+								},
+							},
+						},
+					},
+				],
+			]
+			mockResults.insertQueue = [[], [], [], [retrySession], [], []]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const retryInsert = calls.inserts.find(
+				(i): i is { config: Record<string, unknown>; actionPrompt: string } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { actionPrompt?: unknown }).actionPrompt === session.actionPrompt,
+			)
+			// Hop 1 of a 2-slot chain. The next failure reads this as "already had
+			// its turn on both" and stops rather than wrapping back to primary.
+			expect(retryInsert?.config).toMatchObject({
+				llm_oauth_slot: 'backup',
+				claude_oauth_failover_hops: 1,
+			})
 		})
 
 		it('does not fail over to backup on a runtime limit when the failover flag is off', async () => {
@@ -4169,7 +4263,7 @@ describe('SessionManager', () => {
 			).activeSessions.set(session.id, {
 				tempDir: '/tmp/test',
 				stdoutTail:
-					'{"type":"rate_limit_event","rate_limit_info":{"rateLimitType":"five_hour"}}\nYou\'ve hit your limit · resets 3:20pm (UTC)',
+					'{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1788532200,"rateLimitType":"five_hour","overageStatus":"allowed","isUsingOverage":false}}\nYou\'ve hit your limit · resets 3:20pm (UTC)',
 			})
 			const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
 

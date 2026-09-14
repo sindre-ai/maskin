@@ -62,6 +62,12 @@ const claudeOAuthSlotFailureSchema = z
 	.object({
 		at: z.number().optional(),
 		reason: z.string().optional(),
+		// Epoch ms the provider said this slot becomes usable again, from the
+		// `resetsAt` on Claude's rate_limit_event. This object is `.strict()`, so
+		// a field written without being modelled here fails the parse of the WHOLE
+		// settings row — which reads back as `billing` being absent on unrelated
+		// routes. See the `nickname` entry in .claude/rules/known-pitfalls.md.
+		reset_at: z.number().optional(),
 	})
 	.strict()
 

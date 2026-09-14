@@ -276,3 +276,79 @@ describe('classifyCreditExhaustion — OpenRouter error envelopes', () => {
 		expect(classifyCreditExhaustion(tail, { includeAmbiguousSignals: false })).toBeNull()
 	})
 })
+
+/**
+ * The structured envelope the CLI emits just before its banner. Everything the
+ * banner cannot express lives here, and none of it used to be read: a seven-day
+ * exhaustion and a 5-hour one were both filed as `session_limit` with
+ * `reset_at: null`, and `overageDisabledReason` — the field that explains why a
+ * workspace with credit still cannot spend it — was discarded entirely.
+ *
+ * Payloads below are the verbatim shape from real failed Vaerksted sessions on
+ * 2026-09-14, not invented ones. The spelling is the whole point: the API says
+ * `seven_day`, and the code that tried to detect a weekly limit matched
+ * `"rateLimitType":"weekly"`, so it had never once fired.
+ */
+describe('classifyCreditExhaustion — structured rate_limit_event envelope', () => {
+	const sevenDay =
+		'{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1789416000,"rateLimitType":"seven_day","overageStatus":"rejected","overageDisabledReason":"org_level_disabled","isUsingOverage":false}}\n' +
+		"You've hit your limit · resets 8pm (UTC)\n"
+
+	it('classifies a seven_day limit as weekly, not as a session limit', () => {
+		const result = classifyCreditExhaustion(sevenDay)
+		// The banner alone says "You've hit your limit", which the CLI_BANNERS
+		// list maps to `session_limit` — a materially different thing from a
+		// weekly cap, and the reason a 12-hour outage looked like a 5-hour one.
+		expect(result?.reason_code).toBe('weekly_limit')
+	})
+
+	it('carries the provider reset time instead of a null reset_at', () => {
+		const result = classifyCreditExhaustion(sevenDay)
+		expect(result?.reset_at).toBe(new Date(1789416000 * 1000).toISOString())
+	})
+
+	it('says overage is org-disabled, since that is the only actionable part', () => {
+		const result = classifyCreditExhaustion(sevenDay)
+		expect(result?.human_message).toMatch(/overage is disabled/i)
+	})
+
+	it('classifies a five_hour limit as a session limit', () => {
+		const result = classifyCreditExhaustion(
+			'{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1788532200,"rateLimitType":"five_hour","overageStatus":"allowed","isUsingOverage":false}}\n' +
+				"You've hit your limit · resets 2:30pm (UTC)\n",
+		)
+		expect(result?.reason_code).toBe('session_limit')
+		expect(result?.human_message).not.toMatch(/overage is disabled/i)
+	})
+
+	it('ignores an allowed event — only a rejection is a failure', () => {
+		const result = classifyCreditExhaustion(
+			'{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour"}}\n',
+		)
+		expect(result).toBeNull()
+	})
+
+	it('falls through to the banner when the limit type is unrecognised', () => {
+		// An unmapped type must not invent a classification — the banner is still
+		// a real signal and stays the fallback.
+		const result = classifyCreditExhaustion(
+			'{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"some_future_window"}}\n' +
+				"You've hit your limit\n",
+		)
+		expect(result?.reason_code).toBe('session_limit')
+		expect(result?.reset_at).toBeNull()
+	})
+
+	it('takes the last rejection when a session reported several', () => {
+		const result = classifyCreditExhaustion(
+			'{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour","resetsAt":1788532200}}\n' +
+				'{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"seven_day","resetsAt":1789416000}}\n',
+		)
+		expect(result?.reason_code).toBe('weekly_limit')
+	})
+
+	it('ignores a malformed envelope rather than throwing', () => {
+		const result = classifyCreditExhaustion('{"type":"rate_limit_event", this is not json\n')
+		expect(result).toBeNull()
+	})
+})

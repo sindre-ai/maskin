@@ -20,10 +20,33 @@ export const MAX_OAUTH_SLOTS = 10
 /** Encrypted token blob persisted in a slot. Re-exported for downstream tasks. */
 export type OAuthSlotData = EncryptedOAuthData
 
-/** Per-slot failure record, written when a slot is classified as unusable. */
+/**
+ * Per-slot failure record, written when a slot is classified as unusable.
+ *
+ * `reset_at` (epoch ms) is when the provider said the slot becomes usable
+ * again, taken from the `resetsAt` on Claude's `rate_limit_event`. Without it
+ * every failure looks equally recent and the chain has to re-probe a slot it
+ * already knows is spent — which is how a seven-day limit got polled on a
+ * 5-minute cooldown for twelve hours. Absent when the provider gave no reset
+ * time, in which case readers must treat the slot as worth retrying rather
+ * than assume it is dead.
+ */
 export interface OAuthSlotFailure {
 	at?: number
 	reason?: string
+	reset_at?: number
+}
+
+/**
+ * Is this slot known to still be spent at `now`?
+ *
+ * Only a recorded `reset_at` in the future counts. A slot with no reset time
+ * is never treated as unusable — guessing "probably still broken" is how a
+ * healthy subscription becomes unreachable, which is the failure this whole
+ * mechanism exists to prevent.
+ */
+export function isSlotSpentAt(failure: OAuthSlotFailure, now: number): boolean {
+	return typeof failure.reset_at === 'number' && failure.reset_at > now
 }
 
 /**
@@ -179,6 +202,36 @@ export function nextSlotAfter(raw: unknown, id: OAuthSlotKind): OAuthSlotKind | 
 }
 
 /**
+ * The next slot worth trying after `id`, wrapping past the end of the chain and
+ * skipping slots the provider said are still spent at `now`. `undefined` only
+ * when nothing in the chain is currently usable.
+ *
+ * Differs from `nextSlotAfter` in the two ways that matter when a subscription
+ * runs out mid-session: it WRAPS (so the last slot in the chain can fall back
+ * onto an earlier one that has since reset, instead of declaring the chain
+ * dead) and it SKIPS (so failover doesn't hand the session a subscription we
+ * already know is rate-limited until tonight). `id` itself is never returned.
+ */
+export function nextUsableSlotAfter(
+	raw: unknown,
+	id: OAuthSlotKind,
+	now: number,
+): OAuthSlotKind | undefined {
+	const chain = readChain(raw)
+	const position = chain.findIndex((entry) => entry.id === id)
+	if (position < 0) return undefined
+	const failover = readFailoverState(raw)
+
+	for (let offset = 1; offset < chain.length; offset++) {
+		const candidate = chain[(position + offset) % chain.length]
+		if (!candidate) continue
+		if (isSlotSpentAt(slotFailure(failover, candidate.id), now)) continue
+		return candidate.id
+	}
+	return undefined
+}
+
+/**
  * The legacy `last_*` mirrors for a set of failure records. Only defined
  * values are emitted — an explicit `undefined` would survive into the object
  * as a present-but-empty key, for no benefit.
@@ -210,8 +263,17 @@ export function readFailoverState(raw: unknown): OAuthFailoverState {
 
 	const failures: Record<string, OAuthSlotFailure> = {}
 	for (const [id, failure] of Object.entries(stored.failures ?? {})) {
-		if (failure && (typeof failure.at === 'number' || typeof failure.reason === 'string')) {
-			failures[id] = { at: failure.at, reason: failure.reason }
+		// `reset_at` counts as a record on its own: it is the field the chain walk
+		// reads to decide whether to skip a slot, so dropping a record that has
+		// only that would silently re-enable probing a subscription we already
+		// know is spent.
+		if (
+			failure &&
+			(typeof failure.at === 'number' ||
+				typeof failure.reason === 'string' ||
+				typeof failure.reset_at === 'number')
+		) {
+			failures[id] = { at: failure.at, reason: failure.reason, reset_at: failure.reset_at }
 		}
 	}
 	// Legacy mirrors fill in only where `failures` says nothing, so a row
