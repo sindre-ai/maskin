@@ -591,10 +591,35 @@ export async function startLinkedInMock(): Promise<LinkedInMockServer> {
 			return send(200, CANNED_ACCOUNT_DELETED_RESPONSE())
 		}
 		if (method === 'POST' && url === '/v2/auth/link') {
-			const state =
-				typeof parsed === 'object' && parsed !== null && 'state' in parsed
-					? String((parsed as { state?: unknown }).state ?? '')
-					: ''
+			// Unipile v2 discriminates fresh vs reconnect on which of
+			// `providers` / `account_id` the body carries — the two shapes are
+			// `anyOf` in the openapi schema. Sending both together is a
+			// validation error on the live API; the mock rejects that
+			// combination too so a caller that regresses the client's branch
+			// selection fails a test here rather than shipping a call that
+			// only breaks against production. Same envelope for both shapes:
+			// `{ object: 'HostedAuthLink', link }` on 200.
+			const bodyObj =
+				typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {}
+			const hasProviders = 'providers' in bodyObj
+			const hasAccountId = 'account_id' in bodyObj
+			if (hasProviders && hasAccountId) {
+				return send(400, {
+					status: 400,
+					type: 'errors/validation',
+					title: 'Invalid request',
+					detail: '`providers` and `account_id` are mutually exclusive.',
+				})
+			}
+			if (!hasProviders && !hasAccountId) {
+				return send(400, {
+					status: 400,
+					type: 'errors/validation',
+					title: 'Invalid request',
+					detail: 'One of `providers` or `account_id` is required.',
+				})
+			}
+			const state = 'state' in bodyObj ? String(bodyObj.state ?? '') : ''
 			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
 			return send(200, CANNED_AUTH_LINK(state, base))
 		}

@@ -161,3 +161,41 @@ function readAccountId(ctx: PreDisconnectContext): string | null {
 	if (typeof cred.account_id === 'string' && cred.account_id.length > 0) return cred.account_id
 	return null
 }
+
+/**
+ * P3-H · reconnect-orphan cleanup. Callable from the connect-callback path
+ * when a reconnect wizard mints a NEW Unipile account id — the previous id
+ * is now orphaned upstream (still billed at the per-account Unipile rate)
+ * and must be deleted. Uses the same test-overridable client builder as the
+ * disconnect hook so `__setLinkedInDisconnectClientForTests` covers both
+ * paths, and defers to `deleteUnipileAccountBestEffort` for the same 404 /
+ * non-2xx / network-fault semantics.
+ *
+ * Best-effort by design (same as the disconnect hook): a Unipile hiccup
+ * here must never fail the reconnect. The user has already re-authed; the
+ * worst case is one orphaned account row that surfaces as a cost anomaly
+ * rather than a broken reconnect.
+ */
+export async function deleteUnipileAccountForReconnectOrphan(context: {
+	orphanedAccountId: string
+	integrationId: string
+	workspaceId: string
+}): Promise<void> {
+	const client = buildLinkedInClientForDisconnect()
+	if (!client) {
+		logger.warn(
+			`${PROVIDER} reconnect: Unipile client not configured (skipping orphan deleteAccount)`,
+			{
+				integrationId: context.integrationId,
+				workspaceId: context.workspaceId,
+				accountId: context.orphanedAccountId,
+			},
+		)
+		return
+	}
+	await deleteUnipileAccountBestEffort(client, context.orphanedAccountId, {
+		integrationId: context.integrationId,
+		workspaceId: context.workspaceId,
+		reason: 'reconnect-orphan',
+	})
+}

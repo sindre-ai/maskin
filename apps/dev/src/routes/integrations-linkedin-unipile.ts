@@ -13,6 +13,7 @@ import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { createAuthLink } from '../lib/integrations/providers/linkedin-unipile/client'
+import { deleteUnipileAccountForReconnectOrphan } from '../lib/integrations/providers/linkedin-unipile/disconnect'
 import { enumerateLinkedInIdentitiesAndRegister } from '../lib/integrations/providers/linkedin-unipile/enumeration'
 import {
 	LinkedInIntegrationError,
@@ -316,12 +317,22 @@ app.openapi(connectRoute, (async (c) => {
 	}
 
 	try {
-		const link = await createAuthLink({
-			providers: ['linkedin'],
+		// P3-H · reconnect vs fresh connect. Unipile v2 discriminates on which
+		// of `providers` / `account_id` the /v2/auth/link body carries. If the
+		// integrations row already has an `external_id` (i.e. this workspace/
+		// actor has connected LinkedIn before, whether currently active or
+		// previously disconnected) we ask Unipile to re-authenticate that
+		// specific account instead of minting a new one — closes the
+		// account-churn half of insight (3) at the source.
+		const priorAccountId = existing[0]?.externalId ?? null
+		const commonAuthLinkArgs = {
 			expires_on: new Date(Date.now() + 10 * 60_000).toISOString(),
 			redirect_uri: callbackUrl(),
 			state: `${integrationId}.${authNonce}`,
-		})
+		}
+		const link = priorAccountId
+			? await createAuthLink({ ...commonAuthLinkArgs, account_id: priorAccountId })
+			: await createAuthLink({ ...commonAuthLinkArgs, providers: ['linkedin'] })
 		return c.json({ install_url: link.link, integration_id: integrationId })
 	} catch (err) {
 		// `cause` carries the real LinkedIn status/body (or the schema-drift
@@ -399,6 +410,21 @@ app.openapi(callbackRoute, (async (c) => {
 	}
 	const pending = resolved.row
 
+	// P3-H · reconnect-orphan detection. If the row already carried an
+	// `external_id`, this callback is a reconnect. The happy path (Unipile
+	// v2 reconnect semantics: same account_id round-trips) leaves the row's
+	// external_id unchanged; the pathological path — the wizard user picks
+	// a different LinkedIn identity, or Unipile mints a new id anyway —
+	// leaves the prior account orphaned upstream. Fire a best-effort
+	// deleteAccount against the OLD id and log at warn so it's visible in
+	// Sentry. The delete is intentionally fired regardless of the local
+	// landing outcome; the local status flip below still runs.
+	const priorExternalId = pending.externalId ?? null
+	const isReconnectOrphan =
+		typeof priorExternalId === 'string' &&
+		priorExternalId.length > 0 &&
+		priorExternalId !== account_id
+
 	// Landing the credential drops auth_nonce/nonce_expires_at from the blob,
 	// which is what makes the state single-use: a replay of this exact URL now
 	// resolves to 'bad_nonce' instead of rebinding a live integration.
@@ -474,6 +500,24 @@ app.openapi(callbackRoute, (async (c) => {
 	} else {
 		logger.warn('linkedin-unipile callback: pending row missing actor_id — event skipped', {
 			integrationId: pending.id,
+		})
+	}
+
+	// P3-H · reconnect-orphan cleanup runs AFTER the local landing commits so
+	// a Unipile-side hiccup on the orphan delete can never leave the local
+	// row half-updated. Warn-level log so the "reconnect returned a different
+	// id" case is visible even when the delete succeeds silently.
+	if (isReconnectOrphan && priorExternalId) {
+		logger.warn('linkedin-unipile callback: reconnect returned a different account_id', {
+			integrationId: pending.id,
+			workspaceId: pending.workspaceId,
+			prior_external_id: priorExternalId,
+			new_external_id: account_id,
+		})
+		await deleteUnipileAccountForReconnectOrphan({
+			orphanedAccountId: priorExternalId,
+			integrationId: pending.id,
+			workspaceId: pending.workspaceId,
 		})
 	}
 
