@@ -4,7 +4,7 @@ import { renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../setup'
 
-const mockBilling = vi.fn<[string], { data: BillingUsageResponse | undefined }>()
+const mockBilling = vi.fn<(workspaceId: string) => { data: BillingUsageResponse | undefined }>()
 
 vi.mock('@/hooks/use-billing', () => ({
 	useBillingUsage: (workspaceId: string) => mockBilling(workspaceId),
