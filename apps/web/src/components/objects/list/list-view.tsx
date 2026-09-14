@@ -3,7 +3,6 @@ import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { Button } from '@/components/ui/button'
 import { useObjectLoops } from '@/hooks/use-object-loops'
-import { useObjectStars } from '@/hooks/use-object-stars'
 import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
@@ -119,7 +118,6 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 	const scrollRef = useRef<HTMLDivElement>(null)
 	const sentinelRef = useRef<HTMLDivElement>(null)
 	const groupBy = grouping?.[0]
-	const { starredIds, toggleStar } = useObjectStars(workspaceId)
 	// D1 · Loop chip hydration. Reverse-index `in_loop` edges for the visible
 	// page so each row can render its first-loop chip. The hook fires ONE
 	// bounded batch of relationship queries after the list resolves — no
@@ -348,8 +346,6 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 				columnVisibility={columnVisibility}
 				anySelected={selectedIdSet.size > 0}
 				typeLabel={objectTypeLabel?.(object.type)}
-				isStarred={starredIds.has(object.id)}
-				onToggleStar={toggleStar}
 				loop={loopsByObjectId.get(object.id)}
 			/>
 		))

@@ -268,6 +268,13 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		// Server-persisted star toggles (D5). Idempotent on both sides, no body,
+		// actor derived from the API key. Response carries the resulting scalar
+		// so an optimistic update can drop stale state on mismatch.
+		star: (id: string, workspaceId: string) =>
+			request<StarToggleResponse>(`/objects/${id}/star`, { method: 'POST', workspaceId }),
+		unstar: (id: string, workspaceId: string) =>
+			request<StarToggleResponse>(`/objects/${id}/star`, { method: 'DELETE', workspaceId }),
 	},
 
 	auth: {
@@ -1072,6 +1079,16 @@ export interface ObjectResponse {
 	is_subscribed?: boolean
 	unread_count?: number
 	subscriber_count?: number
+	// Per-viewer starred flag. The list handler + detail + graph hydrate it via
+	// a single secondary query (see `star-state` service on the backend). Other
+	// endpoints — create / update / verify / undo-write / bulk — omit it, so
+	// the field is optional here and every reader defaults to `false`.
+	is_starred_by_me?: boolean
+}
+
+export interface StarToggleResponse {
+	is_starred_by_me: boolean
+	starred_at: string | null
 }
 
 export interface BoardObjectColumn {
