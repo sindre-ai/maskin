@@ -2,7 +2,6 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { Button } from '@/components/ui/button'
-import { useObjectStars } from '@/hooks/use-object-stars'
 import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
@@ -112,7 +111,6 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 	const scrollRef = useRef<HTMLDivElement>(null)
 	const sentinelRef = useRef<HTMLDivElement>(null)
 	const groupBy = grouping?.[0]
-	const { starredIds, toggleStar } = useObjectStars(workspaceId)
 
 	// Rows the user is blocking float to the top of the pool (mockup fixture
 	// 6655's `nyOf`). A stable partition, so within each half the API's own
@@ -333,8 +331,6 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 				columnVisibility={columnVisibility}
 				anySelected={selectedIdSet.size > 0}
 				typeLabel={objectTypeLabel?.(object.type)}
-				isStarred={starredIds.has(object.id)}
-				onToggleStar={toggleStar}
 			/>
 		))
 

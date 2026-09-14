@@ -8,6 +8,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { PanelRight } from 'lucide-react'
 import { useState } from 'react'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
+import { DetailMetaStar } from './detail-meta-row'
 import { OwnerSelect, StatusSelect } from './property-selects'
 
 interface ObjectDetailBarActionsProps {
@@ -124,6 +125,8 @@ export function ObjectDetailIdentity({
 				    a 13px stroke in the type's own colour, not a filled tile. */}
 				{Icon && <Icon aria-hidden="true" className={cn('size-[13px] shrink-0', typeColor.text)} />}
 				<span>{typeLabel(object.type)}</span>
+				{/* SPEC §D5: star sits left of the status chip on the detail meta row. */}
+				<DetailMetaStar objectId={object.id} />
 				{statuses.length > 0 ? (
 					<StatusSelect
 						current={object.status}
