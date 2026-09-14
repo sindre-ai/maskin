@@ -103,6 +103,7 @@ describe('ObjectDetailIdentity', () => {
 	const identityProps = {
 		statuses: baseProps.statuses,
 		members,
+		workspaceId: 'ws-1',
 		onStatusChange: vi.fn(),
 		onDriverChange: vi.fn(),
 	}
@@ -207,6 +208,35 @@ describe('ObjectDetailIdentity', () => {
 		expect(labels.some((l) => l.includes('Unassigned'))).toBe(true)
 		expect(labels.some((l) => l.includes('Alice'))).toBe(true)
 		expect(labels.some((l) => l.includes('Bob'))).toBe(true)
+	})
+
+	it('omits the PAUSED · NO CREDITS chip when credits_state is ok', () => {
+		const object = buildObjectResponse({ type: 'bet', status: 'active' })
+		render(<ObjectDetailIdentity {...identityProps} object={object} creditsState="ok" />, {
+			wrapper: makeWrapper(),
+		})
+		expect(screen.queryByText(/no credits/i)).toBeNull()
+	})
+
+	it('omits the PAUSED · NO CREDITS chip on the unknown loading state', () => {
+		const object = buildObjectResponse({ type: 'bet', status: 'active' })
+		render(<ObjectDetailIdentity {...identityProps} object={object} creditsState="unknown" />, {
+			wrapper: makeWrapper(),
+		})
+		expect(screen.queryByText(/no credits/i)).toBeNull()
+	})
+
+	it('renders the amber PAUSED · NO CREDITS chip with a polite live region when empty', () => {
+		const object = buildObjectResponse({ type: 'bet', status: 'active' })
+		render(<ObjectDetailIdentity {...identityProps} object={object} creditsState="empty" />, {
+			wrapper: makeWrapper(),
+		})
+		const chip = screen.getByRole('status', { name: /paused .*no credits/i })
+		expect(chip).toBeInTheDocument()
+		expect(chip).toHaveAttribute('aria-live', 'polite')
+		expect(chip).toHaveTextContent('PAUSED · NO CREDITS')
+		expect(chip.className).toMatch(/bg-warning/)
+		expect(chip.className).not.toMatch(/border-(?!transparent)/)
 	})
 })
 
