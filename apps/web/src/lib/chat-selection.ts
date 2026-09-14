@@ -1,16 +1,20 @@
 /**
- * Composer-level selection state for the chat. An `agent` is single-
- * select — when set, the next send is routed to that agent as a one-shot
- * session instead of the persistent chat session. `objects` are multi-select
- * and attached as context to whichever target receives the send.
- * `notifications` are multi-select and seeded by the Pulse "Chat with agents"
- * action so the notification being discussed shows up as a chip and is
- * forwarded as first-class context on the next send.
+ * Composer-level selection state for the chat. `agents` is the composer's
+ * multi-mention list — every `@` insertion appends the picked actor id in
+ * order, deduplicated. When the message is sent the array becomes the POST
+ * body's `metadata.mentions`, which the backend fast-path auto-joins as
+ * conversation participants (`conversations.ts`) and hands the responder the
+ * `wasMentioned=true` short-circuit (`conversation-responder.ts`). `objects`
+ * and `notifications` are multi-select context chips; `files` are uploaded
+ * attachments the composer waits on before enabling send.
  *
- * Task 35 layers a pure reducer + chips UI on top of this type; task 36's
- * slash picker dispatches into the same reducer so both entry points converge
- * on a single source of truth for the composer's selection.
+ * The single-select agent bit that previously lived here (a routing override
+ * for the "next send") is retired in favour of the mentions list — the first
+ * mention takes the send-target role in surfaces that need one (Brief drawer,
+ * new-chat page) so both entry points converge on one field.
  */
+
+import { MESSAGE_MAX_MENTIONS } from '@maskin/shared'
 
 export interface ChatSelectionAgent {
 	id: string
@@ -37,14 +41,28 @@ export interface ChatSelectionFile {
 }
 
 export interface ChatSelection {
-	agent: ChatSelectionAgent | null
+	/**
+	 * Mentioned actor ids in insertion order. Matches
+	 * `messageMetadataSchema.mentions` on the wire — the array is capped at
+	 * `MESSAGE_MAX_MENTIONS` here so the send-path never has to trim.
+	 */
+	agents: string[]
+	/**
+	 * Display names for the ids in `agents`, keyed by id. Filled at insertion
+	 * time (the picker knows the name of what it just picked) so chips can
+	 * render a label without an extra network round trip; the wire payload
+	 * still carries only the ids, keeping the source of truth on the actors
+	 * list.
+	 */
+	agentNames: Record<string, string>
 	objects: ChatSelectionObject[]
 	notifications: ChatSelectionNotification[]
 	files: ChatSelectionFile[]
 }
 
 export const EMPTY_CHAT_SELECTION: ChatSelection = {
-	agent: null,
+	agents: [],
+	agentNames: {},
 	objects: [],
 	notifications: [],
 	files: [],
@@ -93,13 +111,14 @@ export function buildOneShotActionPrompt(
 }
 
 /**
- * Reducer actions for the chat composer selection. Agent is single-select,
- * so `add_agent` replaces whatever was there. Objects and notifications are
- * multi-select, deduped by `id`.
+ * Reducer actions for the chat composer selection. `add_agent` appends to the
+ * mentions list (deduped by id, capped at `MESSAGE_MAX_MENTIONS`); `remove_agent`
+ * strips the given id. Objects and notifications are multi-select, deduped by
+ * `id`.
  */
 export type ChatSelectionAction =
 	| { type: 'add_agent'; agent: ChatSelectionAgent }
-	| { type: 'remove_agent' }
+	| { type: 'remove_agent'; id: string }
 	| { type: 'add_object'; object: ChatSelectionObject }
 	| { type: 'remove_object'; id: string }
 	| { type: 'add_notification'; notification: ChatSelectionNotification }
@@ -113,8 +132,8 @@ export type ChatSelectionAction =
  * the send-routing branch in `<Chat>`.
  *
  * Invariants:
- * - Single-agent rule — `add_agent` replaces the current agent; there is at
- *   most one agent in the selection.
+ * - Multi-mention rule — `add_agent` appends to `agents` (deduped by id, capped
+ *   at `MESSAGE_MAX_MENTIONS`); an already-present id is a no-op.
  * - Objects and notifications are deduplicated by `id` — re-adding an
  *   existing id is a no-op.
  * - No-op branches return the previous state reference so callers wrapping in
@@ -127,19 +146,33 @@ export function chatSelectionReducer(
 ): ChatSelection {
 	switch (action.type) {
 		case 'add_agent': {
-			const current = state.agent
-			if (
-				current !== null &&
-				current.id === action.agent.id &&
-				(current.name ?? null) === (action.agent.name ?? null)
-			) {
-				return state
+			if (state.agents.includes(action.agent.id)) {
+				// Refresh the cached label if the picker learned a new name for the
+				// same id, but keep the array reference so a re-pick with the same
+				// name is a true no-op.
+				const nextName = action.agent.name?.trim() ?? ''
+				const prevName = state.agentNames[action.agent.id] ?? ''
+				if (nextName.length === 0 || nextName === prevName) return state
+				return {
+					...state,
+					agentNames: { ...state.agentNames, [action.agent.id]: nextName },
+				}
 			}
-			return { ...state, agent: action.agent }
+			if (state.agents.length >= MESSAGE_MAX_MENTIONS) return state
+			const name = action.agent.name?.trim() ?? ''
+			return {
+				...state,
+				agents: [...state.agents, action.agent.id],
+				agentNames: name.length > 0
+					? { ...state.agentNames, [action.agent.id]: name }
+					: state.agentNames,
+			}
 		}
 		case 'remove_agent': {
-			if (state.agent === null) return state
-			return { ...state, agent: null }
+			if (!state.agents.includes(action.id)) return state
+			const nextAgents = state.agents.filter((id) => id !== action.id)
+			const { [action.id]: _dropped, ...nextNames } = state.agentNames
+			return { ...state, agents: nextAgents, agentNames: nextNames }
 		}
 		case 'add_object': {
 			if (state.objects.some((o) => o.id === action.object.id)) return state
@@ -170,7 +203,7 @@ export function chatSelectionReducer(
 		}
 		case 'clear_all': {
 			if (
-				state.agent === null &&
+				state.agents.length === 0 &&
 				state.objects.length === 0 &&
 				state.notifications.length === 0 &&
 				state.files.length === 0

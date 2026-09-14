@@ -21,6 +21,7 @@ import {
 import { cn } from '@/lib/cn'
 import { deriveConversationTitle } from '@/lib/conversation-title'
 import { useWorkspace } from '@/lib/workspace-context'
+import { MESSAGE_MAX_MENTIONS } from '@maskin/shared'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { ChevronDown, Search } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
@@ -184,13 +185,14 @@ function NewChatRoute() {
 	const handleSend = useCallback(
 		async (content: string) => {
 			setError(null)
-			// The Composer's "Agent" button (selection.agent) is a separate entry
-			// point from the recipient pill above — fold it into the participant
-			// list so tagging an agent there actually adds them to the
-			// conversation, instead of silently doing nothing.
+			// Every actor mentioned in the composer's `agents` list joins the new
+			// conversation, alongside the recipient chosen in the pill above.
+			// Self-mentions get filtered from the outgoing `mentions` metadata
+			// (below), but they still count as intended participants — the user
+			// picked themselves for the thread.
 			const ids = new Set<string>()
 			if (recipient) ids.add(recipient.id)
-			if (selection.agent) ids.add(selection.agent.id)
+			for (const agentId of selection.agents) ids.add(agentId)
 			if (ids.size === 0) {
 				const err = new Error('Add at least one person or agent to start the conversation')
 				setError(err.message)
@@ -231,6 +233,14 @@ function NewChatRoute() {
 					id: n.id,
 					...(n.title ? { title: n.title } : {}),
 				}))
+			}
+			// Mentions ride the initial message; filter self so a self-mention
+			// (warning-styled in the composer) never fires the notification write.
+			const mentions = selection.agents
+				.filter((id) => id !== currentActor?.id)
+				.slice(0, MESSAGE_MAX_MENTIONS)
+			if (mentions.length > 0) {
+				metadata.mentions = mentions
 			}
 
 			try {
@@ -378,7 +388,7 @@ function NewChatRoute() {
 					}
 					selection={selection}
 					onDispatchSelection={dispatchSelection}
-					onRemoveAgent={() => dispatchSelection({ type: 'remove_agent' })}
+					onRemoveAgent={(id) => dispatchSelection({ type: 'remove_agent', id })}
 					onRemoveObject={(id) => dispatchSelection({ type: 'remove_object', id })}
 					onRemoveNotification={(id) => dispatchSelection({ type: 'remove_notification', id })}
 					onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}

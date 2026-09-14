@@ -5,12 +5,14 @@ import { ObjectReference } from '@/components/shared/object-reference'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { useActors } from '@/hooks/use-actors'
 import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { Bell, Box, Pencil, RotateCcw } from 'lucide-react'
-import { useState } from 'react'
+import { Link } from '@tanstack/react-router'
+import { useMemo, useState } from 'react'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 
@@ -40,6 +42,12 @@ export function MessageBubble({
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
+	const { data: workspaceActors } = useActors(workspaceId, { enabled: true })
+	const actorLookup = useMemo(() => {
+		const map = new Map<string, { id: string; name: string; type: string }>()
+		for (const a of workspaceActors ?? []) map.set(a.id, { id: a.id, name: a.name, type: a.type })
+		return map
+	}, [workspaceActors])
 	// Real, persisted, own message (not a system row, not an optimistic
 	// bubble) — the only kind that can be edited or retried.
 	const canAct = isOwn && message.id > 0 && message.kind === 'message'
@@ -50,7 +58,9 @@ export function MessageBubble({
 	const attachments = message.metadata?.attachments ?? []
 	const contextObjects = message.metadata?.context_objects ?? []
 	const contextNotifications = message.metadata?.context_notifications ?? []
+	const mentions = message.metadata?.mentions ?? []
 	const hasContext = contextObjects.length > 0 || contextNotifications.length > 0
+	const hasMentions = mentions.length > 0
 
 	if (message.kind === 'system') {
 		return <MessageDivider label={message.content} />
@@ -92,6 +102,17 @@ export function MessageBubble({
 					<div className="flex max-w-[min(560px,80%)] flex-wrap items-center justify-end gap-1.5">
 						<span className="eyebrow shrink-0">You attached</span>
 						<OwnContextChips objects={contextObjects} notifications={contextNotifications} />
+					</div>
+				) : null}
+				{hasMentions ? (
+					<div className="flex max-w-[min(560px,80%)] flex-wrap items-center justify-end gap-1.5">
+						<span className="eyebrow shrink-0">You mentioned</span>
+						<MentionPills
+							mentions={mentions}
+							workspaceId={workspaceId}
+							actorLookup={actorLookup}
+							selfActorId={actor?.id ?? null}
+						/>
 					</div>
 				) : null}
 				<div
@@ -213,6 +234,17 @@ export function MessageBubble({
 						answered={questionAnswered}
 					/>
 				) : null}
+				{hasMentions ? (
+					<div className="mt-[7px] flex flex-wrap items-center gap-2">
+						<span className="eyebrow shrink-0">Mentioned</span>
+						<MentionPills
+							mentions={mentions}
+							workspaceId={workspaceId}
+							actorLookup={actorLookup}
+							selfActorId={actor?.id ?? null}
+						/>
+					</div>
+				) : null}
 				{hasContext ? (
 					<div className="mt-[7px] flex flex-wrap items-center gap-2 border-t border-border-subtle pt-[7px]">
 						<span className="eyebrow shrink-0">Referenced</span>
@@ -239,6 +271,71 @@ export function MessageBubble({
 				) : null}
 			</div>
 		</div>
+	)
+}
+
+/**
+ * Renders an inline pill per mention on the message bubble. Each pill is an
+ * inline-flex row with the actor's 14px avatar and name, `border-radius: 999px`,
+ * no border (`bg-brand-subtle text-brand-subtle-foreground` maps to the spec's
+ * brand-tinted chip). Self-mention swaps to `bg-warning/10 text-warning` so the
+ * sender sees they've pinged themselves. Clicking a pill navigates to the
+ * actor's detail route — the closest primitive we have to the "profile drawer"
+ * spec, which doesn't ship in the app yet.
+ */
+function MentionPills({
+	mentions,
+	workspaceId,
+	actorLookup,
+	selfActorId,
+}: {
+	mentions: string[]
+	workspaceId: string
+	actorLookup: Map<string, { id: string; name: string; type: string }>
+	selfActorId: string | null
+}) {
+	return (
+		<ul
+			className="flex flex-wrap items-center gap-1.5 p-0"
+			aria-label="Mentions"
+		>
+			{mentions.map((id) => {
+				const actor = actorLookup.get(id)
+				const name = actor?.name?.trim() || id
+				const isSelf = selfActorId === id
+				const chipClasses = cn(
+					'inline-flex max-w-full items-center gap-1.5 rounded-full px-[6px] pl-1 py-[1px] text-[11.5px] font-semibold',
+					isSelf ? 'bg-warning/10 text-warning' : 'bg-brand/10 text-brand',
+				)
+				const label = (
+					<>
+						<ActorAvatar
+							id={id}
+							name={name}
+							type={actor?.type ?? 'agent'}
+							size="sm"
+							className="h-[14px] w-[14px] shrink-0 text-[8px]"
+						/>
+						<span className="max-w-[12rem] truncate">@{name}</span>
+					</>
+				)
+				return (
+					<li key={id}>
+						{actor && !isSelf ? (
+							<Link
+								to="/$workspaceId/agents/$agentId"
+								params={{ workspaceId, agentId: id }}
+								className={chipClasses}
+							>
+								{label}
+							</Link>
+						) : (
+							<span className={chipClasses}>{label}</span>
+						)}
+					</li>
+				)
+			})}
+		</ul>
 	)
 }
 

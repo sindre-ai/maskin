@@ -105,8 +105,11 @@ const agentKind: SlashKindDef<ActorListItem> = {
 	label: 'Agent',
 	icon: <Bot size={14} aria-hidden />,
 	placeholder: 'Search agents…',
-	emptyCopy: 'No agents found.',
-	multi: false,
+	emptyCopy: 'No agent by that name',
+	// Multi-select — the composer's `agents` list is a mentions array, so the
+	// `+` menu's Mention-an-agent path stacks additional picks the same way
+	// the inline `@` picker does.
+	multi: true,
 	// Shares the useActors query cache so opening the picker is free when the
 	// workspace actors list is already loaded elsewhere (sidebar, agents page).
 	search: async (query, { workspaceId, signal, queryClient }) => {
@@ -279,7 +282,8 @@ export const SLASH_KINDS: ReadonlyArray<SlashKindDef<any>> = [agentKind, itemKin
 // ---------------------------------------------------------------------------
 
 export interface SlashPickerSelection {
-	agent?: ChatSelectionAgent | null
+	/** The composer's mentions list — used to draw checkmarks against already-picked agents. */
+	agents?: string[]
 	objects?: ChatSelectionObject[]
 	notifications?: ChatSelectionNotification[]
 }
@@ -655,7 +659,7 @@ function isSelectedForItem<T>(
 	if (!selected) return false
 	if (kindId === 'agent') {
 		const id = (item as unknown as { id: string }).id
-		return selected.agent?.id === id
+		return selected.agents?.includes(id) ?? false
 	}
 	// Multi-select "item" kind — discriminate by the resolved SlashPickerResult
 	// so objects and notifications each hit their own bucket in the selection.

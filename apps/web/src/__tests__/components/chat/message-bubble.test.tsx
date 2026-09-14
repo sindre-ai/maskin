@@ -23,6 +23,11 @@ vi.mock('@/hooks/use-objects', () => ({
 	}),
 }))
 
+vi.mock('@/hooks/use-actors', async () => {
+	const actual = await vi.importActual<typeof import('@/hooks/use-actors')>('@/hooks/use-actors')
+	return { ...actual, useActors: () => ({ data: [] }) }
+})
+
 import { MessageBubble } from '@/components/chat/message-bubble'
 
 function buildMessage(overrides: Partial<MessageResponse> = {}): MessageResponse {

@@ -4,7 +4,8 @@ import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import type { MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
-import { useCallback, useReducer, useState } from 'react'
+import { MESSAGE_MAX_MENTIONS } from '@maskin/shared'
+import { useCallback, useMemo, useReducer, useState } from 'react'
 
 interface ThreadComposerProps {
 	workspaceId: string
@@ -17,16 +18,22 @@ interface ThreadComposerProps {
  * are sent as structured `metadata.context_objects` / `context_notifications`
  * (rendered as chips by `MessageBubble`) rather than inlined into the message
  * text — the backend rebuilds the equivalent context block for the agent's
- * prompt from that metadata (see `conversation-responder.ts`). An agent
- * picked via the "Agent" button becomes an `@mention` so the responder
- * pipeline's mention fast-path picks it up (and auto-joins them as a
- * participant if they weren't one already).
+ * prompt from that metadata (see `conversation-responder.ts`). Agents mentioned
+ * via `@` or the `+` menu ride the message as `metadata.mentions`, and the
+ * responder pipeline's mention fast-path auto-joins them as participants if
+ * they weren't one already.
  */
 export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerProps) {
 	const [selection, dispatch] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
 	const sendMessage = useSendMessage(conversationId, workspaceId)
 	const { data: conversation } = useConversation(conversationId, workspaceId)
+
+	const self = getStoredActor()
+	const participantIds = useMemo(
+		() => conversation?.participants.map((p) => p.actorId) ?? [],
+		[conversation?.participants],
+	)
 
 	const handleSend = useCallback(
 		async (content: string) => {
@@ -53,8 +60,14 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 					...(n.title ? { title: n.title } : {}),
 				}))
 			}
-			if (selection.agent) {
-				metadata.mentions = [selection.agent.id]
+			// Self-mention short-circuits the notification write by never reaching
+			// the wire — the composer surfaced the warning chip, the send drops
+			// the id. Every other mention rides as-is (capped, insertion order).
+			const mentions = selection.agents
+				.filter((id) => id !== self?.id)
+				.slice(0, MESSAGE_MAX_MENTIONS)
+			if (mentions.length > 0) {
+				metadata.mentions = mentions
 			}
 
 			try {
@@ -68,16 +81,17 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 				throw err
 			}
 		},
-		[selection, sendMessage],
+		[selection, sendMessage, self?.id],
 	)
 
 	// Name who you are answering (mockup 7850). "Message this conversation"
 	// gave the composer no subject in a thread whose other party is the whole
-	// point of opening it; an @mention picked in the composer overrides the
+	// point of opening it; a mention picked in the composer overrides the
 	// name because that mention, not the thread's lead, is who replies.
-	const self = getStoredActor()
+	const firstMentionName =
+		selection.agents.length > 0 ? selection.agentNames[selection.agents[0]] : undefined
 	const counterpart =
-		selection.agent?.name ??
+		firstMentionName ??
 		conversation?.participants.find((p) => p.actorId !== self?.id)?.actorName
 	// Task 6321aecf: same boundary as `<Composer>`'s `+` menu switch — when the
 	// flag is ON and there is no named counterpart, promote `/` and `@` in the
@@ -99,7 +113,8 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 			placeholder={placeholder}
 			selection={selection}
 			onDispatchSelection={dispatch}
-			onRemoveAgent={() => dispatch({ type: 'remove_agent' })}
+			conversationParticipantIds={participantIds}
+			onRemoveAgent={(id) => dispatch({ type: 'remove_agent', id })}
 			onRemoveObject={(id) => dispatch({ type: 'remove_object', id })}
 			onRemoveNotification={(id) => dispatch({ type: 'remove_notification', id })}
 			onRemoveFile={(fileId) => dispatch({ type: 'remove_file', fileId })}
