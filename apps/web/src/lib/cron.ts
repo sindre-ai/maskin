@@ -92,3 +92,61 @@ export function describeCronExpression(expr: string): string {
 	const parsed = parseCronExpression(expr)
 	return parsed ? describeCronSchedule(parsed) : expr
 }
+
+/** Next firing instant strictly after `from` for a cron expression this app
+ * generates itself. Returns `null` for any expression `parseCronExpression`
+ * rejects (steps, lists, ranges, day names, out-of-range fields) so the caller
+ * can fall through to a `—` rather than guessing a time. */
+export function nextCronFire(expr: string, from: Date = new Date()): Date | null {
+	const parsed = parseCronExpression(expr)
+	if (!parsed) return null
+	const minute = Number(parsed.minute === '*' ? 0 : parsed.minute)
+	const hour = Number(parsed.hour === '*' ? 0 : parsed.hour)
+
+	switch (parsed.frequency) {
+		case 'hourly': {
+			const next = new Date(from)
+			next.setSeconds(0, 0)
+			next.setMinutes(minute)
+			if (next <= from) next.setHours(next.getHours() + 1)
+			return next
+		}
+		case 'daily': {
+			const next = new Date(from)
+			next.setSeconds(0, 0)
+			next.setHours(hour, minute)
+			if (next <= from) next.setDate(next.getDate() + 1)
+			return next
+		}
+		case 'weekly': {
+			const targetDow = Number(parsed.dayOfWeek)
+			const next = new Date(from)
+			next.setSeconds(0, 0)
+			next.setHours(hour, minute)
+			// Positive modulo — a same-day fire that's already past pushes to
+			// next week, not today.
+			const dayGap = (targetDow - next.getDay() + 7) % 7
+			if (dayGap === 0 && next <= from) next.setDate(next.getDate() + 7)
+			else next.setDate(next.getDate() + dayGap)
+			return next
+		}
+		case 'monthly': {
+			const targetDom = Number(parsed.dayOfMonth)
+			const next = new Date(from)
+			next.setSeconds(0, 0)
+			next.setDate(targetDom)
+			next.setHours(hour, minute)
+			// setDate can overflow (e.g. day 31 in a 30-day month) — that's the
+			// wrong answer for the current month, so advance one calendar
+			// month and re-apply until the day sticks.
+			if (next.getDate() !== targetDom || next <= from) {
+				do {
+					next.setDate(1)
+					next.setMonth(next.getMonth() + 1)
+					next.setDate(targetDom)
+				} while (next.getDate() !== targetDom)
+			}
+			return next
+		}
+	}
+}

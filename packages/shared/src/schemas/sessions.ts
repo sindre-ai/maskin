@@ -294,6 +294,13 @@ export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
  * - billing_error         402 — credit balance exhausted
  * - max_plan_rate_limit   402 — Max plan temporary rate limit
  * - rate_limit_error      429 — Anthropic rate limit
+ * - oauth_revoked         401 — "OAuth access token has been revoked" from the
+ *                         Claude Code CLI's own error line. Distinct from the
+ *                         limit codes above: the credential itself is bad, not
+ *                         just spent. Routes into the same runtime failover
+ *                         path so the retry lands on the next slot; if that
+ *                         slot's token is only expired-not-revoked, the retry's
+ *                         session-start refresh recovers it in place.
  *
  * OpenRouter HTTP error codes:
  * - insufficient_credits  402 — OpenRouter credit balance exhausted
@@ -321,6 +328,7 @@ export const failureReasonCodeSchema = z.enum([
 	'billing_error',
 	'max_plan_rate_limit',
 	'rate_limit_error',
+	'oauth_revoked',
 	'insufficient_credits',
 	'agent_server_lost',
 	'plan_cap_exceeded',

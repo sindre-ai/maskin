@@ -53,6 +53,7 @@ export function TriggerRow({
 	agentType = 'agent',
 	onToggleEnabled,
 	isToggling,
+	v4Polish = false,
 }: {
 	trigger: TriggerResponse
 	workspaceId: string
@@ -63,6 +64,10 @@ export function TriggerRow({
 	 *  hides the switch rather than rendering a dead control. */
 	onToggleEnabled?: (next: boolean) => void
 	isToggling?: boolean
+	/** v4 row parity: state label sized to match the LoopRow state pill and no
+	 *  trailing chevron, so the right rail reads as `state label + toggle`.
+	 *  Composed at the route boundary from the `loops-v4-polish` umbrella flag. */
+	v4Polish?: boolean
 }) {
 	const Icon = TRIGGER_TYPE_ICON[trigger.type] ?? Zap
 	const description = describeTrigger(trigger)
@@ -103,7 +108,8 @@ export function TriggerRow({
 
 			<span
 				className={cn(
-					'pointer-events-none relative w-6 shrink-0 text-right text-[11px] font-semibold',
+					'pointer-events-none relative shrink-0 text-right font-semibold',
+					v4Polish ? 'text-xs' : 'w-6 text-[11px]',
 					trigger.enabled ? 'text-success' : 'text-muted-foreground',
 				)}
 			>
@@ -121,11 +127,13 @@ export function TriggerRow({
 				</span>
 			)}
 
-			<ChevronRight
-				size={15}
-				aria-hidden="true"
-				className="pointer-events-none relative shrink-0 text-muted-foreground"
-			/>
+			{!v4Polish && (
+				<ChevronRight
+					size={15}
+					aria-hidden="true"
+					className="pointer-events-none relative shrink-0 text-muted-foreground"
+				/>
+			)}
 		</div>
 	)
 }

@@ -58,6 +58,13 @@ export const objectResponseSchema = z.object({
 	is_subscribed: z.boolean().optional(),
 	unread_count: z.number().optional(),
 	subscriber_count: z.number().optional(),
+	// Per-viewer starred state. Populated on the list handler + detail + graph
+	// via a single secondary query keyed on the returned page ids (see
+	// getStarredObjectIds in services/star-state.ts). Optional so create /
+	// update / verify / undo-write endpoints — which return a single object the
+	// caller just mutated — can omit it without lying about the schema; the
+	// star toggle endpoints carry their own scalar in the response body.
+	is_starred_by_me: z.boolean().optional(),
 })
 
 export const actorSkillSchema = z.object({

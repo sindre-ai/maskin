@@ -276,7 +276,7 @@ app.openapi(createCommentRoute, (async (c) => {
 		body.parent_event_id,
 	)
 
-	const { comment, agentMentions, unresolvedMentions } = await postComment(db, {
+	const { comment, unresolvedMentions } = await postComment(db, {
 		workspaceId,
 		actorId,
 		entityId: body.entity_id,
@@ -320,46 +320,24 @@ app.openapi(createCommentRoute, (async (c) => {
 		})
 	}
 
-	// Fire-and-forget: spawn an agent session per @mentioned agent so the agent
-	// can read the comment and reply. Session creation happens after the
-	// transaction commits so a failure here doesn't roll back the comment or
-	// notifications — stuck pending sessions are recovered by the watchdog.
-	for (const mention of agentMentions) {
-		sessionManager
-			.createSession(workspaceId, {
-				actorId: mention.agentId,
-				actionPrompt: buildMentionPrompt({
-					objectId: body.entity_id,
-					commenterActorId: actorId,
-					content: body.content,
-					notificationId: mention.notificationId,
-				}),
-				config: {
-					mention: {
-						object_id: body.entity_id,
-						commenter_actor_id: actorId,
-						notification_id: mention.notificationId,
-						comment_event_id: comment.id,
-					},
-				},
-				createdBy: actorId,
-			})
-			.catch((err) =>
-				logger.error('Failed to create session for @mentioned agent', {
-					agentId: mention.agentId,
-					objectId: body.entity_id,
-					notificationId: mention.notificationId,
-					error: String(err),
-				}),
-			)
-	}
+	// Case-1 mention dispatch (@-mention → agent session, human notification)
+	// has moved to `CommentDispatcher` in `services/trigger-runner.ts`. The
+	// subscriber picks the `commented` event off `PgNotifyBridge` once this
+	// transaction commits, so nothing in this handler needs to spawn a session
+	// per mention any more — one code path, one log stream (Magnus-locked).
 
 	// Thread-scoped auto-replies: when this comment is a reply, also fire a
 	// session for any agent who previously participated in the thread (posted
 	// a comment OR was @mentioned), so threaded conversations flow without
 	// requiring an explicit @mention on every message. The 5-in-a-row cap
 	// inside the helper bounds runaway agent-to-agent ping-pong.
+	//
+	// `excludedAgentIds` keeps this in sync with the mention path: any agent
+	// the `CommentDispatcher` will handle via the @-mention branch is excluded
+	// here so the thread-reply auto-spawn doesn't double up on the same agent
+	// for the same comment.
 	if (parentEventId !== undefined) {
+		const excludedAgentIds = await resolveMentionedAgentIds(db, body.mentions)
 		spawnThreadReplySessions({
 			db,
 			sessionManager,
@@ -369,7 +347,7 @@ app.openapi(createCommentRoute, (async (c) => {
 			threadRootEventId: parentEventId,
 			newCommentEventId: comment.id,
 			newCommentContent: body.content,
-			excludedAgentIds: new Set(agentMentions.map((m) => m.agentId)),
+			excludedAgentIds,
 		}).catch((err) =>
 			logger.error('Failed to spawn thread-reply sessions', {
 				objectId: body.entity_id,
@@ -461,29 +439,23 @@ async function resolveRootParentEventId(
 	return { parentEventId: undefined, opActorId: null }
 }
 
-function buildMentionPrompt(ctx: {
-	objectId: string
-	commenterActorId: string
-	content: string
-	notificationId: string
-}): string {
-	return [
-		'You were @mentioned in a comment on an object. Read the comment and the object context, then decide what the right response is. The response can be any combination of:',
-		'  - taking an action (updating the object, creating related work, running a tool, kicking off another session, etc.)',
-		'  - posting a comment reply (to answer, discuss, acknowledge, or report what you did)',
-		'  - doing nothing, if no response is warranted',
-		'',
-		"Let the context guide you — what is being asked explicitly, what's implied by the thread, and what would actually be useful. Action and comment aren't mutually exclusive: it's often right to do the work and post a short comment about it, or to comment first and then act, or just one or the other. Pick whatever genuinely fits.",
-		'',
-		`Object ID: ${ctx.objectId}`,
-		`Commenter actor ID: ${ctx.commenterActorId}`,
-		'Comment content:',
-		'"""',
-		ctx.content,
-		'"""',
-		'',
-		`Once you have done whatever you decided to do (including if that's nothing), mark notification ${ctx.notificationId} as resolved.`,
-	].join('\n')
+/**
+ * Resolve the caller-supplied `mentions` array to the subset that are agent
+ * actors — used by the thread-reply spawn below to skip agents that the
+ * `CommentDispatcher` (`services/trigger-runner.ts`) will already handle via
+ * the mention branch, so a mention + thread-reply on the same comment doesn't
+ * double-dispatch the same agent.
+ */
+async function resolveMentionedAgentIds(
+	db: Database,
+	mentionIds: string[] | undefined,
+): Promise<Set<string>> {
+	if (!mentionIds?.length) return new Set()
+	const rows = await db
+		.select({ id: actors.id })
+		.from(actors)
+		.where(and(inArray(actors.id, mentionIds), eq(actors.type, 'agent')))
+	return new Set(rows.map((r) => r.id))
 }
 
 // Cap on consecutive agent-authored comments at the tail of a thread. Once a

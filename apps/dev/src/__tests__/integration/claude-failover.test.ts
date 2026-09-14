@@ -98,9 +98,142 @@ describe('Claude failover — session-start credential resolver against Postgres
 		const claudeOAuth = settings.claude_oauth as Record<string, unknown>
 		expect(claudeOAuth.failover).toEqual({
 			active_slot: 'backup',
+			// Per-slot record, mirrored onto the legacy primary/backup fields.
+			failures: { primary: { at: 1_800_000_060_000, reason: 'auth_failed' } },
 			last_primary_failure_at: 1_800_000_060_000,
 			last_classified_reason: 'auth_failed',
 		})
+	})
+
+	it('walks past every rejected subscription to the first healthy one in the chain', async () => {
+		const actor = await insertActor(db)
+		const ws = await insertWorkspace(db, actor.id, {
+			settings: {
+				enabled_modules: ['work'],
+				claude_oauth: {
+					primary: futureBlob({ encryptedAccessToken: encrypt('first') }),
+					backup: futureBlob({ encryptedAccessToken: encrypt('second') }),
+					extras: {
+						slot_3: futureBlob({ encryptedAccessToken: encrypt('third') }),
+						slot_4: futureBlob({ encryptedAccessToken: encrypt('fourth') }),
+					},
+					failover: { active_slot: 'primary' },
+				},
+			},
+		})
+
+		// The first two are out of quota; the third answers.
+		const probe = async (tokens: { accessToken: string }): Promise<ClassifierInput | null> =>
+			tokens.accessToken === 'first' || tokens.accessToken === 'second'
+				? { kind: 'http', status: 401, headers: headersFrom({}) }
+				: null
+
+		const result = await resolveClaudeCredentialsWithFailover({
+			db,
+			workspaceId: ws.id,
+			actorId: actor.id,
+			probe,
+			now: () => 1_800_000_060_000,
+			env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+		})
+
+		expect(result?.slot).toBe('slot_3')
+		expect(result?.tokens.accessToken).toBe('third')
+
+		// One transition event per hop, each naming where it went.
+		const rows = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.workspaceId, ws.id), eq(events.action, FAILOVER_TRIGGERED_ACTION)))
+		expect(rows.map((row) => (row.data as { to_slot: string }).to_slot)).toEqual([
+			'backup',
+			'slot_3',
+		])
+
+		const [stored] = await db.select().from(workspaces).where(eq(workspaces.id, ws.id)).limit(1)
+		const oauth = (stored.settings as Record<string, unknown>).claude_oauth as {
+			failover: { active_slot: string; failures: Record<string, { reason: string }> }
+		}
+		expect(oauth.failover.active_slot).toBe('slot_3')
+		// Each rejected subscription carries its own reason, so the settings
+		// page can say which one died and why.
+		expect(oauth.failover.failures.primary?.reason).toBe('auth_failed')
+		expect(oauth.failover.failures.backup?.reason).toBe('auth_failed')
+		expect(oauth.failover.failures.slot_3).toBeUndefined()
+	})
+
+	it('records exhaustion and returns null when every subscription in the chain is rejected', async () => {
+		const actor = await insertActor(db)
+		const ws = await insertWorkspace(db, actor.id, {
+			settings: {
+				enabled_modules: ['work'],
+				claude_oauth: {
+					primary: futureBlob({ encryptedAccessToken: encrypt('first') }),
+					backup: futureBlob({ encryptedAccessToken: encrypt('second') }),
+					extras: { slot_3: futureBlob({ encryptedAccessToken: encrypt('third') }) },
+					failover: { active_slot: 'primary' },
+				},
+			},
+		})
+
+		const unusable: Array<{ transient: boolean; detail: string }> = []
+		const result = await resolveClaudeCredentialsWithFailover({
+			db,
+			workspaceId: ws.id,
+			actorId: actor.id,
+			probe: async () => ({ kind: 'http', status: 401, headers: headersFrom({}) }),
+			now: () => 1_800_000_060_000,
+			env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+			onUnusable: (info) => unusable.push(info),
+		})
+
+		expect(result).toBeNull()
+		expect(unusable).toHaveLength(1)
+		expect(unusable[0]?.transient).toBe(false)
+		const exhausted = await db
+			.select()
+			.from(events)
+			.where(
+				and(
+					eq(events.workspaceId, ws.id),
+					eq(events.action, 'claude_subscription_backup_exhausted'),
+				),
+			)
+		expect(exhausted).toHaveLength(1)
+		expect((exhausted[0]?.data as { slot: string }).slot).toBe('slot_3')
+	})
+
+	it('clears a stale failure record once the slot answers healthily again', async () => {
+		const actor = await insertActor(db)
+		const ws = await insertWorkspace(db, actor.id, {
+			settings: {
+				enabled_modules: ['work'],
+				claude_oauth: {
+					primary: futureBlob({ encryptedAccessToken: encrypt('first') }),
+					failover: {
+						active_slot: 'primary',
+						failures: { primary: { at: 1_700_000_000_000, reason: 'quota_exhausted_5h' } },
+					},
+				},
+			},
+		})
+
+		const result = await resolveClaudeCredentialsWithFailover({
+			db,
+			workspaceId: ws.id,
+			actorId: actor.id,
+			probe: async () => null,
+			now: () => 1_800_000_060_000,
+			env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+		})
+
+		expect(result?.slot).toBe('primary')
+		const [stored] = await db.select().from(workspaces).where(eq(workspaces.id, ws.id)).limit(1)
+		const oauth = (stored.settings as Record<string, unknown>).claude_oauth as {
+			failover: { failures?: Record<string, unknown>; last_classified_reason?: string }
+		}
+		expect(oauth.failover.failures ?? {}).toEqual({})
+		expect(oauth.failover.last_classified_reason).toBeUndefined()
 	})
 
 	it('AC-T5: flag off does not probe, emit events, or write failover state', async () => {

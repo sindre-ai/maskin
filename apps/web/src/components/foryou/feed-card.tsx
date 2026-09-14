@@ -8,7 +8,11 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { useActors } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
-import { trackForyouCardAction, trackForyouCardShown } from '@/lib/analytics'
+import {
+	trackForyouCardAction,
+	trackForyouCardMarkedRead,
+	trackForyouCardShown,
+} from '@/lib/analytics'
 import type { ActorListItem, EventResponse, UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
@@ -21,6 +25,7 @@ import {
 	decisionOf,
 } from '@/lib/foryou-card-kind'
 import { heldNote } from '@/lib/foryou-feed'
+import { markImpressed } from '@/lib/foryou-impressions'
 import { Link } from '@tanstack/react-router'
 import { ArrowUpRight, Check, ChevronDown, ChevronUp } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -90,10 +95,11 @@ export function FeedCard({
 	)
 	const who = driver?.name ?? 'the agent'
 
-	const impressionFired = useRef(false)
+	// Dedup lives in module scope (see `foryou-impressions.ts`), not a per-mount
+	// ref: a per-mount guard re-fires on every navigation back to the feed, which
+	// is exactly what inflated impressions/card 5-8x since Aug 25.
 	useEffect(() => {
-		if (impressionFired.current) return
-		impressionFired.current = true
+		if (!markImpressed(objectId)) return
 		trackForyouCardShown({ card_kind: cardKind, card_id: objectId })
 	}, [cardKind, objectId])
 
@@ -122,6 +128,9 @@ export function FeedCard({
 		(option: CardAction) => {
 			if (pendingId) return
 			trackForyouCardAction({ card_kind: cardKind, card_id: objectId, action_id: option.id })
+			// A decision implies a read — emit alongside the action so the paired
+			// funnel (shown → marked_read) can't miss the decision path.
+			trackForyouCardMarkedRead({ card_kind: cardKind, card_id: objectId })
 			setPendingId(option.id)
 			// Short beat on the bar before the card flips to its receipt, the way
 			// the mockup acknowledges the tap.
@@ -167,7 +176,7 @@ export function FeedCard({
 							{held && <span className="shrink-0 text-warning">{held}</span>}
 						</span>
 					</button>
-					<MarkReadButton onMarkRead={onMarkRead} />
+					<MarkReadButton cardKind={cardKind} cardId={objectId} onMarkRead={onMarkRead} />
 					<RelativeTime
 						date={item.latest_activity_at}
 						compact
@@ -215,7 +224,7 @@ export function FeedCard({
 						compactDayLimit={7}
 						className="shrink-0 font-mono text-[10px] font-medium uppercase tabular-nums text-muted-foreground"
 					/>
-					<MarkReadButton onMarkRead={onMarkRead} />
+					<MarkReadButton cardKind={cardKind} cardId={objectId} onMarkRead={onMarkRead} />
 					{onToggleExpanded && (
 						<button
 							type="button"
@@ -346,7 +355,15 @@ function DecisionReceipt({ decided, who }: { decided: DecidedOption; who?: strin
 // mockup has no per-card dismiss (its cards only leave once decided), but a
 // real feed needs one — kept quiet on pointer devices, always reachable on
 // touch, per the responsiveness rules.
-function MarkReadButton({ onMarkRead }: { onMarkRead: () => void }) {
+function MarkReadButton({
+	cardKind,
+	cardId,
+	onMarkRead,
+}: {
+	cardKind: CardKind
+	cardId: string
+	onMarkRead: () => void
+}) {
 	return (
 		<button
 			type="button"
@@ -354,6 +371,10 @@ function MarkReadButton({ onMarkRead }: { onMarkRead: () => void }) {
 			title="Mark as read"
 			onClick={(event) => {
 				event.stopPropagation()
+				// Emit BEFORE `onMarkRead()` so an API failure in the mutation
+				// doesn't lose the intent signal — the analytics contract asks for
+				// the gesture, not the confirmed outcome.
+				trackForyouCardMarkedRead({ card_kind: cardKind, card_id: cardId })
 				onMarkRead()
 			}}
 			className="grid size-[22px] shrink-0 place-items-center rounded-sm text-muted-foreground hover:bg-secondary hover:text-foreground can-hover:opacity-0 can-hover:focus-visible:opacity-100 can-hover:group-hover/card:opacity-100"

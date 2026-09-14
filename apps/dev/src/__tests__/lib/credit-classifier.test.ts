@@ -71,6 +71,39 @@ describe('classifyCreditExhaustion', () => {
 			})
 		})
 
+		it('classifies OAuth-revoked banner from real Anthropic 401 output', () => {
+			// Exact result-line the Claude Code CLI wrote when Anthropic
+			// returned 401 authentication_error with body
+			// `"OAuth access token has been revoked."` on a rotated Max token
+			// (observed live 2026-09-10). The runtime failover reason mapping
+			// in session-manager.ts::claudeRuntimeFailoverReason routes this
+			// through the same maybeRetryClaudeOAuthOnNextSlot path as the
+			// spent-subscription banners.
+			const result = classifyCreditExhaustion(
+				'{"type":"result","subtype":"success","is_error":true,"api_error_status":401,"result":"Failed to authenticate. API Error: 401 {\\"type\\":\\"error\\",\\"error\\":{\\"type\\":\\"authentication_error\\",\\"message\\":\\"OAuth access token has been revoked.\\"}}"}',
+			)
+			expect(result).toMatchObject({
+				provider: 'anthropic',
+				reason_code: 'oauth_revoked',
+				http_status: null,
+				verbatim_output: 'OAuth access token has been revoked',
+			})
+		})
+
+		it('classifies OAuth-revoked banner under the strict exit-0 gate too', () => {
+			// A revoked-mid-turn interactive session exits cleanly (is_error:true
+			// but subtype:success), so the exit-0 path must still trip on the
+			// literal CLI banner — it's high-confidence, not one of the bare
+			// substrings the ambiguous gate exists to suppress.
+			const result = classifyCreditExhaustion('OAuth access token has been revoked', {
+				includeAmbiguousSignals: false,
+			})
+			expect(result).toMatchObject({
+				provider: 'anthropic',
+				reason_code: 'oauth_revoked',
+			})
+		})
+
 		it('classifies not logged in banner', () => {
 			const result = classifyCreditExhaustion(
 				'Not logged in · Please run /login\nSession failed with exit code 1',
@@ -194,5 +227,52 @@ describe('classifyCreditExhaustion', () => {
 			const result = classifyCreditExhaustion(tail)
 			expect(result?.reason_code).toBe('session_limit')
 		})
+	})
+})
+
+describe('classifyCreditExhaustion — OpenRouter error envelopes', () => {
+	// Before these, the only OpenRouter failure we recognised was the literal
+	// string "insufficient credits"; a rate-limited session classified as null,
+	// so nothing was recorded and nothing could fail over on it.
+	it('classifies a 402 envelope as insufficient credits', () => {
+		const tail =
+			'POST https://openrouter.ai/api/v1/chat/completions\n{"error":{"code":402,"message":"Prompt tokens limit exceeded"}}'
+
+		expect(classifyCreditExhaustion(tail)).toMatchObject({
+			provider: 'openrouter',
+			reason_code: 'insufficient_credits',
+			http_status: 402,
+		})
+	})
+
+	it('classifies a 429 envelope as a rate limit', () => {
+		const tail =
+			'POST https://openrouter.ai/api/v1/chat/completions\n{"error":{"code":429,"message":"Rate limit exceeded"}}'
+
+		expect(classifyCreditExhaustion(tail)).toMatchObject({
+			provider: 'openrouter',
+			reason_code: 'rate_limit_error',
+			http_status: 429,
+		})
+	})
+
+	it('ignores an error envelope from some other service', () => {
+		// The tail is a whole session's stdout and routinely carries other
+		// APIs' error bodies — the OpenRouter host is what makes it ours.
+		const tail = '{"error":{"code":429,"message":"Rate limit exceeded"}} from api.example.com'
+
+		expect(classifyCreditExhaustion(tail)).toBeNull()
+	})
+
+	it('leaves an unmapped OpenRouter status unclassified', () => {
+		const tail = 'https://openrouter.ai/api\n{"error":{"code":418,"message":"teapot"}}'
+
+		expect(classifyCreditExhaustion(tail)).toBeNull()
+	})
+
+	it('does not classify an OpenRouter envelope when ambiguous signals are off', () => {
+		const tail = 'https://openrouter.ai/api\n{"error":{"code":402,"message":"no credits"}}'
+
+		expect(classifyCreditExhaustion(tail, { includeAmbiguousSignals: false })).toBeNull()
 	})
 })
