@@ -132,6 +132,6 @@ test.describe('Agent detail — Tools — auto-injected linkedin-unipile', () =>
 
 		// The hand-pasted server row is not deleted — the hint appears alongside it.
 		await expect(tools.getByText(/Already auto-injected/)).toBeVisible()
-		await expect(tools.getByText('linkedin-unipile')).toBeVisible()
+		await expect(tools.getByText('linkedin-unipile', { exact: true })).toBeVisible()
 	})
 })
