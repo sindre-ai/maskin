@@ -53,6 +53,7 @@ import {
 	recordRuntimeClaudeOAuthFailover,
 } from '../lib/claude-failover'
 import { getValidOAuthToken } from '../lib/claude-oauth'
+import { resolveActiveSlot } from '../lib/claude-oauth-slots'
 import { debitCreditForSession } from '../lib/credit-billing'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { isEnterprise } from '../lib/enterprise'
@@ -2658,6 +2659,50 @@ export class SessionManager extends EventEmitter {
 	 * its old credentials, only the pointer moves so the NEXT session lands on
 	 * the new subscription. The human is told exactly that.
 	 */
+	/**
+	 * The slot a session that just failed on `failedSlot` should be retried on,
+	 * or `null` when there is nowhere to go.
+	 *
+	 * `recordRuntimeClaudeOAuthFailover` only lets the session running on the
+	 * CURRENTLY active slot advance the pointer — everyone else gets
+	 * `superseded`. That guard is correct (a straggler must not drag the
+	 * workspace backwards), but "another session already moved the pointer" is
+	 * NOT the same as "there is nowhere to retry": the pointer has by then been
+	 * moved ONTO A HEALTHY SLOT, which is exactly where this session's work
+	 * belongs. Treating the two as one is how a single rate-limit burst used to
+	 * delete every session but the one that won the row lock — six sessions hit
+	 * an exhausted slot inside two minutes, one got a retry, five were dropped
+	 * with no error anywhere (the @mention that went unanswered for 45 minutes
+	 * on 2026-09-14 was one of them).
+	 *
+	 * So: on `superseded`, read where the winner moved the workspace to and
+	 * retry there. Callers still own their own duplicate-retry guard.
+	 */
+	private async resolveFailoverTargetSlot(
+		workspaceId: string,
+		failedSlot: string,
+		failover: { moved: true; slot: string } | { moved: false; reason: string },
+	): Promise<string | null> {
+		if (failover.moved) return failover.slot
+		if (failover.reason !== 'superseded') return null
+
+		const [latest] = await this.db
+			.select({ settings: workspaces.settings })
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.limit(1)
+		if (!latest) return null
+
+		const settings = (latest.settings as Record<string, unknown>) ?? {}
+		const active = resolveActiveSlot(settings.claude_oauth)
+		// Only a slot that actually moved on is a retry target. If the pointer
+		// still names the slot we just failed on, the winner's transition has
+		// not landed (or landed back here) — retrying would reproduce the same
+		// failure immediately.
+		if (!active || active.slot === failedSlot) return null
+		return active.slot
+	}
+
 	private async failOverInteractiveSession(
 		sessionId: string,
 		reason: string,
@@ -2684,9 +2729,10 @@ export class SessionManager extends EventEmitter {
 			fromSlot: failedSlot,
 			sourceSessionId: session.id,
 		})
-		if (failover.moved) return failover.slot
+		const target = await this.resolveFailoverTargetSlot(session.workspaceId, failedSlot, failover)
+		if (target) return target
 
-		if (failover.reason === 'exhausted') {
+		if (!failover.moved && failover.reason === 'exhausted') {
 			await recordRuntimeClaudeOAuthBackupExhausted({
 				db: this.db,
 				workspaceId: session.workspaceId,
@@ -2748,10 +2794,17 @@ export class SessionManager extends EventEmitter {
 			sourceSessionId: session.id,
 		})
 
-		if (!failover.moved) {
-			// `superseded` means another session already moved the workspace on
-			// — nothing to say. Only a genuinely exhausted chain is reported.
-			if (failover.reason !== 'exhausted') return
+		const targetSlot = await this.resolveFailoverTargetSlot(
+			session.workspaceId,
+			failedSlot,
+			failover,
+		)
+
+		if (!targetSlot) {
+			// Only a genuinely exhausted chain is reported. `superseded` with no
+			// usable target means the winner's transition has not landed yet —
+			// say nothing, since the chain is not actually out of subscriptions.
+			if (failover.moved || failover.reason !== 'exhausted') return
 			await recordRuntimeClaudeOAuthBackupExhausted({
 				db: this.db,
 				workspaceId: session.workspaceId,
@@ -2780,7 +2833,7 @@ export class SessionManager extends EventEmitter {
 			actionPrompt: session.actionPrompt,
 			config: {
 				...config,
-				llm_oauth_slot: failover.slot,
+				llm_oauth_slot: targetSlot,
 				claude_oauth_runtime_failover_retry_of: session.id,
 			},
 			triggerId: session.triggerId ?? undefined,
@@ -3853,10 +3906,34 @@ export class SessionManager extends EventEmitter {
 		}
 
 		// 8. Fail sessions stuck in 'starting' for >10 minutes (zombie session cleanup)
+		//
+		// EXCEPT the ones the dispatch queue still owns. `startSession` flips the
+		// row to 'starting' and only THEN enqueues, and `handleNoCapacity` parks a
+		// row without touching `sessions.updatedAt` — so a session waiting on
+		// legitimate agent-server backpressure ages past this window while doing
+		// nothing wrong, and used to be killed here at exactly 10 minutes and
+		// mislabelled `startup_stalled` ("most often a credential lookup that
+		// never returned" — pointing at credentials for what is a capacity wait).
+		// On 2026-09-14 that reaped a whole morning of Vaerksted's work, including
+		// the failover retries this same class of incident creates.
+		//
+		// A row in `session_dispatch_attempts` means the queue is the authority:
+		// it has its own attempt ceiling and fails the session itself when it
+		// gives up, with an accurate reason. Leave those alone.
 		const stuckStarting = await this.db
 			.select()
 			.from(sessions)
-			.where(and(eq(sessions.status, 'starting'), lt(sessions.updatedAt, tenMinutesAgo)))
+			.where(
+				and(
+					eq(sessions.status, 'starting'),
+					lt(sessions.updatedAt, tenMinutesAgo),
+					sql`NOT EXISTS (
+						SELECT 1 FROM session_dispatch_attempts
+						WHERE session_dispatch_attempts.session_id = sessions.id
+						  AND session_dispatch_attempts.status = 'pending'
+					)`,
+				),
+			)
 
 		for (const session of stuckStarting) {
 			// Everything this pass knows about WHY the launch stalled is on the

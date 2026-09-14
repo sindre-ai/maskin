@@ -1,4 +1,4 @@
-import { agentServers, sessions, workspaces } from '@maskin/db/schema'
+import { agentServers, sessionLogs, sessions, workspaces } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq, ne } from 'drizzle-orm'
 import type { EncryptedOAuthData } from '../../lib/claude-oauth'
@@ -87,12 +87,32 @@ describe('Remote session completion — Claude subscription failover (Integratio
 		agentServerId = server.id
 	})
 
-	async function completeRemoteSessionOnLimit(exitCode: number) {
+	/**
+	 * Point the workspace's failover pointer at `slot` without touching the
+	 * slot blobs — stands in for another session in the same burst having
+	 * already won the row lock in `recordRuntimeClaudeOAuthFailover`.
+	 */
+	async function setActiveSlot(slot: string) {
+		const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
+		const settings = (ws?.settings ?? {}) as Record<string, unknown>
+		const claudeOauth = (settings.claude_oauth ?? {}) as Record<string, unknown>
+		await db
+			.update(workspaces)
+			.set({
+				settings: {
+					...settings,
+					claude_oauth: { ...claudeOauth, failover: { active_slot: slot } },
+				},
+			})
+			.where(eq(workspaces.id, workspaceId))
+	}
+
+	async function completeRemoteSessionOnLimit(exitCode: number, slot = 'primary') {
 		const session = await insertSession(db, workspaceId, actorId, actorId, {
 			status: 'running',
 			agentServerId,
 			containerId: 'sandbox-under-test',
-			config: { llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },
+			config: { llm_route: 'claude_oauth', llm_oauth_slot: slot },
 		})
 		// A remote session's stdout lives only in session_logs — there is no
 		// in-memory tail buffer for it, which is why the classifier had nothing
@@ -143,6 +163,59 @@ describe('Remote session completion — Claude subscription failover (Integratio
 			llm_oauth_slot: 'backup',
 			claude_oauth_runtime_failover_retry_of: session.id,
 		})
+	})
+
+	it('still retries when another session already advanced the pointer (superseded)', async () => {
+		vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
+		// The shape of a rate-limit burst: several sessions on one spent
+		// subscription report within seconds of each other. The first to take the
+		// workspace row lock moves primary -> backup; every straggler after it
+		// gets `superseded`. This session is a straggler.
+		await setActiveSlot('backup')
+
+		const session = await completeRemoteSessionOnLimit(1, 'primary')
+
+		// The pointer is NOT dragged further — that guard is the whole point of
+		// `superseded` and must survive.
+		const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
+		const claudeOauth = (ws?.settings as { claude_oauth?: { failover?: { active_slot?: string } } })
+			?.claude_oauth
+		expect(claudeOauth?.failover?.active_slot).toBe('backup')
+
+		// But the work is not dropped either. Before the fix this returned early
+		// and NO retry row existed: one rate-limit burst silently deleted every
+		// session except the one that won the lock.
+		const retries = await db
+			.select()
+			.from(sessions)
+			.where(and(eq(sessions.workspaceId, workspaceId), ne(sessions.id, session.id)))
+		expect(retries).toHaveLength(1)
+		expect(retries[0]?.config).toMatchObject({
+			llm_route: 'claude_oauth',
+			llm_oauth_slot: 'backup',
+			claude_oauth_runtime_failover_retry_of: session.id,
+		})
+	})
+
+	it('starts no retry when the chain is genuinely exhausted', async () => {
+		vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'true')
+		// Last slot in the chain, and it is the active one — so the failover
+		// transaction has nowhere forward to go and reports `exhausted` rather
+		// than `superseded`. That is the one case where dropping the work is
+		// correct, and it must stay distinguishable from a straggler.
+		await setActiveSlot('backup')
+
+		const session = await completeRemoteSessionOnLimit(1, 'backup')
+
+		const retries = await db
+			.select()
+			.from(sessions)
+			.where(and(eq(sessions.workspaceId, workspaceId), ne(sessions.id, session.id)))
+		expect(retries).toHaveLength(0)
+
+		// And the user is told, rather than left with a session that just stopped.
+		const logs = await db.select().from(sessionLogs).where(eq(sessionLogs.sessionId, session.id))
+		expect(logs.some((l) => l.content.includes('no further Claude OAuth fallback'))).toBe(true)
 	})
 
 	it('does not fail over when the kill-switch flag is off', async () => {

@@ -1,4 +1,4 @@
-import { events, sessions } from '@maskin/db/schema'
+import { events, sessionDispatchAttempts, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
@@ -176,6 +176,68 @@ describe('SessionManager.runWatchdog — stalled launches carry a reason (Integr
 		const eventRows = await db.select().from(events).where(eq(events.entityId, stuck.id))
 		const failed = eventRows.find((e) => e.action === 'session_failed')
 		expect((failed?.data as Record<string, unknown>).reason_code).toBe('startup_stalled')
+	})
+
+	it('spares a session the dispatch queue is still holding', async () => {
+		// `startSession` flips the row to 'starting' BEFORE enqueueing, and the
+		// queue's `handleNoCapacity` re-parks without touching `sessions.updatedAt`
+		// — so a session waiting on a full agent-server pool ages past the zombie
+		// window while behaving perfectly. Killing it here mislabels a capacity
+		// wait as a credential stall and drops the work with no retry, which is
+		// what emptied a morning of Vaerksted's queue on 2026-09-14.
+		const agent = await insertActor(db, { type: 'agent' })
+		const parked = await insertSession(db, workspaceId, agent.id, actorId, {
+			status: 'starting',
+			containerId: null,
+			startedAt: null,
+			config: {},
+			updatedAt: new Date(Date.now() - 20 * 60 * 1000),
+		})
+		await db.insert(sessionDispatchAttempts).values({
+			sessionId: parked.id,
+			idempotencyKey: `dispatch:${parked.id}`,
+			status: 'pending',
+		})
+
+		const manager = new SessionManager(db, stubStorage())
+		try {
+			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+		} finally {
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, parked.id))
+		expect(row?.status).toBe('starting')
+		expect(row?.result).toBeNull()
+	})
+
+	it('still reaps a stalled session whose dispatch row is no longer pending', async () => {
+		// The exclusion is scoped to rows the queue still owns. Once the queue has
+		// given up (status 'failed'), the reaper is the right owner again.
+		const agent = await insertActor(db, { type: 'agent' })
+		const stuck = await insertSession(db, workspaceId, agent.id, actorId, {
+			status: 'starting',
+			containerId: null,
+			startedAt: null,
+			config: {},
+			updatedAt: new Date(Date.now() - 20 * 60 * 1000),
+		})
+		await db.insert(sessionDispatchAttempts).values({
+			sessionId: stuck.id,
+			idempotencyKey: `dispatch:${stuck.id}`,
+			status: 'failed',
+		})
+
+		const manager = new SessionManager(db, stubStorage())
+		try {
+			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+		} finally {
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, stuck.id))
+		expect(row?.status).toBe('failed')
+		expect(failureReasonOf(row?.result)?.reason_code).toBe('startup_stalled')
 	})
 
 	it('reports a route-resolved stall differently from a pre-route stall', async () => {

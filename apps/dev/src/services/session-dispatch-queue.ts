@@ -50,6 +50,18 @@ export interface SessionDispatchQueueOptions {
 	maxBackoffMs?: number
 	/** Backoff when the queue is waiting on capacity. Default 10s. */
 	noCapacityBackoffMs?: number
+	/**
+	 * How long a row may sit parked on `no_capacity` before the queue gives up
+	 * and fails the session. Default 30 min.
+	 *
+	 * No-capacity parking is deliberately unbounded per-attempt (it burns no
+	 * attempt, so a queue waits as long as the pool is full). That is right for
+	 * a busy minute and wrong for a saturated hour: the session sits in
+	 * `starting`, holding a slot in the workspace's own concurrency budget and
+	 * showing the user nothing, indefinitely. This bound turns "silently never"
+	 * into a stated outcome the user can act on.
+	 */
+	noCapacityDeadlineMs?: number
 	/** How often the worker wakes up. Default 5s. */
 	tickMs?: number
 	/** Rows to process per tick. Default 5. */
@@ -98,6 +110,7 @@ const DEFAULTS = {
 	baseBackoffMs: 5_000,
 	maxBackoffMs: 5 * 60_000,
 	noCapacityBackoffMs: 10_000,
+	noCapacityDeadlineMs: 30 * 60_000,
 	tickMs: 5_000,
 	batchSize: 5,
 	leaseMs: 60_000,
@@ -129,6 +142,7 @@ export class SessionDispatchQueue {
 	private readonly baseBackoffMs: number
 	private readonly maxBackoffMs: number
 	private readonly noCapacityBackoffMs: number
+	private readonly noCapacityDeadlineMs: number
 	private readonly tickMs: number
 	private readonly batchSize: number
 	private readonly leaseMs: number
@@ -144,6 +158,7 @@ export class SessionDispatchQueue {
 		this.baseBackoffMs = opts.baseBackoffMs ?? DEFAULTS.baseBackoffMs
 		this.maxBackoffMs = opts.maxBackoffMs ?? DEFAULTS.maxBackoffMs
 		this.noCapacityBackoffMs = opts.noCapacityBackoffMs ?? DEFAULTS.noCapacityBackoffMs
+		this.noCapacityDeadlineMs = opts.noCapacityDeadlineMs ?? DEFAULTS.noCapacityDeadlineMs
 		this.tickMs = opts.tickMs ?? DEFAULTS.tickMs
 		this.batchSize = opts.batchSize ?? DEFAULTS.batchSize
 		this.leaseMs = opts.leaseMs ?? DEFAULTS.leaseMs
@@ -310,6 +325,35 @@ export class SessionDispatchQueue {
 		// Backpressure: every agent-server is full. Don't burn an attempt — just
 		// delay the next try. A queue parked here will resume as soon as an
 		// agent-server frees a slot.
+		//
+		// But not forever. Past the deadline the pool is not "briefly busy", it
+		// is unable to take this work, and the session has been sitting in
+		// `starting` the whole time consuming a slot of the workspace's own
+		// concurrency budget. Fail it with a reason that says capacity, so the
+		// user sees a saturated pool instead of a session that never moved.
+		const parkedForMs = Date.now() - row.createdAt.getTime()
+		if (parkedForMs >= this.noCapacityDeadlineMs) {
+			await this.markRowFailed(row, 'no agent-server capacity')
+			await this.markSessionFailed(
+				row.sessionId,
+				`No agent-server capacity for ${Math.round(parkedForMs / 60_000)} minutes`,
+				{
+					provider: 'maskin',
+					reason_code: 'dispatch_failed',
+					human_message:
+						'This session could not be started — every agent server stayed at capacity, so it was never run. Nothing was executed. Start a new session to try again.',
+					http_status: null,
+					reset_at: null,
+					verbatim_output: `Parked waiting for agent-server capacity for ${Math.round(parkedForMs / 1000)}s before the queue gave up. No container or sandbox was ever created.`,
+				},
+			)
+			logger.error('Session dispatch gave up waiting for capacity', {
+				sessionId: row.sessionId,
+				parkedForMs,
+			})
+			return
+		}
+
 		const nextAttemptAt = new Date(Date.now() + this.noCapacityBackoffMs)
 		await this.db
 			.update(sessionDispatchAttempts)
