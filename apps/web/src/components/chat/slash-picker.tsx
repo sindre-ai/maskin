@@ -10,7 +10,7 @@ import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
 import { type QueryClient, useQueryClient } from '@tanstack/react-query'
 import { Command } from 'cmdk'
-import { Bell, Bot, Box, Check } from 'lucide-react'
+import { Bell, Bot, Box, Check, Sparkles } from 'lucide-react'
 import {
 	type KeyboardEvent,
 	type ReactNode,
@@ -36,12 +36,24 @@ import {
  * exposes the picker primitive.
  */
 
-export type SlashKindId = 'agent' | 'item'
+export type SlashKindId = 'agent' | 'item' | 'create'
+
+/**
+ * `create` rows are the three built-in NEWKIND types (task/bet/insight) that
+ * seed the shared `<CreatePicker>` when picked. `seedTitle` is the composer's
+ * current query at the moment of the pick — the create flow drops it into the
+ * new object's title field so the user never types the same phrase twice.
+ */
+export interface ChatSelectionCreate {
+	objectType: string
+	seedTitle: string
+}
 
 export type SlashPickerResult =
 	| { kind: 'agent'; ref: ChatSelectionAgent }
 	| { kind: 'object'; ref: ChatSelectionObject }
 	| { kind: 'notification'; ref: ChatSelectionNotification }
+	| { kind: 'create'; ref: ChatSelectionCreate }
 
 /**
  * Discriminated union surfaced by the "item" kind — combines workspace objects
@@ -204,8 +216,63 @@ function fetchNotificationPage(
 	})
 }
 
+/**
+ * A NEWKIND row surfaced by the unified `/` picker (`chat-slash-picker-v2`).
+ * The three built-ins mirror the v2 spec's Create-new section — Task, Bet,
+ * Insight. `sub` is the sub-copy verbatim from the spec.
+ */
+export interface CreateKindItem {
+	objectType: string
+	label: string
+	sub: string
+}
+
+const CREATE_ITEMS: CreateKindItem[] = [
+	{
+		objectType: 'task',
+		label: 'Task',
+		sub: 'A piece of work to track through to done',
+	},
+	{
+		objectType: 'bet',
+		label: 'Bet',
+		sub: 'A shaped, time-boxed outcome',
+	},
+	{
+		objectType: 'insight',
+		label: 'Insight',
+		sub: 'A signal from the world worth capturing',
+	},
+]
+
+const createKind: SlashKindDef<CreateKindItem> = {
+	id: 'create',
+	label: 'Create new',
+	icon: <Sparkles size={14} aria-hidden />,
+	placeholder: 'Create new…',
+	// Never dead-ends — Create-new always renders at least the seeded row from
+	// the current query, so the empty-copy string is only surfaced when the
+	// registry itself is filtered to zero items (currently impossible).
+	emptyCopy: 'No create options.',
+	multi: false,
+	search: async (query) => {
+		const needle = query.trim().toLowerCase()
+		if (!needle) return CREATE_ITEMS
+		return CREATE_ITEMS.filter((item) => item.label.toLowerCase().includes(needle))
+	},
+	keyOf: (item) => `create:${item.objectType}`,
+	renderItem: (item) => ({ primary: item.label, secondary: item.sub }),
+	toResult: (item) => ({
+		kind: 'create',
+		// `seedTitle` is filled in by the composer at pick time — the registry
+		// doesn't know the query. Empty string here is a safe default so the
+		// discriminated union is well-formed if this ever runs standalone.
+		ref: { objectType: item.objectType, seedTitle: '' },
+	}),
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: heterogeneous registry — each entry carries its own TItem
-export const SLASH_KINDS: ReadonlyArray<SlashKindDef<any>> = [agentKind, itemKind]
+export const SLASH_KINDS: ReadonlyArray<SlashKindDef<any>> = [agentKind, itemKind, createKind]
 
 // ---------------------------------------------------------------------------
 // Public component

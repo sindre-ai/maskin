@@ -63,6 +63,11 @@ interface CreatePickerProps {
 	/** When defaultType='object', seeds the object subtype from the active
 	 *  type tab (e.g. 'bet', 'insight'). Omit to let the operator pick. */
 	defaultObjectSubtype?: string
+	/** Seeds the title/description input on open — the chat composer's `/`
+	 *  picker threads the current query through here so the user doesn't
+	 *  retype what they just typed. Fully editable once the picker is open;
+	 *  clearing the field clears the seed too. */
+	defaultText?: string
 }
 
 /** Entities the workspace creates directly from a name — no structuring
@@ -133,6 +138,7 @@ export function CreatePicker({
 	onOpenChange,
 	defaultType,
 	defaultObjectSubtype,
+	defaultText,
 }: CreatePickerProps) {
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
@@ -165,12 +171,15 @@ export function CreatePicker({
 		if (!open) return
 		setEntityKind(defaultType && defaultType !== 'object' ? defaultType : null)
 		setObjectType(defaultType === 'object' ? defaultObjectSubtype?.trim() || null : null)
-		setText('')
+		// Seed the input from `defaultText` when supplied (the chat composer's
+		// `/` picker threads its query through here). Callers that don't seed
+		// still start with an empty draft, matching the header/list flows.
+		setText(defaultText ?? '')
 		setAgentId(null)
 		setFull(false)
 		setCommandIndex(0)
 		setSubmitting(false)
-	}, [open, defaultType, defaultObjectSubtype])
+	}, [open, defaultType, defaultObjectSubtype, defaultText])
 
 	useEffect(() => {
 		if (!open) return

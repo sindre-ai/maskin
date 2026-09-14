@@ -88,6 +88,19 @@ export const FLAGS = {
 	chatsV4PolishBanner: 'chats-v4-polish.banner',
 	chatsV4PolishBubbles: 'chats-v4-polish.bubbles',
 	chatsV4PolishNewChat: 'chats-v4-polish.new_chat',
+	/**
+	 * Chat composer `/` picker v2 — unified search-and-create surface.
+	 * When off, typing `/` opens the create-only "Turn this into an object"
+	 * dropdown (today's behaviour). When on, `/` opens the unified picker with
+	 * Reference (existing objects via `search_objects`) on top and Create new
+	 * (Task / Bet / Insight) below, and NEWKIND prefixes like `/task ` become
+	 * type-filter chips in the composer. See parent bet
+	 * [Chat composer completeness](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/f21ad246-ebef-4cd2-93e0-aa46c83ed954).
+	 * Retire once the unified picker is the default for every workspace and the
+	 * legacy `turnIntoOpen` branch in `apps/web/src/components/chat/chat.tsx`
+	 * has been deleted.
+	 */
+	CHAT_SLASH_PICKER_V2: 'chat-slash-picker-v2',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

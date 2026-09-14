@@ -73,10 +73,15 @@ function renderPicker(
 }
 
 describe('SLASH_KINDS registry', () => {
-	it('ships with the two initial kinds in a stable order', () => {
-		expect(SLASH_KINDS.map((k) => k.id)).toEqual(['agent', 'item'])
+	it('ships with the three built-in kinds in a stable order', () => {
+		// `create` is the third kind, added for the v2 unified `/` picker — its
+		// three static rows (task/bet/insight) are the NEWKIND fallback so the
+		// picker never dead-ends. Legacy consumers (agent/item) still see the
+		// same two-kind menu they always did — the extra entry lives at the tail.
+		expect(SLASH_KINDS.map((k) => k.id)).toEqual(['agent', 'item', 'create'])
 		expect(SLASH_KINDS.find((k) => k.id === 'agent')?.multi).toBe(false)
 		expect(SLASH_KINDS.find((k) => k.id === 'item')?.multi).toBe(true)
+		expect(SLASH_KINDS.find((k) => k.id === 'create')?.multi).toBe(false)
 	})
 })
 
