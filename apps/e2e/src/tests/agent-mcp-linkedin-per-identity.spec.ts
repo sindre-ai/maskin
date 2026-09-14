@@ -141,13 +141,14 @@ test.describe('Agent detail — Tools — LinkedIn per-identity Quick Add', () =
 
 		// Sebastian's mcpServers entry lands under his fan-out instance slug —
 		// the key IS the instance slug, so agents inspecting their own tools
-		// see the identity as the row header.
-		await expect(tools.getByText(SEBASTIAN.instanceSlug)).toBeVisible()
+		// see the identity as the row header. Match exact so this doesn't also
+		// pick up the URL row below (URL contains the slug as its path suffix).
+		await expect(tools.getByText(SEBASTIAN.instanceSlug, { exact: true })).toBeVisible()
 
 		// Magnus's server is NOT on the agent — the click only writes Sebastian's
 		// entry. The Magnus button is still clickable (his identity remains
 		// available to add) but nothing scoped to Magnus is on this agent yet.
-		await expect(tools.getByText(MAGNUS.instanceSlug)).toHaveCount(0)
+		await expect(tools.getByText(MAGNUS.instanceSlug, { exact: true })).toHaveCount(0)
 
 		// The Sebastian button hides once his entry is present — matches how the
 		// other Quick Adds behave once their mcpServers row is written.
