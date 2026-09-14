@@ -19,6 +19,7 @@ import {
 	ensureMeetMeetingFields,
 	writeMeetingMetadata,
 } from './meeting-metadata'
+import { synthesizeMeetOnlyWrappedEvent } from './synth-event'
 
 /**
  * Stored under integrations.config alongside system_actor_id.
@@ -589,6 +590,36 @@ async function handleTranscriptReady(
 	} catch (err) {
 		logger.warn('Meet transcript file attach failed (metadata still written)', {
 			meetingId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
+
+	// Meet-only mapper flip: on artefact-complete for a Meet-only call (no
+	// linked Meetup/Luma event), synthesize a wrapped_up `event` object so
+	// consumer triggers 389b1d48 / 925ef751 fire the same way they do for a
+	// listed event. Idempotent on conferenceRecordName; short-circuits when
+	// the meeting already has a linked event. Failure here must not abort
+	// the transcript writeback — log and move on.
+	try {
+		const [meetingRow] = await db
+			.select({ title: objects.title, createdAt: objects.createdAt })
+			.from(objects)
+			.where(eq(objects.id, meetingId))
+			.limit(1)
+		const meetingTitle = meetingRow?.title ?? null
+		const meetingStartTime = meetingRow?.createdAt?.toISOString?.()
+		await synthesizeMeetOnlyWrappedEvent(db, {
+			workspaceId,
+			meetingId,
+			conferenceRecordName,
+			participants,
+			meetingTitle,
+			meetingStartTime,
+		})
+	} catch (err) {
+		logger.warn('Meet-only mapper flip failed (metadata still written)', {
+			meetingId,
+			conferenceRecordName,
 			error: err instanceof Error ? err.message : String(err),
 		})
 	}
