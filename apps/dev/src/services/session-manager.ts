@@ -1890,18 +1890,19 @@ export class SessionManager extends EventEmitter {
 			if (!resolved) continue
 			const mcp = resolved.config.mcp
 			const autoInjectServer = mcp?.autoInject && mcp.server ? mcp.server : null
-			// Providers whose auto-injected server references its own envKey via
-			// `${ENV_KEY}` (e.g. PostHog's `Authorization: Bearer ${POSTHOG_TOKEN}`)
-			// need a resolved per-integration token or the server can't authenticate.
-			// Providers whose server authenticates on the Maskin API key instead
-			// (linkedin-unipile and Slack both use `Bearer ${MASKIN_API_KEY}`) do
-			// not — and linkedin-unipile has NO per-integration token material at
-			// all (its credential blob is `{ account_id }`), so a token-resolution
-			// failure there is expected, not a reason to skip auto-injection.
+			// True when the provider's declared MCP server template references its
+			// own envKey via `${ENV_KEY}` — e.g. PostHog's
+			// `Authorization: Bearer ${POSTHOG_TOKEN}`. Such a server can't
+			// authenticate without a per-integration token, so a token failure IS
+			// a user-visible outage (either the auto-injected server or any
+			// hand-added variant of it will break at request time). Providers
+			// whose server authenticates on `${MASKIN_API_KEY}` instead (Slack,
+			// linkedin-unipile) do not need the token. Predicate is on the
+			// DECLARED server (not `autoInjectServer`) so it also protects a
+			// hand-added user config for a provider whose auto-inject is off —
+			// linkedin-unipile after P3-K is the canonical case.
 			const serverNeedsToken =
-				autoInjectServer && mcp?.envKey
-					? serverSpecReferencesEnvKey(autoInjectServer, mcp.envKey)
-					: false
+				mcp?.server && mcp?.envKey ? serverSpecReferencesEnvKey(mcp.server, mcp.envKey) : false
 
 			let accessToken: string | null = null
 			try {
@@ -1917,22 +1918,25 @@ export class SessionManager extends EventEmitter {
 					)
 					continue
 				}
-				// If the auto-injected server actually consumes the token, or the
+				// If the declared server actually consumes the token, or the
 				// provider is GitHub (which resolves an owner login and per-org env
-				// var below), or there's no autoInject at all, a missing/broken
-				// token blocks the whole integration — log and skip.
-				if (serverNeedsToken || integration.provider === 'github' || !autoInjectServer) {
+				// var below), a missing/broken token blocks the whole integration
+				// — log and skip.
+				if (serverNeedsToken || integration.provider === 'github') {
 					logger.warn(`Failed to load credentials for ${integration.provider}`, {
 						integrationId: integration.id,
 						error: String(err),
 					})
 					continue
 				}
-				// Otherwise: the server auto-injects on Maskin credentials and the
-				// envKey is decorative — fall through with accessToken=null and
-				// inject the server anyway. This is the linkedin-unipile shape.
+				// Otherwise: the server authenticates on Maskin credentials and the
+				// envKey is decorative. Fall through with accessToken=null. This
+				// is the linkedin-unipile shape (credential blob is
+				// `{ account_id }` with no accessToken — token-manager throws by
+				// design). Downgraded to debug so a workspace with LinkedIn
+				// connected does not spam Sentry on every session boot.
 				logger.debug(
-					`No per-provider token for ${integration.provider}; auto-injecting envKey-independent MCP server`,
+					`No per-provider token for ${integration.provider}; envKey-independent server does not need one`,
 					{ integrationId: integration.id, sessionId: session.id },
 				)
 			}
