@@ -42,6 +42,7 @@ function isAddonSubscription(
 	)
 }
 
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { billingAfterCancel, settingsAfterPaidPlanActivation } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import {
@@ -291,6 +292,27 @@ async function applyEvent(
 		switch (event.type) {
 			case 'checkout.session.completed': {
 				const session = event.data.object as Stripe.Checkout.Session
+				// Delta 4: checkout_session_completed PostHog event fires on every
+				// session.completed, closing the checkout-regression blind spot for
+				// this and every future bet. `awaiting_vies` is always false at
+				// Task 1's scope — Task 2 (VAT webhook state machine) wires the
+				// held branch and flips this to true when the fresh customers.retrieve
+				// guard finds a pending tax_id. Distinct id = customer id when the
+				// session carries one, otherwise the session id itself so a
+				// customerless session (first-time buyer before Stripe mints one) still
+				// captures. Fire-and-forget; capturePosthogEvent never throws.
+				const posthogDistinctId =
+					(typeof session.customer === 'string' ? session.customer : session.customer?.id) ??
+					session.id
+				await capturePosthogEvent('checkout_session_completed', posthogDistinctId, {
+					session_id: session.id,
+					mode: session.mode ?? null,
+					amount_total: session.amount_total ?? null,
+					currency: session.currency ?? null,
+					// Task 1 scope: always false. Task 2 will re-fire this event from
+					// the held-branch write site with awaiting_vies=true.
+					awaiting_vies: false,
+				})
 				if (session.mode === 'payment' && session.metadata?.kind === CREDIT_TOPUP_METADATA_KIND) {
 					// Prepaid usage-credits top-up: money has already been captured
 					// by Stripe — credit the balance unconditionally (eligibility
