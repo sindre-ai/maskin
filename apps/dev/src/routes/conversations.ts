@@ -1117,7 +1117,14 @@ app.openapi(updateMeRoute, (async (c) => {
 	const setValues: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.pinned !== undefined) setValues.pinned = body.pinned
 	if (body.archived !== undefined) setValues.archived = body.archived
-	if (body.last_read_message_id !== undefined) {
+	// mark_unread is a reset, so it must bypass the GREATEST guard below — that
+	// guard is advance-only by design and would clamp any reset straight back up
+	// to the existing cursor, turning the write into a silent no-op. Null is the
+	// stored "never read" value (a fresh participant row starts at null and every
+	// read query coalesces it to 0), so the reset is a direct assignment.
+	if (body.mark_unread === true) {
+		setValues.lastReadMessageId = null
+	} else if (body.last_read_message_id !== undefined) {
 		// GREATEST — read state never regresses even if updates race or arrive
 		// out of order.
 		setValues.lastReadMessageId = sql`GREATEST(COALESCE(${conversationParticipants.lastReadMessageId}, 0), ${body.last_read_message_id})`
@@ -1145,6 +1152,7 @@ app.openapi(updateMeRoute, (async (c) => {
 			pinned: body.pinned,
 			archived: body.archived,
 			last_read_message_id: body.last_read_message_id,
+			mark_unread: body.mark_unread,
 		},
 	})
 

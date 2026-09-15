@@ -75,7 +75,7 @@ function readUnreadCount(client: QueryClient, key: readonly unknown[]) {
 describe('useUpdateConversationMe — onMutate optimistic behavior', () => {
 	beforeEach(() => vi.clearAllMocks())
 
-	it('leaves unread_count alone when last_read_message_id: 0 (mark-unread) — no flicker', async () => {
+	it('leaves unread_count alone on a mark_unread reset — no flicker', async () => {
 		const client = new QueryClient({
 			defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
 		})
@@ -93,7 +93,7 @@ describe('useUpdateConversationMe — onMutate optimistic behavior', () => {
 			wrapper: wrapperFactory(client),
 		})
 
-		result.current.mutate({ id: 'conv-1', data: { last_read_message_id: 0 } })
+		result.current.mutate({ id: 'conv-1', data: { mark_unread: true } })
 
 		await gate.capturePromise
 		await waitFor(() => expect(readUnreadCount(client, listKey)).toBe(3))

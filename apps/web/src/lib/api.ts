@@ -1757,6 +1757,7 @@ export interface UpdateConversationParticipantStateInput {
 	pinned?: boolean
 	archived?: boolean
 	last_read_message_id?: number
+	mark_unread?: boolean
 }
 
 export interface PostMessageInput {
