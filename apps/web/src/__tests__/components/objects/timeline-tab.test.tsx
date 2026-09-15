@@ -353,6 +353,47 @@ describe('TimelineTab', () => {
 		)
 	})
 
+	// D8 pruned last_read_event_id — the reader's read cursor points at an
+	// event the server has since deleted / pruned. Server treats it as
+	// "all read" (unread_count=0), even though newer comment events are still
+	// present in the loaded window. In that state the NEW divider must be
+	// hidden entirely, per the acceptance criterion, and no Mark all read
+	// affordance appears. Explicit test — a regression that started rendering
+	// the divider for a pruned pointer would fail here.
+	it('renders no NEW divider when the last_read_event_id was pruned (unread_count=0 with newer comments loaded)', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet', unread_count: 0 })
+		mockGraph(
+			[
+				buildEventResponse({
+					id: 30,
+					action: 'commented',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					createdAt: '2026-01-03T00:00:00Z',
+				}),
+				buildEventResponse({
+					id: 20,
+					action: 'commented',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					createdAt: '2026-01-02T00:00:00Z',
+				}),
+			],
+			[],
+			[],
+			object,
+		)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		// Two loaded comments, but no divider — pruned pointer resolves to
+		// unread_count=0 and the divider is hidden with no reserved space
+		// (per D8: "Zero unread → divider hidden entirely").
+		expect(screen.getAllByRole('listitem')).toHaveLength(2)
+		expect(screen.queryByRole('separator', { name: /unread items below/ })).toBeNull()
+		expect(screen.queryByRole('button', { name: /Mark all read/ })).toBeNull()
+	})
+
 	it('threads replies under their parent comment instead of listing them', () => {
 		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
 		mockGraph(
