@@ -41,7 +41,6 @@ import installedLoopsRoutes from './routes/installed-loops'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
 import integrationsGoogleMeetMcpRoutes from './routes/integrations-google-meet-mcp'
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
-import integrationsGoogleMeetMcpRoutes from './routes/integrations-google-meet-mcp'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import loopsRoutes from './routes/loops'
@@ -343,11 +342,6 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations/google-meet/mcp', integrationsGoogleMeetMcpRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
-	// Google Meet write-path MCP surface. Mounted alongside the LinkedIn +
-	// Slack MCP surfaces — same shape, same wrapper. Read-path tools (Task 3)
-	// register on the same MCP server via a second `registerGoogleMeet*Tools`
-	// call inside `createGoogleMeetMcpServer` when they land.
-	app.route('/api/integrations/google-meet/mcp', integrationsGoogleMeetMcpRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
 	// catchall (`/api/webhooks/:provider`) so the more-specific match wins.
 	// Stripe is billing, not an integration provider.
