@@ -44,7 +44,10 @@ import {
 	or,
 	sql,
 } from 'drizzle-orm'
-import { trackAgentSessionStartedWithPrompt } from '../lib/analytics/agent-session-events'
+import {
+	trackAgentSessionCompleted,
+	trackAgentSessionStartedWithPrompt,
+} from '../lib/analytics/agent-session-events'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import {
@@ -787,6 +790,12 @@ export class SessionManager extends EventEmitter {
 					entityId: sessionId,
 					data: { error: `Enqueue failed: ${message}` },
 				})
+				void trackAgentSessionCompleted({
+					workspaceId: session.workspaceId,
+					sessionId,
+					actorId: session.actorId,
+					outcome: 'failed',
+				})
 				throw err
 			}
 			return
@@ -966,6 +975,13 @@ export class SessionManager extends EventEmitter {
 					error: message,
 					...(launchFailureReason ? { reason_code: launchFailureReason.reason_code } : {}),
 				},
+			})
+
+			void trackAgentSessionCompleted({
+				workspaceId: session.workspaceId,
+				sessionId,
+				actorId: session.actorId,
+				outcome: 'failed',
 			})
 
 			if (launchFailureReason) {
@@ -1468,6 +1484,13 @@ export class SessionManager extends EventEmitter {
 				data: { error: message },
 			})
 
+			void trackAgentSessionCompleted({
+				workspaceId: session.workspaceId,
+				sessionId,
+				actorId: session.actorId,
+				outcome: 'failed',
+			})
+
 			this.telemetry.recordSessionEnded({
 				sessionId,
 				endReason: 'failed',
@@ -1688,6 +1711,7 @@ export class SessionManager extends EventEmitter {
 			agentId: agent.id,
 			agentName: agent.name,
 			systemPrompt: resolvedSystemPrompt,
+			sourceSessionId: session.sourceSessionId ?? null,
 			triggerSource,
 			sourceCommentEventId,
 		})
@@ -3001,6 +3025,13 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		void trackAgentSessionCompleted({
+			workspaceId: session.workspaceId,
+			sessionId,
+			actorId: session.actorId,
+			outcome: status,
+		})
+
 		if (status === 'failed') {
 			await this.maybeRetryClaudeOAuthOnNextSlot({ session, failureReason, stdoutTail }).catch(
 				(err) =>
@@ -3500,6 +3531,13 @@ export class SessionManager extends EventEmitter {
 			data: { reason: 'idle_conversation' },
 		})
 
+		void trackAgentSessionCompleted({
+			workspaceId: session.workspaceId,
+			sessionId: session.id,
+			actorId: session.actorId,
+			outcome: 'completed',
+		})
+
 		this.telemetry.recordSessionEnded({
 			sessionId: session.id,
 			endReason: 'completed',
@@ -3625,6 +3663,13 @@ export class SessionManager extends EventEmitter {
 				entityType: 'session',
 				entityId: session.id,
 				data: {},
+			})
+
+			void trackAgentSessionCompleted({
+				workspaceId: session.workspaceId,
+				sessionId: session.id,
+				actorId: session.actorId,
+				outcome: 'timeout',
 			})
 
 			this.telemetry.recordSessionEnded({
@@ -3975,6 +4020,13 @@ export class SessionManager extends EventEmitter {
 					reason_code: 'startup_stalled',
 					diagnosis: verbatim,
 				},
+			})
+
+			void trackAgentSessionCompleted({
+				workspaceId: session.workspaceId,
+				sessionId: session.id,
+				actorId: session.actorId,
+				outcome: 'failed',
 			})
 
 			await this.insertSystemLog(session.id, stalledFailureReason.human_message).catch((err) =>
@@ -4771,6 +4823,13 @@ export class SessionManager extends EventEmitter {
 				error: String(err),
 			})
 		}
+
+		void trackAgentSessionCompleted({
+			workspaceId: updated.workspaceId,
+			sessionId,
+			actorId: updated.actorId,
+			outcome: status,
+		})
 
 		if (status === 'failed') {
 			await this.maybeRetryClaudeOAuthOnNextSlot({
