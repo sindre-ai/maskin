@@ -15,8 +15,8 @@ import {
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
-import { deriveConversationTitle } from '@/lib/conversation-title'
 import { useWorkspace } from '@/lib/workspace-context'
+import { deriveConversationTitle } from '@maskin/shared'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { X } from 'lucide-react'
 import {
