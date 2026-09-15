@@ -80,6 +80,26 @@ export function bonusFor(amountMinor: number, currency: MaskinCreditsCurrency): 
 }
 
 /**
+ * The single source of truth for how a paid custom-amount top-up becomes
+ * credits (CTO pre-merge fix #4, 10 Sep 2026): normalize the payment-currency
+ * minor units to USD minor, add the volume-bonus tier, and return the total
+ * USD-minor amount to credit to `credit_balance_cents`. Both fulfilment paths
+ * — the direct branch on `checkout.session.completed` and the awaiting-vies
+ * release — write the returned value straight into the ledger row's
+ * `amountCents` and bump the workspace balance by the same number. Bonus
+ * always applies (a legacy flag-off USD top-up ≥ $250 gets the tier it always
+ * should have); currency conversion is the flag-on delta.
+ */
+export function creditedAmountUsdMinor(
+	amountMinor: number,
+	currency: MaskinCreditsCurrency,
+): number {
+	const usdMinor = normalizeToUsdMinor(amountMinor, currency)
+	const bonus = bonusFor(amountMinor, currency)
+	return usdMinor + Math.round(usdMinor * bonus)
+}
+
+/**
  * Boot-time sanity check: does the live Stripe Growth/Scale pack amount still
  * match our hardcoded threshold? Called from the app boot path so a Pricing
  * change on Stripe surfaces as a warn log instead of a silent tier mismatch.

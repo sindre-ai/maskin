@@ -46,6 +46,27 @@ export function isVatCheckoutEnabled(env: NodeJS.ProcessEnv = process.env): bool
 // Stripe's Price object enforces on the outside so a caller can only build
 // a Session Stripe will accept.
 export type MaskinCreditsCurrency = 'usd' | 'eur' | 'dkk'
+export const MASKIN_CREDITS_CURRENCIES: readonly MaskinCreditsCurrency[] = ['usd', 'eur', 'dkk']
+
+/**
+ * Type-narrow a raw currency string (from Stripe or an awaiting_vies row) to
+ * a `MaskinCreditsCurrency`. Returns `null` for anything else — callers log
+ * and fall back to `'usd'` so a rogue value credits raw minor units rather
+ * than silently converting through an unknown rate. Defensive per CTO fix #4
+ * (10 Sep 2026): the awaiting_vies CHECK constraint guards `kind` but not
+ * `currency`, and Stripe's `session.currency` is a lowercase ISO-4217 string
+ * that carries no such constraint at all.
+ */
+export function assertCreditsCurrency(
+	value: string | null | undefined,
+): MaskinCreditsCurrency | null {
+	if (!value) return null
+	const lower = value.toLowerCase()
+	return (MASKIN_CREDITS_CURRENCIES as readonly string[]).includes(lower)
+		? (lower as MaskinCreditsCurrency)
+		: null
+}
+
 export interface CreditsAmountBounds {
 	min: number
 	preset: number
