@@ -11,6 +11,19 @@ import { gmailEventNormalizer, gmailWebhookVerifier } from './providers/gmail/we
 import { config as googleCalendarConfig } from './providers/google-calendar/config'
 import { revokeGoogleCalendarGrant } from './providers/google-calendar/disconnect'
 import { resolveExternalId as googleCalendarResolveExternalId } from './providers/google-calendar/resolve-id'
+import { config as googleMeetConfig } from './providers/google-meet/config'
+import { resolveExternalId as googleMeetResolveExternalId } from './providers/google-meet/resolve-id'
+import {
+	fanOutMeetEvent,
+	setupMeetWatch,
+	stopMeetWatch,
+} from './providers/google-meet/watch'
+import {
+	extractMeetDeliveryId,
+	meetEventNormalizer,
+	meetWebhookVerifier,
+	resolveMeetInstallationId,
+} from './providers/google-meet/webhooks'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
@@ -96,6 +109,28 @@ providers.set('google-calendar', {
 	config: googleCalendarConfig,
 	resolveExternalId: googleCalendarResolveExternalId,
 	preDisconnect: revokeGoogleCalendarGrant,
+})
+
+// google-meet — provider registration + Task 3 (read-path / async ingest) webhook
+// wiring. Wiring the provider:
+//  - lets `google-meet` appear in `GET /api/integrations/providers`,
+//  - exercises the generic OAuth machinery + `INTEGRATION_ENCRYPTION_KEY`
+//    decrypt path against a new Google provider (bet smokes S1 + S3),
+//  - lets the callback route persist `config.meet.peopleId` (S12 smoke),
+//  - keeps the row workspace-scoped like Gmail / GCal — Meet is deliberately
+//    NOT added to `actorScopedProviders` in `lib/integrations/lookup.ts`.
+// `postInstall` opens the Workspace Events subscription; the verifier +
+// normalizer + fan-out map Pub/Sub push deliveries to integration rows.
+providers.set('google-meet', {
+	config: googleMeetConfig,
+	customWebhookVerifier: meetWebhookVerifier,
+	customNormalizer: meetEventNormalizer,
+	resolveExternalId: googleMeetResolveExternalId,
+	resolveInstallationId: resolveMeetInstallationId,
+	extractDeliveryId: extractMeetDeliveryId,
+	postInstall: setupMeetWatch,
+	webhookFanOut: fanOutMeetEvent,
+	preDisconnect: stopMeetWatch,
 })
 
 providers.set('posthog', {
