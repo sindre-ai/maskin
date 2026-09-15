@@ -69,6 +69,25 @@ export const FLAGS = {
 	loopsV4PolishTargets: 'loops-v4-polish.targets',
 	loopsV4PolishStepFlow: 'loops-v4-polish.step_flow',
 	loopsV4PolishUnread: 'loops-v4-polish.unread',
+	/**
+	 * `chats-v4-polish` gates the Chats v4 UX/UI polish bet
+	 * (bet/bdda1c1e-chats-v4-polish). The five sub-flags let a single delta be
+	 * reverted without dropping the rest: `.list` for the conversation-list
+	 * end-of-history footer, `.header` for the thread-header controls (loop
+	 * chip, copy whole conversation, mark as unread, mobile overflow menu),
+	 * `.banner` for the resume-banner restyle, `.bubbles` for the message-bubble
+	 * hover actions + attachment eyebrow, and `.new_chat` for the new-chat chip
+	 * picker. Every sub-flag is additionally gated by the umbrella at each read
+	 * site — so flipping the umbrella off kills every downstream v4 delta at
+	 * once. See `.claude/rules/feature-flags.md` for the boundary rule and
+	 * `bet/bdda1c1e-chats-v4-polish` for the ship / rollback plan.
+	 */
+	chatsV4Polish: 'chats-v4-polish',
+	chatsV4PolishList: 'chats-v4-polish.list',
+	chatsV4PolishHeader: 'chats-v4-polish.header',
+	chatsV4PolishBanner: 'chats-v4-polish.banner',
+	chatsV4PolishBubbles: 'chats-v4-polish.bubbles',
+	chatsV4PolishNewChat: 'chats-v4-polish.new_chat',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
