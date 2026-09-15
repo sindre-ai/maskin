@@ -72,17 +72,30 @@ interface FakeDb {
 	insertedRows: unknown[]
 	deletedIds: string[]
 	selectRows: unknown[]
+	updatedValues: unknown[]
 	transactions: number
 }
 
 function fakeDb(selectRows: unknown[] = []): { db: Database; state: FakeDb } {
-	const state: FakeDb = { insertedRows: [], deletedIds: [], selectRows, transactions: 0 }
+	const state: FakeDb = {
+		insertedRows: [],
+		deletedIds: [],
+		selectRows,
+		updatedValues: [],
+		transactions: 0,
+	}
+	// Drizzle's builder chains differ per call site, so the fake has to answer
+	// all three shapes `fulfilFromAwaitingRow` uses or the release path throws
+	// before reaching any assertion:
+	//   - workspace lookup: select().from().where().for('update').limit(1)
+	//   - ledger claim:     insert().values().onConflictDoNothing().returning()
+	//   - balance credit:   update().set().where()
 	const db = {
 		insert: () => ({
 			values: (row: unknown) => ({
 				onConflictDoNothing: () => {
 					state.insertedRows.push(row)
-					return Promise.resolve([{ id: 'row-1' }])
+					return { returning: () => Promise.resolve([{ id: 'row-1' }]) }
 				},
 			}),
 		}),
@@ -94,7 +107,18 @@ function fakeDb(selectRows: unknown[] = []): { db: Database; state: FakeDb } {
 		}),
 		select: () => ({
 			from: () => ({
-				where: () => Promise.resolve(state.selectRows),
+				where: () => {
+					const rows = Promise.resolve(state.selectRows)
+					return Object.assign(rows, { for: () => ({ limit: () => rows }) })
+				},
+			}),
+		}),
+		update: () => ({
+			set: (values: unknown) => ({
+				where: () => {
+					state.updatedValues.push(values)
+					return Promise.resolve()
+				},
 			}),
 		}),
 		transaction: async (cb: (tx: unknown) => Promise<void>) => {
@@ -388,7 +412,7 @@ describe('customer.tax_id.updated (spec Delta 2 handleTaxIdVerification)', () =>
 				currency: 'usd',
 				amountTotal: 5000,
 				reminderSentAt: null,
-				workspaceId: null,
+				workspaceId: WORKSPACE_ID,
 				createdAt: new Date(),
 			}
 			const { db, state } = fakeDb([heldRow])
@@ -409,6 +433,19 @@ describe('customer.tax_id.updated (spec Delta 2 handleTaxIdVerification)', () =>
 				CUSTOMER_ID,
 				expect.objectContaining({ session_id: 'cs_test_1' }),
 			)
+			// The release path's whole point is the money: the ledger row is
+			// claimed on the session id (the replay idempotency key) and the
+			// workspace balance is bumped by amount_total.
+			expect(state.insertedRows).toHaveLength(1)
+			expect(state.insertedRows[0] as Record<string, unknown>).toMatchObject({
+				type: 'topup',
+				amountCents: 5000,
+				stripeCheckoutSessionId: 'cs_test_1',
+			})
+			expect(state.updatedValues).toHaveLength(1)
+			expect(state.updatedValues[0] as { settings: unknown }).toMatchObject({
+				settings: { billing: { credit_balance_cents: 5000 } },
+			})
 		})
 	})
 
@@ -424,7 +461,7 @@ describe('customer.tax_id.updated (spec Delta 2 handleTaxIdVerification)', () =>
 				currency: 'usd',
 				amountTotal: 5000,
 				reminderSentAt: null,
-				workspaceId: null,
+				workspaceId: WORKSPACE_ID,
 				createdAt: new Date(),
 			}
 			const { db, state } = fakeDb([heldRow])
@@ -467,7 +504,7 @@ describe('customer.tax_id.updated (spec Delta 2 handleTaxIdVerification)', () =>
 				currency: 'usd',
 				amountTotal: 4900,
 				reminderSentAt: null,
-				workspaceId: null,
+				workspaceId: WORKSPACE_ID,
 				createdAt: new Date(),
 			}
 			const { db } = fakeDb([heldRow])
@@ -505,7 +542,7 @@ describe('customer.tax_id.updated (spec Delta 2 handleTaxIdVerification)', () =>
 				currency: 'usd',
 				amountTotal: 5000,
 				reminderSentAt: null,
-				workspaceId: null,
+				workspaceId: WORKSPACE_ID,
 				createdAt: new Date(),
 			}
 			const { db, state } = fakeDb([heldRow])
