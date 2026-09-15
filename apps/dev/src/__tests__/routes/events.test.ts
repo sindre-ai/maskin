@@ -806,6 +806,11 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk: root terminates
+					// Fallback-responder exclusion lookup (no mentions on this comment):
+					// object has no driver, workspace has no Chief of Staff, so the
+					// CommentDispatcher will not fallback-dispatch and nothing is excluded.
+					[], // objects.driver lookup
+					[], // Chief of Staff lookup
 					// Thread comments query (desc by id): new comment + agent reply + root
 					[
 						{
@@ -888,6 +893,8 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
+					[], // fallback-responder exclusion: objects.driver lookup (no driver)
+					[], // fallback-responder exclusion: Chief of Staff lookup (none)
 					// Thread comments query: only humans authored, but root @mentions agent A
 					[
 						{

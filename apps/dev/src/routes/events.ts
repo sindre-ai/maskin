@@ -6,6 +6,10 @@ import { createCommentSchema, eventQuerySchema, validateDecisionProse } from '@m
 import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { trackAgentCommentPosted } from '../lib/analytics/comment-events'
+import {
+	fallbackResponderActorId,
+	resolveCommentFallbackResponder,
+} from '../lib/comment-fallback-responder'
 import { postComment } from '../lib/comments'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -332,12 +336,19 @@ app.openapi(createCommentRoute, (async (c) => {
 	// requiring an explicit @mention on every message. The 5-in-a-row cap
 	// inside the helper bounds runaway agent-to-agent ping-pong.
 	//
-	// `excludedAgentIds` keeps this in sync with the mention path: any agent
-	// the `CommentDispatcher` will handle via the @-mention branch is excluded
-	// here so the thread-reply auto-spawn doesn't double up on the same agent
-	// for the same comment.
+	// `excludedAgentIds` keeps this in sync with BOTH `CommentDispatcher`
+	// branches: any agent that dispatcher will already spawn a session for on
+	// this same comment — via @-mention, or via the case-2/case-3 fallback
+	// ladder — is excluded here, so one comment can never queue two sessions
+	// for the same agent.
 	if (parentEventId !== undefined) {
-		const excludedAgentIds = await resolveMentionedAgentIds(db, body.mentions)
+		const excludedAgentIds = await resolveDispatchedAgentIds(db, {
+			workspaceId,
+			objectId: body.entity_id,
+			commenterId: actorId,
+			parentAuthorId: opActorId,
+			mentions: body.mentions,
+		})
 		spawnThreadReplySessions({
 			db,
 			sessionManager,
@@ -440,22 +451,56 @@ async function resolveRootParentEventId(
 }
 
 /**
- * Resolve the caller-supplied `mentions` array to the subset that are agent
- * actors — used by the thread-reply spawn below to skip agents that the
- * `CommentDispatcher` (`services/trigger-runner.ts`) will already handle via
- * the mention branch, so a mention + thread-reply on the same comment doesn't
- * double-dispatch the same agent.
+ * The agents `CommentDispatcher` (`services/trigger-runner.ts`) will already
+ * spawn a session for on this comment — used by the thread-reply spawn below
+ * to skip them, so one comment never queues two sessions for one agent.
+ *
+ * The dispatcher's two branches are mutually exclusive on the same condition
+ * this function branches on, so exactly one of them contributes:
+ *
+ *  • mentions present → the @-mention branch dispatches one session per
+ *    resolved agent mention, and the fallback ladder is never reached.
+ *  • no mentions → the case-2/case-3 ladder dispatches exactly one session, to
+ *    the object's driver or to the workspace Chief of Staff.
+ *
+ * The no-mentions half is the one that was missing, and it was missing in the
+ * worst possible shape: the ladder only runs when there are no mentions, which
+ * is precisely when the mention-derived exclusion set is empty. So a reply with
+ * no mentions on an object whose driver had already posted in the thread
+ * reliably produced two sessions — a `comment_fallback` and a `thread_reply` —
+ * for the same agent and the same comment, doubling queue depth.
+ *
+ * Resolution is a deterministic function of committed DB state, so this
+ * in-handler call and the dispatcher's own NOTIFY-driven call reach the same
+ * answer without coordinating. Both go through
+ * `resolveCommentFallbackResponder` so the eligibility rules cannot drift.
  */
-async function resolveMentionedAgentIds(
+async function resolveDispatchedAgentIds(
 	db: Database,
-	mentionIds: string[] | undefined,
+	ctx: {
+		workspaceId: string
+		objectId: string
+		commenterId: string
+		parentAuthorId: string | null
+		mentions: string[] | undefined
+	},
 ): Promise<Set<string>> {
-	if (!mentionIds?.length) return new Set()
-	const rows = await db
-		.select({ id: actors.id })
-		.from(actors)
-		.where(and(inArray(actors.id, mentionIds), eq(actors.type, 'agent')))
-	return new Set(rows.map((r) => r.id))
+	if (ctx.mentions?.length) {
+		const rows = await db
+			.select({ id: actors.id })
+			.from(actors)
+			.where(and(inArray(actors.id, ctx.mentions), eq(actors.type, 'agent')))
+		return new Set(rows.map((r) => r.id))
+	}
+
+	const responder = await resolveCommentFallbackResponder(db, {
+		workspaceId: ctx.workspaceId,
+		entityId: ctx.objectId,
+		commenterId: ctx.commenterId,
+		parentAuthorId: ctx.parentAuthorId,
+	})
+	const actorId = fallbackResponderActorId(responder)
+	return actorId ? new Set([actorId]) : new Set()
 }
 
 // Cap on consecutive agent-authored comments at the tail of a thread. Once a
