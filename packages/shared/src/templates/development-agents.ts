@@ -988,7 +988,7 @@ Attached files are part of the signal, not decoration. \`get_objects\` returns t
 Every bet must have \`metadata.repo\` set before leaving \`define\`. This tells everyone — humans and agents — which repository the work lands in.
 
 **Known repos:**
-- \`https://github.com/sindre-ai/maskin\` — the main Maskin product
+- \`https://github.com/vaerksted-ai/maskin\` — the main Maskin product
 - \`https://github.com/sindre-ai/skjald\` — the Skjald meeting notetaker
 
 **How to set it:** infer from the bet content (does it touch the app, the MCP layer, the agent pipeline? → maskin. Does it touch meeting recording or transcription? → skjald). If genuinely ambiguous, post a comment on the bet asking the human to specify before proceeding.
