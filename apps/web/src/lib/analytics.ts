@@ -38,6 +38,7 @@ export function trackEvent(
 
 export type TaxonomyEntityType =
 	| 'object'
+	| 'actor'
 	| 'agent'
 	| 'bet'
 	| 'task'
@@ -259,6 +260,49 @@ function detectPlatform(): 'ios' | 'web' {
 
 export function trackChatImageUpload(p: { outcome: 'success' | 'failure' }): void {
 	trackEvent('chat_image_upload', { platform: detectPlatform(), outcome: p.outcome })
+}
+
+// Chat composer `/` unified picker — fires when a Reference row is committed
+// into the composer selection (either an object or a notification). The parent
+// bet's success metric pairs this with turn sends against the same session to
+// measure whether references travel through to a completed exchange, so
+// `object_type` is the row's own `type` column ('bet' | 'task' | 'insight' |
+// 'notification' | any custom object type) and rides alongside the standard
+// `entity_id`. `workspace_id` / `actor_id` come in via the PostHog
+// super-properties registered on workspace mount.
+export type ChatReferenceObjectType = 'notification' | (string & {})
+
+export function trackChatObjectReferenceCreated(p: {
+	entity_id: string
+	object_type: ChatReferenceObjectType
+}): void {
+	trackEvent('chat_object_reference_created', {
+		entity_id: p.entity_id,
+		object_type: p.object_type,
+		source: 'web',
+	})
+}
+
+// Fires when the `/` picker's Reference search endpoint fails. Paired at query
+// time with `chat_object_reference_created` to compute error-rate on the
+// picker; the message is truncated so posthog-js's batching doesn't reject a
+// long payload on a slow network. See the parent bet's "Retry works from the
+// error state" gate.
+export function trackChatSlashPickerError(p: { message: string }): void {
+	trackEvent('chat_slash_picker_error', {
+		message: p.message.slice(0, 200),
+		source: 'web',
+	})
+}
+
+// Fires every time the composer's `add_agent` reducer action lands — the `@`
+// picker, or the `+ · Mention an agent` shortcut. `entity_id` is the picked
+// actor id; `kind` splits agent vs. human so the mention-adoption metric can
+// see if humans are actually being mentioned in practice.
+export function trackChatMentionInserted(
+	p: BaseProps & { entity_type: 'actor'; kind: 'agent' | 'human' },
+): void {
+	trackEvent('chat_mention_inserted', { ...fillBase(p), kind: p.kind })
 }
 
 // Sidebar legibility bet — click-through proxy for the qualitative ship metric.
