@@ -9,6 +9,7 @@ import {
 } from '@/hooks/use-conversation'
 import { useSessionBudgetStopToast } from '@/hooks/use-conversation-activity'
 import { useUpdateConversationMe } from '@/hooks/use-conversations'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useRef } from 'react'
@@ -24,6 +25,15 @@ function ConversationThreadPage() {
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const { data: messagesData } = useConversationMessages(conversationId, workspaceId)
 	const updateMe = useUpdateConversationMe(workspaceId)
+	// Feature-flag boundary for the chats v4 polish bet (bet/bdda1c1e-chats-v4-polish).
+	// Read once at this route per the feature-flags rule
+	// (`.claude/rules/feature-flags.md`) and threaded down as boolean props. Each
+	// delta is additionally gated by its own sub-flag (`.header` / `.banner` /
+	// `.bubbles`) so a single delta can be reverted without dropping the rest.
+	const chatsV4Enabled = useFeatureFlag('chats-v4-polish')
+	const headerV4Enabled = useFeatureFlag('chats-v4-polish.header')
+	const bannerV4Enabled = useFeatureFlag('chats-v4-polish.banner')
+	const bubblesV4Enabled = useFeatureFlag('chats-v4-polish.bubbles')
 	const lastMarkedRef = useRef<number | null>(null)
 	useSessionBudgetStopToast(workspaceId, conversationId)
 
@@ -43,8 +53,17 @@ function ConversationThreadPage() {
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
-			<ThreadHeader workspaceId={workspaceId} conversationId={conversationId} />
-			<ThreadMessages workspaceId={workspaceId} conversationId={conversationId} />
+			<ThreadHeader
+				workspaceId={workspaceId}
+				conversationId={conversationId}
+				v4Polish={chatsV4Enabled && headerV4Enabled}
+			/>
+			<ThreadMessages
+				workspaceId={workspaceId}
+				conversationId={conversationId}
+				v4PolishBanner={chatsV4Enabled && bannerV4Enabled}
+				v4PolishBubbles={chatsV4Enabled && bubblesV4Enabled}
+			/>
 			{/* No rule above the composer (mockup 517): the composer draws its own
 			    border, and a second full-bleed hairline behind it cut the thread in
 			    half. The gutter matches the header's and the transcript's so the

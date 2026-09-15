@@ -1,6 +1,21 @@
 import { test as base, expect } from '@playwright/test'
 import { TestAPI, createTestActor } from '../helpers/api.helper'
 
+/**
+ * The Chats v4 polish bet (bet/bdda1c1e-chats-v4-polish) is gated behind the
+ * `chats-v4-polish` umbrella and one sub-flag per delta. Nothing sets
+ * `FF_TESTER_FEATURES` in CI, so without this override every v4 assertion in
+ * the suite would run against the pre-bet rollback surface.
+ */
+export const CHATS_V4_FLAGS = [
+	'chats-v4-polish',
+	'chats-v4-polish.list',
+	'chats-v4-polish.header',
+	'chats-v4-polish.banner',
+	'chats-v4-polish.bubbles',
+	'chats-v4-polish.new_chat',
+] as const
+
 interface TestAccount {
 	apiKey: string
 	actorId: string
@@ -45,6 +60,14 @@ export const test = base.extend<AuthFixtures>({
 				localStorage.setItem('maskin-api-key', data.apiKey)
 				localStorage.setItem('maskin-actor', JSON.stringify(data.actor))
 				localStorage.setItem(`north_star_answered_${data.workspaceId}`, '1')
+				// Turn the Chats v4 polish flags on. The bet shipped that surface
+				// unconditionally and these specs assert it (e.g. the header's
+				// Mark-as-unread control), so the specs must render what CI's
+				// flag-less backend would otherwise gate off. The client's
+				// test-only override beats the fetched flag state.
+				for (const flag of CHATS_V4_FLAGS) {
+					localStorage.setItem(`ff:${flag}`, 'on')
+				}
 			},
 			{
 				apiKey: actor.api_key,
