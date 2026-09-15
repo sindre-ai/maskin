@@ -13,6 +13,7 @@ import {
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { deriveSidebarViewport, trackSidebarToggle } from '@/lib/analytics'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
@@ -60,13 +61,19 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 
 	// The ask banner prefers the live needs_input notification targeting this
 	// object; `metadata._ask` stays as the fallback for seeded/fixture rows.
+	// An ask only belongs to the reader when it's explicitly targeted at them —
+	// otherwise the object may be waiting on another actor (e.g. an @mentioned
+	// agent) and rendering the banner here would show "waiting for you" with no
+	// answerable action attached.
 	const { data: needsInputNotifications } = useNotifications(workspaceId, { type: 'needs_input' })
+	const currentActorId = getStoredActor()?.id
 	const liveAsk = useMemo(
 		() =>
 			(needsInputNotifications ?? []).find(
-				(n) => n.objectId === object.id && n.status === 'pending',
+				(n) =>
+					n.objectId === object.id && n.status === 'pending' && n.targetActorId === currentActorId,
 			),
-		[needsInputNotifications, object.id],
+		[needsInputNotifications, object.id, currentActorId],
 	)
 	const askActor = liveAsk?.sourceActorId
 		? actors?.find((a) => a.id === liveAsk.sourceActorId)
