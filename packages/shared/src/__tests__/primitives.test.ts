@@ -33,6 +33,20 @@ describe('safeJsonValue', () => {
 	it('rejects an array containing objects', () => {
 		expect(() => safeJsonValue.parse([{ nested: true }])).toThrow()
 	})
+
+	it('accepts a shallow map of string arrays (closed_statuses shape)', () => {
+		const data = { content: ['live'], task: ['done', 'validated'] }
+		expect(safeJsonValue.parse(data)).toEqual(data)
+	})
+
+	it('accepts an empty map (allows resetting closed_statuses to {})', () => {
+		expect(safeJsonValue.parse({})).toEqual({})
+	})
+
+	it('rejects a map whose values are not string arrays', () => {
+		expect(() => safeJsonValue.parse({ content: 'live' })).toThrow()
+		expect(() => safeJsonValue.parse({ content: [1, 2] })).toThrow()
+	})
 })
 
 describe('safeMetadataSchema', () => {
@@ -52,5 +66,16 @@ describe('safeMetadataSchema', () => {
 
 	it('rejects nested objects as values', () => {
 		expect(() => safeMetadataSchema.parse({ nested: { deep: true } })).toThrow()
+	})
+
+	it("accepts a loop's closed_statuses map (shallow record of string arrays)", () => {
+		const data = { closed_statuses: { content: ['live'], task: ['done'] } }
+		expect(safeMetadataSchema.parse(data)).toEqual(data)
+	})
+
+	it('still rejects a two-level nested map inside closed_statuses', () => {
+		expect(() =>
+			safeMetadataSchema.parse({ closed_statuses: { content: { live: true } } }),
+		).toThrow()
 	})
 })
