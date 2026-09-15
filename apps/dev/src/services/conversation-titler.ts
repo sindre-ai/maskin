@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { actors, conversations, messages, workspaces } from '@maskin/db/schema'
-import { CONVERSATION_TITLE_MAX_LENGTH } from '@maskin/shared'
+import { CONVERSATION_TITLE_MAX_LENGTH, deriveConversationTitle } from '@maskin/shared'
 import { and, asc, count, eq } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
 import { resolveChatCredentials } from '../lib/llm-routing'
@@ -141,6 +141,68 @@ export async function maybeGenerateConversationTitle(ctx: {
 		}
 	}
 
+	// Writes the resolved title guarded on the claim we still hold and, on
+	// success, emits the `conversation_updated` event that drives SSE refresh
+	// of the list + header (sse-invalidation.ts). Returns whether the DB row
+	// was actually updated (a manual rename racing the LLM call flips the
+	// state to `manual`, and the guarded WHERE correctly does nothing in that
+	// case — so releasing the claim below would be wrong).
+	const commitTitle = async (title: string, source: 'llm' | 'derived'): Promise<boolean> => {
+		const updated = await db
+			.update(conversations)
+			.set({ title, updatedAt: new Date() })
+			.where(and(eq(conversations.id, conversationId), eq(conversations.titleAutoState, target)))
+			.returning({ id: conversations.id })
+		if (updated.length === 0) return false
+		committed = true
+
+		// Same action as the manual rename in routes/conversations.ts, with
+		// `auto` in the payload to distinguish them in the audit log. This is also what drives
+		// the live UI update: sse-invalidation.ts refreshes the conversation list
+		// and detail on any entity_type 'conversation' event. actorId is the
+		// conversation's creator — a background job has no acting actor (same
+		// convention as TokenManager.markRevoked).
+		await recordEvent(db, {
+			workspaceId,
+			actorId: conversation.createdBy,
+			action: 'conversation_updated',
+			entityType: 'conversation',
+			entityId: conversationId,
+			data: { title, auto: true, pass: target, source },
+		})
+		return true
+	}
+
+	// Deterministic first-message-derived title, matching what the frontend
+	// composer produces via `deriveConversationTitle` from @maskin/shared.
+	// Used as the initial-pass fallback whenever the LLM path cannot produce a
+	// title (no chat-callable credentials, an LLM error, a model that emits
+	// no tool call): a conversation whose only observed title has been "New
+	// chat" — because the frontend passed that as its own no-content fallback,
+	// or because the row predates the auto-titler — still lands on a real,
+	// content-derived title on its next message, without waiting for an LLM
+	// route to come online. On refinement we don't rederive: the initial pass
+	// already wrote a content-derived title from the same message, so
+	// re-running the same derivation would just replace it with itself and
+	// noise the audit log. If the refinement LLM call fails the initial title
+	// stays as it is.
+	const applyDeterministicFallback = async (): Promise<boolean> => {
+		if (target !== 'initial') return false
+		const [firstMessage] = await db
+			.select({ content: messages.content })
+			.from(messages)
+			.where(eq(messages.conversationId, conversationId))
+			.orderBy(asc(messages.id))
+			.limit(1)
+		const content = firstMessage?.content?.trim()
+		if (!content) return false
+		// The second arg is only returned when `content` is empty, which the
+		// trim + guard above already excludes — so it never surfaces.
+		const derived = deriveConversationTitle(content, '')
+		if (!derived) return false
+		return await commitTitle(derived, 'derived')
+	}
+
 	try {
 		const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
@@ -160,14 +222,18 @@ export async function maybeGenerateConversationTitle(ctx: {
 			agent: { provider: null, apiKey: null, model: null },
 		})
 		if (!credentials) {
-			// Not an error: a workspace with no LLM key of any kind simply keeps
-			// its placeholder titles. Warn so an operator can tell titling was
-			// skipped rather than failing.
+			// No LLM route the same-process call can use (e.g. an enterprise
+			// workspace whose only credential is Claude OAuth — deliberately
+			// skipped by resolveChatCredentials since it isn't a portable
+			// bearer token outside the CLI). Warn so an operator can tell
+			// titling took the LLM-less path, then still write a content-derived
+			// title on the initial pass so the conversation never sits on the
+			// placeholder the frontend passed as a fallback.
 			logger.warn('Conversation auto-title skipped — no chat-callable credentials', {
 				workspaceId,
 				conversationId,
 			})
-			await releaseClaim()
+			if (!(await applyDeterministicFallback())) await releaseClaim()
 			return
 		}
 
@@ -203,44 +269,32 @@ export async function maybeGenerateConversationTitle(ctx: {
 		const call = response.tool_calls.find((tc) => tc.name === 'set_conversation_title')
 		const title = sanitizeTitle(call?.arguments.title)
 		if (!title) {
+			// A model that couldn't (or wouldn't) tool-call. The old behaviour
+			// released the claim and waited for the next message to try the same
+			// model again — reliably empty for workspaces routed at a model that
+			// simply doesn't emit tool calls for this prompt, which is how a
+			// conversation sits on the "New chat" placeholder for its whole life.
+			// Fall back to the deterministic first-message derivation so at
+			// least the initial pass always yields a content-based title.
 			logger.warn('Conversation auto-title produced no usable title', {
 				conversationId,
 				model: credentials.model,
 			})
-			await releaseClaim()
+			if (!(await applyDeterministicFallback())) await releaseClaim()
 			return
 		}
 
 		// Guarded on the state we claimed: if a human renamed the conversation
 		// while the LLM call was in flight, title_auto_state is now 'manual' and
 		// this write correctly does nothing.
-		const updated = await db
-			.update(conversations)
-			.set({ title, updatedAt: new Date() })
-			.where(and(eq(conversations.id, conversationId), eq(conversations.titleAutoState, target)))
-			.returning({ id: conversations.id })
-		if (updated.length === 0) return
-		committed = true
-
-		// Same action as the manual rename in routes/conversations.ts, with
-		// `auto` in the payload to distinguish them in the audit log. This is also what drives
-		// the live UI update: sse-invalidation.ts refreshes the conversation list
-		// and detail on any entity_type 'conversation' event. actorId is the
-		// conversation's creator — a background job has no acting actor (same
-		// convention as TokenManager.markRevoked).
-		await recordEvent(db, {
-			workspaceId,
-			actorId: conversation.createdBy,
-			action: 'conversation_updated',
-			entityType: 'conversation',
-			entityId: conversationId,
-			data: { title, auto: true, pass: target },
-		})
+		if (!(await commitTitle(title, 'llm'))) return
 	} catch (err) {
 		// Network error, non-2xx, malformed response, or the timeout above — all
 		// infra, since the model's own output arrives via tool_calls and is
-		// handled there. Release the claim so a later message retries, and keep
-		// the current title.
+		// handled there. Same as the "no usable title" branch above, we fall
+		// back to the deterministic derivation on the initial pass before
+		// releasing the claim, so an outage doesn't leave a conversation
+		// permanently on its placeholder.
 		//
 		// Unless the title already landed: a throw after that point (the events
 		// insert is the only candidate) means the audit row is missing and the
@@ -252,7 +306,17 @@ export async function maybeGenerateConversationTitle(ctx: {
 			titleCommitted: committed,
 			error: String(err),
 		})
-		if (!committed) await releaseClaim()
+		if (committed) return
+		try {
+			if (await applyDeterministicFallback()) return
+		} catch (fallbackErr) {
+			logger.error('Conversation auto-title deterministic fallback failed', {
+				conversationId,
+				workspaceId,
+				error: String(fallbackErr),
+			})
+		}
+		await releaseClaim()
 	}
 }
 
