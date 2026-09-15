@@ -19,6 +19,7 @@ const apps = [
 	'schema',
 	'sessions',
 	'hero-card',
+	'notifications',
 ]
 
 // Clean output dirs

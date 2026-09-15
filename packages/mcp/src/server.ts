@@ -265,6 +265,7 @@ const UI_RESOURCES = {
 	sessions: 'ui://maskin/sessions',
 	schema: 'ui://maskin/schema',
 	heroCard: 'ui://maskin/hero-card',
+	notifications: 'ui://maskin/notifications',
 } as const
 
 const CSP = {
@@ -5337,7 +5338,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.create_notification.description,
 			inputSchema: tools.create_notification.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.notifications, csp: CSP } },
 		},
 		async (args) => {
 			const { workspace_id, ...body } = args
@@ -5383,7 +5384,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.list_notifications.description,
 			inputSchema: tools.list_notifications.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.notifications, csp: CSP } },
 		},
 		async (args) => {
 			const params = new URLSearchParams()
@@ -5407,7 +5408,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.get_notification.description,
 			inputSchema: tools.get_notification.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.notifications, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(config, 'GET', `/api/notifications/${args.id}`, undefined, {
@@ -5426,7 +5427,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.update_notification.description,
 			inputSchema: tools.update_notification.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.notifications, csp: CSP } },
 		},
 		async (args) => {
 			const { id, workspace_id, ...body } = args
@@ -5450,7 +5451,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.delete_notification.description,
 			inputSchema: tools.delete_notification.inputSchema.shape,
-			_meta: {},
+			_meta: { ui: { resourceUri: UI_RESOURCES.notifications, csp: CSP } },
 		},
 		async (args) => {
 			const result = await apiCall(config, 'DELETE', `/api/notifications/${args.id}`, undefined, {
