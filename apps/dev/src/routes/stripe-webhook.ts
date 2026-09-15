@@ -43,11 +43,13 @@ function isAddonSubscription(
 }
 
 import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { creditedAmountUsdMinor } from '../lib/credit-billing'
 import { billingAfterCancel, settingsAfterPaidPlanActivation } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import {
 	CREDIT_TOPUP_METADATA_KIND,
 	LINKEDIN_ADDON_METADATA_KIND,
+	assertCreditsCurrency,
 	getStripeClient,
 	hardCapForPlan,
 	isHandledStripeEvent,
@@ -350,16 +352,37 @@ async function applyEvent(
 					// touch plan/status/period_* — only `next.credit_balance_cents`
 					// changes here, so this intentionally never falls into the
 					// subscription-shaped mutation below.
-					const amountCents = Number(
+					//
+					// Currency contract (CTO pre-merge fix #4, 10 Sep 2026):
+					// `session.metadata.amount_usd_cents` is a legacy field name —
+					// under `MASKIN_VAT_CHECKOUT=true` its value is minor units in
+					// `session.currency` (USD/EUR/DKK), NOT USD minor. We normalize
+					// here so a DKK 349 payment credits ~$50 in USD cents into
+					// `credit_balance_cents` (which is USD cents), and apply the
+					// volume-bonus tier at ledger-write per Won criterion (e).
+					// Under the legacy flag-off path `session.currency='usd'` so
+					// normalize is identity — the only new behaviour there is that
+					// a USD top-up ≥ $250 now gets the Growth/Scale bonus it always
+					// should have.
+					const amountMinor = Number(
 						session.metadata?.amount_usd_cents ?? session.amount_total ?? Number.NaN,
 					)
-					if (!Number.isFinite(amountCents) || amountCents <= 0) {
+					if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
 						logger.error('Credit top-up checkout.session.completed with invalid amount', {
 							sessionId: session.id,
 							workspaceId,
 						})
 						break
 					}
+					const rawCurrency = session.currency ?? 'usd'
+					const currency = assertCreditsCurrency(rawCurrency)
+					if (!currency) {
+						logger.warn(
+							'Credit top-up checkout.session.completed with unrecognized currency — falling back to usd (raw minor units credited unchanged)',
+							{ sessionId: session.id, workspaceId, currency: rawCurrency },
+						)
+					}
+					const amountCents = creditedAmountUsdMinor(amountMinor, currency ?? 'usd')
 					const currentBalance =
 						typeof current.credit_balance_cents === 'number' && current.credit_balance_cents > 0
 							? current.credit_balance_cents
