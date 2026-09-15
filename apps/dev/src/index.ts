@@ -9,6 +9,7 @@ import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
+import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import {
@@ -178,6 +179,15 @@ logger.info('Webhook deliveries reconciler started')
 const purgeIdempotencyJob = new PurgeIdempotencyJob(db)
 purgeIdempotencyJob.start()
 logger.info('Purge idempotency job started')
+
+// VIES-hold scheduler: 15-min cron running T+2h reminder + T+24h timeout
+// sweeps for the VAT-correct-checkout bet (a9e19ca4). Registered
+// unconditionally — the sweeps themselves read `MASKIN_VAT_CHECKOUT`
+// fresh on every tick and early-return when the flag is off, so nothing
+// runs against the empty `awaiting_vies` table until Task 4's rollout.
+const viesSchedulerJob = new ViesSchedulerJob(db)
+viesSchedulerJob.start()
+logger.info('VIES scheduler job started')
 
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
