@@ -1,0 +1,18 @@
+# CODEOWNERS
+#
+# Files listed here require review from the named owners before merge. Keep
+# entries narrow — this file is a routing hint, not a review-everything switch.
+
+# Slack app manifest — any change to the manifest, or to a file shaped like a
+# Slack manifest, needs a human on it. Reason: the "Maskin in Slack waits to
+# be asked" bet is live and forbids adding ambient-capable OAuth scopes to
+# the manifest. See docs/integrations/slack/scope-constraint.md.
+#
+# Globs are broad on purpose — the guardrail must trigger even if a future
+# manifest lands under a path we haven't seen yet.
+docs/integrations/slack/manifest.yml           @magnusnoeddegaard
+docs/integrations/slack/scope-constraint.md    @magnusnoeddegaard
+**/slack-manifest.*                             @magnusnoeddegaard
+**/manifest.slack.*                             @magnusnoeddegaard
+**/slack/*manifest*                             @magnusnoeddegaard
+**/slack-app.*                                  @magnusnoeddegaard
