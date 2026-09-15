@@ -1724,7 +1724,12 @@ function ObjectsRoute() {
 				value={typeFilter}
 				onChange={handleTypeFilterChange}
 				aria-label="Type filter"
-				className="ml-[14px] min-w-0"
+				// Below md, drop the tabs onto their own row (`basis-full`) after the
+				// title + search cluster (`order-2`) — otherwise the tabs share the
+				// header row with an expanded NavSearch and get clipped mid-label
+				// (last tab reads as "Custo…"). Restored to the inline "beside <h1>"
+				// arrangement at md and above with `md:basis-auto md:order-none`.
+				className="ml-[14px] min-w-0 basis-full order-2 md:basis-auto md:order-none"
 			/>
 		),
 		[tabsWithCounts, typeFilter, handleTypeFilterChange],
