@@ -1,3 +1,4 @@
+import type { SessionResultFailureReason } from '@maskin/shared'
 import { PostHog } from 'posthog-node'
 import { logger } from '../lib/logger'
 
@@ -7,6 +8,14 @@ import { logger } from '../lib/logger'
  * trying to drive to zero — credit exhaustion and runtime timeouts.
  */
 export type RuntimeEndReason = 'completed' | 'failed' | 'irrecoverable' | 'user_stopped'
+
+/**
+ * Rolled-up category emitted as the `failure_reason` property on
+ * `runtime_session_ended`. The bet measures classified credit exhaustion as a
+ * single bucket (`credit_exhausted`); `none` covers every other session
+ * (clean completes, user stops, and unclassified failures).
+ */
+export type RuntimeFailureReason = 'credit_exhausted' | 'none'
 
 export interface RuntimeTelemetryConfig {
 	apiKey?: string
@@ -42,6 +51,13 @@ interface SessionEndedEvent {
 	endReason: RuntimeEndReason
 	durationMs: number
 	agentServerUrl?: string
+	/**
+	 * Classifier output for credit-exhausted failures (null/undefined when the
+	 * classifier didn't run or didn't match). The granular `reason_code` is
+	 * persisted on `sessions.result.failure_reason` for drill-down; this event
+	 * only carries the rolled-up category the bet measures against.
+	 */
+	failureReason?: SessionResultFailureReason | null
 }
 
 interface CrossSessionCheckEvent {
@@ -109,7 +125,9 @@ export class RuntimeTelemetry {
 		endReason,
 		durationMs,
 		agentServerUrl,
+		failureReason,
 	}: SessionEndedEvent): void {
+		const failureReasonProp: RuntimeFailureReason = failureReason ? 'credit_exhausted' : 'none'
 		this.capture({
 			distinctId: sessionId,
 			event: 'runtime_session_ended',
@@ -117,6 +135,7 @@ export class RuntimeTelemetry {
 				session_id: sessionId,
 				end_reason: endReason,
 				duration_ms: durationMs,
+				failure_reason: failureReasonProp,
 				...(agentServerUrl ? { agent_server_url: agentServerUrl } : {}),
 			},
 		})

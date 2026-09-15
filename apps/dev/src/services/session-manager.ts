@@ -3075,6 +3075,7 @@ export class SessionManager extends EventEmitter {
 			endReason,
 			durationMs: elapsedMs(session.startedAt, session.createdAt),
 			agentServerUrl: LOCAL_RUNTIME_BUCKET,
+			failureReason,
 		})
 
 		// Clear active session link on object
