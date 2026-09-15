@@ -55,6 +55,21 @@ export const FLAGS = {
 	 * See parent bet 'Slack setup UX' for the shape spec.
 	 */
 	SLACK_SETUP_UX_V2: 'slack-setup-ux-v2',
+	/**
+	 * Customer-facing Google Meet integration surfaces — provider-card chip,
+	 * first-call preview screen, disable modal with two-radio semantics,
+	 * scope-list per human, reconnect banner, `.mcp-tag.on-meet` teal variant.
+	 * See parent bet [Google Meet MCP — cover the top JTBDs across the
+	 * workspace](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/947eee4d-9b30-49c7-968c-9376b4f5d80e).
+	 * Off until Task 2 registers the `google-meet` provider AND all sibling
+	 * PRs in the bet land; the first live-workspace flip happens in the
+	 * bet's aggregate-review pass, not this PR. The Meet-scoped `/prototypes`
+	 * harness route the customer-UX task ships is gated on this flag too, so
+	 * the surfaces stay dark until a tester actor is added to
+	 * `FF_TESTER_ACTOR_IDS` alongside `google-meet-integration-ui` in
+	 * `FF_TESTER_FEATURES`.
+	 */
+	GOOGLE_MEET_INTEGRATION_UI: 'google-meet-integration-ui',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
