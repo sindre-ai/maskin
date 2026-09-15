@@ -18,6 +18,7 @@ import {
 import { serializeArray } from '../lib/serialize'
 import type { SessionManager } from '../services/session-manager'
 import { autoSubscribe } from '../services/subscriptions'
+import { isCommentFallbackDriverEligible } from '../services/trigger-runner'
 
 type Env = {
 	Variables: {
@@ -338,6 +339,18 @@ app.openapi(createCommentRoute, (async (c) => {
 	// for the same comment.
 	if (parentEventId !== undefined) {
 		const excludedAgentIds = await resolveMentionedAgentIds(db, body.mentions)
+		// The `CommentDispatcher` fallback ladder dispatches the object's driver
+		// for any mention-free comment. When it will dispatch this driver, exclude
+		// them here as well — otherwise one reply queues two sessions for the same
+		// agent (`comment_fallback` + `thread_reply`), which is the doubling the
+		// 8515a7d8 insight measured as 9 comments → 18 sessions.
+		const fallbackDriverId = await resolveFallbackDriverId(db, {
+			commenterId: actorId,
+			mentionCount: body.mentions?.length ?? 0,
+			parentAuthorId: opActorId,
+			objectId: body.entity_id,
+		})
+		if (fallbackDriverId) excludedAgentIds.add(fallbackDriverId)
 		spawnThreadReplySessions({
 			db,
 			sessionManager,
@@ -456,6 +469,45 @@ async function resolveMentionedAgentIds(
 		.from(actors)
 		.where(and(inArray(actors.id, mentionIds), eq(actors.type, 'agent')))
 	return new Set(rows.map((r) => r.id))
+}
+
+/**
+ * The actor the `CommentDispatcher` fallback ladder will dispatch for this
+ * comment, or `null` when the ladder won't reach case 2.
+ *
+ * `spawnThreadReplySessions` consults this so the thread-reply auto-spawn does
+ * not queue a second session for an agent the driver-fallback is already
+ * handling. Both this and the ladder's own branch go through
+ * `isCommentFallbackDriverEligible`, so changing the ladder's conditions can't
+ * silently reintroduce the double-dispatch.
+ *
+ * `parentAuthorId` is the ROOT comment's author: `postComment` writes the
+ * collapsed root id as the stored `parentEventId`, and that is the value the
+ * subscriber reads back when it resolves the comment's parent author.
+ */
+async function resolveFallbackDriverId(
+	db: Database,
+	ctx: {
+		commenterId: string
+		mentionCount: number
+		parentAuthorId: string | null
+		objectId: string
+	},
+): Promise<string | null> {
+	const [obj] = await db
+		.select({ driver: objects.driver })
+		.from(objects)
+		.where(eq(objects.id, ctx.objectId))
+		.limit(1)
+	const driverId = obj?.driver ?? null
+	return isCommentFallbackDriverEligible({
+		driverId,
+		commenterId: ctx.commenterId,
+		parentAuthorId: ctx.parentAuthorId,
+		mentionCount: ctx.mentionCount,
+	})
+		? driverId
+		: null
 }
 
 // Cap on consecutive agent-authored comments at the tail of a thread. Once a

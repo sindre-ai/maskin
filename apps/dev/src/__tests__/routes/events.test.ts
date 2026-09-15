@@ -806,6 +806,9 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk: root terminates
+					// Driver lookup for the fallback exclusion — no driver on this object,
+					// so the thread-reply spawn is unaffected.
+					[{ driver: null }],
 					// Thread comments query (desc by id): new comment + agent reply + root
 					[
 						{
@@ -864,6 +867,80 @@ describe('Events Routes', () => {
 				)
 			})
 
+			it('does NOT spawn a thread-reply session for the driver the fallback ladder will dispatch', async () => {
+				// Regression: one mention-free reply must queue exactly one session.
+				// The driver is also a thread participant, so before the fix both the
+				// `comment_fallback` ladder (case 2) and the thread-reply auto-spawn
+				// dispatched them — doubling queue depth (the 8515a7d8 insight's
+				// 9 comments → 18 sessions).
+				const objectId = randomUUID()
+				const driverAgentId = randomUUID()
+				const rootCommentId = 720100
+				const driverReplyId = 720101
+				const newCommentId = 720200
+
+				const newComment = buildEvent({
+					id: newCommentId,
+					workspaceId: wsId,
+					actorId: 'test-actor-id',
+					action: 'commented',
+					entityType: 'object',
+					entityId: objectId,
+					data: { content: 'Follow up', parentEventId: rootCommentId },
+				})
+				const { app, mockResults, sessionManager } = createSessionTestApp(
+					eventsRoutes,
+					'/api/events',
+				)
+				;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
+				mockResults.selectQueue = [
+					[{ workspaceId: wsId }], // object lookup
+					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk: root terminates
+					// Driver lookup — the object has a driver, and they are a thread
+					// participant, so the fallback ladder (case 2) will handle them.
+					[{ driver: driverAgentId }],
+					// Thread comments query (desc by id): new comment + driver reply + root
+					[
+						{
+							id: newCommentId,
+							actorId: 'test-actor-id',
+							actorType: 'human',
+							data: { content: 'Follow up', parentEventId: rootCommentId },
+						},
+						{
+							id: driverReplyId,
+							actorId: driverAgentId,
+							actorType: 'agent',
+							data: { content: 'driver reply', parentEventId: rootCommentId },
+						},
+						{
+							id: rootCommentId,
+							actorId: randomUUID(),
+							actorType: 'human',
+							data: { content: 'Root' },
+						},
+					],
+				]
+				mockResults.insert = [newComment]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/events',
+						{
+							entity_id: objectId,
+							content: 'Follow up',
+							parent_event_id: rootCommentId,
+						},
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(201)
+				await flushMicrotasks()
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+
 			it('spawns a thread-reply session for an agent only @mentioned earlier in the thread', async () => {
 				const objectId = randomUUID()
 				const agentAId = randomUUID()
@@ -888,6 +965,8 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
+					// Driver lookup for the fallback exclusion — no driver on this object.
+					[{ driver: null }],
 					// Thread comments query: only humans authored, but root @mentions agent A
 					[
 						{
@@ -964,6 +1043,8 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
+					// Driver lookup for the fallback exclusion — no driver on this object.
+					[{ driver: null }],
 					// Thread comments: new + prior agent A reply + root. Both agent rows
 					// are by the current commenter so neither should be spawned.
 					[
@@ -1041,6 +1122,10 @@ describe('Events Routes', () => {
 					[{ id: agentAId }],
 					// resolveMentionedAgentIds — the excludedAgentIds source
 					[{ id: agentAId }],
+					// Driver lookup for the fallback exclusion. The comment carries a
+					// mention, so the ladder never reaches case 2 and this result is
+					// unused — the exclusion here is still the mention one.
+					[{ driver: null }],
 					// Thread comments query
 					[
 						{
@@ -1166,6 +1251,7 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }],
 					[{ id: rootCommentId, data: { content: 'Root' } }],
+					[{ driver: null }],
 					threadRows,
 				]
 				mockResults.insert = [newComment]
@@ -1209,6 +1295,7 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }],
 					[{ id: rootCommentId, data: { content: 'Root' } }],
+					[{ driver: null }],
 					// Both prior thread participants are humans → no agent spawn
 					[
 						{
