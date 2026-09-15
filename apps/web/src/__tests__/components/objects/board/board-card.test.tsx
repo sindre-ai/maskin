@@ -135,4 +135,72 @@ describe('BoardCard', () => {
 		await user.click(screen.getByTestId('board-card'))
 		expect(navigateSpy).toHaveBeenCalledWith('/ws-xyz/objects/obj-abc')
 	})
+
+	describe('advance affordance', () => {
+		// The card body is a `<Link>` (`<a>`), so a `<button>` inside it is
+		// invalid HTML — React 19 logs `<button> cannot be a descendant of <a>`
+		// on every render, spamming the console on the Board view. The advance
+		// affordance renders as `<span role="button">` for that reason.
+		it('renders the advance affordance without nesting a <button> inside the link', () => {
+			const onAdvance = vi.fn()
+			render(
+				<BoardCard
+					object={buildObjectResponse({ id: 'x', title: 'X' })}
+					workspaceId="ws-1"
+					onAdvance={onAdvance}
+					advanceLabel="Move to In Progress"
+				/>,
+			)
+			const advance = screen.getByRole('button', { name: 'Move to In Progress' })
+			expect(advance.tagName).toBe('SPAN')
+			expect(screen.getByTestId('board-card').querySelector('button')).toBeNull()
+		})
+
+		it('invokes onAdvance on click without navigating the card link', async () => {
+			const user = userEvent.setup()
+			const onAdvance = vi.fn()
+			render(
+				<BoardCard
+					object={buildObjectResponse({ id: 'x', title: 'X' })}
+					workspaceId="ws-1"
+					onAdvance={onAdvance}
+					advanceLabel="Move to In Progress"
+				/>,
+			)
+			await user.click(screen.getByRole('button', { name: 'Move to In Progress' }))
+			expect(onAdvance).toHaveBeenCalledTimes(1)
+			expect(navigateSpy).not.toHaveBeenCalled()
+		})
+
+		it('invokes onAdvance on Enter and Space so keyboard users can reach it', async () => {
+			const user = userEvent.setup()
+			const onAdvance = vi.fn()
+			render(
+				<BoardCard
+					object={buildObjectResponse({ id: 'x', title: 'X' })}
+					workspaceId="ws-1"
+					onAdvance={onAdvance}
+					advanceLabel="Move to In Progress"
+				/>,
+			)
+			const advance = screen.getByRole('button', { name: 'Move to In Progress' })
+			advance.focus()
+			await user.keyboard('{Enter}')
+			await user.keyboard(' ')
+			expect(onAdvance).toHaveBeenCalledTimes(2)
+			expect(navigateSpy).not.toHaveBeenCalled()
+		})
+
+		it('is reachable in the tab order', () => {
+			render(
+				<BoardCard
+					object={buildObjectResponse({ id: 'x', title: 'X' })}
+					workspaceId="ws-1"
+					onAdvance={() => {}}
+					advanceLabel="Advance"
+				/>,
+			)
+			expect(screen.getByRole('button', { name: 'Advance' })).toHaveAttribute('tabindex', '0')
+		})
+	})
 })
