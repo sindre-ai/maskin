@@ -41,6 +41,10 @@ export type ReadErrorKind =
 const TERMINAL_PROVIDER_CODES = new Set<string>([
 	'CREDENTIAL_NOT_CONNECTED',
 	'CREDENTIAL_REVOKED',
+	// P3-C: fan-out LinkedIn tool call whose integration was disconnected in
+	// Maskin (user hit Settings > Disconnect, or workspace admin revoked).
+	// Non-retryable — reconnect is a user action, not a wait.
+	'INTEGRATION_DISCONNECTED',
 	'LINKEDIN_ACCOUNT_RESTRICTED',
 ])
 

@@ -1,6 +1,6 @@
 import type { MessageResponse } from '@/lib/api'
-import { render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
 vi.mock('@tanstack/react-router', async () => {
@@ -23,6 +23,12 @@ vi.mock('@/hooks/use-objects', () => ({
 	}),
 }))
 
+const retryMutate = vi.fn()
+vi.mock('@/hooks/use-conversation', () => ({
+	useEditMessage: () => ({ mutate: vi.fn(), isPending: false }),
+	useRetryMessage: () => ({ mutate: retryMutate, isPending: false }),
+}))
+
 import { MessageBubble } from '@/components/chat/message-bubble'
 
 function buildMessage(overrides: Partial<MessageResponse> = {}): MessageResponse {
@@ -42,8 +48,10 @@ function buildMessage(overrides: Partial<MessageResponse> = {}): MessageResponse
 	}
 }
 
-function renderBubble(message: MessageResponse) {
-	return render(<MessageBubble workspaceId="ws-1" message={message} />, { wrapper: TestWrapper })
+function renderBubble(message: MessageResponse, v4Polish = false) {
+	return render(<MessageBubble workspaceId="ws-1" message={message} v4Polish={v4Polish} />, {
+		wrapper: TestWrapper,
+	})
 }
 
 const CHART_MESSAGE = [
@@ -83,11 +91,31 @@ describe('MessageBubble', () => {
 				actorType: 'human',
 				metadata: { context_objects: [{ id: 'obj-1', title: 'Retry window', type: 'bet' }] },
 			}),
+			true,
 		)
-		const label = screen.getByText('You attached')
+		// Raw source string is uppercase — the .eyebrow class only renders visual
+		// case, but v4 fixes the DOM text so it's semantically an eyebrow too.
+		const label = screen.getByText('YOU ATTACHED')
 		expect(label.className).toContain('eyebrow')
 		// The chips row is a sibling of the plate, not a child of it.
 		expect(label.closest('div')?.className).not.toContain('bg-primary')
+	})
+
+	it('keeps the pre-v4 sentence-case label and no hover row when v4Polish is off', () => {
+		// Rollback state for the chats-v4-polish bet: the flag off must render the
+		// pre-bet bubble exactly — "You attached" as prose and no action row.
+		renderBubble(
+			buildMessage({
+				actorId: 'me',
+				actorName: 'Me',
+				actorType: 'human',
+				metadata: { context_objects: [{ id: 'obj-1', title: 'Retry window', type: 'bet' }] },
+			}),
+		)
+		expect(screen.getByText('You attached')).toBeInTheDocument()
+		expect(screen.queryByText('YOU ATTACHED')).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Copy message' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
 	})
 
 	it('renders a REFERENCED rail under an agent message body', () => {
@@ -107,6 +135,58 @@ describe('MessageBubble', () => {
 		expect(screen.getByText('Billing Agent joined')).toBeInTheDocument()
 		expect(container.querySelectorAll('.bg-border')).toHaveLength(2)
 		expect(container.querySelector('.rounded-full')).toBeNull()
+	})
+})
+
+describe('MessageBubble — agent hover row (v4)', () => {
+	beforeEach(() => {
+		retryMutate.mockReset()
+	})
+
+	it('renders Copy and Retry buttons on an agent message', () => {
+		renderBubble(buildMessage(), true)
+		expect(screen.getByRole('button', { name: 'Copy message' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+	})
+
+	it('deliberately does NOT render Rate up / Rate down on the agent hover row', () => {
+		renderBubble(buildMessage(), true)
+		expect(screen.queryByRole('button', { name: /rate up/i })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /rate down/i })).not.toBeInTheDocument()
+	})
+
+	it('copies the message text to the clipboard when Copy is clicked', async () => {
+		const writeText = vi.fn().mockResolvedValue(undefined)
+		Object.defineProperty(navigator, 'clipboard', {
+			configurable: true,
+			value: { writeText },
+		})
+		renderBubble(buildMessage({ content: 'Hello from the agent.' }), true)
+		fireEvent.click(screen.getByRole('button', { name: 'Copy message' }))
+		expect(writeText).toHaveBeenCalledWith('Hello from the agent.')
+	})
+
+	it('triggers the existing regenerate mutation with the message id when Retry is clicked', () => {
+		renderBubble(buildMessage({ id: 42 }), true)
+		fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+		expect(retryMutate).toHaveBeenCalledWith({ messageId: 42 })
+	})
+
+	it('leaves the user branch hover row unchanged (Edit + Retry, no new Copy)', () => {
+		renderBubble(buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human', id: 7 }), true)
+		// The pre-v4 own-message action row uses Edit + Retry; v4 must not add
+		// a new "Copy message" button here. (The label 'Copy message' is the
+		// agent branch's new button — asserting it is absent proves the user
+		// row still has the same two actions it had before.)
+		expect(screen.getByRole('button', { name: 'Edit message' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Ask agents to respond again/ })).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Copy message' })).not.toBeInTheDocument()
+	})
+
+	it('does not render the hover row on an optimistic bubble (id ≤ 0)', () => {
+		renderBubble(buildMessage({ id: -1 }), true)
+		expect(screen.queryByRole('button', { name: 'Copy message' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
 	})
 })
 

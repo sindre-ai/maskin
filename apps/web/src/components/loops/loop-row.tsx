@@ -1,9 +1,10 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { RelativeTime } from '@/components/shared/relative-time'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ActorListItem, LoopSummary } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
-import { LOOP_PILL_STYLES, isLiveLoopPill } from './loop-pill'
+import { LOOP_PILL_STYLES, NO_CREDITS_PILL, isLiveLoopPill } from './loop-pill'
 
 // Plain-language "what happened last" line, derived purely from the loop's live
 // state (no fixtures). The read schema carries no per-activity feed, so this
@@ -32,12 +33,22 @@ export function LoopRow({
 	loop,
 	actors,
 	busyAgentCount = 0,
+	showNoCreditsPill = false,
+	onNoCreditsClick,
 }: {
 	loop: LoopSummary
 	actors: ActorListItem[] | undefined
 	/** How many of this loop's agents have a live session right now — drives the
 	 *  green "busy" line under the stage label (mockup 1536). */
 	busyAgentCount?: number
+	/** Route-level composite from `useFeatureFlag('loops-v4-polish')` + the
+	 *  workspace's `credit_balance_cents`. When true and the loop's `pill` is
+	 *  `paused`, the row renders the NO CREDITS overlay next to the state
+	 *  label — parity with the Objects PAUSED · NO CREDITS pill. */
+	showNoCreditsPill?: boolean
+	/** Invoked when the NO CREDITS pill is clicked; expected to open the
+	 *  workspace billing top-up drawer (no new route). */
+	onNoCreditsClick?: () => void
 }) {
 	const pill = LOOP_PILL_STYLES[loop.pill]
 	const agentCards = loop.agentIds
@@ -45,6 +56,11 @@ export function LoopRow({
 		.filter((a): a is ActorListItem => Boolean(a))
 	const lastActor = agentCards[0]
 	const activity = lastActivityText(loop)
+	// Route-level flag + workspace-credits check already gate this; a per-row
+	// `loop.pill === 'paused'` is the last predicate that keeps the overlay off
+	// live and draft rows. Keeping it here (rather than in the parent) means the
+	// route hands one boolean per workspace, not one per row.
+	const noCreditsVisible = showNoCreditsPill && loop.pill === 'paused'
 
 	return (
 		<Link
@@ -82,18 +98,50 @@ export function LoopRow({
 					</div>
 				)}
 			</div>
-			<div className="shrink-0 text-right leading-[1.35]">
-				{/* Stage stands in for the mockup's per-loop stage label (1535).
-				    `LoopSummary` carries no stage field, so this reads the pill —
-				    a real stage needs a `stage` column on `loopSummarySchema`. */}
-				<p data-testid="loop-pill" className={cn('text-xs font-semibold', pill.text)}>
-					{pill.label}
-				</p>
-				{busyAgentCount > 0 && (
-					<p className="mt-0.5 whitespace-nowrap text-[11px] text-success">
-						{busyAgentCount} busy now
-					</p>
+			<div className="flex shrink-0 items-center gap-2 text-right leading-[1.35]">
+				{noCreditsVisible && (
+					<TooltipProvider delayDuration={150}>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									data-testid="loop-pill-no-credits"
+									aria-label={NO_CREDITS_PILL.ariaLabel}
+									onClick={(event) => {
+										// Stop the row-level <Link> from swallowing the click — the
+										// pill's job is to open the billing drawer, not navigate.
+										event.preventDefault()
+										event.stopPropagation()
+										onNoCreditsClick?.()
+									}}
+									// NOT `.eyebrow` — that utility hard-codes `color: muted-foreground`
+									// at higher specificity than `text-warning` and wins at runtime,
+									// rendering the pill grey. Mirror the marketplace kind-label base
+									// (`components/marketplace/item-type-label.ts:16`) instead so
+									// `text-warning` actually paints amber in both themes.
+									className="inline-flex shrink-0 items-center rounded-md bg-warning/15 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.05em] text-warning transition-colors hover:bg-warning/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/40"
+								>
+									<span className="hidden sm:inline">{NO_CREDITS_PILL.label}</span>
+									<span className="sm:hidden">{NO_CREDITS_PILL.mobileLabel}</span>
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="top">{NO_CREDITS_PILL.tooltip}</TooltipContent>
+						</Tooltip>
+					</TooltipProvider>
 				)}
+				<div>
+					{/* Stage stands in for the mockup's per-loop stage label (1535).
+					    `LoopSummary` carries no stage field, so this reads the pill —
+					    a real stage needs a `stage` column on `loopSummarySchema`. */}
+					<p data-testid="loop-pill" className={cn('text-xs font-semibold', pill.text)}>
+						{pill.label}
+					</p>
+					{busyAgentCount > 0 && (
+						<p className="mt-0.5 whitespace-nowrap text-[11px] text-success">
+							{busyAgentCount} busy now
+						</p>
+					)}
+				</div>
 			</div>
 			{agentCards.length > 0 && (
 				<div className="hidden shrink-0 pl-2 md:flex">

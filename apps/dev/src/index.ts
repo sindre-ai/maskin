@@ -15,10 +15,12 @@ import {
 	maybeBootstrapDev,
 	seedMarketplaceIfEmpty,
 } from './lib/dev-bootstrap'
+import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
+import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
@@ -55,6 +57,19 @@ try {
 		error: err instanceof Error ? err.message : String(err),
 	})
 }
+
+// Repopulate the in-process LinkedIn MCP fan-out registry from every active
+// `linkedin-unipile` credential in the DB. Fire-and-forget on purpose:
+// every Coolify redeploy of apps/dev wipes the registry, and until this
+// runs `tools/list` on the LinkedIn MCP returns zero tools for a workspace
+// with an active credential — but boot must not block on Unipile latency
+// either, and the self-heal path in the /mcp route covers any credential
+// whose enumeration hasn't landed by the time the first request arrives.
+repopulateLinkedInMcpRegistryOnBoot(db).catch((err) => {
+	logger.error('linkedin-unipile boot repopulation: unexpected failure', {
+		error: err instanceof Error ? err.message : String(err),
+	})
+})
 
 // Real-time: PG NOTIFY → SSE bridge
 // LISTEN/NOTIFY requires a direct (session-mode) connection when using a connection
@@ -147,6 +162,13 @@ logger.info('Purge idempotency job started')
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
+
+// D6b — Loops v4 escalation reconciler. Runs iff BOTH `loops-v4-polish` and
+// `loops-v4-polish.step_flow` are in FF_TESTER_FEATURES; noop otherwise, so
+// unsetting the sub-flag from the env + restarting is the rollback path.
+const loopEscalationReconciler = new LoopEscalationReconciler(db)
+loopEscalationReconciler.start()
+logger.info('Loop escalation reconciler started')
 
 const orphanThreadDetector = new OrphanThreadDetector(db)
 orphanThreadDetector.start()

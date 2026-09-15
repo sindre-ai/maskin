@@ -7,17 +7,20 @@ import {
 	type Integration,
 	integrations,
 } from '@maskin/db/schema'
+import { getLinkedInMcpInstancesForIntegration, instanceSlug } from '@maskin/mcp/linkedin'
 import { and, eq } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { createAuthLink } from '../lib/integrations/providers/linkedin-unipile/client'
+import { deleteUnipileAccountForReconnectOrphan } from '../lib/integrations/providers/linkedin-unipile/disconnect'
 import { enumerateLinkedInIdentitiesAndRegister } from '../lib/integrations/providers/linkedin-unipile/enumeration'
 import {
 	LinkedInIntegrationError,
 	isLinkedInIntegrationError,
 } from '../lib/integrations/providers/linkedin-unipile/errors'
+import { selfHealLinkedInMcpCredential } from '../lib/integrations/providers/linkedin-unipile/mcp-registry-self-heal'
 import {
 	commentOnLinkedInPost,
 	getLinkedInPostEngagement,
@@ -316,12 +319,27 @@ app.openapi(connectRoute, (async (c) => {
 	}
 
 	try {
-		const link = await createAuthLink({
-			providers: ['linkedin'],
+		// P3-H · reconnect vs fresh connect. Unipile v2 discriminates on which
+		// of `providers` / `account_id` the /v2/auth/link body carries. Ask for
+		// a reconnect ONLY when the existing row is still `active` upstream —
+		// that's the case P3-H is meant to cover (still-live account, expired
+		// wizard). A `revoked` row's externalId points at an account P3-B's
+		// disconnect preHook already deleted upstream, so a reconnect against
+		// it lands the user on Unipile's hosted-auth page with "Account not
+		// found. The account you try to reconnect does not exist." Fall back
+		// to a fresh mint in that case; the callback overwrites the stale
+		// externalId when the new account lands.
+		const existingRow = existing[0]
+		const priorAccountId =
+			existingRow?.status === CONNECTED_STATUS ? (existingRow.externalId ?? null) : null
+		const commonAuthLinkArgs = {
 			expires_on: new Date(Date.now() + 10 * 60_000).toISOString(),
 			redirect_uri: callbackUrl(),
 			state: `${integrationId}.${authNonce}`,
-		})
+		}
+		const link = priorAccountId
+			? await createAuthLink({ ...commonAuthLinkArgs, account_id: priorAccountId })
+			: await createAuthLink({ ...commonAuthLinkArgs, providers: ['linkedin'] })
 		return c.json({ install_url: link.link, integration_id: integrationId })
 	} catch (err) {
 		// `cause` carries the real LinkedIn status/body (or the schema-drift
@@ -399,6 +417,21 @@ app.openapi(callbackRoute, (async (c) => {
 	}
 	const pending = resolved.row
 
+	// P3-H · reconnect-orphan detection. If the row already carried an
+	// `external_id`, this callback is a reconnect. The happy path (Unipile
+	// v2 reconnect semantics: same account_id round-trips) leaves the row's
+	// external_id unchanged; the pathological path — the wizard user picks
+	// a different LinkedIn identity, or Unipile mints a new id anyway —
+	// leaves the prior account orphaned upstream. Fire a best-effort
+	// deleteAccount against the OLD id and log at warn so it's visible in
+	// Sentry. The delete is intentionally fired regardless of the local
+	// landing outcome; the local status flip below still runs.
+	const priorExternalId = pending.externalId ?? null
+	const isReconnectOrphan =
+		typeof priorExternalId === 'string' &&
+		priorExternalId.length > 0 &&
+		priorExternalId !== account_id
+
 	// Landing the credential drops auth_nonce/nonce_expires_at from the blob,
 	// which is what makes the state single-use: a replay of this exact URL now
 	// resolves to 'bad_nonce' instead of rebinding a live integration.
@@ -474,6 +507,24 @@ app.openapi(callbackRoute, (async (c) => {
 	} else {
 		logger.warn('linkedin-unipile callback: pending row missing actor_id — event skipped', {
 			integrationId: pending.id,
+		})
+	}
+
+	// P3-H · reconnect-orphan cleanup runs AFTER the local landing commits so
+	// a Unipile-side hiccup on the orphan delete can never leave the local
+	// row half-updated. Warn-level log so the "reconnect returned a different
+	// id" case is visible even when the delete succeeds silently.
+	if (isReconnectOrphan && priorExternalId) {
+		logger.warn('linkedin-unipile callback: reconnect returned a different account_id', {
+			integrationId: pending.id,
+			workspaceId: pending.workspaceId,
+			prior_external_id: priorExternalId,
+			new_external_id: account_id,
+		})
+		await deleteUnipileAccountForReconnectOrphan({
+			orphanedAccountId: priorExternalId,
+			integrationId: pending.id,
+			workspaceId: pending.workspaceId,
 		})
 	}
 
@@ -656,6 +707,61 @@ function handleTerminalError(err: unknown, operation: string, actorId: string): 
 		headers: { 'content-type': 'application/json' },
 	})
 }
+
+// ── GET /api/integrations/linkedin-unipile/identities ─────────────────
+//
+// P3-K · Enumerate every connected LinkedIn identity in this workspace so the
+// agent MCP panel can render one Quick Add button per identity. Reads the same
+// fan-out registry the `/mcp/:instanceSlug` endpoint reads, sorted alphabetically
+// by display name for deterministic UI ordering. Empty array — not a 4xx — when
+// no LinkedIn integration is connected: the panel simply renders no LinkedIn
+// buttons in that case, matching how it treats other unconnected providers.
+
+app.get('/identities', async (c) => {
+	const db = c.get('db')
+	const workspaceId = readWorkspaceIdHeader(c.req)
+	if (!workspaceId) {
+		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
+	}
+
+	const credentialRows = await db
+		.select({
+			id: integrations.id,
+			workspaceId: integrations.workspaceId,
+			actorId: integrations.actorId,
+			createdBy: integrations.createdBy,
+			externalId: integrations.externalId,
+			status: integrations.status,
+		})
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.provider, 'linkedin-unipile'),
+				eq(integrations.status, INTEGRATION_STATUS_ACTIVE),
+			),
+		)
+
+	// Same self-heal path the /mcp endpoint uses — the identities list must
+	// match what the MCP server would expose, so a workspace connecting
+	// LinkedIn for the first time sees Quick Add buttons appear on the next
+	// panel refresh rather than after a boot repopulation window.
+	await Promise.all(credentialRows.map(selfHealLinkedInMcpCredential))
+
+	const instances = credentialRows.flatMap((row) => getLinkedInMcpInstancesForIntegration(row.id))
+	const identities = instances
+		.map((cfg) => ({
+			instanceSlug: instanceSlug(cfg),
+			displayName: cfg.displayName,
+			identityType: cfg.identityType,
+			identitySlug: cfg.identitySlug,
+			unipileAccSlug: cfg.unipileAccSlug,
+			integrationId: cfg.integrationId,
+		}))
+		.sort((a, b) => a.displayName.localeCompare(b.displayName))
+
+	return c.json(identities)
+})
 
 // ── POST /api/integrations/linkedin-unipile/send-message ─────────────
 

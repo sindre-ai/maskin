@@ -297,6 +297,145 @@ describe('Conversations Integration', () => {
 			expect(detailBody2.last_read_message_id).toBe(msg2.id)
 		})
 
+		it('mark_unread resets the read cursor to null, unclamped by the GREATEST guard', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Thread', participant_actor_ids: [other.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const m1 = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{ content: 'one' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const msg1 = (await m1.json()) as { id: number }
+			const m2 = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{ content: 'two' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const msg2 = (await m2.json()) as { id: number }
+
+			const { app: otherApp } = createConversationsApp(other.id)
+			const readDetail = async () => {
+				const res = await otherApp.request(
+					jsonGet(`/api/conversations/${conversation.id}`, { 'x-workspace-id': workspaceId }),
+				)
+				return (await res.json()) as {
+					unread_count: number
+					last_read_message_id: number | null
+				}
+			}
+
+			// Both owner messages are unread to start with.
+			expect((await readDetail()).unread_count).toBe(2)
+
+			// Advance to the newest message, then reset.
+			await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/me`,
+					{ last_read_message_id: msg2.id },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect((await readDetail()).last_read_message_id).toBe(msg2.id)
+
+			await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/me`,
+					{ mark_unread: true },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const afterReset = await readDetail()
+			expect(afterReset.last_read_message_id).toBeNull()
+			expect(afterReset.unread_count).toBe(2)
+
+			// A reset is not a one-way door: a later advance still works.
+			await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/me`,
+					{ last_read_message_id: msg1.id },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect((await readDetail()).last_read_message_id).toBe(msg1.id)
+
+			// The GREATEST guard still applies to plain advances: an older id no-ops.
+			await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/me`,
+					{ last_read_message_id: msg2.id },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/me`,
+					{ last_read_message_id: msg1.id },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect((await readDetail()).last_read_message_id).toBe(msg2.id)
+
+			// And a second reset still reaches null after an advance.
+			await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/me`,
+					{ mark_unread: true },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const afterSecondReset = await readDetail()
+			expect(afterSecondReset.last_read_message_id).toBeNull()
+			expect(afterSecondReset.unread_count).toBe(2)
+		})
+
+		it('rejects mark_unread combined with last_read_message_id', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Thread', participant_actor_ids: [other.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const { app: otherApp } = createConversationsApp(other.id)
+			const res = await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/me`,
+					{ mark_unread: true, last_read_message_id: 5 },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(400)
+		})
+
 		it('unread_only=true excludes conversations the caller has fully read', async () => {
 			const other = await insertActor(db, { type: 'human' })
 			await addMember(workspaceId, other.id)

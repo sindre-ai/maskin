@@ -18,6 +18,16 @@
 // Every known flag id. Ids absent from this registry always resolve to false,
 // so a typo in FF_TESTER_FEATURES can't invent a flag. Add an entry here as the
 // first step of introducing a new flag.
+//
+// `loops-v4-polish` gates the Loops & Loop detail v4 UX/UI polish bet
+// (bet/d166-loops-v4-polish). The three sub-flags let a single delta be
+// reverted without dropping the rest: `.targets` for D5 (Loop targets),
+// `.step_flow` for D6 (vertical step flow + escalation reconciler), and
+// `.unread` for D8 (unread boundary + Mark read). Every sub-flag is
+// additionally gated by the umbrella at each read site — so flipping the
+// umbrella off kills every downstream v4 delta at once. See
+// `.claude/rules/feature-flags.md` for the boundary rule and
+// `bet/d166-loops-v4-polish` for the ship / rollback plan.
 export const FLAGS = {
 	/**
 	 * LinkedIn Identity add-on visibility on the plan surface
@@ -70,6 +80,29 @@ export const FLAGS = {
 	 * `FF_TESTER_FEATURES`.
 	 */
 	GOOGLE_MEET_INTEGRATION_UI: 'google-meet-integration-ui',
+	loopsV4Polish: 'loops-v4-polish',
+	loopsV4PolishTargets: 'loops-v4-polish.targets',
+	loopsV4PolishStepFlow: 'loops-v4-polish.step_flow',
+	loopsV4PolishUnread: 'loops-v4-polish.unread',
+	/**
+	 * `chats-v4-polish` gates the Chats v4 UX/UI polish bet
+	 * (bet/bdda1c1e-chats-v4-polish). The five sub-flags let a single delta be
+	 * reverted without dropping the rest: `.list` for the conversation-list
+	 * end-of-history footer, `.header` for the thread-header controls (loop
+	 * chip, copy whole conversation, mark as unread, mobile overflow menu),
+	 * `.banner` for the resume-banner restyle, `.bubbles` for the message-bubble
+	 * hover actions + attachment eyebrow, and `.new_chat` for the new-chat chip
+	 * picker. Every sub-flag is additionally gated by the umbrella at each read
+	 * site — so flipping the umbrella off kills every downstream v4 delta at
+	 * once. See `.claude/rules/feature-flags.md` for the boundary rule and
+	 * `bet/bdda1c1e-chats-v4-polish` for the ship / rollback plan.
+	 */
+	chatsV4Polish: 'chats-v4-polish',
+	chatsV4PolishList: 'chats-v4-polish.list',
+	chatsV4PolishHeader: 'chats-v4-polish.header',
+	chatsV4PolishBanner: 'chats-v4-polish.banner',
+	chatsV4PolishBubbles: 'chats-v4-polish.bubbles',
+	chatsV4PolishNewChat: 'chats-v4-polish.new_chat',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

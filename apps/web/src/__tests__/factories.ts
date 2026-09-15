@@ -5,6 +5,7 @@ import type {
 	EventResponse,
 	ImportResponse,
 	IntegrationResponse,
+	LoopStep,
 	LoopSummary,
 	NotificationResponse,
 	ObjectResponse,
@@ -213,6 +214,26 @@ export function buildTriggerResponse(overrides: Partial<TriggerResponse> = {}): 
 	}
 }
 
+export function buildLoopStep(overrides: Partial<LoopStep> = {}): LoopStep {
+	const triggerId = overrides.triggerId ?? nextId('step')
+	return {
+		triggerId,
+		triggerName: 'Step name',
+		triggerActionPrompt: 'Do the thing',
+		triggerType: 'event',
+		triggerConfig: {},
+		agent: { id: 'actor-1', name: 'Relay', description: null },
+		handsOffToActorId: null,
+		escalatesToActorId: null,
+		escalateAfterMs: null,
+		handsOffToActor: null,
+		escalatesToActor: null,
+		waitingOnViewer: false,
+		pendingCount: 0,
+		...overrides,
+	}
+}
+
 export function buildLoopSummary(overrides: Partial<LoopSummary> = {}): LoopSummary {
 	const id = overrides.id ?? nextId('loop')
 	return {
@@ -230,6 +251,8 @@ export function buildLoopSummary(overrides: Partial<LoopSummary> = {}): LoopSumm
 		agentIds: [],
 		triggerIds: [],
 		waitingOnViewer: false,
+		waitingCount: 0,
+		targets: null,
 		createdAt: null,
 		updatedAt: null,
 		...overrides,

@@ -67,6 +67,7 @@ import {
 	stripFailedIdentities,
 } from '../lib/github/preflight'
 import { isAuthRevokedError } from '../lib/integrations/errors'
+import { serverSpecReferencesEnvKey } from '../lib/integrations/mcp-server-spec-refs'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
 import {
@@ -1874,68 +1875,38 @@ export class SessionManager extends EventEmitter {
 			tokenMetadata: TokenMetadata
 		}> = []
 		for (const integration of activeIntegrations) {
+			let resolved: ReturnType<typeof getProvider>
 			try {
-				const resolved = getProvider(integration.provider)
-				const accessToken = await tokenManager.getValidToken(this.db, integration.id, resolved)
+				resolved = getProvider(integration.provider)
+			} catch (err) {
+				logger.warn(`Unknown integration provider ${integration.provider}; skipping`, {
+					integrationId: integration.id,
+					error: String(err),
+				})
+				continue
+			}
+			// Defensive: some test fixtures stub getProvider to return null. Never
+			// happens in production (registry throws on unknown).
+			if (!resolved) continue
+			const mcp = resolved.config.mcp
+			const autoInjectServer = mcp?.autoInject && mcp.server ? mcp.server : null
+			// True when the provider's declared MCP server template references its
+			// own envKey via `${ENV_KEY}` — e.g. PostHog's
+			// `Authorization: Bearer ${POSTHOG_TOKEN}`. Such a server can't
+			// authenticate without a per-integration token, so a token failure IS
+			// a user-visible outage (either the auto-injected server or any
+			// hand-added variant of it will break at request time). Providers
+			// whose server authenticates on `${MASKIN_API_KEY}` instead (Slack,
+			// linkedin-unipile) do not need the token. Predicate is on the
+			// DECLARED server (not `autoInjectServer`) so it also protects a
+			// hand-added user config for a provider whose auto-inject is off —
+			// linkedin-unipile after P3-K is the canonical case.
+			const serverNeedsToken =
+				mcp?.server && mcp?.envKey ? serverSpecReferencesEnvKey(mcp.server, mcp.envKey) : false
 
-				if (integration.provider === 'github') {
-					const ownerLogin = await this.resolveGithubOwnerLogin(integration)
-					if (!ownerLogin) continue
-
-					const installationId = integration.externalId
-					if (!installationId) {
-						logger.warn(
-							'GitHub integration has no externalId; cannot stamp token metadata for tool-call tagging',
-							{
-								integrationId: integration.id,
-								sessionId: session.id,
-							},
-						)
-						continue
-					}
-
-					envVars[`GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}`] = accessToken
-					resolvedGithubInstalls.push({
-						ownerLogin,
-						token: accessToken,
-						integrationId: integration.id,
-						installationId,
-						tokenMetadata: stampTokenMetadata(accessToken, installationId),
-					})
-				} else {
-					// Slack: only inject the bot token. A user token (xoxp-) here means
-					// the install granted user scopes instead of bot scopes — posting
-					// with it would attribute every message to the human installer
-					// (the mesh-firm bug). Skip injection so the agent gets a clean
-					// "Slack not configured" error from its tools rather than silently
-					// posting as a person.
-					if (integration.provider === 'slack' && !isSlackBotToken(accessToken)) {
-						logger.warn(
-							'Skipping Slack token injection — stored access token is not a bot (xoxb-) token',
-							{
-								sessionId: session.id,
-								workspaceId: session.workspaceId,
-								integrationId: integration.id,
-								tokenPrefix: accessToken.slice(0, 5),
-							},
-						)
-						continue
-					}
-
-					const envVarName =
-						resolved.config.mcp?.envKey ??
-						`${integration.provider.toUpperCase().replace(/-/g, '_')}_TOKEN`
-					envVars[envVarName] = accessToken
-					if (resolved.config.mcp?.autoInject && resolved.config.mcp.server) {
-						autoInjectedMcpServers[`integration-${integration.provider}`] =
-							resolved.config.mcp.server
-						logger.info('Auto-injected MCP server for active integration', {
-							sessionId: session.id,
-							workspaceId: session.workspaceId,
-							provider: integration.provider,
-						})
-					}
-				}
+			let accessToken: string | null = null
+			try {
+				accessToken = await tokenManager.getValidToken(this.db, integration.id, resolved)
 			} catch (err) {
 				if (isAuthRevokedError(err)) {
 					logger.warn(
@@ -1945,12 +1916,97 @@ export class SessionManager extends EventEmitter {
 							provider: integration.provider,
 						},
 					)
-				} else {
+					continue
+				}
+				// If the declared server actually consumes the token, or the
+				// provider is GitHub (which resolves an owner login and per-org env
+				// var below), a missing/broken token blocks the whole integration
+				// — log and skip.
+				if (serverNeedsToken || integration.provider === 'github') {
 					logger.warn(`Failed to load credentials for ${integration.provider}`, {
 						integrationId: integration.id,
 						error: String(err),
 					})
+					continue
 				}
+				// Otherwise: the server authenticates on Maskin credentials and the
+				// envKey is decorative. Fall through with accessToken=null. This
+				// is the linkedin-unipile shape (credential blob is
+				// `{ account_id }` with no accessToken — token-manager throws by
+				// design). Downgraded to debug so a workspace with LinkedIn
+				// connected does not spam Sentry on every session boot.
+				logger.debug(
+					`No per-provider token for ${integration.provider}; envKey-independent server does not need one`,
+					{ integrationId: integration.id, sessionId: session.id },
+				)
+			}
+
+			if (integration.provider === 'github') {
+				// Unreachable when accessToken is null: the catch above continues on
+				// getValidToken failure for github. Guard for the type checker.
+				if (accessToken === null) continue
+
+				const ownerLogin = await this.resolveGithubOwnerLogin(integration)
+				if (!ownerLogin) continue
+
+				const installationId = integration.externalId
+				if (!installationId) {
+					logger.warn(
+						'GitHub integration has no externalId; cannot stamp token metadata for tool-call tagging',
+						{
+							integrationId: integration.id,
+							sessionId: session.id,
+						},
+					)
+					continue
+				}
+
+				envVars[`GITHUB_TOKEN_${githubOwnerLoginToEnvKey(ownerLogin)}`] = accessToken
+				resolvedGithubInstalls.push({
+					ownerLogin,
+					token: accessToken,
+					integrationId: integration.id,
+					installationId,
+					tokenMetadata: stampTokenMetadata(accessToken, installationId),
+				})
+				continue
+			}
+
+			// Slack: only inject the bot token. A user token (xoxp-) here means
+			// the install granted user scopes instead of bot scopes — posting
+			// with it would attribute every message to the human installer
+			// (the mesh-firm bug). Skip injection so the agent gets a clean
+			// "Slack not configured" error from its tools rather than silently
+			// posting as a person.
+			if (
+				integration.provider === 'slack' &&
+				accessToken !== null &&
+				!isSlackBotToken(accessToken)
+			) {
+				logger.warn(
+					'Skipping Slack token injection — stored access token is not a bot (xoxb-) token',
+					{
+						sessionId: session.id,
+						workspaceId: session.workspaceId,
+						integrationId: integration.id,
+						tokenPrefix: accessToken.slice(0, 5),
+					},
+				)
+				continue
+			}
+
+			if (accessToken !== null) {
+				const envVarName =
+					mcp?.envKey ?? `${integration.provider.toUpperCase().replace(/-/g, '_')}_TOKEN`
+				envVars[envVarName] = accessToken
+			}
+			if (autoInjectServer) {
+				autoInjectedMcpServers[`integration-${integration.provider}`] = autoInjectServer
+				logger.info('Auto-injected MCP server for active integration', {
+					sessionId: session.id,
+					workspaceId: session.workspaceId,
+					provider: integration.provider,
+				})
 			}
 		}
 

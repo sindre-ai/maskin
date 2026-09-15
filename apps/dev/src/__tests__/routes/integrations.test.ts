@@ -152,6 +152,7 @@ describe('Integrations Routes', () => {
 				'google-calendar',
 				'google-meet',
 				'linear',
+				'linkedin-unipile',
 				'posthog',
 				'slack',
 				'ubersuggest',

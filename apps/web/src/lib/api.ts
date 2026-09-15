@@ -3,7 +3,9 @@ import type {
 	ActorResponse,
 	AgentState,
 	DisplaySettingsBody,
+	ListLoopStepsResponse,
 	ListLoopsResponse,
+	LoopStep,
 	LoopSummary,
 	SafeMetadata,
 	TriggerResponse,
@@ -14,7 +16,9 @@ export type {
 	ActorResponse,
 	AgentState,
 	DisplaySettingsBody,
+	ListLoopStepsResponse,
 	ListLoopsResponse,
+	LoopStep,
 	LoopSummary,
 	TriggerResponse,
 }
@@ -400,6 +404,8 @@ export const api = {
 		list: (workspaceId: string) => request<ListLoopsResponse>('/loops', { workspaceId }),
 		activity: (id: string, workspaceId: string) =>
 			request<{ events: EventResponse[] }>(`/loops/${id}/activity`, { workspaceId }),
+		steps: (id: string, workspaceId: string) =>
+			request<ListLoopStepsResponse>(`/loops/${id}/steps`, { workspaceId }),
 	},
 
 	triggers: {
@@ -477,6 +483,10 @@ export const api = {
 		},
 		slackUsers: (id: string, workspaceId: string) =>
 			request<SlackUser[]>(`/integrations/${id}/slack/users`, { workspaceId }),
+		linkedinIdentities: (workspaceId: string) =>
+			request<LinkedInIdentitySummary[]>('/integrations/linkedin-unipile/identities', {
+				workspaceId,
+			}),
 	},
 
 	notifications: {
@@ -1413,6 +1423,13 @@ export interface ProviderInfo {
 	authType: 'oauth2' | 'oauth2_custom' | 'api_key' | 'manual'
 	events: ProviderEventDefinition[]
 	externalIdDisplay?: 'email' | 'installation'
+	mcp?: {
+		envKey: string
+		autoInject: boolean
+		server?:
+			| { type: 'stdio'; command: string; args: string[]; env?: Record<string, string> }
+			| { type: 'http'; url: string; headers?: Record<string, string> }
+	}
 }
 
 export interface SlackConversation {
@@ -1430,6 +1447,22 @@ export interface SlackUser {
 	name: string
 	real_name: string
 	is_bot: boolean
+}
+
+/**
+ * One connected LinkedIn identity (personal profile OR admined company page)
+ * for a workspace. Rendered by the agent MCP panel as one Quick Add button
+ * per row — clicking writes an mcpServers entry keyed on `instanceSlug` that
+ * points at `/api/integrations/linkedin-unipile/mcp/${instanceSlug}`, so only
+ * this identity's tools land on the agent.
+ */
+export interface LinkedInIdentitySummary {
+	instanceSlug: string
+	displayName: string
+	identityType: 'personal' | 'company_page'
+	identitySlug: string
+	unipileAccSlug: string
+	integrationId: string
 }
 
 export interface NotificationResponse {
@@ -1610,6 +1643,12 @@ export interface ConversationDetailResponse {
 	pinned: boolean
 	archived: boolean
 	last_read_message_id: number | null
+	// The loop this conversation belongs to, when it was started inside a loop
+	// (Loop chip in the thread header links to it). Server-side field is not
+	// wired yet; the frontend treats `null`/`undefined` as "no loop" and renders
+	// no chip, so the payload can start emitting it without a client-side
+	// change.
+	loop_id?: string | null
 	participants: ConversationParticipantResponse[]
 }
 
@@ -1745,6 +1784,7 @@ export interface UpdateConversationParticipantStateInput {
 	pinned?: boolean
 	archived?: boolean
 	last_read_message_id?: number
+	mark_unread?: boolean
 }
 
 export interface PostMessageInput {
