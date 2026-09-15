@@ -25,21 +25,22 @@ export const config: ProviderConfig = {
 		type: 'oauth2_custom',
 	},
 
-	// Served in-process at /api/integrations/linkedin-unipile/mcp, same shape
-	// as Slack's — the workspace's active linkedin-unipile integration is the
-	// credential source, the route resolves it per request. autoInject means
-	// every session for a workspace with LinkedIn connected gets the fan-out
-	// tools without a per-agent MCP config change, matching the bet's product
-	// intent ("first-party LinkedIn → agents can post/DM when the workspace has
-	// connected it"). envKey is retained for symmetry with other providers; the
-	// MCP route authenticates on the Maskin API key in the Authorization
-	// header, not on a per-provider container env var, so nothing reads it at
-	// runtime — but the McpConfig type requires it and setting it keeps the
-	// discovery response (GET /api/integrations/providers) shaped consistently
-	// with slack/gmail/linear.
+	// Served in-process at /api/integrations/linkedin-unipile/mcp/:instanceSlug —
+	// one MCP endpoint per connected LinkedIn identity (personal profile plus
+	// each admined page). The provider surfaces one canonical `server` spec here
+	// for the GET /api/integrations/providers discovery contract, but this shape
+	// is NOT what the frontend Quick Add uses — the mcp-servers Quick Add UI
+	// enumerates per-identity endpoints from /api/integrations/linkedin-unipile/identities
+	// and writes one mcpServers entry per identity. `autoInject` is false on
+	// purpose (Magnus 2026-09-14 reversal of the workspace-wide auto-inject that
+	// shipped in PR #1595 / bet 56c2ffd7): a workspace with many agents does not
+	// want every agent silently attached to every LinkedIn identity — the
+	// operator picks per-agent, per-identity. envKey is retained for symmetry
+	// with other providers; the MCP route authenticates on the Maskin API key
+	// in the Authorization header, not on a per-provider container env var.
 	mcp: {
 		envKey: 'LINKEDIN_UNIPILE_TOKEN',
-		autoInject: true,
+		autoInject: false,
 		server: {
 			type: 'http',
 			url: '${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp',

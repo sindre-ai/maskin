@@ -7,6 +7,7 @@ import {
 	type Integration,
 	integrations,
 } from '@maskin/db/schema'
+import { getLinkedInMcpInstancesForIntegration, instanceSlug } from '@maskin/mcp/linkedin'
 import { and, eq } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { trackIntegrationConnected } from '../lib/analytics/integration-events'
@@ -19,6 +20,7 @@ import {
 	LinkedInIntegrationError,
 	isLinkedInIntegrationError,
 } from '../lib/integrations/providers/linkedin-unipile/errors'
+import { selfHealLinkedInMcpCredential } from '../lib/integrations/providers/linkedin-unipile/mcp-registry-self-heal'
 import {
 	commentOnLinkedInPost,
 	getLinkedInPostEngagement,
@@ -705,6 +707,61 @@ function handleTerminalError(err: unknown, operation: string, actorId: string): 
 		headers: { 'content-type': 'application/json' },
 	})
 }
+
+// ── GET /api/integrations/linkedin-unipile/identities ─────────────────
+//
+// P3-K · Enumerate every connected LinkedIn identity in this workspace so the
+// agent MCP panel can render one Quick Add button per identity. Reads the same
+// fan-out registry the `/mcp/:instanceSlug` endpoint reads, sorted alphabetically
+// by display name for deterministic UI ordering. Empty array — not a 4xx — when
+// no LinkedIn integration is connected: the panel simply renders no LinkedIn
+// buttons in that case, matching how it treats other unconnected providers.
+
+app.get('/identities', async (c) => {
+	const db = c.get('db')
+	const workspaceId = readWorkspaceIdHeader(c.req)
+	if (!workspaceId) {
+		return c.json(createApiError('BAD_REQUEST', 'Missing X-Workspace-Id header'), 400)
+	}
+
+	const credentialRows = await db
+		.select({
+			id: integrations.id,
+			workspaceId: integrations.workspaceId,
+			actorId: integrations.actorId,
+			createdBy: integrations.createdBy,
+			externalId: integrations.externalId,
+			status: integrations.status,
+		})
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.provider, 'linkedin-unipile'),
+				eq(integrations.status, INTEGRATION_STATUS_ACTIVE),
+			),
+		)
+
+	// Same self-heal path the /mcp endpoint uses — the identities list must
+	// match what the MCP server would expose, so a workspace connecting
+	// LinkedIn for the first time sees Quick Add buttons appear on the next
+	// panel refresh rather than after a boot repopulation window.
+	await Promise.all(credentialRows.map(selfHealLinkedInMcpCredential))
+
+	const instances = credentialRows.flatMap((row) => getLinkedInMcpInstancesForIntegration(row.id))
+	const identities = instances
+		.map((cfg) => ({
+			instanceSlug: instanceSlug(cfg),
+			displayName: cfg.displayName,
+			identityType: cfg.identityType,
+			identitySlug: cfg.identitySlug,
+			unipileAccSlug: cfg.unipileAccSlug,
+			integrationId: cfg.integrationId,
+		}))
+		.sort((a, b) => a.displayName.localeCompare(b.displayName))
+
+	return c.json(identities)
+})
 
 // ── POST /api/integrations/linkedin-unipile/send-message ─────────────
 
