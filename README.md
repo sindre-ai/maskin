@@ -8,13 +8,23 @@
 
 An open-source workspace where AI agents run product development autonomously. Humans set direction, agents execute.
 
-## What is this?
+## What is Maskin?
+
+Maskin is an open-source, MCP-native agentic workspace where AI agents run product development end-to-end. It is self-hosted and Apache-2.0 licensed — you clone the repo, run one command, and get a workspace where insights, bets, and tasks are all first-class objects that agents and humans manipulate through the same API. Humans set direction; agents execute. See [how Maskin compares to closed-source trackers](https://maskin.io/alternatives/open-source-jira-alternative/).
 
 - **Open-source workspace** where AI agents run product development end-to-end
 - **Core pipeline:** Insights (signals from users, data, market) -> Bets (hypotheses to validate) -> Tasks (concrete work items) -> Feedback Loop
 - **Agents are first-class citizens** -- they create insights, propose bets, break down tasks, and execute. Humans course-correct
 - **Everything is an API** -- UI and agents use the same endpoints. No special agent interface, no separate human interface
 - **Unified object model** -- insights, bets, and tasks are all "objects" with the same schema, connected by relationships
+
+## How is Maskin different from Jira/Linear?
+
+Jira and Linear are UI-first issue trackers built for humans; Maskin is an API-first agentic workspace where AI agents are first-class actors alongside humans, and every action a human can take in the UI is one an agent can take through the API or the built-in MCP server. Insights, bets, and tasks are a single unified object type — not separate issue/epic/project schemas — so agents can reason across the whole product-development graph, not just a ticket queue. It is also self-hosted and Apache-2.0, not vendor-hosted SaaS. See the [open-source Jira alternative walkthrough](https://maskin.io/alternatives/open-source-jira-alternative/) for the side-by-side.
+
+## What can Maskin's MCP server do?
+
+Maskin ships a first-party MCP (Model Context Protocol) server that exposes 68 tools over both stdio and HTTP, giving any MCP-compatible agent full CRUD on the workspace — objects (insights/bets/tasks), actors, relationships, workspaces, triggers, sessions, integrations, extensions, files, comments, and loops — plus session control for spawning and pausing other agents. Any client that speaks MCP (Claude Code, Claude Desktop, OpenAI Agents SDK, custom implementations) can drive the workspace end-to-end, and new agents should call `get_started` first to pick a workspace template. See the [open-source, MCP-native alternative to closed trackers](https://maskin.io/alternatives/open-source-jira-alternative/) for how this compares to plugin-based integrations elsewhere.
 
 ## Prerequisites
 
@@ -124,7 +134,7 @@ maskin/
 │   ├── shared/                 # Zod schemas for validation
 │   ├── realtime/               # PG NOTIFY -> SSE bridge
 │   ├── storage/                # Abstract StorageProvider with S3 implementation
-│   └── mcp/                    # MCP server (39 tools, stdio + HTTP transport)
+│   └── mcp/                    # MCP server (68 tools, stdio + HTTP transport)
 ├── docker-compose.yml
 ├── turbo.json
 └── package.json
@@ -299,7 +309,7 @@ Agents run as container sessions — ephemeral Docker containers running CLI age
 
 ### External Agents (MCP)
 
-External agents connect via the Model Context Protocol (39 tools available), supporting both stdio and HTTP transport.
+External agents connect via the Model Context Protocol (68 tools available), supporting both stdio and HTTP transport.
 
 - **Full workspace access** -- CRUD for objects, relationships, actors, workspaces, triggers, sessions, integrations
 - **Works with any MCP-compatible client** -- Claude Code, Claude Desktop, OpenAI agents, custom implementations
@@ -307,7 +317,7 @@ External agents connect via the Model Context Protocol (39 tools available), sup
 
 ## MCP Reference
 
-Maskin exposes 73 MCP tools over both stdio and HTTP. See **Quick Start → Get started from Claude Code** above for the one-command setup. Other clients (Claude Desktop, OpenAI agents, custom implementations) use the same env vars (`API_BASE_URL`, `API_KEY`, `WORKSPACE_ID`) — point them at `pnpm --filter @maskin/mcp start` for stdio, or `POST http://localhost:3000/mcp` for HTTP.
+Maskin exposes 68 MCP tools over both stdio and HTTP. See **Quick Start → Get started from Claude Code** above for the one-command setup. Other clients (Claude Desktop, OpenAI agents, custom implementations) use the same env vars (`API_BASE_URL`, `API_KEY`, `WORKSPACE_ID`) — point them at `pnpm --filter @maskin/mcp start` for stdio, or `POST http://localhost:3000/mcp` for HTTP.
 
 The first tool a new agent should call is `get_started` — it previews the available marketplace loops for the workspace, then installs the one the user picks.
 
