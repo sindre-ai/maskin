@@ -458,6 +458,13 @@ export function resolveWorkspaceIdFromEvent(event: Stripe.Event): string | null 
 	if (obj.metadata && typeof obj.metadata.workspace_id === 'string' && obj.metadata.workspace_id) {
 		return obj.metadata.workspace_id
 	}
+	// `charge.dispute.created` carries a Dispute object, which references
+	// a charge (not a customer or workspace) on its top-level `metadata`.
+	// The webhook route's fallback (workspaces.settings.billing.stripe_customer_id)
+	// picks this up when the caller resolves the customer id from the charge
+	// (see stripe-webhook.ts `customerIdFromEvent` extension); nothing to do
+	// here beyond returning null so the fallback path runs.
+	// (CTO deliverability review fix #2, 10 Sep 2026.)
 	return null
 }
 
