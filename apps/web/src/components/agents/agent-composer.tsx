@@ -58,7 +58,7 @@ export function AgentComposer({ agent }: { agent: ActorResponse }) {
 				textareaLabel={`Message ${agent.name}`}
 				selection={selection}
 				onDispatchSelection={dispatchSelection}
-				onRemoveAgent={() => dispatchSelection({ type: 'remove_agent' })}
+				onRemoveAgent={(id) => dispatchSelection({ type: 'remove_agent', id })}
 				onRemoveObject={(id) => dispatchSelection({ type: 'remove_object', id })}
 				onRemoveNotification={(id) => dispatchSelection({ type: 'remove_notification', id })}
 				onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}

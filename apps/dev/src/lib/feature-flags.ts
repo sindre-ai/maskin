@@ -80,6 +80,16 @@ export const FLAGS = {
 	 * `FF_TESTER_FEATURES`.
 	 */
 	GOOGLE_MEET_INTEGRATION_UI: 'google-meet-integration-ui',
+	/**
+	 * Chat composer `+` menu collapse — replaces the three-item **Reference an
+	 * object** / **Mention an agent** / **Create an object** dropdown with a
+	 * single **Attach a file** row, and promotes the `/` and `@` primitives via
+	 * the composer placeholder. Owned by task **6321aecf**, part of parent bet
+	 * **bet/f21a-chat-composer-completeness** ("Chat composer completeness").
+	 * OFF preserves today's three-item menu and today's placeholder verbatim.
+	 * See `.claude/rules/feature-flags.md` for the boundary rule.
+	 */
+	CHAT_PLUS_MENU_ATTACH_ONLY: 'chat-plus-menu-attach-only',
 	loopsV4Polish: 'loops-v4-polish',
 	loopsV4PolishTargets: 'loops-v4-polish.targets',
 	loopsV4PolishStepFlow: 'loops-v4-polish.step_flow',
@@ -103,6 +113,19 @@ export const FLAGS = {
 	chatsV4PolishBanner: 'chats-v4-polish.banner',
 	chatsV4PolishBubbles: 'chats-v4-polish.bubbles',
 	chatsV4PolishNewChat: 'chats-v4-polish.new_chat',
+	/**
+	 * Chat composer `/` picker v2 — unified search-and-create surface.
+	 * When off, typing `/` opens the create-only "Turn this into an object"
+	 * dropdown (today's behaviour). When on, `/` opens the unified picker with
+	 * Reference (existing objects via `search_objects`) on top and Create new
+	 * (Task / Bet / Insight) below, and NEWKIND prefixes like `/task ` become
+	 * type-filter chips in the composer. See parent bet
+	 * [Chat composer completeness](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/f21ad246-ebef-4cd2-93e0-aa46c83ed954).
+	 * Retire once the unified picker is the default for every workspace and the
+	 * legacy `turnIntoOpen` branch in `apps/web/src/components/chat/chat.tsx`
+	 * has been deleted.
+	 */
+	CHAT_SLASH_PICKER_V2: 'chat-slash-picker-v2',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

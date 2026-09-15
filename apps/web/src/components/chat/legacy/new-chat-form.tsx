@@ -175,13 +175,13 @@ export function LegacyNewChatForm({ search }: { search: LegacyNewChatSearch }) {
 	const handleSend = useCallback(
 		async (content: string) => {
 			setError(null)
-			// The Composer's "Agent" button (selection.agent) is a separate entry
+			// The Composer's "Agent" button (selection.agents) is a separate entry
 			// point from the recipient pill above — fold it into the participant
 			// list so tagging an agent there actually adds them to the
 			// conversation, instead of silently doing nothing.
 			const ids = new Set<string>()
 			if (recipient) ids.add(recipient.id)
-			if (selection.agent) ids.add(selection.agent.id)
+			for (const agentId of selection.agents) ids.add(agentId)
 			if (ids.size === 0) {
 				const err = new Error('Add at least one person or agent to start the conversation')
 				setError(err.message)
@@ -363,7 +363,7 @@ export function LegacyNewChatForm({ search }: { search: LegacyNewChatSearch }) {
 					placeholder={recipient ? `Message ${recipient.name}…` : 'Message this conversation'}
 					selection={selection}
 					onDispatchSelection={dispatchSelection}
-					onRemoveAgent={() => dispatchSelection({ type: 'remove_agent' })}
+					onRemoveAgent={(id) => dispatchSelection({ type: 'remove_agent', id })}
 					onRemoveObject={(id) => dispatchSelection({ type: 'remove_object', id })}
 					onRemoveNotification={(id) => dispatchSelection({ type: 'remove_notification', id })}
 					onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}

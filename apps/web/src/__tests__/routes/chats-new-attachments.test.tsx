@@ -35,7 +35,10 @@ vi.mock('@/hooks/use-conversations', () => ({
 		mutateAsync: mockCreateConversationMutateAsync,
 		isPending: false,
 	}),
-	useConversationsInfinite: () => ({ data: undefined }),
+	// v4 new-chat chip picker AND the composer's `@` picker both walk the
+	// conversations cache — the picker for "Recent collaborators", the v4 chip
+	// picker for RECENT. Shortcut it here since neither is under test.
+	useConversationsInfinite: () => ({ data: { pages: [] } }),
 }))
 
 vi.mock('@/hooks/use-workspaces', () => ({
@@ -76,6 +79,7 @@ vi.mock('@/lib/analytics', () => ({
 	deriveEntryAgentRole: () => 'coach',
 	trackSpecialistSummonedManually: () => {},
 	trackChatSessionStarted: () => {},
+	trackChatMentionInserted: () => {},
 }))
 
 import { Route } from '@/routes/_authed/$workspaceId/chats/new'
