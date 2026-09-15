@@ -151,8 +151,10 @@ function TestWrapper({ children }: { children: ReactNode }) {
 	)
 }
 
-function renderHeader() {
-	return render(<ThreadHeader workspaceId="ws-1" conversationId="conv-1" />, {
+// Every test below asserts v4-only chrome, so the flag boundary defaults on;
+// the rollback test at the end opts back out with `false`.
+function renderHeader(v4Polish = true) {
+	return render(<ThreadHeader workspaceId="ws-1" conversationId="conv-1" v4Polish={v4Polish} />, {
 		wrapper: TestWrapper,
 	})
 }
@@ -267,6 +269,31 @@ describe('ThreadHeader — v4 actions', () => {
 			const [, options] = mockUpdateMe.mock.calls[0] as [unknown, { onSuccess: () => void }]
 			options.onSuccess()
 			expect(mockToastSuccess).toHaveBeenCalledWith('Marked as unread')
+		})
+	})
+
+	describe('rollback (v4Polish off)', () => {
+		it('drops the loop chip, Copy, Mark-unread and the mobile overflow menu', async () => {
+			// The pre-v4 header kept the loop link inside the title meta only — no
+			// chip, no Copy-whole-conversation, no Mark-as-unread, and Pin/Archive
+			// inline at every width rather than collapsed into a ⋯ menu.
+			mockUseConversation.mockReturnValue({
+				data: buildConversation({ loop_id: 'loop-1' }),
+			})
+			mockUseLoop.mockReturnValue({ data: buildLoop({ id: 'loop-1', name: 'Growth loop' }) })
+			renderHeader(false)
+
+			expect(screen.queryByRole('button', { name: /^Loop:/ })).not.toBeInTheDocument()
+			expect(
+				screen.queryByRole('button', { name: 'Copy whole conversation' }),
+			).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: 'Mark as unread' })).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: 'More actions' })).not.toBeInTheDocument()
+			// Pin and Archive stay inline, regardless of viewport width.
+			expect(screen.getByRole('button', { name: 'Pin conversation' })).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Archive conversation' })).toBeInTheDocument()
+			// The loop lookup is skipped entirely rather than fetched and wasted.
+			expect(mockUseLoop).toHaveBeenLastCalledWith('', 'ws-1')
 		})
 	})
 })

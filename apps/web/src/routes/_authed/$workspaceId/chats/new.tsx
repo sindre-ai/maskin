@@ -1,7 +1,9 @@
 import { Composer } from '@/components/chat/chat'
+import { LegacyNewChatForm } from '@/components/chat/legacy/new-chat-form'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
 import { useConversationsInfinite, useCreateConversation } from '@/hooks/use-conversations'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { deriveEntryAgentRole, trackChatSessionStarted } from '@/lib/analytics'
@@ -67,9 +69,27 @@ interface Recipient {
 	description?: string | null
 }
 
+/**
+ * Feature-flag boundary for the Chats v4 polish bet (bet/bdda1c1e-chats-v4-polish).
+ * Read once at this route per the feature-flags rule
+ * (`.claude/rules/feature-flags.md`) — the umbrella AND the `.new_chat` sub-flag.
+ * Flag off renders the pre-bet screen vendored in
+ * `components/chat/legacy/new-chat-form.tsx`; the v4 rewrite lives in `NewChatV4`
+ * below. Retiring the flag means deleting the legacy file, this boundary, and the
+ * flag ids in `apps/dev/src/lib/feature-flags.ts`.
+ */
 function NewChatRoute() {
-	const { workspaceId } = useWorkspace()
 	const search = Route.useSearch()
+	const chatsV4Enabled = useFeatureFlag('chats-v4-polish')
+	const newChatV4Enabled = useFeatureFlag('chats-v4-polish.new_chat')
+	if (!chatsV4Enabled || !newChatV4Enabled) {
+		return <LegacyNewChatForm search={search} />
+	}
+	return <NewChatV4 search={search} />
+}
+
+function NewChatV4({ search }: { search: NewChatSearch }) {
+	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	const createConversation = useCreateConversation(workspaceId)
 	const { data: members } = useWorkspaceMembers(workspaceId)

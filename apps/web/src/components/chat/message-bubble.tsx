@@ -24,6 +24,11 @@ interface MessageBubbleProps {
 	activity?: React.ReactNode
 	/** A later message in the thread already answered this message's question. */
 	questionAnswered?: boolean
+	/** Chats v4 polish (bet/bdda1c1e-chats-v4-polish). Composed at the route
+	 *  boundary from the `chats-v4-polish` umbrella flag AND its `.bubbles`
+	 *  sub-flag. Off keeps the pre-v4 bubble — lowercase "You attached" eyebrow
+	 *  and no per-message Copy/Retry action row. */
+	v4Polish?: boolean
 }
 
 /**
@@ -38,6 +43,7 @@ export function MessageBubble({
 	message,
 	activity,
 	questionAnswered = false,
+	v4Polish = false,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
@@ -91,7 +97,7 @@ export function MessageBubble({
 			<div className={cn('flex flex-col items-end gap-1.5', editing && 'w-full')}>
 				{hasContext ? (
 					<div className="flex max-w-[min(560px,80%)] flex-wrap items-center justify-end gap-1.5">
-						<span className="eyebrow shrink-0">YOU ATTACHED</span>
+						<span className="eyebrow shrink-0">{v4Polish ? 'YOU ATTACHED' : 'You attached'}</span>
 						<OwnContextChips objects={contextObjects} notifications={contextNotifications} />
 					</div>
 				) : null}
@@ -170,10 +176,11 @@ export function MessageBubble({
 	}
 
 	// Real, persisted, agent-side (non-own) message — the only kind that can
-	// be Copy/Retry'd. Optimistic bubbles (id ≤ 0) get no action row.
-	const canActOnAgent = !isOwn && message.id > 0 && message.kind === 'message'
+	// be Copy/Retry'd. Optimistic bubbles (id ≤ 0) get no action row. The row
+	// itself is a v4 delta, so it is additionally gated by `v4Polish`.
+	const canActOnAgent = v4Polish && !isOwn && message.id > 0 && message.kind === 'message'
 	return (
-		<div className="group flex items-start gap-[11px]">
+		<div className={cn('flex items-start gap-[11px]', v4Polish && 'group')}>
 			<ActorAvatar
 				id={message.actorId}
 				name={message.actorName}

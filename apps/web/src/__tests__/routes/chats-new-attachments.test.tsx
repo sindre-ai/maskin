@@ -57,6 +57,13 @@ vi.mock('@/hooks/use-files', () => ({
 	useUploadFile: () => mockUploadFile,
 }))
 
+// The route gates the v4 rewrite behind the `chats-v4-polish` umbrella AND its
+// `.new_chat` sub-flag (bet/bdda1c1e-chats-v4-polish). This suite drives the v4
+// chip composer, so resolve the boundary on.
+vi.mock('@/hooks/use-feature-flag', () => ({
+	useFeatureFlag: (id: string) => id.startsWith('chats-v4-polish'),
+}))
+
 vi.mock('@/lib/file-utils', () => ({
 	readFileAsBase64: async () => 'AAAA',
 }))

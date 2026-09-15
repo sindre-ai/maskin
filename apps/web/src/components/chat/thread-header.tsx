@@ -39,6 +39,12 @@ import { ParticipantsPopover } from './participants-popover'
 interface ThreadHeaderProps {
 	workspaceId: string
 	conversationId: string
+	/** Chats v4 polish (bet/bdda1c1e-chats-v4-polish). Composed at the route
+	 *  boundary from the `chats-v4-polish` umbrella flag AND its `.header`
+	 *  sub-flag. Off keeps the pre-v4 header: no loop chip, no Copy-whole-
+	 *  conversation, no Mark-as-unread, and no mobile ⋯ overflow menu — Pin and
+	 *  Archive stay inline at every width. */
+	v4Polish?: boolean
 }
 
 const LOOP_CHIP_MAX = 24
@@ -49,7 +55,7 @@ const LOOP_CHIP_MAX = 24
  * pin/archive state toggles. A single row collapsed the title to a few pixels
  * at 768px once the fixed-width controls were laid out beside it.
  */
-export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps) {
+export function ThreadHeader({ workspaceId, conversationId, v4Polish = false }: ThreadHeaderProps) {
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const messagesQuery = useConversationMessages(conversationId, workspaceId)
 	const isMobile = useIsMobile()
@@ -58,7 +64,9 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const updateConversation = useUpdateConversation(workspaceId)
 	const loopId = conversation?.loop_id ?? null
-	const { data: loop } = useLoop(loopId ?? '', workspaceId)
+	// Only resolve the loop when the v4 chip can render — flag off means the
+	// chip never mounts, so the lookup is skipped rather than fetched and wasted.
+	const { data: loop } = useLoop(v4Polish ? (loopId ?? '') : '', workspaceId)
 	const [isEditingTitle, setIsEditingTitle] = useState(false)
 	const [titleDraft, setTitleDraft] = useState('')
 
@@ -261,7 +269,7 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 						<Plus size={11} className="text-muted-foreground" aria-hidden />
 					</button>
 				</ParticipantsPopover>
-				{loopId && loopLabel ? (
+				{v4Polish && loopId && loopLabel ? (
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
@@ -278,67 +286,71 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 				) : null}
 				<span className="ml-auto" />
 				{/* At ≤640px, Copy · Pin · Mark-unread · Archive collapse into a
-				    ⋯ menu; Focus + Close stay inline (v4 spec). */}
-				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon"
-							className="h-6 w-6 shrink-0 min-[641px]:hidden"
-							aria-label="More actions"
-						>
-							<MoreHorizontal size={14} />
-						</Button>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end">
-						<DropdownMenuItem onSelect={handleCopyConversation}>
-							<Copy size={14} />
-							<span>Copy whole conversation</span>
-						</DropdownMenuItem>
-						<DropdownMenuItem
-							onSelect={() =>
-								updateMe.mutate({
-									id: conversationId,
-									data: { pinned: !conversation.pinned },
-								})
-							}
-						>
-							<Pin size={14} fill={conversation.pinned ? 'currentColor' : 'none'} />
-							<span>{conversation.pinned ? 'Unpin' : 'Pin'}</span>
-						</DropdownMenuItem>
-						<DropdownMenuItem onSelect={handleMarkUnread}>
-							<EyeOff size={14} />
-							<span>Mark as unread</span>
-						</DropdownMenuItem>
-						<DropdownMenuItem
-							onSelect={() =>
-								updateMe.mutate({
-									id: conversationId,
-									data: { archived: !conversation.archived },
-								})
-							}
-						>
-							{conversation.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
-							<span>{conversation.archived ? 'Unarchive' : 'Archive'}</span>
-						</DropdownMenuItem>
-					</DropdownMenuContent>
-				</DropdownMenu>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon"
-							className="hidden h-6 w-6 shrink-0 min-[641px]:inline-flex"
-							onClick={handleCopyConversation}
-							aria-label="Copy whole conversation"
-						>
-							<Copy size={14} />
-						</Button>
-					</TooltipTrigger>
-					<TooltipContent>Copy whole conversation</TooltipContent>
-				</Tooltip>
+				    ⋯ menu; Focus + Close stay inline (v4 spec). v4-only. */}
+				{v4Polish ? (
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon"
+								className="h-6 w-6 shrink-0 min-[641px]:hidden"
+								aria-label="More actions"
+							>
+								<MoreHorizontal size={14} />
+							</Button>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="end">
+							<DropdownMenuItem onSelect={handleCopyConversation}>
+								<Copy size={14} />
+								<span>Copy whole conversation</span>
+							</DropdownMenuItem>
+							<DropdownMenuItem
+								onSelect={() =>
+									updateMe.mutate({
+										id: conversationId,
+										data: { pinned: !conversation.pinned },
+									})
+								}
+							>
+								<Pin size={14} fill={conversation.pinned ? 'currentColor' : 'none'} />
+								<span>{conversation.pinned ? 'Unpin' : 'Pin'}</span>
+							</DropdownMenuItem>
+							<DropdownMenuItem onSelect={handleMarkUnread}>
+								<EyeOff size={14} />
+								<span>Mark as unread</span>
+							</DropdownMenuItem>
+							<DropdownMenuItem
+								onSelect={() =>
+									updateMe.mutate({
+										id: conversationId,
+										data: { archived: !conversation.archived },
+									})
+								}
+							>
+								{conversation.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
+								<span>{conversation.archived ? 'Unarchive' : 'Archive'}</span>
+							</DropdownMenuItem>
+						</DropdownMenuContent>
+					</DropdownMenu>
+				) : null}
+				{v4Polish ? (
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon"
+								className="hidden h-6 w-6 shrink-0 min-[641px]:inline-flex"
+								onClick={handleCopyConversation}
+								aria-label="Copy whole conversation"
+							>
+								<Copy size={14} />
+							</Button>
+						</TooltipTrigger>
+						<TooltipContent>Copy whole conversation</TooltipContent>
+					</Tooltip>
+				) : null}
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<Button
@@ -346,7 +358,9 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 							variant="ghost"
 							size="icon"
 							className={cn(
-								'hidden h-6 w-6 shrink-0 min-[641px]:inline-flex',
+								'h-6 w-6 shrink-0',
+								// v4 collapses Pin behind the mobile ⋯ menu.
+								v4Polish && 'hidden min-[641px]:inline-flex',
 								// Pinned is a *state*, so it holds an indigo plate rather
 								// than swapping to a different glyph (mockup 7804–7806).
 								// PinOff read as "this button unpins" — i.e. as the action,
@@ -365,28 +379,30 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 					</TooltipTrigger>
 					<TooltipContent>{conversation.pinned ? 'Unpin' : 'Pin'}</TooltipContent>
 				</Tooltip>
+				{v4Polish ? (
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon"
+								className="hidden h-6 w-6 shrink-0 min-[641px]:inline-flex"
+								onClick={handleMarkUnread}
+								aria-label="Mark as unread"
+							>
+								<EyeOff size={14} />
+							</Button>
+						</TooltipTrigger>
+						<TooltipContent>Mark as unread</TooltipContent>
+					</Tooltip>
+				) : null}
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<Button
 							type="button"
 							variant="ghost"
 							size="icon"
-							className="hidden h-6 w-6 shrink-0 min-[641px]:inline-flex"
-							onClick={handleMarkUnread}
-							aria-label="Mark as unread"
-						>
-							<EyeOff size={14} />
-						</Button>
-					</TooltipTrigger>
-					<TooltipContent>Mark as unread</TooltipContent>
-				</Tooltip>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon"
-							className="hidden h-6 w-6 shrink-0 min-[641px]:inline-flex"
+							className={cn('h-6 w-6 shrink-0', v4Polish && 'hidden min-[641px]:inline-flex')}
 							onClick={() =>
 								updateMe.mutate({ id: conversationId, data: { archived: !conversation.archived } })
 							}
