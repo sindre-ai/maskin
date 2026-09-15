@@ -70,11 +70,17 @@ export const config: ProviderConfig = {
 	// day one — trigger UIs (`apps/web/src/components/triggers/**`) read this
 	// list from `GET /api/integrations/providers`. Task 3 wires the normalizer
 	// that emits these entity/action pairs from real Pub/Sub deliveries.
+	//
+	// entityType strings MUST stay byte-identical to what the Task 3 normalizer
+	// emits (watch.ts fan-out) — a trigger configured here fires only on an exact
+	// entityType/action match. Task 3 emits the provider-prefixed form
+	// (`google_meet.*`, mirroring gmail.message / slack.message), so the
+	// definitions below use that prefix; align both sides together if either moves.
 	events: {
 		definitions: [
-			{ entityType: 'meet.conference', actions: ['ended'], label: 'Conference' },
-			{ entityType: 'meet.transcript', actions: ['ready'], label: 'Transcript' },
-			{ entityType: 'meet.recording', actions: ['ready'], label: 'Recording' },
+			{ entityType: 'google_meet.conference', actions: ['ended'], label: 'Conference' },
+			{ entityType: 'google_meet.transcript', actions: ['ready'], label: 'Transcript' },
+			{ entityType: 'google_meet.recording', actions: ['ready'], label: 'Recording' },
 		],
 	},
 
