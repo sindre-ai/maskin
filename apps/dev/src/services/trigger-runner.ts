@@ -1120,6 +1120,31 @@ interface CommentEventData {
 	} | null
 }
 
+/**
+ * The single source of truth for "case 2 will dispatch the object's driver for
+ * this comment". Both the ladder below and the thread-reply spawn in
+ * `routes/events.ts` consult it, so the two can't drift into disagreeing about
+ * whether a given comment has already been handled — a disagreement there is
+ * exactly what queues two sessions for one comment.
+ *
+ * `mentionCount` is a parameter rather than an assumption because the two
+ * callers sit on opposite sides of the mention early-return: the ladder only
+ * ever reaches `handleFallback` for a mention-free comment (so it passes 0),
+ * while the route has to answer the question before that branch is taken.
+ */
+export function isCommentFallbackDriverEligible(ctx: {
+	driverId: string | null
+	commenterId: string
+	parentAuthorId: string | null
+	mentionCount: number
+}): boolean {
+	if (ctx.mentionCount > 0) return false
+	if (!ctx.driverId) return false
+	if (ctx.driverId === ctx.commenterId) return false
+	if (ctx.driverId === ctx.parentAuthorId) return false
+	return true
+}
+
 export class CommentDispatcher {
 	private handler: ((event: PgEvent) => void) | null = null
 
@@ -1316,7 +1341,17 @@ export class CommentDispatcher {
 		// Case 2 — driver fallback. Loop-safety option (a): also blocked when
 		// the driver authored the PARENT comment we're replying to — otherwise
 		// an agent that drives its own bet would ping itself on every reply.
-		if (driverId && driverId !== ctx.commenterId && driverId !== ctx.parentAuthorId) {
+		if (
+			driverId &&
+			isCommentFallbackDriverEligible({
+				driverId,
+				commenterId: ctx.commenterId,
+				parentAuthorId: ctx.parentAuthorId,
+				// `handleEvent` returns to the mention branch for any comment that
+				// carries mentions, so the ladder is only ever reached mention-free.
+				mentionCount: 0,
+			})
+		) {
 			const dispatched = await this.dispatchCommentFallback({
 				workspaceId: ctx.workspaceId,
 				actorId: driverId,
