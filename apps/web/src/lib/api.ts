@@ -483,6 +483,10 @@ export const api = {
 		},
 		slackUsers: (id: string, workspaceId: string) =>
 			request<SlackUser[]>(`/integrations/${id}/slack/users`, { workspaceId }),
+		linkedinIdentities: (workspaceId: string) =>
+			request<LinkedInIdentitySummary[]>('/integrations/linkedin-unipile/identities', {
+				workspaceId,
+			}),
 	},
 
 	notifications: {
@@ -1419,6 +1423,13 @@ export interface ProviderInfo {
 	authType: 'oauth2' | 'oauth2_custom' | 'api_key' | 'manual'
 	events: ProviderEventDefinition[]
 	externalIdDisplay?: 'email' | 'installation'
+	mcp?: {
+		envKey: string
+		autoInject: boolean
+		server?:
+			| { type: 'stdio'; command: string; args: string[]; env?: Record<string, string> }
+			| { type: 'http'; url: string; headers?: Record<string, string> }
+	}
 }
 
 export interface SlackConversation {
@@ -1436,6 +1447,22 @@ export interface SlackUser {
 	name: string
 	real_name: string
 	is_bot: boolean
+}
+
+/**
+ * One connected LinkedIn identity (personal profile OR admined company page)
+ * for a workspace. Rendered by the agent MCP panel as one Quick Add button
+ * per row — clicking writes an mcpServers entry keyed on `instanceSlug` that
+ * points at `/api/integrations/linkedin-unipile/mcp/${instanceSlug}`, so only
+ * this identity's tools land on the agent.
+ */
+export interface LinkedInIdentitySummary {
+	instanceSlug: string
+	displayName: string
+	identityType: 'personal' | 'company_page'
+	identitySlug: string
+	unipileAccSlug: string
+	integrationId: string
 }
 
 export interface NotificationResponse {

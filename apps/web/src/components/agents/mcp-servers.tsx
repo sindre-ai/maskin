@@ -16,7 +16,7 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { useIntegrations } from '@/hooks/use-integrations'
+import { useIntegrations, useLinkedInIdentities } from '@/hooks/use-integrations'
 import type { IntegrationResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { githubOwnerLoginToEnvKey } from '@maskin/shared'
@@ -51,17 +51,6 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 	slack: {
 		type: 'http',
 		url: '${MASKIN_API_URL}/api/integrations/slack/mcp',
-		headers: {
-			Authorization: 'Bearer ${MASKIN_API_KEY}',
-			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
-		},
-	},
-	// Served in-process by apps/dev, like Slack's — not a hosted third-party
-	// endpoint. The credential it uses is per-actor, so the agent sends as the
-	// workspace member whose API key the session runs under.
-	'linkedin-unipile': {
-		type: 'http',
-		url: '${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp',
 		headers: {
 			Authorization: 'Bearer ${MASKIN_API_KEY}',
 			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
@@ -105,6 +94,22 @@ const BROWSER_MCP_PRESET: McpServer = {
 	args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
 }
 
+/**
+ * P3-K · Build the per-identity LinkedIn MCP server template. The URL points at
+ * `/api/integrations/linkedin-unipile/mcp/${instanceSlug}` so only this one
+ * identity's tools land on the agent — no shared endpoint, no filter param.
+ */
+function buildLinkedInIdentityPreset(instanceSlug: string): McpServer {
+	return {
+		type: 'http',
+		url: `\${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp/${instanceSlug}`,
+		headers: {
+			Authorization: 'Bearer ${MASKIN_API_KEY}',
+			'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+		},
+	}
+}
+
 function isHttpServer(server: McpServer): boolean {
 	return !!server.url
 }
@@ -118,6 +123,7 @@ function parseServers(tools: Record<string, unknown> | null): McpServersMap {
 export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProps) {
 	const { workspaceId } = useWorkspace()
 	const { data: integrations } = useIntegrations(workspaceId)
+	const { data: linkedinIdentities } = useLinkedInIdentities(workspaceId)
 	const servers = parseServers(tools)
 	const serverEntries = Object.entries(servers)
 
@@ -201,11 +207,30 @@ export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProp
 		onUpdate({ mcpServers: updated })
 	}, [servers, unaddedGithubInstallations, onUpdate])
 
-	// Quick-add items for static-preset providers (GitHub handled separately above)
+	// P3-K · one Quick Add button per connected LinkedIn identity (personal
+	// profile plus each admined company page). Sorted alphabetically by display
+	// name for determinism. A button is only rendered when its identity is NOT
+	// already in `mcpServers` — matches how the other Quick Adds hide once
+	// their entry is present.
+	const unaddedLinkedInIdentities = (linkedinIdentities ?? [])
+		.filter((identity) => !servers[identity.instanceSlug])
+		.slice()
+		.sort((a, b) => a.displayName.localeCompare(b.displayName))
+
+	const handleQuickAddLinkedIn = useCallback(
+		(instanceSlug: string) => {
+			handleQuickAdd(instanceSlug, buildLinkedInIdentityPreset(instanceSlug))
+		},
+		[handleQuickAdd],
+	)
+
+	// Quick-add items for static-preset providers (GitHub and LinkedIn handled
+	// separately above — GitHub fans out per installation, LinkedIn per identity).
 	const availableQuickAdds: Array<{ id: string; name: string; label: string; preset: McpServer }> =
 		[]
 	for (const i of integrations ?? []) {
-		if (i.status !== 'active' || i.provider === 'github') continue
+		if (i.status !== 'active' || i.provider === 'github' || i.provider === 'linkedin-unipile')
+			continue
 		const preset = INTEGRATION_MCP_PRESETS[i.provider]
 		if (!preset || servers[i.provider]) continue
 		availableQuickAdds.push({ id: i.id, name: i.provider, label: i.provider, preset })
@@ -289,6 +314,17 @@ export function McpServers({ tools, onUpdate, readOnly = false }: McpServersProp
 									Add {label}
 								</Button>
 							))}
+							{unaddedLinkedInIdentities.map((identity) => (
+								<Button
+									key={identity.instanceSlug}
+									size="sm"
+									variant="outline"
+									onClick={() => handleQuickAddLinkedIn(identity.instanceSlug)}
+								>
+									<Zap className="h-3.5 w-3.5 mr-1" />
+									Add {identity.displayName}
+								</Button>
+							))}
 							{showAddGithub && (
 								<Button size="sm" variant="outline" onClick={handleAddGithub}>
 									<Zap className="h-3.5 w-3.5 mr-1" />
@@ -330,60 +366,62 @@ function ServerCard({
 		: Object.keys(server.env ?? {}).length
 
 	return (
-		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-card px-3 py-2">
-			{http ? (
-				<Globe className="h-4 w-4 text-muted-foreground shrink-0" />
-			) : (
-				<Terminal className="h-4 w-4 text-muted-foreground shrink-0" />
-			)}
-			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground truncate">{name}</p>
-				<p className="text-xs text-muted-foreground truncate">
-					{http ? server.url : `${server.command} ${server.args?.join(' ')}`}
-					{detailCount > 0 && (
-						<span className="ml-2 text-muted-foreground">
-							{detailCount} {http ? 'header' : 'env var'}
-							{detailCount > 1 ? 's' : ''}
-						</span>
-					)}
-				</p>
-			</div>
-			{/* Transport scope, right-aligned (mockup 2496). */}
-			<span className="shrink-0 text-[10.5px] text-muted-foreground">
-				{http ? 'http' : 'stdio'}
-			</span>
-			{!readOnly &&
-				(confirmDelete ? (
-					<div className="flex items-center gap-1 shrink-0">
-						<Button size="sm" variant="destructive" onClick={onDelete}>
-							Delete
-						</Button>
-						<Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
-							Cancel
-						</Button>
-					</div>
+		<div className="flex flex-col overflow-hidden rounded-md border border-border bg-card">
+			<div className="flex items-center gap-3 px-3 py-2">
+				{http ? (
+					<Globe className="h-4 w-4 text-muted-foreground shrink-0" />
 				) : (
-					<div className="flex items-center gap-1 shrink-0">
-						<Button
-							size="icon"
-							variant="ghost"
-							className="text-muted-foreground"
-							onClick={onEdit}
-							aria-label="Edit server"
-						>
-							<Pencil className="h-3.5 w-3.5" />
-						</Button>
-						<Button
-							size="icon"
-							variant="ghost"
-							className="text-muted-foreground hover:text-error"
-							onClick={() => setConfirmDelete(true)}
-							aria-label="Delete server"
-						>
-							<Trash2 className="h-3.5 w-3.5" />
-						</Button>
-					</div>
-				))}
+					<Terminal className="h-4 w-4 text-muted-foreground shrink-0" />
+				)}
+				<div className="flex-1 min-w-0">
+					<p className="text-sm font-medium text-foreground truncate">{name}</p>
+					<p className="text-xs text-muted-foreground truncate">
+						{http ? server.url : `${server.command} ${server.args?.join(' ')}`}
+						{detailCount > 0 && (
+							<span className="ml-2 text-muted-foreground">
+								{detailCount} {http ? 'header' : 'env var'}
+								{detailCount > 1 ? 's' : ''}
+							</span>
+						)}
+					</p>
+				</div>
+				{/* Transport scope, right-aligned (mockup 2496). */}
+				<span className="shrink-0 text-[10.5px] text-muted-foreground">
+					{http ? 'http' : 'stdio'}
+				</span>
+				{!readOnly &&
+					(confirmDelete ? (
+						<div className="flex items-center gap-1 shrink-0">
+							<Button size="sm" variant="destructive" onClick={onDelete}>
+								Delete
+							</Button>
+							<Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
+								Cancel
+							</Button>
+						</div>
+					) : (
+						<div className="flex items-center gap-1 shrink-0">
+							<Button
+								size="icon"
+								variant="ghost"
+								className="text-muted-foreground"
+								onClick={onEdit}
+								aria-label="Edit server"
+							>
+								<Pencil className="h-3.5 w-3.5" />
+							</Button>
+							<Button
+								size="icon"
+								variant="ghost"
+								className="text-muted-foreground hover:text-error"
+								onClick={() => setConfirmDelete(true)}
+								aria-label="Delete server"
+							>
+								<Trash2 className="h-3.5 w-3.5" />
+							</Button>
+						</div>
+					))}
+			</div>
 		</div>
 	)
 }

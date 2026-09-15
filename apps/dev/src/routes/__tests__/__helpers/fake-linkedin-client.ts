@@ -65,5 +65,8 @@ export function fakeLinkedInClientForTests(): LinkedInClient {
 		retrievePost: vi.fn() as never,
 		listReactions: vi.fn() as never,
 		countComments: vi.fn() as never,
+		editPost: vi.fn() as never,
+		deletePost: vi.fn() as never,
+		deleteAccount: vi.fn() as never,
 	} as unknown as LinkedInClient
 }
