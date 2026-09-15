@@ -35,10 +35,16 @@ const AVATAR_PALETTE_STRONG = [
 /** Tint plate (the default everywhere) vs the solid plate v2 uses for a row anchor. */
 export type ActorAvatarTone = 'subtle' | 'strong'
 
+/** Strip everything that is not a letter or digit so a bracketed qualifier
+ *  ("Linker (Sigrid)") or a title suffix never lands in the glyph. */
 export function getActorInitials(name: string): string {
 	const trimmed = (name ?? '').trim()
 	if (!trimmed) return '?'
-	const words = trimmed.split(/\s+/).filter(Boolean)
+	const words = trimmed
+		.split(/\s+/)
+		.map((word) => word.replace(/[^\p{L}\p{N}]/gu, ''))
+		.filter(Boolean)
+	if (words.length === 0) return '?'
 	if (words.length >= 2) {
 		const first = words[0]?.[0] ?? ''
 		const second = words[1]?.[0] ?? ''
