@@ -503,7 +503,10 @@ describe('TimelineTab', () => {
 		expect(screen.getAllByRole('listitem')).not.toHaveLength(0)
 	})
 
-	it('leaves short runs unfolded', () => {
+	// Defect 3 (Loops v4 v1): a repeated same-actor, same-event-type pair —
+	// "Chief of Staff updated loop" back to back — folds at 2, below the
+	// general three-row threshold.
+	it('folds a repeated same-actor, same-type pair', () => {
 		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
 		mockGraph(
 			Array.from({ length: 2 }, (_, i) =>
@@ -513,6 +516,30 @@ describe('TimelineTab', () => {
 					entityType: 'bet',
 					entityId: 'obj-1',
 					actorId: 'actor-1',
+					createdAt: `2026-02-0${i + 1}T00:00:00Z`,
+				}),
+			),
+			[],
+			[],
+			object,
+		)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		const fold = screen.getByRole('button', { name: /2 agent updates/ })
+		expect(fold).toHaveAttribute('aria-expanded', 'false')
+	})
+
+	it('leaves a short run from different actors unfolded', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		mockGraph(
+			Array.from({ length: 2 }, (_, i) =>
+				buildEventResponse({
+					id: 30 + i,
+					action: 'updated',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					actorId: `actor-${i + 1}`,
 					createdAt: `2026-02-0${i + 1}T00:00:00Z`,
 				}),
 			),

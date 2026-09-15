@@ -58,6 +58,9 @@ type TimelineEntry =
 			text: string
 			chipLabel: string
 			chipTone: ChipTone
+			/** The raw event action (`updated`, `created`, a `session_*`, `link`).
+			 *  Identifies "same event type" for the same-actor fold. */
+			eventType: string
 			isStatusChange: boolean
 			/** Edge rows read `<when> <verb> <object chip>` with a square node —
 			 *  the mockup's `tl.isRel` (1258–1272), not a sentence. */
@@ -92,17 +95,36 @@ type StreamRow = TimelineEntry | TimelineFold
 const FOLD_MIN_RUN = 3
 
 /**
+ * Two event rows that read as the same actor doing the same thing. A pair this
+ * tight is pure repetition — "Chief of Staff updated loop" three times over —
+ * and folds at length 2, below the general threshold.
+ */
+function isSameActorSameType(a: TimelineEntry, b: TimelineEntry): boolean {
+	return (
+		a.kind === 'event' &&
+		b.kind === 'event' &&
+		a.actorId !== null &&
+		a.actorId === b.actorId &&
+		a.eventType === b.eventType
+	)
+}
+
+/**
  * Collapse consecutive runs of routine machine chatter — plain updates, session
  * rows, link rows — into a single fold. Comments and status changes are the
  * spine of the story and are never folded, so the unread divider's target and
- * every phase boundary stay reachable.
+ * every phase boundary stay reachable. A run folds at three rows, or at two when
+ * both rows share the same actor and event type.
  */
 function foldRuns(entries: TimelineEntry[]): StreamRow[] {
 	const out: StreamRow[] = []
 	let run: TimelineEntry[] = []
+	const shouldFold = (rows: TimelineEntry[]) =>
+		rows.length >= FOLD_MIN_RUN ||
+		(rows.length >= 2 && !!rows[0] && !!rows[1] && isSameActorSameType(rows[0], rows[1]))
 	const flush = () => {
 		if (run.length === 0) return
-		if (run.length >= FOLD_MIN_RUN) {
+		if (shouldFold(run)) {
 			out.push({ kind: 'fold', key: `fold-${run[0]?.key}`, rows: run })
 		} else {
 			out.push(...run)
@@ -329,6 +351,7 @@ export function TimelineTab({
 				text: formatEventDescription(event, { actorsById }),
 				chipLabel: chip.label,
 				chipTone: chip.tone,
+				eventType: event.action,
 				isStatusChange: event.action === 'status_changed',
 				isRelationship: false,
 				newStatus: event.action === 'status_changed' ? newStatusOf(event) : null,
@@ -351,6 +374,7 @@ export function TimelineTab({
 				text: 'linked this',
 				chipLabel: 'Link',
 				chipTone: 'link',
+				eventType: 'link',
 				isStatusChange: false,
 				isRelationship: true,
 				newStatus: null,
