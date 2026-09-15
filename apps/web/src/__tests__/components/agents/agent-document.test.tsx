@@ -74,6 +74,7 @@ vi.mock('@/components/agents/skills', () => ({
 
 vi.mock('@/components/agents/agent-usage-chart', () => ({
 	AgentUsageChart: () => null,
+	default: () => null,
 }))
 
 vi.mock('@/components/activity/activity-item', () => ({
