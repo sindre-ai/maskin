@@ -7,15 +7,23 @@ import { logger } from '../lib/logger'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 
 /**
- * Streamable-HTTP MCP endpoint for google-meet, mounted at
- * `/api/integrations/google-meet/mcp`. Sibling of the linkedin-unipile and
- * slack MCP routes.
+ * Streamable-HTTP MCP endpoint for the Google Meet integration, mounted at
+ * `/api/integrations/google-meet/mcp`. Sibling of
+ * `integrations-linkedin-unipile-mcp.ts` and `integrations-slack-mcp.ts`.
  *
- * Task 4 (write-path: create_space + create_meet_backed_event) ships the
- * companion `mcp-server.ts` write-tool registration; both slices target this
- * same route + factory. Merge conflicts on this file are expected at the
- * aggregate-review pass and are additive (my registerReadTools + Task 4's
- * registerWriteTools call each other).
+ * Serves both slices registered in `google-meet/mcp-server.ts`: the five
+ * read-path tools (list/get conference records, list participants, transcript
+ * entries, list recordings) and the two write-path tools
+ * (`google_meet__create_space`, `google_meet__create_meet_backed_event`).
+ * The write tools resolve the caller-actor's Google Meet token from the
+ * workspace's `integrations` row and hit Google. The route itself is dumb —
+ * one build-server + connect-transport per POST.
+ *
+ * A workspace with no connected Meet integration gets an empty tools list
+ * (matches the LinkedIn / Slack surfaces — the token layer throws
+ * RECONSENT_REQUIRED at tool-call time, but tools/list runs before any tool
+ * is called). Onboarding UX surfaces the "connect Google Meet" pre-condition;
+ * agent-side callers get a clean error envelope on first tool invocation.
  */
 
 type Env = {
