@@ -39,7 +39,12 @@ function catalogRow(overrides: Partial<Record<string, unknown>> = {}) {
 		status: 'published',
 		sort_weight: 0,
 		install_count: 10,
-		loop_definition: { steps_summary: '3 steps', ins: ['slack'], outs: ['inbox'], cadence: 'hourly' },
+		loop_definition: {
+			steps_summary: '3 steps',
+			ins: ['slack'],
+			outs: ['inbox'],
+			cadence: 'hourly',
+		},
 		skill_slugs: null,
 		trigger_seeds: null,
 		install_flow_copy: {},
@@ -52,17 +57,14 @@ function mockDbWithExecute(rawCatalogRows: unknown[], installationsRows: unknown
 
 	// Membership check, integrations connected, human count.
 	mockResults.selectQueue = [
-		[{ actorId: 'test-actor-id' }],           // isWorkspaceMember
-		[{ provider: 'slack' }],                  // connected integrations
-		[{ n: 2 }],                               // human count
+		[{ actorId: 'test-actor-id' }], // isWorkspaceMember
+		[{ provider: 'slack' }], // connected integrations
+		[{ n: 2 }], // human count
 	]
 
 	// Two db.execute calls: (a) installations lookup, (b) the UNION-ALL.
 	// Drizzle's Proxy in setup.ts doesn't stub `execute`; patch it inline.
-	const executeQueue = [
-		{ rows: installationsRows },
-		{ rows: rawCatalogRows },
-	]
+	const executeQueue = [{ rows: installationsRows }, { rows: rawCatalogRows }]
 	;(db as unknown as { execute: (q: unknown) => Promise<unknown> }).execute = async () => {
 		return executeQueue.shift() ?? { rows: [] }
 	}
@@ -225,18 +227,27 @@ describe('GET /api/marketplace/catalog', () => {
 			jsonGet('/api/marketplace/catalog?limit=2', { 'x-workspace-id': wsId }),
 		)
 		expect(res1.status).toBe(200)
-		const body1 = (await res1.json()) as { team_grid: Array<{ slug: string }>; next_cursor: string | null }
+		const body1 = (await res1.json()) as {
+			team_grid: Array<{ slug: string }>
+			next_cursor: string | null
+		}
 		expect(body1.team_grid.map((c) => c.slug)).toEqual(['l0', 'l1'])
 		expect(body1.next_cursor).toBeTruthy()
 
 		const { app: app2 } = mockDbWithExecute(rows)
 		const res2 = await app2.request(
-			jsonGet(`/api/marketplace/catalog?limit=2&cursor=${encodeURIComponent(body1.next_cursor as string)}`, {
-				'x-workspace-id': wsId,
-			}),
+			jsonGet(
+				`/api/marketplace/catalog?limit=2&cursor=${encodeURIComponent(body1.next_cursor as string)}`,
+				{
+					'x-workspace-id': wsId,
+				},
+			),
 		)
 		expect(res2.status).toBe(200)
-		const body2 = (await res2.json()) as { team_grid: Array<{ slug: string }>; next_cursor: string | null }
+		const body2 = (await res2.json()) as {
+			team_grid: Array<{ slug: string }>
+			next_cursor: string | null
+		}
 		expect(body2.team_grid.map((c) => c.slug)).toEqual(['l2', 'l3'])
 		expect(body2.next_cursor).toBeTruthy()
 	})
@@ -338,12 +349,12 @@ describe('GET /api/marketplace/items/{item_kind}/{catalog_id}', () => {
 		const { app, mockResults, db } = createTestApp(marketplaceCatalogRoutes, '/api/marketplace')
 		mockResults.selectQueue = [
 			[{ actorId: 'test-actor-id' }], // isWorkspaceMember
-			[{ provider: 'slack' }],          // integrations
-			[{ n: 1 }],                       // human count
+			[{ provider: 'slack' }], // integrations
+			[{ n: 1 }], // human count
 		]
 		const executeQueue: unknown[] = [
-			{ rows: [] },       // installations
-			{ rows: [loop] },   // detail row
+			{ rows: [] }, // installations
+			{ rows: [loop] }, // detail row
 		]
 		;(db as unknown as { execute: (q: unknown) => Promise<unknown> }).execute = async () => {
 			return executeQueue.shift() ?? { rows: [] }
@@ -367,18 +378,12 @@ describe('GET /api/marketplace/items/{item_kind}/{catalog_id}', () => {
 			{ slug: 'slack', connected: true },
 			{ slug: 'github', connected: false },
 		])
-		expect(body.requires_status.mcp_installations).toEqual([
-			{ slug: 'linear', installed: false },
-		])
+		expect(body.requires_status.mcp_installations).toEqual([{ slug: 'linear', installed: false }])
 	})
 
 	it('returns 404 when the item is missing', async () => {
 		const { app, mockResults, db } = createTestApp(marketplaceCatalogRoutes, '/api/marketplace')
-		mockResults.selectQueue = [
-			[{ actorId: 'test-actor-id' }],
-			[],
-			[{ n: 0 }],
-		]
+		mockResults.selectQueue = [[{ actorId: 'test-actor-id' }], [], [{ n: 0 }]]
 		const executeQueue: unknown[] = [{ rows: [] }, { rows: [] }]
 		;(db as unknown as { execute: (q: unknown) => Promise<unknown> }).execute = async () => {
 			return executeQueue.shift() ?? { rows: [] }

@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { actors, integrations, workspaceMembers } from '@maskin/db/schema'
+import { INTEGRATION_STATUS_ACTIVE, actors, integrations, workspaceMembers } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -153,6 +153,9 @@ type CatalogItemCard = z.infer<typeof catalogItemCardSchema>
 // specifies. Column names below match §2.2 / §2.3 exactly.
 
 interface RawCatalogRow {
+	// Index signature so the type satisfies the `Record<string, unknown>`
+	// constraint drizzle's `db.execute<T>` puts on its row type parameter.
+	[key: string]: unknown
 	item_kind: 'loop' | 'agent' | 'skill' | 'mcp_server'
 	catalog_id: string
 	slug: string
@@ -274,7 +277,12 @@ async function loadWorkspaceState(
 		db
 			.select({ provider: integrations.provider })
 			.from(integrations)
-			.where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.status, 'connected'))),
+			.where(
+				and(
+					eq(integrations.workspaceId, workspaceId),
+					eq(integrations.status, INTEGRATION_STATUS_ACTIVE),
+				),
+			),
 		db
 			.select({ n: sql<number>`count(*)::int` })
 			.from(actors)
@@ -420,7 +428,6 @@ function toCard(
 function stripInternal(
 	card: CatalogItemCard & { _sortWeight: number; _matched: boolean },
 ): CatalogItemCard {
-	// biome-ignore lint/correctness/noUnusedVariables: destructuring to drop sort keys
 	const { _sortWeight, _matched, ...rest } = card
 	return rest
 }

@@ -40,7 +40,10 @@ test.describe('Marketplace requires-not-met flow', () => {
 			has: page.getByRole('heading', { name: loop.displayName }),
 		})
 		await expect(card.first()).toBeVisible({ timeout: 20000 })
-		await card.first().getByRole('button', { name: /^install$/i }).click()
+		await card
+			.first()
+			.getByRole('button', { name: /^install$/i })
+			.click()
 
 		// The install-modal's needs-integration variant fires on the 424
 		// response and surfaces the missing provider. Design spec Copy:

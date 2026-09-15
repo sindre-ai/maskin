@@ -194,15 +194,15 @@ const PLACEHOLDER_RE = /\{([a-z_]+(?:\.[a-z_]+)?)\}/g
  */
 export function renderWhyLine(template: string, ctx: MatchContext): string {
 	return template.replace(PLACEHOLDER_RE, (whole, path: string) => {
-		const parts = path.split('.')
-		if (parts.length === 1) {
-			const v = (ctx as Record<string, unknown>)[parts[0]]
-			if (typeof v === 'string' || typeof v === 'number') return String(v)
+		const [root, field] = path.split('.')
+		if (root === undefined) return whole
+		const rootValue = (ctx as Record<string, unknown>)[root]
+		if (field === undefined) {
+			if (typeof rootValue === 'string' || typeof rootValue === 'number') return String(rootValue)
 			return whole
 		}
-		const source = (ctx as Record<string, unknown>)[parts[0]]
-		if (source && typeof source === 'object' && parts[1] in (source as object)) {
-			const v = (source as Record<string, unknown>)[parts[1]]
+		if (rootValue && typeof rootValue === 'object' && field in (rootValue as object)) {
+			const v = (rootValue as Record<string, unknown>)[field]
 			if (typeof v === 'string' || typeof v === 'number') return String(v)
 		}
 		return whole

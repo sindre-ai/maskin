@@ -99,7 +99,9 @@ function buildInterpolationContext(
 		return undefined
 	})()
 
-	const teamDisplay = selectedTeam ? TEAM_DISPLAY[selectedTeam] ?? titleCase(selectedTeam) : undefined
+	const teamDisplay = selectedTeam
+		? (TEAM_DISPLAY[selectedTeam] ?? titleCase(selectedTeam))
+		: undefined
 
 	return {
 		integration: integrationName,
@@ -116,17 +118,10 @@ export function InstallModal({
 	onClose,
 	forcedVariant,
 }: InstallModalProps) {
-	const [variant, setVariant] = useState<InstallModalVariant>(
-		forcedVariant ?? initialVariant,
-	)
-	const [selectedTeam, setSelectedTeam] = useState<'customer' | 'revenue' | 'shared'>(
-		'customer',
-	)
+	const [variant, setVariant] = useState<InstallModalVariant>(forcedVariant ?? initialVariant)
+	const [selectedTeam, setSelectedTeam] = useState<'customer' | 'revenue' | 'shared'>('customer')
 	const install = useInstallMarketplaceItem(workspaceId)
-	const ctx = useMemo(
-		() => buildInterpolationContext(item, selectedTeam),
-		[item, selectedTeam],
-	)
+	const ctx = useMemo(() => buildInterpolationContext(item, selectedTeam), [item, selectedTeam])
 	const copy = item.install_flow_copy
 
 	useEffect(() => {
@@ -198,6 +193,7 @@ export function InstallModal({
 			<div
 				ref={dialogRef}
 				className="marketplace-v3-modal"
+				// biome-ignore lint/a11y/useSemanticElements: native <dialog> is against project convention (apps/web/CLAUDE.md) — this is the same ARIA div-based modal pattern command-palette.tsx renders.
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby={titleId}
@@ -235,13 +231,7 @@ export function InstallModal({
 					/>
 				)}
 				{variant === 'success' && (
-					<Success
-						item={item}
-						titleId={titleId}
-						onClose={onClose}
-						copy={copy?.success}
-						ctx={ctx}
-					/>
+					<Success item={item} titleId={titleId} onClose={onClose} copy={copy?.success} ctx={ctx} />
 				)}
 				{variant === 'error' && (
 					<ErrorVariant
@@ -287,11 +277,9 @@ function NeedsIntegration({
 					<h3 id={titleId} className="title">
 						Install {item.display_name}
 					</h3>
-					<div className="subtitle">
-						{interpolateInstallFlowCopy(copy?.subtitle, ctx)}
-					</div>
+					<div className="subtitle">{interpolateInstallFlowCopy(copy?.subtitle, ctx)}</div>
 				</div>
-				<button className="close" onClick={onClose} aria-label="Close">
+				<button type="button" className="close" onClick={onClose} aria-label="Close">
 					<CloseIcon />
 				</button>
 			</div>
@@ -316,8 +304,7 @@ function NeedsIntegration({
 						<div>
 							<h4>Available in workspace</h4>
 							<p>
-								Every agent will be able to call {item.display_name} tools under its own
-								guardrails.
+								Every agent will be able to call {item.display_name} tools under its own guardrails.
 							</p>
 						</div>
 					</div>
@@ -325,16 +312,16 @@ function NeedsIntegration({
 				<div className="callout info">
 					<InfoIcon />
 					<div>
-						Connections live on the <b>agent</b>, not here. You&apos;ll pick which agent uses
-						this from that agent&apos;s page after install.
+						Connections live on the <b>agent</b>, not here. You&apos;ll pick which agent uses this
+						from that agent&apos;s page after install.
 					</div>
 				</div>
 			</div>
 			<div className="foot">
-				<button className="mp-btn mp-btn-ghost" onClick={onClose}>
+				<button type="button" className="mp-btn mp-btn-ghost" onClick={onClose}>
 					Cancel
 				</button>
-				<button className="mp-btn mp-btn-primary" onClick={onConnect}>
+				<button type="button" className="mp-btn mp-btn-primary" onClick={onConnect}>
 					Connect {item.display_name} →
 				</button>
 			</div>
@@ -373,17 +360,17 @@ function NeedsDecision({
 					<h3 id={titleId} className="title">
 						Install {item.display_name}
 					</h3>
-					<div className="subtitle">
-						{interpolateInstallFlowCopy(copy?.subtitle, ctx)}
-					</div>
+					<div className="subtitle">{interpolateInstallFlowCopy(copy?.subtitle, ctx)}</div>
 				</div>
-				<button className="close" onClick={onClose} aria-label="Close">
+				<button type="button" className="close" onClick={onClose} aria-label="Close">
 					<CloseIcon />
 				</button>
 			</div>
 			<div className="body">
 				<div className="form-block">
-					<label id={`${titleId}-team`}>Assign to team</label>
+					<span id={`${titleId}-team`} className="form-block-label">
+						Assign to team
+					</span>
 					<div className="radio-list" role="radiogroup" aria-labelledby={`${titleId}-team`}>
 						<TeamRadio
 							value="customer"
@@ -415,10 +402,10 @@ function NeedsDecision({
 				</div>
 			</div>
 			<div className="foot">
-				<button className="mp-btn mp-btn-ghost" onClick={onClose}>
+				<button type="button" className="mp-btn mp-btn-ghost" onClick={onClose}>
 					Cancel
 				</button>
-				<button className="mp-btn mp-btn-primary" onClick={onConfirm}>
+				<button type="button" className="mp-btn mp-btn-primary" onClick={onConfirm}>
 					Install to {teamLabel} →
 				</button>
 			</div>
@@ -442,6 +429,7 @@ function TeamRadio({
 	return (
 		<button
 			type="button"
+			// biome-ignore lint/a11y/useSemanticElements: role="radio" is correct for a styled radio row; the parent radio-list supplies role="radiogroup"
 			role="radio"
 			aria-checked={selected}
 			className="radio-row"
@@ -523,10 +511,10 @@ function Installing({
 				</div>
 			</div>
 			<div className="foot">
-				<button className="mp-btn mp-btn-ghost" disabled>
+				<button type="button" className="mp-btn mp-btn-ghost" disabled>
 					Cancel
 				</button>
-				<button className="mp-btn mp-btn-primary mp-btn-loading" disabled>
+				<button type="button" className="mp-btn mp-btn-primary mp-btn-loading" disabled>
 					<span className="mp-spinner" />
 					Installing…
 				</button>
@@ -563,32 +551,34 @@ function Success({
 					<h3 id={titleId} className="title">
 						{item.display_name} is installed
 					</h3>
-					<div className="subtitle">
-						{interpolateInstallFlowCopy(copy?.subtitle, ctx)}
-					</div>
+					<div className="subtitle">{interpolateInstallFlowCopy(copy?.subtitle, ctx)}</div>
 				</div>
-				<button className="close" onClick={onClose} aria-label="Close">
+				<button type="button" className="close" onClick={onClose} aria-label="Close">
 					<CloseIcon />
 				</button>
 			</div>
 			<div className="body">
-				<div className="callout success" role="status">
+				<div
+					className="callout success"
+					// biome-ignore lint/a11y/useSemanticElements: a styled callout panel is not a form result; role="status" is the correct live region
+					role="status"
+				>
 					<CheckIcon />
 					<div>{interpolateInstallFlowCopy(copy?.callout, ctx)}</div>
 				</div>
 				<div className="form-block">
-					<label>Next</label>
+					<span className="form-block-label">Next</span>
 					<div className="form-hint">
-						Open the loop to set the usage-drop threshold, or come back later — the defaults
-						are safe.
+						Open the loop to set the usage-drop threshold, or come back later — the defaults are
+						safe.
 					</div>
 				</div>
 			</div>
 			<div className="foot">
-				<button className="mp-btn mp-btn-ghost" onClick={onClose}>
+				<button type="button" className="mp-btn mp-btn-ghost" onClick={onClose}>
 					Later
 				</button>
-				<button className="mp-btn mp-btn-primary" onClick={onClose}>
+				<button type="button" className="mp-btn mp-btn-primary" onClick={onClose}>
 					Open loop →
 				</button>
 			</div>
@@ -628,24 +618,28 @@ function ErrorVariant({
 					</h3>
 					<div className="subtitle">Nothing was changed in your workspace.</div>
 				</div>
-				<button className="close" onClick={onClose} aria-label="Close">
+				<button type="button" className="close" onClick={onClose} aria-label="Close">
 					<CloseIcon />
 				</button>
 			</div>
 			<div className="body">
-				<div className="callout error" role="status">
+				<div
+					className="callout error"
+					// biome-ignore lint/a11y/useSemanticElements: a styled callout panel is not a form result; role="status" is the correct live region
+					role="status"
+				>
 					<InfoIcon />
 					<div>{interpolateInstallFlowCopy(copy?.callout, ctx)}</div>
 				</div>
 			</div>
 			<div className="foot">
-				<button className="mp-btn mp-btn-ghost" onClick={onClose}>
+				<button type="button" className="mp-btn mp-btn-ghost" onClick={onClose}>
 					Cancel
 				</button>
-				<button className="mp-btn mp-btn-secondary" onClick={onClose}>
+				<button type="button" className="mp-btn mp-btn-secondary" onClick={onClose}>
 					Reconnect PostHog
 				</button>
-				<button className="mp-btn mp-btn-primary" onClick={onRetry}>
+				<button type="button" className="mp-btn mp-btn-primary" onClick={onRetry}>
 					Try again
 				</button>
 			</div>
@@ -657,14 +651,30 @@ function ErrorVariant({
 
 function CloseIcon() {
 	return (
-		<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+		<svg
+			width="16"
+			height="16"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			aria-hidden="true"
+		>
 			<path d="M6 6l12 12M18 6L6 18" />
 		</svg>
 	)
 }
 function InfoIcon() {
 	return (
-		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+		<svg
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2.2"
+			aria-hidden="true"
+		>
 			<circle cx="12" cy="12" r="9" />
 			<path d="M12 8v4M12 16h.01" />
 		</svg>
@@ -672,7 +682,15 @@ function InfoIcon() {
 }
 function WarnIcon() {
 	return (
-		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+		<svg
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2.2"
+			aria-hidden="true"
+		>
 			<path d="M12 3l9 16H3z" />
 			<path d="M12 10v4M12 17h.01" />
 		</svg>
@@ -680,7 +698,15 @@ function WarnIcon() {
 }
 function CheckIcon() {
 	return (
-		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+		<svg
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2.5"
+			aria-hidden="true"
+		>
 			<path d="M4 12l5 5L20 6" />
 		</svg>
 	)

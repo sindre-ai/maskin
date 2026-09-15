@@ -14,11 +14,12 @@ function baseState(): WorkspaceState {
 	return {
 		integrations: new Set(['slack', 'github']),
 		installedLoops: new Map([
-			['customer-conversations', { slug: 'customer-conversations', display_name: 'Customer Conversations' }],
+			[
+				'customer-conversations',
+				{ slug: 'customer-conversations', display_name: 'Customer Conversations' },
+			],
 		]),
-		installedAgents: new Map([
-			['research', { slug: 'research', display_name: 'Research' }],
-		]),
+		installedAgents: new Map([['research', { slug: 'research', display_name: 'Research' }]]),
 		installedSkills: new Map(),
 		humanCount: 2,
 	}
@@ -27,13 +28,17 @@ function baseState(): WorkspaceState {
 describe('evaluatePredicate — predicate vocabulary (spec §4.1)', () => {
 	it('workspace_has_integration matches when any listed slug is connected', () => {
 		const state = baseState()
-		expect(evaluatePredicate({ workspace_has_integration: ['slack'] } as Predicate, state)).toEqual({
-			matched_integration: 'slack',
-		})
+		expect(evaluatePredicate({ workspace_has_integration: ['slack'] } as Predicate, state)).toEqual(
+			{
+				matched_integration: 'slack',
+			},
+		)
 		expect(
 			evaluatePredicate({ workspace_has_integration: ['zendesk', 'slack'] } as Predicate, state),
 		).toEqual({ matched_integration: 'slack' })
-		expect(evaluatePredicate({ workspace_has_integration: ['zendesk'] } as Predicate, state)).toBeNull()
+		expect(
+			evaluatePredicate({ workspace_has_integration: ['zendesk'] } as Predicate, state),
+		).toBeNull()
 	})
 
 	it('workspace_missing_integration matches when NONE of the listed slugs are connected', () => {
@@ -59,7 +64,9 @@ describe('evaluatePredicate — predicate vocabulary (spec §4.1)', () => {
 		).toEqual({
 			matched_loop: { slug: 'customer-conversations', display_name: 'Customer Conversations' },
 		})
-		expect(evaluatePredicate({ workspace_has_loop: ['sales-triage'] } as Predicate, state)).toBeNull()
+		expect(
+			evaluatePredicate({ workspace_has_loop: ['sales-triage'] } as Predicate, state),
+		).toBeNull()
 	})
 
 	it('workspace_missing_loop matches when NONE of the listed slugs are installed', () => {
@@ -77,8 +84,12 @@ describe('evaluatePredicate — predicate vocabulary (spec §4.1)', () => {
 		expect(evaluatePredicate({ workspace_has_agent: ['research'] } as Predicate, state)).toEqual({
 			matched_agent: { slug: 'research', display_name: 'Research' },
 		})
-		expect(evaluatePredicate({ workspace_missing_agent: ['coach'] } as Predicate, state)).toEqual({})
-		expect(evaluatePredicate({ workspace_missing_agent: ['research'] } as Predicate, state)).toBeNull()
+		expect(evaluatePredicate({ workspace_missing_agent: ['coach'] } as Predicate, state)).toEqual(
+			{},
+		)
+		expect(
+			evaluatePredicate({ workspace_missing_agent: ['research'] } as Predicate, state),
+		).toBeNull()
 	})
 
 	it('workspace_size_gte matches on human count', () => {
@@ -105,10 +116,7 @@ describe('evaluatePredicate — and/or/not composition (spec §4.1)', () => {
 		})
 
 		const oneFails: Predicate = {
-			and: [
-				{ workspace_has_integration: ['slack'] },
-				{ workspace_has_loop: ['sales-triage'] },
-			],
+			and: [{ workspace_has_integration: ['slack'] }, { workspace_has_loop: ['sales-triage'] }],
 		}
 		expect(evaluatePredicate(oneFails, state)).toBeNull()
 	})
@@ -120,10 +128,7 @@ describe('evaluatePredicate — and/or/not composition (spec §4.1)', () => {
 		expect(evaluatePredicate(either, state)).toEqual({ matched_integration: 'slack' })
 
 		const noneMatch: Predicate = {
-			or: [
-				{ workspace_has_integration: ['zendesk'] },
-				{ workspace_has_loop: ['sales-triage'] },
-			],
+			or: [{ workspace_has_integration: ['zendesk'] }, { workspace_has_loop: ['sales-triage'] }],
 		}
 		expect(evaluatePredicate(noneMatch, state)).toBeNull()
 	})
@@ -201,16 +206,20 @@ describe('renderWhyLine — placeholder resolution (spec §4.2)', () => {
 	})
 
 	it('substitutes a bare {matched_integration} scalar', () => {
-		expect(renderWhyLine('you use {matched_integration} for chat', { matched_integration: 'slack' })).toBe(
-			'you use slack for chat',
-		)
+		expect(
+			renderWhyLine('you use {matched_integration} for chat', { matched_integration: 'slack' }),
+		).toBe('you use slack for chat')
 	})
 
 	it('leaves an unresolvable placeholder as-is so authors catch it in preview', () => {
-		expect(renderWhyLine('for {matched_loop.display_name}', {})).toBe('for {matched_loop.display_name}')
-		expect(renderWhyLine('for {matched_loop.no_such_field}', {
-			matched_loop: { slug: 's', display_name: 'D' },
-		})).toBe('for {matched_loop.no_such_field}')
+		expect(renderWhyLine('for {matched_loop.display_name}', {})).toBe(
+			'for {matched_loop.display_name}',
+		)
+		expect(
+			renderWhyLine('for {matched_loop.no_such_field}', {
+				matched_loop: { slug: 's', display_name: 'D' },
+			}),
+		).toBe('for {matched_loop.no_such_field}')
 	})
 
 	it('substitutes multiple placeholders in one template', () => {
@@ -230,13 +239,21 @@ describe('performance budget (spec §4.3)', () => {
 			score_boost: 5,
 			rules: [
 				{ when: { workspace_has_integration: ['slack'] }, why: 'you use {matched_integration}' },
-				{ when: { workspace_has_loop: ['customer-conversations'] }, why: 'have {matched_loop.display_name}' },
+				{
+					when: { workspace_has_loop: ['customer-conversations'] },
+					why: 'have {matched_loop.display_name}',
+				},
 				{ when: { workspace_missing_agent: ['coach'] }, why: 'coach agent would help here' },
 				{
 					when: {
 						and: [
 							{ workspace_size_gte: 2 },
-							{ or: [{ workspace_has_integration: ['github'] }, { workspace_has_integration: ['linear'] }] },
+							{
+								or: [
+									{ workspace_has_integration: ['github'] },
+									{ workspace_has_integration: ['linear'] },
+								],
+							},
 						],
 					},
 					why: 'team of {matched_integration}',

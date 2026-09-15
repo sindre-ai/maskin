@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { marketplaceAgents, marketplaceLoops, marketplaceSkills } from '@maskin/db/schema'
 import { splitStatements } from '@maskin/db/migrate-utils'
+import { marketplaceAgents, marketplaceLoops, marketplaceSkills } from '@maskin/db/schema'
 import { asc, isNull } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { db, sql } from './global-setup'
@@ -44,10 +44,7 @@ async function snapshotCatalog() {
 	// Global-catalog rows only (workspace-private curation is out of scope
 	// for the seed reify — the migration inserts NULL workspace_id).
 	const [loops, agents, skills] = await Promise.all([
-		db
-			.select()
-			.from(marketplaceLoops)
-			.orderBy(asc(marketplaceLoops.slug)),
+		db.select().from(marketplaceLoops).orderBy(asc(marketplaceLoops.slug)),
 		db
 			.select()
 			.from(marketplaceAgents)

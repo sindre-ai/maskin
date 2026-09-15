@@ -260,9 +260,7 @@ async function main(): Promise<void> {
 	console.log(`  loops:  ${loops.inserted} inserted / ${loops.matched} matched`)
 	console.log(`  agents: ${agents.inserted} inserted / ${agents.matched} matched`)
 	console.log(`  skills: ${skills.inserted} inserted / ${skills.matched} matched`)
-	console.log(
-		`  total:  ${loops.inserted + agents.inserted + skills.inserted} audit rows written`,
-	)
+	console.log(`  total:  ${loops.inserted + agents.inserted + skills.inserted} audit rows written`)
 	// Note: mcp_server backfill is deliberately out of scope — Registry owns
 	// mcp_installations and its own backfill script (tech spec §3.4 references
 	// the Keychain/Registry backfill precedent). Running Registry's backfill

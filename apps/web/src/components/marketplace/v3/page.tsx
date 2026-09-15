@@ -11,9 +11,9 @@
  */
 
 import { useCallback, useRef, useState } from 'react'
+import { CompactCard, LoopCard, RecommendedCard } from './cards'
 import type { CatalogItemCard, MarketplaceItemKind, MarketplaceTeam } from './catalog'
 import { TEAM_LABELS, teamLabel, useMarketplaceCatalog } from './catalog'
-import { CompactCard, LoopCard, RecommendedCard } from './cards'
 import { InstallModal, type InstallModalVariant } from './install-modal'
 import './tokens.css'
 
@@ -72,12 +72,7 @@ export function MarketplaceV3Page({ workspaceId }: { workspaceId: string }) {
 						</Band>
 					</>
 				) : (
-					<AllBands
-						tab={tab}
-						bands={bands}
-						team={team}
-						onInstall={onInstall}
-					/>
+					<AllBands tab={tab} bands={bands} team={team} onInstall={onInstall} />
 				)}
 			</div>
 			{modalItem ? (
@@ -153,7 +148,11 @@ function TopBar({
 				})}
 			</div>
 			<div className="mp-top-actions">
-				<div className="mp-search" role="search">
+				<div
+					className="mp-search"
+					// biome-ignore lint/a11y/useSemanticElements: a search box is a styled input group, not the native <search> landmark which carries page-level semantics
+					role="search"
+				>
 					<SearchIcon />
 					<input
 						placeholder="Search catalog"
@@ -382,7 +381,11 @@ function CardSkeleton() {
 
 function BandError({ onRetry }: { onRetry: () => void }) {
 	return (
-		<div className="mp-error" role="status">
+		<div
+			className="mp-error"
+			// biome-ignore lint/a11y/useSemanticElements: a styled error panel is not a form result; role="status" is the correct live region
+			role="status"
+		>
 			<h3>Couldn&apos;t load the catalog</h3>
 			<p>
 				The catalog service is unreachable.{' '}
@@ -401,11 +404,15 @@ function BandError({ onRetry }: { onRetry: () => void }) {
 
 function RecEmpty() {
 	return (
-		<div className="mp-empty" role="status">
+		<div
+			className="mp-empty"
+			// biome-ignore lint/a11y/useSemanticElements: a styled empty-state panel is not a form result; role="status" is the correct live region
+			role="status"
+		>
 			<h3>Nothing to recommend yet</h3>
 			<p>
-				Install a loop or connect an integration, and we&apos;ll suggest what pairs well. Or
-				browse Popular below.
+				Install a loop or connect an integration, and we&apos;ll suggest what pairs well. Or browse
+				Popular below.
 			</p>
 		</div>
 	)
@@ -419,7 +426,11 @@ function FilterEmpty({ team }: { team: MarketplaceTeam | 'all' }) {
 				<h2>{label} team</h2>
 				<span className="mp-band-note">no items match this filter</span>
 			</div>
-			<div className="mp-empty" role="status">
+			<div
+				className="mp-empty"
+				// biome-ignore lint/a11y/useSemanticElements: a styled empty-state panel is not a form result; role="status" is the correct live region
+				role="status"
+			>
 				<h3>Nothing tagged for {label} yet</h3>
 				<p>The catalog is curated per team. Try All teams or ask what belongs here.</p>
 			</div>
@@ -439,7 +450,15 @@ function pickInitialVariant(item: CatalogItemCard): InstallModalVariant {
 
 function SearchIcon() {
 	return (
-		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+		<svg
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			aria-hidden="true"
+		>
 			<circle cx="11" cy="11" r="7" />
 			<path d="M20 20l-3-3" />
 		</svg>

@@ -1,4 +1,6 @@
+import { marketplaceAgents, marketplaceLoops, marketplaceSkills } from '@maskin/db/schema'
 import {
+	CONTINUOUS_ONBOARDING_SKILL,
 	DEFAULT_WORKSPACE_AGENTS,
 	DEFAULT_WORKSPACE_LOOPS,
 	FOR_YOU_FORMAT_SKILL,
@@ -7,9 +9,7 @@ import {
 	MARKETPLACE_CATALOG_SKILLS,
 	MASKIN_WAY_OF_WORKING_SKILL,
 	SHAPED_BET_FORMAT_SKILL,
-	CONTINUOUS_ONBOARDING_SKILL,
 } from '@maskin/shared'
-import { marketplaceAgents, marketplaceLoops, marketplaceSkills } from '@maskin/db/schema'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { db } from './global-setup'
@@ -59,9 +59,7 @@ describe('marketplace seed overlap — catalog is a superset of DEFAULT_WORKSPAC
 		const rows = await db
 			.select({ slug: marketplaceAgents.slug })
 			.from(marketplaceAgents)
-			.where(
-				and(isNull(marketplaceAgents.workspaceId), inArray(marketplaceAgents.slug, expected)),
-			)
+			.where(and(isNull(marketplaceAgents.workspaceId), inArray(marketplaceAgents.slug, expected)))
 		const present = new Set(rows.map((r) => r.slug))
 		const missing = expected.filter((slug) => !present.has(slug))
 		expect(missing).toEqual([])
@@ -77,9 +75,7 @@ describe('marketplace seed overlap — catalog is a superset of DEFAULT_WORKSPAC
 		const rows = await db
 			.select({ slug: marketplaceSkills.slug })
 			.from(marketplaceSkills)
-			.where(
-				and(isNull(marketplaceSkills.workspaceId), inArray(marketplaceSkills.slug, expected)),
-			)
+			.where(and(isNull(marketplaceSkills.workspaceId), inArray(marketplaceSkills.slug, expected)))
 		const present = new Set(rows.map((r) => r.slug))
 		const missing = expected.filter((slug) => !present.has(slug))
 		expect(missing).toEqual([])

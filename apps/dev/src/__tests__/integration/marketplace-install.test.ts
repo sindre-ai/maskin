@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import {
+	INTEGRATION_STATUS_ACTIVE,
 	integrations,
 	marketplaceAgents,
 	marketplaceInstallations,
@@ -156,7 +157,7 @@ describe('marketplace-install — requires check', () => {
 		await db.insert(integrations).values({
 			workspaceId: ws.id,
 			provider: 'github',
-			status: 'connected',
+			status: INTEGRATION_STATUS_ACTIVE,
 			credentials: 'placeholder',
 			createdBy: getTestActorId(),
 		})

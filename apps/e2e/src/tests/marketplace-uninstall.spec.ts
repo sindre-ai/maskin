@@ -53,7 +53,10 @@ test.describe('Marketplace uninstall flow', () => {
 		} else {
 			// Compact-card variant surfaces uninstall via the detail page
 			// overflow menu.
-			await card.getByRole('link', { name: /open|details/i }).first().click()
+			await card
+				.getByRole('link', { name: /open|details/i })
+				.first()
+				.click()
 			await page.getByRole('button', { name: /loop actions|manage/i }).click()
 			await page.getByRole('menuitem', { name: /remove from workspace|uninstall/i }).click()
 		}

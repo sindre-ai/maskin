@@ -37,9 +37,7 @@ export function RecommendedCard({ item, onInstall }: { item: CatalogItemCard } &
 				</div>
 			) : null}
 			<div className="mp-row-end">
-				<span
-					className={`mp-needs${item.requires_status === 'ready' ? ' connected' : ''}`}
-				>
+				<span className={`mp-needs${item.requires_status === 'ready' ? ' connected' : ''}`}>
 					<span className="dot" />
 					{item.requires_label ?? (item.requires_status === 'ready' ? 'Ready' : 'Needs setup')}
 				</span>
@@ -76,12 +74,14 @@ export function LoopCard({ item, onInstall }: { item: CatalogItemCard } & CardHa
 			{summary ? (
 				<div className="mp-step-flow" aria-label="Loop steps">
 					{summary.ins.map((line, i) => (
+						// biome-ignore lint/suspicious/noArrayIndexKey: loop summary lines are static seed strings with no stable id; order never changes
 						<div className="mp-step-row" key={`in-${i}`}>
 							<span className="kind in">IN</span>
 							<span className="text">{renderStepText(line)}</span>
 						</div>
 					))}
 					{summary.outs.map((line, i) => (
+						// biome-ignore lint/suspicious/noArrayIndexKey: loop summary lines are static seed strings with no stable id; order never changes
 						<div className="mp-step-row" key={`out-${i}`}>
 							<span className="kind out">OUT</span>
 							<span className="text">{renderStepText(line)}</span>
@@ -93,15 +93,18 @@ export function LoopCard({ item, onInstall }: { item: CatalogItemCard } & CardHa
 				{typeof item.asks_per_cycle === 'number' ? (
 					<span className="mp-asks">Asks you {item.asks_per_cycle}× per cycle</span>
 				) : null}
-				<span
-					className={`mp-needs${item.requires_status === 'ready' ? ' connected' : ''}`}
-				>
+				<span className={`mp-needs${item.requires_status === 'ready' ? ' connected' : ''}`}>
 					<span className="dot" />
 					{item.requires_label ?? ''}
 				</span>
 			</div>
 			{installed ? (
-				<div className="mp-manage-row" role="group" aria-label={`${item.display_name}, installed`}>
+				<div
+					className="mp-manage-row"
+					// biome-ignore lint/a11y/useSemanticElements: <fieldset> is meant for form controls; a manage-action row is more idiomatic as role="group"
+					role="group"
+					aria-label={`${item.display_name}, installed`}
+				>
 					<div>
 						<span className="stat">
 							<b>{item.installed_stats?.cycles_this_week ?? 0}</b> cycles this week
@@ -114,11 +117,7 @@ export function LoopCard({ item, onInstall }: { item: CatalogItemCard } & CardHa
 						<button type="button" className="mp-btn mp-btn-secondary mp-btn-sm">
 							Open loop
 						</button>
-						<button
-							type="button"
-							className="mp-btn mp-btn-ghost mp-btn-sm"
-							aria-haspopup="menu"
-						>
+						<button type="button" className="mp-btn mp-btn-ghost mp-btn-sm" aria-haspopup="menu">
 							Manage ▾
 						</button>
 					</div>
@@ -214,22 +213,40 @@ function renderStepText(line: string) {
 	const parts = line.split(/(\*[^*]+\*)/g).filter(Boolean)
 	return parts.map((part, i) => {
 		if (part.startsWith('*') && part.endsWith('*')) {
+			// biome-ignore lint/suspicious/noArrayIndexKey: split segments of a static string — positional by construction, no stable id
 			return <b key={i}>{part.slice(1, -1)}</b>
 		}
+		// biome-ignore lint/suspicious/noArrayIndexKey: split segments of a static string — positional by construction, no stable id
 		return <span key={i}>{part}</span>
 	})
 }
 
 function SparkleIcon() {
 	return (
-		<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+		<svg
+			width="12"
+			height="12"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2.2"
+			aria-hidden="true"
+		>
 			<path d="M12 3v3M12 18v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M3 12h3M18 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" />
 		</svg>
 	)
 }
 function CheckIcon() {
 	return (
-		<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+		<svg
+			width="12"
+			height="12"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2.5"
+			aria-hidden="true"
+		>
 			<path d="M4 12l5 5L20 6" />
 		</svg>
 	)

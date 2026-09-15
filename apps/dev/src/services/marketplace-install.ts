@@ -3,6 +3,7 @@ import {
 	events,
 	actors,
 	agentSkills,
+	INTEGRATION_STATUS_ACTIVE,
 	installedLoops,
 	integrations,
 	marketplaceAgents,
@@ -200,7 +201,7 @@ async function checkRequires(
 			.where(
 				and(
 					eq(integrations.workspaceId, workspaceId),
-					eq(integrations.status, 'connected'),
+					eq(integrations.status, INTEGRATION_STATUS_ACTIVE),
 					inArray(integrations.provider, wanted),
 				),
 			)

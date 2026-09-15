@@ -55,9 +55,7 @@ const PROVISIONED_TO_COMPONENT_TYPE: ReadonlyArray<
 	['integrations', 'integration'],
 ]
 
-function normaliseSource(
-	source: LoopInstalledProps['source'],
-): MarketplaceInstallSource {
+function normaliseSource(source: LoopInstalledProps['source']): MarketplaceInstallSource {
 	if (source === 'seed' || source === 'api' || source === 'marketplace') return source
 	// Undefined + the legacy 'detail'/'catalogue' UI-page tags both mean
 	// "user clicked Install on a Marketplace surface"; coerce to 'marketplace'
