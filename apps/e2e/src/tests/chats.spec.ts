@@ -1,6 +1,6 @@
 import type { Browser, Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
-import { type TestAPI, createTestActor } from '../helpers/api.helper'
+import { TestAPI, createTestActor } from '../helpers/api.helper'
 import { grantPlanHeadroom } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
@@ -142,6 +142,68 @@ test.describe('Chats — full-screen multi-party chat', () => {
 		await partnerPage.goto(`/${account.workspaceId}/chats`)
 		const row = partnerPage.getByRole('link', { name: /E2E multi-party chat/ })
 		await expect(row.getByLabel(/unread/)).toBeVisible({ timeout: 10_000 })
+
+		await partnerPage.context().close()
+	})
+
+	test('mark as unread resets the read cursor server-side and the badge survives a reload', async ({
+		page,
+		account,
+		browser,
+	}) => {
+		const { conversation, secondHuman } = await setUpConversation(
+			account.api,
+			account.workspaceId,
+			account.apiKey,
+		)
+
+		// The primary actor posts while the partner is away, so the partner has
+		// something to read in the first place.
+		await account.api.postConversationMessage(conversation.id, account.workspaceId, {
+			content: 'Anything to report?',
+		})
+
+		const partnerApi = new TestAPI(secondHuman.api_key)
+		const partnerPage = await signInAsActor(browser, secondHuman.api_key, {
+			id: secondHuman.id,
+			name: secondHuman.name,
+			type: secondHuman.type,
+			email: secondHuman.email,
+		})
+		await partnerPage.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+		await expect(partnerPage.getByRole('heading', { name: 'E2E multi-party chat' })).toBeVisible({
+			timeout: 10_000,
+		})
+
+		// Opening the thread advances the partner's own cursor past zero.
+		await expect
+			.poll(
+				async () =>
+					(await partnerApi.getConversation(conversation.id, account.workspaceId))
+						.last_read_message_id,
+				{ timeout: 15_000 },
+			)
+			.toBeGreaterThan(0)
+
+		await partnerPage.getByRole('button', { name: 'Mark as unread' }).click()
+		await expect(partnerPage.getByText('Marked as unread')).toBeVisible({ timeout: 10_000 })
+
+		// The reset is persisted, not just optimistic client state: the cursor
+		// reads back as null for the partner. This is the assertion the old
+		// GREATEST-clamped write could never satisfy.
+		await expect
+			.poll(
+				async () =>
+					(await partnerApi.getConversation(conversation.id, account.workspaceId))
+						.last_read_message_id,
+				{ timeout: 15_000 },
+			)
+			.toBeNull()
+
+		await partnerPage.goto(`/${account.workspaceId}/chats`)
+		await expect(
+			partnerPage.getByRole('link', { name: /E2E multi-party chat/ }).getByLabel(/unread/),
+		).toBeVisible({ timeout: 10_000 })
 
 		await partnerPage.context().close()
 	})
