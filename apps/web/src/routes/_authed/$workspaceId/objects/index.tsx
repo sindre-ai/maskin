@@ -506,14 +506,24 @@ function ObjectsRoute() {
 	// disappear the moment a filter is applied — the workspace would look like it
 	// had lost its types. While any filter is active we therefore show the full
 	// tab set; the hide rule only prunes types the workspace genuinely never uses.
+	//
+	// The same "count = loaded rows" trade-off also means a type whose objects sit
+	// past the first infinite-query page reads as `count === 0` until the user
+	// scrolls to load them — so pruning on that value would hide legitimate tabs
+	// on any workspace with more than one page of objects. Only apply the hide
+	// rule once the infinite query has drained (`!hasNextPage && !isLoading`);
+	// until then, assume every enabled type could still show up in a later page
+	// and keep its tab visible. Empty workspaces still collapse to `All` because
+	// their first page is under PAGE_SIZE, so `hasNextPage` is false immediately.
+	const canPruneZeroCountTabs = !infiniteQuery.hasNextPage && !infiniteQuery.isLoading
 	const tabsWithCounts = useMemo(() => {
 		const withCounts = tabs.map((t) => ({
 			...t,
 			count: t.value ? countsByType[t.value] : countsByType.all,
 		}))
-		if (hasActiveFilterForTabs) return withCounts
+		if (hasActiveFilterForTabs || !canPruneZeroCountTabs) return withCounts
 		return withCounts.filter((t) => !t.value || t.count > 0 || t.value === typeFilter)
-	}, [tabs, countsByType, typeFilter, hasActiveFilterForTabs])
+	}, [tabs, countsByType, typeFilter, hasActiveFilterForTabs, canPruneZeroCountTabs])
 
 	// Derive available statuses grouped by type (scoped to enabled types only)
 	const statusesByType = useMemo(() => {
