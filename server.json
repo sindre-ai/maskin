@@ -1,19 +1,19 @@
 {
-  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.sindre-ai/maskin",
-  "title": "Maskin",
-  "description": "MCP-native agentic workspace where humans set direction and agents run the shop. 68 tools.",
-  "version": "0.1.0",
-  "websiteUrl": "https://maskin.io",
-  "repository": {
-    "url": "https://github.com/sindre-ai/maskin",
-    "source": "github",
-    "id": "1191465792"
-  },
-  "remotes": [
-    {
-      "type": "streamable-http",
-      "url": "https://maskin.io/mcp"
-    }
-  ]
+	"$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+	"name": "io.github.sindre-ai/maskin",
+	"title": "Maskin",
+	"description": "MCP-native agentic workspace where humans set direction and agents run the shop. 68 tools.",
+	"version": "0.1.0",
+	"websiteUrl": "https://maskin.io",
+	"repository": {
+		"url": "https://github.com/sindre-ai/maskin",
+		"source": "github",
+		"id": "1191465792"
+	},
+	"remotes": [
+		{
+			"type": "streamable-http",
+			"url": "https://maskin.io/mcp"
+		}
+	]
 }
