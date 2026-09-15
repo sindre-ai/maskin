@@ -55,19 +55,23 @@ describe('google-meet provider config', () => {
 		expect(config.webhook).toEqual({ type: 'custom' })
 	})
 
-	it('defines meet.conference / transcript / recording event surfaces', () => {
+	it('defines google_meet.conference / transcript / recording event surfaces', () => {
 		const types = config.events?.definitions.map((d) => d.entityType)
 		expect(types).toEqual(
-			expect.arrayContaining(['meet.conference', 'meet.transcript', 'meet.recording']),
+			expect.arrayContaining([
+				'google_meet.conference',
+				'google_meet.transcript',
+				'google_meet.recording',
+			]),
 		)
 		expect(
-			config.events?.definitions.find((d) => d.entityType === 'meet.conference')?.actions,
+			config.events?.definitions.find((d) => d.entityType === 'google_meet.conference')?.actions,
 		).toContain('ended')
 		expect(
-			config.events?.definitions.find((d) => d.entityType === 'meet.transcript')?.actions,
+			config.events?.definitions.find((d) => d.entityType === 'google_meet.transcript')?.actions,
 		).toContain('ready')
 		expect(
-			config.events?.definitions.find((d) => d.entityType === 'meet.recording')?.actions,
+			config.events?.definitions.find((d) => d.entityType === 'google_meet.recording')?.actions,
 		).toContain('ready')
 	})
 
