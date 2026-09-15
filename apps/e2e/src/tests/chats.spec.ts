@@ -1,5 +1,5 @@
 import type { Browser, Page } from '@playwright/test'
-import { expect, test } from '../fixtures/auth.fixture'
+import { CHATS_V4_FLAGS, expect, test } from '../fixtures/auth.fixture'
 import { TestAPI, createTestActor } from '../helpers/api.helper'
 import { grantPlanHeadroom } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
@@ -20,11 +20,16 @@ async function signInAsActor(
 	const context = await browser.newContext()
 	const page = await context.newPage()
 	await page.addInitScript(
-		(data: { apiKey: string; actor: typeof actor }) => {
+		(data: { apiKey: string; actor: typeof actor; flags: readonly string[] }) => {
 			localStorage.setItem('maskin-api-key', data.apiKey)
 			localStorage.setItem('maskin-actor', JSON.stringify(data.actor))
+			// This context bypasses the auth fixture, so it needs the Chats v4
+			// flag override too — the partner page asserts v4 header controls.
+			for (const flag of data.flags) {
+				localStorage.setItem(`ff:${flag}`, 'on')
+			}
 		},
-		{ apiKey, actor },
+		{ apiKey, actor, flags: CHATS_V4_FLAGS },
 	)
 	return page
 }
