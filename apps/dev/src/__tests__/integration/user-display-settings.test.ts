@@ -225,4 +225,31 @@ describe('User Display Settings Integration', () => {
 		)
 		expect(res.status).toBe(400)
 	})
+
+	it('returns 200 with an empty defaults body on a fresh actor (no persisted row)', async () => {
+		// The Objects page fires GET /__all__ and GET /<type> on every load,
+		// even for a freshly signed-up actor with no saved prefs. Returning
+		// 404 rendered as a console error on each page load; the endpoint now
+		// hands back an empty defaults body so callers don't have to catch.
+		const app = appAs(actorId)
+		const headers = { 'x-workspace-id': workspaceId }
+
+		const getAll = await app.request(jsonGet('/api/user-display-settings/__all__', headers))
+		expect(getAll.status).toBe(200)
+		expect(await getAll.json()).toEqual({
+			object_type: '__all__',
+			name: 'default',
+			settings: {},
+			updated_at: null,
+		})
+
+		const getBet = await app.request(jsonGet('/api/user-display-settings/bet', headers))
+		expect(getBet.status).toBe(200)
+		expect(await getBet.json()).toEqual({
+			object_type: 'bet',
+			name: 'default',
+			settings: {},
+			updated_at: null,
+		})
+	})
 })

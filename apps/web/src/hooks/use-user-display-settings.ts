@@ -1,28 +1,17 @@
-import {
-	ApiError,
-	type DisplaySettingsBody,
-	type UserDisplaySettingsResponse,
-	api,
-} from '@/lib/api'
+import { type DisplaySettingsBody, type UserDisplaySettingsResponse, api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 /**
  * Read the current actor's persisted display settings for a single object
- * type. Returns `null` (not undefined) when the server has no row yet so
- * callers can distinguish "still loading" from "no settings persisted".
+ * type. The server returns a defaults body (`settings: {}`, `updated_at:
+ * null`) when no row is persisted yet, so callers can rely on
+ * `data?.settings?.<field>` without a null check.
  */
 export function useUserDisplaySettings(workspaceId: string, objectType: string) {
-	return useQuery<UserDisplaySettingsResponse | null>({
+	return useQuery<UserDisplaySettingsResponse>({
 		queryKey: queryKeys.userDisplaySettings.detail(workspaceId, objectType),
-		queryFn: async () => {
-			try {
-				return await api.userDisplaySettings.get(workspaceId, objectType)
-			} catch (err) {
-				if (err instanceof ApiError && err.status === 404) return null
-				throw err
-			}
-		},
+		queryFn: () => api.userDisplaySettings.get(workspaceId, objectType),
 		enabled: !!workspaceId && !!objectType,
 	})
 }

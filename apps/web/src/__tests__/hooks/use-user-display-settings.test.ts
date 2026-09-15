@@ -26,6 +26,13 @@ import { ApiError, type UserDisplaySettingsResponse, api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { TestWrapper } from '../setup'
 
+const emptyRow = (objectType: string): UserDisplaySettingsResponse => ({
+	object_type: objectType,
+	name: 'default',
+	settings: {},
+	updated_at: null,
+})
+
 describe('useUserDisplaySettings', () => {
 	beforeEach(() => vi.clearAllMocks())
 
@@ -47,15 +54,26 @@ describe('useUserDisplaySettings', () => {
 		expect(api.userDisplaySettings.get).toHaveBeenCalledWith('ws-1', 'task')
 	})
 
-	it('returns null when the server has no row yet (404)', async () => {
-		vi.mocked(api.userDisplaySettings.get).mockRejectedValue(new ApiError(404, 'not found'))
+	it('returns the empty defaults body when the server has no row yet', async () => {
+		const row = emptyRow('task')
+		vi.mocked(api.userDisplaySettings.get).mockResolvedValue(row)
 
 		const { result } = renderHook(() => useUserDisplaySettings('ws-1', 'task'), {
 			wrapper: TestWrapper,
 		})
 
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
-		expect(result.current.data).toBeNull()
+		expect(result.current.data).toEqual(row)
+	})
+
+	it('surfaces non-404 errors instead of swallowing them', async () => {
+		vi.mocked(api.userDisplaySettings.get).mockRejectedValue(new ApiError(500, 'boom'))
+
+		const { result } = renderHook(() => useUserDisplaySettings('ws-1', 'task'), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.isError).toBe(true))
 	})
 
 	it('fetches the row keyed by the All-tab sentinel', async () => {

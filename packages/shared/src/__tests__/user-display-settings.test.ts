@@ -4,6 +4,7 @@ import {
 	CHROME_KEY,
 	displaySettingsBodySchema,
 	userDisplaySettingsParamsSchema,
+	userDisplaySettingsResponseSchema,
 } from '../schemas/user-display-settings'
 
 describe('displaySettingsBodySchema', () => {
@@ -183,5 +184,28 @@ describe('userDisplaySettingsParamsSchema', () => {
 	it('still rejects malformed object types', () => {
 		expect(() => userDisplaySettingsParamsSchema.parse({ object_type: 'Not-Valid' })).toThrow()
 		expect(() => userDisplaySettingsParamsSchema.parse({ object_type: '__bogus__' })).toThrow()
+	})
+})
+
+describe('userDisplaySettingsResponseSchema', () => {
+	it('accepts updated_at as an ISO string', () => {
+		const parsed = userDisplaySettingsResponseSchema.parse({
+			object_type: 'task',
+			name: 'default',
+			settings: { view: 'list' },
+			updated_at: '2026-08-14T10:00:00.000Z',
+		})
+		expect(parsed.updated_at).toBe('2026-08-14T10:00:00.000Z')
+	})
+
+	it('accepts updated_at=null for the no-row-persisted defaults body', () => {
+		const parsed = userDisplaySettingsResponseSchema.parse({
+			object_type: 'task',
+			name: 'default',
+			settings: {},
+			updated_at: null,
+		})
+		expect(parsed.updated_at).toBeNull()
+		expect(parsed.settings).toEqual({})
 	})
 })

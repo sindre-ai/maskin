@@ -109,7 +109,9 @@ export const userDisplaySettingsResponseSchema = z.object({
 	object_type: displaySettingsTypeKeySchema,
 	name: z.string(),
 	settings: displaySettingsBodySchema,
-	updated_at: z.string(),
+	// Null when no row is persisted yet — the server returns a defaults body
+	// (empty settings) instead of 404 so callers don't emit console errors.
+	updated_at: z.string().nullable(),
 })
 
 export const listUserDisplaySettingsResponseSchema = z.object({
