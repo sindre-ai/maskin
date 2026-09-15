@@ -1,6 +1,11 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { INTEGRATION_STATUS_ACTIVE, actors, integrations, workspaceMembers } from '@maskin/db/schema'
+import {
+	INTEGRATION_STATUS_ACTIVE,
+	actors,
+	integrations,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'

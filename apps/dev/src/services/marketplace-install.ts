@@ -1,9 +1,9 @@
 import type { Database, Transaction } from '@maskin/db'
 import {
 	events,
+	INTEGRATION_STATUS_ACTIVE,
 	actors,
 	agentSkills,
-	INTEGRATION_STATUS_ACTIVE,
 	installedLoops,
 	integrations,
 	marketplaceAgents,
