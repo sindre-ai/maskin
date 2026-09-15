@@ -117,7 +117,7 @@ export function ImportDialog({ open, onOpenChange, onImportStarted }: ImportDial
 
 	return (
 		<ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-			<ResponsiveDialogContent className="overflow-y-auto md:max-w-2xl md:max-h-[80vh]">
+			<ResponsiveDialogContent className="flex flex-col md:max-w-2xl md:max-h-[80vh]">
 				<ResponsiveDialogHeader>
 					<ResponsiveDialogTitle>Import Objects</ResponsiveDialogTitle>
 					<ResponsiveDialogDescription>
@@ -127,21 +127,23 @@ export function ImportDialog({ open, onOpenChange, onImportStarted }: ImportDial
 					</ResponsiveDialogDescription>
 				</ResponsiveDialogHeader>
 
-				{step === 'upload' && (
-					<UploadStep onFileUpload={handleFileUpload} isLoading={createImport.isPending} />
-				)}
+				<div className="flex-1 min-h-0 overflow-y-auto">
+					{step === 'upload' && (
+						<UploadStep onFileUpload={handleFileUpload} isLoading={createImport.isPending} />
+					)}
 
-				{step === 'mapping' && importRecord && (
-					<MappingStep
-						key={importRecord.preview?.columns?.join('\t') ?? ''}
-						importRecord={importRecord}
-						workspace={workspace}
-						onConfirm={handleConfirm}
-						onMappingUpdate={handleMappingUpdate}
-						onCsvOptionsChange={handleCsvOptionsChange}
-						isUpdating={updateMapping.isPending}
-					/>
-				)}
+					{step === 'mapping' && importRecord && (
+						<MappingStep
+							key={importRecord.preview?.columns?.join('\t') ?? ''}
+							importRecord={importRecord}
+							workspace={workspace}
+							onConfirm={handleConfirm}
+							onMappingUpdate={handleMappingUpdate}
+							onCsvOptionsChange={handleCsvOptionsChange}
+							isUpdating={updateMapping.isPending}
+						/>
+					)}
+				</div>
 			</ResponsiveDialogContent>
 		</ResponsiveDialog>
 	)
