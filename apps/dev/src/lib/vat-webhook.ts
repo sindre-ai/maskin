@@ -25,8 +25,9 @@ import { workspaceSettingsSchema } from '@maskin/shared'
 import { eq, sql } from 'drizzle-orm'
 import type Stripe from 'stripe'
 import { capturePosthogEvent } from './analytics/posthog'
+import { creditedAmountUsdMinor } from './credit-billing'
 import { logger } from './logger'
-import { isVatCheckoutEnabled } from './stripe'
+import { assertCreditsCurrency, isVatCheckoutEnabled } from './stripe'
 import {
 	notifySebkOnSlack,
 	sendAwaitingViesEmail,
@@ -337,6 +338,14 @@ async function voidSessionDirect(session: Stripe.Checkout.Session, stripe: Strip
  * ledger's `stripe_checkout_session_id` UNIQUE index acts as the money
  * idempotency gate so a replayed webhook cannot double-credit.
  *
+ * `row.amountTotal` is minor units in `row.currency` (both stamped from the
+ * original session), NOT USD minor. We normalize to USD minor and apply the
+ * Delta 1b volume-bonus tier before writing the ledger row's `amountCents`
+ * and the workspace balance (CTO pre-merge fix #4, 10 Sep 2026). The
+ * currency string on the row has no CHECK constraint, so type-narrow
+ * defensively against `MaskinCreditsCurrency` and log-and-fall-back to
+ * `'usd'` on an unexpected value rather than silently mis-converting.
+ *
  * For a subscription, the subscription is already active on Stripe's side
  * (the completion event marked the workspace `active`); there is nothing
  * to write here beyond the audit trail. We rely on the existing
@@ -352,6 +361,15 @@ async function fulfilFromAwaitingRow(db: Database, row: AwaitingViesRow): Promis
 		})
 		return
 	}
+
+	const currency = assertCreditsCurrency(row.currency)
+	if (!currency) {
+		logger.warn(
+			'vat.fulfilFromAwaitingRow — unrecognized currency on awaiting_vies row, falling back to usd (raw minor units credited unchanged)',
+			{ rowId: row.id, sessionId: row.sessionId, currency: row.currency },
+		)
+	}
+	const creditedUsdMinor = creditedAmountUsdMinor(row.amountTotal, currency ?? 'usd')
 
 	await db.transaction(async (tx) => {
 		const [workspace] = await tx
@@ -376,14 +394,14 @@ async function fulfilFromAwaitingRow(db: Database, row: AwaitingViesRow): Promis
 			currentBilling.credit_balance_cents > 0
 				? currentBilling.credit_balance_cents
 				: 0
-		const balanceAfter = currentBalance + row.amountTotal
+		const balanceAfter = currentBalance + creditedUsdMinor
 
 		const ledgerClaim = await tx
 			.insert(workspaceCreditLedger)
 			.values({
 				workspaceId: row.workspaceId,
 				type: 'topup',
-				amountCents: row.amountTotal,
+				amountCents: creditedUsdMinor,
 				balanceAfterCents: balanceAfter,
 				stripeCheckoutSessionId: row.sessionId,
 			})

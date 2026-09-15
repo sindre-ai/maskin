@@ -449,6 +449,118 @@ describe('customer.tax_id.updated (spec Delta 2 handleTaxIdVerification)', () =>
 		})
 	})
 
+	it('verified with a DKK open row → credits normalized USD minor + volume bonus into balance (CTO pre-merge fix #4)', async () => {
+		await withFlag(true, async () => {
+			// DKK 349 (≈ $50 USD-equivalent) — below Growth threshold, no bonus.
+			// The load-bearing assertion is that we do NOT credit 34900 into
+			// `credit_balance_cents` (USD cents) — that would give the customer
+			// ~$349 of credits for a ~$50 payment.
+			const heldRow = {
+				id: 'row-dkk-1',
+				sessionId: 'cs_test_dkk_1',
+				customerId: CUSTOMER_ID,
+				kind: 'topup',
+				paymentIntentId: 'pi_dkk_1',
+				subscriptionId: null,
+				currency: 'dkk',
+				amountTotal: 34900,
+				reminderSentAt: null,
+				workspaceId: WORKSPACE_ID,
+				createdAt: new Date(),
+			}
+			const { db, state } = fakeDb([heldRow])
+			await applyVatEventIfHandled(
+				db,
+				WORKSPACE_ID,
+				event('customer.tax_id.updated', {
+					customer: CUSTOMER_ID,
+					verification: { status: 'verified' },
+				}),
+				fakeStripe(),
+			)
+			expect(state.insertedRows).toHaveLength(1)
+			expect(state.insertedRows[0] as Record<string, unknown>).toMatchObject({
+				type: 'topup',
+				stripeCheckoutSessionId: 'cs_test_dkk_1',
+			})
+			// $50 USD-equivalent = 5000 USD cents. Below Growth threshold (25000).
+			expect((state.insertedRows[0] as { amountCents: number }).amountCents).toBe(5000)
+			expect(state.updatedValues).toHaveLength(1)
+			expect(state.updatedValues[0] as { settings: unknown }).toMatchObject({
+				settings: { billing: { credit_balance_cents: 5000 } },
+			})
+		})
+	})
+
+	it('verified with a DKK Growth-tier open row → credits USD minor + 10% bonus (Won criterion e)', async () => {
+		await withFlag(true, async () => {
+			// DKK 1745 (≈ $250 USD-equivalent = Growth threshold) — 10% bonus.
+			// normalizeToUsdMinor(174500, 'dkk') = round(174500 * 5000 / 34900)
+			// = round(25000) = 25000 USD cents; bonus = 0.10; credited = 27500.
+			const heldRow = {
+				id: 'row-dkk-growth-1',
+				sessionId: 'cs_test_dkk_growth_1',
+				customerId: CUSTOMER_ID,
+				kind: 'topup',
+				paymentIntentId: 'pi_dkk_growth_1',
+				subscriptionId: null,
+				currency: 'dkk',
+				amountTotal: 174_500,
+				reminderSentAt: null,
+				workspaceId: WORKSPACE_ID,
+				createdAt: new Date(),
+			}
+			const { db, state } = fakeDb([heldRow])
+			await applyVatEventIfHandled(
+				db,
+				WORKSPACE_ID,
+				event('customer.tax_id.updated', {
+					customer: CUSTOMER_ID,
+					verification: { status: 'verified' },
+				}),
+				fakeStripe(),
+			)
+			expect((state.insertedRows[0] as { amountCents: number }).amountCents).toBe(27_500)
+			expect(state.updatedValues[0] as { settings: unknown }).toMatchObject({
+				settings: { billing: { credit_balance_cents: 27_500 } },
+			})
+		})
+	})
+
+	it('verified with an open row on an unrecognized currency → falls back to raw minor units + warns', async () => {
+		await withFlag(true, async () => {
+			// A rogue currency string (nothing enforces the CHECK on `currency`)
+			// must not silently convert through an unknown rate. Fall back to
+			// crediting the raw minor units so ops sees the warn line and can
+			// remediate manually rather than losing the money.
+			const heldRow = {
+				id: 'row-gbp-1',
+				sessionId: 'cs_test_gbp_1',
+				customerId: CUSTOMER_ID,
+				kind: 'topup',
+				paymentIntentId: 'pi_gbp_1',
+				subscriptionId: null,
+				currency: 'gbp',
+				amountTotal: 5000,
+				reminderSentAt: null,
+				workspaceId: WORKSPACE_ID,
+				createdAt: new Date(),
+			}
+			const { db, state } = fakeDb([heldRow])
+			await applyVatEventIfHandled(
+				db,
+				WORKSPACE_ID,
+				event('customer.tax_id.updated', {
+					customer: CUSTOMER_ID,
+					verification: { status: 'verified' },
+				}),
+				fakeStripe(),
+			)
+			// USD-fallback: 5000 minor treated as USD cents, no bonus (below Growth).
+			expect((state.insertedRows[0] as { amountCents: number }).amountCents).toBe(5000)
+		})
+	})
+
 	it('unverified with an open row → refund PI + rejection email + delete row + stripe_tax_id_rejected', async () => {
 		await withFlag(true, async () => {
 			const heldRow = {
