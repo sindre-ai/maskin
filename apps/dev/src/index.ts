@@ -10,6 +10,7 @@ import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
+import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import {
 	type DevBootstrapResult,
 	maybeBootstrapDev,
@@ -17,6 +18,7 @@ import {
 } from './lib/dev-bootstrap'
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
 import { logger } from './lib/logger'
+import { getStripeClient } from './lib/stripe'
 import { AgentStorageManager } from './services/agent-storage'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
@@ -97,6 +99,24 @@ try {
 			error: err instanceof Error ? err.message : String(err),
 		},
 	)
+}
+
+// VAT bet Task 1 (Delta 1b): log a warning when the live Stripe
+// maskin_credits_growth / maskin_credits_scale Price amounts drift from the
+// USD-minor thresholds pinned in credit-billing.ts. Fire-and-forget so a
+// Stripe outage or a deployment without STRIPE_SECRET_KEY at boot does not
+// take the API down over an application-level bonus classification.
+try {
+	const stripe = getStripeClient()
+	verifyVolumeBonusThresholds(stripe).catch((err) => {
+		logger.warn('verifyVolumeBonusThresholds failed', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+	})
+} catch (err) {
+	logger.info('Skipping volume-bonus threshold verification — Stripe not configured', {
+		error: err instanceof Error ? err.message : String(err),
+	})
 }
 
 const agentStorage = new AgentStorageManager(storageProvider, db)
