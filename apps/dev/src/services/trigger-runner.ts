@@ -1088,6 +1088,13 @@ export function evaluateCondition(
 //   • case 1a mention — agent-actor mention → needs_input notification + agent
 //     session; human-actor mention → needs_input notification only. Suppressed
 //     when the mentioned actor authored the parent comment (`noop_self_authored`).
+//   • case 0 self-authored — the object's own driver authored the comment.
+//     Runs FIRST, before case 2 and case 3: there is nobody to ping, because
+//     the driver wrote the comment itself. `noop_self_authored` with no
+//     dispatch. Without this guard the comment falls past case 2 (whose shared
+//     eligibility predicate excludes `driver === commenter`) into case 3, which
+//     only checks the CoS for self-authorship — so a driven object would get a
+//     CoS session for a comment its own driver wrote.
 //   • case 2 driver fallback — no mentions AND joined `objects.driver` on
 //     `event.entity_id` is non-null AND ≠ author AND ≠ parent-comment author.
 //     Silent dispatch via `sessionManager.createSession(...)` with
@@ -1096,7 +1103,11 @@ export function evaluateCondition(
 //     Chief of Staff (spec-fixed actor id) with a wrapped routing prompt
 //     (object title + id — not the raw comment) so CoS routes rather than
 //     answers. Suppressed when CoS authored the comment or its parent
-//     (`noop_self_authored`).
+//     (`noop_self_authored`). Two shapes reach it once case 0 and case 2 have
+//     claimed theirs: a genuinely driver-less object, and one whose driver
+//     authored the parent comment (loop-safety option (a) below). The routing
+//     prompt opens differently for those two, so it never claims "no driver"
+//     for an object that has one.
 //
 // Structured as a class in the same shape as `OrphanThreadDetector` in
 // `orphan-thread-detector.ts` — one entry method (`handleEvent`) with focused
@@ -1338,6 +1349,24 @@ export class CommentDispatcher {
 			.limit(1)
 		const driverId = obj?.driver ?? null
 
+		// Case 0 — the driver authored the comment itself. Guard-first: resolved
+		// BEFORE case 2 and case 3 so nothing downstream can claim a comment the
+		// object's own driver already wrote. Case 2 would decline this shape
+		// anyway (`isCommentFallbackDriverEligible` excludes driver === commenter)
+		// and case 3 only checks the CoS for self-authorship, so without this the
+		// ladder would dispatch a CoS session for a self-authored comment on a
+		// driven object. `noop_self_authored` is exactly the tag that intended.
+		if (driverId && driverId === ctx.commenterId) {
+			await this.emitResolved(
+				ctx.event,
+				ctx.eventIdNum,
+				ctx.commenterId,
+				'noop_self_authored',
+				null,
+			)
+			return
+		}
+
 		// Case 2 — driver fallback. Loop-safety option (a): also blocked when
 		// the driver authored the PARENT comment we're replying to — otherwise
 		// an agent that drives its own bet would ping itself on every reply.
@@ -1416,6 +1445,7 @@ export class CommentDispatcher {
 				entityId: ctx.entityId,
 				commenterActorId: ctx.commenterId,
 				content: ctx.content,
+				driverId,
 			}),
 		})
 		await this.emitResolved(
@@ -1487,6 +1517,7 @@ export class CommentDispatcher {
 		entityId: string
 		commenterActorId: string
 		content: string
+		driverId: string | null
 	}): Promise<string> {
 		const [row] = await this.db
 			.select({ title: objects.title })
@@ -1494,12 +1525,21 @@ export class CommentDispatcher {
 			.where(eq(objects.id, ctx.entityId))
 			.limit(1)
 		const title = row?.title ?? '(untitled object)'
+		// Two shapes reach case 3 once case 0 and case 2 have claimed theirs, and
+		// the opening line is branched so neither is told a falsehood: a genuinely
+		// driver-less object, and one whose driver authored the parent comment
+		// (loop-safety option (a) — case 2 declines it by design). Only the first
+		// gets the "no driver" line; claiming it for an object that has a driver
+		// would send CoS hunting for an owner to assign when one already exists.
+		const opening = ctx.driverId
+			? 'A comment was posted on an object whose driver wrote the comment it replies to — you are being pinged as the responder of last resort. Decide: forward to a specialist, or answer directly.'
+			: 'A comment was posted on an object that has no driver — you are being pinged as the responder of last resort. Decide: assign a driver, forward to a specialist, or answer directly.'
 		// Every id is on its own labelled line rather than inlined in prose —
 		// a bare uuid inside a sentence reads ambiguously (object? comment?
 		// actor?), so the agent has to guess what to pass to get_objects. Same
 		// labelled shape as `buildCommentFallbackPrompt` for the driver case.
 		return [
-			'A comment was posted on an object that has no driver — you are being pinged as the responder of last resort. Decide: assign a driver, forward to a specialist, or answer directly.',
+			opening,
 			'',
 			`Object ID: ${ctx.entityId}`,
 			`Object title: ${title}`,
