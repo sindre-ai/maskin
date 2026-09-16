@@ -182,6 +182,12 @@ export const createSessionSchema = z.object({
 	// `sessions.config.entry_agent_role` so downstream analytics can attribute
 	// every session to the agent that received the owner's first turn.
 	entry_agent_role: z.string().max(64).optional(),
+	// Handed-off strip anchors. `spawned_by_message_id` is the assistant message
+	// that triggered this sub-agent spawn (bigint to match `messages.id`);
+	// `depends_on_session_ids` names the sessions this one is blocked behind.
+	// Both optional — a spawn without them reads as "no strip".
+	spawned_by_message_id: z.number().int().positive().optional(),
+	depends_on_session_ids: z.array(z.string().uuid()).optional(),
 })
 
 export const sessionQuerySchema = z.object({

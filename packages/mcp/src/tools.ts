@@ -1440,6 +1440,20 @@ export const tools = {
 				.max(3700)
 				.default(660)
 				.describe('Maximum time to wait before giving up (should exceed session timeout)'),
+			spawned_by_message_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'The assistant message that triggered this sub-agent spawn. Persisted onto the session so the UI can anchor a handed-off strip to that bubble; omit for a spawn with no strip.',
+				),
+			depends_on_session_ids: z
+				.array(z.string().uuid())
+				.optional()
+				.describe(
+					'Sessions this one is blocked behind. Persisted onto the session for the "behind X and Y" dependency label; omit when the spawn has no blockers.',
+				),
 		}),
 	},
 
