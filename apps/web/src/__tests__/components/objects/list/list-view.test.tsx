@@ -295,7 +295,9 @@ describe('ListView', () => {
 		// the glue text on the parent paragraph.
 		expect(screen.getByText('Waiting on you')).toBeInTheDocument()
 		const asker = screen.getByText('Alice')
-		expect(asker.parentElement?.textContent).toContain('Alice asks — “Please approve this shipment”')
+		expect(asker.parentElement?.textContent).toContain(
+			'Alice asks — “Please approve this shipment”',
+		)
 	})
 
 	it('hides the ask pill + line once the row ask is resolved, and never for a row with no ask', () => {
