@@ -44,6 +44,14 @@ vi.mock('@/components/shared/agent-working-badge', () => ({
 	AgentWorkingBadge: () => <span>agent working</span>,
 }))
 
+// D1 loop chip is hydrated via `useObjectLoops`, which reads through
+// `useLoops` → `useQuery` and therefore needs a `QueryClientProvider`. These
+// tests exercise ListView without any loop-chip state, so a stub map keeps the
+// component contract intact without pulling react-query into the render tree.
+vi.mock('@/hooks/use-object-loops', () => ({
+	useObjectLoops: () => ({ data: new Map(), isLoading: false, isError: false }),
+}))
+
 // jsdom does not support IntersectionObserver; the sentinel effect needs it.
 // Observed nodes are recorded so a test can assert the infinite-scroll sentinel
 // is actually being watched.
@@ -274,10 +282,12 @@ describe('ListView', () => {
 		})
 
 		// Pending-ask pill (bg-accent + text-accent-foreground per the "Needs
-		// you" accent-pairing rule) and the "<Agent> asks · <text>" line.
+		// you" accent-pairing rule) and the D3 ask line — SPEC copy is
+		// `{who} asks — "{text}"` with the asker's name in a bold span and
+		// the glue text on the parent paragraph.
 		expect(screen.getByText('Waiting on you')).toBeInTheDocument()
-		expect(screen.getByText(/Alice asks/i)).toBeInTheDocument()
-		expect(screen.getByText(/Please approve this shipment/i)).toBeInTheDocument()
+		const asker = screen.getByText('Alice')
+		expect(asker.parentElement?.textContent).toContain('Alice asks — “Please approve this shipment”')
 	})
 
 	it('hides the ask pill + line once the row ask is resolved, and never for a row with no ask', () => {

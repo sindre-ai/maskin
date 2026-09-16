@@ -323,6 +323,19 @@ function ObjectsRoute() {
 		}
 		return map
 	}, [needsInputNotifications])
+	// D3 · Multi-ask overflow. The ask-line on a row renders the FIRST pending
+	// ask (from `pendingAsksByObjectId`) plus a plain `+ N more` counter when
+	// this map's entry for that id is ≥ 2. Kept as a separate memo so the
+	// first-ask map's ordering (oldest first, insertion order) stays the
+	// single source of truth for which ask is "the first".
+	const pendingAskCountByObjectId = useMemo(() => {
+		const map = new Map<string, number>()
+		for (const n of needsInputNotifications ?? []) {
+			if (n.status !== 'pending' || !n.objectId) continue
+			map.set(n.objectId, (map.get(n.objectId) ?? 0) + 1)
+		}
+		return map
+	}, [needsInputNotifications])
 	const respondNotification = useRespondNotification(workspaceId)
 	const handleRespond = useCallback(
 		(id: string, response: 'approve' | 'hold') => {
@@ -1899,6 +1912,7 @@ function ObjectsRoute() {
 					betStatuses={betStatuses}
 					showBetStatusIndicator={showBetStatusIndicator}
 					asksByObjectId={pendingAsksByObjectId}
+					pendingAskCountByObjectId={pendingAskCountByObjectId}
 					hasNextPage={infiniteQuery.hasNextPage}
 					isFetchingNextPage={infiniteQuery.isFetchingNextPage}
 					isError={infiniteQuery.isError}

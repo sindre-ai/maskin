@@ -733,8 +733,57 @@ app.openapi(listObjectsRoute, async (c) => {
 		.offset(useKeyset ? 0 : query.offset)
 		.orderBy(...orderBy)
 
-	return c.json(serializeArray(results) as z.infer<typeof objectResponseSchema>[], 200)
+	// D2 · Working-ring predicate. `activeSessionId` remains non-null across
+	// pending/starting/running/paused/waiting_for_input (see session-manager's
+	// clearActiveSession callers), so gating the ring on `activeSessionId !=
+	// null` would flicker on states where the agent is queued or idle. Hydrate
+	// the tied session's status as a scalar the client reads with `=== 'running'`
+	// — mirrors the read_state per-viewer scalar pattern in subscriptions.ts and
+	// stays a single bounded batch call per list request (dodges the N+1 the
+	// tech spec flagged in §D2). Rows without an active session get `null`.
+	const sessionStatesByObjectId = await hydrateActiveSessionStates(db, results)
+
+	return c.json(
+		results.map((row) => ({
+			...serialize(row),
+			active_session_state: sessionStatesByObjectId.get(row.id) ?? null,
+		})) as z.infer<typeof objectResponseSchema>[],
+		200,
+	)
 })
+
+/**
+ * Batch-fetch `sessions.status` for every object in `rows` that carries a
+ * non-null `activeSessionId`. Returned map is keyed by object id (not session
+ * id) so the caller can attach the scalar without a second lookup. If a row
+ * points at a deleted session, its entry is absent from the map (client reads
+ * `null` — no ring).
+ */
+async function hydrateActiveSessionStates(
+	db: Database,
+	rows: Array<typeof objects.$inferSelect>,
+): Promise<Map<string, string>> {
+	const sessionIdToObjectIds = new Map<string, string[]>()
+	for (const row of rows) {
+		if (!row.activeSessionId) continue
+		const existing = sessionIdToObjectIds.get(row.activeSessionId)
+		if (existing) existing.push(row.id)
+		else sessionIdToObjectIds.set(row.activeSessionId, [row.id])
+	}
+	if (sessionIdToObjectIds.size === 0) return new Map()
+
+	const sessionRows = await db
+		.select({ id: sessions.id, status: sessions.status })
+		.from(sessions)
+		.where(inArray(sessions.id, [...sessionIdToObjectIds.keys()]))
+
+	const statesByObjectId = new Map<string, string>()
+	for (const s of sessionRows) {
+		const objectIds = sessionIdToObjectIds.get(s.id) ?? []
+		for (const objectId of objectIds) statesByObjectId.set(objectId, s.status)
+	}
+	return statesByObjectId
+}
 
 // GET /board - List board columns with per-column pagination
 const boardObjectsRoute = createRoute({
@@ -1045,7 +1094,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		getSubscriberCount(db, { workspaceId, entityType: 'object', entityId: id }),
 		object.activeSessionId
 			? db
-					.select({ currentActivity: sessions.currentActivity })
+					.select({ currentActivity: sessions.currentActivity, status: sessions.status })
 					.from(sessions)
 					.where(eq(sessions.id, object.activeSessionId))
 					.limit(1)
@@ -1117,6 +1166,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 			object: {
 				...serialize(object),
 				activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
+				active_session_state: activeSession?.status ?? null,
 				is_subscribed: subscribed,
 				unread_count: unreadCount,
 				subscriber_count: subscriberCount,
@@ -1446,7 +1496,7 @@ app.openapi(getObjectRoute, async (c) => {
 		}),
 		object.activeSessionId
 			? db
-					.select({ currentActivity: sessions.currentActivity })
+					.select({ currentActivity: sessions.currentActivity, status: sessions.status })
 					.from(sessions)
 					.where(eq(sessions.id, object.activeSessionId))
 					.limit(1)
@@ -1458,6 +1508,7 @@ app.openapi(getObjectRoute, async (c) => {
 		{
 			...serialize(object),
 			activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
+			active_session_state: activeSession?.status ?? null,
 			is_subscribed: subscribed,
 			unread_count: unreadCount,
 			subscriber_count: subscriberCount,
