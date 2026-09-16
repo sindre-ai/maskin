@@ -213,10 +213,32 @@ export function trackTriggerFired(p: BaseProps & { entity_type: 'trigger' }): vo
 	trackEvent('trigger_fired', { ...fillBase(p), source: 'trigger' })
 }
 
+// `source` on `relationship_created` is the UI attribution point Analytics
+// asked for on the parent bet (comment 522050): the D11 dashed CTAs on the
+// Relationships tab need to be filterable in PostHog against the generic
+// AddLinkForm / drag-drop / batch-attach paths that also emit this event.
+// Widening beyond the base `EventSource` here (not in `BaseProps`) keeps the
+// SDK-source semantic ('web' | 'mcp' | 'trigger') clean everywhere else while
+// still emitting a single `source` property on the event.
+export type RelationshipCreatedSource =
+	| EventSource
+	| 'relationships_tab_link_cta'
+	| 'relationships_tab_upload_cta'
+
 export function trackRelationshipCreated(
-	p: BaseProps & { entity_type: 'relationship'; relationship_type: string },
+	p: Omit<BaseProps, 'source'> & {
+		entity_type: 'relationship'
+		relationship_type: string
+		source?: RelationshipCreatedSource
+	},
 ): void {
-	trackEvent('relationship_created', { ...fillBase(p), relationship_type: p.relationship_type })
+	trackEvent('relationship_created', {
+		entity_id: p.entity_id,
+		entity_type: p.entity_type,
+		source: p.source ?? 'web',
+		flow_id: p.flow_id ?? null,
+		relationship_type: p.relationship_type,
+	})
 }
 
 export function trackObjectAttachedFile(
