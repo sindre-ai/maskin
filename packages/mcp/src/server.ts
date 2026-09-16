@@ -5781,6 +5781,8 @@ export function createMcpServer(config: McpConfig) {
 					action_prompt: args.action_prompt,
 					config: args.config,
 					auto_start: true,
+					spawned_by_message_id: args.spawned_by_message_id,
+					depends_on_session_ids: args.depends_on_session_ids,
 				},
 				wsOpts,
 			)) as { id: string; status: string }

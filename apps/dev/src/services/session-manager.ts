@@ -193,6 +193,14 @@ export interface CreateSessionParams {
 	/** ID of a prior session whose workspace snapshot should be restored at startup. */
 	sourceSessionId?: string
 	/**
+	 * Handed-off strip anchors. `spawnedByMessageId` is the assistant message id
+	 * that triggered this sub-agent spawn; `dependsOnSessionIds` names the
+	 * sessions this one is blocked behind. Both optional — a spawn without them
+	 * persists NULL and simply renders no strip.
+	 */
+	spawnedByMessageId?: number
+	dependsOnSessionIds?: string[]
+	/**
 	 * Attribution for `agent_session_started_with_prompt` — names the dispatch
 	 * path (e.g. `'comment_fallback'` for the comment-posted subscriber in
 	 * `trigger-runner.ts`). Threaded through so every dispatch route benefits
@@ -557,6 +565,8 @@ export class SessionManager extends EventEmitter {
 				conversationId,
 				createdBy: params.createdBy,
 				sourceSessionId: params.sourceSessionId,
+				spawnedByMessageId: params.spawnedByMessageId ?? null,
+				dependsOnSessionIds: params.dependsOnSessionIds ?? null,
 			})
 			.returning()
 
