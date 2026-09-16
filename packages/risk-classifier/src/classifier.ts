@@ -37,7 +37,7 @@ export function classify(input: ClassifierInput): ClassifierVerdict {
 }
 
 export function bandForScore(score: number): RiskBand {
-	if (score >= 60) return 'two_human_required'
+	if (score >= 60) return 'human_review_required'
 	if (score >= 25) return 'agent_recommends_human'
 	return 'auto'
 }
