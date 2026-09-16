@@ -1,7 +1,7 @@
+import { randomUUID } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import { files, integrations, objects, relationships, workspaces } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
-import { randomUUID } from 'node:crypto'
 import { logger } from '../../../logger'
 import type { IntegrationConfig } from '../../../types'
 
@@ -47,10 +47,7 @@ interface FieldDef {
  * settings.field_definitions.meeting slot. Only adds — never removes. Called
  * before the first webhook fan-out so the schema is present.
  */
-export async function ensureMeetMeetingFields(
-	db: Database,
-	workspaceId: string,
-): Promise<void> {
+export async function ensureMeetMeetingFields(db: Database, workspaceId: string): Promise<void> {
 	const [ws] = await db
 		.select({ settings: workspaces.settings })
 		.from(workspaces)
@@ -58,8 +55,7 @@ export async function ensureMeetMeetingFields(
 		.limit(1)
 	if (!ws) return
 	const settings = (ws.settings as Record<string, unknown>) ?? {}
-	const fieldDefs =
-		(settings.field_definitions as Record<string, FieldDef[]> | undefined) ?? {}
+	const fieldDefs = (settings.field_definitions as Record<string, FieldDef[]> | undefined) ?? {}
 	const existing = fieldDefs.meeting ?? []
 	const byName = new Map(existing.map((f) => [f.name, f]))
 	let mutated = false
@@ -144,18 +140,13 @@ function isStorageLike(x: unknown): x is StoragePutLike {
 	return typeof x === 'object' && x !== null && typeof (x as StoragePutLike).put === 'function'
 }
 
-async function resolveSystemActorId(
-	db: Database,
-	workspaceId: string,
-): Promise<string | null> {
+async function resolveSystemActorId(db: Database, workspaceId: string): Promise<string | null> {
 	// The workspace's google-meet integration row stores its system actor id
 	// in config.system_actor_id; every fan-out is scoped to that actor.
 	const [row] = await db
 		.select({ config: integrations.config })
 		.from(integrations)
-		.where(
-			and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, 'google-meet')),
-		)
+		.where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, 'google-meet')))
 		.limit(1)
 	const cfg = (row?.config as IntegrationConfig | null) ?? null
 	const actorId = cfg?.system_actor_id

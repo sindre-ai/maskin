@@ -37,12 +37,14 @@ export interface IdempotencyReadHit {
  * UTC), but stable + tzdata-free + explicit; callers with a stronger opinion
  * pass their own key.
  */
-export function defaultIdempotencyKey(params: { actorId: string; purpose: string; now?: Date }): string {
+export function defaultIdempotencyKey(params: {
+	actorId: string
+	purpose: string
+	now?: Date
+}): string {
 	const day = (params.now ?? new Date()).toISOString().slice(0, 10)
 	const normalised = normalisePurpose(params.purpose)
-	return createHash('sha256')
-		.update(`${params.actorId}|${normalised}|${day}`)
-		.digest('hex')
+	return createHash('sha256').update(`${params.actorId}|${normalised}|${day}`).digest('hex')
 }
 
 export function normalisePurpose(purpose: string): string {

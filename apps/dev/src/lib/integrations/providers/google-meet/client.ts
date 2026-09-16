@@ -62,9 +62,10 @@ export async function callGoogleApi<T>(
 }
 
 /** Serialize a MeetToolError for MCP tool responses; rethrow anything else. */
-export function toolErrorPayload(
-	err: unknown,
-): { isError: true; content: [{ type: 'text'; text: string }] } {
+export function toolErrorPayload(err: unknown): {
+	isError: true
+	content: [{ type: 'text'; text: string }]
+} {
 	if (err instanceof MeetToolError) {
 		return {
 			isError: true as const,
@@ -311,7 +312,8 @@ function computeBackoff(attempt: number): number {
 function readRetryAfterMs(header: string | null): number | undefined {
 	if (!header) return undefined
 	const asNumber = Number(header)
-	if (Number.isFinite(asNumber) && asNumber >= 0) return Math.min(asNumber * 1000, BACKOFF_MAX_MS * 2)
+	if (Number.isFinite(asNumber) && asNumber >= 0)
+		return Math.min(asNumber * 1000, BACKOFF_MAX_MS * 2)
 	return undefined
 }
 

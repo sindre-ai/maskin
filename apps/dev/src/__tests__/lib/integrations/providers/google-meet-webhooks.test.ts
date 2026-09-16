@@ -45,9 +45,7 @@ describe('meetEventNormalizer', () => {
 	})
 
 	it('returns null when message.data is not base64 JSON', () => {
-		expect(
-			meetEventNormalizer({ message: { data: 'not-b64!!!', messageId: 'x' } }, {}),
-		).toBeNull()
+		expect(meetEventNormalizer({ message: { data: 'not-b64!!!', messageId: 'x' } }, {})).toBeNull()
 	})
 
 	it('returns null when no People-id can be extracted', () => {

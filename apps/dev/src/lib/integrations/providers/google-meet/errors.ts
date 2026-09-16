@@ -267,8 +267,7 @@ export function classifyGoogleError(params: {
 		if (RECONSENT_SCOPE_MARKERS.some((m) => bodyLower.includes(m))) {
 			return new MeetError({
 				code: 'RECONSENT_REQUIRED',
-				message:
-					'Google Meet scope `meetings.space.created` is not granted on this actor\'s token.',
+				message: "Google Meet scope `meetings.space.created` is not granted on this actor's token.",
 				provider_status: status,
 				hint: 'Ask the actor to reconnect Google Meet and grant the Create-meetings scope.',
 			})
@@ -292,7 +291,8 @@ export function classifyGoogleError(params: {
 	if (status === 404) {
 		return new MeetError({
 			code: 'NOT_FOUND',
-			message: providerMessage || 'Google returned 404. If creating an event, verify the calendar id.',
+			message:
+				providerMessage || 'Google returned 404. If creating an event, verify the calendar id.',
 			provider_status: status,
 		})
 	}

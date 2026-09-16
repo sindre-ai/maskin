@@ -2,12 +2,10 @@ import type { Database } from '@maskin/db'
 import { integrations, objects } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq, sql } from 'drizzle-orm'
-import { getProvider } from '../lib/integrations/registry'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
-import {
-	reconcileMeetingArtefacts,
-} from '../lib/integrations/providers/google-meet/watch'
 import { writeMeetingMetadata } from '../lib/integrations/providers/google-meet/meeting-metadata'
+import { reconcileMeetingArtefacts } from '../lib/integrations/providers/google-meet/watch'
+import { getProvider } from '../lib/integrations/registry'
 import { logger } from '../lib/logger'
 
 const TICK_MS = 24 * 60 * 60 * 1000 // daily

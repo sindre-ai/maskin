@@ -101,15 +101,7 @@ export async function createSpace(
 
 	const body = buildCreateSpaceBody(input)
 	let space: CreateSpaceResponse
-	try {
-		space = await client.createSpace(accessToken, body)
-	} catch (err) {
-		// classifyGoogleError already returned a MeetError; re-throw so the
-		// tool layer surfaces the envelope. Anything else (e.g. a bug in the
-		// client) escalates to a plain Error so the transport shows the
-		// stack.
-		throw err
-	}
+	space = await client.createSpace(accessToken, body)
 
 	// Race-safe record. If another concurrent caller landed the same
 	// (workspace, key) between our read and here, they will win the insert
@@ -333,7 +325,8 @@ export async function createMeetBackedEvent(
 		request_id: requestId,
 		linked_meeting_metadata_written: metadataWritten,
 	}
-	if (input.linked_meeting_object_id) output.linked_meeting_object_id = input.linked_meeting_object_id
+	if (input.linked_meeting_object_id)
+		output.linked_meeting_object_id = input.linked_meeting_object_id
 	return output
 }
 
@@ -366,7 +359,8 @@ function startEndPayload(dt: { date_time: string; time_zone?: string }): Record<
 }
 
 function extractMeetUri(event: CalendarEventResponse): string | null {
-	if (typeof event.hangoutLink === 'string' && event.hangoutLink.length > 0) return event.hangoutLink
+	if (typeof event.hangoutLink === 'string' && event.hangoutLink.length > 0)
+		return event.hangoutLink
 	const ep = event.conferenceData?.entryPoints?.find(
 		(e) => e.entryPointType === 'video' && typeof e.uri === 'string',
 	)

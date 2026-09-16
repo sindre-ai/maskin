@@ -72,7 +72,6 @@ describe('POST /api/integrations/google-meet/mcp', () => {
 		})
 		expect(res.status).toBe(403)
 	})
-
 })
 
 describe('GET / DELETE /api/integrations/google-meet/mcp', () => {

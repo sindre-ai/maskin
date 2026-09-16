@@ -73,10 +73,12 @@ beforeEach(() => {
 		integrationId: 'int-1',
 	})
 	;(readIdempotency as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(null)
-	;(recordIdempotency as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (_db, p) => ({
-		inserted: true,
-		row: { spaceName: p.spaceName, meetingCode: p.meetingCode, meetingUri: p.meetingUri },
-	}))
+	;(recordIdempotency as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+		async (_db, p) => ({
+			inserted: true,
+			row: { spaceName: p.spaceName, meetingCode: p.meetingCode, meetingUri: p.meetingUri },
+		}),
+	)
 })
 
 describe('createSpace', () => {
@@ -242,7 +244,8 @@ describe('createMeetBackedEvent', () => {
 		expect(out.meet_space_name).toBe('spaces/abc-defg-hij')
 		expect(out.request_id).toMatch(/^[0-9a-f]{64}$/)
 
-		const call = (client.insertCalendarEvent as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1]
+		const call = (client.insertCalendarEvent as unknown as ReturnType<typeof vi.fn>).mock
+			.calls[0][1]
 		expect(call.calendarId).toBe('primary')
 		expect(call.body).toMatchObject({
 			summary: 'Product review',
@@ -267,7 +270,8 @@ describe('createMeetBackedEvent', () => {
 		})
 
 		expect(out.request_id).toBe('caller-supplied-key-1')
-		const call = (client.insertCalendarEvent as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1]
+		const call = (client.insertCalendarEvent as unknown as ReturnType<typeof vi.fn>).mock
+			.calls[0][1]
 		expect(call.body).toMatchObject({
 			conferenceData: { createRequest: { requestId: 'caller-supplied-key-1' } },
 		})
@@ -284,7 +288,8 @@ describe('createMeetBackedEvent', () => {
 			send_updates: 'externalOnly',
 		})
 
-		const call = (client.insertCalendarEvent as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1]
+		const call = (client.insertCalendarEvent as unknown as ReturnType<typeof vi.fn>).mock
+			.calls[0][1]
 		expect(call.sendUpdates).toBe('externalOnly')
 		expect(call.body).toMatchObject({
 			description: 'agenda',

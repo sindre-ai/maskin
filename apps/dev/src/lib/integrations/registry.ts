@@ -13,11 +13,7 @@ import { revokeGoogleCalendarGrant } from './providers/google-calendar/disconnec
 import { resolveExternalId as googleCalendarResolveExternalId } from './providers/google-calendar/resolve-id'
 import { config as googleMeetConfig } from './providers/google-meet/config'
 import { resolveExternalId as googleMeetResolveExternalId } from './providers/google-meet/resolve-id'
-import {
-	fanOutMeetEvent,
-	setupMeetWatch,
-	stopMeetWatch,
-} from './providers/google-meet/watch'
+import { fanOutMeetEvent, setupMeetWatch, stopMeetWatch } from './providers/google-meet/watch'
 import {
 	extractMeetDeliveryId,
 	meetEventNormalizer,

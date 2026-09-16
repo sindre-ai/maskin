@@ -50,7 +50,9 @@ describe('MeetError envelope', () => {
 	})
 
 	it('isMeetError narrows unknown thrown values', () => {
-		expect(isMeetError(new MeetError({ code: 'PROVIDER_ERROR', message: 'x', provider_status: 0 }))).toBe(true)
+		expect(
+			isMeetError(new MeetError({ code: 'PROVIDER_ERROR', message: 'x', provider_status: 0 })),
+		).toBe(true)
 		expect(isMeetError(new Error('plain'))).toBe(false)
 		expect(isMeetError('string')).toBe(false)
 		expect(isMeetError(null)).toBe(false)
@@ -75,8 +77,7 @@ describe('classifyGoogleError — status → code mapping', () => {
 			bodyText: JSON.stringify({
 				error: {
 					code: 403,
-					message:
-						'Request had insufficient authentication scopes.',
+					message: 'Request had insufficient authentication scopes.',
 					details: [
 						{
 							scope: 'https://www.googleapis.com/auth/meetings.space.created',

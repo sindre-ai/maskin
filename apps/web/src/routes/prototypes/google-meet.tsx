@@ -65,8 +65,9 @@ function GoogleMeetPrototype() {
 					<p className="mt-2 text-sm text-muted-foreground">
 						The customer-facing Google Meet surfaces are gated behind the
 						<span className="font-mono"> google-meet-integration-ui </span>
-						feature flag. Add your actor id to <span className="font-mono">FF_TESTER_ACTOR_IDS</span>{' '}
-						and <span className="font-mono">google-meet-integration-ui</span> to{' '}
+						feature flag. Add your actor id to{' '}
+						<span className="font-mono">FF_TESTER_ACTOR_IDS</span> and{' '}
+						<span className="font-mono">google-meet-integration-ui</span> to{' '}
 						<span className="font-mono">FF_TESTER_FEATURES</span> in the dev environment, then
 						reload.
 					</p>
@@ -128,10 +129,7 @@ function GoogleMeetPrototype() {
 						<DetailPage variant="connected" />
 					</Section>
 
-					<Section
-						id="first-call"
-						title="First-call preview (has_ingested_call = false)"
-					>
+					<Section id="first-call" title="First-call preview (has_ingested_call = false)">
 						<FirstCallPreview />
 					</Section>
 
@@ -152,7 +150,10 @@ function GoogleMeetPrototype() {
 	)
 }
 
-function GalleryHeader({ theme, onThemeChange }: { theme: Theme; onThemeChange: (t: Theme) => void }) {
+function GalleryHeader({
+	theme,
+	onThemeChange,
+}: { theme: Theme; onThemeChange: (t: Theme) => void }) {
 	return (
 		<header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur">
 			<div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 md:px-8">
@@ -186,10 +187,16 @@ function GalleryHeader({ theme, onThemeChange }: { theme: Theme; onThemeChange: 
 	)
 }
 
-function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
+function Section({
+	id,
+	title,
+	children,
+}: { id: string; title: string; children: React.ReactNode }) {
 	return (
 		<section id={id} className="space-y-3" data-testid={`section-${id}`}>
-			<h2 className="text-sm font-medium uppercase tracking-wider text-muted-foreground">{title}</h2>
+			<h2 className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+				{title}
+			</h2>
 			<div className="rounded-lg border border-border bg-card p-4 md:p-6">{children}</div>
 		</section>
 	)
@@ -491,6 +498,7 @@ function ReconsentBanner({
 					? 'border-orange-500/40 bg-orange-500/10 text-orange-900 dark:text-orange-100'
 					: 'border-warning/40 bg-warning/10 text-warning',
 			)}
+			// biome-ignore lint/a11y/useSemanticElements: prototype gallery — banner uses role/aria-live for a11y; <output> is form-only in this design system
 			role="status"
 			aria-live="polite"
 			data-testid={`reconsent-banner-${kind}`}
@@ -593,10 +601,9 @@ function ScopeChip({
 		<div
 			className={cn(
 				'flex items-start gap-2 rounded-md border p-2',
-				granted
-					? 'border-success/30 bg-success/5'
-					: 'border-warning/30 bg-warning/5 text-warning',
+				granted ? 'border-success/30 bg-success/5' : 'border-warning/30 bg-warning/5 text-warning',
 			)}
+			// biome-ignore lint/a11y/useSemanticElements: prototype gallery — parent renders as an aria-list of scopes; item uses role for a11y without forcing <li>/<ul> semantics
 			role="listitem"
 			aria-label={`${label}, ${granted ? 'granted' : 'not granted'}`}
 			data-state={granted ? 'granted' : 'is-missing'}
@@ -611,12 +618,7 @@ function ScopeChip({
 				{granted ? <Check className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
 			</div>
 			<div className="min-w-0">
-				<p
-					className={cn(
-						'text-xs font-medium',
-						granted ? 'text-foreground' : 'text-warning',
-					)}
-				>
+				<p className={cn('text-xs font-medium', granted ? 'text-foreground' : 'text-warning')}>
 					{label}
 				</p>
 				<p className="font-mono text-[10px] text-muted-foreground">
@@ -815,6 +817,7 @@ function DisableModal({
 	const buttonLabel = choice === 'whole-google' ? 'Disconnect Google account' : 'Disconnect Meet'
 
 	return (
+		// biome-ignore lint/a11y/useKeyWithClickEvents: prototype gallery — native <dialog> handles Escape via browser default; backdrop click is mouse-only intent
 		<dialog
 			ref={dialogRef}
 			className="rounded-lg border border-border bg-card p-0 text-foreground backdrop:bg-black/50"
@@ -898,6 +901,7 @@ function PostDisconnectCallout() {
 	return (
 		<div
 			className="rounded-md border border-success/40 bg-success/10 p-3 text-sm text-foreground"
+			// biome-ignore lint/a11y/useSemanticElements: prototype gallery — callout uses role/aria-live for a11y; <output> is form-only in this design system
 			role="status"
 			aria-live="polite"
 			data-testid="post-disconnect-callout"

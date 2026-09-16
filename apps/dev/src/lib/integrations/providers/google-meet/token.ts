@@ -42,12 +42,7 @@ export async function getGoogleMeetAccessToken(
 	workspaceId: string,
 	actorId: string | null,
 ): Promise<{ accessToken: string; integrationId: string }> {
-	const integration = await getIntegrationCredential(
-		db,
-		workspaceId,
-		GOOGLE_MEET_PROVIDER,
-		actorId,
-	)
+	const integration = await getIntegrationCredential(db, workspaceId, GOOGLE_MEET_PROVIDER, actorId)
 	if (!integration) {
 		throw new MeetError({
 			code: 'RECONSENT_REQUIRED',

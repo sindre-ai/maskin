@@ -13,7 +13,7 @@ import type {
 	WebhookFanOutContext,
 } from '../../types'
 import { callGoogleApi } from './client'
-import { classifyGoogleApiError, MeetToolError } from './errors'
+import { MeetToolError, classifyGoogleApiError } from './errors'
 import {
 	attachTranscriptFile,
 	ensureMeetMeetingFields,
@@ -351,9 +351,7 @@ interface FanOutPayload {
  * event type and a resource reference; we fetch full artefacts under the
  * host's token below.
  */
-export function parseMeetFanOutPayload(
-	messageData: Record<string, unknown>,
-): FanOutPayload | null {
+export function parseMeetFanOutPayload(messageData: Record<string, unknown>): FanOutPayload | null {
 	const eventType = typeof messageData.eventType === 'string' ? messageData.eventType : undefined
 	if (!eventType) return null
 	const resource = messageData.resource as Record<string, unknown> | undefined
@@ -436,8 +434,7 @@ export async function fanOutMeetEvent(ctx: WebhookFanOutContext): Promise<Normal
 		await writeMeetingMetadata(db, meetingId, {
 			meet_conference_ended_at: new Date().toISOString(),
 			artefact_state: 'pending',
-			google_meet_conference_record_name:
-				parsed.conferenceRecordName ?? undefined,
+			google_meet_conference_record_name: parsed.conferenceRecordName ?? undefined,
 			artefact_last_polled_at: new Date().toISOString(),
 		})
 		emitted.push({

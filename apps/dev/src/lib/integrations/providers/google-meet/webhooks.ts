@@ -108,7 +108,10 @@ interface MeetEventData {
  * Extract a Google People-id from the delivered Workspace Events payload.
  * Falls back to the Pub/Sub attribute if present.
  */
-export function extractPeopleId(data: MeetEventData, attrs?: Record<string, string>): string | null {
+export function extractPeopleId(
+	data: MeetEventData,
+	attrs?: Record<string, string>,
+): string | null {
 	const refName = data.resource?.name
 	if (typeof refName === 'string') {
 		const m = refName.match(/\/users\/([^/]+)$/)

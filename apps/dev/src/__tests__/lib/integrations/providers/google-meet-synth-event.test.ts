@@ -139,11 +139,7 @@ describe('synthesizeMeetOnlyWrappedEvent', () => {
 	})
 
 	it('handles anonymous + phone participants in the display-name list', async () => {
-		ctx.mockResults.selectQueue = [
-			[],
-			[],
-			[{ config: { system_actor_id: SYSTEM_ACTOR } }],
-		]
+		ctx.mockResults.selectQueue = [[], [], [{ config: { system_actor_id: SYSTEM_ACTOR } }]]
 		ctx.mockResults.insertQueue = [[{ id: 'new-event-3' }]]
 
 		await synthesizeMeetOnlyWrappedEvent(

@@ -175,10 +175,7 @@ export async function getConferenceRecord(
 ): Promise<unknown> {
 	await assertConferenceOwnedByWorkspace(ctx, input.conference_record_name)
 	const accessToken = await resolveHostToken(ctx)
-	return callGoogleApi<unknown>(
-		`${MEET_API_BASE}/${input.conference_record_name}`,
-		accessToken,
-	)
+	return callGoogleApi<unknown>(`${MEET_API_BASE}/${input.conference_record_name}`, accessToken)
 }
 
 export interface ListParticipantsInput {

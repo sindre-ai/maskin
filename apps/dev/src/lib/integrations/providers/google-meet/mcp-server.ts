@@ -226,10 +226,7 @@ export function registerReadTools(server: McpServer, ctx: MeetMcpContext): void 
  * `createGoogleMeetMcpServer` so the read path can share the same server
  * instance for its read-path tools without a duplicate route handler.
  */
-export function registerGoogleMeetWriteTools(
-	server: McpServer,
-	ctx: OperationsContext,
-): void {
+export function registerGoogleMeetWriteTools(server: McpServer, ctx: OperationsContext): void {
 	// Zod input shape for `google_meet__create_space`. Field names match the
 	// spec on task 824f1a6a exactly; the tool description quotes the same
 	// wording so an agent reading tools/list gets the acceptance-criteria
@@ -317,10 +314,7 @@ export function registerGoogleMeetWriteTools(
 							.string()
 							.min(1)
 							.describe('RFC3339 datetime, e.g. "2026-09-15T15:00:00+02:00".'),
-						time_zone: z
-							.string()
-							.optional()
-							.describe('IANA time zone, e.g. "Europe/Copenhagen".'),
+						time_zone: z.string().optional().describe('IANA time zone, e.g. "Europe/Copenhagen".'),
 					})
 					.describe('Event start.'),
 				end: z
@@ -356,7 +350,7 @@ export function registerGoogleMeetWriteTools(
 					.uuid()
 					.optional()
 					.describe(
-						"Optional Maskin meeting-object id. If set, the tool writes back metadata.google_meet_space_name so the webhook can back-fill artefacts to the same object.",
+						'Optional Maskin meeting-object id. If set, the tool writes back metadata.google_meet_space_name so the webhook can back-fill artefacts to the same object.',
 					),
 			},
 		},
@@ -394,9 +388,7 @@ const defaultMeetingMetadataWriter: MeetingMetadataWriter = async ({
 		throw new Error(`meeting object ${meetingObjectId} not found`)
 	}
 	if (existing.workspaceId !== workspaceId) {
-		throw new Error(
-			`meeting object ${meetingObjectId} does not belong to workspace ${workspaceId}`,
-		)
+		throw new Error(`meeting object ${meetingObjectId} does not belong to workspace ${workspaceId}`)
 	}
 	const nextMetadata = {
 		...((existing.metadata as Record<string, unknown> | null) ?? {}),

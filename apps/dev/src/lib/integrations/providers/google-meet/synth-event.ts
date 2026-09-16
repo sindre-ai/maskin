@@ -51,16 +51,11 @@ interface SynthesizeResult {
  * integration row). Every write below is scoped to that actor so `created_by`
  * / `actor_id` foreign keys resolve.
  */
-async function resolveSystemActorId(
-	db: Database,
-	workspaceId: string,
-): Promise<string | null> {
+async function resolveSystemActorId(db: Database, workspaceId: string): Promise<string | null> {
 	const [row] = await db
 		.select({ config: integrations.config })
 		.from(integrations)
-		.where(
-			and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, 'google-meet')),
-		)
+		.where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, 'google-meet')))
 		.limit(1)
 	const cfg = (row?.config as IntegrationConfig | null) ?? null
 	const actorId = cfg?.system_actor_id
@@ -72,10 +67,7 @@ async function resolveSystemActorId(
  * Meetup/Luma-listed case, and existing behaviour already fires 389b1d48 via
  * the linked event's own status transition. We must not synthesize another.
  */
-async function meetingHasLinkedEvent(
-	db: Database,
-	meetingId: string,
-): Promise<boolean> {
+async function meetingHasLinkedEvent(db: Database, meetingId: string): Promise<boolean> {
 	const rows = await db
 		.select({ id: relationships.id })
 		.from(relationships)
@@ -117,10 +109,7 @@ async function findExistingSynthesizedEvent(
 
 function participantDisplayName(p: Participant): string | null {
 	return (
-		p.signedInUser?.displayName ??
-		p.anonymousUser?.displayName ??
-		p.phoneUser?.displayName ??
-		null
+		p.signedInUser?.displayName ?? p.anonymousUser?.displayName ?? p.phoneUser?.displayName ?? null
 	)
 }
 
@@ -141,8 +130,14 @@ export async function synthesizeMeetOnlyWrappedEvent(
 	db: Database,
 	input: SynthesizeInput,
 ): Promise<SynthesizeResult> {
-	const { workspaceId, meetingId, conferenceRecordName, participants, meetingTitle, meetingStartTime } =
-		input
+	const {
+		workspaceId,
+		meetingId,
+		conferenceRecordName,
+		participants,
+		meetingTitle,
+		meetingStartTime,
+	} = input
 
 	const existingId = await findExistingSynthesizedEvent(db, workspaceId, conferenceRecordName)
 	if (existingId) {
