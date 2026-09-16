@@ -24,7 +24,7 @@ Outputs the `## Risk Score` block to stdout and exits with:
 | ------------------------ | --------- |
 | auto                     | 0         |
 | agent_recommends_human   | 1         |
-| two_human_required       | 2         |
+| human_review_required    | 2         |
 
 `--output json` emits the full verdict object; `--output check-run` emits the GitHub check-run summary used by the `maskin/risk-score` required check.
 
