@@ -49,5 +49,16 @@ protected_paths:
   # --- CI/CD workflows ---
   - ".github/workflows/**"
 
+  # --- agent-governing files (the agent's own rulebook) ---
+  # A change here rewrites the instructions every agent session reads, so it
+  # must never be auto-merge-eligible. Note the anchoring (see
+  # packages/risk-classifier/src/lib/match.ts): patterns bind at both ends and
+  # `.` is escaped, so a bare `CLAUDE.md` would match only the repo-root file
+  # and leave e.g. apps/web/CLAUDE.md un-floored. The `**/` prefix is required
+  # so the entry binds at any depth. `.claude/**` covers the repo-root tree —
+  # the repo keeps no per-app `.claude/` directory.
+  - ".claude/**"
+  - "**/CLAUDE.md"
+
   # --- the risk-classifier's own floor configuration (self-protecting) ---
   - ".maskin/**"
