@@ -1,0 +1,33 @@
+-- Handed-off strip: two additive columns the spawn write path fills in so the
+-- renderer can anchor a strip to the right assistant bubble and label its
+-- dependency. Spec: bet-handed-off-strip-SHAPE.md, section "Two additive
+-- migrations close the strip's gaps".
+--
+-- 1. `sessions.spawned_by_message_id` — the assistant message that triggered
+--    the sub-agent spawn. `messages.id` is bigserial, so this is a nullable
+--    bigint FK. Written from the run_agent path when the caller supplies a
+--    message id. Nullable so pre-migration rows read as "no strip" — no
+--    backfill, no strip renders on historical bubbles (accepted per spec
+--    Rabbit hole "Backfill").
+-- 2. `sessions.depends_on_session_ids` — uuid[] carrying the "behind X and Y"
+--    dependency label. Written from the run_agent path when the spawn call
+--    names blockers.
+--
+-- `ON DELETE SET NULL` on the FK: the anchor is a nullable pointer, not an
+-- ownership edge — if the message is ever deleted the session must survive and
+-- simply stop rendering a strip, which is exactly what NULL means. This matches
+-- the existing nullable-FK precedent in this table (`trigger_id`,
+-- `conversation_id`). NO ACTION would block message deletes; CASCADE would
+-- delete live sessions, which is never wanted.
+--
+-- `sessions` is NOT on the hot-tables list in packages/db/MIGRATIONS.md, so
+-- plain `ADD COLUMN` is safe: nullable columns without defaults are a metadata-
+-- only change in Postgres and take no table rewrite. Kept one statement per
+-- ADD COLUMN so a partial failure doesn't leave a mixed state (the migrator
+-- runs each simple-query message on its own, not inside an implicit BEGIN).
+--
+-- Expand-only slice (Rail 5): no consumer code reads either column yet.
+
+ALTER TABLE "sessions" ADD COLUMN "spawned_by_message_id" bigint REFERENCES "messages"("id") ON DELETE SET NULL;
+--> statement-breakpoint
+ALTER TABLE "sessions" ADD COLUMN "depends_on_session_ids" uuid[];

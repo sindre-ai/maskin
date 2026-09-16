@@ -345,6 +345,17 @@ export const sessions = pgTable(
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
+		// Handed-off strip anchors: the assistant message that triggered this
+		// sub-agent spawn, and the sessions this one is blocked behind. Both
+		// nullable — pre-migration rows read NULL ("no strip"). Written from the
+		// run_agent path when the caller supplies a message id / blockers.
+		// ON DELETE SET NULL: the anchor is a pointer, not ownership — a deleted
+		// message must not delete the session, it just stops rendering a strip.
+		spawnedByMessageId: bigint('spawned_by_message_id', { mode: 'number' }).references(
+			(): AnyPgColumn => messages.id,
+			{ onDelete: 'set null' },
+		),
+		dependsOnSessionIds: uuid('depends_on_session_ids').array(),
 		startedAt: timestamp('started_at', { withTimezone: true }),
 		completedAt: timestamp('completed_at', { withTimezone: true }),
 		timeoutAt: timestamp('timeout_at', { withTimezone: true }),
