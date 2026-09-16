@@ -17,6 +17,7 @@ import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
+import { trackForyouCardMarkedRead } from '@/lib/analytics'
 import { type CreateCommentInput, type DisplaySettingsBody, type UnreadItem, api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { classifyCardKind, recommendedAction } from '@/lib/foryou-card-kind'
@@ -335,6 +336,12 @@ function ForYouFeed() {
 		(item: UnreadItem) => {
 			const key = feedItemKey(item)
 			setRepliedKeys((prev) => new Set(prev).add(key))
+			// A typed reply implies a read — emit here, next to the gesture, so
+			// the funnel counts it even if the mark-read call fails.
+			trackForyouCardMarkedRead({
+				card_kind: classifyCardKind(item),
+				card_id: item.entity_id,
+			})
 			const forget = () =>
 				setRepliedKeys((prev) => {
 					const next = new Set(prev)
@@ -370,14 +377,25 @@ function ForYouFeed() {
 			// — so if the mark-read then fails, nothing else would bring it back.
 			// Restore its receipt alongside the un-hide.
 			const decidedBefore = decided
-			const dismissed = targets.filter((item) =>
-				markItemRead(item, () => {
+			const dismissed = targets.filter((item) => {
+				const marked = markItemRead(item, () => {
 					const key = feedItemKey(item)
 					const decision = decidedBefore.get(key)
 					if (!decision) return
 					setDecided((prev) => (prev.has(key) ? prev : new Map(prev).set(key, decision)))
-				}),
-			)
+				})
+				// One `foryou_card_marked_read` per successfully-marked item —
+				// bulk dismiss is the reader saying "read" for every card that
+				// actually leaves the column. Skips items that couldn't be marked
+				// so the analytics volume matches what the reader actually cleared.
+				if (marked) {
+					trackForyouCardMarkedRead({
+						card_kind: classifyCardKind(item),
+						card_id: item.entity_id,
+					})
+				}
+				return marked
+			})
 			if (dismissed.length === 0) {
 				toast.error("Couldn't dismiss those — they're still in your feed.")
 				return

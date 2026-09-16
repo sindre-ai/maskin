@@ -113,6 +113,7 @@ import {
 	type SessionUsage,
 	extractSessionUsage,
 	parseUsageFromLogChunks,
+	readSessionStdoutTail,
 	sumRunningSessionUsage,
 } from './usage-parser'
 import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace-briefing'
@@ -190,6 +191,19 @@ export interface CreateSessionParams {
 	autoStart?: boolean
 	/** ID of a prior session whose workspace snapshot should be restored at startup. */
 	sourceSessionId?: string
+	/**
+	 * Attribution for `agent_session_started_with_prompt` — names the dispatch
+	 * path (e.g. `'comment_fallback'` for the comment-posted subscriber in
+	 * `trigger-runner.ts`). Threaded through so every dispatch route benefits
+	 * without each call site having to remember to emit its own event.
+	 */
+	triggerSource?: string
+	/**
+	 * `events.id` of the source `commented` row when this session is spawned
+	 * by the comment-fallback resolver. Persisted on `sessions.config.mention`
+	 * for existing consumers; also emitted as a PostHog prop.
+	 */
+	sourceCommentEventId?: number
 }
 
 /**
@@ -212,6 +226,12 @@ function claudeRuntimeFailoverReason(
 ): string | null {
 	if (!failureReason || failureReason.provider !== 'anthropic') return null
 	if (failureReason.reason_code === 'not_logged_in') return 'auth_failed'
+	// A revoked credential is a distinct failure mode from a spent one — the
+	// slot's token itself is bad, not the subscription's quota — but the
+	// remediation is the same: fail this session over to the next slot in the
+	// chain. The retry's session-start refresh recovers expired-but-not-revoked
+	// tokens in place; a fully-dead slot walks further via unusableFromRefresh.
+	if (failureReason.reason_code === 'oauth_revoked') return 'oauth_revoked'
 
 	const usageCodes = new Set([
 		'session_limit',
@@ -238,13 +258,13 @@ function claudeRuntimeFailoverReason(
  * when nothing changed.
  *
  * Clears `claude_oauth_runtime_failover_retry_of` whenever the slot resolves
- * back to `primary`. That marker only means anything while the session is
- * still actually running on the backup a prior runtime failover put it on —
- * leaving it stamped after a lazy recovery flips the slot back to primary
- * would make `maybeRetryClaudeOAuthOnBackup`'s gate (which treats a
- * `retry_of` string alone as sufficient, regardless of the current
- * `llm_oauth_slot`) misclassify a later, unrelated primary failure as
- * "backup already exhausted".
+ * back to `primary` — the head of the failover chain. That marker records
+ * that this session exists because an earlier one was pushed off its
+ * subscription; once a lazy recovery has routed the session back to the head,
+ * it describes nothing that is still true. It stays a marker only, never a
+ * gate: whether a failing session has anywhere left to fall over to is
+ * decided by its slot's position in the chain (see
+ * `maybeRetryClaudeOAuthOnNextSlot`), not by its presence.
  */
 export function mergeLaunchRouteConfig(
 	existingConfig: Record<string, unknown>,
@@ -395,6 +415,21 @@ export class SessionManager extends EventEmitter {
 			// will produce a chat message, which it never will.
 			retryTurn: (sessionId, payload) =>
 				this.writeInput(sessionId, payload, undefined, undefined, { maskin_retry: true }),
+			// An interactive session never exits on a spent subscription, so the
+			// session-exit failover below never sees one. This is the same move,
+			// reached from the per-turn path.
+			onSubscriptionLimit: (sessionId, reason) =>
+				this.failOverInteractiveSession(sessionId, reason),
+			// Stop the still-running container after the pointer has moved. The
+			// current session launched with the now-spent (or revoked) credential
+			// and can't be resumed in place; stopping it means the human's next
+			// message in the same chat spawns a fresh session that picks up the
+			// workspace's new active_slot. Best-effort — the finalizer already
+			// swallowed the stop error and logged it, so no throw handling here.
+			// `reason` is currently unused by stopSession; kept in the callback
+			// signature so a future stop-reason column can pick it up without
+			// re-plumbing the finalizer.
+			onStopSession: (sessionId, _reason) => this.stopSession(sessionId),
 		})
 	}
 
@@ -461,7 +496,19 @@ export class SessionManager extends EventEmitter {
 		workspaceId: string,
 		params: CreateSessionParams,
 	): Promise<typeof sessions.$inferSelect> {
-		const config = params.config ?? {}
+		// Fold `triggerSource` / `sourceCommentEventId` into `config` so
+		// `launchContainer` can read them off the session row later — the two
+		// props are threaded through to `agent_session_started_with_prompt`
+		// from there, meaning every dispatch route benefits without each call
+		// site having to remember to fire the analytics event itself.
+		const baseConfig = params.config ?? {}
+		const config: Record<string, unknown> = { ...baseConfig }
+		if (params.triggerSource !== undefined) {
+			config.trigger_source = params.triggerSource
+		}
+		if (params.sourceCommentEventId !== undefined) {
+			config.source_comment_event_id = params.sourceCommentEventId
+		}
 		const interactive = config.interactive === true
 		const conversationId =
 			(config.conversation as { conversation_id?: string } | undefined)?.conversation_id ?? null
@@ -1628,12 +1675,20 @@ export class SessionManager extends EventEmitter {
 		// samples in PostHog. Runs on every launch (start + resume) since both
 		// build a container from the current systemPrompt; session_id keeps the
 		// samples dedup-able downstream.
+		const sessionCfg = (session.config as Record<string, unknown>) ?? {}
+		const triggerSource =
+			typeof sessionCfg.trigger_source === 'string' ? sessionCfg.trigger_source : undefined
+		const sourceCommentEventIdRaw = sessionCfg.source_comment_event_id
+		const sourceCommentEventId =
+			typeof sourceCommentEventIdRaw === 'number' ? sourceCommentEventIdRaw : undefined
 		void trackAgentSessionStartedWithPrompt({
 			workspaceId: session.workspaceId,
 			sessionId: session.id,
 			agentId: agent.id,
 			agentName: agent.name,
 			systemPrompt: resolvedSystemPrompt,
+			triggerSource,
+			sourceCommentEventId,
 		})
 
 		// Interactive sessions have no opening ACTION_PROMPT — the first user turn
@@ -2596,7 +2651,55 @@ export class SessionManager extends EventEmitter {
 		return Boolean(other)
 	}
 
-	private async maybeRetryClaudeOAuthOnBackup(params: {
+	/**
+	 * Move a live interactive session's workspace onto its next Claude
+	 * subscription and return the slot moved to (or `null` if nothing moved).
+	 * Deliberately does NOT relaunch the container — the running session keeps
+	 * its old credentials, only the pointer moves so the NEXT session lands on
+	 * the new subscription. The human is told exactly that.
+	 */
+	private async failOverInteractiveSession(
+		sessionId: string,
+		reason: string,
+	): Promise<string | null> {
+		if (!isClaudeFailoverEnabled()) return null
+
+		const [session] = await this.db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		if (!session) return null
+
+		const config = ((session.config as Record<string, unknown>) ?? {}) as Record<string, unknown>
+		if (config.llm_route !== LLM_ROUTE_OAUTH) return null
+		const failedSlot = config.llm_oauth_slot
+		if (typeof failedSlot !== 'string') return null
+
+		const failover = await recordRuntimeClaudeOAuthFailover({
+			db: this.db,
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			reason,
+			fromSlot: failedSlot,
+			sourceSessionId: session.id,
+		})
+		if (failover.moved) return failover.slot
+
+		if (failover.reason === 'exhausted') {
+			await recordRuntimeClaudeOAuthBackupExhausted({
+				db: this.db,
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				reason,
+				slot: failedSlot,
+				sourceSessionId: session.id,
+			})
+		}
+		return null
+	}
+
+	private async maybeRetryClaudeOAuthOnNextSlot(params: {
 		session: typeof sessions.$inferSelect
 		failureReason: { provider: string; reason_code: string } | null
 		stdoutTail: string
@@ -2614,26 +2717,16 @@ export class SessionManager extends EventEmitter {
 		const reason = claudeRuntimeFailoverReason(failureReason, stdoutTail)
 		if (!reason) return
 
-		if (
-			config.llm_oauth_slot === 'backup' ||
-			typeof config.claude_oauth_runtime_failover_retry_of === 'string'
-		) {
-			await recordRuntimeClaudeOAuthBackupExhausted({
-				db: this.db,
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				reason,
-				sourceSessionId: session.id,
-			})
-			await this.insertSystemLog(
-				session.id,
-				'Claude backup subscription also hit a usage limit; no further Claude OAuth fallback is available',
-			)
-			return
-		}
+		// Which subscription this session was actually running on. Whether
+		// there is another one to fall over to is decided by that slot's
+		// position in the workspace's chain (under a row lock, in
+		// recordRuntimeClaudeOAuthFailover) rather than by the slot's name —
+		// a workspace can hold more than two.
+		const failedSlot = config.llm_oauth_slot
+		if (typeof failedSlot !== 'string') return
 
-		if (config.llm_oauth_slot !== 'primary') return
-
+		// One retry per failing session, however long the chain is: the retry
+		// itself fails over again from its own slot if it has to.
 		const [existingRetry] = await this.db
 			.select({ id: sessions.id })
 			.from(sessions)
@@ -2646,25 +2739,48 @@ export class SessionManager extends EventEmitter {
 			.limit(1)
 		if (existingRetry) return
 
-		const didFailover = await recordRuntimeClaudeOAuthFailover({
+		const failover = await recordRuntimeClaudeOAuthFailover({
 			db: this.db,
 			workspaceId: session.workspaceId,
 			actorId: session.actorId,
 			reason,
+			fromSlot: failedSlot,
 			sourceSessionId: session.id,
 		})
-		if (!didFailover) return
+
+		if (!failover.moved) {
+			// `superseded` means another session already moved the workspace on
+			// — nothing to say. Only a genuinely exhausted chain is reported.
+			if (failover.reason !== 'exhausted') return
+			await recordRuntimeClaudeOAuthBackupExhausted({
+				db: this.db,
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				reason,
+				slot: failedSlot,
+				sourceSessionId: session.id,
+			})
+			await this.insertSystemLog(
+				session.id,
+				reason === 'oauth_revoked'
+					? 'The last connected Claude subscription is also unavailable (token revoked); no further Claude OAuth fallback is available'
+					: 'The last connected Claude subscription also hit a usage limit; no further Claude OAuth fallback is available',
+			)
+			return
+		}
 
 		await this.insertSystemLog(
 			session.id,
-			'Claude primary subscription hit a usage limit; retrying this session on the backup subscription',
+			reason === 'oauth_revoked'
+				? 'The Claude subscription in use had its OAuth token revoked; retrying this session on the next connected subscription'
+				: 'The Claude subscription in use hit a usage limit; retrying this session on the next connected subscription',
 		)
 		await this.createSession(session.workspaceId, {
 			actorId: session.actorId,
 			actionPrompt: session.actionPrompt,
 			config: {
 				...config,
-				llm_oauth_slot: 'backup',
+				llm_oauth_slot: failover.slot,
 				claude_oauth_runtime_failover_retry_of: session.id,
 			},
 			triggerId: session.triggerId ?? undefined,
@@ -2830,7 +2946,7 @@ export class SessionManager extends EventEmitter {
 		}
 
 		if (status === 'failed') {
-			await this.maybeRetryClaudeOAuthOnBackup({ session, failureReason, stdoutTail }).catch(
+			await this.maybeRetryClaudeOAuthOnNextSlot({ session, failureReason, stdoutTail }).catch(
 				(err) =>
 					logger.warn('Failed to retry Claude OAuth session on backup', {
 						sessionId,
@@ -4315,7 +4431,6 @@ export class SessionManager extends EventEmitter {
 		opts: { stoppedByUser?: boolean } = {},
 	): Promise<boolean> {
 		const stoppedByUser = opts.stoppedByUser ?? false
-		const status = exitCode === 0 ? 'completed' : 'failed'
 
 		// Extract token / cost usage from the remote session's stdout tail.
 		// Unlike the local Docker path, there is no in-memory tail buffer for a
@@ -4335,9 +4450,40 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		// Mirror handleCompletion's classification + failover on this path — the
+		// remote completion path is what production uses, and until this existed
+		// it wrote `{ exit_code }` and returned, so failover never ran (see
+		// known-pitfalls.md "The Remote Completion Path Skipped Classification").
+		// Tail read is best-effort: stopSession() calls this after the sandbox is
+		// already dead, so a throw would surface as a spurious "stop failed" 400.
+		let stdoutTail = ''
+		if (!stoppedByUser) {
+			try {
+				stdoutTail = await readSessionStdoutTail(this.db, sessionId)
+			} catch (err) {
+				logger.warn('Failed to read stdout tail for remote session classification', {
+					sessionId,
+					error: String(err),
+				})
+			}
+		}
+		const failureReason: SessionResultFailureReason | null =
+			!stoppedByUser && exitCode !== null
+				? classifyCreditExhaustion(stdoutTail, { includeAmbiguousSignals: exitCode !== 0 })
+				: null
+		if (failureReason) {
+			logger.info('Remote session credit-exhaustion classified', {
+				sessionId,
+				reason_code: failureReason.reason_code,
+				provider: failureReason.provider,
+				exitCode,
+			})
+		}
+		const status = exitCode === 0 && !failureReason ? 'completed' : 'failed'
+
 		const result: SessionResult = stoppedByUser
 			? { exit_code: exitCode, stopped_by_user: true }
-			: { exit_code: exitCode }
+			: { exit_code: exitCode, ...(failureReason ? { failure_reason: failureReason } : {}) }
 
 		// A thrown DB error here (distinct from a clean 0-row CAS miss) must not
 		// permanently strand the session: giving up immediately would skip the
@@ -4557,13 +4703,30 @@ export class SessionManager extends EventEmitter {
 				action: `session_${status}`,
 				entityType: 'session',
 				entityId: sessionId,
-				data: { exit_code: exitCode, stopped_by_user: stoppedByUser },
+				data: {
+					exit_code: exitCode,
+					stopped_by_user: stoppedByUser,
+					...(failureReason ? { failure_reason: failureReason } : {}),
+				},
 			})
 		} catch (err) {
 			logger.error('Failed to insert remote session completion event', {
 				sessionId,
 				error: String(err),
 			})
+		}
+
+		if (status === 'failed') {
+			await this.maybeRetryClaudeOAuthOnNextSlot({
+				session: updated,
+				failureReason,
+				stdoutTail,
+			}).catch((err) =>
+				logger.warn('Failed to retry remote Claude OAuth session on the next subscription', {
+					sessionId,
+					error: String(err),
+				}),
+			)
 		}
 
 		const remoteLlmRoute = (updated.config as Record<string, unknown>)?.llm_route

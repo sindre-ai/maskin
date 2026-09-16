@@ -1,6 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, workspaceMembers } from '@maskin/db/schema'
+import { events, subscriptions, workspaceMembers } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { buildSignupCaptureKnowledge } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
@@ -122,9 +122,17 @@ describe('Signup welcome comment — Chief of Staff comments, Researcher gets sp
 			.where(and(eq(events.entityId, created.id), eq(events.action, 'commented')))
 		expect(commentEvent).toBeDefined()
 		expect(commentEvent.actorId).toBe(chief.id)
-		const data = commentEvent.data as { content: string; mentions: string[] }
-		expect(data.mentions).toEqual(expect.arrayContaining([researcher.id, humanActorId]))
-		expect(data.mentions).toHaveLength(2)
+		const data = commentEvent.data as {
+			content: string
+			mentions: string[]
+			metadata: { suppress_dispatch_actor_ids: string[] }
+		}
+		// Researcher IS a real mention — that is what auto-subscribes it to the
+		// object and makes it count as a thread participant, so a later human
+		// reply reaches it. Only its generic CommentDispatcher session is
+		// suppressed, since signup-welcome wires a bespoke one below.
+		expect(data.mentions).toEqual([researcher.id, humanActorId])
+		expect(data.metadata.suppress_dispatch_actor_ids).toEqual([researcher.id])
 		expect(data.content).toContain('Ada Testowski')
 		expect(data.content).toContain('@Researcher')
 
@@ -163,6 +171,13 @@ describe('Signup welcome comment — Chief of Staff comments, Researcher gets sp
 		const item = unread.items.find((i) => i.entity_id === created.id)
 		expect(item).toBeDefined()
 		expect(item?.mentioning_unread_count).toBeGreaterThan(0)
+
+		// Researcher's mention must also auto-subscribe it to the object, so it
+		// sees later activity on the onboarding thread — the whole point of
+		// keeping it in `mentions` rather than dropping it to avoid the
+		// double-dispatch.
+		const subs = await db.select().from(subscriptions).where(eq(subscriptions.entityId, created.id))
+		expect(subs.map((sub) => sub.actorId)).toContain(researcher.id)
 	})
 
 	it('does not trigger a comment or session for a knowledge object that is not signup_capture', async () => {
