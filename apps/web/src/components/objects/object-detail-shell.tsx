@@ -7,6 +7,7 @@ import { useNotifications } from '@/hooks/use-notifications'
 import { useDeleteObject, useObjectGraph, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useScrollToTopEmitter } from '@/hooks/use-scroll-to-top-emitter'
 import { useStar } from '@/hooks/use-star'
+import { useUsageState } from '@/hooks/use-usage-state'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
@@ -17,6 +18,7 @@ import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
+import { Pencil } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ObjectAskBanner } from './object-ask-banner'
@@ -62,18 +64,31 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 
 	// The ask banner prefers the live needs_input notification targeting this
 	// object; `metadata._ask` stays as the fallback for seeded/fixture rows.
+	// The same cache also drives the D4 verb swap on the shared New button —
+	// a `useMemo` over the sorted pending asks so both surfaces read the same
+	// oldest-first pick and re-render together when SSE flushes.
 	const { data: needsInputNotifications } = useNotifications(workspaceId, { type: 'needs_input' })
-	const liveAsk = useMemo(
+	const pendingAsks = useMemo(
 		() =>
-			(needsInputNotifications ?? []).find(
-				(n) => n.objectId === object.id && n.status === 'pending',
-			),
+			(needsInputNotifications ?? [])
+				.filter((n) => n.objectId === object.id && n.status === 'pending')
+				.sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? '')),
 		[needsInputNotifications, object.id],
 	)
+	const liveAsk = pendingAsks[0]
 	const askActor = liveAsk?.sourceActorId
 		? actors?.find((a) => a.id === liveAsk.sourceActorId)
 		: undefined
 	const askText = liveAsk ? (liveAsk.content ?? liveAsk.title) : getAsk(object)
+
+	// D6 credits chip predicate — workspace-scoped selector reacts to SSE
+	// invalidation on session lifecycle events (see `sse-invalidation.ts`).
+	const { credits_state } = useUsageState(workspaceId)
+
+	// D4: whole button disabled at 60% opacity when the object is
+	// non-editable. `archived` bets are the only observable read-only state
+	// the current object schema carries — the field is otherwise mutable.
+	const isReadOnly = object.status === 'archived'
 
 	// Memoised so the published crumb keeps a stable identity across renders.
 	const crumb = useMemo(
@@ -89,6 +104,29 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	const answerRef = useRef<HTMLTextAreaElement>(null)
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const confirmedDeleteRef = useRef(false)
+
+	// D4: focus the composer at the oldest pending ask on the timeline —
+	// mirrors the ObjectAskBanner's Answer-it button, so both entry points
+	// commit to the same answer surface. Kept off `pendingAsks` (not
+	// `liveAsk`) so the reference is stable across renders that don't change
+	// the pick.
+	const handleAnswerLatestAsk = useCallback(() => {
+		answerRef.current?.focus()
+	}, [])
+
+	// D4 verb-swap override published to the shared New button. `useMemo` on
+	// the notification cache — automatic re-render when SSE flushes new asks.
+	const newMenuPrimaryOverride = useMemo(() => {
+		if (!liveAsk) return undefined
+		return {
+			label: 'Answer this ask',
+			ariaLabel: 'Answer the pending ask on this object',
+			title: 'Answer this ask — jump to the composer at the pending ask',
+			icon: <Pencil aria-hidden className="size-[13px]" />,
+			onClick: handleAnswerLatestAsk,
+			disabled: isReadOnly,
+		}
+	}, [liveAsk, handleAnswerLatestAsk, isReadOnly])
 
 	// Right-side properties drawer (mockup 1371–1499). Desktop pushes the app
 	// shell aside via `contentPush`; mobile opens the primitive's Sheet.
@@ -329,6 +367,8 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 				}
 				contentPush={contentPush}
 				scrollLocked
+				newMenuPrimaryOverride={newMenuPrimaryOverride}
+				newMenuDisabled={isReadOnly}
 			/>
 			<div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
 				{/* The document owns the only scroll region on this screen, so the
@@ -346,6 +386,8 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 							object={object}
 							statuses={statuses}
 							members={members ?? []}
+							workspaceId={workspaceId}
+							creditsState={credits_state}
 							onStatusChange={handleUpdateStatus}
 							onDriverChange={handleUpdateDriver}
 							onTitleChange={handleUpdateTitle}
