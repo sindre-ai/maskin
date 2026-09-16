@@ -1057,6 +1057,14 @@ export interface ObjectResponse {
 	metadata: SafeMetadata | null
 	driver: string | null
 	activeSessionId: string | null
+	// D2 · Working-ring predicate. Lifecycle state of the session pointed at by
+	// `activeSessionId`, hydrated by a bounded batch lookup on list/detail so
+	// the row can gate the ring on 'running' only — `activeSessionId` stays
+	// non-null through pending/starting/paused, which would flicker the ring.
+	// `null` when there is no active session, `undefined` on legacy list
+	// surfaces (e.g. board) that don't hydrate it — clients read both as "no
+	// ring".
+	active_session_state?: string | null
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null

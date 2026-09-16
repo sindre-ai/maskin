@@ -49,6 +49,13 @@ export const objectResponseSchema = z.object({
 	driver: z.string().uuid().nullable(),
 	activeSessionId: z.string().uuid().nullable(),
 	activeSessionCurrentActivity: z.string().nullable().optional(),
+	// Per-row lifecycle state of the session pointed at by activeSessionId,
+	// hydrated by a batch lookup on list/detail so the client can gate the
+	// working-ring on 'running' only — activeSessionId itself stays non-null
+	// through pending/starting/paused/waiting_for_input, which would flicker
+	// the ring on states where the agent isn't actively working. Null when
+	// there is no active session, or when the session row has been deleted.
+	active_session_state: z.string().nullable().optional(),
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
