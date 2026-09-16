@@ -94,9 +94,7 @@ describe('useStar', () => {
 		const detail = qc.getQueryData<ObjectResponse>(queryKeys.objects.detail(OBJECT_ID))
 		expect(detail?.is_starred_by_me).toBe(true)
 		// The mutation itself runs on the next microtask, so wait for the spy.
-		await waitFor(() =>
-			expect(api.objects.star).toHaveBeenCalledWith(OBJECT_ID, WORKSPACE_ID),
-		)
+		await waitFor(() => expect(api.objects.star).toHaveBeenCalledWith(OBJECT_ID, WORKSPACE_ID))
 		await waitFor(() => expect(result.current.isSaving).toBe(false))
 	})
 
