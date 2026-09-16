@@ -22,6 +22,8 @@ import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
+import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
+import { MeetWatchRenewer } from './services/meet-watch-renewer'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
@@ -132,6 +134,14 @@ commentDispatcher.start()
 const gmailWatchRenewer = new GmailWatchRenewer(db)
 gmailWatchRenewer.start()
 logger.info('Gmail watch renewer started')
+
+const meetWatchRenewer = new MeetWatchRenewer(db)
+meetWatchRenewer.start()
+logger.info('Meet watch renewer started')
+
+const meetTranscriptReconciler = new MeetTranscriptReconciler(db, storageProvider)
+meetTranscriptReconciler.start()
+logger.info('Meet transcript reconciler started')
 
 const webhookDeliveriesCleaner = new WebhookDeliveriesCleaner(db)
 webhookDeliveriesCleaner.start()
