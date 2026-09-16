@@ -326,6 +326,33 @@ export const messageResponseSchema = z.object({
 	editedAt: z.string().nullable(),
 })
 
+/**
+ * Sub-session delegation strip (bet/444b-handed-off-strip). Shape served on the
+ * `spawned_sessions` embed of `GET /conversations/:id/messages`. Casing matches
+ * the delegation strip contract: camelCase except `depends_on_session_ids`.
+ */
+export const spawnedSessionResponseSchema = z.object({
+	id: z.string().uuid(),
+	status: z.string(),
+	actorId: z.string().uuid(),
+	actorName: z.string(),
+	actionPrompt: z.string(),
+	startedAt: z.string().nullable(),
+	completedAt: z.string().nullable(),
+	durationMs: z.number().nullable(),
+	result: jsonbField.nullable(),
+	currentActivity: z.string().nullable(),
+	depends_on_session_ids: z.array(z.string().uuid()),
+})
+
+/**
+ * List response only — the POST 201 path keeps `messageResponseSchema` so the
+ * two surfaces can evolve independently.
+ */
+export const messageWithSpawnedSessionsSchema = messageResponseSchema.extend({
+	spawned_sessions: z.array(spawnedSessionResponseSchema),
+})
+
 export const sessionLogResponseSchema = z.object({
 	id: z.number(),
 	sessionId: z.string().uuid(),

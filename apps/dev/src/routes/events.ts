@@ -17,6 +17,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
 import type { SessionManager } from '../services/session-manager'
+import { loadSessionStateChangeFrame } from '../services/spawned-sessions'
 import { autoSubscribe } from '../services/subscriptions'
 import { isCommentFallbackDriverEligible } from '../services/trigger-runner'
 
@@ -62,6 +63,46 @@ app.get('/', async (c) => {
 	c.header('X-Accel-Buffering', 'no')
 
 	return streamSSE(c, async (stream) => {
+		const callerId = c.get('actorId')
+
+		// Every frame goes through this serialized chain. It exists for the
+		// `session.state_changed` frame below: resolving it needs a DB read, but
+		// the live bridge callback is synchronous, so a fire-and-forget await
+		// there would let two events' frames interleave and land out of order.
+		// Chaining also guarantees the generic frame is on the wire before the
+		// delegation-strip frame for the same event.
+		let chain: Promise<void> = Promise.resolve()
+		const writeFrame = (
+			id: string,
+			action: string,
+			payload: unknown,
+			sessionEntityId: string | null,
+		): Promise<void> => {
+			chain = chain
+				.then(async () => {
+					await stream.writeSSE({ id, event: action, data: JSON.stringify(payload) })
+					if (!sessionEntityId) return
+					// Entitlement gate on the emission path: `loadSessionStateChangeFrame`
+					// returns null unless the caller is a participant of the owning
+					// conversation, so a non-participant never receives this frame.
+					const frame = await loadSessionStateChangeFrame(db, {
+						sessionId: sessionEntityId,
+						workspaceId,
+						actorId: callerId,
+					})
+					if (!frame) return
+					await stream.writeSSE({
+						id,
+						event: 'session.state_changed',
+						data: JSON.stringify(frame),
+					})
+				})
+				.catch((err) => {
+					logger.warn('events SSE frame write failed', { error: String(err) })
+				})
+			return chain
+		}
+
 		// Replay missed events if Last-Event-ID is provided
 		const parsedId = Number(lastEventId)
 		if (lastEventId && !Number.isNaN(parsedId)) {
@@ -73,11 +114,12 @@ app.get('/', async (c) => {
 				.limit(100)
 
 			for (const event of missed) {
-				await stream.writeSSE({
-					id: String(event.id),
-					event: event.action,
-					data: JSON.stringify(event),
-				})
+				await writeFrame(
+					String(event.id),
+					event.action,
+					event,
+					event.entityType === 'session' ? event.entityId : null,
+				)
 			}
 		}
 
@@ -85,11 +127,12 @@ app.get('/', async (c) => {
 		const handler = (event: PgEvent) => {
 			if (event.workspace_id !== workspaceId) return
 
-			stream.writeSSE({
-				id: event.event_id,
-				event: event.action,
-				data: JSON.stringify(event),
-			})
+			void writeFrame(
+				event.event_id,
+				event.action,
+				event,
+				event.entity_type === 'session' ? event.entity_id : null,
+			)
 		}
 
 		bridge.on('event', handler)
