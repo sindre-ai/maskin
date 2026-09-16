@@ -2,7 +2,8 @@ import { LoopPlanCard, defaultLoopName } from '@/components/loops/loop-plan-card
 import type { LoopPlan } from '@/lib/loop-plan'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { TestWrapper } from '../../setup'
 
 // The created state renders a Link to the new loop; the card is unit-tested
 // without a router.
@@ -20,6 +21,21 @@ vi.mock('@tanstack/react-router', () => ({
 			</a>
 		)
 	},
+}))
+
+// D9 v4 gate. Tests below opt each case into the flagged branch via
+// `mockFeatureFlag.mockReturnValueOnce(true)` — the pre-v4 tests above run
+// unaffected because the mock defaults to `false`.
+const mockFeatureFlag = vi.fn<() => boolean>()
+vi.mock('@/hooks/use-feature-flag', () => ({
+	useFeatureFlag: () => mockFeatureFlag(),
+}))
+
+const mockProviders = vi.fn()
+const mockIntegrations = vi.fn()
+vi.mock('@/hooks/use-integrations', () => ({
+	useProviders: () => ({ data: mockProviders() }),
+	useIntegrations: () => ({ data: mockIntegrations() }),
 }))
 
 const plan: LoopPlan = {
@@ -56,6 +72,12 @@ function baseProps(overrides: Partial<Parameters<typeof LoopPlanCard>[0]> = {}) 
 		...overrides,
 	}
 }
+
+beforeEach(() => {
+	mockFeatureFlag.mockReturnValue(false)
+	mockProviders.mockReturnValue([])
+	mockIntegrations.mockReturnValue([])
+})
 
 describe('defaultLoopName', () => {
 	it('derives the default loop name from the first object type', () => {
@@ -187,5 +209,84 @@ describe('LoopPlanCard — created state', () => {
 			'href',
 			'/ws-1/loops/loop-1',
 		)
+	})
+})
+
+// D9 — NEEDS THESE CONNECTED row. Only mounts under the `loops-v4-polish`
+// umbrella; every test opts in via `mockFeatureFlag.mockReturnValue(true)`.
+describe('LoopPlanCard — NEEDS THESE CONNECTED (loops-v4-polish)', () => {
+	beforeEach(() => {
+		mockFeatureFlag.mockReturnValue(true)
+		mockProviders.mockReturnValue([
+			{ name: 'slack', displayName: 'Slack', authType: 'oauth2', events: [] },
+			{ name: 'github', displayName: 'GitHub', authType: 'oauth2', events: [] },
+		])
+		mockIntegrations.mockReturnValue([])
+	})
+
+	function slackPlan(): LoopPlan {
+		return {
+			...plan,
+			triggers: [
+				{
+					...plan.triggers[0],
+					whenClause: 'when a slack message arrives in the #ops channel',
+				},
+			],
+		}
+	}
+
+	it('renders the section when the flag is on and the plan has a trigger', () => {
+		render(<LoopPlanCard {...baseProps({ plan: slackPlan() })} />, { wrapper: TestWrapper })
+		expect(screen.getByText('NEEDS THESE CONNECTED')).toBeInTheDocument()
+	})
+
+	it('marks a required provider as needs connecting when no integration is active', () => {
+		render(<LoopPlanCard {...baseProps({ plan: slackPlan() })} />, { wrapper: TestWrapper })
+		expect(screen.getByLabelText(/slack needs connecting/i)).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: /^connect$/i })).toHaveAttribute(
+			'href',
+			'/ws-1/settings/integrations',
+		)
+	})
+
+	it('opens the Connect link in a new tab so /loops/new stays mounted', () => {
+		render(<LoopPlanCard {...baseProps({ plan: slackPlan() })} />, { wrapper: TestWrapper })
+		expect(screen.getByRole('link', { name: /^connect$/i })).toHaveAttribute('target', '_blank')
+	})
+
+	it('marks a required provider as connected when the workspace has an active integration', () => {
+		mockIntegrations.mockReturnValue([
+			{ id: 'int-1', provider: 'slack', status: 'active', config: {} },
+		])
+		render(<LoopPlanCard {...baseProps({ plan: slackPlan() })} />, { wrapper: TestWrapper })
+		expect(screen.getByLabelText(/slack connected/i)).toBeInTheDocument()
+		expect(screen.queryByRole('link', { name: /^connect$/i })).not.toBeInTheDocument()
+	})
+
+	it('appends the Connect X sentence to the footer only when something is missing', () => {
+		const { rerender } = render(<LoopPlanCard {...baseProps({ plan: slackPlan() })} />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.getByText(/connect slack to enable this loop/i)).toBeInTheDocument()
+
+		mockIntegrations.mockReturnValue([
+			{ id: 'int-1', provider: 'slack', status: 'active', config: {} },
+		])
+		rerender(<LoopPlanCard {...baseProps({ plan: slackPlan() })} />)
+		expect(screen.queryByText(/connect slack to enable/i)).not.toBeInTheDocument()
+	})
+
+	it('renders a "no integrations required" note when the plan needs nothing', () => {
+		render(<LoopPlanCard {...baseProps()} />, { wrapper: TestWrapper })
+		expect(screen.getByText('NEEDS THESE CONNECTED')).toBeInTheDocument()
+		expect(screen.getByText(/no integrations required/i)).toBeInTheDocument()
+	})
+
+	it('does not render the section when there is no trigger', () => {
+		render(<LoopPlanCard {...baseProps({ plan: { ...plan, triggers: [] } })} />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.queryByText('NEEDS THESE CONNECTED')).not.toBeInTheDocument()
 	})
 })

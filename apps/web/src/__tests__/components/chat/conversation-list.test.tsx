@@ -44,7 +44,25 @@ describe('ConversationList', () => {
 		vi.mocked(api.conversations.list).mockReset()
 	})
 
-	it('renders the group rail and ends the list silently when there is no next page', async () => {
+	it('renders the group rail and closes the list with the end-of-history line when there is no next page', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [
+				buildConversation({ id: 'a', title: 'Billing retries' }),
+				buildConversation({ id: 'b', title: 'Second one' }),
+			],
+			has_more: false,
+		})
+		render(<ConversationList workspaceId="ws-1" v4Polish />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('Today')).toBeInTheDocument()
+		expect(screen.getByText("That's the whole history — 2 in this workspace.")).toBeInTheDocument()
+		// The scroll affordance never renders alongside the closing line.
+		expect(screen.queryByText(/Older conversations load as you scroll/)).not.toBeInTheDocument()
+	})
+
+	it('ends the list silently when v4Polish is off (rollback path)', async () => {
+		// chats-v4-polish umbrella off → the pre-v4 list, which has no footer at
+		// all. The last row is the end of the list.
 		vi.mocked(api.conversations.list).mockResolvedValue({
 			conversations: [buildConversation({ id: 'a', title: 'Billing retries' })],
 			has_more: false,
@@ -52,9 +70,20 @@ describe('ConversationList', () => {
 		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
 
 		expect(await screen.findByText('Today')).toBeInTheDocument()
-		// The last row is the end of the list — no running-total footer under it.
 		expect(screen.queryByText(/whole history/)).not.toBeInTheDocument()
-		expect(screen.queryByText(/Older conversations load as you scroll/)).not.toBeInTheDocument()
+	})
+
+	it('hides the end-of-history line while more pages remain', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [buildConversation({ id: 'a' })],
+			has_more: true,
+		})
+		render(<ConversationList workspaceId="ws-1" v4Polish />, { wrapper: TestWrapper })
+
+		// The scroll sentinel owns the tail while pages are still fetchable —
+		// showing "That's the whole history" here would lie about the count.
+		expect(await screen.findByText(/Older conversations load as you scroll/)).toBeInTheDocument()
+		expect(screen.queryByText(/whole history/)).not.toBeInTheDocument()
 	})
 
 	it('advertises the scroll affordance only while another page is pending', async () => {

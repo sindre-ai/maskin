@@ -27,8 +27,10 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `.claude/rules/input-validation.md` — input validation requirements at system boundaries (HTTP params, env vars, DB triggers)
 - `.claude/rules/structural-verification.md` — file placement and build configuration verification checklist
 - `.claude/rules/known-pitfalls.md` — registry of recurring bugs to check against before submitting code
+- `.claude/rules/integrations-mcp.md` — Integrations & MCP class rules (source of truth: workspace's Tech principles & best-practices doc)
 - `.claude/rules/feature-flags.md` — how to add, place, and retire a feature flag (one boundary per feature; visual layer only)
 - `.claude/rules/verification.md` — mandatory runtime-verification gates: integration tests for DB/route changes, E2E specs for frontend changes
+- `.claude/rules/live-verification.md` — live-environment evidence gates for integration/provider work: surface matrix, staging + production runs, no provider ids in the UI
 - `packages/db/MIGRATIONS.md` — migration conventions for hot tables (CONCURRENTLY indexes, chunked backfills); read before editing a `.sql` file produced by `pnpm db:generate`
 
 ## Reference

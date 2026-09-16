@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useObjectGraph } from '@/hooks/use-objects'
 import { useMarkRead } from '@/hooks/use-subscriptions'
+import { trackMarkReadClicked } from '@/lib/analytics'
 import type { ActorListItem, EventResponse, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { hasDecision } from '@/lib/comment-decision'
@@ -223,7 +224,39 @@ function prevStatusOf(event: EventResponse): string | null {
 	return typeof value === 'string' ? value : null
 }
 
-export function TimelineTab({ object }: { object: ObjectResponse }) {
+/**
+ * Optional variant carrying the D8 delta of the Loops v4 UX/UI polish bet
+ * (bet/d166-loops-v4-polish). When set, the unread divider re-skins to
+ * `NEW · {n} unread` in red, rows the current viewer has already read carry
+ * opacity-75, the boundary announces itself to screen readers on mount, an
+ * EARLIER divider marks the current-window boundary in the stream, and
+ * Mark read fires the `mark_read_clicked` PostHog event with
+ * `{loop_id, unread_count}`. Gated at the callsite behind the
+ * `loops-v4-polish.unread` sub-flag (feature-flag boundary lives in
+ * `_authed/$workspaceId/loops/$loopId.tsx`). Absent → the pre-bet divider
+ * ships as before, so Objects (the other consumer of this component) is
+ * completely untouched.
+ */
+export interface LoopsV4PolishUnreadOptions {
+	/** Emitted on the analytics payload for `mark_read_clicked` — matches
+	 *  the SPEC's verbatim `{loopId, unreadCount}` contract. */
+	loopId: string
+}
+
+/** How old an entry must be to sit under the `EARLIER` divider — the SPEC's
+ *  "current window" isn't machine-defined, so the frontend fixes it to seven
+ *  days. Everything within a week reads as "current", everything older falls
+ *  under `EARLIER`. Kept as a top-level constant so a single change moves the
+ *  boundary for both the divider and its tests. */
+const EARLIER_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+
+export function TimelineTab({
+	object,
+	loopsV4PolishUnread,
+}: {
+	object: ObjectResponse
+	loopsV4PolishUnread?: LoopsV4PolishUnreadOptions
+}) {
 	const { workspaceId } = useWorkspace()
 	const {
 		data: graph,
@@ -387,6 +420,18 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 	const handleMarkRead = useCallback(() => {
 		setUnreadDismissed(true)
 		if (latestCommentEventId <= 0) return
+		// D8 ship metric — fires once per Mark read click, only in the polish
+		// variant. `unreadCount` reads the exact number the divider is showing
+		// at click time, matching the `NEW · {n} unread` label the user sees.
+		// Emit BEFORE the mutate so a late failure that rolls the dismiss back
+		// still has a click recorded — the metric is "did the admin engage
+		// with the boundary", not "did the server successfully persist it".
+		if (loopsV4PolishUnread) {
+			trackMarkReadClicked({
+				loop_id: loopsV4PolishUnread.loopId,
+				unread_count: unreadCount,
+			})
+		}
 		markRead.mutate(
 			{ entityType: 'object', entityId: object.id, lastEventId: latestCommentEventId },
 			{
@@ -396,7 +441,7 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 				},
 			},
 		)
-	}, [markRead, object.id, latestCommentEventId])
+	}, [markRead, object.id, latestCommentEventId, loopsV4PolishUnread, unreadCount])
 	const firstUnreadId = useMemo(() => {
 		if (unreadEventIds.size === 0) return null
 		let min: number | null = null
@@ -408,6 +453,25 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 		return min
 	}, [unreadEventIds, entries])
 	const showUnreadDivider = !unreadDismissed && firstUnreadId !== null
+
+	// D8 EARLIER divider anchor — the key of the newest entry that sits
+	// outside the "current window" (older than seven days from render time).
+	// Fixed at first render so the boundary stays put as time passes across
+	// this session — a moving line would re-position mid-scroll. Falsy when
+	// nothing in the stream is old enough; the divider then simply doesn't
+	// render. Only computed when the polish variant is on; every other
+	// consumer of TimelineTab reads null and pays no cost.
+	const earlierAnchorKey = useMemo(() => {
+		if (!loopsV4PolishUnread) return null
+		const threshold = Date.now() - EARLIER_WINDOW_MS
+		for (const entry of entries) {
+			if (!entry.time) continue
+			const ts = Date.parse(entry.time)
+			if (Number.isNaN(ts)) continue
+			if (ts < threshold) return entry.key
+		}
+		return null
+	}, [loopsV4PolishUnread, entries])
 
 	const containerRef = useRef<HTMLDivElement>(null)
 	const [jumpTick, setJumpTick] = useState(0)
@@ -456,43 +520,64 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 	}
 
 	const renderEntry = (entry: TimelineEntry) => {
-		const divider =
-			showUnreadDivider && entry.kind === 'comment' && entry.event.id === firstUnreadId ? (
+		const unreadHere =
+			showUnreadDivider && entry.kind === 'comment' && entry.event.id === firstUnreadId
+		const unreadDivider = unreadHere ? (
+			loopsV4PolishUnread ? (
+				<PolishUnreadDivider count={unreadCount} onMarkRead={handleMarkRead} />
+			) : (
 				<NewDivider count={unreadCount} onMarkRead={handleMarkRead} />
-			) : null
+			)
+		) : null
+		// EARLIER divider — polish variant only.
+		const earlierDivider =
+			loopsV4PolishUnread && entry.key === earlierAnchorKey ? <EarlierDivider /> : null
+		// D8 (loops v4 polish path): dim entries the current viewer has already
+		// read. Per-viewer via `unreadEventIds`.
+		const dimAsRead =
+			!!loopsV4PolishUnread && entry.kind === 'comment' && !unreadEventIds.has(entry.event.id)
 		return (
 			<li key={entry.key} className="list-none">
-				{divider}
-				{entry.kind === 'comment' ? (
-					(() => {
-						const replies = repliesByParent.get(entry.event.id) ?? []
-						const answer = findDecisionAnswer(entry.event, replies)
-						const foldedAnswer =
-							answer !== null && isDecidedFoldEligible(entry.event, replies) ? answer : null
-						return foldedAnswer ? (
-							<DecidedFold
-								event={entry.event}
-								replies={replies}
-								answer={foldedAnswer}
-								workspaceId={workspaceId}
-								objectId={object.id}
-								isUnread={unreadEventIds.has(entry.event.id)}
-							/>
-						) : (
-							<ActivityComment
-								event={entry.event}
-								replies={replies}
-								workspaceId={workspaceId}
-								objectId={object.id}
-								isUnread={unreadEventIds.has(entry.event.id)}
-								variant="bubble"
-								collapsibleReplies
-							/>
-						)
-					})()
-				) : (
-					<EventRow entry={entry} actorsById={actorsById} workspaceId={workspaceId} />
-				)}
+				{unreadDivider}
+				{earlierDivider}
+				<div className={cn(dimAsRead && 'opacity-75')}>
+					{entry.kind === 'comment' ? (
+						(() => {
+							const replies = repliesByParent.get(entry.event.id) ?? []
+							const answer = findDecisionAnswer(entry.event, replies)
+							// D9 decided-fold applies only in the default (Object detail)
+							// path — the loops v4 polish variant keeps the full ActivityComment card.
+							const foldedAnswer =
+								!loopsV4PolishUnread &&
+								answer !== null &&
+								isDecidedFoldEligible(entry.event, replies)
+									? answer
+									: null
+							return foldedAnswer ? (
+								<DecidedFold
+									event={entry.event}
+									replies={replies}
+									answer={foldedAnswer}
+									workspaceId={workspaceId}
+									objectId={object.id}
+									isUnread={unreadEventIds.has(entry.event.id)}
+								/>
+							) : (
+								<ActivityComment
+									event={entry.event}
+									replies={replies}
+									workspaceId={workspaceId}
+									objectId={object.id}
+									isUnread={unreadEventIds.has(entry.event.id)}
+									variant="bubble"
+									collapsibleReplies
+								/>
+							)
+						})()
+					) : (
+						<EventRow entry={entry} actorsById={actorsById} workspaceId={workspaceId} />
+					)}
+				</div>
 			</li>
 		)
 	}
@@ -553,6 +638,23 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 
 	return (
 		<div className="w-full min-w-0">
+			{/*
+			 * D8 a11y — a stable, visually-hidden `role="status"` region above
+			 * the stream. Screen readers announce its text as soon as the
+			 * TimelineTab mounts (`aria-live="polite"`), so a loop-detail
+			 * visitor with unread activity hears "N unread activity items"
+			 * without any interaction. Only rendered under the polish variant;
+			 * text is empty when there is nothing unread, so a fully-read
+			 * timeline stays silent. Same live-region-outside-the-content
+			 * pattern the SPEC pins for the D3 AskBanner (a stable
+			 * aria-live host that lives above the strip; content swaps in
+			 * and out of it, not the other way around).
+			 */}
+			{loopsV4PolishUnread && (
+				<output className="sr-only" aria-live="polite" aria-atomic="true">
+					{showUnreadDivider ? `${unreadCount} unread activity items` : ''}
+				</output>
+			)}
 			<div className="flex flex-wrap items-center gap-1.5 pb-2 pt-2.5">
 				{FILTERS.map((f) => {
 					const active = filter === f.id
@@ -632,6 +734,59 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 					)}
 				</div>
 			)}
+		</div>
+	)
+}
+
+/**
+ * D8 unread divider for the loops v4 polish path (bet/d166-loops-v4-polish).
+ * SPEC copy: `NEW · {n} unread` (red). CTA verbatim: `Mark read`. Only
+ * rendered when the loops v4 polish variant is enabled; the default Object
+ * detail timeline uses the shared `<NewDivider>` from
+ * `@/components/timeline/new-divider` instead.
+ */
+function PolishUnreadDivider({ count, onMarkRead }: { count: number; onMarkRead: () => void }) {
+	return (
+		<div className="relative z-[3] flex items-center gap-2.5 pb-1.5 pt-2">
+			<span aria-hidden="true" className="h-px flex-1 bg-destructive/40" />
+			<span
+				data-testid="loops-v4-unread-divider"
+				className="rounded-full bg-destructive/10 px-2.5 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.11em] text-destructive"
+			>
+				NEW · {count} unread
+			</span>
+			<button
+				type="button"
+				onClick={onMarkRead}
+				className="text-[10.5px] font-semibold text-muted-foreground transition-colors hover:text-foreground"
+			>
+				Mark read
+			</button>
+			<span aria-hidden="true" className="h-px w-3 bg-destructive/40" />
+		</div>
+	)
+}
+
+/**
+ * D8 EARLIER divider (bet/d166-loops-v4-polish). Renders inline at the
+ * boundary between the current window (last seven days) and older activity
+ * so scrolling past it reads as crossing from "current" to "earlier". Copy
+ * verbatim: `EARLIER`, mono, muted-foreground (which is `--kc4c4cc` per the
+ * shipped token, matching the SPEC). Purely visual — never focusable, never
+ * announced to screen readers (`aria-hidden`), no interaction. The stream
+ * behind it already has its own rail so the divider only needs to punctuate.
+ */
+function EarlierDivider() {
+	return (
+		<div aria-hidden="true" className="relative z-[3] flex items-center gap-2.5 pb-1.5 pt-2">
+			<span className="h-px flex-1 bg-muted" />
+			<span
+				data-testid="loops-v4-earlier-divider"
+				className="rounded-full bg-muted px-2.5 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.11em] text-muted-foreground"
+			>
+				EARLIER
+			</span>
+			<span className="h-px w-3 bg-muted" />
 		</div>
 	)
 }

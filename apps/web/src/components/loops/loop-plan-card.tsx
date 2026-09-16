@@ -2,8 +2,11 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
+import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import { cn } from '@/lib/cn'
 import { type LoopPlan, describeLoopPlan, summariseLoopPlan } from '@/lib/loop-plan'
+import { getRequiredIntegrationsForPlan } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { Check, Plus } from 'lucide-react'
 
@@ -54,6 +57,12 @@ export function LoopPlanCard({
 	workspaceId,
 }: LoopPlanCardProps) {
 	const title = created ? 'Loop created' : defaultLoopName(plan)
+	// D9 gate: the NEEDS THESE CONNECTED section + its footer sentence ship
+	// behind the umbrella `loops-v4-polish` flag. This is the only user-visible
+	// change in this component; when the flag is off, LoopPlanCard renders
+	// exactly as pre-v4 and never mounts the integration-fetching hooks.
+	// No second flag check further down.
+	const showV4NeedsConnected = useFeatureFlag('loops-v4-polish')
 
 	return (
 		<div className="flex flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
@@ -209,6 +218,10 @@ export function LoopPlanCard({
 						</div>
 					</section>
 				)}
+
+				{showV4NeedsConnected && plan.triggers.length > 0 && (
+					<NeedsConnectedSection plan={plan} workspaceId={workspaceId} />
+				)}
 			</div>
 
 			<div className="flex flex-wrap items-center gap-2 border-t border-border bg-muted px-5 py-3.5">
@@ -228,9 +241,13 @@ export function LoopPlanCard({
 					</>
 				) : (
 					<>
-						<span className="mr-auto min-w-[180px] flex-1 text-[11px] leading-relaxed text-muted-foreground">
-							{summariseLoopPlan(plan)}
-						</span>
+						{showV4NeedsConnected ? (
+							<V4FooterSummary plan={plan} workspaceId={workspaceId} />
+						) : (
+							<span className="mr-auto min-w-[180px] flex-1 text-[11px] leading-relaxed text-muted-foreground">
+								{summariseLoopPlan(plan)}
+							</span>
+						)}
 						<Button size="sm" variant="ghost" onClick={onStartOver} disabled={creating}>
 							Start over
 						</Button>
@@ -249,4 +266,139 @@ export function LoopPlanCard({
 			</div>
 		</div>
 	)
+}
+
+/**
+ * NEEDS THESE CONNECTED — D9 section, rendered under WHERE IT WILL STOP FOR
+ * YOU (or as the last section when there is no stop-for-you clause). Ships
+ * behind the `loops-v4-polish` umbrella flag, gated one level up.
+ *
+ * Requirements are derived from the plan by the shared helper
+ * `getRequiredIntegrationsForPlan` — same import trigger-runner uses at
+ * create time. Connected state is the current workspace's integrations list
+ * filtered to active rows. A missing chip carries an inline **Connect**
+ * that opens the workspace's integrations settings page in a new tab; the
+ * chip auto-flips to ✓ connected on return via TanStack Query's window-focus
+ * refetch (no page reload of /loops/new).
+ */
+function NeedsConnectedSection({ plan, workspaceId }: { plan: LoopPlan; workspaceId: string }) {
+	const providerRefs = getRequiredIntegrationsForPlan(plan.triggers)
+	const { data: providers } = useProviders()
+	const { data: integrations } = useIntegrations(workspaceId)
+	const providerByName = new Map((providers ?? []).map((p) => [p.name, p]))
+	const connectedNames = new Set(
+		(integrations ?? []).filter((row) => row.status === 'active').map((row) => row.provider),
+	)
+
+	// Drop providers the server doesn't offer — a keyword match in a plan
+	// clause is not enough on its own.
+	const known = providerRefs.filter((name) => providerByName.has(name))
+
+	if (known.length === 0) {
+		return (
+			<section aria-label="Integrations required">
+				<SectionLabel>NEEDS THESE CONNECTED</SectionLabel>
+				<p className="mt-2.5 text-[11.5px] leading-snug text-muted-foreground">
+					No integrations required — this plan runs on Maskin alone.
+				</p>
+			</section>
+		)
+	}
+
+	return (
+		<section aria-label="Integrations required">
+			<SectionLabel>NEEDS THESE CONNECTED</SectionLabel>
+			<ul className="mt-2.5 flex flex-col gap-1.5">
+				{known.map((providerName) => {
+					const provider = providerByName.get(providerName)
+					const label = provider?.displayName ?? providerName
+					const connected = connectedNames.has(providerName)
+					return (
+						<li
+							key={providerName}
+							className="flex items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5"
+						>
+							<span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+								{label}
+							</span>
+							{connected ? (
+								<span
+									className="inline-flex shrink-0 items-center gap-1 rounded-md bg-success/10 px-1.5 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-success"
+									aria-label={`${label} connected`}
+								>
+									<Check size={11} aria-hidden />
+									connected
+								</span>
+							) : (
+								<>
+									<span
+										className="inline-flex shrink-0 items-center gap-1 rounded-md bg-warning/10 px-1.5 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-warning"
+										aria-label={`${label} needs connecting`}
+									>
+										needs connecting
+									</span>
+									{/* Opens the workspace's integrations page in a new tab so
+									 *  /loops/new stays mounted. On return, TanStack Query's
+									 *  window-focus refetch pulls the fresh integrations list and
+									 *  the chip flips to ✓ connected without a page reload.
+									 *  Plain `<a>` — the typed TanStack Link on the integrations
+									 *  route requires the `search` schema even for an empty
+									 *  navigation, and we only ever open this in a new tab. */}
+									<Button size="sm" variant="outline" asChild>
+										<a
+											href={`/${workspaceId}/settings/integrations`}
+											target="_blank"
+											rel="noreferrer"
+										>
+											Connect
+										</a>
+									</Button>
+								</>
+							)}
+						</li>
+					)
+				})}
+			</ul>
+		</section>
+	)
+}
+
+/** Footer sentence when the v4 flag is on. Mounts the integrations queries
+ *  only under the flag boundary, so a legacy render never hits them. */
+function V4FooterSummary({ plan, workspaceId }: { plan: LoopPlan; workspaceId: string }) {
+	const { data: providers } = useProviders()
+	const { data: integrations } = useIntegrations(workspaceId)
+	const providerByName = new Map((providers ?? []).map((p) => [p.name, p]))
+	const connectedNames = new Set(
+		(integrations ?? []).filter((row) => row.status === 'active').map((row) => row.provider),
+	)
+	const required = getRequiredIntegrationsForPlan(plan.triggers)
+	const missing: string[] = []
+	for (const name of required) {
+		const provider = providerByName.get(name)
+		if (!provider) continue
+		if (connectedNames.has(name)) continue
+		missing.push(provider.displayName)
+	}
+	const summaryLine = summariseLoopPlan(plan)
+	const connectSentence = missing.length > 0 ? buildConnectSentence(missing) : null
+	return (
+		<span className="mr-auto min-w-[180px] flex-1 text-[11px] leading-relaxed text-muted-foreground">
+			{connectSentence ? `${summaryLine} ${connectSentence}` : summaryLine}
+		</span>
+	)
+}
+
+/** "Connect X to enable Y." — SPEC verbatim. Y is the first trigger's core
+ *  intent (kindLabel-derived); we keep it short so the sentence stays under
+ *  the footer's single line. */
+function buildConnectSentence(missingDisplayNames: string[]): string {
+	if (missingDisplayNames.length === 0) return ''
+	const list =
+		missingDisplayNames.length === 1
+			? missingDisplayNames[0]
+			: `${missingDisplayNames.slice(0, -1).join(', ')} and ${
+					missingDisplayNames[missingDisplayNames.length - 1]
+				}`
+	return `Connect ${list} to enable this loop.`
 }

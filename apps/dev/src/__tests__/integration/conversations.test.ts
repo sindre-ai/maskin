@@ -297,6 +297,145 @@ describe('Conversations Integration', () => {
 			expect(detailBody2.last_read_message_id).toBe(msg2.id)
 		})
 
+		it('mark_unread resets the read cursor to null, unclamped by the GREATEST guard', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Thread', participant_actor_ids: [other.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const m1 = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{ content: 'one' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const msg1 = (await m1.json()) as { id: number }
+			const m2 = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{ content: 'two' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const msg2 = (await m2.json()) as { id: number }
+
+			const { app: otherApp } = createConversationsApp(other.id)
+			const readDetail = async () => {
+				const res = await otherApp.request(
+					jsonGet(`/api/conversations/${conversation.id}`, { 'x-workspace-id': workspaceId }),
+				)
+				return (await res.json()) as {
+					unread_count: number
+					last_read_message_id: number | null
+				}
+			}
+
+			// Both owner messages are unread to start with.
+			expect((await readDetail()).unread_count).toBe(2)
+
+			// Advance to the newest message, then reset.
+			await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/me`,
+					{ last_read_message_id: msg2.id },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect((await readDetail()).last_read_message_id).toBe(msg2.id)
+
+			await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/me`,
+					{ mark_unread: true },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const afterReset = await readDetail()
+			expect(afterReset.last_read_message_id).toBeNull()
+			expect(afterReset.unread_count).toBe(2)
+
+			// A reset is not a one-way door: a later advance still works.
+			await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/me`,
+					{ last_read_message_id: msg1.id },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect((await readDetail()).last_read_message_id).toBe(msg1.id)
+
+			// The GREATEST guard still applies to plain advances: an older id no-ops.
+			await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/me`,
+					{ last_read_message_id: msg2.id },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/me`,
+					{ last_read_message_id: msg1.id },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect((await readDetail()).last_read_message_id).toBe(msg2.id)
+
+			// And a second reset still reaches null after an advance.
+			await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/me`,
+					{ mark_unread: true },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const afterSecondReset = await readDetail()
+			expect(afterSecondReset.last_read_message_id).toBeNull()
+			expect(afterSecondReset.unread_count).toBe(2)
+		})
+
+		it('rejects mark_unread combined with last_read_message_id', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Thread', participant_actor_ids: [other.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const { app: otherApp } = createConversationsApp(other.id)
+			const res = await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/me`,
+					{ mark_unread: true, last_read_message_id: 5 },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(400)
+		})
+
 		it('unread_only=true excludes conversations the caller has fully read', async () => {
 			const other = await insertActor(db, { type: 'human' })
 			await addMember(workspaceId, other.id)
@@ -444,6 +583,91 @@ describe('Conversations Integration', () => {
 			await new Promise((resolve) => setTimeout(resolve, 50))
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
+		})
+
+		it('auto-joins both actors in a two-actor mention and lets both responders see wasMentioned=true', async () => {
+			// Two-actor mention case: neither is a participant, both must be
+			// promoted, both must be handed to `evaluateAndRespond` with the
+			// wasMentioned=true short-circuit (proxied here by the responder
+			// picking up both agents as candidates and calling createSession
+			// for each).
+			const agentA = await insertActor(db, { type: 'agent' })
+			const agentB = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agentA.id)
+			await addMember(workspaceId, agentB.id)
+			const { app: ownerApp, sessionManager } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Two mentions', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const messageRes = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{
+						content: `hey <@${agentA.id}> <@${agentB.id}>`,
+						metadata: { mentions: [agentA.id, agentB.id] },
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(messageRes.status).toBe(201)
+
+			const detail = await ownerApp.request(
+				jsonGet(`/api/conversations/${conversation.id}`, { 'x-workspace-id': workspaceId }),
+			)
+			const detailBody = (await detail.json()) as { participants: Array<{ actorId: string }> }
+			expect(detailBody.participants.map((p) => p.actorId).sort()).toEqual(
+				[ownerId, agentA.id, agentB.id].sort(),
+			)
+
+			// evaluateAndRespond is fire-and-forget from the route — give it a turn.
+			await new Promise((resolve) => setTimeout(resolve, 50))
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(2)
+			const sessionActorIds = sessionManager.createSession.mock.calls
+				.map((call) => (call[1] as { actorId: string }).actorId)
+				.sort()
+			expect(sessionActorIds).toEqual([agentA.id, agentB.id].sort())
+
+			// Re-mentioning the same actor a second time is idempotent — no new
+			// participant row, no duplicate `conversation_participant_added` event.
+			const priorEvents = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.entityId, conversation.id),
+						eq(events.action, 'conversation_participant_added'),
+					),
+				)
+			const remention = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{
+						content: `hey again <@${agentA.id}>`,
+						metadata: { mentions: [agentA.id] },
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(remention.status).toBe(201)
+			const laterEvents = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.entityId, conversation.id),
+						eq(events.action, 'conversation_participant_added'),
+					),
+				)
+			expect(laterEvents).toHaveLength(priorEvents.length)
 		})
 
 		it('ignores a mention of an actor who is not a workspace member, without failing the message post', async () => {

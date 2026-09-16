@@ -56,6 +56,7 @@
 export type LinkedInErrorCode =
 	| 'CREDENTIAL_NOT_CONNECTED'
 	| 'CREDENTIAL_REVOKED'
+	| 'INTEGRATION_DISCONNECTED'
 	| 'RATE_LIMITED_LINKEDIN'
 	| 'LINKEDIN_ACCOUNT_RESTRICTED'
 	| 'LINKEDIN_POST_TOO_LONG'
@@ -63,10 +64,13 @@ export type LinkedInErrorCode =
 	| 'INVALID_INPUT'
 	| 'LINKEDIN_INVITE_QUOTA_EXCEEDED'
 	| 'LINKEDIN_ALREADY_CONNECTED'
+	| 'PAGE_ADMIN_REVOKED'
+	| 'POST_NOT_FOUND'
 
 export const LINKEDIN_ERROR_CODES = [
 	'CREDENTIAL_NOT_CONNECTED',
 	'CREDENTIAL_REVOKED',
+	'INTEGRATION_DISCONNECTED',
 	'RATE_LIMITED_LINKEDIN',
 	'LINKEDIN_ACCOUNT_RESTRICTED',
 	'LINKEDIN_POST_TOO_LONG',
@@ -74,7 +78,33 @@ export const LINKEDIN_ERROR_CODES = [
 	'INVALID_INPUT',
 	'LINKEDIN_INVITE_QUOTA_EXCEEDED',
 	'LINKEDIN_ALREADY_CONNECTED',
+	'PAGE_ADMIN_REVOKED',
+	'POST_NOT_FOUND',
 ] as const satisfies readonly LinkedInErrorCode[]
+
+/**
+ * `POST_NOT_FOUND` covers three failure modes that agents MUST treat the same
+ * way (stop trying — do not retry, do not "verify" by re-issuing):
+ *   1. `post_id` refers to a post that never existed.
+ *   2. `post_id` refers to a post that was already deleted (LinkedIn's
+ *      second-DELETE response).
+ *   3. `post_id` refers to a post authored by a DIFFERENT identity — LinkedIn
+ *      refuses edits and deletes on posts the calling identity did not author.
+ *
+ * All three surface the same wire envelope on LinkedIn's side:
+ *   - status: 400 or 404
+ *   - body:   { error_code: 'post_not_found', ... }  (or a `detail`/`message`
+ *             containing "post not found")
+ *
+ * Bucketed under INVALID_INPUT at wire level (HTTP 400, no retry), distinct
+ * as a named subclass so agents can branch on the code. `__delete_post`'s
+ * operation layer treats `POST_NOT_FOUND` as a SUCCESSFUL NO-OP — deleting a
+ * post that is already gone from LinkedIn is the intended terminal state.
+ */
+export const LINKEDIN_POST_NOT_FOUND_MARKERS = {
+	errorCodes: ['post_not_found'] as const,
+	messageFragments: ['post not found'] as const,
+}
 
 /**
  * LinkedIn's post-body hard limit is 3000 characters. LinkedIn v2's create-post
@@ -127,6 +157,20 @@ export const LINKEDIN_RESTRICTED_MARKERS = {
 export const LINKEDIN_CONNECTION_REQUEST_MARKERS = {
 	inviteQuotaExceeded: ['invite_quota_exceeded', 'invitation_limit_reached'] as const,
 	alreadyConnected: ['already_connected', 'already_invited', 'pending_invitation'] as const,
+}
+
+/**
+ * Discriminators for `PAGE_ADMIN_REVOKED`: LinkedIn revoked this specific
+ * page's admin scope from the connected account. Structurally recoverable —
+ * the ops layer deregisters the affected MCP instance and enqueues an
+ * `account.reconnect`-style re-enumeration for the credential (spec
+ * §5). Detected on a 403 to any page-scoped Unipile route AND a body
+ * `error_code` in this list. Retry policy is `null`: retrying makes nothing
+ * better, LinkedIn's answer is stable until the page-admin grant is
+ * re-issued in LinkedIn.
+ */
+export const LINKEDIN_PAGE_ADMIN_REVOKED_MARKERS = {
+	errorCodes: ['page_admin_revoked', 'no_admin_access'] as const,
 }
 
 /**
@@ -188,6 +232,11 @@ export type RetryPolicy = {
 export const RETRY_POLICY_BY_CODE: Record<LinkedInErrorCode, RetryPolicy | null> = {
 	CREDENTIAL_NOT_CONNECTED: null,
 	CREDENTIAL_REVOKED: null,
+	// P3-C: the integration was disconnected in Maskin (user hit Settings >
+	// Disconnect, or the workspace admin revoked). Terminal — retrying just
+	// re-observes the same revoked row. The recovery is a user action
+	// (reconnect at Settings > Integrations), not a wait.
+	INTEGRATION_DISCONNECTED: null,
 	RATE_LIMITED_LINKEDIN: { maxAttempts: 3, baseMs: 2_000, capMs: 30_000, jitter: 0.25 },
 	LINKEDIN_ACCOUNT_RESTRICTED: null,
 	LINKEDIN_POST_TOO_LONG: null,
@@ -199,11 +248,22 @@ export const RETRY_POLICY_BY_CODE: Record<LinkedInErrorCode, RetryPolicy | null>
 	// answered "no" to that specific invite).
 	LINKEDIN_INVITE_QUOTA_EXCEEDED: null,
 	LINKEDIN_ALREADY_CONNECTED: null,
+	// Page-admin revoke is terminal for the current call: LinkedIn removed
+	// the page's admin scope from this account. Retrying gets the same 403
+	// until the page admin re-invites us in LinkedIn; the ops-layer side
+	// effect (deregister-and-re-enumerate) is what makes the loop learn of
+	// the change.
+	PAGE_ADMIN_REVOKED: null,
+	// POST_NOT_FOUND is terminal: retrying an edit/delete on a post LinkedIn
+	// says does not exist just gets the same POST_NOT_FOUND back. Delete
+	// operations treat this as a successful no-op at the operations layer.
+	POST_NOT_FOUND: null,
 }
 
 const IS_RETRYABLE: Record<LinkedInErrorCode, boolean> = {
 	CREDENTIAL_NOT_CONNECTED: false,
 	CREDENTIAL_REVOKED: false,
+	INTEGRATION_DISCONNECTED: false,
 	RATE_LIMITED_LINKEDIN: true,
 	LINKEDIN_ACCOUNT_RESTRICTED: false,
 	LINKEDIN_POST_TOO_LONG: false,
@@ -211,11 +271,18 @@ const IS_RETRYABLE: Record<LinkedInErrorCode, boolean> = {
 	INVALID_INPUT: false,
 	LINKEDIN_INVITE_QUOTA_EXCEEDED: false,
 	LINKEDIN_ALREADY_CONNECTED: false,
+	PAGE_ADMIN_REVOKED: false,
+	POST_NOT_FOUND: false,
 }
 
 const DEFAULT_HTTP_STATUS: Record<LinkedInErrorCode, number> = {
 	CREDENTIAL_NOT_CONNECTED: 424,
 	CREDENTIAL_REVOKED: 401,
+	// 424 Failed Dependency: same HTTP shape as CREDENTIAL_NOT_CONNECTED (the
+	// downstream credential we depend on is not available), classified as its
+	// own code so agent-side error handlers can distinguish "never connected"
+	// from "was connected, now disconnected in Maskin".
+	INTEGRATION_DISCONNECTED: 424,
 	RATE_LIMITED_LINKEDIN: 429,
 	LINKEDIN_ACCOUNT_RESTRICTED: 423,
 	LINKEDIN_POST_TOO_LONG: 400,
@@ -226,6 +293,15 @@ const DEFAULT_HTTP_STATUS: Record<LinkedInErrorCode, number> = {
 	// one. 409 for already-connected: state conflict, the classic HTTP fit.
 	LINKEDIN_INVITE_QUOTA_EXCEEDED: 403,
 	LINKEDIN_ALREADY_CONNECTED: 409,
+	// 403: LinkedIn's own status for the revoked-page-admin envelope.
+	// Surfacing the same class through the same status keeps the wire
+	// self-describing.
+	PAGE_ADMIN_REVOKED: 403,
+	// Bucketed under INVALID_INPUT at wire level (spec §5): the caller made a
+	// request LinkedIn cannot honour — same 400 shape agents already handle
+	// for other input-shaped nos. Distinct code so a `__delete_post` op can
+	// swallow it as a no-op without swallowing every other INVALID_INPUT.
+	POST_NOT_FOUND: 400,
 }
 
 /**
@@ -248,6 +324,19 @@ export function classifyLinkedInResponse(status: number, body: unknown): LinkedI
 	if (isInviteQuotaExceededBody(body)) return 'LINKEDIN_INVITE_QUOTA_EXCEEDED'
 	if (isAlreadyConnectedBody(body)) return 'LINKEDIN_ALREADY_CONNECTED'
 	if (isPostTooLongBody(body)) return 'LINKEDIN_POST_TOO_LONG'
+	// PAGE_ADMIN_REVOKED must run BEFORE the generic 403 → INVALID_INPUT
+	// fallback: 403 alone would land in the wrong class (retry policy null
+	// either way, but the ops-layer side effect for
+	// PAGE_ADMIN_REVOKED — deregister the instance + enqueue re-enumeration —
+	// only fires when the classifier picks the specific class).
+	if (status === 403 && isPageAdminRevokedBody(body)) return 'PAGE_ADMIN_REVOKED'
+	// POST_NOT_FOUND detection runs BEFORE the generic 4xx → INVALID_INPUT
+	// fallback so an edit/delete against a missing / already-deleted /
+	// non-authored post lands in its own class instead of collapsing into a
+	// generic "bad request" — `__delete_post` needs to distinguish the two
+	// to treat POST_NOT_FOUND as a successful no-op. Only fires on the 400/404
+	// statuses LinkedIn uses for this (never on a 5xx or an unrelated 4xx).
+	if ((status === 400 || status === 404) && isPostNotFoundBody(body)) return 'POST_NOT_FOUND'
 	if (status >= 200 && status < 300) return null
 	if (status === 401) return 'CREDENTIAL_REVOKED'
 	if (status === 404) return 'CREDENTIAL_NOT_CONNECTED'
@@ -280,6 +369,26 @@ function isNotImplementedBody(body: unknown): boolean {
 	const type = typeof rec.type === 'string' ? rec.type.toLowerCase() : null
 	const errorType = typeof rec.error_type === 'string' ? rec.error_type.toLowerCase() : null
 	return type === 'api/not_implemented' || errorType === 'api/not_implemented'
+}
+
+/**
+ * Detect the POST_NOT_FOUND envelope on an edit/delete response. Fires on
+ * `body.error_code === 'post_not_found'` (case-insensitive) OR when
+ * `message` / `detail` contain the phrase "post not found". Detection intentionally
+ * matches on the phrase regardless of status — the classifier's caller gates
+ * on 400/404 so this cannot fire on an unrelated 500.
+ */
+function isPostNotFoundBody(body: unknown): boolean {
+	if (!body || typeof body !== 'object') return false
+	const rec = body as Record<string, unknown>
+	const errorCode = typeof rec.error_code === 'string' ? rec.error_code.toLowerCase() : null
+	if (errorCode && LINKEDIN_POST_NOT_FOUND_MARKERS.errorCodes.includes(errorCode as never)) {
+		return true
+	}
+	const message = typeof rec.message === 'string' ? rec.message.toLowerCase() : ''
+	const detail = typeof rec.detail === 'string' ? rec.detail.toLowerCase() : ''
+	const haystack = `${message} ${detail}`
+	return LINKEDIN_POST_NOT_FOUND_MARKERS.messageFragments.some((frag) => haystack.includes(frag))
 }
 
 function isPostTooLongBody(body: unknown): boolean {
@@ -332,6 +441,20 @@ function isAlreadyConnectedBody(body: unknown): boolean {
 	const code = readErrorCode(body)
 	if (!code) return false
 	return LINKEDIN_CONNECTION_REQUEST_MARKERS.alreadyConnected.includes(code as never)
+}
+
+/**
+ * Detect the `PAGE_ADMIN_REVOKED` body shape: LinkedIn returns 403 with
+ * `error_code` in `LINKEDIN_PAGE_ADMIN_REVOKED_MARKERS.errorCodes` when the
+ * connected account no longer has admin rights on a page. Exported so the
+ * webhook handler can share the discriminator with the runtime classifier —
+ * a body-marker change (LinkedIn adding a new error_code alias) is a
+ * one-line edit in one place.
+ */
+export function isPageAdminRevokedBody(body: unknown): boolean {
+	const code = readErrorCode(body)
+	if (!code) return false
+	return LINKEDIN_PAGE_ADMIN_REVOKED_MARKERS.errorCodes.includes(code as never)
 }
 
 /**
@@ -463,6 +586,72 @@ export class LinkedinAlreadyConnectedError extends LinkedInIntegrationError {
 		super(
 			'LINKEDIN_ALREADY_CONNECTED',
 			'This member is already a first-degree connection or has a pending invitation from this account. Treat as a successful no-op.',
+			{ cause },
+		)
+	}
+}
+
+/**
+ * Named subclass for `PAGE_ADMIN_REVOKED`. The current call is terminal
+ * (retry policy is null); the ops layer additionally deregisters the
+ * affected LinkedIn MCP instance and enqueues an
+ * `account.reconnect`-style re-enumeration for the credential so the
+ * loop sees the change on the NEXT call rather than continuing to attach a
+ * tool that will 403 again.
+ */
+export class PageAdminRevokedError extends LinkedInIntegrationError {
+	constructor(cause?: unknown) {
+		super(
+			'PAGE_ADMIN_REVOKED',
+			"LinkedIn has revoked this account's admin access to the target page. The page has been unregistered; ask a page admin to re-invite the account in LinkedIn to restore it.",
+			{ cause },
+		)
+	}
+}
+
+/**
+ * Post-not-found / already-deleted / not-authored-by-this-identity — three
+ * failure modes LinkedIn surfaces the same way and that agents MUST treat the
+ * same way (stop trying). The message is deliberately one sentence covering
+ * all three, because we cannot distinguish them from LinkedIn's response and
+ * must not guess at which one it was for the human reading a log line.
+ *
+ * Wire code is `POST_NOT_FOUND`, but the operation layer for `__delete_post`
+ * treats this error as a SUCCESSFUL NO-OP (spec §5) — the post is gone, which
+ * is the intended terminal state. `__edit_post` re-raises unchanged.
+ */
+export class PostNotFoundError extends LinkedInIntegrationError {
+	constructor(cause?: unknown) {
+		super('POST_NOT_FOUND', 'Post not found, already deleted, or not authored by this identity.', {
+			cause,
+		})
+	}
+}
+
+/**
+ * P3-C · The fan-out MCP instance's own `integrations` row is missing or not
+ * `active` — the user (or a workspace admin) disconnected the integration in
+ * Maskin. Terminal: retrying re-reads the same revoked row. Recovery is a
+ * reconnect at Settings > Integrations; there is nothing the agent can do in
+ * the meantime, so the fail-closed rule is that the wrong (revoked) credential
+ * MUST NEVER reach Unipile — see linkedin-mcp-phase2-technical-spec.md core
+ * principle 3 ("Access is gated on live credential status, never on cached
+ * registration").
+ *
+ * Distinct from `CREDENTIAL_NOT_CONNECTED` so an agent can tell "your
+ * workspace never connected this integration" from "the integration was
+ * connected, then disconnected while your session was live" — the second
+ * usually means a human just revoked, and the right agent behaviour is to
+ * stop calling the tool and surface the disconnect rather than nag for a
+ * reconnect UX flow the user just deliberately exited.
+ */
+export class IntegrationDisconnectedError extends LinkedInIntegrationError {
+	constructor(identitySlug?: string, cause?: unknown) {
+		super(
+			'INTEGRATION_DISCONNECTED',
+			identitySlug
+				? `LinkedIn identity ${identitySlug} has been disconnected in Maskin. Reconnect at Settings > Integrations to resume.`
+				: 'This LinkedIn integration has been disconnected in Maskin. Reconnect at Settings > Integrations to resume.',
 			{ cause },
 		)
 	}

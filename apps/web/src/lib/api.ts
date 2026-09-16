@@ -3,7 +3,9 @@ import type {
 	ActorResponse,
 	AgentState,
 	DisplaySettingsBody,
+	ListLoopStepsResponse,
 	ListLoopsResponse,
+	LoopStep,
 	LoopSummary,
 	SafeMetadata,
 	TriggerResponse,
@@ -14,7 +16,9 @@ export type {
 	ActorResponse,
 	AgentState,
 	DisplaySettingsBody,
+	ListLoopStepsResponse,
 	ListLoopsResponse,
+	LoopStep,
 	LoopSummary,
 	TriggerResponse,
 }
@@ -407,6 +411,8 @@ export const api = {
 		list: (workspaceId: string) => request<ListLoopsResponse>('/loops', { workspaceId }),
 		activity: (id: string, workspaceId: string) =>
 			request<{ events: EventResponse[] }>(`/loops/${id}/activity`, { workspaceId }),
+		steps: (id: string, workspaceId: string) =>
+			request<ListLoopStepsResponse>(`/loops/${id}/steps`, { workspaceId }),
 	},
 
 	triggers: {
@@ -484,6 +490,10 @@ export const api = {
 		},
 		slackUsers: (id: string, workspaceId: string) =>
 			request<SlackUser[]>(`/integrations/${id}/slack/users`, { workspaceId }),
+		linkedinIdentities: (workspaceId: string) =>
+			request<LinkedInIdentitySummary[]>('/integrations/linkedin-unipile/identities', {
+				workspaceId,
+			}),
 	},
 
 	notifications: {
@@ -617,12 +627,21 @@ export const api = {
 		status: (workspaceId: string) =>
 			request<ClaudeOAuthStatusResponse>('/claude-oauth/status', { workspaceId }),
 		disconnect: (workspaceId: string, slot?: ClaudeOAuthSlot) =>
-			request<{ success: boolean }>(slot ? `/claude-oauth?slot=${slot}` : '/claude-oauth', {
-				method: 'DELETE',
-				workspaceId,
-			}),
+			request<{ success: boolean }>(
+				slot ? `/claude-oauth?slot=${encodeURIComponent(slot)}` : '/claude-oauth',
+				{
+					method: 'DELETE',
+					workspaceId,
+				},
+			),
 		swap: (workspaceId: string) =>
 			request<{ success: boolean }>('/claude-oauth/swap', { method: 'POST', workspaceId }),
+		promote: (workspaceId: string, slot: ClaudeOAuthSlot) =>
+			request<{ success: boolean }>('/claude-oauth/promote', {
+				method: 'POST',
+				body: { slot },
+				workspaceId,
+			}),
 		rename: (workspaceId: string, slot: ClaudeOAuthSlot, nickname: string) =>
 			request<{ success: boolean }>('/claude-oauth/nickname', {
 				method: 'PATCH',
@@ -963,13 +982,25 @@ export const api = {
 	},
 }
 
-export type ClaudeOAuthSlot = 'primary' | 'backup'
+/**
+ * A slot id — a position in the workspace's Claude failover chain. The first
+ * two keep their historical names (`primary`, `backup`); the rest are
+ * `slot_3` … `slot_10`. Iterate `ClaudeOAuthStatusResponse.chain` rather than
+ * assuming which ids exist.
+ */
+export type ClaudeOAuthSlot = string
 
 export interface ClaudeOAuthSlotInfo {
+	slot: ClaudeOAuthSlot
+	/** Position in the failover chain — 0 is the one sessions try first. */
+	position: number
 	subscription_type?: string
 	expires_at: number
 	fingerprint?: string
 	nickname?: string
+	/** When this subscription was last rejected, and the classified reason. */
+	failure_at?: number
+	failure_reason?: string
 }
 
 export interface ClaudeOAuthExchangeResponse {
@@ -985,10 +1016,11 @@ export interface ClaudeOAuthStatusResponse {
 	subscription_type?: string
 	expires_at?: number
 	valid: boolean
-	slots: {
-		primary?: ClaudeOAuthSlotInfo
-		backup?: ClaudeOAuthSlotInfo
-	}
+	/** Per-slot info keyed by slot id; `chain` gives the failover order. */
+	slots: Record<string, ClaudeOAuthSlotInfo | undefined>
+	chain: ClaudeOAuthSlot[]
+	/** How many more subscriptions this workspace can connect. */
+	slots_remaining: number
 	active_slot: ClaudeOAuthSlot
 	last_primary_failure_at?: number
 	last_classified_reason?: string
@@ -1002,7 +1034,8 @@ export interface ClaudeOAuthImportInput {
 	expiresAt: number
 	subscriptionType?: string
 	scopes?: string[]
-	slot?: ClaudeOAuthSlot
+	/** A slot id to overwrite, or `new` to append to the chain. */
+	slot?: ClaudeOAuthSlot | 'new'
 	nickname?: string
 }
 
@@ -1415,6 +1448,13 @@ export interface ProviderInfo {
 	authType: 'oauth2' | 'oauth2_custom' | 'api_key' | 'manual'
 	events: ProviderEventDefinition[]
 	externalIdDisplay?: 'email' | 'installation'
+	mcp?: {
+		envKey: string
+		autoInject: boolean
+		server?:
+			| { type: 'stdio'; command: string; args: string[]; env?: Record<string, string> }
+			| { type: 'http'; url: string; headers?: Record<string, string> }
+	}
 }
 
 export interface SlackConversation {
@@ -1432,6 +1472,22 @@ export interface SlackUser {
 	name: string
 	real_name: string
 	is_bot: boolean
+}
+
+/**
+ * One connected LinkedIn identity (personal profile OR admined company page)
+ * for a workspace. Rendered by the agent MCP panel as one Quick Add button
+ * per row — clicking writes an mcpServers entry keyed on `instanceSlug` that
+ * points at `/api/integrations/linkedin-unipile/mcp/${instanceSlug}`, so only
+ * this identity's tools land on the agent.
+ */
+export interface LinkedInIdentitySummary {
+	instanceSlug: string
+	displayName: string
+	identityType: 'personal' | 'company_page'
+	identitySlug: string
+	unipileAccSlug: string
+	integrationId: string
 }
 
 export interface NotificationResponse {
@@ -1612,6 +1668,12 @@ export interface ConversationDetailResponse {
 	pinned: boolean
 	archived: boolean
 	last_read_message_id: number | null
+	// The loop this conversation belongs to, when it was started inside a loop
+	// (Loop chip in the thread header links to it). Server-side field is not
+	// wired yet; the frontend treats `null`/`undefined` as "no loop" and renders
+	// no chip, so the payload can start emitting it without a client-side
+	// change.
+	loop_id?: string | null
 	participants: ConversationParticipantResponse[]
 }
 
@@ -1747,6 +1809,7 @@ export interface UpdateConversationParticipantStateInput {
 	pinned?: boolean
 	archived?: boolean
 	last_read_message_id?: number
+	mark_unread?: boolean
 }
 
 export interface PostMessageInput {
