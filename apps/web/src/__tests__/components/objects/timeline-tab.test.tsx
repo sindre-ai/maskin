@@ -606,8 +606,8 @@ describe('TimelineTab', () => {
 			render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
 
 			expect(screen.queryByTestId('loops-v4-unread-divider')).toBeNull()
-			// Pre-bet divider stays put for the non-polish surface.
-			expect(screen.getByText('1 new')).toBeInTheDocument()
+			// D8 · Object detail default now uses NewDivider ("New — 1 item").
+			expect(screen.getByText('New — 1 item')).toBeInTheDocument()
 		})
 
 		it('announces the unread count to screen readers on mount via a stable aria-live region', () => {
@@ -742,7 +742,8 @@ describe('TimelineTab', () => {
 
 			render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
 
-			await user.click(screen.getByRole('button', { name: 'Mark read' }))
+			// D8 · Object detail default now uses NewDivider ("✓ Mark all read").
+			await user.click(screen.getByRole('button', { name: /Mark all read/ }))
 
 			expect(trackMarkReadClicked).not.toHaveBeenCalled()
 		})
