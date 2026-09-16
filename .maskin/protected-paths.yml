@@ -49,5 +49,21 @@ protected_paths:
   # --- CI/CD workflows ---
   - ".github/workflows/**"
 
+  # --- agent-governing files, Codex-harness family (the agent's own rulebook) ---
+  # Same class of hole as the .claude/** + CLAUDE.md block in #1652: a change
+  # here rewrites the instructions an agent session reads, so it must never be
+  # auto-merge-eligible. Note the anchoring (see
+  # packages/risk-classifier/src/lib/match.ts): patterns bind at both ends and
+  # `.` is escaped, so a bare `AGENTS.md` would match only the repo-root
+  # location and leave e.g. apps/web/AGENTS.md un-floored — and the root
+  # AGENTS.md already references apps/web/AGENTS.md, so a nested file is
+  # coming. The `**/` prefix is required so each entry binds at any depth;
+  # being depth-agnostic unconditionally costs nothing and binds the moment a
+  # sibling lands, rather than needing a follow-up edit to this file. Same
+  # forward-looking intent as the payments/billing block above.
+  - "**/AGENTS.md"
+  - "**/.codex/**"
+  - "**/.agents/**"
+
   # --- the risk-classifier's own floor configuration (self-protecting) ---
   - ".maskin/**"
