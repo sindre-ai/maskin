@@ -36,8 +36,10 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 			// The pill is the shorthand; the ask line carries actor + text.
 			await expect(page.getByText('Waiting on you')).toBeVisible()
 			// The line names the asking actor; a source actor outside this
-			// workspace's member list reads as the generic "Agent".
-			await expect(page.getByText('Agent asks', { exact: true })).toBeVisible()
+			// workspace's member list reads as the generic "Agent". Only the actor
+			// name is its own span now ({who} asks — "{text}" splits the phrase
+			// across nodes), so match the phrase against the line.
+			await expect(page.getByText(/^Agent asks —/)).toBeVisible()
 			await expect(page.getByText(/approve this bet/i).first()).toBeVisible()
 		})
 	}
