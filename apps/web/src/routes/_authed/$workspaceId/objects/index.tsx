@@ -25,7 +25,6 @@ import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useNotifications, useRespondNotification } from '@/hooks/use-notifications'
-import { useObjectStars } from '@/hooks/use-object-stars'
 import { useObjectTypeLabel } from '@/hooks/use-object-type-label'
 import { useBulkResultHandlers, useBulkUpdateObjects } from '@/hooks/use-objects'
 import {
@@ -191,7 +190,6 @@ function ObjectsRoute() {
 	// keep the existing panel shape until archive lands for their type.
 	const supportsIncludeArchived = typeFilter === 'bet'
 
-	const { starredIds } = useObjectStars(workspaceId)
 	const objectTypeLabel = useObjectTypeLabel()
 	// Which Display-panel filter options are promoted to the toolbar chip row.
 	// Per-actor and per-tab, so it rides the same persisted DisplaySettings row
@@ -451,6 +449,16 @@ function ObjectsRoute() {
 	})
 
 	const allObjects = useMemo(() => infiniteQuery.data?.pages.flat() ?? [], [infiniteQuery.data])
+
+	// Starred set — derived from server-truth `is_starred_by_me` on the loaded
+	// pages, mirroring the pre-D5 shape the Starred quick filter + its count
+	// consume. SSE-driven cache invalidations refresh the list, so this stays
+	// in sync with cross-device toggles without a second store.
+	const starredIds = useMemo(() => {
+		const ids = new Set<string>()
+		for (const o of allObjects) if (o.is_starred_by_me) ids.add(o.id)
+		return ids
+	}, [allObjects])
 
 	// The Attention axis has no server-side equivalent — "waiting on you" is a
 	// pending needs_input notification and "agent working" is a live session, so

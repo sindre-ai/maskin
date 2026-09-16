@@ -6,6 +6,7 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useDeleteObject, useObjectGraph, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useScrollToTopEmitter } from '@/hooks/use-scroll-to-top-emitter'
+import { useStar } from '@/hooks/use-star'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
@@ -34,6 +35,7 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	const navigate = useNavigate()
 	const isMobile = useIsMobile()
 	const updateObject = useUpdateObject(workspaceId)
+	const { toggle: toggleStarKeyboard } = useStar(object.id)
 	const deleteObject = useDeleteObject(workspaceId)
 	const { data: members } = useWorkspaceMembers(workspaceId)
 	const { data: actors } = useActors(workspaceId)
@@ -151,6 +153,26 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 		document.addEventListener('keydown', handler)
 		return () => document.removeEventListener('keydown', handler)
 	}, [handleToggleSidebar])
+
+	// SPEC §D5 keyboard shortcut: `s` toggles star on focused detail. Uses the
+	// document listener rather than a per-element handler so a plain-page tab
+	// with nothing else focused still triggers, matching the list-row behaviour.
+	// Skipped inside editable fields (title, body, composer) so `s` types
+	// normally there.
+	useEffect(() => {
+		const handler = (e: KeyboardEvent) => {
+			if (e.key !== 's' || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
+			const target = e.target as HTMLElement | null
+			if (target) {
+				const tag = target.tagName
+				if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return
+			}
+			e.preventDefault()
+			toggleStarKeyboard()
+		}
+		document.addEventListener('keydown', handler)
+		return () => document.removeEventListener('keydown', handler)
+	}, [toggleStarKeyboard])
 
 	// Emit `sidebar_toggle` on every transition — covers the PanelRight button,
 	// the ⌘/Ctrl+I shortcut, Sheet ESC/overlay close on mobile, and any
