@@ -7,6 +7,45 @@ if [ -f /agent/.env-overflow.sh ]; then
   source /agent/.env-overflow.sh
 fi
 
+# --- Scratch space: keep temp files OFF the RAM-backed /tmp ------------------
+# microsandbox mounts the guest's /tmp as a 512 MB tmpfs (its MSB_TMPFS init
+# handoff). That size is msb's own default, not ours: buildMsbCreateArgs in
+# apps/agent-server/src/services/microsandbox.ts passes no --tmpfs, there is no
+# msb config file on the host, and MSB_BIN is the only MSB_* key in the
+# agent-server unit's environment. Verified on the Finland box 2026-09-16.
+#
+# Do NOT "fix" this by passing a bigger --tmpfs. msb documents the flag as
+# "Mount a temporary in-memory filesystem" — it is RAM. On a 4 GB VM with no
+# swap, a larger /tmp just converts a full disk into an OOM kill of the whole
+# sandbox, which is a worse failure than the one it replaces.
+#
+# Why a full /tmp is catastrophic rather than merely annoying: the Claude Code
+# harness writes its own Bash plumbing under $TMPDIR — the output FIFO created
+# in run_agent_logged below, and the per-task .output files. Once /tmp fills,
+# every Bash tool call returns a bare `Exit code 1` from *below* the command
+# level (`pwd: write error: No space left on device`) whether or not the command
+# itself succeeded, and the session never recovers. That error never reaches the
+# session log, so afterwards the run looks like an unexplained wall of exit-1s.
+# A single dependency install in a cloned repo fills 512 MB (incident
+# 2026-09-16, session a9ac4d05 — blind for 45 minutes, 9 turns never acked).
+#
+# /agent is a virtiofs bind mount with hundreds of GB free, so put scratch there
+# and let /tmp stay small and idle. pushSessionWorkspace excludes ./tmp from the
+# session snapshot so this never inflates the workspace tarball.
+AGENT_TMPDIR=/agent/tmp
+mkdir -p "$AGENT_TMPDIR"
+export TMPDIR="$AGENT_TMPDIR" TMP="$AGENT_TMPDIR" TEMP="$AGENT_TMPDIR"
+# Package managers keep their own cache/store roots and do NOT honour TMPDIR —
+# these are the writes that actually filled the tmpfs.
+export npm_config_cache="$AGENT_TMPDIR/npm"
+export npm_config_tmp="$AGENT_TMPDIR/npm-tmp"
+export npm_config_store_dir="$AGENT_TMPDIR/pnpm-store"
+export YARN_CACHE_FOLDER="$AGENT_TMPDIR/yarn"
+export XDG_CACHE_HOME="$AGENT_TMPDIR/cache"
+# Record both filesystems at boot. If a session ever wedges this way again, this
+# is the first evidence of whether the redirect was actually in effect.
+df -h "$AGENT_TMPDIR" /tmp 2>/dev/null | sed 's/^/[system] scratch: /' || true
+
 # Committer identity for anything the agent commits. Overridable via env, but
 # any override must stay on a domain we own (maskin.io / sindre.ai) — see
 # setup_git_identity below.
@@ -197,7 +236,7 @@ setup_cdp_retry_proxy() {
   # Process substitution (not a pipeline) keeps $! as node's own pid, which
   # the kill -0 liveness check below depends on.
   node /cdp-retry-proxy.js "$CDP_RETRY_PROXY_PORT" "$target_host" "$target_port" \
-    > >(tee /tmp/cdp-retry-proxy.log | sed -u 's/^/[cdp-retry-proxy] /' >&2) 2>&1 &
+    > >(tee "${TMPDIR:-/tmp}/cdp-retry-proxy.log" | sed -u 's/^/[cdp-retry-proxy] /' >&2) 2>&1 &
   local proxy_pid=$!
   # Give it a moment to bind before handing out the local URL — a failed
   # bind (port in use, node missing) means BROWSER_CDP_URL should still
@@ -206,13 +245,13 @@ setup_cdp_retry_proxy() {
   while [ "$(date +%s)" -lt "$deadline" ]; do
     if ! kill -0 "$proxy_pid" 2>/dev/null; then
       echo "[system] WARNING: cdp-retry-proxy exited immediately, using BROWSER_CDP_URL directly" >&2
-      cat /tmp/cdp-retry-proxy.log >&2 2>/dev/null || true
+      cat "${TMPDIR:-/tmp}/cdp-retry-proxy.log" >&2 2>/dev/null || true
       return
     fi
-    grep -q "listening on" /tmp/cdp-retry-proxy.log 2>/dev/null && break
+    grep -q "listening on" "${TMPDIR:-/tmp}/cdp-retry-proxy.log" 2>/dev/null && break
     sleep 0.2
   done
-  if grep -q "listening on" /tmp/cdp-retry-proxy.log 2>/dev/null; then
+  if grep -q "listening on" "${TMPDIR:-/tmp}/cdp-retry-proxy.log" 2>/dev/null; then
     echo "[system] CDP retry proxy up, routing BROWSER_CDP_URL through 127.0.0.1:${CDP_RETRY_PROXY_PORT}"
     BROWSER_CDP_URL="http://127.0.0.1:${CDP_RETRY_PROXY_PORT}"
   else
@@ -228,7 +267,7 @@ setup_mcps() {
 
   setup_cdp_retry_proxy
 
-  local mcp_config="/tmp/mcp-config.json"
+  local mcp_config="${TMPDIR:-/tmp}/mcp-config.json"
   local empty='{}'
   local agent_config="${AGENT_MCP_JSON:-$empty}"
   local session_config="${MCP_SERVERS_JSON:-$empty}"
@@ -424,7 +463,10 @@ run_agent() {
   # than hours.
   run_agent_logged() {
     local fifo
-    fifo="$(mktemp -u /tmp/agent-out.XXXXXX)"
+    # On the RAM-backed /tmp this FIFO is the single most damaging thing to lose:
+    # it is the agent's entire stdout/stderr path (see the scratch-space block at
+    # the top of this file). Create it on the big disk with everything else.
+    fifo="$(mktemp -u "${TMPDIR:-/tmp}/agent-out.XXXXXX")"
     mkfifo "$fifo"
 
     log_tee < "$fifo" &
