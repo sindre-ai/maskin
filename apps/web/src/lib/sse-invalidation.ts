@@ -78,6 +78,13 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			// Same reasoning as trigger_fired above — session lifecycle events feed
 			// into the loop activity view via the trigger id join.
 			queryClient.invalidateQueries({ queryKey: ['loops', workspaceId, 'activity'] })
+			// Sessions burn credits and can flip the workspace into PAUSED · NO
+			// CREDITS mid-flight. The D6 chip reads through `useUsageState` →
+			// `useBillingUsage`, so invalidating billing usage on every session
+			// lifecycle event keeps the chip's re-render workspace-scoped and
+			// SSE-driven (D6 acceptance: reacts to workspace-level SSE, not
+			// per-object).
+			queryClient.invalidateQueries({ queryKey: queryKeys.billing.usage(workspaceId) })
 			const outcome = SESSION_COMPLETION_ACTIONS.get(event.action)
 			if (outcome) {
 				trackAgentSessionCompleted({
