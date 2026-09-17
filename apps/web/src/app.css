@@ -618,12 +618,27 @@
    ad-hoc small text-size on an input) trips it. Enforce a 16px floor on
    mobile viewports for every form control. Unlayered so it wins over
    Tailwind's `text-*` utilities in @layer utilities — layered inside
-   @layer base, it would lose to the utility class it's meant to override. */
+   @layer base, it would lose to the utility class it's meant to override.
+   Scoped with :not(:where(...)) to skip elements that carry an explicit
+   Tailwind size utility of text-lg (18px) or larger: those are already
+   above the 16px iOS floor, and bumping them to 16px would shrink title
+   textareas from 24px (text-2xl) down to 16px. :where() keeps the exclusion
+   at zero-specificity so the base selector's specificity is unchanged. */
 @media (max-width: 767px) {
-	input,
-	select,
-	textarea,
-	[role="combobox"] {
+	:is(input, select, textarea, [role="combobox"]):not(
+			:where(
+					[class~="text-lg"],
+					[class~="text-xl"],
+					[class~="text-2xl"],
+					[class~="text-3xl"],
+					[class~="text-4xl"],
+					[class~="text-5xl"],
+					[class~="text-6xl"],
+					[class~="text-7xl"],
+					[class~="text-8xl"],
+					[class~="text-9xl"]
+				)
+		) {
 		font-size: 16px;
 	}
 }
