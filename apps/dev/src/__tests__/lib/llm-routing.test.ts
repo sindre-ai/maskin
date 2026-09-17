@@ -380,6 +380,9 @@ describe('resolveLlmRoute priority order', () => {
 					ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
 					ANTHROPIC_SMALL_FAST_MODEL: 'deepseek/deepseek-v4-flash',
 				})
+				// modelName carries through to `sessions.model_name` — the local
+				// cost resolver keys OpenRouter's pricing table on it.
+				expect(result?.modelName).toBe('deepseek/deepseek-v4-flash')
 			},
 		)
 
