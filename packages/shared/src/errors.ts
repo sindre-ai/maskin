@@ -8,6 +8,11 @@ export const ApiErrorCode = {
 	BAD_REQUEST: 'BAD_REQUEST',
 	INTERNAL_ERROR: 'INTERNAL_ERROR',
 	PLAN_CAP_EXCEEDED: 'PLAN_CAP_EXCEEDED',
+	// Prepaid credit balance below the pre-session reserve — surfaces on the
+	// same HTTP 402 as PLAN_CAP_EXCEEDED but carries a different error contract
+	// (balance_cents / min_reserve_cents / topup_url) driven by
+	// InsufficientCreditsError. See apps/dev/src/lib/llm-routing.ts.
+	INSUFFICIENT_CREDITS: 'INSUFFICIENT_CREDITS',
 	AUTH_REVOKED: 'AUTH_REVOKED',
 	// Workspace-membership entitlement gates (distinct from PLAN_CAP_EXCEEDED,
 	// which is token-usage-specific and returns 402). These are

@@ -11,7 +11,7 @@ import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
 import { CLIENT_SOURCE_HEADER } from './lib/analytics/knowledge-events'
 import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } from './lib/errors'
-import { PlanCapExceededError } from './lib/llm-routing'
+import { InsufficientCreditsError, PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
 import { Sentry, resolveClientSourceTag } from './lib/sentry'
 import {
@@ -143,6 +143,24 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 						used: err.used,
 						cap: err.cap,
 						period_end: err.periodEnd,
+					},
+				},
+				402,
+			)
+		}
+		if (err instanceof InsufficientCreditsError) {
+			logger.warn('Insufficient credits', {
+				balanceCents: err.balanceCents,
+				minReserveCents: err.minReserveCents,
+			})
+			return c.json(
+				{
+					error: {
+						code: ApiErrorCode.INSUFFICIENT_CREDITS,
+						message: err.message,
+						balance_cents: err.balanceCents,
+						min_reserve_cents: err.minReserveCents,
+						topup_url: err.topupUrl,
 					},
 				},
 				402,

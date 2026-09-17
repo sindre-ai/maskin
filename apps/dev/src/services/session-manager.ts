@@ -56,6 +56,7 @@ import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { isEnterprise } from '../lib/enterprise'
+import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { buildAgentGitIdentity } from '../lib/git-identity'
 import {
@@ -82,6 +83,7 @@ import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
 	FALLBACK_TOKENS_PER_USD_CENT,
+	InsufficientCreditsError,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
 	LlmCredentialsUnavailableError,
@@ -89,6 +91,7 @@ import {
 	PlanCapExceededError,
 	canUseCreditBalance,
 	ceilCents,
+	checkCreditBalanceRuntime,
 	checkPlanCap,
 	creditBalanceCents,
 	getWorkspacePlanCap,
@@ -542,6 +545,22 @@ export class SessionManager extends EventEmitter {
 				!!(await getValidOAuthToken(this.db, workspaceId).catch(() => null)))
 		if (!hasByoCredentials) {
 			await checkPlanCap({ db: this.db, workspaceId, wsSettings, enterprise })
+			// Prepaid-credit reserve check, gated by MASKIN_CREDIT_UX so the
+			// backend 402 contract lands in sync with the paired UI tasks
+			// (InsufficientCreditsModal + low-balance banner). Fires the
+			// `session_blocked_insufficient_credits` PostHog event on every
+			// rejection. Runs alongside `checkPlanCap` — belt-and-braces per
+			// the bet spec — and only actually gates when the plan cap has
+			// been exhausted this period (so under-cap trials keep working
+			// at $0 balance).
+			if (isFlagEnabled(params.actorId, FLAGS.MASKIN_CREDIT_UX)) {
+				await checkCreditBalanceRuntime({
+					db: this.db,
+					workspaceId,
+					wsSettings,
+					enterprise,
+				})
+			}
 		}
 
 		const [session] = await this.db
@@ -1754,6 +1773,14 @@ export class SessionManager extends EventEmitter {
 					plan: err.plan,
 					used: err.used,
 					cap: err.cap,
+				})
+			}
+			if (err instanceof InsufficientCreditsError) {
+				logger.warn('Insufficient prepaid credit balance', {
+					sessionId: session.id,
+					actorId: session.actorId,
+					balanceCents: err.balanceCents,
+					minReserveCents: err.minReserveCents,
 				})
 			}
 			throw err
