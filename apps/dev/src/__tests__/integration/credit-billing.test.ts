@@ -1,11 +1,23 @@
 import { events, sessions, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
+import { vi } from 'vitest'
 import { debitCreditForSession } from '../../lib/credit-billing'
 import { isEnterpriseWorkspace } from '../../lib/enterprise'
-import { PlanCapExceededError, canUseCreditBalance, checkPlanCap } from '../../lib/llm-routing'
+import {
+	InsufficientCreditsError,
+	MIN_SESSION_RESERVE_CENTS,
+	PlanCapExceededError,
+	canUseCreditBalance,
+	checkCreditBalanceRuntime,
+	checkPlanCap,
+} from '../../lib/llm-routing'
 import type { WorkspaceSettings } from '../../lib/types'
 import { insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
+
+vi.mock('../../lib/analytics/posthog', () => ({
+	capturePosthogEvent: vi.fn(async () => {}),
+}))
 
 const PERIOD_START_SEC = 1_700_000_000
 // $10.00 included per period — usage and cap are tracked in USD cents (not
@@ -131,6 +143,44 @@ describe('checkPlanCap / canUseCreditBalance — soft cap matrix (Integration)',
 		await expect(
 			checkPlanCap({ db, workspaceId, wsSettings, enterprise: false }),
 		).resolves.toBeUndefined()
+	})
+
+	describe('checkCreditBalanceRuntime (integration)', () => {
+		it('throws InsufficientCreditsError when the plan cap is exhausted and the balance is below the pre-session reserve', async () => {
+			await seedOverCapUsage()
+			const wsSettings = billingSettings({ plan: 'pro', credit_balance_cents: 30 })
+			const err = await checkCreditBalanceRuntime({
+				db,
+				workspaceId,
+				wsSettings,
+				enterprise: false,
+			}).catch((e) => e)
+			expect(err).toBeInstanceOf(InsufficientCreditsError)
+			expect((err as InsufficientCreditsError).balanceCents).toBe(30)
+			expect((err as InsufficientCreditsError).minReserveCents).toBe(MIN_SESSION_RESERVE_CENTS)
+			expect((err as InsufficientCreditsError).topupUrl).toBe('/billing/credits')
+		})
+
+		it('passes when the balance is at or above the pre-session reserve, even with the cap exhausted', async () => {
+			await seedOverCapUsage()
+			const wsSettings = billingSettings({
+				plan: 'pro',
+				credit_balance_cents: MIN_SESSION_RESERVE_CENTS,
+			})
+			await expect(
+				checkCreditBalanceRuntime({ db, workspaceId, wsSettings, enterprise: false }),
+			).resolves.toBeUndefined()
+		})
+
+		it('is a no-op while the plan cap still has headroom — the subscription funds the session, not credits', async () => {
+			// No over-cap usage seeded — the cap is $10.00 and $0 has been spent.
+			// A trial workspace at $0 balance keeps running because its cap is
+			// what funds it; gating here would break the try-before-you-buy flow.
+			const wsSettings = billingSettings({ plan: 'trial', credit_balance_cents: 0 })
+			await expect(
+				checkCreditBalanceRuntime({ db, workspaceId, wsSettings, enterprise: false }),
+			).resolves.toBeUndefined()
+		})
 	})
 
 	describe('enterprise allowlist bypass', () => {

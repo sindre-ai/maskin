@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
+import { capturePosthogEvent } from './analytics/posthog'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from './billing-defaults'
 import {
 	type SubscriptionProbe,
@@ -12,6 +13,7 @@ import {
 } from './claude-failover'
 import { type OAuthSlotKind, readSlots, resolveActiveSlot } from './claude-oauth-slots'
 import { isEnterprise } from './enterprise'
+import { FLAGS, isFlagEnabled } from './feature-flags'
 import { logger } from './logger'
 import type { WorkspaceSettings } from './types'
 
@@ -299,6 +301,134 @@ export function canUseCreditBalance(
  * the balance is actually debited separately at session-completion time
  * (`lib/credit-billing.ts`).
  */
+/**
+ * Minimum spendable prepaid credit balance required at session start.
+ *
+ * Placeholder value pending the parent prepaid-credits bet's P50-derived
+ * reserve calibration — that bet will replace this constant with a
+ * cost-model-derived floor (roughly the P50 spend of a real session so a
+ * session cleared to start can be assumed to have room to complete).
+ *
+ * The floor is deliberately a small non-zero: gating on `> 0` would let a
+ * workspace with $0.001 remaining start a session that then fails mid-run
+ * when the debit path resolves, which is precisely the "silently stops
+ * working" incident this bet exists to close.
+ */
+export const MIN_SESSION_RESERVE_CENTS = 50
+
+/**
+ * Surfaces as HTTP 402 with `{ code: 'INSUFFICIENT_CREDITS', balance_cents,
+ * min_reserve_cents, topup_url }`. Distinct from `PlanCapExceededError`
+ * (also 402): that one carries `plan`/`used`/`cap`/`period_end` for the
+ * subscription-cap surface; this one carries the prepaid-credit surface
+ * that the paired UI tasks (InsufficientCreditsModal + low-balance banner)
+ * consume. Frontend reads the `code` discriminator to pick the surface.
+ */
+export interface InsufficientCreditsErrorPayload {
+	balance_cents: number
+	min_reserve_cents: number
+	topup_url: string
+}
+
+export class InsufficientCreditsError extends Error {
+	readonly code = 'INSUFFICIENT_CREDITS' as const
+	readonly balanceCents: number
+	readonly minReserveCents: number
+	readonly topupUrl: string
+
+	constructor(payload: InsufficientCreditsErrorPayload) {
+		super(
+			`Insufficient credits: balance $${(payload.balance_cents / 100).toFixed(2)} is below the $${(payload.min_reserve_cents / 100).toFixed(2)} pre-session reserve.`,
+		)
+		this.name = 'InsufficientCreditsError'
+		this.balanceCents = payload.balance_cents
+		this.minReserveCents = payload.min_reserve_cents
+		this.topupUrl = payload.topup_url
+	}
+}
+
+/**
+ * Fires exactly once per gate rejection — before the throw, so a session
+ * that is blocked is observable in PostHog even when the caller never
+ * catches the error path. `distinctId` is the workspace id (matches how the
+ * other billing-shape events are keyed in analytics/agent-session-events.ts
+ * and posthog.ts), and the property block carries the same three numeric
+ * fields as the HTTP 402 body so a PostHog query can join on either.
+ */
+async function fireInsufficientCreditsEvent(
+	workspaceId: string,
+	balanceCents: number,
+): Promise<void> {
+	await capturePosthogEvent('session_blocked_insufficient_credits', workspaceId, {
+		workspace_id: workspaceId,
+		balance_cents: balanceCents,
+		min_reserve_cents: MIN_SESSION_RESERVE_CENTS,
+	})
+}
+
+/**
+ * Runtime pre-session credit gate. Sibling to `checkPlanCap` (deliberate —
+ * the parent prepaid-credits bet renames `checkPlanCap` to
+ * `checkCreditBalanceRuntime` outright, and this bet lands the credit-gate
+ * shape alongside without touching the existing function; keeping both is
+ * the smaller diff and preserves belt-and-braces gating during the parent's
+ * roll-forward). Called from both `SessionManager.createSession` (so the
+ * HTTP 402 surfaces before a session row is created) and from
+ * `resolveLlmRoute` (defense-in-depth against dispatch paths that skipped
+ * the pre-flight).
+ *
+ * No-op unless credits are the *active* funding mechanism. That's what
+ * "credit_balance_cents is the active gate" means per the bet spec: either
+ * the workspace has no cap at all (a future credits-only plan) or its plan
+ * cap has been exhausted this period, so the next session will be paid out
+ * of the prepaid balance. A trial workspace still under $10 of spend keeps
+ * running unchanged even at $0 balance — its cap is what's funding it, and
+ * gating trials on their empty ledgers would break the try-before-you-buy
+ * flow this bet is not scoped to touch.
+ *
+ * The DB read for `used` is redundant with `checkPlanCap` when both run in
+ * the same call — accepted for now because it keeps both gates as
+ * independent siblings; the parent bet's renamed unified function collapses
+ * them into one query.
+ */
+export async function checkCreditBalanceRuntime(params: {
+	db: Database
+	workspaceId: string
+	wsSettings: WorkspaceSettings
+	/** Same shape as `checkPlanCap` — passed in rather than re-derived. */
+	enterprise: boolean
+}): Promise<void> {
+	if (params.enterprise) return
+
+	const billing = params.wsSettings.billing
+	const plan = (billing?.plan ?? 'trial') as MaskinPlan | 'enterprise'
+	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return
+
+	// Is the workspace actively drawing on credits? Either (a) no cap at
+	// all — a future credits-only plan — or (b) the plan cap has been
+	// exhausted this period.
+	const maskinPlan = plan as MaskinPlan
+	const cap = effectivePlanCap(maskinPlan, billing?.hard_cap_usd_cents ?? undefined)
+	if (cap !== null) {
+		const periodStartMs =
+			typeof billing?.period_start === 'number' ? billing.period_start * 1000 : undefined
+		const used = await getWorkspacePlanUsdCentsUsage(params.db, params.workspaceId, periodStartMs)
+		if (used < cap) return
+	}
+
+	const balance = creditBalanceCents(billing)
+	if (balance >= MIN_SESSION_RESERVE_CENTS) return
+
+	// PostHog capture before the throw so every gate rejection is observable
+	// regardless of how the caller handles the error.
+	await fireInsufficientCreditsEvent(params.workspaceId, balance)
+	throw new InsufficientCreditsError({
+		balance_cents: balance,
+		min_reserve_cents: MIN_SESSION_RESERVE_CENTS,
+		topup_url: '/billing/credits',
+	})
+}
+
 export async function checkPlanCap(params: {
 	db: Database
 	workspaceId: string
@@ -607,6 +737,14 @@ export async function resolveLlmRoute(params: {
 	const maskinPlanEnv = buildMaskinPlanEnv(wsSettings.billing, fallback, enterprise)
 	if (maskinPlanEnv) {
 		await checkPlanCap({ db, workspaceId, wsSettings, enterprise })
+		// Belt-and-braces credit-balance gate. Flag-gated via
+		// `MASKIN_CREDIT_UX` so the backend contract flips on in sync with
+		// the paired UI tasks (InsufficientCreditsModal + low-balance banner)
+		// — shipping the 402 alone would surface a bare error to users with
+		// no modal to render it.
+		if (isFlagEnabled(actorId, FLAGS.MASKIN_CREDIT_UX)) {
+			await checkCreditBalanceRuntime({ db, workspaceId, wsSettings, enterprise })
+		}
 		return { route: LLM_ROUTE_MASKIN_PLAN, envVars: maskinPlanEnv }
 	}
 

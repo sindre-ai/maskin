@@ -5,6 +5,14 @@ vi.mock('../../lib/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn() },
 }))
 
+// checkCreditBalanceRuntime fires `session_blocked_insufficient_credits` on
+// every throw — assert on the mocked emitter so we can verify the workspace
+// id + numeric fields land unchanged, without a live PostHog dependency.
+const posthogCapture = vi.hoisted(() => vi.fn(async () => {}))
+vi.mock('../../lib/analytics/posthog', () => ({
+	capturePosthogEvent: posthogCapture,
+}))
+
 // crypto = identity so encrypted claude_oauth blobs round-trip as their
 // plaintext values — `resolveClaudeCredentialsWithFailover` reads the
 // primary slot directly now, so tests drive it through the `db` mock's
@@ -19,16 +27,20 @@ import {
 	PRO_HARD_CAP_DEFAULT_USD_CENTS,
 	TEAM_HARD_CAP_DEFAULT_USD_CENTS,
 } from '../../lib/billing-defaults'
+import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { preflightLlmCredentials } from '../../lib/llm-routing'
 import {
+	InsufficientCreditsError,
 	LLM_ROUTE_AGENT,
 	LLM_ROUTE_API_KEY,
 	LLM_ROUTE_CUSTOM,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
 	LlmCredentialsUnavailableError,
+	MIN_SESSION_RESERVE_CENTS,
 	PlanCapExceededError,
 	ceilCents,
+	checkCreditBalanceRuntime,
 	checkPlanCap,
 	getWorkspacePlanUsdCentsUsage,
 	readFallbackConfig,
@@ -703,6 +715,67 @@ describe('checkPlanCap', () => {
 		).resolves.toBeUndefined()
 	})
 
+	it('resolveLlmRoute rejects with InsufficientCreditsError when flag is on and balance is below reserve', async () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		process.env.FF_TESTER_ACTOR_IDS = 'actor-1'
+		process.env.FF_TESTER_FEATURES = 'maskin-credit-ux'
+		_resetFeatureFlagConfig()
+		try {
+			const settings = emptySettings()
+			// Plan cap exhausted this period; balance $0.30 is above zero
+			// (so `checkPlanCap` passes via `canUseCreditBalance`) but below
+			// the $0.50 pre-session reserve.
+			settings.billing = {
+				plan: 'pro',
+				hard_cap_usd_cents: 100,
+				period_start: 0,
+				credit_balance_cents: 30,
+			}
+			const db = dbWithSessionUsage([{ totalCostUsd: '2.00', inputTokens: 0, outputTokens: 0 }])
+			const err = await resolveLlmRoute({
+				db,
+				workspaceId: 'ws-1',
+				actorId: 'actor-1',
+				wsSettings: settings,
+				enterprise: false,
+				agent: {},
+			}).catch((e) => e)
+			expect(err).toBeInstanceOf(InsufficientCreditsError)
+			expect((err as InsufficientCreditsError).balanceCents).toBe(30)
+			expect((err as InsufficientCreditsError).minReserveCents).toBe(MIN_SESSION_RESERVE_CENTS)
+			expect((err as InsufficientCreditsError).topupUrl).toBe('/billing/credits')
+			expect((err as InsufficientCreditsError).code).toBe('INSUFFICIENT_CREDITS')
+		} finally {
+			process.env.FF_TESTER_ACTOR_IDS = undefined
+			process.env.FF_TESTER_FEATURES = undefined
+			_resetFeatureFlagConfig()
+		}
+	})
+
+	it('resolveLlmRoute does NOT invoke checkCreditBalanceRuntime when the flag is off (existing behaviour stands)', async () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		_resetFeatureFlagConfig()
+		const settings = emptySettings()
+		// Same low-balance shape as the flag-on case above; without the flag
+		// the maskin_plan route resolves cleanly because balance > 0.
+		settings.billing = {
+			plan: 'pro',
+			hard_cap_usd_cents: 100,
+			period_start: 0,
+			credit_balance_cents: 30,
+		}
+		const db = dbWithSessionUsage([{ totalCostUsd: '2.00', inputTokens: 0, outputTokens: 0 }])
+		const result = await resolveLlmRoute({
+			db,
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			wsSettings: settings,
+			enterprise: false,
+			agent: {},
+		})
+		expect(result?.route).toBe(LLM_ROUTE_MASKIN_PLAN)
+	})
+
 	it('resolveLlmRoute rejects with PlanCapExceededError when over the cap', async () => {
 		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
 		const settings = emptySettings()
@@ -718,6 +791,123 @@ describe('checkPlanCap', () => {
 				agent: {},
 			}),
 		).rejects.toBeInstanceOf(PlanCapExceededError)
+	})
+})
+
+describe('checkCreditBalanceRuntime', () => {
+	beforeEach(() => {
+		posthogCapture.mockClear()
+	})
+
+	it('throws InsufficientCreditsError on an empty balance when the plan cap is exhausted', async () => {
+		const settings = emptySettings()
+		settings.billing = {
+			plan: 'pro',
+			hard_cap_usd_cents: 100,
+			period_start: 0,
+			credit_balance_cents: 0,
+		}
+		const db = dbWithSessionUsage([{ totalCostUsd: '2.00', inputTokens: 0, outputTokens: 0 }])
+		const err = await checkCreditBalanceRuntime({
+			db,
+			workspaceId: 'ws-1',
+			wsSettings: settings,
+			enterprise: false,
+		}).catch((e) => e)
+		expect(err).toBeInstanceOf(InsufficientCreditsError)
+		expect((err as InsufficientCreditsError).balanceCents).toBe(0)
+		expect((err as InsufficientCreditsError).minReserveCents).toBe(50)
+		expect((err as InsufficientCreditsError).topupUrl).toBe('/billing/credits')
+		// Event fires on every throw, keyed on workspace id, with the three
+		// numeric fields the HTTP 402 body carries — so downstream analytics
+		// can join either signal.
+		expect(posthogCapture).toHaveBeenCalledExactlyOnceWith(
+			'session_blocked_insufficient_credits',
+			'ws-1',
+			{ workspace_id: 'ws-1', balance_cents: 0, min_reserve_cents: 50 },
+		)
+	})
+
+	it('passes when the balance is at or above the pre-session reserve', async () => {
+		const settings = emptySettings()
+		settings.billing = {
+			plan: 'pro',
+			hard_cap_usd_cents: 100,
+			period_start: 0,
+			credit_balance_cents: 50, // exactly at MIN_SESSION_RESERVE_CENTS
+		}
+		const db = dbWithSessionUsage([{ totalCostUsd: '2.00', inputTokens: 0, outputTokens: 0 }])
+		await expect(
+			checkCreditBalanceRuntime({
+				db,
+				workspaceId: 'ws-1',
+				wsSettings: settings,
+				enterprise: false,
+			}),
+		).resolves.toBeUndefined()
+		expect(posthogCapture).not.toHaveBeenCalled()
+	})
+
+	it('is a no-op for enterprise workspaces — BYO credentials are never gated on credits', async () => {
+		const settings = emptySettings()
+		settings.billing = { plan: 'enterprise', credit_balance_cents: 0 }
+		const db = dbWithSessionUsage([])
+		await expect(
+			checkCreditBalanceRuntime({
+				db,
+				workspaceId: 'ws-1',
+				wsSettings: settings,
+				enterprise: true,
+			}),
+		).resolves.toBeUndefined()
+		expect(posthogCapture).not.toHaveBeenCalled()
+	})
+
+	it('is a no-op when the plan cap is not yet exhausted — the subscription is the active gate, not credits', async () => {
+		// Trial workspace with a fresh empty balance is the canonical case:
+		// gating it here would break the try-before-you-buy flow. The plan
+		// cap is what funds the trial until it's used up.
+		const settings = emptySettings()
+		settings.billing = {
+			plan: 'trial',
+			hard_cap_usd_cents: 1_000,
+			period_start: 0,
+			credit_balance_cents: 0,
+		}
+		const db = dbWithSessionUsage([{ totalCostUsd: '2.00', inputTokens: 0, outputTokens: 0 }])
+		await expect(
+			checkCreditBalanceRuntime({
+				db,
+				workspaceId: 'ws-1',
+				wsSettings: settings,
+				enterprise: false,
+			}),
+		).resolves.toBeUndefined()
+		expect(posthogCapture).not.toHaveBeenCalled()
+	})
+
+	it('throws with a low but non-zero balance below the reserve floor', async () => {
+		// Regression: canUseCreditBalance returns true at balance > 0, so
+		// checkPlanCap accepts $0.30 — but that's below the pre-session
+		// reserve, and a session cleared to start on $0.30 would fail the
+		// debit path mid-run. This is the "silently stops working" incident
+		// the bet exists to close.
+		const settings = emptySettings()
+		settings.billing = {
+			plan: 'pro',
+			hard_cap_usd_cents: 100,
+			period_start: 0,
+			credit_balance_cents: 30,
+		}
+		const db = dbWithSessionUsage([{ totalCostUsd: '2.00', inputTokens: 0, outputTokens: 0 }])
+		const err = await checkCreditBalanceRuntime({
+			db,
+			workspaceId: 'ws-1',
+			wsSettings: settings,
+			enterprise: false,
+		}).catch((e) => e)
+		expect(err).toBeInstanceOf(InsufficientCreditsError)
+		expect((err as InsufficientCreditsError).balanceCents).toBe(30)
 	})
 })
 

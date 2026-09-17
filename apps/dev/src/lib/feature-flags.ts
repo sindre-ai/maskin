@@ -127,6 +127,23 @@ export const FLAGS = {
 	 * has been deleted.
 	 */
 	CHAT_SLASH_PICKER_V2: 'chat-slash-picker-v2',
+	/**
+	 * Out-of-credits UX bet
+	 * ([bet/6d84-credit-reliability](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/6d84754e-23c6-4694-87e5-7adf3970b380)).
+	 * Coordinates the backend pre-session credit gate (this task) with the
+	 * paired UI tasks: **InsufficientCreditsModal** (919c02d8) and
+	 * **Low-balance banner** (6775ef6c). When OFF, session-start behaves
+	 * exactly as today — no credit check, no modal, no banner. When ON, the
+	 * backend gate throws **InsufficientCreditsError** below **$0.50** on
+	 * maskin-plan-routed workspaces whose subscription cap is exhausted,
+	 * mapped to HTTP 402 with the **INSUFFICIENT_CREDITS** error contract,
+	 * and the frontend lights up the modal + banner in the same rollout.
+	 * Read via `isFlagEnabled(actorId, FLAGS.MASKIN_CREDIT_UX, config)` at
+	 * `SessionManager.createSession` (pre-session-row) and in
+	 * `resolveLlmRoute` (defense-in-depth). Retire once the coordinated UX is
+	 * default for every workspace.
+	 */
+	MASKIN_CREDIT_UX: 'maskin-credit-ux',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
