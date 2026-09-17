@@ -46,6 +46,7 @@ const STRIPE_ENV = {
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
+	STRIPE_PRICE_CREDITS_CUSTOM: 'price_credits_custom_test',
 	MASKIN_PRO_HARD_CAP_USD_CENTS: '2000',
 	MASKIN_TEAM_HARD_CAP_USD_CENTS: '20000',
 }

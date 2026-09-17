@@ -78,13 +78,6 @@ export const CREDIT_TOPUP_BOUNDS_MINOR: Record<MaskinCreditsCurrency, CreditsAmo
 	eur: { min: 2250, preset: 4500, max: 450000 },
 }
 
-/**
- * Stripe Price id for the maskin_credits_custom Price (custom-amount top-up).
- * Prefer the lookup_key path in code; the literal id here is kept for the
- * env-var-free fast path and for grep-ability against the spec.
- */
-export const MASKIN_CREDITS_CUSTOM_PRICE_ID = 'price_1UB7u9K6EV92oY0mfOiOQ6FO'
-export const MASKIN_CREDITS_CUSTOM_LOOKUP_KEY = 'maskin_credits_custom'
 
 /**
  * Free Trial price (tax-exclusive replacement per bet Delta 3). Held here for
@@ -154,6 +147,14 @@ export interface StripeEnv {
 	 * taking the whole API down over a feature most workspaces do not use.
 	 */
 	priceLinkedinIdentity: string | null
+	/**
+	 * Stripe Price id backing the maskin_credits_custom Product — the "customer
+	 * picks the number" credit top-up Price whose Product carries the tax_code
+	 * Stripe Tax classifies against. Environment-specific (test-mode and
+	 * live-mode Products are different Stripe objects with different ids), so
+	 * it must come from env rather than the codebase.
+	 */
+	priceCreditsCustom: string
 }
 
 interface CheckoutInputs {
@@ -200,6 +201,7 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 		'STRIPE_WEBHOOK_SECRET',
 		'STRIPE_PRICE_PRO',
 		'STRIPE_PRICE_TEAM',
+		'STRIPE_PRICE_CREDITS_CUSTOM',
 		'MASKIN_PRO_HARD_CAP_USD_CENTS',
 		'MASKIN_TEAM_HARD_CAP_USD_CENTS',
 	] as const
@@ -232,6 +234,7 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 		proHardCapUsdCents: parseCapCents('MASKIN_PRO_HARD_CAP_USD_CENTS'),
 		teamHardCapUsdCents: parseCapCents('MASKIN_TEAM_HARD_CAP_USD_CENTS'),
 		priceLinkedinIdentity: env.STRIPE_PRICE_LINKEDIN_IDENTITY || null,
+		priceCreditsCustom: env.STRIPE_PRICE_CREDITS_CUSTOM as string,
 	}
 }
 
@@ -338,6 +341,7 @@ export const CREDIT_TOPUP_METADATA_KIND = 'credit_topup'
 export async function createCreditCheckoutSession(
 	stripe: Stripe,
 	inputs: CreditCheckoutInputs,
+	env: StripeEnv,
 ): Promise<Stripe.Checkout.Session> {
 	const vatOn = isVatCheckoutEnabled()
 	const currency: MaskinCreditsCurrency = vatOn ? (inputs.currency ?? 'usd') : 'usd'
@@ -360,7 +364,7 @@ export async function createCreditCheckoutSession(
 				{
 					price_data: {
 						currency,
-						product: (await stripe.prices.retrieve(MASKIN_CREDITS_CUSTOM_PRICE_ID))
+						product: (await stripe.prices.retrieve(env.priceCreditsCustom))
 							.product as string,
 						unit_amount: inputs.amountUsdCents,
 						tax_behavior: 'exclusive',

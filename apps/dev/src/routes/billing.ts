@@ -492,14 +492,18 @@ app.openapi(buyCreditsRoute, async (c) => {
 
 	const stripe = getStripeClient(stripeEnv)
 	try {
-		const session = await createCreditCheckoutSession(stripe, {
-			workspaceId,
-			amountUsdCents: amount_usd_cents,
-			successUrl: success_url,
-			cancelUrl: cancel_url,
-			existingCustomerId: billing?.stripe_customer_id ?? undefined,
-			currency: currency as MaskinCreditsCurrency | undefined,
-		})
+		const session = await createCreditCheckoutSession(
+			stripe,
+			{
+				workspaceId,
+				amountUsdCents: amount_usd_cents,
+				successUrl: success_url,
+				cancelUrl: cancel_url,
+				existingCustomerId: billing?.stripe_customer_id ?? undefined,
+				currency: currency as MaskinCreditsCurrency | undefined,
+			},
+			stripeEnv,
+		)
 		if (!session.url) {
 			logger.error('Stripe credit top-up checkout session missing url', { sessionId: session.id })
 			return c.json(createApiError('INTERNAL_ERROR', 'Stripe returned no checkout url'), 500)

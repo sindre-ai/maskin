@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
 	CREDIT_TOPUP_BOUNDS_MINOR,
 	CREDIT_TOPUP_METADATA_KIND,
-	MASKIN_CREDITS_CUSTOM_PRICE_ID,
 	createCheckoutSession,
 	createCreditCheckoutSession,
 	hardCapForPlan,
@@ -24,6 +23,7 @@ const VALID_ENV = {
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
+	STRIPE_PRICE_CREDITS_CUSTOM: 'price_credits_custom_test',
 	MASKIN_PRO_HARD_CAP_USD_CENTS: '2000',
 	MASKIN_TEAM_HARD_CAP_USD_CENTS: '20000',
 }
@@ -40,6 +40,7 @@ describe('readStripeEnv', () => {
 	it('parses a valid env block', () => {
 		const env = readStripeEnv(VALID_ENV)
 		expect(env.pricePro).toBe('price_pro')
+		expect(env.priceCreditsCustom).toBe('price_credits_custom_test')
 		expect(env.proHardCapUsdCents).toBe(2_000)
 		expect(env.teamHardCapUsdCents).toBe(20_000)
 	})
@@ -47,6 +48,11 @@ describe('readStripeEnv', () => {
 	it('throws when a required var is missing', () => {
 		const { STRIPE_PRICE_TEAM: _omit, ...missing } = VALID_ENV
 		expect(() => readStripeEnv(missing)).toThrow(/STRIPE_PRICE_TEAM/)
+	})
+
+	it('throws when STRIPE_PRICE_CREDITS_CUSTOM is missing', () => {
+		const { STRIPE_PRICE_CREDITS_CUSTOM: _omit, ...missing } = VALID_ENV
+		expect(() => readStripeEnv(missing)).toThrow(/STRIPE_PRICE_CREDITS_CUSTOM/)
 	})
 
 	it('throws when a cap is non-numeric', () => {
@@ -256,13 +262,18 @@ describe('createCreditCheckoutSession', () => {
 			.fn()
 			.mockResolvedValue({ id: 'cs_credit_1', url: 'https://stripe.test/checkout/cs_credit_1' })
 		const stripe = { checkout: { sessions: { create } } } as unknown as Stripe
-		const session = await createCreditCheckoutSession(stripe, {
-			workspaceId: 'ws-1',
-			amountUsdCents: 2_500,
-			successUrl: 'https://app.test/success',
-			cancelUrl: 'https://app.test/cancel',
-			existingCustomerId: 'cus_existing',
-		})
+		const env = readStripeEnv(VALID_ENV)
+		const session = await createCreditCheckoutSession(
+			stripe,
+			{
+				workspaceId: 'ws-1',
+				amountUsdCents: 2_500,
+				successUrl: 'https://app.test/success',
+				cancelUrl: 'https://app.test/cancel',
+				existingCustomerId: 'cus_existing',
+			},
+			env,
+		)
 		expect(session.id).toBe('cs_credit_1')
 		expect(create).toHaveBeenCalledTimes(1)
 		const params = create.mock.calls[0]?.[0] as Stripe.Checkout.SessionCreateParams
@@ -348,7 +359,7 @@ describe('Delta 1 — MASKIN_VAT_CHECKOUT flag on: Stripe Tax params attached', 
 			.fn()
 			.mockResolvedValue({ id: 'cs_credit_vat', url: 'https://stripe.test/cs_credit_vat' })
 		const pricesRetrieve = vi.fn().mockResolvedValue({
-			id: MASKIN_CREDITS_CUSTOM_PRICE_ID,
+			id: 'price_credits_custom_test',
 			product: 'prod_maskin_credits_custom',
 		})
 		const stripe = {
@@ -356,16 +367,21 @@ describe('Delta 1 — MASKIN_VAT_CHECKOUT flag on: Stripe Tax params attached', 
 			prices: { retrieve: pricesRetrieve },
 		} as unknown as Stripe
 
-		await createCreditCheckoutSession(stripe, {
-			workspaceId: 'ws-vat',
-			amountUsdCents: CREDIT_TOPUP_BOUNDS_MINOR.eur.preset, // 4500 EUR minor
-			successUrl: 'https://app.test/success',
-			cancelUrl: 'https://app.test/cancel',
-			existingCustomerId: 'cus_existing_eu',
-			currency: 'eur',
-		})
+		const env = readStripeEnv(VALID_ENV)
+		await createCreditCheckoutSession(
+			stripe,
+			{
+				workspaceId: 'ws-vat',
+				amountUsdCents: CREDIT_TOPUP_BOUNDS_MINOR.eur.preset, // 4500 EUR minor
+				successUrl: 'https://app.test/success',
+				cancelUrl: 'https://app.test/cancel',
+				existingCustomerId: 'cus_existing_eu',
+				currency: 'eur',
+			},
+			env,
+		)
 
-		expect(pricesRetrieve).toHaveBeenCalledWith(MASKIN_CREDITS_CUSTOM_PRICE_ID)
+		expect(pricesRetrieve).toHaveBeenCalledWith('price_credits_custom_test')
 		const params = create.mock.calls[0]?.[0] as Stripe.Checkout.SessionCreateParams
 		expect(params.mode).toBe('payment')
 		expect(params.invoice_creation).toEqual({ enabled: true })
@@ -384,20 +400,25 @@ describe('Delta 1 — MASKIN_VAT_CHECKOUT flag on: Stripe Tax params attached', 
 			.fn()
 			.mockResolvedValue({ id: 'cs_credit_vat_usd', url: 'https://stripe.test/cs' })
 		const pricesRetrieve = vi.fn().mockResolvedValue({
-			id: MASKIN_CREDITS_CUSTOM_PRICE_ID,
+			id: 'price_credits_custom_test',
 			product: 'prod_maskin_credits_custom',
 		})
 		const stripe = {
 			checkout: { sessions: { create } },
 			prices: { retrieve: pricesRetrieve },
 		} as unknown as Stripe
-		await createCreditCheckoutSession(stripe, {
-			workspaceId: 'ws-vat',
-			amountUsdCents: 5000,
-			successUrl: 'https://app.test/success',
-			cancelUrl: 'https://app.test/cancel',
-			existingCustomerId: 'cus_x',
-		})
+		const env = readStripeEnv(VALID_ENV)
+		await createCreditCheckoutSession(
+			stripe,
+			{
+				workspaceId: 'ws-vat',
+				amountUsdCents: 5000,
+				successUrl: 'https://app.test/success',
+				cancelUrl: 'https://app.test/cancel',
+				existingCustomerId: 'cus_x',
+			},
+			env,
+		)
 		const params = create.mock.calls[0]?.[0] as Stripe.Checkout.SessionCreateParams
 		const lineItem = params.line_items?.[0] as Stripe.Checkout.SessionCreateParams.LineItem
 		expect(lineItem.price_data?.currency).toBe('usd')
