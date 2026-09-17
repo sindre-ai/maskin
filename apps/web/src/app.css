@@ -582,20 +582,6 @@
 		overflow-x: clip;
 	}
 
-	/* iOS/Android auto-zoom on focus fires when a form control's computed
-	   font-size is under 16px. `text-xs` (12px) on `SelectTrigger` (and any
-	   ad-hoc small text-size on an input) trips it. Enforce a 16px floor on
-	   mobile viewports for every form control — Tailwind's utility still wins
-	   at >=md so desktop density is unchanged. */
-	@media (max-width: 767px) {
-		input,
-		select,
-		textarea,
-		[role="combobox"] {
-			font-size: 16px;
-		}
-	}
-
 	/* Tabular numerals on mono surfaces — keeps numeric columns column-aligned
 	   without each call site having to remember the utility class (AC-U4). */
 	code,
@@ -624,6 +610,21 @@
 	}
 	*::-webkit-scrollbar-thumb:hover {
 		background-color: var(--muted-foreground);
+	}
+}
+
+/* iOS/Android auto-zoom on focus fires when a form control's computed
+   font-size is under 16px. `text-xs` (12px) on `SelectTrigger` (and any
+   ad-hoc small text-size on an input) trips it. Enforce a 16px floor on
+   mobile viewports for every form control. Unlayered so it wins over
+   Tailwind's `text-*` utilities in @layer utilities — layered inside
+   @layer base, it would lose to the utility class it's meant to override. */
+@media (max-width: 767px) {
+	input,
+	select,
+	textarea,
+	[role="combobox"] {
+		font-size: 16px;
 	}
 }
 
