@@ -57,6 +57,15 @@ export interface LlmRoutingResult {
 	/** Env vars to merge into the container environment. */
 	envVars: Record<string, string>
 	oauthSlot?: OAuthSlotKind
+	/**
+	 * OpenRouter model id that will actually run this session. Populated on
+	 * the maskin_plan route (from `MASKIN_FALLBACK_MODEL`) so the caller can
+	 * stamp `sessions.model_name` at spawn; the follow-on local cost resolver
+	 * prices maskin_plan usage from OpenRouter's pricing table keyed on this
+	 * value. Undefined on every other route — Claude Code's own
+	 * `total_cost_usd` stays ground truth for `claude_oauth` and BYO paths.
+	 */
+	modelName?: string
 }
 
 export interface FallbackConfig {
@@ -607,7 +616,11 @@ export async function resolveLlmRoute(params: {
 	const maskinPlanEnv = buildMaskinPlanEnv(wsSettings.billing, fallback, enterprise)
 	if (maskinPlanEnv) {
 		await checkPlanCap({ db, workspaceId, wsSettings, enterprise })
-		return { route: LLM_ROUTE_MASKIN_PLAN, envVars: maskinPlanEnv }
+		return {
+			route: LLM_ROUTE_MASKIN_PLAN,
+			envVars: maskinPlanEnv,
+			modelName: fallback.model ?? 'deepseek/deepseek-v4-flash',
+		}
 	}
 
 	if (oauthFailure) {

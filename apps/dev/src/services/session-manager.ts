@@ -1753,6 +1753,7 @@ export class SessionManager extends EventEmitter {
 
 		let routeTaken: LlmRoute | null = null
 		let oauthSlotTaken: string | undefined
+		let routeModelName: string | undefined
 		try {
 			const resolved = await resolveLlmRoute({
 				db: this.db,
@@ -1769,6 +1770,7 @@ export class SessionManager extends EventEmitter {
 			if (resolved) {
 				routeTaken = resolved.route
 				oauthSlotTaken = resolved.oauthSlot
+				routeModelName = resolved.modelName
 				Object.assign(envVars, resolved.envVars)
 			}
 		} catch (err) {
@@ -1829,16 +1831,33 @@ export class SessionManager extends EventEmitter {
 
 		// Persist the chosen route on the session config so cron-based quota
 		// queries (and later analytics) can find fallback sessions cheaply.
+		// On the maskin_plan route we ALSO stamp `sessions.model_name` with the
+		// OpenRouter model that will actually run: the follow-on local cost
+		// resolver keys OpenRouter's pricing table on that value, and without
+		// it every non-Anthropic session reads as an Opus-priced number.
+		// claude_oauth and BYO routes leave `model_name` null on purpose —
+		// Claude Code's own `total_cost_usd` stays ground truth for those.
 		if (routeTaken) {
 			const existingConfig = (session.config as Record<string, unknown>) ?? {}
 			const nextOauthSlot = routeTaken === LLM_ROUTE_OAUTH ? oauthSlotTaken : undefined
 			const updatedConfig = mergeLaunchRouteConfig(existingConfig, routeTaken, nextOauthSlot)
-			if (updatedConfig) {
-				await this.db
-					.update(sessions)
-					.set({ config: updatedConfig })
-					.where(eq(sessions.id, session.id))
-				;(session as { config: Record<string, unknown> }).config = updatedConfig
+			const modelNameToPersist =
+				routeTaken === LLM_ROUTE_MASKIN_PLAN &&
+				routeModelName &&
+				routeModelName !== session.modelName
+					? routeModelName
+					: undefined
+			if (updatedConfig || modelNameToPersist !== undefined) {
+				const patch: Partial<typeof sessions.$inferInsert> = {}
+				if (updatedConfig) patch.config = updatedConfig
+				if (modelNameToPersist !== undefined) patch.modelName = modelNameToPersist
+				await this.db.update(sessions).set(patch).where(eq(sessions.id, session.id))
+				if (updatedConfig) {
+					;(session as { config: Record<string, unknown> }).config = updatedConfig
+				}
+				if (modelNameToPersist !== undefined) {
+					;(session as { modelName: string | null }).modelName = modelNameToPersist
+				}
 			}
 		}
 
