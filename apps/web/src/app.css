@@ -571,6 +571,31 @@
 		@apply bg-background text-foreground font-sans antialiased;
 	}
 
+	/* Contain any accidental horizontal overflow at the viewport edge so a
+	   single stray min-w on a deep child can never produce a page-level
+	   horizontal scrollbar on mobile. Elements that legitimately scroll
+	   horizontally (tables, tab strips) still do so inside their own
+	   overflow-auto wrapper — `clip` on the outer box does not create a
+	   scroll container the way `hidden` would. */
+	html,
+	body {
+		overflow-x: clip;
+	}
+
+	/* iOS/Android auto-zoom on focus fires when a form control's computed
+	   font-size is under 16px. `text-xs` (12px) on `SelectTrigger` (and any
+	   ad-hoc small text-size on an input) trips it. Enforce a 16px floor on
+	   mobile viewports for every form control — Tailwind's utility still wins
+	   at >=md so desktop density is unchanged. */
+	@media (max-width: 767px) {
+		input,
+		select,
+		textarea,
+		[role="combobox"] {
+			font-size: 16px;
+		}
+	}
+
 	/* Tabular numerals on mono surfaces — keeps numeric columns column-aligned
 	   without each call site having to remember the utility class (AC-U4). */
 	code,
