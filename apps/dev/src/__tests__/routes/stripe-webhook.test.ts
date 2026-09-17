@@ -11,6 +11,11 @@ vi.mock('../../lib/stripe', async () => {
 	}
 })
 
+vi.mock('../../lib/analytics/posthog', () => ({
+	capturePosthogEvent: vi.fn(async () => {}),
+}))
+
+import { capturePosthogEvent } from '../../lib/analytics/posthog'
 import { verifyStripeWebhook } from '../../lib/stripe'
 import stripeWebhookRoutes from '../../routes/stripe-webhook'
 import { createTestApp } from '../setup'
@@ -41,6 +46,7 @@ const clearEnv = () => {
 
 beforeEach(() => {
 	vi.mocked(verifyStripeWebhook).mockReset()
+	vi.mocked(capturePosthogEvent).mockClear()
 	clearEnv()
 	setupEnv()
 })
@@ -624,6 +630,7 @@ describe('POST /api/webhooks/stripe', () => {
 				object: {
 					id: 'cs_credit_1',
 					mode: 'payment',
+					created: Math.floor(Date.now() / 1000) - 5,
 					client_reference_id: workspaceId,
 					metadata: { workspace_id: workspaceId, kind: 'credit_topup', amount_usd_cents: '2500' },
 				},
@@ -652,6 +659,30 @@ describe('POST /api/webhooks/stripe', () => {
 		)
 		expect(eventInsert).toBeDefined()
 		expect(eventInsert?.workspaceId).toBe(workspaceId)
+
+		// Observability fired once after commit with all four properties. The
+		// lag-over-60s companion must NOT fire on a fresh reconcile — that
+		// event is the SLO alert and its firing is the regression signal.
+		const reconciled = vi
+			.mocked(capturePosthogEvent)
+			.mock.calls.filter(([event]) => event === 'credit_purchase_reconciled')
+		expect(reconciled).toHaveLength(1)
+		const reconciledCall = reconciled[0]
+		if (!reconciledCall) throw new Error('unreachable — length asserted above')
+		const [, distinctId, props] = reconciledCall
+		expect(distinctId).toBe(workspaceId)
+		expect(props).toMatchObject({
+			workspace_id: workspaceId,
+			amount_cents: 2_500,
+			stripe_checkout_session_id: 'cs_credit_1',
+		})
+		expect(props.lag_seconds as number).toBeGreaterThanOrEqual(0)
+		expect(props.lag_seconds as number).toBeLessThanOrEqual(60)
+		expect(
+			vi
+				.mocked(capturePosthogEvent)
+				.mock.calls.filter(([event]) => event === 'credit_purchase_reconciliation_lag_over_60s'),
+		).toHaveLength(0)
 	})
 
 	it('does not re-credit the balance when the same credit_topup checkout is redelivered', async () => {
@@ -711,6 +742,15 @@ describe('POST /api/webhooks/stripe', () => {
 				(i as Record<string, unknown>).action === 'workspace_credit_topup',
 		)
 		expect(eventInsert).toBeUndefined()
+
+		// Same reason the audit row is suppressed: the top-up is a replay,
+		// not a new reconciliation. PostHog would otherwise inflate the
+		// reconciled-count and hide the SLO-lag signal in duplicate noise.
+		expect(
+			vi
+				.mocked(capturePosthogEvent)
+				.mock.calls.filter(([event]) => event === 'credit_purchase_reconciled'),
+		).toHaveLength(0)
 	})
 
 	it('does not credit the balance when a credit_topup checkout carries an invalid amount', async () => {
@@ -744,6 +784,76 @@ describe('POST /api/webhooks/stripe', () => {
 		expect(res.status).toBe(200)
 		const update = findWorkspaceUpdate(calls.updates)
 		expect(update.settings.billing).toMatchObject({ credit_balance_cents: 1_000 })
+
+		// Nothing was reconciled — the invalid-amount early return must NOT
+		// surface as a successful reconciliation in PostHog.
+		expect(
+			vi
+				.mocked(capturePosthogEvent)
+				.mock.calls.filter(([event]) => event === 'credit_purchase_reconciled'),
+		).toHaveLength(0)
+	})
+
+	it('fires credit_purchase_reconciliation_lag_over_60s when session.created is older than the SLO window', async () => {
+		// Any lag > 60s means the reconciliation guarantee slipped — either a
+		// Stripe delivery delay or a webhook queue backup. Both are on-call
+		// signals, so the SLO-breach event fires alongside the base event so a
+		// PostHog alert can key off its own name without filtering.
+		const { app, mockResults } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [
+			[{ id: 'claim-topup-lag' }],
+			[{ id: 'ledger-topup-lag' }],
+			[{ id: 'system-actor-topup-lag' }],
+			[],
+			[],
+		]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: { plan: 'pro', status: 'active', credit_balance_cents: 1_000 },
+					},
+				},
+				[],
+				[],
+			],
+		]
+
+		const nowSec = Math.floor(Date.now() / 1000)
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_credit_topup_lag',
+			type: 'checkout.session.completed',
+			data: {
+				object: {
+					id: 'cs_credit_lag',
+					mode: 'payment',
+					// 90 seconds ago — above the 60s SLO threshold.
+					created: nowSec - 90,
+					client_reference_id: workspaceId,
+					metadata: { workspace_id: workspaceId, kind: 'credit_topup', amount_usd_cents: '2500' },
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+
+		const reconciled = vi
+			.mocked(capturePosthogEvent)
+			.mock.calls.filter(([event]) => event === 'credit_purchase_reconciled')
+		const lagOver = vi
+			.mocked(capturePosthogEvent)
+			.mock.calls.filter(([event]) => event === 'credit_purchase_reconciliation_lag_over_60s')
+		expect(reconciled).toHaveLength(1)
+		expect(lagOver).toHaveLength(1)
+		const reconciledCall = reconciled[0]
+		const lagOverCall = lagOver[0]
+		if (!reconciledCall || !lagOverCall) throw new Error('unreachable — length asserted above')
+		expect(reconciledCall[2].lag_seconds as number).toBeGreaterThan(60)
+		expect(lagOverCall[2]).toEqual(reconciledCall[2])
 	})
 
 	it('short-circuits duplicate deliveries via webhook_deliveries dedup', async () => {
@@ -764,6 +874,10 @@ describe('POST /api/webhooks/stripe', () => {
 		expect(body).toMatchObject({ duplicate: true })
 		// And critically — no workspace update was attempted.
 		expect(calls.updates).toHaveLength(0)
+		// The dedup short-circuit returns before applyEvent runs, so no
+		// reconciliation happened — the observability events must stay
+		// silent (double-fire would inflate the reconciled-count).
+		expect(vi.mocked(capturePosthogEvent)).not.toHaveBeenCalled()
 	})
 
 	// ── LinkedIn Identity add-on ─────────────────────────────────────────

@@ -42,6 +42,7 @@ function isAddonSubscription(
 	)
 }
 
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { billingAfterCancel, settingsAfterPaidPlanActivation } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import {
@@ -61,6 +62,21 @@ import {
 import type { StripeEnv } from '../lib/stripe'
 
 const STRIPE_SYSTEM_ACTOR_NAME = 'Stripe'
+
+// Bet 6d84-credit-reliability. Fires after the top-up transaction commits so
+// the reconciliation guarantee is falsifiable: any success without this event
+// (or any event whose `lag_seconds` breaches the SLO) is a real regression.
+// Always-on regardless of MASKIN_CREDIT_UX — the flag gates UX surfaces, not
+// observability, so we catch drift in unflagged workspaces during rollout.
+const POSTHOG_EVENT_CREDIT_TOPUP_RECONCILED = 'credit_purchase_reconciled'
+const POSTHOG_EVENT_CREDIT_TOPUP_LAG_OVER_60S = 'credit_purchase_reconciliation_lag_over_60s'
+const CREDIT_TOPUP_LAG_SLO_SECONDS = 60
+
+interface AppliedTopup {
+	amountCents: number
+	stripeCheckoutSessionId: string
+	stripeSessionCreatedSec: number | null
+}
 
 type Tx = Pick<Database, 'select' | 'insert'>
 
@@ -163,7 +179,28 @@ app.post('/', async (c) => {
 	}
 
 	try {
-		await applyEvent(db, workspaceId, event, stripeEnv)
+		const appliedTopup = await applyEvent(db, workspaceId, event, stripeEnv)
+		if (appliedTopup) {
+			// Post-commit only: `applyEvent` throws on rollback, so reaching
+			// here means both the ledger row and the balance bump landed. Fire
+			// twice for the lag breach case so the SLO alert can key off its
+			// own event name without re-deriving from the base event.
+			const nowSec = Math.floor(Date.now() / 1000)
+			const lagSeconds =
+				appliedTopup.stripeSessionCreatedSec !== null
+					? Math.max(0, nowSec - appliedTopup.stripeSessionCreatedSec)
+					: 0
+			const properties = {
+				workspace_id: workspaceId,
+				amount_cents: appliedTopup.amountCents,
+				lag_seconds: lagSeconds,
+				stripe_checkout_session_id: appliedTopup.stripeCheckoutSessionId,
+			}
+			void capturePosthogEvent(POSTHOG_EVENT_CREDIT_TOPUP_RECONCILED, workspaceId, properties)
+			if (lagSeconds > CREDIT_TOPUP_LAG_SLO_SECONDS) {
+				void capturePosthogEvent(POSTHOG_EVENT_CREDIT_TOPUP_LAG_OVER_60S, workspaceId, properties)
+			}
+		}
 		if (claimRowId) {
 			// Mark the claim processed so the reconciler doesn't release it after the
 			// 15m stale threshold. Without this, every successful Stripe delivery
@@ -249,13 +286,14 @@ async function applyEvent(
 	workspaceId: string,
 	event: Stripe.Event,
 	stripeEnv: StripeEnv,
-): Promise<void> {
+): Promise<AppliedTopup | null> {
 	// Concurrent webhook deliveries on the same workspace each do a
 	// SELECT -> mutate JSON -> UPDATE. Without serialization, a later writer
 	// that read before an earlier writer's UPDATE silently clobbers fields
 	// only the earlier writer touched. A row lock inside a transaction
 	// serializes them on the workspace row; a single delivery still completes
 	// in one round-trip per query so the lock window stays bounded.
+	let appliedTopup: AppliedTopup | null = null
 	await db.transaction(async (tx) => {
 		const [workspace] = await tx
 			.select({
@@ -354,6 +392,11 @@ async function applyEvent(
 					}
 
 					next = { ...next, credit_balance_cents: balanceAfter }
+					appliedTopup = {
+						amountCents,
+						stripeCheckoutSessionId: session.id,
+						stripeSessionCreatedSec: typeof session.created === 'number' ? session.created : null,
+					}
 
 					// Persist the Stripe customer this top-up ran against when the
 					// workspace doesn't have one yet. A first-time buyer (typically a
@@ -547,6 +590,7 @@ async function applyEvent(
 			})
 		}
 	})
+	return appliedTopup
 }
 
 /**
