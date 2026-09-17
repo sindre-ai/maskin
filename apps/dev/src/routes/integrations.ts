@@ -40,6 +40,7 @@ import {
 	persistRecoveredInstallationId,
 	propagateRecoveredInstallationId,
 } from '../lib/integrations/providers/github/installation-recovery'
+import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
 import { upsertSkjaldMeeting } from '../lib/integrations/providers/skjald/meeting-sync'
 import {
 	dispatchAccountLinkAction,
@@ -1393,9 +1394,34 @@ app.openapi(callbackRoute, (async (c) => {
 		}
 	}
 
+	// google-meet only: resolve the caller's Google People id and persist it on
+	// the row before activation. Task 3's Workspace Events subscription uses this
+	// value to build `targetResource=//cloudidentity.googleapis.com/users/{peopleId}`,
+	// and `webhookPreHandler` reads it to map deliveries back to `external_id`.
+	// A missing People id fails the connect (redirect with `people_id_fetch_failed`)
+	// rather than activating a row Task 3 would immediately mark broken —
+	// stored `config.meet.peopleId` is a hard postcondition of the S12 smoke.
+	let meetPeopleId: string | undefined
+	if (providerName === 'google-meet' && credentials.accessToken) {
+		try {
+			meetPeopleId = await resolveMeetPeopleId(credentials.accessToken)
+		} catch (err) {
+			logger.error('Failed to resolve Google Meet People id at OAuth callback', {
+				workspaceId: stateData.workspaceId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+			clearOAuthNonceCookie(c, providerName)
+			return c.redirect(
+				`${frontendUrl}/${stateData.workspaceId}/settings/integrations?error=people_id_fetch_failed`,
+			)
+		}
+	}
+
 	const encryptedCredentials = encrypt(JSON.stringify(credentials))
 	const activeConfig: IntegrationConfig = { system_actor_id: systemActor.id }
 	if (ownerLogin) activeConfig.owner_login = ownerLogin
+	if (meetPeopleId) activeConfig.meet = { peopleId: meetPeopleId }
 
 	// Re-connecting an installation whose externalId is stable across connects
 	// (GitHub installation ids, Slack team ids via resolveExternalId): refresh
@@ -2640,6 +2666,27 @@ webhookApp.post('/:provider', async (c) => {
 	if (!normalized) {
 		// Event type we don't handle — acknowledge it
 		return c.json({ ok: true, skipped: true })
+	}
+
+	// Some providers (Google Meet) deliver payloads keyed on an indirect
+	// identifier (People-id via Workspace Events) rather than the row's
+	// external_id. The resolveInstallationId hook is the join that swaps the
+	// placeholder for the real external_id before the integrations lookup.
+	if (resolved.resolveInstallationId) {
+		const resolvedId = await resolved.resolveInstallationId({
+			db,
+			provider: providerName,
+			normalized,
+			payload,
+			headers,
+		})
+		if (!resolvedId) {
+			logger.info(`Meet-shape provider ${providerName} had no matching row for delivered id`, {
+				installationId: normalized.installationId,
+			})
+			return c.json({ ok: true, skipped: true })
+		}
+		normalized.installationId = resolvedId
 	}
 
 	// Find ALL matching active integrations. A single external install (e.g. one

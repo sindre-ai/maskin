@@ -83,7 +83,7 @@ Exactly one band. Not a range, not "around 30," not "depends." Pick.
 
 - **AUTO-APPROVE ELIGIBLE** — `score < 25`. The PR is eligible for `orchestrate-pr-review` to consume; it does not auto-approve here.
 - **AGENT RECOMMENDS HUMAN** — `25 ≤ score < 60`. Orchestrator runs perspectives but never submits APPROVE.
-- **TWO-HUMAN REQUIRED** — `score ≥ 60`. Orchestrator stops and routes to humans.
+- **HUMAN REVIEW REQUIRED** — `score ≥ 60`. Orchestrator stops and routes to humans.
 
 ## Output
 
@@ -109,7 +109,7 @@ Also post the `maskin/risk-score` GitHub check run with conclusion:
 
 - `success` for `AUTO-APPROVE ELIGIBLE`
 - `neutral` for `AGENT RECOMMENDS HUMAN`
-- `failure` for `TWO-HUMAN REQUIRED`
+- `failure` for `HUMAN REVIEW REQUIRED`
 
 The check-run summary includes the score and band; the full block goes on the task, not on the PR (the PR is a projection of the task).
 
@@ -122,5 +122,5 @@ Record the skill version (`0.1.0`) and the deterministic seed in the in-toto att
 - Do not invent a signal that isn't in the table. The table is the contract; new signals require a version bump and a bet revision.
 - Do not produce a non-deterministic score. If the adapter cannot reach a sub-tool (squawk, semgrep, incident density), the affected signal is *absent*, not *guessed*. Absent signals are observable in the verdict — that is itself a feature.
 - Do not write a partial verdict. Either the full `## Risk Score` block lands on the task and the check run lands on the PR, or neither does. Half-output is worse than no output.
-- Do not edit `.maskin/protected-paths.yml`, `.maskin/risk-floors.yml`, or `.maskin/hot-tables.yml` from this skill. Those are protected paths themselves; edits are always two-human PRs.
+- Do not edit `.maskin/protected-paths.yml`, `.maskin/risk-floors.yml`, or `.maskin/hot-tables.yml` from this skill. Those are protected paths themselves; edits are always human-review PRs.
 - Do not approve, merge, or request changes. Score, output, stop. The downstream skills decide what happens next.

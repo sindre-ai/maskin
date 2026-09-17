@@ -808,6 +808,42 @@ export const readState = pgTable(
 export type ReadState = typeof readState.$inferSelect
 export type NewReadState = typeof readState.$inferInsert
 
+// ── Star State ────────────────────────────────────────────────────────────
+//
+// Per-actor "starred" flag on a polymorphic (entity_type, entity_id) target.
+// Mirrors `read_state` in shape and reason: server-persisted per-caller state
+// so a toggle from one device shows up on the caller's other devices without
+// a client-only localStorage cache. Presence of the row means starred; unstar
+// is a row DELETE (see services/star-state.ts), no soft-flag or unstarred_at
+// column — boolean semantics match the payload's `is_starred_by_me` scalar.
+//
+// `entity_type = 'object'` at ship; `comment` / `session` are deliberately
+// left open in the schema so the same table backs future starrable entities
+// without a migration, but no code path writes them yet.
+
+export const starState = pgTable(
+	'star_state',
+	{
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		entityType: text('entity_type').notNull(),
+		entityId: uuid('entity_id').notNull(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		starredAt: timestamp('starred_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.actorId, t.entityType, t.entityId] }),
+		index('star_state_lookup_idx').on(t.workspaceId, t.actorId),
+		index('star_state_reverse_idx').on(t.entityType, t.entityId),
+	],
+)
+
+export type StarState = typeof starState.$inferSelect
+export type NewStarState = typeof starState.$inferInsert
+
 // ── Notifications ─────────────────────────────────────────────────────────
 
 export const notifications = pgTable(
@@ -1408,3 +1444,43 @@ export const orphanThreadDetections = pgTable(
 
 export type OrphanThreadDetection = typeof orphanThreadDetections.$inferSelect
 export type NewOrphanThreadDetection = typeof orphanThreadDetections.$inferInsert
+
+// ── Google Meet — create_space idempotency ─────────────────────────────────
+// Maskin-side dedup ledger for `google_meet__create_space`. Meet's spaces.create
+// endpoint does NOT accept a client-side idempotency key (unlike GCal's
+// events.insert, which does via conferenceData.createRequest.requestId — the
+// create_meet_backed_event path uses Google-native replay and does not touch
+// this table). So `create_space` two identical calls (same workspace, same
+// idempotency_key) would otherwise provision two spaces and burn Meet quota.
+//
+// Default key derives to sha256(actor_id + purpose_normalised + YYYY-MM-DD)
+// so an agent that retries within a day gets the cached space back; callers
+// that need tighter or looser dedupe pass their own key.
+//
+// Composite unique index (workspace_id, idempotency_key) is what makes the
+// replay contract hold — a second insert with the same key races, loses on
+// the constraint, and the tool reads back the winner's space_name.
+export const googleMeetSpaceIdempotency = pgTable(
+	'google_meet_space_idempotency',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		idempotencyKey: text('idempotency_key').notNull(),
+		spaceName: text('space_name').notNull(),
+		meetingCode: text('meeting_code').notNull(),
+		meetingUri: text('meeting_uri').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('google_meet_space_idempotency_workspace_key_uniq').on(
+			t.workspaceId,
+			t.idempotencyKey,
+		),
+		index('google_meet_space_idempotency_created_at_idx').on(t.createdAt),
+	],
+)
+
+export type GoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferSelect
+export type NewGoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferInsert

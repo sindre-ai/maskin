@@ -66,6 +66,22 @@ export const FLAGS = {
 	 */
 	SLACK_SETUP_UX_V2: 'slack-setup-ux-v2',
 	/**
+	 * Google Meet integration visibility on the Settings > Integrations page.
+	 * When off, the provider card + Connect button are filtered out of the
+	 * providers list rendered by `apps/web/src/routes/_authed/$workspaceId/settings/integrations.tsx`
+	 * — the customer sees no google-meet entry point at all. When on, google-meet
+	 * appears alongside every other OAuth provider (Gmail, GCal, Slack, ...) with
+	 * a standard Connect button. Visual-layer only: the backend still registers
+	 * the provider unconditionally, so `POST /api/integrations/google-meet/connect`
+	 * and the seven `google_meet__*` MCP tools stay reachable for tester actors
+	 * (add them to `FF_TESTER_ACTOR_IDS` + `google-meet-integration-ui` to
+	 * `FF_TESTER_FEATURES`). See parent bet [Google Meet MCP — cover the top
+	 * JTBDs across the workspace](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/947eee4d-9b30-49c7-968c-9376b4f5d80e)
+	 * for the rollout plan. Retire (drop the boundary + delete this entry) once
+	 * google-meet ships to every workspace.
+	 */
+	GOOGLE_MEET_INTEGRATION_UI: 'google-meet-integration-ui',
+	/**
 	 * Chat composer `+` menu collapse — replaces the three-item **Reference an
 	 * object** / **Mention an agent** / **Create an object** dropdown with a
 	 * single **Attach a file** row, and promotes the `/` and `@` primitives via
