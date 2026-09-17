@@ -101,23 +101,35 @@ export const MASKIN_FREE_TRIAL_LOOKUP_KEY = 'maskin_free_trial'
 /**
  * Delta 1 Checkout Session params — added to EVERY stripe.checkout.sessions.create
  * call built by createCheckoutSession, createCreditCheckoutSession, and
- * createLinkedInAddonCheckoutSession when MASKIN_VAT_CHECKOUT=true. Gated as a
- * unit because Stripe rejects the session at creation if any of the four are
- * set without customer_update.address (see Delta 1 rationale in the spec).
+ * createLinkedInAddonCheckoutSession when MASKIN_VAT_CHECKOUT=true.
+ *
+ * customer_update is only valid when the session already has a Customer
+ * attached. Stripe rejects a session at creation with "customer_update can
+ * only be used with customer." if customer_update is set while `customer` is
+ * not — the "attach the collected billing address to the persisted customer"
+ * semantics are meaningless when no persisted customer exists yet. For a
+ * first-time buyer (no existingCustomerId), the Customer is minted during
+ * Checkout and Stripe populates its address from the collected billing_address
+ * automatically, so customer_update must be omitted. Callers pass
+ * `hasCustomer` reflecting whether they will also set `params.customer`.
  *
  * Callers spread this into their SessionCreateParams object; do not mutate it.
  */
-export function vatCheckoutSessionParams(): Pick<
+export function vatCheckoutSessionParams(opts: { hasCustomer: boolean }): Pick<
 	Stripe.Checkout.SessionCreateParams,
 	'automatic_tax' | 'tax_id_collection' | 'billing_address_collection' | 'customer_update'
 > {
-	return {
+	const base = {
 		automatic_tax: { enabled: true },
 		tax_id_collection: {
 			enabled: true,
-			required: 'never',
+			required: 'never' as const,
 		},
-		billing_address_collection: 'required',
+		billing_address_collection: 'required' as const,
+	}
+	if (!opts.hasCustomer) return base
+	return {
+		...base,
 		customer_update: {
 			address: 'auto',
 			name: 'auto',
@@ -295,10 +307,11 @@ export async function createCheckoutSession(
 		subscription_data: {
 			metadata: { workspace_id: inputs.workspaceId, plan: inputs.plan },
 		},
-		// Delta 1 (VAT bet). Spread as a unit — Stripe rejects the session at
-		// creation if any of these is set without customer_update.address, so
-		// they must ship together or not at all. Gated by env kill switch.
-		...(isVatCheckoutEnabled() ? vatCheckoutSessionParams() : {}),
+		// Delta 1 (VAT bet). Gated by env kill switch. customer_update is
+		// conditional on there being a customer to update — see the helper.
+		...(isVatCheckoutEnabled()
+			? vatCheckoutSessionParams({ hasCustomer: Boolean(inputs.existingCustomerId) })
+			: {}),
 	}
 	if (inputs.existingCustomerId) {
 		params.customer = inputs.existingCustomerId
@@ -358,8 +371,9 @@ export async function createCreditCheckoutSession(
 			// Delta 1 payload additions PLUS invoice_creation (payment mode only —
 			// subscription mode gets an invoice automatically from Stripe Billing).
 			// The invoice PDF is the legally-required document for reverse-charge
-			// sales (EU VAT Directive Art. 226(11a)).
-			...vatCheckoutSessionParams(),
+			// sales (EU VAT Directive Art. 226(11a)). customer_update is only
+			// emitted when a customer is attached — see the helper.
+			...vatCheckoutSessionParams({ hasCustomer: Boolean(inputs.existingCustomerId) }),
 			invoice_creation: { enabled: true },
 			metadata: {
 				workspace_id: inputs.workspaceId,
@@ -563,7 +577,9 @@ export async function createLinkedInAddonCheckoutSession(
 		// Delta 1 (VAT bet) also applies to the LinkedIn Identity add-on.
 		// Non-blocking spec correction from CTO's 10 Sep deliverability review:
 		// the third builder was originally undernamed in the shaping doc.
-		...(isVatCheckoutEnabled() ? vatCheckoutSessionParams() : {}),
+		...(isVatCheckoutEnabled()
+			? vatCheckoutSessionParams({ hasCustomer: Boolean(inputs.existingCustomerId) })
+			: {}),
 	}
 	if (inputs.existingCustomerId) {
 		params.customer = inputs.existingCustomerId

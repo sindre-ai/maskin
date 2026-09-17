@@ -126,15 +126,25 @@ describe('isVatCheckoutEnabled', () => {
 })
 
 describe('vatCheckoutSessionParams (Delta 1)', () => {
-	it('returns the four inseparable Stripe Tax flags', () => {
-		const params = vatCheckoutSessionParams()
+	it('returns automatic_tax, tax_id_collection, billing_address_collection, customer_update when a customer is attached', () => {
+		const params = vatCheckoutSessionParams({ hasCustomer: true })
 		expect(params.automatic_tax).toEqual({ enabled: true })
 		expect(params.tax_id_collection).toEqual({ enabled: true, required: 'never' })
 		expect(params.billing_address_collection).toBe('required')
-		// customer_update.address='auto' is what stops Stripe from rejecting the
-		// session at creation when billing_address_collection='required' AND
-		// automatic_tax=true are both set with a persisted Customer.
 		expect(params.customer_update).toEqual({ address: 'auto', name: 'auto' })
+	})
+
+	it('omits customer_update for a first-time buyer with no existing Stripe customer', () => {
+		// Stripe rejects Checkout with "customer_update can only be used with
+		// customer." when customer_update is set without an attached Customer,
+		// which kills every first-time paid signup. The other three flags stay
+		// on — Stripe still collects the billing address, applies Stripe Tax,
+		// and mints the Customer with that address automatically.
+		const params = vatCheckoutSessionParams({ hasCustomer: false })
+		expect(params.automatic_tax).toEqual({ enabled: true })
+		expect(params.tax_id_collection).toEqual({ enabled: true, required: 'never' })
+		expect(params.billing_address_collection).toBe('required')
+		expect(params.customer_update).toBeUndefined()
 	})
 })
 
@@ -282,7 +292,7 @@ describe('Delta 1 — MASKIN_VAT_CHECKOUT flag on: Stripe Tax params attached', 
 		vi.unstubAllEnvs()
 	})
 
-	it('createCheckoutSession attaches the four Delta 1 flags on subscription mode', async () => {
+	it('createCheckoutSession attaches Delta 1 flags on subscription mode; first-time buyer omits customer_update', async () => {
 		const env = readStripeEnv(VALID_ENV)
 		const create = vi
 			.fn()
@@ -302,10 +312,35 @@ describe('Delta 1 — MASKIN_VAT_CHECKOUT flag on: Stripe Tax params attached', 
 		expect(params.automatic_tax).toEqual({ enabled: true })
 		expect(params.tax_id_collection).toEqual({ enabled: true, required: 'never' })
 		expect(params.billing_address_collection).toBe('required')
-		expect(params.customer_update).toEqual({ address: 'auto', name: 'auto' })
+		// No existingCustomerId → Stripe mints the Customer during Checkout,
+		// so customer_update must be omitted or Stripe rejects the session.
+		expect(params.customer).toBeUndefined()
+		expect(params.customer_update).toBeUndefined()
 		// invoice_creation ONLY on payment mode, so subscription mode does not
 		// get it here. Stripe Billing auto-invoices subscription sessions.
 		expect((params as { invoice_creation?: unknown }).invoice_creation).toBeUndefined()
+	})
+
+	it('createCheckoutSession attaches customer_update when a returning customer is passed', async () => {
+		const env = readStripeEnv(VALID_ENV)
+		const create = vi
+			.fn()
+			.mockResolvedValue({ id: 'cs_sub_vat_ret', url: 'https://stripe.test/cs_sub_vat_ret' })
+		const stripe = { checkout: { sessions: { create } } } as unknown as Stripe
+		await createCheckoutSession(
+			stripe,
+			{
+				workspaceId: 'ws-vat',
+				plan: 'pro',
+				successUrl: 'https://app.test/success',
+				cancelUrl: 'https://app.test/cancel',
+				existingCustomerId: 'cus_existing',
+			},
+			env,
+		)
+		const params = create.mock.calls[0]?.[0] as Stripe.Checkout.SessionCreateParams
+		expect(params.customer).toBe('cus_existing')
+		expect(params.customer_update).toEqual({ address: 'auto', name: 'auto' })
 	})
 
 	it('createCreditCheckoutSession swaps to maskin_credits_custom Price + adds invoice_creation', async () => {
