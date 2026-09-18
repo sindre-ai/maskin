@@ -1,5 +1,16 @@
 const BASE_URL = 'http://localhost:5173'
 
+/**
+ * The **AGENT_SERVER_SECRET** the E2E stack runs with.
+ *
+ * Single source of truth: **playwright.config.ts** injects it into the dev
+ * webServer's environment, and specs pass it to **postSessionLogs**. One
+ * constant means the two cannot drift — a mismatch would 401 the log-ingest
+ * call with no obvious cause, and the dev server 503s outright when the
+ * variable is unset.
+ */
+export const E2E_AGENT_SERVER_SECRET = 'e2e-agent-server-secret'
+
 interface CreateActorResponse {
 	id: string
 	name: string
@@ -131,6 +142,18 @@ interface TriggerResponse {
 	targetActorId: string
 	enabled: boolean
 	createdBy: string
+	createdAt: string | null
+	updatedAt: string | null
+}
+
+interface SessionResponse {
+	id: string
+	workspaceId: string
+	actorId: string
+	status: string
+	actionPrompt: string
+	config: Record<string, unknown> | null
+	conversationId: string | null
 	createdAt: string | null
 	updatedAt: string | null
 }
@@ -488,6 +511,62 @@ export class TestAPI {
 			body: JSON.stringify(data),
 		})
 		if (!res.ok) throw new Error(`updateConversationMe failed: ${res.status}`)
+		return res.json()
+	}
+
+	/**
+	 * Create a session row without starting a container (`auto_start: false`,
+	 * so it lands in `pending` and never tries to launch).
+	 *
+	 * The web E2E stack has no container runtime, so a genuinely running
+	 * session is impossible here. This seeds the DB row two other things need:
+	 * the log-ingest endpoint 410s for an unknown session id, and the SSE
+	 * stream authorises the request against the session's workspace. Specs then
+	 * present the row to the UI as `running` with a route mock.
+	 */
+	async createSession(
+		workspaceId: string,
+		data: {
+			actor_id: string
+			action_prompt: string
+			config?: Record<string, unknown>
+			auto_start?: boolean
+		},
+	): Promise<SessionResponse> {
+		const res = await fetch(`${this.baseURL}/api/sessions`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify(data),
+		})
+		if (!res.ok) throw new Error(`createSession failed: ${res.status}`)
+		return res.json()
+	}
+
+	/**
+	 * POST a batch of log lines to the internal agent-server ingest endpoint.
+	 *
+	 * This is the path a remote agent-server uses in production, and the one
+	 * that emits on the in-process `log` bus the SSE stream reads. Using it —
+	 * rather than seeding `session_logs` directly — is what makes the
+	 * live-update spec exercise the real stream end to end.
+	 *
+	 * Needs the **AGENT_SERVER_SECRET** bearer, which the dev server reads from
+	 * its own environment (the route 503s when unset).
+	 */
+	async postSessionLogs(
+		sessionId: string,
+		logs: { stream: 'stdout' | 'stderr' | 'system'; content: string }[],
+		secret: string,
+	): Promise<{ accepted: number }> {
+		const res = await fetch(
+			`${this.baseURL}/api/internal/agent-servers/sessions/${sessionId}/logs`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
+				body: JSON.stringify({ logs }),
+			},
+		)
+		if (!res.ok) throw new Error(`postSessionLogs failed: ${res.status}`)
 		return res.json()
 	}
 }
