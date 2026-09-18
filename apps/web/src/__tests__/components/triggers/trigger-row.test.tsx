@@ -1,4 +1,4 @@
-import { TriggerRow } from '@/components/triggers/trigger-row'
+import { TriggerRow, describeTrigger } from '@/components/triggers/trigger-row'
 import type { TriggerResponse } from '@/lib/api'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -110,5 +110,50 @@ describe('TriggerRow', () => {
 		const label = screen.getByText('On')
 		expect(label.className).toContain('text-xs')
 		expect(label.className).not.toContain('text-[11px]')
+	})
+})
+
+describe('describeTrigger status_changed', () => {
+	// MCP writes `{ filter: { status } }` per the shared schema; the trigger
+	// row was falling through to "from any to any" for every agent-created
+	// trigger before the fix.
+	it('reads config.filter.status when set to a single status (MCP shape)', () => {
+		expect(
+			describeTrigger({
+				type: 'event',
+				config: {
+					entity_type: 'contact',
+					action: 'status_changed',
+					filter: { status: 'in_progress' },
+				},
+			}),
+		).toBe('When contact changes from any to in_progress')
+	})
+
+	it('reads config.filter.status when set to an array of statuses', () => {
+		expect(
+			describeTrigger({
+				type: 'event',
+				config: {
+					entity_type: 'contact',
+					action: 'status_changed',
+					filter: { status: ['in_progress', 'in_review'] },
+				},
+			}),
+		).toBe('When contact changes from any to in_progress or in_review')
+	})
+
+	it('still reads config.from_status / config.to_status when set (form shape)', () => {
+		expect(
+			describeTrigger({
+				type: 'event',
+				config: {
+					entity_type: 'contact',
+					action: 'status_changed',
+					from_status: 'new_lead',
+					to_status: 'in_conversation',
+				},
+			}),
+		).toBe('When contact changes from new_lead to in_conversation')
 	})
 })
