@@ -1,7 +1,7 @@
 import { ViewerStage } from '@/components/files/viewer-stage'
 import { trackFileViewerZoomUsed } from '@/lib/analytics'
 import type { FileDetail } from '@/lib/api'
-import { VIEWER_DOC_SIZE_MESSAGE } from '@/lib/mini-app'
+import { VIEWER_DOC_SIZE_MESSAGE, VIEWER_WHEEL_MESSAGE } from '@/lib/mini-app'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -89,6 +89,119 @@ describe('ViewerStage — native wheel binding', () => {
 		const event = new WheelEvent('wheel', { deltaY: 120, cancelable: true, bubbles: true })
 		getViewport().dispatchEvent(event)
 		expect(event.defaultPrevented).toBe(false)
+		expect(trackFileViewerZoomUsed).not.toHaveBeenCalled()
+	})
+})
+
+describe('ViewerStage — wheel forwarded from the sandboxed iframe', () => {
+	// This is the boundary the native-wheel test above CANNOT reach: a real
+	// ctrl+wheel over a sandboxed iframe fires in the frame's own browsing
+	// context and never bubbles to the parent listener, so the feature depends
+	// entirely on the reporter script (see VIEWER_WHEEL_MESSAGE in mini-app.ts)
+	// forwarding the event over postMessage. jsdom has no iframe browsing
+	// context, so we simulate the boundary by dispatching the same MessageEvent
+	// the reporter would post — matching `source: iframe.contentWindow`, since
+	// the parent checks source-window equality before trusting any payload.
+
+	function getIframe(): HTMLIFrameElement {
+		return screen.getByTitle('Preview of mockup.html') as HTMLIFrameElement
+	}
+
+	function getViewport(): HTMLElement {
+		return screen.getByTitle('Preview of mockup.html').closest('.overflow-auto') as HTMLElement
+	}
+
+	beforeEach(() => {
+		vi.mocked(trackFileViewerZoomUsed).mockClear()
+	})
+
+	it('emits file_viewer_zoom_used when the iframe forwards a ctrl+wheel over the document', () => {
+		render(<ViewerStage file={buildHtmlFile()} />)
+		const iframe = getIframe()
+		act(() => {
+			window.dispatchEvent(
+				new MessageEvent('message', {
+					source: iframe.contentWindow,
+					data: {
+						type: VIEWER_WHEEL_MESSAGE,
+						deltaX: 0,
+						deltaY: -120,
+						ctrlKey: true,
+						docX: 400,
+						docY: 300,
+					},
+				}),
+			)
+		})
+		expect(trackFileViewerZoomUsed).toHaveBeenCalledWith(
+			expect.objectContaining({ mode: 'wheel', file_id: 'file-1' }),
+		)
+	})
+
+	it('reports mode=pinch when the forwarded delta is fractional (trackpad pinch)', () => {
+		render(<ViewerStage file={buildHtmlFile()} />)
+		const iframe = getIframe()
+		act(() => {
+			window.dispatchEvent(
+				new MessageEvent('message', {
+					source: iframe.contentWindow,
+					data: {
+						type: VIEWER_WHEEL_MESSAGE,
+						deltaX: 0,
+						deltaY: -13.5,
+						ctrlKey: true,
+						docX: 100,
+						docY: 100,
+					},
+				}),
+			)
+		})
+		expect(trackFileViewerZoomUsed).toHaveBeenCalledWith(expect.objectContaining({ mode: 'pinch' }))
+	})
+
+	it('pans the viewport on a plain (non-ctrl) wheel forwarded from the iframe', () => {
+		render(<ViewerStage file={buildHtmlFile()} />)
+		const iframe = getIframe()
+		const viewport = getViewport()
+		viewport.scrollLeft = 0
+		viewport.scrollTop = 0
+		act(() => {
+			window.dispatchEvent(
+				new MessageEvent('message', {
+					source: iframe.contentWindow,
+					data: {
+						type: VIEWER_WHEEL_MESSAGE,
+						deltaX: 25,
+						deltaY: 40,
+						ctrlKey: false,
+						docX: 0,
+						docY: 0,
+					},
+				}),
+			)
+		})
+		expect(viewport.scrollLeft).toBe(25)
+		expect(viewport.scrollTop).toBe(40)
+		expect(trackFileViewerZoomUsed).not.toHaveBeenCalled()
+	})
+
+	it('ignores a wheel message whose source is not our iframe (spoofed sender)', () => {
+		render(<ViewerStage file={buildHtmlFile()} />)
+		act(() => {
+			// source omitted → null, so the source-window check drops the payload.
+			window.dispatchEvent(
+				new MessageEvent('message', {
+					data: {
+						type: VIEWER_WHEEL_MESSAGE,
+						deltaX: 0,
+						deltaY: -120,
+						ctrlKey: true,
+						docX: 100,
+						docY: 100,
+					},
+				}),
+			)
+		})
 		expect(trackFileViewerZoomUsed).not.toHaveBeenCalled()
 	})
 })

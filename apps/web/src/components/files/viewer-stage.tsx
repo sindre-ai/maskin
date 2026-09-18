@@ -5,7 +5,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { type FileViewerZoomMode, trackFileViewerZoomUsed } from '@/lib/analytics'
 import type { FileDetail } from '@/lib/api'
 import { base64ToBytes, decodeBase64Utf8, downloadFile } from '@/lib/file-utils'
-import { VIEWER_DOC_SIZE_MESSAGE, prepareViewerHtml } from '@/lib/mini-app'
+import { VIEWER_DOC_SIZE_MESSAGE, VIEWER_WHEEL_MESSAGE, prepareViewerHtml } from '@/lib/mini-app'
 import {
 	type Size,
 	ZOOM_MAX,
@@ -148,18 +148,43 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 		return () => observer.disconnect()
 	}, [])
 
-	// Listen for the sandbox reporter's doc-size posts. Filter is the
-	// namespaced type token (VIEWER_DOC_SIZE_MESSAGE) — this listener only
-	// runs while the stage is mounted, and the only sender of that token is
-	// the reporter script injected via prepareViewerHtml.
+	// Listen for the sandbox reporter's posts: doc-size on load + resize, and
+	// forwarded wheel events (see VIEWER_WHEEL_MESSAGE in mini-app.ts for why
+	// forwarding is required at all). The frame has null origin so origin-based
+	// filtering isn't possible; source-window comparison against our own iframe
+	// ref is the invariant that keeps a hostile ad frame or browser extension
+	// from feeding fake payloads into the zoom/scroll path.
 	useEffect(() => {
 		function onMessage(event: MessageEvent) {
-			const data = event.data as { type?: string; w?: number; h?: number } | null
-			if (!data || data.type !== VIEWER_DOC_SIZE_MESSAGE) return
-			const w = typeof data.w === 'number' ? data.w : 0
-			const h = typeof data.h === 'number' ? data.h : 0
-			if (w <= 0 || h <= 0) return
-			setDocSize({ w, h })
+			const iframe = iframeRef.current
+			if (!iframe || event.source !== iframe.contentWindow) return
+			const data = event.data as {
+				type?: string
+				w?: number
+				h?: number
+				deltaX?: number
+				deltaY?: number
+				ctrlKey?: boolean
+				docX?: number
+				docY?: number
+			} | null
+			if (!data) return
+			if (data.type === VIEWER_DOC_SIZE_MESSAGE) {
+				const w = typeof data.w === 'number' ? data.w : 0
+				const h = typeof data.h === 'number' ? data.h : 0
+				if (w <= 0 || h <= 0) return
+				setDocSize({ w, h })
+				return
+			}
+			if (data.type === VIEWER_WHEEL_MESSAGE) {
+				wheelFromFrameRef.current({
+					deltaX: typeof data.deltaX === 'number' ? data.deltaX : 0,
+					deltaY: typeof data.deltaY === 'number' ? data.deltaY : 0,
+					ctrlKey: !!data.ctrlKey,
+					docX: typeof data.docX === 'number' ? data.docX : 0,
+					docY: typeof data.docY === 'number' ? data.docY : 0,
+				})
+			}
 		}
 		window.addEventListener('message', onMessage)
 		return () => window.removeEventListener('message', onMessage)
@@ -280,6 +305,60 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 		el.addEventListener('wheel', onWheel, { passive: false })
 		return () => el.removeEventListener('wheel', onWheel)
 	}, [blocked])
+
+	// Wheel handler for events forwarded from *inside* the sandboxed iframe via
+	// postMessage (see VIEWER_WHEEL_MESSAGE in mini-app.ts). The native listener
+	// above only catches wheels that landed on bare stage area (letterbox);
+	// wheels over the document itself fire in the frame's own browsing context
+	// and never bubble out, so this path is what makes ctrl+wheel zoom and
+	// plain-scroll pan work where a user actually points.
+	//
+	// The `docX/docY` coordinates arrive in the iframe's own unscaled document
+	// space. Converting them to the viewport-screen coord space that `zoomAt`
+	// operates in is `docX * zoom - viewport.scrollLeft`: the scaled iframe
+	// occupies [0..docSize.w*zoom, 0..docSize.h*zoom] in the viewport's scroll
+	// area, and the viewport-screen coord is that pre-scroll position minus
+	// the current scroll offset.
+	const handleFrameWheel = useCallback(
+		(data: { deltaX: number; deltaY: number; ctrlKey: boolean; docX: number; docY: number }) => {
+			const viewport = viewportRef.current
+			if (!viewport) return
+			if (data.ctrlKey) {
+				const cursor = {
+					x: data.docX * zoom - viewport.scrollLeft,
+					y: data.docY * zoom - viewport.scrollTop,
+				}
+				const factor = Math.exp(-data.deltaY / 300)
+				const result = zoomAt(zoom, zoom * factor, cursor, {
+					x: viewport.scrollLeft,
+					y: viewport.scrollTop,
+				})
+				zoomIsAutoFitRef.current = false
+				setZoom(result.k)
+				requestAnimationFrame(() => {
+					const el = viewportRef.current
+					if (!el) return
+					el.scrollLeft = Math.max(0, result.scroll.x)
+					el.scrollTop = Math.max(0, result.scroll.y)
+				})
+				// Same gesture-source heuristic as the native handler: an
+				// integer deltaY is a mouse wheel; a fractional one is a
+				// trackpad pinch synthesised as ctrlKey+wheel by the browser.
+				const mode: FileViewerZoomMode = Number.isInteger(data.deltaY) ? 'wheel' : 'pinch'
+				emitZoom(mode, result.k)
+				return
+			}
+			// Plain wheel over the document pans the viewport — the iframe has
+			// no scroll room of its own, so without this the gesture is dead.
+			viewport.scrollLeft = Math.max(0, viewport.scrollLeft + data.deltaX)
+			viewport.scrollTop = Math.max(0, viewport.scrollTop + data.deltaY)
+		},
+		[zoom, emitZoom],
+	)
+	const wheelFromFrameRef = useRef(handleFrameWheel)
+	useEffect(() => {
+		wheelFromFrameRef.current = handleFrameWheel
+	}, [handleFrameWheel])
 
 	// Fullscreen the *shell*, not the iframe — the iframe has no origin so its
 	// fullscreen call would be blocked. We toggle the closest fullscreen-eligible

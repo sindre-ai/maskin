@@ -176,20 +176,39 @@ export function prepareMiniAppHtml(html: string): string {
 // `documentElement.scrollWidth/scrollHeight` at load + on resize.
 export const VIEWER_DOC_SIZE_MESSAGE = 'maskin:viewer:doc-size'
 
+// postMessage type the viewer stage listens for to receive wheel events that
+// fired inside the sandboxed iframe. Sandboxed iframes swallow their own wheel
+// events — they never bubble to the parent listener — so without forwarding,
+// ctrl+wheel zoom and plain-scroll pan are dead wherever a user actually
+// points (the document itself). Payload carries the deltas, the ctrl flag,
+// and the cursor in the iframe's own document coordinate space (unscaled).
+export const VIEWER_WHEEL_MESSAGE = 'maskin:viewer:wheel'
+
 // One-line reporter script injected into the same platform footer as the CSP
 // and data-slot bootstrap, so `prepareViewerHtml` still passes through a
 // single `injectIntoHtml` call. Runs inside the sandboxed frame (null origin,
 // no allow-same-origin) and posts to `window.parent` with `targetOrigin: '*'`
 // because the frame has no origin of its own. The stage validates the source
-// against its own iframe reference before trusting the payload.
-const VIEWER_DOC_SIZE_REPORTER = `<script>(function(){function s(){try{var d=document.documentElement;parent.postMessage({type:'${VIEWER_DOC_SIZE_MESSAGE}',w:d.scrollWidth,h:d.scrollHeight},'*')}catch(e){}}if(document.readyState==='complete')s();else window.addEventListener('load',s);window.addEventListener('resize',s)})();</script>`
+// against its own iframe reference (`event.source === iframeRef.contentWindow`)
+// before trusting either payload.
+//
+// Two responsibilities:
+//   1. Report the natural document size on load + resize so the stage can
+//      compute fit-to-screen against the frame's real dimensions.
+//   2. Forward every wheel event to the parent, always calling
+//      preventDefault: the iframe has no scroll room of its own (it's sized
+//      to its content), so the default action either does nothing or falls
+//      back to browser page zoom — both wrong. The parent's message handler
+//      translates the payload into a stage zoom or a viewport scroll.
+const VIEWER_REPORTER = `<script>(function(){function s(){try{var d=document.documentElement;parent.postMessage({type:'${VIEWER_DOC_SIZE_MESSAGE}',w:d.scrollWidth,h:d.scrollHeight},'*')}catch(e){}}if(document.readyState==='complete')s();else window.addEventListener('load',s);window.addEventListener('resize',s);window.addEventListener('wheel',function(e){try{parent.postMessage({type:'${VIEWER_WHEEL_MESSAGE}',deltaX:e.deltaX,deltaY:e.deltaY,ctrlKey:e.ctrlKey,docX:e.clientX,docY:e.clientY},'*');e.preventDefault()}catch(err){}},{passive:false})})();</script>`
 
 // Viewer-shell variant of `prepareMiniAppHtml`: same CSP + data-slot
-// bootstrap, plus the doc-size reporter so the stage can compute fit-to-
-// screen against the frame's natural document dimensions. One injectIntoHtml
-// call keeps the byte-preserving placement invariant intact — see the header
-// comment on `injectIntoHtml` above.
+// bootstrap, plus the doc-size + wheel-forwarding reporter so the stage can
+// compute fit-to-screen and drive its own zoom/scroll from gestures that
+// land over the document. One injectIntoHtml call keeps the byte-preserving
+// placement invariant intact — see the header comment on `injectIntoHtml`
+// above.
 export function prepareViewerHtml(html: string): string {
 	const scrubbed = stripMetaRefresh(stripAgentCsp(html))
-	return injectIntoHtml(scrubbed, CSP_META + DATA_SLOT_BOOTSTRAP + VIEWER_DOC_SIZE_REPORTER)
+	return injectIntoHtml(scrubbed, CSP_META + DATA_SLOT_BOOTSTRAP + VIEWER_REPORTER)
 }

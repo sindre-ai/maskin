@@ -2,6 +2,7 @@ import {
 	DATA_SLOT_ID,
 	MINI_APP_CSP,
 	VIEWER_DOC_SIZE_MESSAGE,
+	VIEWER_WHEEL_MESSAGE,
 	injectIntoHtml,
 	prepareMiniAppHtml,
 	prepareViewerHtml,
@@ -270,12 +271,13 @@ describe('data-slot contract', () => {
 })
 
 describe('prepareViewerHtml', () => {
-	it('injects the platform CSP + data-slot bootstrap + doc-size reporter in ONE injection', () => {
+	it('injects the platform CSP + data-slot bootstrap + reporter in ONE injection', () => {
 		const html = '<!DOCTYPE html><html><head></head><body>hi</body></html>'
 		const result = prepareViewerHtml(html)
 		expect(result).toContain(MINI_APP_CSP)
 		expect(result).toContain(DATA_SLOT_ID)
 		expect(result).toContain(VIEWER_DOC_SIZE_MESSAGE)
+		expect(result).toContain(VIEWER_WHEEL_MESSAGE)
 		// One contiguous injection point: the CSP meta, the bootstrap script,
 		// and the reporter script all sit immediately after <head>.
 		const headEnd = result.indexOf('<head>') + '<head>'.length
@@ -299,6 +301,24 @@ describe('prepareViewerHtml', () => {
 		expect(result).toMatch(
 			new RegExp(`parent\\.postMessage\\(\\{type:'${VIEWER_DOC_SIZE_MESSAGE}'`),
 		)
+	})
+
+	it('wheel-forwarding reporter posts every wheel to the parent with delta + ctrl + doc-space cursor', () => {
+		const html = '<!DOCTYPE html><html><body></body></html>'
+		const result = prepareViewerHtml(html)
+		// Sandboxed frames swallow their own wheel events (they fire in the
+		// frame's browsing context and never bubble to the parent listener),
+		// so ctrl+wheel zoom over the document depends on this forwarding path.
+		expect(result).toMatch(new RegExp(`parent\\.postMessage\\(\\{type:'${VIEWER_WHEEL_MESSAGE}'`))
+		expect(result).toContain('deltaX:e.deltaX')
+		expect(result).toContain('deltaY:e.deltaY')
+		expect(result).toContain('ctrlKey:e.ctrlKey')
+		expect(result).toContain('docX:e.clientX')
+		expect(result).toContain('docY:e.clientY')
+		// passive:false is what lets the reporter's preventDefault suppress the
+		// browser's Ctrl+wheel page zoom inside the frame — a passive listener
+		// cannot preventDefault, so a page zoom would race the stage zoom.
+		expect(result).toContain('{passive:false}')
 	})
 
 	it('keeps the original document content intact', () => {
