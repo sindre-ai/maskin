@@ -229,36 +229,37 @@ describe('CommentDispatcher', () => {
 		)
 	})
 
-	it('falls through to CoS (case 3) when driver = author', async () => {
+	it('driver = author → noop_self_authored with no dispatch (case 0, guard-first)', async () => {
 		mockResults.selectQueue = [
 			// event data — author is 'human-author'
 			[{ actorId: 'human-author', data: { content: 'hi', mentions: [] } }],
 			// driver lookup — driver IS the author
 			[{ driver: 'human-author' }],
-			// CoS routing prompt: objects.title lookup
-			// workspace Chief of Staff lookup
-			COS_LOOKUP_ROWS,
-			[{ title: 'A bet' }],
 		]
 
 		dispatcher.start()
 		await fire(baseEvent({ actor_id: 'human-author' }))
 
-		expect(sessionManager.createSession).toHaveBeenCalledOnce()
-		const [, opts] = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0] as [
-			string,
-			Record<string, unknown>,
-		]
-		expect(opts.actorId).toBe(COS_ACTOR_ID)
-		expect(opts.actionPrompt as string).toContain('has no driver')
-		// Every id the agent needs is labelled, not inlined in prose — a bare
-		// uuid in a sentence leaves it guessing which id it is.
-		expect(opts.actionPrompt as string).toContain('Object ID: a4f1c9d2-3b58-4e07-9c26-8f5d0a7b1e43')
-		expect(opts.actionPrompt as string).toContain('Object title: A bet')
-		expect(opts.actionPrompt as string).toContain('Commenter actor ID: human-author')
+		// Nobody to ping: the object's own driver wrote the comment. The case-0
+		// guard resolves before case 2 and case 3 are evaluated, so neither a
+		// driver session nor a CoS session is dispatched — and because it returns
+		// early, the CoS lookup and the title lookup never run, which is why the
+		// select queue above holds only two entries.
+		expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+		const resolvedLog = logInfo.mock.calls.find(
+			(c) =>
+				c[0] === 'Comment responder resolved' &&
+				(c[1] as { case?: string })?.case === 'noop_self_authored',
+		)
+		expect(resolvedLog?.[1]).toMatchObject({
+			event_id: '42',
+			case: 'noop_self_authored',
+			resolved_actor_id: null,
+		})
 
 		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
-			expect.objectContaining({ case: 'case_3_cos_fallback', resolvedActorId: COS_ACTOR_ID }),
+			expect.objectContaining({ case: 'noop_self_authored', resolvedActorId: null }),
 		)
 	})
 
@@ -284,6 +285,9 @@ describe('CommentDispatcher', () => {
 		expect(opts.actorId).toBe(COS_ACTOR_ID)
 		expect(opts.triggerSource).toBe('comment_fallback')
 		expect(opts.sourceCommentEventId).toBe(42)
+		// This is the path the "no driver" sentence belongs to — the object
+		// genuinely has none, so the routing prompt may say so.
+		expect(opts.actionPrompt as string).toContain('has no driver')
 
 		expect(vi.mocked(trackCommentResponderResolved)).toHaveBeenCalledWith(
 			expect.objectContaining({ case: 'case_3_cos_fallback', resolvedActorId: COS_ACTOR_ID }),
@@ -320,6 +324,14 @@ describe('CommentDispatcher', () => {
 		)
 		expect(dispatchedTo).not.toContain('driver-1')
 		expect(dispatchedTo).toContain(COS_ACTOR_ID)
+
+		// The object DOES have a driver — only its parent comment's author is
+		// that driver. The routing prompt must not claim otherwise, or CoS goes
+		// looking for an owner to assign when one already exists.
+		const cosCall = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls.find(
+			(c) => (c[1] as { actorId: string }).actorId === COS_ACTOR_ID,
+		)
+		expect((cosCall?.[1] as { actionPrompt: string }).actionPrompt).not.toContain('has no driver')
 	})
 
 	it('skips only the named actor when metadata.suppress_dispatch_actor_ids is set', async () => {

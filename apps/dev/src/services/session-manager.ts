@@ -729,6 +729,18 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not found or not in pending/queued state`)
 		}
 
+		// Unconditional dispatch-entry marker, emitted before any capacity check,
+		// queue handoff or lock. A session stuck in `starting` with this row
+		// present was entered but not dispatched; without it, dispatch never ran.
+		await this.db.insert(events).values({
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			action: 'dispatch_entered',
+			entityType: 'session',
+			entityId: sessionId,
+			data: {},
+		})
+
 		// Chat sessions (conversationId set) are exempt from the workspace concurrency
 		// limit — a live human is waiting on the other end, which is more urgent than
 		// queuing behind background/trigger sessions. They also don't count against
