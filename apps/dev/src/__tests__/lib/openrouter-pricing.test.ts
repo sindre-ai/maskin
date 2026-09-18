@@ -115,6 +115,25 @@ describe('openrouter-pricing', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(2)
 	})
 
+	it('logs pricing_refresh_stale when the background refresh fails on a stale cache', async () => {
+		nowSpy.mockReturnValue(1_000)
+		await getModelPricing('deepseek/deepseek-v4-flash')
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+
+		// Past the TTL the current call still gets the stale price; the failed
+		// background refresh is reported rather than silently swallowed.
+		fetchMock.mockRejectedValue(new Error('network down'))
+		nowSpy.mockReturnValue(1_000 + 61 * 60 * 1000)
+		const pricing = await getModelPricing('deepseek/deepseek-v4-flash')
+		expect(pricing?.prompt).toBe(0.00000007)
+
+		await vi.waitFor(() => {
+			expect(logger.warn).toHaveBeenCalledWith('pricing_refresh_stale', {
+				servedAgeMs: 61 * 60 * 1000,
+			})
+		})
+	})
+
 	it('logs and returns null when the catalogue is unreachable on a cold cache', async () => {
 		fetchMock.mockRejectedValue(new Error('network down'))
 		expect(await getModelPricing('deepseek/deepseek-v4-flash')).toBeNull()
