@@ -8,7 +8,6 @@ import { Sidebar, SidebarContent, SidebarHeader, useSidebar } from '@/components
 import { useActors } from '@/hooks/use-actors'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useObjectGraph } from '@/hooks/use-objects'
-import { useSubscribe, useSubscribers, useUnsubscribe } from '@/hooks/use-subscriptions'
 import type { ActorListItem, MemberResponse, ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { X } from 'lucide-react'
@@ -23,7 +22,7 @@ import { OwnerSelect, StatusSelect } from './property-selects'
  * entry point (see `headerActions` in `object-document.tsx`). Expanded, it
  * renders a core-fields summary (driver, status, attention, type, created,
  * updated) reusing the same editable pickers as the hero, then Custom fields
- * / Subscribed / Files sections.
+ * / People / Files sections.
  */
 export function ObjectPropertiesSidebar({
 	object,
@@ -136,7 +135,7 @@ export function ObjectPropertiesSidebar({
 				</div>
 
 				<div className="mt-5 border-t border-border pt-5">
-					<SubscribedSection object={object} workspaceId={workspaceId} />
+					<PeopleSection object={object} workspaceId={workspaceId} />
 				</div>
 
 				<div className="mt-5 border-t border-border pt-5">
@@ -153,28 +152,26 @@ export function ObjectPropertiesSidebar({
 }
 
 /**
- * SUBSCRIBED (mockup 1470–1482): a header note, then one row per subscriber
- * with the reason they are on it, then the subscribe control. The reason is
- * read off the object itself (driver / author / the viewer), never invented.
+ * PEOPLE (mockup 1470–1482): a header note, then one row per person involved
+ * with the reason they are on it. The reason is read off the object itself
+ * (driver / author / the viewer), never invented. Read-only — there is no
+ * subscribe control, because presence here is earned by driving or posting.
  */
-function SubscribedSection({
+function PeopleSection({
 	object,
 	workspaceId,
 }: {
 	object: ObjectResponse
 	workspaceId: string
 }) {
-	const { data: subscribers } = useSubscribers(workspaceId, 'object', object.id)
 	const { data: graph } = useObjectGraph(workspaceId, object.id)
 	const { data: actors } = useActors(workspaceId)
-	const subscribe = useSubscribe(workspaceId)
-	const unsubscribe = useUnsubscribe(workspaceId)
 	const currentActorId = getStoredActor()?.id
 
-	// Everyone who gets timeline updates, in the mockup's order (8394–8400):
-	// you, then the driver, then whoever has posted here. The subscriber list
-	// alone under-reports it — the driver and the agents posting to the object
-	// are on it whether or not they ever pressed Subscribe.
+	// Everyone involved with this object, in the mockup's order (8394-8400):
+	// the driver, then whoever has posted here. This used to lead with the
+	// viewer when they held a subscription row; with subscribe gone, presence
+	// is derived purely from what someone actually did on the object.
 	const rows = useMemo(() => {
 		const byId = new Map<string, ActorListItem>()
 		for (const actor of actors ?? []) byId.set(actor.id, actor)
@@ -185,68 +182,50 @@ function SubscribedSection({
 			ordered.push(id)
 		}
 
-		if (object.is_subscribed) push(currentActorId)
 		push(object.driver)
-		for (const actor of subscribers?.actors ?? []) push(actor.id)
 		for (const event of graph?.events ?? []) {
 			if (event.action === 'commented') push(event.actorId)
 		}
 
 		return ordered.slice(0, 5).map((id) => byId.get(id) as ActorListItem)
-	}, [actors, subscribers, graph, object.is_subscribed, object.driver, currentActorId])
+	}, [actors, graph, object.driver])
+
+	if (rows.length === 0) return null
 
 	return (
 		<div className="flex flex-col">
 			<div className="flex items-center gap-2">
-				<SectionLabel>Subscribed</SectionLabel>
+				<SectionLabel>People</SectionLabel>
 				<span className="min-w-0 flex-1 truncate text-[10.5px] text-muted-foreground">
-					{object.is_subscribed ? 'everyone here gets timeline updates' : 'you are not on this one'}
+					who is on this one
 				</span>
 			</div>
-			{rows.length > 0 && (
-				<ul className="mt-2 flex flex-col">
-					{rows.map((actor) => (
-						<li key={actor.id} className="flex items-center gap-2.5 rounded-lg px-2 py-1.5">
-							<ActorAvatar
-								id={actor.id}
-								name={actor.name}
-								type={actor.type}
-								className="size-[22px] shrink-0 text-[9px]"
-							/>
-							<span className="min-w-0 flex-1 leading-tight">
-								<span className="block truncate text-[12.5px] font-semibold text-foreground">
-									{actor.name}
-								</span>
-								<span className="block truncate text-[10.5px] text-muted-foreground">
-									{subscriberReason(actor.id, object, currentActorId)}
-								</span>
+			<ul className="mt-2 flex flex-col">
+				{rows.map((actor) => (
+					<li key={actor.id} className="flex items-center gap-2.5 rounded-lg px-2 py-1.5">
+						<ActorAvatar
+							id={actor.id}
+							name={actor.name}
+							type={actor.type}
+							className="size-[22px] shrink-0 text-[9px]"
+						/>
+						<span className="min-w-0 flex-1 leading-tight">
+							<span className="block truncate text-[12.5px] font-semibold text-foreground">
+								{actor.name}
 							</span>
-						</li>
-					))}
-				</ul>
-			)}
-			{/* A labelled control, not an avatar stack — the rows above already
-			    say who is on it (mockup 1445). */}
-			<Button
-				type="button"
-				variant="outline"
-				size="sm"
-				className="mt-2 h-auto self-start rounded-lg px-2.5 py-1.5 text-[11.5px] font-semibold text-muted-foreground"
-				disabled={subscribe.isPending || unsubscribe.isPending}
-				onClick={() =>
-					object.is_subscribed
-						? unsubscribe.mutate({ entityType: 'object', entityId: object.id })
-						: subscribe.mutate({ entityType: 'object', entityId: object.id })
-				}
-			>
-				{object.is_subscribed ? 'Unsubscribe' : 'Subscribe'}
-			</Button>
+							<span className="block truncate text-[10.5px] text-muted-foreground">
+								{participantReason(actor.id, object, currentActorId)}
+							</span>
+						</span>
+					</li>
+				))}
+			</ul>
 		</div>
 	)
 }
 
 /** Why this actor is on the object — the mockup's per-row sub-line. */
-function subscriberReason(
+function participantReason(
 	actorId: string,
 	object: ObjectResponse,
 	currentActorId: string | undefined,

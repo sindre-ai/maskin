@@ -1,18 +1,6 @@
 import { type ObjectGraphResponse, type ObjectResponse, api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { toast } from 'sonner'
-
-/**
- * Live list of subscribers for an entity. Used by the watchers avatar stack.
- */
-export function useSubscribers(workspaceId: string, entityType: string, entityId: string) {
-	return useQuery({
-		queryKey: queryKeys.subscriptions.subscribers(entityType, entityId),
-		queryFn: () => api.subscriptions.subscribers(workspaceId, entityType, entityId),
-		enabled: !!entityId,
-	})
-}
 
 /**
  * Pulse-feed of entities with unread comments for the current actor. When
@@ -25,55 +13,6 @@ export function useUnread(workspaceId: string, entityType?: string, includeRecen
 		queryKey: queryKeys.subscriptions.unread(workspaceId, entityType, includeRecentlyRead),
 		queryFn: () => api.subscriptions.unread(workspaceId, entityType, includeRecentlyRead),
 		enabled: !!workspaceId,
-	})
-}
-
-export function useSubscribe(workspaceId: string) {
-	const queryClient = useQueryClient()
-	return useMutation({
-		mutationFn: ({ entityType, entityId }: { entityType: string; entityId: string }) =>
-			api.subscriptions.subscribe(workspaceId, entityType, entityId),
-		onSuccess: (_, { entityType, entityId }) => {
-			// Refresh subscriber stack + object detail (subscriber_count + is_subscribed).
-			queryClient.invalidateQueries({
-				queryKey: queryKeys.subscriptions.subscribers(entityType, entityId),
-			})
-			if (entityType === 'object') {
-				queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(entityId) })
-				queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(entityId) })
-			}
-			queryClient.invalidateQueries({
-				queryKey: queryKeys.subscriptions.unread(workspaceId),
-			})
-		},
-		// The button's label is driven by `is_subscribed`, which only moves once
-		// the invalidation above lands — so a failed write leaves it reading the
-		// old state with nothing to say the change didn't take.
-		onError: () => toast.error('Could not subscribe'),
-	})
-}
-
-export function useUnsubscribe(workspaceId: string) {
-	const queryClient = useQueryClient()
-	return useMutation({
-		mutationFn: ({ entityType, entityId }: { entityType: string; entityId: string }) =>
-			api.subscriptions.unsubscribe(workspaceId, entityType, entityId),
-		onSuccess: (_, { entityType, entityId }) => {
-			queryClient.invalidateQueries({
-				queryKey: queryKeys.subscriptions.subscribers(entityType, entityId),
-			})
-			if (entityType === 'object') {
-				queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(entityId) })
-				queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(entityId) })
-			}
-			queryClient.invalidateQueries({
-				queryKey: queryKeys.subscriptions.unread(workspaceId),
-			})
-		},
-		// The button's label is driven by `is_subscribed`, which only moves once
-		// the invalidation above lands — so a failed write leaves it reading the
-		// old state with nothing to say the change didn't take.
-		onError: () => toast.error('Could not unsubscribe'),
 	})
 }
 

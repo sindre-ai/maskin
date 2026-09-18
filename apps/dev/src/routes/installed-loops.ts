@@ -21,7 +21,6 @@ import {
 	relationships,
 	sessionLogs,
 	sessions,
-	subscriptions,
 	triggers,
 	workspaceMembers,
 	workspaceSkills,
@@ -60,7 +59,6 @@ import {
 	stopCapturedSandboxes,
 } from '../services/session-cleanup'
 import type { SessionManager } from '../services/session-manager'
-import { autoSubscribe } from '../services/subscriptions'
 
 type Env = {
 	Variables: {
@@ -579,20 +577,6 @@ app.openapi(installLoopRoute, async (c) => {
 		throw err
 	}
 
-	// Auto-subscribe the installer to the new Loop object, same as manually
-	// creating an object (see objects.ts's POST route). Outside the transaction
-	// (mirrors that route) — a missed subscribe on a rare failure is not worth
-	// widening the install transaction's lock footprint.
-	if (installed.objectId) {
-		await autoSubscribe(db, {
-			workspaceId,
-			actorId,
-			entityType: 'object',
-			entityId: installed.objectId,
-			source: 'author',
-		})
-	}
-
 	logger.info('Marketplace loop installed', {
 		installedLoopId: installed.id,
 		workspaceId,
@@ -1094,7 +1078,6 @@ app.openapi(uninstallLoopRoute, async (c) => {
 					)
 				await tx.delete(events).where(inArray(events.actorId, actorIds))
 				await tx.delete(relationships).where(inArray(relationships.createdBy, actorIds))
-				await tx.delete(subscriptions).where(inArray(subscriptions.actorId, actorIds))
 				await tx.delete(readState).where(inArray(readState.actorId, actorIds))
 				await tx
 					.delete(orphanThreadDetections)
@@ -1171,11 +1154,6 @@ app.openapi(uninstallLoopRoute, async (c) => {
 						eq(relationships.sourceId, install.objectId),
 						eq(relationships.targetId, install.objectId),
 					),
-				)
-			await tx
-				.delete(subscriptions)
-				.where(
-					and(eq(subscriptions.entityType, 'object'), eq(subscriptions.entityId, install.objectId)),
 				)
 			await tx
 				.delete(readState)

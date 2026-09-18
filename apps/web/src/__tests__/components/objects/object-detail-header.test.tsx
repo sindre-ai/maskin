@@ -18,11 +18,7 @@ vi.mock('@tanstack/react-router', async () => {
 const subscribeMock = vi.fn()
 const unsubscribeMock = vi.fn()
 
-vi.mock('@/hooks/use-subscriptions', () => ({
-	useSubscribe: () => ({ mutate: subscribeMock, isPending: false }),
-	useUnsubscribe: () => ({ mutate: unsubscribeMock, isPending: false }),
-	useSubscribers: () => ({ data: { actors: [] } }),
-}))
+vi.mock('@/hooks/use-subscriptions', () => ({}))
 
 vi.mock('@/lib/auth', async () => {
 	const actual = await vi.importActual<typeof import('@/lib/auth')>('@/lib/auth')

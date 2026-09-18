@@ -92,7 +92,7 @@ test.describe('Object detail — above-title hero (static shell)', () => {
 			)
 			expect(scrollWidth).toBeLessThanOrEqual(0)
 
-			// SubscribeToggle + creator + created/updated timestamps must no
+			// Creator + created/updated timestamps must no
 			// longer render inline in the identity row; scoped to the row itself
 			// (via the status-trigger ancestor) since the ⋯ menu's Subscribe
 			// action is a menuitem, not a row-level button.

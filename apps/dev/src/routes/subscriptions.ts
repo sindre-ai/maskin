@@ -1,26 +1,20 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, subscriptions } from '@maskin/db/schema'
+import { events, objects, workspaces } from '@maskin/db/schema'
 import {
 	commentDecisionSchema,
 	markReadBodySchema,
 	markUnreadBodySchema,
 	parseCommentDecision,
-	subscribeBodySchema,
-	subscribersQuerySchema,
 	unreadQuerySchema,
-	unsubscribeBodySchema,
 } from '@maskin/shared'
 import { and, count, desc, eq, gt, inArray, max, ne, or, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { errorSchema, objectResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import {
-	autoSubscribe,
-	getSubscribers,
 	markRead as markReadService,
 	markUnread as markUnreadService,
-	unsubscribe as unsubscribeService,
 } from '../services/subscriptions'
 
 type Env = {
@@ -68,16 +62,6 @@ async function verifyEntityInWorkspace(
 	}
 	return verifier(db, workspaceId, entityId)
 }
-
-const subscribersResponseSchema = z.object({
-	actors: z.array(
-		z.object({
-			id: z.string().uuid(),
-			type: z.string(),
-			name: z.string(),
-		}),
-	),
-})
 
 const unreadItemSchema = z.object({
 	entity_type: z.string(),
@@ -155,121 +139,6 @@ function toLatestMention(event: typeof events.$inferSelect): LatestMention {
 const unreadResponseSchema = z.object({
 	items: z.array(unreadItemSchema),
 })
-
-// POST /api/subscriptions — manually subscribe the current actor.
-const subscribeRoute = createRoute({
-	method: 'post',
-	path: '/',
-	tags: ['Subscriptions'],
-	summary: 'Subscribe current actor to an entity',
-	request: {
-		headers: workspaceIdHeader,
-		body: { content: { 'application/json': { schema: subscribeBodySchema } } },
-	},
-	responses: {
-		201: {
-			description: 'Subscribed',
-			content: { 'application/json': { schema: z.object({ subscribed: z.literal(true) }) } },
-		},
-		404: {
-			description: 'Entity not found',
-			content: { 'application/json': { schema: errorSchema } },
-		},
-	},
-})
-
-app.openapi(subscribeRoute, async (c) => {
-	const db = c.get('db')
-	const actorId = c.get('actorId')
-	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const body = c.req.valid('json')
-
-	const exists = await verifyEntityInWorkspace(db, workspaceId, body.entity_type, body.entity_id)
-	if (!exists) return c.json(createApiError('NOT_FOUND', 'Entity not found'), 404)
-
-	await autoSubscribe(db, {
-		workspaceId,
-		actorId,
-		entityType: body.entity_type,
-		entityId: body.entity_id,
-		source: 'manual',
-	})
-
-	return c.json({ subscribed: true as const }, 201)
-})
-
-// DELETE /api/subscriptions — unsubscribe the current actor.
-const unsubscribeRoute = createRoute({
-	method: 'delete',
-	path: '/',
-	tags: ['Subscriptions'],
-	summary: 'Unsubscribe current actor from an entity',
-	request: {
-		headers: workspaceIdHeader,
-		body: { content: { 'application/json': { schema: unsubscribeBodySchema } } },
-	},
-	responses: {
-		200: {
-			description: 'Unsubscribed',
-			content: { 'application/json': { schema: z.object({ unsubscribed: z.literal(true) }) } },
-		},
-	},
-})
-
-app.openapi(unsubscribeRoute, async (c) => {
-	const db = c.get('db')
-	const actorId = c.get('actorId')
-	const body = c.req.valid('json')
-
-	await unsubscribeService(db, {
-		actorId,
-		entityType: body.entity_type,
-		entityId: body.entity_id,
-	})
-
-	return c.json({ unsubscribed: true as const }, 200)
-})
-
-// GET /api/subscriptions/subscribers?entity_type=…&entity_id=…
-const listSubscribersRoute = createRoute({
-	method: 'get',
-	path: '/subscribers',
-	tags: ['Subscriptions'],
-	summary: 'List actors subscribed to an entity',
-	request: {
-		headers: workspaceIdHeader,
-		query: subscribersQuerySchema,
-	},
-	responses: {
-		200: {
-			description: 'Subscribers',
-			content: { 'application/json': { schema: subscribersResponseSchema } },
-		},
-		404: {
-			description: 'Entity not found in this workspace',
-			content: { 'application/json': { schema: errorSchema } },
-		},
-	},
-})
-
-app.openapi(listSubscribersRoute, (async (c) => {
-	const db = c.get('db')
-	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { entity_type, entity_id } = c.req.valid('query')
-
-	// Verify the entity belongs to the caller's workspace before exposing
-	// its subscriber list — otherwise any workspace member could probe
-	// cross-workspace entity IDs and read back W2's subscriber actors.
-	const exists = await verifyEntityInWorkspace(db, workspaceId, entity_type, entity_id)
-	if (!exists) return c.json(createApiError('NOT_FOUND', 'Entity not found'), 404)
-
-	const rows = await getSubscribers(db, {
-		workspaceId,
-		entityType: entity_type,
-		entityId: entity_id,
-	})
-	return c.json({ actors: rows })
-}) as RouteHandler<typeof listSubscribersRoute, Env>)
 
 // POST /api/subscriptions/read — advance the high-water-mark.
 const markReadRoute = createRoute({
@@ -363,7 +232,7 @@ app.openapi(markUnreadRoute, async (c) => {
 	return c.json({ updated: true as const }, 200)
 })
 
-// GET /api/subscriptions/unread — entities the actor is subscribed to with unread > 0.
+// GET /api/subscriptions/unread — entities with unread activity addressed to the actor.
 const listUnreadRoute = createRoute({
 	method: 'get',
 	path: '/unread',
@@ -387,27 +256,39 @@ app.openapi(listUnreadRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { entity_type, include_recently_read: includeRecentlyRead } = c.req.valid('query')
 
-	// Single query: for each (entity_type, entity_id) the actor is subscribed to
-	// in this workspace, join the events that count as unread (id > last_read
-	// and not by the viewer) plus, when the caller opted in, any read events
-	// still within the recently-read window. `unread_count` is computed via
-	// FILTER so a recently-read card returns unread_count = 0 while still
-	// appearing in the feed.
+	// The onboarding carve-out below used to be scoped by the actor holding a
+	// subscription row on the coach's session object. With subscriptions gone,
+	// scope it to the workspace's creator — the human the onboarding coach is
+	// talking to. Resolved once here rather than joined, since workspaceId is a
+	// constant for this request.
+	const [ws] = await db
+		.select({ createdBy: workspaces.createdBy })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	const isWorkspaceCreator = ws?.createdBy === actorId
+
+	// Single query over `events`: group the comments addressed to this actor by
+	// the entity they landed on. Previously this selected FROM `subscriptions`
+	// and joined events onto it, but the join predicate was already mentions-only
+	// and every mentioned actor was auto-subscribed in the same transaction that
+	// wrote the comment — so the subscription row was a redundant gate. Anchoring
+	// on events directly drops the table without changing which rows come back.
+	// The correlated columns are written as literal, table-qualified SQL rather
+	// than interpolated Drizzle column objects: inside a correlated `sql`
+	// template those render UNQUALIFIED, and `read_state` has its own
+	// `entity_type`/`entity_id`, so Postgres would silently bind the
+	// correlation to the inner table and every lookup would return 0.
+	// See .claude/rules/known-pitfalls.md.
 	const lastReadExpr = sql<number>`coalesce(
 		(select last_read_event_id from read_state
 			where actor_id = ${actorId}
-				and entity_type = ${subscriptions.entityType}
-				and entity_id = ${subscriptions.entityId}),
+				and read_state.entity_type = events.entity_type
+				and read_state.entity_id = events.entity_id),
 		0
 	)`
 
-	const subConditions = [
-		eq(subscriptions.workspaceId, workspaceId),
-		eq(subscriptions.actorId, actorId),
-	]
-	if (entity_type) subConditions.push(eq(subscriptions.entityType, entity_type))
-
-	// Restricts the join to events that could contribute a row: unread ones,
+	// Restricts the scan to events that could contribute a row: unread ones,
 	// plus (when opted in) read events still inside a 48h window. Read events
 	// outside the window drop here so aggregates don't scan the whole entity
 	// history on hot threads. 48h covers the Today and Yesterday buckets the
@@ -416,77 +297,67 @@ app.openapi(listUnreadRoute, (async (c) => {
 		? sql`(${events.id} > ${lastReadExpr} or ${events.createdAt} >= now() - interval '48 hours')`
 		: sql`${events.id} > ${lastReadExpr}`
 
+	// Two surfaces land in the unread feed, both scoped to comments only
+	// (status-change/terminal-bet/commitment-attention signals were dropped from
+	// For You — mentions are the only trigger now):
+	// (1) a comment that actually @-mentions this actor specifically —
+	//     `data.mentions` is the per-comment array of actor ids passed on
+	//     POST /api/events, checked with `@>` containment against this actor's
+	//     own id so a comment that mentions a different actor in the same
+	//     workspace never counts.
+	// (2) the onboarding coach conversation — any comment on an
+	//     onboarding_session object counts as unread for the workspace creator
+	//     regardless of mention, since the coach doesn't @-mention the human on
+	//     every turn. Carve-out for a pre-existing, unrelated feature;
+	//     everything else in the feed is mentions-only.
+	const addressedToActor = isWorkspaceCreator
+		? or(
+				sql`${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)`,
+				eq(objects.type, 'onboarding_session'),
+			)
+		: sql`${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)`
+
+	const conditions = [
+		eq(events.workspaceId, workspaceId),
+		eq(events.action, 'commented'),
+		eq(events.entityType, entity_type ?? 'object'),
+		ne(events.actorId, actorId),
+		readOrRecentPredicate,
+		addressedToActor,
+	]
+
 	// Per-event mention count: how many of the *unread* events on this entity
 	// actually @-mention the current actor. Recently-read events never count
 	// toward the mention pill even when they're joined.
 	const mentioningUnreadCountExpr = sql<number>`coalesce(count(*) filter (where ${events.id} > ${lastReadExpr} and ${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)), 0)::int`
 
-	// True unread count regardless of whether recently-read events are joined.
+	// True unread count regardless of whether recently-read events are scanned.
 	const unreadCountExpr = sql<number>`coalesce(count(${events.id}) filter (where ${events.id} > ${lastReadExpr}), 0)::int`
 
-	// Highest attention score among this entity's *joined* unread comments, for
-	// the Priority sort on For You — same join scope as unread_count (mentioning
-	// comments, plus any onboarding_session coach reply regardless of mention;
-	// see the join predicate below), not the narrower mentioning_unread_count
-	// scope. Comments without an attention score don't contribute a value —
-	// max() over an all-null filtered set returns null, which the frontend
-	// sorts below any scored comment.
+	// Highest attention score among this entity's matched unread comments, for
+	// the Priority sort on For You — same scope as unread_count (mentioning
+	// comments, plus any onboarding_session coach reply; see above), not the
+	// narrower mentioning_unread_count scope. Comments without an attention
+	// score don't contribute a value — max() over an all-null filtered set
+	// returns null, which the frontend sorts below any scored comment.
 	const maxUnreadAttentionExpr = sql<
 		number | null
 	>`max((${events.data}->>'attention')::int) filter (where ${events.id} > ${lastReadExpr})`
 
 	const rows = await db
 		.select({
-			entityType: subscriptions.entityType,
-			entityId: subscriptions.entityId,
+			entityType: events.entityType,
+			entityId: events.entityId,
 			unreadCount: unreadCountExpr,
 			mentioningUnreadCount: mentioningUnreadCountExpr,
 			maxUnreadAttention: maxUnreadAttentionExpr,
 			latestEventId: max(events.id),
 			latestActivityAt: max(events.createdAt),
 		})
-		.from(subscriptions)
-		.leftJoin(
-			objects,
-			and(eq(subscriptions.entityType, 'object'), eq(objects.id, subscriptions.entityId)),
-		)
-		.leftJoin(
-			events,
-			and(
-				eq(events.workspaceId, subscriptions.workspaceId),
-				eq(events.entityId, subscriptions.entityId),
-				ne(events.actorId, actorId),
-				readOrRecentPredicate,
-				// Two surfaces land in the unread feed, both scoped to comments only
-				// (status-change/terminal-bet/commitment-attention signals were
-				// dropped from For You — mentions are the only trigger now):
-				// (1) a comment that actually @-mentions this actor specifically —
-				//     `data.mentions` is the per-comment array of actor ids passed on
-				//     POST /api/events, checked with `@>` containment against this
-				//     actor's own id so a comment that mentions a different actor in
-				//     the same workspace never counts.
-				// (2) the onboarding coach conversation — any comment on an
-				//     onboarding_session object the actor owns counts as unread
-				//     regardless of mention, since the coach doesn't @-mention the
-				//     human on every turn. Carve-out for a pre-existing, unrelated
-				//     feature; everything else in the feed is mentions-only.
-				or(
-					and(
-						eq(events.entityType, subscriptions.entityType),
-						eq(events.action, 'commented'),
-						sql`${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)`,
-					),
-					and(
-						eq(subscriptions.entityType, 'object'),
-						eq(events.entityType, 'object'),
-						eq(events.action, 'commented'),
-						eq(objects.type, 'onboarding_session'),
-					),
-				),
-			),
-		)
-		.where(and(...subConditions))
-		.groupBy(subscriptions.entityType, subscriptions.entityId)
+		.from(events)
+		.leftJoin(objects, and(eq(events.entityType, 'object'), eq(objects.id, events.entityId)))
+		.where(and(...conditions))
+		.groupBy(events.entityType, events.entityId)
 		.having(gt(count(events.id), 0))
 		.orderBy(desc(max(events.id)))
 

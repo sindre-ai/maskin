@@ -46,7 +46,6 @@ export function ObjectDetailBarActions({
 				object={object}
 				onDeleteRequest={onDeleteRequest}
 				onArchiveRequest={onArchiveRequest}
-				workspaceId={workspaceId}
 				open={menuOpen}
 				onOpenChange={setMenuOpen}
 			/>

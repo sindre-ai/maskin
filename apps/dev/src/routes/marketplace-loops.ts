@@ -21,7 +21,6 @@ import {
 	relationships,
 	sessionLogs,
 	sessions,
-	subscriptions,
 	triggers,
 	workspaceMembers,
 	workspaceSkills,
@@ -695,7 +694,6 @@ app.openapi(uninstallItemRoute, (async (c) => {
 						)
 					await tx.delete(events).where(eq(events.actorId, entityId))
 					await tx.delete(relationships).where(eq(relationships.createdBy, entityId))
-					await tx.delete(subscriptions).where(eq(subscriptions.actorId, entityId))
 					await tx.delete(readState).where(eq(readState.actorId, entityId))
 					await tx
 						.delete(orphanThreadDetections)

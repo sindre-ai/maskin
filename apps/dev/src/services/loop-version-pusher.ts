@@ -20,7 +20,6 @@ import {
 	relationships,
 	sessionLogs,
 	sessions,
-	subscriptions,
 	triggers,
 	workspaceMembers,
 	workspaceSkills,
@@ -605,7 +604,6 @@ export class LoopVersionPusher {
 					)
 				await tx.delete(events).where(inArray(events.actorId, removedActorIds))
 				await tx.delete(relationships).where(inArray(relationships.createdBy, removedActorIds))
-				await tx.delete(subscriptions).where(inArray(subscriptions.actorId, removedActorIds))
 				await tx.delete(readState).where(inArray(readState.actorId, removedActorIds))
 				// conversation_participants.actor_id/added_by are RESTRICT FKs to
 				// actors.id with no cascade — null out added_by on surviving rows,

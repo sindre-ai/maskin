@@ -18,7 +18,6 @@ import {
 	relationships,
 	sessionLogs,
 	sessions,
-	subscriptions,
 	triggers,
 	workspaceMembers,
 	workspaceSkills,
@@ -1034,7 +1033,6 @@ app.openapi(deleteActorRoute, (async (c) => {
 		await tx.delete(relationships).where(eq(relationships.createdBy, id))
 
 		// Delete per-actor feed bookkeeping
-		await tx.delete(subscriptions).where(eq(subscriptions.actorId, id))
 		await tx.delete(readState).where(eq(readState.actorId, id))
 
 		// Delete orphan-thread-detection ledger rows expecting a reply from this actor

@@ -9,7 +9,6 @@ import {
 	relationships,
 	sessions,
 	starState,
-	subscriptions,
 	triggers,
 	workspaces,
 } from '@maskin/db/schema'
@@ -86,12 +85,7 @@ import {
 	starObject,
 	unstarObject,
 } from '../services/star-state'
-import {
-	autoSubscribe,
-	getSubscriberCount,
-	getUnreadCount,
-	isSubscribed,
-} from '../services/subscriptions'
+import { getUnreadCount } from '../services/subscriptions'
 
 type Env = {
 	Variables: {
@@ -637,15 +631,6 @@ app.openapi(createObjectRoute, async (c) => {
 		data: created,
 	})
 
-	// Auto-subscribe the creator so they're notified about future comments.
-	await autoSubscribe(db, {
-		workspaceId,
-		actorId,
-		entityType: 'object',
-		entityId: created.id,
-		source: 'author',
-	})
-
 	if (created.type === 'knowledge') {
 		void trackKnowledgeObjectCreated({
 			workspaceId,
@@ -1101,10 +1086,8 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		description: formatEventDescription(event, { actorsById }),
 	}))
 
-	const [subscribed, unreadCount, subscriberCount, activeSession, starredIds] = await Promise.all([
-		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
+	const [unreadCount, activeSession, starredIds] = await Promise.all([
 		getUnreadCount(db, { workspaceId, actorId, entityType: 'object', entityId: id }),
-		getSubscriberCount(db, { workspaceId, entityType: 'object', entityId: id }),
 		object.activeSessionId
 			? db
 					.select({ currentActivity: sessions.currentActivity, status: sessions.status })
@@ -1188,9 +1171,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 				...serialize(object),
 				activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
 				active_session_state: activeSession?.status ?? null,
-				is_subscribed: subscribed,
 				unread_count: unreadCount,
-				subscriber_count: subscriberCount,
 				is_starred_by_me: starredIds.has(object.id),
 			},
 			relationships: rels.map((r) => ({
@@ -1506,16 +1487,10 @@ app.openapi(getObjectRoute, async (c) => {
 		})
 	}
 
-	const [subscribed, unreadCount, subscriberCount, activeSession, starred] = await Promise.all([
-		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
+	const [unreadCount, activeSession, starred] = await Promise.all([
 		getUnreadCount(db, {
 			workspaceId: object.workspaceId,
 			actorId,
-			entityType: 'object',
-			entityId: id,
-		}),
-		getSubscriberCount(db, {
-			workspaceId: object.workspaceId,
 			entityType: 'object',
 			entityId: id,
 		}),
@@ -1535,9 +1510,7 @@ app.openapi(getObjectRoute, async (c) => {
 			...serialize(object),
 			activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
 			active_session_state: activeSession?.status ?? null,
-			is_subscribed: subscribed,
 			unread_count: unreadCount,
-			subscriber_count: subscriberCount,
 			is_starred_by_me: starred,
 		} as z.infer<typeof objectResponseSchema>,
 		200,
@@ -1686,7 +1659,7 @@ app.openapi(updateObjectRoute, async (c) => {
 		// Fan out a notification row to every subscriber when a bet reaches a
 		// terminal state (succeeded/failed/paused — see TERMINAL_BET_STATUSES).
 		// The status_changed event itself surfaces the entity in the unread feed
-		// (see subscriptions.ts); the notification row drives the dedicated
+		// the notification row drives the dedicated
 		// terminal-signal UI and is the canonical record for "watcher was told
 		// the bet ended". Author/manual/commenter/mentioned subscribers are all
 		// included; the actor making the change is excluded (you don't notify
@@ -2099,20 +2072,32 @@ async function fanOutBetTerminalNotifications(
 ): Promise<void> {
 	const { workspaceId, actorId, bet } = args
 
-	const subs = await tx
-		.select({ actorId: subscriptions.actorId })
-		.from(subscriptions)
+	// Recipients used to be the bet's subscriber rows. With subscriptions gone,
+	// notify the people actually involved with this bet: everyone who commented
+	// on it, plus its driver and its creator. That is the same population the
+	// subscriber table held (author + commenter + mentioned sources) minus the
+	// rows that only existed because someone opened a manual Subscribe toggle.
+	// The acting actor is excluded — they just made the change.
+	const commenters = await tx
+		.selectDistinct({ actorId: events.actorId })
+		.from(events)
 		.where(
 			and(
-				eq(subscriptions.workspaceId, workspaceId),
-				eq(subscriptions.entityType, 'object'),
-				eq(subscriptions.entityId, bet.id),
-				ne(subscriptions.actorId, actorId),
+				eq(events.workspaceId, workspaceId),
+				eq(events.entityType, 'object'),
+				eq(events.entityId, bet.id),
+				eq(events.action, 'commented'),
 			),
 		)
 
-	if (subs.length === 0) {
-		logger.info('Bet reached terminal state, no subscribers to notify', {
+	const recipientIds = new Set<string>()
+	for (const row of commenters) if (row.actorId) recipientIds.add(row.actorId)
+	if (bet.driver) recipientIds.add(bet.driver)
+	if (bet.createdBy) recipientIds.add(bet.createdBy)
+	recipientIds.delete(actorId)
+
+	if (recipientIds.size === 0) {
+		logger.info('Bet reached terminal state, nobody to notify', {
 			betId: bet.id,
 			status: bet.status,
 		})
@@ -2124,19 +2109,19 @@ async function fanOutBetTerminalNotifications(
 	const created = await insertNotificationsWithEvents(tx, {
 		workspaceId,
 		actorId,
-		rows: subs.map((s) => ({
+		rows: Array.from(recipientIds).map((targetActorId) => ({
 			workspaceId,
 			type,
 			title,
 			content: null,
 			sourceActorId: actorId,
-			targetActorId: s.actorId,
+			targetActorId,
 			objectId: bet.id,
 			status: 'pending' as const,
 		})),
 	})
 
-	logger.info('Bet reached terminal state, notified subscribers', {
+	logger.info('Bet reached terminal state, notified participants', {
 		betId: bet.id,
 		status: bet.status,
 		notified: created.length,
@@ -2300,14 +2285,9 @@ app.openapi(migrateObjectTypeRoute, async (c) => {
 	const deletedIds = toDelete.map(({ id }) => id)
 
 	await db.transaction(async (tx) => {
-		// Clean up polymorphic subscription + read_state rows before the
-		// objects vanish — there is no FK because (entity_type, entity_id)
-		// is polymorphic, so cascade can't do this for us.
-		await tx
-			.delete(subscriptions)
-			.where(
-				and(eq(subscriptions.entityType, 'object'), inArray(subscriptions.entityId, deletedIds)),
-			)
+		// Clean up polymorphic read_state rows before the objects vanish —
+		// there is no FK because (entity_type, entity_id) is polymorphic, so
+		// cascade can't do this for us.
 		await tx
 			.delete(readState)
 			.where(and(eq(readState.entityType, 'object'), inArray(readState.entityId, deletedIds)))
@@ -2497,12 +2477,8 @@ app.openapi(deleteObjectRoute, async (c) => {
 	}
 
 	await db.transaction(async (tx) => {
-		// Polymorphic subscription + read_state + star_state rows aren't FK'd to
-		// objects, so drop them explicitly to avoid orphans pointing at a freed
-		// entity_id.
-		await tx
-			.delete(subscriptions)
-			.where(and(eq(subscriptions.entityType, 'object'), eq(subscriptions.entityId, id)))
+		// Polymorphic read_state + star_state rows aren't FK'd to objects, so
+		// drop them explicitly to avoid orphans pointing at a freed entity_id.
 		await tx
 			.delete(readState)
 			.where(and(eq(readState.entityType, 'object'), eq(readState.entityId, id)))

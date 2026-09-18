@@ -8,7 +8,6 @@ import {
 	notifications,
 	readState,
 	sessions,
-	subscriptions,
 	workspaceMembers,
 	workspaceSkills,
 	workspaces,
@@ -20,7 +19,6 @@ import {
 	buildFile,
 	buildImport,
 	buildReadState,
-	buildSubscription,
 	buildWorkspaceSkill,
 	insertActor,
 	insertNotification,
@@ -125,12 +123,11 @@ describe('Actors Integration — DELETE', () => {
 		})
 	})
 
-	it('cleans up subscriptions, read_state, sessions, and authored artifacts', async () => {
+	it('cleans up read_state, sessions, and authored artifacts', async () => {
 		const app = createApp()
 		const humanId = getTestActorId()
 
 		// Per-actor feed bookkeeping rows that previously blocked the delete.
-		await db.insert(subscriptions).values(buildSubscription({ workspaceId, actorId: agentId }))
 		await db.insert(readState).values(buildReadState({ workspaceId, actorId: agentId }))
 
 		// A session this agent created for another actor — exercises the
@@ -190,12 +187,7 @@ describe('Actors Integration — DELETE', () => {
 		const remainingActor = await db.select().from(actors).where(eq(actors.id, agentId))
 		expect(remainingActor).toHaveLength(0)
 
-		// Subscriptions and read_state for the agent are gone.
-		const remainingSubs = await db
-			.select()
-			.from(subscriptions)
-			.where(eq(subscriptions.actorId, agentId))
-		expect(remainingSubs).toHaveLength(0)
+		// read_state for the agent is gone.
 		const remainingReads = await db.select().from(readState).where(eq(readState.actorId, agentId))
 		expect(remainingReads).toHaveLength(0)
 

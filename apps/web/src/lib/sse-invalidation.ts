@@ -29,10 +29,7 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		queryClient.invalidateQueries({
 			queryKey: ['subscriptions', 'unread', workspaceId],
 		})
-		queryClient.invalidateQueries({
-			queryKey: queryKeys.subscriptions.subscribers(event.entity_type, event.entity_id),
-		})
-		// Also refresh the detail/graph so unread_count + subscriber_count update.
+		// Also refresh the detail/graph so unread_count updates.
 		queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(event.entity_id) })
 		queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(event.entity_id) })
 	}

@@ -253,7 +253,7 @@ describe('ObjectDocumentView', () => {
 			)
 		})
 
-		it('no longer renders SubscribeToggle, creator, or created/updated chips inline', () => {
+		it('no longer renders creator or created/updated chips inline', () => {
 			const object = buildObjectResponse({
 				type: 'knowledge',
 				createdAt: '2026-06-01T10:00:00.000Z',
