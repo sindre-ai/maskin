@@ -658,7 +658,6 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 				object={object}
 				onDeleteRequest={openDeleteConfirm}
 				onArchiveRequest={handleArchive}
-				workspaceId={workspaceId}
 				open={menuOpen}
 				onOpenChange={setMenuOpen}
 			/>

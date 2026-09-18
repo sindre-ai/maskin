@@ -93,37 +93,34 @@ describe('Subscriptions Integration', () => {
 			.values({ workspaceId, actorId: bId, role: 'member' })
 	})
 
-	it('auto-subscribes the creator and any commenter; unread tracks correctly', async () => {
+	it('tracks unread against mentions without any subscription row', async () => {
 		const appA = appAs(aId)
 		const appB = appAs(bId)
 		const headersA = { 'x-workspace-id': workspaceId }
 		const headersB = { 'x-workspace-id': workspaceId }
 
-		// A creates an object → A is auto-subscribed as 'author'.
 		const createRes = await appA.request(
 			jsonRequest('POST', '/api/objects', buildCreateObjectBody(), headersA),
 		)
 		expect(createRes.status).toBe(201)
 		const obj = await createRes.json()
 
-		// A's detail view: is_subscribed=true, unread=0, subscriber_count=1.
+		// Nobody has commented yet, so neither side has unread activity.
 		const detailA1 = await appA
 			.request(jsonGet(`/api/objects/${obj.id}`, headersA))
 			.then((r) => r.json())
-		expect(detailA1.is_subscribed).toBe(true)
 		expect(detailA1.unread_count).toBe(0)
-		expect(detailA1.subscriber_count).toBe(1)
+		expect(detailA1).not.toHaveProperty('is_subscribed')
+		expect(detailA1).not.toHaveProperty('subscriber_count')
 
-		// B has not commented yet → B is not subscribed, unread=0.
 		const detailB1 = await appB
 			.request(jsonGet(`/api/objects/${obj.id}`, headersB))
 			.then((r) => r.json())
-		expect(detailB1.is_subscribed).toBe(false)
 		expect(detailB1.unread_count).toBe(0)
 
-		// B comments and @-mentions A → B is auto-subscribed; A now has unread=1.
-		// For You is mentions-only, so the comment must mention A to land there
-		// (the object-detail unread_count above is a separate, unmentioned-comment
+		// B comments and @-mentions A → A now has unread=1. For You is
+		// mentions-only, so the comment must mention A to land there (the
+		// object-detail unread_count above is a separate, unmentioned-comment
 		// count and is unaffected).
 		const commentRes = await appB.request(
 			jsonRequest(
@@ -140,14 +137,11 @@ describe('Subscriptions Integration', () => {
 			.request(jsonGet(`/api/objects/${obj.id}`, headersA))
 			.then((r) => r.json())
 		expect(detailA2.unread_count).toBe(1)
-		expect(detailA2.subscriber_count).toBe(2)
-		expect(detailA2.is_subscribed).toBe(true)
 
 		// B doesn't see their own comment as unread.
 		const detailB2 = await appB
 			.request(jsonGet(`/api/objects/${obj.id}`, headersB))
 			.then((r) => r.json())
-		expect(detailB2.is_subscribed).toBe(true)
 		expect(detailB2.unread_count).toBe(0)
 
 		// A's For You: unread feed lists the object (B's comment mentions A).
@@ -270,15 +264,7 @@ describe('Subscriptions Integration', () => {
 		)
 		const obj = await createRes.json()
 
-		// Both actors subscribe and read the same comment.
-		await appB.request(
-			jsonRequest(
-				'POST',
-				'/api/subscriptions',
-				{ entity_type: 'object', entity_id: obj.id },
-				headersB,
-			),
-		)
+		// Both actors read the same comment.
 		const comment = await appB
 			.request(
 				jsonRequest('POST', '/api/events', { entity_id: obj.id, content: 'shared' }, headersB),
@@ -403,132 +389,6 @@ describe('Subscriptions Integration', () => {
 		expect(detail.unread_count).toBe(0)
 	})
 
-	it('manual subscribe / unsubscribe round trip', async () => {
-		const appA = appAs(aId)
-		const appB = appAs(bId)
-		const headersA = { 'x-workspace-id': workspaceId }
-		const headersB = { 'x-workspace-id': workspaceId }
-
-		const createRes = await appA.request(
-			jsonRequest('POST', '/api/objects', buildCreateObjectBody(), headersA),
-		)
-		const obj = await createRes.json()
-
-		// B manually subscribes.
-		const subRes = await appB.request(
-			jsonRequest(
-				'POST',
-				'/api/subscriptions',
-				{ entity_type: 'object', entity_id: obj.id },
-				headersB,
-			),
-		)
-		expect(subRes.status).toBe(201)
-
-		const detail1 = await appB
-			.request(jsonGet(`/api/objects/${obj.id}`, headersB))
-			.then((r) => r.json())
-		expect(detail1.is_subscribed).toBe(true)
-		expect(detail1.subscriber_count).toBe(2)
-
-		// B unsubscribes.
-		const unsubRes = await appB.request(
-			jsonRequest(
-				'DELETE',
-				'/api/subscriptions',
-				{ entity_type: 'object', entity_id: obj.id },
-				headersB,
-			),
-		)
-		expect(unsubRes.status).toBe(200)
-
-		const detail2 = await appB
-			.request(jsonGet(`/api/objects/${obj.id}`, headersB))
-			.then((r) => r.json())
-		expect(detail2.is_subscribed).toBe(false)
-		expect(detail2.subscriber_count).toBe(1)
-	})
-
-	it('a watcher of a bet is NOT subscribed to its child tasks via breaks_into', async () => {
-		// Locks the invariant behind the "stop bet→task notification cascade" bet:
-		// subscribing to a bet must never surface its child tasks' activity in the
-		// watcher's For You unless the watcher is directly involved with the task.
-		const appA = appAs(aId)
-		const appB = appAs(bId)
-		const headersA = { 'x-workspace-id': workspaceId }
-		const headersB = { 'x-workspace-id': workspaceId }
-
-		// A creates a bet → A is auto-subscribed as 'author'.
-		const betRes = await appA.request(
-			jsonRequest(
-				'POST',
-				'/api/objects',
-				buildCreateObjectBody({ type: 'bet', title: 'Parent bet', status: 'active' }),
-				headersA,
-			),
-		)
-		expect(betRes.status).toBe(201)
-		const bet = await betRes.json()
-
-		// B creates a task → B is auto-subscribed; A is NOT.
-		const taskRes = await appB.request(
-			jsonRequest(
-				'POST',
-				'/api/objects',
-				buildCreateObjectBody({ type: 'task', title: 'Child task', status: 'todo' }),
-				headersB,
-			),
-		)
-		expect(taskRes.status).toBe(201)
-		const task = await taskRes.json()
-
-		// Link bet → task via `breaks_into`. This must not subscribe A to the task.
-		const relRes = await appA.request(
-			jsonRequest(
-				'POST',
-				'/api/relationships',
-				{
-					source_type: 'object',
-					source_id: bet.id,
-					target_type: 'object',
-					target_id: task.id,
-					type: 'breaks_into',
-				},
-				headersA,
-			),
-		)
-		expect(relRes.status).toBe(201)
-
-		// B comments on the task with NO @mention of A. The cascade we're guarding
-		// against would surface this in A's For You via bet-membership.
-		const commentRes = await appB.request(
-			jsonRequest(
-				'POST',
-				'/api/events',
-				{ entity_id: task.id, content: 'progress update on the task' },
-				headersB,
-			),
-		)
-		expect(commentRes.status).toBe(201)
-
-		// A's view of the task: not subscribed. `unread_count` on the detail
-		// endpoint is "comments since you last read this entity" and intentionally
-		// doesn't gate on subscription, so it can be non-zero here — the invariant
-		// we lock is the For You feed below, not the per-entity unread badge.
-		const taskDetailA = await appA
-			.request(jsonGet(`/api/objects/${task.id}`, headersA))
-			.then((r) => r.json())
-		expect(taskDetailA.is_subscribed).toBe(false)
-
-		// A's For You: the task must NOT appear. The bet has no comment activity
-		// of its own, so the unread feed should be empty for A.
-		const unreadA = await appA
-			.request(jsonGet('/api/subscriptions/unread', headersA))
-			.then((r) => r.json())
-		const taskIds = unreadA.items.map((i: { entity_id: string }) => i.entity_id)
-		expect(taskIds).not.toContain(task.id)
-	})
-
 	it('a bet watcher receives a notification on terminal status_changed, but the unread feed stays mentions-only', async () => {
 		// For You dropped the status_changed arm (T2 on bet/notif-cascade-fix)
 		// once the feed became mentions-only — a terminal bet transition still
@@ -539,8 +399,8 @@ describe('Subscriptions Integration', () => {
 		const headersA = { 'x-workspace-id': workspaceId }
 		const headersB = { 'x-workspace-id': workspaceId }
 
-		// A creates a bet (auto-subscribed as 'author'). B manually subscribes so
-		// we exercise the fan-out across two subscribers.
+		// A creates the bet (its creator). B joins by commenting, so the fan-out
+		// has two distinct participants to reach.
 		const betRes = await appA.request(
 			jsonRequest(
 				'POST',
@@ -552,11 +412,13 @@ describe('Subscriptions Integration', () => {
 		expect(betRes.status).toBe(201)
 		const bet = await betRes.json()
 
+		// B becomes a participant by posting on the bet — that is what puts them
+		// in the terminal-notification fan-out now that subscriptions are gone.
 		await appB.request(
 			jsonRequest(
 				'POST',
-				'/api/subscriptions',
-				{ entity_type: 'object', entity_id: bet.id },
+				'/api/events',
+				{ entity_id: bet.id, content: 'Watching this one.' },
 				headersB,
 			),
 		)
@@ -606,6 +468,67 @@ describe('Subscriptions Integration', () => {
 		expect(aGoodNews).toBeUndefined()
 	})
 
+	it('the terminal fan-out reaches participants only — an uninvolved workspace member gets nothing', async () => {
+		// Recipients used to be subscriber rows, which a manual Subscribe toggle
+		// could add for anyone. They are now derived from involvement: whoever
+		// commented, plus the bet's driver and creator. This pins the boundary —
+		// a member who never touched the bet must not be notified.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const bystander = await insertActor(db, {
+			name: 'Bystander',
+			email: `bystander-${Date.now()}@test.com`,
+			apiKey: `ank_bystander_${Date.now()}`,
+		})
+		await db
+			.insert((await import('@maskin/db/schema')).workspaceMembers)
+			.values({ workspaceId, actorId: bystander.id, role: 'member' })
+
+		const bet = await appA
+			.request(
+				jsonRequest(
+					'POST',
+					'/api/objects',
+					buildCreateObjectBody({ type: 'bet', title: 'Participant fan-out', status: 'active' }),
+					headersA,
+				),
+			)
+			.then((r) => r.json())
+
+		// B participates; the bystander is a member of the same workspace but
+		// never comments, drives, or creates anything here.
+		await appB.request(
+			jsonRequest('POST', '/api/events', { entity_id: bet.id, content: 'On it.' }, headersB),
+		)
+
+		expect(
+			(
+				await appA.request(
+					jsonRequest('PATCH', `/api/objects/${bet.id}`, { status: 'succeeded' }, headersA),
+				)
+			).status,
+		).toBe(200)
+
+		const notifs = await appB
+			.request(jsonGet(`/api/notifications?object_id=${bet.id}`, headersB))
+			.then((r) => r.json())
+		const targets = new Set(
+			(notifs as Array<{ type: string; targetActorId: string }>)
+				.filter((n) => n.type === 'good_news')
+				.map((n) => n.targetActorId),
+		)
+
+		// The commenter is in.
+		expect(targets.has(bId)).toBe(true)
+		// The actor who made the flip is not notified about their own action.
+		expect(targets.has(aId)).toBe(false)
+		// And the uninvolved member is not reachable at all any more.
+		expect(targets.has(bystander.id)).toBe(false)
+	})
+
 	it('a bet flipping straight to failed with no comments still notifies, but not via the unread feed', async () => {
 		// The bet's notification row (separate system, unaffected by this change)
 		// still fires with no comments in between. The unread feed, now
@@ -625,12 +548,14 @@ describe('Subscriptions Integration', () => {
 		)
 		const bet = await betRes.json()
 
-		// B subscribes manually; no comments are ever posted.
+		// Nobody comments, drives, or creates besides A.
+		// B becomes a participant by posting on the bet — that is what puts them
+		// in the terminal-notification fan-out now that subscriptions are gone.
 		await appB.request(
 			jsonRequest(
 				'POST',
-				'/api/subscriptions',
-				{ entity_type: 'object', entity_id: bet.id },
+				'/api/events',
+				{ entity_id: bet.id, content: 'Watching this one.' },
 				headersB,
 			),
 		)
@@ -676,11 +601,13 @@ describe('Subscriptions Integration', () => {
 		)
 		const bet = await betRes.json()
 
+		// B becomes a participant by posting on the bet — that is what puts them
+		// in the terminal-notification fan-out now that subscriptions are gone.
 		await appB.request(
 			jsonRequest(
 				'POST',
-				'/api/subscriptions',
-				{ entity_type: 'object', entity_id: bet.id },
+				'/api/events',
+				{ entity_id: bet.id, content: 'Watching this one.' },
 				headersB,
 			),
 		)
@@ -706,7 +633,7 @@ describe('Subscriptions Integration', () => {
 		expect(bAlert.title).toContain('paused')
 	})
 
-	it('concurrent PATCHes flipping the same bet to succeeded notify each subscriber exactly once', async () => {
+	it('concurrent PATCHes flipping the same bet to succeeded notify each participant exactly once', async () => {
 		// Regression test for the TOCTOU race: the terminal-notification guard
 		// used to compare against a pre-transaction `existing` snapshot, so two
 		// concurrent PATCHes could both observe the pre-transition status and
@@ -728,11 +655,13 @@ describe('Subscriptions Integration', () => {
 		)
 		const bet = await betRes.json()
 
+		// B becomes a participant by posting on the bet — that is what puts them
+		// in the terminal-notification fan-out now that subscriptions are gone.
 		await appB.request(
 			jsonRequest(
 				'POST',
-				'/api/subscriptions',
-				{ entity_type: 'object', entity_id: bet.id },
+				'/api/events',
+				{ entity_id: bet.id, content: 'Watching this one.' },
 				headersB,
 			),
 		)
@@ -778,11 +707,13 @@ describe('Subscriptions Integration', () => {
 		)
 		const bet = await betRes.json()
 
+		// B becomes a participant by posting on the bet — that is what puts them
+		// in the terminal-notification fan-out now that subscriptions are gone.
 		await appB.request(
 			jsonRequest(
 				'POST',
-				'/api/subscriptions',
-				{ entity_type: 'object', entity_id: bet.id },
+				'/api/events',
+				{ entity_id: bet.id, content: 'Watching this one.' },
 				headersB,
 			),
 		)
@@ -1041,7 +972,7 @@ describe('Subscriptions Integration', () => {
 		const headersA = { 'x-workspace-id': workspaceId }
 		const headersB = { 'x-workspace-id': workspaceId }
 
-		// A (human) creates the object and is auto-subscribed.
+		// A (human) creates the object.
 		const createRes = await appA.request(
 			jsonRequest('POST', '/api/objects', buildCreateObjectBody(), headersA),
 		)
@@ -1079,21 +1010,14 @@ describe('Subscriptions Integration', () => {
 
 		// onboarding_session isn't a type POST /api/objects accepts for a bare
 		// test workspace (no type/status validated in its settings) — insert the
-		// row directly, as the real onboarding flow does internally, and then
-		// subscribe A the same way object creation would (author subscription).
+		// row directly, as the real onboarding flow does internally. A is the
+		// workspace creator, which is what scopes the carve-out to them now that
+		// the author subscription is gone.
 		const session = await insertObject(db, workspaceId, aId, {
 			type: 'onboarding_session',
 			title: 'Getting started',
 			status: 'active',
 		})
-		await appA.request(
-			jsonRequest(
-				'POST',
-				'/api/subscriptions',
-				{ entity_type: 'object', entity_id: session.id },
-				headersA,
-			),
-		)
 
 		const coachReply = await appB.request(
 			jsonRequest(
@@ -1150,14 +1074,6 @@ describe('Subscriptions Integration', () => {
 			title: 'Getting started',
 			status: 'active',
 		})
-		await appA.request(
-			jsonRequest(
-				'POST',
-				'/api/subscriptions',
-				{ entity_type: 'object', entity_id: session.id },
-				headersA,
-			),
-		)
 
 		const coachReply = await appB.request(
 			jsonRequest(
@@ -1203,15 +1119,6 @@ describe('Subscriptions Integration', () => {
 		expect(loopRes.status).toBe(201)
 		const loop = await loopRes.json()
 
-		await appB.request(
-			jsonRequest(
-				'POST',
-				'/api/subscriptions',
-				{ entity_type: 'object', entity_id: loop.id },
-				headersB,
-			),
-		)
-
 		// Born already breached: no `created` arm left to catch this.
 		const unreadAfterBirth = await appB
 			.request(jsonGet('/api/subscriptions/unread', headersB))
@@ -1232,37 +1139,6 @@ describe('Subscriptions Integration', () => {
 		expect(
 			unreadAfterTransition.items.find((i: { entity_id: string }) => i.entity_id === loop.id),
 		).toBeUndefined()
-	})
-
-	it('auto-subscribes the creator to every node created via POST /api/graph', async () => {
-		const appA = appAs(aId)
-		const headersA = { 'x-workspace-id': workspaceId }
-
-		const graphRes = await appA.request(
-			jsonRequest(
-				'POST',
-				'/api/graph',
-				{
-					nodes: [
-						{ $id: 'bet-1', type: 'bet', title: 'Bet via graph', status: 'proposed' },
-						{ $id: 'task-1', type: 'task', title: 'Task via graph', status: 'todo' },
-					],
-					edges: [{ source: 'bet-1', target: 'task-1', type: 'breaks_into' }],
-				},
-				headersA,
-			),
-		)
-		expect(graphRes.status).toBe(201)
-		const { nodes } = await graphRes.json()
-		expect(nodes).toHaveLength(2)
-
-		for (const node of nodes) {
-			const detail = await appA
-				.request(jsonGet(`/api/objects/${node.id}`, headersA))
-				.then((r) => r.json())
-			expect(detail.is_subscribed).toBe(true)
-			expect(detail.subscriber_count).toBe(1)
-		}
 	})
 
 	it('include_recently_read keeps a marked-read card in the feed within the 48h window', async () => {
@@ -1407,7 +1283,7 @@ describe('Subscriptions Integration', () => {
 	// actor that no longer exists (deleted, or a stale client cache). Inserting
 	// one into subscriptions.actor_id violates subscriptions_actor_id_fkey and
 	// rolls back the entire comment transaction (Sentry MASKIN-DEV-8).
-	it('posts the comment and skips the subscription when a mention names a non-existent actor', async () => {
+	it('posts the comment and reports the unresolved id when a mention names a non-existent actor', async () => {
 		const appA = appAs(aId)
 		const headersA = { 'x-workspace-id': workspaceId }
 
@@ -1437,14 +1313,11 @@ describe('Subscriptions Integration', () => {
 		expect(commentBody.unresolved_mentions).toEqual([ghostActorId])
 		expect(commentBody.warning).toContain('list_actors')
 
-		// The real mentioned actor is still subscribed...
-		const subs = await db.execute(
-			sql`select actor_id, source from subscriptions where entity_id = ${obj.id}`,
-		)
-		const rows = subs as unknown as Array<{ actor_id: string; source: string }>
-		expect(rows.some((r) => r.actor_id === bId && r.source === 'mentioned')).toBe(true)
-		// ...and the ghost simply produced no row.
-		expect(rows.some((r) => r.actor_id === ghostActorId)).toBe(false)
+		// The real mention still lands in B's feed; the ghost simply evaporated.
+		const unreadB = await appAs(bId)
+			.request(jsonGet('/api/subscriptions/unread', { 'x-workspace-id': workspaceId }))
+			.then((r) => r.json())
+		expect(unreadB.items.some((i: { entity_id: string }) => i.entity_id === obj.id)).toBe(true)
 	})
 
 	// The For You card leads with the comment that mentioned the reader, so the

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { buildObject, buildSubscription } from '../factories'
+import { buildObject } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
@@ -9,150 +9,6 @@ const wsId = '00000000-0000-0000-0000-000000000001'
 const headers = { 'x-workspace-id': wsId }
 
 describe('Subscriptions Routes', () => {
-	describe('POST /api/subscriptions', () => {
-		it('returns 201 when subscribing to an existing object', async () => {
-			const obj = buildObject({ workspaceId: wsId })
-			const { app, mockResults } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
-			// Two selects: 1) verify object exists. autoSubscribe doesn't select.
-			mockResults.selectQueue = [[{ id: obj.id }]]
-
-			const res = await app.request(
-				jsonRequest(
-					'POST',
-					'/api/subscriptions',
-					{ entity_type: 'object', entity_id: obj.id },
-					headers,
-				),
-			)
-
-			expect(res.status).toBe(201)
-			const body = await res.json()
-			expect(body.subscribed).toBe(true)
-		})
-
-		it('returns 404 when the object does not exist', async () => {
-			const { app } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
-			// no select results queued → mock returns []
-
-			const res = await app.request(
-				jsonRequest(
-					'POST',
-					'/api/subscriptions',
-					{ entity_type: 'object', entity_id: randomUUID() },
-					headers,
-				),
-			)
-
-			expect(res.status).toBe(404)
-		})
-
-		it('returns 400 for invalid entity_type', async () => {
-			const { app } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
-
-			const res = await app.request(
-				jsonRequest(
-					'POST',
-					'/api/subscriptions',
-					{ entity_type: 'thread', entity_id: randomUUID() },
-					headers,
-				),
-			)
-
-			expect(res.status).toBe(400)
-		})
-
-		it('returns 400 for malformed UUID', async () => {
-			const { app } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
-
-			const res = await app.request(
-				jsonRequest(
-					'POST',
-					'/api/subscriptions',
-					{ entity_type: 'object', entity_id: 'not-a-uuid' },
-					headers,
-				),
-			)
-
-			expect(res.status).toBe(400)
-		})
-	})
-
-	describe('DELETE /api/subscriptions', () => {
-		it('returns 200 even when no subscription exists (idempotent)', async () => {
-			const { app } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
-
-			const res = await app.request(
-				jsonRequest(
-					'DELETE',
-					'/api/subscriptions',
-					{ entity_type: 'object', entity_id: randomUUID() },
-					headers,
-				),
-			)
-
-			expect(res.status).toBe(200)
-			const body = await res.json()
-			expect(body.unsubscribed).toBe(true)
-		})
-	})
-
-	describe('GET /api/subscriptions/subscribers', () => {
-		it('returns the joined subscribers list', async () => {
-			const entityId = randomUUID()
-			const actorRow = { id: randomUUID(), type: 'human', name: 'Alice' }
-			const { app, mockResults } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
-			// 1) entity-in-workspace check, 2) subscribers join.
-			mockResults.selectQueue = [[{ id: entityId }], [actorRow]]
-
-			const res = await app.request(
-				jsonGet(`/api/subscriptions/subscribers?entity_type=object&entity_id=${entityId}`, headers),
-			)
-
-			expect(res.status).toBe(200)
-			const body = await res.json()
-			expect(body.actors).toEqual([actorRow])
-		})
-
-		it('returns empty list when entity has no subscribers in this workspace', async () => {
-			const entityId = randomUUID()
-			const { app, mockResults } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
-			// Entity exists, but no subscribers.
-			mockResults.selectQueue = [[{ id: entityId }], []]
-
-			const res = await app.request(
-				jsonGet(`/api/subscriptions/subscribers?entity_type=object&entity_id=${entityId}`, headers),
-			)
-
-			expect(res.status).toBe(200)
-			const body = await res.json()
-			expect(body.actors).toEqual([])
-		})
-
-		it('returns 404 when the entity is not in this workspace', async () => {
-			const { app } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
-			// no selectQueue → entity-exists check returns [] → 404.
-
-			const res = await app.request(
-				jsonGet(
-					`/api/subscriptions/subscribers?entity_type=object&entity_id=${randomUUID()}`,
-					headers,
-				),
-			)
-
-			expect(res.status).toBe(404)
-		})
-
-		it('returns 400 when entity_id is missing', async () => {
-			const { app } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
-
-			const res = await app.request(
-				jsonGet('/api/subscriptions/subscribers?entity_type=object', headers),
-			)
-
-			expect(res.status).toBe(400)
-		})
-	})
-
 	describe('POST /api/subscriptions/read', () => {
 		it('returns 200 with a valid last_event_id', async () => {
 			const entityId = randomUUID()
@@ -302,11 +158,13 @@ describe('Subscriptions Routes', () => {
 
 		it('hydrates the embedded object for object entity_type', async () => {
 			const obj = buildObject({ workspaceId: wsId })
-			const sub = buildSubscription({ workspaceId: wsId, entityType: 'object', entityId: obj.id })
 			const { app, mockResults } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
-			// First select = aggregate join query → returns the grouped row.
-			// Second select = inArray fetch for object summaries.
+			// Aggregate over `events` → the grouped row; then the inArray fetch
+			// for object summaries.
 			mockResults.selectQueue = [
+				// 1st select = the workspaces lookup that resolves `created_by` for
+				// the onboarding carve-out; the aggregate follows it.
+				[{ createdBy: null }],
 				[
 					{
 						entityType: 'object',
@@ -319,9 +177,6 @@ describe('Subscriptions Routes', () => {
 				],
 				[obj],
 			]
-			// Suppress unused-var lint by referencing the sub factory
-			void sub
-
 			const res = await app.request(jsonGet('/api/subscriptions/unread', headers))
 
 			expect(res.status).toBe(200)
@@ -338,6 +193,9 @@ describe('Subscriptions Routes', () => {
 			const obj = buildObject({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
 			mockResults.selectQueue = [
+				// 1st select = the workspaces lookup that resolves `created_by` for
+				// the onboarding carve-out; the aggregate follows it.
+				[{ createdBy: null }],
 				[
 					{
 						entityType: 'object',
@@ -368,6 +226,9 @@ describe('Subscriptions Routes', () => {
 			const obj = buildObject({ workspaceId: wsId })
 			const { app, mockResults } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
 			mockResults.selectQueue = [
+				// 1st select = the workspaces lookup that resolves `created_by` for
+				// the onboarding carve-out; the aggregate follows it.
+				[{ createdBy: null }],
 				[
 					{
 						entityType: 'object',
@@ -405,6 +266,9 @@ describe('Subscriptions Routes', () => {
 			// A recently-read card comes back with unread_count = 0 but is still
 			// present in the feed with a non-null latest_activity_at.
 			mockResults.selectQueue = [
+				// 1st select = the workspaces lookup that resolves `created_by` for
+				// the onboarding carve-out; the aggregate follows it.
+				[{ createdBy: null }],
 				[
 					{
 						entityType: 'object',

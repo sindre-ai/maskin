@@ -161,19 +161,6 @@ export function buildWorkspaceMember(overrides?: Record<string, unknown>) {
 	}
 }
 
-export function buildSubscription(overrides?: Record<string, unknown>) {
-	return {
-		id: randomUUID(),
-		workspaceId: randomUUID(),
-		actorId: randomUUID(),
-		entityType: 'object',
-		entityId: randomUUID(),
-		source: 'manual' as const,
-		createdAt: new Date(),
-		...overrides,
-	}
-}
-
 export function buildReadState(overrides?: Record<string, unknown>) {
 	return {
 		id: randomUUID(),

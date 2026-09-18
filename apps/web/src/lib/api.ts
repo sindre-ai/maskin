@@ -737,22 +737,6 @@ export const api = {
 	},
 
 	subscriptions: {
-		subscribe: (workspaceId: string, entityType: string, entityId: string) =>
-			request<{ subscribed: true }>('/subscriptions', {
-				method: 'POST',
-				body: { entity_type: entityType, entity_id: entityId },
-				workspaceId,
-			}),
-		unsubscribe: (workspaceId: string, entityType: string, entityId: string) =>
-			request<{ unsubscribed: true }>('/subscriptions', {
-				method: 'DELETE',
-				body: { entity_type: entityType, entity_id: entityId },
-				workspaceId,
-			}),
-		subscribers: (workspaceId: string, entityType: string, entityId: string) => {
-			const qs = new URLSearchParams({ entity_type: entityType, entity_id: entityId }).toString()
-			return request<SubscribersResponse>(`/subscriptions/subscribers?${qs}`, { workspaceId })
-		},
 		markRead: (workspaceId: string, entityType: string, entityId: string, lastEventId: number) =>
 			request<{ updated: true }>('/subscriptions/read', {
 				method: 'POST',
@@ -1109,9 +1093,7 @@ export interface ObjectResponse {
 	createdAt: string | null
 	updatedAt: string | null
 	// Populated by detail / graph routes only — list routes omit to avoid N+1.
-	is_subscribed?: boolean
 	unread_count?: number
-	subscriber_count?: number
 	// Per-viewer starred flag. The list handler + detail + graph hydrate it via
 	// a single secondary query (see `star-state` service on the backend). Other
 	// endpoints — create / update / verify / undo-write / bulk — omit it, so
@@ -1134,10 +1116,6 @@ export interface BoardObjectColumn {
 
 export interface BoardObjectResponse {
 	columns: BoardObjectColumn[]
-}
-
-export interface SubscribersResponse {
-	actors: Array<{ id: string; type: string; name: string }>
 }
 
 export interface UnreadItem {

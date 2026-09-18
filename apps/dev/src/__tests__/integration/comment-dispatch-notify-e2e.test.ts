@@ -195,7 +195,7 @@ describe('Comment dispatch over a real PG NOTIFY bridge (end-to-end transport)',
 		})
 
 		// The shape lib/onboarding/signup-welcome.ts writes: a real @mention
-		// (so the agent is auto-subscribed and counts as a thread participant)
+		// (so the agent counts as a thread participant)
 		// plus a suppression entry so the dispatcher does not add a second,
 		// generic session on top of the bespoke one the caller already made.
 		await db.insert(events).values({

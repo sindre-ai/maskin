@@ -741,43 +741,6 @@ export const mcpTelemetry = pgTable(
 	],
 )
 
-// ── Subscriptions ─────────────────────────────────────────────────────────
-//
-// Polymorphic per-actor subscriptions keyed on (entity_type, entity_id).
-// `source` tracks how the row was created — 'author' (creator), 'commenter'
-// (auto-attached when they comment), 'mentioned' (auto-attached when they are
-// @-mentioned in a comment), or 'manual' (explicit subscribe). Manual/author
-// should never be downgraded by a later auto-subscribe.
-
-export const subscriptions = pgTable(
-	'subscriptions',
-	{
-		id: uuid('id').defaultRandom().primaryKey(),
-		workspaceId: uuid('workspace_id')
-			.references(() => workspaces.id)
-			.notNull(),
-		actorId: uuid('actor_id')
-			.references(() => actors.id)
-			.notNull(),
-		entityType: text('entity_type').notNull(),
-		entityId: uuid('entity_id').notNull(),
-		source: text('source').notNull(),
-		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
-	},
-	(t) => [
-		unique('subscriptions_actor_entity_uniq').on(t.actorId, t.entityType, t.entityId),
-		index('subscriptions_ws_actor_idx').on(t.workspaceId, t.actorId),
-		index('subscriptions_entity_idx').on(t.entityType, t.entityId),
-		check(
-			'subscriptions_source_check',
-			sql`${t.source} IN ('manual', 'author', 'commenter', 'mentioned')`,
-		),
-	],
-)
-
-export type Subscription = typeof subscriptions.$inferSelect
-export type NewSubscription = typeof subscriptions.$inferInsert
-
 // ── Read State ────────────────────────────────────────────────────────────
 //
 // Per-actor high-water-mark per subscribable entity. `last_read_event_id`

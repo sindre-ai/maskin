@@ -2314,19 +2314,14 @@ export function createMcpServer(config: McpConfig) {
 				await Promise.all(tasks)
 			}
 
-			// activeSessionId/activeSessionCurrentActivity/unread_count/subscriber_count
+			// activeSessionId/activeSessionCurrentActivity/unread_count
 			// are per-viewer/session bookkeeping fields the API returns on every
 			// object row; a just-created object never has them populated
 			// meaningfully, so create_objects strips them from the response.
 			const enrichedNodes = Array.isArray(graphResult.nodes)
 				? graphResult.nodes.map((node) => {
-						const {
-							activeSessionId,
-							activeSessionCurrentActivity,
-							unread_count,
-							subscriber_count,
-							...rest
-						} = node as Record<string, unknown>
+						const { activeSessionId, activeSessionCurrentActivity, unread_count, ...rest } =
+							node as Record<string, unknown>
 						return addUrl(rest, config, workspace_id, { kind: 'object', id: node.id })
 					})
 				: graphResult.nodes

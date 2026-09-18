@@ -134,8 +134,6 @@ export const queryKeys = {
 		usage: (workspaceId: string) => ['billing', workspaceId, 'usage'] as const,
 	},
 	subscriptions: {
-		subscribers: (entityType: string, entityId: string) =>
-			['subscriptions', 'subscribers', entityType, entityId] as const,
 		unread: (workspaceId: string, entityType?: string, includeRecentlyRead?: boolean) =>
 			[
 				'subscriptions',

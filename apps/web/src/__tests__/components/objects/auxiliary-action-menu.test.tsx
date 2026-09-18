@@ -5,10 +5,7 @@ import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { buildObjectResponse } from '../../factories'
 
-vi.mock('@/hooks/use-subscriptions', () => ({
-	useSubscribe: () => ({ mutate: vi.fn() }),
-	useUnsubscribe: () => ({ mutate: vi.fn() }),
-}))
+vi.mock('@/hooks/use-subscriptions', () => ({}))
 
 // Mutable so individual tests can flip the viewport class.
 const viewport = { isMobile: false }
@@ -36,12 +33,7 @@ describe('AuxiliaryActionMenu', () => {
 		const object = buildObjectResponse({ type: 'bet', status: 'active' })
 
 		render(
-			<AuxiliaryActionMenu
-				object={object}
-				onDeleteRequest={vi.fn()}
-				onArchiveRequest={vi.fn()}
-				workspaceId="ws-1"
-			/>,
+			<AuxiliaryActionMenu object={object} onDeleteRequest={vi.fn()} onArchiveRequest={vi.fn()} />,
 			{ wrapper: makeWrapper() },
 		)
 
@@ -60,12 +52,7 @@ describe('AuxiliaryActionMenu', () => {
 		const object = buildObjectResponse({ type: 'task', status: 'todo' })
 
 		render(
-			<AuxiliaryActionMenu
-				object={object}
-				onDeleteRequest={vi.fn()}
-				onArchiveRequest={vi.fn()}
-				workspaceId="ws-1"
-			/>,
+			<AuxiliaryActionMenu object={object} onDeleteRequest={vi.fn()} onArchiveRequest={vi.fn()} />,
 			{ wrapper: makeWrapper() },
 		)
 
@@ -80,12 +67,7 @@ describe('AuxiliaryActionMenu', () => {
 		const object = buildObjectResponse({ type: 'bet', status: 'archived' })
 
 		render(
-			<AuxiliaryActionMenu
-				object={object}
-				onDeleteRequest={vi.fn()}
-				onArchiveRequest={vi.fn()}
-				workspaceId="ws-1"
-			/>,
+			<AuxiliaryActionMenu object={object} onDeleteRequest={vi.fn()} onArchiveRequest={vi.fn()} />,
 			{ wrapper: makeWrapper() },
 		)
 
@@ -103,7 +85,6 @@ describe('AuxiliaryActionMenu', () => {
 				object={object}
 				onDeleteRequest={vi.fn()}
 				onArchiveRequest={onArchive}
-				workspaceId="ws-1"
 			/>,
 			{ wrapper: makeWrapper() },
 		)
@@ -127,7 +108,6 @@ describe('AuxiliaryActionMenu', () => {
 				object={object}
 				onDeleteRequest={vi.fn()}
 				onArchiveRequest={onArchive}
-				workspaceId="ws-1"
 				open
 				onOpenChange={vi.fn()}
 			/>,
@@ -151,7 +131,6 @@ describe('AuxiliaryActionMenu', () => {
 				object={object}
 				onDeleteRequest={vi.fn()}
 				onArchiveRequest={onArchive}
-				workspaceId="ws-1"
 				open
 				onOpenChange={vi.fn()}
 			/>,
@@ -170,12 +149,7 @@ describe('AuxiliaryActionMenu', () => {
 		const object = buildObjectResponse({ type: 'bet', status: 'active' })
 
 		render(
-			<AuxiliaryActionMenu
-				object={object}
-				onDeleteRequest={vi.fn()}
-				onArchiveRequest={vi.fn()}
-				workspaceId="ws-1"
-			/>,
+			<AuxiliaryActionMenu object={object} onDeleteRequest={vi.fn()} onArchiveRequest={vi.fn()} />,
 			{ wrapper: makeWrapper() },
 		)
 
@@ -192,12 +166,7 @@ describe('AuxiliaryActionMenu', () => {
 		const object = buildObjectResponse({ type: 'bet', status: 'active' })
 
 		render(
-			<AuxiliaryActionMenu
-				object={object}
-				onDeleteRequest={vi.fn()}
-				onArchiveRequest={vi.fn()}
-				workspaceId="ws-1"
-			/>,
+			<AuxiliaryActionMenu object={object} onDeleteRequest={vi.fn()} onArchiveRequest={vi.fn()} />,
 			{ wrapper: makeWrapper() },
 		)
 
