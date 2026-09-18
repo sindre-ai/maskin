@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label'
 import { useActors } from '@/hooks/use-actors'
 import { useAuth } from '@/hooks/use-auth'
 import { useBillingUsage } from '@/hooks/use-billing'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	useCompleteIntegration,
 	useConnectIntegration,
@@ -60,6 +61,15 @@ function IntegrationsPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: integrations, isLoading: integrationsLoading } = useIntegrations(workspaceId)
 	const { data: providers, isLoading: providersLoading } = useProviders()
+	// Gate the google-meet provider card behind `google-meet-integration-ui` —
+	// the backend registers the provider unconditionally so its OAuth callback
+	// and MCP routes stay reachable for anyone the tester rollout allows in,
+	// but the connect entry point stays hidden from everyone else until the flag
+	// flips on. Visual-layer only, per .claude/rules/feature-flags.md.
+	const googleMeetVisible = useFeatureFlag('google-meet-integration-ui')
+	const visibleProviders = (providers ?? []).filter(
+		(p) => p.name !== 'google-meet' || googleMeetVisible,
+	)
 
 	// GitHub only installs its App once per org, so a workspace that wants an org
 	// someone already connected elsewhere can't go through the install flow — it
@@ -99,14 +109,14 @@ function IntegrationsPage() {
 		<div>
 			{isLoading ? (
 				<ListSkeleton />
-			) : !providers?.length ? (
+			) : !visibleProviders.length ? (
 				<EmptyState
 					title="No providers available"
 					description="No integration providers are configured on the server"
 				/>
 			) : (
 				<div className="space-y-2">
-					{providers.map((provider) => {
+					{visibleProviders.map((provider) => {
 						const installations = activeByProvider.get(provider.name) ?? []
 						if (MULTI_INSTALL_PROVIDERS.has(provider.name) && installations.length > 0) {
 							return (

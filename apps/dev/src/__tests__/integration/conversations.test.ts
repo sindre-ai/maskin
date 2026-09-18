@@ -585,6 +585,91 @@ describe('Conversations Integration', () => {
 			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
 		})
 
+		it('auto-joins both actors in a two-actor mention and lets both responders see wasMentioned=true', async () => {
+			// Two-actor mention case: neither is a participant, both must be
+			// promoted, both must be handed to `evaluateAndRespond` with the
+			// wasMentioned=true short-circuit (proxied here by the responder
+			// picking up both agents as candidates and calling createSession
+			// for each).
+			const agentA = await insertActor(db, { type: 'agent' })
+			const agentB = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agentA.id)
+			await addMember(workspaceId, agentB.id)
+			const { app: ownerApp, sessionManager } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Two mentions', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const messageRes = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{
+						content: `hey <@${agentA.id}> <@${agentB.id}>`,
+						metadata: { mentions: [agentA.id, agentB.id] },
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(messageRes.status).toBe(201)
+
+			const detail = await ownerApp.request(
+				jsonGet(`/api/conversations/${conversation.id}`, { 'x-workspace-id': workspaceId }),
+			)
+			const detailBody = (await detail.json()) as { participants: Array<{ actorId: string }> }
+			expect(detailBody.participants.map((p) => p.actorId).sort()).toEqual(
+				[ownerId, agentA.id, agentB.id].sort(),
+			)
+
+			// evaluateAndRespond is fire-and-forget from the route — give it a turn.
+			await new Promise((resolve) => setTimeout(resolve, 50))
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(2)
+			const sessionActorIds = sessionManager.createSession.mock.calls
+				.map((call) => (call[1] as { actorId: string }).actorId)
+				.sort()
+			expect(sessionActorIds).toEqual([agentA.id, agentB.id].sort())
+
+			// Re-mentioning the same actor a second time is idempotent — no new
+			// participant row, no duplicate `conversation_participant_added` event.
+			const priorEvents = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.entityId, conversation.id),
+						eq(events.action, 'conversation_participant_added'),
+					),
+				)
+			const remention = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{
+						content: `hey again <@${agentA.id}>`,
+						metadata: { mentions: [agentA.id] },
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(remention.status).toBe(201)
+			const laterEvents = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.entityId, conversation.id),
+						eq(events.action, 'conversation_participant_added'),
+					),
+				)
+			expect(laterEvents).toHaveLength(priorEvents.length)
+		})
+
 		it('ignores a mention of an actor who is not a workspace member, without failing the message post', async () => {
 			const outsider = await insertActor(db, { type: 'agent' })
 			const { app: ownerApp } = createConversationsApp(ownerId)
