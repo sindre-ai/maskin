@@ -78,7 +78,6 @@ export const CREDIT_TOPUP_BOUNDS_MINOR: Record<MaskinCreditsCurrency, CreditsAmo
 	eur: { min: 2250, preset: 4500, max: 450000 },
 }
 
-
 /**
  * Free Trial price (tax-exclusive replacement per bet Delta 3). Held here for
  * reference: the pre-bet archived price `price_1U1RPeK6EV92oY0m3UIAnvnp` is
@@ -364,8 +363,7 @@ export async function createCreditCheckoutSession(
 				{
 					price_data: {
 						currency,
-						product: (await stripe.prices.retrieve(env.priceCreditsCustom))
-							.product as string,
+						product: (await stripe.prices.retrieve(env.priceCreditsCustom)).product as string,
 						unit_amount: inputs.amountUsdCents,
 						tax_behavior: 'exclusive',
 					},
