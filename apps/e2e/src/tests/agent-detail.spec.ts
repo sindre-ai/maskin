@@ -111,6 +111,53 @@ test.describe('Agent detail — header and Usage block', () => {
 	}
 })
 
+test.describe('Agent detail — delete action', () => {
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`removes a workspace agent and returns to the index @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			const agent = await account.api.createAgentActor('Dez Dispose')
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
+
+			await expect(page.getByRole('heading', { name: 'Dez Dispose' })).toBeVisible({
+				timeout: 10_000,
+			})
+
+			// The delete affordance is a ghost trash icon in the detail bar, next
+			// to the enable/disable switch — reachable on touch at every ship-gate
+			// viewport (no hover-only reveal).
+			const deleteButton = page.getByRole('button', { name: 'Delete agent' })
+			await expect(deleteButton).toBeVisible()
+			for (const scheme of ['light', 'dark'] as const) {
+				await page.emulateMedia({ colorScheme: scheme })
+				await expect(deleteButton).toBeVisible()
+			}
+			await page.emulateMedia({ colorScheme: 'light' })
+
+			// Cancel is a real escape hatch — the agent is still there, and the
+			// trash icon comes back afterwards.
+			await deleteButton.click()
+			await expect(page.getByText('Delete this agent?')).toBeVisible()
+			await page.getByRole('button', { name: 'Cancel' }).click()
+			await expect(page.getByRole('button', { name: 'Delete agent' })).toBeVisible()
+
+			// Confirming the second time actually removes the agent and lands
+			// back on the agents index without it in the list.
+			await page.getByRole('button', { name: 'Delete agent' }).click()
+			await page.getByRole('button', { name: 'Confirm' }).click()
+
+			await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/agents/?$`), {
+				timeout: 15_000,
+			})
+			await expect(page.getByRole('link', { name: /Dez Dispose/ })).toHaveCount(0)
+		})
+	}
+})
+
 test.describe('Agent detail — inline identity editing', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
 		test(`renames the agent and edits its outcome @ ${vp.label}`, async ({ page, account }) => {
