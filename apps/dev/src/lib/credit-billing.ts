@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { events, sessions, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
+import type Stripe from 'stripe'
 import { isEnterpriseWorkspace } from './enterprise'
 import {
 	canUseCreditBalance,
@@ -9,7 +10,129 @@ import {
 	getWorkspacePlanUsdCentsUsage,
 } from './llm-routing'
 import { logger } from './logger'
+import type { MaskinCreditsCurrency } from './stripe'
 import type { WorkspaceSettings } from './types'
+
+// ── Delta 1b — custom-amount top-up volume bonus tiers ─────────────────────
+//
+// Threshold amounts in USD MINOR UNITS (i.e. cents). Pinned to the current
+// maskin_credits_growth ($250 = 25000 cents) and maskin_credits_scale
+// ($1000 = 100000 cents) Stripe Price amounts per the 7 Sep Pricing
+// lock-down comment on the parent bet. If Stripe rotates those Price
+// amounts the boot-time sanity check below fires a warn log; the constants
+// stay authoritative because the volume bonus is an application-level
+// benefit, not an on-Stripe promotion.
+//
+// Source of truth (Stripe):
+//   maskin_credits_growth  → 25000 USD cents (10% pack)
+//   maskin_credits_scale   → 100000 USD cents (20% pack)
+// Verified live against sk_live_… on 7 Sep by Pricing Strategist.
+export const GROWTH_THRESHOLD_USD_MINOR = 25_000
+export const SCALE_THRESHOLD_USD_MINOR = 100_000
+export const GROWTH_BONUS = 0.1
+export const SCALE_BONUS = 0.2
+
+/**
+ * USD-equivalent normalisation reference for the volume-bonus tier check
+ * (bet spec Delta 1b, Item 9): $50 = 349 DKK = 45 EUR. This is a bonus tier
+ * classification, NOT a payment or Stripe amount — we deliberately do NOT
+ * do live FX here. Live FX for the money side of the transaction happens
+ * inside Stripe / Adaptive Pricing.
+ */
+const USD_EQUIV_50_USD_MINOR = 5000
+const USD_EQUIV_349_DKK_MINOR = 34900
+const USD_EQUIV_45_EUR_MINOR = 4500
+
+/**
+ * Convert a minor-unit amount in `currency` into USD minor units using the
+ * fixed reference above. Used ONLY to decide which bonus tier applies to a
+ * custom-amount top-up; do not call this from any code that touches money.
+ */
+export function normalizeToUsdMinor(amountMinor: number, currency: MaskinCreditsCurrency): number {
+	if (!Number.isFinite(amountMinor) || amountMinor <= 0) return 0
+	switch (currency) {
+		case 'usd':
+			return Math.round(amountMinor)
+		case 'dkk':
+			// $50 = 349 DKK  →  ratio = 5000 / 34900
+			return Math.round((amountMinor * USD_EQUIV_50_USD_MINOR) / USD_EQUIV_349_DKK_MINOR)
+		case 'eur':
+			// $50 = 45 EUR  →  ratio = 5000 / 4500
+			return Math.round((amountMinor * USD_EQUIV_50_USD_MINOR) / USD_EQUIV_45_EUR_MINOR)
+	}
+}
+
+/**
+ * Delta 1b: volume-bonus tier for a custom-amount top-up.
+ *
+ * Returns the multiplier used to compute bonus credits — 0 / 0.10 / 0.20 —
+ * keyed off the USD-equivalent of the paid amount. Scale-first check per the
+ * 7 Sep Pricing lock-down (the naive Growth-first order would misclassify a
+ * Scale-tier top-up as Growth and under-award). Callers apply the bonus at
+ * ledger-write time — see routes/stripe-webhook.ts's credit-topup branch and
+ * the awaiting-vies release path (Task 2's fulfilFromAwaitingRow).
+ */
+export function bonusFor(amountMinor: number, currency: MaskinCreditsCurrency): number {
+	const usdEquivMinor = normalizeToUsdMinor(amountMinor, currency)
+	if (usdEquivMinor >= SCALE_THRESHOLD_USD_MINOR) return SCALE_BONUS
+	if (usdEquivMinor >= GROWTH_THRESHOLD_USD_MINOR) return GROWTH_BONUS
+	return 0
+}
+
+/**
+ * The single source of truth for how a paid custom-amount top-up becomes
+ * credits (CTO pre-merge fix #4, 10 Sep 2026): normalize the payment-currency
+ * minor units to USD minor, add the volume-bonus tier, and return the total
+ * USD-minor amount to credit to `credit_balance_cents`. Both fulfilment paths
+ * — the direct branch on `checkout.session.completed` and the awaiting-vies
+ * release — write the returned value straight into the ledger row's
+ * `amountCents` and bump the workspace balance by the same number. Bonus
+ * always applies (a legacy flag-off USD top-up ≥ $250 gets the tier it always
+ * should have); currency conversion is the flag-on delta.
+ */
+export function creditedAmountUsdMinor(
+	amountMinor: number,
+	currency: MaskinCreditsCurrency,
+): number {
+	const usdMinor = normalizeToUsdMinor(amountMinor, currency)
+	const bonus = bonusFor(amountMinor, currency)
+	return usdMinor + Math.round(usdMinor * bonus)
+}
+
+/**
+ * Boot-time sanity check: does the live Stripe Growth/Scale pack amount still
+ * match our hardcoded threshold? Called from the app boot path so a Pricing
+ * change on Stripe surfaces as a warn log instead of a silent tier mismatch.
+ * Never throws — a Stripe outage or a missing price must not take the app
+ * down at boot over an application-level bonus classification.
+ */
+export async function verifyVolumeBonusThresholds(stripe: Stripe): Promise<void> {
+	const checks: Array<{ lookupKey: string; expectedMinor: number }> = [
+		{ lookupKey: 'maskin_credits_growth', expectedMinor: GROWTH_THRESHOLD_USD_MINOR },
+		{ lookupKey: 'maskin_credits_scale', expectedMinor: SCALE_THRESHOLD_USD_MINOR },
+	]
+	for (const { lookupKey, expectedMinor } of checks) {
+		try {
+			const list = await stripe.prices.list({ lookup_keys: [lookupKey], active: true, limit: 1 })
+			const price = list.data[0]
+			if (!price) {
+				logger.warn('bonusFor: Stripe Price lookup returned nothing', { lookupKey })
+				continue
+			}
+			if (typeof price.unit_amount === 'number' && price.unit_amount !== expectedMinor) {
+				logger.warn(
+					'bonusFor: live Stripe Price amount diverges from hardcoded threshold — bonus tiers may under/over-award',
+					{ lookupKey, live: price.unit_amount, hardcoded: expectedMinor },
+				)
+			}
+		} catch (err) {
+			logger.warn('bonusFor: Stripe threshold check failed', {
+				lookupKey,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+}
 
 /**
  * Debits the workspace's prepaid credit balance for the dollar cost this

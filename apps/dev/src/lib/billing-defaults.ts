@@ -92,15 +92,15 @@ export function parsePositiveIntEnv(
  * until the other sites are updated.
  *
  * Each paid plan's included-usage cap equals its monthly price in dollars —
- * the same $20/$200 numbers previously expressed as 32M/320M tokens at the old
- * flat rate of 16,000 tokens per cent. The trial has no price to key off; its
+ * $49 for Pro (raised from $20 in Sep 2026, matching the Stripe price change)
+ * and $200 for Team. The trial has no price to key off; its
  * $10 is the product's stated free-trial allowance. Switching to a dollar cap
  * (instead of a token count) is what lets different agents run different models
  * with different $/token ratios without the cap silently over- or
  * under-counting usage.
  */
 export const TRIAL_HARD_CAP_DEFAULT_USD_CENTS = 1_000
-export const PRO_HARD_CAP_DEFAULT_USD_CENTS = 2_000
+export const PRO_HARD_CAP_DEFAULT_USD_CENTS = 4_900
 export const TEAM_HARD_CAP_DEFAULT_USD_CENTS = 20_000
 
 /** Billing periods on paid plans run ~30 days; used when Stripe hasn't written `period_end` yet. */
