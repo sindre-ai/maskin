@@ -208,6 +208,10 @@ interface SessionDetailPanelProps {
 }
 
 function SessionStatusBadge({ status }: { status: string }) {
+	// Bucketing matches AgentSessionsSection.deriveState so the pill on the agent
+	// page and the pill in this detail sheet render the same label for the same
+	// session — a queued session that reads Running upstairs must not read as
+	// something else in the log sidebar.
 	const config: Record<string, { icon: React.ElementType; label: string; className: string }> = {
 		completed: {
 			icon: CheckCircle2,
@@ -231,18 +235,33 @@ function SessionStatusBadge({ status }: { status: string }) {
 		},
 		starting: {
 			icon: Spinner,
-			label: 'Starting',
+			label: 'Running',
 			className: 'bg-status-processing-bg text-status-processing-text',
+		},
+		pending: {
+			icon: Spinner,
+			label: 'Running',
+			className: 'bg-status-processing-bg text-status-processing-text',
+		},
+		queued: {
+			icon: Spinner,
+			label: 'Running',
+			className: 'bg-status-processing-bg text-status-processing-text',
+		},
+		snapshotting: {
+			icon: Spinner,
+			label: 'Running',
+			className: 'bg-status-processing-bg text-status-processing-text',
+		},
+		waiting_for_input: {
+			icon: Clock,
+			label: 'Waiting',
+			className: 'bg-muted text-muted-foreground',
 		},
 		paused: {
 			icon: Clock,
 			label: 'Paused',
 			className: 'bg-status-paused-bg text-status-paused-text',
-		},
-		snapshotting: {
-			icon: Clock,
-			label: 'Snapshotting',
-			className: 'bg-status-processing-bg text-status-processing-text',
 		},
 		idle: {
 			icon: PauseCircle,
