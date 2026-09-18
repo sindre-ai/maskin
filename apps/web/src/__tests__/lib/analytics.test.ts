@@ -11,6 +11,11 @@ import {
 	trackChatSessionStarted,
 	trackCommentPosted,
 	trackEvent,
+	trackFileViewerCommentResolved,
+	trackFileViewerPageNavigated,
+	trackFileViewerPinPlaced,
+	trackFileViewerRoundSent,
+	trackFileViewerZoomUsed,
 	trackForyouCardAction,
 	trackForyouCardShown,
 	trackMiniAppFileViewed,
@@ -747,6 +752,117 @@ describe('trackChatImageUpload', () => {
 		expect(capture).toHaveBeenCalledWith('chat_image_upload', {
 			platform: 'web',
 			outcome: 'success',
+		})
+	})
+})
+
+describe('file_viewer events', () => {
+	function captureSpy() {
+		__setInitializedForTesting(true)
+		return vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+	}
+
+	// The `source` enum on comment_posted was extended to include 'file_viewer'
+	// so the "≥40% comment-after-view within 24h" success criterion can attribute
+	// review-viewer comments correctly. Without this the source lands as `web`
+	// and the numerator on that funnel is unmeasurable.
+	it('comment_posted accepts source="file_viewer" (enum extension)', () => {
+		const capture = captureSpy()
+
+		trackCommentPosted({
+			entity_id: 'file-1',
+			entity_type: 'file',
+			is_reply: false,
+			attachment_count: 0,
+			content: 'centered logo drifts on scroll',
+			source: 'file_viewer',
+		})
+
+		expect(capture).toHaveBeenCalledWith(
+			'comment_posted',
+			expect.objectContaining({
+				entity_id: 'file-1',
+				entity_type: 'file',
+				source: 'file_viewer',
+			}),
+		)
+	})
+
+	it('file_viewer_zoom_used carries mode, zoom_level, file_id', () => {
+		const capture = captureSpy()
+
+		trackFileViewerZoomUsed({ file_id: 'file-1', mode: 'fit', zoom_level: 0.85 })
+
+		expect(capture).toHaveBeenCalledWith('file_viewer_zoom_used', {
+			file_id: 'file-1',
+			mode: 'fit',
+			zoom_level: 0.85,
+		})
+	})
+
+	it('file_viewer_page_navigated carries to_page, from_page, file_id, total_pages', () => {
+		const capture = captureSpy()
+
+		trackFileViewerPageNavigated({
+			file_id: 'file-1',
+			from_page: 3,
+			to_page: 4,
+			total_pages: 12,
+		})
+
+		expect(capture).toHaveBeenCalledWith('file_viewer_page_navigated', {
+			file_id: 'file-1',
+			from_page: 3,
+			to_page: 4,
+			total_pages: 12,
+		})
+	})
+
+	it('file_viewer_pin_placed carries file_id, page, variant', () => {
+		const capture = captureSpy()
+
+		trackFileViewerPinPlaced({ file_id: 'file-1', page: 2, variant: 'deck' })
+
+		expect(capture).toHaveBeenCalledWith('file_viewer_pin_placed', {
+			file_id: 'file-1',
+			page: 2,
+			variant: 'deck',
+		})
+	})
+
+	it('file_viewer_round_sent carries file_id, comment_count, attaching_object_id, driver_id, round_id', () => {
+		const capture = captureSpy()
+
+		trackFileViewerRoundSent({
+			file_id: 'file-1',
+			comment_count: 5,
+			attaching_object_id: 'bet-42',
+			driver_id: 'actor-99',
+			round_id: 'round-abc',
+		})
+
+		expect(capture).toHaveBeenCalledWith('file_viewer_round_sent', {
+			file_id: 'file-1',
+			comment_count: 5,
+			attaching_object_id: 'bet-42',
+			driver_id: 'actor-99',
+			round_id: 'round-abc',
+		})
+	})
+
+	it('file_viewer_comment_resolved carries file_id, comment_id, resolved_by', () => {
+		const capture = captureSpy()
+
+		trackFileViewerCommentResolved({
+			file_id: 'file-1',
+			comment_id: 'cmt-1',
+			resolved_by: 'actor-99',
+		})
+
+		expect(capture).toHaveBeenCalledWith('file_viewer_comment_resolved', {
+			file_id: 'file-1',
+			comment_id: 'cmt-1',
+			resolved_by: 'actor-99',
 		})
 	})
 })

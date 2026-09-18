@@ -1,3 +1,5 @@
+import type { FileDetail } from '@/lib/api'
+
 export function base64ToBytes(base64: string): Uint8Array {
 	if (typeof atob === 'undefined') return new Uint8Array()
 	try {
@@ -37,4 +39,22 @@ export function formatSize(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`
 	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
 	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+// Save the file's bytes to disk under its own name. Shared by the top-bar
+// Download action and the iframe-blocked fallback tile so both paths build the
+// blob the same way.
+export function downloadFile(file: FileDetail): void {
+	const blob =
+		file.encoding === 'utf8'
+			? new Blob([file.content], { type: file.mimeType })
+			: new Blob([base64ToBytes(file.content).buffer as ArrayBuffer], { type: file.mimeType })
+	const url = URL.createObjectURL(blob)
+	const a = document.createElement('a')
+	a.href = url
+	a.download = file.name
+	document.body.appendChild(a)
+	a.click()
+	document.body.removeChild(a)
+	URL.revokeObjectURL(url)
 }
