@@ -8,7 +8,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { useFile } from '@/hooks/use-files'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { ApiError, type FileDetail } from '@/lib/api'
-import { base64ToBytes } from '@/lib/file-utils'
+import { downloadFile } from '@/lib/file-utils'
 import { isPinned, togglePinnedFile } from '@/lib/pinned-files'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -19,21 +19,6 @@ export const Route = createFileRoute('/_authed/$workspaceId/files/$fileId')({
 	component: FileViewerPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
-
-function downloadFile(file: FileDetail): void {
-	const blob =
-		file.encoding === 'utf8'
-			? new Blob([file.content], { type: file.mimeType })
-			: new Blob([base64ToBytes(file.content).buffer as ArrayBuffer], { type: file.mimeType })
-	const url = URL.createObjectURL(blob)
-	const a = document.createElement('a')
-	a.href = url
-	a.download = file.name
-	document.body.appendChild(a)
-	a.click()
-	document.body.removeChild(a)
-	URL.revokeObjectURL(url)
-}
 
 function FileViewerPage() {
 	const { fileId } = Route.useParams()

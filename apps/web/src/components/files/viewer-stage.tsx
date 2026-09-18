@@ -1,9 +1,10 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { type FileViewerZoomMode, trackFileViewerZoomUsed } from '@/lib/analytics'
 import type { FileDetail } from '@/lib/api'
-import { base64ToBytes, decodeBase64Utf8 } from '@/lib/file-utils'
+import { base64ToBytes, decodeBase64Utf8, downloadFile } from '@/lib/file-utils'
 import { VIEWER_DOC_SIZE_MESSAGE, prepareViewerHtml } from '@/lib/mini-app'
 import {
 	type Size,
@@ -14,7 +15,7 @@ import {
 	zoomAt,
 	zoomStep,
 } from '@/lib/viewer-coord-math'
-import { AlertTriangle, Maximize2, Minus, Plus } from 'lucide-react'
+import { AlertTriangle, Code, Download, Maximize2, Minus, Plus } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { isHtml, isInlineImage, isMarkdown, isPlainText } from './file-body'
 
@@ -221,8 +222,13 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 	// wheel events with `ctrlKey` set even without any modifier key pressed, so
 	// one handler covers both. Zoom-around-a-point via zoomAt so the doc point
 	// under the cursor stays fixed under the cursor after k changes.
+	//
+	// This handler is bound natively (see the effect below), not through React's
+	// `onWheel` prop: React 19 attaches wheel listeners at the root as passive,
+	// so `preventDefault()` inside a React handler is a no-op and the browser's
+	// own Ctrl+wheel page zoom wins instead of ours.
 	const handleWheel = useCallback(
-		(event: React.WheelEvent<HTMLDivElement>) => {
+		(event: WheelEvent) => {
 			if (!event.ctrlKey) return
 			event.preventDefault()
 			const viewport = viewportRef.current
@@ -257,10 +263,34 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 		[zoom, emitZoom],
 	)
 
+	// Keep the latest handler in a ref so the native listener can be attached
+	// once per viewport (not re-attached on every zoom change) while still
+	// calling the current closure — the handler reads `zoom` from state.
+	const wheelHandlerRef = useRef(handleWheel)
+	useEffect(() => {
+		wheelHandlerRef.current = handleWheel
+	}, [handleWheel])
+	useEffect(() => {
+		if (blocked) return
+		const el = viewportRef.current
+		if (!el) return
+		const onWheel = (event: WheelEvent) => wheelHandlerRef.current(event)
+		// `passive: false` is the whole point: it lets preventDefault() suppress
+		// the browser's Ctrl+wheel page zoom so our stage zoom is the only one.
+		el.addEventListener('wheel', onWheel, { passive: false })
+		return () => el.removeEventListener('wheel', onWheel)
+	}, [blocked])
+
 	// Fullscreen the *shell*, not the iframe — the iframe has no origin so its
 	// fullscreen call would be blocked. We toggle the closest fullscreen-eligible
 	// element up the tree (the stage frame) so overlays and controls stay reachable.
 	const containerRef = useRef<HTMLDivElement>(null)
+	// Focus the stage on mount so the keyboard subset (0 / + / - / F / Esc) is
+	// live without a click. The stage is the primary surface for an HTML preview,
+	// so gating the shortcuts behind a click leaves them inert on arrival.
+	useEffect(() => {
+		containerRef.current?.focus()
+	}, [])
 	const toggleFullscreen = useCallback(() => {
 		const target = containerRef.current
 		if (!target) return
@@ -321,15 +351,18 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 		<StageFrame>
 			{/* role="application" is the correct role for a keyboard-driven stage:
 			    the shell owns the shortcut set (0 / + / - / F / Esc) and swallows
-			    those keys before the browser or shell see them. tabIndex={-1} keeps
-			    the stage focusable-on-click without adding it to the natural tab
-			    order — Tab from the shell keeps flowing through the top-bar actions,
-			    and clicking into the stage still activates the keyboard subset. */}
+			    those keys before the browser or shell see them. tabIndex={0} puts
+			    the stage in the natural tab order and is focused on mount, so the
+			    shortcuts are live the moment the preview opens. `bg-muted` here
+			    (not just on the outer StageFrame) matters for fullscreen: the
+			    browser fullscreens this element, and without its own background
+			    the letterbox area around the scaled document renders black. */}
 			<div
 				ref={containerRef}
-				className="relative flex h-full w-full flex-col outline-none focus-visible:ring-1 focus-visible:ring-ring"
+				className="relative flex h-full w-full flex-col bg-muted outline-none focus-visible:ring-1 focus-visible:ring-ring"
 				role="application"
-				tabIndex={-1}
+				// biome-ignore lint/a11y/noNoninteractiveTabindex: role="application" is a focusable keyboard-driven region — the stage owns the shortcut set and is focused on mount
+				tabIndex={0}
 				onKeyDown={handleKeyDown}
 				aria-label={`Viewer for ${file.name}`}
 				data-viewer-state={blocked ? 'iframe-blocked' : docSize ? 'ready' : 'loading'}
@@ -337,7 +370,12 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 				{blocked ? (
 					<IframeBlockedFallback file={file} />
 				) : (
-					<div ref={viewportRef} className="relative flex-1 overflow-auto" onWheel={handleWheel}>
+					<div ref={viewportRef} className="relative flex-1 overflow-auto">
+						{!docSize && (
+							<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+								<Spinner className="size-6 text-muted-foreground" />
+							</div>
+						)}
 						<div
 							style={{
 								width: scaledSize?.w ?? '100%',
@@ -392,7 +430,7 @@ function ZoomControls({
 }) {
 	const percent = Math.round(zoom * 100)
 	return (
-		<div className="pointer-events-none absolute bottom-4 right-4 z-10 flex items-center gap-1 rounded-md border border-border bg-card/95 p-1 shadow-md backdrop-blur-sm">
+		<div className="pointer-events-none absolute bottom-4 right-4 z-10 flex items-center gap-1 rounded-md border border-border bg-card p-1 shadow-md">
 			<div className="pointer-events-auto flex items-center gap-1">
 				<Button
 					type="button"
@@ -436,6 +474,19 @@ function ZoomControls({
 }
 
 function IframeBlockedFallback({ file }: { file: FileDetail }) {
+	// The blocked tile is the one surface a user reaches when the sandbox never
+	// reported a doc size, so it has to offer a way forward that doesn't depend on
+	// the frame rendering. View source opens the raw text as a text/plain blob —
+	// reusing the file's own text/html mime here would render and execute the
+	// document in the app origin, which is exactly what the sandbox prevents.
+	// Revoke on a delay rather than immediately: the new tab reads the blob URL
+	// during its own navigation, so a synchronous revoke can race the load.
+	const handleViewSource = useCallback(() => {
+		const blob = new Blob([fileText(file)], { type: 'text/plain' })
+		const url = URL.createObjectURL(blob)
+		window.open(url, '_blank', 'noopener,noreferrer')
+		window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+	}, [file])
 	return (
 		<div className="flex h-full w-full items-center justify-center p-8">
 			<div className="max-w-md rounded-md border border-border bg-card p-6 text-center shadow-sm">
@@ -445,9 +496,20 @@ function IframeBlockedFallback({ file }: { file: FileDetail }) {
 				<h2 className="text-sm font-semibold text-foreground">Preview didn't load</h2>
 				<p className="mt-1 text-xs text-muted-foreground">
 					The document didn't respond within 8 seconds — it may be blocked by its own
-					content-security policy or otherwise fail to render inside the sandbox. Use the download
-					action to open <span className="font-medium text-foreground">{file.name}</span> locally.
+					content-security policy or otherwise fail to render inside the sandbox. Open the source or
+					download <span className="font-medium text-foreground">{file.name}</span> to read it
+					locally.
 				</p>
+				<div className="mt-4 flex items-center justify-center gap-2">
+					<Button type="button" variant="outline" size="sm" onClick={handleViewSource}>
+						<Code size={14} />
+						View source
+					</Button>
+					<Button type="button" variant="default" size="sm" onClick={() => downloadFile(file)}>
+						<Download size={14} />
+						Download
+					</Button>
+				</div>
 			</div>
 		</div>
 	)

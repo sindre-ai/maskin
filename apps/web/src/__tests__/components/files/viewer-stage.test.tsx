@@ -53,6 +53,62 @@ describe('ViewerStage — HTML sandbox posture', () => {
 	})
 })
 
+describe('ViewerStage — native wheel binding', () => {
+	// The wheel listener is attached natively to the scroll viewport, not through
+	// React's onWheel prop — React 19 attaches root wheel listeners as passive, so
+	// a React handler's preventDefault() is a no-op and the browser's own
+	// Ctrl+wheel page zoom wins. Firing a real WheelEvent at the viewport is the
+	// only way to observe whether preventDefault actually took.
+	function getViewport(): HTMLElement {
+		return screen.getByTitle('Preview of mockup.html').closest('.overflow-auto') as HTMLElement
+	}
+
+	beforeEach(() => {
+		vi.mocked(trackFileViewerZoomUsed).mockClear()
+	})
+
+	it('prevents default on ctrl+wheel so the stage zoom beats the browser page zoom', () => {
+		render(<ViewerStage file={buildHtmlFile()} />)
+		const event = new WheelEvent('wheel', {
+			ctrlKey: true,
+			deltaY: -120,
+			cancelable: true,
+			bubbles: true,
+		})
+		// The handler calls setZoom, so the dispatch has to be wrapped — otherwise
+		// React warns about a state update outside act().
+		act(() => {
+			getViewport().dispatchEvent(event)
+		})
+		expect(event.defaultPrevented).toBe(true)
+		expect(trackFileViewerZoomUsed).toHaveBeenCalledWith(expect.objectContaining({ mode: 'wheel' }))
+	})
+
+	it('leaves an unmodified wheel alone so the viewport scrolls normally', () => {
+		render(<ViewerStage file={buildHtmlFile()} />)
+		const event = new WheelEvent('wheel', { deltaY: 120, cancelable: true, bubbles: true })
+		getViewport().dispatchEvent(event)
+		expect(event.defaultPrevented).toBe(false)
+		expect(trackFileViewerZoomUsed).not.toHaveBeenCalled()
+	})
+})
+
+describe('ViewerStage — keyboard focus', () => {
+	it('is focusable on mount so the shortcut set is live without a click', () => {
+		render(<ViewerStage file={buildHtmlFile()} />)
+		const stage = document.querySelector('[data-viewer-state]') as HTMLElement
+		expect(stage).toHaveAttribute('tabindex', '0')
+		expect(document.activeElement).toBe(stage)
+	})
+})
+
+describe('ViewerStage — loading state', () => {
+	it('shows a spinner while the doc size is still unknown', () => {
+		render(<ViewerStage file={buildHtmlFile()} />)
+		expect(screen.getByTitle('Loading')).toBeInTheDocument()
+	})
+})
+
 describe('ViewerStage — keyboard subset (Slice 1)', () => {
 	// The keyboard handler lives on the stage's tabIndex container. Fire the
 	// event on it directly so React's synthetic-event pipeline actually invokes
@@ -103,6 +159,7 @@ describe('ViewerStage — iframe-blocked timeout', () => {
 	})
 	afterEach(() => {
 		vi.useRealTimers()
+		vi.unstubAllGlobals()
 	})
 
 	it('shows the fallback tile when no doc-size message arrives within 8s', () => {
@@ -133,5 +190,47 @@ describe('ViewerStage — iframe-blocked timeout', () => {
 			vi.advanceTimersByTime(8000)
 		})
 		expect(screen.queryByText(/Preview didn't load/i)).not.toBeInTheDocument()
+	})
+
+	it('offers View source and Download actions once the frame is declared blocked', () => {
+		render(<ViewerStage file={buildHtmlFile()} />)
+		act(() => {
+			vi.advanceTimersByTime(8000)
+		})
+		expect(screen.getByRole('button', { name: /view source/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /download/i })).toBeInTheDocument()
+	})
+
+	it('opens the source as a text/plain blob so the document never runs in the app origin', () => {
+		// jsdom ships no object-URL implementation, so stub both halves around the
+		// click — the assertion is on the blob's mime and the window.open contract,
+		// not on anything the browser would do with the URL.
+		// The parameter is declared so the mock's call tuple is typed [Blob] —
+		// an untyped vi.fn() records calls as empty tuples, which makes the
+		// assertion below untypeable.
+		const createObjectURL = vi.fn((_blob: Blob) => 'blob:mock')
+		const revokeObjectURL = vi.fn()
+		const originalCreate = URL.createObjectURL
+		const originalRevoke = URL.revokeObjectURL
+		URL.createObjectURL = createObjectURL
+		URL.revokeObjectURL = revokeObjectURL
+		const openSpy = vi.fn()
+		vi.stubGlobal('open', openSpy)
+		try {
+			render(<ViewerStage file={buildHtmlFile()} />)
+			act(() => {
+				vi.advanceTimersByTime(8000)
+			})
+			fireEvent.click(screen.getByRole('button', { name: /view source/i }))
+			expect(createObjectURL).toHaveBeenCalledTimes(1)
+			const blob = createObjectURL.mock.calls[0][0]
+			expect(blob.type).toBe('text/plain')
+			expect(openSpy).toHaveBeenCalledWith('blob:mock', '_blank', 'noopener,noreferrer')
+		} finally {
+			if (originalCreate) URL.createObjectURL = originalCreate
+			else Reflect.deleteProperty(URL, 'createObjectURL')
+			if (originalRevoke) URL.revokeObjectURL = originalRevoke
+			else Reflect.deleteProperty(URL, 'revokeObjectURL')
+		}
 	})
 })
