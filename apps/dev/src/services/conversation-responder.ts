@@ -236,6 +236,7 @@ export async function evaluateAndRespond(ctx: {
 					content: buildConversationTurnPrompt({
 						authorName: message.authorName,
 						authorType: message.authorType,
+						authorActorId: message.actorId,
 						newMessageContent: messageForPrompt.content,
 						isDirectConversation,
 						wasMentioned,
@@ -406,6 +407,7 @@ async function spawnOrJoinConversationSession(params: {
 			content: buildConversationTurnPrompt({
 				authorName: message.authorName,
 				authorType: message.authorType,
+				authorActorId: message.actorId,
 				newMessageContent: message.content,
 				isDirectConversation,
 				wasMentioned,
@@ -753,18 +755,24 @@ function describeReplyExpectation(ctx: {
  * reply reads as indistinguishable from the human's, and the model infers
  * "someone already answered" from mere proximity in the transcript — even
  * when that peer's message is itself a question waiting on the human.
+ *
+ * Carries the sender's stable actor ID alongside their display name so the
+ * receiving agent can attribute the message reliably — names collide, change,
+ * and don't distinguish a human from an agent. The fresh-session seed prompt
+ * (buildConversationReplyPrompt) already does this.
  */
 function buildConversationTurnPrompt(ctx: {
 	authorName: string
 	authorType: string
+	authorActorId: string
 	newMessageContent: string
 	isDirectConversation: boolean
 	wasMentioned: boolean
 }): string {
 	const speaker =
 		ctx.authorType === 'agent'
-			? `${ctx.authorName} (fellow agent, not the user — their reply doesn't mean the user's message has been handled)`
-			: ctx.authorName
+			? `${ctx.authorName} (fellow agent, not the user — their reply doesn't mean the user's message has been handled; actor ID: ${ctx.authorActorId})`
+			: `${ctx.authorName} (actor ID: ${ctx.authorActorId})`
 	const reminder = ctx.isDirectConversation
 		? " (it's just the two of you here — they're expecting a reply)"
 		: ctx.wasMentioned
