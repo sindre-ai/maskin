@@ -26,7 +26,7 @@ import { useEffect, useState } from 'react'
 
 const PLAN_LABEL: Record<BillingPlan, string> = {
 	trial: 'Trial',
-	pro: 'Pro — $20/mo',
+	pro: 'Pro — $49/mo',
 	team: 'Team — $200/mo',
 	enterprise: 'Enterprise',
 }
@@ -76,7 +76,7 @@ function formatSeatCap(n: number | null): string {
 // apps/dev/src/lib/billing-defaults.ts and the .env.example
 // MASKIN_*_HARD_CAP_USD_CENTS defaults. Keep in sync when bumping — enforced
 // by scripts/verify-billing-cap-literals.mjs.
-const CAP_DEFAULTS = { trial: 1_000, pro: 2_000, team: 20_000 } as const
+const CAP_DEFAULTS = { trial: 1_000, pro: 4_900, team: 20_000 } as const
 
 interface PlanCardConfig {
 	plan: BillingPlan
@@ -104,7 +104,7 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 	{
 		plan: 'pro',
 		eyebrow: 'PRO',
-		price: '$20',
+		price: '$49',
 		priceSuffix: '/mo',
 		tagline: 'For teams running real workflows day to day.',
 		features: [

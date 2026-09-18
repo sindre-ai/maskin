@@ -23,7 +23,7 @@ const VALID_ENV = {
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
 	STRIPE_PRICE_CREDITS_CUSTOM: 'price_credits_custom_test',
-	MASKIN_PRO_HARD_CAP_USD_CENTS: '2000',
+	MASKIN_PRO_HARD_CAP_USD_CENTS: '4900',
 	MASKIN_TEAM_HARD_CAP_USD_CENTS: '20000',
 }
 
@@ -40,7 +40,7 @@ describe('readStripeEnv', () => {
 		const env = readStripeEnv(VALID_ENV)
 		expect(env.pricePro).toBe('price_pro')
 		expect(env.priceCreditsCustom).toBe('price_credits_custom_test')
-		expect(env.proHardCapUsdCents).toBe(2_000)
+		expect(env.proHardCapUsdCents).toBe(4_900)
 		expect(env.teamHardCapUsdCents).toBe(20_000)
 	})
 
@@ -82,7 +82,7 @@ describe('priceIdForPlan / planForPriceId / hardCapForPlan', () => {
 	})
 
 	it('returns the configured USD-cent cap for each plan', () => {
-		expect(hardCapForPlan('pro', env)).toBe(2_000)
+		expect(hardCapForPlan('pro', env)).toBe(4_900)
 		expect(hardCapForPlan('team', env)).toBe(20_000)
 	})
 })
