@@ -2,9 +2,10 @@ import { isSessionIdleAwaitingInput } from '@/components/agents/session-log-tran
 import { api } from '@/lib/api'
 import type { SessionLogResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
+import { subscribeToSessionLogs } from '@/lib/session-log-stream'
 import type { UseQueryResult } from '@tanstack/react-query'
 import { useQueries, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 /** Max rows the logs endpoint will return in one call (see `sessionLogQuerySchema`). */
 const PAGE_SIZE = 500
@@ -192,10 +193,8 @@ export function useSessionActivityLogs(
 				})
 
 				const current = store.get(sessionId) ?? []
-				const seen = new Set(current.map((l) => l.id))
-				const fresh = rows.filter((l) => !seen.has(l.id))
-				if (fresh.length > 0) {
-					const merged = [...current, ...fresh].sort((a, b) => a.id - b.id)
+				const merged = mergeSessionLogs(current, rows)
+				if (merged !== current) {
 					store.set(sessionId, merged)
 					queryClient.setQueryData([...queryKeys.sessions.logs(sessionId), 'activity'], [...merged])
 				}
@@ -219,7 +218,76 @@ export function useSessionActivityLogs(
 		[queryClient, workspaceId],
 	)
 
+	// Stream only the sessions the poll is already watching. `pollableSessionIds`
+	// is the existing selection logic (live sessions, not terminal history) and
+	// is reused rather than re-derived, so the two channels can never disagree
+	// about which sessions are live.
+	//
+	// Both `sessionIds` and `pollableSessionIds` are rebuilt on every render, so
+	// the effect keys off a stable serialisation of the intersection instead of
+	// the collections themselves — otherwise every render would tear down and
+	// reopen every stream.
+	const streamKey = [...sessionIds]
+		.filter((id) => pollableSessionIds?.has(id))
+		.sort()
+		.join(',')
+
+	useEffect(() => {
+		if (!streamKey) return
+		const sessionIdList = streamKey.split(',')
+
+		const unsubscribes = sessionIdList.map((sessionId) =>
+			subscribeToSessionLogs(workspaceId, sessionId, (log) => {
+				const store = accumulated.current
+				const existing = store.get(sessionId) ?? []
+				const merged = mergeSessionLogs(existing, [log])
+				if (merged === existing) return
+				store.set(sessionId, merged)
+
+				// Merge into the cache rather than replacing it with a
+				// stream-derived array — the poll's rows are already in there
+				// and a bare replacement would drop them (and vice versa). When
+				// the cache is empty we fall back to the store, which is the
+				// authoritative superset.
+				queryClient.setQueryData<SessionLogResponse[]>(
+					[...queryKeys.sessions.logs(sessionId), 'activity'],
+					(prev) => (prev && prev.length > 0 ? mergeSessionLogs(prev, [log]) : merged),
+				)
+			}),
+		)
+
+		return () => {
+			for (const unsubscribe of unsubscribes) unsubscribe()
+		}
+	}, [streamKey, workspaceId, queryClient])
+
 	return { queries, loadOlder, backfill }
+}
+
+/**
+ * The one way rows enter a session's transcript.
+ *
+ * Both channels — the poll and the SSE stream — funnel through here, and the
+ * Set-dedup on `id` is the whole reason they can overlap safely: on reconnect
+ * the server replays lines the poll already delivered, and mid-reconnect a
+ * poll can land lines the stream is about to re-deliver. Dedup makes the two
+ * orders converge on the same array.
+ *
+ * Returns `existing` unchanged when nothing is fresh, so callers can skip a
+ * write (and the render it would trigger) by identity check. A caller that
+ * replaces the cache with a freshly-built array instead of merging silently
+ * drops the other channel's rows — that is the invariant this function exists
+ * to protect.
+ */
+export function mergeSessionLogs(
+	existing: SessionLogResponse[],
+	incoming: SessionLogResponse[],
+): SessionLogResponse[] {
+	if (incoming.length === 0) return existing
+	const seen = new Set(existing.map((l) => l.id))
+	const fresh = incoming.filter((l) => !seen.has(l.id))
+	if (fresh.length === 0) return existing
+	return [...existing, ...fresh].sort((a, b) => a.id - b.id)
 }
 
 function nextBackfill(
@@ -253,19 +321,13 @@ async function fetchNewLogs(
 		// Guard against re-entrancy (React strict mode double-invokes, and a
 		// refetch can overlap a slow in-flight poll) — appending blind would
 		// duplicate steps in the transcript.
-		const seen = new Set(existing.map((l) => l.id))
-		const fresh = rows.filter((l) => !seen.has(l.id))
-		if (fresh.length > 0) {
-			store.set(
-				sessionId,
-				[...existing, ...fresh].sort((a, b) => a.id - b.id),
-			)
-		}
+		const merged = mergeSessionLogs(existing, rows)
+		if (merged !== existing) store.set(sessionId, merged)
 
 		// A short page means we've reached the tail. A full page that was
 		// entirely duplicates leaves the cursor where it was, so continuing
 		// would just refetch the same 500 rows — stop on that too.
-		if (fresh.length === 0 || rows.length < PAGE_SIZE) break
+		if (merged === existing || rows.length < PAGE_SIZE) break
 	}
 
 	return store.get(sessionId) ?? []

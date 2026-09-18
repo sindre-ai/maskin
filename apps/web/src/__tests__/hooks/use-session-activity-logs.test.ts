@@ -9,9 +9,14 @@ vi.mock('@/lib/api', () => ({
 	},
 }))
 
+vi.mock('@/lib/session-log-stream', () => ({
+	subscribeToSessionLogs: vi.fn(() => () => {}),
+}))
+
 import { activityPollInterval, useSessionActivityLogs } from '@/hooks/use-session-activity-logs'
 import { api } from '@/lib/api'
 import type { SessionLogResponse } from '@/lib/api'
+import { subscribeToSessionLogs } from '@/lib/session-log-stream'
 import { TestWrapper } from '../setup'
 
 const workspaceId = 'ws-1'
@@ -134,6 +139,106 @@ describe('useSessionActivityLogs', () => {
 
 		await waitFor(() => expect(result.current.queries[0]?.data).toHaveLength(3))
 		expect(result.current.queries[0]?.data?.map((l) => l.id)).toEqual([1, 2, 3])
+	})
+})
+
+describe('useSessionActivityLogs stream merge', () => {
+	/** Capture the stream callbacks the hook registers, keyed by session id. */
+	function captureStreamListeners() {
+		const listeners = new Map<string, (log: SessionLogResponse) => void>()
+		vi.mocked(subscribeToSessionLogs).mockImplementation((_ws, sid, onLog) => {
+			listeners.set(sid, onLog)
+			return () => {
+				listeners.delete(sid)
+			}
+		})
+		return listeners
+	}
+
+	function render(sessionIds = [sessionId]) {
+		return renderHook(
+			() => useSessionActivityLogs(workspaceId, sessionIds, null, new Set(sessionIds)),
+			{ wrapper: TestWrapper },
+		)
+	}
+
+	it('renders a line that arrived only on the stream', async () => {
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+		const listeners = captureStreamListeners()
+
+		const { result } = render()
+		await waitFor(() => expect(result.current.queries[0]?.data).toEqual([]))
+
+		listeners.get(sessionId)?.(buildLog(5))
+
+		await waitFor(() => expect(result.current.queries[0]?.data?.map((l) => l.id)).toEqual([5]))
+	})
+
+	it('converges on the same rows for stream-only, poll-only and stream+poll', async () => {
+		// poll-only
+		vi.mocked(api.sessions.logs).mockResolvedValue([buildLog(1), buildLog(2), buildLog(3)])
+		const pollOnly = render()
+		await waitFor(() => expect(pollOnly.result.current.queries[0]?.data).toHaveLength(3))
+		expect(pollOnly.result.current.queries[0]?.data?.map((l) => l.id)).toEqual([1, 2, 3])
+		pollOnly.unmount()
+
+		// stream-only
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+		const listeners = captureStreamListeners()
+		const streamOnly = render()
+		await waitFor(() => expect(streamOnly.result.current.queries[0]?.data).toEqual([]))
+		const onLog = listeners.get(sessionId)
+		onLog?.(buildLog(1))
+		onLog?.(buildLog(2))
+		onLog?.(buildLog(3))
+		await waitFor(() => expect(streamOnly.result.current.queries[0]?.data).toHaveLength(3))
+		expect(streamOnly.result.current.queries[0]?.data?.map((l) => l.id)).toEqual([1, 2, 3])
+		streamOnly.unmount()
+
+		// stream+poll, with the poll re-delivering lines the stream already
+		// rendered — the mid-reconnect overlap the spec calls out. Dedup on id
+		// must make it converge on the identical array rather than duplicating.
+		const listeners2 = captureStreamListeners()
+		const both = render()
+		await waitFor(() => expect(both.result.current.queries[0]?.data).toEqual([]))
+		const onLog2 = listeners2.get(sessionId)
+		onLog2?.(buildLog(1))
+		onLog2?.(buildLog(2))
+		onLog2?.(buildLog(3))
+		await waitFor(() => expect(both.result.current.queries[0]?.data).toHaveLength(3))
+
+		vi.mocked(api.sessions.logs).mockResolvedValue([buildLog(2), buildLog(3), buildLog(4)])
+		await both.result.current.queries[0]?.refetch()
+
+		await waitFor(() => expect(both.result.current.queries[0]?.data).toHaveLength(4))
+		expect(both.result.current.queries[0]?.data?.map((l) => l.id)).toEqual([1, 2, 3, 4])
+	})
+
+	it('subscribes only to the pollable session ids', async () => {
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+		const listeners = captureStreamListeners()
+
+		// A terminal session's history is fetched once and then left alone, so
+		// no stream is opened for it.
+		renderHook(() => useSessionActivityLogs(workspaceId, [sessionId], null, new Set<string>()), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(api.sessions.logs).toHaveBeenCalled())
+		expect(subscribeToSessionLogs).not.toHaveBeenCalled()
+		expect(listeners.size).toBe(0)
+	})
+
+	it('tears the stream down on unmount', async () => {
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+		const listeners = captureStreamListeners()
+
+		const { unmount } = render()
+		await waitFor(() => expect(listeners.has(sessionId)).toBe(true))
+
+		unmount()
+
+		expect(listeners.has(sessionId)).toBe(false)
 	})
 })
 
