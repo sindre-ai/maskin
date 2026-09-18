@@ -1388,6 +1388,19 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not in paused state or no snapshot`)
 		}
 
+		// Unconditional resume-entry marker, emitted before the `starting`
+		// transition and before any lock. The `session_resumed` marker below is
+		// post-launch, so a resume that stalls mid-path writes nothing without
+		// this and reads as a dispatch-origin stall (no `dispatch_entered`).
+		await this.db.insert(events).values({
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			action: 'resume_entered',
+			entityType: 'session',
+			entityId: sessionId,
+			data: {},
+		})
+
 		await this.db
 			.update(sessions)
 			.set({ status: 'starting', updatedAt: new Date() })
