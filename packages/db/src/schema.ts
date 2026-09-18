@@ -172,6 +172,34 @@ export const events = pgTable(
 
 // ── Integrations ───────────────────────────────────────────────────────────
 
+/**
+ * The complete status vocabulary for an `integrations` row. Applied to the
+ * column via `$type<>()` below so a reader that filters on a literal outside
+ * this union is a compile error rather than a query that silently matches
+ * nothing — the failure mode that shipped a permanently-hidden LinkedIn
+ * billing line (a reader filtering `'connected'`, a writer writing `'active'`).
+ *
+ * `active` is the only value that means "credentials are live and usable";
+ * every reader fetching usable credentials must filter on
+ * `INTEGRATION_STATUS_ACTIVE` rather than re-spelling the literal.
+ */
+export type IntegrationStatus =
+	| 'active'
+	| 'pending'
+	| 'revoked'
+	| 'error'
+	| 'awaiting_secret'
+	/**
+	 * Written only by `buildIntegrationInsert` (loop provisioning): a row
+	 * installed from a snapshot, which by construction carries no credentials
+	 * and needs the user to re-run OAuth. Matches no credential reader, which
+	 * is the intent — it must never be mistaken for a live connection.
+	 */
+	| 'inactive'
+
+/** The one status meaning "connected and usable". See `IntegrationStatus`. */
+export const INTEGRATION_STATUS_ACTIVE = 'active' satisfies IntegrationStatus
+
 export const integrations = pgTable(
 	'integrations',
 	{
@@ -180,12 +208,24 @@ export const integrations = pgTable(
 			.references(() => workspaces.id)
 			.notNull(),
 		provider: text('provider').notNull(),
-		status: text('status').notNull(),
+		status: text('status').$type<IntegrationStatus>().notNull(),
 		externalId: text('external_id'),
 		credentials: text('credentials').notNull(),
 		config: jsonb('config').notNull().default({}),
 		// Per-row marker keys for managed-package installs; nullable everywhere.
 		metadata: jsonb('metadata'),
+		// Nullable everywhere. Only providers in the actor-scoped allow-list
+		// declared in apps/dev/src/lib/integrations/lookup.ts populate this;
+		// every other provider keeps actor_id = NULL and stays workspace-scoped.
+		actorId: uuid('actor_id').references(() => actors.id),
+		// R11-A · Fan-out registration foundation. Populated only for
+		// `provider = 'linkedin-unipile'` rows — the value is
+		// `unipileClient.getProfile({ identifier: 'me' }).public_identifier`,
+		// resolved once at connect-time and used as the account half of the
+		// per-identity MCP instance slug `linkedin-{unipile_acc_slug}-{identity_slug}`.
+		// Phase 1 rows that predate R11 carry NULL until the next
+		// `account.reconnect` webhook or the admin refresh-identities call fills it.
+		unipileAccSlug: text('unipile_acc_slug'),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -193,14 +233,20 @@ export const integrations = pgTable(
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 	},
 	(t) => [
-		uniqueIndex('integrations_ws_provider_external_uniq')
-			.on(t.workspaceId, t.provider, t.externalId)
+		uniqueIndex('integrations_ws_actor_provider_external_uniq')
+			.on(t.workspaceId, t.actorId, t.provider, t.externalId)
 			.where(sql`${t.externalId} IS NOT NULL`),
-		uniqueIndex('integrations_ws_provider_null_external_uniq')
-			.on(t.workspaceId, t.provider)
+		uniqueIndex('integrations_ws_actor_provider_null_external_uniq')
+			.on(t.workspaceId, t.actorId, t.provider)
 			.where(sql`${t.externalId} IS NULL`),
+		index('integrations_ws_provider_idx').on(t.workspaceId, t.provider),
+		index('integrations_unipile_acc_slug_idx')
+			.on(t.unipileAccSlug)
+			.where(sql`${t.unipileAccSlug} IS NOT NULL`),
 	],
 )
+export type Integration = typeof integrations.$inferSelect
+export type NewIntegration = typeof integrations.$inferInsert
 
 // ── Slack User Links ───────────────────────────────────────────────────────
 // Per-(Slack team, Slack user) routing into a Maskin actor + default
@@ -240,6 +286,23 @@ export const triggers = pgTable('triggers', {
 		.references(() => actors.id)
 		.notNull(),
 	enabled: boolean('enabled').notNull().default(true),
+	// Loops v4 vertical-story fields (D6a). All three nullable and dormant on
+	// this task — the reconciler (D6b) and the vertical-story renderer (D6c)
+	// wire them up in stacked follow-up PRs. `hands_off_to_actor_id` is kept
+	// explicit rather than derived from the next step's `target_actor_id` so
+	// the renderer treats HANDS OFF as a first-class row (Architect + Designer
+	// alignment 2026-09-03; SPEC Q2 Option A). `escalates_to_actor_id` +
+	// `escalate_after_ms` together define the fixed-shape escalation the D6b
+	// cron in trigger-runner scans for.
+	handsOffToActorId: uuid('hands_off_to_actor_id').references(() => actors.id),
+	escalatesToActorId: uuid('escalates_to_actor_id').references(() => actors.id),
+	escalateAfterMs: integer('escalate_after_ms'),
+	// D6b idempotency guard: the last time the escalation reconciler posted
+	// an escalation comment for this step. The reconciler skips a step whose
+	// `last_escalated_at` is >= `waitingSince` (the oldest unread event's
+	// timestamp for the hands-off actor), so a new wait spell re-arms
+	// escalation on its own — see `loop-escalation-reconciler.ts`.
+	lastEscalatedAt: timestamp('last_escalated_at', { withTimezone: true }),
 	// Per-row marker keys for managed-package installs; nullable everywhere.
 	metadata: jsonb('metadata'),
 	createdBy: uuid('created_by')
@@ -745,6 +808,42 @@ export const readState = pgTable(
 export type ReadState = typeof readState.$inferSelect
 export type NewReadState = typeof readState.$inferInsert
 
+// ── Star State ────────────────────────────────────────────────────────────
+//
+// Per-actor "starred" flag on a polymorphic (entity_type, entity_id) target.
+// Mirrors `read_state` in shape and reason: server-persisted per-caller state
+// so a toggle from one device shows up on the caller's other devices without
+// a client-only localStorage cache. Presence of the row means starred; unstar
+// is a row DELETE (see services/star-state.ts), no soft-flag or unstarred_at
+// column — boolean semantics match the payload's `is_starred_by_me` scalar.
+//
+// `entity_type = 'object'` at ship; `comment` / `session` are deliberately
+// left open in the schema so the same table backs future starrable entities
+// without a migration, but no code path writes them yet.
+
+export const starState = pgTable(
+	'star_state',
+	{
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		entityType: text('entity_type').notNull(),
+		entityId: uuid('entity_id').notNull(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		starredAt: timestamp('starred_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.actorId, t.entityType, t.entityId] }),
+		index('star_state_lookup_idx').on(t.workspaceId, t.actorId),
+		index('star_state_reverse_idx').on(t.entityType, t.entityId),
+	],
+)
+
+export type StarState = typeof starState.$inferSelect
+export type NewStarState = typeof starState.$inferInsert
+
 // ── Notifications ─────────────────────────────────────────────────────────
 
 export const notifications = pgTable(
@@ -981,6 +1080,53 @@ export const idempotencyRecords = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [index('idempotency_records_created_at_idx').on(t.createdAt)],
+)
+
+// ── LinkedIn Tool Calls (content-hash idempotency) ──────────────────────────
+// Dedup ledger for the LinkedIn (LinkedIn-backed) content/community tools whose
+// v2 endpoints — unlike the messaging surface — do NOT accept an
+// Idempotency-Key header. Two identical tool-call requests (same actor, same
+// tool, same canonical-JSON request body → same sha256 content hash) collide
+// on the primary key: the first request claims the row and hits LinkedIn; the
+// second loses the insert race and either replays the winner's stored response
+// or, if the winner is still in flight, refuses. Replay-on-hit guards a specific
+// failure mode: a caller that retries after a network blip would otherwise
+// publish the same post twice, comment on the same post twice, etc. The 24h
+// TTL matches the reasonable window for retry — longer would balloon the
+// table, shorter would let real duplicates slip through.
+//
+// `actor_id` is text, NOT uuid: keeping it identical to `idempotencyRecords`'
+// column type isn't the constraint here — the constraint is that the value
+// bound at INSERT time is the caller's actor id as it flows through the MCP
+// context, and text avoids coupling to whether that path is uuid-typed all
+// the way down. `tool` is the wire tool name (e.g. `linkedin_publish_post`).
+// `content_hash` is `sha256(canonical-json(request-body))` — see
+// `apps/dev/src/lib/integrations/providers/linkedin-unipile/operations.ts`
+// for the canonicalisation helper. `response` stores the normalised, tool-
+// facing response payload so a replay returns the exact bytes the first
+// caller received.
+//
+// `status` is what makes the primary key *serialise* callers rather than just
+// deduplicate their bookkeeping: the row is inserted BEFORE the LinkedIn call
+// (status 0, in flight) and flipped to 200 with the response afterwards. The
+// natural ordering — read, call, write — is check-then-act, and for these
+// tools losing that race means a duplicate public post. Same discipline as
+// `idempotencyRecords`, which this table is the header-less counterpart to.
+export const linkedinToolCalls = pgTable(
+	'linkedin_tool_calls',
+	{
+		actorId: text('actor_id').notNull(),
+		tool: text('tool').notNull(),
+		contentHash: text('content_hash').notNull(),
+		// 0 = in flight (claim held, response not yet stored), 200 = completed.
+		status: integer('status').notNull(),
+		response: jsonb('response').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.actorId, t.tool, t.contentHash] }),
+		index('linkedin_tool_calls_created_at_idx').on(t.createdAt),
+	],
 )
 
 // ── User Display Settings ───────────────────────────────────────────────────
@@ -1298,3 +1444,43 @@ export const orphanThreadDetections = pgTable(
 
 export type OrphanThreadDetection = typeof orphanThreadDetections.$inferSelect
 export type NewOrphanThreadDetection = typeof orphanThreadDetections.$inferInsert
+
+// ── Google Meet — create_space idempotency ─────────────────────────────────
+// Maskin-side dedup ledger for `google_meet__create_space`. Meet's spaces.create
+// endpoint does NOT accept a client-side idempotency key (unlike GCal's
+// events.insert, which does via conferenceData.createRequest.requestId — the
+// create_meet_backed_event path uses Google-native replay and does not touch
+// this table). So `create_space` two identical calls (same workspace, same
+// idempotency_key) would otherwise provision two spaces and burn Meet quota.
+//
+// Default key derives to sha256(actor_id + purpose_normalised + YYYY-MM-DD)
+// so an agent that retries within a day gets the cached space back; callers
+// that need tighter or looser dedupe pass their own key.
+//
+// Composite unique index (workspace_id, idempotency_key) is what makes the
+// replay contract hold — a second insert with the same key races, loses on
+// the constraint, and the tool reads back the winner's space_name.
+export const googleMeetSpaceIdempotency = pgTable(
+	'google_meet_space_idempotency',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		idempotencyKey: text('idempotency_key').notNull(),
+		spaceName: text('space_name').notNull(),
+		meetingCode: text('meeting_code').notNull(),
+		meetingUri: text('meeting_uri').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('google_meet_space_idempotency_workspace_key_uniq').on(
+			t.workspaceId,
+			t.idempotencyKey,
+		),
+		index('google_meet_space_idempotency_created_at_idx').on(t.createdAt),
+	],
+)
+
+export type GoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferSelect
+export type NewGoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferInsert

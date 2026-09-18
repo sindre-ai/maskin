@@ -11,6 +11,10 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useActors } from '@/hooks/use-actors'
+import { useAuth } from '@/hooks/use-auth'
+import { useBillingUsage } from '@/hooks/use-billing'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import {
 	useCompleteIntegration,
 	useConnectIntegration,
@@ -27,6 +31,13 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Check, Copy, Link2, Plus } from 'lucide-react'
 import { useState } from 'react'
+
+// Providers whose installs are a list, not a single row. GitHub installs once
+// per org; LinkedIn once per workspace member (see the actor-scoped uniques in
+// packages/db/src/schema.ts). Anything not listed here renders as one row and
+// silently drops extra installs, so adding a provider to this set is what makes
+// its second install visible at all.
+const MULTI_INSTALL_PROVIDERS = new Set(['github', 'linkedin-unipile'])
 
 const SLACK_HISTORY_SCOPES: readonly string[] = [
 	'channels:history',
@@ -50,6 +61,15 @@ function IntegrationsPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: integrations, isLoading: integrationsLoading } = useIntegrations(workspaceId)
 	const { data: providers, isLoading: providersLoading } = useProviders()
+	// Gate the google-meet provider card behind `google-meet-integration-ui` —
+	// the backend registers the provider unconditionally so its OAuth callback
+	// and MCP routes stay reachable for anyone the tester rollout allows in,
+	// but the connect entry point stays hidden from everyone else until the flag
+	// flips on. Visual-layer only, per .claude/rules/feature-flags.md.
+	const googleMeetVisible = useFeatureFlag('google-meet-integration-ui')
+	const visibleProviders = (providers ?? []).filter(
+		(p) => p.name !== 'google-meet' || googleMeetVisible,
+	)
 
 	// GitHub only installs its App once per org, so a workspace that wants an org
 	// someone already connected elsewhere can't go through the install flow — it
@@ -74,8 +94,9 @@ function IntegrationsPage() {
 		integrationId: string
 	} | null>(null)
 
-	// Group active integrations by provider — GitHub can have multiple installations,
-	// other providers currently have one.
+	// Group active integrations by provider — GitHub can have multiple
+	// installations (one per org) and LinkedIn multiple accounts (one per
+	// workspace member); other providers currently have one.
 	const activeByProvider = new Map<string, IntegrationResponse[]>()
 	for (const integration of integrations ?? []) {
 		if (integration.status !== 'active') continue
@@ -88,23 +109,23 @@ function IntegrationsPage() {
 		<div>
 			{isLoading ? (
 				<ListSkeleton />
-			) : !providers?.length ? (
+			) : !visibleProviders.length ? (
 				<EmptyState
 					title="No providers available"
 					description="No integration providers are configured on the server"
 				/>
 			) : (
 				<div className="space-y-2">
-					{providers.map((provider) => {
+					{visibleProviders.map((provider) => {
 						const installations = activeByProvider.get(provider.name) ?? []
-						if (provider.name === 'github' && installations.length > 0) {
+						if (MULTI_INSTALL_PROVIDERS.has(provider.name) && installations.length > 0) {
 							return (
 								<GroupedProviderRow
 									key={provider.name}
 									provider={provider}
 									installations={installations}
 									workspaceId={workspaceId}
-									linkableCount={linkableCount}
+									linkableCount={provider.name === 'github' ? linkableCount : 0}
 									onRequestLink={() => setLinkGithubOpen(true)}
 								/>
 							)
@@ -214,6 +235,27 @@ function ProviderRow({
 		provider.name === 'slack' &&
 		integration?.missingScopes?.some((scope) => SLACK_HISTORY_SCOPES.includes(scope))
 
+	// LinkedIn is the one provider that costs money to connect — $49 per
+	// connected identity per month, added to the workspace subscription. A
+	// price has to be stated before the click that incurs it, not only on the
+	// billing page afterwards, so it is rendered on the card in both states:
+	// as a price before connecting, as a statement of what is being billed
+	// after. Kept in sync with LINKEDIN_IDENTITY_UNIT_PRICE_USD_CENTS in
+	// apps/dev/src/lib/linkedin-addon.ts.
+	// Enterprise workspaces get connected identities free, so the price must not
+	// be stated to them. `plan` reads `enterprise` for exactly the workspaces
+	// the backend exempts from the charge — see `isEnterprise()` in
+	// apps/dev/src/lib/enterprise.ts and the exemption in routes/billing.ts.
+	//
+	// Neither line renders until the plan is known: `billingUsage` is undefined
+	// on first render, and defaulting to the paid copy would flash
+	// "$49/month" at an enterprise workspace — the one thing this is here to
+	// avoid — for as long as the query takes.
+	const { data: billingUsage } = useBillingUsage(workspaceId)
+	const isLinkedInIdentityAddon = provider.name === 'linkedin-unipile' && billingUsage !== undefined
+	const isFreeIdentityAddon = isLinkedInIdentityAddon && billingUsage?.plan === 'enterprise'
+	const isPaidIdentityAddon = isLinkedInIdentityAddon && billingUsage?.plan !== 'enterprise'
+
 	const connectedLabel = isConnected
 		? needsReconnect
 			? missingSlackHistoryScopes
@@ -241,6 +283,18 @@ function ProviderRow({
 				>
 					{connectedLabel}
 				</p>
+				{isFreeIdentityAddon && (
+					<p className="text-xs text-muted-foreground">
+						Included in your enterprise plan — no per-identity charge.
+					</p>
+				)}
+				{isPaidIdentityAddon && (
+					<p className="text-xs text-muted-foreground">
+						{isConnected
+							? '$49/month per connected identity, billed on your Maskin subscription. Disconnecting stops the charge at the end of the current period.'
+							: '$49/month per connected identity, added to your Maskin subscription.'}
+					</p>
+				)}
 			</div>
 			{isConnected ? (
 				<div className="flex shrink-0 items-center gap-2">
@@ -299,6 +353,36 @@ function GroupedProviderRow({
 	const [expanded, setExpanded] = useState(installations.length > 1)
 	const count = installations.length
 
+	// LinkedIn installs are per-member: the row carries `actorId`, and the only
+	// human-readable identity we hold for a connected LinkedIn account is who
+	// connected it — the callback stores the opaque LinkedIn account_id and
+	// writes nothing to `config` (routes/integrations-linkedin-unipile.ts), so
+	// there is no `owner_login` equivalent to label rows with.
+	const isActorScoped = provider.name === 'linkedin-unipile'
+	const { actor } = useAuth()
+	const currentActorId = actor?.id
+	const { data: actors } = useActors(workspaceId, { enabled: isActorScoped })
+	const actorNames = new Map((actors ?? []).map((a) => [a.id, a.name]))
+
+	// One LinkedIn account per member, so the add affordance is offered only to
+	// someone who has not connected yet. For a member who already has a row it
+	// would reuse and overwrite that row rather than add a sibling.
+	const hasOwnInstall =
+		isActorScoped && installations.some((i) => i.actorId && i.actorId === currentActorId)
+	const canAdd = isActorScoped ? Boolean(currentActorId) && !hasOwnInstall : true
+	const addLabel = isActorScoped ? 'Connect your account' : 'Add another'
+
+	const unitLabel = isActorScoped ? 'connected account' : 'active installation'
+
+	// Same $49/identity disclosure ProviderRow makes, which a workspace on its
+	// second LinkedIn account would otherwise never see again — the price has to
+	// be stated before the click that incurs it. See the long note in
+	// ProviderRow for why neither line renders until `plan` is known.
+	const { data: billingUsage } = useBillingUsage(workspaceId)
+	const isLinkedInIdentityAddon = isActorScoped && billingUsage !== undefined
+	const isFreeIdentityAddon = isLinkedInIdentityAddon && billingUsage?.plan === 'enterprise'
+	const isPaidIdentityAddon = isLinkedInIdentityAddon && billingUsage?.plan !== 'enterprise'
+
 	return (
 		<div className="overflow-hidden rounded-lg border border-border bg-card">
 			<button
@@ -313,8 +397,20 @@ function GroupedProviderRow({
 						{provider.displayName} · {count}
 					</p>
 					<p className="text-xs text-muted-foreground truncate">
-						{count} active installation{count === 1 ? '' : 's'}
+						{count} {unitLabel}
+						{count === 1 ? '' : 's'}
 					</p>
+					{isFreeIdentityAddon && (
+						<p className="text-xs text-muted-foreground">
+							Included in your enterprise plan — no per-identity charge.
+						</p>
+					)}
+					{isPaidIdentityAddon && (
+						<p className="text-xs text-muted-foreground">
+							$49/month per connected identity, billed on your Maskin subscription. Disconnecting
+							stops the charge at the end of the current period.
+						</p>
+					)}
 				</div>
 			</button>
 			{expanded && (
@@ -323,21 +419,26 @@ function GroupedProviderRow({
 						<NestedInstallationRow
 							key={installation.id}
 							integration={installation}
+							actorScoped={isActorScoped}
+							actorName={installation.actorId ? actorNames.get(installation.actorId) : undefined}
+							isOwn={Boolean(installation.actorId && installation.actorId === currentActorId)}
 							onDisconnect={() => disconnect.mutate(installation.id)}
 							disconnecting={disconnect.isPending}
 						/>
 					))}
 					<div className="flex flex-col gap-2 md:flex-row">
-						<Button
-							variant="outline"
-							size="sm"
-							className="w-full md:flex-1"
-							onClick={() => connect.mutate({ provider: provider.name })}
-							disabled={connect.isPending}
-						>
-							<Plus className="h-3.5 w-3.5 mr-1" />
-							Add another
-						</Button>
+						{canAdd && (
+							<Button
+								variant="outline"
+								size="sm"
+								className="w-full md:flex-1"
+								onClick={() => connect.mutate({ provider: provider.name })}
+								disabled={connect.isPending}
+							>
+								<Plus className="h-3.5 w-3.5 mr-1" />
+								{addLabel}
+							</Button>
+						)}
 						{linkableCount > 0 && (
 							<Button
 								variant="outline"
@@ -681,27 +782,45 @@ function LinkGithubDialog({
 
 function NestedInstallationRow({
 	integration,
+	actorScoped = false,
+	actorName,
+	isOwn = false,
 	onDisconnect,
 	disconnecting,
 }: {
 	integration: IntegrationResponse
+	/** True for providers whose installs belong to a member, not the workspace. */
+	actorScoped?: boolean
+	/** Display name of the member who connected an actor-scoped install. */
+	actorName?: string
+	isOwn?: boolean
 	onDisconnect: () => void
 	disconnecting: boolean
 }) {
 	const ownerLogin =
 		typeof integration.config.owner_login === 'string' ? integration.config.owner_login : undefined
-	const label =
-		ownerLogin ??
-		(integration.externalId ? `Installation ${integration.externalId}` : 'Installation')
+	// An actor-scoped install is identified by the member who connected it —
+	// the provider gives us only an opaque account id, which is meaningless to
+	// read but is still the stable id worth showing underneath.
+	const noun = actorScoped ? 'Account' : 'Installation'
+	const label = actorScoped
+		? (actorName ?? (isOwn ? 'You' : 'Workspace member'))
+		: (ownerLogin ??
+			(integration.externalId ? `Installation ${integration.externalId}` : 'Installation'))
 
 	return (
 		<div className="flex items-center gap-3 rounded-md border border-border bg-bg-surface p-3">
 			<div className="h-3 w-3 shrink-0 rounded-full bg-success" />
 			<div className="flex-1 min-w-0">
-				<p className="text-sm font-medium text-foreground truncate">{label}</p>
+				<p className="text-sm font-medium text-foreground truncate">
+					{label}
+					{actorScoped && isOwn && (
+						<span className="ml-1 font-normal text-muted-foreground">(you)</span>
+					)}
+				</p>
 				{integration.externalId && (
 					<p className="text-xs text-muted-foreground truncate">
-						Installation {integration.externalId}
+						{noun} {integration.externalId}
 					</p>
 				)}
 			</div>

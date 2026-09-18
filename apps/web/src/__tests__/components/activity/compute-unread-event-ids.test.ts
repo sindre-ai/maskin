@@ -69,4 +69,24 @@ describe('computeUnreadEventIds', () => {
 	it('returns empty set when events array is empty', () => {
 		expect(computeUnreadEventIds([], 5).size).toBe(0)
 	})
+
+	// D8 pruned/deleted last_read_event_id — the reader's read cursor points
+	// at an event the server has since deleted or pruned out of the retained
+	// window. `getUnreadCount` on the server treats a dangling pointer as
+	// "all read" and returns 0, so the client's loaded window can still hold
+	// newer comment events but no NEW divider must render. This test names
+	// the scenario explicitly so a future refactor that starts treating a
+	// pruned pointer as "all unread" fails here rather than at the DOM.
+	it('returns empty set when the last_read_event_id was pruned (server-reported unread_count=0 with newer comments still loaded)', () => {
+		const events = [
+			buildEventResponse({ id: 101, action: 'commented' }),
+			buildEventResponse({ id: 102, action: 'commented' }),
+			buildEventResponse({ id: 103, action: 'commented' }),
+		]
+		// The pruned last_read_event_id (say id=7) never reaches the client —
+		// the server just resolves it as "all read" and returns unread_count=0.
+		// Even though newer comments are in the window, none of them get
+		// tagged unread on the client.
+		expect(computeUnreadEventIds(events, 0).size).toBe(0)
+	})
 })

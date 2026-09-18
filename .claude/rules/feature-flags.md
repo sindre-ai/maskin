@@ -48,14 +48,14 @@ const someFlag = useFeatureFlag('some-flag')
 {someFlag ? <ObjectsPageV2 /> : <LegacyObjectsPage />}
 ```
 
-No flag is live right now. The pattern to copy is the retired `new-design`
-flag, which shipped the v2 redesign: its read sites were route components, each
-swapping a whole page, plus one shell read in `layout/sidebar.tsx`, with the
-pre-v2 components vendored under sibling `legacy/` directories that were deleted
-with the flag. Deliberately *outside* the boundary were the routes'
-`validateSearch`, the shared filter and grouping helpers, the data-fetching
-hooks, and every additive component variant — so both branches ran on one search
-schema and one data layer, per the rule below.
+`linkedin-addon-visible` is the one live flag. The pattern to copy is the
+retired `new-design` flag, which shipped the v2 redesign: its read sites were
+route components, each swapping a whole page, plus one shell read in
+`layout/sidebar.tsx`, with the pre-v2 components vendored under sibling
+`legacy/` directories that were deleted with the flag. Deliberately *outside*
+the boundary were the routes' `validateSearch`, the shared filter and grouping
+helpers, the data-fetching hooks, and every additive component variant — so
+both branches ran on one search schema and one data layer, per the rule below.
 
 **One route component = one boundary.** A flag governing more than two pages
 will have more than two read sites, because a page is the highest point at which

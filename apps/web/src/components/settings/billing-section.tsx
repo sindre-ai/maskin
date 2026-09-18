@@ -11,7 +11,12 @@ import {
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { useBillingCancel, useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
-import type { BillingPlan, BillingStatus, BillingUsageResponse } from '@/lib/api'
+import type {
+	BillingPlan,
+	BillingStatus,
+	BillingUsageResponse,
+	LinkedInIdentityAddonLine,
+} from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
 import { OWNERSHIP_CAPS, SEAT_CAPS } from '@maskin/shared'
@@ -30,6 +35,15 @@ const STRIPE_BILLING_PORTAL = 'https://billing.stripe.com/p/login/maskin'
 
 export function formatCredits(cents: number): string {
 	return `$${(cents / 100).toFixed(2)}`
+}
+
+// Whole-dollar format used on the LinkedIn Identity add-on line ("$49/mo").
+// The unit price is a round-dollar constant ($49) locked by Sebk on
+// 2026-09-02; a `.toFixed(0)` keeps the label tight. Total-line uses
+// `.toFixed(2)` to make the arithmetic visible even at count=1 ("$49.00").
+export function formatDollars(cents: number, opts: { withCents?: boolean } = {}): string {
+	const value = cents / 100
+	return `$${opts.withCents ? value.toFixed(2) : value.toFixed(0)}`
 }
 
 export function formatResetsIn(ms: number | null): string {
@@ -498,6 +512,34 @@ function UsageBanner({
 					rows below.
 				</p>
 			)}
+
+			{usage.linkedin_identity_addon && (
+				<LinkedInIdentityAddonLineRow line={usage.linkedin_identity_addon} />
+			)}
+		</div>
+	)
+}
+
+// Renders the LinkedIn Identity SKU under the plan surface. The buyer-framing
+// paragraph is verbatim from the bet §Pricing so pricing copy stays inside
+// the pricing memo's control — do NOT paraphrase it. Displayed only when the
+// backend returns a non-null `linkedin_identity_addon` (see
+// apps/dev/src/lib/linkedin-addon.ts).
+function LinkedInIdentityAddonLineRow({ line }: { line: LinkedInIdentityAddonLine }) {
+	const unit = formatDollars(line.unit_price_usd_cents)
+	const total = formatDollars(line.monthly_total_usd_cents, { withCents: true })
+	return (
+		<div data-testid="linkedin-identity-addon" className="pt-2 border-t border-border space-y-1">
+			<div className="flex items-center justify-between gap-2 text-xs">
+				<span className="font-medium text-foreground">LinkedIn Identity</span>
+				<span className="text-muted-foreground">
+					{unit}/mo × {line.count} = {total}
+				</span>
+			</div>
+			<p className="text-xs text-muted-foreground">
+				$49/month covers connectivity to LinkedIn; your token bucket continues to cover only what
+				the model reasons through.
+			</p>
 		</div>
 	)
 }

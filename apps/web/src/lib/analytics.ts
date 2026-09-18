@@ -38,6 +38,7 @@ export function trackEvent(
 
 export type TaxonomyEntityType =
 	| 'object'
+	| 'actor'
 	| 'agent'
 	| 'bet'
 	| 'task'
@@ -129,12 +130,14 @@ export function trackChatSessionStarted(
 		entity_type: 'session'
 		entry_point: ChatSessionEntryPoint
 		entry_agent_role: string | null
+		participant_count: number
 	},
 ): void {
 	trackEvent('chat_session_started', {
 		...fillBase(p),
 		entry_point: p.entry_point,
 		entry_agent_role: p.entry_agent_role,
+		participant_count: p.participant_count,
 	})
 }
 
@@ -213,10 +216,32 @@ export function trackTriggerFired(p: BaseProps & { entity_type: 'trigger' }): vo
 	trackEvent('trigger_fired', { ...fillBase(p), source: 'trigger' })
 }
 
+// `source` on `relationship_created` is the UI attribution point Analytics
+// asked for on the parent bet (comment 522050): the D11 dashed CTAs on the
+// Relationships tab need to be filterable in PostHog against the generic
+// AddLinkForm / drag-drop / batch-attach paths that also emit this event.
+// Widening beyond the base `EventSource` here (not in `BaseProps`) keeps the
+// SDK-source semantic ('web' | 'mcp' | 'trigger') clean everywhere else while
+// still emitting a single `source` property on the event.
+export type RelationshipCreatedSource =
+	| EventSource
+	| 'relationships_tab_link_cta'
+	| 'relationships_tab_upload_cta'
+
 export function trackRelationshipCreated(
-	p: BaseProps & { entity_type: 'relationship'; relationship_type: string },
+	p: Omit<BaseProps, 'source'> & {
+		entity_type: 'relationship'
+		relationship_type: string
+		source?: RelationshipCreatedSource
+	},
 ): void {
-	trackEvent('relationship_created', { ...fillBase(p), relationship_type: p.relationship_type })
+	trackEvent('relationship_created', {
+		entity_id: p.entity_id,
+		entity_type: p.entity_type,
+		source: p.source ?? 'web',
+		flow_id: p.flow_id ?? null,
+		relationship_type: p.relationship_type,
+	})
 }
 
 export function trackObjectAttachedFile(
@@ -257,6 +282,49 @@ function detectPlatform(): 'ios' | 'web' {
 
 export function trackChatImageUpload(p: { outcome: 'success' | 'failure' }): void {
 	trackEvent('chat_image_upload', { platform: detectPlatform(), outcome: p.outcome })
+}
+
+// Chat composer `/` unified picker — fires when a Reference row is committed
+// into the composer selection (either an object or a notification). The parent
+// bet's success metric pairs this with turn sends against the same session to
+// measure whether references travel through to a completed exchange, so
+// `object_type` is the row's own `type` column ('bet' | 'task' | 'insight' |
+// 'notification' | any custom object type) and rides alongside the standard
+// `entity_id`. `workspace_id` / `actor_id` come in via the PostHog
+// super-properties registered on workspace mount.
+export type ChatReferenceObjectType = 'notification' | (string & {})
+
+export function trackChatObjectReferenceCreated(p: {
+	entity_id: string
+	object_type: ChatReferenceObjectType
+}): void {
+	trackEvent('chat_object_reference_created', {
+		entity_id: p.entity_id,
+		object_type: p.object_type,
+		source: 'web',
+	})
+}
+
+// Fires when the `/` picker's Reference search endpoint fails. Paired at query
+// time with `chat_object_reference_created` to compute error-rate on the
+// picker; the message is truncated so posthog-js's batching doesn't reject a
+// long payload on a slow network. See the parent bet's "Retry works from the
+// error state" gate.
+export function trackChatSlashPickerError(p: { message: string }): void {
+	trackEvent('chat_slash_picker_error', {
+		message: p.message.slice(0, 200),
+		source: 'web',
+	})
+}
+
+// Fires every time the composer's `add_agent` reducer action lands — the `@`
+// picker, or the `+ · Mention an agent` shortcut. `entity_id` is the picked
+// actor id; `kind` splits agent vs. human so the mention-adoption metric can
+// see if humans are actually being mentioned in practice.
+export function trackChatMentionInserted(
+	p: BaseProps & { entity_type: 'actor'; kind: 'agent' | 'human' },
+): void {
+	trackEvent('chat_mention_inserted', { ...fillBase(p), kind: p.kind })
 }
 
 // Sidebar legibility bet — click-through proxy for the qualitative ship metric.
@@ -429,6 +497,18 @@ export function trackForyouCardAction(p: {
 	})
 }
 
+// Restores the mark-read side of the For You engagement contract, deleted in
+// PR #1459 when the new-design flag was retired. Client-side and next to the
+// gesture: fired BEFORE the mark-read mutation so an API failure doesn't lose
+// the intent signal, and once per invocation (the server drops the card once
+// read, so there is no natural dedup boundary here — the surface itself is).
+export function trackForyouCardMarkedRead(p: { card_kind: CardKind; card_id: string }): void {
+	trackEvent('foryou_card_marked_read', {
+		card_kind: p.card_kind,
+		card_id: p.card_id,
+	})
+}
+
 // Per-mutation event for the Bulk select bet's ship metric (avg ≥5 objects
 // changed per cleanup session, baseline 1). Fires once per successful object
 // mutation from the three object hooks — single update, single delete, and one
@@ -502,4 +582,76 @@ export function trackLoopCreatedViaLanguage(p: {
 		},
 		{ send_instantly: true },
 	)
+}
+
+// PR D — fires when the trigger owner clicks Resume on an auto-paused Slack
+// trigger (either from the dropdown at $triggerId.tsx or the red banner in
+// `SlackTriggerSetupStatus`). Complementary to PR C's backend
+// `slack.trigger.auto_paused` event, so a PostHog funnel can measure
+// pause→resume latency and rate. `time_since_pause_ms` is `now -
+// metadata.auto_paused.paused_at` — computed at the call site so the query
+// doesn't have to join across two events. Fires only on a user-initiated
+// resume of an auto-paused trigger; a plain manual-pause → resume is
+// deliberately NOT tracked here (that's the existing `trigger_updated`).
+export function trackSlackTriggerResumedFromAutoPause(p: {
+	workspace_id: string
+	trigger_id: string
+	channel_id: string
+	time_since_pause_ms: number
+}): void {
+	trackEvent('slack.trigger.resumed_from_auto_pause', {
+		workspace_id: p.workspace_id,
+		trigger_id: p.trigger_id,
+		channel_id: p.channel_id,
+		time_since_pause_ms: p.time_since_pause_ms,
+	})
+}
+
+// Loops v4 (D6c): scroll-depth telemetry on the loop-detail vertical-story
+// spine. Fires at 25 / 50 / 75 / 100 percent as the user scrolls the flow
+// container into view — exactly once per depth per mount. Wired to the parent
+// bet's Won-condition "one-scroll read" measurement (the SHAPE flags this
+// event as load-bearing). `depth` is the four-value union rather than a raw
+// number so a typo can't invent a fifth bucket, and `loopId` is the
+// `objects.id` for taxonomy joins on the standard `entity_id` field.
+export function trackLoopsDetailFlowScrollDepth(p: {
+	depth: 25 | 50 | 75 | 100
+	loopId: string
+}): void {
+	trackEvent('loops.detail.flow_scroll_depth', {
+		depth: p.depth,
+		loopId: p.loopId,
+		entity_id: p.loopId,
+		entity_type: 'loop',
+		source: 'web',
+	})
+}
+
+// LOAD-BEARING for the Loops v4 polish bet's Won / Lost falsification metric
+// (Decide ↓ click-through ≥ 30% on sessions where the AskBanner renders). Fires
+// on the D3 AskBanner's Decide click. `loopId` and `pendingCount` are the two
+// fields the bet's PostHog query pairs the event with; camelCase kept
+// intentionally minimal here — this event has no taxonomy join outside its own
+// numerator, and the bet SHAPE names the payload as `{loopId, pendingCount}`.
+export function trackAskBannerDecideClicked(p: {
+	loopId: string
+	pendingCount: number
+}): void {
+	trackEvent('ask_banner_decide_clicked', {
+		loopId: p.loopId,
+		pendingCount: p.pendingCount,
+	})
+}
+
+// Ship-metric event for D8 of the Loops v4 UX/UI polish bet
+// (bet/d166-loops-v4-polish). Fires once per click on the "Mark read" CTA
+// inside the loop-detail TimelineTab's `NEW · {n} unread` divider.
+export function trackMarkReadClicked(p: { loop_id: string; unread_count: number }): void {
+	trackEvent('mark_read_clicked', {
+		loop_id: p.loop_id,
+		unread_count: p.unread_count,
+		entity_id: p.loop_id,
+		entity_type: 'loop',
+		source: 'web',
+	})
 }

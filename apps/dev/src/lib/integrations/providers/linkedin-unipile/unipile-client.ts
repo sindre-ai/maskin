@@ -1,0 +1,681 @@
+/**
+ * Thin HTTP client for the LinkedIn v2 Messaging API. v1 paths
+ * (`/api/v1/messages`, `/api/v1/chats*`) are gone — v2 puts `account_id` in
+ * the URL path and renames the send-recipients field. See
+ * https://developer.unipile.com/v2.0/docs/migration-messaging-api.
+ *
+ * Interface, not tight coupling — this is the seam the bet's architecture
+ * paragraph names: swapping to Postpress or SocialAPI.ai only means writing a
+ * second implementation of `LinkedInClient`. The route handler is the only
+ * consumer, and it depends on the shape, not the concrete class.
+ *
+ * All methods return `LinkedInHttpResult` (raw status + body) rather than a
+ * classified error, so the classification lives in one place — errors.ts.
+ * That keeps this file dumb HTTP and every retry/taxonomy decision reviewable
+ * in a single spot.
+ */
+
+export type LinkedInHttpResult<TBody = unknown> = {
+	status: number
+	body: TBody
+	headers: Record<string, string>
+}
+
+export type LinkedInSendMessagePayload = {
+	account_id: string
+	recipient_urn: string
+	body: string
+	/**
+	 * Optional attachments. Passed through to Unipile verbatim; each entry
+	 * carries `send_mode` (native vs file) so the messaging surface can decide
+	 * whether the file is inlined into the DM or delivered as a hosted link.
+	 * The array shape (mixed-type refinement) is validated at the tool
+	 * boundary — the client is dumb HTTP.
+	 */
+	attachments?: unknown[]
+	/** Defaults to `DEFAULT_LINKEDIN_INBOX`. */
+	inbox_id?: string
+}
+
+export type LinkedInReplyPayload = {
+	account_id: string
+	thread_id: string
+	body: string
+}
+
+export type LinkedInListConversationsQuery = {
+	account_id: string
+	cursor?: string
+	limit?: number
+	/** Defaults to `DEFAULT_LINKEDIN_INBOX`. */
+	inbox_id?: string
+}
+
+/**
+ * LinkedIn's primary inbox. `GET /v2/{account_id}/inboxes` lists the rest
+ * (CLASSIC_ARCHIVED, …); the primary one is what "my conversations" means and
+ * is the only inbox this surface reads today.
+ */
+export const DEFAULT_LINKEDIN_INBOX = 'CLASSIC_PRIMARY'
+
+/**
+ * Response envelope LinkedIn v2 sends on message-send, per the v2 reference:
+ *   - start-chat (`/inboxes/:id/chats/send`)  → { object: 'ChatStarted', chat_id, message_id }
+ *   - in-chat send (`/chats/:id/messages/send`) → { object: 'MessageSent', message_id }
+ *
+ * `message_id` is `string | string[] | null` — an array when attachments are
+ * delivered as separate messages, null when nothing was sent. `id` is kept
+ * only as a tolerated alias; v2 does not emit it. The route's
+ * `normalizeSendResponse` reads all three forms and never turns an
+ * unreadable id on a 2xx into an error — the message is already gone.
+ */
+export type LinkedInSendMessageResponse = {
+	object?: string
+	chat_id?: string
+	message_id?: string | string[] | null
+	/** Not emitted by v2; tolerated alias only. */
+	id?: string
+	sent_at?: string
+}
+
+/**
+ * The MCP-facing conversation shape. This is OUR contract with agents, not
+ * LinkedIn's wire shape — v2 chats arrive as { id, user_id,
+ * last_message_timestamp, unread_count, last_message } and are mapped onto
+ * this by `normalizeListResponse` in the route. Keeping the two separate is
+ * what let the v1→v2 wire change land without agents seeing a shape change.
+ */
+export type LinkedInConversation = {
+	thread_id: string
+	participants: Array<{ recipient_urn: string; display_name: string }>
+	last_message_at: string
+	unread_count: number
+	preview: string
+}
+
+/**
+ * v2 returns the page under `data`. `conversations`/`items` remain as
+ * tolerated aliases; elements are raw wire chats, not `LinkedInConversation`.
+ */
+export type LinkedInListConversationsResponse = {
+	data?: unknown[]
+	items?: unknown[]
+	conversations?: unknown[]
+	next_cursor?: string
+	cursor?: string
+}
+
+/** `GET /v2/{account_id}/chats/{chat_id}/messages` */
+export type LinkedInListMessagesQuery = {
+	account_id: string
+	chat_id: string
+	cursor?: string
+	limit?: number
+}
+
+/** `GET /v2/{account_id}/users/me/relations` — the account's connections. */
+export type LinkedInListRelationsQuery = {
+	account_id: string
+	cursor?: string
+	limit?: number
+}
+
+/**
+ * `POST /v2/{account_id}/linkedin/search`
+ *
+ * LinkedIn takes a LinkedIn search URL rather than structured filters, so the
+ * caller supplies either `keywords` (we build the URL) or an explicit `url`
+ * copied from a LinkedIn search the user already refined in the browser.
+ */
+export type LinkedInSearchPeopleQuery = {
+	account_id: string
+	keywords?: string
+	url?: string
+	cursor?: string
+	limit?: number
+}
+
+/** `GET /v2/{account_id}/users/{identifier}` */
+export type LinkedInGetProfileQuery = {
+	account_id: string
+	/** Public identifier ("janedoe"), provider id, or `me`. */
+	identifier: string
+}
+
+/**
+ * `GET /v2/{account_id}/linkedin/company/pages` — pages the connected LinkedIn
+ * member admins, per spec §1.4 step 2. This is a v2 LinkedIn-specific route
+ * (not the generic Unipile `pages` route) and returns one entry per admined
+ * page with the URN, the public identifier used as the fan-out slug, the
+ * page's own mailbox id, and whether that mailbox accepts inbound messages.
+ * The R11-A connect-callback path calls it right after `getProfile('me')`
+ * and hands each entry to `registerLinkedInMcpInstance(cfg)` (see spec §2 +
+ * §1.4).
+ */
+export type LinkedInListManagedPagesQuery = {
+	account_id: string
+	cursor?: string
+	limit?: number
+}
+
+/**
+ * One admined page as R11 needs it. `object_urn` is the LinkedIn
+ * `urn:li:organization:{id}` used as `poster_urn`/`commenter_urn` on the wire;
+ * `public_identifier` is the human-readable slug (e.g. `maskinio`) that becomes
+ * the identity half of the instance slug per spec §1.3. `messaging_enabled`
+ * gates the §2 messaging suite: pages that are publish-only never get
+ * `__send_message`/`__reply` registered on their instance.
+ */
+export type LinkedInManagedPage = {
+	object: 'ManagedCompanyPage'
+	object_urn: string
+	public_identifier: string
+	name: string
+	mailbox_id: string | null
+	messaging_enabled: boolean
+}
+
+export type LinkedInListManagedPagesResponse = {
+	object?: string
+	data?: LinkedInManagedPage[]
+	next_cursor?: string
+}
+
+/**
+ * `POST /v2/{account_id}/users/me/relation-requests` — send a LinkedIn
+ * connection invitation to a member.
+ *
+ * `user_id` is the LinkedIn provider id of the target member — the same
+ * opaque id that `recipient_urn` carries elsewhere on this interface (from
+ * `linkedin_search_people`, `linkedin_list_connections`, etc.). Pass it
+ * through verbatim.
+ *
+ * `message` is the optional invite note. LinkedIn enforces the length limit
+ * server-side (currently 200 chars on the wire); we deliberately do NOT
+ * pre-validate here so a wire-side limit change surfaces as a normal
+ * `INVALID_INPUT` classification rather than a client-side rejection that
+ * lies about the real constraint.
+ */
+export type LinkedInConnectionRequestPayload = {
+	account_id: string
+	user_id: string
+	message?: string
+}
+
+/**
+ * Response envelope LinkedIn v2 sends on a successful connection request.
+ * Fields are optional because the API surface is thinner than messaging —
+ * some tenants get `{ object: 'UserInvitationSent', invitation_id }`, others
+ * a bare 200 with no body. The operation layer treats a 2xx as success
+ * regardless.
+ */
+export type LinkedInConnectionRequestResponse = {
+	object?: string
+	invitation_id?: string
+	sent_at?: string
+}
+
+/** Every paged v2 read returns its page under `data` with a `next_cursor`. */
+export type LinkedInPagedResponse = {
+	data?: unknown[]
+	next_cursor?: string
+}
+
+// ── Content / community verbs (Task 7b) ──────────────────────────────────
+//
+// LinkedIn v2 uses one create-post endpoint (`POST /posts`) for both personal
+// and business-page publishes; `post_as` selects the page URN when publishing
+// as a page. `comment_as` is the equivalent for commenting from a page — not
+// wired in v1 of this bet (the six content tools shape shipping now covers
+// personal-profile commenting; page commenting is a follow-on).
+//
+// Every payload flows straight into a JSON body — no client-side clamping of
+// `text` length, no client-side URN validation. The 3000-char LinkedIn limit
+// is enforced by LinkedIn/LinkedIn and surfaces as a LINKEDIN_POST_TOO_LONG
+// classification (see errors.ts). Trusting the caller here keeps the seam
+// thin: the moment we start validating shape locally, changing LinkedIn's
+// rules requires a client update rather than an operations-layer one.
+
+export type LinkedInPublishPostPayload = {
+	account_id: string
+	text: string
+	/** Present when publishing as a business page; a company URN like `urn:li:organization:12345`. */
+	post_as?: string
+	attachments?: unknown[]
+	can_read?: string
+	can_comment?: string
+	quoted_post_id?: string
+	specifics?: Record<string, unknown>
+}
+
+/**
+ * `PATCH /v2/{account_id}/posts/{post_id}` — LinkedIn v2 edit-post.
+ *
+ * LinkedIn v2 only lets an author mutate `text` and `can_comment` on a post
+ * already published — attachments are FROZEN at publish (see the spec §3.1 /
+ * §4.2 rationale). No `post_as`: R11-A pre-scopes the acting identity, so the
+ * URL's `account_id` is already the right one and LinkedIn refuses edits from
+ * a different author with POST_NOT_FOUND.
+ */
+export type LinkedInEditPostPayload = {
+	account_id: string
+	post_id: string
+	text?: string
+	can_comment?: 'anyone' | 'connections' | 'no_one'
+}
+
+/**
+ * `DELETE /v2/{account_id}/posts/{post_id}` — LinkedIn v2 delete-post.
+ *
+ * Irreversible on LinkedIn's side. LinkedIn returns 204 on success; a SECOND
+ * call for the same post_id returns POST_NOT_FOUND, which the operations
+ * layer treats as a successful no-op.
+ */
+export type LinkedInDeletePostPayload = {
+	account_id: string
+	post_id: string
+}
+
+export type LinkedInCommentOnPostPayload = {
+	account_id: string
+	post_id: string
+	text: string
+}
+
+export type LinkedInReplyToCommentPayload = {
+	account_id: string
+	comment_id: string
+	text: string
+}
+
+export type LinkedInReadPostCommentsQuery = {
+	account_id: string
+	post_id: string
+	cursor?: string
+	limit?: number
+}
+
+export type LinkedInRetrievePostQuery = {
+	account_id: string
+	post_id: string
+}
+
+export type LinkedInListReactionsQuery = {
+	account_id: string
+	post_id: string
+	cursor?: string
+	limit?: number
+}
+
+export type LinkedInCountCommentsQuery = {
+	account_id: string
+	post_id: string
+}
+
+/**
+ * `DELETE /v2/accounts/{account_id}` — Unipile's account-level delete
+ * (P3-B). Payload is the Unipile-issued account id (e.g. `acc_01m2abxf…`),
+ * NOT the LinkedIn public slug in `integrations.unipile_acc_slug`.
+ *
+ * The route is NOT LinkedIn-scoped — it lives at the top-level `/v2/accounts`
+ * surface and hangs off every connected provider (LinkedIn, Gmail, WhatsApp,
+ * …). Grouped here because the LinkedIn-unipile provider is the only current
+ * caller and the client is already the single place that owns the Unipile v2
+ * wire shape; a future non-LinkedIn provider that needs the same call points
+ * at the same seam rather than re-implementing it.
+ *
+ * Best-effort by design: the caller treats 404 (already deleted upstream) as
+ * success and every other non-2xx as a log-and-continue so the local
+ * disconnect never blocks on Unipile's response. See
+ * `preDisconnect` in the linkedin-unipile registry entry.
+ */
+export type LinkedInDeleteAccountPayload = {
+	account_id: string
+}
+
+/**
+ * Response envelope Unipile sends on a successful account delete:
+ *   `{ object: 'AccountDeleted' }` (200)
+ * The object shape is documented; fields are optional so a tolerated body
+ * drift ('object' missing) still parses without turning a 200 into an error.
+ */
+export type LinkedInDeleteAccountResponse = {
+	object?: string
+}
+
+export interface LinkedInClient {
+	sendMessage(
+		payload: LinkedInSendMessagePayload,
+	): Promise<LinkedInHttpResult<LinkedInSendMessageResponse | Record<string, unknown>>>
+	reply(
+		payload: LinkedInReplyPayload,
+	): Promise<LinkedInHttpResult<LinkedInSendMessageResponse | Record<string, unknown>>>
+	listConversations(
+		query: LinkedInListConversationsQuery,
+	): Promise<LinkedInHttpResult<LinkedInListConversationsResponse | Record<string, unknown>>>
+	listMessages(
+		query: LinkedInListMessagesQuery,
+	): Promise<LinkedInHttpResult<LinkedInPagedResponse | Record<string, unknown>>>
+	listRelations(
+		query: LinkedInListRelationsQuery,
+	): Promise<LinkedInHttpResult<LinkedInPagedResponse | Record<string, unknown>>>
+	searchPeople(
+		query: LinkedInSearchPeopleQuery,
+	): Promise<LinkedInHttpResult<LinkedInPagedResponse | Record<string, unknown>>>
+	getProfile(query: LinkedInGetProfileQuery): Promise<LinkedInHttpResult<Record<string, unknown>>>
+	getManagedCompanyPages(
+		query: LinkedInListManagedPagesQuery,
+	): Promise<LinkedInHttpResult<LinkedInListManagedPagesResponse | Record<string, unknown>>>
+	sendConnectionRequest(
+		payload: LinkedInConnectionRequestPayload,
+	): Promise<LinkedInHttpResult<LinkedInConnectionRequestResponse | Record<string, unknown>>>
+	// Task 7b content/community verbs — see notes above the payload types.
+	publishPost(
+		payload: LinkedInPublishPostPayload,
+	): Promise<LinkedInHttpResult<Record<string, unknown>>>
+	commentOnPost(
+		payload: LinkedInCommentOnPostPayload,
+	): Promise<LinkedInHttpResult<Record<string, unknown>>>
+	replyToComment(
+		payload: LinkedInReplyToCommentPayload,
+	): Promise<LinkedInHttpResult<Record<string, unknown>>>
+	readPostComments(
+		query: LinkedInReadPostCommentsQuery,
+	): Promise<LinkedInHttpResult<LinkedInPagedResponse | Record<string, unknown>>>
+	retrievePost(
+		query: LinkedInRetrievePostQuery,
+	): Promise<LinkedInHttpResult<Record<string, unknown>>>
+	listReactions(
+		query: LinkedInListReactionsQuery,
+	): Promise<LinkedInHttpResult<LinkedInPagedResponse | Record<string, unknown>>>
+	countComments(
+		query: LinkedInCountCommentsQuery,
+	): Promise<LinkedInHttpResult<Record<string, unknown>>>
+	// R11-B destructive post CRUD.
+	editPost(payload: LinkedInEditPostPayload): Promise<LinkedInHttpResult<Record<string, unknown>>>
+	deletePost(
+		payload: LinkedInDeletePostPayload,
+	): Promise<LinkedInHttpResult<Record<string, unknown>>>
+	// P3-B symmetric-disconnect + P3-H reconnect-orphan cleanup.
+	deleteAccount(
+		payload: LinkedInDeleteAccountPayload,
+	): Promise<LinkedInHttpResult<LinkedInDeleteAccountResponse | Record<string, unknown>>>
+}
+
+/**
+ * Build the LinkedIn people-search URL LinkedIn's search endpoint expects.
+ * Exported so a test can pin the shape — an agent passes plain keywords and
+ * must never have to know LinkedIn's URL format.
+ */
+export function buildPeopleSearchUrl(keywords: string): string {
+	return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(keywords)}`
+}
+
+export type LinkedInHttpClientOptions = {
+	baseUrl: string
+	apiKey: string
+	fetchImpl?: typeof fetch
+}
+
+/**
+ * Default fetch-based `LinkedInClient`. Reads LinkedIn's `X-API-KEY` auth
+ * header and treats every response as JSON. `UNIPILE_BASE_URL` must NOT
+ * include the `/v2` suffix — the path lives here so this client owns the
+ * v1 → v2 migration surface in a single spot.
+ */
+export function createLinkedInHttpClient(options: LinkedInHttpClientOptions): LinkedInClient {
+	const baseUrl = options.baseUrl.replace(/\/+$/, '')
+	const fetchFn = options.fetchImpl ?? fetch
+
+	async function call<T>(
+		method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+		path: string,
+		body?: unknown,
+	): Promise<LinkedInHttpResult<T>> {
+		const url = `${baseUrl}${path}`
+		const init: RequestInit = {
+			method,
+			headers: {
+				'X-API-KEY': options.apiKey,
+				Accept: 'application/json',
+				...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+			},
+			body: body === undefined ? undefined : JSON.stringify(body),
+		}
+		const response = await fetchFn(url, init)
+		const headers: Record<string, string> = {}
+		response.headers.forEach((value, key) => {
+			headers[key] = value
+		})
+		const text = await response.text()
+		let parsed: unknown = {}
+		if (text.length > 0) {
+			try {
+				parsed = JSON.parse(text)
+			} catch {
+				parsed = { raw: text }
+			}
+		}
+		return { status: response.status, body: parsed as T, headers }
+	}
+
+	return {
+		sendMessage(payload) {
+			// v1: POST /api/v1/messages with { account_id, recipient, text }
+			// v2: POST /v2/{account_id}/inboxes/{inbox_id}/chats/send with
+			//     { users_ids, text }. `attendees_ids` → `users_ids` per the
+			//     migration doc.
+			//
+			// NOT `/v2/{account_id}/chats/send` ("Start a Chat") — that is the
+			// route for providers with no inbox concept. LinkedIn has inboxes,
+			// so it answers 501 `api/not_implemented` there with "Use Start a
+			// Chat in the given inbox endpoint", and every attempt to open a
+			// NEW thread fails while replies into existing threads keep working.
+			// Same trap as `listConversations` below; the correct route is the
+			// "Start a Chat from Inbox" reference page.
+			//
+			// R11-B: `attachments` are folded into the same request body under
+			// the wire field name Unipile v2 uses (`attachments`) — omitted
+			// when empty/undefined so a text-only send stays identical to the
+			// Phase 1 wire body agents and tests already exercise. Each
+			// attachment carries its own `send_mode` (native vs file), so the
+			// client does no per-entry rewriting.
+			const inbox = encodeURIComponent(payload.inbox_id ?? DEFAULT_LINKEDIN_INBOX)
+			const body: Record<string, unknown> = {
+				users_ids: [payload.recipient_urn],
+				text: payload.body,
+			}
+			if (payload.attachments && payload.attachments.length > 0) {
+				body.attachments = payload.attachments
+			}
+			return call(
+				'POST',
+				`/v2/${encodeURIComponent(payload.account_id)}/inboxes/${inbox}/chats/send`,
+				body,
+			)
+		},
+		reply(payload) {
+			// v1: POST /api/v1/chats/{id}/messages with { account_id, text }
+			// v2: POST /v2/{account_id}/chats/{chat_id}/messages/send with { text }
+			return call(
+				'POST',
+				`/v2/${encodeURIComponent(payload.account_id)}/chats/${encodeURIComponent(payload.thread_id)}/messages/send`,
+				{ text: payload.body },
+			)
+		},
+		listConversations(query) {
+			// v1: GET /api/v1/chats?account_id=…
+			// v2: GET /v2/{account_id}/inboxes/{inbox_id}/chats?cursor=…&limit=…
+			//
+			// NOT `/v2/{account_id}/chats` — that route exists but LinkedIn does
+			// not implement it, and LinkedIn answers 501 `api/not_implemented`
+			// with "Use List inbox Chats endpoint for this provider." Verified
+			// against api.unipile.com on 2026-09-04: the inbox route returns real
+			// conversations for the same account the bare route rejects.
+			const params = new URLSearchParams()
+			if (query.cursor) params.set('cursor', query.cursor)
+			if (typeof query.limit === 'number') params.set('limit', String(query.limit))
+			const qs = params.toString()
+			const inbox = encodeURIComponent(query.inbox_id ?? DEFAULT_LINKEDIN_INBOX)
+			return call(
+				'GET',
+				`/v2/${encodeURIComponent(query.account_id)}/inboxes/${inbox}/chats${qs ? `?${qs}` : ''}`,
+			)
+		},
+		listMessages(query) {
+			// GET /v2/{account_id}/chats/{chat_id}/messages
+			const params = new URLSearchParams()
+			if (query.cursor) params.set('cursor', query.cursor)
+			if (typeof query.limit === 'number') params.set('limit', String(query.limit))
+			const qs = params.toString()
+			const acc = encodeURIComponent(query.account_id)
+			const chat = encodeURIComponent(query.chat_id)
+			return call('GET', `/v2/${acc}/chats/${chat}/messages${qs ? `?${qs}` : ''}`)
+		},
+		listRelations(query) {
+			// GET /v2/{account_id}/users/me/relations
+			//
+			// NOT `/users/relations`: that path matches the `/users/{identifier}`
+			// route and resolves "relations" as a profile name, answering 200
+			// with a single unrelated person. A wrong-but-successful response is
+			// worse than a 404 — it looks like it works.
+			const params = new URLSearchParams()
+			if (query.cursor) params.set('cursor', query.cursor)
+			if (typeof query.limit === 'number') params.set('limit', String(query.limit))
+			const qs = params.toString()
+			const acc = encodeURIComponent(query.account_id)
+			return call('GET', `/v2/${acc}/users/me/relations${qs ? `?${qs}` : ''}`)
+		},
+		searchPeople(query) {
+			// POST /v2/{account_id}/linkedin/search with a LinkedIn search URL.
+			const params = new URLSearchParams()
+			if (query.cursor) params.set('cursor', query.cursor)
+			if (typeof query.limit === 'number') params.set('limit', String(query.limit))
+			const qs = params.toString()
+			const acc = encodeURIComponent(query.account_id)
+			const url = query.url ?? buildPeopleSearchUrl(query.keywords ?? '')
+			return call('POST', `/v2/${acc}/linkedin/search${qs ? `?${qs}` : ''}`, { url })
+		},
+		getProfile(query) {
+			// GET /v2/{account_id}/users/{identifier}; `me` returns the account's
+			// own profile.
+			const acc = encodeURIComponent(query.account_id)
+			return call('GET', `/v2/${acc}/users/${encodeURIComponent(query.identifier)}`)
+		},
+		getManagedCompanyPages(query) {
+			// GET /v2/{account_id}/linkedin/company/pages — pages the connected
+			// LinkedIn member currently admins. The R11-A connect-callback path
+			// calls this once per credential; every entry becomes its own MCP
+			// instance registered under `linkedin-{acc}-{page_public_identifier}`.
+			const params = new URLSearchParams()
+			if (query.cursor) params.set('cursor', query.cursor)
+			if (typeof query.limit === 'number') params.set('limit', String(query.limit))
+			const qs = params.toString()
+			const acc = encodeURIComponent(query.account_id)
+			return call('GET', `/v2/${acc}/linkedin/company/pages${qs ? `?${qs}` : ''}`)
+		},
+		sendConnectionRequest(payload) {
+			// POST /v2/{account_id}/users/me/relation-requests
+			// Body carries `user_id` (LinkedIn provider id) and the optional
+			// invite `message`. `message` is only serialised when present so a
+			// null-vs-absent distinction on LinkedIn's side stays visible.
+			const acc = encodeURIComponent(payload.account_id)
+			const body: Record<string, unknown> = { user_id: payload.user_id }
+			if (payload.message !== undefined) body.message = payload.message
+			return call('POST', `/v2/${acc}/users/me/relation-requests`, body)
+		},
+		publishPost(payload) {
+			// POST /v2/{account_id}/posts with {text, post_as?, ...}. Same endpoint
+			// serves personal and business-page publish; `post_as` selects the page
+			// URN when publishing as a page.
+			const { account_id, ...body } = payload
+			return call('POST', `/v2/${encodeURIComponent(account_id)}/posts`, body)
+		},
+		commentOnPost(payload) {
+			// POST /v2/{account_id}/posts/{post_id}/comments with {text}.
+			const acc = encodeURIComponent(payload.account_id)
+			const post = encodeURIComponent(payload.post_id)
+			return call('POST', `/v2/${acc}/posts/${post}/comments`, { text: payload.text })
+		},
+		replyToComment(payload) {
+			// POST /v2/{account_id}/comments/{comment_id}/replies with {text}.
+			const acc = encodeURIComponent(payload.account_id)
+			const comment = encodeURIComponent(payload.comment_id)
+			return call('POST', `/v2/${acc}/comments/${comment}/replies`, { text: payload.text })
+		},
+		readPostComments(query) {
+			// GET /v2/{account_id}/posts/{post_id}/comments (offset paginated).
+			const params = new URLSearchParams()
+			if (query.cursor) params.set('cursor', query.cursor)
+			if (typeof query.limit === 'number') params.set('limit', String(query.limit))
+			const qs = params.toString()
+			const acc = encodeURIComponent(query.account_id)
+			const post = encodeURIComponent(query.post_id)
+			return call('GET', `/v2/${acc}/posts/${post}/comments${qs ? `?${qs}` : ''}`)
+		},
+		retrievePost(query) {
+			// GET /v2/{account_id}/posts/{post_id}. Part of the get_post_engagement
+			// fan-out: this fetches base post metadata alongside listReactions +
+			// countComments.
+			const acc = encodeURIComponent(query.account_id)
+			const post = encodeURIComponent(query.post_id)
+			return call('GET', `/v2/${acc}/posts/${post}`)
+		},
+		listReactions(query) {
+			// GET /v2/{account_id}/posts/{post_id}/reactions (paginated). One leg
+			// of the get_post_engagement fan-out — paginated because a viral post
+			// can accumulate thousands of reactions and LinkedIn only returns them
+			// one page at a time.
+			const params = new URLSearchParams()
+			if (query.cursor) params.set('cursor', query.cursor)
+			if (typeof query.limit === 'number') params.set('limit', String(query.limit))
+			const qs = params.toString()
+			const acc = encodeURIComponent(query.account_id)
+			const post = encodeURIComponent(query.post_id)
+			return call('GET', `/v2/${acc}/posts/${post}/reactions${qs ? `?${qs}` : ''}`)
+		},
+		countComments(query) {
+			// GET /v2/{account_id}/posts/{post_id}/comments?limit=1 as a stand-in
+			// for a dedicated count endpoint — LinkedIn v2 exposes total via the
+			// page envelope's `paging.total_count` on the same list route. The
+			// operations layer reads that field rather than counting the items
+			// returned. If LinkedIn ships a dedicated /comments/count route, only
+			// this method needs to change.
+			const acc = encodeURIComponent(query.account_id)
+			const post = encodeURIComponent(query.post_id)
+			return call('GET', `/v2/${acc}/posts/${post}/comments?limit=1`)
+		},
+		editPost(payload) {
+			// PATCH /v2/{account_id}/posts/{post_id} with { text?, can_comment? }.
+			// LinkedIn v2 refuses edits on a post authored by a different identity
+			// with POST_NOT_FOUND (see errors.ts). Body carries ONLY the fields
+			// the caller wants to change — omitted fields leave LinkedIn's stored
+			// value alone. No `attachments`: LinkedIn v2 freezes those at publish.
+			const acc = encodeURIComponent(payload.account_id)
+			const post = encodeURIComponent(payload.post_id)
+			const body: Record<string, unknown> = {}
+			if (payload.text !== undefined) body.text = payload.text
+			if (payload.can_comment !== undefined) body.can_comment = payload.can_comment
+			return call('PATCH', `/v2/${acc}/posts/${post}`, body)
+		},
+		deletePost(payload) {
+			// DELETE /v2/{account_id}/posts/{post_id}. LinkedIn returns 204 on
+			// success; a SECOND call for the same id returns POST_NOT_FOUND, which
+			// the operations layer treats as a successful no-op (spec §5).
+			const acc = encodeURIComponent(payload.account_id)
+			const post = encodeURIComponent(payload.post_id)
+			return call('DELETE', `/v2/${acc}/posts/${post}`)
+		},
+		deleteAccount(payload) {
+			// DELETE /v2/accounts/{account_id}. Unipile-level (not LinkedIn-
+			// scoped): the plural `accounts` segment sits at the v2 root, unlike
+			// every other method here whose path starts with the account id.
+			// Verified against api.unipile.com/v2/docs/json 2026-09-12
+			// (operationId: `removeAccount`, pattern `^acc_(.*)$`). Response
+			// envelope is `{ object: 'AccountDeleted' }` on 200; 404 is documented
+			// as "Account not found" and the caller treats it as success (already
+			// deleted upstream).
+			return call('DELETE', `/v2/accounts/${encodeURIComponent(payload.account_id)}`)
+		},
+	}
+}

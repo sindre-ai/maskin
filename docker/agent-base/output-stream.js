@@ -224,17 +224,16 @@ let finished = false
  * synchronously) is the fallback.
  *
  * Exits 0. A log shipper that could not deliver is a degraded session, not a
- * failed agent, and this process's status is what agent-run.sh reads for the
- * pipeline. Exiting non-zero here tripped `set -e` before AGENT_EXIT_CODE was
- * assigned, so the EXIT trap posted its initial 0 — a session that lost its
- * reply reporting clean success. agent-run.sh now also guards that with
- * `|| true` inside log_tee; this is the other half.
+ * failed agent. This mattered more when agent-run.sh read the session's status
+ * from the pipeline this process sat in: exiting non-zero tripped `set -e`
+ * before AGENT_EXIT_CODE was assigned, so the EXIT trap posted its initial 0 —
+ * a session that lost its reply reporting clean success. agent-run.sh now waits
+ * on the agent's own PID and ignores this process's status entirely, so exiting
+ * 0 is no longer load-bearing — but it is still correct, and cheap to keep.
  */
-const reportGaveUp = () => {
+const abandon = (summary) => {
 	if (finished) return
 	finished = true
-	const elapsed = Math.round((Date.now() - (endedAt ?? Date.now())) / 1000)
-	const summary = `gave up after ${elapsed}s with ${pending.length} line(s) undelivered — some agent output was lost, possibly including its reply`
 	warn(summary)
 	try {
 		const url = new URL(`${AGENT_SERVER_URL}/sessions/${SESSION_ID}/logs/ingest`)
@@ -259,6 +258,36 @@ const reportGaveUp = () => {
 		process.exit(0)
 	}
 }
+
+/** Delivery failed for the whole give-up budget. See abandon() above. */
+const reportGaveUp = () => {
+	const elapsed = Math.round((Date.now() - (endedAt ?? Date.now())) / 1000)
+	abandon(
+		`gave up after ${elapsed}s with ${pending.length} line(s) undelivered — some agent output was lost, possibly including its reply`,
+	)
+}
+
+/**
+ * agent-run.sh's drain reaper hit LOG_DRAIN_GRACE_SECS and signalled us. That
+ * means stdin never EOF'd: the agent exited but something it spawned still
+ * holds the write end of the fifo, so the give-up clock above never started and
+ * never would. Node's default SIGTERM action terminates immediately, which
+ * would discard the buffer with no stderr line and no marker — the same silent
+ * loss this file exists to prevent, arriving by a different door.
+ *
+ * Deliberately NOT reportGaveUp(): that wording is for the delivery-failure
+ * case and derives its elapsed time from endedAt, which is still null here. It
+ * would read "gave up after 0s with 0 line(s) undelivered" — true, and actively
+ * misleading about which condition fired.
+ */
+process.on('SIGTERM', () => {
+	// No server to report to on the local Docker path; nothing is buffered there
+	// either, since PASSTHROUGH writes straight to stdout.
+	if (PASSTHROUGH) process.exit(0)
+	abandon(
+		`reaped ${pending.length} line(s) undelivered — the agent exited but its output fd is still held by another process it spawned, so this stream never ended`,
+	)
+})
 
 const finish = () => {
 	if (finished) return

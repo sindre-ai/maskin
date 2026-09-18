@@ -266,6 +266,15 @@ export interface ResolvedProvider {
 	 */
 	extractDeliveryId?: (payload: unknown, headers: Record<string, string>) => string | null
 	/**
+	 * Resolve the installationId used to match an integrations row, when the
+	 * webhook payload only carries an indirect identifier (e.g. Google Meet
+	 * delivers events tied to a People-id, but rows are keyed by host email).
+	 * Runs after normalizeEvent + before the integrations WHERE lookup. Return
+	 * null to skip this delivery. Providers whose normalizer already emits the
+	 * matching external_id do not need this hook.
+	 */
+	resolveInstallationId?: (ctx: ResolveInstallationIdContext) => Promise<string | null>
+	/**
 	 * Run provider-specific work immediately after OAuth credentials are stored and the
 	 * integration is activated (e.g. Gmail's users.watch call). Failures should be logged
 	 * by the provider; the route catches and surfaces them as a redirect with an error param.
@@ -319,4 +328,21 @@ export interface PreDisconnectContext {
 	integrationId: string
 	workspaceId: string
 	credentials: StoredCredentials
+	/**
+	 * The provider-issued stable id for this credential — `integrations.external_id`
+	 * (e.g. Unipile's `acc_01m2abxf…` for `linkedin-unipile`, Slack's `team_id`,
+	 * GitHub's installation id). Passed through so provider `preDisconnect` hooks
+	 * can call remote delete-account endpoints keyed on the id the provider owns,
+	 * without re-selecting the integration row. `null` when the row landed as
+	 * `pending` and never enumerated an external id.
+	 */
+	externalId: string | null
+}
+
+export interface ResolveInstallationIdContext {
+	db: unknown
+	provider: string
+	normalized: NormalizedEvent
+	payload: unknown
+	headers: Record<string, string>
 }

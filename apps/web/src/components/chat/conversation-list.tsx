@@ -16,6 +16,11 @@ interface ConversationListProps {
 	/** True when the list owns the whole content width (no thread open) — the
 	 *  rows then centre on a 900px column instead of stretching edge to edge. */
 	expanded?: boolean
+	/** Chats v4 polish (bet/bdda1c1e-chats-v4-polish). Composed at the route
+	 *  boundary from the `chats-v4-polish` umbrella flag AND its `.list`
+	 *  sub-flag. Off keeps the pre-v4 list, which ends on the last row with no
+	 *  footer. */
+	v4Polish?: boolean
 }
 
 const EMPTY_COPY: Record<ChatsFilter, { title: string; description: string }> = {
@@ -42,6 +47,7 @@ export function ConversationList({
 	filter = 'all',
 	className,
 	expanded,
+	v4Polish = false,
 }: ConversationListProps) {
 	// Omit `archived` unless it's the active filter — the backend already
 	// defaults the list to non-archived conversations (see
@@ -149,10 +155,6 @@ export function ConversationList({
 									))}
 								</div>
 							))}
-							{/* Nothing marks the end of the list. The mockup's
-							    "that's the whole history — N conversations" footer was
-							    a running total nobody asked for, printed under every
-							    short list; the last row ending is signal enough. */}
 							{hasNextPage ? (
 								// The sentinel is the loader; its label only claims to be
 								// loading while a page is actually in flight (mockup 545–549).
@@ -177,6 +179,10 @@ export function ConversationList({
 									) : (
 										'Older conversations load as you scroll'
 									)}
+								</div>
+							) : v4Polish ? (
+								<div className="flex items-center justify-center px-3 pt-4 pb-2.5 text-center text-[11px] text-muted-foreground">
+									That's the whole history — {conversations.length} in this workspace.
 								</div>
 							) : null}
 						</>

@@ -1,6 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { trackEvent, trackRelationshipCreated } from '../lib/analytics'
+import {
+	type RelationshipCreatedSource,
+	trackEvent,
+	trackRelationshipCreated,
+} from '../lib/analytics'
 import { type CreateRelationshipInput, api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
 
@@ -11,11 +15,19 @@ export function useRelationships(workspaceId: string, params?: Record<string, st
 	})
 }
 
+// Callers can tag the `source` of a create so PostHog can attribute uptake of
+// the D11 dashed CTAs vs. the existing AddLinkForm / drag-drop paths — the
+// property Analytics called out on comment 522050 of the parent bet.
+export type CreateRelationshipVariables = CreateRelationshipInput & {
+	source?: RelationshipCreatedSource
+}
+
 export function useCreateRelationship(workspaceId: string, objectId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
-		mutationFn: (data: CreateRelationshipInput) => api.relationships.create(workspaceId, data),
-		onSuccess: (created) => {
+		mutationFn: ({ source: _source, ...data }: CreateRelationshipVariables) =>
+			api.relationships.create(workspaceId, data),
+		onSuccess: (created, variables) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(objectId) })
 			const otherId = created.sourceId === objectId ? created.targetId : created.sourceId
@@ -25,6 +37,7 @@ export function useCreateRelationship(workspaceId: string, objectId: string) {
 				entity_id: created.id,
 				entity_type: 'relationship',
 				relationship_type: created.type,
+				source: variables.source,
 			})
 			// `attached` edges from any object → file are the file-attach v1 event.
 			// Trigger fires from the object-files panel and any future direct-attach
