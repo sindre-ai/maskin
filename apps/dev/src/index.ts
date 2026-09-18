@@ -181,10 +181,9 @@ purgeIdempotencyJob.start()
 logger.info('Purge idempotency job started')
 
 // VIES-hold scheduler: 15-min cron running T+2h reminder + T+24h timeout
-// sweeps for the VAT-correct-checkout bet (a9e19ca4). Registered
-// unconditionally — the sweeps themselves read `MASKIN_VAT_CHECKOUT`
-// fresh on every tick and early-return when the flag is off, so nothing
-// runs against the empty `awaiting_vies` table until Task 4's rollout.
+// sweeps for the VAT-correct-checkout bet (a9e19ca4). Both sweeps early-return
+// when no rows are eligible, so this is a no-op until the webhook starts
+// writing rows to the `awaiting_vies` table.
 const viesSchedulerJob = new ViesSchedulerJob(db)
 viesSchedulerJob.start()
 logger.info('VIES scheduler job started')

@@ -4,7 +4,7 @@ import { Cron } from 'croner'
 import { trackViesReminderSent } from '../lib/analytics/vies-events'
 import { findOlderThan, findRemindable, markReminderSent } from '../lib/awaiting-vies'
 import { logger } from '../lib/logger'
-import { getStripeClient, isVatCheckoutEnabled } from '../lib/stripe'
+import { getStripeClient } from '../lib/stripe'
 import { voidAwaitingRow } from '../lib/vat-webhook'
 import { sendAwaitingViesReminderEmail } from '../lib/vies-emails'
 
@@ -33,12 +33,9 @@ import { sendAwaitingViesReminderEmail } from '../lib/vies-emails'
  * next to `purge-idempotency.ts`, the established shape for a scheduled
  * built-in maintenance job.
  *
- * Both sweeps early-return without touching the DB when
- * `MASKIN_VAT_CHECKOUT` is off — matches the spec's kill-switch note:
- * leaving the timeout job registered while the webhook branch is off is a
- * no-op because nothing ever writes rows to sweep. Flag is read on every
- * tick (not cached) so a rollback (flag flip + restart) takes effect on
- * the next tick without waiting for a full re-boot cycle.
+ * Both sweeps early-return without touching the DB when no rows are
+ * eligible, so leaving the job registered is a no-op until the webhook
+ * starts writing rows to the `awaiting_vies` table.
  *
  * Guarded against overlapping runs — a slow tick will not double up with
  * the next one. Failures on a single row do not stop the sweep; other
@@ -92,8 +89,6 @@ export interface ProcessViesSchedulerDeps {
 	timeoutAgeMs: number
 	/** Injectable clock for tests. Defaults to `Date.now`. */
 	now?: () => Date
-	/** Injectable flag for tests. Defaults to `process.env.MASKIN_VAT_CHECKOUT === 'true'`. */
-	flagEnabled?: () => boolean
 }
 
 /**
@@ -108,9 +103,6 @@ export async function processViesScheduler(
 	db: Database,
 	deps: ProcessViesSchedulerDeps,
 ): Promise<void> {
-	const flagEnabled = deps.flagEnabled ?? isVatCheckoutEnabled
-	if (!flagEnabled()) return
-
 	const now = deps.now ?? (() => new Date())
 
 	try {

@@ -12,10 +12,9 @@
  *     unverified → void + delete row; unavailable/pending → leave open.
  *   • customer.tax_id.deleted — no-op.
  *
- * All Delta-2 behaviour is gated on `MASKIN_VAT_CHECKOUT`. The Delta-5
- * `charge.dispute.created` branch (also implemented here) is intentionally
- * NOT gated — it produces alerts only, mutates nothing, and is safe to run
- * at any time (spec Delta 5 rationale).
+ * The Delta-5 `charge.dispute.created` branch (also implemented here) runs
+ * alongside the Delta-2 branches — it produces alerts only, mutates nothing,
+ * and is safe to run at any time (spec Delta 5 rationale).
  */
 
 import type { Database } from '@maskin/db'
@@ -27,7 +26,7 @@ import type Stripe from 'stripe'
 import { capturePosthogEvent } from './analytics/posthog'
 import { creditedAmountUsdMinor } from './credit-billing'
 import { logger } from './logger'
-import { assertCreditsCurrency, isVatCheckoutEnabled } from './stripe'
+import { assertCreditsCurrency } from './stripe'
 import {
 	notifySebkOnSlack,
 	sendAwaitingViesEmail,
@@ -56,14 +55,9 @@ export async function applyVatEventIfHandled(
 	event: Stripe.Event,
 	stripe: Stripe,
 ): Promise<{ handled: boolean }> {
-	// charge.dispute.created runs regardless of the flag — see module docstring.
 	if (event.type === 'charge.dispute.created') {
 		await handleChargeDisputeCreated(event, stripe)
 		return { handled: true }
-	}
-
-	if (!isVatCheckoutEnabled()) {
-		return { handled: false }
 	}
 
 	if (event.type === 'customer.tax_id.created') {

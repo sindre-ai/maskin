@@ -7,7 +7,6 @@ import {
 	createCreditCheckoutSession,
 	hardCapForPlan,
 	isHandledStripeEvent,
-	isVatCheckoutEnabled,
 	mapSubscriptionStatus,
 	planForPriceId,
 	priceIdForPlan,
@@ -111,23 +110,6 @@ describe('isHandledStripeEvent', () => {
 	it('rejects events outside the allowlist', () => {
 		expect(isHandledStripeEvent('charge.succeeded')).toBe(false)
 		expect(isHandledStripeEvent('customer.created')).toBe(false)
-	})
-})
-
-describe('isVatCheckoutEnabled', () => {
-	it('is false when the env var is unset', () => {
-		expect(isVatCheckoutEnabled({})).toBe(false)
-	})
-	it('is false when set to anything other than "true"', () => {
-		expect(isVatCheckoutEnabled({ MASKIN_VAT_CHECKOUT: '' })).toBe(false)
-		expect(isVatCheckoutEnabled({ MASKIN_VAT_CHECKOUT: 'false' })).toBe(false)
-		expect(isVatCheckoutEnabled({ MASKIN_VAT_CHECKOUT: '1' })).toBe(false)
-		expect(isVatCheckoutEnabled({ MASKIN_VAT_CHECKOUT: 'yes' })).toBe(false)
-	})
-	it('is true when set to "true" (case-insensitive, trimmed)', () => {
-		expect(isVatCheckoutEnabled({ MASKIN_VAT_CHECKOUT: 'true' })).toBe(true)
-		expect(isVatCheckoutEnabled({ MASKIN_VAT_CHECKOUT: 'TRUE' })).toBe(true)
-		expect(isVatCheckoutEnabled({ MASKIN_VAT_CHECKOUT: '  true  ' })).toBe(true)
 	})
 })
 
@@ -257,11 +239,18 @@ describe('createCheckoutSession', () => {
 })
 
 describe('createCreditCheckoutSession', () => {
-	it('builds a one-time payment-mode session with dynamic price_data (legacy path)', async () => {
+	it('builds a one-time payment-mode session on the maskin_credits_custom Price with Stripe Tax attached', async () => {
 		const create = vi
 			.fn()
 			.mockResolvedValue({ id: 'cs_credit_1', url: 'https://stripe.test/checkout/cs_credit_1' })
-		const stripe = { checkout: { sessions: { create } } } as unknown as Stripe
+		const pricesRetrieve = vi.fn().mockResolvedValue({
+			id: 'price_credits_custom_test',
+			product: 'prod_maskin_credits_custom',
+		})
+		const stripe = {
+			checkout: { sessions: { create } },
+			prices: { retrieve: pricesRetrieve },
+		} as unknown as Stripe
 		const env = readStripeEnv(VALID_ENV)
 		const session = await createCreditCheckoutSession(
 			stripe,
@@ -276,6 +265,7 @@ describe('createCreditCheckoutSession', () => {
 		)
 		expect(session.id).toBe('cs_credit_1')
 		expect(create).toHaveBeenCalledTimes(1)
+		expect(pricesRetrieve).toHaveBeenCalledWith('price_credits_custom_test')
 		const params = create.mock.calls[0]?.[0] as Stripe.Checkout.SessionCreateParams
 		expect(params.mode).toBe('payment')
 		expect(params.customer).toBe('cus_existing')
@@ -286,23 +276,16 @@ describe('createCreditCheckoutSession', () => {
 		expect(lineItem.quantity).toBe(1)
 		expect(lineItem.price_data?.unit_amount).toBe(2_500)
 		expect(lineItem.price_data?.currency).toBe('usd')
-		// Legacy path should NOT emit Delta 1 flags.
-		expect(params.automatic_tax).toBeUndefined()
-		expect(params.tax_id_collection).toBeUndefined()
-		expect(params.invoice_creation).toBeUndefined()
+		expect(lineItem.price_data?.product).toBe('prod_maskin_credits_custom')
+		expect(lineItem.price_data?.tax_behavior).toBe('exclusive')
+		// Stripe Tax is unconditional — every checkout emits the Delta 1 payload.
+		expect(params.automatic_tax).toEqual({ enabled: true })
+		expect(params.tax_id_collection).toEqual({ enabled: true, required: 'never' })
+		expect(params.invoice_creation).toEqual({ enabled: true })
 	})
 })
 
-describe('Delta 1 — MASKIN_VAT_CHECKOUT flag on: Stripe Tax params attached', () => {
-	// Save/restore process.env.MASKIN_VAT_CHECKOUT around every case so we don't
-	// leak state between this suite and everything else in the file.
-	beforeEach(() => {
-		vi.stubEnv('MASKIN_VAT_CHECKOUT', 'true')
-	})
-	afterEach(() => {
-		vi.unstubAllEnvs()
-	})
-
+describe('Delta 1 — Stripe Tax params attached', () => {
 	it('createCheckoutSession attaches Delta 1 flags on subscription mode; first-time buyer omits customer_update', async () => {
 		const env = readStripeEnv(VALID_ENV)
 		const create = vi

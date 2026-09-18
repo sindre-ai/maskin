@@ -25,7 +25,6 @@ import {
 	createCheckoutSession,
 	createCreditCheckoutSession,
 	getStripeClient,
-	isVatCheckoutEnabled,
 	readStripeEnv,
 } from '../lib/stripe'
 import type { WorkspaceSettings } from '../lib/types'
@@ -364,12 +363,11 @@ const buyCreditsBodySchema = z.object({
 	success_url: z.string().url(),
 	cancel_url: z.string().url(),
 	/**
-	 * Optional currency for the top-up. Meaningful only when
-	 * MASKIN_VAT_CHECKOUT=true (custom-amount top-up moves onto the
-	 * maskin_credits_custom Price); the legacy path is USD-only regardless.
-	 * When set, the route re-validates the amount against the per-currency
-	 * bounds from CREDIT_TOPUP_BOUNDS_MINOR (spec Delta 1b) so a EUR/DKK
-	 * caller can't sneak in outside the currency-specific min/max.
+	 * Optional currency for the top-up (custom-amount top-up uses the
+	 * maskin_credits_custom Price). When set, the route re-validates the
+	 * amount against the per-currency bounds from CREDIT_TOPUP_BOUNDS_MINOR
+	 * (spec Delta 1b) so a EUR/DKK caller can't sneak in outside the
+	 * currency-specific min/max.
 	 */
 	currency: z.enum(['usd', 'eur', 'dkk']).optional(),
 })
@@ -415,11 +413,10 @@ app.openapi(buyCreditsRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { amount_usd_cents, success_url, cancel_url, currency } = c.req.valid('json')
 
-	// Delta 1b currency-scoped bounds. Only enforced under the VAT path — the
-	// legacy path is USD-only and its bounds already ran in
-	// buyCreditsBodySchema above. A caller passing currency=eur/dkk with the
-	// flag off is treated as USD (route still validates against USD bounds).
-	if (isVatCheckoutEnabled() && currency && currency !== 'usd') {
+	// Delta 1b currency-scoped bounds. The USD bounds already ran in
+	// buyCreditsBodySchema above; this adds the stricter per-currency min/max
+	// for EUR/DKK callers.
+	if (currency && currency !== 'usd') {
 		const bounds = CREDIT_TOPUP_BOUNDS_MINOR[currency as MaskinCreditsCurrency]
 		if (amount_usd_cents < bounds.min || amount_usd_cents > bounds.max) {
 			return c.json(

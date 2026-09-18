@@ -656,10 +656,10 @@ describe('POST /api/webhooks/stripe', () => {
 	})
 
 	it('credits normalized USD minor + volume bonus on a DKK direct-fulfil top-up (CTO pre-merge fix #4)', async () => {
-		// Under `MASKIN_VAT_CHECKOUT=true`, `session.metadata.amount_usd_cents`
-		// is minor units in `session.currency` (a legacy field name — see the
-		// currency-contract comment in stripe-webhook.ts). A DKK 349 payment
-		// must credit ~5000 USD cents (≈ $50), NOT 34900 USD cents (≈ $349).
+		// `session.metadata.amount_usd_cents` is minor units in
+		// `session.currency` (a legacy field name — see the currency-contract
+		// comment in stripe-webhook.ts). A DKK 349 payment must credit ~5000 USD
+		// cents (≈ $50), NOT 34900 USD cents (≈ $349).
 		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
 		const workspaceId = randomUUID()
 		mockResults.insertQueue = [

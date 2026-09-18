@@ -36,13 +36,10 @@ import { applyVatEventIfHandled } from '../../lib/vat-webhook'
 const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111'
 const CUSTOMER_ID = 'cus_test_vat'
 
-function withFlag(on: boolean, run: () => Promise<void> | void) {
-	const prior = process.env.MASKIN_VAT_CHECKOUT
-	process.env.MASKIN_VAT_CHECKOUT = on ? 'true' : 'false'
-	return Promise.resolve(run()).finally(() => {
-		if (prior === undefined) process.env.MASKIN_VAT_CHECKOUT = undefined
-		else process.env.MASKIN_VAT_CHECKOUT = prior
-	})
+// The MASKIN_VAT_CHECKOUT kill switch is gone — every VAT branch is now
+// unconditional. Kept as a passthrough so the call sites below read unchanged.
+function withFlag(_on: boolean, run: () => Promise<void> | void) {
+	return Promise.resolve(run())
 }
 
 function fakeStripe(overrides: Partial<Stripe> = {}): Stripe {
@@ -152,64 +149,6 @@ function event<T>(type: string, obj: T): Stripe.Event {
 
 beforeEach(() => {
 	vi.clearAllMocks()
-})
-
-describe('applyVatEventIfHandled — flag gating (spec Delta 2 rollout)', () => {
-	it('returns handled=false for checkout.session.completed when MASKIN_VAT_CHECKOUT is off', async () => {
-		await withFlag(false, async () => {
-			const { db } = fakeDb()
-			const stripe = fakeStripe()
-			const out = await applyVatEventIfHandled(
-				db,
-				WORKSPACE_ID,
-				event('checkout.session.completed', completedSession()),
-				stripe,
-			)
-			expect(out).toEqual({ handled: false })
-		})
-	})
-
-	it('returns handled=false for customer.tax_id.updated when flag is off', async () => {
-		await withFlag(false, async () => {
-			const { db } = fakeDb()
-			const out = await applyVatEventIfHandled(
-				db,
-				WORKSPACE_ID,
-				event('customer.tax_id.updated', {
-					customer: CUSTOMER_ID,
-					verification: { status: 'verified' },
-				}),
-				fakeStripe(),
-			)
-			expect(out).toEqual({ handled: false })
-		})
-	})
-
-	it('always handles charge.dispute.created regardless of the flag (Delta 5)', async () => {
-		await withFlag(false, async () => {
-			const { db } = fakeDb()
-			const out = await applyVatEventIfHandled(
-				db,
-				WORKSPACE_ID,
-				event('charge.dispute.created', {
-					id: 'dp_1',
-					charge: 'ch_1',
-					amount: 5000,
-					currency: 'usd',
-					reason: 'fraudulent',
-					status: 'needs_response',
-				}),
-				fakeStripe(),
-			)
-			expect(out).toEqual({ handled: true })
-			expect(notifySebkOnSlack).toHaveBeenCalledOnce()
-			expect(capturePosthogEvent).toHaveBeenCalledWith(
-				'stripe_dispute_created',
-				CUSTOMER_ID,
-				expect.objectContaining({ dispute_id: 'dp_1', reason: 'fraudulent' }),
-			)
-		})
-	})
 })
 
 describe('checkout.session.completed guard (spec Delta 2 three-way branch)', () => {

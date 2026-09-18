@@ -355,15 +355,13 @@ async function applyEvent(
 					//
 					// Currency contract (CTO pre-merge fix #4, 10 Sep 2026):
 					// `session.metadata.amount_usd_cents` is a legacy field name —
-					// under `MASKIN_VAT_CHECKOUT=true` its value is minor units in
-					// `session.currency` (USD/EUR/DKK), NOT USD minor. We normalize
-					// here so a DKK 349 payment credits ~$50 in USD cents into
-					// `credit_balance_cents` (which is USD cents), and apply the
-					// volume-bonus tier at ledger-write per Won criterion (e).
-					// Under the legacy flag-off path `session.currency='usd'` so
-					// normalize is identity — the only new behaviour there is that
-					// a USD top-up ≥ $250 now gets the Growth/Scale bonus it always
-					// should have.
+					// its value is minor units in `session.currency` (USD/EUR/DKK),
+					// NOT USD minor. We normalize here so a DKK 349 payment credits
+					// ~$50 in USD cents into `credit_balance_cents` (which is USD
+					// cents), and apply the volume-bonus tier at ledger-write per
+					// Won criterion (e). For a USD top-up normalize is identity —
+					// the only new behaviour there is that a USD top-up ≥ $250 now
+					// gets the Growth/Scale bonus it always should have.
 					const amountMinor = Number(
 						session.metadata?.amount_usd_cents ?? session.amount_total ?? Number.NaN,
 					)

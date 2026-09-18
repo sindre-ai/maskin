@@ -16,10 +16,10 @@ import { logger } from './logger'
  * and body length. The real send call (Resend / SES / whichever transport
  * Task 2's billing-emails.ts settles on) drops in at the marked call site.
  * A no-op-in-dev shape is deliberate: this file is imported by the VIES
- * scheduler which starts on every apps/dev boot behind the
- * `MASKIN_VAT_CHECKOUT` flag, and a partial send-side integration would
- * either double-send once Task 2 lands or block Task 3 waiting on Task 2 —
- * neither is what "parallel execution" of the task stack means.
+ * scheduler which starts on every apps/dev boot, and a partial send-side
+ * integration would either double-send once Task 2 lands or block Task 3
+ * waiting on Task 2 — neither is what "parallel execution" of the task
+ * stack means.
  */
 
 const REMINDER_SUBJECT = 'Still verifying your VAT number'

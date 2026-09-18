@@ -4,23 +4,6 @@ import { logger } from './logger'
 
 type PaidMaskinPlan = 'pro' | 'team'
 
-// ── VAT / Stripe Tax kill switch ────────────────────────────────────────────
-//
-// MASKIN_VAT_CHECKOUT — env-var-backed on/off for the VAT-correct-checkout bet.
-// When off (the default until rollout), every Checkout Session Maskin creates
-// keeps the pre-VAT payload shape and the webhook does not touch the new tax_id
-// branches — safe rollback is env change + backend restart.
-//
-// Not registered in FLAGS (apps/dev/src/lib/feature-flags.ts) on purpose: the
-// FLAGS registry is user-visible / actor-scoped, resolved by the frontend from
-// GET /api/feature-flags. This one gates a backend behaviour change on every
-// request, so the boundary is process-env, not per-actor. Ships behind a full
-// backend restart via turbo.json globalPassThroughEnv — see the entry there.
-const VAT_CHECKOUT_ENV_VAR = 'MASKIN_VAT_CHECKOUT'
-export function isVatCheckoutEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-	return env[VAT_CHECKOUT_ENV_VAR]?.trim().toLowerCase() === 'true'
-}
-
 // ── Delta 1c — Adaptive Pricing note ───────────────────────────────────────
 //
 // Adaptive Pricing is on every Checkout Session and remains compatible with
@@ -93,7 +76,7 @@ export const MASKIN_FREE_TRIAL_LOOKUP_KEY = 'maskin_free_trial'
 /**
  * Delta 1 Checkout Session params — added to EVERY stripe.checkout.sessions.create
  * call built by createCheckoutSession, createCreditCheckoutSession, and
- * createLinkedInAddonCheckoutSession when MASKIN_VAT_CHECKOUT=true.
+ * createLinkedInAddonCheckoutSession.
  *
  * customer_update is only valid when the session already has a Customer
  * attached. Stripe rejects a session at creation with "customer_update can
@@ -167,10 +150,9 @@ interface CheckoutInputs {
 interface CreditCheckoutInputs {
 	workspaceId: string
 	/**
-	 * Amount to top up, in the minor units of `currency`. Under VAT-checkout
-	 * (MASKIN_VAT_CHECKOUT=true) this is passed to the maskin_credits_custom
-	 * Price via price_data override so Stripe Tax can classify it; under the
-	 * legacy shape it's inlined into an ad-hoc USD-only price_data payload.
+	 * Amount to top up, in the minor units of `currency`. Passed to the
+	 * maskin_credits_custom Price via price_data override so Stripe Tax can
+	 * classify it.
 	 */
 	amountUsdCents: number
 	successUrl: string
@@ -179,11 +161,7 @@ interface CreditCheckoutInputs {
 	/** Undefined for a first-time buyer — Stripe Checkout mints the customer
 	 *  and the webhook persists the id. */
 	existingCustomerId?: string | null
-	/**
-	 * Currency for the top-up. Only meaningful when MASKIN_VAT_CHECKOUT=true;
-	 * ignored on the legacy path (which is USD-only). Defaults to 'usd' to
-	 * keep the legacy behaviour byte-identical when the flag is off.
-	 */
+	/** Currency for the top-up. Defaults to 'usd'. */
 	currency?: MaskinCreditsCurrency
 }
 
@@ -309,11 +287,9 @@ export async function createCheckoutSession(
 		subscription_data: {
 			metadata: { workspace_id: inputs.workspaceId, plan: inputs.plan },
 		},
-		// Delta 1 (VAT bet). Gated by env kill switch. customer_update is
-		// conditional on there being a customer to update — see the helper.
-		...(isVatCheckoutEnabled()
-			? vatCheckoutSessionParams({ hasCustomer: Boolean(inputs.existingCustomerId) })
-			: {}),
+		// Delta 1 (VAT bet). customer_update is conditional on there being a
+		// customer to update — see the helper.
+		...vatCheckoutSessionParams({ hasCustomer: Boolean(inputs.existingCustomerId) }),
 	}
 	if (inputs.existingCustomerId) {
 		params.customer = inputs.existingCustomerId
@@ -342,62 +318,16 @@ export async function createCreditCheckoutSession(
 	inputs: CreditCheckoutInputs,
 	env: StripeEnv,
 ): Promise<Stripe.Checkout.Session> {
-	const vatOn = isVatCheckoutEnabled()
-	const currency: MaskinCreditsCurrency = vatOn ? (inputs.currency ?? 'usd') : 'usd'
+	const currency: MaskinCreditsCurrency = inputs.currency ?? 'usd'
 
-	if (vatOn) {
-		// Delta 1b: migrate off ad-hoc `price_data` onto the Stripe-managed
-		// `maskin_credits_custom` Price. Stripe Tax can only classify a Price
-		// object (via its tax_behavior + product tax code), not an inline
-		// price_data blob, so this swap is what unlocks VAT calculation on the
-		// custom-amount top-up. Amount is overridden via price_data on top of
-		// the Price to keep the "customer chooses the number" behaviour Stripe
-		// otherwise takes off a fixed-Price line item.
-		const params: Stripe.Checkout.SessionCreateParams = {
-			mode: 'payment',
-			customer: inputs.existingCustomerId ?? undefined,
-			client_reference_id: inputs.workspaceId,
-			success_url: inputs.successUrl,
-			cancel_url: inputs.cancelUrl,
-			line_items: [
-				{
-					price_data: {
-						currency,
-						product: (await stripe.prices.retrieve(env.priceCreditsCustom)).product as string,
-						unit_amount: inputs.amountUsdCents,
-						tax_behavior: 'exclusive',
-					},
-					quantity: 1,
-				},
-			],
-			// Delta 1 payload additions PLUS invoice_creation (payment mode only —
-			// subscription mode gets an invoice automatically from Stripe Billing).
-			// The invoice PDF is the legally-required document for reverse-charge
-			// sales (EU VAT Directive Art. 226(11a)). customer_update is only
-			// emitted when a customer is attached — see the helper.
-			...vatCheckoutSessionParams({ hasCustomer: Boolean(inputs.existingCustomerId) }),
-			invoice_creation: { enabled: true },
-			metadata: {
-				workspace_id: inputs.workspaceId,
-				kind: CREDIT_TOPUP_METADATA_KIND,
-				amount_usd_cents: String(inputs.amountUsdCents),
-				currency,
-			},
-		}
-		const session = await stripe.checkout.sessions.create(params)
-		logger.info('Stripe credit top-up checkout session created (VAT path)', {
-			workspaceId: inputs.workspaceId,
-			amountUsdCents: inputs.amountUsdCents,
-			currency,
-			sessionId: session.id,
-		})
-		return session
-	}
-
-	// Legacy path — inline USD-only price_data, no Stripe Tax involvement.
-	// Kept byte-identical to pre-VAT behaviour so a flag flip is the only
-	// difference between the two shapes at rollback time.
-	const session = await stripe.checkout.sessions.create({
+	// Delta 1b: migrate off ad-hoc `price_data` onto the Stripe-managed
+	// `maskin_credits_custom` Price. Stripe Tax can only classify a Price
+	// object (via its tax_behavior + product tax code), not an inline
+	// price_data blob, so this swap is what unlocks VAT calculation on the
+	// custom-amount top-up. Amount is overridden via price_data on top of
+	// the Price to keep the "customer chooses the number" behaviour Stripe
+	// otherwise takes off a fixed-Price line item.
+	const params: Stripe.Checkout.SessionCreateParams = {
 		mode: 'payment',
 		customer: inputs.existingCustomerId ?? undefined,
 		client_reference_id: inputs.workspaceId,
@@ -406,22 +336,33 @@ export async function createCreditCheckoutSession(
 		line_items: [
 			{
 				price_data: {
-					currency: 'usd',
-					product_data: { name: 'Maskin usage credits' },
+					currency,
+					product: (await stripe.prices.retrieve(env.priceCreditsCustom)).product as string,
 					unit_amount: inputs.amountUsdCents,
+					tax_behavior: 'exclusive',
 				},
 				quantity: 1,
 			},
 		],
+		// Delta 1 payload additions PLUS invoice_creation (payment mode only —
+		// subscription mode gets an invoice automatically from Stripe Billing).
+		// The invoice PDF is the legally-required document for reverse-charge
+		// sales (EU VAT Directive Art. 226(11a)). customer_update is only
+		// emitted when a customer is attached — see the helper.
+		...vatCheckoutSessionParams({ hasCustomer: Boolean(inputs.existingCustomerId) }),
+		invoice_creation: { enabled: true },
 		metadata: {
 			workspace_id: inputs.workspaceId,
 			kind: CREDIT_TOPUP_METADATA_KIND,
 			amount_usd_cents: String(inputs.amountUsdCents),
+			currency,
 		},
-	})
+	}
+	const session = await stripe.checkout.sessions.create(params)
 	logger.info('Stripe credit top-up checkout session created', {
 		workspaceId: inputs.workspaceId,
 		amountUsdCents: inputs.amountUsdCents,
+		currency,
 		sessionId: session.id,
 	})
 	return session
@@ -579,9 +520,7 @@ export async function createLinkedInAddonCheckoutSession(
 		// Delta 1 (VAT bet) also applies to the LinkedIn Identity add-on.
 		// Non-blocking spec correction from CTO's 10 Sep deliverability review:
 		// the third builder was originally undernamed in the shaping doc.
-		...(isVatCheckoutEnabled()
-			? vatCheckoutSessionParams({ hasCustomer: Boolean(inputs.existingCustomerId) })
-			: {}),
+		...vatCheckoutSessionParams({ hasCustomer: Boolean(inputs.existingCustomerId) }),
 	}
 	if (inputs.existingCustomerId) {
 		params.customer = inputs.existingCustomerId

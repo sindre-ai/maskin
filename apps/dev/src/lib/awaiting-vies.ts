@@ -12,9 +12,7 @@ export type { AwaitingViesRow }
  * The VIES scheduler (`apps/dev/src/jobs/vies-scheduler.ts`) is the only
  * reader outside the webhook handler itself. It uses `findRemindable` +
  * `markReminderSent` on the T+2h reminder sweep and `findOlderThan` on the
- * T+24h timeout sweep. Both sweeps are gated behind `MASKIN_VAT_CHECKOUT`
- * at the scheduler layer so the accessors themselves never need to know
- * about the flag.
+ * T+24h timeout sweep.
  */
 
 /**

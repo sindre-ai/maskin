@@ -145,28 +145,4 @@ describe('VIES scheduler integration', () => {
 		const stamped = await markReminderSent(db, row.id)
 		expect(stamped).toBe(false)
 	})
-
-	/**
-	 * The kill-switch: `MASKIN_VAT_CHECKOUT=false` must skip both sweeps
-	 * entirely, even when candidate rows exist. Guards against a rollback
-	 * leaving the scheduler wired up but firing against production data.
-	 */
-	it('processViesScheduler is a no-op when MASKIN_VAT_CHECKOUT is off', async () => {
-		const now = new Date()
-		await insertAwaitingViesRow(workspaceId, {
-			sessionId: 'cs_test_flag_off_1',
-			createdAt: new Date(now.getTime() - 25 * HOUR_MS),
-		})
-
-		await processViesScheduler(db, {
-			reminderAgeMs: 2 * HOUR_MS,
-			timeoutAgeMs: 24 * HOUR_MS,
-			now: () => now,
-			flagEnabled: () => false,
-		})
-
-		expect(stripeMock.refunds.create).not.toHaveBeenCalled()
-		const remaining = await db.select().from(awaitingVies)
-		expect(remaining).toHaveLength(1)
-	})
 })
