@@ -176,7 +176,15 @@ export async function pushSessionWorkspace(
 		// `-C sessionDir` + `.` packs entries relative to sessionDir with a leading
 		// `.` component (e.g. `./workspace/…`). pullSessionWorkspace uses
 		// --strip-components=1 which strips that `.`, landing files at newDir/*.
-		await execFile('tar', ['-C', sessionDir, '-czf', 'workspace.tar.gz', '.'], { cwd: stage })
+		//
+		// `./tmp` is excluded: agent-run.sh points TMPDIR (and the npm/pnpm/yarn
+		// caches) at /agent/tmp so temp files land on this virtiofs mount instead of
+		// the 512 MB RAM-backed /tmp. That scratch is per-run and can be many GB —
+		// snapshotting it would balloon every workspace tarball and restore a stale
+		// dependency cache into the next session.
+		await execFile('tar', ['-C', sessionDir, '--exclude=./tmp', '-czf', 'workspace.tar.gz', '.'], {
+			cwd: stage,
+		})
 		const buf = await readFile(archivePath)
 
 		let lastErr: unknown

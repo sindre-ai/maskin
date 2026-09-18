@@ -2,7 +2,7 @@ import type { Database } from '@maskin/db'
 import { workspaces } from '@maskin/db/schema'
 import { CLAUDE_OAUTH_CLIENT_ID, CLAUDE_TOKEN_URL } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
-import { type OAuthSlotKind, resolveActiveSlot, writeSlot } from './claude-oauth-slots'
+import { type OAuthSlotKind, readSlots, resolveActiveSlot, writeSlot } from './claude-oauth-slots'
 import { decrypt, encrypt } from './crypto'
 import { logger } from './logger'
 
@@ -67,6 +67,13 @@ export async function refreshClaudeToken(tokens: ClaudeOAuthTokens): Promise<Cla
 		expiresAt: Date.now() + data.expires_in * 1000,
 		subscriptionType: tokens.subscriptionType,
 		scopes: data.scope?.split(' ') ?? tokens.scopes,
+		// The nickname is user-authored metadata that happens to ride along in
+		// the token record. Rebuilding the record without it here is what made
+		// nicknames vanish on their own: the refreshed blob is persisted over
+		// the slot wholesale, so anything dropped here is dropped from storage.
+		// The same is true of every other non-token field on the record — add
+		// new ones HERE, not only to the interface.
+		nickname: tokens.nickname,
 	}
 }
 
@@ -125,6 +132,27 @@ export function encryptOAuthTokens(tokens: ClaudeOAuthTokens): EncryptedOAuthDat
 }
 
 /**
+ * Carry a slot's nickname from what is already stored onto a blob that is
+ * about to replace it. The nickname is not token material: a write that only
+ * means to rotate credentials must not silently erase how the credential is
+ * labelled.
+ *
+ * An incoming value always wins, so a rename still takes effect; only
+ * `undefined` falls back to what was there.
+ */
+export function preserveSlotLabels(
+	incoming: EncryptedOAuthData,
+	stored: EncryptedOAuthData | undefined,
+): EncryptedOAuthData {
+	if (!stored) return incoming
+	const next = { ...incoming }
+	if (next.nickname === undefined && stored.nickname !== undefined) {
+		next.nickname = stored.nickname
+	}
+	return next
+}
+
+/**
  * Persist a freshly-refreshed encrypted token blob into the given slot on a
  * workspace, without clobbering any other slot or failover state a concurrent
  * refresh may have written. Wraps the read-modify-write in a transaction with
@@ -149,7 +177,13 @@ export async function persistRefreshedSlot(
 			.limit(1)
 		if (!latest) return
 		const latestSettings = (latest.settings as Record<string, unknown>) ?? {}
-		const nextOAuth = writeSlot(latestSettings.claude_oauth, slot, encrypted)
+		// Second line of defence for the nickname: this function only ever
+		// persists refreshed TOKENS, so it must never be the thing that clears
+		// a label. A rename racing a refresh would otherwise be lost, since
+		// `encrypted` was built from a snapshot taken before the lock.
+		const stored = readSlots(latestSettings.claude_oauth)[slot]
+		const merged = preserveSlotLabels(encrypted, stored)
+		const nextOAuth = writeSlot(latestSettings.claude_oauth, slot, merged)
 		await tx
 			.update(workspaces)
 			.set({

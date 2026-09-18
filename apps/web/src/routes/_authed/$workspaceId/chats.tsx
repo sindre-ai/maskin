@@ -3,6 +3,7 @@ import { ConversationList } from '@/components/chat/conversation-list'
 import { PageHeader } from '@/components/layout/page-header'
 import { useChatUnreadCount } from '@/hooks/use-chat-unread'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -49,6 +50,13 @@ function ChatsLayout() {
 	const isDraft = leafMatch?.routeId === '/_authed/$workspaceId/chats/new'
 
 	const { count: unreadCount } = useChatUnreadCount(workspaceId)
+	// Feature-flag boundary for the chats v4 polish bet (bet/bdda1c1e-chats-v4-polish).
+	// Read once at this route layout per the feature-flags rule
+	// (`.claude/rules/feature-flags.md`); the list delta is additionally gated by
+	// its `.list` sub-flag so it can be reverted without dropping the rest.
+	const chatsV4Enabled = useFeatureFlag('chats-v4-polish')
+	const listV4Enabled = useFeatureFlag('chats-v4-polish.list')
+	const listV4Polish = chatsV4Enabled && listV4Enabled
 	const { data } = useConversationsInfinite(workspaceId)
 	const total = data?.pages.flatMap((p) => p.conversations).length ?? 0
 	const subtitle =
@@ -103,7 +111,12 @@ function ChatsLayout() {
 						<Outlet />
 					</div>
 				) : (
-					<ConversationList workspaceId={workspaceId} filter={filter} className="-m-4" />
+					<ConversationList
+						workspaceId={workspaceId}
+						filter={filter}
+						className="-m-4"
+						v4Polish={listV4Polish}
+					/>
 				)}
 			</>
 		)
@@ -120,6 +133,7 @@ function ChatsLayout() {
 					filter={filter}
 					expanded
 					className="-m-4 md:-m-8"
+					v4Polish={listV4Polish}
 				/>
 			</>
 		)
@@ -133,7 +147,7 @@ function ChatsLayout() {
 					// `bg-surface-sunken` is what makes the split read as index +
 					// document rather than two equal halves (mockup 273).
 					<div className="hidden w-[clamp(266px,25vw,326px)] shrink-0 flex-col border-r border-border bg-surface-sunken md:flex">
-						<ConversationList workspaceId={workspaceId} filter={filter} />
+						<ConversationList workspaceId={workspaceId} filter={filter} v4Polish={listV4Polish} />
 					</div>
 				)}
 				{/* One gutter variable for the whole thread pane — the header,

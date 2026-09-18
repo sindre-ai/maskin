@@ -18,6 +18,16 @@
 // Every known flag id. Ids absent from this registry always resolve to false,
 // so a typo in FF_TESTER_FEATURES can't invent a flag. Add an entry here as the
 // first step of introducing a new flag.
+//
+// `loops-v4-polish` gates the Loops & Loop detail v4 UX/UI polish bet
+// (bet/d166-loops-v4-polish). The three sub-flags let a single delta be
+// reverted without dropping the rest: `.targets` for D5 (Loop targets),
+// `.step_flow` for D6 (vertical step flow + escalation reconciler), and
+// `.unread` for D8 (unread boundary + Mark read). Every sub-flag is
+// additionally gated by the umbrella at each read site — so flipping the
+// umbrella off kills every downstream v4 delta at once. See
+// `.claude/rules/feature-flags.md` for the boundary rule and
+// `bet/d166-loops-v4-polish` for the ship / rollback plan.
 export const FLAGS = {
 	/**
 	 * LinkedIn Identity add-on visibility on the plan surface
@@ -55,6 +65,68 @@ export const FLAGS = {
 	 * See parent bet 'Slack setup UX' for the shape spec.
 	 */
 	SLACK_SETUP_UX_V2: 'slack-setup-ux-v2',
+	/**
+	 * Google Meet integration visibility on the Settings > Integrations page.
+	 * When off, the provider card + Connect button are filtered out of the
+	 * providers list rendered by `apps/web/src/routes/_authed/$workspaceId/settings/integrations.tsx`
+	 * — the customer sees no google-meet entry point at all. When on, google-meet
+	 * appears alongside every other OAuth provider (Gmail, GCal, Slack, ...) with
+	 * a standard Connect button. Visual-layer only: the backend still registers
+	 * the provider unconditionally, so `POST /api/integrations/google-meet/connect`
+	 * and the seven `google_meet__*` MCP tools stay reachable for tester actors
+	 * (add them to `FF_TESTER_ACTOR_IDS` + `google-meet-integration-ui` to
+	 * `FF_TESTER_FEATURES`). See parent bet [Google Meet MCP — cover the top
+	 * JTBDs across the workspace](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/947eee4d-9b30-49c7-968c-9376b4f5d80e)
+	 * for the rollout plan. Retire (drop the boundary + delete this entry) once
+	 * google-meet ships to every workspace.
+	 */
+	GOOGLE_MEET_INTEGRATION_UI: 'google-meet-integration-ui',
+	/**
+	 * Chat composer `+` menu collapse — replaces the three-item **Reference an
+	 * object** / **Mention an agent** / **Create an object** dropdown with a
+	 * single **Attach a file** row, and promotes the `/` and `@` primitives via
+	 * the composer placeholder. Owned by task **6321aecf**, part of parent bet
+	 * **bet/f21a-chat-composer-completeness** ("Chat composer completeness").
+	 * OFF preserves today's three-item menu and today's placeholder verbatim.
+	 * See `.claude/rules/feature-flags.md` for the boundary rule.
+	 */
+	CHAT_PLUS_MENU_ATTACH_ONLY: 'chat-plus-menu-attach-only',
+	loopsV4Polish: 'loops-v4-polish',
+	loopsV4PolishTargets: 'loops-v4-polish.targets',
+	loopsV4PolishStepFlow: 'loops-v4-polish.step_flow',
+	loopsV4PolishUnread: 'loops-v4-polish.unread',
+	/**
+	 * `chats-v4-polish` gates the Chats v4 UX/UI polish bet
+	 * (bet/bdda1c1e-chats-v4-polish). The five sub-flags let a single delta be
+	 * reverted without dropping the rest: `.list` for the conversation-list
+	 * end-of-history footer, `.header` for the thread-header controls (loop
+	 * chip, copy whole conversation, mark as unread, mobile overflow menu),
+	 * `.banner` for the resume-banner restyle, `.bubbles` for the message-bubble
+	 * hover actions + attachment eyebrow, and `.new_chat` for the new-chat chip
+	 * picker. Every sub-flag is additionally gated by the umbrella at each read
+	 * site — so flipping the umbrella off kills every downstream v4 delta at
+	 * once. See `.claude/rules/feature-flags.md` for the boundary rule and
+	 * `bet/bdda1c1e-chats-v4-polish` for the ship / rollback plan.
+	 */
+	chatsV4Polish: 'chats-v4-polish',
+	chatsV4PolishList: 'chats-v4-polish.list',
+	chatsV4PolishHeader: 'chats-v4-polish.header',
+	chatsV4PolishBanner: 'chats-v4-polish.banner',
+	chatsV4PolishBubbles: 'chats-v4-polish.bubbles',
+	chatsV4PolishNewChat: 'chats-v4-polish.new_chat',
+	/**
+	 * Chat composer `/` picker v2 — unified search-and-create surface.
+	 * When off, typing `/` opens the create-only "Turn this into an object"
+	 * dropdown (today's behaviour). When on, `/` opens the unified picker with
+	 * Reference (existing objects via `search_objects`) on top and Create new
+	 * (Task / Bet / Insight) below, and NEWKIND prefixes like `/task ` become
+	 * type-filter chips in the composer. See parent bet
+	 * [Chat composer completeness](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/f21ad246-ebef-4cd2-93e0-aa46c83ed954).
+	 * Retire once the unified picker is the default for every workspace and the
+	 * legacy `turnIntoOpen` branch in `apps/web/src/components/chat/chat.tsx`
+	 * has been deleted.
+	 */
+	CHAT_SLASH_PICKER_V2: 'chat-slash-picker-v2',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

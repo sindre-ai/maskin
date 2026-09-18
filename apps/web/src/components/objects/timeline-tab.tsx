@@ -1,15 +1,23 @@
 import { ActivityComment } from '@/components/activity/activity-comment'
 import { computeUnreadEventIds } from '@/components/activity/object-activity'
-import { PhaseDivider } from '@/components/activity/phase-divider'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RelativeTime } from '@/components/shared/relative-time'
+import {
+	DecidedFold,
+	findDecisionAnswer,
+	isDecidedFoldEligible,
+} from '@/components/timeline/decided-fold'
+import { NewDivider } from '@/components/timeline/new-divider'
+import { PhaseDivider } from '@/components/timeline/phase-divider'
+import { type LifecyclePhase, phaseForStatus } from '@/components/timeline/phase-map'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useObjectGraph } from '@/hooks/use-objects'
 import { useMarkRead } from '@/hooks/use-subscriptions'
+import { trackMarkReadClicked } from '@/lib/analytics'
 import type { ActorListItem, EventResponse, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { hasDecision } from '@/lib/comment-decision'
@@ -19,6 +27,16 @@ import { formatEventDescription } from '@maskin/shared'
 import { ArrowDown, ChevronDown } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+
+/** Above this many entries in a tab, the count pill renders as `{cutoff}+`.
+ *  Kept just below the graph endpoint's 100-event page limit so a full page
+ *  reads as an overflow indicator rather than an exact tally. */
+const TAB_COUNT_CUTOFF = 99
+
+function formatTabCount(value: number): string {
+	if (value > TAB_COUNT_CUTOFF) return `${TAB_COUNT_CUTOFF}+`
+	return String(value)
+}
 
 /**
  * One row of the merged activity stream (mockup 1176–1355). Comments and events
@@ -206,7 +224,39 @@ function prevStatusOf(event: EventResponse): string | null {
 	return typeof value === 'string' ? value : null
 }
 
-export function TimelineTab({ object }: { object: ObjectResponse }) {
+/**
+ * Optional variant carrying the D8 delta of the Loops v4 UX/UI polish bet
+ * (bet/d166-loops-v4-polish). When set, the unread divider re-skins to
+ * `NEW · {n} unread` in red, rows the current viewer has already read carry
+ * opacity-75, the boundary announces itself to screen readers on mount, an
+ * EARLIER divider marks the current-window boundary in the stream, and
+ * Mark read fires the `mark_read_clicked` PostHog event with
+ * `{loop_id, unread_count}`. Gated at the callsite behind the
+ * `loops-v4-polish.unread` sub-flag (feature-flag boundary lives in
+ * `_authed/$workspaceId/loops/$loopId.tsx`). Absent → the pre-bet divider
+ * ships as before, so Objects (the other consumer of this component) is
+ * completely untouched.
+ */
+export interface LoopsV4PolishUnreadOptions {
+	/** Emitted on the analytics payload for `mark_read_clicked` — matches
+	 *  the SPEC's verbatim `{loopId, unreadCount}` contract. */
+	loopId: string
+}
+
+/** How old an entry must be to sit under the `EARLIER` divider — the SPEC's
+ *  "current window" isn't machine-defined, so the frontend fixes it to seven
+ *  days. Everything within a week reads as "current", everything older falls
+ *  under `EARLIER`. Kept as a top-level constant so a single change moves the
+ *  boundary for both the divider and its tests. */
+const EARLIER_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+
+export function TimelineTab({
+	object,
+	loopsV4PolishUnread,
+}: {
+	object: ObjectResponse
+	loopsV4PolishUnread?: LoopsV4PolishUnreadOptions
+}) {
 	const { workspaceId } = useWorkspace()
 	const {
 		data: graph,
@@ -370,6 +420,18 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 	const handleMarkRead = useCallback(() => {
 		setUnreadDismissed(true)
 		if (latestCommentEventId <= 0) return
+		// D8 ship metric — fires once per Mark read click, only in the polish
+		// variant. `unreadCount` reads the exact number the divider is showing
+		// at click time, matching the `NEW · {n} unread` label the user sees.
+		// Emit BEFORE the mutate so a late failure that rolls the dismiss back
+		// still has a click recorded — the metric is "did the admin engage
+		// with the boundary", not "did the server successfully persist it".
+		if (loopsV4PolishUnread) {
+			trackMarkReadClicked({
+				loop_id: loopsV4PolishUnread.loopId,
+				unread_count: unreadCount,
+			})
+		}
 		markRead.mutate(
 			{ entityType: 'object', entityId: object.id, lastEventId: latestCommentEventId },
 			{
@@ -379,7 +441,7 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 				},
 			},
 		)
-	}, [markRead, object.id, latestCommentEventId])
+	}, [markRead, object.id, latestCommentEventId, loopsV4PolishUnread, unreadCount])
 	const firstUnreadId = useMemo(() => {
 		if (unreadEventIds.size === 0) return null
 		let min: number | null = null
@@ -392,6 +454,25 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 	}, [unreadEventIds, entries])
 	const showUnreadDivider = !unreadDismissed && firstUnreadId !== null
 
+	// D8 EARLIER divider anchor — the key of the newest entry that sits
+	// outside the "current window" (older than seven days from render time).
+	// Fixed at first render so the boundary stays put as time passes across
+	// this session — a moving line would re-position mid-scroll. Falsy when
+	// nothing in the stream is old enough; the divider then simply doesn't
+	// render. Only computed when the polish variant is on; every other
+	// consumer of TimelineTab reads null and pays no cost.
+	const earlierAnchorKey = useMemo(() => {
+		if (!loopsV4PolishUnread) return null
+		const threshold = Date.now() - EARLIER_WINDOW_MS
+		for (const entry of entries) {
+			if (!entry.time) continue
+			const ts = Date.parse(entry.time)
+			if (Number.isNaN(ts)) continue
+			if (ts < threshold) return entry.key
+		}
+		return null
+	}, [loopsV4PolishUnread, entries])
+
 	const containerRef = useRef<HTMLDivElement>(null)
 	const [jumpTick, setJumpTick] = useState(0)
 	useEffect(() => {
@@ -400,56 +481,31 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 		el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 	}, [jumpTick, firstUnreadId])
 
-	// Collapsed phases, keyed by the status the phase opened with. Phase rows
-	// are chronological groups the mockup shows as labelled dividers (1226–1233).
-	const [collapsedPhases, setCollapsedPhases] = useState<ReadonlySet<string>>(new Set())
-	const togglePhase = (key: string) => {
-		setCollapsedPhases((prev) => {
-			const next = new Set(prev)
-			if (next.has(key)) next.delete(key)
-			else next.add(key)
-			return next
-		})
-	}
-
-	// Walk the descending stream: a status change opens the phase everything
-	// above it belongs to, so the divider renders in place, before its rows.
-	const phases = useMemo(() => {
-		const out: Array<{
-			key: string
-			status: string
-			startedAt: string | null
-			rows: TimelineEntry[]
-		}> = [
-			{ key: `phase-current-${object.status}`, status: object.status, startedAt: null, rows: [] },
-		]
+	// Walk the descending stream and group entries into lifecycle-phase runs
+	// (SHAPING / BUILT / SHIPPED / WRAPPED UP). A status change only opens a new
+	// run when the phase actually flips — back-to-back moves within one phase
+	// (e.g. define → shaped, both SHAPING) fall through into the same group,
+	// per D10. Static phase pills sit above each group.
+	const lifecycleGroups = useMemo(() => {
+		type Group = { phase: LifecyclePhase; key: string; rows: TimelineEntry[] }
+		const initial: Group = {
+			phase: phaseForStatus(object.status),
+			key: `phase-top-${object.status}`,
+			rows: [],
+		}
+		const out: Group[] = [initial]
 		for (const entry of visible) {
 			out[out.length - 1]?.rows.push(entry)
-			if (entry.kind === 'event' && entry.isStatusChange) {
-				// `visible` runs newest-first, so this change CLOSES the phase we
-				// have been filling and OPENS the older one below it. The phase
-				// above sat in the status the object moved to (`newStatus`) and
-				// began at this event's timestamp; everything older than the
-				// change sat in the status it moved from (`prevStatus`), and when
-				// that phase began is only known once we reach the next (older)
-				// change — hence `startedAt: null` until then.
-				const closing = out[out.length - 1]
-				if (closing) {
-					closing.startedAt = entry.time
-					if (entry.newStatus) closing.status = entry.newStatus
-				}
-				out.push({
-					key: `phase-${entry.key}`,
-					status: entry.prevStatus ?? object.status,
-					startedAt: null,
-					rows: [],
-				})
+			if (entry.kind !== 'event' || !entry.isStatusChange || !entry.prevStatus) continue
+			const prevPhase = phaseForStatus(entry.prevStatus)
+			if (prevPhase !== out[out.length - 1]?.phase) {
+				out.push({ phase: prevPhase, key: `phase-${entry.key}`, rows: [] })
 			}
 		}
-		return out.filter((phase) => phase.rows.length > 0)
+		return out.filter((group) => group.rows.length > 0)
 	}, [visible, object.status])
 
-	const showPhases = filter === 'all' && phases.length > 1
+	const showPhases = filter === 'all' && lifecycleGroups.length > 1
 
 	// Expanded folds, keyed by the fold's first row. Transient — a fold is a
 	// reading affordance, not view state worth persisting.
@@ -464,26 +520,64 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 	}
 
 	const renderEntry = (entry: TimelineEntry) => {
-		const divider =
-			showUnreadDivider && entry.kind === 'comment' && entry.event.id === firstUnreadId ? (
-				<UnreadDivider count={unreadCount} onMarkRead={handleMarkRead} />
-			) : null
+		const unreadHere =
+			showUnreadDivider && entry.kind === 'comment' && entry.event.id === firstUnreadId
+		const unreadDivider = unreadHere ? (
+			loopsV4PolishUnread ? (
+				<PolishUnreadDivider count={unreadCount} onMarkRead={handleMarkRead} />
+			) : (
+				<NewDivider count={unreadCount} onMarkRead={handleMarkRead} />
+			)
+		) : null
+		// EARLIER divider — polish variant only.
+		const earlierDivider =
+			loopsV4PolishUnread && entry.key === earlierAnchorKey ? <EarlierDivider /> : null
+		// D8 (loops v4 polish path): dim entries the current viewer has already
+		// read. Per-viewer via `unreadEventIds`.
+		const dimAsRead =
+			!!loopsV4PolishUnread && entry.kind === 'comment' && !unreadEventIds.has(entry.event.id)
 		return (
 			<li key={entry.key} className="list-none">
-				{divider}
-				{entry.kind === 'comment' ? (
-					<ActivityComment
-						event={entry.event}
-						replies={repliesByParent.get(entry.event.id) ?? []}
-						workspaceId={workspaceId}
-						objectId={object.id}
-						isUnread={unreadEventIds.has(entry.event.id)}
-						variant="bubble"
-						collapsibleReplies
-					/>
-				) : (
-					<EventRow entry={entry} actorsById={actorsById} workspaceId={workspaceId} />
-				)}
+				{unreadDivider}
+				{earlierDivider}
+				<div className={cn(dimAsRead && 'opacity-75')}>
+					{entry.kind === 'comment' ? (
+						(() => {
+							const replies = repliesByParent.get(entry.event.id) ?? []
+							const answer = findDecisionAnswer(entry.event, replies)
+							// D9 decided-fold applies only in the default (Object detail)
+							// path — the loops v4 polish variant keeps the full ActivityComment card.
+							const foldedAnswer =
+								!loopsV4PolishUnread &&
+								answer !== null &&
+								isDecidedFoldEligible(entry.event, replies)
+									? answer
+									: null
+							return foldedAnswer ? (
+								<DecidedFold
+									event={entry.event}
+									replies={replies}
+									answer={foldedAnswer}
+									workspaceId={workspaceId}
+									objectId={object.id}
+									isUnread={unreadEventIds.has(entry.event.id)}
+								/>
+							) : (
+								<ActivityComment
+									event={entry.event}
+									replies={replies}
+									workspaceId={workspaceId}
+									objectId={object.id}
+									isUnread={unreadEventIds.has(entry.event.id)}
+									variant="bubble"
+									collapsibleReplies
+								/>
+							)
+						})()
+					) : (
+						<EventRow entry={entry} actorsById={actorsById} workspaceId={workspaceId} />
+					)}
+				</div>
 			</li>
 		)
 	}
@@ -544,15 +638,34 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 
 	return (
 		<div className="w-full min-w-0">
+			{/*
+			 * D8 a11y — a stable, visually-hidden `role="status"` region above
+			 * the stream. Screen readers announce its text as soon as the
+			 * TimelineTab mounts (`aria-live="polite"`), so a loop-detail
+			 * visitor with unread activity hears "N unread activity items"
+			 * without any interaction. Only rendered under the polish variant;
+			 * text is empty when there is nothing unread, so a fully-read
+			 * timeline stays silent. Same live-region-outside-the-content
+			 * pattern the SPEC pins for the D3 AskBanner (a stable
+			 * aria-live host that lives above the strip; content swaps in
+			 * and out of it, not the other way around).
+			 */}
+			{loopsV4PolishUnread && (
+				<output className="sr-only" aria-live="polite" aria-atomic="true">
+					{showUnreadDivider ? `${unreadCount} unread activity items` : ''}
+				</output>
+			)}
 			<div className="flex flex-wrap items-center gap-1.5 pb-2 pt-2.5">
 				{FILTERS.map((f) => {
 					const active = filter === f.id
+					const rawCount = counts[f.id]
+					const display = formatTabCount(rawCount)
 					return (
 						<button
 							key={f.id}
 							type="button"
 							aria-pressed={active}
-							aria-label={`${f.label} (${counts[f.id]})`}
+							aria-label={`${f.label} (${rawCount})`}
 							onClick={() => setFilter(f.id)}
 							className={cn(
 								'inline-flex h-[26px] items-center gap-1.5 rounded-full border border-border px-[11px] text-[11.5px] font-semibold transition-colors',
@@ -566,10 +679,16 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 								aria-hidden="true"
 								className={cn(
 									'text-[10.5px] font-semibold tabular-nums',
-									active ? 'text-primary-foreground/50' : 'text-border-strong',
+									active
+										? 'text-primary-foreground/50'
+										: // Zero counts stay visible but recede — the row's presence is itself
+											// the affordance, per SPEC.
+											rawCount === 0
+											? 'text-border-strong opacity-70'
+											: 'text-border-strong',
 								)}
 							>
-								{counts[f.id]}
+								{display}
 							</span>
 						</button>
 					)
@@ -604,22 +723,12 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 				<div ref={containerRef} className="relative pt-2">
 					<span aria-hidden="true" className="absolute bottom-3 left-[14px] top-3 w-0.5 bg-muted" />
 					{showPhases ? (
-						phases.map((phase) => {
-							const collapsed = collapsedPhases.has(phase.key)
-							return (
-								<div key={phase.key}>
-									<PhaseDivider
-										status={phase.status}
-										startedAt={phase.startedAt}
-										isOpen={!collapsed}
-										onToggle={() => togglePhase(phase.key)}
-									/>
-									{!collapsed && (
-										<ol className="m-0 list-none p-0">{foldRuns(phase.rows).map(renderRow)}</ol>
-									)}
-								</div>
-							)
-						})
+						lifecycleGroups.map((group) => (
+							<div key={group.key}>
+								<PhaseDivider phase={group.phase} />
+								<ol className="m-0 list-none p-0">{foldRuns(group.rows).map(renderRow)}</ol>
+							</div>
+						))
 					) : (
 						<ol className="m-0 list-none p-0">{foldRuns(visible).map(renderRow)}</ol>
 					)}
@@ -629,12 +738,22 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 	)
 }
 
-function UnreadDivider({ count, onMarkRead }: { count: number; onMarkRead: () => void }) {
+/**
+ * D8 unread divider for the loops v4 polish path (bet/d166-loops-v4-polish).
+ * SPEC copy: `NEW · {n} unread` (red). CTA verbatim: `Mark read`. Only
+ * rendered when the loops v4 polish variant is enabled; the default Object
+ * detail timeline uses the shared `<NewDivider>` from
+ * `@/components/timeline/new-divider` instead.
+ */
+function PolishUnreadDivider({ count, onMarkRead }: { count: number; onMarkRead: () => void }) {
 	return (
 		<div className="relative z-[3] flex items-center gap-2.5 pb-1.5 pt-2">
-			<span aria-hidden="true" className="h-px flex-1 bg-brand/40" />
-			<span className="rounded-full bg-brand/10 px-2.5 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.11em] text-brand">
-				{count} new
+			<span aria-hidden="true" className="h-px flex-1 bg-destructive/40" />
+			<span
+				data-testid="loops-v4-unread-divider"
+				className="rounded-full bg-destructive/10 px-2.5 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.11em] text-destructive"
+			>
+				NEW · {count} unread
 			</span>
 			<button
 				type="button"
@@ -643,7 +762,31 @@ function UnreadDivider({ count, onMarkRead }: { count: number; onMarkRead: () =>
 			>
 				Mark read
 			</button>
-			<span aria-hidden="true" className="h-px w-3 bg-brand/40" />
+			<span aria-hidden="true" className="h-px w-3 bg-destructive/40" />
+		</div>
+	)
+}
+
+/**
+ * D8 EARLIER divider (bet/d166-loops-v4-polish). Renders inline at the
+ * boundary between the current window (last seven days) and older activity
+ * so scrolling past it reads as crossing from "current" to "earlier". Copy
+ * verbatim: `EARLIER`, mono, muted-foreground (which is `--kc4c4cc` per the
+ * shipped token, matching the SPEC). Purely visual — never focusable, never
+ * announced to screen readers (`aria-hidden`), no interaction. The stream
+ * behind it already has its own rail so the divider only needs to punctuate.
+ */
+function EarlierDivider() {
+	return (
+		<div aria-hidden="true" className="relative z-[3] flex items-center gap-2.5 pb-1.5 pt-2">
+			<span className="h-px flex-1 bg-muted" />
+			<span
+				data-testid="loops-v4-earlier-divider"
+				className="rounded-full bg-muted px-2.5 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.11em] text-muted-foreground"
+			>
+				EARLIER
+			</span>
+			<span className="h-px w-3 bg-muted" />
 		</div>
 	)
 }

@@ -151,12 +151,12 @@ describe('activityPollInterval', () => {
 	})
 
 	it('polls fast while a turn is in flight', () => {
-		expect(activityPollInterval(midTurn, null, now)).toBe(1000)
+		expect(activityPollInterval(midTurn, null, now)).toBe(2000)
 	})
 
 	it('polls fast when nothing has been read yet', () => {
-		expect(activityPollInterval([], null, now)).toBe(1000)
-		expect(activityPollInterval(undefined, null, now)).toBe(1000)
+		expect(activityPollInterval([], null, now)).toBe(2000)
+		expect(activityPollInterval(undefined, null, now)).toBe(2000)
 	})
 
 	it('polls fast right after a message even though the held logs read as idle', () => {
@@ -164,7 +164,7 @@ describe('activityPollInterval', () => {
 		// nothing invalidates these logs when the user sends a message. Without
 		// the timestamp the transcript would sit on the 5s idle tick at the
 		// most latency-sensitive moment of the interaction.
-		expect(activityPollInterval(finishedTurn, now - 2000, now)).toBe(1000)
+		expect(activityPollInterval(finishedTurn, now - 2000, now)).toBe(2000)
 	})
 
 	it('returns to the idle interval once the grace window has passed', () => {

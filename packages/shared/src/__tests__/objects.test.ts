@@ -3,6 +3,8 @@ import {
 	SAFE_METADATA_FIELD_NAME_RE,
 	TERMINAL_BET_STATUSES,
 	createObjectSchema,
+	loopTargetSchema,
+	loopTargetSourceSchema,
 	objectParamsSchema,
 	objectQuerySchema,
 	objectTypeSchema,
@@ -220,5 +222,109 @@ describe('SAFE_METADATA_FIELD_NAME_RE', () => {
 		expect(SAFE_METADATA_FIELD_NAME_RE.test('2024_target')).toBe(false)
 		expect(SAFE_METADATA_FIELD_NAME_RE.test("bad'field")).toBe(false)
 		expect(SAFE_METADATA_FIELD_NAME_RE.test('')).toBe(false)
+	})
+})
+
+describe('loopTargetSourceSchema', () => {
+	// Bet D5 SPEC: `source` is a plain string OR a `metric:<ns>.<key>` OR an
+	// `event:<slug>` reference. All three shapes must round-trip; anything else
+	// is rejected so an ad-hoc metadata write can't drift a fourth kind in.
+	it('accepts a plain-string source (human label before wiring)', () => {
+		expect(loopTargetSourceSchema.parse('posts published this month')).toBe(
+			'posts published this month',
+		)
+	})
+
+	it('accepts a metric: reference in the metric:<namespace>.<key> shape', () => {
+		expect(loopTargetSourceSchema.parse('metric:linkedin.impressions')).toBe(
+			'metric:linkedin.impressions',
+		)
+		expect(loopTargetSourceSchema.parse('metric:sales.pipeline.opps_open')).toBe(
+			'metric:sales.pipeline.opps_open',
+		)
+	})
+
+	it('accepts an event: reference in the event:<slug> shape', () => {
+		expect(loopTargetSourceSchema.parse('event:cycle_closed')).toBe('event:cycle_closed')
+		expect(loopTargetSourceSchema.parse('event:demo-booked')).toBe('event:demo-booked')
+	})
+
+	it('rejects an empty string', () => {
+		expect(() => loopTargetSourceSchema.parse('')).toThrow()
+	})
+
+	it('rejects non-string inputs', () => {
+		expect(() => loopTargetSourceSchema.parse(42)).toThrow()
+		expect(() => loopTargetSourceSchema.parse(null)).toThrow()
+	})
+})
+
+describe('loopTargetSchema', () => {
+	it('accepts a well-formed target with a plain-string source', () => {
+		const parsed = loopTargetSchema.parse({
+			label: 'Posts published',
+			source: 'posts published this month',
+			actual: 6,
+			target: 8,
+		})
+		expect(parsed.label).toBe('Posts published')
+		expect(parsed.source).toBe('posts published this month')
+		expect(parsed.actual).toBe(6)
+		expect(parsed.target).toBe(8)
+	})
+
+	it('accepts a target with a metric: source', () => {
+		const parsed = loopTargetSchema.parse({
+			label: 'LinkedIn impressions',
+			source: 'metric:linkedin.impressions',
+			actual: 4200,
+			target: 5000,
+			ownerActorId: '550e8400-e29b-41d4-a716-446655440000',
+		})
+		expect(parsed.source).toBe('metric:linkedin.impressions')
+		expect(parsed.ownerActorId).toBe('550e8400-e29b-41d4-a716-446655440000')
+	})
+
+	it('accepts a target with an event: source and a pace_policy', () => {
+		const parsed = loopTargetSchema.parse({
+			label: 'Cycles closed this week',
+			source: 'event:cycle_closed',
+			actual: 12,
+			target: 20,
+			pace_policy: 'strict',
+		})
+		expect(parsed.source).toBe('event:cycle_closed')
+		expect(parsed.pace_policy).toBe('strict')
+	})
+
+	it('strips a persisted pace field — pace is only ever derived on read', () => {
+		// pace is derived on read from actual/target — never persisted. The
+		// schema is `.object({...})` (not `.passthrough()`) so an extra key
+		// causes strict Zod parsing to strip it, not error. Verify it's dropped.
+		const input: Record<string, unknown> = {
+			label: 'Posts',
+			source: 'posts',
+			actual: 3,
+			target: 5,
+			pace: 'behind',
+		}
+		const parsed = loopTargetSchema.parse(input)
+		expect('pace' in parsed).toBe(false)
+	})
+
+	it('rejects a target with a missing required field', () => {
+		expect(() => loopTargetSchema.parse({ label: 'Posts', source: 'posts', target: 5 })).toThrow()
+	})
+
+	it('rejects an ownerActorId that is not a uuid', () => {
+		expect(() =>
+			loopTargetSchema.parse({
+				label: 'Posts',
+				source: 'posts',
+				actual: 3,
+				target: 5,
+				ownerActorId: 'not-a-uuid',
+			}),
+		).toThrow()
 	})
 })

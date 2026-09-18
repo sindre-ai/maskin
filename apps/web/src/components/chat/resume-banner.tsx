@@ -14,6 +14,11 @@ interface ResumeBannerProps {
 	conversationId: string
 	messages: MessageResponse[]
 	lastReadMessageId: number | null
+	/** Chats v4 polish (bet/bdda1c1e-chats-v4-polish). Composed at the route
+	 *  boundary from the `chats-v4-polish` umbrella flag AND its `.banner`
+	 *  sub-flag. Off keeps the pre-v4 banner styling (brand-subtle card with a
+	 *  RotateCcw icon plate). */
+	v4Polish?: boolean
 }
 
 function firstLine(content: string): string {
@@ -27,7 +32,12 @@ function firstLine(content: string): string {
  * fetched: everything newer than your `last_read_message_id`, shown only when
  * the last thing you *did* read is old enough that you've genuinely been gone.
  */
-export function ResumeBanner({ conversationId, messages, lastReadMessageId }: ResumeBannerProps) {
+export function ResumeBanner({
+	conversationId,
+	messages,
+	lastReadMessageId,
+	v4Polish = false,
+}: ResumeBannerProps) {
 	const self = getStoredActor()
 	// Latch the read cursor the first time we actually have one:
 	// `$conversationId.tsx` marks the thread read on open, so reading it live
@@ -71,6 +81,39 @@ export function ResumeBanner({ conversationId, messages, lastReadMessageId }: Re
 	const lines = unread.slice(0, MAX_LINES)
 	const overflow = unread.length - lines.length
 
+	if (v4Polish) {
+		return (
+			<div className="rounded-lg border-l-2 border-brand bg-muted p-3.5">
+				<div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+					<span className="eyebrow">Picking up where you left off</span>
+					<span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+						last spoke
+						<RelativeTime date={lastRead.createdAt} />
+					</span>
+				</div>
+				<ul className="flex flex-col gap-1 text-xs leading-normal text-muted-foreground">
+					{lines.map((m) => (
+						<li key={m.id} className="flex gap-2">
+							<span aria-hidden className="shrink-0 text-brand-subtle-foreground">
+								→
+							</span>
+							<span className="min-w-0">
+								{m.actorName}: {firstLine(m.content) || 'shared an attachment'}
+							</span>
+						</li>
+					))}
+					{overflow > 0 ? (
+						<li className="pl-5">
+							+{overflow} more {overflow === 1 ? 'message' : 'messages'}
+						</li>
+					) : null}
+				</ul>
+			</div>
+		)
+	}
+
+	// Pre-v4 styling (bet/bdda1c1e-chats-v4-polish). Kept verbatim behind the
+	// `.banner` sub-flag so a rollback is a flag flip, not a code change.
 	return (
 		<div className="rounded-xl border border-brand-subtle bg-brand-subtle px-4 py-3">
 			<div className="flex items-center gap-2">

@@ -3,11 +3,12 @@ import {
 	ObjectDetailIdentity,
 } from '@/components/objects/object-detail-header'
 import type { MemberResponse } from '@/lib/api'
+import { WorkspaceContext, type WorkspaceContextValue } from '@/lib/workspace-context'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event'
 import type { ReactNode } from 'react'
-import { buildObjectResponse } from '../../factories'
+import { buildObjectResponse, buildWorkspaceWithRole } from '../../factories'
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
@@ -45,8 +46,19 @@ function makeWrapper() {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false, gcTime: 0 } },
 	})
+	// D5 client migration: the meta row's star button uses `useStar`, which
+	// reads the current workspace id via context. Wrap so ObjectDetailIdentity
+	// renders under both a QueryClient and a WorkspaceContext.
+	const workspace = buildWorkspaceWithRole({ id: 'ws-1' })
+	const ctx: WorkspaceContextValue = {
+		workspace,
+		workspaceId: workspace.id,
+		sseStatus: 'connected',
+	}
 	return ({ children }: { children: ReactNode }) => (
-		<QueryClientProvider client={client}>{children}</QueryClientProvider>
+		<QueryClientProvider client={client}>
+			<WorkspaceContext.Provider value={ctx}>{children}</WorkspaceContext.Provider>
+		</QueryClientProvider>
 	)
 }
 
@@ -103,6 +115,7 @@ describe('ObjectDetailIdentity', () => {
 	const identityProps = {
 		statuses: baseProps.statuses,
 		members,
+		workspaceId: 'ws-1',
 		onStatusChange: vi.fn(),
 		onDriverChange: vi.fn(),
 	}
@@ -207,6 +220,35 @@ describe('ObjectDetailIdentity', () => {
 		expect(labels.some((l) => l.includes('Unassigned'))).toBe(true)
 		expect(labels.some((l) => l.includes('Alice'))).toBe(true)
 		expect(labels.some((l) => l.includes('Bob'))).toBe(true)
+	})
+
+	it('omits the PAUSED · NO CREDITS chip when credits_state is ok', () => {
+		const object = buildObjectResponse({ type: 'bet', status: 'active' })
+		render(<ObjectDetailIdentity {...identityProps} object={object} creditsState="ok" />, {
+			wrapper: makeWrapper(),
+		})
+		expect(screen.queryByText(/no credits/i)).toBeNull()
+	})
+
+	it('omits the PAUSED · NO CREDITS chip on the unknown loading state', () => {
+		const object = buildObjectResponse({ type: 'bet', status: 'active' })
+		render(<ObjectDetailIdentity {...identityProps} object={object} creditsState="unknown" />, {
+			wrapper: makeWrapper(),
+		})
+		expect(screen.queryByText(/no credits/i)).toBeNull()
+	})
+
+	it('renders the amber PAUSED · NO CREDITS chip with a polite live region when empty', () => {
+		const object = buildObjectResponse({ type: 'bet', status: 'active' })
+		render(<ObjectDetailIdentity {...identityProps} object={object} creditsState="empty" />, {
+			wrapper: makeWrapper(),
+		})
+		const chip = screen.getByRole('status', { name: /paused .*no credits/i })
+		expect(chip).toBeInTheDocument()
+		expect(chip).toHaveAttribute('aria-live', 'polite')
+		expect(chip).toHaveTextContent('PAUSED · NO CREDITS')
+		expect(chip.className).toMatch(/bg-warning/)
+		expect(chip.className).not.toMatch(/border-(?!transparent)/)
 	})
 })
 
