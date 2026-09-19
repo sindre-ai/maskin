@@ -9,15 +9,19 @@ vi.mock('../../../lib/analytics/posthog', () => ({
 
 import {
 	approximatePromptTokens,
+	isRuntimeAgentSessionCompletedEnabled,
+	trackAgentSessionCompleted,
 	trackAgentSessionStartedWithPrompt,
 } from '../../../lib/analytics/agent-session-events'
 
 beforeEach(() => {
 	capturePosthogEventMock.mockClear()
+	Reflect.deleteProperty(process.env, 'RUNTIME_AGENT_SESSION_COMPLETED_ENABLED')
 })
 
 afterEach(() => {
 	vi.restoreAllMocks()
+	Reflect.deleteProperty(process.env, 'RUNTIME_AGENT_SESSION_COMPLETED_ENABLED')
 })
 
 describe('approximatePromptTokens', () => {
@@ -59,7 +63,25 @@ describe('trackAgentSessionStartedWithPrompt', () => {
 				agent_name: 'Bug Triage',
 				system_prompt_chars: 1200,
 				system_prompt_tokens: 300,
+				source_session_id: null,
 			},
+		)
+	})
+
+	it('carries source_session_id when the session was spawned by another session', async () => {
+		await trackAgentSessionStartedWithPrompt({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-child',
+			agentId: 'agent-2',
+			agentName: 'Sentinel',
+			systemPrompt: 'ok',
+			sourceSessionId: 'sess-parent',
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(
+			'agent_session_started_with_prompt',
+			'agent-2',
+			expect.objectContaining({ source_session_id: 'sess-parent' }),
 		)
 	})
 
@@ -89,6 +111,106 @@ describe('trackAgentSessionStartedWithPrompt', () => {
 				agentId: 'agent-1',
 				agentName: 'Bug Triage',
 				systemPrompt: 'abc',
+			}),
+		).resolves.toBeUndefined()
+	})
+})
+
+describe('isRuntimeAgentSessionCompletedEnabled', () => {
+	it('returns false when the env var is unset', () => {
+		expect(isRuntimeAgentSessionCompletedEnabled()).toBe(false)
+	})
+
+	it('returns true only for "1" or "true" (case-insensitive)', () => {
+		process.env.RUNTIME_AGENT_SESSION_COMPLETED_ENABLED = 'true'
+		expect(isRuntimeAgentSessionCompletedEnabled()).toBe(true)
+		process.env.RUNTIME_AGENT_SESSION_COMPLETED_ENABLED = 'TRUE'
+		expect(isRuntimeAgentSessionCompletedEnabled()).toBe(true)
+		process.env.RUNTIME_AGENT_SESSION_COMPLETED_ENABLED = '1'
+		expect(isRuntimeAgentSessionCompletedEnabled()).toBe(true)
+		process.env.RUNTIME_AGENT_SESSION_COMPLETED_ENABLED = 'false'
+		expect(isRuntimeAgentSessionCompletedEnabled()).toBe(false)
+		process.env.RUNTIME_AGENT_SESSION_COMPLETED_ENABLED = '0'
+		expect(isRuntimeAgentSessionCompletedEnabled()).toBe(false)
+		process.env.RUNTIME_AGENT_SESSION_COMPLETED_ENABLED = ''
+		expect(isRuntimeAgentSessionCompletedEnabled()).toBe(false)
+	})
+})
+
+describe('trackAgentSessionCompleted', () => {
+	it('does not emit when the runtime flag is off', async () => {
+		await trackAgentSessionCompleted({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-1',
+			actorId: 'agent-1',
+			outcome: 'completed',
+		})
+
+		expect(capturePosthogEventMock).not.toHaveBeenCalled()
+	})
+
+	it('emits an event that mirrors the frontend payload shape when the flag is on', async () => {
+		process.env.RUNTIME_AGENT_SESSION_COMPLETED_ENABLED = 'true'
+
+		await trackAgentSessionCompleted({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-1',
+			actorId: 'agent-1',
+			outcome: 'completed',
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledOnce()
+		expect(capturePosthogEventMock).toHaveBeenCalledWith('agent_session_completed', 'agent-1', {
+			entity_id: 'sess-1',
+			entity_type: 'session',
+			source: 'runtime',
+			flow_id: null,
+			outcome: 'completed',
+			workspace_id: 'ws-1',
+			actor_id: 'agent-1',
+		})
+	})
+
+	it('preserves the outcome for the failed and timeout transitions', async () => {
+		process.env.RUNTIME_AGENT_SESSION_COMPLETED_ENABLED = '1'
+
+		await trackAgentSessionCompleted({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-2',
+			actorId: 'agent-1',
+			outcome: 'failed',
+		})
+		await trackAgentSessionCompleted({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-3',
+			actorId: 'agent-1',
+			outcome: 'timeout',
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenNthCalledWith(
+			1,
+			'agent_session_completed',
+			'agent-1',
+			expect.objectContaining({ entity_id: 'sess-2', outcome: 'failed' }),
+		)
+		expect(capturePosthogEventMock).toHaveBeenNthCalledWith(
+			2,
+			'agent_session_completed',
+			'agent-1',
+			expect.objectContaining({ entity_id: 'sess-3', outcome: 'timeout' }),
+		)
+	})
+
+	it('swallows capture failures so the completion path is never blocked', async () => {
+		process.env.RUNTIME_AGENT_SESSION_COMPLETED_ENABLED = 'true'
+		capturePosthogEventMock.mockRejectedValueOnce(new Error('posthog down'))
+
+		await expect(
+			trackAgentSessionCompleted({
+				workspaceId: 'ws-1',
+				sessionId: 'sess-4',
+				actorId: 'agent-1',
+				outcome: 'completed',
 			}),
 		).resolves.toBeUndefined()
 	})
