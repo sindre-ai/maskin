@@ -10,20 +10,10 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { useIsMobile } from '@/hooks/use-mobile'
-import { useSubscribe, useUnsubscribe } from '@/hooks/use-subscriptions'
 import { trackEvent } from '@/lib/analytics'
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import {
-	Archive,
-	Bell,
-	BellOff,
-	Copy,
-	ExternalLink,
-	FileText,
-	MoreHorizontal,
-	Trash2,
-} from 'lucide-react'
+import { Archive, Copy, ExternalLink, FileText, MoreHorizontal, Trash2 } from 'lucide-react'
 import { Fragment, useCallback, useEffect, useMemo } from 'react'
 import { toast } from 'sonner'
 
@@ -59,8 +49,6 @@ export function AuxiliaryActionMenu({
 	onOpenChange,
 }: AuxiliaryActionMenuProps) {
 	const isMobile = useIsMobile()
-	const subscribe = useSubscribe(workspaceId)
-	const unsubscribe = useUnsubscribe(workspaceId)
 
 	const handleClipboard = useCallback((text: string, label: string) => {
 		navigator.clipboard.writeText(text).then(
@@ -68,14 +56,6 @@ export function AuxiliaryActionMenu({
 			() => toast.error(`Failed to copy ${label.toLowerCase()}`),
 		)
 	}, [])
-
-	const handleSubscribeToggle = useCallback(() => {
-		if (object.is_subscribed) {
-			unsubscribe.mutate({ entityType: 'object', entityId: object.id })
-		} else {
-			subscribe.mutate({ entityType: 'object', entityId: object.id })
-		}
-	}, [object.is_subscribed, object.id, subscribe, unsubscribe])
 
 	const canArchive = object.type === 'bet' && !!onArchiveRequest && object.status !== 'archived'
 
@@ -102,13 +82,6 @@ export function AuxiliaryActionMenu({
 				shortcut: '⇧C',
 				onSelect: () => handleClipboard(object.content ?? '', 'Content'),
 			},
-			{
-				id: 'subscribe',
-				label: object.is_subscribed ? 'Unsubscribe' : 'Subscribe',
-				icon: object.is_subscribed ? BellOff : Bell,
-				shortcut: 'S',
-				onSelect: handleSubscribeToggle,
-			},
 		]
 		if (canArchive && onArchiveRequest) {
 			base.push({
@@ -132,14 +105,7 @@ export function AuxiliaryActionMenu({
 			onSelect: onDeleteRequest,
 		})
 		return base
-	}, [
-		object,
-		handleClipboard,
-		handleSubscribeToggle,
-		onDeleteRequest,
-		onArchiveRequest,
-		canArchive,
-	])
+	}, [object, handleClipboard, onDeleteRequest, onArchiveRequest, canArchive])
 
 	const visibleItems = items.filter((item) => item.visibility !== 'hide')
 
@@ -153,7 +119,6 @@ export function AuxiliaryActionMenu({
 			if (e.key === 'e' && !e.shiftKey && !isMeta) itemId = 'copy-link'
 			else if (e.key === 'T' && e.shiftKey && !isMeta) itemId = 'copy-title'
 			else if (e.key === 'C' && e.shiftKey && !isMeta) itemId = 'copy-content'
-			else if (e.key === 's' && !e.shiftKey && !isMeta) itemId = 'subscribe'
 			else if (e.key === 'a' && !e.shiftKey && !isMeta) itemId = 'archive'
 			else if (e.key === 'Backspace' && isMeta) itemId = 'delete'
 

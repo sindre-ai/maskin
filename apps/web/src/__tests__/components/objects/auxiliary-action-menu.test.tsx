@@ -5,11 +5,6 @@ import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { buildObjectResponse } from '../../factories'
 
-vi.mock('@/hooks/use-subscriptions', () => ({
-	useSubscribe: () => ({ mutate: vi.fn() }),
-	useUnsubscribe: () => ({ mutate: vi.fn() }),
-}))
-
 // Mutable so individual tests can flip the viewport class.
 const viewport = { isMobile: false }
 vi.mock('@/hooks/use-mobile', () => ({
