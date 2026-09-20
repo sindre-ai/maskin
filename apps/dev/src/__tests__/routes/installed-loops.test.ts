@@ -256,7 +256,7 @@ describe('POST /api/installed-loops', () => {
 			[{ id: existingActorId }],
 		]
 		// No actor insert and no workspace_members insert for the reused agent.
-		mockResults.insertQueue = [[install], [{ id: newTriggerId }], [loopObject], [], [], []]
+		mockResults.insertQueue = [[install], [{ id: newTriggerId }], [loopObject], [], []]
 
 		const res = await app.request(
 			jsonRequest('POST', '/api/installed-loops', { loopId, workspaceId }),
@@ -268,7 +268,7 @@ describe('POST /api/installed-loops', () => {
 		expect(body.provisioned).toEqual({ actors: 0, triggers: 1, skills: 0, integrations: 0 })
 
 		// No actor + workspace_members insert pair — the reused agent was not cloned.
-		expect(calls.inserts).toHaveLength(6)
+		expect(calls.inserts).toHaveLength(5)
 		const actorInsert = calls.inserts.find(
 			(ins) => (ins as Record<string, unknown>).type === 'agent',
 		)

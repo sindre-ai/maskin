@@ -8,7 +8,7 @@ import {
 	parseCommentDecision,
 	unreadQuerySchema,
 } from '@maskin/shared'
-import { and, desc, eq, gt, inArray, max, ne, or, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, max, ne, or, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { errorSchema, objectResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
