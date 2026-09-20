@@ -3,9 +3,11 @@ import {
 	resolveTopupTarget,
 } from '@/components/shared/insufficient-credits-modal'
 import { _resetInsufficientCredits, openInsufficientCreditsModal } from '@/lib/insufficient-credits'
+import { WorkspaceContext } from '@/lib/workspace-context'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { buildWorkspaceWithRole } from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
 
 const navigateMock = vi.fn()
@@ -32,6 +34,16 @@ function renderModal() {
 	})
 }
 
+/** Same modal, but the workspace id is a prop so a test can switch it. */
+function WorkspaceHarness({ workspaceId }: { workspaceId: string }) {
+	const workspace = buildWorkspaceWithRole({ id: workspaceId })
+	return (
+		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus: 'connected' }}>
+			<InsufficientCreditsModal />
+		</WorkspaceContext.Provider>
+	)
+}
+
 describe('resolveTopupTarget', () => {
 	it('follows an absolute https target as an external url', () => {
 		expect(resolveTopupTarget('https://billing.example.com/credits')).toEqual({
@@ -44,12 +56,16 @@ describe('resolveTopupTarget', () => {
 		expect(resolveTopupTarget('/billing/credits')).toEqual({ kind: 'billing-settings' })
 	})
 
-	it('resolves a non-https absolute value to billing settings rather than following it', () => {
-		// A provider-supplied url is an external input; following a javascript:
-		// or http: value would be an open redirect.
-		expect(resolveTopupTarget('javascript:alert(1)')).toEqual({ kind: 'billing-settings' })
-		expect(resolveTopupTarget('http://billing.example.com')).toEqual({
-			kind: 'billing-settings',
+	it('passes any other value through verbatim, not collapsed onto billing settings', () => {
+		// The frontend follows whatever the backend sends once the real path
+		// lands (Task 3), rather than guessing it is billing settings.
+		expect(resolveTopupTarget('/settings/plans')).toEqual({
+			kind: 'external',
+			url: '/settings/plans',
+		})
+		expect(resolveTopupTarget('https://billing.example.com/credits')).toEqual({
+			kind: 'external',
+			url: 'https://billing.example.com/credits',
 		})
 	})
 })
@@ -118,6 +134,22 @@ describe('InsufficientCreditsModal', () => {
 			to: '/$workspaceId/settings/billing',
 			params: { workspaceId: 'ws-1' },
 		})
+	})
+
+	it('clears on workspace switch and does not re-fire with the old balance', async () => {
+		const { rerender } = render(<WorkspaceHarness workspaceId="ws-1" />)
+		act(() => {
+			openInsufficientCreditsModal(PAYLOAD)
+		})
+		await screen.findByRole('dialog')
+		await waitFor(() => expect(trackCreditsExhaustedErrorShown).toHaveBeenCalledTimes(1))
+
+		rerender(<WorkspaceHarness workspaceId="ws-2" />)
+
+		// The stale 402 belongs to ws-1: the modal closes and the event does not
+		// re-fire against the new workspace id with the old balance.
+		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+		expect(trackCreditsExhaustedErrorShown).toHaveBeenCalledTimes(1)
 	})
 
 	it('does not open while the MASKIN_CREDIT_UX flag is off', () => {

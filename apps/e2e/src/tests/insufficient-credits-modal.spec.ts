@@ -181,8 +181,8 @@ test.describe('InsufficientCreditsModal — out-of-credits session start', () =>
 		const dialog = page.getByRole('dialog').filter({ hasText: 'Out of credits' })
 		await expect(dialog).toBeVisible({ timeout: 10_000 })
 
-		// The backend emits the relative '/billing/credits'; only an absolute
-		// https:// target is followed, so a relative one lands on billing settings.
+		// The backend emits the known relative sentinel '/billing/credits', which
+		// maps to billing settings; any other value would be followed verbatim.
 		await dialog.getByRole('button', { name: 'Top up credits' }).click()
 		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/settings/billing`))
 		await expect(dialog).toBeHidden()

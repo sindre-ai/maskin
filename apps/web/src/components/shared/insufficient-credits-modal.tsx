@@ -1,5 +1,5 @@
 import { useNavigate } from '@tanstack/react-router'
-import { useEffect, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 
 import { formatUsd } from '@/components/settings/billing-usage'
 import { Button } from '@/components/ui/button'
@@ -22,15 +22,21 @@ import { useWorkspace } from '@/lib/workspace-context'
 export type TopupTarget = { kind: 'billing-settings' } | { kind: 'external'; url: string }
 
 /**
- * The backend currently emits the relative '/billing/credits', which has no SPA
- * route, so a relative value cannot be navigated to. Only an absolute https://
- * target is followed (a provider-supplied URL is an external input — a relative
- * or non-https value would be an open redirect); everything else resolves to the
- * billing settings surface, which is where credits are actually topped up.
+ * The one relative value the backend emits today. It has no SPA route of its
+ * own, so it maps to the billing surface, which is where credits are actually
+ * topped up — the shim dies once the backend emits a real path (Task 3 owns
+ * that mapping).
+ */
+const BILLING_CREDITS_PATH = '/billing/credits'
+
+/**
+ * Maps the known relative sentinel to billing settings and passes every other
+ * value through verbatim, so a corrected backend path — or an absolute provider
+ * URL — is followed rather than silently collapsed onto billing settings.
  */
 export function resolveTopupTarget(topupUrl: string): TopupTarget {
-	if (/^https:\/\//.test(topupUrl)) return { kind: 'external', url: topupUrl }
-	return { kind: 'billing-settings' }
+	if (topupUrl === BILLING_CREDITS_PATH) return { kind: 'billing-settings' }
+	return { kind: 'external', url: topupUrl }
 }
 
 /**
@@ -47,8 +53,26 @@ export function InsufficientCreditsModal() {
 		getInsufficientCreditsPayload,
 	)
 
+	// A switch to another workspace must not carry this workspace's 402 across:
+	// the balance belongs to the workspace that got the error, so drop it.
+	const previousWorkspaceId = useRef(workspaceId)
 	useEffect(() => {
-		if (!payload) return
+		if (previousWorkspaceId.current === workspaceId) return
+		previousWorkspaceId.current = workspaceId
+		closeInsufficientCreditsModal()
+	}, [workspaceId])
+
+	// Fire once per open. Each open stores a fresh payload object, so keying on
+	// that reference is the signal; also depending on workspaceId would re-fire
+	// the event with the previous balance when only the workspace changed.
+	const trackedPayload = useRef<unknown>(null)
+	useEffect(() => {
+		if (!payload) {
+			trackedPayload.current = null
+			return
+		}
+		if (trackedPayload.current === payload) return
+		trackedPayload.current = payload
 		trackCreditsExhaustedErrorShown({
 			workspace_id: workspaceId,
 			balance_cents: payload.balance_cents,
