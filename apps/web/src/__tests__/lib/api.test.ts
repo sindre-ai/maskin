@@ -157,6 +157,47 @@ describe('request', () => {
 		}
 	})
 
+	it('populates insufficientCreditsContext from a 402 INSUFFICIENT_CREDITS body', async () => {
+		const errorBody = {
+			error: {
+				code: 'INSUFFICIENT_CREDITS',
+				message: 'Workspace balance is below the minimum reserve',
+				balance_cents: 42,
+				min_reserve_cents: 50,
+				topup_url: '/billing/credits',
+			},
+		}
+		fetchSpy.mockResolvedValue(new Response(JSON.stringify(errorBody), { status: 402 }))
+
+		try {
+			await api.sessions.create('ws-1', { actor_id: 'actor-1', action_prompt: 'do the thing' })
+			expect.unreachable('Should have thrown')
+		} catch (err) {
+			const apiErr = err as ApiError
+			expect(apiErr).toBeInstanceOf(ApiError)
+			expect(apiErr.status).toBe(402)
+			expect(apiErr.code).toBe('INSUFFICIENT_CREDITS')
+			expect(apiErr.insufficientCreditsContext).toEqual({
+				balance_cents: 42,
+				min_reserve_cents: 50,
+				topup_url: '/billing/credits',
+			})
+		}
+	})
+
+	it('leaves insufficientCreditsContext undefined for other error codes', async () => {
+		const errorBody = { error: { code: 'BAD_REQUEST', message: 'Nope' } }
+		fetchSpy.mockResolvedValue(new Response(JSON.stringify(errorBody), { status: 400 }))
+
+		try {
+			await api.sessions.create('ws-1', { actor_id: 'actor-1', action_prompt: 'do the thing' })
+			expect.unreachable('Should have thrown')
+		} catch (err) {
+			const apiErr = err as ApiError
+			expect(apiErr.insufficientCreditsContext).toBeUndefined()
+		}
+	})
+
 	it('throws ApiError with legacy string error format', async () => {
 		const errorBody = { error: 'Not found' }
 		fetchSpy.mockResolvedValue(new Response(JSON.stringify(errorBody), { status: 404 }))

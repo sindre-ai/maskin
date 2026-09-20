@@ -1,4 +1,5 @@
 import { ApiError } from '@/lib/api'
+import { openInsufficientCreditsModalForError } from '@/lib/insufficient-credits'
 import type { useNavigate } from '@tanstack/react-router'
 import { toast } from 'sonner'
 
@@ -31,6 +32,12 @@ export function toastSessionCreateError(
 	workspaceId: string,
 	fallbackMessage?: string,
 ): void {
+	// An exhausted prepaid balance blocks the run outright, so it takes over
+	// presentation with the shared out-of-credits modal rather than a toast —
+	// a toast would leave the user believing the agent might still start. When
+	// the credit-UX flag is off the opener declines and we fall through to the
+	// existing copy.
+	if (openInsufficientCreditsModalForError(err)) return
 	if (err instanceof ApiError && err.code === 'PLAN_CAP_EXCEEDED') {
 		showPlanLimitToast(navigate, workspaceId, err.planCapContext?.plan === 'trial')
 		return

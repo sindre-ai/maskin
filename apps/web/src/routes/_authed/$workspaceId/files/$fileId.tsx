@@ -13,6 +13,7 @@ import type { AnnotationJson } from '@/lib/annotations'
 import { buildRevisePrompt } from '@/lib/annotations'
 import { ApiError, type FileDetail, api } from '@/lib/api'
 import { base64ToBytes } from '@/lib/file-utils'
+import { openInsufficientCreditsModalForError } from '@/lib/insufficient-credits'
 import { isPinned, togglePinnedFile } from '@/lib/pinned-files'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -77,8 +78,10 @@ function FileViewerPage() {
 					auto_start: true,
 				})
 				toast.success('Design Agent session started')
-			} catch {
-				toast.error('Failed to start Design Agent session')
+			} catch (err) {
+				if (!openInsufficientCreditsModalForError(err)) {
+					toast.error('Failed to start Design Agent session')
+				}
 			} finally {
 				setIsRevising(false)
 			}

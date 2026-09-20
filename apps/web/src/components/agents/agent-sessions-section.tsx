@@ -11,6 +11,7 @@ import {
 import type { ActorResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
+import { openInsufficientCreditsModalForError } from '@/lib/insufficient-credits'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import {
@@ -271,7 +272,12 @@ function SessionCard({
 			{ actor_id: agent.id, action_prompt: prompt },
 			{
 				onSuccess: () => toast.success('Session restarted'),
-				onError: () => toast.error(`Couldn't restart this session for ${agent.name}`),
+				onError: (err) => {
+					// A restart is a fresh run, so an exhausted balance blocks it the
+					// same way it blocks a first run — the shared modal takes over.
+					if (openInsufficientCreditsModalForError(err)) return
+					toast.error(`Couldn't restart this session for ${agent.name}`)
+				},
 			},
 		)
 
@@ -293,7 +299,12 @@ function SessionCard({
 		}
 		resumeSession.mutate(session.id, {
 			onSuccess: () => toast.success('Session resumed'),
-			onError: () => toast.error("Couldn't resume this session"),
+			onError: (err) => {
+				// Resuming relaunches the container, so it passes the same pre-session
+				// credit gate as a fresh run and can come back 402.
+				if (openInsufficientCreditsModalForError(err)) return
+				toast.error("Couldn't resume this session")
+			},
 		})
 	}
 

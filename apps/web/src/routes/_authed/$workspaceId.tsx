@@ -2,6 +2,7 @@ import { TrialExpiredBanner } from '@/components/billing/trial-expired-banner'
 import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
 import { AppSidebar } from '@/components/layout/sidebar'
+import { InsufficientCreditsModal } from '@/components/shared/insufficient-credits-modal'
 import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useDefaultChatAgent } from '@/hooks/use-actors'
@@ -95,6 +96,7 @@ function WorkspaceLayout() {
 				<CommandPaletteProvider>
 					<PendingPromptBootstrap />
 					<GuestDraftClaimBootstrap workspaceId={workspaceId} />
+					<InsufficientCreditsModal />
 					<PendingCommentsProvider workspaceId={workspaceId}>
 						<PageHeaderProvider>
 							<ContentPushShell>

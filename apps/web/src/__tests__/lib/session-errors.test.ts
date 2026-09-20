@@ -2,8 +2,13 @@ vi.mock('sonner', () => ({
 	toast: { error: vi.fn() },
 }))
 
+vi.mock('@/lib/insufficient-credits', () => ({
+	openInsufficientCreditsModalForError: vi.fn(),
+}))
+
 // Must import after mock setup
 import { ApiError } from '@/lib/api'
+import { openInsufficientCreditsModalForError } from '@/lib/insufficient-credits'
 import { toastSessionCreateError } from '@/lib/session-errors'
 import { toast } from 'sonner'
 
@@ -13,6 +18,7 @@ describe('toastSessionCreateError', () => {
 
 	beforeEach(() => {
 		vi.mocked(toast.error).mockClear()
+		vi.mocked(openInsufficientCreditsModalForError).mockReset()
 		navigate.mockClear()
 	})
 
@@ -96,5 +102,39 @@ describe('toastSessionCreateError', () => {
 			'Trial limit reached — upgrade to keep going',
 			expect.objectContaining({ action: expect.objectContaining({ label: 'Go to Billing' }) }),
 		)
+	})
+
+	it('hands an out-of-credits error to the modal instead of a toast', () => {
+		const err = new ApiError(402, 'Workspace balance is below the minimum reserve')
+		err.code = 'INSUFFICIENT_CREDITS'
+		err.insufficientCreditsContext = {
+			balance_cents: 42,
+			min_reserve_cents: 50,
+			topup_url: '/billing/credits',
+		}
+		vi.mocked(openInsufficientCreditsModalForError).mockReturnValue(true)
+
+		// biome-ignore lint/suspicious/noExplicitAny: navigate's real type is the router's overloaded signature, irrelevant to this test
+		toastSessionCreateError(err, navigate as any, workspaceId, "Couldn't start Researcher")
+
+		expect(openInsufficientCreditsModalForError).toHaveBeenCalledWith(err)
+		expect(toast.error).not.toHaveBeenCalled()
+		expect(navigate).not.toHaveBeenCalled()
+	})
+
+	it('falls through to the toast when the credit modal declines', () => {
+		const err = new ApiError(402, 'Workspace balance is below the minimum reserve')
+		err.code = 'INSUFFICIENT_CREDITS'
+		err.insufficientCreditsContext = {
+			balance_cents: 42,
+			min_reserve_cents: 50,
+			topup_url: '/billing/credits',
+		}
+		vi.mocked(openInsufficientCreditsModalForError).mockReturnValue(false)
+
+		// biome-ignore lint/suspicious/noExplicitAny: navigate's real type is the router's overloaded signature, irrelevant to this test
+		toastSessionCreateError(err, navigate as any, workspaceId)
+
+		expect(toast.error).toHaveBeenCalledWith('Workspace balance is below the minimum reserve')
 	})
 })
