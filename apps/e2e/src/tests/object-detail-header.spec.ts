@@ -92,14 +92,12 @@ test.describe('Object detail — above-title hero (static shell)', () => {
 			)
 			expect(scrollWidth).toBeLessThanOrEqual(0)
 
-			// SubscribeToggle + creator + created/updated timestamps must no
-			// longer render inline in the identity row; scoped to the row itself
-			// (via the status-trigger ancestor) since the ⋯ menu's Subscribe
-			// action is a menuitem, not a row-level button.
+			// Creator + created/updated timestamps must no longer render inline
+			// in the identity row (moved to the properties drawer). Scoped to the
+			// row itself via the status-trigger ancestor.
 			const identityRow = page
 				.locator('[data-hero-status-trigger]')
 				.locator('xpath=ancestor::div[contains(@class, "flex-wrap")][1]')
-			await expect(identityRow.getByRole('button', { name: /subscribe/i })).toHaveCount(0)
 			const heroTimes = await identityRow.locator('xpath=.//time').count()
 			expect(heroTimes).toBe(0)
 		})

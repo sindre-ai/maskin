@@ -39,9 +39,6 @@ vi.mock('@tanstack/react-router', async () => {
 })
 
 vi.mock('@/hooks/use-subscriptions', () => ({
-	useSubscribe: () => ({ mutate: vi.fn(), isPending: false }),
-	useUnsubscribe: () => ({ mutate: vi.fn(), isPending: false }),
-	useSubscribers: () => ({ data: [] }),
 	useMarkRead: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 

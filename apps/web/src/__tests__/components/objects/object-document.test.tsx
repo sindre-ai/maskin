@@ -253,14 +253,13 @@ describe('ObjectDocumentView', () => {
 			)
 		})
 
-		it('no longer renders SubscribeToggle, creator, or created/updated chips inline', () => {
+		it('does not render inline creator, timestamps, or reference count', () => {
 			const object = buildObjectResponse({
 				type: 'knowledge',
 				createdAt: '2026-06-01T10:00:00.000Z',
 				updatedAt: '2026-06-01T10:05:00.000Z',
 			})
 			const { container } = render(<ObjectDocumentView {...baseProps} object={object} />)
-			expect(screen.queryByTestId('subscribe-toggle')).not.toBeInTheDocument()
 			expect(container.querySelectorAll('time').length).toBe(0)
 			expect(screen.queryByText(/Referenced by/)).not.toBeInTheDocument()
 		})

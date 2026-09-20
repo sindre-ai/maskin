@@ -50,12 +50,6 @@ vi.mock('@/hooks/use-objects', () => ({
 	useDeleteObject: () => ({ mutate: mutateMock, isPending: false }),
 }))
 
-vi.mock('@/hooks/use-subscriptions', () => ({
-	useSubscribe: () => ({ mutate: vi.fn() }),
-	useUnsubscribe: () => ({ mutate: vi.fn() }),
-	useSubscribers: () => ({ data: { actors: [] } }),
-}))
-
 vi.mock('@/components/shared/agent-working-badge', () => ({
 	AgentWorkingBadge: () => null,
 }))
@@ -66,10 +60,6 @@ vi.mock('@/components/shared/markdown-content', () => ({
 
 vi.mock('@/components/activity/object-activity', () => ({
 	ObjectActivity: () => null,
-}))
-
-vi.mock('@/components/shared/subscribe-toggle', () => ({
-	SubscribeToggle: () => null,
 }))
 
 vi.mock('@/components/objects/metadata-properties', () => ({

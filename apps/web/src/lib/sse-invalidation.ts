@@ -22,17 +22,13 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		queryClient.invalidateQueries({ queryKey: queryKeys.objects.references(event.entity_id) })
 	}
 
-	// New comments may change unread counts for any subscriber in this workspace
-	// and the subscriber list for the entity that was commented on (the latter
-	// because the commenter auto-subscribes server-side).
+	// New comments may change unread counts for anyone the comment surfaces to
+	// (every @-mentioned actor plus workspace owners on onboarding_session
+	// objects) — invalidate the unread feed rather than trying to shard by viewer.
 	if (event.action === 'commented') {
 		queryClient.invalidateQueries({
 			queryKey: ['subscriptions', 'unread', workspaceId],
 		})
-		queryClient.invalidateQueries({
-			queryKey: queryKeys.subscriptions.subscribers(event.entity_type, event.entity_id),
-		})
-		// Also refresh the detail/graph so unread_count + subscriber_count update.
 		queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(event.entity_id) })
 		queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(event.entity_id) })
 	}

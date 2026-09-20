@@ -21,7 +21,6 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
-import { autoSubscribe } from '../services/subscriptions'
 
 type Env = {
 	Variables: {
@@ -424,19 +423,6 @@ app.openapi(createGraphRoute, async (c) => {
 		}
 		logger.error('Graph transaction failed', { error: String(err) })
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create graph'), 500)
-	}
-
-	// Auto-subscribe the creator to every node so they're notified about future
-	// comments. Mirrors POST /api/objects; runs outside the transaction for the
-	// same reason — a subscription failure must not roll back graph creation.
-	for (const node of result.nodes) {
-		await autoSubscribe(db, {
-			workspaceId,
-			actorId,
-			entityType: 'object',
-			entityId: node.id,
-			source: 'author',
-		})
 	}
 
 	// Build a title lookup for every object referenced by an edge. Newly created

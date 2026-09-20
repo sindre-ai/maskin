@@ -192,7 +192,7 @@ describe('Objects Routes', () => {
 			expect(body.id).toBe(obj.id)
 		})
 
-		it('includes is_subscribed / unread_count / subscriber_count fields', async () => {
+		it('includes unread_count', async () => {
 			const obj = buildObject()
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
 			mockResults.select = [obj]
@@ -201,12 +201,8 @@ describe('Objects Routes', () => {
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			// Fields are always present, even when storage is empty (defaults zeroed).
-			expect(body).toHaveProperty('is_subscribed')
 			expect(body).toHaveProperty('unread_count')
-			expect(body).toHaveProperty('subscriber_count')
 			expect(typeof body.unread_count).toBe('number')
-			expect(typeof body.subscriber_count).toBe('number')
 		})
 
 		it('returns 404 when object not found', async () => {
@@ -236,9 +232,7 @@ describe('Objects Routes', () => {
 			mockResults.selectQueue = [
 				[obj], // object lookup
 				[obj], // isWorkspaceMember
-				[], // isSubscribed
 				[], // getUnreadCount
-				[], // getSubscriberCount
 				[{ currentActivity: 'Searching codebase' }], // session currentActivity query
 			]
 
@@ -645,10 +639,9 @@ describe('Objects Routes', () => {
 			// Queue order matches handler call order: 1) object, 2) relationships,
 			// 3) files-membership lookup (endpoint resolves to the `files` table so
 			// it is bucketed as a file — skips connected_objects), 4) events,
-			// 5-8) the four parallel queries fired via Promise.all (isSubscribed,
-			// getUnreadCount, getSubscriberCount, getStarredObjectIds), 9) files
-			// summary.
-			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [], [], [file]]
+			// 5-6) the two parallel queries fired via Promise.all (getUnreadCount,
+			// getStarredObjectIds), 7) files summary.
+			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [file]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -675,9 +668,8 @@ describe('Objects Routes', () => {
 			})
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
 			// 1) object, 2) relationships (empty → skips connected_objects), 3) events,
-			// 4-7) parallel queries (subscribed, unreadCount, subscriberCount, starredIds),
-			// 8) files.
-			mockResults.selectQueue = [[obj], [], [comment], [], [], [], [], [file]]
+			// 4-5) parallel queries (unreadCount, starredIds), 6) files.
+			mockResults.selectQueue = [[obj], [], [comment], [], [], [file]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -755,9 +747,9 @@ describe('Objects Routes', () => {
 			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
 			// 1) object, 2) relationships, 3) files-membership lookup returns the
 			// file (endpoint id resolves to `files.id`), so no connected_objects
-			// fetch, 4) events, 5-8) parallel queries (subscribed, unreadCount,
-			// subscriberCount, starredIds), 9) files summary.
-			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [], [], [file]]
+			// fetch, 4) events, 5-6) parallel queries (unreadCount, starredIds),
+			// 7) files summary.
+			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [file]]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),

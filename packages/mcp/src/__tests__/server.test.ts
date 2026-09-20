@@ -203,7 +203,6 @@ describe('tool handlers', () => {
 						activeSessionId: 'session-1',
 						activeSessionCurrentActivity: 'thinking',
 						unread_count: 3,
-						subscriber_count: 2,
 					},
 				],
 				edges: [],
@@ -220,7 +219,6 @@ describe('tool handlers', () => {
 			expect(parsed.nodes[0]).not.toHaveProperty('activeSessionId')
 			expect(parsed.nodes[0]).not.toHaveProperty('activeSessionCurrentActivity')
 			expect(parsed.nodes[0]).not.toHaveProperty('unread_count')
-			expect(parsed.nodes[0]).not.toHaveProperty('subscriber_count')
 			expect(parsed.nodes[0].id).toBe('obj-1')
 		})
 

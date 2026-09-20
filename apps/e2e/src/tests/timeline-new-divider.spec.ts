@@ -46,8 +46,6 @@ function buildObjectResponse(overrides: { unread_count: number; workspaceId: str
 		createdBy: ACTOR_ID,
 		createdAt: '2026-01-01T00:00:00Z',
 		updatedAt: '2026-01-03T00:00:00Z',
-		is_subscribed: true,
-		subscriber_count: 1,
 		unread_count: overrides.unread_count,
 	}
 }
