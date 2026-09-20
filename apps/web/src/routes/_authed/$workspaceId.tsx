@@ -1,3 +1,4 @@
+import { LowBalanceBanner } from '@/components/billing/low-balance-banner'
 import { TrialExpiredBanner } from '@/components/billing/trial-expired-banner'
 import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
@@ -7,6 +8,7 @@ import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useDefaultChatAgent } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { usePersistedSidebarOpen } from '@/hooks/use-persisted-sidebar-open'
 import { useSSE } from '@/hooks/use-sse'
@@ -40,6 +42,13 @@ export const Route = createFileRoute('/_authed/$workspaceId')({
 function WorkspaceLayout() {
 	const { workspaceId } = Route.useParams()
 	const { data: workspaces } = useWorkspaces()
+
+	// Credit reliability bet's shell-level flag boundary — read once here and
+	// branched on to keep flag-off users on today's shell verbatim. Same
+	// pattern as the retired `new-design` flag: one read at the highest
+	// sensible point, no scattered checks inside the low-balance banner
+	// itself. See `.claude/rules/feature-flags.md`.
+	const creditUxOn = useFeatureFlag('maskin-credit-ux')
 
 	// Connect SSE for real-time updates
 	const sseStatus = useSSE(workspaceId)
@@ -110,6 +119,7 @@ function WorkspaceLayout() {
 									<SidebarInset className="min-w-0">
 										<Header />
 										<TrialExpiredBanner workspaceId={workspaceId} />
+										{creditUxOn && <LowBalanceBanner workspaceId={workspaceId} />}
 										<MainScrollArea>
 											<Outlet />
 										</MainScrollArea>

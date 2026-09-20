@@ -1,8 +1,8 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, workspaces } from '@maskin/db/schema'
+import { events, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
 import { CREDIT_TOPUP_MAX_USD, CREDIT_TOPUP_MIN_USD, workspaceSettingsSchema } from '@maskin/shared'
-import { eq } from 'drizzle-orm'
+import { and, eq, gte, sql } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
 import { isEnterprise, isEnterpriseWorkspace } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
@@ -128,6 +128,13 @@ const usageResponseSchema = z.object({
 	// Prepaid usage-credits balance, in USD cents. Only meaningful for
 	// pro/team — see `lib/credit-billing.ts`.
 	credit_balance_cents: z.number().int().nonnegative(),
+	// Sum of `workspace_credit_ledger` topup rows in the last 30 days, in USD
+	// cents. Feeds the low-balance banner's 20%-of-recent-burn threshold rule
+	// on the frontend (see `bet/6d84-credit-reliability` — Task 6775ef6c).
+	// Sums the raw ledger rows rather than reading a cached settings field
+	// because credit purchases are recorded as append-only ledger rows, and
+	// the 30-day window is a rolling one that no snapshot can precompute.
+	sum_topups_last_30d_cents: z.number().int().nonnegative(),
 	linkedin_identity_addon: linkedinIdentityAddonSchema,
 })
 
@@ -251,6 +258,33 @@ app.openapi(usageRoute, async (c) => {
 		exempt: linkedinExempt,
 	})
 
+	// 30-day rolling topup sum for the low-balance banner threshold formula
+	// (Task 6775ef6c). Ledger 'topup' rows carry a positive `amountCents`; the
+	// COALESCE keeps the response's `int().nonnegative()` contract satisfied
+	// on a workspace with zero topups. Explicitly filtered to `type='topup'` so
+	// a future ledger row type can't be silently summed in. Runs last in the
+	// route's read chain so the existing test-select-queue offsets for the
+	// LinkedIn add-on line stay stable — the topup select consumes a fresh
+	// slot at the end rather than shifting older ones.
+	const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+	const [topupRow] = await db
+		.select({
+			total: sql<string>`COALESCE(SUM(${workspaceCreditLedger.amountCents}), 0)`,
+		})
+		.from(workspaceCreditLedger)
+		.where(
+			and(
+				eq(workspaceCreditLedger.workspaceId, workspaceId),
+				eq(workspaceCreditLedger.type, 'topup'),
+				gte(workspaceCreditLedger.createdAt, thirtyDaysAgo),
+			),
+		)
+	const sumTopupsLast30dCentsRaw = Number(topupRow?.total ?? 0)
+	const sumTopupsLast30dCents =
+		Number.isFinite(sumTopupsLast30dCentsRaw) && sumTopupsLast30dCentsRaw > 0
+			? Math.floor(sumTopupsLast30dCentsRaw)
+			: 0
+
 	logger.info('Billing usage read', {
 		workspaceId,
 		plan,
@@ -258,6 +292,7 @@ app.openapi(usageRoute, async (c) => {
 		usdCentsUsed,
 		hardCapCents,
 		creditBalanceCents,
+		sumTopupsLast30dCents,
 		linkedinIdentityCount: linkedinIdentityAddon?.count ?? 0,
 	})
 
@@ -272,6 +307,7 @@ app.openapi(usageRoute, async (c) => {
 			stripe_customer_id: billing?.stripe_customer_id ?? null,
 			stripe_subscription_id: billing?.stripe_subscription_id ?? null,
 			credit_balance_cents: creditBalanceCents,
+			sum_topups_last_30d_cents: sumTopupsLast30dCents,
 			linkedin_identity_addon: linkedinIdentityAddon,
 		},
 		200,
