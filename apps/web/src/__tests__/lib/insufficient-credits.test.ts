@@ -7,9 +7,11 @@ vi.mock('@/lib/feature-flags', () => ({
 import { ApiError } from '@/lib/api'
 import { getFlag } from '@/lib/feature-flags'
 import {
+	InsufficientCreditsBlockedError,
 	_resetInsufficientCredits,
 	closeInsufficientCreditsModal,
 	getInsufficientCreditsPayload,
+	isInsufficientCreditsBlocked,
 	openInsufficientCreditsModal,
 	openInsufficientCreditsModalForError,
 	subscribeInsufficientCredits,
@@ -123,6 +125,14 @@ describe('closeInsufficientCreditsModal', () => {
 		closeInsufficientCreditsModal()
 
 		expect(listener).not.toHaveBeenCalled()
+	})
+})
+
+describe('isInsufficientCreditsBlocked', () => {
+	it('recognises the marker the composer throws so the chat stays quiet', () => {
+		expect(isInsufficientCreditsBlocked(new InsufficientCreditsBlockedError())).toBe(true)
+		expect(isInsufficientCreditsBlocked(new Error('nope'))).toBe(false)
+		expect(isInsufficientCreditsBlocked(undefined)).toBe(false)
 	})
 })
 

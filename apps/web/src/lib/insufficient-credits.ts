@@ -60,6 +60,22 @@ export function openInsufficientCreditsModalForError(err: unknown): boolean {
 	return openInsufficientCreditsModal(payload)
 }
 
+/**
+ * Thrown by a send the credit modal has taken over. The composer must treat it
+ * as a *failed* send — only a resolved send clears the draft — while rendering
+ * no inline failure of its own, because the modal owns the presentation.
+ */
+export class InsufficientCreditsBlockedError extends Error {
+	constructor() {
+		super('Workspace balance is below the minimum reserve')
+		this.name = 'InsufficientCreditsBlockedError'
+	}
+}
+
+export function isInsufficientCreditsBlocked(err: unknown): boolean {
+	return err instanceof InsufficientCreditsBlockedError
+}
+
 export function _resetInsufficientCredits(): void {
 	current = null
 	listeners.clear()

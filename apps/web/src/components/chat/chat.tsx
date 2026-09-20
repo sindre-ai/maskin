@@ -44,6 +44,7 @@ import { getStoredActor } from '@/lib/auth'
 import type { ChatSelection, ChatSelectionAction } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { readFileAsBase64 } from '@/lib/file-utils'
+import { isInsufficientCreditsBlocked } from '@/lib/insufficient-credits'
 import { ArrowUp, AtSign, Box, Hash, Mic, Paperclip, Plus, Sparkles, X } from 'lucide-react'
 import {
 	type ChangeEvent,
@@ -390,7 +391,12 @@ export function Composer({
 				await onSend(content)
 				sent = true
 			} catch (err) {
-				setSendError(err instanceof Error ? err.message : 'Failed to send')
+				// A send the credit modal has taken over still counts as *not sent*
+				// (so the draft below is preserved), but the modal is the whole
+				// presentation — an inline failure behind it would be duplicate noise.
+				if (!isInsufficientCreditsBlocked(err)) {
+					setSendError(err instanceof Error ? err.message : 'Failed to send')
+				}
 			} finally {
 				setSending(false)
 			}

@@ -6,7 +6,10 @@ import {
 	buildOneShotActionPrompt,
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
-import { openInsufficientCreditsModalForError } from '@/lib/insufficient-credits'
+import {
+	InsufficientCreditsBlockedError,
+	openInsufficientCreditsModalForError,
+} from '@/lib/insufficient-credits'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useCallback, useReducer } from 'react'
 import { toast } from 'sonner'
@@ -37,10 +40,14 @@ export function AgentComposer({ agent }: { agent: ActorResponse }) {
 			try {
 				await createSession.mutateAsync({ actor_id: agent.id, action_prompt: actionPrompt })
 			} catch (err) {
-				// An exhausted balance blocks the run outright: the shared modal takes
-				// over presentation, so the inline failed-send state would only add
-				// noise behind it — and the draft is kept either way.
-				if (openInsufficientCreditsModalForError(err)) return
+				// An exhausted balance blocks the run outright. Throw — do not
+				// return — so the composer sees a failed send and keeps the draft
+				// (it only clears the input on a send that resolved). The marker
+				// error also suppresses the composer's inline failure state, which
+				// would otherwise render behind the modal that owns presentation.
+				if (openInsufficientCreditsModalForError(err)) {
+					throw new InsufficientCreditsBlockedError()
+				}
 				// Thrown, not toasted: the composer renders a failed send inline and
 				// keeps the draft so the message can be retried without retyping.
 				throw new Error(`Couldn't start a session for ${agent.name}`)
