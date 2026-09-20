@@ -24,9 +24,8 @@ describe('Graph Routes', () => {
 			mockResults.selectQueue = [[ws]]
 			// insert queue (in order):
 			//   node1 returning, node1 event, node2 returning, node2 event,
-			//   edge returning, edge event,
-			//   autoSubscribe for node1, autoSubscribe for node2
-			mockResults.insertQueue = [[obj1], [{}], [obj2], [{}], [rel], [{}], [], []]
+			//   edge returning, edge event
+			mockResults.insertQueue = [[obj1], [{}], [obj2], [{}], [rel], [{}]]
 
 			const res = await app.request(
 				jsonRequest('POST', '/api/graph', buildCreateGraphBody(), {
@@ -227,8 +226,8 @@ describe('Graph Routes', () => {
 			const created = buildObject({ workspaceId: wsId, type: 'bet', status: 'signal' })
 			const { app, mockResults, calls } = createTestApp(graphRoutes, '/api/graph')
 			mockResults.selectQueue = [[ws]]
-			// insert: node returning, node event, autoSubscribe
-			mockResults.insertQueue = [[created], [{}], []]
+			// insert: node returning, node event
+			mockResults.insertQueue = [[created], [{}]]
 
 			const res = await app.request(
 				jsonRequest(

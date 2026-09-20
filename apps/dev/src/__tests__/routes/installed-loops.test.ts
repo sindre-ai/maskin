@@ -86,8 +86,8 @@ describe('POST /api/installed-loops', () => {
 			// existing installed_loops check — none
 			[],
 		]
-		// installed_loops, loop object, loop event, installed_loop event, auto-subscribe.
-		mockResults.insertQueue = [[install], [loopObject], [], [], []]
+		// installed_loops, loop object, loop event, installed_loop event.
+		mockResults.insertQueue = [[install], [loopObject], [], []]
 
 		const res = await app.request(
 			jsonRequest('POST', '/api/installed-loops', { loopId, workspaceId }),
@@ -164,14 +164,13 @@ describe('POST /api/installed-loops', () => {
 		]
 		// Inserts fire in this order: installed_loops, actor, workspace_members
 		// (binds the provisioned agent to the workspace), trigger, loop object,
-		// loop event, installed_loop event, auto-subscribe.
+		// loop event, installed_loop event.
 		mockResults.insertQueue = [
 			[install],
 			[{ id: newActorId }],
 			[],
 			[{ id: newTriggerId }],
 			[loopObject],
-			[],
 			[],
 			[],
 		]
