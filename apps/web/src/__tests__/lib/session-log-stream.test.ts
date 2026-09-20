@@ -145,6 +145,38 @@ describe('subscribeToSessionLogs', () => {
 		off()
 	})
 
+	it('fans the done frame out to every subscriber that registered onDone', () => {
+		const doneA = vi.fn()
+		const doneB = vi.fn()
+
+		subscribeToSessionLogs(workspaceId, sessionA, vi.fn(), doneA)
+		subscribeToSessionLogs(workspaceId, sessionA, vi.fn(), doneB)
+		// A subscriber that did not ask to hear about completion must not break
+		// the fan-out for the ones that did.
+		subscribeToSessionLogs(workspaceId, sessionA, vi.fn())
+
+		// One shared connection, so one done frame has to reach every listener.
+		expect(fetchEventSource).toHaveBeenCalledTimes(1)
+		callOptions().onmessage({ id: '13', event: 'done', data: 'completed' })
+
+		expect(doneA).toHaveBeenCalledTimes(1)
+		expect(doneB).toHaveBeenCalledTimes(1)
+		expect(activeSessionLogConnections()).toBe(0)
+	})
+
+	it('detaches a done listener on unsubscribe', () => {
+		const doneA = vi.fn()
+		const doneB = vi.fn()
+		const offA = subscribeToSessionLogs(workspaceId, sessionA, vi.fn(), doneA)
+		subscribeToSessionLogs(workspaceId, sessionA, vi.fn(), doneB)
+
+		offA()
+		callOptions().onmessage({ id: '13', event: 'done', data: 'completed' })
+
+		expect(doneA).not.toHaveBeenCalled()
+		expect(doneB).toHaveBeenCalledTimes(1)
+	})
+
 	it('starts a fresh connection after done, and the old unsubscribe is inert', () => {
 		const onLog = vi.fn()
 		const off = subscribeToSessionLogs(workspaceId, sessionA, onLog)

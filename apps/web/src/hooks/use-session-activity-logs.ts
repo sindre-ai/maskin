@@ -68,6 +68,22 @@ const IDLE_POLL_MS = 5000
 const ACTIVE_GRACE_MS = 30_000
 
 /**
+ * The single backstop poll fired after the log stream reports `done`.
+ *
+ * The bet's "keep polling as a slow backstop" rule exists because of a past
+ * incident where a dropped live connection left nothing to catch up: the
+ * transcript froze and only a reload recovered it. So when a session reaches a
+ * terminal state we do not stop cold — we schedule exactly ONE more fetch of
+ * that session's logs this long after `done`, then stop for that session.
+ *
+ * One fetch, not a repeating interval: the stream is authoritative for a live
+ * turn, and once the session is terminal the poll's only remaining job is to
+ * pick up any final lines that landed after the `done` frame. Deliberately
+ * much slower than the live cadence — this is a safety net, not a poll.
+ */
+export const DONE_GRACE_TICK_MS = 30_000
+
+/**
  * Streams a live session's logs by accumulating pages rather than re-reading
  * a fixed window.
  *
@@ -126,6 +142,24 @@ export function useSessionActivityLogs(
 	const backfilling = useRef(new Set<string>())
 	const [backfill, setBackfill] = useState(new Map<string, SessionBackfillState>())
 
+	// Sessions whose log stream has reported `done` (terminal). State, not a
+	// ref: it gates the poll interval below, so learning about a `done` has to
+	// re-render for the interval to change.
+	const [doneSessions, setDoneSessions] = useState<ReadonlySet<string>>(() => new Set())
+	// One pending backstop timer per done session. The Map makes scheduling
+	// idempotent, so a re-render while a tick is still pending cannot arm a
+	// second one — which is what keeps the tick to EXACTLY one.
+	const graceTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+
+	const markDone = useCallback((sessionId: string) => {
+		setDoneSessions((prev) => {
+			if (prev.has(sessionId)) return prev
+			const next = new Set(prev)
+			next.add(sessionId)
+			return next
+		})
+	}, [])
+
 	// Drop sessions we're no longer watching so a long-lived tab doesn't hold
 	// every session's transcript it has ever seen.
 	const watching = new Set(sessionIds)
@@ -158,10 +192,21 @@ export function useSessionActivityLogs(
 					}
 					return fetchNewLogs(store, sessionId, workspaceId)
 				},
+				// Scope focus-refetch to this query alone. The app-wide default
+				// stays false (apps/web/src/lib/query.ts) so useObjects /
+				// useEvents / useNotifications / useBilling do not stampede the
+				// API the moment the user returns to the tab — a live chat,
+				// uniquely, has something new to show and wants the catch-up.
+				refetchOnWindowFocus: true,
 				refetchInterval: (query: { state: { data?: SessionLogResponse[] } }) =>
-					pollableSessionIds && !pollableSessionIds.has(sessionId)
+					// Terminal: the stream told us the turn is over, so the fast
+					// poll stops. The single backstop tick is armed separately
+					// below, so this must not also keep an interval running.
+					doneSessions.has(sessionId)
 						? (false as const)
-						: activityPollInterval(query.state.data, lastMessageAt),
+						: pollableSessionIds && !pollableSessionIds.has(sessionId)
+							? (false as const)
+							: activityPollInterval(query.state.data, lastMessageAt),
 			}
 		}),
 	}) as UseQueryResult<SessionLogResponse[], Error>[]
@@ -237,29 +282,67 @@ export function useSessionActivityLogs(
 		const sessionIdList = streamKey.split(',')
 
 		const unsubscribes = sessionIdList.map((sessionId) =>
-			subscribeToSessionLogs(workspaceId, sessionId, (log) => {
-				const store = accumulated.current
-				const existing = store.get(sessionId) ?? []
-				const merged = mergeSessionLogs(existing, [log])
-				if (merged === existing) return
-				store.set(sessionId, merged)
+			subscribeToSessionLogs(
+				workspaceId,
+				sessionId,
+				(log) => {
+					const store = accumulated.current
+					const existing = store.get(sessionId) ?? []
+					const merged = mergeSessionLogs(existing, [log])
+					if (merged === existing) return
+					store.set(sessionId, merged)
 
-				// Merge into the cache rather than replacing it with a
-				// stream-derived array — the poll's rows are already in there
-				// and a bare replacement would drop them (and vice versa). When
-				// the cache is empty we fall back to the store, which is the
-				// authoritative superset.
-				queryClient.setQueryData<SessionLogResponse[]>(
-					[...queryKeys.sessions.logs(sessionId), 'activity'],
-					(prev) => (prev && prev.length > 0 ? mergeSessionLogs(prev, [log]) : merged),
-				)
-			}),
+					// Merge into the cache rather than replacing it with a
+					// stream-derived array — the poll's rows are already in there
+					// and a bare replacement would drop them (and vice versa). When
+					// the cache is empty we fall back to the store, which is the
+					// authoritative superset.
+					queryClient.setQueryData<SessionLogResponse[]>(
+						[...queryKeys.sessions.logs(sessionId), 'activity'],
+						(prev) => (prev && prev.length > 0 ? mergeSessionLogs(prev, [log]) : merged),
+					)
+				},
+				() => markDone(sessionId),
+			),
 		)
 
 		return () => {
 			for (const unsubscribe of unsubscribes) unsubscribe()
 		}
-	}, [streamKey, workspaceId, queryClient])
+	}, [streamKey, workspaceId, queryClient, markDone])
+
+	// The backstop: exactly one fetch per session, DONE_GRACE_TICK_MS after its
+	// stream reported `done`. It runs through `refetchQueries` rather than the
+	// poll interval because by the time it fires the session has usually gone
+	// terminal and dropped out of the watched set — its query is then inactive,
+	// and an inactive query gets no interval. `type: 'all'` reaches it anyway.
+	//
+	// The Map guard makes arming idempotent; the timers are cleared only on
+	// unmount (not on every re-run of this effect, which would otherwise cancel
+	// a tick that a previous render had already armed).
+	useEffect(() => {
+		for (const sessionId of doneSessions) {
+			if (graceTimers.current.has(sessionId)) continue
+			graceTimers.current.set(
+				sessionId,
+				setTimeout(() => {
+					graceTimers.current.delete(sessionId)
+					void queryClient.refetchQueries({
+						queryKey: [...queryKeys.sessions.logs(sessionId), 'activity'],
+						type: 'all',
+					})
+				}, DONE_GRACE_TICK_MS),
+			)
+		}
+	}, [doneSessions, queryClient])
+
+	useEffect(
+		() => () => {
+			for (const timer of graceTimers.current.values()) clearTimeout(timer)
+			graceTimers.current.clear()
+		},
+		[],
+	)
 
 	return { queries, loadOlder, backfill }
 }
