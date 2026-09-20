@@ -64,15 +64,22 @@ const ResponsiveDialogClose = React.forwardRef<
 })
 ResponsiveDialogClose.displayName = 'ResponsiveDialogClose'
 
+type ResponsiveDialogContentProps = React.ComponentPropsWithoutRef<
+	typeof DialogPrimitive.Content
+> & {
+	hideCloseButton?: boolean
+}
+
 const ResponsiveDialogContent = React.forwardRef<
 	React.ElementRef<typeof DialogPrimitive.Content>,
-	React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => {
+	ResponsiveDialogContentProps
+>(({ className, children, hideCloseButton, ...props }, ref) => {
 	if (useMode() === 'sheet') {
 		return (
 			<SheetContent
 				ref={ref}
 				side="bottom"
+				hideCloseButton={hideCloseButton}
 				className={cn(
 					'flex max-h-[85dvh] w-full max-w-none flex-col rounded-t-lg rounded-b-none',
 					className,
@@ -84,7 +91,7 @@ const ResponsiveDialogContent = React.forwardRef<
 		)
 	}
 	return (
-		<DialogContent ref={ref} className={className} {...props}>
+		<DialogContent ref={ref} hideCloseButton={hideCloseButton} className={className} {...props}>
 			{children}
 		</DialogContent>
 	)

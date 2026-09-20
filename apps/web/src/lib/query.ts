@@ -13,6 +13,12 @@ export const queryClient = new QueryClient({
 			// next to it. Same reasoning as the field-error case above: if a call
 			// site owns the presentation, the global fallback must stay quiet.
 			if (error instanceof ApiError && error.code === 'PLAN_CAP_EXCEEDED') return
+			// INSUFFICIENT_CREDITS is always rendered by the call site via the
+			// shared out-of-credits modal opener, which blocks with a Top up CTA.
+			// Same reasoning as PLAN_CAP_EXCEEDED above: if a call site owns the
+			// presentation, the global fallback must stay quiet — otherwise the
+			// blocking modal is buried under a generic toast of the raw string.
+			if (error instanceof ApiError && error.code === 'INSUFFICIENT_CREDITS') return
 			const message = error instanceof ApiError ? error.message : 'Something went wrong'
 			toast.error(message)
 		},

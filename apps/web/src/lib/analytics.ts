@@ -655,3 +655,28 @@ export function trackMarkReadClicked(p: { loop_id: string; unread_count: number 
 		source: 'web',
 	})
 }
+
+// Credit reliability bet (bet/6d84-credit-reliability) — fires when the shared
+// out-of-credits modal renders on a session-start call site that caught the
+// HTTP 402 / INSUFFICIENT_CREDITS response. The bet's Won condition counts
+// distinct workspaces that saw a named error state instead of a silent failure,
+// so `workspace_id` rides on the event itself (not only via super-properties)
+// and `balance_cents` is the raw integer the 402 payload carried — the dollars
+// are formatted at the render site, never here. `send_instantly: true` so the
+// emission is not lost to posthog-js's batching queue: the modal blocks the UI,
+// so there is no later flush a user interaction would trigger. Exactly-once per
+// modal open is enforced at the opener, not here.
+export function trackCreditsExhaustedErrorShown(p: {
+	workspace_id: string
+	balance_cents: number
+}): void {
+	trackEvent(
+		'credits_exhausted_error_shown',
+		{
+			workspace_id: p.workspace_id,
+			balance_cents: p.balance_cents,
+			source: 'web',
+		},
+		{ send_instantly: true },
+	)
+}

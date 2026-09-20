@@ -33,12 +33,20 @@ export interface PlanCapContext {
 	period_end: number | null
 }
 
+export interface InsufficientCreditsContext {
+	balance_cents: number
+	min_reserve_cents: number
+	topup_url: string
+}
+
 export class ApiError extends Error {
 	fieldErrors: Record<string, string[]>
 	/** Structured error code from the backend's `{ error: { code, ... } }` body, e.g. `PLAN_CAP_EXCEEDED`. */
 	code?: string
 	/** Populated when `code === 'PLAN_CAP_EXCEEDED'` — the plan/used/cap/reset context for a typed upgrade CTA. */
 	planCapContext?: PlanCapContext
+	/** Populated when `code === 'INSUFFICIENT_CREDITS'` — the prepaid-balance context the out-of-credits modal renders. */
+	insufficientCreditsContext?: InsufficientCreditsContext
 
 	constructor(
 		public status: number,
@@ -112,6 +120,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		let message: string
 		let code: string | undefined
 		let planCapContext: PlanCapContext | undefined
+		let insufficientCreditsContext: InsufficientCreditsContext | undefined
 
 		if (typeof data.error === 'object' && data.error?.code) {
 			// Structured error format: { error: { code, message, details?, suggestion? } }
@@ -133,6 +142,13 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 					period_end: data.error.period_end ?? null,
 				}
 			}
+			if (code === 'INSUFFICIENT_CREDITS') {
+				insufficientCreditsContext = {
+					balance_cents: data.error.balance_cents,
+					min_reserve_cents: data.error.min_reserve_cents,
+					topup_url: data.error.topup_url,
+				}
+			}
 		} else if (typeof data.error === 'string') {
 			// TODO: Remove legacy string format fallback once all API responses use structured errors
 			message = data.error
@@ -143,6 +159,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		const err = new ApiError(res.status, message, fieldErrors)
 		err.code = code
 		err.planCapContext = planCapContext
+		err.insufficientCreditsContext = insufficientCreditsContext
 		// This is the single chokepoint for every /api call the UI makes, so a
 		// non-2xx here is where a backend problem becomes visible to a user.
 		// Method, path (query stripped), status and the structured error code
