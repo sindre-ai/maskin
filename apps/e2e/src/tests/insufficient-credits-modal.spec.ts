@@ -78,8 +78,13 @@ test.describe('InsufficientCreditsModal — out-of-credits session start', () =>
 
 			// Test-only override: beats the fetched flag state, so the modal
 			// boundary is on even though CI's backend has no tester features.
+			// The theme key is seeded to 'system' because the app is class-based
+			// and only follows prefers-color-scheme when the stored theme is
+			// 'system' (apps/web/src/lib/theme.tsx) — without it emulateMedia
+			// below would be inert and the dark pass would prove nothing.
 			await page.addInitScript((flag: string) => {
 				localStorage.setItem(`ff:${flag}`, 'on')
+				localStorage.setItem('maskin-theme', 'system')
 			}, CREDIT_UX_FLAG)
 
 			await interceptSessionCreateWith402(page)
@@ -103,12 +108,17 @@ test.describe('InsufficientCreditsModal — out-of-credits session start', () =>
 			await expect(dialog.getByRole('button', { name: 'Close' })).toBeVisible()
 
 			// Dark-theme parity — the modal is reachable and legible in both modes.
-			for (const scheme of ['light', 'dark'] as const) {
-				await page.emulateMedia({ colorScheme: scheme })
-				await expect(dialog.getByText('Out of credits', { exact: true })).toBeVisible()
-				await expect(dialog.getByRole('button', { name: 'Top up credits' })).toBeVisible()
-			}
+			// The html class is asserted too, so a mode that never actually
+			// applied fails here instead of passing on visibility alone.
+			await page.emulateMedia({ colorScheme: 'dark' })
+			await expect(page.locator('html')).toHaveClass(/(^|\s)dark(\s|$)/)
+			await expect(dialog.getByText('Out of credits', { exact: true })).toBeVisible()
+			await expect(dialog.getByRole('button', { name: 'Top up credits' })).toBeVisible()
+
 			await page.emulateMedia({ colorScheme: 'light' })
+			await expect(page.locator('html')).not.toHaveClass(/(^|\s)dark(\s|$)/)
+			await expect(dialog.getByText('Out of credits', { exact: true })).toBeVisible()
+			await expect(dialog.getByRole('button', { name: 'Top up credits' })).toBeVisible()
 
 			// The run is blocked: no success toast, draft preserved.
 			await expect(page.getByText(/picked it up/)).toHaveCount(0)
