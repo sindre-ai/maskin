@@ -86,12 +86,7 @@ import {
 	starObject,
 	unstarObject,
 } from '../services/star-state'
-import {
-	autoSubscribe,
-	getSubscriberCount,
-	getUnreadCount,
-	isSubscribed,
-} from '../services/subscriptions'
+import { getUnreadCount } from '../services/subscriptions'
 
 type Env = {
 	Variables: {
@@ -637,15 +632,6 @@ app.openapi(createObjectRoute, async (c) => {
 		data: created,
 	})
 
-	// Auto-subscribe the creator so they're notified about future comments.
-	await autoSubscribe(db, {
-		workspaceId,
-		actorId,
-		entityType: 'object',
-		entityId: created.id,
-		source: 'author',
-	})
-
 	if (created.type === 'knowledge') {
 		void trackKnowledgeObjectCreated({
 			workspaceId,
@@ -1101,10 +1087,8 @@ app.openapi(getObjectGraphRoute, async (c) => {
 		description: formatEventDescription(event, { actorsById }),
 	}))
 
-	const [subscribed, unreadCount, subscriberCount, activeSession, starredIds] = await Promise.all([
-		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
+	const [unreadCount, activeSession, starredIds] = await Promise.all([
 		getUnreadCount(db, { workspaceId, actorId, entityType: 'object', entityId: id }),
-		getSubscriberCount(db, { workspaceId, entityType: 'object', entityId: id }),
 		object.activeSessionId
 			? db
 					.select({ currentActivity: sessions.currentActivity, status: sessions.status })
@@ -1188,9 +1172,7 @@ app.openapi(getObjectGraphRoute, async (c) => {
 				...serialize(object),
 				activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
 				active_session_state: activeSession?.status ?? null,
-				is_subscribed: subscribed,
 				unread_count: unreadCount,
-				subscriber_count: subscriberCount,
 				is_starred_by_me: starredIds.has(object.id),
 			},
 			relationships: rels.map((r) => ({
@@ -1506,16 +1488,10 @@ app.openapi(getObjectRoute, async (c) => {
 		})
 	}
 
-	const [subscribed, unreadCount, subscriberCount, activeSession, starred] = await Promise.all([
-		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
+	const [unreadCount, activeSession, starred] = await Promise.all([
 		getUnreadCount(db, {
 			workspaceId: object.workspaceId,
 			actorId,
-			entityType: 'object',
-			entityId: id,
-		}),
-		getSubscriberCount(db, {
-			workspaceId: object.workspaceId,
 			entityType: 'object',
 			entityId: id,
 		}),
@@ -1535,9 +1511,7 @@ app.openapi(getObjectRoute, async (c) => {
 			...serialize(object),
 			activeSessionCurrentActivity: activeSession?.currentActivity ?? null,
 			active_session_state: activeSession?.status ?? null,
-			is_subscribed: subscribed,
 			unread_count: unreadCount,
-			subscriber_count: subscriberCount,
 			is_starred_by_me: starred,
 		} as z.infer<typeof objectResponseSchema>,
 		200,

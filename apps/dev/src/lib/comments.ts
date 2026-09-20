@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { events, actors, subscriptions } from '@maskin/db/schema'
+import { actors, events } from '@maskin/db/schema'
 import type { CommentDecision } from '@maskin/shared'
 import { inArray } from 'drizzle-orm'
 
@@ -35,9 +35,9 @@ export interface PostCommentResult {
 }
 
 /**
- * Core comment-creation logic: insert the `commented` event and auto-subscribe
- * the commenter + mentions. Shared by `POST /api/events` and any backend code
- * that needs to post a comment programmatically.
+ * Core comment-creation logic: insert the `commented` event and resolve any
+ * @-mentions against `actors`. Shared by `POST /api/events` and any backend
+ * code that needs to post a comment programmatically.
  *
  * Does NOT create notifications or spawn agent sessions — the `comment_posted`
  * subscriber in `trigger-runner.ts` (`CommentDispatcher`) is the single code
@@ -78,63 +78,16 @@ export async function postComment(
 
 		// Mention ids come straight off the request body, so they can reference
 		// actors that never existed or were deleted since the client rendered the
-		// composer. Resolve them against `actors` here so callers can surface
-		// unresolved ids back to the client and so the auto-subscribe below never
-		// tries to insert an unknown id into `subscriptions.actor_id` (which
-		// would violate its FK and abort the whole comment).
-		let existingMentionedIds: string[] = []
+		// composer. Resolve them against `actors` so callers can surface
+		// unresolved ids back to the client.
 		let unresolvedMentions: string[] = []
-
 		if (input.mentions?.length) {
 			const mentionedActors = await tx
 				.select({ id: actors.id })
 				.from(actors)
 				.where(inArray(actors.id, input.mentions))
-
-			existingMentionedIds = mentionedActors.map((a) => a.id)
-			const existingSet = new Set(existingMentionedIds)
+			const existingSet = new Set(mentionedActors.map((a) => a.id))
 			unresolvedMentions = Array.from(new Set(input.mentions)).filter((id) => !existingSet.has(id))
-		}
-
-		// Auto-subscribe the commenter — anyone who comments on an entity starts
-		// watching it for future activity (Slack-channel-style). On conflict we
-		// keep the existing source so author/manual subscriptions are never
-		// downgraded to 'commenter'.
-		await tx
-			.insert(subscriptions)
-			.values({
-				workspaceId: input.workspaceId,
-				actorId: input.actorId,
-				entityType,
-				entityId: input.entityId,
-				source: 'commenter',
-			})
-			.onConflictDoNothing({
-				target: [subscriptions.actorId, subscriptions.entityType, subscriptions.entityId],
-			})
-
-		// Auto-subscribe @-mentioned actors so the comment reaches their For You
-		// page even if they weren't already subscribed.
-		if (existingMentionedIds.length > 0) {
-			const uniqueMentioned = Array.from(new Set(existingMentionedIds)).filter(
-				(id) => id !== input.actorId,
-			)
-			if (uniqueMentioned.length > 0) {
-				await tx
-					.insert(subscriptions)
-					.values(
-						uniqueMentioned.map((mentionedActorId) => ({
-							workspaceId: input.workspaceId,
-							actorId: mentionedActorId,
-							entityType,
-							entityId: input.entityId,
-							source: 'mentioned' as const,
-						})),
-					)
-					.onConflictDoNothing({
-						target: [subscriptions.actorId, subscriptions.entityType, subscriptions.entityId],
-					})
-			}
 		}
 
 		return { comment, unresolvedMentions }

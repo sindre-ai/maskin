@@ -60,7 +60,6 @@ import {
 	stopCapturedSandboxes,
 } from '../services/session-cleanup'
 import type { SessionManager } from '../services/session-manager'
-import { autoSubscribe } from '../services/subscriptions'
 
 type Env = {
 	Variables: {
@@ -577,20 +576,6 @@ app.openapi(installLoopRoute, async (c) => {
 			)
 		}
 		throw err
-	}
-
-	// Auto-subscribe the installer to the new Loop object, same as manually
-	// creating an object (see objects.ts's POST route). Outside the transaction
-	// (mirrors that route) — a missed subscribe on a rare failure is not worth
-	// widening the install transaction's lock footprint.
-	if (installed.objectId) {
-		await autoSubscribe(db, {
-			workspaceId,
-			actorId,
-			entityType: 'object',
-			entityId: installed.objectId,
-			source: 'author',
-		})
 	}
 
 	logger.info('Marketplace loop installed', {

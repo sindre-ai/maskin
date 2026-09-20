@@ -59,12 +59,10 @@ export const objectResponseSchema = z.object({
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
-	// Per-viewer subscription state. Populated only by detail/graph endpoints
-	// (list endpoints omit them to avoid N+1 queries — clients render lists
-	// without unread badges).
-	is_subscribed: z.boolean().optional(),
+	// Per-viewer unread count. Populated only by detail/graph endpoints (list
+	// endpoints omit it to avoid N+1 queries — clients render lists without
+	// unread badges).
 	unread_count: z.number().optional(),
-	subscriber_count: z.number().optional(),
 	// Per-viewer starred state. Populated on the list handler + detail + graph
 	// via a single secondary query keyed on the returned page ids (see
 	// getStarredObjectIds in services/star-state.ts). Optional so create /
@@ -301,7 +299,7 @@ export const conversationListItemResponseSchema = z.object({
 	updatedAt: z.string().nullable(),
 	// Per-viewer participant state — resolved from the caller's own
 	// conversation_participants row, same "computed, snake_case" convention
-	// as objectResponseSchema's is_subscribed/unread_count/subscriber_count.
+	// as objectResponseSchema's unread_count.
 	pinned: z.boolean(),
 	archived: z.boolean(),
 	unread_count: z.number(),

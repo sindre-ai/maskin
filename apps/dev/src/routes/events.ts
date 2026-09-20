@@ -17,7 +17,6 @@ import {
 } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
 import type { SessionManager } from '../services/session-manager'
-import { autoSubscribe } from '../services/subscriptions'
 import { isCommentFallbackDriverEligible } from '../services/trigger-runner'
 
 type Env = {
@@ -289,37 +288,6 @@ app.openapi(createCommentRoute, (async (c) => {
 		decision: body.decision,
 		attention: body.attention,
 	})
-
-	// Auto-subscribe the thread OP when this is a reply, so they're notified of
-	// all follow-up messages — Slack participant model. Skip when the OP is the
-	// same as the current commenter (already subscribed by postComment).
-	if (parentEventId !== undefined && opActorId && opActorId !== actorId) {
-		await autoSubscribe(db, {
-			workspaceId,
-			actorId: opActorId,
-			entityType: comment.entityType,
-			entityId: comment.entityId,
-			source: 'commenter',
-		})
-		logger.info('Auto-subscribed thread OP to commented object', {
-			objectId: body.entity_id,
-			commentEventId: comment.id,
-			opActorId,
-		})
-	}
-
-	const unresolvedSet = new Set(unresolvedMentions)
-	const uniqueMentionedCount = body.mentions?.length
-		? Array.from(new Set(body.mentions)).filter((id) => id !== actorId && !unresolvedSet.has(id))
-				.length
-		: 0
-	if (uniqueMentionedCount > 0) {
-		logger.info('Auto-subscribed @-mentioned actors to commented object', {
-			objectId: body.entity_id,
-			commentEventId: comment.id,
-			mentionedSubscriberCount: uniqueMentionedCount,
-		})
-	}
 
 	// Case-1 mention dispatch (@-mention → agent session, human notification)
 	// has moved to `CommentDispatcher` in `services/trigger-runner.ts`. The
