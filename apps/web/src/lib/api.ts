@@ -1094,6 +1094,10 @@ export interface BillingUsageResponse {
 	stripe_customer_id: string | null
 	stripe_subscription_id: string | null
 	credit_balance_cents: number
+	// Sum of ledger topup rows in the last 30 days, in USD cents. Feeds the
+	// low-balance banner's 20%-of-recent-burn threshold rule — see
+	// `apps/web/src/components/billing/low-balance-banner.tsx`.
+	sum_topups_last_30d_cents: number
 	// $49/connected LinkedIn identity/month, shown as its own SKU on the plan
 	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the caller's
 	// `linkedin-addon-visible` flag is off OR the workspace has no connected
