@@ -158,6 +158,14 @@ interface SessionResponse {
 	updatedAt: string | null
 }
 
+interface SessionLogResponse {
+	id: number
+	sessionId: string
+	stream: string
+	content: string
+	createdAt: string | null
+}
+
 export class TestAPI {
 	constructor(
 		private apiKey: string,
@@ -567,6 +575,27 @@ export class TestAPI {
 			},
 		)
 		if (!res.ok) throw new Error(`postSessionLogs failed: ${res.status}`)
+		return res.json()
+	}
+
+	/**
+	 * Read a session's persisted log history — the canonical transcript.
+	 *
+	 * The endpoint always returns rows in ascending id order regardless of
+	 * **order** / **before**, so this is the authoritative sequence to diff a
+	 * client-side transcript against: any duplicate or gap in the UI shows up
+	 * as a mismatch here.
+	 */
+	async getSessionLogs(
+		sessionId: string,
+		workspaceId: string,
+		params: { since?: string; before?: string; limit?: string; order?: 'asc' | 'desc' } = {},
+	): Promise<SessionLogResponse[]> {
+		const query = new URLSearchParams(params)
+		const res = await fetch(`${this.baseURL}/api/sessions/${sessionId}/logs?${query}`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`getSessionLogs failed: ${res.status}`)
 		return res.json()
 	}
 }

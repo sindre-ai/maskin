@@ -1,5 +1,5 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { renderHook, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { type ReactNode, createElement } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -13,9 +13,14 @@ vi.mock('@/lib/session-log-stream', () => ({
 	subscribeToSessionLogs: vi.fn(() => () => {}),
 }))
 
-import { activityPollInterval, useSessionActivityLogs } from '@/hooks/use-session-activity-logs'
+import {
+	DONE_GRACE_TICK_MS,
+	activityPollInterval,
+	useSessionActivityLogs,
+} from '@/hooks/use-session-activity-logs'
 import { api } from '@/lib/api'
 import type { SessionLogResponse } from '@/lib/api'
+import { queryKeys } from '@/lib/query-keys'
 import { subscribeToSessionLogs } from '@/lib/session-log-stream'
 import { TestWrapper } from '../setup'
 
@@ -30,6 +35,24 @@ function buildLog(id: number, content = `line ${id}`): SessionLogResponse {
 		content,
 		createdAt: new Date(id).toISOString(),
 	}
+}
+
+/**
+ * The option bag a query was created with, read off the query cache.
+ *
+ * `refetchInterval` and `refetchOnWindowFocus` are observer-level options: a
+ * `Query` is typed as holding `QueryOptions`, which omits them, but at runtime
+ * it is the observer's full option bag that lands on `query.options`. The cast
+ * bridges that gap so the assertions read the real values rather than a
+ * structurally-narrowed view of them.
+ */
+function observerOptions(
+	client: QueryClient,
+	queryKey: readonly unknown[],
+): { refetchInterval?: unknown; refetchOnWindowFocus?: unknown } | undefined {
+	return client.getQueryCache().find({ queryKey })?.options as
+		| { refetchInterval?: unknown; refetchOnWindowFocus?: unknown }
+		| undefined
 }
 
 beforeEach(() => {
@@ -143,16 +166,23 @@ describe('useSessionActivityLogs', () => {
 })
 
 describe('useSessionActivityLogs stream merge', () => {
-	/** Capture the stream callbacks the hook registers, keyed by session id. */
+	/**
+	 * Capture the stream callbacks the hook registers, keyed by session id.
+	 * `log` is the line listener; `done` is the terminal-state listener the hook
+	 * uses to stop the fast poll and arm its single backstop tick.
+	 */
 	function captureStreamListeners() {
-		const listeners = new Map<string, (log: SessionLogResponse) => void>()
-		vi.mocked(subscribeToSessionLogs).mockImplementation((_ws, sid, onLog) => {
-			listeners.set(sid, onLog)
+		const log = new Map<string, (log: SessionLogResponse) => void>()
+		const done = new Map<string, () => void>()
+		vi.mocked(subscribeToSessionLogs).mockImplementation((_ws, sid, onLog, onDone) => {
+			log.set(sid, onLog)
+			if (onDone) done.set(sid, onDone)
 			return () => {
-				listeners.delete(sid)
+				log.delete(sid)
+				done.delete(sid)
 			}
 		})
-		return listeners
+		return { log, done }
 	}
 
 	function render(sessionIds = [sessionId]) {
@@ -164,12 +194,12 @@ describe('useSessionActivityLogs stream merge', () => {
 
 	it('renders a line that arrived only on the stream', async () => {
 		vi.mocked(api.sessions.logs).mockResolvedValue([])
-		const listeners = captureStreamListeners()
+		const { log } = captureStreamListeners()
 
 		const { result } = render()
 		await waitFor(() => expect(result.current.queries[0]?.data).toEqual([]))
 
-		listeners.get(sessionId)?.(buildLog(5))
+		log.get(sessionId)?.(buildLog(5))
 
 		await waitFor(() => expect(result.current.queries[0]?.data?.map((l) => l.id)).toEqual([5]))
 	})
@@ -184,10 +214,10 @@ describe('useSessionActivityLogs stream merge', () => {
 
 		// stream-only
 		vi.mocked(api.sessions.logs).mockResolvedValue([])
-		const listeners = captureStreamListeners()
+		const { log } = captureStreamListeners()
 		const streamOnly = render()
 		await waitFor(() => expect(streamOnly.result.current.queries[0]?.data).toEqual([]))
-		const onLog = listeners.get(sessionId)
+		const onLog = log.get(sessionId)
 		onLog?.(buildLog(1))
 		onLog?.(buildLog(2))
 		onLog?.(buildLog(3))
@@ -198,10 +228,10 @@ describe('useSessionActivityLogs stream merge', () => {
 		// stream+poll, with the poll re-delivering lines the stream already
 		// rendered — the mid-reconnect overlap the spec calls out. Dedup on id
 		// must make it converge on the identical array rather than duplicating.
-		const listeners2 = captureStreamListeners()
+		const { log: log2 } = captureStreamListeners()
 		const both = render()
 		await waitFor(() => expect(both.result.current.queries[0]?.data).toEqual([]))
-		const onLog2 = listeners2.get(sessionId)
+		const onLog2 = log2.get(sessionId)
 		onLog2?.(buildLog(1))
 		onLog2?.(buildLog(2))
 		onLog2?.(buildLog(3))
@@ -216,7 +246,7 @@ describe('useSessionActivityLogs stream merge', () => {
 
 	it('subscribes only to the pollable session ids', async () => {
 		vi.mocked(api.sessions.logs).mockResolvedValue([])
-		const listeners = captureStreamListeners()
+		const { log } = captureStreamListeners()
 
 		// A terminal session's history is fetched once and then left alone, so
 		// no stream is opened for it.
@@ -226,19 +256,92 @@ describe('useSessionActivityLogs stream merge', () => {
 
 		await waitFor(() => expect(api.sessions.logs).toHaveBeenCalled())
 		expect(subscribeToSessionLogs).not.toHaveBeenCalled()
-		expect(listeners.size).toBe(0)
+		expect(log.size).toBe(0)
 	})
 
 	it('tears the stream down on unmount', async () => {
 		vi.mocked(api.sessions.logs).mockResolvedValue([])
-		const listeners = captureStreamListeners()
+		const { log } = captureStreamListeners()
 
 		const { unmount } = render()
-		await waitFor(() => expect(listeners.has(sessionId)).toBe(true))
+		await waitFor(() => expect(log.has(sessionId)).toBe(true))
 
 		unmount()
 
-		expect(listeners.has(sessionId)).toBe(false)
+		expect(log.has(sessionId)).toBe(false)
+	})
+
+	it('stops the fast poll on done and fires exactly one backstop fetch, then stops', async () => {
+		// The bet's "slow backstop" rule: the stream is authoritative for a live
+		// turn, but a dropped connection once froze a transcript with nothing to
+		// catch up. So `done` must silence the fast poll and leave exactly ONE
+		// late fetch to pick up any final lines — not an interval.
+		vi.useFakeTimers({ shouldAdvanceTime: true })
+		try {
+			vi.mocked(api.sessions.logs).mockResolvedValue([buildLog(1)])
+			const { done } = captureStreamListeners()
+
+			const { result } = render()
+			await waitFor(() => expect(result.current.queries[0]?.data).toHaveLength(1))
+
+			await act(async () => {
+				done.get(sessionId)?.()
+			})
+
+			vi.mocked(api.sessions.logs).mockClear()
+
+			// Just short of the grace tick: the 2s poll must already be dead, so
+			// nothing at all should have been fetched.
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(DONE_GRACE_TICK_MS - 1_000)
+			})
+			expect(api.sessions.logs).not.toHaveBeenCalled()
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(1_000)
+			})
+			expect(api.sessions.logs).toHaveBeenCalledTimes(1)
+
+			// Several more grace windows: still the one fetch, because the
+			// backstop is a single tick rather than a repeating interval.
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(DONE_GRACE_TICK_MS * 4)
+			})
+			expect(api.sessions.logs).toHaveBeenCalledTimes(1)
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('drops the poll interval entirely once the session reports done', async () => {
+		const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+		const wrapper = ({ children }: { children: ReactNode }) =>
+			createElement(QueryClientProvider, { client }, children)
+
+		vi.mocked(api.sessions.logs).mockResolvedValue([buildLog(1)])
+		const { done } = captureStreamListeners()
+
+		const { result } = renderHook(
+			() => useSessionActivityLogs(workspaceId, [sessionId], null, new Set([sessionId])),
+			{ wrapper },
+		)
+		await waitFor(() => expect(result.current.queries[0]?.data).toHaveLength(1))
+
+		const key = [...queryKeys.sessions.logs(sessionId), 'activity']
+		const query = client.getQueryCache().find({ queryKey: key })
+		const intervalNow = () =>
+			observerOptions(client, key)?.refetchInterval as ((query: unknown) => unknown) | undefined
+
+		expect(typeof intervalNow()).toBe('function')
+		expect(intervalNow()?.(query)).not.toBe(false)
+
+		await act(async () => {
+			done.get(sessionId)?.()
+		})
+
+		// TanStack clears an armed interval when the option flips to false; the
+		// single backstop fetch is scheduled separately by the hook.
+		expect(intervalNow()?.(query)).toBe(false)
 	})
 })
 
@@ -361,5 +464,87 @@ describe('useSessionActivityLogs backward paging', () => {
 		// alone — putting a finished conversation back on a 1s timer would be a
 		// pure cost with nothing to show for it.
 		expect(result.current.queries[0]?.isRefetching).toBe(false)
+	})
+})
+
+describe('useSessionActivityLogs focus scoping', () => {
+	/**
+	 * A client that mirrors apps/web/src/lib/query.ts: the app-wide default is
+	 * refetchOnWindowFocus:false. TestWrapper does not set that default (it
+	 * inherits TanStack's own true), so a focus test has to build the app-like
+	 * client explicitly or it would prove nothing about the app.
+	 */
+	function appLikeClient() {
+		return new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, gcTime: 0, staleTime: 0, refetchOnWindowFocus: false },
+			},
+		})
+	}
+
+	function renderWithUnrelated(client: QueryClient) {
+		const wrapper = ({ children }: { children: ReactNode }) =>
+			createElement(QueryClientProvider, { client }, children)
+		const unrelatedFetch = vi.fn()
+		const hook = renderHook(
+			() => {
+				const activity = useSessionActivityLogs(
+					workspaceId,
+					[sessionId],
+					null,
+					new Set([sessionId]),
+				)
+				const other = useQuery({
+					queryKey: ['unrelated'],
+					queryFn: async () => {
+						unrelatedFetch()
+						return 1
+					},
+				})
+				return { activity, other }
+			},
+			{ wrapper },
+		)
+		return { ...hook, unrelatedFetch }
+	}
+
+	const logsKey = [...queryKeys.sessions.logs(sessionId), 'activity']
+
+	it('opts the chat/logs query in while the client default stays out', async () => {
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+		const client = appLikeClient()
+		expect(client.getDefaultOptions().queries?.refetchOnWindowFocus).toBe(false)
+
+		const { result } = renderWithUnrelated(client)
+		await waitFor(() => expect(result.current.activity.queries[0]?.data).toEqual([]))
+		await waitFor(() => expect(result.current.other.isSuccess).toBe(true))
+
+		// The scoping is per-query, not a global flip: exactly the chat/logs
+		// query opts in.
+		expect(observerOptions(client, logsKey)?.refetchOnWindowFocus).toBe(true)
+		expect(observerOptions(client, ['unrelated'])?.refetchOnWindowFocus).toBe(false)
+	})
+
+	it('refetches chat/logs on visibilitychange but leaves unrelated queries alone', async () => {
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+		const client = appLikeClient()
+		const { result, unrelatedFetch } = renderWithUnrelated(client)
+		await waitFor(() => expect(result.current.activity.queries[0]?.data).toEqual([]))
+		await waitFor(() => expect(result.current.other.isSuccess).toBe(true))
+
+		vi.mocked(api.sessions.logs).mockClear()
+		unrelatedFetch.mockClear()
+
+		await act(async () => {
+			window.dispatchEvent(new Event('visibilitychange'))
+		})
+
+		// A live chat uniquely has something new to show when the tab comes
+		// back, so it catches up immediately...
+		await waitFor(() => expect(api.sessions.logs).toHaveBeenCalledTimes(1))
+		// ...while the objects/events/notifications/billing queries that share
+		// this client stay put, which is the whole point of not flipping the
+		// app-wide default.
+		expect(unrelatedFetch).not.toHaveBeenCalled()
 	})
 })

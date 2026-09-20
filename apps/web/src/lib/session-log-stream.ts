@@ -24,9 +24,18 @@ function setCursor(sessionId: string, id: string) {
 
 export type SessionLogListener = (log: SessionLogResponse) => void
 
+/**
+ * Fired once, when the server ends this session's stream with `done` — the
+ * session reached a terminal state. Distinct from the unsubscribe function
+ * returned by {@link subscribeToSessionLogs}: this is the *server* ending the
+ * stream, not the consumer leaving.
+ */
+export type SessionDoneListener = () => void
+
 interface Connection {
 	controller: AbortController
 	listeners: Set<SessionLogListener>
+	doneListeners: Set<SessionDoneListener>
 }
 
 /**
@@ -50,17 +59,20 @@ const connections = new Map<string, Connection>()
  *
  * Frames arrive as `{ id, event, data }` where `event` is the log stream
  * (`stdout` | `stderr` | `system`) and `data` is the raw line; the `done`
- * frame that marks a terminal session is swallowed here (see the decoder).
+ * frame that marks a terminal session is swallowed here (see the decoder) and
+ * surfaced to `onDone` instead.
  */
 export function subscribeToSessionLogs(
 	workspaceId: string,
 	sessionId: string,
 	onLog: SessionLogListener,
+	onDone?: SessionDoneListener,
 ): () => void {
 	let connection = connections.get(sessionId)
 
 	if (!connection) {
 		const listeners = new Set<SessionLogListener>()
+		const doneListeners = new Set<SessionDoneListener>()
 		const controller = connectEventStream<SessionLogResponse>({
 			urlBuilder: () => `${API_BASE}/sessions/${sessionId}/logs/stream`,
 			headers: () => ({
@@ -91,26 +103,30 @@ export function subscribeToSessionLogs(
 			},
 			onDone: () => {
 				// The core has already stopped this connection without
-				// retrying. Drop the registry entry so a later subscribe for
-				// the same session starts a fresh one rather than attaching to
-				// a dead controller. What the UI does at end-of-session — a
-				// final backstop poll, stopping the poll — is the sibling
-				// hardening task's scope, not this one's.
+				// retrying. Fan out to every subscriber that asked to hear
+				// about completion, then drop the registry entry so a later
+				// subscribe for the same session starts a fresh one rather
+				// than attaching to a dead controller. What each subscriber
+				// does at end-of-session — the chat hook's single grace tick —
+				// is the caller's business, not this module's.
+				for (const listener of doneListeners) listener()
 				connections.delete(sessionId)
 			},
 		})
-		connection = { controller, listeners }
+		connection = { controller, listeners, doneListeners }
 		connections.set(sessionId, connection)
 	}
 
 	const owned = connection
 	owned.listeners.add(onLog)
+	if (onDone) owned.doneListeners.add(onDone)
 
 	return () => {
 		// A `done` may have replaced the registry entry since we subscribed;
 		// only the connection we actually hold may be torn down.
 		if (connections.get(sessionId) !== owned) return
 		owned.listeners.delete(onLog)
+		if (onDone) owned.doneListeners.delete(onDone)
 		if (owned.listeners.size === 0) {
 			owned.controller.abort()
 			connections.delete(sessionId)
