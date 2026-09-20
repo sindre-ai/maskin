@@ -2320,12 +2320,8 @@ export function createMcpServer(config: McpConfig) {
 			// meaningfully, so create_objects strips them from the response.
 			const enrichedNodes = Array.isArray(graphResult.nodes)
 				? graphResult.nodes.map((node) => {
-						const {
-							activeSessionId,
-							activeSessionCurrentActivity,
-							unread_count,
-							...rest
-						} = node as Record<string, unknown>
+						const { activeSessionId, activeSessionCurrentActivity, unread_count, ...rest } =
+							node as Record<string, unknown>
 						return addUrl(rest, config, workspace_id, { kind: 'object', id: node.id })
 					})
 				: graphResult.nodes

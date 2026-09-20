@@ -12,7 +12,10 @@ import { and, desc, eq, inArray, max, ne, or, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { errorSchema, objectResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
-import { markRead as markReadService, markUnread as markUnreadService } from '../services/subscriptions'
+import {
+	markRead as markReadService,
+	markUnread as markUnreadService,
+} from '../services/subscriptions'
 
 type Env = {
 	Variables: {
@@ -318,15 +321,11 @@ app.openapi(listUnreadRoute, (async (c) => {
 	conditions.push(windowPredicate)
 
 	// True unread count regardless of whether recently-read events are joined.
-	const unreadCountExpr = sql<
-		number
-	>`coalesce(count(${events.id}) filter (where ${events.id} > ${lastReadExpr}), 0)::int`
+	const unreadCountExpr = sql<number>`coalesce(count(${events.id}) filter (where ${events.id} > ${lastReadExpr}), 0)::int`
 
 	// Per-entity mention count over unread events only. Onboarding-only cards
 	// (surfaced by predicate 2) can have unread_count > 0 while this stays 0.
-	const mentioningUnreadCountExpr = sql<
-		number
-	>`coalesce(count(*) filter (where ${events.id} > ${lastReadExpr} and ${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)), 0)::int`
+	const mentioningUnreadCountExpr = sql<number>`coalesce(count(*) filter (where ${events.id} > ${lastReadExpr} and ${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)), 0)::int`
 
 	// Highest attention (1-5) among unread comments; null when every unread
 	// comment carries no attention score. Priority sort treats null as the

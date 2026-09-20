@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { actors, events } from '@maskin/db/schema'
+import { events, actors } from '@maskin/db/schema'
 import type { CommentDecision } from '@maskin/shared'
 import { inArray } from 'drizzle-orm'
 

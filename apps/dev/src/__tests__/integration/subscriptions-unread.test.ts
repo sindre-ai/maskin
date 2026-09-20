@@ -1,7 +1,7 @@
+import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, workspaceMembers } from '@maskin/db/schema'
-import { randomUUID } from 'node:crypto'
 import { insertActor, insertObject, insertWorkspace } from '../factories'
 import { jsonGet } from '../helpers'
 import { db } from './global-setup'

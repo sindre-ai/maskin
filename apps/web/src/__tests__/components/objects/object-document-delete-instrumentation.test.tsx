@@ -50,7 +50,6 @@ vi.mock('@/hooks/use-objects', () => ({
 	useDeleteObject: () => ({ mutate: mutateMock, isPending: false }),
 }))
 
-
 vi.mock('@/components/shared/agent-working-badge', () => ({
 	AgentWorkingBadge: () => null,
 }))
