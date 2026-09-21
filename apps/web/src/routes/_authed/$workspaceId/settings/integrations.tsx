@@ -65,7 +65,7 @@ function IntegrationsPage() {
 	// the backend registers the provider unconditionally so its OAuth callback
 	// and MCP routes stay reachable for anyone the tester rollout allows in,
 	// but the connect entry point stays hidden from everyone else until the flag
-	// flips on. Visual-layer only, per .claude/rules/feature-flags.md.
+	// flips on. Per-actor behaviour gate, never a shared-state change.
 	const googleMeetVisible = useFeatureFlag('google-meet-integration-ui')
 	const visibleProviders = (providers ?? []).filter(
 		(p) => p.name !== 'google-meet' || googleMeetVisible,
