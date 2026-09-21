@@ -1,5 +1,4 @@
 import {
-	LOOP_STATUSES,
 	MESSAGE_MAX_LENGTH,
 	createCommentSchema,
 	messageMetadataSchema,
@@ -8,6 +7,15 @@ import {
 	skillNameSchema,
 } from '@maskin/shared'
 import { z } from 'zod'
+
+// Loop status enum exposed by the MCP `create_loop` / `update_loop` tools.
+// This is intentionally scoped to the MCP surface — it matches what the
+// server-side per-workspace status validator (see `apps/dev/src/routes/objects.ts`,
+// PATCH `/objects/:id`) actually accepts today, which had drifted from the
+// shared `LOOP_STATUSES` constant in `@maskin/shared`. Ladder is
+// `draft` → `pilot` → `supervised` → `live`, with `paused` reachable from any
+// live rung and `archived` a terminal retirement state.
+const MCP_LOOP_STATUSES = ['draft', 'pilot', 'supervised', 'live', 'paused', 'archived'] as const
 
 // Keep field list in sync with `notificationMetadataSchema` in
 // packages/shared/src/schemas/notifications.ts — that schema is the canonical
@@ -1143,7 +1151,7 @@ export const tools = {
 	// wrong.
 	create_loop: {
 		description:
-			"Create a Loop — an iterative process where agents (and humans) work toward a goal, driven by STEPS that fire an agent when an object of any type changes state (event) or on a schedule (cron). A step and a trigger are the same thing, created two different ways: `steps` authors brand-new triggers inline in this call (you supply name/agent_id/prompt/when); `trigger_ids` attaches triggers that already exist. Both land in the same place — the loop's step list — and the response nests each step's resolved agent directly under it (there is no separate flat agent list, since the trigger is what determines which agent runs a step). Before authoring a step or attaching a trigger_ids entry, call list_actors (and list_triggers, to see a candidate trigger's current target agent) and confirm the agent's role and system_prompt genuinely fit the work — never default to an unrelated or generic agent/trigger just because one is on hand. Where nothing fits, create a fresh, specialized agent (create_actor) and/or trigger (an inline step, or create_trigger) instead of repurposing a mismatched pair — loops are more reliable when each step is run by an expert, single-purpose agent. MEMBER OBJECTS are the objects currently flowing through the loop (any type — call get_workspace_schema to discover types and statuses), linked via `in_loop` relationships. `status` is a graduated-trust ladder (draft → learning → supervised → fully_autonomous, in that order) that can be paused from any point — pausing disables every trigger the loop references, so nothing fires until it's resumed. A loop is OPEN when it has no feedback mechanism, CLOSED when one of its steps is a feedback step — an event trigger on the close condition (e.g. when an object reaches a done status) whose agent captures learnings (create an insight/knowledge object linked with `informs`), improves the loop, and/or seeds the next object into it. Prefer closing every loop. To put a human ON the loop, add a step whose agent @mentions that human on the relevant object via create_comment — human participation is a step like any other. If custom object types flow through the loop, pass `closed_statuses` so the loop knows which statuses mean done. All ids, types, and statuses are validated against the workspace — unknown ones fail with a clear error instead of silently creating a loop with no working steps. The loop object and its `in_loop` membership edges are created atomically; attach more steps or objects later with update_loop; read loops back (with live stats) via list_loops. NOTE: this creates a custom loop from scratch — to install a pre-packaged marketplace loop template, use get_started instead.",
+			"Create a Loop — an iterative process where agents (and humans) work toward a goal, driven by STEPS that fire an agent when an object of any type changes state (event) or on a schedule (cron). A step and a trigger are the same thing, created two different ways: `steps` authors brand-new triggers inline in this call (you supply name/agent_id/prompt/when); `trigger_ids` attaches triggers that already exist. Both land in the same place — the loop's step list — and the response nests each step's resolved agent directly under it (there is no separate flat agent list, since the trigger is what determines which agent runs a step). Before authoring a step or attaching a trigger_ids entry, call list_actors (and list_triggers, to see a candidate trigger's current target agent) and confirm the agent's role and system_prompt genuinely fit the work — never default to an unrelated or generic agent/trigger just because one is on hand. Where nothing fits, create a fresh, specialized agent (create_actor) and/or trigger (an inline step, or create_trigger) instead of repurposing a mismatched pair — loops are more reliable when each step is run by an expert, single-purpose agent. MEMBER OBJECTS are the objects currently flowing through the loop (any type — call get_workspace_schema to discover types and statuses), linked via `in_loop` relationships. `status` is a graduated-trust ladder (draft → pilot → supervised → live, in that order) that can be paused from any point on the ladder — pausing disables every trigger the loop references, so nothing fires until it's resumed. `archived` is a terminal retirement state for loops that are no longer in service. A loop is OPEN when it has no feedback mechanism, CLOSED when one of its steps is a feedback step — an event trigger on the close condition (e.g. when an object reaches a done status) whose agent captures learnings (create an insight/knowledge object linked with `informs`), improves the loop, and/or seeds the next object into it. Prefer closing every loop. To put a human ON the loop, add a step whose agent @mentions that human on the relevant object via create_comment — human participation is a step like any other. If custom object types flow through the loop, pass `closed_statuses` so the loop knows which statuses mean done. All ids, types, and statuses are validated against the workspace — unknown ones fail with a clear error instead of silently creating a loop with no working steps. The loop object and its `in_loop` membership edges are created atomically; attach more steps or objects later with update_loop; read loops back (with live stats) via list_loops. NOTE: this creates a custom loop from scratch — to install a pre-packaged marketplace loop template, use get_started instead.",
 		inputSchema: z.object({
 			workspace_id: requiredWorkspaceId,
 			name: z.string().min(1).describe('Loop name, e.g. "Inbound lead qualification".'),
@@ -1152,10 +1160,10 @@ export const tools = {
 				.optional()
 				.describe('What the loop is for — a plain-language description of the process it runs.'),
 			status: z
-				.enum(LOOP_STATUSES)
+				.enum(MCP_LOOP_STATUSES)
 				.default('draft')
 				.describe(
-					'Autonomy stage. `draft` (default) — set up but not live yet. `learning` → `supervised` → `fully_autonomous` is the trust ladder as the loop proves itself and earns more autonomy. `paused` can be set from any stage and disables every trigger the loop references until it leaves paused.',
+					'Autonomy stage. `draft` (default) — set up but not live yet. `pilot` → `supervised` → `live` is the trust ladder as the loop proves itself and earns more autonomy. `paused` can be set from any live stage and disables every trigger the loop references until it leaves paused. `archived` is a terminal retirement state — use it once the loop is no longer in service.',
 				),
 			entry_condition: z
 				.string()
@@ -1205,10 +1213,10 @@ export const tools = {
 				.optional()
 				.describe('New loop description (replaces the current content).'),
 			status: z
-				.enum(LOOP_STATUSES)
+				.enum(MCP_LOOP_STATUSES)
 				.optional()
 				.describe(
-					"New autonomy stage: draft | learning | supervised | fully_autonomous | paused — see create_loop for what each means. Setting `paused` disables the loop's triggers; moving off it re-enables them.",
+					"New autonomy stage: draft | pilot | supervised | live | paused | archived — see create_loop for what each means. Setting `paused` disables the loop's triggers; moving off it re-enables them. `archived` is terminal.",
 				),
 			entry_condition: z
 				.string()
