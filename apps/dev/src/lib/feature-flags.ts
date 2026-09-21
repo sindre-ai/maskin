@@ -71,8 +71,9 @@ export const FLAGS = {
 	 * providers list rendered by `apps/web/src/routes/_authed/$workspaceId/settings/integrations.tsx`
 	 * — the customer sees no google-meet entry point at all. When on, google-meet
 	 * appears alongside every other OAuth provider (Gmail, GCal, Slack, ...) with
-	 * a standard Connect button. Visual-layer only: the backend still registers
-	 * the provider unconditionally, so `POST /api/integrations/google-meet/connect`
+	 * a standard Connect button. Per-actor behaviour gate, never shared state:
+	 * the backend still registers the provider unconditionally, so
+	 * `POST /api/integrations/google-meet/connect`
 	 * and the seven `google_meet__*` MCP tools stay reachable for tester actors
 	 * (add them to `FF_TESTER_ACTOR_IDS` + `google-meet-integration-ui` to
 	 * `FF_TESTER_FEATURES`). See parent bet [Google Meet MCP — cover the top

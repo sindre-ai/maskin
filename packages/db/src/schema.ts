@@ -349,6 +349,14 @@ export const sessions = pgTable(
 		completedAt: timestamp('completed_at', { withTimezone: true }),
 		timeoutAt: timestamp('timeout_at', { withTimezone: true }),
 		totalCostUsd: numeric('total_cost_usd', { precision: 12, scale: 6 }),
+		// OpenRouter model id that actually ran this session (e.g.
+		// `deepseek/deepseek-v4-flash`). Stamped at spawn on the maskin_plan
+		// route from `MASKIN_FALLBACK_MODEL`; null on every other route so
+		// `claude_oauth` and BYO paths keep pricing off Claude Code's own
+		// `total_cost_usd`. Load-bearing for the follow-on local cost resolver,
+		// which prices maskin_plan sessions from OpenRouter's pricing table
+		// keyed on this value.
+		modelName: text('model_name'),
 		inputTokens: integer('input_tokens'),
 		outputTokens: integer('output_tokens'),
 		cacheCreationInputTokens: integer('cache_creation_input_tokens'),
