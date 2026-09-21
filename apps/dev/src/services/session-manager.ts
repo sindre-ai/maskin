@@ -81,7 +81,6 @@ import {
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
-	FALLBACK_TOKENS_PER_USD_CENT,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
 	LlmCredentialsUnavailableError,
@@ -115,6 +114,7 @@ import {
 	extractSessionUsage,
 	parseUsageFromLogChunks,
 	readSessionStdoutTail,
+	resolveSessionCostUsd,
 	sumRunningSessionUsage,
 } from './usage-parser'
 import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace-briefing'
@@ -1753,6 +1753,7 @@ export class SessionManager extends EventEmitter {
 
 		let routeTaken: LlmRoute | null = null
 		let oauthSlotTaken: string | undefined
+		let routeModelName: string | undefined
 		try {
 			const resolved = await resolveLlmRoute({
 				db: this.db,
@@ -1769,6 +1770,7 @@ export class SessionManager extends EventEmitter {
 			if (resolved) {
 				routeTaken = resolved.route
 				oauthSlotTaken = resolved.oauthSlot
+				routeModelName = resolved.modelName
 				Object.assign(envVars, resolved.envVars)
 			}
 		} catch (err) {
@@ -1829,16 +1831,33 @@ export class SessionManager extends EventEmitter {
 
 		// Persist the chosen route on the session config so cron-based quota
 		// queries (and later analytics) can find fallback sessions cheaply.
+		// On the maskin_plan route we ALSO stamp `sessions.model_name` with the
+		// OpenRouter model that will actually run: the follow-on local cost
+		// resolver keys OpenRouter's pricing table on that value, and without
+		// it every non-Anthropic session reads as an Opus-priced number.
+		// claude_oauth and BYO routes leave `model_name` null on purpose —
+		// Claude Code's own `total_cost_usd` stays ground truth for those.
 		if (routeTaken) {
 			const existingConfig = (session.config as Record<string, unknown>) ?? {}
 			const nextOauthSlot = routeTaken === LLM_ROUTE_OAUTH ? oauthSlotTaken : undefined
 			const updatedConfig = mergeLaunchRouteConfig(existingConfig, routeTaken, nextOauthSlot)
-			if (updatedConfig) {
-				await this.db
-					.update(sessions)
-					.set({ config: updatedConfig })
-					.where(eq(sessions.id, session.id))
-				;(session as { config: Record<string, unknown> }).config = updatedConfig
+			const modelNameToPersist =
+				routeTaken === LLM_ROUTE_MASKIN_PLAN &&
+				routeModelName &&
+				routeModelName !== session.modelName
+					? routeModelName
+					: undefined
+			if (updatedConfig || modelNameToPersist !== undefined) {
+				const patch: Partial<typeof sessions.$inferInsert> = {}
+				if (updatedConfig) patch.config = updatedConfig
+				if (modelNameToPersist !== undefined) patch.modelName = modelNameToPersist
+				await this.db.update(sessions).set(patch).where(eq(sessions.id, session.id))
+				if (updatedConfig) {
+					;(session as { config: Record<string, unknown> }).config = updatedConfig
+				}
+				if (modelNameToPersist !== undefined) {
+					;(session as { modelName: string | null }).modelName = modelNameToPersist
+				}
 			}
 		}
 
@@ -3209,6 +3228,29 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * Loads the two inputs the cost resolver needs off the session row: the
+	 * route the session was dispatched under (`config.llm_route`) and the
+	 * model name recorded for it. Both are written at dispatch time. One
+	 * query, shared by the sessionId-only callsites —
+	 * `enforceRunningSessionBudget` already holds the session row and reads
+	 * the fields directly instead.
+	 */
+	private async loadSessionRouteAndModel(
+		sessionId: string,
+	): Promise<{ route: string; modelName: string | null }> {
+		const [row] = await this.db
+			.select({ config: sessions.config, modelName: sessions.modelName })
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		const config = ((row?.config as Record<string, unknown>) ?? {}) as Record<string, unknown>
+		return {
+			route: typeof config.llm_route === 'string' ? config.llm_route : '',
+			modelName: row?.modelName ?? null,
+		}
+	}
+
+	/**
 	 * Parses usage from the session's log tail (same source `handleCompletion`
 	 * uses) and adds it onto the session's cumulative usage columns. Additive,
 	 * not overwriting: a paused-then-resumed session launches a fresh CLI
@@ -3219,6 +3261,10 @@ export class SessionManager extends EventEmitter {
 	 * for cap/billing display) reflects cost incurred even when a session
 	 * never reaches a terminal 'completed' status — pausing is the common
 	 * case for interactive sessions sitting idle between turns.
+	 *
+	 * The USD figure written is the resolver's (`resolveSessionCostUsd`), not
+	 * the CLI's `total_cost_usd` — a maskin_plan session's CLI cost is priced
+	 * against Anthropic's rate card even though it runs through OpenRouter.
 	 *
 	 * Returns the parsed segment (not the new cumulative total, and not
 	 * necessarily persisted if the DB write failed) so callers can log it;
@@ -3247,13 +3293,29 @@ export class SessionManager extends EventEmitter {
 		}
 		if (!usage) return null
 
+		// Resolve the true USD cost for this segment before it is added to the
+		// cumulative column: for a maskin_plan session the CLI's own
+		// `total_cost_usd` is Anthropic-priced and wrong. Best-effort — a
+		// lookup failure falls back to the CLI figure rather than losing the
+		// segment's cost entirely.
+		let resolvedCostUsd = usage.totalCostUsd
+		try {
+			const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
+			resolvedCostUsd = await resolveSessionCostUsd({ route, modelName, usage })
+		} catch (err) {
+			logger.warn('Failed to resolve session cost, using CLI-reported cost', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
 		try {
 			await this.db
 				.update(sessions)
 				.set({
 					totalCostUsd:
-						usage.totalCostUsd != null
-							? sql`COALESCE(${sessions.totalCostUsd}, 0) + ${usage.totalCostUsd}`
+						resolvedCostUsd != null
+							? sql`COALESCE(${sessions.totalCostUsd}, 0) + ${resolvedCostUsd}`
 							: undefined,
 					inputTokens:
 						usage.inputTokens != null
@@ -3335,15 +3397,20 @@ export class SessionManager extends EventEmitter {
 			getWorkspacePlanUsdCentsUsage(this.db, session.workspaceId, periodStartMs),
 			sumRunningSessionUsage(this.db, session.id),
 		])
-		// Same preference order as getWorkspacePlanUsdCentsUsage: the live
-		// scan's own reported totalCostUsd first, a flat token-rate estimate
-		// only when that's unavailable (e.g. no `result` event parsed yet).
-		const liveCents = liveUsage
-			? liveUsage.totalCostUsd && liveUsage.totalCostUsd > 0
-				? liveUsage.totalCostUsd * 100
-				: ((liveUsage.inputTokens ?? 0) + (liveUsage.outputTokens ?? 0)) /
-					FALLBACK_TOKENS_PER_USD_CENT
-			: 0
+		// Route-aware cost, not the live scan's own reported figure: only
+		// maskin_plan sessions reach this check (the watchdog query filters on
+		// the route), and their CLI-reported `total_cost_usd` is priced against
+		// Anthropic's rate card. The resolver also owns the never-silent-zero
+		// fallback to the legacy token rate, so a session with usage but no
+		// published price still bills.
+		const liveCostUsd = liveUsage
+			? await resolveSessionCostUsd({
+					route: ((session.config as Record<string, unknown>)?.llm_route as string) ?? '',
+					modelName: session.modelName,
+					usage: liveUsage,
+				})
+			: null
+		const liveCents = liveCostUsd && liveCostUsd > 0 ? liveCostUsd * 100 : 0
 		const totalUsedCents = persistedUsedCents + ceilCents(liveCents)
 		if (totalUsedCents < capCents) return
 
@@ -4531,6 +4598,24 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		// Resolve the route-aware cost before the CAS loop so both writes below
+		// use the same figure. Best-effort for the same reason as the tail read:
+		// stopSession() calls this after the sandbox is already dead, so a throw
+		// here would surface as a spurious "stop failed" 400. On failure the
+		// CLI-reported cost is used, which is the pre-existing behaviour.
+		let resolvedCostUsd: number | null = usage?.totalCostUsd ?? null
+		if (usage) {
+			try {
+				const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
+				resolvedCostUsd = await resolveSessionCostUsd({ route, modelName, usage })
+			} catch (err) {
+				logger.warn('Failed to resolve remote session cost, using CLI-reported cost', {
+					sessionId,
+					error: String(err),
+				})
+			}
+		}
+
 		// Mirror handleCompletion's classification + failover on this path — the
 		// remote completion path is what production uses, and until this existed
 		// it wrote `{ exit_code }` and returned, so failover never ran (see
@@ -4599,7 +4684,7 @@ export class SessionManager extends EventEmitter {
 						currentActivity: null,
 						...(usage
 							? {
-									totalCostUsd: usage.totalCostUsd?.toString() ?? null,
+									totalCostUsd: resolvedCostUsd?.toString() ?? null,
 									inputTokens: usage.inputTokens,
 									outputTokens: usage.outputTokens,
 									cacheCreationInputTokens: usage.cacheCreationInputTokens,
@@ -4711,7 +4796,7 @@ export class SessionManager extends EventEmitter {
 						currentActivity: null,
 						...(usage
 							? {
-									totalCostUsd: usage.totalCostUsd?.toString() ?? null,
+									totalCostUsd: resolvedCostUsd?.toString() ?? null,
 									inputTokens: usage.inputTokens,
 									outputTokens: usage.outputTokens,
 									cacheCreationInputTokens: usage.cacheCreationInputTokens,
