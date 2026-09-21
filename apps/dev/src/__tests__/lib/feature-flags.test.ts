@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseFeatureFlagConfig, resolveFlags } from '../../lib/feature-flags'
+import { FLAGS, parseFeatureFlagConfig, resolveFlags } from '../../lib/feature-flags'
 
 const TESTER = '3f7c1e2a-9b4d-4f21-8c6e-5a0d7b91e442'
 const NON_TESTER = 'c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f'
@@ -34,10 +34,42 @@ describe('parseFeatureFlagConfig', () => {
 })
 
 describe('resolveFlags', () => {
-	it('resolves the live registry — empty while no flag is in flight', () => {
+	// Asserts the SHAPE of a live-registry resolve, not a fixed flag set: every
+	// registered id resolves to a boolean, and an id absent from
+	// FF_TESTER_FEATURES stays false even for a tester. Pinning an exact object
+	// here made the suite fail the moment a real flag was registered.
+	it('resolves every registered flag to a boolean, false when not in flight', () => {
 		const c = config({ FF_TESTER_FEATURES: 'anything', FF_TESTER_ACTOR_IDS: TESTER })
-		expect(resolveFlags(TESTER, c)).toEqual({})
-		expect(resolveFlags(NON_TESTER, c)).toEqual({})
+		for (const actor of [TESTER, NON_TESTER]) {
+			const resolved = resolveFlags(actor, c)
+			expect(Object.keys(resolved).sort()).toEqual([...Object.values(FLAGS)].sort())
+			expect(Object.values(resolved).every((v) => v === false)).toBe(true)
+		}
+	})
+
+	it('resolves the live registry — slack-setup-ux-v2 is on for a listed tester', () => {
+		const c = config({ FF_TESTER_FEATURES: FLAGS.SLACK_SETUP_UX_V2, FF_TESTER_ACTOR_IDS: TESTER })
+		// Assert the tester sees slack-setup-ux-v2 ON while every other registered flag
+		// stays OFF — the check is per-flag so it survives future flags being
+		// added to FLAGS without churn.
+		const tester = resolveFlags(TESTER, c)
+		const nonTester = resolveFlags(NON_TESTER, c)
+		expect(tester[FLAGS.SLACK_SETUP_UX_V2]).toBe(true)
+		expect(nonTester[FLAGS.SLACK_SETUP_UX_V2]).toBe(false)
+		for (const other of Object.values(FLAGS)) {
+			if (other === FLAGS.SLACK_SETUP_UX_V2) continue
+			expect(tester[other]).toBe(false)
+			expect(nonTester[other]).toBe(false)
+		}
+	})
+
+	it('resolves the loops-v4-polish.step_flow sub-flag from the live registry when enabled for a tester', () => {
+		const c = config({
+			FF_TESTER_FEATURES: 'loops-v4-polish.step_flow',
+			FF_TESTER_ACTOR_IDS: TESTER,
+		})
+		expect(resolveFlags(TESTER, c)['loops-v4-polish.step_flow']).toBe(true)
+		expect(resolveFlags(NON_TESTER, c)['loops-v4-polish.step_flow']).toBe(false)
 	})
 
 	it('is false for every flag when the env is empty', () => {

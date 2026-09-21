@@ -21,6 +21,7 @@ import {
 } from '../../lib/billing-defaults'
 import { preflightLlmCredentials } from '../../lib/llm-routing'
 import {
+	LEGACY_TOKENS_PER_USD_CENT,
 	LLM_ROUTE_AGENT,
 	LLM_ROUTE_API_KEY,
 	LLM_ROUTE_CUSTOM,
@@ -380,6 +381,9 @@ describe('resolveLlmRoute priority order', () => {
 					ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
 					ANTHROPIC_SMALL_FAST_MODEL: 'deepseek/deepseek-v4-flash',
 				})
+				// modelName carries through to `sessions.model_name` — the local
+				// cost resolver keys OpenRouter's pricing table on it.
+				expect(result?.modelName).toBe('deepseek/deepseek-v4-flash')
 			},
 		)
 
@@ -535,7 +539,9 @@ describe('getWorkspacePlanUsdCentsUsage', () => {
 		const db = dbWithSessionUsage([
 			{ totalCostUsd: '1.00', inputTokens: 0, outputTokens: 0 },
 			{ totalCostUsd: '0.50', inputTokens: 0, outputTokens: 0 },
-			// No reported cost — falls back to 16,000 tokens/cent: 16,000 -> 1 cent.
+			// No reported cost — falls back to LEGACY_TOKENS_PER_USD_CENT
+			// (200,000 tokens/cent): 16,000 tokens -> 0.08 cents, which rounds up
+			// to the whole cent on the aggregate below.
 			{ totalCostUsd: null, inputTokens: 16_000, outputTokens: 0 },
 		])
 		expect(await getWorkspacePlanUsdCentsUsage(db, 'ws-1', 0)).toBe(151)
@@ -739,9 +745,9 @@ describe('ceilCents', () => {
 
 	it('still rounds genuine sub-cent usage up to a whole cent', () => {
 		// The token-rate fallback is the only producer of fractional cents; its
-		// smallest non-zero output (1 / FALLBACK_TOKENS_PER_USD_CENT = 6.25e-5)
+		// smallest non-zero output (1 / LEGACY_TOKENS_PER_USD_CENT = 5e-6)
 		// must not be snapped away to zero.
-		expect(ceilCents(1 / 16_000)).toBe(1)
+		expect(ceilCents(1 / LEGACY_TOKENS_PER_USD_CENT)).toBe(1)
 		expect(ceilCents(1004.5)).toBe(1005)
 	})
 })
@@ -864,6 +870,8 @@ describe('preflightLlmCredentials', () => {
 	const noEnv: NodeJS.ProcessEnv = {}
 	/** Failover on — `active_slot` is what the resolver will read. */
 	const failoverEnv: NodeJS.ProcessEnv = { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' }
+	/** Kill-switch flipped — legacy primary-only path. */
+	const failoverOffEnv: NodeJS.ProcessEnv = { MASKIN_CLAUDE_FAILOVER_ENABLED: 'false' }
 
 	const slotData = () => ({
 		encryptedAccessToken: 'a',
@@ -1033,7 +1041,7 @@ describe('preflightLlmCredentials', () => {
 				},
 				agent: {},
 				enterprise: true,
-				env: noEnv,
+				env: failoverOffEnv,
 			}),
 		).toBeNull()
 	})
@@ -1047,7 +1055,7 @@ describe('preflightLlmCredentials', () => {
 			},
 			agent: {},
 			enterprise: true,
-			env: noEnv,
+			env: failoverOffEnv,
 		})
 		expect(gap).not.toBeNull()
 	})

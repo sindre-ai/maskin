@@ -7,6 +7,45 @@ if [ -f /agent/.env-overflow.sh ]; then
   source /agent/.env-overflow.sh
 fi
 
+# --- Scratch space: keep temp files OFF the RAM-backed /tmp ------------------
+# microsandbox mounts the guest's /tmp as a 512 MB tmpfs (its MSB_TMPFS init
+# handoff). That size is msb's own default, not ours: buildMsbCreateArgs in
+# apps/agent-server/src/services/microsandbox.ts passes no --tmpfs, there is no
+# msb config file on the host, and MSB_BIN is the only MSB_* key in the
+# agent-server unit's environment. Verified on the Finland box 2026-09-16.
+#
+# Do NOT "fix" this by passing a bigger --tmpfs. msb documents the flag as
+# "Mount a temporary in-memory filesystem" — it is RAM. On a 4 GB VM with no
+# swap, a larger /tmp just converts a full disk into an OOM kill of the whole
+# sandbox, which is a worse failure than the one it replaces.
+#
+# Why a full /tmp is catastrophic rather than merely annoying: the Claude Code
+# harness writes its own Bash plumbing under $TMPDIR — the output FIFO created
+# in run_agent_logged below, and the per-task .output files. Once /tmp fills,
+# every Bash tool call returns a bare `Exit code 1` from *below* the command
+# level (`pwd: write error: No space left on device`) whether or not the command
+# itself succeeded, and the session never recovers. That error never reaches the
+# session log, so afterwards the run looks like an unexplained wall of exit-1s.
+# A single dependency install in a cloned repo fills 512 MB (incident
+# 2026-09-16, session a9ac4d05 — blind for 45 minutes, 9 turns never acked).
+#
+# /agent is a virtiofs bind mount with hundreds of GB free, so put scratch there
+# and let /tmp stay small and idle. pushSessionWorkspace excludes ./tmp from the
+# session snapshot so this never inflates the workspace tarball.
+AGENT_TMPDIR=/agent/tmp
+mkdir -p "$AGENT_TMPDIR"
+export TMPDIR="$AGENT_TMPDIR" TMP="$AGENT_TMPDIR" TEMP="$AGENT_TMPDIR"
+# Package managers keep their own cache/store roots and do NOT honour TMPDIR —
+# these are the writes that actually filled the tmpfs.
+export npm_config_cache="$AGENT_TMPDIR/npm"
+export npm_config_tmp="$AGENT_TMPDIR/npm-tmp"
+export npm_config_store_dir="$AGENT_TMPDIR/pnpm-store"
+export YARN_CACHE_FOLDER="$AGENT_TMPDIR/yarn"
+export XDG_CACHE_HOME="$AGENT_TMPDIR/cache"
+# Record both filesystems at boot. If a session ever wedges this way again, this
+# is the first evidence of whether the redirect was actually in effect.
+df -h "$AGENT_TMPDIR" /tmp 2>/dev/null | sed 's/^/[system] scratch: /' || true
+
 # Committer identity for anything the agent commits. Overridable via env, but
 # any override must stay on a domain we own (maskin.io / sindre.ai) — see
 # setup_git_identity below.
@@ -57,6 +96,16 @@ resolve_agent_server_url
 # Only meaningful on the remote microsandbox path (AGENT_SERVER_URL set); the
 # local Docker path manages container lifecycle itself.
 report_complete() {
+  # MUST be the first statement: $? is this script's exit status.
+  local script_rc=$?
+  # If run_agent never captured a real agent status (the agent was killed
+  # before `wait` returned, install_runtime failed, `set -e` aborted us, ...)
+  # then AGENT_EXIT_CODE is still its initial 0 and reporting it would post a
+  # clean success for a session that failed. Fall back to the script's own
+  # status, which is non-zero in exactly those cases.
+  if [ "$AGENT_EXIT_CODE_CAPTURED" != "1" ]; then
+    AGENT_EXIT_CODE=$script_rc
+  fi
   if [ -n "$AGENT_SERVER_URL" ] && [ -n "$SESSION_ID" ]; then
     curl -4 -s --http1.0 --max-time 10 -X POST \
       "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/complete" \
@@ -69,6 +118,36 @@ trap report_complete EXIT
 
 RUNTIME="${AGENT_RUNTIME:-claude-code}"
 AGENT_EXIT_CODE=0
+# Set to 1 only once `wait` has returned the agent's real status. Until then
+# AGENT_EXIT_CODE is a placeholder and report_complete must not trust it.
+AGENT_EXIT_CODE_CAPTURED=0
+# Bounds the LINGERING-HOLDER case only: a stray process holding the write end
+# of the output fifo means the shipper never sees EOF, so its own give-up clock
+# (gated on stdinEnded) never starts and it would wait forever.
+#
+# It must NOT bound the case where the shipper has EOF'd and is legitimately
+# still delivering. output-stream.js does not exit at EOF -- it exits once its
+# backlog is acked, retrying for OUTPUT_STREAM_GIVE_UP_MS (300s) and then
+# posting a give-up marker. That budget is deliberate: see the comment on
+# GIVE_UP_AFTER_MS in output-stream.js, which records that a ~19s budget was
+# measured as too short to survive a routine agent-server restart, destroying
+# the buffered result envelope -- the agent's reply. So this value must stay
+# ABOVE 300s + the 5s give-up POST, or we cut short the very mechanism that
+# exists to survive that outage.
+#
+# KEEP IN SYNC with OUTPUT_STREAM_GIVE_UP_MS in docker/agent-base/output-stream.js.
+LOG_DRAIN_GRACE_SECS="${LOG_DRAIN_GRACE_SECS:-330}"
+# Validated because this is externally settable: session_config.env_vars passes
+# unreserved keys straight into the container (session-manager.ts). A
+# non-numeric value makes `sleep` fail instantly, which kills the reaper on its
+# first statement and leaves `wait "$tee_pid"` unbounded -- silently restoring
+# the multi-hour wedge this whole change exists to remove.
+case "$LOG_DRAIN_GRACE_SECS" in
+  ''|*[!0-9]*)
+    echo "[system] WARNING: invalid LOG_DRAIN_GRACE_SECS '${LOG_DRAIN_GRACE_SECS}' -- using 330" >&2
+    LOG_DRAIN_GRACE_SECS=330
+    ;;
+esac
 
 # Install runtime if not already present
 install_runtime() {
@@ -157,7 +236,7 @@ setup_cdp_retry_proxy() {
   # Process substitution (not a pipeline) keeps $! as node's own pid, which
   # the kill -0 liveness check below depends on.
   node /cdp-retry-proxy.js "$CDP_RETRY_PROXY_PORT" "$target_host" "$target_port" \
-    > >(tee /tmp/cdp-retry-proxy.log | sed -u 's/^/[cdp-retry-proxy] /' >&2) 2>&1 &
+    > >(tee "${TMPDIR:-/tmp}/cdp-retry-proxy.log" | sed -u 's/^/[cdp-retry-proxy] /' >&2) 2>&1 &
   local proxy_pid=$!
   # Give it a moment to bind before handing out the local URL — a failed
   # bind (port in use, node missing) means BROWSER_CDP_URL should still
@@ -166,13 +245,13 @@ setup_cdp_retry_proxy() {
   while [ "$(date +%s)" -lt "$deadline" ]; do
     if ! kill -0 "$proxy_pid" 2>/dev/null; then
       echo "[system] WARNING: cdp-retry-proxy exited immediately, using BROWSER_CDP_URL directly" >&2
-      cat /tmp/cdp-retry-proxy.log >&2 2>/dev/null || true
+      cat "${TMPDIR:-/tmp}/cdp-retry-proxy.log" >&2 2>/dev/null || true
       return
     fi
-    grep -q "listening on" /tmp/cdp-retry-proxy.log 2>/dev/null && break
+    grep -q "listening on" "${TMPDIR:-/tmp}/cdp-retry-proxy.log" 2>/dev/null && break
     sleep 0.2
   done
-  if grep -q "listening on" /tmp/cdp-retry-proxy.log 2>/dev/null; then
+  if grep -q "listening on" "${TMPDIR:-/tmp}/cdp-retry-proxy.log" 2>/dev/null; then
     echo "[system] CDP retry proxy up, routing BROWSER_CDP_URL through 127.0.0.1:${CDP_RETRY_PROXY_PORT}"
     BROWSER_CDP_URL="http://127.0.0.1:${CDP_RETRY_PROXY_PORT}"
   else
@@ -188,7 +267,7 @@ setup_mcps() {
 
   setup_cdp_retry_proxy
 
-  local mcp_config="/tmp/mcp-config.json"
+  local mcp_config="${TMPDIR:-/tmp}/mcp-config.json"
   local empty='{}'
   local agent_config="${AGENT_MCP_JSON:-$empty}"
   local session_config="${MCP_SERVERS_JSON:-$empty}"
@@ -347,20 +426,95 @@ run_agent() {
   # backpressure to the agent, and only forgets lines the server acks. With no
   # AGENT_SERVER_URL (the local Docker path) it just passes stdin to stdout.
   # See docker/agent-base/output-stream.js.
-  # `|| true` because this is a log shipper, not the agent. Line 2 sets
-  # `set -e`, and every call site turns pipefail OFF before `agent | log_tee`,
-  # so the pipeline's status is THIS command's. A non-zero exit here therefore
-  # aborted run_agent before `AGENT_EXIT_CODE=${PIPESTATUS[0]}` ran, and the
-  # EXIT trap reported the initial 0 — a failed session posting clean success,
-  # with everything after run_agent skipped.
+  # `exec` so that backgrounding this function yields the NODE pid, not the pid
+  # of a wrapper subshell. That matters twice over: the drain reaper below
+  # signals $! directly, and a wrapper would swallow the signal while node kept
+  # running, orphaned and unreported. (Any trailing command here -- `|| true`
+  # included -- suppresses bash's tail-call exec optimisation and reintroduces
+  # exactly that wrapper, so do not add one.)
   #
-  # It must be inside this function, not `... | log_tee || true` at the call
-  # site: `|| true` there resets PIPESTATUS, so ${PIPESTATUS[0]} reads 0 and
-  # every real agent failure is masked as success. Verified both ways.
-  # PIPESTATUS[0] refers to the agent, the pipeline's FIRST element, so
-  # swallowing this function's own status cannot affect it.
+  # Its non-zero exit no longer needs guarding: run_agent_logged reads the
+  # session's status from the agent's own PID rather than from a pipeline, and
+  # the only `wait` on this pid is already `|| true`. A log shipper that could
+  # not deliver is a degraded session, not a failed agent.
   log_tee() {
-    node /output-stream.js || true
+    exec node /output-stream.js
+  }
+
+  # Run the agent with its output shipped through log_tee, WITHOUT gating the
+  # agent's exit status on the output channel closing.
+  #
+  # The previous form was `agent 2>&1 | log_tee; AGENT_EXIT_CODE=${PIPESTATUS[0]}`.
+  # A shell pipeline only returns once EVERY member exits, and log_tee exits on
+  # EOF — which arrives only when the LAST holder of the pipe's write end closes
+  # it. Any background process the agent spawned (a dev server, a database, a
+  # watcher) inherits that fd and keeps it open after the agent itself is gone.
+  # log_tee then never EOFs, the pipeline never returns, `AGENT_EXIT_CODE=` never
+  # runs, and the EXIT trap never fires — so the session sat "running" until
+  # SESSION_MAX_DURATION (8h) even though the agent had finished its work.
+  # Session 5bd428eb (2026-09-08) wedged exactly this way after the agent started
+  # the local devstack; ports 3000/5173/5432/8181/8333 were still relayed from
+  # the VM with the agent long done. The same shape swallows the status when the
+  # agent is SIGKILLed mid-pipeline (an OOM kill, session f6022f55 the same day).
+  #
+  # Waiting on the agent's own PID decouples the two: its status is available the
+  # moment it exits, whatever else is still holding the fd. Draining is then
+  # bounded separately, so a lingering holder costs LOG_DRAIN_GRACE_SECS rather
+  # than hours.
+  run_agent_logged() {
+    local fifo
+    # On the RAM-backed /tmp this FIFO is the single most damaging thing to lose:
+    # it is the agent's entire stdout/stderr path (see the scratch-space block at
+    # the top of this file). Create it on the big disk with everything else.
+    fifo="$(mktemp -u "${TMPDIR:-/tmp}/agent-out.XXXXXX")"
+    mkfifo "$fifo"
+
+    log_tee < "$fifo" &
+    local tee_pid=$!
+
+    # `<&0` is REQUIRED, not redundant. With job control off -- which it is in
+    # any non-interactive script -- the shell assigns /dev/null to the stdin of
+    # a backgrounded command *unless stdin is explicitly redirected*. Without
+    # `<&0` the agent would read EOF immediately instead of this function's
+    # stdin, so `claude --input-format stream-json` would exit with no turn on
+    # both interactive paths (remote: `< <(node /input-stream.js)` at the call
+    # site; local Docker: ContainerManager.attachStdin). The explicit redirect
+    # suppresses the substitution and the caller's stdin is inherited as
+    # intended.
+    "$@" > "$fifo" 2>&1 <&0 &
+    local agent_pid=$!
+
+    # `|| rc=$?` keeps `set -e` from aborting on a non-zero agent status; the
+    # whole point here is to CAPTURE that status, not die on it.
+    local rc=0
+    wait "$agent_pid" || rc=$?
+    AGENT_EXIT_CODE=$rc
+    AGENT_EXIT_CODE_CAPTURED=1
+
+    # Let the shipper finish delivering what the agent already wrote.
+    #
+    # Note this waits on DELIVERY, not on EOF: output-stream.js keeps retrying
+    # an unacked backlog after stdin ends, and exits either when the server acks
+    # it or when its own 300s budget expires and it posts a give-up marker. Both
+    # of those are self-terminating, so on any path where the agent's output
+    # channel actually closed, the reaper below never fires.
+    #
+    # It fires only when EOF never arrives at all -- a process the agent spawned
+    # still holds the write end -- because that is the one case the shipper
+    # cannot resolve itself. SIGTERM (not KILL) so its handler can report the
+    # condition; KILL after a short margin in case that handler is itself stuck,
+    # since the whole point here is to be bounded.
+    ( sleep "$LOG_DRAIN_GRACE_SECS"
+      echo "[system] output fd still held ${LOG_DRAIN_GRACE_SECS}s after the agent exited — reaping the log shipper; some output may be lost" >&2
+      kill "$tee_pid" 2>/dev/null
+      sleep 10
+      kill -9 "$tee_pid" 2>/dev/null ) &
+    local reaper_pid=$!
+    wait "$tee_pid" 2>/dev/null || true
+    kill "$reaper_pid" 2>/dev/null || true
+    rm -f "$fifo"
+
+    return 0
   }
 
   case "$RUNTIME" in
@@ -394,54 +548,37 @@ run_agent() {
           # status and errors go to stderr. It never exits on its own -- it
           # dies with the VM at teardown -- so claude stdin never sees EOF
           # mid-conversation.
-          set +o pipefail
-          claude -p \
+          run_agent_logged claude -p \
             --input-format stream-json \
             --output-format stream-json \
             --verbose \
             --dangerously-skip-permissions \
             "${mcp_args[@]}" \
-            2>&1 \
-            < <(node /input-stream.js) \
-            | log_tee
-          AGENT_EXIT_CODE=${PIPESTATUS[0]}
-          set -o pipefail
+            < <(node /input-stream.js)
         else
           # Local Docker path: stdin is attached by ContainerManager.attachStdin.
-          set +o pipefail
-          claude -p \
+          run_agent_logged claude -p \
             --input-format stream-json \
             --output-format stream-json \
             --verbose \
             --dangerously-skip-permissions \
-            "${mcp_args[@]}" \
-            2>&1 | log_tee
-          AGENT_EXIT_CODE=${PIPESTATUS[0]}
-          set -o pipefail
+            "${mcp_args[@]}"
         fi
       else
-        set +o pipefail
-        claude -p "$ACTION_PROMPT" \
+        run_agent_logged claude -p "$ACTION_PROMPT" \
           --print \
           --verbose \
           --output-format stream-json \
           --max-turns "$max_turns" \
           --dangerously-skip-permissions \
-          "${mcp_args[@]}" \
-          2>&1 | log_tee
-        AGENT_EXIT_CODE=${PIPESTATUS[0]}
-        set -o pipefail
+          "${mcp_args[@]}"
       fi
       ;;
     codex)
       local approval_mode="${CODEX_APPROVAL_MODE:-full-auto}"
-      set +o pipefail
-      codex \
+      run_agent_logged codex \
         --approval-mode "$approval_mode" \
-        --prompt "$ACTION_PROMPT" \
-        2>&1 | log_tee
-      AGENT_EXIT_CODE=${PIPESTATUS[0]}
-      set -o pipefail
+        --prompt "$ACTION_PROMPT"
       ;;
     custom)
       if [ -z "$CUSTOM_COMMAND" ]; then
@@ -460,10 +597,7 @@ run_agent() {
         echo "[error] CUSTOM_COMMAND is empty after tokenization" >&2
         exit 1
       fi
-      set +o pipefail
-      "${custom_argv[@]}" 2>&1 | log_tee
-      AGENT_EXIT_CODE=${PIPESTATUS[0]}
-      set -o pipefail
+      run_agent_logged "${custom_argv[@]}"
       ;;
   esac
 }

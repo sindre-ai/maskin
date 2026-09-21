@@ -244,13 +244,18 @@ test.describe('Chats v2 — participants popover', () => {
 
 test.describe('Chats v2 — new chat zero state', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`a suggestion prefills the composer without sending at ${vp.label}`, async ({
+		test(`the zero state renders the heading + empty composer at ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			await page.goto(`/${account.workspaceId}/chats/new`)
 
+			// v4 replaces the single "Change who you are talking to" button + the
+			// 6-item suggestion-prompt cluster with the chip picker + RECENT list
+			// (parent bet Chats — v4 UX/UI polish, PR #1603). The suggestion-prefill
+			// flow is deliberately dropped, so this narrows to the two invariants
+			// the v4 zero state still guarantees for every viewport.
 			await expect(page.getByRole('heading', { name: 'What are we working on?' })).toBeVisible({
 				timeout: 15_000,
 			})
@@ -259,20 +264,7 @@ test.describe('Chats v2 — new chat zero state', () => {
 			const composer = page.getByLabel('Message this conversation')
 			await expect(composer).toHaveValue('')
 
-			// The draft header names who the chat is addressed to (mockup 616–623).
-			await expect(
-				page.getByRole('button', { name: /Change who you are talking to/ }),
-			).toBeVisible()
-			// The tagline is the first thing to truncate away in a narrow header.
-			if (vp.width >= 768) {
-				await expect(
-					page.getByText('answers first, hands it on if someone else owns it'),
-				).toBeVisible()
-			}
-
-			await page.getByRole('button', { name: /What needs a decision from me today/ }).click()
-			await expect(composer).toHaveValue('What needs a decision from me today?')
-			// Prefill only — nothing was sent, so we're still on the draft route.
+			// Draft route stays put — nothing has been sent yet.
 			await expect(page).toHaveURL(/\/chats\/new/)
 		})
 	}

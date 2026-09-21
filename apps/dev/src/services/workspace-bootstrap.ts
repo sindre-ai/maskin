@@ -15,6 +15,7 @@ import { applyModuleDefaults } from '@maskin/module-sdk'
 import {
 	CHIEF_OF_STAFF_DEFAULT,
 	DEFAULT_WORKSPACE_AGENTS,
+	DEFAULT_WORKSPACE_KNOWLEDGE,
 	DEFAULT_WORKSPACE_LOOPS,
 	DEFAULT_WORKSPACE_TRIGGERS,
 	type SeedSkill,
@@ -23,7 +24,7 @@ import {
 	skillNameSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { isEnterpriseActor } from '../lib/enterprise'
 import { logger } from '../lib/logger'
@@ -597,6 +598,67 @@ export async function bootstrapDefaultAgents(
 			logger.error('Failed to create default loop during workspace bootstrap', {
 				workspaceId,
 				loopName: loop.name,
+				err,
+			})
+		}
+	}
+
+	// Seed default knowledge objects — the onboarding checklist and any future
+	// template-provisioned knowledge. Idempotent per workspace via
+	// `metadata.seed_slug`, NOT title: a user who renames the checklist in the
+	// UI keeps the same slug and therefore the same row on re-bootstrap, so a
+	// title match would let a rename mint a duplicate that poisons the workspace.
+	// createdBy is chiefId when Chief of Staff exists; the top-level bootstrap
+	// createdBy (the workspace owner) is only used if CoS seeding failed above.
+	for (const seed of DEFAULT_WORKSPACE_KNOWLEDGE) {
+		const [existing] = await db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(
+				and(
+					eq(objects.workspaceId, workspaceId),
+					eq(objects.type, 'knowledge'),
+					sql`${objects.metadata}->>'seed_slug' = ${seed.seedSlug}`,
+				),
+			)
+			.limit(1)
+
+		if (existing) continue
+
+		try {
+			const [created] = await db
+				.insert(objects)
+				.values({
+					workspaceId,
+					type: 'knowledge',
+					title: seed.title,
+					content: seed.body,
+					status: 'draft',
+					createdBy: chiefId ?? createdBy,
+					metadata: { seed_slug: seed.seedSlug },
+				})
+				.returning()
+
+			if (!created) {
+				logger.error('Failed to create default knowledge object during workspace bootstrap', {
+					workspaceId,
+					seedSlug: seed.seedSlug,
+				})
+				continue
+			}
+
+			await db.insert(events).values({
+				workspaceId,
+				actorId: chiefId ?? createdBy,
+				action: 'created',
+				entityType: 'knowledge',
+				entityId: created.id,
+				data: created,
+			})
+		} catch (err) {
+			logger.error('Failed to seed default knowledge during workspace bootstrap', {
+				workspaceId,
+				seedSlug: seed.seedSlug,
 				err,
 			})
 		}

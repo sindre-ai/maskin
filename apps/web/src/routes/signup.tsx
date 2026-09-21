@@ -9,6 +9,16 @@ import { Link, createFileRoute } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 
 export const Route = createFileRoute('/signup')({
+	head: () => ({
+		meta: [
+			{ title: 'Sign up for Maskin — Open-source AI-native workspace' },
+			{
+				name: 'description',
+				content:
+					'Create your free Maskin workspace. Open-source, MCP-native workspace where humans and agents ship bets together.',
+			},
+		],
+	}),
 	component: SignupPage,
 })
 

@@ -1,11 +1,11 @@
 # Protected paths for the `risk-classifier` skill (packages/risk-classifier).
 #
 # Any file in a PR diff matching one of these globs floors the score to 100
-# (TWO-HUMAN REQUIRED), overriding the additive signal sum — see "Apply the
+# (HUMAN REVIEW REQUIRED), overriding the additive signal sum — see "Apply the
 # floors" in the risk-classifier skill and R1 in the risk-gate skill.
 #
 # This file is itself a protected path (see the last entry below) — edits
-# here are always two-human PRs, per the classifier's own rule.
+# here are always human-review PRs, per the classifier's own rule.
 #
 # Glob syntax: `**` matches any characters including `/`, `*` matches within
 # a path segment, `?` matches one character. Patterns are anchored at both

@@ -14,13 +14,46 @@ import { and, eq, sql } from 'drizzle-orm'
 import type Stripe from 'stripe'
 import { isEnterprise } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
+
+/**
+ * Is this subscription the LinkedIn add-on's own, rather than the workspace
+ * plan's? Two independent signals, either sufficient:
+ *
+ *   - its price is the configured add-on price, or
+ *   - its id already matches the add-on subscription id we stored.
+ *
+ * Two, because each covers the other's blind spot. The price check fails if
+ * `STRIPE_PRICE_LINKEDIN_IDENTITY` is rotated or unset in this environment;
+ * the stored-id check fails on `customer.subscription.created`, which is the
+ * first time we ever see the id. Getting this wrong in the false-negative
+ * direction is the dangerous one: an add-on event treated as a plan event
+ * rewrites the workspace's plan, cap and period.
+ */
+function isAddonSubscription(
+	sub: { id: string; metadata?: Record<string, string> | null },
+	priceId: string | null,
+	billing: { linkedin_addon_subscription_id?: string | null },
+	env: StripeEnv,
+): boolean {
+	if (sub.metadata?.kind === LINKEDIN_ADDON_METADATA_KIND) return true
+	if (isLinkedInAddonPrice(priceId, env)) return true
+	return Boolean(
+		billing.linkedin_addon_subscription_id && billing.linkedin_addon_subscription_id === sub.id,
+	)
+}
+
+import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { creditedAmountUsdMinor } from '../lib/credit-billing'
 import { billingAfterCancel, settingsAfterPaidPlanActivation } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import {
 	CREDIT_TOPUP_METADATA_KIND,
+	LINKEDIN_ADDON_METADATA_KIND,
+	assertCreditsCurrency,
 	getStripeClient,
 	hardCapForPlan,
 	isHandledStripeEvent,
+	isLinkedInAddonPrice,
 	mapSubscriptionStatus,
 	planForPriceId,
 	priceIdFromSubscription,
@@ -29,6 +62,7 @@ import {
 	verifyStripeWebhook,
 } from '../lib/stripe'
 import type { StripeEnv } from '../lib/stripe'
+import { applyVatEventIfHandled, resolveDisputeWorkspaceId } from '../lib/vat-webhook'
 
 const STRIPE_SYSTEM_ACTOR_NAME = 'Stripe'
 
@@ -81,7 +115,7 @@ app.post('/', async (c) => {
 		return c.json({ ok: true, skipped: true, reason: 'unhandled_event_type' })
 	}
 
-	const workspaceId = await resolveWorkspaceId(c.get('db'), event)
+	const workspaceId = await resolveWorkspaceId(c.get('db'), event, stripe)
 	if (!workspaceId) {
 		// We can't link this back to a workspace. Acknowledge so Stripe stops
 		// retrying - silent retries on orphaned events are noise, not a bug.
@@ -133,7 +167,7 @@ app.post('/', async (c) => {
 	}
 
 	try {
-		await applyEvent(db, workspaceId, event, stripeEnv)
+		await applyEvent(db, workspaceId, event, stripeEnv, stripe)
 		if (claimRowId) {
 			// Mark the claim processed so the reconciler doesn't release it after the
 			// 15m stale threshold. Without this, every successful Stripe delivery
@@ -187,9 +221,23 @@ app.post('/', async (c) => {
 	}
 })
 
-async function resolveWorkspaceId(db: Database, event: Stripe.Event): Promise<string | null> {
+async function resolveWorkspaceId(
+	db: Database,
+	event: Stripe.Event,
+	stripe: Stripe,
+): Promise<string | null> {
 	const direct = resolveWorkspaceIdFromEvent(event)
 	if (direct) return direct
+
+	// `charge.dispute.created` carries a Dispute object, which references
+	// a Charge on its `charge` field, not a Customer. The generic customer
+	// extractor below returns null on this shape, which — before this
+	// branch existed — sent every dispute out as `no_workspace` and Delta 5
+	// silently died. Resolve customer via a `charges.retrieve` before
+	// falling through. (CTO deliverability review fix #2, 10 Sep 2026.)
+	if (event.type === 'charge.dispute.created') {
+		return await resolveDisputeWorkspaceId(db, event, stripe)
+	}
 
 	// Fallback: look up by stripe_customer_id stored on settings.billing.
 	// Subscription / invoice events don't always carry metadata, but they
@@ -219,7 +267,21 @@ async function applyEvent(
 	workspaceId: string,
 	event: Stripe.Event,
 	stripeEnv: StripeEnv,
+	stripe: Stripe,
 ): Promise<void> {
+	// VAT-correct-checkout bet (Delta 2 + 2a + Delta 5). Dispatched BEFORE
+	// the workspace transaction below:
+	//   • `customer.tax_id.*` and `charge.dispute.created` mutate their own
+	//     tables (or nothing) — they do not need the `workspaces` row lock.
+	//   • `checkout.session.completed` may need the guard's short-circuit
+	//     branches (pending → UPSERT `awaiting_vies`, unverified → void)
+	//     to complete before falling through. `handled: false` means the
+	//     guard decided "fulfil now" and the existing switch below owns
+	//     the mutation. When the flag is off, the helper returns
+	//     `{ handled: false }` for `checkout.session.completed` unchanged.
+	const vatDispatch = await applyVatEventIfHandled(db, workspaceId, event, stripe)
+	if (vatDispatch.handled) return
+
 	// Concurrent webhook deliveries on the same workspace each do a
 	// SELECT -> mutate JSON -> UPDATE. Without serialization, a later writer
 	// that read before an earlier writer's UPDATE silently clobbers fields
@@ -261,6 +323,27 @@ async function applyEvent(
 		switch (event.type) {
 			case 'checkout.session.completed': {
 				const session = event.data.object as Stripe.Checkout.Session
+				// Delta 4: checkout_session_completed PostHog event fires on every
+				// session.completed, closing the checkout-regression blind spot for
+				// this and every future bet. `awaiting_vies` is always false at
+				// Task 1's scope — Task 2 (VAT webhook state machine) wires the
+				// held branch and flips this to true when the fresh customers.retrieve
+				// guard finds a pending tax_id. Distinct id = customer id when the
+				// session carries one, otherwise the session id itself so a
+				// customerless session (first-time buyer before Stripe mints one) still
+				// captures. Fire-and-forget; capturePosthogEvent never throws.
+				const posthogDistinctId =
+					(typeof session.customer === 'string' ? session.customer : session.customer?.id) ??
+					session.id
+				await capturePosthogEvent('checkout_session_completed', posthogDistinctId, {
+					session_id: session.id,
+					mode: session.mode ?? null,
+					amount_total: session.amount_total ?? null,
+					currency: session.currency ?? null,
+					// Task 1 scope: always false. Task 2 will re-fire this event from
+					// the held-branch write site with awaiting_vies=true.
+					awaiting_vies: false,
+				})
 				if (session.mode === 'payment' && session.metadata?.kind === CREDIT_TOPUP_METADATA_KIND) {
 					// Prepaid usage-credits top-up: money has already been captured
 					// by Stripe — credit the balance unconditionally (eligibility
@@ -269,16 +352,35 @@ async function applyEvent(
 					// touch plan/status/period_* — only `next.credit_balance_cents`
 					// changes here, so this intentionally never falls into the
 					// subscription-shaped mutation below.
-					const amountCents = Number(
+					//
+					// Currency contract (CTO pre-merge fix #4, 10 Sep 2026):
+					// `session.metadata.amount_usd_cents` is a legacy field name —
+					// its value is minor units in `session.currency` (USD/EUR/DKK),
+					// NOT USD minor. We normalize here so a DKK 349 payment credits
+					// ~$50 in USD cents into `credit_balance_cents` (which is USD
+					// cents), and apply the volume-bonus tier at ledger-write per
+					// Won criterion (e). For a USD top-up normalize is identity —
+					// the only new behaviour there is that a USD top-up ≥ $250 now
+					// gets the Growth/Scale bonus it always should have.
+					const amountMinor = Number(
 						session.metadata?.amount_usd_cents ?? session.amount_total ?? Number.NaN,
 					)
-					if (!Number.isFinite(amountCents) || amountCents <= 0) {
+					if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
 						logger.error('Credit top-up checkout.session.completed with invalid amount', {
 							sessionId: session.id,
 							workspaceId,
 						})
 						break
 					}
+					const rawCurrency = session.currency ?? 'usd'
+					const currency = assertCreditsCurrency(rawCurrency)
+					if (!currency) {
+						logger.warn(
+							'Credit top-up checkout.session.completed with unrecognized currency — falling back to usd (raw minor units credited unchanged)',
+							{ sessionId: session.id, workspaceId, currency: rawCurrency },
+						)
+					}
+					const amountCents = creditedAmountUsdMinor(amountMinor, currency ?? 'usd')
 					const currentBalance =
 						typeof current.credit_balance_cents === 'number' && current.credit_balance_cents > 0
 							? current.credit_balance_cents
@@ -325,6 +427,19 @@ async function applyEvent(
 
 					next = { ...next, credit_balance_cents: balanceAfter }
 
+					// Persist the Stripe customer this top-up ran against when the
+					// workspace doesn't have one yet. A first-time buyer (typically a
+					// trial workspace topping up straight from the NO CREDITS prompt)
+					// arrives with `customer` unset, so Checkout mints one; without
+					// recording it here every later checkout would mint another and
+					// our customer→workspace map would drift. Deliberately additive:
+					// plan/status/period_* stay untouched on this path.
+					const topUpCustomerId =
+						typeof session.customer === 'string' ? session.customer : (session.customer?.id ?? null)
+					if (topUpCustomerId && !next.stripe_customer_id) {
+						next = { ...next, stripe_customer_id: topUpCustomerId }
+					}
+
 					const systemActorId = await getOrCreateStripeSystemActor(tx, workspaceId)
 					await tx.insert(events).values({
 						workspaceId,
@@ -346,6 +461,20 @@ async function applyEvent(
 						: (session.subscription?.id ?? null)
 				const customerId =
 					typeof session.customer === 'string' ? session.customer : (session.customer?.id ?? null)
+				if (session.metadata?.kind === LINKEDIN_ADDON_METADATA_KIND) {
+					// The LinkedIn add-on's OWN subscription (trial workspaces, which
+					// have no plan subscription to hang an item on). It must never
+					// touch plan/status/period_* — writing `stripe_subscription_id`
+					// here would make a $49 add-on look like the workspace's plan,
+					// and `settingsAfterPaidPlanActivation` would then grant
+					// maskin_plan LLM routing to a workspace that never bought it.
+					next = {
+						...next,
+						stripe_customer_id: customerId ?? next.stripe_customer_id,
+						linkedin_addon_subscription_id: subscriptionId ?? next.linkedin_addon_subscription_id,
+					}
+					break
+				}
 				// Clear stale period bounds so the billing route's fallback shows a
 				// future reset time while we wait for customer.subscription.created to
 				// arrive with the real Stripe period. Only clear when period_end is
@@ -368,6 +497,19 @@ async function applyEvent(
 			case 'customer.subscription.updated': {
 				const sub = event.data.object as Stripe.Subscription
 				const priceId = priceIdFromSubscription(sub)
+				if (isAddonSubscription(sub, priceId, next, stripeEnv)) {
+					// Add-on subscription, not the plan. Record its ids and stop:
+					// falling through would set `plan` from a null lookup, reset
+					// `hard_cap_usd_cents`, and overwrite the plan's period bounds
+					// with the add-on's — silently changing what the workspace is
+					// entitled to because it connected LinkedIn.
+					next = {
+						...next,
+						linkedin_addon_subscription_id: sub.id,
+						linkedin_addon_item_id: sub.items?.data?.[0]?.id ?? next.linkedin_addon_item_id,
+					}
+					break
+				}
 				const plan = priceId ? planForPriceId(priceId, stripeEnv) : null
 				planMutated = true
 				next = {
@@ -386,6 +528,18 @@ async function applyEvent(
 			}
 			case 'customer.subscription.deleted': {
 				const sub = event.data.object as Stripe.Subscription
+				if (isAddonSubscription(sub, priceIdFromSubscription(sub), next, stripeEnv)) {
+					// Cancelling the $49 add-on is not cancelling the plan. Without
+					// this guard `billingAfterCancel` would run and drop a paying
+					// workspace to trial (or enterprise) because it disconnected
+					// its last LinkedIn identity.
+					next = {
+						...next,
+						linkedin_addon_subscription_id: null,
+						linkedin_addon_item_id: null,
+					}
+					break
+				}
 				planMutated = true
 				// `plan: 'enterprise'` is NOT safe to write unconditionally here.
 				// It sits at the top of PLAN_TIER_ORDER with null (unlimited)

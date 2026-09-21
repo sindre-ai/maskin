@@ -3,7 +3,9 @@ import type {
 	ActorResponse,
 	AgentState,
 	DisplaySettingsBody,
+	ListLoopStepsResponse,
 	ListLoopsResponse,
+	LoopStep,
 	LoopSummary,
 	SafeMetadata,
 	TriggerResponse,
@@ -14,7 +16,9 @@ export type {
 	ActorResponse,
 	AgentState,
 	DisplaySettingsBody,
+	ListLoopStepsResponse,
 	ListLoopsResponse,
+	LoopStep,
 	LoopSummary,
 	TriggerResponse,
 }
@@ -268,6 +272,13 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		// Server-persisted star toggles (D5). Idempotent on both sides, no body,
+		// actor derived from the API key. Response carries the resulting scalar
+		// so an optimistic update can drop stale state on mismatch.
+		star: (id: string, workspaceId: string) =>
+			request<StarToggleResponse>(`/objects/${id}/star`, { method: 'POST', workspaceId }),
+		unstar: (id: string, workspaceId: string) =>
+			request<StarToggleResponse>(`/objects/${id}/star`, { method: 'DELETE', workspaceId }),
 	},
 
 	auth: {
@@ -400,6 +411,8 @@ export const api = {
 		list: (workspaceId: string) => request<ListLoopsResponse>('/loops', { workspaceId }),
 		activity: (id: string, workspaceId: string) =>
 			request<{ events: EventResponse[] }>(`/loops/${id}/activity`, { workspaceId }),
+		steps: (id: string, workspaceId: string) =>
+			request<ListLoopStepsResponse>(`/loops/${id}/steps`, { workspaceId }),
 	},
 
 	triggers: {
@@ -477,6 +490,10 @@ export const api = {
 		},
 		slackUsers: (id: string, workspaceId: string) =>
 			request<SlackUser[]>(`/integrations/${id}/slack/users`, { workspaceId }),
+		linkedinIdentities: (workspaceId: string) =>
+			request<LinkedInIdentitySummary[]>('/integrations/linkedin-unipile/identities', {
+				workspaceId,
+			}),
 	},
 
 	notifications: {
@@ -610,12 +627,21 @@ export const api = {
 		status: (workspaceId: string) =>
 			request<ClaudeOAuthStatusResponse>('/claude-oauth/status', { workspaceId }),
 		disconnect: (workspaceId: string, slot?: ClaudeOAuthSlot) =>
-			request<{ success: boolean }>(slot ? `/claude-oauth?slot=${slot}` : '/claude-oauth', {
-				method: 'DELETE',
-				workspaceId,
-			}),
+			request<{ success: boolean }>(
+				slot ? `/claude-oauth?slot=${encodeURIComponent(slot)}` : '/claude-oauth',
+				{
+					method: 'DELETE',
+					workspaceId,
+				},
+			),
 		swap: (workspaceId: string) =>
 			request<{ success: boolean }>('/claude-oauth/swap', { method: 'POST', workspaceId }),
+		promote: (workspaceId: string, slot: ClaudeOAuthSlot) =>
+			request<{ success: boolean }>('/claude-oauth/promote', {
+				method: 'POST',
+				body: { slot },
+				workspaceId,
+			}),
 		rename: (workspaceId: string, slot: ClaudeOAuthSlot, nickname: string) =>
 			request<{ success: boolean }>('/claude-oauth/nickname', {
 				method: 'PATCH',
@@ -956,13 +982,25 @@ export const api = {
 	},
 }
 
-export type ClaudeOAuthSlot = 'primary' | 'backup'
+/**
+ * A slot id — a position in the workspace's Claude failover chain. The first
+ * two keep their historical names (`primary`, `backup`); the rest are
+ * `slot_3` … `slot_10`. Iterate `ClaudeOAuthStatusResponse.chain` rather than
+ * assuming which ids exist.
+ */
+export type ClaudeOAuthSlot = string
 
 export interface ClaudeOAuthSlotInfo {
+	slot: ClaudeOAuthSlot
+	/** Position in the failover chain — 0 is the one sessions try first. */
+	position: number
 	subscription_type?: string
 	expires_at: number
 	fingerprint?: string
 	nickname?: string
+	/** When this subscription was last rejected, and the classified reason. */
+	failure_at?: number
+	failure_reason?: string
 }
 
 export interface ClaudeOAuthExchangeResponse {
@@ -978,10 +1016,11 @@ export interface ClaudeOAuthStatusResponse {
 	subscription_type?: string
 	expires_at?: number
 	valid: boolean
-	slots: {
-		primary?: ClaudeOAuthSlotInfo
-		backup?: ClaudeOAuthSlotInfo
-	}
+	/** Per-slot info keyed by slot id; `chain` gives the failover order. */
+	slots: Record<string, ClaudeOAuthSlotInfo | undefined>
+	chain: ClaudeOAuthSlot[]
+	/** How many more subscriptions this workspace can connect. */
+	slots_remaining: number
 	active_slot: ClaudeOAuthSlot
 	last_primary_failure_at?: number
 	last_classified_reason?: string
@@ -995,7 +1034,8 @@ export interface ClaudeOAuthImportInput {
 	expiresAt: number
 	subscriptionType?: string
 	scopes?: string[]
-	slot?: ClaudeOAuthSlot
+	/** A slot id to overwrite, or `new` to append to the chain. */
+	slot?: ClaudeOAuthSlot | 'new'
 	nickname?: string
 }
 
@@ -1019,6 +1059,12 @@ export interface BillingBuyCreditsInput {
 	cancel_url: string
 }
 
+export interface LinkedInIdentityAddonLine {
+	count: number
+	unit_price_usd_cents: number
+	monthly_total_usd_cents: number
+}
+
 export interface BillingUsageResponse {
 	plan: BillingPlan
 	status: BillingStatus
@@ -1031,6 +1077,13 @@ export interface BillingUsageResponse {
 	stripe_customer_id: string | null
 	stripe_subscription_id: string | null
 	credit_balance_cents: number
+	// $49/connected LinkedIn identity/month, shown as its own SKU on the plan
+	// surface — see apps/dev/src/lib/linkedin-addon.ts. Null when the caller's
+	// `linkedin-addon-visible` flag is off OR the workspace has no connected
+	// linkedin-unipile credentials. Deliberately separate from
+	// `credit_balance_cents` and `usd_cents_used`: connectivity and inference
+	// are billed as distinct lines.
+	linkedin_identity_addon: LinkedInIdentityAddonLine | null
 }
 
 // Types derived from backend response schemas
@@ -1044,6 +1097,14 @@ export interface ObjectResponse {
 	metadata: SafeMetadata | null
 	driver: string | null
 	activeSessionId: string | null
+	// D2 · Working-ring predicate. Lifecycle state of the session pointed at by
+	// `activeSessionId`, hydrated by a bounded batch lookup on list/detail so
+	// the row can gate the ring on 'running' only — `activeSessionId` stays
+	// non-null through pending/starting/paused, which would flicker the ring.
+	// `null` when there is no active session, `undefined` on legacy list
+	// surfaces (e.g. board) that don't hydrate it — clients read both as "no
+	// ring".
+	active_session_state?: string | null
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
@@ -1051,6 +1112,16 @@ export interface ObjectResponse {
 	is_subscribed?: boolean
 	unread_count?: number
 	subscriber_count?: number
+	// Per-viewer starred flag. The list handler + detail + graph hydrate it via
+	// a single secondary query (see `star-state` service on the backend). Other
+	// endpoints — create / update / verify / undo-write / bulk — omit it, so
+	// the field is optional here and every reader defaults to `false`.
+	is_starred_by_me?: boolean
+}
+
+export interface StarToggleResponse {
+	is_starred_by_me: boolean
+	starred_at: string | null
 }
 
 export interface BoardObjectColumn {
@@ -1337,6 +1408,9 @@ export interface IntegrationResponse {
 	status: string
 	externalId: string | null
 	config: Record<string, unknown>
+	/** The member this install belongs to, for actor-scoped providers
+	 *  (linkedin-unipile). Null for workspace-wide providers like GitHub. */
+	actorId: string | null
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
@@ -1374,6 +1448,13 @@ export interface ProviderInfo {
 	authType: 'oauth2' | 'oauth2_custom' | 'api_key' | 'manual'
 	events: ProviderEventDefinition[]
 	externalIdDisplay?: 'email' | 'installation'
+	mcp?: {
+		envKey: string
+		autoInject: boolean
+		server?:
+			| { type: 'stdio'; command: string; args: string[]; env?: Record<string, string> }
+			| { type: 'http'; url: string; headers?: Record<string, string> }
+	}
 }
 
 export interface SlackConversation {
@@ -1391,6 +1472,22 @@ export interface SlackUser {
 	name: string
 	real_name: string
 	is_bot: boolean
+}
+
+/**
+ * One connected LinkedIn identity (personal profile OR admined company page)
+ * for a workspace. Rendered by the agent MCP panel as one Quick Add button
+ * per row — clicking writes an mcpServers entry keyed on `instanceSlug` that
+ * points at `/api/integrations/linkedin-unipile/mcp/${instanceSlug}`, so only
+ * this identity's tools land on the agent.
+ */
+export interface LinkedInIdentitySummary {
+	instanceSlug: string
+	displayName: string
+	identityType: 'personal' | 'company_page'
+	identitySlug: string
+	unipileAccSlug: string
+	integrationId: string
 }
 
 export interface NotificationResponse {
@@ -1571,6 +1668,12 @@ export interface ConversationDetailResponse {
 	pinned: boolean
 	archived: boolean
 	last_read_message_id: number | null
+	// The loop this conversation belongs to, when it was started inside a loop
+	// (Loop chip in the thread header links to it). Server-side field is not
+	// wired yet; the frontend treats `null`/`undefined` as "no loop" and renders
+	// no chip, so the payload can start emitting it without a client-side
+	// change.
+	loop_id?: string | null
 	participants: ConversationParticipantResponse[]
 }
 
@@ -1706,6 +1809,7 @@ export interface UpdateConversationParticipantStateInput {
 	pinned?: boolean
 	archived?: boolean
 	last_read_message_id?: number
+	mark_unread?: boolean
 }
 
 export interface PostMessageInput {

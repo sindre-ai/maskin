@@ -172,4 +172,16 @@ describe('ObjectDetailShell', () => {
 		fireEvent.click(toggle)
 		expect(toggle).toHaveAttribute('aria-expanded', 'true')
 	})
+
+	// D6: the meta row's PAUSED · NO CREDITS chip only shows up when the
+	// workspace-scoped `useUsageState()` returns `credits_state === 'empty'`.
+	// The default mocks resolve `useBillingUsage` to undefined data, so
+	// `useUsageState` never fires — the chip is absent by construction.
+	it('omits the PAUSED · NO CREDITS chip by default', () => {
+		const object = buildObjectResponse({ type: 'bet' })
+		render(<ObjectDetailShell object={object} />, {
+			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
+		})
+		expect(screen.queryByText(/NO CREDITS/)).toBeNull()
+	})
 })

@@ -6,6 +6,7 @@ import { Cron } from 'croner'
 import { and, asc, count, desc, eq } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import {
 	errorSchema,
 	idParamSchema,
@@ -13,7 +14,9 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { removeTriggerMetadataKey } from '../lib/trigger-metadata'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import { extractSlackChannelIds, runSlackTriggerSetup } from '../services/slack-trigger-setup'
 
 type Env = {
 	Variables: {
@@ -24,6 +27,51 @@ type Env = {
 }
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
+
+/**
+ * Kick off the Slack trigger setup service after the DB commit — never inside
+ * the transaction (spec §2). `row.type !== 'event'` excludes cron and reminder
+ * triggers; `extractSlackChannelIds` returning an empty array excludes every
+ * other event trigger, since only Slack ones carry `event.channel` /
+ * `event.item.channel` conditions.
+ *
+ * The one case where an empty channel list still runs: a trigger that already
+ * has `metadata.slack_setup`. That is a Slack trigger whose last channel was
+ * just removed, and the service needs to run to clear the outcomes the form
+ * would otherwise keep showing.
+ *
+ * Gated behind `slack-setup-ux-v2` per spec §10 rollout — flag OFF = today's
+ * behaviour (no join, no confirmation, no metadata write).
+ */
+function kickOffSlackSetup(
+	db: Database,
+	actorId: string,
+	row: {
+		id: string
+		workspaceId: string
+		name: string
+		type: string
+		config: unknown
+		metadata?: unknown
+	},
+): void {
+	if (row.type !== 'event') return
+	if (!isFlagEnabled(actorId, FLAGS.SLACK_SETUP_UX_V2)) return
+	const channelIds = extractSlackChannelIds(row.config as Record<string, unknown> | null)
+	const hasStaleSetup =
+		(row.metadata as Record<string, unknown> | null | undefined)?.slack_setup !== undefined
+	if (channelIds.length === 0 && !hasStaleSetup) return
+	// Fire-and-forget — the route response is what the frontend awaits, not the
+	// setup outcome. `runSlackTriggerSetup` swallows its own errors so a
+	// rejected promise here would be a runtime bug, not a Slack API failure.
+	void runSlackTriggerSetup(db, {
+		triggerId: row.id,
+		workspaceId: row.workspaceId,
+		channelIds,
+		triggerName: row.name,
+		actorId,
+	})
+}
 
 // POST /api/triggers
 const createTriggerRoute = createRoute({
@@ -102,6 +150,11 @@ app.openapi(createTriggerRoute, async (c) => {
 
 		return row
 	})
+
+	// Post-commit — the transaction is done, the row exists. Kick off the
+	// Slack setup service (join channels + post confirmations) if the trigger
+	// is Slack-shaped. Never blocks the response.
+	kickOffSlackSetup(db, actorId, created)
 
 	return c.json(serialize(created) as z.infer<typeof triggerResponseSchema>, 201)
 })
@@ -275,6 +328,23 @@ app.openapi(updateTriggerRoute, (async (c) => {
 	if (body.target_actor_id) updateData.targetActorId = body.target_actor_id
 	if (body.enabled !== undefined) updateData.enabled = body.enabled
 
+	// PR D — Slack auto-resume. When the resume UX flips a trigger back on it
+	// also passes `clear_auto_paused: true` so the row's `metadata.auto_paused`
+	// is REMOVED (not just skipped). Removal matters: PR C's
+	// `handleMemberLeftChannel` stamps a fresh `previous_enabled` on the next
+	// kick, and a stale `auto_paused` object would keep the red banner
+	// rendering even after the trigger is re-enabled. Sibling metadata keys
+	// (notably PR B's `slack_setup`) are preserved by picking off only
+	// `auto_paused` from the existing object. Safe when metadata is null/empty.
+	if (body.clear_auto_paused === true) {
+		// Removal happens in SQL (`metadata - 'auto_paused'`, see
+		// `lib/trigger-metadata.ts`) rather than as a spread of the `trigger` row
+		// read before the transaction — that read is already stale by the time
+		// the UPDATE runs, so spreading it would clobber a `slack_setup` written
+		// by the in-flight setup service.
+		updateData.metadata = removeTriggerMetadataKey('auto_paused')
+	}
+
 	const updated = await db.transaction(async (tx) => {
 		const [row] = await tx.update(triggers).set(updateData).where(eq(triggers.id, id)).returning()
 		if (!row) return null
@@ -292,6 +362,12 @@ app.openapi(updateTriggerRoute, (async (c) => {
 	})
 
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Trigger not found'), 404)
+
+	// Post-commit — same rules as create. Fires when the PATCH touched
+	// `config` (channel list may have changed) or `name` (confirmation copy
+	// uses the trigger name). Body.enabled toggles don't need a re-run, but
+	// we skip via the empty-channel-list short-circuit anyway.
+	kickOffSlackSetup(db, actorId, updated)
 
 	return c.json(serialize(updated) as z.infer<typeof triggerResponseSchema>)
 }) as RouteHandler<typeof updateTriggerRoute, Env>)

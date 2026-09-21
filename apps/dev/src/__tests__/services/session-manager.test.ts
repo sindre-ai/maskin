@@ -226,6 +226,35 @@ describe('SessionManager', () => {
 			).rejects.toThrow('Failed to create session')
 		})
 
+		it('persists triggerSource + sourceCommentEventId onto session.config so trackAgentSessionStartedWithPrompt can read them at launch (always-a-responder wiring)', async () => {
+			// End-to-end contract check for the fallback ladder: the comment
+			// resolver passes triggerSource + sourceCommentEventId to createSession,
+			// which must persist them onto session.config so startSession's
+			// `trackAgentSessionStartedWithPrompt` picks them up on the reload
+			// path. If the key shape drifts here, PostHog stops receiving
+			// trigger_source / source_comment_event_id and the funnel can't
+			// attribute launches to the fallback path.
+			const session = buildSession({ status: 'pending' })
+			mockResults.insertQueue = [[session], []]
+
+			await manager.createSession('ws-1', {
+				actorId: 'actor-1',
+				actionPrompt: 'Reply to the comment',
+				createdBy: 'creator-1',
+				autoStart: false,
+				triggerSource: 'comment_fallback',
+				sourceCommentEventId: 9001,
+			})
+
+			const sessionInsert = calls.inserts.find((row) => {
+				if (typeof row !== 'object' || row === null || !('config' in row)) return false
+				const cfg = (row as { config?: Record<string, unknown> }).config
+				return cfg?.trigger_source === 'comment_fallback'
+			}) as { config: { trigger_source: string; source_comment_event_id: number } } | undefined
+			expect(sessionInsert?.config.trigger_source).toBe('comment_fallback')
+			expect(sessionInsert?.config.source_comment_event_id).toBe(9001)
+		})
+
 		it('rejects pre-insert when the workspace is over its plan cap', async () => {
 			// Workspace select returns a pro plan at cap; the cap query then
 			// returns rows whose reported dollar cost sums to ≥ hard_cap_usd_cents.
@@ -1169,6 +1198,130 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('buildLaunchSpec() — persists model_name + llm_route on maskin_plan dispatch', () => {
+		// Foundational task for the session-cost accounting bet: every maskin_plan
+		// session must land with `sessions.model_name` non-null (the OpenRouter
+		// model that actually ran) and `sessions.config.llm_route = 'maskin_plan'`
+		// so the follow-on local cost resolver has the fields it needs. claude_oauth
+		// dispatches leave `model_name` null — Claude Code's own `total_cost_usd`
+		// stays ground truth there.
+
+		const savedEnv: Record<string, string | undefined> = {}
+		const trackedEnvKeys = [
+			'MASKIN_FALLBACK_OPENROUTER_KEY',
+			'MASKIN_FALLBACK_BASE_URL',
+			'MASKIN_FALLBACK_MODEL',
+			'MASKIN_FALLBACK_SMALL_MODEL',
+		] as const
+
+		beforeEach(() => {
+			vi.clearAllMocks()
+			for (const key of trackedEnvKeys) {
+				savedEnv[key] = process.env[key]
+			}
+			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-test'
+			process.env.MASKIN_FALLBACK_BASE_URL = 'https://openrouter.ai/api'
+			process.env.MASKIN_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash'
+		})
+		afterEach(() => {
+			for (const key of trackedEnvKeys) {
+				if (savedEnv[key] === undefined) {
+					delete process.env[key]
+				} else {
+					process.env[key] = savedEnv[key]
+				}
+			}
+		})
+
+		function testAgent(actorId: string) {
+			return {
+				id: actorId,
+				type: 'agent' as const,
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+		}
+
+		it('writes model_name = MASKIN_FALLBACK_MODEL and config.llm_route = "maskin_plan" for a pro-plan workspace with no BYO credentials', async () => {
+			const session = buildSession({ status: 'pending', interactive: false, config: {} })
+			const agent = testAgent(session.actorId)
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: false,
+				billingOwnerId: null,
+				settings: { billing: { plan: 'pro', hard_cap_usd_cents: 1000, period_start: 0 } },
+			}
+
+			mockResults.selectQueue = [
+				[agent], // buildLaunchSpec: agent lookup
+				[workspace], // buildLaunchSpec: workspace lookup
+				[], // resolveLlmRoute -> checkPlanCap -> getWorkspacePlanUsdCentsUsage
+				[], // buildLaunchSpec: integrations lookup (GitHub auto-inject)
+			]
+
+			await manager.buildLaunchSpec(
+				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
+			)
+
+			const routeUpdate = calls.updates.find(
+				(u): u is { config?: { llm_route?: string }; modelName?: string } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'modelName' in u &&
+					(u as { modelName?: unknown }).modelName === 'deepseek/deepseek-v4-flash',
+			)
+			expect(routeUpdate).toBeDefined()
+			expect(routeUpdate?.modelName).toBe('deepseek/deepseek-v4-flash')
+			expect(routeUpdate?.config?.llm_route).toBe('maskin_plan')
+		})
+
+		it('does NOT write model_name on a non-maskin_plan route (leaves the column null for claude_oauth / BYO paths)', async () => {
+			// A workspace-anthropic-key path resolves to LLM_ROUTE_API_KEY, not
+			// maskin_plan. The dispatch write path must still stamp
+			// config.llm_route so quota queries can find the session, but must
+			// leave sessions.model_name null — Claude Code's `total_cost_usd`
+			// is ground truth for every non-maskin_plan route.
+			const session = buildSession({ status: 'pending', interactive: false, config: {} })
+			const agent = testAgent(session.actorId)
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				billingOwnerId: null,
+				settings: { llm_keys: { anthropic: 'sk-ant-test-ws' } },
+			}
+
+			mockResults.selectQueue = [
+				[agent], // buildLaunchSpec: agent lookup
+				[workspace], // buildLaunchSpec: workspace lookup
+				[workspace], // resolveLlmRoute -> resolveClaudeCredentialsWithFailover: workspace lookup
+				[], // buildLaunchSpec: integrations lookup
+			]
+
+			await manager.buildLaunchSpec(
+				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
+			)
+
+			// No update ever carries a modelName on this route.
+			for (const u of calls.updates) {
+				if (typeof u === 'object' && u !== null && 'modelName' in u) {
+					expect((u as { modelName?: unknown }).modelName).toBeUndefined()
+				}
+			}
+			// But config.llm_route IS stamped — that path is unchanged from before.
+			const routeUpdate = calls.updates.find(
+				(u): u is { config?: { llm_route?: string } } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'config' in u &&
+					typeof (u as { config?: { llm_route?: unknown } }).config?.llm_route === 'string',
+			)
+			expect(routeUpdate?.config?.llm_route).toBe('workspace_api_key')
+		})
+	})
+
 	describe('cleanupBrowserSidecar() — teardown SLA (AC-T5)', () => {
 		// Access the private map + method through a structural cast so the test
 		// can exercise the orchestration without standing up the whole
@@ -1622,6 +1775,115 @@ describe('SessionManager', () => {
 						)
 					: []
 				expect(mcpKeys).not.toContain('integration-slack')
+			})
+		})
+
+		describe('linkedin-unipile auto-inject — envKey-independent server', () => {
+			// The linkedin-unipile provider's stored credential blob is `{ account_id }`
+			// with no accessToken; tokenManager.getValidToken throws `has no access
+			// token` on that shape. Because its auto-injected HTTP MCP server
+			// authenticates on `${MASKIN_API_KEY}` and never references
+			// `${LINKEDIN_UNIPILE_TOKEN}`, session-manager must still inject the
+			// server without a resolved per-provider token. P3-F fix.
+			const linkedinProviderConfig = {
+				config: {
+					name: 'linkedin-unipile',
+					mcp: {
+						envKey: 'LINKEDIN_UNIPILE_TOKEN',
+						autoInject: true,
+						server: {
+							type: 'http' as const,
+							url: '${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp',
+							headers: {
+								Authorization: 'Bearer ${MASKIN_API_KEY}',
+								'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+							},
+						},
+					},
+				},
+			}
+
+			it('auto-injects the linkedin-unipile MCP server even when getValidToken throws (no accessToken in credentials)', async () => {
+				const integration = buildIntegration({
+					provider: 'linkedin-unipile',
+					externalId: 'unipile-acc-123',
+				})
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(linkedinProviderConfig as never)
+				// token-manager.ts L89 throws exactly this when credentials.accessToken
+				// is missing on a non-customAuth, non-api_key provider.
+				mockGetValidToken.mockRejectedValueOnce(
+					new Error(`Integration ${integration.id} has no access token`),
+				)
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+
+				// No per-provider token env var set — none exists to inject
+				expect(createArgs.env.LINKEDIN_UNIPILE_TOKEN).toBeUndefined()
+
+				// But the auto-injected MCP server IS present, because its Authorization
+				// header uses ${MASKIN_API_KEY} not ${LINKEDIN_UNIPILE_TOKEN}
+				expect(createArgs.env.MCP_SERVERS_JSON).toBeDefined()
+				const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+					mcpServers: Record<string, { type: string; url: string; headers: Record<string, string> }>
+				}
+				expect(parsed.mcpServers['integration-linkedin-unipile']).toEqual({
+					type: 'http',
+					url: '${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp',
+					headers: {
+						Authorization: 'Bearer ${MASKIN_API_KEY}',
+						'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+					},
+				})
+			})
+
+			it('resolves the token when the server spec DOES reference the envKey (e.g. PostHog Bearer ${POSTHOG_TOKEN}) and skips on failure', async () => {
+				// Regression guard: a provider whose server template consumes envKey
+				// still needs the token — a failure to resolve must skip the server.
+				const posthogProviderConfig = {
+					config: {
+						name: 'posthog',
+						mcp: {
+							envKey: 'POSTHOG_TOKEN',
+							autoInject: true,
+							server: {
+								type: 'http' as const,
+								url: 'https://mcp.posthog.com/mcp',
+								headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
+							},
+						},
+					},
+				}
+				const integration = buildIntegration({ provider: 'posthog' })
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(posthogProviderConfig as never)
+				mockGetValidToken.mockRejectedValueOnce(new Error('boom'))
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+
+				expect(createArgs.env.POSTHOG_TOKEN).toBeUndefined()
+				const mcpKeys = createArgs.env.MCP_SERVERS_JSON
+					? Object.keys(
+							(
+								JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+									mcpServers: Record<string, unknown>
+								}
+							).mcpServers,
+						)
+					: []
+				expect(mcpKeys).not.toContain('integration-posthog')
 			})
 		})
 
@@ -2226,9 +2488,11 @@ describe('SessionManager', () => {
 			const session = buildSession({ status: 'completed', result: { exit_code: 0 } })
 			mockResults.update = [] // .returning() → no row: UPDATE matched nothing (already terminal)
 			// 1st select: markRemoteSessionComplete's own usage extraction (reads
-			// session_logs) — empty means "no usage found". 2nd select: the best-
-			// effort lookup used only to enrich the dropped-signal log line.
-			mockResults.selectQueue = [[], [session]]
+			// session_logs) — empty means "no usage found". 2nd select: the stdout
+			// tail read for credit classification (also session_logs; empty means
+			// nothing to classify). 3rd select: the best-effort lookup used only to
+			// enrich the dropped-signal log line.
+			mockResults.selectQueue = [[], [], [session]]
 			const warnSpy = vi.spyOn(logger, 'warn')
 
 			await manager.markRemoteSessionComplete(session.id, 1)
@@ -2243,6 +2507,24 @@ describe('SessionManager', () => {
 					currentResult: { exit_code: 0 },
 				}),
 			)
+		})
+
+		it('still reaches a terminal state when the stdout tail read for classification throws', async () => {
+			// The tail read added for credit classification is best-effort: it runs
+			// before the CAS update, and stopSession() calls this method after the
+			// remote sandbox is already dead. A throw escaping here would surface
+			// as a spurious "stop failed" 400 for a stop that actually succeeded.
+			const session = buildSession({ status: 'running' })
+			mockResults.updateQueue = [[session], []]
+			// 1st select: usage extraction. 2nd select: the tail read, which throws.
+			mockResults.selectErrorQueue = [undefined, new Error('connection reset')]
+
+			await expect(manager.markRemoteSessionComplete(session.id, 137)).resolves.toBe(true)
+
+			const eventInsert = calls.inserts.find(
+				(v) => (v as Record<string, unknown>).action === 'session_failed',
+			)
+			expect(eventInsert).toBeDefined()
 		})
 
 		it('inserts exactly one session_failed event when the CAS update matches a row (nonzero exit code)', async () => {
@@ -2313,10 +2595,12 @@ describe('SessionManager', () => {
 				new Error('connection reset'),
 				new Error('connection reset'),
 			]
-			// 1st select: usage extraction (empty = no-op). 2nd select: the fallback
-			// lookup itself throws — the DB is still unreachable.
+			// 1st select: usage extraction (empty = no-op). 2nd select: the stdout
+			// tail read for credit classification (also a no-op here; it swallows
+			// its own errors). 3rd select: the fallback lookup itself throws — the
+			// DB is still unreachable.
 			mockResults.selectQueue = [[]]
-			mockResults.selectErrorQueue = [undefined, new Error('connection reset')]
+			mockResults.selectErrorQueue = [undefined, undefined, new Error('connection reset')]
 			const initialInsertCount = calls.inserts.length
 
 			await expect(manager.markRemoteSessionComplete('some-session-id', 137)).resolves.toBe(false)
@@ -4009,34 +4293,38 @@ describe('SessionManager', () => {
 			})
 			const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
 
+			// The workspace row is read twice on this path: once to look for a
+			// slot after `backup` in the chain (there is none — that is what
+			// makes it exhausted), then again to record the exhaustion.
+			const exhaustedWorkspace = {
+				id: session.workspaceId,
+				settings: {
+					claude_oauth: {
+						primary: {
+							encryptedAccessToken: 'primary-access',
+							encryptedRefreshToken: 'primary-refresh',
+							expiresAt: 1_800_000_000_000,
+						},
+						backup: {
+							encryptedAccessToken: 'backup-access',
+							encryptedRefreshToken: 'backup-refresh',
+							expiresAt: 1_900_000_000_000,
+						},
+						failover: {
+							active_slot: 'backup',
+							last_primary_failure_at: 1_783_005_600_000,
+							last_classified_reason: 'quota_exhausted_5h',
+						},
+					},
+				},
+			}
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
 				[], // hasOtherActiveSessions
-				[
-					{
-						id: session.workspaceId,
-						settings: {
-							claude_oauth: {
-								primary: {
-									encryptedAccessToken: 'primary-access',
-									encryptedRefreshToken: 'primary-refresh',
-									expiresAt: 1_800_000_000_000,
-								},
-								backup: {
-									encryptedAccessToken: 'backup-access',
-									encryptedRefreshToken: 'backup-refresh',
-									expiresAt: 1_900_000_000_000,
-								},
-								failover: {
-									active_slot: 'backup',
-									last_primary_failure_at: 1_783_005_600_000,
-									last_classified_reason: 'quota_exhausted_5h',
-								},
-							},
-						},
-					},
-				], // recordRuntimeClaudeOAuthBackupExhausted locked workspace read
+				[], // existing retry-of-this-session lookup (none)
+				[exhaustedWorkspace], // recordRuntimeClaudeOAuthFailover locked read
+				[exhaustedWorkspace], // recordRuntimeClaudeOAuthBackupExhausted locked read
 			]
 			mockResults.insertQueue = [
 				[], // completion event
@@ -4101,7 +4389,8 @@ describe('SessionManager', () => {
 			// failover (resolveClaudeCredentialsWithFailover) but previously did
 			// NOT gate this runtime mid-session retry path — an operator using
 			// the flag as an incident kill-switch would still see failover
-			// triggered here. Flag left unset (default off) for this test.
+			// triggered here. Flag flipped to `false` explicitly (it defaults on).
+			vi.stubEnv('MASKIN_CLAUDE_FAILOVER_ENABLED', 'false')
 			const session = buildSession({
 				status: 'running',
 				config: { llm_route: 'claude_oauth', llm_oauth_slot: 'primary' },
@@ -4461,13 +4750,11 @@ describe('mergeLaunchRouteConfig()', () => {
 
 	it('clears a stale claude_oauth_runtime_failover_retry_of marker once the slot resolves back to primary', () => {
 		// Regression test: a retry session created during a runtime failover is
-		// stamped with llm_oauth_slot: 'backup' + claude_oauth_runtime_failover_retry_of.
-		// If primary recovers before that retry session's container actually
-		// launches, the slot resolves back to 'primary' here — the stale
-		// retry_of marker must not survive, or maybeRetryClaudeOAuthOnBackup's
-		// gate (`llm_oauth_slot === 'backup' || typeof retry_of === 'string'`)
-		// would misclassify a later, unrelated primary failure as
-		// "backup already exhausted".
+		// stamped with the slot it fell over to + claude_oauth_runtime_failover_retry_of.
+		// If the head of the chain recovers before that retry session's
+		// container actually launches, the slot resolves back to 'primary'
+		// here — the stale retry_of marker must not survive, since it would
+		// then describe a failover this session is no longer running under.
 		const existingConfig = {
 			llm_route: 'claude_oauth',
 			llm_oauth_slot: 'backup',
