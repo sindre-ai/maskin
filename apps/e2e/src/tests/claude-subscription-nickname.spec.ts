@@ -91,6 +91,11 @@ test.describe('Claude subscription nickname — settings UI', () => {
 
 		await page.goto(`/${account.workspaceId}/settings/keys`)
 
+		// Wait for the slot to finish loading before asserting on its nickname
+		// input, the same way the "typing a nickname" test above does — without
+		// this, the input isn't in the DOM yet and the locator times out.
+		await expect(page.getByTestId('slot-primary')).toContainText('Connected')
+
 		const nicknameInput = page.getByTestId('slot-primary-nickname')
 		await expect(nicknameInput).toHaveValue(longNickname)
 
