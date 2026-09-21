@@ -20,6 +20,8 @@ import {
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import {
+	CREDIT_TOPUP_BOUNDS_MINOR,
+	type MaskinCreditsCurrency,
 	createCheckoutSession,
 	createCreditCheckoutSession,
 	getStripeClient,
@@ -360,6 +362,14 @@ const buyCreditsBodySchema = z.object({
 		.max(CREDIT_TOPUP_MAX_USD * 100),
 	success_url: z.string().url(),
 	cancel_url: z.string().url(),
+	/**
+	 * Optional currency for the top-up (custom-amount top-up uses the
+	 * maskin_credits_custom Price). When set, the route re-validates the
+	 * amount against the per-currency bounds from CREDIT_TOPUP_BOUNDS_MINOR
+	 * (spec Delta 1b) so a EUR/DKK caller can't sneak in outside the
+	 * currency-specific min/max.
+	 */
+	currency: z.enum(['usd', 'eur', 'dkk']).optional(),
 })
 
 const buyCreditsRoute = createRoute({
@@ -401,7 +411,23 @@ const buyCreditsRoute = createRoute({
 app.openapi(buyCreditsRoute, async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { amount_usd_cents, success_url, cancel_url } = c.req.valid('json')
+	const { amount_usd_cents, success_url, cancel_url, currency } = c.req.valid('json')
+
+	// Delta 1b currency-scoped bounds. The USD bounds already ran in
+	// buyCreditsBodySchema above; this adds the stricter per-currency min/max
+	// for EUR/DKK callers.
+	if (currency && currency !== 'usd') {
+		const bounds = CREDIT_TOPUP_BOUNDS_MINOR[currency as MaskinCreditsCurrency]
+		if (amount_usd_cents < bounds.min || amount_usd_cents > bounds.max) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					`amount_usd_cents must be between ${bounds.min} and ${bounds.max} for currency=${currency}`,
+				),
+				400,
+			)
+		}
+	}
 
 	const [workspace] = await db
 		.select({ id: workspaces.id, settings: workspaces.settings })
@@ -463,13 +489,18 @@ app.openapi(buyCreditsRoute, async (c) => {
 
 	const stripe = getStripeClient(stripeEnv)
 	try {
-		const session = await createCreditCheckoutSession(stripe, {
-			workspaceId,
-			amountUsdCents: amount_usd_cents,
-			successUrl: success_url,
-			cancelUrl: cancel_url,
-			existingCustomerId: billing?.stripe_customer_id ?? undefined,
-		})
+		const session = await createCreditCheckoutSession(
+			stripe,
+			{
+				workspaceId,
+				amountUsdCents: amount_usd_cents,
+				successUrl: success_url,
+				cancelUrl: cancel_url,
+				existingCustomerId: billing?.stripe_customer_id ?? undefined,
+				currency: currency as MaskinCreditsCurrency | undefined,
+			},
+			stripeEnv,
+		)
 		if (!session.url) {
 			logger.error('Stripe credit top-up checkout session missing url', { sessionId: session.id })
 			return c.json(createApiError('INTERNAL_ERROR', 'Stripe returned no checkout url'), 500)

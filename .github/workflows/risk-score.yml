@@ -87,5 +87,5 @@ jobs:
               },
             })
             if (result.conclusion === 'failure') {
-              core.setFailed(`Risk score requires two-human review: ${result.summary}`)
+              core.setFailed(`Risk score requires human review: ${result.summary}`)
             }

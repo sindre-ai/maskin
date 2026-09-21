@@ -28,7 +28,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `.claude/rules/structural-verification.md` — file placement and build configuration verification checklist
 - `.claude/rules/known-pitfalls.md` — registry of recurring bugs to check against before submitting code
 - `.claude/rules/integrations-mcp.md` — Integrations & MCP class rules (source of truth: workspace's Tech principles & best-practices doc)
-- `.claude/rules/feature-flags.md` — how to add, place, and retire a feature flag (one boundary per feature; visual layer only)
+- `.claude/rules/feature-flags.md` — how to add, place, and retire a feature flag (one boundary per feature; no shared-state change)
 - `.claude/rules/verification.md` — mandatory runtime-verification gates: integration tests for DB/route changes, E2E specs for frontend changes
 - `.claude/rules/live-verification.md` — live-environment evidence gates for integration/provider work: surface matrix, staging + production runs, no provider ids in the UI
 - `packages/db/MIGRATIONS.md` — migration conventions for hot tables (CONCURRENTLY indexes, chunked backfills); read before editing a `.sql` file produced by `pnpm db:generate`
@@ -227,8 +227,15 @@ promoting it, so the config can't become a graveyard of undeleted code.
 - Read it with `useFeatureFlag(id)` at **one** boundary, as high in the tree as
   possible (shell or route layout) — never scattered across components. Third
   call site for one flag means the boundary is wrong.
-- Flags are for the **visual layer only**. Never flag data-layer, API, or
-  migration changes — a user with the flag off hits the same backend.
+- Flags gate **per-actor behaviour**, never shared state. A flag may gate any
+  behaviour whose off-state is the already-shipped state — visual (a UI branch)
+  or behavioural (an action the system takes for the flagging actor, read per
+  driver-actor); SALES_REP_LINKEDIN_AUTOSEND is the precedent. A flag must
+  **never** make a data-layer, API, or migration change safe: those change
+  shared state for everyone, and an actor-scoped flag read at runtime cannot
+  isolate the un-flagged population, so such changes must be safe for all users
+  on their own. If a design needs a breaking backend change, raise it rather
+  than wrapping it in a flag.
 - Resolution happens server-side (`GET /api/feature-flags`); the tester actor
   ids never reach the browser.
 

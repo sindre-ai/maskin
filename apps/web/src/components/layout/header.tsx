@@ -137,7 +137,16 @@ const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
  */
 export function Header() {
 	const matches = useMatches()
-	const { title, subtitle, actions, titleTabs, stickyIdentity, crumb } = usePageHeader()
+	const {
+		title,
+		subtitle,
+		actions,
+		titleTabs,
+		stickyIdentity,
+		crumb,
+		newMenuPrimaryOverride,
+		newMenuDisabled,
+	} = usePageHeader()
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	const router = useRouter()
@@ -199,6 +208,8 @@ export function Header() {
 				<NewMenu
 					onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
 					primaryKind={leafConfig?.primary ?? 'chat'}
+					primaryOverride={newMenuPrimaryOverride}
+					disabled={newMenuDisabled}
 				/>
 			</header>
 		)
@@ -280,6 +291,8 @@ export function Header() {
 					onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
 					hideObjectSection={isObjectDetail}
 					primaryKind={leafConfig?.primary ?? 'chat'}
+					primaryOverride={newMenuPrimaryOverride}
+					disabled={newMenuDisabled}
 				/>
 			</div>
 		</header>
