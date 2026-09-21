@@ -87,10 +87,20 @@ export type SubscriptionProbe = (tokens: ClaudeOAuthTokens) => Promise<Classifie
  * container launches. `null` on 2xx; otherwise the response status/headers
  * are handed to `classifyClaudeFailure`. Network-level failures (DNS, abort,
  * etc.) are caught by `runProbe`'s wrapper, not here.
+ *
+ * In an E2E stack (MASKIN_TEST_GRANT_TOKEN set — the same seam the test-grants
+ * route mounts on), the probe returns `null` unconditionally: specs seed the
+ * chain with fake OAuth tokens, background sessions kicked off by the
+ * workspace bootstrap and trigger runner would otherwise hit Anthropic with
+ * those tokens, get 401 back, stamp `auth_failed` on the slot, and flip its
+ * card to "Unhealthy" mid-test — a real rendering of a state the test never
+ * asked for. Bypassing here keeps the slot as "Connected" and stops the
+ * cascade the shard 2 timeout was recovering from.
  */
 export async function probeClaudeSubscription(
 	tokens: ClaudeOAuthTokens,
 ): Promise<ClassifierInput | null> {
+	if (process.env.MASKIN_TEST_GRANT_TOKEN) return null
 	const res = await fetch(CLAUDE_MESSAGES_URL, {
 		method: 'POST',
 		// Bounded so a hung Anthropic socket can't stall session launch — see
