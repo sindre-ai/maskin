@@ -90,11 +90,11 @@ export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): Fallba
 	return {
 		apiKey: env.MASKIN_FALLBACK_OPENROUTER_KEY?.trim() || undefined,
 		baseUrl: env.MASKIN_FALLBACK_BASE_URL?.trim() || 'https://openrouter.ai/api',
-		model: env.MASKIN_FALLBACK_MODEL?.trim() || 'deepseek/deepseek-v4-flash',
+		model: env.MASKIN_FALLBACK_MODEL?.trim() || 'deepseek/deepseek-v4.1-flash',
 		smallModel:
 			env.MASKIN_FALLBACK_SMALL_MODEL?.trim() ||
 			env.MASKIN_FALLBACK_MODEL?.trim() ||
-			'deepseek/deepseek-v4-flash',
+			'deepseek/deepseek-v4.1-flash',
 	}
 }
 
@@ -408,9 +408,9 @@ function buildMaskinPlanEnv(
 		ANTHROPIC_BASE_URL: fallback.baseUrl ?? 'https://openrouter.ai/api',
 		ANTHROPIC_AUTH_TOKEN: fallback.apiKey,
 		ANTHROPIC_API_KEY: '',
-		ANTHROPIC_MODEL: fallback.model ?? 'deepseek/deepseek-v4-flash',
+		ANTHROPIC_MODEL: fallback.model ?? 'deepseek/deepseek-v4.1-flash',
 		ANTHROPIC_SMALL_FAST_MODEL:
-			fallback.smallModel ?? fallback.model ?? 'deepseek/deepseek-v4-flash',
+			fallback.smallModel ?? fallback.model ?? 'deepseek/deepseek-v4.1-flash',
 	}
 }
 
@@ -627,7 +627,7 @@ export async function resolveLlmRoute(params: {
 		return {
 			route: LLM_ROUTE_MASKIN_PLAN,
 			envVars: maskinPlanEnv,
-			modelName: fallback.model ?? 'deepseek/deepseek-v4-flash',
+			modelName: fallback.model ?? 'deepseek/deepseek-v4.1-flash',
 		}
 	}
 
