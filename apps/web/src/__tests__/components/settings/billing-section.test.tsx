@@ -1,4 +1,4 @@
-// 1_000 / 2_000 / 20_000 (USD cents) below mirror TRIAL_HARD_CAP_DEFAULT_USD_CENTS /
+// 1_000 / 4_900 / 20_000 (USD cents) below mirror TRIAL_HARD_CAP_DEFAULT_USD_CENTS /
 // PRO_HARD_CAP_DEFAULT_USD_CENTS / TEAM_HARD_CAP_DEFAULT_USD_CENTS in
 // apps/dev/src/lib/billing-defaults.ts and the .env.example
 // MASKIN_*_HARD_CAP_USD_CENTS defaults. Keep in sync when bumping.
@@ -92,7 +92,7 @@ describe('BillingSection', () => {
 			plan: 'pro',
 			status: 'active',
 			usd_cents_used: 750,
-			hard_cap_usd_cents: 2_000,
+			hard_cap_usd_cents: 4_900,
 			period_start: Date.now() - 7 * 24 * 60 * 60 * 1000,
 			period_resets_in_ms: 23 * 24 * 60 * 60 * 1000,
 			stripe_customer_id: 'cus_x',
@@ -105,8 +105,8 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $20/mo')
-		expect(screen.getByText(/\$7\.50 \/ \$20\.00 used/)).toBeInTheDocument()
+		await screen.findByText('Pro — $49/mo')
+		expect(screen.getByText(/\$7\.50 \/ \$49\.00 used/)).toBeInTheDocument()
 		expect(screen.getByText(/resets in 23d/)).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: /Manage in Stripe/ })).toBeInTheDocument()
 
@@ -240,7 +240,7 @@ describe('BillingSection', () => {
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
 			plan: 'pro',
-			hard_cap_usd_cents: 2_000,
+			hard_cap_usd_cents: 4_900,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 		})
@@ -251,7 +251,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $20/mo')
+		await screen.findByText('Pro — $49/mo')
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
 		await user.click(screen.getByRole('button', { name: 'Downgrade to Free' }))
 		expect(screen.getByRole('dialog')).toBeInTheDocument()
@@ -264,7 +264,7 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_usd_cents: 2_000,
+			hard_cap_usd_cents: 4_900,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 		})
@@ -275,7 +275,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $20/mo')
+		await screen.findByText('Pro — $49/mo')
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
 
 		expect(screen.queryByRole('button', { name: 'Downgrade to Free' })).not.toBeInTheDocument()
@@ -306,8 +306,8 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_usd_cents: 2_000,
-			usd_cents_used: 2_500,
+			hard_cap_usd_cents: 4_900,
+			usd_cents_used: 6_000,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 			credit_balance_cents: 4_000,
@@ -319,7 +319,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $20/mo')
+		await screen.findByText('Pro — $49/mo')
 		expect(screen.getByText('$40.00 usage credits')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Buy usage credits' })).toBeInTheDocument()
 		// A spendable balance is expected, already-paid-for usage — the bar must not read as an error.
@@ -332,8 +332,8 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_usd_cents: 2_000,
-			usd_cents_used: 2_500,
+			hard_cap_usd_cents: 4_900,
+			usd_cents_used: 6_000,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 			credit_balance_cents: 0,
@@ -345,7 +345,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $20/mo')
+		await screen.findByText('Pro — $49/mo')
 		expect(screen.getByText('$0.00 usage credits')).toBeInTheDocument()
 		const bar = screen.getByRole('progressbar')
 		expect(bar.className).toContain('bg-error')
@@ -357,7 +357,7 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_usd_cents: 2_000,
+			hard_cap_usd_cents: 4_900,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 			credit_balance_cents: 0,
@@ -379,7 +379,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $20/mo')
+		await screen.findByText('Pro — $49/mo')
 		await user.click(screen.getByRole('button', { name: 'Buy usage credits' }))
 		expect(await screen.findByRole('dialog')).toBeInTheDocument()
 
@@ -405,7 +405,7 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_usd_cents: 2_000,
+			hard_cap_usd_cents: 4_900,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 		})
@@ -416,7 +416,7 @@ describe('BillingSection', () => {
 			</TestWrapper>,
 		)
 
-		await screen.findByText('Pro — $20/mo')
+		await screen.findByText('Pro — $49/mo')
 		expect(screen.queryByRole('button', { name: 'Downgrade to Free' })).not.toBeInTheDocument()
 
 		await user.click(screen.getByRole('button', { name: 'Compare plans' }))
@@ -452,7 +452,7 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_usd_cents: 2_000,
+			hard_cap_usd_cents: 4_900,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 			linkedin_identity_addon: {

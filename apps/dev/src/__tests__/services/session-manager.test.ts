@@ -1198,6 +1198,130 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('buildLaunchSpec() — persists model_name + llm_route on maskin_plan dispatch', () => {
+		// Foundational task for the session-cost accounting bet: every maskin_plan
+		// session must land with `sessions.model_name` non-null (the OpenRouter
+		// model that actually ran) and `sessions.config.llm_route = 'maskin_plan'`
+		// so the follow-on local cost resolver has the fields it needs. claude_oauth
+		// dispatches leave `model_name` null — Claude Code's own `total_cost_usd`
+		// stays ground truth there.
+
+		const savedEnv: Record<string, string | undefined> = {}
+		const trackedEnvKeys = [
+			'MASKIN_FALLBACK_OPENROUTER_KEY',
+			'MASKIN_FALLBACK_BASE_URL',
+			'MASKIN_FALLBACK_MODEL',
+			'MASKIN_FALLBACK_SMALL_MODEL',
+		] as const
+
+		beforeEach(() => {
+			vi.clearAllMocks()
+			for (const key of trackedEnvKeys) {
+				savedEnv[key] = process.env[key]
+			}
+			process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-test'
+			process.env.MASKIN_FALLBACK_BASE_URL = 'https://openrouter.ai/api'
+			process.env.MASKIN_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash'
+		})
+		afterEach(() => {
+			for (const key of trackedEnvKeys) {
+				if (savedEnv[key] === undefined) {
+					delete process.env[key]
+				} else {
+					process.env[key] = savedEnv[key]
+				}
+			}
+		})
+
+		function testAgent(actorId: string) {
+			return {
+				id: actorId,
+				type: 'agent' as const,
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+		}
+
+		it('writes model_name = MASKIN_FALLBACK_MODEL and config.llm_route = "maskin_plan" for a pro-plan workspace with no BYO credentials', async () => {
+			const session = buildSession({ status: 'pending', interactive: false, config: {} })
+			const agent = testAgent(session.actorId)
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: false,
+				billingOwnerId: null,
+				settings: { billing: { plan: 'pro', hard_cap_usd_cents: 1000, period_start: 0 } },
+			}
+
+			mockResults.selectQueue = [
+				[agent], // buildLaunchSpec: agent lookup
+				[workspace], // buildLaunchSpec: workspace lookup
+				[], // resolveLlmRoute -> checkPlanCap -> getWorkspacePlanUsdCentsUsage
+				[], // buildLaunchSpec: integrations lookup (GitHub auto-inject)
+			]
+
+			await manager.buildLaunchSpec(
+				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
+			)
+
+			const routeUpdate = calls.updates.find(
+				(u): u is { config?: { llm_route?: string }; modelName?: string } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'modelName' in u &&
+					(u as { modelName?: unknown }).modelName === 'deepseek/deepseek-v4-flash',
+			)
+			expect(routeUpdate).toBeDefined()
+			expect(routeUpdate?.modelName).toBe('deepseek/deepseek-v4-flash')
+			expect(routeUpdate?.config?.llm_route).toBe('maskin_plan')
+		})
+
+		it('does NOT write model_name on a non-maskin_plan route (leaves the column null for claude_oauth / BYO paths)', async () => {
+			// A workspace-anthropic-key path resolves to LLM_ROUTE_API_KEY, not
+			// maskin_plan. The dispatch write path must still stamp
+			// config.llm_route so quota queries can find the session, but must
+			// leave sessions.model_name null — Claude Code's `total_cost_usd`
+			// is ground truth for every non-maskin_plan route.
+			const session = buildSession({ status: 'pending', interactive: false, config: {} })
+			const agent = testAgent(session.actorId)
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				billingOwnerId: null,
+				settings: { llm_keys: { anthropic: 'sk-ant-test-ws' } },
+			}
+
+			mockResults.selectQueue = [
+				[agent], // buildLaunchSpec: agent lookup
+				[workspace], // buildLaunchSpec: workspace lookup
+				[workspace], // resolveLlmRoute -> resolveClaudeCredentialsWithFailover: workspace lookup
+				[], // buildLaunchSpec: integrations lookup
+			]
+
+			await manager.buildLaunchSpec(
+				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
+			)
+
+			// No update ever carries a modelName on this route.
+			for (const u of calls.updates) {
+				if (typeof u === 'object' && u !== null && 'modelName' in u) {
+					expect((u as { modelName?: unknown }).modelName).toBeUndefined()
+				}
+			}
+			// But config.llm_route IS stamped — that path is unchanged from before.
+			const routeUpdate = calls.updates.find(
+				(u): u is { config?: { llm_route?: string } } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'config' in u &&
+					typeof (u as { config?: { llm_route?: unknown } }).config?.llm_route === 'string',
+			)
+			expect(routeUpdate?.config?.llm_route).toBe('workspace_api_key')
+		})
+	})
+
 	describe('cleanupBrowserSidecar() — teardown SLA (AC-T5)', () => {
 		// Access the private map + method through a structural cast so the test
 		// can exercise the orchestration without standing up the whole

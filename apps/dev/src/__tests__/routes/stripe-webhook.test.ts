@@ -27,7 +27,8 @@ const VALID_ENV = {
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
-	MASKIN_PRO_HARD_CAP_USD_CENTS: '2000',
+	STRIPE_PRICE_CREDITS_CUSTOM: 'price_credits_custom_test',
+	MASKIN_PRO_HARD_CAP_USD_CENTS: '4900',
 	MASKIN_TEAM_HARD_CAP_USD_CENTS: '20000',
 	STRIPE_PRICE_LINKEDIN_IDENTITY: 'price_linkedin',
 }
@@ -603,7 +604,7 @@ describe('POST /api/webhooks/stripe', () => {
 						billing: {
 							plan: 'pro',
 							status: 'active',
-							hard_cap_usd_cents: 2_000,
+							hard_cap_usd_cents: 4_900,
 							period_start: 1_700_000_000,
 							period_end: 1_702_592_000,
 							stripe_customer_id: 'cus_existing',
@@ -652,6 +653,120 @@ describe('POST /api/webhooks/stripe', () => {
 		)
 		expect(eventInsert).toBeDefined()
 		expect(eventInsert?.workspaceId).toBe(workspaceId)
+	})
+
+	it('credits normalized USD minor + volume bonus on a DKK direct-fulfil top-up (CTO pre-merge fix #4)', async () => {
+		// `session.metadata.amount_usd_cents` is minor units in
+		// `session.currency` (a legacy field name — see the currency-contract
+		// comment in stripe-webhook.ts). A DKK 349 payment must credit ~5000 USD
+		// cents (≈ $50), NOT 34900 USD cents (≈ $349).
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [
+			[{ id: 'claim-topup-dkk' }],
+			[{ id: 'ledger-topup-dkk' }],
+			[{ id: 'system-actor-dkk' }],
+			[],
+			[],
+		]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: {
+							plan: 'pro',
+							status: 'active',
+							hard_cap_usd_cents: 4_900,
+							period_start: 1_700_000_000,
+							period_end: 1_702_592_000,
+							stripe_customer_id: 'cus_existing',
+							stripe_subscription_id: 'sub_existing',
+							credit_balance_cents: 1_000,
+						},
+					},
+				},
+			],
+			[],
+			[],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_credit_topup_dkk',
+			type: 'checkout.session.completed',
+			data: {
+				object: {
+					id: 'cs_credit_dkk_1',
+					mode: 'payment',
+					currency: 'dkk',
+					client_reference_id: workspaceId,
+					metadata: { workspace_id: workspaceId, kind: 'credit_topup', amount_usd_cents: '34900' },
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+
+		// 5000 (normalized USD cents) + 0 bonus (below Growth); balance 1000 → 6000.
+		const update = findWorkspaceUpdate(calls.updates)
+		expect(update.settings.billing).toMatchObject({ credit_balance_cents: 6_000 })
+
+		const eventInsert = calls.inserts.find(
+			(i): i is { data: { amount_cents: number } } =>
+				!!i &&
+				typeof i === 'object' &&
+				(i as Record<string, unknown>).action === 'workspace_credit_topup',
+		)
+		expect(eventInsert?.data.amount_cents).toBe(5_000)
+	})
+
+	it('applies the 10% Growth bonus on a USD $250 direct-fulfil top-up (Won criterion e)', async () => {
+		// Regression floor for the USD-only slice of Won (e): a $250 top-up
+		// must credit 27500 USD cents (25000 + 10% bonus), not 25000.
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [
+			[{ id: 'claim-topup-growth' }],
+			[{ id: 'ledger-topup-growth' }],
+			[{ id: 'system-actor-growth' }],
+			[],
+			[],
+		]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: { plan: 'pro', status: 'active', credit_balance_cents: 0 },
+					},
+				},
+			],
+			[],
+			[],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_credit_topup_growth',
+			type: 'checkout.session.completed',
+			data: {
+				object: {
+					id: 'cs_credit_growth_1',
+					mode: 'payment',
+					currency: 'usd',
+					client_reference_id: workspaceId,
+					metadata: { workspace_id: workspaceId, kind: 'credit_topup', amount_usd_cents: '25000' },
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+
+		const update = findWorkspaceUpdate(calls.updates)
+		expect(update.settings.billing).toMatchObject({ credit_balance_cents: 27_500 })
 	})
 
 	it('does not re-credit the balance when the same credit_topup checkout is redelivered', async () => {
@@ -818,7 +933,7 @@ describe('POST /api/webhooks/stripe', () => {
 							plan: 'pro',
 							status: 'active',
 							stripe_subscription_id: 'sub_plan',
-							hard_cap_usd_cents: 2000,
+							hard_cap_usd_cents: 4_900,
 						},
 					},
 				},
@@ -845,7 +960,7 @@ describe('POST /api/webhooks/stripe', () => {
 		// The plan subscription id, plan and cap must survive untouched.
 		expect(billing.stripe_subscription_id).toBe('sub_plan')
 		expect(billing.plan).toBe('pro')
-		expect(billing.hard_cap_usd_cents).toBe(2000)
+		expect(billing.hard_cap_usd_cents).toBe(4900)
 	})
 
 	it('does not downgrade the plan when the add-on subscription is deleted', async () => {
@@ -862,7 +977,7 @@ describe('POST /api/webhooks/stripe', () => {
 							plan: 'pro',
 							status: 'active',
 							stripe_subscription_id: 'sub_plan',
-							hard_cap_usd_cents: 2000,
+							hard_cap_usd_cents: 4_900,
 							linkedin_addon_subscription_id: 'sub_addon',
 							linkedin_addon_item_id: 'si_addon',
 						},
@@ -888,7 +1003,7 @@ describe('POST /api/webhooks/stripe', () => {
 		const billing = findWorkspaceUpdate(calls.updates).settings.billing
 		expect(billing.plan).toBe('pro')
 		expect(billing.status).toBe('active')
-		expect(billing.hard_cap_usd_cents).toBe(2000)
+		expect(billing.hard_cap_usd_cents).toBe(4900)
 		expect(billing.linkedin_addon_subscription_id).toBeNull()
 		expect(billing.linkedin_addon_item_id).toBeNull()
 	})
