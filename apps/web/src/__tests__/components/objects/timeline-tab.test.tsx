@@ -553,6 +553,57 @@ describe('TimelineTab', () => {
 		expect(screen.queryByRole('button', { name: /agent updates/ })).toBeNull()
 		expect(screen.getAllByRole('listitem')).toHaveLength(2)
 	})
+
+	// Defect 3 (Loops v4 v1) regression: the loop's `created` event must not
+	// fold into a run of consecutive `updated` events by the same actor. Only
+	// the same-actor + same-event-type stretch collapses.
+	it('does not fold a foreign event type into a run of same-actor updates', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'loop' })
+		mockGraph(
+			[
+				buildEventResponse({
+					id: 53,
+					action: 'updated',
+					entityType: 'loop',
+					entityId: 'obj-1',
+					actorId: 'actor-1',
+					createdAt: '2026-03-04T00:00:00Z',
+				}),
+				buildEventResponse({
+					id: 52,
+					action: 'updated',
+					entityType: 'loop',
+					entityId: 'obj-1',
+					actorId: 'actor-1',
+					createdAt: '2026-03-03T00:00:00Z',
+				}),
+				buildEventResponse({
+					id: 51,
+					action: 'updated',
+					entityType: 'loop',
+					entityId: 'obj-1',
+					actorId: 'actor-1',
+					createdAt: '2026-03-02T00:00:00Z',
+				}),
+				buildEventResponse({
+					id: 50,
+					action: 'created',
+					entityType: 'loop',
+					entityId: 'obj-1',
+					actorId: 'actor-1',
+					createdAt: '2026-03-01T00:00:00Z',
+				}),
+			],
+			[],
+			[],
+			object,
+		)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		const fold = screen.getByRole('button', { name: /agent updates/ })
+		expect(fold).toHaveTextContent('3 agent updates')
+	})
 	// D10: phase dividers only fire at lifecycle-phase boundaries. active is in
 	// BUILT and define is in SHAPING, so the define→active transition draws one
 	// divider labelled SHAPING for the older group. The scope→define transition

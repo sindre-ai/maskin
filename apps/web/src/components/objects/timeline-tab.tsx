@@ -91,13 +91,14 @@ interface TimelineFold {
 
 type StreamRow = TimelineEntry | TimelineFold
 
-/** A run of this many consecutive low-signal rows collapses behind one pill. */
-const FOLD_MIN_RUN = 3
+/** A same-actor + same-event-type run this long collapses behind one pill. */
+const FOLD_MIN_RUN = 2
 
 /**
- * Two event rows that read as the same actor doing the same thing. A pair this
- * tight is pure repetition — "Chief of Staff updated loop" three times over —
- * and folds at length 2, below the general threshold.
+ * Two event rows that read as the same actor doing the same thing. Repetition
+ * this tight — "Chief of Staff updated loop" back-to-back — is what the fold
+ * targets, and also what defines a run's boundary: a row that breaks this
+ * predicate ends the current run and starts a fresh one.
  */
 function isSameActorSameType(a: TimelineEntry, b: TimelineEntry): boolean {
 	return (
@@ -113,18 +114,17 @@ function isSameActorSameType(a: TimelineEntry, b: TimelineEntry): boolean {
  * Collapse consecutive runs of routine machine chatter — plain updates, session
  * rows, link rows — into a single fold. Comments and status changes are the
  * spine of the story and are never folded, so the unread divider's target and
- * every phase boundary stay reachable. A run folds at three rows, or at two when
- * both rows share the same actor and event type.
+ * every phase boundary stay reachable. A run is one same-actor + same-event-type
+ * stretch and folds at two rows; a row that changes actor or action ends the
+ * run, so the loop's `created` event never folds into a stretch of `updated`
+ * rows by the same actor.
  */
 function foldRuns(entries: TimelineEntry[]): StreamRow[] {
 	const out: StreamRow[] = []
 	let run: TimelineEntry[] = []
-	const shouldFold = (rows: TimelineEntry[]) =>
-		rows.length >= FOLD_MIN_RUN ||
-		(rows.length >= 2 && !!rows[0] && !!rows[1] && isSameActorSameType(rows[0], rows[1]))
 	const flush = () => {
 		if (run.length === 0) return
-		if (shouldFold(run)) {
+		if (run.length >= FOLD_MIN_RUN) {
 			out.push({ kind: 'fold', key: `fold-${run[0]?.key}`, rows: run })
 		} else {
 			out.push(...run)
@@ -132,8 +132,11 @@ function foldRuns(entries: TimelineEntry[]): StreamRow[] {
 		run = []
 	}
 	for (const entry of entries) {
-		if (entry.kind === 'event' && !entry.isStatusChange) run.push(entry)
-		else {
+		if (entry.kind === 'event' && !entry.isStatusChange) {
+			const head = run[0]
+			if (head && !isSameActorSameType(head, entry)) flush()
+			run.push(entry)
+		} else {
 			flush()
 			out.push(entry)
 		}
