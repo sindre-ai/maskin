@@ -66,7 +66,11 @@ async function seedChain(apiKey: string, workspaceId: string, count: number) {
  */
 async function reloadKeysPage(page: Page) {
 	await page.reload()
-	await expect(page.getByTestId('slot-primary')).toBeVisible({ timeout: 15_000 })
+	// 30s rather than 15s: the same reload on a loaded CI runner has been
+	// observed to take longer than that (shard 2 e2e wall-clock incidents,
+	// PR #1633's verify-e2e run), and the timeout is what turned into a
+	// flake-storm the shard couldn't recover from within its 15-min budget.
+	await expect(page.getByTestId('slot-primary')).toBeVisible({ timeout: 30_000 })
 }
 
 test.describe('Claude subscriptions — nicknames', () => {
@@ -84,7 +88,12 @@ test.describe('Claude subscriptions — nicknames', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/settings/keys`)
-		await expect(page.getByTestId('slot-primary-nickname')).toHaveValue('Work account')
+		// The auth guard, flag load and status query stack behind this goto —
+		// on a loaded CI runner it can outlast toHaveValue's 5s default (see
+		// reloadKeysPage above for the same reasoning).
+		await expect(page.getByTestId('slot-primary-nickname')).toHaveValue('Work account', {
+			timeout: 30_000,
+		})
 
 		// Replace the credentials the way someone would after a subscription's
 		// tokens expire — the paste flow sends no nickname.
@@ -121,7 +130,12 @@ test.describe('Claude subscriptions — more than two', () => {
 		await seedChain(account.apiKey, account.workspaceId, 2)
 
 		await page.goto(`/${account.workspaceId}/settings/keys`)
-		await expect(page.getByTestId('slot-primary')).toContainText('Connected')
+		// The auth guard, flag load and status query stack behind this goto —
+		// on a loaded CI runner it can outlast toContainText's 5s default (see
+		// reloadKeysPage above for the same reasoning).
+		await expect(page.getByTestId('slot-primary')).toContainText('Connected', {
+			timeout: 30_000,
+		})
 
 		await page.getByRole('button', { name: 'Import another subscription' }).click()
 		const pasteFlow = page.getByTestId('paste-flow')
@@ -168,8 +182,13 @@ test.describe('Claude subscriptions — more than two', () => {
 
 		await page.goto(`/${account.workspaceId}/settings/keys`)
 		// Nicknames travel with the credential, so they are how we can see that
-		// the third subscription really moved to the front.
-		await expect(page.getByTestId('slot-primary-nickname')).toHaveValue('Account 1')
+		// the third subscription really moved to the front. The auth guard,
+		// flag load and status query stack behind this goto — on a loaded CI
+		// runner it can outlast toHaveValue's 5s default (see reloadKeysPage
+		// above for the same reasoning).
+		await expect(page.getByTestId('slot-primary-nickname')).toHaveValue('Account 1', {
+			timeout: 30_000,
+		})
 		await expect(page.getByTestId('slot-slot_3-nickname')).toHaveValue('Account 3')
 
 		await page
@@ -196,7 +215,12 @@ test.describe('Claude subscriptions — more than two', () => {
 		await seedChain(account.apiKey, account.workspaceId, 3)
 
 		await page.goto(`/${account.workspaceId}/settings/keys`)
-		await expect(page.getByTestId('slot-backup')).toContainText('Connected')
+		// The auth guard, flag load and status query stack behind this goto —
+		// on a loaded CI runner it can outlast toContainText's 5s default (see
+		// reloadKeysPage above for the same reasoning).
+		await expect(page.getByTestId('slot-backup')).toContainText('Connected', {
+			timeout: 30_000,
+		})
 
 		await page
 			.getByTestId('slot-backup')
@@ -224,9 +248,20 @@ test.describe('Claude subscriptions — more than two', () => {
 		await page.goto(`/${account.workspaceId}/settings/keys`)
 
 		const nickname = page.getByTestId('slot-slot_3-nickname')
-		await expect(nickname).toHaveValue('Account 3')
+		// The auth guard, flag load and status query stack behind the goto —
+		// on a loaded CI runner it can outlast toHaveValue's 5s default (see
+		// reloadKeysPage above for the same reasoning).
+		await expect(nickname).toHaveValue('Account 3', { timeout: 30_000 })
+		// Wait for the rename PATCH before reloading — the mutation fires on
+		// blur but does not await inside the handler, so without this the
+		// reload can race the server-side write.
+		const rename = page.waitForResponse(
+			(res) =>
+				res.url().includes('/api/claude-oauth/nickname') && res.request().method() === 'PATCH',
+		)
 		await nickname.fill('Spare account')
 		await nickname.blur()
+		await rename
 
 		await reloadKeysPage(page)
 		await expect(page.getByTestId('slot-slot_3-nickname')).toHaveValue('Spare account')
