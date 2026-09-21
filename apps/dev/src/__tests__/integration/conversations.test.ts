@@ -1344,6 +1344,13 @@ describe('Conversations Integration', () => {
 			// The triggering message id is tagged onto the turn (4th arg) so the
 			// chat UI can anchor this turn's activity dropdown to this message.
 			expect(sessionManager.writeInput.mock.calls[0]?.[3]).toBe(triggering.id)
+			// The delivered turn carries the sender's stable actor id alongside
+			// their display name, so the receiving agent can attribute the message
+			// even when names collide, change, or belong to another agent.
+			const turn = sessionManager.writeInput.mock.calls[0]?.[1] as {
+				message: { content: string }
+			}
+			expect(turn.message.content).toContain(ownerId)
 		})
 
 		it('spawns a fresh interactive session with inlined history when none is running', async () => {

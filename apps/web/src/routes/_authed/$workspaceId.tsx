@@ -101,7 +101,7 @@ function WorkspaceLayout() {
 								<SidebarProvider
 									open={open}
 									onOpenChange={setOpen}
-									className="h-screen !min-h-0"
+									className="h-dvh !min-h-0"
 									data-shell="v2"
 								>
 									<AppSidebar />

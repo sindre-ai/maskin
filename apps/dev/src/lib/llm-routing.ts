@@ -57,6 +57,15 @@ export interface LlmRoutingResult {
 	/** Env vars to merge into the container environment. */
 	envVars: Record<string, string>
 	oauthSlot?: OAuthSlotKind
+	/**
+	 * OpenRouter model id that will actually run this session. Populated on
+	 * the maskin_plan route (from `MASKIN_FALLBACK_MODEL`) so the caller can
+	 * stamp `sessions.model_name` at spawn; the follow-on local cost resolver
+	 * prices maskin_plan usage from OpenRouter's pricing table keyed on this
+	 * value. Undefined on every other route — Claude Code's own
+	 * `total_cost_usd` stays ground truth for `claude_oauth` and BYO paths.
+	 */
+	modelName?: string
 }
 
 export interface FallbackConfig {
@@ -81,22 +90,30 @@ export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): Fallba
 	return {
 		apiKey: env.MASKIN_FALLBACK_OPENROUTER_KEY?.trim() || undefined,
 		baseUrl: env.MASKIN_FALLBACK_BASE_URL?.trim() || 'https://openrouter.ai/api',
-		model: env.MASKIN_FALLBACK_MODEL?.trim() || 'deepseek/deepseek-v4-flash',
+		model: env.MASKIN_FALLBACK_MODEL?.trim() || 'deepseek/deepseek-v4.1-flash',
 		smallModel:
 			env.MASKIN_FALLBACK_SMALL_MODEL?.trim() ||
 			env.MASKIN_FALLBACK_MODEL?.trim() ||
-			'deepseek/deepseek-v4-flash',
+			'deepseek/deepseek-v4.1-flash',
 	}
 }
 
 /**
- * Legacy fallback rate used only when a maskin_plan session never reported
- * its own `total_cost_usd` (e.g. a runtime whose CLI stream never emitted a
- * `result` event). Real cost — which reflects whatever model actually ran —
- * is always preferred; this exists so a missing report doesn't silently read
- * as $0 of usage.
+ * Legacy blended token rate, in tokens per USD CENT, used only when a
+ * maskin_plan session's model can't be priced from OpenRouter's table (no
+ * model name recorded, an unpublished model, or the catalogue being
+ * unreachable). Real per-token cost is always preferred; this exists so a
+ * session whose model can't be resolved doesn't silently read as $0 of usage.
+ *
+ * Calibrated to the maskin_plan fallback model's scale rather than Anthropic's:
+ * `deepseek/deepseek-v4-flash` publishes $0.00000007/prompt token (≈142,857
+ * tokens/cent) and $0.00000014/completion token (≈71,428/cent). A conservative
+ * 200,000 tokens/cent for a prompt-heavy blend keeps the estimate from
+ * over-charging while staying the right order of magnitude — the previous
+ * 16,000/cent was an Anthropic-scale figure that over-billed maskin_plan
+ * sessions by roughly an order of magnitude.
  */
-export const FALLBACK_TOKENS_PER_USD_CENT = 16_000
+export const LEGACY_TOKENS_PER_USD_CENT = 200_000
 
 /**
  * Rounds a cents amount up to a whole cent after clearing IEEE754 dust.
@@ -112,8 +129,8 @@ export const FALLBACK_TOKENS_PER_USD_CENT = 16_000
  * Snapping to 6 decimal places first discards only that dust. Genuine
  * sub-cent usage still rounds up as intended: the sole producer of fractional
  * cents here is the token-rate fallback, whose smallest non-zero output is
- * `1 / FALLBACK_TOKENS_PER_USD_CENT` = 6.25e-5 cents — nearly two orders of
- * magnitude above the 1e-6 snapping threshold.
+ * `1 / LEGACY_TOKENS_PER_USD_CENT` = 5e-6 cents — above the 1e-6 snapping
+ * threshold, though by a narrower margin than the pre-rename rate.
  */
 export function ceilCents(cents: number): number {
 	return Math.ceil(Number(cents.toFixed(6)))
@@ -165,7 +182,7 @@ export async function getWorkspacePlanUsdCentsUsage(
 			continue
 		}
 		const tokens = (row.inputTokens ?? 0) + (row.outputTokens ?? 0)
-		totalCents += tokens / FALLBACK_TOKENS_PER_USD_CENT
+		totalCents += tokens / LEGACY_TOKENS_PER_USD_CENT
 	}
 	// Round once on the aggregate, not per-row, so small per-session fractions
 	// of a cent don't compound into meaningfully over-counted usage.
@@ -391,9 +408,9 @@ function buildMaskinPlanEnv(
 		ANTHROPIC_BASE_URL: fallback.baseUrl ?? 'https://openrouter.ai/api',
 		ANTHROPIC_AUTH_TOKEN: fallback.apiKey,
 		ANTHROPIC_API_KEY: '',
-		ANTHROPIC_MODEL: fallback.model ?? 'deepseek/deepseek-v4-flash',
+		ANTHROPIC_MODEL: fallback.model ?? 'deepseek/deepseek-v4.1-flash',
 		ANTHROPIC_SMALL_FAST_MODEL:
-			fallback.smallModel ?? fallback.model ?? 'deepseek/deepseek-v4-flash',
+			fallback.smallModel ?? fallback.model ?? 'deepseek/deepseek-v4.1-flash',
 	}
 }
 
@@ -607,7 +624,11 @@ export async function resolveLlmRoute(params: {
 	const maskinPlanEnv = buildMaskinPlanEnv(wsSettings.billing, fallback, enterprise)
 	if (maskinPlanEnv) {
 		await checkPlanCap({ db, workspaceId, wsSettings, enterprise })
-		return { route: LLM_ROUTE_MASKIN_PLAN, envVars: maskinPlanEnv }
+		return {
+			route: LLM_ROUTE_MASKIN_PLAN,
+			envVars: maskinPlanEnv,
+			modelName: fallback.model ?? 'deepseek/deepseek-v4.1-flash',
+		}
 	}
 
 	if (oauthFailure) {

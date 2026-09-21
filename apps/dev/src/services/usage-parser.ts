@@ -2,6 +2,8 @@ import type { Database } from '@maskin/db'
 import { sessionLogs } from '@maskin/db/schema'
 import { parseResultLine } from '@maskin/shared'
 import { and, desc, eq, sql } from 'drizzle-orm'
+import { LEGACY_TOKENS_PER_USD_CENT, LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
+import { getModelPricing } from '../lib/openrouter-pricing'
 
 export type SessionUsage = {
 	totalCostUsd: number | null
@@ -151,6 +153,65 @@ export async function sumRunningSessionUsage(
 		cacheReadInputTokens: totalCacheRead,
 		durationMs: totalDuration,
 	}
+}
+
+export interface SessionCostInput {
+	/** The session's `config.llm_route` value. */
+	route: string
+	/** The session's `model_name`, when the route records one. */
+	modelName: string | null
+	usage: SessionUsage
+}
+
+/**
+ * Resolves a session's true USD cost from its route and observed usage.
+ *
+ * The CLI prices every turn against Anthropic's rate card, which is correct
+ * for the routes that actually reach Anthropic (`claude_oauth`, workspace API
+ * keys) and wrong for `maskin_plan`, whose sessions are routed through
+ * OpenRouter to a non-Anthropic model. For `maskin_plan` the reported
+ * `total_cost_usd` is therefore discarded and the cost is computed locally
+ * from token counts and OpenRouter's published per-token prices.
+ *
+ * Never returns a silent zero for real usage: when the model has no published
+ * price (or no model name was recorded), it bills the tokens at the legacy
+ * blended rate instead — conservative, and never Anthropic-scale for a
+ * DeepSeek-priced session.
+ */
+export async function resolveSessionCostUsd({
+	route,
+	modelName,
+	usage,
+}: SessionCostInput): Promise<number | null> {
+	if (route !== LLM_ROUTE_MASKIN_PLAN) return usage.totalCostUsd
+
+	const inputTokens = usage.inputTokens ?? 0
+	const outputTokens = usage.outputTokens ?? 0
+	const cacheReadTokens = usage.cacheReadInputTokens ?? 0
+	const cacheWriteTokens = usage.cacheCreationInputTokens ?? 0
+
+	if (modelName) {
+		const pricing = await getModelPricing(modelName)
+		if (pricing) {
+			return (
+				inputTokens * pricing.prompt +
+				outputTokens * pricing.completion +
+				cacheReadTokens * pricing.cacheRead +
+				cacheWriteTokens * pricing.cacheWrite
+			)
+		}
+	}
+
+	// No priced model to bill against — fall back to the legacy blended rate.
+	// Input + output tokens only, mirroring `getWorkspacePlanUsdCentsUsage`'s
+	// estimate; cache reads are near-free and billing them at the blended rate
+	// would over-charge. Cache-only usage still bills rather than reading as
+	// $0, which would be the silent-zero this path exists to prevent.
+	const tokens = inputTokens + outputTokens
+	if (tokens > 0) return tokens / LEGACY_TOKENS_PER_USD_CENT / 100
+	const cacheOnly = cacheReadTokens + cacheWriteTokens
+	if (cacheOnly > 0) return cacheOnly / LEGACY_TOKENS_PER_USD_CENT / 100
+	return null
 }
 
 /**

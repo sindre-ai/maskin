@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -156,6 +156,40 @@ describe('pull → push → pull round-trip', () => {
 		expect((await readFile(join(restored, 'learnings', 'session.md'))).toString()).toBe(
 			'learned: tar trumps zip',
 		)
+	})
+
+	it('excludes the /agent/tmp scratch dir from the snapshot', async () => {
+		// agent-run.sh points TMPDIR and the npm/pnpm/yarn caches at /agent/tmp so
+		// temp files land on the big virtiofs mount instead of the 512 MB RAM-backed
+		// /tmp (incident 2026-09-16). That scratch is per-run and can be many GB, so
+		// it must never enter the workspace tarball — otherwise every pause/resume
+		// round-trips a dependency cache through S3 and restores it stale.
+		const storage = new InMemoryStorage()
+		const sessionId = 'scratch-excluded'
+
+		const original = join(tmpRoot, 'scratch-original')
+		await pullSessionWorkspace(storage, sessionId, original)
+
+		await writeFile(join(original, 'workspace', 'keep.md'), 'real work')
+		// Stand in for a pnpm store: big enough that its absence is unambiguous.
+		await mkdir(join(original, 'tmp', 'pnpm-store'), { recursive: true })
+		await writeFile(
+			join(original, 'tmp', 'pnpm-store', 'junk.bin'),
+			Buffer.alloc(2 * 1024 * 1024, 7),
+		)
+		await writeFile(join(original, 'tmp', 'agent-out.abc123'), 'fifo leftovers')
+
+		await pushSessionWorkspace(storage, sessionId, original)
+
+		const restored = join(tmpRoot, 'scratch-restored')
+		await pullSessionWorkspace(storage, sessionId, restored)
+
+		// Real work survives.
+		expect((await readFile(join(restored, 'workspace', 'keep.md'))).toString()).toBe('real work')
+		// Scratch does not. pullSessionWorkspace only recreates the four skeleton
+		// dirs, and `tmp` is deliberately not one of them.
+		await expect(stat(join(restored, 'tmp'))).rejects.toThrow()
+		expect(SESSION_SKELETON_DIRS).not.toContain('tmp')
 	})
 
 	it('reconstructs the skeleton dirs even if the prior archive omitted them', async () => {
