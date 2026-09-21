@@ -311,6 +311,14 @@ jobs:
           # so this one entry reaches both the specs and the stack under test.
           # Never set in production — the route is not mounted without it.
           MASKIN_TEST_GRANT_TOKEN: e2e-local-test-grant-token
+          # Bearer for the internal agent-server log-ingest endpoint
+          # (POST /api/internal/agent-servers/sessions/:id/logs), which the
+          # live-update spec posts to in order to drive the real SSE log
+          # stream. The route 503s when unset, so without this the spec fails
+          # at the first ingest call. Mirrors MASKIN_TEST_GRANT_TOKEN: the
+          # value is fixed and test-only, and reaches the stack because
+          # Playwright spawns the API itself.
+          AGENT_SERVER_SECRET: e2e-agent-server-secret
           # Argos visual-regression uploads are opt-in and never gate a PR: the
           # free-plan screenshot quota is shared across all shards of all runs,
           # so an exhausted quota fails the upload for reasons unrelated to the
