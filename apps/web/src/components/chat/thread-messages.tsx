@@ -139,7 +139,10 @@ export function ThreadMessages({
 			onScroll={handleScroll}
 			data-testid="thread-messages"
 			className={cn(
-				'flex flex-1 flex-col gap-[18px] overflow-y-auto px-[var(--chat-gut)] pt-[18px] pb-1.5',
+				// `min-w-0` caps min-content on the cross axis, so a wide descendant
+				// (markdown table, long unbroken URL) can't push the flex column past
+				// its container and up into the page's `overflow-auto` shell.
+				'flex min-w-0 flex-1 flex-col gap-[18px] overflow-y-auto px-[var(--chat-gut)] pt-[18px] pb-1.5',
 				className,
 			)}
 		>
