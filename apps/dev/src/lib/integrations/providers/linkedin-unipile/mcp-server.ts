@@ -56,6 +56,16 @@ export interface LinkedInMcpContext {
 	/** Calling actor — used as the ledger key by the operations layer. */
 	actorId: string
 	workspaceId: string
+	/**
+	 * P3-J · When `true`, the fan-out registers only the read-only allowlist
+	 * (`LINKEDIN_READ_ONLY_VERBS`) per identity — never any write verb. Read
+	 * from the caller's `actors.metadata.readOnly` flag at the /mcp route and
+	 * threaded through here so the filter lives inside `toolsForIdentity(cfg)`
+	 * where the §2 identity matrix already lives. Non-read-only callers
+	 * (`false` | `undefined`) see the unchanged surface — the flag only ever
+	 * REMOVES verbs and only for the current request.
+	 */
+	readOnly?: boolean
 }
 
 /**
@@ -126,7 +136,7 @@ export function registerLinkedInMcpInstance(
 	cfg: LinkedInMcpInstanceConfig,
 	ctx: LinkedInMcpContext,
 ): void {
-	const allowed = new Set<LinkedInVerb>(toolsForIdentity(cfg))
+	const allowed = new Set<LinkedInVerb>(toolsForIdentity(cfg, { readOnly: ctx.readOnly === true }))
 	const opCtx = { db: ctx.db, actorId: ctx.actorId, workspaceId: ctx.workspaceId, identity: cfg }
 
 	if (allowed.has('publish_post')) {

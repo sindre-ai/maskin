@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { INTEGRATION_STATUS_ACTIVE, integrations } from '@maskin/db/schema'
+import { INTEGRATION_STATUS_ACTIVE, actors, integrations } from '@maskin/db/schema'
 import { getLinkedInMcpInstancesForIntegration, instanceSlug } from '@maskin/mcp/linkedin'
 import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
@@ -90,6 +90,35 @@ async function resolveWorkspaceIdentities(
 }
 
 /**
+ * P3-J · Resolve the caller's read-only tag from `actors.metadata.readOnly`
+ * on the calling actor row. When true, the fan-out registers only the
+ * read-only allowlist per identity — no write verb reaches the tool surface.
+ * Fails safe: a lookup miss or a badly-shaped metadata blob is treated as
+ * non-read-only, so an actor's full surface never collapses to nothing on a
+ * transient DB read; a leak in the OTHER direction (a read-only-tagged actor
+ * seeing a write verb) is the only failure mode gap-17 is about — that path
+ * requires `metadata.readOnly === true` to be persisted, and that is what we
+ * check for exactly.
+ */
+async function resolveCallerReadOnly(db: Database, actorId: string): Promise<boolean> {
+	try {
+		const [row] = await db
+			.select({ metadata: actors.metadata })
+			.from(actors)
+			.where(eq(actors.id, actorId))
+			.limit(1)
+		const meta = (row?.metadata as Record<string, unknown> | null) ?? null
+		return meta?.readOnly === true
+	} catch (err) {
+		logger.warn('LinkedIn MCP: read-only lookup failed, defaulting to false', {
+			actorId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return false
+	}
+}
+
+/**
  * Per-identity MCP endpoint. The mounted-under path (see app-factory.ts) makes
  * `/:instanceSlug` resolve to e.g.
  * `/api/integrations/linkedin-unipile/mcp/linkedin-magnus-noeddegaard-personal`.
@@ -127,7 +156,15 @@ app.post('/:instanceSlug', async (c) => {
 	// `github-*` MCP surface's shape.
 	const scoped = allInstances.filter((cfg) => instanceSlug(cfg) === requestedSlug)
 
-	const mcpServer = createLinkedInMcpServer({ db, actorId, workspaceId }, scoped)
+	// P3-J · Look the caller up ONCE per request and thread `readOnly` into the
+	// context; the fan-out's `toolsForIdentity(cfg, {readOnly})` then filters
+	// down to the read-only allowlist for every registered instance. Cheap
+	// (one PK read) — the /mcp route already runs a workspace-member check
+	// and self-heal per request, so one more actor lookup does not shift the
+	// path's characteristic.
+	const readOnly = await resolveCallerReadOnly(db, actorId)
+
+	const mcpServer = createLinkedInMcpServer({ db, actorId, workspaceId, readOnly }, scoped)
 
 	const transport = new StreamableHTTPServerTransport({
 		sessionIdGenerator: undefined,
@@ -147,6 +184,7 @@ app.post('/:instanceSlug', async (c) => {
 	logger.info('LinkedIn MCP request (per-identity)', {
 		workspaceId,
 		actorId,
+		readOnly,
 		method: (body as { method?: string })?.method,
 		instanceSlug: requestedSlug,
 		matched: scoped.length,
