@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
+import { workspaceMembers, workspaceSkills } from '@maskin/db/schema'
 import {
 	createWorkspaceSkillSchema,
 	parseSkillMd,
@@ -14,6 +14,7 @@ import { and, asc, desc, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
@@ -381,7 +382,7 @@ app.openapi(createWorkspaceSkillRoute, (async (c) => {
 	// The mutation has already succeeded; a failing audit write must not
 	// translate into a 500 for the caller.
 	try {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId: callerActorId,
 			action: 'created',
@@ -775,7 +776,7 @@ app.openapi(uploadWorkspaceSkillRoute, (async (c) => {
 	// Audit event — same shape as the JSON create path so existing listeners
 	// keep working. `content` is omitted to stay under the 8KB NOTIFY cap.
 	try {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId: callerActorId,
 			action: replaceRow ? 'updated' : 'created',
@@ -1168,7 +1169,7 @@ app.openapi(updateWorkspaceSkillRoute, (async (c) => {
 	}
 
 	try {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId: callerActorId,
 			action: 'updated',
@@ -1257,7 +1258,7 @@ app.openapi(deleteWorkspaceSkillRoute, (async (c) => {
 	}
 
 	try {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId: callerActorId,
 			action: 'deleted',

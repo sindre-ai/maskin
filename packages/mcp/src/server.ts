@@ -338,6 +338,20 @@ async function apiFetch(
 	if (effectiveWorkspaceId) {
 		headers['X-Workspace-Id'] = effectiveWorkspaceId
 	}
+	// S2 writer hook: attribute every MCP-tool-originated mutation to the
+	// container session it ran inside, so the backend's `produced_by` writer
+	// can persist a `session → object|file` edge. `SESSION_ID` is injected by
+	// the host session-manager on container launch; running the MCP server
+	// outside an agent session (local dev) leaves it unset and no header is
+	// sent. Read-only calls carry the header too — cheap and harmless, and
+	// keeps the header contract uniform per request rather than per method.
+	const sessionId = process.env.SESSION_ID
+	if (
+		sessionId &&
+		/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
+	) {
+		headers['X-Maskin-Session-Id'] = sessionId
+	}
 	const idempotencyKey = options?.idempotencyKey ?? deriveIdempotencyKey(method, path, body)
 	if (idempotencyKey) {
 		headers['Idempotency-Key'] = idempotencyKey

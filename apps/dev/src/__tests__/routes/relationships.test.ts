@@ -186,7 +186,19 @@ describe('Relationships Routes', () => {
 					(v) => (v as Record<string, unknown>).action !== 'workspace_knowledge_referenced',
 				),
 			).toBe(true)
-			expect(capturePosthogEventMock).not.toHaveBeenCalled()
+			// The `workspace_knowledge_referenced` PostHog capture must not fire on
+			// a non-`derived_from` edge; the S2 writer hook (bet 34706e2f) adds a
+			// separate `relationship_created` capture on every relationships write,
+			// which does fire here — the two events serve different purposes and are
+			// asserted independently.
+			expect(
+				capturePosthogEventMock.mock.calls.some(
+					(args) => args[0] === 'workspace_knowledge_referenced',
+				),
+			).toBe(false)
+			expect(
+				capturePosthogEventMock.mock.calls.some((args) => args[0] === 'relationship_created'),
+			).toBe(true)
 		})
 	})
 

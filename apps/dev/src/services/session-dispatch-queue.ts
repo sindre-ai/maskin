@@ -1,7 +1,8 @@
 import type { Database } from '@maskin/db'
-import { events, sessionDispatchAttempts, sessions } from '@maskin/db/schema'
+import { sessionDispatchAttempts, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
 import { and, asc, eq, lte, sql } from 'drizzle-orm'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 
 /**
@@ -490,7 +491,7 @@ export class SessionDispatchQueue {
 		// failed. Each failure is logged and swallowed so it cannot cost the
 		// caller the workspace id it needs to open the pause.
 		try {
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: updated.workspaceId,
 				actorId: updated.actorId,
 				action: 'session_failed',

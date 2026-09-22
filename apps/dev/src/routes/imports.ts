@@ -1,11 +1,12 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, imports, workspaces } from '@maskin/db/schema'
+import { imports, workspaces } from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import { type CsvOptions, importMappingSchema, importQuerySchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, desc, eq } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -218,7 +219,7 @@ app.openapi(createImportRoute, async (c) => {
 	}
 
 	// Log event
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'created',
@@ -408,7 +409,7 @@ function runImportInBackground(opts: {
 			})
 			.where(eq(imports.id, importId))
 
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId,
 			action: finalStatus === 'completed' ? 'import_completed' : 'import_failed',
@@ -562,7 +563,7 @@ app.openapi(confirmImportRoute, async (c) => {
 	}
 
 	// Log event
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'import_started',

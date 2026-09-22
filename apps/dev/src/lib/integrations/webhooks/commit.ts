@@ -1,6 +1,7 @@
 import type { Database } from '@maskin/db'
-import { events, webhookDeliveries } from '@maskin/db/schema'
+import { type events, webhookDeliveries } from '@maskin/db/schema'
 import { and, eq, isNull } from 'drizzle-orm'
+import { recordEvents } from '../../events/record-event'
 
 export type WebhookEventRow = typeof events.$inferInsert
 
@@ -42,7 +43,7 @@ export async function commitWebhookDelivery(
 ): Promise<void> {
 	await db.transaction(async (tx) => {
 		if (args.eventRows.length > 0) {
-			await tx.insert(events).values(args.eventRows)
+			await recordEvents(tx, args.eventRows)
 		}
 		if (args.claimRowId) {
 			const matched = await tx

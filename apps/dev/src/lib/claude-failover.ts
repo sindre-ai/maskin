@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { events, workspaces } from '@maskin/db/schema'
+import { workspaces } from '@maskin/db/schema'
 import { CLAUDE_MESSAGES_URL } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import {
@@ -31,6 +31,7 @@ import {
 	withSlotFailure,
 	writeFailoverState,
 } from './claude-oauth-slots'
+import { recordEvent } from './events/record-event'
 import { logger } from './logger'
 
 /**
@@ -542,7 +543,7 @@ async function recordFailoverTransition(params: {
 			})
 			.where(eq(workspaces.id, workspaceId))
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId,
 			action: FAILOVER_TRIGGERED_ACTION,
@@ -670,7 +671,7 @@ export async function recordRuntimeClaudeOAuthFailover(params: {
 			})
 			.where(eq(workspaces.id, workspaceId))
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId,
 			action: FAILOVER_TRIGGERED_ACTION,
@@ -757,7 +758,7 @@ export async function recordRuntimeClaudeOAuthBackupExhausted(params: {
 				.where(eq(workspaces.id, workspaceId))
 		}
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId,
 			action: BACKUP_EXHAUSTED_ACTION,

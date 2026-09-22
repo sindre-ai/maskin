@@ -1,7 +1,8 @@
 import type { Database } from '@maskin/db'
-import { events, actors, conversations, messages, workspaces } from '@maskin/db/schema'
+import { actors, conversations, messages, workspaces } from '@maskin/db/schema'
 import { CONVERSATION_TITLE_MAX_LENGTH } from '@maskin/shared'
 import { and, asc, count, eq } from 'drizzle-orm'
+import { recordEvent } from '../lib/events/record-event'
 import { resolveChatCredentials } from '../lib/llm-routing'
 import type { LLMTool } from '../lib/llm/adapter'
 import { createLLMAdapter } from '../lib/llm/index'
@@ -227,7 +228,7 @@ export async function maybeGenerateConversationTitle(ctx: {
 		// and detail on any entity_type 'conversation' event. actorId is the
 		// conversation's creator — a background job has no acting actor (same
 		// convention as TokenManager.markRevoked).
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId: conversation.createdBy,
 			action: 'conversation_updated',

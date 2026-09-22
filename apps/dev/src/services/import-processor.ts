@@ -1,8 +1,9 @@
 import type { Database } from '@maskin/db'
-import { events, imports, objects, relationships } from '@maskin/db/schema'
+import { imports, objects, relationships } from '@maskin/db/schema'
 import type { CsvOptions, ImportMapping, TypeMapping } from '@maskin/shared'
 import { parse } from 'csv-parse/sync'
 import { eq } from 'drizzle-orm'
+import { capturePosthogRelationshipCreated, recordEvents } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
 
@@ -512,7 +513,8 @@ export async function executeImport(
 						.returning()
 
 					if (created.length > 0) {
-						await tx.insert(events).values(
+						await recordEvents(
+							tx,
 							created.map((obj) => ({
 								workspaceId,
 								actorId,
@@ -619,7 +621,8 @@ export async function executeImport(
 
 				// Log relationship events
 				if (created.length > 0) {
-					await db.insert(events).values(
+					await recordEvents(
+						db,
 						created.map((rel) => ({
 							workspaceId,
 							actorId,
@@ -629,6 +632,16 @@ export async function executeImport(
 							data: rel,
 						})),
 					)
+					// PostHog · one capture per relationships write, source of truth
+					// for the ship-metric across every prod writer. Fire-and-forget.
+					for (const rel of created) {
+						capturePosthogRelationshipCreated(actorId, {
+							workspaceId,
+							sourceType: rel.sourceType,
+							targetType: rel.targetType,
+							type: rel.type,
+						})
+					}
 				}
 			} catch (err) {
 				const message = `Relationship batch failed: ${err instanceof Error ? err.message : String(err)}`

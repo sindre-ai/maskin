@@ -2,7 +2,6 @@ import { OpenAPIHono } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
-	events,
 	actors,
 	webhookDeliveries,
 	workspaceCreditLedger,
@@ -44,6 +43,7 @@ function isAddonSubscription(
 
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { creditedAmountUsdMinor } from '../lib/credit-billing'
+import { recordEvent } from '../lib/events/record-event'
 import { billingAfterCancel, settingsAfterPaidPlanActivation } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import {
@@ -441,7 +441,7 @@ async function applyEvent(
 					}
 
 					const systemActorId = await getOrCreateStripeSystemActor(tx, workspaceId)
-					await tx.insert(events).values({
+					await recordEvent(tx, {
 						workspaceId,
 						actorId: systemActorId,
 						action: 'workspace_credit_topup',
@@ -602,7 +602,7 @@ async function applyEvent(
 		// nothing plan-shaped changed (a top-up already wrote its own event).
 		if (planMutated) {
 			const systemActorId = await getOrCreateStripeSystemActor(tx, workspaceId)
-			await tx.insert(events).values({
+			await recordEvent(tx, {
 				workspaceId,
 				actorId: systemActorId,
 				action: 'workspace_billing_updated',
