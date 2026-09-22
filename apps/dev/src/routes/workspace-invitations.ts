@@ -10,7 +10,7 @@ import {
 } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { isEnterpriseActor } from '../lib/enterprise-allowlist'
+import { isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, formatZodError, validationFailureHook } from '../lib/errors'
 import { takeInvitePreviewToken } from '../lib/invite-preview-throttle'
 import { hashInviteToken } from '../lib/invites-token'
