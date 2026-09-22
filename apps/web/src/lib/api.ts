@@ -272,6 +272,13 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		// Server-persisted star toggles (D5). Idempotent on both sides, no body,
+		// actor derived from the API key. Response carries the resulting scalar
+		// so an optimistic update can drop stale state on mismatch.
+		star: (id: string, workspaceId: string) =>
+			request<StarToggleResponse>(`/objects/${id}/star`, { method: 'POST', workspaceId }),
+		unstar: (id: string, workspaceId: string) =>
+			request<StarToggleResponse>(`/objects/${id}/star`, { method: 'DELETE', workspaceId }),
 	},
 
 	auth: {
@@ -1090,6 +1097,14 @@ export interface ObjectResponse {
 	metadata: SafeMetadata | null
 	driver: string | null
 	activeSessionId: string | null
+	// D2 · Working-ring predicate. Lifecycle state of the session pointed at by
+	// `activeSessionId`, hydrated by a bounded batch lookup on list/detail so
+	// the row can gate the ring on 'running' only — `activeSessionId` stays
+	// non-null through pending/starting/paused, which would flicker the ring.
+	// `null` when there is no active session, `undefined` on legacy list
+	// surfaces (e.g. board) that don't hydrate it — clients read both as "no
+	// ring".
+	active_session_state?: string | null
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
@@ -1097,6 +1112,16 @@ export interface ObjectResponse {
 	is_subscribed?: boolean
 	unread_count?: number
 	subscriber_count?: number
+	// Per-viewer starred flag. The list handler + detail + graph hydrate it via
+	// a single secondary query (see `star-state` service on the backend). Other
+	// endpoints — create / update / verify / undo-write / bulk — omit it, so
+	// the field is optional here and every reader defaults to `false`.
+	is_starred_by_me?: boolean
+}
+
+export interface StarToggleResponse {
+	is_starred_by_me: boolean
+	starred_at: string | null
 }
 
 export interface BoardObjectColumn {
@@ -1643,6 +1668,12 @@ export interface ConversationDetailResponse {
 	pinned: boolean
 	archived: boolean
 	last_read_message_id: number | null
+	// The loop this conversation belongs to, when it was started inside a loop
+	// (Loop chip in the thread header links to it). Server-side field is not
+	// wired yet; the frontend treats `null`/`undefined` as "no loop" and renders
+	// no chip, so the payload can start emitting it without a client-side
+	// change.
+	loop_id?: string | null
 	participants: ConversationParticipantResponse[]
 }
 
@@ -1778,6 +1809,7 @@ export interface UpdateConversationParticipantStateInput {
 	pinned?: boolean
 	archived?: boolean
 	last_read_message_id?: number
+	mark_unread?: boolean
 }
 
 export interface PostMessageInput {

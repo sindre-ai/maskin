@@ -571,11 +571,22 @@ export function MarkdownContent({
 			return <pre {...rest}>{children}</pre>
 		}
 
-		if (!mentionActors) return { code, pre }
+		// `overflow-x-auto` on a `<table>` doesn't clamp the way it does on a
+		// block box — the table layout algorithm still computes its intrinsic
+		// width from cell content and can exceed the containing block. An outer
+		// block-level scroll wrapper is the reliable pattern for wide tables.
+		const table: Components['table'] = ({ children, ...rest }) => (
+			<div className="my-2 max-w-full overflow-x-auto">
+				<table {...rest}>{children}</table>
+			</div>
+		)
+
+		if (!mentionActors) return { code, pre, table }
 		const wrap = (children: ReactNode) => wrapWithMentions(children, mentionActors, onMentionClick)
 		return {
 			code,
 			pre,
+			table,
 			p: ({ children }) => <p>{wrap(children)}</p>,
 			li: ({ children }) => <li>{wrap(children)}</li>,
 			em: ({ children }) => <em>{wrap(children)}</em>,
@@ -785,7 +796,7 @@ export function MarkdownContent({
 				<div
 					className={cn(
 						'prose dark:prose-invert prose-sm max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-p:leading-[1.7142857] prose-li:text-muted-foreground prose-a:text-primary prose-strong:text-foreground prose-code:text-primary prose-code:bg-card prose-code:px-1 prose-code:rounded prose-code:before:content-none prose-code:after:content-none',
-						'break-words [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_img]:max-w-full [&_table]:block [&_table]:overflow-x-auto [&_table]:max-w-full',
+						'break-words [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_img]:max-w-full',
 						size === 'xs' && '[&_p]:text-xs [&_p]:leading-normal [&_li]:text-xs [&_a]:text-xs',
 						size === 'doc' && [
 							'[&_p]:text-[15px] [&_p]:leading-[1.65] [&_p]:text-foreground [&_p]:mb-2 [&_p]:mt-0',

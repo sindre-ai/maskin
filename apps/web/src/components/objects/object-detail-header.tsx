@@ -1,13 +1,13 @@
 import { EditableTitle } from '@/components/shared/editable-title'
-import { NewMenu } from '@/components/shared/new-menu'
 import { Button } from '@/components/ui/button'
 import type { MemberResponse, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { getStatusColor, getTypeColor, statusLabel, typeIcons, typeLabel } from '@/lib/constants'
-import { useNavigate } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 import { PanelRight } from 'lucide-react'
 import { useState } from 'react'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
+import { DetailMetaStar } from './detail-meta-row'
 import { OwnerSelect, StatusSelect } from './property-selects'
 
 interface ObjectDetailBarActionsProps {
@@ -95,10 +95,51 @@ function StatusPill({ status }: { status: string }) {
 	)
 }
 
+/**
+ * D6 — the amber `⏸ PAUSED · NO CREDITS` chip on the object-detail meta row.
+ * Rendered only when the workspace-scoped `useUsageState()` selector returns
+ * `credits_state === 'empty'`. Click flows to the same billing anchor the
+ * low-credits notice already uses (see `TrialExpiredBanner` and
+ * `session-errors.ts`), so operators land on the surface that clears the
+ * state. `role="status"` + polite live region reads the flip on first render;
+ * SSE-driven billing invalidation (session lifecycle events) drives the
+ * subsequent re-renders without a page reload.
+ */
+export function PausedNoCreditsChip({ workspaceId }: { workspaceId: string }) {
+	return (
+		<Link
+			to="/$workspaceId/settings/keys"
+			params={{ workspaceId }}
+			// biome-ignore lint/a11y/useSemanticElements: the chip is also a link,
+			// so it must remain an <a>; role=status carries the D6 accessibility
+			// contract without changing the element.
+			role="status"
+			aria-live="polite"
+			aria-label="Paused — no credits. Open billing to add credit."
+			title="No credits — new sessions are paused. Open billing to add credit."
+			className={cn(
+				'inline-flex items-center gap-1 rounded-[7px] px-2 py-[3px] font-semibold',
+				// Amber chip, no border — matches the retired trial-expired banner
+				// tone (bg-warning/10 + text-warning) so both credit surfaces speak
+				// with one voice.
+				'bg-warning/15 text-warning transition-colors hover:bg-warning/25',
+			)}
+		>
+			{/* Copy verbatim per D6 SPEC — the leading U+23F8 double-vertical-bar
+			    stays inline with the label so screen readers announce
+			    "PAUSED · NO CREDITS" via aria-label rather than the glyph. */}
+			<span aria-hidden="true">⏸</span>
+			<span>PAUSED · NO CREDITS</span>
+		</Link>
+	)
+}
+
 export function ObjectDetailIdentity({
 	object,
 	statuses,
 	members,
+	workspaceId,
+	creditsState,
 	onStatusChange,
 	onDriverChange,
 	onTitleChange,
@@ -106,6 +147,11 @@ export function ObjectDetailIdentity({
 	object: ObjectResponse
 	statuses: string[]
 	members: MemberResponse[]
+	/** Workspace ID the D6 credits chip links back to for the billing anchor. */
+	workspaceId: string
+	/** D6: when `'empty'`, renders the amber `⏸ PAUSED · NO CREDITS` chip
+	 *  immediately after the status chip. Any other value renders nothing. */
+	creditsState?: 'empty' | 'ok' | 'unknown'
 	onStatusChange: (status: string) => void
 	onDriverChange: (driver: string | null) => void
 	/** Wire this to make the title editable in place. Omitted by read-only
@@ -124,6 +170,8 @@ export function ObjectDetailIdentity({
 				    a 13px stroke in the type's own colour, not a filled tile. */}
 				{Icon && <Icon aria-hidden="true" className={cn('size-[13px] shrink-0', typeColor.text)} />}
 				<span>{typeLabel(object.type)}</span>
+				{/* SPEC §D5: star sits left of the status chip on the detail meta row. */}
+				<DetailMetaStar objectId={object.id} />
 				{statuses.length > 0 ? (
 					<StatusSelect
 						current={object.status}
@@ -135,6 +183,7 @@ export function ObjectDetailIdentity({
 				) : (
 					object.status && <StatusPill status={object.status} />
 				)}
+				{creditsState === 'empty' && <PausedNoCreditsChip workspaceId={workspaceId} />}
 				<OwnerSelect
 					members={members}
 					currentOwnerId={object.driver ?? null}

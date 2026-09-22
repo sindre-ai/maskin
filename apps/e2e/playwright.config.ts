@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
+import { E2E_AGENT_SERVER_SECRET } from './src/helpers/api.helper'
 import { isArgosEnabled } from './src/helpers/argos.helper'
 
 // Without ARGOS_TOKEN, every upload attempt fails (quota, auth, or a
@@ -47,9 +48,34 @@ export default defineConfig({
 			port: 3000,
 			reuseExistingServer: !process.env.CI,
 			cwd: '../../',
+			// The internal log-ingest endpoint (POST
+			// /api/internal/agent-servers/sessions/:id/logs) 503s unless the
+			// server has AGENT_SERVER_SECRET set — it is the bearer the
+			// live-update spec authenticates with. The value must match
+			// E2E_AGENT_SERVER_SECRET, which the spec reads. Note this only
+			// applies when Playwright spawns the server: with
+			// reuseExistingServer (local runs against an already-up dev stack)
+			// the server keeps whatever secret it was started with.
+			env: { AGENT_SERVER_SECRET: E2E_AGENT_SERVER_SECRET },
 		},
 		{
-			command: 'pnpm --filter @maskin/web dev',
+			// CI serves the production build (`vite preview`) instead of the dev
+			// server. `pnpm build` already runs earlier in the verify-e2e job, so
+			// this costs nothing extra — and it fixes a real flake: the dev server
+			// transforms every ES module on demand, so a `page.reload()` (a full
+			// navigation, not a Vite HMR update) re-fetches and re-transforms the
+			// whole module graph from scratch. On a loaded CI runner that
+			// regularly pushed reloads on module-heavy routes (settings/keys, with
+			// its several Radix-heavy sub-editors) past the wait's 30s budget —
+			// see claude-subscription-*.spec.ts's reloadKeysPage — while the API
+			// calls behind those same reloads were consistently under 50ms. The
+			// production build is pre-bundled static files, so a reload is just a
+			// handful of cached-or-not HTTP GETs, not a transform pipeline.
+			// `preview.proxy` in apps/web/vite.config.ts mirrors `server.proxy` so
+			// /api and /mcp still route to the backend either way.
+			command: process.env.CI
+				? 'pnpm --filter @maskin/web preview'
+				: 'pnpm --filter @maskin/web dev',
 			port: 5173,
 			reuseExistingServer: !process.env.CI,
 			cwd: '../../',

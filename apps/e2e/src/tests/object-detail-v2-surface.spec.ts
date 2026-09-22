@@ -83,8 +83,10 @@ test.describe('Object detail — v2 surface', () => {
 			await page.getByRole('tab', { name: /^Related/ }).click()
 			await expect(page.getByText('breaks into')).toBeVisible()
 			await expect(page.getByRole('link', { name: 'Linked task' })).toBeVisible()
-			await expect(page.getByRole('button', { name: /Link an object/ })).toBeVisible()
-			await expect(page.getByRole('button', { name: /Upload a file/ })).toBeVisible()
+			// D11 renders one CTA pair per relationship type, so these are
+			// deliberate multi-matches — pin the first rather than the only.
+			await expect(page.getByRole('button', { name: /Link an object/ }).first()).toBeVisible()
+			await expect(page.getByRole('button', { name: /Upload a file/ }).first()).toBeVisible()
 
 			// No horizontal page scroll at this ship-gate viewport.
 			const scrollWidth = await page.evaluate(

@@ -26,7 +26,7 @@ import { createTestApp } from '../setup'
 const OWNER_CALLER = { role: 'owner', type: 'human' } as const
 
 // Sentinel cap values (USD cents) that are intentionally NOT the literal
-// defaults (2_000 / 20_000), AND chosen arithmetically far from them so that
+// defaults (4_900 / 20_000), AND chosen arithmetically far from them so that
 // a swapped or off-by-one test value couldn't accidentally satisfy a literal-
 // default assertion. Pi / Euler digits keep them memorable.
 const PRO_ENV_SENTINEL = '31415926'
@@ -37,6 +37,7 @@ const VALID_ENV = {
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
+	STRIPE_PRICE_CREDITS_CUSTOM: 'price_credits_custom_test',
 	MASKIN_PRO_HARD_CAP_USD_CENTS: PRO_ENV_SENTINEL,
 	MASKIN_TEAM_HARD_CAP_USD_CENTS: TEAM_ENV_SENTINEL,
 }
@@ -414,6 +415,7 @@ describe('POST /api/billing/credits/checkout', () => {
 				amountUsdCents: 2_500,
 				existingCustomerId: 'cus_x',
 			}),
+			expect.objectContaining({ priceCreditsCustom: 'price_credits_custom_test' }),
 		)
 	})
 
@@ -474,7 +476,7 @@ describe('GET /api/billing/usage', () => {
 						billing: {
 							plan: 'pro',
 							status: 'active',
-							hard_cap_usd_cents: 2_000,
+							hard_cap_usd_cents: 4_900,
 							period_start: periodStart,
 							stripe_customer_id: 'cus_x',
 							stripe_subscription_id: 'sub_x',
@@ -499,7 +501,7 @@ describe('GET /api/billing/usage', () => {
 			plan: 'pro',
 			status: 'active',
 			usd_cents_used: 751,
-			hard_cap_usd_cents: 2_000,
+			hard_cap_usd_cents: 4_900,
 			period_start: periodStart,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
@@ -590,7 +592,7 @@ describe('GET /api/billing/usage', () => {
 		// `hard_cap_usd_cents: 1` as the boundary value of the `> 0` guard: a
 		// positive integer is honored verbatim, even at the smallest possible
 		// value, so callers can't accidentally tip into the fallback by saving 1.
-		// And with env unset, the Pro response must equal the literal $20.00
+		// And with env unset, the Pro response must equal the literal $49.00
 		// default — the env-driven test above only proves the false branch hits
 		// the sentinel, not the literal that fires in prod when the env is
 		// missing.
@@ -625,12 +627,12 @@ describe('GET /api/billing/usage', () => {
 
 		const zeroRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': zeroWs }))
 		expect(zeroRes.status).toBe(200)
-		// Env is unset, so the fallback path resolves to the literal $20.00
+		// Env is unset, so the fallback path resolves to the literal $49.00
 		// default — the actual prod failure mode (no env, stored 0). Proves the
 		// route took the `> 0` false branch all the way to the literal.
 		expect(await zeroRes.json()).toMatchObject({
 			plan: 'pro',
-			hard_cap_usd_cents: 2_000,
+			hard_cap_usd_cents: 4_900,
 		})
 
 		const negRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': negWs }))
@@ -665,7 +667,7 @@ describe('GET /api/billing/usage', () => {
 
 		const proRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': proWs }))
 		expect(proRes.status).toBe(200)
-		expect(await proRes.json()).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 2_000 })
+		expect(await proRes.json()).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 4_900 })
 
 		const teamRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': teamWs }))
 		expect(teamRes.status).toBe(200)
@@ -724,7 +726,7 @@ describe('GET /api/billing/usage', () => {
 						billing: {
 							plan: 'pro',
 							status: 'active',
-							hard_cap_usd_cents: 2_000,
+							hard_cap_usd_cents: 4_900,
 							period_start: periodStart,
 							period_end: periodEnd,
 						},
@@ -758,7 +760,7 @@ describe('GET /api/billing/usage', () => {
 						billing: {
 							plan: 'pro',
 							status: 'active',
-							hard_cap_usd_cents: 2_000,
+							hard_cap_usd_cents: 4_900,
 							period_start: -1.5,
 						},
 					},
@@ -771,7 +773,7 @@ describe('GET /api/billing/usage', () => {
 		expect(res.status).toBe(200)
 		const body = await res.json()
 		expect(body.period_start).toBeNull()
-		expect(body).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 2_000 })
+		expect(body).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 4_900 })
 	})
 
 	it('reports the prepaid credit balance for a pro workspace over cap', async () => {
@@ -786,7 +788,7 @@ describe('GET /api/billing/usage', () => {
 						billing: {
 							plan: 'pro',
 							status: 'active',
-							hard_cap_usd_cents: 2_000,
+							hard_cap_usd_cents: 4_900,
 							period_start: periodStart,
 							credit_balance_cents: 4_000,
 						},
@@ -887,7 +889,7 @@ describe('GET /api/billing/usage', () => {
 						billing: {
 							plan: 'pro',
 							status: 'active',
-							hard_cap_usd_cents: 2_000,
+							hard_cap_usd_cents: 4_900,
 							period_start: periodStart + 0.42,
 						},
 					},
@@ -988,7 +990,7 @@ describe('GET /api/billing/usage', () => {
 					{
 						id: workspaceId,
 						settings: {
-							billing: { plan: 'pro', status: 'active', hard_cap_usd_cents: 2_000 },
+							billing: { plan: 'pro', status: 'active', hard_cap_usd_cents: 4_900 },
 						},
 					},
 				],
