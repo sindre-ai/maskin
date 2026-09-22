@@ -28,7 +28,10 @@ import { and, eq, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { isEnterpriseActor } from '../lib/enterprise'
 import { logger } from '../lib/logger'
-import { buildChiefOfStaffKickoffPrompt } from '../lib/onboarding/chief-of-staff-kickoff'
+import {
+	buildChiefOfStaffKickoffPrompt,
+	shouldSkipOnboardingKickoff,
+} from '../lib/onboarding/chief-of-staff-kickoff'
 import {
 	OwnershipCapExceededError,
 	computeEffectiveTier,
@@ -673,7 +676,7 @@ export async function bootstrapDefaultAgents(
 	// time Chief of Staff is created for this workspace (chiefIsNew), so
 	// idempotent re-runs of this function (e.g. a template backfill on an
 	// existing workspace) never re-kick the welcome session.
-	if (chiefIsNew && chiefId && sessionManager) {
+	if (chiefIsNew && chiefId && sessionManager && !shouldSkipOnboardingKickoff()) {
 		const [owner] = await db
 			.select({ name: actors.name, email: actors.email })
 			.from(actors)
@@ -846,7 +849,7 @@ export async function provisionWorkspace(params: {
 	// kickoff — fire the welcome session here instead. It can't be driven by an
 	// `actor.created` event trigger either: the owner's actor row predates every
 	// trigger in this workspace.
-	if (chiefOfStaffId && sessionManager) {
+	if (chiefOfStaffId && sessionManager && !shouldSkipOnboardingKickoff()) {
 		const [owner] = await db
 			.select({ name: actors.name, email: actors.email })
 			.from(actors)

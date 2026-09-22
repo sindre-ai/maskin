@@ -58,6 +58,9 @@ type TimelineEntry =
 			text: string
 			chipLabel: string
 			chipTone: ChipTone
+			/** The raw event action (`updated`, `created`, a `session_*`, `link`).
+			 *  Identifies "same event type" for the same-actor fold. */
+			eventType: string
 			isStatusChange: boolean
 			/** Edge rows read `<when> <verb> <object chip>` with a square node —
 			 *  the mockup's `tl.isRel` (1258–1272), not a sentence. */
@@ -88,14 +91,33 @@ interface TimelineFold {
 
 type StreamRow = TimelineEntry | TimelineFold
 
-/** A run of this many consecutive low-signal rows collapses behind one pill. */
-const FOLD_MIN_RUN = 3
+/** A same-actor + same-event-type run this long collapses behind one pill. */
+const FOLD_MIN_RUN = 2
+
+/**
+ * Two event rows that read as the same actor doing the same thing. Repetition
+ * this tight — "Chief of Staff updated loop" back-to-back — is what the fold
+ * targets, and also what defines a run's boundary: a row that breaks this
+ * predicate ends the current run and starts a fresh one.
+ */
+function isSameActorSameType(a: TimelineEntry, b: TimelineEntry): boolean {
+	return (
+		a.kind === 'event' &&
+		b.kind === 'event' &&
+		a.actorId !== null &&
+		a.actorId === b.actorId &&
+		a.eventType === b.eventType
+	)
+}
 
 /**
  * Collapse consecutive runs of routine machine chatter — plain updates, session
  * rows, link rows — into a single fold. Comments and status changes are the
  * spine of the story and are never folded, so the unread divider's target and
- * every phase boundary stay reachable.
+ * every phase boundary stay reachable. A run is one same-actor + same-event-type
+ * stretch and folds at two rows; a row that changes actor or action ends the
+ * run, so the loop's `created` event never folds into a stretch of `updated`
+ * rows by the same actor.
  */
 function foldRuns(entries: TimelineEntry[]): StreamRow[] {
 	const out: StreamRow[] = []
@@ -110,8 +132,11 @@ function foldRuns(entries: TimelineEntry[]): StreamRow[] {
 		run = []
 	}
 	for (const entry of entries) {
-		if (entry.kind === 'event' && !entry.isStatusChange) run.push(entry)
-		else {
+		if (entry.kind === 'event' && !entry.isStatusChange) {
+			const head = run[0]
+			if (head && !isSameActorSameType(head, entry)) flush()
+			run.push(entry)
+		} else {
 			flush()
 			out.push(entry)
 		}
@@ -329,6 +354,7 @@ export function TimelineTab({
 				text: formatEventDescription(event, { actorsById }),
 				chipLabel: chip.label,
 				chipTone: chip.tone,
+				eventType: event.action,
 				isStatusChange: event.action === 'status_changed',
 				isRelationship: false,
 				newStatus: event.action === 'status_changed' ? newStatusOf(event) : null,
@@ -351,6 +377,7 @@ export function TimelineTab({
 				text: 'linked this',
 				chipLabel: 'Link',
 				chipTone: 'link',
+				eventType: 'link',
 				isStatusChange: false,
 				isRelationship: true,
 				newStatus: null,

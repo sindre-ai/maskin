@@ -191,7 +191,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: [1, 2, 3, 4, 5, 6, 7]
     services:
       postgres:
         image: postgres:16-alpine
@@ -288,7 +288,7 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: pnpm --filter @maskin/e2e exec playwright install-deps chromium
 
-      - name: Run E2E tests (shard ${{ matrix.shard }}/5)
+      - name: Run E2E tests (shard ${{ matrix.shard }}/7)
         # Argos's upload() can reject via a promise that safe-argos-reporter.ts's
         # own try/catch doesn't end up wrapping — an unhandled rejection there
         # has previously crashed an otherwise-green shard. Rather than keep
@@ -300,7 +300,7 @@ jobs:
         # upload path — quota, outage, auth, a library bug — can then never
         # fail the job, while an actual test regression still does.
         run: |
-          pnpm --filter @maskin/e2e exec playwright test --shard=${{ matrix.shard }}/5 || true
+          pnpm --filter @maskin/e2e exec playwright test --shard=${{ matrix.shard }}/7 || true
           node apps/e2e/scripts/assert-results.mjs apps/e2e/playwright-report/e2e-results.json
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
