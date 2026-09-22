@@ -24,7 +24,7 @@ export {
 	instanceSlug,
 	toolName,
 } from './linkedin-mcp-context.js'
-export { toolsForIdentity } from '../linkedin/register.js'
+export { LINKEDIN_READ_ONLY_VERBS, toolsForIdentity } from '../linkedin/register.js'
 export {
 	__resetLinkedInMcpRegistryForTests,
 	deregisterLinkedInMcpInstance,

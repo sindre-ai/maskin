@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
 	LINKEDIN_ALL_VERBS,
+	LINKEDIN_READ_ONLY_VERBS,
 	__resetLinkedInMcpRegistryForTests,
 	instanceSlug,
 	listLinkedInMcpInstances,
@@ -8,7 +9,26 @@ import {
 	toolName,
 	toolsForIdentity,
 } from '../lib/linkedin-fan-out.js'
-import type { LinkedInMcpInstanceConfig } from '../lib/linkedin-fan-out.js'
+import type { LinkedInMcpInstanceConfig, LinkedInVerb } from '../lib/linkedin-fan-out.js'
+
+/**
+ * P3-J · Every write verb R11 registers. If a read-only caller sees ANY of
+ * these on ANY fanned-out identity, the read-only filter has leaked. Kept
+ * inline (rather than derived from `LINKEDIN_ALL_VERBS \ LINKEDIN_READ_ONLY_VERBS`)
+ * so a new verb added later has to be classified explicitly — the compiler
+ * will tell us which list it belongs on, rather than silently defaulting a
+ * new write verb into the read-only surface.
+ */
+const LINKEDIN_WRITE_VERBS: readonly LinkedInVerb[] = [
+	'publish_post',
+	'edit_post',
+	'delete_post',
+	'comment_on_post',
+	'reply_to_comment',
+	'send_message',
+	'reply',
+	'send_connection_request',
+] as const
 
 /**
  * R11-A · linkedin-mcp-phase2-technical-spec.md §9.2 suite 2 — pin the
@@ -112,6 +132,73 @@ describe('toolsForIdentity — §2 filter matrix', () => {
 		// `LINKEDIN_ALL_VERBS` (Phase 1 + Phase 2 R11-B verbs) is the canonical
 		// order. For personal, the filter output must be exactly that order.
 		expect(toolsForIdentity(personal)).toEqual([...LINKEDIN_ALL_VERBS])
+	})
+})
+
+describe('toolsForIdentity — P3-J read-only caller filter (gap-17)', () => {
+	it('personal + readOnly narrows to the read-only allowlist exactly', () => {
+		// A read-only-tagged caller sees only network-reading verbs the
+		// [Investor Relations] warm-intro path needs — never any write verb
+		// and never any messaging / posts / engagement verb either. The
+		// allowlist IS the surface, not a maximum.
+		expect(toolsForIdentity(personal, { readOnly: true })).toEqual([...LINKEDIN_READ_ONLY_VERBS])
+	})
+
+	it('personal without readOnly is unchanged (non-read-only callers get the full surface)', () => {
+		// Rail 3 for this file: the flag only ever REMOVES verbs. A missing
+		// or false opt must yield exactly the identity-side output, byte for
+		// byte — the acceptance criterion "non-read-only caller sees the full
+		// existing surface unchanged" comes down to this equality.
+		expect(toolsForIdentity(personal)).toEqual(toolsForIdentity(personal, { readOnly: false }))
+		expect(toolsForIdentity(personal)).toEqual([...LINKEDIN_ALL_VERBS])
+	})
+
+	it('page + readOnly = empty surface — the allowlist is personal-only in §2', () => {
+		// All three read-only verbs live in the profile / connections suites
+		// which the §2 table restricts to `identityType: 'personal'`. On a
+		// company_page instance (messaging-enabled OR publish-only) the
+		// intersection is empty by construction — a read-only agent attached
+		// to a page identity carries no tools.
+		expect(toolsForIdentity(pageMessagingEnabled, { readOnly: true })).toEqual([])
+		expect(toolsForIdentity(pageMessagingDisabled, { readOnly: true })).toEqual([])
+	})
+
+	it('no write verb ever appears in a read-only surface — across every identity shape', () => {
+		// The load-bearing gap-17 assertion, run against the three concrete
+		// identity shapes the fan-out actually produces (personal + messaging-
+		// enabled page + publish-only page). If ANY of the 8 write verbs
+		// leaks through the filter on ANY of these, IR's warm-intro loadout
+		// is unsafe to attach — which is exactly the bug this task closes.
+		const writeVerbs = new Set<LinkedInVerb>(LINKEDIN_WRITE_VERBS)
+		for (const cfg of [personal, pageMessagingEnabled, pageMessagingDisabled]) {
+			const surface = toolsForIdentity(cfg, { readOnly: true })
+			for (const v of surface) {
+				expect(writeVerbs.has(v)).toBe(false)
+			}
+		}
+	})
+
+	it('the read-only allowlist itself carries no write verb', () => {
+		// Guards against a future edit of `LINKEDIN_READ_ONLY_VERBS` — if
+		// anyone adds `publish_post` (or any of the 8 write verbs) to the
+		// allowlist, the filter is silently defeated on personal instances.
+		// Keep this check on the CONST, not on filtered output, so the
+		// intent is visible at the site of the change.
+		const writeVerbs = new Set<LinkedInVerb>(LINKEDIN_WRITE_VERBS)
+		for (const v of LINKEDIN_READ_ONLY_VERBS) {
+			expect(writeVerbs.has(v)).toBe(false)
+		}
+	})
+
+	it('preserves canonical order for the personal read-only surface', () => {
+		// Same diff-stability rule as the identity-side filter: the read-only
+		// output must land in `LINKEDIN_ALL_VERBS` order so a `tools/list`
+		// diff on a read-only agent stays stable across restarts.
+		const surface = toolsForIdentity(personal, { readOnly: true })
+		const canonicalOrder = LINKEDIN_ALL_VERBS.filter((v) =>
+			(LINKEDIN_READ_ONLY_VERBS as readonly LinkedInVerb[]).includes(v),
+		)
+		expect(surface).toEqual(canonicalOrder)
 	})
 })
 
