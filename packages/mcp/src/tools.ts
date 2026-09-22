@@ -465,6 +465,31 @@ export const tools = {
 				),
 		}),
 	},
+	create_relationship: {
+		description:
+			"Create a relationship (graph edge) between two endpoints. Each endpoint id may point at an object or a file in the workspace — the server derives `sourceType`/`targetType` internally from the id, so callers do NOT supply type labels. Idempotent on (source_id, target_id, type): a second call with identical params returns the existing row. Returns 404 when either id resolves to neither an object nor a file in the caller's workspace. Use this to link a file to a bet from the file-detail page, wire two objects together, or attach any first-class node to any other. For edge deletion, use the UI's DELETE /api/relationships/:id — the MCP surface does not expose delete_relationship for file endpoints on purpose.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			source_id: z
+				.string()
+				.uuid()
+				.describe(
+					"UUID of the source endpoint. Must be an existing object or file in the caller's workspace — 404 otherwise.",
+				),
+			target_id: z
+				.string()
+				.uuid()
+				.describe(
+					"UUID of the target endpoint. Must be an existing object or file in the caller's workspace — 404 otherwise.",
+				),
+			type: z
+				.string()
+				.min(1)
+				.describe(
+					"Relationship type. Call get_workspace_schema to see this workspace's configured relationship types — built-ins like informs/breaks_into/blocks/relates_to/duplicates are common defaults, plus `attached` for file-attach edges.",
+				),
+		}),
+	},
 	list_relationships: {
 		description:
 			'List relationships with optional filters. Use `object_id` to fetch every relationship connected to an object regardless of direction (matches either source or target). Use `source_id` / `target_id` only when direction matters. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',

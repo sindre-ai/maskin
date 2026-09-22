@@ -15,7 +15,11 @@ import {
 } from '@/components/ui/select'
 import { useFiles } from '@/hooks/use-files'
 import { useObjects } from '@/hooks/use-objects'
-import { useCreateRelationship, useDeleteRelationship } from '@/hooks/use-relationships'
+import {
+	useCreateRelationship,
+	useDeleteRelationship,
+	useRelationships,
+} from '@/hooks/use-relationships'
 import type {
 	CreateRelationshipInput,
 	GraphFileSummary,
@@ -55,6 +59,10 @@ export function LinkedObjectsView({
 	isError,
 	errorStatus,
 	onRetry,
+	heading,
+	showTabCounts,
+	menuLabels,
+	openPickerSignal,
 }: {
 	objectId: string
 	objectType: string
@@ -81,9 +89,41 @@ export function LinkedObjectsView({
 	errorStatus?: number | string
 	/** Retry handler for the inline error card. */
 	onRetry?: () => void
+	/** Section heading label. Defaults to `Related` (object-detail); the
+	 *  file-detail page passes `Linked` per design spec §6 copy table. */
+	heading?: string
+	/** When true, render inline `Objects (n) / Files (n)` count pills next to
+	 *  the heading. File-detail turns this on so the Linked section surfaces
+	 *  per-tab counts without depending on filter-chip opening; Related tab
+	 *  keeps its existing `DataTableControls` filter behaviour. */
+	showTabCounts?: boolean
+	/** Optional override for the `+` menu labels. File-detail flips the
+	 *  primary CTA to `Link to object` (defaulting the picker to Objects); the
+	 *  secondary label is omitted when null — file→file linking is an agent
+	 *  affordance, not a UI one. */
+	menuLabels?: {
+		primary: { label: string; kind: 'object' | 'file' }
+		secondary?: { label: string; kind: 'object' | 'file' } | null
+	}
+	/**
+	 * Parent-driven trigger to open the picker from outside the header `+`
+	 * menu. The value is a `{ kind, nonce }` tuple; every time `nonce` changes
+	 * the view opens the picker with `kind` pre-selected. Used by the
+	 * file-detail page's `Link to object` button.
+	 */
+	openPickerSignal?: { kind: 'object' | 'file'; nonce: number } | null
 }) {
 	const [activeFilter, setActiveFilter] = useState<string>('all')
 	const [addLinkKind, setAddLinkKind] = useState<'object' | 'file' | null>(null)
+
+	// External open trigger (file-detail's `Link to object` button). Watching
+	// the nonce (not the kind) so the same-kind click retriggers.
+	const signalNonce = openPickerSignal?.nonce
+	useEffect(() => {
+		if (openPickerSignal && signalNonce !== undefined) {
+			setAddLinkKind(openPickerSignal.kind)
+		}
+	}, [openPickerSignal, signalNonce])
 
 	// Build map from both sources so linked objects always resolve, even when
 	// they fall outside the paginated workspace listing in `allObjects`.
@@ -162,8 +202,20 @@ export function LinkedObjectsView({
 			{/* Header */}
 			<div className="flex items-center gap-2 mb-2">
 				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-					Related ({totalCount})
+					{heading ?? 'Related'} ({totalCount})
 				</h3>
+				{showTabCounts && (
+					<div
+						className="flex items-center gap-1.5 text-[10.5px] font-mono uppercase tracking-wider text-muted-foreground"
+						aria-label="Type counts"
+					>
+						<span>
+							Objects ({typeCounts.file ? totalCount - (typeCounts.file ?? 0) : totalCount})
+						</span>
+						<span aria-hidden="true">·</span>
+						<span>Files ({typeCounts.file ?? 0})</span>
+					</div>
+				)}
 				<div className="flex-1" />
 				{uniqueTypes.length >= 2 && (
 					<DataTableControls
@@ -187,15 +239,23 @@ export function LinkedObjectsView({
 					</DropdownMenuTrigger>
 					<DropdownMenuContent align="end" className="min-w-[180px]">
 						{/* Keyboard hints "O" / "F" match Designer §7 — the picker
-						  itself also intercepts O/F to jump between tabs. */}
-						<DropdownMenuItem onSelect={() => openLinkTo('object')}>
-							<span className="flex-1">Link to object</span>
-							<span className="ml-3 font-mono text-[10px] text-muted-foreground">O</span>
+						  itself also intercepts O/F to jump between tabs. On
+						  file-detail the primary CTA is `Link to object`, so the
+						  menu's leading item flips accordingly. */}
+						<DropdownMenuItem onSelect={() => openLinkTo(menuLabels?.primary.kind ?? 'object')}>
+							<span className="flex-1">{menuLabels?.primary.label ?? 'Link to object'}</span>
+							<span className="ml-3 font-mono text-[10px] text-muted-foreground">
+								{(menuLabels?.primary.kind ?? 'object') === 'object' ? 'O' : 'F'}
+							</span>
 						</DropdownMenuItem>
-						<DropdownMenuItem onSelect={() => openLinkTo('file')}>
-							<span className="flex-1">Link to file</span>
-							<span className="ml-3 font-mono text-[10px] text-muted-foreground">F</span>
-						</DropdownMenuItem>
+						{menuLabels?.secondary !== null && (
+							<DropdownMenuItem onSelect={() => openLinkTo(menuLabels?.secondary?.kind ?? 'file')}>
+								<span className="flex-1">{menuLabels?.secondary?.label ?? 'Link to file'}</span>
+								<span className="ml-3 font-mono text-[10px] text-muted-foreground">
+									{(menuLabels?.secondary?.kind ?? 'file') === 'file' ? 'F' : 'O'}
+								</span>
+							</DropdownMenuItem>
+						)}
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
@@ -280,6 +340,122 @@ export function LinkedObjects({
 				createRelationship.mutate({ ...data, linkedTitle: ctx?.targetTitle })
 			}
 			onDeleteRelationship={(id) => deleteRelationship.mutate(id)}
+		/>
+	)
+}
+
+/**
+ * File-detail wrapper. Same `LinkedObjectsView` component the object-detail
+ * Related tab renders, entered with `objectId=file.id` and `objectType='file'`
+ * per design spec §10. No object-graph endpoint exists for a file id, so this
+ * composes the same shape from the workspace-scoped relationships list —
+ * split into `asSource` / `asTarget`, with connected objects and reciprocal
+ * files hydrated by their existing list hooks.
+ */
+export function LinkedObjectsForFile({
+	fileId,
+	openPickerSignal,
+}: {
+	fileId: string
+	/**
+	 * `{ kind, nonce }` — bumping `nonce` opens the picker with `kind`
+	 * pre-selected. Used by the file-detail header's `Link to object` button
+	 * to trigger the picker (Objects tab default, per design spec §3.1 step 6).
+	 */
+	openPickerSignal?: { kind: 'object' | 'file'; nonce: number } | null
+}) {
+	const { workspaceId, workspace } = useWorkspace()
+	const relQuery = useRelationships(workspaceId, { object_id: fileId })
+	const { data: allObjects } = useObjects(workspaceId)
+	const { data: allFiles } = useFiles(workspaceId)
+	const createRelationship = useCreateRelationship(workspaceId, fileId)
+	const deleteRelationship = useDeleteRelationship(workspaceId, fileId)
+
+	const settings = workspace.settings as Record<string, unknown>
+	const relationshipTypes = (settings?.relationship_types as string[] | undefined) ?? [
+		'informs',
+		'breaks_into',
+		'blocks',
+		'relates_to',
+		'duplicates',
+	]
+
+	const asSource = useMemo(
+		() => (relQuery.data ?? []).filter((r) => r.sourceId === fileId),
+		[relQuery.data, fileId],
+	)
+	const asTarget = useMemo(
+		() => (relQuery.data ?? []).filter((r) => r.targetId === fileId),
+		[relQuery.data, fileId],
+	)
+
+	// Reciprocal endpoint ids — anything on the other side of an edge.
+	const otherEndpointIds = useMemo(() => {
+		const ids = new Set<string>()
+		for (const r of relQuery.data ?? []) {
+			if (r.sourceId !== fileId) ids.add(r.sourceId)
+			if (r.targetId !== fileId) ids.add(r.targetId)
+		}
+		return ids
+	}, [relQuery.data, fileId])
+
+	const connectedObjects = useMemo(
+		() => (allObjects ?? []).filter((o) => otherEndpointIds.has(o.id)),
+		[allObjects, otherEndpointIds],
+	)
+
+	// Adapt `FileListItem` to `GraphFileSummary` (drops storageKey/description,
+	// adds a client-minted viewer `url` so file rows navigate correctly from
+	// the Linked table). We only surface reciprocal files here — the file
+	// itself is the anchor, not a row in its own list.
+	const files = useMemo<GraphFileSummary[]>(
+		() =>
+			(allFiles ?? [])
+				.filter((f) => otherEndpointIds.has(f.id))
+				.map((f) => ({
+					id: f.id,
+					name: f.name,
+					mimeType: f.mimeType,
+					sizeBytes: f.sizeBytes,
+					url:
+						typeof window !== 'undefined'
+							? `${window.location.origin}/${workspaceId}/files/${f.id}`
+							: `/${workspaceId}/files/${f.id}`,
+				})),
+		[allFiles, otherEndpointIds, workspaceId],
+	)
+
+	return (
+		<LinkedObjectsView
+			objectId={fileId}
+			objectType="file"
+			asSource={asSource}
+			asTarget={asTarget}
+			workspaceId={workspaceId}
+			allObjects={allObjects ?? []}
+			connectedObjects={connectedObjects}
+			files={files}
+			relationshipTypes={relationshipTypes}
+			onCreateRelationship={(data, ctx) =>
+				createRelationship.mutate({ ...data, linkedTitle: ctx?.targetTitle })
+			}
+			onDeleteRelationship={(id) => deleteRelationship.mutate(id)}
+			isLoading={relQuery.isLoading}
+			isError={relQuery.isError}
+			errorStatus={relQuery.error instanceof Error ? relQuery.error.message : undefined}
+			onRetry={() => relQuery.refetch()}
+			heading="Linked"
+			showTabCounts
+			// File-detail's primary link CTA is `Link to object`, defaulting the
+			// picker to the Objects tab — inverse of object-detail's `Link to
+			// file` primary (design spec §3.1 step 6, §4 File detail — Actions
+			// row). File→file linking stays available via the MCP tool, so the
+			// UI keeps a single CTA.
+			menuLabels={{
+				primary: { label: 'Link to object', kind: 'object' },
+				secondary: null,
+			}}
+			openPickerSignal={openPickerSignal}
 		/>
 	)
 }

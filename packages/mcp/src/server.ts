@@ -26,7 +26,12 @@ import {
 	paginateClientSide,
 	toSnapshotAt,
 } from './cursor.js'
-import { READ_TOOL_NAMES, buildReadErrorBody, toolErrorResponse } from './read-error.js'
+import {
+	READ_TOOL_NAMES,
+	buildReadErrorBody,
+	parseApiErrorStatus,
+	toolErrorResponse,
+} from './read-error.js'
 import { applyResponseTokenCap } from './response-cap.js'
 import {
 	type ApiCaller as SetupApiCaller,
@@ -3003,6 +3008,93 @@ export function createMcpServer(config: McpConfig) {
 	)
 
 	// ─── Relationships ────────────────────────────────────────
+	registerAppTool(
+		server,
+		'create_relationship',
+		{
+			description: tools.create_relationship.description,
+			inputSchema: tools.create_relationship.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.relationships, csp: CSP } },
+		},
+		async (args) => {
+			const workspaceId = args.workspace_id
+			// Preflight: resolve each endpoint to `file`, `object`, or `null`
+			// (unknown). Any unknown side must 404 — a caller writing an edge to
+			// a nonexistent node was almost certainly working from a stale id
+			// or hallucinated one, and the read paths can only be tolerant of
+			// dangling endpoints because legacy writers exist. New writes go
+			// through this strict gate. Files first: mirrors the derive helper's
+			// files > objects precedence.
+			const resolveKind = async (id: string): Promise<'file' | 'object' | null> => {
+				try {
+					await apiCall(config, 'GET', `/api/files/${id}`, undefined, { workspaceId })
+					return 'file'
+				} catch (err) {
+					if (parseApiErrorStatus(err) !== 404) throw err
+				}
+				try {
+					await apiCall(config, 'GET', `/api/objects/${id}`, undefined, { workspaceId })
+					return 'object'
+				} catch (err) {
+					if (parseApiErrorStatus(err) !== 404) throw err
+				}
+				return null
+			}
+			const [sourceKind, targetKind] = await Promise.all([
+				resolveKind(args.source_id),
+				resolveKind(args.target_id),
+			])
+			const unknownIds: string[] = []
+			if (!sourceKind) unknownIds.push(args.source_id)
+			if (!targetKind) unknownIds.push(args.target_id)
+			if (unknownIds.length > 0) {
+				throw new Error(
+					`API error 404: Unknown endpoint id(s) in this workspace: ${unknownIds.join(
+						', ',
+					)}. Both source_id and target_id must resolve to an existing object or file — find them via list_objects, search_objects, or list_files first.`,
+				)
+			}
+			// Server derives sourceType/targetType from the ids via T1's helper;
+			// the labels we pass here are placeholders satisfying the wire
+			// schema and are ignored by the endpoint. Caller-supplied labels
+			// were removed from the MCP contract for exactly this reason —
+			// there's one authority for endpoint kind, and it is the id.
+			const created = (await apiCall(
+				config,
+				'POST',
+				'/api/relationships',
+				{
+					source_type: sourceKind,
+					source_id: args.source_id,
+					target_type: targetKind,
+					target_id: args.target_id,
+					type: args.type,
+				},
+				{ workspaceId },
+			)) as {
+				id: string
+				sourceId: string
+				sourceType: string
+				targetId: string
+				targetType: string
+				type: string
+				createdAt?: string | null
+				sourceTitle?: string | null
+				targetTitle?: string | null
+			}
+			return {
+				_meta: meta('create_relationship', config, workspaceId),
+				content: [
+					{
+						type: 'text' as const,
+						text: JSON.stringify(created),
+					},
+				],
+				structuredContent: { relationship: created },
+			}
+		},
+	)
+
 	registerAppTool(
 		server,
 		'list_relationships',

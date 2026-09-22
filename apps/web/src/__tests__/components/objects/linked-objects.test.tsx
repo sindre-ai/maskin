@@ -309,3 +309,103 @@ describe('AddLinkForm — Objects | Files tab strip', () => {
 		expect(options[0]).toHaveAttribute('aria-selected', 'true')
 	})
 })
+
+// File-detail entry point: same LinkedObjectsView component, entered with
+// `objectType='file'` per design spec §10. Task 2 acceptance criteria pin:
+// (1) heading reads `Linked (<n>)` with per-tab counts, (2) `+` menu's primary
+// item is `Link to object`, (3) `openPickerSignal` prop opens the picker on
+// the Objects tab so the header button can drive it from outside.
+describe('LinkedObjectsView — file-detail entry point', () => {
+	it('renders the "Linked (N)" heading with per-tab Objects / Files counts', () => {
+		const targetObj = buildObjectResponse({ id: 'obj-2', title: 'Anchor bet', type: 'bet' })
+		const relObj = buildRelationshipResponse({ sourceId: 'obj-2', targetId: 'file-1' })
+		const relFile = buildRelationshipResponse({
+			id: 'rel-2',
+			sourceId: 'file-2',
+			targetId: 'file-1',
+			targetType: 'file',
+			sourceType: 'file',
+		})
+		render(
+			<LinkedObjectsView
+				{...baseProps}
+				objectId="file-1"
+				objectType="file"
+				asSource={[]}
+				asTarget={[relObj, relFile]}
+				allObjects={[targetObj]}
+				files={[
+					{ id: 'file-2', name: 'sibling.md', mimeType: 'text/markdown', sizeBytes: 42, url: '' },
+				]}
+				heading="Linked"
+				showTabCounts
+			/>,
+		)
+		expect(screen.getByText('Linked (2)')).toBeInTheDocument()
+		// Per-tab counts render as inline "Objects (1)" / "Files (1)" pills.
+		const counts = screen.getByLabelText('Type counts')
+		expect(counts).toHaveTextContent('Objects (1)')
+		expect(counts).toHaveTextContent('Files (1)')
+	})
+
+	it('flips the `+` menu primary item to `Link to object` and hides the secondary via menuLabels', async () => {
+		const user = userEvent.setup()
+		render(
+			<LinkedObjectsView
+				{...baseProps}
+				objectId="file-1"
+				objectType="file"
+				asSource={[]}
+				asTarget={[]}
+				allObjects={[]}
+				heading="Linked"
+				menuLabels={{
+					primary: { label: 'Link to object', kind: 'object' },
+					secondary: null,
+				}}
+			/>,
+		)
+		await user.click(screen.getByRole('button', { name: 'Add link' }))
+		// Primary item leads with `Link to object`.
+		const primary = await screen.findAllByText('Link to object')
+		expect(primary.length).toBeGreaterThan(0)
+		// Secondary is null on file-detail: no `Link to file` in the menu.
+		expect(screen.queryByRole('menuitem', { name: /Link to file/ })).toBeNull()
+	})
+
+	it('opens the picker on the Objects tab when `openPickerSignal` fires', async () => {
+		const Wrapper = createWorkspaceWrapper()
+		const { rerender } = render(
+			<LinkedObjectsView
+				{...baseProps}
+				objectId="file-1"
+				objectType="file"
+				asSource={[]}
+				asTarget={[]}
+				allObjects={[buildObjectResponse({ id: 'obj-2', title: 'Anchor bet', type: 'bet' })]}
+				heading="Linked"
+				openPickerSignal={null}
+			/>,
+			{ wrapper: Wrapper },
+		)
+		// No picker yet — the search input isn't in the DOM.
+		expect(screen.queryByPlaceholderText(/Search objects/)).toBeNull()
+
+		// Bump the signal — the picker should open, defaulting to Objects.
+		rerender(
+			<LinkedObjectsView
+				{...baseProps}
+				objectId="file-1"
+				objectType="file"
+				asSource={[]}
+				asTarget={[]}
+				allObjects={[buildObjectResponse({ id: 'obj-2', title: 'Anchor bet', type: 'bet' })]}
+				heading="Linked"
+				openPickerSignal={{ kind: 'object', nonce: 1 }}
+			/>,
+		)
+		await waitFor(() => expect(screen.getByPlaceholderText(/Search objects/)).toBeInTheDocument())
+		// The Objects tab pill reads pressed when the picker enters on that tab.
+		expect(screen.getByRole('button', { name: /Objects/ })).toHaveAttribute('aria-pressed', 'true')
+	})
+})
