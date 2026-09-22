@@ -9,7 +9,6 @@ import { createGzip } from 'node:zlib'
 const execFileAsync = promisify(execFileCb)
 import type { Database } from '@maskin/db'
 import {
-	events,
 	actors,
 	agentServers,
 	conversationPendingTurns,
@@ -56,6 +55,7 @@ import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { isEnterprise } from '../lib/enterprise'
+import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { buildAgentGitIdentity } from '../lib/git-identity'
 import {
@@ -513,6 +513,18 @@ export class SessionManager extends EventEmitter {
 		const interactive = config.interactive === true
 		const conversationId =
 			(config.conversation as { conversation_id?: string } | undefined)?.conversation_id ?? null
+		// S2 writer hook · the spawning message id, when the session is
+		// spawned inside an existing chat. Persisted on the
+		// `conversation → session` `spawned` edge's `metadata.messageId` so
+		// Task 4's deep-link (`/chats/<id>?msg=<messageId>`) can scroll to
+		// exactly that message. Null for sessions spawned outside a chat
+		// (triggers, cron, workspace-bootstrap) — the `spawned` edge is only
+		// written when `conversationId` is truthy, so a null messageId is
+		// only ever recorded when the spawn is truly conversation-anchored
+		// but the caller didn't have a message id to name (e.g. the future
+		// "resume conversation from scratch" flow).
+		const conversationMessageId =
+			(config.conversation as { message_id?: number } | undefined)?.message_id ?? null
 
 		// Pre-flight billing cap. Only enforced when no BYO credentials are
 		// present — BYO routes (OAuth, custom_llm, api_key) take precedence over
@@ -564,7 +576,7 @@ export class SessionManager extends EventEmitter {
 			throw new Error('Failed to create session')
 		}
 
-		await this.db.insert(events).values({
+		await recordEvent(this.db, {
 			workspaceId,
 			actorId: params.actorId,
 			action: 'session_created',
@@ -572,6 +584,21 @@ export class SessionManager extends EventEmitter {
 			entityId: session.id,
 			data: {},
 		})
+
+		// S2 writer hook · upsert a `conversation → session` `spawned` edge
+		// with the spawning message id on metadata. Guarded on `conversationId`
+		// (no chat context = no lineage row, per spec §Rabbit holes) and
+		// flag-gated on the session's actor inside the helper. Idempotent on
+		// the unique index; a session_created re-run never double-writes.
+		if (conversationId) {
+			await writeSpawnedEdge(this.db, {
+				workspaceId,
+				conversationId,
+				sessionId: session.id,
+				sessionActorId: params.actorId,
+				messageId: conversationMessageId,
+			})
+		}
 
 		logger.info(`Session created: ${session.id}`, { workspaceId })
 
@@ -732,7 +759,7 @@ export class SessionManager extends EventEmitter {
 		// Unconditional dispatch-entry marker, emitted before any capacity check,
 		// queue handoff or lock. A session stuck in `starting` with this row
 		// present was entered but not dispatched; without it, dispatch never ran.
-		await this.db.insert(events).values({
+		await recordEvent(this.db, {
 			workspaceId: session.workspaceId,
 			actorId: session.actorId,
 			action: 'dispatch_entered',
@@ -791,7 +818,7 @@ export class SessionManager extends EventEmitter {
 						updatedAt: new Date(),
 					})
 					.where(eq(sessions.id, sessionId))
-				await this.db.insert(events).values({
+				await recordEvent(this.db, {
 					workspaceId: session.workspaceId,
 					actorId: session.actorId,
 					action: 'session_failed',
@@ -901,7 +928,7 @@ export class SessionManager extends EventEmitter {
 			// working" surfaces) never refetch past their last 'pending'-status
 			// snapshot from session_created, so the chat typing indicator never
 			// appears even though the agent is live.
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				action: 'session_started',
@@ -968,7 +995,7 @@ export class SessionManager extends EventEmitter {
 				})
 				.where(eq(sessions.id, sessionId))
 
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				action: 'session_failed',
@@ -1392,7 +1419,7 @@ export class SessionManager extends EventEmitter {
 		// transition and before any lock. The `session_resumed` marker below is
 		// post-launch, so a resume that stalls mid-path writes nothing without
 		// this and reads as a dispatch-origin stall (no `dispatch_entered`).
-		await this.db.insert(events).values({
+		await recordEvent(this.db, {
 			workspaceId: session.workspaceId,
 			actorId: session.actorId,
 			action: 'resume_entered',
@@ -1457,7 +1484,7 @@ export class SessionManager extends EventEmitter {
 
 			// Same rationale as the fresh-start path above — without this the
 			// frontend never learns the resumed session is running again.
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				action: 'session_resumed',
@@ -1484,7 +1511,7 @@ export class SessionManager extends EventEmitter {
 				})
 				.where(eq(sessions.id, sessionId))
 
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				action: 'session_failed',
@@ -3029,7 +3056,7 @@ export class SessionManager extends EventEmitter {
 		}
 
 		try {
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				action: `session_${status}`,
@@ -3442,22 +3469,19 @@ export class SessionManager extends EventEmitter {
 				error: String(err),
 			}),
 		)
-		await this.db
-			.insert(events)
-			.values({
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				action: 'session_budget_stopped',
-				entityType: 'session',
-				entityId: session.id,
-				data: { total_used_usd_cents: totalUsedCents, cap_usd_cents: capCents, reason: stopReason },
-			})
-			.catch((err) =>
-				logger.warn('Failed to insert session_budget_stopped event', {
-					sessionId: session.id,
-					error: String(err),
-				}),
-			)
+		await recordEvent(this.db, {
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			action: 'session_budget_stopped',
+			entityType: 'session',
+			entityId: session.id,
+			data: { total_used_usd_cents: totalUsedCents, cap_usd_cents: capCents, reason: stopReason },
+		}).catch((err) =>
+			logger.warn('Failed to insert session_budget_stopped event', {
+				sessionId: session.id,
+				error: String(err),
+			}),
+		)
 		this.budgetStopped.set(session.id, stopReason)
 		await this.stopSession(session.id).catch((err) =>
 			logger.error('Failed to stop over-budget session', {
@@ -3583,7 +3607,7 @@ export class SessionManager extends EventEmitter {
 				)
 		}
 
-		await this.db.insert(events).values({
+		await recordEvent(this.db, {
 			workspaceId: session.workspaceId,
 			actorId: session.actorId,
 			action: 'session_completed',
@@ -3710,7 +3734,7 @@ export class SessionManager extends EventEmitter {
 					)
 			}
 
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				action: 'session_timeout',
@@ -4056,7 +4080,7 @@ export class SessionManager extends EventEmitter {
 				})
 				.where(eq(sessions.id, session.id))
 
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				action: 'session_failed',
@@ -4863,7 +4887,7 @@ export class SessionManager extends EventEmitter {
 		}
 
 		try {
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: updated.workspaceId,
 				actorId: updated.actorId,
 				action: `session_${status}`,

@@ -1,7 +1,8 @@
 import type { Database } from '@maskin/db'
-import { events, integrations } from '@maskin/db/schema'
+import { integrations } from '@maskin/db/schema'
 import { and, eq, ne } from 'drizzle-orm'
 import { decrypt, encrypt } from '../../../crypto'
+import { recordEvent } from '../../../events/record-event'
 import { logger } from '../../../logger'
 import type { StoredCredentials } from '../../types'
 
@@ -76,7 +77,7 @@ export async function persistRecoveredInstallationId(
 			.where(eq(integrations.id, integrationId))
 
 		try {
-			await tx.insert(events).values({
+			await recordEvent(tx, {
 				workspaceId,
 				actorId,
 				action: 'updated',
@@ -182,7 +183,7 @@ export async function propagateRecoveredInstallationId(
 				})
 				.where(eq(integrations.id, sibling.id))
 
-			await db.insert(events).values({
+			await recordEvent(db, {
 				workspaceId: sibling.workspaceId,
 				actorId,
 				action: 'updated',

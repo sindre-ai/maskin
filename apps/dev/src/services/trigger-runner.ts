@@ -8,6 +8,7 @@ import {
 	type CommentResponderCase,
 	trackCommentResponderResolved,
 } from '../lib/analytics/comment-responder-events'
+import { recordEvent } from '../lib/events/record-event'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
@@ -614,7 +615,7 @@ export class TriggerRunner {
 			const eventForPrompt = { ...event, data: dataForPrompt ?? null }
 
 			// Log trigger fired event
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: event.workspace_id,
 				actorId: trigger.targetActorId,
 				action: 'trigger_fired',
@@ -779,7 +780,7 @@ export class TriggerRunner {
 		}
 		if (scopeMatches) eventData.scope_matches = scopeMatches
 
-		await this.db.insert(events).values({
+		await recordEvent(this.db, {
 			workspaceId: trigger.workspaceId,
 			actorId: trigger.targetActorId,
 			action: 'trigger_fired',
@@ -834,7 +835,7 @@ export class TriggerRunner {
 		const timeout = setTimeout(async () => {
 			logger.info(`Reminder trigger '${trigger.name}' firing`)
 
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: trigger.workspaceId,
 				actorId: trigger.targetActorId,
 				action: 'trigger_fired',

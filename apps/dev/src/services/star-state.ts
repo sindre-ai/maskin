@@ -1,6 +1,7 @@
 import type { Database } from '@maskin/db'
-import { events, starState } from '@maskin/db/schema'
+import { starState } from '@maskin/db/schema'
 import { and, eq, inArray, sql } from 'drizzle-orm'
+import { recordEvent } from '../lib/events/record-event'
 
 /**
  * Per-actor "starred" flag on an entity. Mirrors `read_state` in shape and
@@ -55,7 +56,7 @@ export async function starObject(
 		})
 		.returning({ starredAt: starState.starredAt })
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId: args.workspaceId,
 		actorId: args.actorId,
 		action: 'starred',
@@ -92,7 +93,7 @@ export async function unstarObject(
 			),
 		)
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId: args.workspaceId,
 		actorId: args.actorId,
 		action: 'unstarred',

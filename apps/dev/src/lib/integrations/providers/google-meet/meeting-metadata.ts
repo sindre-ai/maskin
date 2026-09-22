@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import { files, integrations, objects, relationships, workspaces } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
+import { capturePosthogRelationshipCreated } from '../../../events/record-event'
 import { logger } from '../../../logger'
 import type { IntegrationConfig } from '../../../types'
 
@@ -229,6 +230,15 @@ export async function attachTranscriptFile(
 		targetId: inserted.id,
 		type: 'attached',
 		createdBy: actorId,
+	})
+
+	// PostHog · one capture per relationships write, source of truth for
+	// the ship-metric across every prod writer. Fire-and-forget.
+	capturePosthogRelationshipCreated(actorId, {
+		workspaceId,
+		sourceType: 'object',
+		targetType: 'file',
+		type: 'attached',
 	})
 	return inserted.id
 }

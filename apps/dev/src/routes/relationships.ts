@@ -1,11 +1,13 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, files, objects, relationships } from '@maskin/db/schema'
+import { files, objects, relationships } from '@maskin/db/schema'
 import { createRelationshipSchema, relationshipQuerySchema } from '@maskin/shared'
 import { and, asc, desc, eq, inArray, or } from 'drizzle-orm'
 import { maybeEmitKnowledgeReferenceFromEdge } from '../lib/analytics/knowledge-events'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { capturePosthogRelationshipCreated, recordEvent } from '../lib/events/record-event'
+import { resolveEndpointTitles } from '../lib/graph/endpoint-titles'
 import {
 	errorSchema,
 	idParamSchema,
@@ -117,13 +119,22 @@ app.openapi(createRelationshipRoute, async (c) => {
 	}
 
 	if (isNewInsert) {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId,
 			action: 'created',
 			entityType: 'relationship',
 			entityId: created.id,
 			data: created,
+		})
+
+		// PostHog · one capture per relationship write, source of truth for
+		// the ship-metric across every prod writer. Fire-and-forget.
+		capturePosthogRelationshipCreated(actorId, {
+			workspaceId,
+			sourceType: created.sourceType,
+			targetType: created.targetType,
+			type: created.type,
 		})
 
 		// Auto-emit ship-metric when the new edge is a `derived_from` pointing at
@@ -137,6 +148,10 @@ app.openapi(createRelationshipRoute, async (c) => {
 		})
 	}
 
+	// Titles hydrate from `objects` when the endpoint is an object row. The
+	// UI attach flow never mints a conversation or session endpoint here (that
+	// would violate spec §No-gos — users don't hand-write those edges), so
+	// this stays object-only for the response.
 	const endpointRows = await db
 		.select({ id: objects.id, title: objects.title })
 		.from(objects)
@@ -208,19 +223,23 @@ app.openapi(listRelationshipsRoute, async (c) => {
 		.offset(skipOffset ? 0 : query.offset)
 		.orderBy(...orderBy)
 
-	const endpointIds = new Set<string>()
+	// Partition endpoint ids by the stored `sourceType` / `targetType` label so
+	// the batch lookup can hit the right table for each kind. Legacy edges
+	// written with a specialised label (`'insight'`, `'bet'`, `'task'`,
+	// `'knowledge'`) fall through to the object path — matches the same
+	// fallback GET /api/objects/:id/graph uses for those rows.
+	const objectIds = new Set<string>()
+	const conversationIds = new Set<string>()
+	const sessionIds = new Set<string>()
 	for (const r of results) {
-		endpointIds.add(r.sourceId)
-		endpointIds.add(r.targetId)
+		bucket(r.sourceType, r.sourceId, objectIds, conversationIds, sessionIds)
+		bucket(r.targetType, r.targetId, objectIds, conversationIds, sessionIds)
 	}
-	const titleById = new Map<string, string | null>()
-	if (endpointIds.size > 0) {
-		const endpointRows = await db
-			.select({ id: objects.id, title: objects.title })
-			.from(objects)
-			.where(inArray(objects.id, [...endpointIds]))
-		for (const row of endpointRows) titleById.set(row.id, row.title ?? null)
-	}
+	const titleById = await resolveEndpointTitles(db, {
+		objectIds: [...objectIds],
+		conversationIds: [...conversationIds],
+		sessionIds: [...sessionIds],
+	})
 
 	return c.json(
 		results.map((r) => ({
@@ -230,6 +249,18 @@ app.openapi(listRelationshipsRoute, async (c) => {
 		})) as z.infer<typeof relationshipResponseSchema>[],
 	)
 })
+
+function bucket(
+	kind: string,
+	id: string,
+	objectIds: Set<string>,
+	conversationIds: Set<string>,
+	sessionIds: Set<string>,
+): void {
+	if (kind === 'conversation') conversationIds.add(id)
+	else if (kind === 'session') sessionIds.add(id)
+	else objectIds.add(id) // 'object', 'file' (files hydrated by Task 1 elsewhere), any legacy label
+}
 
 // DELETE /api/relationships/:id
 const deleteRelationshipRoute = createRoute({
@@ -275,7 +306,7 @@ app.openapi(deleteRelationshipRoute, (async (c) => {
 	await db.delete(relationships).where(eq(relationships.id, id))
 
 	if (workspaceId) {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId,
 			action: 'deleted',
