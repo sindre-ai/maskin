@@ -704,6 +704,38 @@ export const api = {
 			}),
 	},
 
+	// GET /api/marketplace/catalog (Marketplace tech spec §6.1) — returns the
+	// four ranked bands + team_grid. The frontend derives popular_skills and
+	// tab_counts from team_grid so this file mirrors the server's shape 1:1.
+	marketplaceCatalog: {
+		list: (
+			workspaceId: string,
+			params?: { team?: string; item_kind?: string; include_recommended?: boolean },
+		) => {
+			const query = new URLSearchParams()
+			if (params?.team) query.set('team', params.team)
+			if (params?.item_kind) query.set('item_kind', params.item_kind)
+			if (params?.include_recommended === false) query.set('include_recommended', 'false')
+			const qs = query.toString() ? `?${query.toString()}` : ''
+			return request<MarketplaceCatalogServerResponse>(`/marketplace/catalog${qs}`, {
+				workspaceId,
+			})
+		},
+	},
+
+	// POST /api/marketplace/install (Marketplace tech spec §6.3) — creates a
+	// marketplace_installations row and returns it. Idempotent: 200 if the
+	// item was already installed, 201 otherwise. The frontend cache keys off
+	// `id` regardless.
+	marketplaceInstall: {
+		install: (workspaceId: string, body: { item_kind: string; catalog_id: string }) =>
+			request<MarketplaceInstallServerResponse>('/marketplace/install', {
+				method: 'POST',
+				body: { ...body, workspace_id: workspaceId },
+				workspaceId,
+			}),
+	},
+
 	installedLoops: {
 		list: (workspaceId: string) =>
 			request<InstalledLoopsListResponse>(
@@ -2044,6 +2076,58 @@ export interface MarketplaceItemInstalledEntry {
 
 export interface MarketplaceItemsInstalledResponse {
 	items: MarketplaceItemInstalledEntry[]
+}
+
+// Wire shape of GET /api/marketplace/catalog. Kept minimal — matches the Zod
+// schema in apps/dev/src/routes/marketplace-catalog.ts; per-card fields the
+// route does not populate (brand, description, requires_status/label,
+// installed_stats, asks_per_cycle, eyebrow) are UI-only affordances the
+// frontend derives from what's on the wire.
+export interface MarketplaceCatalogServerCard {
+	item_kind: 'loop' | 'agent' | 'skill' | 'mcp_server'
+	catalog_id: string
+	slug: string
+	display_name: string
+	outcome_line: string
+	team: string
+	requires: { integrations?: string[]; mcp_installations?: string[] }
+	install_count: number
+	installed_installation_id?: string | null
+	why_line?: string
+	loop_summary?: { steps_summary: string; ins: string[]; outs: string[]; cadence: string }
+	agent_summary?: { skills_count: number; triggers_count: number }
+	install_flow_copy?: unknown
+}
+
+export interface MarketplaceCatalogServerResponse {
+	bands: {
+		recommended: MarketplaceCatalogServerCard[]
+		popular_loops: MarketplaceCatalogServerCard[]
+		top_agents: MarketplaceCatalogServerCard[]
+		most_installed_tools: MarketplaceCatalogServerCard[]
+	}
+	team_grid: MarketplaceCatalogServerCard[]
+	next_cursor: string | null
+}
+
+// Wire shape of POST /api/marketplace/install — the full installation row.
+// Only `id` and `item_kind` / `catalog_id` are read on the frontend today; the
+// rest is here so consumers can typecheck against the real response.
+export interface MarketplaceInstallServerResponse {
+	id: string
+	workspace_id: string
+	item_kind: 'loop' | 'agent' | 'skill' | 'mcp_server'
+	catalog_id: string
+	catalog_slug: string
+	installed_loop_id: string | null
+	actor_id: string | null
+	workspace_skill_id: string | null
+	mcp_installation_id: string | null
+	trigger_ids: string[]
+	source: string
+	installed_by_actor_id: string
+	installed_at: string
+	uninstalled_at: string | null
 }
 
 export interface InstalledLoopRow {

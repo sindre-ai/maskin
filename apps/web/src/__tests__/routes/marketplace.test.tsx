@@ -1,7 +1,10 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+// The route file exports a component composed from MarketplaceV3Page. Mock the
+// TanStack Router file-based helper so this test doesn't need the full router
+// runtime; the route object surfaces the component under `.component`.
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
@@ -14,365 +17,226 @@ vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
-const mockUseMarketplaceLoops = vi.fn()
-vi.mock('@/hooks/use-marketplace-loops', () => ({
-	useMarketplaceLoops: () => mockUseMarketplaceLoops(),
-	useInstallMarketplaceItem: () => ({ mutate: vi.fn(), isPending: false, isSuccess: false }),
-	useInstalledMarketplaceItems: () => ({ data: undefined, isLoading: false }),
-	useUninstallMarketplaceItem: () => ({ mutate: vi.fn(), isPending: false, isSuccess: false }),
+// The v3 catalog hook + install mutation both go through `@/lib/api`. Mock the
+// two entry points and drive them per-test. Every other api surface stays
+// intact via importOriginal so unrelated hooks a component reaches for still
+// work. `vi.hoisted` is what lets these fns exist in the same scope as the
+// hoisted vi.mock factory without a temporal-dead-zone error.
+const { listMock, installMock } = vi.hoisted(() => ({
+	listMock: vi.fn(),
+	installMock: vi.fn(),
 }))
 
-vi.mock('@/hooks/use-installed-loops', () => ({
-	useInstalledLoops: () => ({ data: { installs: [] }, isLoading: false, isError: false }),
-	useInstallLoop: () => ({ mutate: vi.fn(), isPending: false }),
-	useForkInstalledLoop: () => ({ mutate: vi.fn(), isPending: false }),
-}))
-
-// useQueries is used to fetch individual items from multi-type loops.
-// Default to returning no data so most tests stay simple.
-const mockUseQueries = vi.fn((): unknown[] => [])
-vi.mock('@tanstack/react-query', async () => {
-	const actual = await vi.importActual('@tanstack/react-query')
-	return { ...actual, useQueries: () => mockUseQueries() }
+vi.mock('@/lib/api', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api')
+	return {
+		...actual,
+		api: {
+			...actual.api,
+			marketplaceCatalog: { list: listMock },
+			marketplaceInstall: { install: installMock },
+		},
+	}
 })
 
 import { Route } from '@/routes/_authed/$workspaceId/marketplace/index'
+import { TestWrapper } from '../setup'
 
 const MarketplacePage = (Route as unknown as { component: React.FC }).component
 
-const COUNTS = {
-	total: 4,
-	by_type: { actor: 5, trigger: 2, skill: 6, integration: 3 },
-	by_use_case: { Discovery: 1, Sales: 2, Research: 0, 'Lifecycle comms': 1 },
+// A minimal server catalog payload — enough to exercise every band + tab-count
+// derivation. Field names mirror the Marketplace tech spec §6.1 wire shape.
+function buildCard(overrides: Record<string, unknown>) {
+	return {
+		item_kind: 'loop' as const,
+		catalog_id: '11111111-1111-1111-1111-111111111111',
+		slug: 'default-slug',
+		display_name: 'Default',
+		outcome_line: 'A default outcome line.',
+		team: 'shared',
+		requires: {},
+		install_count: 0,
+		...overrides,
+	}
 }
 
-describe('MarketplacePage', () => {
+function buildCatalog(overrides: Record<string, unknown> = {}) {
+	const loopCard = buildCard({
+		item_kind: 'loop',
+		catalog_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',
+		slug: 'churn-recovery',
+		display_name: 'Churn Recovery loop',
+		outcome_line: 'Spot quiet accounts before they lapse.',
+		install_count: 12,
+		team: 'customer',
+	})
+	const agentCard = buildCard({
+		item_kind: 'agent',
+		catalog_id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1',
+		slug: 'compass',
+		display_name: 'Compass',
+		outcome_line: 'Structures signals into insights.',
+		install_count: 14,
+	})
+	const skillCard = buildCard({
+		item_kind: 'skill',
+		catalog_id: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
+		slug: 'plain-english-voice',
+		display_name: 'Plain English voice',
+		outcome_line: "Rewrites drafts in Maskin's house style.",
+		install_count: 22,
+	})
+	const toolCard = buildCard({
+		item_kind: 'mcp_server',
+		catalog_id: 'dddddddd-dddd-dddd-dddd-dddddddddddd',
+		slug: 'slack',
+		display_name: 'Slack',
+		outcome_line: 'Send messages, join channels.',
+		install_count: 46,
+	})
+	const recCard = buildCard({
+		item_kind: 'loop',
+		catalog_id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+		slug: 'churn-recovery-recommended',
+		display_name: 'Churn Recovery loop',
+		outcome_line: 'Recommended flavour of Churn Recovery.',
+		install_count: 3,
+		why_line: 'Sentinel is idle and PostHog is already connected',
+	})
+	return {
+		bands: {
+			recommended: [recCard],
+			popular_loops: [loopCard],
+			top_agents: [agentCard],
+			most_installed_tools: [toolCard],
+		},
+		team_grid: [loopCard, agentCard, skillCard, toolCard],
+		next_cursor: null,
+		...overrides,
+	}
+}
+
+describe('MarketplacePage (v3)', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
-		mockUseQueries.mockReturnValue([])
-		mockUseMarketplaceLoops.mockReturnValue({
-			data: { loops: [], counts: COUNTS },
-			isLoading: false,
-			isError: false,
-		})
 	})
 
-	it('renders type and use-case chips in a single list with counts from the API', () => {
-		render(<MarketplacePage />)
-
-		// Only one "All" chip — type and use-case filters share a single list.
-		expect(screen.getAllByRole('button', { name: /^All \(/ })).toHaveLength(1)
-		// Type counts fall back to by_type when no items are loaded.
-		expect(screen.getByRole('button', { name: /^Agents \(5\)$/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /^Triggers \(2\)$/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /^Skills \(6\)$/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /^Integrations \(3\)$/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /^Discovery \(1\)$/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /^Sales \(2\)$/ })).toBeInTheDocument()
+	it('renders the top-bar tabs + By-team chip rail while the catalog is loading', () => {
+		listMock.mockImplementation(() => new Promise(() => {}))
+		render(<MarketplacePage />, { wrapper: TestWrapper })
+		expect(screen.getByRole('heading', { name: 'Marketplace' })).toBeInTheDocument()
+		// Featured is the default tab.
+		expect(screen.getByRole('tab', { name: 'Featured', selected: true })).toBeInTheDocument()
+		// The By-team chip rail renders All teams by default.
+		expect(screen.getByRole('tablist', { name: 'Filter by team' })).toBeInTheDocument()
+		expect(screen.getByRole('tab', { name: 'All teams' })).toBeInTheDocument()
 	})
 
-	it('hides chips with a zero count', () => {
-		render(<MarketplacePage />)
-		// COUNTS.by_use_case.Research is 0 — its chip should not render at all.
-		expect(screen.queryByRole('button', { name: /^Research/ })).not.toBeInTheDocument()
+	it('renders skeleton cards under the Recommended band while the catalog is loading', () => {
+		listMock.mockImplementation(() => new Promise(() => {}))
+		const { container } = render(<MarketplacePage />, { wrapper: TestWrapper })
+		expect(container.querySelectorAll('.mp-skel-card').length).toBeGreaterThan(0)
+		expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument()
 	})
 
-	it('shows the total catalog size on "All", not the loop count', () => {
-		render(<MarketplacePage />)
-		// Sum of by_type counts (5 + 2 + 6 + 3 = 16), not COUNTS.total (4 loops).
-		expect(screen.getByRole('button', { name: /^All \(16\)$/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /^Loops \(4\)$/ })).toBeInTheDocument()
-	})
+	it('renders all five bands with cards + tab counts derived from the server response', async () => {
+		listMock.mockResolvedValue(buildCatalog())
+		render(<MarketplacePage />, { wrapper: TestWrapper })
 
-	it('clicking a chip marks it active', async () => {
-		render(<MarketplacePage />)
-		const user = userEvent.setup()
-		const btn = screen.getByRole('button', { name: /^Agents \(5\)$/ })
-		await user.click(btn)
-		expect(btn.className).toMatch(/(?:^|\s)border-primary(?:\s|$)/)
-		expect(btn.className).toMatch(/(?:^|\s)bg-primary(?:\s|$)/)
-	})
-
-	it('only one chip can be active at a time, across type and use-case chips', async () => {
-		render(<MarketplacePage />)
-		const user = userEvent.setup()
-
-		const agentsBtn = screen.getByRole('button', { name: /^Agents \(5\)$/ })
-		await user.click(agentsBtn)
-		expect(agentsBtn.className).toMatch(/(?:^|\s)border-primary(?:\s|$)/)
-
-		const discoveryBtn = screen.getByRole('button', { name: /^Discovery \(1\)$/ })
-		await user.click(discoveryBtn)
-		expect(discoveryBtn.className).toMatch(/(?:^|\s)border-primary(?:\s|$)/)
-		expect(agentsBtn.className).not.toMatch(/(?:^|\s)border-primary(?:\s|$)/)
-
-		const allBtn = screen.getByRole('button', { name: /^All \(/ })
-		await user.click(allBtn)
-		expect(allBtn.className).toMatch(/(?:^|\s)border-primary(?:\s|$)/)
-		expect(discoveryBtn.className).not.toMatch(/(?:^|\s)border-primary(?:\s|$)/)
-	})
-
-	it('renders chips without counts when the API request errors', () => {
-		mockUseMarketplaceLoops.mockReturnValue({
-			data: undefined,
-			isLoading: false,
-			isError: true,
-		})
-		render(<MarketplacePage />)
-		expect(screen.getByRole('button', { name: /^Agents$/ })).toBeInTheDocument()
-		expect(screen.getByText(/Couldn't load the marketplace/i)).toBeInTheDocument()
-	})
-
-	it('renders skeleton blocks (not a spinner) while loading', () => {
-		mockUseMarketplaceLoops.mockReturnValue({
-			data: undefined,
-			isLoading: true,
-			isError: false,
-		})
-		const { container } = render(<MarketplacePage />)
-		// CardSkeleton renders animate-pulse elements — the shared vocabulary signal.
-		expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
-	})
-
-	it('renders the empty state through EmptyState when there are no loops', () => {
-		mockUseMarketplaceLoops.mockReturnValue({
-			data: { loops: [], counts: { total: 0, by_type: {}, by_use_case: {} } },
-			isLoading: false,
-			isError: false,
-		})
-		render(<MarketplacePage />)
-		expect(screen.getByText(/No loops yet/i)).toBeInTheDocument()
-		expect(
-			screen.getByText(/Check back once Maskin publishes the first one\./i),
-		).toBeInTheDocument()
-	})
-
-	it('places a multi-type loop in the Loops section, not in Agents or Triggers', () => {
-		mockUseMarketplaceLoops.mockReturnValue({
-			data: {
-				loops: [
-					{
-						id: 'p1',
-						name: 'Customer Continuous Discovery',
-						slug: 'continuous-discovery',
-						description: 'Loop',
-						version: '1.0.0',
-						use_case: 'Discovery',
-						item_types: ['actor', 'trigger'],
-						created_at: null,
-						updated_at: null,
-					},
-				],
-				counts: COUNTS,
-			},
-			isLoading: false,
-			isError: false,
-		})
-		render(<MarketplacePage />)
-		expect(screen.getByRole('region', { name: 'Loops' })).toHaveTextContent(
-			'Customer Continuous Discovery',
+		// Recommended band renders the WHY line pill from the seeded card.
+		await waitFor(() =>
+			expect(
+				screen.getByText(/Sentinel is idle and PostHog is already connected/i),
+			).toBeInTheDocument(),
 		)
-		expect(screen.queryByRole('region', { name: 'Agents' })).not.toBeInTheDocument()
-		expect(screen.queryByRole('region', { name: 'Triggers' })).not.toBeInTheDocument()
+		// All five bands render, aria-labelled by band title.
+		expect(screen.getByRole('region', { name: 'Recommended for you' })).toBeInTheDocument()
+		expect(screen.getByRole('region', { name: 'Popular loops' })).toBeInTheDocument()
+		expect(screen.getByRole('region', { name: 'Top agents' })).toBeInTheDocument()
+		expect(screen.getByRole('region', { name: 'Popular skills' })).toBeInTheDocument()
+		expect(screen.getByRole('region', { name: 'Most-installed tools' })).toBeInTheDocument()
+
+		// popular_skills is derived from team_grid client-side — the skill card
+		// only appears in team_grid on the wire, and the page still renders it.
+		expect(screen.getByText('Plain English voice')).toBeInTheDocument()
+
+		// Tab counts are derived from team_grid: 1 loop, 1 agent, 1 skill, 1 tool.
+		expect(screen.getByRole('tab', { name: /Loops, 1 items/ })).toBeInTheDocument()
+		expect(screen.getByRole('tab', { name: /Agents, 1 items/ })).toBeInTheDocument()
+		expect(screen.getByRole('tab', { name: /Skills, 1 items/ })).toBeInTheDocument()
+		expect(screen.getByRole('tab', { name: /Tools, 1 items/ })).toBeInTheDocument()
 	})
 
-	it('shows individual items in typed sections when loop details are loaded', () => {
-		mockUseMarketplaceLoops.mockReturnValue({
-			data: {
-				loops: [
-					{
-						id: 'p1',
-						name: 'Customer Continuous Discovery',
-						slug: 'continuous-discovery',
-						description: 'Loop',
-						version: '1.0.0',
-						use_case: 'Discovery',
-						item_types: ['actor', 'trigger'],
-						created_at: null,
-						updated_at: null,
-					},
-				],
-				counts: COUNTS,
-			},
-			isLoading: false,
-			isError: false,
-		})
-		mockUseQueries.mockReturnValue([
-			{
-				data: {
-					loop: { id: 'p1', name: 'CCD' },
-					items: [
-						{
-							id: 'i1',
-							loop_id: 'p1',
-							item_type: 'actor',
-							source_item_id: 'src-1',
-							item_snapshot: { name: 'Feedback Agent', description: 'Handles feedback' },
-							created_at: null,
-						},
-						{
-							id: 'i2',
-							loop_id: 'p1',
-							item_type: 'trigger',
-							source_item_id: 'src-2',
-							item_snapshot: { name: 'Daily Sweep', description: 'Runs daily' },
-							created_at: null,
-						},
-					],
+	it('calls the catalog endpoint with the workspace id and refetches with a team filter when a chip is clicked', async () => {
+		listMock.mockResolvedValue(buildCatalog())
+		render(<MarketplacePage />, { wrapper: TestWrapper })
+
+		await waitFor(() => expect(listMock).toHaveBeenCalledWith('ws-1', { team: undefined }))
+
+		const user = userEvent.setup()
+		await user.click(screen.getByRole('tab', { name: 'Customer' }))
+		await waitFor(() => expect(listMock).toHaveBeenCalledWith('ws-1', { team: 'customer' }))
+	})
+
+	it('renders the band-level error state when the catalog request fails', async () => {
+		listMock.mockRejectedValue(new Error('offline'))
+		render(<MarketplacePage />, { wrapper: TestWrapper })
+		await waitFor(() => expect(screen.getByText(/Couldn't load the catalog/i)).toBeInTheDocument())
+		expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+	})
+
+	it('renders the Recommended empty state when no cards match', async () => {
+		listMock.mockResolvedValue(
+			buildCatalog({
+				bands: {
+					recommended: [],
+					popular_loops: [],
+					top_agents: [],
+					most_installed_tools: [],
 				},
-			},
-		])
-		render(<MarketplacePage />)
-		expect(screen.getByRole('region', { name: 'Loops' })).toHaveTextContent(
-			'Customer Continuous Discovery',
+				team_grid: [],
+			}),
 		)
-		expect(screen.getByRole('region', { name: 'Agents' })).toHaveTextContent('Feedback Agent')
-		expect(screen.getByRole('region', { name: 'Triggers' })).toHaveTextContent('Daily Sweep')
+		render(<MarketplacePage />, { wrapper: TestWrapper })
+		await waitFor(() => expect(screen.getByText(/Nothing to recommend yet/i)).toBeInTheDocument())
 	})
 
-	it('shows the empty-state copy when the marketplace has no loops', () => {
-		render(<MarketplacePage />)
-		expect(screen.getByText(/No loops yet/i)).toBeInTheDocument()
-	})
-
-	it('renders the free-text filter input inside the filter nav', () => {
-		mockUseMarketplaceLoops.mockReturnValue({
-			data: {
-				loops: [
-					{
-						id: 'p1',
-						name: 'Alpha',
-						slug: 'alpha',
-						description: '',
-						version: '1',
-						use_case: null,
-						item_types: ['actor'],
-						created_at: null,
-						updated_at: null,
-					},
-				],
-				counts: COUNTS,
-			},
-			isLoading: false,
-			isError: false,
+	it('opens the install modal on Install and flips the card to installed via optimistic cache write', async () => {
+		listMock.mockResolvedValue(buildCatalog())
+		installMock.mockResolvedValue({
+			id: 'inst-1234-5678-9012-345678901234',
+			workspace_id: 'ws-1',
+			item_kind: 'agent',
+			catalog_id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1',
+			catalog_slug: 'compass',
+			installed_loop_id: null,
+			actor_id: 'act-1',
+			workspace_skill_id: null,
+			mcp_installation_id: null,
+			trigger_ids: [],
+			source: 'marketplace',
+			installed_by_actor_id: 'user-1',
+			installed_at: new Date().toISOString(),
+			uninstalled_at: null,
 		})
-		render(<MarketplacePage />)
-		const input = screen.getByRole('searchbox', { name: 'Filter marketplace' })
-		const chipNav = screen.getByRole('navigation', { name: 'Marketplace filters' })
-		expect(chipNav.contains(input)).toBe(true)
-	})
+		render(<MarketplacePage />, { wrapper: TestWrapper })
 
-	it('narrows the visible loops when the user types into the filter', async () => {
-		mockUseMarketplaceLoops.mockReturnValue({
-			data: {
-				loops: [
-					{
-						id: 'p1',
-						name: 'Discover & Research',
-						slug: 'discover',
-						description: 'Insight loop',
-						version: '1',
-						use_case: null,
-						item_types: ['actor', 'trigger'],
-						created_at: null,
-						updated_at: null,
-					},
-					{
-						id: 'p2',
-						name: 'Build & Ship',
-						slug: 'build-ship',
-						description: 'Delivery loop',
-						version: '1',
-						use_case: null,
-						item_types: ['actor', 'trigger'],
-						created_at: null,
-						updated_at: null,
-					},
-				],
-				counts: COUNTS,
-			},
-			isLoading: false,
-			isError: false,
-		})
-		render(<MarketplacePage />)
-		const loops = screen.getByRole('region', { name: 'Loops' })
-		expect(loops).toHaveTextContent('Discover & Research')
-		expect(loops).toHaveTextContent('Build & Ship')
+		await waitFor(() => expect(screen.getByText('Compass')).toBeInTheDocument())
 
 		const user = userEvent.setup()
-		const input = screen.getByRole('searchbox', { name: 'Filter marketplace' })
-		await user.type(input, 'discover')
-		expect(screen.getByRole('region', { name: 'Loops' })).toHaveTextContent('Discover & Research')
-		expect(screen.getByRole('region', { name: 'Loops' })).not.toHaveTextContent('Build & Ship')
-	})
+		await user.click(screen.getByRole('button', { name: 'Install Compass' }))
+		expect(screen.getByRole('dialog', { name: /Install Compass/ })).toBeInTheDocument()
 
-	it('renders a clean empty state when the query matches nothing', async () => {
-		mockUseMarketplaceLoops.mockReturnValue({
-			data: {
-				loops: [
-					{
-						id: 'p1',
-						name: 'Alpha',
-						slug: 'alpha',
-						description: '',
-						version: '1',
-						use_case: null,
-						item_types: ['actor'],
-						created_at: null,
-						updated_at: null,
-					},
-				],
-				counts: COUNTS,
-			},
-			isLoading: false,
-			isError: false,
-		})
-		render(<MarketplacePage />)
-		const user = userEvent.setup()
-		const input = screen.getByRole('searchbox', { name: 'Filter marketplace' })
-		await user.type(input, 'zzzznomatchxyz')
-		expect(screen.getByText('Nothing in the catalog matches those filters.')).toBeInTheDocument()
-		expect(screen.queryByRole('region', { name: 'Loops' })).not.toBeInTheDocument()
-		expect(screen.queryByText(/Showing all/i)).not.toBeInTheDocument()
-		expect(screen.queryByText(/No loops yet/i)).not.toBeInTheDocument()
-	})
-
-	it('clears the search query and chip filter from the empty state', async () => {
-		mockUseMarketplaceLoops.mockReturnValue({
-			data: {
-				loops: [
-					{
-						id: 'p1',
-						name: 'Alpha',
-						slug: 'alpha',
-						description: '',
-						version: '1',
-						use_case: null,
-						item_types: ['actor'],
-						created_at: null,
-						updated_at: null,
-					},
-				],
-				counts: COUNTS,
-			},
-			isLoading: false,
-			isError: false,
-		})
-		render(<MarketplacePage />)
-		const user = userEvent.setup()
-
-		// Filter to a chip with matches, then type a query that matches nothing.
-		const agentsBtn = screen.getByRole('button', { name: /^Agents \(5\)$/ })
-		await user.click(agentsBtn)
-		const input = screen.getByRole('searchbox', { name: 'Filter marketplace' })
-		await user.type(input, 'zzzznomatchxyz')
-		expect(screen.getByText('Nothing in the catalog matches those filters.')).toBeInTheDocument()
-
-		// "Clear filters" resets both the search box and the active chip.
-		await user.click(screen.getByRole('button', { name: 'Clear filters' }))
-		expect(input).toHaveValue('')
-		expect(screen.getByRole('button', { name: /^All \(/ }).className).toMatch(
-			/(?:^|\s)border-primary(?:\s|$)/,
+		// Kick off the install; the modal moves through installing → success and
+		// the underlying card flips to the Installed chip via the optimistic
+		// cache write in useInstallMarketplaceItem.onSuccess.
+		await user.click(screen.getByRole('button', { name: /Install to \w+/ }))
+		await waitFor(() =>
+			expect(installMock).toHaveBeenCalledWith('ws-1', {
+				item_kind: 'agent',
+				catalog_id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1',
+			}),
 		)
+		await waitFor(() => expect(screen.getByLabelText('Compass, installed')).toBeInTheDocument())
 	})
 })
