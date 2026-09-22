@@ -3,7 +3,7 @@ import type { Database } from '@maskin/db'
 import { events, triggers } from '@maskin/db/schema'
 import { configSchemaForType, createTriggerSchema, updateTriggerSchema } from '@maskin/shared'
 import { Cron } from 'croner'
-import { and, asc, count, desc, eq } from 'drizzle-orm'
+import { and, asc, count, desc, eq, sql } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
@@ -405,6 +405,33 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 
 	await db.transaction(async (tx) => {
 		await tx.delete(triggers).where(eq(triggers.id, id))
+
+		// Cascade the deletion into loop step membership. A loop stores its step
+		// spine as `metadata.trigger_ids` (a JSONB array of trigger uuid strings)
+		// on the `objects` row — no FK — so a delete without this sweep leaves
+		// orphaned ids that surface as null-agent step slots on `get_loop` and
+		// as false setup-check failures. Runs inside the same transaction so
+		// the trigger row and every loop pointer to it disappear or persist
+		// together.
+		await tx.execute(sql`
+			UPDATE objects
+			SET metadata = jsonb_set(
+				metadata,
+				'{trigger_ids}',
+				COALESCE(
+					(
+						SELECT jsonb_agg(v)
+						FROM jsonb_array_elements(metadata->'trigger_ids') v
+						WHERE v <> to_jsonb(${id}::text)
+					),
+					'[]'::jsonb
+				)
+			)
+			WHERE workspace_id = ${existing.workspaceId}
+			  AND type = 'loop'
+			  AND metadata ? 'trigger_ids'
+			  AND metadata->'trigger_ids' ? ${id}
+		`)
 
 		await tx.insert(events).values({
 			workspaceId: existing.workspaceId,

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { events, sessions, triggers } from '@maskin/db/schema'
+import { events, objects, sessions, triggers } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { eq } from 'drizzle-orm'
 import { vi } from 'vitest'
@@ -103,6 +103,54 @@ describe('Triggers Integration', () => {
 			const [updatedSession] = await db.select().from(sessions).where(eq(sessions.id, session.id))
 			expect(updatedSession).toBeDefined()
 			expect(updatedSession.triggerId).toBeNull()
+		})
+	})
+
+	describe('delete cascades into loop step membership', () => {
+		it('prunes the deleted trigger id from every referencing loop', async () => {
+			const app = createApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const actorId = getTestActorId()
+
+			const trigger = await insertTrigger(db, workspaceId, actorId, targetActorId)
+			const otherTrigger = await insertTrigger(db, workspaceId, actorId, targetActorId)
+
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				metadata: { trigger_ids: [otherTrigger.id, trigger.id] },
+			})
+			const siblingLoop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				metadata: { trigger_ids: [trigger.id] },
+			})
+			const unrelatedLoop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				metadata: { trigger_ids: [otherTrigger.id] },
+			})
+
+			const deleteRes = await app.request(
+				jsonRequest('DELETE', `/api/triggers/${trigger.id}`, undefined, headers),
+			)
+			expect(deleteRes.status).toBe(200)
+
+			const [afterLoop] = await db.select().from(objects).where(eq(objects.id, loop.id))
+			expect((afterLoop.metadata as { trigger_ids: string[] }).trigger_ids).toEqual([
+				otherTrigger.id,
+			])
+
+			const [afterSiblingLoop] = await db
+				.select()
+				.from(objects)
+				.where(eq(objects.id, siblingLoop.id))
+			expect((afterSiblingLoop.metadata as { trigger_ids: string[] }).trigger_ids).toEqual([])
+
+			const [afterUnrelated] = await db
+				.select()
+				.from(objects)
+				.where(eq(objects.id, unrelatedLoop.id))
+			expect((afterUnrelated.metadata as { trigger_ids: string[] }).trigger_ids).toEqual([
+				otherTrigger.id,
+			])
 		})
 	})
 
