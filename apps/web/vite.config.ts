@@ -111,4 +111,23 @@ export default defineConfig(async () => ({
 			},
 		},
 	},
+	// `vite preview` (serving the production build) does NOT inherit
+	// `server.proxy` — it has its own, separate proxy config. E2E's CI run
+	// uses preview instead of the dev server (see apps/e2e/playwright.config.ts)
+	// specifically to avoid on-demand module transforms slowing down
+	// `page.reload()`, so this needs to mirror `server.proxy` exactly or every
+	// `/api`/`/mcp` request 404s against the static file server.
+	preview: {
+		port: 5173,
+		proxy: {
+			'/api': {
+				target: 'http://localhost:3000',
+				changeOrigin: true,
+			},
+			'/mcp': {
+				target: 'http://localhost:3000',
+				changeOrigin: true,
+			},
+		},
+	},
 }))
