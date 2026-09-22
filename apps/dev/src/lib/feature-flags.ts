@@ -128,6 +128,23 @@ export const FLAGS = {
 	 * has been deleted.
 	 */
 	CHAT_SLASH_PICKER_V2: 'chat-slash-picker-v2',
+	/**
+	 * Gates the S2 writer hook on the parent bet
+	 * [Extend the graph: files, chats, and sessions as first-class nodes]
+	 * (https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/34706e2f-943f-49f5-a832-400a702952c2).
+	 * Off means the `recordEvent` helper never writes `session → object|file`
+	 * `produced_by` edges and `POST /api/sessions` never writes a
+	 * `conversation → session` `spawned` edge — the mutations still succeed
+	 * silently, no lineage rows land. On (per driver-actor) means both writes
+	 * fire whenever their preconditions hold (`X-Maskin-Session-Id` header
+	 * present on the mutation, or `conversationId` set at session CREATE).
+	 * Migration 0074 (which widens the CHECK constraint and adds the
+	 * `metadata` column) ships LIVE regardless of this flag: schema tolerance
+	 * with zero writes is safe. Retire once the hook is on for every workspace
+	 * and the Task 4 `<Origin>` block + Task 5 Chat Produced pane depend on
+	 * the edges being present.
+	 */
+	GRAPH_PROVENANCE_WRITES: 'graph-provenance-writes',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

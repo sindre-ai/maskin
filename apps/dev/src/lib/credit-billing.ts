@@ -1,9 +1,10 @@
 import type { Database } from '@maskin/db'
-import { events, sessions, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
+import { sessions, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import type Stripe from 'stripe'
 import { isEnterpriseWorkspace } from './enterprise'
+import { recordEvent } from './events/record-event'
 import {
 	canUseCreditBalance,
 	getWorkspacePlanCap,
@@ -324,7 +325,7 @@ export async function debitCreditForSession(params: {
 			})
 			.where(eq(workspaces.id, workspaceId))
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId,
 			action: 'session_credit_debited',

@@ -1,7 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
-	events,
 	actors,
 	conversationParticipants,
 	conversations,
@@ -22,6 +21,7 @@ import {
 } from '@maskin/shared'
 import { and, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import {
 	conversationDetailResponseSchema,
@@ -278,7 +278,7 @@ app.openapi(createConversationRoute, (async (c) => {
 				.where(eq(conversations.id, created.id))
 		}
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId: callerId,
 			action: 'conversation_created',
@@ -547,7 +547,7 @@ app.openapi(updateConversationRoute, (async (c) => {
 		.returning()
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId: callerId,
 		action: 'conversation_updated',
@@ -619,7 +619,7 @@ app.openapi(addParticipantsRoute, (async (c) => {
 
 	await addParticipantsToConversation(db, id, body.actor_ids, callerId)
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId: callerId,
 		action: 'conversation_participant_added',
@@ -685,7 +685,7 @@ app.openapi(removeParticipantRoute, (async (c) => {
 		.returning({ actorId: conversationParticipants.actorId })
 
 	if (removed.length > 0) {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId: callerId,
 			action: 'conversation_participant_removed',
@@ -861,7 +861,7 @@ app.openapi(postMessageRoute, (async (c) => {
 			const toAdd = notYetJoined.filter((actorId) => memberIds.has(actorId))
 			if (toAdd.length > 0) {
 				await addParticipantsToConversation(db, id, toAdd, callerId)
-				await db.insert(events).values({
+				await recordEvent(db, {
 					workspaceId,
 					actorId: callerId,
 					action: 'conversation_participant_added',
@@ -963,7 +963,7 @@ app.openapi(editMessageRoute, (async (c) => {
 		.returning()
 	if (!updated) throw new Error('Failed to update message')
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId: callerId,
 		action: 'message_updated',
@@ -1142,7 +1142,7 @@ app.openapi(updateMeRoute, (async (c) => {
 		.returning()
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId: callerId,
 		action: 'conversation_participant_state_updated',

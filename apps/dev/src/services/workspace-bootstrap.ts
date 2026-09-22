@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
-	events,
 	actors,
 	agentSkills,
 	objects,
@@ -27,6 +26,7 @@ import {
 import { and, eq, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { isEnterpriseActor } from '../lib/enterprise'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import {
 	buildChiefOfStaffKickoffPrompt,
@@ -589,7 +589,7 @@ export async function bootstrapDefaultAgents(
 				continue
 			}
 
-			await db.insert(events).values({
+			await recordEvent(db, {
 				workspaceId,
 				actorId: createdBy,
 				action: 'created',
@@ -650,7 +650,7 @@ export async function bootstrapDefaultAgents(
 				continue
 			}
 
-			await db.insert(events).values({
+			await recordEvent(db, {
 				workspaceId,
 				actorId: chiefId ?? createdBy,
 				action: 'created',

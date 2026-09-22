@@ -1,18 +1,14 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import {
-	events,
-	INTEGRATION_STATUS_ACTIVE,
-	type Integration,
-	integrations,
-} from '@maskin/db/schema'
+import { INTEGRATION_STATUS_ACTIVE, type Integration, integrations } from '@maskin/db/schema'
 import { getLinkedInMcpInstancesForIntegration, instanceSlug } from '@maskin/mcp/linkedin'
 import { and, eq } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { createAuthLink } from '../lib/integrations/providers/linkedin-unipile/client'
 import { deleteUnipileAccountForReconnectOrphan } from '../lib/integrations/providers/linkedin-unipile/disconnect'
 import { enumerateLinkedInIdentitiesAndRegister } from '../lib/integrations/providers/linkedin-unipile/enumeration'
@@ -308,7 +304,7 @@ app.openapi(connectRoute, (async (c) => {
 		// provider path does this at each equivalent point (routes/integrations.ts).
 		// Without it the LinkedIn connect is invisible to both the audit log and
 		// the SSE feed that drives real-time cache invalidation.
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId,
 			action: 'created',
@@ -479,7 +475,7 @@ app.openapi(callbackRoute, (async (c) => {
 		// landing cannot leave a "connected" event behind. This is the opposite
 		// ordering from the PostHog capture below on purpose: the event row is
 		// part of the write, the telemetry is a report about the write.
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId: pending.workspaceId,
 			// `actor_id` is nullable on integrations (only actor-scoped providers
 			// set it) but required on events; `created_by` is not null and is the
@@ -612,7 +608,7 @@ async function handleCallbackError(
 						updatedAt: new Date(),
 					})
 					.where(eq(integrations.id, pending.id))
-				await tx.insert(events).values({
+				await recordEvent(tx, {
 					workspaceId: pending.workspaceId,
 					actorId: pending.actorId ?? pending.createdBy,
 					action: 'updated',

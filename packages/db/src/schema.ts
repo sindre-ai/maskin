@@ -132,6 +132,12 @@ export const relationships = pgTable(
 		targetType: text('target_type').notNull(),
 		targetId: uuid('target_id').notNull(),
 		type: text('type').notNull(),
+		// S2 · edge-level context the writer hook persists at CREATE time.
+		// Currently the spawning `messageId` on a `conversation → session`
+		// `spawned` edge (surfaces the deep-link into a chat at the exact
+		// message). Nullable and jsonb so future edge types can add their own
+		// shape without another migration. Added in migration 0074.
+		metadata: jsonb('metadata'),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -139,9 +145,14 @@ export const relationships = pgTable(
 	},
 	(t) => [
 		unique('relationships_src_tgt_type_uniq').on(t.sourceId, t.targetId, t.type),
+		// S2 · widened to admit `conversation` and `session` endpoint kinds so
+		// the writer hook can persist automatic provenance edges
+		// (conversation→session `spawned`, session→object|file `produced_by`).
+		// Applied live via migration 0074; hook itself gated on
+		// `graph-provenance-writes` — schema tolerance is safe with zero writes.
 		check(
 			'relationships_source_target_type_kind',
-			sql`${t.sourceType} IN ('object', 'file') AND ${t.targetType} IN ('object', 'file')`,
+			sql`${t.sourceType} IN ('object', 'file', 'conversation', 'session') AND ${t.targetType} IN ('object', 'file', 'conversation', 'session')`,
 		),
 	],
 )

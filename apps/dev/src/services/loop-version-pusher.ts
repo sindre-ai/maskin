@@ -27,6 +27,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import { and, eq, inArray, ne, or, sql } from 'drizzle-orm'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { expandBrowserCapability } from '../lib/marketplace-loops/loop-snapshot'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
@@ -711,7 +712,7 @@ export class LoopVersionPusher {
 				.where(eq(installedLoops.id, install.id))
 
 			if (createdBy) {
-				await tx.insert(events).values({
+				await recordEvent(tx, {
 					workspaceId: install.workspaceId,
 					actorId: createdBy,
 					action: 'updated',
