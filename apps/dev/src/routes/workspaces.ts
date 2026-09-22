@@ -27,6 +27,7 @@ import {
 	patchAddsByoSource,
 } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
+import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { getStripeClient, readStripeEnv } from '../lib/stripe'
@@ -601,7 +602,7 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 			)
 			.limit(1)
 
-		if (coach) {
+		if (coach && !shouldSkipOnboardingKickoff()) {
 			c.get('sessionManager')
 				.createSession(id, {
 					actorId: coach.id,
