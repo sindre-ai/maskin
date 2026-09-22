@@ -222,8 +222,15 @@ describe('Relationships Routes', () => {
 			const sourceObj = buildObject()
 			const rel = buildRelationship({ sourceId: sourceObj.id })
 			const { app, mockResults } = createTestApp(relationshipsRoutes, '/api/relationships')
-			// First select: relationship, second: source object lookup, third: membership check
-			mockResults.selectQueue = [[rel], [sourceObj], [buildWorkspaceMember()]]
+			// Selects, in order: relationship lookup, then a parallel object +
+			// file workspace lookup for the source endpoint (Slice 1 fix — the
+			// endpoint may live in either table), then the membership check.
+			mockResults.selectQueue = [
+				[rel],
+				[sourceObj],
+				[], // files lookup returns nothing when source is an object
+				[buildWorkspaceMember()],
+			]
 			mockResults.insert = [{}] // event
 
 			const res = await app.request(
@@ -235,6 +242,29 @@ describe('Relationships Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.deleted).toBe(true)
+		})
+
+		it('returns 200 when deleting a file-endpoint edge', async () => {
+			// Before Slice 1 this path 404s: the workspace check only hit
+			// `objects`, so a source that lived in `files` fell through. The
+			// fix parallel-queries both tables and takes the first hit.
+			const rel = buildRelationship({ sourceId: '00000000-0000-0000-0000-000000fileid1' })
+			const { app, mockResults } = createTestApp(relationshipsRoutes, '/api/relationships')
+			mockResults.selectQueue = [
+				[rel],
+				[], // objects lookup misses
+				[{ workspaceId: wsId }], // files lookup hits
+				[buildWorkspaceMember()],
+			]
+			mockResults.insert = [{}] // event
+
+			const res = await app.request(
+				jsonDelete(`/api/relationships/${rel.id}`, {
+					'X-Workspace-Id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
 		})
 
 		it('returns 404 when relationship not found', async () => {

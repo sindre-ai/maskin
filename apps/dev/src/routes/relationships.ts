@@ -14,6 +14,7 @@ import {
 	relationshipResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
+import { derivePairEndpointKinds } from '../lib/relationships-endpoint-kind'
 import { serialize } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 
@@ -68,15 +69,15 @@ app.openapi(createRelationshipRoute, async (c) => {
 
 	// Resolve sourceType/targetType server-side per T1 convention B:
 	// 'file' when the endpoint id lives in files, 'object' otherwise.
-	// Caller-supplied type labels are ignored.
-	const endpointIds = [body.source_id, body.target_id]
-	const fileRows = await db
-		.select({ id: files.id })
-		.from(files)
-		.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, endpointIds)))
-	const fileIds = new Set(fileRows.map((r) => r.id))
-	const sourceType = fileIds.has(body.source_id) ? 'file' : 'object'
-	const targetType = fileIds.has(body.target_id) ? 'file' : 'object'
+	// Caller-supplied type labels are ignored. Centralised in
+	// `lib/relationships-endpoint-kind.ts` so Slice 2 can widen the union to
+	// conversation/session in one place, not five.
+	const { sourceType, targetType } = await derivePairEndpointKinds(
+		db,
+		workspaceId,
+		body.source_id,
+		body.target_id,
+	)
 
 	// Idempotent on (source_id, target_id, type) — matches
 	// `relationships_src_tgt_type_uniq`. A duplicate call returns 201 with the
@@ -148,15 +149,26 @@ app.openapi(createRelationshipRoute, async (c) => {
 		})
 	}
 
-	// Titles hydrate from `objects` when the endpoint is an object row. The
-	// UI attach flow never mints a conversation or session endpoint here (that
-	// would violate spec §No-gos — users don't hand-write those edges), so
-	// this stays object-only for the response.
-	const endpointRows = await db
-		.select({ id: objects.id, title: objects.title })
-		.from(objects)
-		.where(inArray(objects.id, [created.sourceId, created.targetId]))
-	const titleById = new Map(endpointRows.map((r) => [r.id, r.title ?? null]))
+	// Titles hydrate in parallel from `objects` and `files` — the UI attach
+	// flow only writes object/file endpoints (spec §No-gos: users don't
+	// hand-write conversation or session edges), so those two tables are the
+	// full set for a POST response. Files win when an id somehow lives in both
+	// tables; the derive helper's precedence rule (files > objects) is
+	// mirrored here.
+	const endpointIdSet = [created.sourceId, created.targetId]
+	const [objectRows, fileRows] = await Promise.all([
+		db
+			.select({ id: objects.id, title: objects.title })
+			.from(objects)
+			.where(inArray(objects.id, endpointIdSet)),
+		db
+			.select({ id: files.id, name: files.name })
+			.from(files)
+			.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, endpointIdSet))),
+	])
+	const titleById = new Map<string, string | null>()
+	for (const r of objectRows) titleById.set(r.id, r.title ?? null)
+	for (const r of fileRows) titleById.set(r.id, r.name ?? null)
 
 	return c.json(
 		{
@@ -229,17 +241,31 @@ app.openapi(listRelationshipsRoute, async (c) => {
 	// `'knowledge'`) fall through to the object path — matches the same
 	// fallback GET /api/objects/:id/graph uses for those rows.
 	const objectIds = new Set<string>()
+	const fileIds = new Set<string>()
 	const conversationIds = new Set<string>()
 	const sessionIds = new Set<string>()
 	for (const r of results) {
-		bucket(r.sourceType, r.sourceId, objectIds, conversationIds, sessionIds)
-		bucket(r.targetType, r.targetId, objectIds, conversationIds, sessionIds)
+		bucket(r.sourceType, r.sourceId, objectIds, fileIds, conversationIds, sessionIds)
+		bucket(r.targetType, r.targetId, objectIds, fileIds, conversationIds, sessionIds)
 	}
-	const titleById = await resolveEndpointTitles(db, {
-		objectIds: [...objectIds],
-		conversationIds: [...conversationIds],
-		sessionIds: [...sessionIds],
-	})
+	// `resolveEndpointTitles` covers object / conversation / session; file
+	// hydration is additive per the helper's contract — one extra workspace-
+	// scoped `files.name` batch, then merge with files > objects precedence
+	// (matches `deriveEndpointKinds`).
+	const [titleById, fileRows] = await Promise.all([
+		resolveEndpointTitles(db, {
+			objectIds: [...objectIds],
+			conversationIds: [...conversationIds],
+			sessionIds: [...sessionIds],
+		}),
+		fileIds.size > 0
+			? db
+					.select({ id: files.id, name: files.name })
+					.from(files)
+					.where(inArray(files.id, [...fileIds]))
+			: Promise.resolve([] as { id: string; name: string }[]),
+	])
+	for (const row of fileRows) titleById.set(row.id, row.name ?? null)
 
 	return c.json(
 		results.map((r) => ({
@@ -254,12 +280,14 @@ function bucket(
 	kind: string,
 	id: string,
 	objectIds: Set<string>,
+	fileIds: Set<string>,
 	conversationIds: Set<string>,
 	sessionIds: Set<string>,
 ): void {
-	if (kind === 'conversation') conversationIds.add(id)
+	if (kind === 'file') fileIds.add(id)
+	else if (kind === 'conversation') conversationIds.add(id)
 	else if (kind === 'session') sessionIds.add(id)
-	else objectIds.add(id) // 'object', 'file' (files hydrated by Task 1 elsewhere), any legacy label
+	else objectIds.add(id) // 'object', any legacy label
 }
 
 // DELETE /api/relationships/:id
@@ -293,13 +321,24 @@ app.openapi(deleteRelationshipRoute, (async (c) => {
 
 	if (!existing) return c.json(createApiError('NOT_FOUND', 'Relationship not found'), 404)
 
-	// Verify actor is a member of the workspace that owns the source object
-	const [sourceObject] = await db
-		.select({ workspaceId: objects.workspaceId })
-		.from(objects)
-		.where(eq(objects.id, existing.sourceId))
-		.limit(1)
-	if (!sourceObject || !(await isWorkspaceMember(db, actorId, sourceObject.workspaceId))) {
+	// Verify actor is a member of the workspace that owns the source endpoint.
+	// The endpoint may live in `objects` OR `files` (Slice 1) — a check that
+	// hits `objects` only 404s on file-endpoint edges, which is the DELETE bug
+	// the bet spec flagged. Fetch both in parallel and take the first hit.
+	const [sourceObjectRows, sourceFileRows] = await Promise.all([
+		db
+			.select({ workspaceId: objects.workspaceId })
+			.from(objects)
+			.where(eq(objects.id, existing.sourceId))
+			.limit(1),
+		db
+			.select({ workspaceId: files.workspaceId })
+			.from(files)
+			.where(eq(files.id, existing.sourceId))
+			.limit(1),
+	])
+	const sourceWorkspaceId = sourceObjectRows[0]?.workspaceId ?? sourceFileRows[0]?.workspaceId
+	if (!sourceWorkspaceId || !(await isWorkspaceMember(db, actorId, sourceWorkspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Relationship not found'), 404)
 	}
 
