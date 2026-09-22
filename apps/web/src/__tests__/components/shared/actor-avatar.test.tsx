@@ -32,6 +32,18 @@ describe('getActorInitials', () => {
 	it('uppercases lowercase input', () => {
 		expect(getActorInitials('alice bob')).toBe('AB')
 	})
+
+	it('skips punctuation so a bracketed qualifier does not leak into the initials', () => {
+		expect(getActorInitials('Linker (Sigrid)')).toBe('LS')
+	})
+
+	it('ignores a token that is punctuation only', () => {
+		expect(getActorInitials('John - Doe')).toBe('JD')
+	})
+
+	it('returns ? when the name is punctuation only', () => {
+		expect(getActorInitials('---')).toBe('?')
+	})
 })
 
 describe('getActorAvatarPaletteClass', () => {
