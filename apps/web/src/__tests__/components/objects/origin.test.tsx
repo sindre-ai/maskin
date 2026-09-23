@@ -114,11 +114,7 @@ describe('resolveLineage', () => {
 describe('<Origin>', () => {
 	it('renders nothing when there is no lineage', () => {
 		const { container } = render(
-			<Origin
-				object={{ id: 'obj-1' }}
-				relationships={[]}
-				workspaceId="ws-1"
-			/>,
+			<Origin object={{ id: 'obj-1' }} relationships={[]} workspaceId="ws-1" />,
 			{ wrapper: createWorkspaceWrapper() },
 		)
 		expect(container.firstChild).toBeNull()
