@@ -10,6 +10,25 @@ const SESSION_COMPLETION_ACTIONS = new Map<string, 'completed' | 'failed' | 'tim
 ])
 
 export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string, event: SSEEvent) {
+	// `session.state_changed` frames (bet/444b-handed-off-strip) carry a
+	// `SessionStateChangedPayload` — not the generic `events` row shape — so
+	// `entity_type`/`entity_id` are absent and the switch below never matches
+	// them. They pair a sub-session's live status with the delegation strip
+	// rendered on `spawned_sessions`, which is embedded in the messages list
+	// response. Invalidate every conversation-messages query in this workspace
+	// so any open thread carrying the affected sub-session refetches; rows
+	// never reorder in the strip so the refetch is invisible unless the pill
+	// itself changed.
+	if (event.action === 'session.state_changed') {
+		// Every open conversation-messages query in this tab: the SSE payload
+		// carries `session_id`, not the owning conversation id, so a narrower
+		// invalidation would have to walk cached pages to find the strip that
+		// owns the sub-session. The prefix here matches `queryKeys.conversations`
+		// so a future refactor of the key shape keeps the invalidation in step.
+		queryClient.invalidateQueries({ queryKey: ['conversations', 'detail'] })
+		return
+	}
+
 	// Always invalidate events history
 	queryClient.invalidateQueries({ queryKey: queryKeys.events.history(workspaceId) })
 	queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(event.entity_id) })

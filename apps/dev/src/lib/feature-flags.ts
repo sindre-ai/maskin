@@ -99,6 +99,18 @@ export const FLAGS = {
 	chatsV4PolishBubbles: 'chats-v4-polish.bubbles',
 	chatsV4PolishNewChat: 'chats-v4-polish.new_chat',
 	/**
+	 * Chat thread `HANDED OFF` sub-agent delegation strip
+	 * (bet/444b-handed-off-strip). When on, an agent message with ≥1
+	 * **spawned_sessions** row renders the delegation strip beneath its
+	 * content: one row per sub-agent with a live-updating QUEUED / WORKING /
+	 * DONE / FAILED pill, deps clause, elapsed timer, current activity and
+	 * row-click through to the sub-agent's own thread. Visual-layer only —
+	 * the embed and SSE contract ship to everyone regardless of this flag,
+	 * so a flag flip toggles the strip on or off without affecting how sub-
+	 * sessions run or how their state propagates.
+	 */
+	HANDED_OFF_STRIP: 'handed-off-strip',
+	/**
 	 * Chat composer `/` picker v2 — unified search-and-create surface.
 	 * When off, typing `/` opens the create-only "Turn this into an object"
 	 * dropdown (today's behaviour). When on, `/` opens the unified picker with

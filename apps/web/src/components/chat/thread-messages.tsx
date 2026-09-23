@@ -36,6 +36,11 @@ interface ThreadMessagesProps {
 	/** Chats v4 polish — umbrella flag AND the `.bubbles` sub-flag — into each
 	 *  message bubble. */
 	v4PolishBubbles?: boolean
+	/** Chat thread `HANDED OFF` sub-agent delegation strip
+	 *  (bet/444b-handed-off-strip). Threaded from the route boundary as a
+	 *  plain boolean; the bubble decides per-message whether to render the
+	 *  strip based on this flag AND the message's own `spawned_sessions`. */
+	handedOffStripEnabled?: boolean
 }
 
 export function ThreadMessages({
@@ -44,6 +49,7 @@ export function ThreadMessages({
 	className,
 	v4PolishBanner = false,
 	v4PolishBubbles = false,
+	handedOffStripEnabled = false,
 }: ThreadMessagesProps) {
 	const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
@@ -205,6 +211,7 @@ export function ThreadMessages({
 								message={message}
 								questionAnswered={answeredQuestionIds.has(message.id)}
 								v4Polish={v4PolishBubbles}
+								handedOffStripEnabled={handedOffStripEnabled}
 								// Keyed by index as well as session: one session can put two
 								// turns under the same message (a result segment plus the
 								// live turn that follows it), so `sessionId` alone is not
