@@ -3,6 +3,7 @@ import { INTEGRATION_STATUS_ACTIVE, integrations } from '@maskin/db/schema'
 import { getLinkedInMcpInstancesForIntegration, instanceSlug } from '@maskin/mcp/linkedin'
 import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { createApiError } from '../lib/errors'
@@ -28,11 +29,16 @@ import { isWorkspaceMember } from '../lib/workspace-auth'
  *       cannot call identity-B's verbs.
  *
  *   POST /api/integrations/linkedin-unipile/mcp
- *     — legacy shape (pre-P3-K). Now answers `tools/list` with an empty list
- *       to signal that per-identity scoping is required. Kept as an endpoint
- *       rather than a 404 so any hand-added mcpServers entry still connects
- *       cleanly — the empty tool set is the visible signal to switch to the
- *       per-identity path.
+ *     — legacy shape (pre-P3-K). Deprecated. Now answers `tools/list` with an
+ *       explicit empty list and `tools/call` with a deprecation error that
+ *       names the per-identity replacement. Kept as an endpoint rather than
+ *       a 404 so any hand-added mcpServers entry still connects cleanly —
+ *       the empty tool set and the pointer error are the visible signals to
+ *       switch to the per-identity path. Before this de-trap the SDK's
+ *       zero-tool path (server/mcp.js `setToolRequestHandlers`, gated by
+ *       `_createRegisteredTool`) never installed the tools/list handler, so
+ *       any call landed on a bare `-32601 Method not found` with nothing to
+ *       explain the migration.
  *
  * Instance-slug matching is done against the in-process registry, which is
  * populated at connect-time (see linkedin-unipile.ts callback) and boot-time
@@ -41,6 +47,15 @@ import { isWorkspaceMember } from '../lib/workspace-auth'
  * rebuilds the same instance slugs Unipile enumerates, and self-heal covers
  * a boot that raced the registry.
  */
+
+/**
+ * The wire code + message every deprecated-aggregate `tools/call` returns.
+ * The code is grepable in Sentry / logs and the message names the concrete
+ * replacement path so an agent (or a human reading the transcript) has a
+ * one-step migration recipe rather than a bare "not found".
+ */
+const DEPRECATED_AGGREGATE_TOOL_CALL_MESSAGE =
+	'LINKEDIN_MCP_DEPRECATED_AGGREGATE: The aggregate /api/integrations/linkedin-unipile/mcp endpoint is deprecated and exposes no tools. Point your mcpServers entry at /api/integrations/linkedin-unipile/mcp/{instanceSlug}; enumerate instance slugs via GET /api/integrations/linkedin-unipile/identities.'
 
 const PROVIDER = 'linkedin-unipile'
 
@@ -159,13 +174,24 @@ app.post('/:instanceSlug', async (c) => {
 })
 
 /**
- * Legacy aggregate endpoint (pre-P3-K). Now serves an empty tool set — the
+ * Legacy aggregate endpoint (pre-P3-K). Deprecated. Serves an empty tool set
+ * on `tools/list` and a deprecation-pointer error on `tools/call` — the
  * per-identity Quick Add UI writes per-identity URLs (see the /:instanceSlug
  * route above), so nothing under the current UX ever hits this path. Kept as
  * a live endpoint (rather than removing the mount) so a hand-added mcpServers
  * entry that still points here does not fail the transport handshake — it
- * just sees zero tools, which is the correct signal to switch to the per-
- * identity URL.
+ * sees an empty tools list plus, on any accidental tools/call, a message
+ * that names the per-identity URL and the identities endpoint.
+ *
+ * The tools/list + tools/call handlers are wired manually on the low-level
+ * Server here rather than through `McpServer.registerTool`. The MCP SDK
+ * (1.29.0, `server/mcp.js` `setToolRequestHandlers`, gated by
+ * `_createRegisteredTool`) only installs the tools capability + these two
+ * handlers the first time a tool is registered. A zero-instance server
+ * therefore advertises `capabilities:{}` and every `tools/list` call returns
+ * `-32601 Method not found` — an unexplained error, contradicting the doc
+ * above. Wiring the handlers directly here closes that trap and matches
+ * what the doc has always claimed.
  */
 app.post('/', async (c) => {
 	const db = c.get('db')
@@ -189,6 +215,17 @@ app.post('/', async (c) => {
 	}
 
 	const mcpServer = createLinkedInMcpServer({ db, actorId, workspaceId }, [])
+
+	// Force-install the tools capability + tools/list + tools/call handlers
+	// so the deprecated aggregate route serves a documented response instead
+	// of `-32601 Method not found`. See file-level comment for why the SDK
+	// leaves these off for a zero-tool server.
+	mcpServer.server.registerCapabilities({ tools: { listChanged: false } })
+	mcpServer.server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [] }))
+	mcpServer.server.setRequestHandler(CallToolRequestSchema, async () => ({
+		isError: true,
+		content: [{ type: 'text', text: DEPRECATED_AGGREGATE_TOOL_CALL_MESSAGE }],
+	}))
 
 	const transport = new StreamableHTTPServerTransport({
 		sessionIdGenerator: undefined,

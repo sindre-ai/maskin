@@ -507,15 +507,27 @@ export async function bootstrapDefaultAgents(
 			continue
 		}
 
+		// If the seed prompt references its own trigger id via {{trigger_id}},
+		// pre-generate the UUID and interpolate before insert so the agent has
+		// a literal id to pass to update_trigger for self-disable. Used by the
+		// onboarding-only Chief of Staff triggers that must fire once per
+		// workspace and disable themselves afterwards.
+		const referencesTriggerId = trigger.actionPrompt.includes('{{trigger_id}}')
+		const preGeneratedId = referencesTriggerId ? randomUUID() : undefined
+		const actionPrompt = preGeneratedId
+			? trigger.actionPrompt.replaceAll('{{trigger_id}}', preGeneratedId)
+			: trigger.actionPrompt
+
 		try {
 			const [created] = await db
 				.insert(triggers)
 				.values({
+					...(preGeneratedId ? { id: preGeneratedId } : {}),
 					workspaceId,
 					name: trigger.name,
 					type: trigger.type,
 					config: trigger.config as Record<string, unknown>,
-					actionPrompt: trigger.actionPrompt,
+					actionPrompt,
 					targetActorId,
 					enabled: trigger.enabled,
 					createdBy,
