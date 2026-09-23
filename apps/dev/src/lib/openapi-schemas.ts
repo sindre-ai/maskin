@@ -363,6 +363,8 @@ export const importResponseSchema = z.object({
 	totalRows: z.number().nullable(),
 	processedRows: z.number(),
 	successCount: z.number(),
+	skippedCount: z.number(),
+	updatedCount: z.number(),
 	errorCount: z.number(),
 	mapping: jsonbField,
 	preview: jsonbField,

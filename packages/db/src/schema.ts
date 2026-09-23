@@ -702,6 +702,9 @@ export const imports = pgTable(
 		processedRows: integer('processed_rows').notNull().default(0),
 		successCount: integer('success_count').notNull().default(0),
 		errorCount: integer('error_count').notNull().default(0),
+		// Rows that matched an existing object via the mapping's `matchOn` key
+		skippedCount: integer('skipped_count').notNull().default(0),
+		updatedCount: integer('updated_count').notNull().default(0),
 		mapping: jsonb('mapping'),
 		preview: jsonb('preview'),
 		errors: jsonb('errors'),

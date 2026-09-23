@@ -395,12 +395,17 @@ function runImportInBackground(opts: {
 		)
 
 		const totalErrors = result.errorCount + result.relationshipErrorCount
-		const finalStatus = result.successCount > 0 ? 'completed' : 'failed'
+		// A re-import where every row matched an existing object creates nothing
+		// and is still a success.
+		const handledRows = result.successCount + result.skippedCount + result.updatedCount
+		const finalStatus = handledRows > 0 ? 'completed' : 'failed'
 		await db
 			.update(imports)
 			.set({
 				status: finalStatus,
 				successCount: result.successCount,
+				skippedCount: result.skippedCount,
+				updatedCount: result.updatedCount,
 				errorCount: totalErrors,
 				errors: result.errors.length > 0 ? result.errors : null,
 				processedRows: parsed.rows.length,
@@ -417,6 +422,8 @@ function runImportInBackground(opts: {
 			entityId: importId,
 			data: {
 				successCount: result.successCount,
+				skippedCount: result.skippedCount,
+				updatedCount: result.updatedCount,
 				errorCount: totalErrors,
 				relationshipCount: result.relationshipCount,
 			},
@@ -426,6 +433,8 @@ function runImportInBackground(opts: {
 			importId,
 			status: finalStatus,
 			successCount: result.successCount,
+			skippedCount: result.skippedCount,
+			updatedCount: result.updatedCount,
 			errorCount: result.errorCount,
 			relationshipCount: result.relationshipCount,
 			relationshipErrorCount: result.relationshipErrorCount,
@@ -667,6 +676,8 @@ app.openapi(listImportsRoute, async (c) => {
 			totalRows: imports.totalRows,
 			processedRows: imports.processedRows,
 			successCount: imports.successCount,
+			skippedCount: imports.skippedCount,
+			updatedCount: imports.updatedCount,
 			errorCount: imports.errorCount,
 			source: imports.source,
 			createdBy: imports.createdBy,

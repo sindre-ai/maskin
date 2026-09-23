@@ -30,6 +30,7 @@ import type {
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
+import { IMPORT_MATCH_ON_RE } from '@maskin/shared'
 import { ChevronDown, ChevronRight, FileUp, Link2, Loader2, Plus, Upload, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
@@ -40,6 +41,13 @@ const DELIMITER_OPTIONS = [
 	{ value: ';', label: 'Semicolon (;)' },
 	{ value: '\t', label: 'Tab' },
 	{ value: '|', label: 'Pipe (|)' },
+]
+
+const NO_MATCH = '__none__'
+
+const ON_MATCH_OPTIONS = [
+	{ value: 'skip', label: 'Skip it' },
+	{ value: 'update', label: 'Update the existing object' },
 ]
 
 const ENCODING_OPTIONS = [
@@ -299,27 +307,39 @@ function MappingStep({
 	const handleTargetChange = useCallback(
 		(typeMappingIndex: number, sourceColumn: string, newTarget: string) => {
 			setTypeMappings((prev) =>
-				prev.map((tm, idx) =>
-					idx === typeMappingIndex
-						? {
-								...tm,
-								columns: tm.columns.map((col) =>
-									col.sourceColumn === sourceColumn
-										? {
-												...col,
-												targetField:
-													newTarget === '__skip__' ? `metadata.${col.sourceColumn}` : newTarget,
-												skip: newTarget === '__skip__',
-											}
-										: col,
-								),
-							}
-						: tm,
-				),
+				prev.map((tm, idx) => {
+					if (idx !== typeMappingIndex) return tm
+					const columns = tm.columns.map((col) =>
+						col.sourceColumn === sourceColumn
+							? {
+									...col,
+									targetField:
+										newTarget === '__skip__' ? `metadata.${col.sourceColumn}` : newTarget,
+									skip: newTarget === '__skip__',
+								}
+							: col,
+					)
+					// Drop the match key if its field is no longer mapped
+					const stillMapped = columns.some((col) => !col.skip && col.targetField === tm.matchOn)
+					return { ...tm, columns, matchOn: stillMapped ? tm.matchOn : undefined }
+				}),
 			)
 		},
 		[],
 	)
+
+	const handleMatchOnChange = useCallback((typeMappingIndex: number, matchOn: string) => {
+		setTypeMappings((prev) =>
+			prev.map((tm, idx) =>
+				idx === typeMappingIndex
+					? { ...tm, matchOn: matchOn === NO_MATCH ? undefined : matchOn }
+					: tm,
+			),
+		)
+	}, [])
+
+	const [onMatch, setOnMatch] = useState<'skip' | 'update'>(mapping?.onMatch ?? 'skip')
+	const anyMatchKey = typeMappings.some((tm) => tm.matchOn)
 
 	const handleTypeChange = useCallback(
 		(typeMappingIndex: number, newType: string) => {
@@ -370,8 +390,9 @@ function MappingStep({
 			typeMappings,
 			relationships: localRelationships,
 			...(mapping?.csvOptions ? { csvOptions: mapping.csvOptions } : {}),
+			...(anyMatchKey ? { onMatch } : {}),
 		}),
-		[typeMappings, localRelationships, mapping?.csvOptions],
+		[typeMappings, localRelationships, mapping?.csvOptions, anyMatchKey, onMatch],
 	)
 
 	// Save mapping on changes (skip initial render, deduplicate identical updates)
@@ -535,9 +556,31 @@ function MappingStep({
 						canRemove={typeMappings.length > 1}
 						onTypeChange={handleTypeChange}
 						onTargetChange={handleTargetChange}
+						onMatchOnChange={handleMatchOnChange}
 						onRemove={handleRemoveType}
 					/>
 				))}
+
+				{anyMatchKey && (
+					<div className="flex flex-col gap-2 rounded-lg border px-3 py-2 text-sm sm:flex-row sm:items-center">
+						<span className="text-muted-foreground">If a row matches an existing object:</span>
+						<Select value={onMatch} onValueChange={(v) => setOnMatch(v as 'skip' | 'update')}>
+							<SelectTrigger
+								className="w-full sm:w-fit"
+								aria-label="If a row matches an existing object"
+							>
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								{ON_MATCH_OPTIONS.map((opt) => (
+									<SelectItem key={opt.value} value={opt.value}>
+										{opt.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					</div>
+				)}
 			</div>
 
 			{/* Relationships section */}
@@ -691,6 +734,7 @@ function TypeMappingSection({
 	canRemove,
 	onTypeChange,
 	onTargetChange,
+	onMatchOnChange,
 	onRemove,
 }: {
 	typeMapping: TypeMappingInput
@@ -702,12 +746,26 @@ function TypeMappingSection({
 	canRemove: boolean
 	onTypeChange: (index: number, newType: string) => void
 	onTargetChange: (typeMappingIndex: number, sourceColumn: string, newTarget: string) => void
+	onMatchOnChange: (typeMappingIndex: number, matchOn: string) => void
 	onRemove: (index: number) => void
 }) {
+	// Fields this type maps that can identify an existing object
+	const matchOptions = [
+		...new Set(
+			typeMapping.columns
+				.filter((col) => !col.skip && IMPORT_MATCH_ON_RE.test(col.targetField))
+				.map((col) => col.targetField),
+		),
+	].map((value) => ({
+		value,
+		label:
+			targetOptions.find((opt) => opt.value === value)?.label ?? value.replace(/^metadata\./, ''),
+	}))
+
 	return (
 		<div className="border rounded-lg overflow-x-auto">
 			{/* Type header */}
-			<div className="flex items-center gap-2 px-3 py-2 bg-muted/50">
+			<div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-muted/50">
 				<Select
 					value={typeMapping.objectType}
 					onValueChange={(v) => onTypeChange(typeMappingIndex, v)}
@@ -725,6 +783,27 @@ function TypeMappingSection({
 							))}
 					</SelectContent>
 				</Select>
+				{matchOptions.length > 0 && (
+					<div className="flex items-center gap-2 text-xs">
+						<span className="text-muted-foreground">Match existing on</span>
+						<Select
+							value={typeMapping.matchOn ?? NO_MATCH}
+							onValueChange={(v) => onMatchOnChange(typeMappingIndex, v)}
+						>
+							<SelectTrigger className="w-fit" aria-label="Match existing on">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value={NO_MATCH}>Nothing (always create)</SelectItem>
+								{matchOptions.map((opt) => (
+									<SelectItem key={opt.value} value={opt.value}>
+										{opt.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					</div>
+				)}
 				{canRemove && (
 					<Button
 						variant="ghost"
