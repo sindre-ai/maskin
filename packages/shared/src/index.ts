@@ -1,5 +1,6 @@
 export * from './schemas/index'
 export * from './billing-caps'
+export * from './conversation-title'
 export * from './billing-credits'
 export * from './constants/claude-oauth'
 export * from './constants/ccd-loop'
