@@ -1360,6 +1360,11 @@ export interface RelationshipResponse {
 	targetId: string
 	targetTitle?: string | null
 	type: string
+	// S2 · edge-level context the writer hook persists at CREATE time.
+	// A `conversation → session` `spawned` edge carries `{ messageId }` so
+	// the Origin block can build a deep-link into the chat at the exact
+	// spawning message.
+	metadata?: Record<string, unknown> | null
 	createdBy: string
 	createdAt: string | null
 }

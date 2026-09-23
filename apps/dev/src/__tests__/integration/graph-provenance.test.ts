@@ -420,6 +420,129 @@ describe('S2 · graph provenance writer + read hydration', () => {
 			expect(body[0]?.type).toBe('spawned')
 		})
 
+		it('GET /api/objects/:id/graph returns the produced_by edge and hydrates the ancestor spawned edge with messageId (T4 <Origin>)', async () => {
+			const workspace = await insertWorkspace(db, getTestActorId())
+			const startObj = await insertObject(db, workspace.id, getTestActorId(), {
+				title: 'produced bet',
+				type: 'bet',
+			})
+			const [conversationRow] = await db
+				.insert(conversations)
+				.values({
+					workspaceId: workspace.id,
+					title: 'origin chat',
+					createdBy: getTestActorId(),
+				})
+				.returning()
+			if (!conversationRow) throw new Error('conversation insert returned no row')
+			const conversationId = conversationRow.id
+			const session = await insertSession(workspace.id, getTestActorId(), {
+				conversationId,
+				actionPrompt: 'Draft the launch note',
+			})
+			// Wire: bet <-produced_by- session <-spawned- conversation (the spawn
+			// edge does NOT touch startObj directly — the T4 change is that the
+			// /graph endpoint follows produced_by one hop upstream so the Origin
+			// block can render its Chat cell in one round-trip).
+			await db.insert(relationships).values({
+				sourceType: 'session',
+				sourceId: session.id,
+				targetType: 'object',
+				targetId: startObj.id,
+				type: 'produced_by',
+				createdBy: getTestActorId(),
+			})
+			await db.insert(relationships).values({
+				sourceType: 'conversation',
+				sourceId: conversationId,
+				targetType: 'session',
+				targetId: session.id,
+				type: 'spawned',
+				metadata: { messageId: 4242 },
+				createdBy: getTestActorId(),
+			})
+
+			const app = createIntegrationApp({ path: '/api/objects', module: objectsRoutes })
+			const res = await app.request(
+				jsonGet(`/api/objects/${startObj.id}/graph`, {
+					'X-Workspace-Id': workspace.id,
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as {
+				relationships: Array<{
+					sourceType: string
+					sourceId: string
+					sourceTitle: string | null
+					targetType: string
+					targetId: string
+					targetTitle: string | null
+					type: string
+					metadata: Record<string, unknown> | null
+				}>
+			}
+			const producedBy = body.relationships.find((r) => r.type === 'produced_by')
+			expect(producedBy).toBeDefined()
+			expect(producedBy?.sourceType).toBe('session')
+			expect(producedBy?.sourceTitle).toBe('Draft the launch note')
+
+			// The spawn edge is the ancestor hop this task added — the Origin
+			// block reads it to render Chat + the "Open chat at this moment"
+			// deep-link via metadata.messageId.
+			const spawned = body.relationships.find((r) => r.type === 'spawned')
+			expect(spawned).toBeDefined()
+			expect(spawned?.sourceType).toBe('conversation')
+			expect(spawned?.sourceTitle).toBe('origin chat')
+			expect(spawned?.targetType).toBe('session')
+			expect(spawned?.metadata).toEqual({ messageId: 4242 })
+		})
+
+		it('GET /api/objects/:id/graph does not fetch upstream edges when there is no produced_by (absence contract)', async () => {
+			const workspace = await insertWorkspace(db, getTestActorId())
+			const startObj = await insertObject(db, workspace.id, getTestActorId(), {
+				title: 'human-created bet',
+				type: 'bet',
+			})
+			// No produced_by anywhere. The /graph endpoint must not surface a
+			// spawn edge on another object as a lineage hop — the Origin block
+			// stays absent (spec §Rabbit holes: absence = no session).
+			const [conversationRow] = await db
+				.insert(conversations)
+				.values({
+					workspaceId: workspace.id,
+					title: 'unrelated chat',
+					createdBy: getTestActorId(),
+				})
+				.returning()
+			if (!conversationRow) throw new Error('conversation insert returned no row')
+			const strangerSession = await insertSession(workspace.id, getTestActorId(), {
+				conversationId: conversationRow.id,
+				actionPrompt: 'Some other work',
+			})
+			await db.insert(relationships).values({
+				sourceType: 'conversation',
+				sourceId: conversationRow.id,
+				targetType: 'session',
+				targetId: strangerSession.id,
+				type: 'spawned',
+				metadata: { messageId: 99 },
+				createdBy: getTestActorId(),
+			})
+
+			const app = createIntegrationApp({ path: '/api/objects', module: objectsRoutes })
+			const res = await app.request(
+				jsonGet(`/api/objects/${startObj.id}/graph`, {
+					'X-Workspace-Id': workspace.id,
+				}),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as {
+				relationships: Array<{ type: string }>
+			}
+			expect(body.relationships.some((r) => r.type === 'produced_by')).toBe(false)
+			expect(body.relationships.some((r) => r.type === 'spawned')).toBe(false)
+		})
+
 		it('GET /api/objects/:id/graph/traverse walks conversation and session endpoints', async () => {
 			const workspace = await insertWorkspace(db, getTestActorId())
 			const startObj = await insertObject(db, workspace.id, getTestActorId(), {
