@@ -1,7 +1,8 @@
 import type { Database } from '@maskin/db'
-import { events, sessions } from '@maskin/db/schema'
+import { sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
 import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 
 /**
@@ -147,7 +148,7 @@ export class SessionReconciler {
 
 		if (!updated) return
 
-		await this.db.insert(events).values({
+		await recordEvent(this.db, {
 			workspaceId,
 			actorId,
 			action: 'session_failed',

@@ -2,13 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import {
-	events,
-	actors,
-	integrations,
-	webhookDeliveries,
-	workspaceMembers,
-} from '@maskin/db/schema'
+import { actors, integrations, webhookDeliveries, workspaceMembers } from '@maskin/db/schema'
 import { deregisterLinkedInMcpInstancesForIntegration } from '@maskin/mcp/linkedin'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { skjaldTranscriptionCompletedPayloadSchema } from '@maskin/shared'
@@ -20,6 +14,7 @@ import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
 import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
@@ -325,7 +320,7 @@ async function bindGithubInstallation(opts: {
 
 	if (!row) return null
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: existing ? 'updated' : 'created',
@@ -721,7 +716,7 @@ app.openapi(selectInstallationRoute, (async (c) => {
 	// if a prior attempt already got this far.
 	if (row.id !== pending.row.id) {
 		await db.delete(integrations).where(eq(integrations.id, pending.row.id))
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId,
 			action: 'deleted',
@@ -880,7 +875,7 @@ app.openapi(connectRoute, (async (c) => {
 			return c.json(createApiError('INTERNAL_ERROR', 'Failed to activate integration'), 500)
 		}
 
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId,
 			action: 'created',
@@ -969,7 +964,7 @@ app.openapi(connectRoute, (async (c) => {
 			return c.json(createApiError('INTERNAL_ERROR', 'Failed to create integration'), 500)
 		}
 
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId,
 			action: 'created',
@@ -1278,7 +1273,7 @@ app.openapi(callbackRoute, (async (c) => {
 		// of showing stale state until a manual refresh. The candidate list itself
 		// is deliberately not in `data` — only its size, since the payload is
 		// mirrored into the realtime feed.
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId: stateData.workspaceId,
 			actorId: stateData.actorId,
 			action: 'updated',
@@ -1508,7 +1503,7 @@ app.openapi(callbackRoute, (async (c) => {
 	}
 
 	// Log event
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId: stateData.workspaceId,
 		actorId: stateData.actorId,
 		action: 'created',
@@ -1597,7 +1592,7 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 			.set({ status: 'revoked', updatedAt: new Date() })
 			.where(eq(integrations.id, id))
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId: existing.workspaceId,
 			actorId,
 			action: 'updated',
@@ -1709,7 +1704,7 @@ app.openapi(completeIntegrationRoute, (async (c) => {
 			.set({ credentials: encrypt(secret), status: 'active', updatedAt: new Date() })
 			.where(eq(integrations.id, id))
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId: existing.workspaceId,
 			actorId,
 			action: 'updated',

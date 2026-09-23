@@ -1,5 +1,6 @@
 import type { Transaction } from '@maskin/db'
-import { events, notifications } from '@maskin/db/schema'
+import { notifications } from '@maskin/db/schema'
+import { recordEvents } from './events/record-event'
 
 export type NewNotification = typeof notifications.$inferInsert
 export type Notification = typeof notifications.$inferSelect
@@ -25,7 +26,8 @@ export async function insertNotificationsWithEvents(
 	const created = await tx.insert(notifications).values(rows).returning()
 
 	if (created.length > 0) {
-		await tx.insert(events).values(
+		await recordEvents(
+			tx,
 			created.map((n) => ({
 				workspaceId,
 				actorId,

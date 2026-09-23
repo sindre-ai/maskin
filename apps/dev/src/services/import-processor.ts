@@ -1,9 +1,11 @@
 import type { Database } from '@maskin/db'
-import { events, imports, objects, relationships } from '@maskin/db/schema'
+import { imports, objects, relationships } from '@maskin/db/schema'
 import type { CsvOptions, ImportMapping, TypeMapping } from '@maskin/shared'
 import { parse } from 'csv-parse/sync'
 import { eq } from 'drizzle-orm'
+import { capturePosthogRelationshipCreated, recordEvents } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
+import { deriveEndpointKinds } from '../lib/relationships-endpoint-kind'
 import type { WorkspaceSettings } from '../lib/types'
 
 export interface ParsedFile {
@@ -512,7 +514,8 @@ export async function executeImport(
 						.returning()
 
 					if (created.length > 0) {
-						await tx.insert(events).values(
+						await recordEvents(
+							tx,
 							created.map((obj) => ({
 								workspaceId,
 								actorId,
@@ -596,17 +599,27 @@ export async function executeImport(
 			}
 		}
 
-		// Insert relationships in batches
+		// Insert relationships in batches. The CSV import spec supplies
+		// static `sourceType`/`targetType` labels ('object' historically), but a
+		// downstream row id can legitimately resolve to a file — funnel every
+		// endpoint id through the centralised helper so a CSV that references a
+		// file endpoint gets the correct label without needing to widen the
+		// mapping schema. Batch-lookup once, then per-batch insert.
 		for (let i = 0; i < relBatch.length; i += BATCH_SIZE) {
 			const batch = relBatch.slice(i, i + BATCH_SIZE)
+			const kindByEndpointId = await deriveEndpointKinds(
+				db,
+				workspaceId,
+				batch.flatMap((r) => [r.sourceId, r.targetId]),
+			)
 			try {
 				const created = await db
 					.insert(relationships)
 					.values(
 						batch.map((r) => ({
-							sourceType: r.sourceType,
+							sourceType: kindByEndpointId.get(r.sourceId) ?? r.sourceType,
 							sourceId: r.sourceId,
-							targetType: r.targetType,
+							targetType: kindByEndpointId.get(r.targetId) ?? r.targetType,
 							targetId: r.targetId,
 							type: r.type,
 							createdBy: actorId,
@@ -619,7 +632,8 @@ export async function executeImport(
 
 				// Log relationship events
 				if (created.length > 0) {
-					await db.insert(events).values(
+					await recordEvents(
+						db,
 						created.map((rel) => ({
 							workspaceId,
 							actorId,
@@ -629,6 +643,16 @@ export async function executeImport(
 							data: rel,
 						})),
 					)
+					// PostHog · one capture per relationships write, source of truth
+					// for the ship-metric across every prod writer. Fire-and-forget.
+					for (const rel of created) {
+						capturePosthogRelationshipCreated(actorId, {
+							workspaceId,
+							sourceType: rel.sourceType,
+							targetType: rel.targetType,
+							type: rel.type,
+						})
+					}
 				}
 			} catch (err) {
 				const message = `Relationship batch failed: ${err instanceof Error ? err.message : String(err)}`

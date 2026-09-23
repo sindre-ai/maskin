@@ -16,6 +16,7 @@ import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
+import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
 
 interface MessageBubbleProps {
 	workspaceId: string
@@ -31,6 +32,10 @@ interface MessageBubbleProps {
 	 *  sub-flag. Off keeps the pre-v4 bubble — lowercase "You attached" eyebrow
 	 *  and no per-message Copy/Retry action row. */
 	v4Polish?: boolean
+	/** S2 · bet 34706e2f, task 5. When set, this message spawned an agent
+	 *  session — render the persistent vertical --brand bar to the bubble's
+	 *  right and the spawn chip below it. */
+	spawnInfo?: MessageSpawnInfo
 }
 
 /**
@@ -46,6 +51,7 @@ export function MessageBubble({
 	activity,
 	questionAnswered = false,
 	v4Polish = false,
+	spawnInfo,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
@@ -124,10 +130,18 @@ export function MessageBubble({
 				) : null}
 				<div
 					className={cn(
-						'flex max-w-[min(560px,80%)] flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground',
+						'relative flex max-w-[min(560px,80%)] flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground',
 						editing && 'w-full',
 					)}
 				>
+					{spawnInfo ? (
+						// S2 · persistent spawn marker. Absolute + right-side placement
+						// so the bar sits flush against the bubble without changing
+						// its width or reflowing the transcript. Nested inside the
+						// bubble so it inherits the bubble's height and clips
+						// naturally on wrap.
+						<SpawnBar className="absolute -right-2 top-0 h-full" />
+					) : null}
 					{fileList}
 					{editing ? (
 						<div className="flex flex-col gap-2">
@@ -158,6 +172,7 @@ export function MessageBubble({
 						<span className="whitespace-pre-wrap text-balance">{message.content}</span>
 					) : null}
 				</div>
+				{spawnInfo ? <SpawnChip info={spawnInfo} /> : null}
 				{/* The actions sit permanently in the timestamp row rather than
 				    revealing on hover — a touch viewport has no hover, and the
 				    ship gate asserts plain visibility at 375px. */}
@@ -209,7 +224,14 @@ export function MessageBubble({
 				size="md"
 				className="shrink-0 rounded-lg"
 			/>
-			<div className="min-w-0 flex-1 md:max-w-[660px]">
+			<div className="relative min-w-0 flex-1 md:max-w-[660px]">
+				{spawnInfo ? (
+					// S2 · agent-side messages can also spawn sessions (an agent that
+					// hands off work to a spawned session); render the same marker
+					// they'd see on their own bubble. Absolute-positioned so it
+					// doesn't reflow the message column.
+					<SpawnBar className="absolute -right-2 top-0 h-full" />
+				) : null}
 				<div className="flex items-baseline gap-2">
 					<span className="truncate text-[12.5px] font-bold text-foreground">
 						{message.actorName}
@@ -280,6 +302,7 @@ export function MessageBubble({
 						))}
 					</div>
 				) : null}
+				{spawnInfo ? <SpawnChip info={spawnInfo} className="mt-1.5" /> : null}
 				{canActOnAgent ? (
 					<div
 						className="mt-1.5 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100"

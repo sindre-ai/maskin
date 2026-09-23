@@ -76,6 +76,15 @@ export type Env = {
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
 		storageProvider: StorageProvider
+		/**
+		 * The originating session's id, when the request carried a well-formed
+		 * `X-Maskin-Session-Id` header (S2 writer hook). Undefined for human
+		 * writes direct from the UI and for any request whose header was
+		 * missing / not a uuid. Route handlers pass this to `recordEvent` via
+		 * `provenance: { sessionId, entityKind }` on object/file mutations to
+		 * trigger the `produced_by` edge write.
+		 */
+		maskinSessionId?: string
 	}
 }
 
@@ -306,6 +315,23 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 			if (actorType) Sentry.setTag('actorType', actorType)
 		} catch (sentryErr) {
 			console.error('[sentry] setUser/setTag failed', sentryErr)
+		}
+		await next()
+	})
+
+	// S2 writer-hook · attribute a mutation to its originating session by
+	// reading the `X-Maskin-Session-Id` header once at the boundary and
+	// stashing it on the context. Any route that then calls `recordEvent`
+	// with `provenance: { sessionId: c.get('maskinSessionId'), entityKind }`
+	// gets a `session → object|file` `produced_by` edge for free (gated on
+	// the `graph-provenance-writes` flag inside recordEvent). Non-mutating
+	// requests are unaffected; requests without the header — human writes
+	// direct from the UI — leave the context value undefined and no edge
+	// lands, exactly the intended contract.
+	app.use('/api/*', async (c, next) => {
+		const raw = c.req.header('X-Maskin-Session-Id')?.trim()
+		if (raw && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)) {
+			c.set('maskinSessionId', raw)
 		}
 		await next()
 	})
