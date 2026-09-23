@@ -59,7 +59,7 @@ test('nav_item_clicked fires with the stable item_key + top-nav source when a to
 	})
 })
 
-test('nav_item_clicked fires with source=footer when Marketplace is clicked from the sidebar footer', async ({
+test('nav_item_clicked fires with source=top-nav when Marketplace is clicked from the sidebar', async ({
 	page,
 	account,
 }) => {
@@ -79,6 +79,6 @@ test('nav_item_clicked fires with source=footer when Marketplace is clicked from
 	expect(navClicks[0]).toMatchObject({
 		name: 'nav_item_clicked',
 		item_key: 'marketplace',
-		source: 'footer',
+		source: 'top-nav',
 	})
 })

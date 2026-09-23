@@ -185,7 +185,7 @@ export async function reifyE2EMarketplaceCatalog(dbUrl: string): Promise<void> {
 			0,
 			0
 		)
-		ON CONFLICT (workspace_id, slug) WHERE workspace_id IS NULL DO UPDATE SET
+		ON CONFLICT (slug) WHERE workspace_id IS NULL DO UPDATE SET
 			display_name = EXCLUDED.display_name,
 			outcome_line = EXCLUDED.outcome_line,
 			description = EXCLUDED.description,
@@ -210,7 +210,7 @@ export async function reifyE2EMarketplaceCatalog(dbUrl: string): Promise<void> {
 			0,
 			0
 		)
-		ON CONFLICT (workspace_id, slug) WHERE workspace_id IS NULL DO UPDATE SET
+		ON CONFLICT (slug) WHERE workspace_id IS NULL DO UPDATE SET
 			display_name = EXCLUDED.display_name,
 			outcome_line = EXCLUDED.outcome_line,
 			description = EXCLUDED.description,
