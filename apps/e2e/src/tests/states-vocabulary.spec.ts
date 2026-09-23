@@ -66,7 +66,7 @@ test.describe('Shared state vocabulary — loading / empty / error / offline', (
 
 		// The marketplace isError branch renders inline muted text, not a
 		// button — there is no retry control on this surface yet.
-		await expect(page.getByText(/Couldn't load the marketplace/i)).toBeVisible({ timeout: 10000 })
+		await expect(page.getByText(/Couldn't load the catalog/i)).toBeVisible({ timeout: 10000 })
 
 		await page.unroute('**/api/marketplace/catalog**')
 	})
