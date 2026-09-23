@@ -46,9 +46,13 @@ test.describe('Chats — backward pagination for older messages', () => {
 
 		// The newest message is on-screen by default (auto-scroll pins to
 		// bottom); the oldest one is behind an older-page fetch that hasn't
-		// happened yet.
-		await expect(thread.getByText(`seeded message ${total}`)).toBeVisible({ timeout: 10_000 })
-		await expect(thread.getByText('seeded message 1')).toHaveCount(0)
+		// happened yet. `getByText` uses substring match by default — passing
+		// `exact: true` so "seeded message 1" doesn't collide with
+		// "seeded message 10..19" which land in the newest-50 first page.
+		await expect(thread.getByText(`seeded message ${total}`, { exact: true })).toBeVisible({
+			timeout: 10_000,
+		})
+		await expect(thread.getByText('seeded message 1', { exact: true })).toHaveCount(0)
 
 		// Scrolling to the top must trigger the older-page load — this is what
 		// the reporter said was broken. The IntersectionObserver has a 200px
@@ -56,7 +60,9 @@ test.describe('Chats — backward pagination for older messages', () => {
 		await thread.evaluate((el) => {
 			el.scrollTop = 0
 		})
-		await expect(thread.getByText('seeded message 1')).toBeVisible({ timeout: 15_000 })
+		await expect(thread.getByText('seeded message 1', { exact: true })).toBeVisible({
+			timeout: 15_000,
+		})
 
 		// The button remains as an accessible fallback but should not be the
 		// only path — the reader never had to click it.
