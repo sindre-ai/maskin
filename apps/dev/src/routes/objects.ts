@@ -1136,12 +1136,23 @@ app.openapi(getObjectGraphRoute, async (c) => {
 
 	// Build a title lookup keyed by endpoint id so each relationship can carry
 	// the titles of its endpoints. Agents reading this payload should reference
-	// connected objects by title in human-facing output, not by UUID. S2:
-	// batch-resolve `conversation` and `session` endpoints too so a
-	// `spawned` / `produced_by` edge doesn't render as an unlabelled row.
+	// connected endpoints by title in human-facing output, not by UUID. Files
+	// as first-class endpoints (Slice 1): the file's `name` populates the
+	// title slot so an edge pointing at a file stops reading back as `null`;
+	// files are hydrated further below into `filesSummary` as the source of
+	// truth for the FE's `fileMap`. S2: `conversation` and `session` endpoints
+	// batch-resolve through `resolveEndpointTitles` so a `spawned` /
+	// `produced_by` edge doesn't render as an unlabelled row.
 	const titleById = new Map<string, string | null>()
 	titleById.set(object.id, object.title ?? null)
 	for (const co of connectedObjects) titleById.set(co.id, co.title ?? null)
+	if (attachedFileIds.size > 0) {
+		const fileTitleRows = await db
+			.select({ id: files.id, name: files.name })
+			.from(files)
+			.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, [...attachedFileIds])))
+		for (const row of fileTitleRows) titleById.set(row.id, row.name ?? null)
+	}
 
 	const provenanceConversationIds = new Set<string>()
 	const provenanceSessionIds = new Set<string>()
@@ -1393,25 +1404,33 @@ app.openapi(traverseGraphRoute, async (c) => {
 		const discovered: { id: string; type: string; title: string | null }[] = []
 		if (candidateIds.size > 0) {
 			const candidateArr = [...candidateIds]
-			// Workspace scoping + file/object filter in one query: only rows in
-			// `objects` with matching workspaceId come back. File endpoints and
-			// cross-workspace ids drop out here.
-			const objectRows = await db
-				.select({ id: objects.id, type: objects.type, title: objects.title })
-				.from(objects)
-				.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, candidateArr)))
-			discovered.push(
-				...objectRows.map((r) => ({ id: r.id, type: r.type, title: r.title ?? null })),
-			)
+			// Every frontier admits all four endpoint kinds — `object`, `file`,
+			// `conversation`, `session` — as first-class BFS nodes. Objects and
+			// files fire in parallel (Slice 1 shape); the two provenance tables
+			// then run on the remaining ids (S2, cheaper because most frontiers
+			// resolve fully in the first pair). Cross-workspace ids drop out
+			// via the workspaceId filter on every table.
+			const [objectRows, fileRows] = await Promise.all([
+				db
+					.select({ id: objects.id, type: objects.type, title: objects.title })
+					.from(objects)
+					.where(and(eq(objects.workspaceId, workspaceId), inArray(objects.id, candidateArr))),
+				db
+					.select({ id: files.id, name: files.name })
+					.from(files)
+					.where(and(eq(files.workspaceId, workspaceId), inArray(files.id, candidateArr))),
+			])
+			for (const r of objectRows) {
+				discovered.push({ id: r.id, type: r.type, title: r.title ?? null })
+			}
+			for (const r of fileRows) {
+				discovered.push({ id: r.id, type: 'file', title: r.name ?? null })
+			}
 
-			// S2 · admit `conversation` and `session` endpoints too. Same
-			// workspace scoping (both tables carry `workspaceId`), same walk
-			// semantics — a `spawned` edge from a chat into a session shows up
-			// as two extra nodes on the traversal without any special-casing
-			// in the caller. Sessions use a distilled `actionPrompt` headline
-			// as their title, matching what `resolveEndpointTitles` returns
-			// for the flat read paths.
-			const alreadySeen = new Set(objectRows.map((r) => r.id))
+			// S2 · admit `conversation` and `session` endpoints too. Sessions
+			// use a distilled `actionPrompt` headline as their title, matching
+			// what `resolveEndpointTitles` returns for the flat read paths.
+			const alreadySeen = new Set([...objectRows.map((r) => r.id), ...fileRows.map((r) => r.id)])
 			const remaining = candidateArr.filter((id) => !alreadySeen.has(id))
 			if (remaining.length > 0) {
 				const conversationRows = await db
