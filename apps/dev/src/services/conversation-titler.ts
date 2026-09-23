@@ -40,6 +40,16 @@ const TITLE_MAX_CHARS = 60
 
 type TitleAutoState = 'none' | 'initial' | 'refined' | 'manual'
 
+/**
+ * The frontend's own no-content fallback (new-chat-form.tsx / chats/new.tsx),
+ * and what a pre-auto-titler row was created with. The deterministic fallback
+ * below only replaces *this* — a conversation created with a real, caller-
+ * supplied title (an API/MCP integration, a test fixture) keeps it when the
+ * LLM path can't produce a title, instead of being silently overwritten by a
+ * derivation of a message the caller never asked to have titled.
+ */
+const PLACEHOLDER_TITLE = 'New chat'
+
 const SET_TITLE_TOOL: LLMTool = {
 	name: 'set_conversation_title',
 	description: 'Set a short, descriptive title for this conversation.',
@@ -80,6 +90,7 @@ export async function maybeGenerateConversationTitle(ctx: {
 			id: conversations.id,
 			createdBy: conversations.createdBy,
 			titleAutoState: conversations.titleAutoState,
+			title: conversations.title,
 		})
 		.from(conversations)
 		.where(and(eq(conversations.id, conversationId), eq(conversations.workspaceId, workspaceId)))
@@ -188,6 +199,8 @@ export async function maybeGenerateConversationTitle(ctx: {
 	// stays as it is.
 	const applyDeterministicFallback = async (): Promise<boolean> => {
 		if (target !== 'initial') return false
+		const currentTitle = conversation.title?.trim()
+		if (currentTitle && currentTitle !== PLACEHOLDER_TITLE) return false
 		const [firstMessage] = await db
 			.select({ content: messages.content })
 			.from(messages)
