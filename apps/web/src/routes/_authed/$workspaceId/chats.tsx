@@ -14,6 +14,11 @@ interface ChatsSearch {
 	filter?: ChatsFilter
 	/** Desktop focus mode — hides the list pane and widens the thread gutter. */
 	wide?: boolean
+	/** S2 · Produced pane state (bet 34706e2f, task 5). Persisted in the URL
+	 *  so a reload keeps the pane open; the toggle in ThreadHeader flips it
+	 *  and the `P` shortcut on the conversation route does the same. Undefined
+	 *  when closed (never appears in the URL for the default state). */
+	produced?: boolean
 }
 
 const FILTER_VALUES: ChatsFilter[] = ['all', 'unread', 'pinned', 'archived']
@@ -28,6 +33,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/chats')({
 		return {
 			filter: filter && filter !== 'all' ? filter : undefined,
 			wide: search.wide === true || search.wide === 'true' ? true : undefined,
+			produced: search.produced === true || search.produced === 'true' ? true : undefined,
 		}
 	},
 })
