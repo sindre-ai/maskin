@@ -176,6 +176,57 @@ describe('Files as first-class relationship endpoints (Slice 1)', () => {
 		expect(fileEdge.targetTitle).toBe('design.md')
 	})
 
+	it('POST /api/relationships round-trips a file → file pair (server derives both types)', async () => {
+		// Task 2 acceptance: MCP create_relationship must round-trip all four
+		// endpoint-pair shapes (object→object, object→file, file→object,
+		// file→file). The prior tests cover the first three via UI-flow shapes;
+		// this one locks file→file, the shape the design spec calls out for
+		// "linking one file to another" from the file-detail Link to object
+		// action (which itself doesn't reach file→file — that comes from an
+		// agent's create_relationship call).
+		const app = relApp()
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/relationships',
+				{
+					source_type: 'anything',
+					source_id: fileAId,
+					target_type: 'anything',
+					target_id: fileBId,
+					type: 'relates_to',
+				},
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(201)
+		const created = await res.json()
+		expect(created.sourceType).toBe('file')
+		expect(created.targetType).toBe('file')
+		expect(created.sourceTitle).toBe('design.md')
+		expect(created.targetTitle).toBe('metrics.csv')
+
+		// Idempotent: a second call with the same triple returns the same id
+		// via UNIQUE + onConflictDoNothing.
+		const second = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/relationships',
+				{
+					source_type: 'file',
+					source_id: fileAId,
+					target_type: 'file',
+					target_id: fileBId,
+					type: 'relates_to',
+				},
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		expect(second.status).toBe(201)
+		const secondBody = await second.json()
+		expect(secondBody.id).toBe(created.id)
+	})
+
 	it('/api/objects/:id/graph/traverse walks THROUGH file endpoints', async () => {
 		const app = objectsApp()
 		const rApp = relApp()
