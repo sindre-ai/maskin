@@ -94,6 +94,72 @@ describe('executeImport — matching existing objects', () => {
 		expect(acme?.status).toBe('processing')
 	})
 
+	it('matches stored values padded with tabs, newlines or non-breaking spaces', async () => {
+		await insertObject(db, workspaceId, actorId, {
+			type: 'insight',
+			title: 'Acme\t',
+			status: 'new',
+		})
+		await insertObject(db, workspaceId, actorId, {
+			type: 'insight',
+			title: '\nGlobex\r\n',
+			status: 'new',
+		})
+		await insertObject(db, workspaceId, actorId, {
+			type: 'insight',
+			title: ' Initech ',
+			status: 'new',
+		})
+
+		const result = await run(
+			[
+				{ name: 'acme', domain: 'acme.com' },
+				{ name: 'Globex', domain: 'globex.com' },
+				{ name: 'INITECH\t', domain: 'initech.com' },
+			],
+			companyMapping({ matchOn: 'title' }),
+		)
+
+		expect(result).toMatchObject({ successCount: 0, skippedCount: 3 })
+		expect(await listInsights()).toHaveLength(3)
+	})
+
+	it('matches the oldest existing duplicate, breaking a created_at tie by id', async () => {
+		const older = new Date('2026-01-01T00:00:00Z')
+		const newer = new Date('2026-02-01T00:00:00Z')
+		// Insert the newer one first so insertion order and created_at order disagree
+		const newest = await insertObject(db, workspaceId, actorId, {
+			type: 'insight',
+			title: 'Acme',
+			status: 'new',
+			createdAt: newer,
+		})
+		const tiedA = await insertObject(db, workspaceId, actorId, {
+			type: 'insight',
+			title: 'Acme',
+			status: 'new',
+			createdAt: older,
+		})
+		const tiedB = await insertObject(db, workspaceId, actorId, {
+			type: 'insight',
+			title: 'Acme',
+			status: 'new',
+			createdAt: older,
+		})
+		// Postgres orders uuids bytewise, which matches lowercase hex string order
+		const expectedId = [tiedA.id, tiedB.id].sort()[0]
+
+		await run(
+			[{ name: 'Acme', domain: 'acme.com' }],
+			companyMapping({ matchOn: 'title', onMatch: 'update' }),
+		)
+
+		const rows = await listInsights()
+		const updated = rows.filter((r) => (r.metadata as { domain?: string } | null)?.domain)
+		expect(updated.map((r) => r.id)).toEqual([expectedId])
+		expect(updated[0]?.id).not.toBe(newest.id)
+	})
+
 	it('creates one object when a key repeats within the file', async () => {
 		const result = await run(
 			[

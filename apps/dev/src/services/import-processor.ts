@@ -8,7 +8,7 @@ import {
 	computeChanges,
 } from '@maskin/shared'
 import { parse } from 'csv-parse/sync'
-import { type SQL, and, asc, eq, inArray, sql } from 'drizzle-orm'
+import { type SQL, and, eq, inArray, sql } from 'drizzle-orm'
 import { capturePosthogRelationshipCreated, recordEvents } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { deriveEndpointKinds } from '../lib/relationships-endpoint-kind'
@@ -471,56 +471,82 @@ export function mapRowForType(
 
 // ── Matching against existing objects ───────────────────────────────────
 
-function normalizeMatchKey(value: unknown): string | undefined {
+// The whitespace JS `\s` matches, spelled out so the same pattern means the same
+// thing in a JS RegExp and a Postgres ARE. Postgres `btrim(x)` strips only ASCII
+// spaces and `\s` there is locale-dependent, so neither can stand in for `trim()`.
+const MATCH_KEY_SPACE =
+	'[ \\t\\n\\v\\f\\r\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]'
+const MATCH_KEY_TRIM_PATTERN = `^${MATCH_KEY_SPACE}+|${MATCH_KEY_SPACE}+$`
+const MATCH_KEY_TRIM_RE = new RegExp(MATCH_KEY_TRIM_PATTERN, 'g')
+
+function trimMatchValue(value: unknown): string | undefined {
 	if (value === undefined || value === null) return undefined
-	const key = String(value).trim().toLowerCase()
-	return key === '' ? undefined : key
+	const trimmed = String(value).replace(MATCH_KEY_TRIM_RE, '')
+	return trimmed === '' ? undefined : trimmed
+}
+
+function normalizeMatchKey(value: unknown): string | undefined {
+	return trimMatchValue(value)?.toLowerCase()
+}
+
+/** The trimmed value of `matchOn` for a mapped row, or undefined when the row has none. */
+function matchValueFor(mapped: MappedRow, matchOn: string): string | undefined {
+	if (matchOn === 'title') return trimMatchValue(mapped.title)
+	return trimMatchValue(mapped.metadata[matchOn.slice('metadata.'.length)])
 }
 
 /** The normalized value of `matchOn` for a mapped row, or undefined when the row has none. */
 export function matchKeyFor(mapped: MappedRow, matchOn: string): string | undefined {
-	if (matchOn === 'title') return normalizeMatchKey(mapped.title)
-	return normalizeMatchKey(mapped.metadata[matchOn.slice('metadata.'.length)])
+	return normalizeMatchKey(matchValueFor(mapped, matchOn))
 }
 
-/** SQL for the same normalization `normalizeMatchKey` applies, over the stored column. */
-function matchKeyExpr(matchOn: string): SQL<string> {
-	if (matchOn === 'title') return sql<string>`lower(btrim(${objects.title}))`
-	const field = matchOn.slice('metadata.'.length)
-	return sql<string>`lower(btrim(${objects.metadata} ->> ${field}))`
+/** Trim + lowercase in SQL, with the same trim set as `trimMatchValue`. */
+function sqlMatchKey(value: SQL): SQL {
+	return sql`lower(regexp_replace(${value}, ${MATCH_KEY_TRIM_PATTERN}, '', 'g'))`
 }
 
 const MATCH_LOOKUP_CHUNK = 500
 
 /**
- * Map each key to the id of an existing object of `objectType` whose `matchOn`
- * value normalizes to it. When the workspace already holds several objects
- * with the same key, the oldest one wins.
+ * Map each normalized key to the id of an existing object of `objectType` whose
+ * `matchOn` value matches it. When the workspace already holds several objects
+ * with the same key, the oldest one wins, ties broken by id so the pick is stable.
+ *
+ * `values` are the rows' trimmed values, not their JS-lowercased keys: both
+ * sides of the comparison are lowercased by Postgres `lower()`, so a collation
+ * whose case folding differs from JS `toLowerCase()` cannot make them disagree.
  */
 async function findExistingByKey(
 	db: Database,
 	workspaceId: string,
 	objectType: string,
 	matchOn: string,
-	keys: string[],
+	values: string[],
 ): Promise<Map<string, string>> {
 	const found = new Map<string, string>()
-	const keyExpr = matchKeyExpr(matchOn)
-	for (let i = 0; i < keys.length; i += MATCH_LOOKUP_CHUNK) {
-		const chunk = keys.slice(i, i + MATCH_LOOKUP_CHUNK)
-		const rows = await db
-			.select({ id: objects.id, key: keyExpr })
-			.from(objects)
-			.where(
-				and(
-					eq(objects.workspaceId, workspaceId),
-					eq(objects.type, objectType),
-					inArray(keyExpr, chunk),
-				),
-			)
-			.orderBy(asc(objects.createdAt))
+	// Literal, table-qualified column references — see known-pitfalls.md on
+	// Drizzle column objects rendering unqualified inside raw `sql` templates.
+	const stored =
+		matchOn === 'title'
+			? sql`objects.title`
+			: sql`objects.metadata ->> ${matchOn.slice('metadata.'.length)}`
+	for (let i = 0; i < values.length; i += MATCH_LOOKUP_CHUNK) {
+		const chunk = values.slice(i, i + MATCH_LOOKUP_CHUNK)
+		const rows = (await db.execute(sql`
+			SELECT k.value AS value, objects.id AS id
+			FROM unnest(ARRAY[${sql.join(
+				chunk.map((v) => sql`${v}`),
+				sql`, `,
+			)}]::text[]) AS k(value)
+			JOIN objects
+				ON objects.workspace_id = ${workspaceId}
+				AND objects.type = ${objectType}
+				AND ${sqlMatchKey(stored)} = ${sqlMatchKey(sql`k.value`)}
+			ORDER BY objects.created_at ASC, objects.id ASC
+		`)) as unknown as Array<{ value: string; id: string }>
 		for (const row of rows) {
-			if (row.key && !found.has(row.key)) found.set(row.key, row.id)
+			const key = normalizeMatchKey(row.value)
+			if (key && !found.has(key)) found.set(key, row.id)
 		}
 	}
 	return found
@@ -638,16 +664,16 @@ export async function executeImport(
 	for (const [tmIndex, typeMapping] of mapping.typeMappings.entries()) {
 		const { matchOn } = typeMapping
 		if (!matchOn) continue
-		const keys = new Set<string>()
+		const values = new Set<string>()
 		for (const row of rows) {
 			const mapped = mapRowForType(row, typeMapping, settings)
-			const key = mapped ? matchKeyFor(mapped, matchOn) : undefined
-			if (key) keys.add(key)
+			const value = mapped ? matchValueFor(mapped, matchOn) : undefined
+			if (value) values.add(value)
 		}
 		knownByKey.set(
 			tmIndex,
-			keys.size > 0
-				? await findExistingByKey(db, workspaceId, typeMapping.objectType, matchOn, [...keys])
+			values.size > 0
+				? await findExistingByKey(db, workspaceId, typeMapping.objectType, matchOn, [...values])
 				: new Map(),
 		)
 	}
