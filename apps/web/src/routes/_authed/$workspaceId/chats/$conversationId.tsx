@@ -20,17 +20,30 @@ import { useConversationProduced } from '@/hooks/use-conversation-produced'
 import { useUpdateConversationMe } from '@/hooks/use-conversations'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIsDesktopViewport } from '@/hooks/use-mobile'
+import { useOriginDeepLinkScroll } from '@/hooks/use-origin-deep-link-scroll'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef } from 'react'
+import { z } from 'zod'
+
+// `?msg=<message id>` is the Origin block's deep-link — see `<Origin>` at
+// `apps/web/src/components/objects/origin.tsx`. Number-typed here so a
+// malformed param can't smuggle a non-numeric selector into
+// `[data-message-id="..."]` down below (and so the router preserves the
+// typed value across re-serialisation). Anything unparseable is dropped.
+const chatSearchSchema = z.object({
+	msg: z.coerce.number().int().positive().optional(),
+})
 
 export const Route = createFileRoute('/_authed/$workspaceId/chats/$conversationId')({
 	component: ConversationThreadPage,
 	errorComponent: ({ error }) => <RouteError error={error} />,
+	validateSearch: chatSearchSchema,
 })
 
 function ConversationThreadPage() {
 	const { conversationId } = Route.useParams()
+	const { msg: deepLinkMessageId } = Route.useSearch()
 	const { workspaceId } = useWorkspace()
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const { data: messagesData } = useConversationMessages(conversationId, workspaceId)
@@ -117,6 +130,11 @@ function ConversationThreadPage() {
 		return () => window.removeEventListener('keydown', onKey)
 	}, [producedEnabled, toggleProduced])
 
+	const announcement = useOriginDeepLinkScroll({
+		messageId: deepLinkMessageId ?? null,
+		dataTrigger: messagesData,
+	})
+
 	return (
 		<div className="flex min-h-0 flex-1">
 			<div className="flex min-h-0 flex-1 flex-col">
@@ -136,6 +154,11 @@ function ConversationThreadPage() {
 					v4PolishBubbles={chatsV4Enabled && bubblesV4Enabled}
 					producedEnabled={producedEnabled}
 				/>
+				{/* Live region for the Origin deep-link jump — announced once per
+				    navigation (spec §7 accessibility). Kept out of ThreadMessages so
+				    it isn't torn down when the message list scrolls. `<output>` has
+				    an implicit `role="status"` + `aria-live="polite"`. */}
+				<output className="sr-only">{announcement}</output>
 				{/* No rule above the composer (mockup 517): the composer draws its own
 				    border, and a second full-bleed hairline behind it cut the thread in
 				    half. The gutter matches the header's and the transcript's so the

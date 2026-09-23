@@ -214,7 +214,11 @@ export function ThreadMessages({
 					const turnsBelow = byTriggerMessageId.get(message.id) ?? []
 					const turnsBelowHere = isLast ? [...turnsBelow, ...fallback] : turnsBelow
 					return (
-						<div key={message.id} className="flex flex-col gap-1">
+						<div
+							key={message.id}
+							data-message-id={message.id}
+							className="flex flex-col gap-1 scroll-mt-[60px]"
+						>
 							{/* A divider separates two days; there is nothing above the
 							    first message to separate it from, so the thread doesn't
 							    open with a "Today" rule floating over its own first line. */}

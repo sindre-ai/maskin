@@ -27,6 +27,7 @@ import { getAsk } from './object-detail-fixtures'
 import { ObjectDetailBarActions, ObjectDetailIdentity } from './object-detail-header'
 import { DeleteConfirmDialog } from './object-document'
 import { ObjectPropertiesSidebar } from './object-properties-sidebar'
+import { Origin } from './origin'
 import { PropertiesSidebarProvider, SIDEBAR_WIDTH } from './properties-sidebar-provider'
 import { RelatedTab } from './related-tab'
 import { resolveRelatedRows } from './related-tab-utils'
@@ -391,6 +392,16 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 							onStatusChange={handleUpdateStatus}
 							onDriverChange={handleUpdateDriver}
 							onTitleChange={handleUpdateTitle}
+						/>
+
+						{/* System-written lineage — renders NOTHING when the object has no
+						    produced_by ancestor (absence contract). Placed between identity
+						    and the ask banner per CPO 2026-09-22 (top-of-page, not
+						    right-rail). Depends on the graph query already firing above. */}
+						<Origin
+							object={object}
+							relationships={graph?.relationships ?? []}
+							workspaceId={workspaceId}
 						/>
 
 						{askText && (

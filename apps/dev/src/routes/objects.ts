@@ -1035,10 +1035,36 @@ app.openapi(getObjectGraphRoute, async (c) => {
 	}
 
 	// Fetch all relationships where this object is source or target
-	const rels = await db
+	const directRels = await db
 		.select()
 		.from(relationships)
 		.where(or(eq(relationships.sourceId, id), eq(relationships.targetId, id)))
+
+	// S2 · walk one hop upstream through `produced_by` — the session that
+	// produced this object may itself have been spawned from a chat, and Task
+	// 4's Origin block needs the conversation cell alongside the session
+	// cell. The session's `spawned` edge does NOT touch this object directly,
+	// so a second query is required. Skipped when no `produced_by` edges are
+	// present (the absence contract: no session → no Origin block).
+	const producingSessionIds = new Set<string>()
+	for (const rel of directRels) {
+		if (rel.type === 'produced_by' && rel.sourceType === 'session' && rel.targetId === id) {
+			producingSessionIds.add(rel.sourceId)
+		}
+	}
+	let ancestorRels: (typeof relationships.$inferSelect)[] = []
+	if (producingSessionIds.size > 0) {
+		ancestorRels = await db
+			.select()
+			.from(relationships)
+			.where(
+				and(
+					eq(relationships.type, 'spawned'),
+					inArray(relationships.targetId, [...producingSessionIds]),
+				),
+			)
+	}
+	const rels = [...directRels, ...ancestorRels]
 
 	// Resolve endpoints by object/file id, not by the stored `sourceType`/
 	// `targetType` label. Some legacy edges were written with a specialised
