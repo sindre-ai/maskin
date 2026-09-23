@@ -179,6 +179,15 @@ interface RawCatalogRow {
 	install_flow_copy: unknown
 }
 
+// The loop arm projects NULL for `loop_definition` because `marketplace_loops`
+// stores step data in the sibling `marketplace_loop_items` table (frozen
+// per-version snapshots keyed by `loop_id`), not as an inline JSONB blob on the
+// loops row itself. And `marketplace_loops` has no `workspace_id` column — every
+// row is global by construction, so no filter is needed. `loop_summary` is
+// declared optional in spec §6.1; the catalog list ships without it here and a
+// later PR can hydrate it from `marketplace_loop_items` if the frontend needs
+// it. Agents and skills DO carry `workspace_id` (nullable, NULL = global
+// catalog), so their arms keep the `workspace_id IS NULL` filter.
 const CATALOG_UNION_SQL = sql`
 	SELECT
 		'loop'::text AS item_kind,
@@ -193,12 +202,12 @@ const CATALOG_UNION_SQL = sql`
 		status,
 		sort_weight,
 		install_count,
-		definition AS loop_definition,
+		NULL::jsonb AS loop_definition,
 		NULL::jsonb AS skill_slugs,
 		NULL::jsonb AS trigger_seeds,
 		install_flow_copy
 	FROM marketplace_loops
-	WHERE status = 'published' AND workspace_id IS NULL
+	WHERE status = 'published'
 
 	UNION ALL
 
