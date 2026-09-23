@@ -810,4 +810,41 @@
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 	}
+
+	/* Origin deep-link — the message that spawned a session, pulsing once on
+	   arrival + carrying a persistent vertical brand rail on its right edge.
+	   Both attributes are stamped by `useOriginDeepLinkScroll` in the chat
+	   detail route from `?msg=<id>`, and read here as CSS selectors so no
+	   per-message-bubble prop threading is needed. The pulse attribute is
+	   removed after 2.2s so it never loops; the spawn attribute persists for
+	   the duration of the page view.
+
+	   `position: relative` is added so the ::after rule can pin the bar to
+	   the wrapper's right edge — the wrapper is already a flex column and
+	   otherwise has no positioning context. */
+	[data-origin-spawn] {
+		position: relative;
+	}
+	[data-origin-spawn]::after {
+		content: "";
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		right: -6px;
+		width: 3px;
+		border-radius: 2px;
+		background-color: var(--brand);
+		pointer-events: none;
+	}
+	[data-origin-pulse] {
+		animation: origin-spawn-pulse 2.2s ease-out 1;
+	}
+	@keyframes origin-spawn-pulse {
+		0% {
+			background-color: color-mix(in oklab, var(--brand) 22%, transparent);
+		}
+		100% {
+			background-color: color-mix(in oklab, var(--brand) 0%, transparent);
+		}
+	}
 }
