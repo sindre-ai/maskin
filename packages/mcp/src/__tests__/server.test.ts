@@ -1001,6 +1001,212 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('create_relationship handler', () => {
+		const OBJ_A = '11111111-1111-4111-8111-111111111111'
+		const OBJ_B = '22222222-2222-4222-8222-222222222222'
+		const FILE_A = '33333333-3333-4333-8333-333333333333'
+		const FILE_B = '44444444-4444-4444-8444-444444444444'
+
+		/**
+		 * Mock a workspace where two ids live in `objects` and two ids live in
+		 * `files`. The MCP tool preflights each endpoint by hitting
+		 * `/api/files/:id` first and falling back to `/api/objects/:id`; both
+		 * routes 404 when the id doesn't belong. Anything else 500s.
+		 */
+		function mockWorkspace(existing: Set<string>, filesSet: Set<string>) {
+			const relRows: Array<Record<string, unknown>> = []
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				const filesMatch = u.match(/\/api\/files\/([0-9a-fA-F-]{36})$/)
+				if (filesMatch) {
+					const id = filesMatch[1] as string
+					if (filesSet.has(id)) {
+						return {
+							ok: true,
+							headers: new Headers(),
+							json: () => Promise.resolve({ id, name: `file-${id}` }),
+						} as Response
+					}
+					return {
+						ok: false,
+						status: 404,
+						headers: new Headers(),
+						text: () => Promise.resolve('{"error":{"code":"NOT_FOUND","message":"not found"}}'),
+					} as unknown as Response
+				}
+				const objectsMatch = u.match(/\/api\/objects\/([0-9a-fA-F-]{36})$/)
+				if (objectsMatch) {
+					const id = objectsMatch[1] as string
+					if (existing.has(id) && !filesSet.has(id)) {
+						return {
+							ok: true,
+							headers: new Headers(),
+							json: () => Promise.resolve({ id, title: `obj-${id}` }),
+						} as Response
+					}
+					return {
+						ok: false,
+						status: 404,
+						headers: new Headers(),
+						text: () => Promise.resolve('{"error":{"code":"NOT_FOUND","message":"not found"}}'),
+					} as unknown as Response
+				}
+				if (u.endsWith('/api/relationships') && (init?.method ?? 'GET') === 'POST') {
+					const body = JSON.parse((init as RequestInit).body as string) as {
+						source_id: string
+						target_id: string
+						type: string
+					}
+					// Idempotency mirror: (source_id, target_id, type) unique.
+					const existing = relRows.find(
+						(r) =>
+							r.sourceId === body.source_id &&
+							r.targetId === body.target_id &&
+							r.type === body.type,
+					)
+					const row = existing ?? {
+						id: `rel-${relRows.length + 1}`,
+						sourceId: body.source_id,
+						targetId: body.target_id,
+						type: body.type,
+						sourceType: filesSet.has(body.source_id) ? 'file' : 'object',
+						targetType: filesSet.has(body.target_id) ? 'file' : 'object',
+						createdAt: '2026-09-22T00:00:00.000Z',
+						sourceTitle: filesSet.has(body.source_id)
+							? `file-${body.source_id}`
+							: `obj-${body.source_id}`,
+						targetTitle: filesSet.has(body.target_id)
+							? `file-${body.target_id}`
+							: `obj-${body.target_id}`,
+					}
+					if (!existing) relRows.push(row)
+					return {
+						ok: true,
+						status: 201,
+						headers: new Headers(),
+						json: () => Promise.resolve(row),
+					} as Response
+				}
+				return {
+					ok: false,
+					status: 500,
+					headers: new Headers(),
+					text: () => Promise.resolve('{"error":{"code":"INTERNAL_ERROR","message":"unexpected"}}'),
+				} as unknown as Response
+			})
+			return { relRows }
+		}
+
+		it.each([
+			['object', 'object', OBJ_A, OBJ_B],
+			['object', 'file', OBJ_A, FILE_A],
+			['file', 'object', FILE_A, OBJ_A],
+			['file', 'file', FILE_A, FILE_B],
+		])(
+			'round-trips a %s → %s pair — server derives types from ids',
+			async (_sourceKind, _targetKind, sourceId, targetId) => {
+				mockWorkspace(new Set([OBJ_A, OBJ_B, FILE_A, FILE_B]), new Set([FILE_A, FILE_B]))
+				const handler = getHandler('create_relationship')
+				const result = (await handler({
+					workspace_id: 'ws-1',
+					source_id: sourceId,
+					target_id: targetId,
+					type: 'relates_to',
+				})) as { structuredContent: { relationship: Record<string, unknown> } }
+				expect(result.structuredContent.relationship.sourceId).toBe(sourceId)
+				expect(result.structuredContent.relationship.targetId).toBe(targetId)
+
+				// The POST body must NOT reflect caller-supplied labels; the
+				// preflight resolved kinds from the ids and passed them as
+				// placeholders the server derives past anyway.
+				const relCall = vi
+					.mocked(fetch)
+					.mock.calls.find(
+						(c) =>
+							(c[0] as string).endsWith('/api/relationships') &&
+							(c[1] as RequestInit).method === 'POST',
+					)
+				expect(relCall).toBeDefined()
+				const relBody = JSON.parse((relCall?.[1] as RequestInit).body as string)
+				expect(relBody.source_id).toBe(sourceId)
+				expect(relBody.target_id).toBe(targetId)
+				expect(relBody.type).toBe('relates_to')
+			},
+		)
+
+		it('returns 404 when source_id belongs to neither an object nor a file', async () => {
+			mockWorkspace(new Set([OBJ_A]), new Set())
+			const handler = getHandler('create_relationship')
+			await expect(
+				handler({
+					workspace_id: 'ws-1',
+					source_id: OBJ_B,
+					target_id: OBJ_A,
+					type: 'relates_to',
+				}),
+			).rejects.toThrow(/404/)
+		})
+
+		it('returns 404 when target_id is unknown', async () => {
+			mockWorkspace(new Set([OBJ_A]), new Set([FILE_A]))
+			const handler = getHandler('create_relationship')
+			await expect(
+				handler({
+					workspace_id: 'ws-1',
+					source_id: OBJ_A,
+					target_id: OBJ_B,
+					type: 'relates_to',
+				}),
+			).rejects.toThrow(/404/)
+		})
+
+		it('is idempotent — double-call with identical params returns the same row', async () => {
+			const { relRows } = mockWorkspace(new Set([OBJ_A, FILE_A]), new Set([FILE_A]))
+			const handler = getHandler('create_relationship')
+
+			const first = (await handler({
+				workspace_id: 'ws-1',
+				source_id: OBJ_A,
+				target_id: FILE_A,
+				type: 'attached',
+			})) as { structuredContent: { relationship: { id: string } } }
+			const second = (await handler({
+				workspace_id: 'ws-1',
+				source_id: OBJ_A,
+				target_id: FILE_A,
+				type: 'attached',
+			})) as { structuredContent: { relationship: { id: string } } }
+
+			expect(first.structuredContent.relationship.id).toBe(second.structuredContent.relationship.id)
+			expect(relRows).toHaveLength(1)
+		})
+
+		it('ignores caller-supplied source_type / target_type labels', async () => {
+			mockWorkspace(new Set([OBJ_A, FILE_A]), new Set([FILE_A]))
+			const handler = getHandler('create_relationship')
+			await handler({
+				workspace_id: 'ws-1',
+				source_id: OBJ_A,
+				target_id: FILE_A,
+				type: 'attached',
+				// These would be stripped by the schema and never reach the
+				// wire. The handler derives kinds from the id itself.
+				source_type: 'anything',
+				target_type: 'anything-else',
+			})
+			const relCall = vi
+				.mocked(fetch)
+				.mock.calls.find(
+					(c) =>
+						(c[0] as string).endsWith('/api/relationships') &&
+						(c[1] as RequestInit).method === 'POST',
+				)
+			const relBody = JSON.parse((relCall?.[1] as RequestInit).body as string)
+			expect(relBody.source_type).toBe('object')
+			expect(relBody.target_type).toBe('file')
+		})
+	})
+
 	describe('create_actor handler', () => {
 		it('POSTs to /api/actors with skipAuth', async () => {
 			mockFetchSuccess({ id: 'actor-new', name: 'Bot', type: 'agent' })

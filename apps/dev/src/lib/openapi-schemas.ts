@@ -146,6 +146,12 @@ export const relationshipResponseSchema = z.object({
 	targetId: z.string().uuid(),
 	targetTitle: z.string().nullable().optional(),
 	type: z.string(),
+	// S2 · edge-level context the writer hook persists at CREATE time.
+	// Currently the spawning `messageId` (as a string, since Postgres
+	// bigint round-trips to a JS number would silently lose precision
+	// past 2^53) on a `conversation → session` `spawned` edge — powers
+	// the object-detail Origin deep-link into a chat at the exact message.
+	metadata: jsonbField,
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 })

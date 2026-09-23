@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, sessionLogs, sessions } from '@maskin/db/schema'
+import { sessionLogs, sessions } from '@maskin/db/schema'
 import {
 	createSessionSchema,
 	formatQuestionsAsMarkdown,
@@ -15,6 +15,7 @@ import {
 import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -366,7 +367,7 @@ app.openapi(patchSessionRoute, (async (c) => {
 
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId: session.actorId,
 		action: 'session_updated',

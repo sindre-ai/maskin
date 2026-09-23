@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import {
-	events,
 	INTEGRATION_STATUS_ACTIVE,
 	idempotencyRecords,
 	integrations,
@@ -12,6 +11,7 @@ import { deregisterLinkedInMcpInstance } from '@maskin/mcp/linkedin'
 import { and, eq, lt } from 'drizzle-orm'
 import { z } from 'zod'
 import { decrypt } from '../../../crypto'
+import { recordEvent } from '../../../events/record-event'
 import { logger } from '../../../logger'
 import { isWorkspaceMember } from '../../../workspace-auth'
 import { getIntegrationCredential } from '../../lookup'
@@ -280,7 +280,7 @@ async function markIntegrationRevoked(
 				.update(integrations)
 				.set({ status: 'revoked' })
 				.where(eq(integrations.id, integrationId))
-			await tx.insert(events).values({
+			await recordEvent(tx, {
 				workspaceId,
 				actorId,
 				action: 'updated',

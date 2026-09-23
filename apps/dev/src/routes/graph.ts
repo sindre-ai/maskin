@@ -1,11 +1,12 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, files, objects, relationships, workspaces } from '@maskin/db/schema'
+import { objects, relationships, workspaces } from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import { createGraphSchema } from '@maskin/shared'
 import { and, eq, inArray } from 'drizzle-orm'
 import { maybeEmitKnowledgeReferenceFromEdge } from '../lib/analytics/knowledge-events'
 import { createApiError, createInvalidTypeError, validationFailureHook } from '../lib/errors'
+import { capturePosthogRelationshipCreated, recordEvent } from '../lib/events/record-event'
 import {
 	findKnowledgeDuplicate,
 	isDuplicateTitle,
@@ -19,6 +20,7 @@ import {
 	relationshipResponseSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
+import { deriveEndpointKinds } from '../lib/relationships-endpoint-kind'
 import { serialize } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
 import { autoSubscribe } from '../services/subscriptions'
@@ -28,6 +30,10 @@ type Env = {
 		db: Database
 		actorId: string
 		actorType: string
+		/** Set by app-factory when the request carried a well-formed
+		 * `X-Maskin-Session-Id` header — the S2 writer hook reads it to attribute
+		 * batched object creations to their originating session. */
+		maskinSessionId?: string
 	}
 }
 
@@ -287,20 +293,24 @@ app.openapi(createGraphRoute, async (c) => {
 				idMap.set(node.$id, created.id)
 				createdNodes.push({ ...created, $id: node.$id })
 
-				await tx.insert(events).values({
+				await recordEvent(tx, {
 					workspaceId,
 					actorId,
 					action: 'created',
 					entityType: node.type,
 					entityId: created.id,
 					data: created,
+					provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'object' },
 				})
 			}
 
 			// 2. Resolve edge references and create relationships
 			const createdEdges: (typeof relationships.$inferSelect)[] = []
 
-			// Collect pre-existing endpoint ids to determine file vs object membership
+			// Collect pre-existing endpoint ids and derive their kind via the
+			// centralised helper. Newly-created nodes in this batch are always
+			// objects (the batch spec doesn't accept file $ids); external ids may
+			// resolve to files. Precedence: newly-created > files > objects.
 			const externalEndpointIds = new Set<string>()
 			for (const edge of body.edges) {
 				const sourceId = idMap.get(edge.source) ?? edge.source
@@ -308,24 +318,16 @@ app.openapi(createGraphRoute, async (c) => {
 				if (!createdNodes.find((n) => n.id === sourceId)) externalEndpointIds.add(sourceId)
 				if (!createdNodes.find((n) => n.id === targetId)) externalEndpointIds.add(targetId)
 			}
-			const fileIds = new Set<string>()
-			if (externalEndpointIds.size > 0) {
-				const fileRows = await tx
-					.select({ id: files.id })
-					.from(files)
-					.where(inArray(files.id, [...externalEndpointIds]))
-				for (const row of fileRows) fileIds.add(row.id)
-			}
+			const externalKindById = await deriveEndpointKinds(tx, workspaceId, [...externalEndpointIds])
 
 			for (const edge of body.edges) {
 				const sourceId = idMap.get(edge.source) ?? edge.source
 				const targetId = idMap.get(edge.target) ?? edge.target
 
-				// Derive type from file membership per T1 convention B
 				const isSourceNew = createdNodes.find((n) => n.id === sourceId)
 				const isTargetNew = createdNodes.find((n) => n.id === targetId)
-				const sourceType = isSourceNew ? 'object' : fileIds.has(sourceId) ? 'file' : 'object'
-				const targetType = isTargetNew ? 'object' : fileIds.has(targetId) ? 'file' : 'object'
+				const sourceType = isSourceNew ? 'object' : (externalKindById.get(sourceId) ?? 'object')
+				const targetType = isTargetNew ? 'object' : (externalKindById.get(targetId) ?? 'object')
 
 				// Idempotent on (source_id, target_id, type). A duplicate edge in the
 				// same graph payload — or one already present in the DB — resolves to
@@ -368,13 +370,23 @@ app.openapi(createGraphRoute, async (c) => {
 				createdEdges.push(created)
 
 				if (isNewInsert) {
-					await tx.insert(events).values({
+					await recordEvent(tx, {
 						workspaceId,
 						actorId,
 						action: 'created',
 						entityType: 'relationship',
 						entityId: created.id,
 						data: created,
+					})
+
+					// PostHog · same ship-metric as the flat POST /relationships path,
+					// so `relationship_created` fires once per new edge regardless of
+					// the surface that wrote it. Fire-and-forget.
+					capturePosthogRelationshipCreated(actorId, {
+						workspaceId,
+						sourceType: created.sourceType,
+						targetType: created.targetType,
+						type: created.type,
 					})
 
 					// Ship-metric auto-emit when a fresh `derived_from` edge points at

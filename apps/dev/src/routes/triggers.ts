@@ -1,11 +1,12 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, triggers } from '@maskin/db/schema'
+import { objects, triggers } from '@maskin/db/schema'
 import { configSchemaForType, createTriggerSchema, updateTriggerSchema } from '@maskin/shared'
 import { Cron } from 'croner'
 import { and, asc, count, desc, eq, sql } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent, recordEvents } from '../lib/events/record-event'
 import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import {
 	errorSchema,
@@ -139,7 +140,7 @@ app.openapi(createTriggerRoute, async (c) => {
 
 		if (!row) throw new Error('Failed to create trigger')
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId,
 			action: 'created',
@@ -349,7 +350,7 @@ app.openapi(updateTriggerRoute, (async (c) => {
 		const [row] = await tx.update(triggers).set(updateData).where(eq(triggers.id, id)).returning()
 		if (!row) return null
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId: trigger.workspaceId,
 			actorId,
 			action: 'updated',
@@ -439,7 +440,7 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 			)
 			.returning({ id: objects.id })
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId: existing.workspaceId,
 			actorId,
 			action: 'deleted',
@@ -452,7 +453,8 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 		// the loop rows the cascade just changed (matches the every-mutation-
 		// gets-an-event convention in .claude/rules/known-pitfalls.md).
 		if (prunedLoops.length > 0) {
-			await tx.insert(events).values(
+			await recordEvents(
+				tx,
 				prunedLoops.map((loop) => ({
 					workspaceId: existing.workspaceId,
 					actorId,

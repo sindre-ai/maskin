@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import { files, integrations, objects, relationships, workspaces } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
+import { capturePosthogRelationshipCreated } from '../../../events/record-event'
 import { logger } from '../../../logger'
+import { derivePairEndpointKinds } from '../../../relationships-endpoint-kind'
 import type { IntegrationConfig } from '../../../types'
 
 /**
@@ -222,13 +224,31 @@ export async function attachTranscriptFile(
 			})
 		}
 	}
+	// Centralised derive keeps the endpoint labels honest — meetingId is
+	// always an object today, inserted.id is always a file, but this insulates
+	// the writer from Slice 2's widened union without a code change.
+	const { sourceType, targetType } = await derivePairEndpointKinds(
+		db,
+		workspaceId,
+		meetingId,
+		inserted.id,
+	)
 	await db.insert(relationships).values({
-		sourceType: 'object',
+		sourceType,
 		sourceId: meetingId,
-		targetType: 'file',
+		targetType,
 		targetId: inserted.id,
 		type: 'attached',
 		createdBy: actorId,
+	})
+
+	// PostHog · one capture per relationships write, source of truth for
+	// the ship-metric across every prod writer. Fire-and-forget.
+	capturePosthogRelationshipCreated(actorId, {
+		workspaceId,
+		sourceType: 'object',
+		targetType: 'file',
+		type: 'attached',
 	})
 	return inserted.id
 }
