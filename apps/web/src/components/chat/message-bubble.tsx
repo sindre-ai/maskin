@@ -169,7 +169,7 @@ export function MessageBubble({
 							</div>
 						</div>
 					) : message.content.length > 0 ? (
-						<span className="whitespace-pre-wrap text-balance">{message.content}</span>
+						<span className="whitespace-pre-wrap text-balance break-words">{message.content}</span>
 					) : null}
 				</div>
 				{spawnInfo ? <SpawnChip info={spawnInfo} /> : null}

@@ -135,9 +135,15 @@ function ConversationThreadPage() {
 		dataTrigger: messagesData,
 	})
 
+	// `min-w-0` on both rows is load-bearing: a flex item's default
+	// `min-width: auto` lets a wide descendant (a long unbreakable token in a
+	// message) raise the column's min-content above the viewport, and the page's
+	// `html, body { overflow-x: clip }` then hides the excess as mid-word text
+	// clipping instead of a scrollbar. The scroller's own `min-w-0` is too late —
+	// the column above it has already grown.
 	return (
-		<div className="flex min-h-0 flex-1">
-			<div className="flex min-h-0 flex-1 flex-col">
+		<div className="flex min-h-0 min-w-0 flex-1">
+			<div className="flex min-h-0 min-w-0 flex-1 flex-col">
 				<ThreadHeader
 					workspaceId={workspaceId}
 					conversationId={conversationId}
