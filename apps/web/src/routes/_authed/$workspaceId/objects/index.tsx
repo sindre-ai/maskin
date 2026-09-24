@@ -299,10 +299,11 @@ function ObjectsRoute() {
 	// Pending asks scoped to the current selection. An ask is a needs_input
 	// notification whose object is one of the selected rows; Approve/Hold
 	// round-trips through the respond endpoint and the panel reflects the done
-	// state via the resolved status. Only asks targeted at the current actor
-	// count — the notifications feed is workspace-wide, so a mention pulling
-	// another actor into the loop lands here too and must not surface as an
-	// ask the reader can answer.
+	// state via the resolved status. An ask belongs to the reader when it names
+	// them, or when it names nobody — `create_notification` omits target_actor_id
+	// to broadcast to all workspace members, so a null target is everyone's, not
+	// nobody's. An ask naming another actor (e.g. a mention pulling another agent
+	// into the loop) is pending workspace-wide but is not the reader's to answer.
 	const actorsById = useMemo(() => new Map((actors ?? []).map((a) => [a.id, a])), [actors])
 	const [asksOpen, setAsksOpen] = useState(false)
 	const currentActorId = getStoredActor()?.id
@@ -310,7 +311,10 @@ function ObjectsRoute() {
 		type: 'needs_input',
 	})
 	const asksForCurrentActor = useMemo(
-		() => (needsInputNotifications ?? []).filter((n) => n.targetActorId === currentActorId),
+		() =>
+			(needsInputNotifications ?? []).filter(
+				(n) => n.targetActorId === currentActorId || n.targetActorId == null,
+			),
 		[needsInputNotifications, currentActorId],
 	)
 	const selectedAsks = useMemo(() => {

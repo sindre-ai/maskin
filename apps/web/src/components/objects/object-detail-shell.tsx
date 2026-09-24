@@ -66,10 +66,12 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 
 	// The ask banner prefers the live needs_input notification targeting this
 	// object; `metadata._ask` stays as the fallback for seeded/fixture rows.
-	// An ask only belongs to the reader when it's explicitly targeted at them —
-	// otherwise the object may be waiting on another actor (e.g. an @mentioned
-	// agent) and rendering the banner here would show "waiting for you" with no
-	// answerable action attached. The same cache also drives the D4 verb swap on
+	// An ask belongs to the reader when it names them, or when it names nobody —
+	// `create_notification` omits target_actor_id to broadcast to all workspace
+	// members, so a null target is everyone's. An ask naming another actor (e.g.
+	// a mention pulling an agent into the loop) is not the reader's, and showing
+	// the banner for it would be "waiting for you" with nothing to do.
+	// The same cache also drives the D4 verb swap on
 	// the shared New button, so this list is sorted oldest-first and both
 	// surfaces read the same pick and re-render together when SSE flushes.
 	const { data: needsInputNotifications } = useNotifications(workspaceId, { type: 'needs_input' })
@@ -81,7 +83,7 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 					(n) =>
 						n.objectId === object.id &&
 						n.status === 'pending' &&
-						n.targetActorId === currentActorId,
+						(n.targetActorId === currentActorId || n.targetActorId == null),
 				)
 				.sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? '')),
 		[needsInputNotifications, object.id, currentActorId],

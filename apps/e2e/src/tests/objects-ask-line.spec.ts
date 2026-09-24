@@ -78,8 +78,10 @@ test.describe('List row — pending-ask line + pill (ship gate)', () => {
 	}
 
 	// Regression guard for the reported bug: an ask that targets a different
-	// actor (or nobody) must not light up a personal "Waiting on you" signal for
-	// this reader — that is the "waiting on me with nothing to do" symptom.
+	// actor must not light up a personal "Waiting on you" signal for this reader
+	// — that is the "waiting on me with nothing to do" symptom. A broadcast ask
+	// (no target) belongs to everyone, so its surfacing is asserted in
+	// ask-panel.spec.ts.
 	test('an ask targeting another actor shows no "Waiting on you" for this reader', async ({
 		page,
 		account,
