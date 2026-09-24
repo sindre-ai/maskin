@@ -79,7 +79,9 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 			(needsInputNotifications ?? [])
 				.filter(
 					(n) =>
-						n.objectId === object.id && n.status === 'pending' && n.targetActorId === currentActorId,
+						n.objectId === object.id &&
+						n.status === 'pending' &&
+						n.targetActorId === currentActorId,
 				)
 				.sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? '')),
 		[needsInputNotifications, object.id, currentActorId],
