@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
-import type { TestAPI } from '../helpers/api.helper'
+import { TestAPI } from '../helpers/api.helper'
 import { type NamedViewport, SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -21,6 +21,16 @@ import { type NamedViewport, SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/v
  *
  * Requires a live backend — the conversation and its wide content are seeded
  * through the real /api/conversations routes (TestAPI), not mocked.
+ *
+ * The two wide payloads deliberately take the two DIFFERENT render paths, so
+ * each half of the title is real:
+ *   - the markdown table is posted by a second, non-own agent participant, so
+ *     the reader sees MessageBubble's markdown branch — the only branch that
+ *     emits a <table> and its overflow-x wrapper;
+ *   - the long unbroken URL is posted by the session's own actor, so it renders
+ *     as the plain-text bubble span that `break-words` has to contain.
+ * Seeding either from the session actor would exercise the plain-text path and
+ * leave the <table> assertion looking for an element that never exists.
  */
 
 const HORIZONTAL_OVERFLOW_TOLERANCE_PX = 1
@@ -46,13 +56,25 @@ interface OverflowAccount {
 }
 
 async function seedOverflowConversation(account: OverflowAccount): Promise<{ id: string }> {
-	// The creator is added as a participant automatically, so an empty list is
-	// a valid single-participant conversation — no second seat needed.
+	const stamp = Date.now()
+	// The wide table is posted by a SECOND agent actor, never the session actor:
+	// MessageBubble forks on `isOwn`, and only the non-own (markdown) branch
+	// emits a <table>. Seeding it as the session actor rendered a plain-text
+	// bubble and left assertWideTableContained hunting for a table that was
+	// never in the DOM.
+	const agent = await account.api.createAgentActor(`Overflow QA Agent ${stamp}`)
+	await account.api.addWorkspaceMember(account.workspaceId, agent.id)
 	const conversation = await account.api.createConversation(account.workspaceId, {
 		title: CONVERSATION_TITLE,
-		participant_actor_ids: [],
-		initial_message: WIDE_TABLE,
+		participant_actor_ids: [agent.id],
+		initial_message: 'Opening the thread',
 	})
+	const agentApi = new TestAPI(agent.api_key)
+	await agentApi.postConversationMessage(conversation.id, account.workspaceId, {
+		content: WIDE_TABLE,
+	})
+	// Posted by the session actor, so it renders as an own plain-text bubble —
+	// the path whose unbroken token `break-words` is responsible for containing.
 	await account.api.postConversationMessage(conversation.id, account.workspaceId, {
 		content: LONG_UNBROKEN_URL,
 	})
@@ -205,6 +227,58 @@ async function assertWideTableContained(page: Page, viewport: NamedViewport) {
 	expect(report.scrollWidth).toBeGreaterThanOrEqual(report.clientWidth)
 }
 
+/**
+ * The long-URL half of the title. A presence-only `toContainText` proved the
+ * string was in the DOM but said nothing about whether it stayed inside the
+ * viewport — the thread scroller is `overflow-x: auto` (forced by its
+ * `overflow-y: auto`), so an unbroken token raised the scroller's scrollWidth
+ * past its clientWidth while the document stayed 375px and every
+ * scrollWidth-only gate stayed green. This checks the bubble span's real box
+ * and the scroller's own scroll geometry instead.
+ */
+async function assertLongUrlContained(page: Page, viewport: NamedViewport) {
+	const thread = page.getByTestId('thread-messages')
+	await expect(thread, `thread must render at ${viewport.label}`).toBeVisible({ timeout: 10_000 })
+	await expect(thread).toContainText(LONG_UNBROKEN_URL, { timeout: 10_000 })
+
+	const report = await page.evaluate((url) => {
+		const scroller = document.querySelector('[data-testid="thread-messages"]')
+		if (!scroller) return null
+		// The bubble body is the deepest span whose trimmed text is exactly the
+		// URL — not the scroller wrapping it.
+		const span = Array.from(scroller.querySelectorAll('span')).find(
+			(el) => el.textContent?.trim() === url,
+		)
+		if (!span) return null
+		const rect = span.getBoundingClientRect()
+		return {
+			left: Math.round(rect.left),
+			right: Math.round(rect.right),
+			scrollerClientWidth: scroller.clientWidth,
+			scrollerScrollWidth: scroller.scrollWidth,
+			innerWidth: window.innerWidth,
+		}
+	}, LONG_UNBROKEN_URL)
+
+	expect(report, 'long-URL bubble span must be found in the thread').not.toBeNull()
+	if (!report) return
+
+	expect(
+		report.left,
+		`long-URL span left edge ${report.left} is outside the viewport at ${viewport.label}`,
+	).toBeGreaterThanOrEqual(-HORIZONTAL_OVERFLOW_TOLERANCE_PX)
+	expect(
+		report.right,
+		`long-URL span right edge ${report.right} exceeds innerWidth=${report.innerWidth} at ${viewport.label}`,
+	).toBeLessThanOrEqual(report.innerWidth + HORIZONTAL_OVERFLOW_TOLERANCE_PX)
+	// This is the assertion the unbroken token used to fail: with no break
+	// opportunity the span's min-content pushed the scroller's scrollWidth out.
+	expect(
+		report.scrollerScrollWidth,
+		`thread scroller scrollWidth=${report.scrollerScrollWidth} exceeds clientWidth=${report.scrollerClientWidth} at ${viewport.label} — the unbroken URL is painting past the bubble`,
+	).toBeLessThanOrEqual(report.scrollerClientWidth + HORIZONTAL_OVERFLOW_TOLERANCE_PX)
+}
+
 test.describe('Chat detail — horizontal overflow gate', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
 		test(`wide markdown table and long URL stay inside the viewport @ ${viewport.label}`, async ({
@@ -216,6 +290,7 @@ test.describe('Chat detail — horizontal overflow gate', () => {
 
 			await assertChatColumnContained(page, viewport)
 			await assertWideTableContained(page, viewport)
+			await assertLongUrlContained(page, viewport)
 		})
 	}
 
@@ -229,10 +304,8 @@ test.describe('Chat detail — horizontal overflow gate', () => {
 		await assertChatColumnContained(page, viewport)
 
 		// The long unbroken URL is the second seeded message — assert it actually
-		// rendered rather than being clipped out of existence.
-		await expect(page.getByTestId('thread-messages')).toContainText(LONG_UNBROKEN_URL, {
-			timeout: 10_000,
-		})
+		// rendered AND was contained rather than being clipped or painting out.
+		await assertLongUrlContained(page, viewport)
 
 		const messageText = `Overflow QA reply ${Date.now()}`
 		const composer = page.getByLabel('Message this conversation').first()
@@ -255,5 +328,6 @@ test.describe('Chat detail — horizontal overflow gate', () => {
 
 		await assertChatColumnContained(page, viewport)
 		await assertWideTableContained(page, viewport)
+		await assertLongUrlContained(page, viewport)
 	})
 })
