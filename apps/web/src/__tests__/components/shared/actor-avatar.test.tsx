@@ -32,6 +32,18 @@ describe('getActorInitials', () => {
 	it('uppercases lowercase input', () => {
 		expect(getActorInitials('alice bob')).toBe('AB')
 	})
+
+	it('skips punctuation so a bracketed qualifier does not leak into the initials', () => {
+		expect(getActorInitials('Linker (Sigrid)')).toBe('LS')
+	})
+
+	it('ignores a token that is punctuation only', () => {
+		expect(getActorInitials('John - Doe')).toBe('JD')
+	})
+
+	it('returns ? when the name is punctuation only', () => {
+		expect(getActorInitials('---')).toBe('?')
+	})
 })
 
 describe('getActorAvatarPaletteClass', () => {
@@ -137,5 +149,32 @@ describe('ActorAvatar', () => {
 		// underneath the img so first paint has no logo→initials flicker.
 		render(<ActorAvatar name="Alice" type="human" imageUrl="https://example.com/a.png" />)
 		expect(screen.getByText('AL')).toBeInTheDocument()
+	})
+
+	describe('working ring (D2)', () => {
+		it('renders no wrapper span when `working` is unset', () => {
+			const { container } = render(<ActorAvatar name="Alice" type="human" />)
+			expect(container.querySelector('.actor-avatar-working-ring')).toBeNull()
+		})
+
+		it('wraps the avatar in a `.actor-avatar-working-ring` span when working', () => {
+			const { container } = render(<ActorAvatar name="Alice" type="human" working />)
+			const ring = container.querySelector('.actor-avatar-working-ring')
+			expect(ring).not.toBeNull()
+			// The avatar itself keeps its own name; only the wrapper announces
+			// the working state — the SPEC's split between "avatar keeps its
+			// existing name" and container "aria-label='Agent working…'".
+			expect(ring?.getAttribute('aria-label')).toBe('Agent working on this object')
+			expect(screen.getByTitle('Alice')).toBeInTheDocument()
+		})
+
+		it('wraps the button variant too so a clickable avatar can still show the ring', () => {
+			const { container } = render(
+				<ActorAvatar name="Alice" type="human" onClick={() => {}} working />,
+			)
+			const ring = container.querySelector('.actor-avatar-working-ring')
+			expect(ring).not.toBeNull()
+			expect(ring?.querySelector('button')).not.toBeNull()
+		})
 	})
 })

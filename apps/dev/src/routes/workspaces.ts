@@ -1,12 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import {
-	events,
-	actors,
-	workspaceMembers,
-	workspaceOnboardingPrompts,
-	workspaces,
-} from '@maskin/db/schema'
+import { actors, workspaceMembers, workspaceOnboardingPrompts, workspaces } from '@maskin/db/schema'
 import {
 	WORKSPACE_ADMIN_DIFF_FIELDS,
 	WORKSPACE_COACH_DEFAULT,
@@ -19,6 +13,7 @@ import {
 import { and, count, eq, inArray } from 'drizzle-orm'
 import { isEnterprise, isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import {
 	billingAfterByoTransition,
 	cancelActivePaidSubscription,
@@ -27,6 +22,7 @@ import {
 	patchAddsByoSource,
 } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
+import { shouldSkipOnboardingKickoff } from '../lib/onboarding/chief-of-staff-kickoff'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { getStripeClient, readStripeEnv } from '../lib/stripe'
@@ -435,7 +431,7 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId: id,
 		actorId,
 		action: 'updated',
@@ -601,7 +597,7 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 			)
 			.limit(1)
 
-		if (coach) {
+		if (coach && !shouldSkipOnboardingKickoff()) {
 			c.get('sessionManager')
 				.createSession(id, {
 					actorId: coach.id,
@@ -620,7 +616,7 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 		updated as unknown as Record<string, unknown>,
 		WORKSPACE_ADMIN_DIFF_FIELDS,
 	)
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId: id,
 		actorId,
 		action: 'updated',
@@ -720,7 +716,7 @@ app.openapi(addMemberRoute, (async (c) => {
 
 		if (!inserted.length) return { kind: 'already_member' as const }
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId: callerId,
 			action: 'created',
@@ -887,7 +883,7 @@ app.openapi(transferOwnershipRoute, (async (c) => {
 			.returning()
 		if (!updated) return { kind: 'ws_not_found' as const }
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId: callerId,
 			action: 'updated',
@@ -1081,7 +1077,7 @@ app.openapi(updateMemberRoute, (async (c) => {
 			.where(eq(actors.id, actorId))
 			.limit(1)
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId: callerId,
 			action: 'updated',
@@ -1185,7 +1181,7 @@ app.openapi(removeMemberRoute, (async (c) => {
 			.returning()
 		if (!deleted.length) return { kind: 'not_member' as const }
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId: callerId,
 			action: 'deleted',

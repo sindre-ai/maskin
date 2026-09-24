@@ -124,6 +124,7 @@
 	--color-success: var(--success);
 	--color-warning: var(--warning);
 	--color-error: var(--error);
+	--color-violet: var(--violet);
 
 	/* Status badge colors */
 	--color-status-new-bg: var(--st-new-bg);
@@ -188,6 +189,17 @@
 	--color-type-bet-text: var(--tp-bet-text);
 	--color-type-task-bg: var(--tp-task-bg);
 	--color-type-task-text: var(--tp-task-text);
+	/* S2 · provenance graph endpoints (bet 34706e2f) get their own TypeBadge
+	 * variants so a `spawned` / `produced_by` edge row reads as a first-class
+	 * node not a generic muted chip. Palettes stay inside the existing v2
+	 * zinc / cyan / fuchsia families (per §Design system reuse); text stops
+	 * hit ≥ 4.5:1 in both modes. */
+	--color-type-file-bg: var(--tp-file-bg);
+	--color-type-file-text: var(--tp-file-text);
+	--color-type-conversation-bg: var(--tp-conversation-bg);
+	--color-type-conversation-text: var(--tp-conversation-text);
+	--color-type-session-bg: var(--tp-session-bg);
+	--color-type-session-text: var(--tp-session-text);
 
 	--color-sidebar-ring: var(--sidebar-ring);
 	--color-sidebar-border: var(--sidebar-border);
@@ -340,6 +352,13 @@
 	--warning: #92400e;
 	--error: #dc2626;
 
+	/* Working-ring accent (violet-500). Named after the spec token, not the
+	   brand indigo — the driver-avatar ring is the ONE surface that carries it,
+	   and reusing --brand there would confuse the ring's "an agent is running
+	   right now" signal with the brand-action visual language it lives next to
+	   on a row. */
+	--violet: #8b5cf6;
+
 	/* Status badges */
 	--st-new-bg: #f4f4f5;
 	--st-new-text: #71717a;
@@ -406,6 +425,12 @@
 	--tp-bet-text: #4338ca;
 	--tp-task-bg: #f4f4f5;
 	--tp-task-text: #71717a;
+	--tp-file-bg: #ecfeff;
+	--tp-file-text: #0e7490;
+	--tp-conversation-bg: #cffafe;
+	--tp-conversation-text: #155e75;
+	--tp-session-bg: #fae8ff;
+	--tp-session-text: #86198f;
 
 	/* Sidebar */
 	--sidebar: #fafafa;
@@ -478,6 +503,11 @@
 	--warning: #fbbf24;
 	--error: #f87171;
 
+	/* Working-ring accent — violet-400, lifted one stop for legibility on the
+	   zinc-950 dark field (same one-stop lift pattern the brand indigo uses
+	   below). */
+	--violet: #a78bfa;
+
 	--st-new-bg: #27272a;
 	--st-new-text: #a1a1aa;
 	--st-backlog-bg: #1f1f23;
@@ -539,6 +569,12 @@
 	--tp-bet-text: #a5b4fc;
 	--tp-task-bg: #27272a;
 	--tp-task-text: #a1a1aa;
+	--tp-file-bg: #083344;
+	--tp-file-text: #67e8f9;
+	--tp-conversation-bg: #164e63;
+	--tp-conversation-text: #a5f3fc;
+	--tp-session-bg: #4a044e;
+	--tp-session-text: #f0abfc;
 
 	--sidebar: #0a0a0b;
 	--sidebar-foreground: #fafafa;
@@ -556,6 +592,17 @@
 	}
 	body {
 		@apply bg-background text-foreground font-sans antialiased;
+	}
+
+	/* Contain any accidental horizontal overflow at the viewport edge so a
+	   single stray min-w on a deep child can never produce a page-level
+	   horizontal scrollbar on mobile. Elements that legitimately scroll
+	   horizontally (tables, tab strips) still do so inside their own
+	   overflow-auto wrapper — `clip` on the outer box does not create a
+	   scroll container the way `hidden` would. */
+	html,
+	body {
+		overflow-x: clip;
 	}
 
 	/* Tabular numerals on mono surfaces — keeps numeric columns column-aligned
@@ -586,6 +633,36 @@
 	}
 	*::-webkit-scrollbar-thumb:hover {
 		background-color: var(--muted-foreground);
+	}
+}
+
+/* iOS/Android auto-zoom on focus fires when a form control's computed
+   font-size is under 16px. `text-xs` (12px) on `SelectTrigger` (and any
+   ad-hoc small text-size on an input) trips it. Enforce a 16px floor on
+   mobile viewports for every form control. Unlayered so it wins over
+   Tailwind's `text-*` utilities in @layer utilities — layered inside
+   @layer base, it would lose to the utility class it's meant to override.
+   Scoped with :not(:where(...)) to skip elements that carry an explicit
+   Tailwind size utility of text-lg (18px) or larger: those are already
+   above the 16px iOS floor, and bumping them to 16px would shrink title
+   textareas from 24px (text-2xl) down to 16px. :where() keeps the exclusion
+   at zero-specificity so the base selector's specificity is unchanged. */
+@media (max-width: 767px) {
+	:is(input, select, textarea, [role="combobox"]):not(
+			:where(
+					[class~="text-lg"],
+					[class~="text-xl"],
+					[class~="text-2xl"],
+					[class~="text-3xl"],
+					[class~="text-4xl"],
+					[class~="text-5xl"],
+					[class~="text-6xl"],
+					[class~="text-7xl"],
+					[class~="text-8xl"],
+					[class~="text-9xl"]
+				)
+		) {
+		font-size: 16px;
 	}
 }
 
@@ -649,6 +726,57 @@
 		color: var(--muted-foreground);
 	}
 
+	/* D2 · Agent-working ring around the driver avatar on Objects list rows.
+	   The wrapper composes a 2px violet conic-gradient ring around its child
+	   avatar, animating clockwise at ~1.6s/rev. The ring lives in a positioned
+	   ::before pseudo-element so it can spin without rotating the child
+	   avatar's initials.
+
+	   The gradient stops at 300deg intentionally: the paused-state (any time
+	   the animation is halted, either mid-loop OR by prefers-reduced-motion)
+	   is a static 300° arc — exactly what the SPEC asks for on reduced motion.
+	   The global @media (prefers-reduced-motion: reduce) rule above zeros the
+	   animation-duration, so no duplicate override here.
+
+	   `will-change: transform` opts the ring onto the compositor layer so the
+	   360°-per-1.6s repaint doesn't thrash the row's paint tree — matters
+	   because the list view is virtualized and many rings can be on-screen at
+	   once. */
+	.actor-avatar-working-ring {
+		position: relative;
+		padding: 2px;
+		border-radius: 9999px;
+	}
+
+	.actor-avatar-working-ring::before {
+		content: "";
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		background: conic-gradient(
+			from 0deg,
+			var(--violet) 0deg,
+			var(--violet) 300deg,
+			transparent 300deg,
+			transparent 360deg
+		);
+		-webkit-mask: radial-gradient(
+			farthest-side,
+			transparent calc(100% - 2px),
+			#000 calc(100% - 2px)
+		);
+		mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+		animation: actor-avatar-ring-spin 1.6s linear infinite;
+		will-change: transform;
+		pointer-events: none;
+	}
+
+	@keyframes actor-avatar-ring-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
 	/* Full-contrast prose: @tailwindcss/typography sets paragraph/list-item color
 	   to var(--tw-prose-body), which resolves to a muted tone inside .prose.
 	   The compound selector (.agent-output p/li) has higher specificity than the
@@ -681,5 +809,42 @@
 		background-color: var(--muted);
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
+	}
+
+	/* Origin deep-link — the message that spawned a session, pulsing once on
+	   arrival + carrying a persistent vertical brand rail on its right edge.
+	   Both attributes are stamped by `useOriginDeepLinkScroll` in the chat
+	   detail route from `?msg=<id>`, and read here as CSS selectors so no
+	   per-message-bubble prop threading is needed. The pulse attribute is
+	   removed after 2.2s so it never loops; the spawn attribute persists for
+	   the duration of the page view.
+
+	   `position: relative` is added so the ::after rule can pin the bar to
+	   the wrapper's right edge — the wrapper is already a flex column and
+	   otherwise has no positioning context. */
+	[data-origin-spawn] {
+		position: relative;
+	}
+	[data-origin-spawn]::after {
+		content: "";
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		right: -6px;
+		width: 3px;
+		border-radius: 2px;
+		background-color: var(--brand);
+		pointer-events: none;
+	}
+	[data-origin-pulse] {
+		animation: origin-spawn-pulse 2.2s ease-out 1;
+	}
+	@keyframes origin-spawn-pulse {
+		0% {
+			background-color: color-mix(in oklab, var(--brand) 22%, transparent);
+		}
+		100% {
+			background-color: color-mix(in oklab, var(--brand) 0%, transparent);
+		}
 	}
 }

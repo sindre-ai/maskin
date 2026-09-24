@@ -1186,7 +1186,8 @@ Otherwise, exit silently.
 If firing:
 1. Post ONE comment on this knowledge object (create_comment, attention 3) addressed to the user. 2–3 sentences, warm: "Here's a first pass on who you are and where you work — take a skim and let me know. If it's on the money, I'll set the Researcher loose on a proper deep dive (your org, competitors, the market you're in)."
 2. On that same comment, attach a \`decision\`: the deep dive does not start until they answer, so it is a real call. Options are "Looks right" / "Needs correction" / "Wrong entirely", each with 2-3 one-clause consequences and exactly one recommended, plus a title, a summary carrying a real number, and a first-person ask. See the \`decision\` param docs on \`create_comment\` for the rules the API enforces.
-3. Do NOT change the knowledge status yourself. The user's answer is what confirms the brief; you'll act on their reply per the onboarding arc in your system prompt (Beat 2).`,
+3. Do NOT change the knowledge status yourself. The user's answer is what confirms the brief; you'll act on their reply per the onboarding arc in your system prompt (Beat 2).
+4. As the FINAL step, once the confirmation comment + decision have been posted, call \`update_trigger\` with \`id: {{trigger_id}}\` and \`enabled: false\`. This trigger is onboarding-only and one-shot per workspace — self-disabling prevents every subsequent \`knowledge.created\` event from spawning a redundant Chief of Staff session just to run the "is this the first Researcher brief?" gate.`,
 		targetActor$id: 'chief_of_staff',
 		enabled: true,
 	},
@@ -1223,7 +1224,8 @@ If firing:
    - Competitive landscape — top 3–5 competitors and how they position vs the user's organization.
    - Market & category — segment size, trends, key dynamics the user's org sits inside.
 3. Do NOT surface anything else to the user beyond the confirmation comment. The briefs land as drafts and the user reviews at their own pace.
-4. Beat 6 hand-off (Signal Analyst) is chained separately — do NOT dispatch Signal Analyst from this session. The seeded \`Deep-research brief validated → Signal Analyst clustering\` trigger fires only after deep-research validates — specifically, after each deep-research brief reaches \`status = validated\` — and never concurrently with this dispatch (Magnus 2026-09-06 guardrail: clustering an unvalidated brief clusters an empty knowledge set). Trust the chain.`,
+4. Beat 6 hand-off (Signal Analyst) is chained separately — do NOT dispatch Signal Analyst from this session. The seeded \`Deep-research brief validated → Signal Analyst clustering\` trigger fires only after deep-research validates — specifically, after each deep-research brief reaches \`status = validated\` — and never concurrently with this dispatch (Magnus 2026-09-06 guardrail: clustering an unvalidated brief clusters an empty knowledge set). Trust the chain.
+5. As the FINAL step, once all three deep-research briefs have been filed via \`run_agent\`, call \`update_trigger\` with \`id: {{trigger_id}}\` and \`enabled: false\`. This trigger is onboarding-only and one-shot per workspace — self-disabling prevents every subsequent \`knowledge.status_changed → validated\` event from spawning a redundant Chief of Staff session just to run the "is this the first validated first-pass brief?" gate.`,
 		targetActor$id: 'chief_of_staff',
 		enabled: true,
 	},

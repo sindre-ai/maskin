@@ -472,6 +472,7 @@ function LoopDetailRoute() {
 						<TimelineTab
 							object={object}
 							loopsV4PolishUnread={unreadPolishFlag ? { loopId } : undefined}
+							additionalEvents={activityEvents}
 						/>
 					</div>
 				)}

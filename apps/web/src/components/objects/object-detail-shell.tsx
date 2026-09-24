@@ -6,6 +6,8 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useDeleteObject, useObjectGraph, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useScrollToTopEmitter } from '@/hooks/use-scroll-to-top-emitter'
+import { useStar } from '@/hooks/use-star'
+import { useUsageState } from '@/hooks/use-usage-state'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
@@ -17,6 +19,7 @@ import { getStoredActor } from '@/lib/auth'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
+import { Pencil } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ObjectAskBanner } from './object-ask-banner'
@@ -25,6 +28,7 @@ import { getAsk } from './object-detail-fixtures'
 import { ObjectDetailBarActions, ObjectDetailIdentity } from './object-detail-header'
 import { DeleteConfirmDialog } from './object-document'
 import { ObjectPropertiesSidebar } from './object-properties-sidebar'
+import { Origin } from './origin'
 import { PropertiesSidebarProvider, SIDEBAR_WIDTH } from './properties-sidebar-provider'
 import { RelatedTab } from './related-tab'
 import { resolveRelatedRows } from './related-tab-utils'
@@ -35,6 +39,7 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	const navigate = useNavigate()
 	const isMobile = useIsMobile()
 	const updateObject = useUpdateObject(workspaceId)
+	const { toggle: toggleStarKeyboard } = useStar(object.id)
 	const deleteObject = useDeleteObject(workspaceId)
 	const { data: members } = useWorkspaceMembers(workspaceId)
 	const { data: actors } = useActors(workspaceId)
@@ -64,21 +69,35 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	// An ask only belongs to the reader when it's explicitly targeted at them —
 	// otherwise the object may be waiting on another actor (e.g. an @mentioned
 	// agent) and rendering the banner here would show "waiting for you" with no
-	// answerable action attached.
+	// answerable action attached. The same cache also drives the D4 verb swap on
+	// the shared New button, so this list is sorted oldest-first and both
+	// surfaces read the same pick and re-render together when SSE flushes.
 	const { data: needsInputNotifications } = useNotifications(workspaceId, { type: 'needs_input' })
 	const currentActorId = getStoredActor()?.id
-	const liveAsk = useMemo(
+	const pendingAsks = useMemo(
 		() =>
-			(needsInputNotifications ?? []).find(
-				(n) =>
-					n.objectId === object.id && n.status === 'pending' && n.targetActorId === currentActorId,
-			),
+			(needsInputNotifications ?? [])
+				.filter(
+					(n) =>
+						n.objectId === object.id && n.status === 'pending' && n.targetActorId === currentActorId,
+				)
+				.sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? '')),
 		[needsInputNotifications, object.id, currentActorId],
 	)
+	const liveAsk = pendingAsks[0]
 	const askActor = liveAsk?.sourceActorId
 		? actors?.find((a) => a.id === liveAsk.sourceActorId)
 		: undefined
 	const askText = liveAsk ? (liveAsk.content ?? liveAsk.title) : getAsk(object)
+
+	// D6 credits chip predicate — workspace-scoped selector reacts to SSE
+	// invalidation on session lifecycle events (see `sse-invalidation.ts`).
+	const { credits_state } = useUsageState(workspaceId)
+
+	// D4: whole button disabled at 60% opacity when the object is
+	// non-editable. `archived` bets are the only observable read-only state
+	// the current object schema carries — the field is otherwise mutable.
+	const isReadOnly = object.status === 'archived'
 
 	// Memoised so the published crumb keeps a stable identity across renders.
 	const crumb = useMemo(
@@ -94,6 +113,29 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	const answerRef = useRef<HTMLTextAreaElement>(null)
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const confirmedDeleteRef = useRef(false)
+
+	// D4: focus the composer at the oldest pending ask on the timeline —
+	// mirrors the ObjectAskBanner's Answer-it button, so both entry points
+	// commit to the same answer surface. Kept off `pendingAsks` (not
+	// `liveAsk`) so the reference is stable across renders that don't change
+	// the pick.
+	const handleAnswerLatestAsk = useCallback(() => {
+		answerRef.current?.focus()
+	}, [])
+
+	// D4 verb-swap override published to the shared New button. `useMemo` on
+	// the notification cache — automatic re-render when SSE flushes new asks.
+	const newMenuPrimaryOverride = useMemo(() => {
+		if (!liveAsk) return undefined
+		return {
+			label: 'Answer this ask',
+			ariaLabel: 'Answer the pending ask on this object',
+			title: 'Answer this ask — jump to the composer at the pending ask',
+			icon: <Pencil aria-hidden className="size-[13px]" />,
+			onClick: handleAnswerLatestAsk,
+			disabled: isReadOnly,
+		}
+	}, [liveAsk, handleAnswerLatestAsk, isReadOnly])
 
 	// Right-side properties drawer (mockup 1371–1499). Desktop pushes the app
 	// shell aside via `contentPush`; mobile opens the primitive's Sheet.
@@ -158,6 +200,26 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 		document.addEventListener('keydown', handler)
 		return () => document.removeEventListener('keydown', handler)
 	}, [handleToggleSidebar])
+
+	// SPEC §D5 keyboard shortcut: `s` toggles star on focused detail. Uses the
+	// document listener rather than a per-element handler so a plain-page tab
+	// with nothing else focused still triggers, matching the list-row behaviour.
+	// Skipped inside editable fields (title, body, composer) so `s` types
+	// normally there.
+	useEffect(() => {
+		const handler = (e: KeyboardEvent) => {
+			if (e.key !== 's' || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
+			const target = e.target as HTMLElement | null
+			if (target) {
+				const tag = target.tagName
+				if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return
+			}
+			e.preventDefault()
+			toggleStarKeyboard()
+		}
+		document.addEventListener('keydown', handler)
+		return () => document.removeEventListener('keydown', handler)
+	}, [toggleStarKeyboard])
 
 	// Emit `sidebar_toggle` on every transition — covers the PanelRight button,
 	// the ⌘/Ctrl+I shortcut, Sheet ESC/overlay close on mobile, and any
@@ -314,6 +376,8 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 				}
 				contentPush={contentPush}
 				scrollLocked
+				newMenuPrimaryOverride={newMenuPrimaryOverride}
+				newMenuDisabled={isReadOnly}
 			/>
 			<div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
 				{/* The document owns the only scroll region on this screen, so the
@@ -331,9 +395,21 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 							object={object}
 							statuses={statuses}
 							members={members ?? []}
+							workspaceId={workspaceId}
+							creditsState={credits_state}
 							onStatusChange={handleUpdateStatus}
 							onDriverChange={handleUpdateDriver}
 							onTitleChange={handleUpdateTitle}
+						/>
+
+						{/* System-written lineage — renders NOTHING when the object has no
+						    produced_by ancestor (absence contract). Placed between identity
+						    and the ask banner per CPO 2026-09-22 (top-of-page, not
+						    right-rail). Depends on the graph query already firing above. */}
+						<Origin
+							object={object}
+							relationships={graph?.relationships ?? []}
+							workspaceId={workspaceId}
 						/>
 
 						{askText && (

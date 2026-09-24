@@ -9,6 +9,8 @@ const mockSetStickyIdentity = vi.fn()
 const mockSetCrumb = vi.fn()
 const mockSetContentPush = vi.fn()
 const mockSetScrollLocked = vi.fn()
+const mockSetNewMenuPrimaryOverride = vi.fn()
+const mockSetNewMenuDisabled = vi.fn()
 
 vi.mock('@/lib/page-header-context', () => ({
 	usePageHeader: () => ({
@@ -20,6 +22,8 @@ vi.mock('@/lib/page-header-context', () => ({
 		setCrumb: mockSetCrumb,
 		setContentPush: mockSetContentPush,
 		setScrollLocked: mockSetScrollLocked,
+		setNewMenuPrimaryOverride: mockSetNewMenuPrimaryOverride,
+		setNewMenuDisabled: mockSetNewMenuDisabled,
 	}),
 }))
 
@@ -33,6 +37,8 @@ describe('PageHeader', () => {
 		mockSetCrumb.mockClear()
 		mockSetContentPush.mockClear()
 		mockSetScrollLocked.mockClear()
+		mockSetNewMenuPrimaryOverride.mockClear()
+		mockSetNewMenuDisabled.mockClear()
 	})
 
 	it('publishes titleTabs separately from actions — they land in different clusters', () => {

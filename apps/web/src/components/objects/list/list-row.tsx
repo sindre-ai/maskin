@@ -1,15 +1,21 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
-import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
 import { IndicatorBadgeRow } from '@/components/shared/indicator-badge'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Checkbox } from '@/components/ui/checkbox'
+import { useStar } from '@/hooks/use-star'
 import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
 import type { VisibilityState } from '@tanstack/react-table'
+
+// Ask-line title truncation. The SPEC calls for `~90 chars` — 90 is the exact
+// count, tuned to fit one line at the row's title-column width on desktop
+// before the CSS `truncate` steps in on narrower viewports. Keep as a literal
+// so the value shows up in one grep-able place if design revises it.
+const ASK_LINE_TITLE_MAX = 90
 
 export interface ListRowProps {
 	object: ObjectResponse
@@ -27,6 +33,12 @@ export interface ListRowProps {
 	 *  row shows the ask line + "Waiting on you" pill only while the ask is
 	 *  still pending — a resolved/dismissed ask never renders. */
 	ask?: NotificationResponse
+	/** Total pending asks on this row, including `ask`. When ≥ 2, the ask-line
+	 *  renders a trailing `+ N more` counter (plain text, not a link). The
+	 *  caller is responsible for the count — the row only knows about the
+	 *  single first ask threaded via `ask`. Ordering: oldest pending first,
+	 *  matching the "Waiting on you" pill's own ordering.  */
+	pendingAskCount?: number
 	betStatus?: BetStatusResult
 	showBetStatusIndicator?: boolean
 	columnVisibility: VisibilityState
@@ -38,8 +50,12 @@ export interface ListRowProps {
 	 *  Absent for a type the workspace no longer defines, where the raw key is
 	 *  the only honest label left. */
 	typeLabel?: string
-	isStarred?: boolean
-	onToggleStar?: (objectId: string) => void
+	/** First `in_loop` edge on this object, resolved client-side by
+	 *  `useObjectLoops` in list-view. Renders as the D1 loop chip immediately
+	 *  after the title; absent = no chip (no reserved space, per the D1
+	 *  acceptance criterion). Multi-loop objects show only the first edge in
+	 *  creation-time order — the caller picks that edge, the row renders it. */
+	loop?: { id: string; name: string }
 }
 
 export function ListRow({
@@ -51,14 +67,15 @@ export function ListRow({
 	onOpen,
 	onShiftClick,
 	ask,
+	pendingAskCount,
 	betStatus,
 	showBetStatusIndicator,
 	columnVisibility,
 	anySelected,
 	typeLabel,
-	isStarred,
-	onToggleStar,
+	loop,
 }: ListRowProps) {
+	const { isStarred, isSaving: isStarSaving, toggle: toggleStar } = useStar(object.id)
 	const driver = object.driver ? actors?.find((a) => a.id === object.driver) : null
 	const isArchived = object.status === 'archived'
 	// Prior status is populated by the archive handler (T6) into metadata.previous_status.
@@ -70,6 +87,21 @@ export function ListRow({
 	const askActorName = hasPendingAsk
 		? (actors?.find((a) => a.id === ask.sourceActorId)?.name ?? 'Agent')
 		: null
+	// Ask-line text: SPEC copy is `{who} asks — "{text}"` where `{text}` is
+	// the notification's title, ellipsis at ~90 chars. `content` is a longer
+	// free-form body only some notifications carry — falls back to `title` so
+	// bare-title asks still render.
+	const rawAskText = hasPendingAsk ? (ask.content ?? ask.title ?? '') : ''
+	const askText =
+		rawAskText.length > ASK_LINE_TITLE_MAX
+			? `${rawAskText.slice(0, ASK_LINE_TITLE_MAX).trimEnd()}…`
+			: rawAskText
+	const extraAskCount = hasPendingAsk ? Math.max(0, (pendingAskCount ?? 1) - 1) : 0
+	// D2 · Working ring predicate. Gated on `running` explicitly — see
+	// `hydrateActiveSessionStates` in `apps/dev/src/routes/objects.ts` for
+	// why `activeSessionId != null` isn't enough (pending/starting/paused
+	// would flicker the ring on states where the agent isn't working).
+	const isWorking = object.active_session_state === 'running'
 	const showType = columnVisibility.type !== false
 	const showTag = columnVisibility.status !== false
 	const showDriver = columnVisibility.driver !== false
@@ -85,7 +117,6 @@ export function ListRow({
 	const showStar = !selectionMode
 
 	return (
-		// biome-ignore lint/a11y/useKeyWithClickEvents: the row carries a real Link for keyboard navigation; click supplements it (same pattern as ObjectCard).
 		<div
 			data-obj-id={object.id}
 			data-state={isSelected ? 'selected' : undefined}
@@ -98,6 +129,18 @@ export function ListRow({
 					return
 				}
 				onOpen(object.id)
+			}}
+			onKeyDown={(e) => {
+				// SPEC §D5 keyboard shortcut: `s` toggles star on the focused row.
+				// Don't fire when the shift-select or another modifier is held, or
+				// when focus is inside a real editable field (a metadata inline edit
+				// nested in the row would otherwise lose the `s` keystroke).
+				if (e.key !== 's' || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
+				const target = e.target as HTMLElement | null
+				const tag = target?.tagName
+				if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return
+				e.preventDefault()
+				toggleStar()
 			}}
 			className={cn(
 				'group relative flex w-full items-center gap-3 rounded-lg py-2.5 pr-3',
@@ -121,12 +164,12 @@ export function ListRow({
 				{showStar && (
 					<button
 						type="button"
-						aria-label={isStarred ? 'Unstar' : 'Star'}
+						aria-label={isStarred ? 'Starred (click to remove)' : 'Star this object'}
 						aria-pressed={isStarred}
 						onClick={(e) => {
 							e.preventDefault()
 							e.stopPropagation()
-							onToggleStar?.(object.id)
+							toggleStar()
 						}}
 						className={cn(
 							'text-[13px] leading-none transition-colors',
@@ -136,7 +179,12 @@ export function ListRow({
 							// 1024, so at exactly iPad-landscape width the checkbox would go
 							// touch-sized while the star still held the slot.
 							'max-[1024.02px]:hidden pointer-coarse:hidden',
-							isStarred ? 'text-foreground' : 'text-border-strong hover:text-muted-foreground',
+							// Amber-filled when on (SPEC §D5 — parity with detail meta row).
+							// `--ink-3` (border-strong) → `--ink-2` (muted-foreground) on hover
+							// when off, per SPEC.
+							isStarred ? 'text-[#f59e0b]' : 'text-border-strong hover:text-muted-foreground',
+							// SPEC: 60% opacity while the server round-trip is in flight.
+							isStarSaving && 'opacity-60',
 						)}
 					>
 						{isStarred ? '★' : '☆'}
@@ -203,6 +251,25 @@ export function ListRow({
 					>
 						{object.title || 'Untitled'}
 					</Link>
+					{loop && (
+						// D1 · Loop chip. Position: after the title, before the right-
+						// side status chip. Copy verbatim per SPEC: `↺ Loop · {name}`.
+						// The chip itself never truncates (`shrink-0`) — the title
+						// truncates first, exactly as the D1 spec asks.
+						<Link
+							to="/$workspaceId/loops/$loopId"
+							params={{ workspaceId, loopId: loop.id }}
+							onClick={(e) => e.stopPropagation()}
+							className={cn(
+								'shrink-0 rounded-full border border-border bg-muted/60 px-2 py-0.5',
+								'text-[10px] font-medium leading-none text-muted-foreground',
+								'transition-colors hover:text-foreground hover:underline',
+								'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+							)}
+						>
+							↺ Loop · {loop.name}
+						</Link>
+					)}
 					{hasPendingAsk && (
 						<span className="shrink-0 rounded-full border border-ask-border bg-ask-surface px-2 py-0.5 text-[10px] font-bold leading-none text-warning">
 							Waiting on you
@@ -211,17 +278,21 @@ export function ListRow({
 					{betStatus && showBetStatusIndicator && (
 						<IndicatorBadgeRow result={betStatus} className="shrink-0" />
 					)}
-					{object.activeSessionId && (
-						<AgentWorkingBadge sessionId={object.activeSessionId} workspaceId={workspaceId} />
-					)}
 				</div>
 				{hasPendingAsk && (
+					// D3 · Ask-line under the title. Copy is verbatim from the SPEC:
+					// `{who} asks — "{text}"` (name bolded, text truncated at ~90
+					// chars). Multi-ask overflow renders `+ N more` as plain text —
+					// not a link, per the D3 spec's explicit "plain text, not a link".
 					// The type label is a sibling column here (not inline with the
 					// title as in the mockup), so the ask line already starts at the
 					// title column — no extra `askIndent` offset is needed.
 					<p className="truncate text-xs leading-snug text-muted-foreground">
-						<span className="font-bold text-warning">{askActorName} asks</span>{' '}
-						{ask.content ?? ask.title}
+						<span className="font-bold text-warning">{askActorName}</span> asks —{' '}
+						<span>“{askText}”</span>
+						{extraAskCount > 0 && (
+							<span className="text-muted-foreground/80"> + {extraAskCount} more</span>
+						)}
 					</p>
 				)}
 				{priorStatus && (
@@ -244,7 +315,17 @@ export function ListRow({
 				/>
 			)}
 			{showDriver && driver && (
-				<ActorAvatar id={driver.id} name={driver.name} type={driver.type} className="shrink-0" />
+				// D2 · Driver avatar gains a violet conic-gradient ring when the
+				// object has an actively-running session on it. Replaces the old
+				// right-side <AgentWorkingBadge> — the ring is the row's only
+				// working indicator now, per the D2 acceptance criteria.
+				<ActorAvatar
+					id={driver.id}
+					name={driver.name}
+					type={driver.type}
+					className="shrink-0"
+					working={isWorking}
+				/>
 			)}
 			{showUpdated && object.updatedAt && (
 				<RelativeTime

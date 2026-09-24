@@ -1,10 +1,17 @@
 import { ActivityComment } from '@/components/activity/activity-comment'
 import { computeUnreadEventIds } from '@/components/activity/object-activity'
-import { PhaseDivider } from '@/components/activity/phase-divider'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RelativeTime } from '@/components/shared/relative-time'
+import {
+	DecidedFold,
+	findDecisionAnswer,
+	isDecidedFoldEligible,
+} from '@/components/timeline/decided-fold'
+import { NewDivider } from '@/components/timeline/new-divider'
+import { PhaseDivider } from '@/components/timeline/phase-divider'
+import { type LifecyclePhase, phaseForStatus } from '@/components/timeline/phase-map'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
@@ -20,6 +27,16 @@ import { formatEventDescription } from '@maskin/shared'
 import { ArrowDown, ChevronDown } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+
+/** Above this many entries in a tab, the count pill renders as `{cutoff}+`.
+ *  Kept just below the graph endpoint's 100-event page limit so a full page
+ *  reads as an overflow indicator rather than an exact tally. */
+const TAB_COUNT_CUTOFF = 99
+
+function formatTabCount(value: number): string {
+	if (value > TAB_COUNT_CUTOFF) return `${TAB_COUNT_CUTOFF}+`
+	return String(value)
+}
 
 /**
  * One row of the merged activity stream (mockup 1176–1355). Comments and events
@@ -41,6 +58,9 @@ type TimelineEntry =
 			text: string
 			chipLabel: string
 			chipTone: ChipTone
+			/** The raw event action (`updated`, `created`, a `session_*`, `link`).
+			 *  Identifies "same event type" for the same-actor fold. */
+			eventType: string
 			isStatusChange: boolean
 			/** Edge rows read `<when> <verb> <object chip>` with a square node —
 			 *  the mockup's `tl.isRel` (1258–1272), not a sentence. */
@@ -71,14 +91,33 @@ interface TimelineFold {
 
 type StreamRow = TimelineEntry | TimelineFold
 
-/** A run of this many consecutive low-signal rows collapses behind one pill. */
-const FOLD_MIN_RUN = 3
+/** A same-actor + same-event-type run this long collapses behind one pill. */
+const FOLD_MIN_RUN = 2
+
+/**
+ * Two event rows that read as the same actor doing the same thing. Repetition
+ * this tight — "Chief of Staff updated loop" back-to-back — is what the fold
+ * targets, and also what defines a run's boundary: a row that breaks this
+ * predicate ends the current run and starts a fresh one.
+ */
+function isSameActorSameType(a: TimelineEntry, b: TimelineEntry): boolean {
+	return (
+		a.kind === 'event' &&
+		b.kind === 'event' &&
+		a.actorId !== null &&
+		a.actorId === b.actorId &&
+		a.eventType === b.eventType
+	)
+}
 
 /**
  * Collapse consecutive runs of routine machine chatter — plain updates, session
  * rows, link rows — into a single fold. Comments and status changes are the
  * spine of the story and are never folded, so the unread divider's target and
- * every phase boundary stay reachable.
+ * every phase boundary stay reachable. A run is one same-actor + same-event-type
+ * stretch and folds at two rows; a row that changes actor or action ends the
+ * run, so the loop's `created` event never folds into a stretch of `updated`
+ * rows by the same actor.
  */
 function foldRuns(entries: TimelineEntry[]): StreamRow[] {
 	const out: StreamRow[] = []
@@ -93,8 +132,11 @@ function foldRuns(entries: TimelineEntry[]): StreamRow[] {
 		run = []
 	}
 	for (const entry of entries) {
-		if (entry.kind === 'event' && !entry.isStatusChange) run.push(entry)
-		else {
+		if (entry.kind === 'event' && !entry.isStatusChange) {
+			const head = run[0]
+			if (head && !isSameActorSameType(head, entry)) flush()
+			run.push(entry)
+		} else {
 			flush()
 			out.push(entry)
 		}
@@ -236,9 +278,15 @@ const EARLIER_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 export function TimelineTab({
 	object,
 	loopsV4PolishUnread,
+	additionalEvents,
 }: {
 	object: ObjectResponse
 	loopsV4PolishUnread?: LoopsV4PolishUnreadOptions
+	/** Extra events to merge into the stream — used by the loop detail page to
+	 * fold in agent-work events (session lifecycle, trigger fires) that don't
+	 * carry `entityId = object.id` and so aren't returned by the object graph.
+	 * Deduped against the graph events by event id. */
+	additionalEvents?: EventResponse[]
 }) {
 	const { workspaceId } = useWorkspace()
 	const {
@@ -247,7 +295,13 @@ export function TimelineTab({
 		isError: isGraphError,
 		error: graphError,
 	} = useObjectGraph(workspaceId, object.id)
-	const events = graph?.events
+	const events = useMemo(() => {
+		const base = graph?.events ?? []
+		if (!additionalEvents || additionalEvents.length === 0) return base
+		const seen = new Set(base.map((e) => e.id))
+		const extra = additionalEvents.filter((e) => !seen.has(e.id))
+		return extra.length === 0 ? base : [...base, ...extra]
+	}, [graph?.events, additionalEvents])
 	const relationships = graph?.relationships
 	const connectedObjects = graph?.connected_objects
 
@@ -300,6 +354,7 @@ export function TimelineTab({
 				text: formatEventDescription(event, { actorsById }),
 				chipLabel: chip.label,
 				chipTone: chip.tone,
+				eventType: event.action,
 				isStatusChange: event.action === 'status_changed',
 				isRelationship: false,
 				newStatus: event.action === 'status_changed' ? newStatusOf(event) : null,
@@ -322,6 +377,7 @@ export function TimelineTab({
 				text: 'linked this',
 				chipLabel: 'Link',
 				chipTone: 'link',
+				eventType: 'link',
 				isStatusChange: false,
 				isRelationship: true,
 				newStatus: null,
@@ -464,56 +520,31 @@ export function TimelineTab({
 		el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 	}, [jumpTick, firstUnreadId])
 
-	// Collapsed phases, keyed by the status the phase opened with. Phase rows
-	// are chronological groups the mockup shows as labelled dividers (1226–1233).
-	const [collapsedPhases, setCollapsedPhases] = useState<ReadonlySet<string>>(new Set())
-	const togglePhase = (key: string) => {
-		setCollapsedPhases((prev) => {
-			const next = new Set(prev)
-			if (next.has(key)) next.delete(key)
-			else next.add(key)
-			return next
-		})
-	}
-
-	// Walk the descending stream: a status change opens the phase everything
-	// above it belongs to, so the divider renders in place, before its rows.
-	const phases = useMemo(() => {
-		const out: Array<{
-			key: string
-			status: string
-			startedAt: string | null
-			rows: TimelineEntry[]
-		}> = [
-			{ key: `phase-current-${object.status}`, status: object.status, startedAt: null, rows: [] },
-		]
+	// Walk the descending stream and group entries into lifecycle-phase runs
+	// (SHAPING / BUILT / SHIPPED / WRAPPED UP). A status change only opens a new
+	// run when the phase actually flips — back-to-back moves within one phase
+	// (e.g. define → shaped, both SHAPING) fall through into the same group,
+	// per D10. Static phase pills sit above each group.
+	const lifecycleGroups = useMemo(() => {
+		type Group = { phase: LifecyclePhase; key: string; rows: TimelineEntry[] }
+		const initial: Group = {
+			phase: phaseForStatus(object.status),
+			key: `phase-top-${object.status}`,
+			rows: [],
+		}
+		const out: Group[] = [initial]
 		for (const entry of visible) {
 			out[out.length - 1]?.rows.push(entry)
-			if (entry.kind === 'event' && entry.isStatusChange) {
-				// `visible` runs newest-first, so this change CLOSES the phase we
-				// have been filling and OPENS the older one below it. The phase
-				// above sat in the status the object moved to (`newStatus`) and
-				// began at this event's timestamp; everything older than the
-				// change sat in the status it moved from (`prevStatus`), and when
-				// that phase began is only known once we reach the next (older)
-				// change — hence `startedAt: null` until then.
-				const closing = out[out.length - 1]
-				if (closing) {
-					closing.startedAt = entry.time
-					if (entry.newStatus) closing.status = entry.newStatus
-				}
-				out.push({
-					key: `phase-${entry.key}`,
-					status: entry.prevStatus ?? object.status,
-					startedAt: null,
-					rows: [],
-				})
+			if (entry.kind !== 'event' || !entry.isStatusChange || !entry.prevStatus) continue
+			const prevPhase = phaseForStatus(entry.prevStatus)
+			if (prevPhase !== out[out.length - 1]?.phase) {
+				out.push({ phase: prevPhase, key: `phase-${entry.key}`, rows: [] })
 			}
 		}
-		return out.filter((phase) => phase.rows.length > 0)
+		return out.filter((group) => group.rows.length > 0)
 	}, [visible, object.status])
 
-	const showPhases = filter === 'all' && phases.length > 1
+	const showPhases = filter === 'all' && lifecycleGroups.length > 1
 
 	// Expanded folds, keyed by the fold's first row. Transient — a fold is a
 	// reading affordance, not view state worth persisting.
@@ -534,21 +565,14 @@ export function TimelineTab({
 			loopsV4PolishUnread ? (
 				<PolishUnreadDivider count={unreadCount} onMarkRead={handleMarkRead} />
 			) : (
-				<UnreadDivider count={unreadCount} onMarkRead={handleMarkRead} />
+				<NewDivider count={unreadCount} onMarkRead={handleMarkRead} />
 			)
 		) : null
-		// EARLIER divider — polish variant only. Sits inline in the descending
-		// stream at the first entry older than the current window (see
-		// `earlierAnchorKey` above), so scrolling past it reads as crossing
-		// from "current" into "earlier" without any extra scroll math.
+		// EARLIER divider — polish variant only.
 		const earlierDivider =
 			loopsV4PolishUnread && entry.key === earlierAnchorKey ? <EarlierDivider /> : null
-		// D8: dim entries the current viewer has already read. `unreadEventIds`
-		// is per-viewer (fed from the same `read_state` row `useMarkRead`
-		// writes), so a comment that's read for one viewer stays full-opacity
-		// for another. Non-comment events (status changes, links) never carry
-		// an unread marker; leave them at full opacity to keep the story spine
-		// legible.
+		// D8 (loops v4 polish path): dim entries the current viewer has already
+		// read. Per-viewer via `unreadEventIds`.
 		const dimAsRead =
 			!!loopsV4PolishUnread && entry.kind === 'comment' && !unreadEventIds.has(entry.event.id)
 		return (
@@ -557,15 +581,38 @@ export function TimelineTab({
 				{earlierDivider}
 				<div className={cn(dimAsRead && 'opacity-75')}>
 					{entry.kind === 'comment' ? (
-						<ActivityComment
-							event={entry.event}
-							replies={repliesByParent.get(entry.event.id) ?? []}
-							workspaceId={workspaceId}
-							objectId={object.id}
-							isUnread={unreadEventIds.has(entry.event.id)}
-							variant="bubble"
-							collapsibleReplies
-						/>
+						(() => {
+							const replies = repliesByParent.get(entry.event.id) ?? []
+							const answer = findDecisionAnswer(entry.event, replies)
+							// D9 decided-fold applies only in the default (Object detail)
+							// path — the loops v4 polish variant keeps the full ActivityComment card.
+							const foldedAnswer =
+								!loopsV4PolishUnread &&
+								answer !== null &&
+								isDecidedFoldEligible(entry.event, replies)
+									? answer
+									: null
+							return foldedAnswer ? (
+								<DecidedFold
+									event={entry.event}
+									replies={replies}
+									answer={foldedAnswer}
+									workspaceId={workspaceId}
+									objectId={object.id}
+									isUnread={unreadEventIds.has(entry.event.id)}
+								/>
+							) : (
+								<ActivityComment
+									event={entry.event}
+									replies={replies}
+									workspaceId={workspaceId}
+									objectId={object.id}
+									isUnread={unreadEventIds.has(entry.event.id)}
+									variant="bubble"
+									collapsibleReplies
+								/>
+							)
+						})()
 					) : (
 						<EventRow entry={entry} actorsById={actorsById} workspaceId={workspaceId} />
 					)}
@@ -650,12 +697,14 @@ export function TimelineTab({
 			<div className="flex flex-wrap items-center gap-1.5 pb-2 pt-2.5">
 				{FILTERS.map((f) => {
 					const active = filter === f.id
+					const rawCount = counts[f.id]
+					const display = formatTabCount(rawCount)
 					return (
 						<button
 							key={f.id}
 							type="button"
 							aria-pressed={active}
-							aria-label={`${f.label} (${counts[f.id]})`}
+							aria-label={`${f.label} (${rawCount})`}
 							onClick={() => setFilter(f.id)}
 							className={cn(
 								'inline-flex h-[26px] items-center gap-1.5 rounded-full border border-border px-[11px] text-[11.5px] font-semibold transition-colors',
@@ -669,10 +718,16 @@ export function TimelineTab({
 								aria-hidden="true"
 								className={cn(
 									'text-[10.5px] font-semibold tabular-nums',
-									active ? 'text-primary-foreground/50' : 'text-border-strong',
+									active
+										? 'text-primary-foreground/50'
+										: // Zero counts stay visible but recede — the row's presence is itself
+											// the affordance, per SPEC.
+											rawCount === 0
+											? 'text-border-strong opacity-70'
+											: 'text-border-strong',
 								)}
 							>
-								{counts[f.id]}
+								{display}
 							</span>
 						</button>
 					)
@@ -707,22 +762,12 @@ export function TimelineTab({
 				<div ref={containerRef} className="relative pt-2">
 					<span aria-hidden="true" className="absolute bottom-3 left-[14px] top-3 w-0.5 bg-muted" />
 					{showPhases ? (
-						phases.map((phase) => {
-							const collapsed = collapsedPhases.has(phase.key)
-							return (
-								<div key={phase.key}>
-									<PhaseDivider
-										status={phase.status}
-										startedAt={phase.startedAt}
-										isOpen={!collapsed}
-										onToggle={() => togglePhase(phase.key)}
-									/>
-									{!collapsed && (
-										<ol className="m-0 list-none p-0">{foldRuns(phase.rows).map(renderRow)}</ol>
-									)}
-								</div>
-							)
-						})
+						lifecycleGroups.map((group) => (
+							<div key={group.key}>
+								<PhaseDivider phase={group.phase} />
+								<ol className="m-0 list-none p-0">{foldRuns(group.rows).map(renderRow)}</ol>
+							</div>
+						))
 					) : (
 						<ol className="m-0 list-none p-0">{foldRuns(visible).map(renderRow)}</ol>
 					)}
@@ -732,36 +777,12 @@ export function TimelineTab({
 	)
 }
 
-function UnreadDivider({ count, onMarkRead }: { count: number; onMarkRead: () => void }) {
-	return (
-		<div className="relative z-[3] flex items-center gap-2.5 pb-1.5 pt-2">
-			<span aria-hidden="true" className="h-px flex-1 bg-brand/40" />
-			<span className="rounded-full bg-brand/10 px-2.5 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.11em] text-brand">
-				{count} new
-			</span>
-			<button
-				type="button"
-				onClick={onMarkRead}
-				className="text-[10.5px] font-semibold text-muted-foreground transition-colors hover:text-foreground"
-			>
-				Mark read
-			</button>
-			<span aria-hidden="true" className="h-px w-3 bg-brand/40" />
-		</div>
-	)
-}
-
 /**
- * D8 unread divider (bet/d166-loops-v4-polish). Same slot as the default
- * `UnreadDivider`, re-skinned to the SPEC's exact copy: `NEW · {n} unread`
- * (red). CTA verbatim: `Mark read`. Only rendered under the polish variant;
- * the pre-bet divider stays put for every other consumer of TimelineTab so
- * Objects is untouched.
- *
- * The red is `text-destructive` / `bg-destructive` from the app's status
- * ramp — semantic tokens the light and dark modes already tune (verified
- * WCAG AA on both). Never hardcode a hex here; `--kc4c4cc` from the SPEC is
- * the `--muted-foreground` token, which the EARLIER divider below picks up.
+ * D8 unread divider for the loops v4 polish path (bet/d166-loops-v4-polish).
+ * SPEC copy: `NEW · {n} unread` (red). CTA verbatim: `Mark read`. Only
+ * rendered when the loops v4 polish variant is enabled; the default Object
+ * detail timeline uses the shared `<NewDivider>` from
+ * `@/components/timeline/new-divider` instead.
  */
 function PolishUnreadDivider({ count, onMarkRead }: { count: number; onMarkRead: () => void }) {
 	return (

@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
-	events,
 	actors,
 	agentSkills,
 	objects,
@@ -27,8 +26,12 @@ import {
 import { and, eq, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { isEnterpriseActor } from '../lib/enterprise'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
-import { buildChiefOfStaffKickoffPrompt } from '../lib/onboarding/chief-of-staff-kickoff'
+import {
+	buildChiefOfStaffKickoffPrompt,
+	shouldSkipOnboardingKickoff,
+} from '../lib/onboarding/chief-of-staff-kickoff'
 import {
 	OwnershipCapExceededError,
 	computeEffectiveTier,
@@ -504,15 +507,27 @@ export async function bootstrapDefaultAgents(
 			continue
 		}
 
+		// If the seed prompt references its own trigger id via {{trigger_id}},
+		// pre-generate the UUID and interpolate before insert so the agent has
+		// a literal id to pass to update_trigger for self-disable. Used by the
+		// onboarding-only Chief of Staff triggers that must fire once per
+		// workspace and disable themselves afterwards.
+		const referencesTriggerId = trigger.actionPrompt.includes('{{trigger_id}}')
+		const preGeneratedId = referencesTriggerId ? randomUUID() : undefined
+		const actionPrompt = preGeneratedId
+			? trigger.actionPrompt.replaceAll('{{trigger_id}}', preGeneratedId)
+			: trigger.actionPrompt
+
 		try {
 			const [created] = await db
 				.insert(triggers)
 				.values({
+					...(preGeneratedId ? { id: preGeneratedId } : {}),
 					workspaceId,
 					name: trigger.name,
 					type: trigger.type,
 					config: trigger.config as Record<string, unknown>,
-					actionPrompt: trigger.actionPrompt,
+					actionPrompt,
 					targetActorId,
 					enabled: trigger.enabled,
 					createdBy,
@@ -586,7 +601,7 @@ export async function bootstrapDefaultAgents(
 				continue
 			}
 
-			await db.insert(events).values({
+			await recordEvent(db, {
 				workspaceId,
 				actorId: createdBy,
 				action: 'created',
@@ -647,7 +662,7 @@ export async function bootstrapDefaultAgents(
 				continue
 			}
 
-			await db.insert(events).values({
+			await recordEvent(db, {
 				workspaceId,
 				actorId: chiefId ?? createdBy,
 				action: 'created',
@@ -673,7 +688,7 @@ export async function bootstrapDefaultAgents(
 	// time Chief of Staff is created for this workspace (chiefIsNew), so
 	// idempotent re-runs of this function (e.g. a template backfill on an
 	// existing workspace) never re-kick the welcome session.
-	if (chiefIsNew && chiefId && sessionManager) {
+	if (chiefIsNew && chiefId && sessionManager && !shouldSkipOnboardingKickoff()) {
 		const [owner] = await db
 			.select({ name: actors.name, email: actors.email })
 			.from(actors)
@@ -846,7 +861,7 @@ export async function provisionWorkspace(params: {
 	// kickoff — fire the welcome session here instead. It can't be driven by an
 	// `actor.created` event trigger either: the owner's actor row predates every
 	// trigger in this workspace.
-	if (chiefOfStaffId && sessionManager) {
+	if (chiefOfStaffId && sessionManager && !shouldSkipOnboardingKickoff()) {
 		const [owner] = await db
 			.select({ name: actors.name, email: actors.email })
 			.from(actors)

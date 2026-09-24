@@ -14,7 +14,6 @@ import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { CommandPaletteProvider } from '@/lib/command-palette-context'
-import { deriveConversationTitle } from '@/lib/conversation-title'
 import { setFaroUser } from '@/lib/faro'
 import { isHiddenRouteId, migrateLegacySidebarState, viewKeyFromRouteId } from '@/lib/nav-view-keys'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
@@ -26,6 +25,7 @@ import {
 	setCapturingEnabled,
 } from '@/lib/posthog'
 import { WorkspaceContext, useWorkspace } from '@/lib/workspace-context'
+import { deriveConversationTitle } from '@maskin/shared'
 import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect, useMemo, useRef } from 'react'
 
@@ -101,7 +101,7 @@ function WorkspaceLayout() {
 								<SidebarProvider
 									open={open}
 									onOpenChange={setOpen}
-									className="h-screen !min-h-0"
+									className="h-dvh !min-h-0"
 									data-shell="v2"
 								>
 									<AppSidebar />

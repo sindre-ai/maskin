@@ -132,6 +132,12 @@ export const relationships = pgTable(
 		targetType: text('target_type').notNull(),
 		targetId: uuid('target_id').notNull(),
 		type: text('type').notNull(),
+		// S2 · edge-level context the writer hook persists at CREATE time.
+		// Currently the spawning `messageId` on a `conversation → session`
+		// `spawned` edge (surfaces the deep-link into a chat at the exact
+		// message). Nullable and jsonb so future edge types can add their own
+		// shape without another migration. Added in migration 0074.
+		metadata: jsonb('metadata'),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -139,9 +145,14 @@ export const relationships = pgTable(
 	},
 	(t) => [
 		unique('relationships_src_tgt_type_uniq').on(t.sourceId, t.targetId, t.type),
+		// S2 · widened to admit `conversation` and `session` endpoint kinds so
+		// the writer hook can persist automatic provenance edges
+		// (conversation→session `spawned`, session→object|file `produced_by`).
+		// Applied live via migration 0074; hook itself gated on
+		// `graph-provenance-writes` — schema tolerance is safe with zero writes.
 		check(
 			'relationships_source_target_type_kind',
-			sql`${t.sourceType} IN ('object', 'file') AND ${t.targetType} IN ('object', 'file')`,
+			sql`${t.sourceType} IN ('object', 'file', 'conversation', 'session') AND ${t.targetType} IN ('object', 'file', 'conversation', 'session')`,
 		),
 	],
 )
@@ -349,6 +360,14 @@ export const sessions = pgTable(
 		completedAt: timestamp('completed_at', { withTimezone: true }),
 		timeoutAt: timestamp('timeout_at', { withTimezone: true }),
 		totalCostUsd: numeric('total_cost_usd', { precision: 12, scale: 6 }),
+		// OpenRouter model id that actually ran this session (e.g.
+		// `deepseek/deepseek-v4-flash`). Stamped at spawn on the maskin_plan
+		// route from `MASKIN_FALLBACK_MODEL`; null on every other route so
+		// `claude_oauth` and BYO paths keep pricing off Claude Code's own
+		// `total_cost_usd`. Load-bearing for the follow-on local cost resolver,
+		// which prices maskin_plan sessions from OpenRouter's pricing table
+		// keyed on this value.
+		modelName: text('model_name'),
 		inputTokens: integer('input_tokens'),
 		outputTokens: integer('output_tokens'),
 		cacheCreationInputTokens: integer('cache_creation_input_tokens'),
@@ -683,6 +702,9 @@ export const imports = pgTable(
 		processedRows: integer('processed_rows').notNull().default(0),
 		successCount: integer('success_count').notNull().default(0),
 		errorCount: integer('error_count').notNull().default(0),
+		// Rows that matched an existing object via the mapping's `matchOn` key
+		skippedCount: integer('skipped_count').notNull().default(0),
+		updatedCount: integer('updated_count').notNull().default(0),
 		mapping: jsonb('mapping'),
 		preview: jsonb('preview'),
 		errors: jsonb('errors'),
@@ -807,6 +829,42 @@ export const readState = pgTable(
 
 export type ReadState = typeof readState.$inferSelect
 export type NewReadState = typeof readState.$inferInsert
+
+// ── Star State ────────────────────────────────────────────────────────────
+//
+// Per-actor "starred" flag on a polymorphic (entity_type, entity_id) target.
+// Mirrors `read_state` in shape and reason: server-persisted per-caller state
+// so a toggle from one device shows up on the caller's other devices without
+// a client-only localStorage cache. Presence of the row means starred; unstar
+// is a row DELETE (see services/star-state.ts), no soft-flag or unstarred_at
+// column — boolean semantics match the payload's `is_starred_by_me` scalar.
+//
+// `entity_type = 'object'` at ship; `comment` / `session` are deliberately
+// left open in the schema so the same table backs future starrable entities
+// without a migration, but no code path writes them yet.
+
+export const starState = pgTable(
+	'star_state',
+	{
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		entityType: text('entity_type').notNull(),
+		entityId: uuid('entity_id').notNull(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		starredAt: timestamp('starred_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.actorId, t.entityType, t.entityId] }),
+		index('star_state_lookup_idx').on(t.workspaceId, t.actorId),
+		index('star_state_reverse_idx').on(t.entityType, t.entityId),
+	],
+)
+
+export type StarState = typeof starState.$inferSelect
+export type NewStarState = typeof starState.$inferInsert
 
 // ── Notifications ─────────────────────────────────────────────────────────
 
@@ -1407,4 +1465,99 @@ export const orphanThreadDetections = pgTable(
 )
 
 export type OrphanThreadDetection = typeof orphanThreadDetections.$inferSelect
+
+// ── VAT / awaiting_vies ─────────────────────────────────────────────────────
+//
+// Rows written by the Stripe webhook (Task 2) when a Checkout Session
+// completes with a `tax_id.verification.status='pending'` — fulfilment is
+// HELD until Stripe fires `customer.tax_id.updated(verified)` and the row is
+// deleted, at which point credits/subscription land. Row lifecycle:
+//   • verified   → delete + fulfil
+//   • unverified → delete + refund (+ cancel subscription)
+//   • 24h timeout → delete + refund (+ cancel subscription)
+//
+// Architect fold-in: intentionally NO `status` column. Row existence IS the
+// held state and deletion IS the resolved state — adding a status column
+// would double-track a state already carried by row lifecycle and introduce
+// a "resolved but not deleted" failure mode.
+//
+// Researcher fold-in: `reminder_sent_at` is NOT a status column. It's a
+// one-way idempotency marker for the T+2h "still verifying" reminder email
+// (Task 3's sweep) that fires WHILE the row is still open. A row can be
+// reminder_sent_at IS NOT NULL and still open. Row deletion still means
+// resolved. Nullable rather than DEFAULT — the marker is genuinely absent
+// on a fresh row.
+export const awaitingVies = pgTable(
+	'awaiting_vies',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		// Stripe Checkout Session id — natural idempotency key for webhook
+		// replays of the same session.completed event.
+		sessionId: text('session_id').notNull().unique(),
+		// Stripe Customer id — Task 2 looks up rows by this on the tax_id.*
+		// event chain.
+		customerId: text('customer_id').notNull(),
+		// 'topup' | 'subscription' — controls the void path shape (refund on
+		// topup vs cancel-subscription + refund-first-invoice on subscription).
+		kind: text('kind').notNull(),
+		paymentIntentId: text('payment_intent_id'),
+		subscriptionId: text('subscription_id'),
+		currency: text('currency').notNull(),
+		amountTotal: integer('amount_total').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		reminderSentAt: timestamp('reminder_sent_at', { withTimezone: true }),
+		// FK to workspaces so a workspace deletion doesn't leave orphaned held
+		// rows behind — mirrors workspaceCreditLedger's shape.
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+	},
+	(t) => [
+		check('awaiting_vies_kind_check', sql`${t.kind} IN ('topup','subscription')`),
+		index('awaiting_vies_customer_idx').on(t.customerId),
+		index('awaiting_vies_created_at_idx').on(t.createdAt),
+	],
+)
+
+export type AwaitingViesRow = typeof awaitingVies.$inferSelect
 export type NewOrphanThreadDetection = typeof orphanThreadDetections.$inferInsert
+
+// ── Google Meet — create_space idempotency ─────────────────────────────────
+// Maskin-side dedup ledger for `google_meet__create_space`. Meet's spaces.create
+// endpoint does NOT accept a client-side idempotency key (unlike GCal's
+// events.insert, which does via conferenceData.createRequest.requestId — the
+// create_meet_backed_event path uses Google-native replay and does not touch
+// this table). So `create_space` two identical calls (same workspace, same
+// idempotency_key) would otherwise provision two spaces and burn Meet quota.
+//
+// Default key derives to sha256(actor_id + purpose_normalised + YYYY-MM-DD)
+// so an agent that retries within a day gets the cached space back; callers
+// that need tighter or looser dedupe pass their own key.
+//
+// Composite unique index (workspace_id, idempotency_key) is what makes the
+// replay contract hold — a second insert with the same key races, loses on
+// the constraint, and the tool reads back the winner's space_name.
+export const googleMeetSpaceIdempotency = pgTable(
+	'google_meet_space_idempotency',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		idempotencyKey: text('idempotency_key').notNull(),
+		spaceName: text('space_name').notNull(),
+		meetingCode: text('meeting_code').notNull(),
+		meetingUri: text('meeting_uri').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('google_meet_space_idempotency_workspace_key_uniq').on(
+			t.workspaceId,
+			t.idempotencyKey,
+		),
+		index('google_meet_space_idempotency_created_at_idx').on(t.createdAt),
+	],
+)
+
+export type GoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferSelect
+export type NewGoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferInsert

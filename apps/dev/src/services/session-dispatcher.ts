@@ -1,6 +1,7 @@
 import type { Database } from '@maskin/db'
-import { events, agentServers, sessions } from '@maskin/db/schema'
+import { agentServers, sessions } from '@maskin/db/schema'
 import { and, eq, inArray, sql } from 'drizzle-orm'
+import { recordEvent } from '../lib/events/record-event'
 import { LlmCredentialsUnavailableError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
@@ -408,7 +409,7 @@ export class SessionDispatcher {
 		// and live-activity surfaces (e.g. the chat typing indicator) never
 		// refetch to pick it up.
 		if (updated && session) {
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				action: 'session_started',

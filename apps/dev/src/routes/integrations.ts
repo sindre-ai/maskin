@@ -2,13 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import {
-	events,
-	actors,
-	integrations,
-	webhookDeliveries,
-	workspaceMembers,
-} from '@maskin/db/schema'
+import { actors, integrations, webhookDeliveries, workspaceMembers } from '@maskin/db/schema'
 import { deregisterLinkedInMcpInstancesForIntegration } from '@maskin/mcp/linkedin'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { skjaldTranscriptionCompletedPayloadSchema } from '@maskin/shared'
@@ -20,6 +14,7 @@ import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
 import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
@@ -40,6 +35,7 @@ import {
 	persistRecoveredInstallationId,
 	propagateRecoveredInstallationId,
 } from '../lib/integrations/providers/github/installation-recovery'
+import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
 import { upsertSkjaldMeeting } from '../lib/integrations/providers/skjald/meeting-sync'
 import {
 	dispatchAccountLinkAction,
@@ -324,7 +320,7 @@ async function bindGithubInstallation(opts: {
 
 	if (!row) return null
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: existing ? 'updated' : 'created',
@@ -720,7 +716,7 @@ app.openapi(selectInstallationRoute, (async (c) => {
 	// if a prior attempt already got this far.
 	if (row.id !== pending.row.id) {
 		await db.delete(integrations).where(eq(integrations.id, pending.row.id))
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId,
 			action: 'deleted',
@@ -879,7 +875,7 @@ app.openapi(connectRoute, (async (c) => {
 			return c.json(createApiError('INTERNAL_ERROR', 'Failed to activate integration'), 500)
 		}
 
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId,
 			action: 'created',
@@ -968,7 +964,7 @@ app.openapi(connectRoute, (async (c) => {
 			return c.json(createApiError('INTERNAL_ERROR', 'Failed to create integration'), 500)
 		}
 
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId,
 			action: 'created',
@@ -1277,7 +1273,7 @@ app.openapi(callbackRoute, (async (c) => {
 		// of showing stale state until a manual refresh. The candidate list itself
 		// is deliberately not in `data` — only its size, since the payload is
 		// mirrored into the realtime feed.
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId: stateData.workspaceId,
 			actorId: stateData.actorId,
 			action: 'updated',
@@ -1393,9 +1389,34 @@ app.openapi(callbackRoute, (async (c) => {
 		}
 	}
 
+	// google-meet only: resolve the caller's Google People id and persist it on
+	// the row before activation. Task 3's Workspace Events subscription uses this
+	// value to build `targetResource=//cloudidentity.googleapis.com/users/{peopleId}`,
+	// and `webhookPreHandler` reads it to map deliveries back to `external_id`.
+	// A missing People id fails the connect (redirect with `people_id_fetch_failed`)
+	// rather than activating a row Task 3 would immediately mark broken —
+	// stored `config.meet.peopleId` is a hard postcondition of the S12 smoke.
+	let meetPeopleId: string | undefined
+	if (providerName === 'google-meet' && credentials.accessToken) {
+		try {
+			meetPeopleId = await resolveMeetPeopleId(credentials.accessToken)
+		} catch (err) {
+			logger.error('Failed to resolve Google Meet People id at OAuth callback', {
+				workspaceId: stateData.workspaceId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+			clearOAuthNonceCookie(c, providerName)
+			return c.redirect(
+				`${frontendUrl}/${stateData.workspaceId}/settings/integrations?error=people_id_fetch_failed`,
+			)
+		}
+	}
+
 	const encryptedCredentials = encrypt(JSON.stringify(credentials))
 	const activeConfig: IntegrationConfig = { system_actor_id: systemActor.id }
 	if (ownerLogin) activeConfig.owner_login = ownerLogin
+	if (meetPeopleId) activeConfig.meet = { peopleId: meetPeopleId }
 
 	// Re-connecting an installation whose externalId is stable across connects
 	// (GitHub installation ids, Slack team ids via resolveExternalId): refresh
@@ -1482,7 +1503,7 @@ app.openapi(callbackRoute, (async (c) => {
 	}
 
 	// Log event
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId: stateData.workspaceId,
 		actorId: stateData.actorId,
 		action: 'created',
@@ -1571,7 +1592,7 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 			.set({ status: 'revoked', updatedAt: new Date() })
 			.where(eq(integrations.id, id))
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId: existing.workspaceId,
 			actorId,
 			action: 'updated',
@@ -1683,7 +1704,7 @@ app.openapi(completeIntegrationRoute, (async (c) => {
 			.set({ credentials: encrypt(secret), status: 'active', updatedAt: new Date() })
 			.where(eq(integrations.id, id))
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId: existing.workspaceId,
 			actorId,
 			action: 'updated',
@@ -2640,6 +2661,27 @@ webhookApp.post('/:provider', async (c) => {
 	if (!normalized) {
 		// Event type we don't handle — acknowledge it
 		return c.json({ ok: true, skipped: true })
+	}
+
+	// Some providers (Google Meet) deliver payloads keyed on an indirect
+	// identifier (People-id via Workspace Events) rather than the row's
+	// external_id. The resolveInstallationId hook is the join that swaps the
+	// placeholder for the real external_id before the integrations lookup.
+	if (resolved.resolveInstallationId) {
+		const resolvedId = await resolved.resolveInstallationId({
+			db,
+			provider: providerName,
+			normalized,
+			payload,
+			headers,
+		})
+		if (!resolvedId) {
+			logger.info(`Meet-shape provider ${providerName} had no matching row for delivered id`, {
+				installationId: normalized.installationId,
+			})
+			return c.json({ ok: true, skipped: true })
+		}
+		normalized.installationId = resolvedId
 	}
 
 	// Find ALL matching active integrations. A single external install (e.g. one

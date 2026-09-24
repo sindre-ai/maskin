@@ -288,6 +288,21 @@ describe('MarkdownContent', () => {
 		expect(screen.getByText('tail')).toBeInTheDocument()
 	})
 
+	// A wide markdown table (paste of a big table into chat) used to push the whole
+	// chat window sideways because `overflow-x-auto` on the <table> element itself
+	// doesn't clamp — the table's own intrinsic width from the table layout
+	// algorithm can still exceed its containing block. The fix wraps every
+	// rendered table in a block-level scroll container that DOES obey max-w-full.
+	it('wraps a markdown table in a horizontal scroll container', () => {
+		const table = '| a | b |\n| - | - |\n| 1 | 2 |'
+		const { container } = render(<MarkdownContent content={table} />)
+		const tableEl = container.querySelector('table')
+		expect(tableEl).not.toBeNull()
+		const wrapper = tableEl?.parentElement
+		expect(wrapper?.className).toMatch(/overflow-x-auto/)
+		expect(wrapper?.className).toMatch(/max-w-full/)
+	})
+
 	it('renders @mentions as chips inside formatted markdown', () => {
 		const actors = [
 			{

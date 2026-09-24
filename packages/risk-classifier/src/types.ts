@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 export const SKILL_VERSION = '0.1.0'
 
-export type RiskBand = 'auto' | 'agent_recommends_human' | 'two_human_required'
+export type RiskBand = 'auto' | 'agent_recommends_human' | 'human_review_required'
 
 export type SignalKind =
 	| 'diff_loc'

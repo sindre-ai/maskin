@@ -18,8 +18,26 @@ vi.mock('@/hooks/use-sessions', () => ({
 	useCreateSession: () => ({ mutate: createSessionMutate, isPending: createSessionIsPending }),
 }))
 
+let mockProducedObjects: Array<{
+	entityId: string
+	entityType: string
+	title: string | null
+	actions: string[]
+}> = []
+let mockProducedFiles: Array<{
+	fileId: string
+	name: string | null
+	mimeType: string | null
+	sizeBytes: number | null
+}> = []
+
 vi.mock('@/hooks/use-events', () => ({
-	useSessionAffectedObjects: () => ({ affectedObjects: [], isLoading: false }),
+	useSessionAffectedObjects: () => ({
+		affectedObjects: mockProducedObjects,
+		producedObjects: mockProducedObjects,
+		producedFiles: mockProducedFiles,
+		isLoading: false,
+	}),
 }))
 
 vi.mock('@tanstack/react-router', () => ({
@@ -52,6 +70,8 @@ function renderPanel(session: ReturnType<typeof buildSessionResponse>) {
 beforeEach(() => {
 	createSessionMutate.mockReset()
 	createSessionIsPending = false
+	mockProducedObjects = []
+	mockProducedFiles = []
 	vi.spyOn(console, 'info').mockImplementation(() => {})
 })
 
@@ -476,6 +496,25 @@ describe('SessionDetailPanel failure display', () => {
 	})
 })
 
+describe('SessionDetailPanel status badge', () => {
+	// The pill on the agent page (agent-sessions-section) buckets queued /
+	// pending / starting / snapshotting under a single 'Running' label. This
+	// sheet is the "session log sidebar" surface — its badge must show the same
+	// label for the same session, or the two surfaces disagree (bug ee2a0498).
+	it.each(['running', 'starting', 'pending', 'queued', 'snapshotting'])(
+		'labels %s status as Running',
+		(status) => {
+			renderPanel(buildSessionResponse({ status }))
+			expect(screen.getByText('Running')).toBeInTheDocument()
+		},
+	)
+
+	it('labels waiting_for_input as Waiting', () => {
+		renderPanel(buildSessionResponse({ status: 'waiting_for_input' }))
+		expect(screen.getByText('Waiting')).toBeInTheDocument()
+	})
+})
+
 describe('SessionDetailPanel Restart button', () => {
 	it.each(['failed', 'timeout', 'completed'])('renders Restart on terminal status %s', (status) => {
 		renderPanel(buildSessionResponse({ status }))
@@ -535,5 +574,48 @@ describe('SessionDetailPanel Restart button', () => {
 
 		await user.click(button)
 		expect(createSessionMutate).not.toHaveBeenCalled()
+	})
+})
+
+// S2 · bet 34706e2f, task 5 — the Session Sheet's Objects affected section
+// is renamed to Produced, and grows a Files sub-group that hides entirely when
+// its count is zero. `<h5>Files · 0</h5>` never appears on a text-only session.
+describe('SessionDetailPanel Produced section', () => {
+	it('renders under the Produced heading (not "Objects affected")', () => {
+		renderPanel(buildSessionResponse({ status: 'completed' }))
+		expect(screen.getByRole('heading', { level: 4, name: /Produced/i })).toBeInTheDocument()
+		expect(screen.queryByText('Objects affected')).not.toBeInTheDocument()
+	})
+
+	it('shows the Objects sub-group when produced objects exist', () => {
+		mockProducedObjects = [
+			{ entityId: 'obj-a', entityType: 'bet', title: 'Bet A', actions: ['created'] },
+		]
+		renderPanel(buildSessionResponse({ status: 'completed' }))
+		expect(screen.getByText('Objects · 1')).toBeInTheDocument()
+	})
+
+	it('renders the Files sub-group when files count > 0', () => {
+		mockProducedFiles = [
+			{ fileId: 'f-1', name: 'plan.md', mimeType: 'text/markdown', sizeBytes: 1234 },
+		]
+		renderPanel(buildSessionResponse({ status: 'completed' }))
+		expect(screen.getByText('Files · 1')).toBeInTheDocument()
+		expect(screen.getByText('plan.md')).toBeInTheDocument()
+	})
+
+	it('hides the Files sub-group entirely when files count = 0', () => {
+		mockProducedObjects = [
+			{ entityId: 'obj-b', entityType: 'task', title: 'Task B', actions: ['created'] },
+		]
+		renderPanel(buildSessionResponse({ status: 'completed' }))
+		expect(screen.queryByText(/Files · 0/)).not.toBeInTheDocument()
+		// Sanity — the Objects sub-group still renders alone.
+		expect(screen.getByText('Objects · 1')).toBeInTheDocument()
+	})
+
+	it('shows a "Nothing produced yet" fallback when both counts are 0', () => {
+		renderPanel(buildSessionResponse({ status: 'completed' }))
+		expect(screen.getByText('Nothing produced yet')).toBeInTheDocument()
 	})
 })

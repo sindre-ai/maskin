@@ -29,6 +29,7 @@ const ALL_TOOL_NAMES = [
 	'delete_object',
 	'list_objects',
 	'search_objects',
+	'create_relationship',
 	'list_relationships',
 	'traverse_graph',
 	'delete_relationship',
@@ -397,6 +398,48 @@ describe('traverse_graph schema', () => {
 
 	it('rejects max_nodes above the tool-side ceiling', () => {
 		expect(() => schema.parse({ object_id: uuid, max_nodes: 1001 })).toThrow()
+	})
+})
+
+describe('create_relationship schema', () => {
+	const schema = tools.create_relationship.inputSchema
+
+	it('accepts a valid pair with a type', () => {
+		const result = schema.parse({
+			workspace_id: uuid,
+			source_id: uuid,
+			target_id: uuid2,
+			type: 'attached',
+		})
+		expect(result.source_id).toBe(uuid)
+		expect(result.target_id).toBe(uuid2)
+		expect(result.type).toBe('attached')
+	})
+
+	it('rejects non-uuid source_id', () => {
+		expect(() => schema.parse({ source_id: 'nope', target_id: uuid2, type: 'attached' })).toThrow()
+	})
+
+	it('rejects non-uuid target_id', () => {
+		expect(() => schema.parse({ source_id: uuid, target_id: 'nope', type: 'attached' })).toThrow()
+	})
+
+	it('rejects empty type', () => {
+		expect(() => schema.parse({ source_id: uuid, target_id: uuid2, type: '' })).toThrow()
+	})
+
+	it('rejects extra source_type / target_type — server derives kinds internally', () => {
+		// The schema is strict enough that unknown fields are stripped but not
+		// rejected; the tool handler ignores any caller-supplied labels regardless.
+		const result = schema.parse({
+			source_id: uuid,
+			target_id: uuid2,
+			type: 'attached',
+			source_type: 'object',
+			target_type: 'file',
+		}) as Record<string, unknown>
+		expect(result.source_type).toBeUndefined()
+		expect(result.target_type).toBeUndefined()
 	})
 })
 

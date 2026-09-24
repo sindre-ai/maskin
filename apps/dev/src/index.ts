@@ -9,7 +9,9 @@ import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
+import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
+import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import {
 	type DevBootstrapResult,
 	maybeBootstrapDev,
@@ -17,11 +19,14 @@ import {
 } from './lib/dev-bootstrap'
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
 import { logger } from './lib/logger'
+import { getStripeClient } from './lib/stripe'
 import { AgentStorageManager } from './services/agent-storage'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
+import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
+import { MeetWatchRenewer } from './services/meet-watch-renewer'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
@@ -97,6 +102,24 @@ try {
 	)
 }
 
+// VAT bet Task 1 (Delta 1b): log a warning when the live Stripe
+// maskin_credits_growth / maskin_credits_scale Price amounts drift from the
+// USD-minor thresholds pinned in credit-billing.ts. Fire-and-forget so a
+// Stripe outage or a deployment without STRIPE_SECRET_KEY at boot does not
+// take the API down over an application-level bonus classification.
+try {
+	const stripe = getStripeClient()
+	verifyVolumeBonusThresholds(stripe).catch((err) => {
+		logger.warn('verifyVolumeBonusThresholds failed', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+	})
+} catch (err) {
+	logger.info('Skipping volume-bonus threshold verification — Stripe not configured', {
+		error: err instanceof Error ? err.message : String(err),
+	})
+}
+
 const agentStorage = new AgentStorageManager(storageProvider, db)
 
 const runtimeTelemetry = new RuntimeTelemetry({
@@ -133,6 +156,14 @@ const gmailWatchRenewer = new GmailWatchRenewer(db)
 gmailWatchRenewer.start()
 logger.info('Gmail watch renewer started')
 
+const meetWatchRenewer = new MeetWatchRenewer(db)
+meetWatchRenewer.start()
+logger.info('Meet watch renewer started')
+
+const meetTranscriptReconciler = new MeetTranscriptReconciler(db, storageProvider)
+meetTranscriptReconciler.start()
+logger.info('Meet transcript reconciler started')
+
 const webhookDeliveriesCleaner = new WebhookDeliveriesCleaner(db)
 webhookDeliveriesCleaner.start()
 logger.info('Webhook deliveries cleaner started')
@@ -148,6 +179,14 @@ logger.info('Webhook deliveries reconciler started')
 const purgeIdempotencyJob = new PurgeIdempotencyJob(db)
 purgeIdempotencyJob.start()
 logger.info('Purge idempotency job started')
+
+// VIES-hold scheduler: 15-min cron running T+2h reminder + T+24h timeout
+// sweeps for the VAT-correct-checkout bet (a9e19ca4). Both sweeps early-return
+// when no rows are eligible, so this is a no-op until the webhook starts
+// writing rows to the `awaiting_vies` table.
+const viesSchedulerJob = new ViesSchedulerJob(db)
+viesSchedulerJob.start()
+logger.info('VIES scheduler job started')
 
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()

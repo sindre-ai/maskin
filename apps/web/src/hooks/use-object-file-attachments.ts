@@ -1,5 +1,6 @@
 import { useCreateFile } from '@/hooks/use-files'
 import { useCreateRelationship } from '@/hooks/use-relationships'
+import type { RelationshipCreatedSource } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import { readFileAsBase64 } from '@/lib/file-utils'
 import { useCallback, useState } from 'react'
@@ -12,7 +13,9 @@ export const ATTACHED_REL_TYPE = 'attached'
  * Upload files and attach them to an object in one step — create the `files`
  * row, then the `attached` edge back to the object. Shared by the properties
  * drawer's FILES section and the Related tab's "+ Upload a file" affordance so
- * both write the same pair of records.
+ * both write the same pair of records. Callers may pass `source` on `upload()`
+ * to tag the emitted `relationship_created` event for PostHog attribution
+ * (D11 uses this to isolate CTA-driven uptake from other attach paths).
  */
 export function useObjectFileAttachments({
 	workspaceId,
@@ -28,7 +31,7 @@ export function useObjectFileAttachments({
 	const [isUploading, setIsUploading] = useState(false)
 
 	const upload = useCallback(
-		async (incoming: File[]) => {
+		async (incoming: File[], options?: { source?: RelationshipCreatedSource }) => {
 			setIsUploading(true)
 			const failed: string[] = []
 			try {
@@ -52,6 +55,7 @@ export function useObjectFileAttachments({
 							target_type: 'file',
 							target_id: created.id,
 							type: ATTACHED_REL_TYPE,
+							source: options?.source,
 						})
 						toast.success(`Uploaded ${file.name}`)
 					} catch {

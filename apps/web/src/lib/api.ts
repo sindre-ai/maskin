@@ -272,6 +272,13 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		// Server-persisted star toggles (D5). Idempotent on both sides, no body,
+		// actor derived from the API key. Response carries the resulting scalar
+		// so an optimistic update can drop stale state on mismatch.
+		star: (id: string, workspaceId: string) =>
+			request<StarToggleResponse>(`/objects/${id}/star`, { method: 'POST', workspaceId }),
+		unstar: (id: string, workspaceId: string) =>
+			request<StarToggleResponse>(`/objects/${id}/star`, { method: 'DELETE', workspaceId }),
 	},
 
 	auth: {
@@ -1090,6 +1097,14 @@ export interface ObjectResponse {
 	metadata: SafeMetadata | null
 	driver: string | null
 	activeSessionId: string | null
+	// D2 · Working-ring predicate. Lifecycle state of the session pointed at by
+	// `activeSessionId`, hydrated by a bounded batch lookup on list/detail so
+	// the row can gate the ring on 'running' only — `activeSessionId` stays
+	// non-null through pending/starting/paused, which would flicker the ring.
+	// `null` when there is no active session, `undefined` on legacy list
+	// surfaces (e.g. board) that don't hydrate it — clients read both as "no
+	// ring".
+	active_session_state?: string | null
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
@@ -1097,6 +1112,16 @@ export interface ObjectResponse {
 	is_subscribed?: boolean
 	unread_count?: number
 	subscriber_count?: number
+	// Per-viewer starred flag. The list handler + detail + graph hydrate it via
+	// a single secondary query (see `star-state` service on the backend). Other
+	// endpoints — create / update / verify / undo-write / bulk — omit it, so
+	// the field is optional here and every reader defaults to `false`.
+	is_starred_by_me?: boolean
+}
+
+export interface StarToggleResponse {
+	is_starred_by_me: boolean
+	starred_at: string | null
 }
 
 export interface BoardObjectColumn {
@@ -1335,6 +1360,11 @@ export interface RelationshipResponse {
 	targetId: string
 	targetTitle?: string | null
 	type: string
+	// S2 · edge-level context the writer hook persists at CREATE time.
+	// A `conversation → session` `spawned` edge carries `{ messageId }` so
+	// the Origin block can build a deep-link into the chat at the exact
+	// spawning message.
+	metadata?: Record<string, unknown> | null
 	createdBy: string
 	createdAt: string | null
 }
@@ -1344,6 +1374,24 @@ export interface ObjectGraphResponse {
 	relationships: RelationshipResponse[]
 	connected_objects: ObjectResponse[]
 	events: EventResponse[]
+	/** Files this object references — attached via a relationship endpoint
+	 *  OR referenced from a comment's `data.attachmentFileIds`. The FE builds
+	 *  its `fileMap` off this so file endpoints render as first-class rows in
+	 *  the Related tab without a follow-up round-trip. Optional for
+	 *  back-compat with older test fixtures; the server always emits it. */
+	files?: GraphFileSummary[]
+}
+
+/** Compact file summary carried on `ObjectGraphResponse.files`. Not the same
+ *  shape as `FileListItem`/`FileDetail` — this omits storageKey/description
+ *  and adds the pre-minted viewer `url`. Matches the backend's
+ *  `fileSummarySchema`. */
+export interface GraphFileSummary {
+	id: string
+	name: string
+	mimeType: string
+	sizeBytes: number
+	url: string
 }
 
 export interface KnowledgeReferencesResponse {
@@ -1915,6 +1963,10 @@ export interface ImportResponse {
 	totalRows: number | null
 	processedRows: number
 	successCount: number
+	/** Rows that matched an existing object and were left alone */
+	skippedCount: number
+	/** Rows that matched an existing object and were merged into it */
+	updatedCount: number
 	errorCount: number
 	mapping: ImportMappingInput | null
 	preview: ImportPreview | null
@@ -1952,6 +2004,8 @@ export interface TypeMappingInput {
 	objectType: string
 	columns: ColumnMappingInput[]
 	defaultStatus?: string
+	/** `title` or `metadata.<field>` — rows matching an existing object on this field aren't re-created */
+	matchOn?: string
 }
 
 export interface RelationshipMappingInput {
@@ -1964,6 +2018,8 @@ export interface ImportMappingInput {
 	typeMappings: TypeMappingInput[]
 	relationships?: RelationshipMappingInput[]
 	csvOptions?: CsvOptions
+	/** What happens to a row that matches an existing object. Absent means `skip`. */
+	onMatch?: 'skip' | 'update'
 }
 
 export type MarketplaceItemType = 'actor' | 'trigger' | 'skill' | 'integration'

@@ -47,7 +47,7 @@ describe('classify', () => {
 			}),
 		)
 		expect(v.score).toBe(100)
-		expect(v.band).toBe('two_human_required')
+		expect(v.band).toBe('human_review_required')
 		expect(v.floors_applied.some((f) => f.kind === 'protected_path')).toBe(true)
 	})
 

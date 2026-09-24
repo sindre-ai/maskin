@@ -1,11 +1,12 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, triggers } from '@maskin/db/schema'
+import { objects, triggers } from '@maskin/db/schema'
 import { configSchemaForType, createTriggerSchema, updateTriggerSchema } from '@maskin/shared'
 import { Cron } from 'croner'
-import { and, asc, count, desc, eq } from 'drizzle-orm'
+import { and, asc, count, desc, eq, sql } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent, recordEvents } from '../lib/events/record-event'
 import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import {
 	errorSchema,
@@ -139,7 +140,7 @@ app.openapi(createTriggerRoute, async (c) => {
 
 		if (!row) throw new Error('Failed to create trigger')
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId,
 			action: 'created',
@@ -349,7 +350,7 @@ app.openapi(updateTriggerRoute, (async (c) => {
 		const [row] = await tx.update(triggers).set(updateData).where(eq(triggers.id, id)).returning()
 		if (!row) return null
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId: trigger.workspaceId,
 			actorId,
 			action: 'updated',
@@ -406,7 +407,40 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 	await db.transaction(async (tx) => {
 		await tx.delete(triggers).where(eq(triggers.id, id))
 
-		await tx.insert(events).values({
+		// Cascade-prune the deleted trigger's id from every loop's
+		// metadata.trigger_ids in the same workspace, in the same transaction.
+		// Without this, `get_loop` keeps rendering an orphaned step slot per
+		// deleted id (triggerName/agent all null) and the setup check reads
+		// "no agent assigned" for a trigger that no longer exists. Single
+		// atomic UPDATE — jsonb_agg over the array minus this id, coalesced
+		// to '[]' so an array of one becomes an empty array (not null).
+		const prunedLoops = await tx
+			.update(objects)
+			.set({
+				metadata: sql`jsonb_set(
+					${objects.metadata},
+					'{trigger_ids}',
+					COALESCE(
+						(
+							SELECT jsonb_agg(elem)
+							FROM jsonb_array_elements(${objects.metadata} -> 'trigger_ids') AS elem
+							WHERE elem <> to_jsonb(${id}::text)
+						),
+						'[]'::jsonb
+					)
+				)`,
+				updatedAt: new Date(),
+			})
+			.where(
+				and(
+					eq(objects.workspaceId, existing.workspaceId),
+					eq(objects.type, 'loop'),
+					sql`${objects.metadata} -> 'trigger_ids' ? ${id}`,
+				),
+			)
+			.returning({ id: objects.id })
+
+		await recordEvent(tx, {
 			workspaceId: existing.workspaceId,
 			actorId,
 			action: 'deleted',
@@ -414,6 +448,23 @@ app.openapi(deleteTriggerRoute, (async (c) => {
 			entityId: id,
 			data: { trigger_name: existing.name, type: existing.type },
 		})
+
+		// Emit an `updated` event per affected loop so the SSE feed invalidates
+		// the loop rows the cascade just changed (matches the every-mutation-
+		// gets-an-event convention in .claude/rules/known-pitfalls.md).
+		if (prunedLoops.length > 0) {
+			await recordEvents(
+				tx,
+				prunedLoops.map((loop) => ({
+					workspaceId: existing.workspaceId,
+					actorId,
+					action: 'updated' as const,
+					entityType: 'object' as const,
+					entityId: loop.id,
+					data: { cascade: 'trigger_deleted', trigger_id: id },
+				})),
+			)
+		}
 	})
 
 	return c.json({ deleted: true })

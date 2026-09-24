@@ -66,6 +66,23 @@ export const FLAGS = {
 	 */
 	SLACK_SETUP_UX_V2: 'slack-setup-ux-v2',
 	/**
+	 * Google Meet integration visibility on the Settings > Integrations page.
+	 * When off, the provider card + Connect button are filtered out of the
+	 * providers list rendered by `apps/web/src/routes/_authed/$workspaceId/settings/integrations.tsx`
+	 * — the customer sees no google-meet entry point at all. When on, google-meet
+	 * appears alongside every other OAuth provider (Gmail, GCal, Slack, ...) with
+	 * a standard Connect button. Per-actor behaviour gate, never shared state:
+	 * the backend still registers the provider unconditionally, so
+	 * `POST /api/integrations/google-meet/connect`
+	 * and the seven `google_meet__*` MCP tools stay reachable for tester actors
+	 * (add them to `FF_TESTER_ACTOR_IDS` + `google-meet-integration-ui` to
+	 * `FF_TESTER_FEATURES`). See parent bet [Google Meet MCP — cover the top
+	 * JTBDs across the workspace](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/947eee4d-9b30-49c7-968c-9376b4f5d80e)
+	 * for the rollout plan. Retire (drop the boundary + delete this entry) once
+	 * google-meet ships to every workspace.
+	 */
+	GOOGLE_MEET_INTEGRATION_UI: 'google-meet-integration-ui',
+	/**
 	 * Chat composer `+` menu collapse — replaces the three-item **Reference an
 	 * object** / **Mention an agent** / **Create an object** dropdown with a
 	 * single **Attach a file** row, and promotes the `/` and `@` primitives via
@@ -111,6 +128,23 @@ export const FLAGS = {
 	 * has been deleted.
 	 */
 	CHAT_SLASH_PICKER_V2: 'chat-slash-picker-v2',
+	/**
+	 * Gates the S2 writer hook on the parent bet
+	 * [Extend the graph: files, chats, and sessions as first-class nodes]
+	 * (https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/34706e2f-943f-49f5-a832-400a702952c2).
+	 * Off means the `recordEvent` helper never writes `session → object|file`
+	 * `produced_by` edges and `POST /api/sessions` never writes a
+	 * `conversation → session` `spawned` edge — the mutations still succeed
+	 * silently, no lineage rows land. On (per driver-actor) means both writes
+	 * fire whenever their preconditions hold (`X-Maskin-Session-Id` header
+	 * present on the mutation, or `conversationId` set at session CREATE).
+	 * Migration 0074 (which widens the CHECK constraint and adds the
+	 * `metadata` column) ships LIVE regardless of this flag: schema tolerance
+	 * with zero writes is safe. Retire once the hook is on for every workspace
+	 * and the Task 4 `<Origin>` block + Task 5 Chat Produced pane depend on
+	 * the edges being present.
+	 */
+	GRAPH_PROVENANCE_WRITES: 'graph-provenance-writes',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

@@ -204,14 +204,39 @@ describe('Conversation auto-titler Integration', () => {
 		expect(await readConversation()).toEqual({ title: 'My own title', titleAutoState: 'manual' })
 	})
 
-	it('releases the claim and keeps the title when the LLM call fails', async () => {
-		await postMessages(1)
+	it('falls back to a first-message-derived title on the initial pass when the LLM call fails', async () => {
+		await postMessages(1, 'the deploy pipeline keeps failing on migrate')
 		chat.mockRejectedValue(new Error('provider is down'))
 
 		await maybeGenerateConversationTitle({ db, workspaceId, conversationId })
 
-		// Back to 'none' so a later message retries, rather than being stuck.
-		expect(await readConversation()).toEqual({ title: 'New chat', titleAutoState: 'none' })
+		// A conversation that once said "New chat" now says what the first
+		// message was actually about — even though the LLM never answered.
+		// postMessages() appends the row index to `contentPrefix` (i.e. " 0").
+		expect(await readConversation()).toEqual({
+			title: 'the deploy pipeline keeps failing on migrate 0',
+			titleAutoState: 'initial',
+		})
+	})
+
+	it('releases the claim on a refinement LLM failure so the initial title stays', async () => {
+		// Initial pass first, so the row lands on titleAutoState='initial'.
+		await postMessages(1)
+		chat.mockResolvedValue(titleResponse('Initial title'))
+		await maybeGenerateConversationTitle({ db, workspaceId, conversationId })
+
+		// Now trip the refinement pass, but fail the LLM call.
+		await postMessages(4)
+		chat.mockReset()
+		chat.mockRejectedValue(new Error('provider is down'))
+		await maybeGenerateConversationTitle({ db, workspaceId, conversationId })
+
+		// Deterministic fallback is initial-only — refinement failure keeps the
+		// initial title and hands the claim back for another try later.
+		expect(await readConversation()).toEqual({
+			title: 'Initial title',
+			titleAutoState: 'initial',
+		})
 	})
 
 	it('keeps the claim when the title landed but the audit-log insert failed', async () => {
@@ -251,13 +276,18 @@ describe('Conversation auto-titler Integration', () => {
 		expect((await readConversation()).title).toBe('Deploy pipeline failing')
 	})
 
-	it('keeps the title when the model returns no tool call', async () => {
-		await postMessages(1)
+	it('falls back to the derived title when the model returns no tool call', async () => {
+		await postMessages(1, 'Why did trial signups dip last week? I want the product or the channel.')
 		chat.mockResolvedValue({ content: 'sure!', tool_calls: [], finish_reason: 'stop' })
 
 		await maybeGenerateConversationTitle({ db, workspaceId, conversationId })
 
-		expect(await readConversation()).toEqual({ title: 'New chat', titleAutoState: 'none' })
+		// A workspace routed at a model that just doesn't tool-call still gets
+		// a real title on message #1, matching what the frontend would derive.
+		expect(await readConversation()).toEqual({
+			title: 'Why did trial signups dip last week?',
+			titleAutoState: 'initial',
+		})
 	})
 
 	it('calls the provider exactly once when two messages race', async () => {
@@ -275,12 +305,20 @@ describe('Conversation auto-titler Integration', () => {
 		expect((await readConversation()).titleAutoState).toBe('initial')
 	})
 
-	it('leaves the placeholder alone when the workspace has no LLM credential', async () => {
-		await db.update(workspaces).set({ settings: {} }).where(eq(workspaces.id, workspaceId))
+	it('still writes a derived title when the workspace has no chat-callable credentials', async () => {
+		// The one shape a workspace can be in where resolveChatCredentials returns
+		// null: enterprise-entitled with no BYO chat credential (so the Maskin
+		// fallback route is deliberately refused). Titling used to leave those
+		// conversations on their "New chat" placeholder forever — this test pins
+		// the deterministic fallback that replaces it.
+		await db
+			.update(workspaces)
+			.set({ settings: {}, enterpriseGranted: true })
+			.where(eq(workspaces.id, workspaceId))
 		const previous = process.env.MASKIN_FALLBACK_OPENROUTER_KEY
 		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = ''
 		try {
-			await postMessages(1)
+			await postMessages(1, 'Draft the note to Acme about the retry window before Thursday')
 			await maybeGenerateConversationTitle({ db, workspaceId, conversationId })
 		} finally {
 			// Restoring '' rather than deleting when it was unset is equivalent for
@@ -289,6 +327,28 @@ describe('Conversation auto-titler Integration', () => {
 		}
 
 		expect(chat).not.toHaveBeenCalled()
-		expect(await readConversation()).toEqual({ title: 'New chat', titleAutoState: 'none' })
+		// postMessages() appends the row index to `contentPrefix` (i.e. " 0").
+		expect(await readConversation()).toEqual({
+			title: 'Draft the note to Acme about the retry window before Thursday 0',
+			titleAutoState: 'initial',
+		})
+	})
+
+	it('stamps the audit event with source=derived when the fallback fired', async () => {
+		await postMessages(1, 'the deploy pipeline keeps failing on migrate')
+		chat.mockRejectedValue(new Error('provider is down'))
+
+		await maybeGenerateConversationTitle({ db, workspaceId, conversationId })
+
+		const rows = await db
+			.select({ data: events.data })
+			.from(events)
+			.where(and(eq(events.entityType, 'conversation'), eq(events.entityId, conversationId)))
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.data).toMatchObject({
+			title: 'the deploy pipeline keeps failing on migrate 0',
+			auto: true,
+			source: 'derived',
+		})
 	})
 })

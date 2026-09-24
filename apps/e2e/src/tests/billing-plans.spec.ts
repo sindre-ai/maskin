@@ -91,7 +91,7 @@ test.describe('Billing plans — Settings UI', () => {
 			plan: 'pro',
 			status: 'past_due',
 			usd_cents_used: 1_900,
-			hard_cap_usd_cents: 2_000,
+			hard_cap_usd_cents: 4_900,
 			period_resets_in_ms: 5 * 24 * 60 * 60 * 1000,
 		})
 
@@ -126,7 +126,7 @@ test.describe('Billing plans — Settings UI', () => {
 				plan: 'pro',
 				status: 'active',
 				usd_cents_used: 2_500,
-				hard_cap_usd_cents: 2_000,
+				hard_cap_usd_cents: 4_900,
 				period_resets_in_ms: 20 * 24 * 60 * 60 * 1000,
 				credit_balance_cents: 4_000,
 			})
@@ -134,7 +134,7 @@ test.describe('Billing plans — Settings UI', () => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			await page.goto(`/${account.workspaceId}/settings/billing`)
 
-			await expect(page.getByText('Pro — $20/mo')).toBeVisible()
+			await expect(page.getByText('Pro — $49/mo')).toBeVisible()
 			await expect(page.getByText('$40.00 usage credits')).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Buy usage credits' })).toBeVisible()
 
@@ -157,7 +157,7 @@ test.describe('Billing plans — Settings UI', () => {
 				plan: 'pro',
 				status: 'active',
 				usd_cents_used: 600,
-				hard_cap_usd_cents: 2_000,
+				hard_cap_usd_cents: 4_900,
 				period_resets_in_ms: 20 * 24 * 60 * 60 * 1000,
 				credit_balance_cents: 0,
 			})
@@ -174,7 +174,7 @@ test.describe('Billing plans — Settings UI', () => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			await page.goto(`/${account.workspaceId}/settings/billing`)
 
-			await expect(page.getByText('Pro — $20/mo')).toBeVisible()
+			await expect(page.getByText('Pro — $49/mo')).toBeVisible()
 			// Reachable/tappable at every ship-gate viewport, including 375px —
 			// ResponsiveDialog becomes a bottom sheet below 768px for exactly this.
 			await page.getByRole('button', { name: 'Buy usage credits' }).click()

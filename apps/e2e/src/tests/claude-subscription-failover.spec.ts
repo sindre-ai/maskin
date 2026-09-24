@@ -51,7 +51,11 @@ async function getWorkspaceSettings(apiKey: string, workspaceId: string) {
  */
 async function reloadKeysPage(page: Page) {
 	await page.reload()
-	await expect(page.getByTestId('slot-primary')).toBeVisible({ timeout: 15_000 })
+	// 30s rather than 15s: the same reload on a loaded CI runner has been
+	// observed to take longer than that (shard 2 e2e wall-clock incidents,
+	// PR #1633's verify-e2e run), and the timeout is what turned into a
+	// flake-storm the shard couldn't recover from within its 15-min budget.
+	await expect(page.getByTestId('slot-primary')).toBeVisible({ timeout: 30_000 })
 }
 
 const seedPrimary = {

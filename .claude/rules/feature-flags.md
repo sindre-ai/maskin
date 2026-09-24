@@ -69,11 +69,15 @@ and that the directory dies with the flag.
 
 ## What NOT to flag
 
-Flags are for the **visual layer only**. Do not flag data-layer changes, API
-changes, or migrations — those must be safe for all users on their own, because
-a user with the flag off still hits the same backend. If a design change
-genuinely requires a breaking backend change, raise it rather than wrapping it
-in a flag.
+Flags gate **per-actor behaviour**, never shared state. A flag may gate any
+behaviour whose off-state is the already-shipped state — visual (a UI branch) or
+behavioural (an action the system takes for the flagging actor, read per
+driver-actor); SALES_REP_LINKEDIN_AUTOSEND is the precedent. A flag must
+**never** make a data-layer, API, or migration change safe: those change shared
+state for everyone, and an actor-scoped flag read at runtime cannot isolate the
+un-flagged population, so such changes must be safe for all users on their own.
+If a design needs a breaking backend change, raise it rather than wrapping it in
+a flag.
 
 ## Test-only override
 

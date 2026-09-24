@@ -34,6 +34,7 @@ import {
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
@@ -925,7 +926,7 @@ app.openapi(resetActorRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'reset',
@@ -1076,7 +1077,7 @@ app.openapi(deleteActorRoute, (async (c) => {
 		await tx.delete(actors).where(eq(actors.id, id))
 	})
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'deleted',
@@ -1207,7 +1208,7 @@ app.openapi(pauseAgentRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'agent_paused',
@@ -1354,7 +1355,7 @@ app.openapi(runAgentRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'agent_run',

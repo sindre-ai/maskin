@@ -2,7 +2,6 @@ import { OpenAPIHono } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
-	events,
 	actors,
 	webhookDeliveries,
 	workspaceCreditLedger,
@@ -42,11 +41,15 @@ function isAddonSubscription(
 	)
 }
 
+import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { creditedAmountUsdMinor } from '../lib/credit-billing'
+import { recordEvent } from '../lib/events/record-event'
 import { billingAfterCancel, settingsAfterPaidPlanActivation } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import {
 	CREDIT_TOPUP_METADATA_KIND,
 	LINKEDIN_ADDON_METADATA_KIND,
+	assertCreditsCurrency,
 	getStripeClient,
 	hardCapForPlan,
 	isHandledStripeEvent,
@@ -59,6 +62,7 @@ import {
 	verifyStripeWebhook,
 } from '../lib/stripe'
 import type { StripeEnv } from '../lib/stripe'
+import { applyVatEventIfHandled, resolveDisputeWorkspaceId } from '../lib/vat-webhook'
 
 const STRIPE_SYSTEM_ACTOR_NAME = 'Stripe'
 
@@ -111,7 +115,7 @@ app.post('/', async (c) => {
 		return c.json({ ok: true, skipped: true, reason: 'unhandled_event_type' })
 	}
 
-	const workspaceId = await resolveWorkspaceId(c.get('db'), event)
+	const workspaceId = await resolveWorkspaceId(c.get('db'), event, stripe)
 	if (!workspaceId) {
 		// We can't link this back to a workspace. Acknowledge so Stripe stops
 		// retrying - silent retries on orphaned events are noise, not a bug.
@@ -163,7 +167,7 @@ app.post('/', async (c) => {
 	}
 
 	try {
-		await applyEvent(db, workspaceId, event, stripeEnv)
+		await applyEvent(db, workspaceId, event, stripeEnv, stripe)
 		if (claimRowId) {
 			// Mark the claim processed so the reconciler doesn't release it after the
 			// 15m stale threshold. Without this, every successful Stripe delivery
@@ -217,9 +221,23 @@ app.post('/', async (c) => {
 	}
 })
 
-async function resolveWorkspaceId(db: Database, event: Stripe.Event): Promise<string | null> {
+async function resolveWorkspaceId(
+	db: Database,
+	event: Stripe.Event,
+	stripe: Stripe,
+): Promise<string | null> {
 	const direct = resolveWorkspaceIdFromEvent(event)
 	if (direct) return direct
+
+	// `charge.dispute.created` carries a Dispute object, which references
+	// a Charge on its `charge` field, not a Customer. The generic customer
+	// extractor below returns null on this shape, which — before this
+	// branch existed — sent every dispute out as `no_workspace` and Delta 5
+	// silently died. Resolve customer via a `charges.retrieve` before
+	// falling through. (CTO deliverability review fix #2, 10 Sep 2026.)
+	if (event.type === 'charge.dispute.created') {
+		return await resolveDisputeWorkspaceId(db, event, stripe)
+	}
 
 	// Fallback: look up by stripe_customer_id stored on settings.billing.
 	// Subscription / invoice events don't always carry metadata, but they
@@ -249,7 +267,21 @@ async function applyEvent(
 	workspaceId: string,
 	event: Stripe.Event,
 	stripeEnv: StripeEnv,
+	stripe: Stripe,
 ): Promise<void> {
+	// VAT-correct-checkout bet (Delta 2 + 2a + Delta 5). Dispatched BEFORE
+	// the workspace transaction below:
+	//   • `customer.tax_id.*` and `charge.dispute.created` mutate their own
+	//     tables (or nothing) — they do not need the `workspaces` row lock.
+	//   • `checkout.session.completed` may need the guard's short-circuit
+	//     branches (pending → UPSERT `awaiting_vies`, unverified → void)
+	//     to complete before falling through. `handled: false` means the
+	//     guard decided "fulfil now" and the existing switch below owns
+	//     the mutation. When the flag is off, the helper returns
+	//     `{ handled: false }` for `checkout.session.completed` unchanged.
+	const vatDispatch = await applyVatEventIfHandled(db, workspaceId, event, stripe)
+	if (vatDispatch.handled) return
+
 	// Concurrent webhook deliveries on the same workspace each do a
 	// SELECT -> mutate JSON -> UPDATE. Without serialization, a later writer
 	// that read before an earlier writer's UPDATE silently clobbers fields
@@ -291,6 +323,27 @@ async function applyEvent(
 		switch (event.type) {
 			case 'checkout.session.completed': {
 				const session = event.data.object as Stripe.Checkout.Session
+				// Delta 4: checkout_session_completed PostHog event fires on every
+				// session.completed, closing the checkout-regression blind spot for
+				// this and every future bet. `awaiting_vies` is always false at
+				// Task 1's scope — Task 2 (VAT webhook state machine) wires the
+				// held branch and flips this to true when the fresh customers.retrieve
+				// guard finds a pending tax_id. Distinct id = customer id when the
+				// session carries one, otherwise the session id itself so a
+				// customerless session (first-time buyer before Stripe mints one) still
+				// captures. Fire-and-forget; capturePosthogEvent never throws.
+				const posthogDistinctId =
+					(typeof session.customer === 'string' ? session.customer : session.customer?.id) ??
+					session.id
+				await capturePosthogEvent('checkout_session_completed', posthogDistinctId, {
+					session_id: session.id,
+					mode: session.mode ?? null,
+					amount_total: session.amount_total ?? null,
+					currency: session.currency ?? null,
+					// Task 1 scope: always false. Task 2 will re-fire this event from
+					// the held-branch write site with awaiting_vies=true.
+					awaiting_vies: false,
+				})
 				if (session.mode === 'payment' && session.metadata?.kind === CREDIT_TOPUP_METADATA_KIND) {
 					// Prepaid usage-credits top-up: money has already been captured
 					// by Stripe — credit the balance unconditionally (eligibility
@@ -299,16 +352,35 @@ async function applyEvent(
 					// touch plan/status/period_* — only `next.credit_balance_cents`
 					// changes here, so this intentionally never falls into the
 					// subscription-shaped mutation below.
-					const amountCents = Number(
+					//
+					// Currency contract (CTO pre-merge fix #4, 10 Sep 2026):
+					// `session.metadata.amount_usd_cents` is a legacy field name —
+					// its value is minor units in `session.currency` (USD/EUR/DKK),
+					// NOT USD minor. We normalize here so a DKK 349 payment credits
+					// ~$50 in USD cents into `credit_balance_cents` (which is USD
+					// cents), and apply the volume-bonus tier at ledger-write per
+					// Won criterion (e). For a USD top-up normalize is identity —
+					// the only new behaviour there is that a USD top-up ≥ $250 now
+					// gets the Growth/Scale bonus it always should have.
+					const amountMinor = Number(
 						session.metadata?.amount_usd_cents ?? session.amount_total ?? Number.NaN,
 					)
-					if (!Number.isFinite(amountCents) || amountCents <= 0) {
+					if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
 						logger.error('Credit top-up checkout.session.completed with invalid amount', {
 							sessionId: session.id,
 							workspaceId,
 						})
 						break
 					}
+					const rawCurrency = session.currency ?? 'usd'
+					const currency = assertCreditsCurrency(rawCurrency)
+					if (!currency) {
+						logger.warn(
+							'Credit top-up checkout.session.completed with unrecognized currency — falling back to usd (raw minor units credited unchanged)',
+							{ sessionId: session.id, workspaceId, currency: rawCurrency },
+						)
+					}
+					const amountCents = creditedAmountUsdMinor(amountMinor, currency ?? 'usd')
 					const currentBalance =
 						typeof current.credit_balance_cents === 'number' && current.credit_balance_cents > 0
 							? current.credit_balance_cents
@@ -369,7 +441,7 @@ async function applyEvent(
 					}
 
 					const systemActorId = await getOrCreateStripeSystemActor(tx, workspaceId)
-					await tx.insert(events).values({
+					await recordEvent(tx, {
 						workspaceId,
 						actorId: systemActorId,
 						action: 'workspace_credit_topup',
@@ -530,7 +602,7 @@ async function applyEvent(
 		// nothing plan-shaped changed (a top-up already wrote its own event).
 		if (planMutated) {
 			const systemActorId = await getOrCreateStripeSystemActor(tx, workspaceId)
-			await tx.insert(events).values({
+			await recordEvent(tx, {
 				workspaceId,
 				actorId: systemActorId,
 				action: 'workspace_billing_updated',

@@ -9,7 +9,6 @@ import { createGzip } from 'node:zlib'
 const execFileAsync = promisify(execFileCb)
 import type { Database } from '@maskin/db'
 import {
-	events,
 	actors,
 	agentServers,
 	conversationPendingTurns,
@@ -56,6 +55,7 @@ import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { isEnterprise } from '../lib/enterprise'
+import { recordEvent, writeSpawnedEdge } from '../lib/events/record-event'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { buildAgentGitIdentity } from '../lib/git-identity'
 import {
@@ -81,7 +81,6 @@ import {
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
-	FALLBACK_TOKENS_PER_USD_CENT,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
 	LlmCredentialsUnavailableError,
@@ -115,6 +114,7 @@ import {
 	extractSessionUsage,
 	parseUsageFromLogChunks,
 	readSessionStdoutTail,
+	resolveSessionCostUsd,
 	sumRunningSessionUsage,
 } from './usage-parser'
 import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace-briefing'
@@ -513,6 +513,18 @@ export class SessionManager extends EventEmitter {
 		const interactive = config.interactive === true
 		const conversationId =
 			(config.conversation as { conversation_id?: string } | undefined)?.conversation_id ?? null
+		// S2 writer hook · the spawning message id, when the session is
+		// spawned inside an existing chat. Persisted on the
+		// `conversation → session` `spawned` edge's `metadata.messageId` so
+		// Task 4's deep-link (`/chats/<id>?msg=<messageId>`) can scroll to
+		// exactly that message. Null for sessions spawned outside a chat
+		// (triggers, cron, workspace-bootstrap) — the `spawned` edge is only
+		// written when `conversationId` is truthy, so a null messageId is
+		// only ever recorded when the spawn is truly conversation-anchored
+		// but the caller didn't have a message id to name (e.g. the future
+		// "resume conversation from scratch" flow).
+		const conversationMessageId =
+			(config.conversation as { message_id?: number } | undefined)?.message_id ?? null
 
 		// Pre-flight billing cap. Only enforced when no BYO credentials are
 		// present — BYO routes (OAuth, custom_llm, api_key) take precedence over
@@ -564,7 +576,7 @@ export class SessionManager extends EventEmitter {
 			throw new Error('Failed to create session')
 		}
 
-		await this.db.insert(events).values({
+		await recordEvent(this.db, {
 			workspaceId,
 			actorId: params.actorId,
 			action: 'session_created',
@@ -572,6 +584,21 @@ export class SessionManager extends EventEmitter {
 			entityId: session.id,
 			data: {},
 		})
+
+		// S2 writer hook · upsert a `conversation → session` `spawned` edge
+		// with the spawning message id on metadata. Guarded on `conversationId`
+		// (no chat context = no lineage row, per spec §Rabbit holes) and
+		// flag-gated on the session's actor inside the helper. Idempotent on
+		// the unique index; a session_created re-run never double-writes.
+		if (conversationId) {
+			await writeSpawnedEdge(this.db, {
+				workspaceId,
+				conversationId,
+				sessionId: session.id,
+				sessionActorId: params.actorId,
+				messageId: conversationMessageId,
+			})
+		}
 
 		logger.info(`Session created: ${session.id}`, { workspaceId })
 
@@ -729,6 +756,18 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not found or not in pending/queued state`)
 		}
 
+		// Unconditional dispatch-entry marker, emitted before any capacity check,
+		// queue handoff or lock. A session stuck in `starting` with this row
+		// present was entered but not dispatched; without it, dispatch never ran.
+		await recordEvent(this.db, {
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			action: 'dispatch_entered',
+			entityType: 'session',
+			entityId: sessionId,
+			data: {},
+		})
+
 		// Chat sessions (conversationId set) are exempt from the workspace concurrency
 		// limit — a live human is waiting on the other end, which is more urgent than
 		// queuing behind background/trigger sessions. They also don't count against
@@ -779,7 +818,7 @@ export class SessionManager extends EventEmitter {
 						updatedAt: new Date(),
 					})
 					.where(eq(sessions.id, sessionId))
-				await this.db.insert(events).values({
+				await recordEvent(this.db, {
 					workspaceId: session.workspaceId,
 					actorId: session.actorId,
 					action: 'session_failed',
@@ -889,7 +928,7 @@ export class SessionManager extends EventEmitter {
 			// working" surfaces) never refetch past their last 'pending'-status
 			// snapshot from session_created, so the chat typing indicator never
 			// appears even though the agent is live.
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				action: 'session_started',
@@ -956,7 +995,7 @@ export class SessionManager extends EventEmitter {
 				})
 				.where(eq(sessions.id, sessionId))
 
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				action: 'session_failed',
@@ -1376,6 +1415,19 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not in paused state or no snapshot`)
 		}
 
+		// Unconditional resume-entry marker, emitted before the `starting`
+		// transition and before any lock. The `session_resumed` marker below is
+		// post-launch, so a resume that stalls mid-path writes nothing without
+		// this and reads as a dispatch-origin stall (no `dispatch_entered`).
+		await recordEvent(this.db, {
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			action: 'resume_entered',
+			entityType: 'session',
+			entityId: sessionId,
+			data: {},
+		})
+
 		await this.db
 			.update(sessions)
 			.set({ status: 'starting', updatedAt: new Date() })
@@ -1432,7 +1484,7 @@ export class SessionManager extends EventEmitter {
 
 			// Same rationale as the fresh-start path above — without this the
 			// frontend never learns the resumed session is running again.
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				action: 'session_resumed',
@@ -1459,7 +1511,7 @@ export class SessionManager extends EventEmitter {
 				})
 				.where(eq(sessions.id, sessionId))
 
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				action: 'session_failed',
@@ -1728,6 +1780,7 @@ export class SessionManager extends EventEmitter {
 
 		let routeTaken: LlmRoute | null = null
 		let oauthSlotTaken: string | undefined
+		let routeModelName: string | undefined
 		try {
 			const resolved = await resolveLlmRoute({
 				db: this.db,
@@ -1744,6 +1797,7 @@ export class SessionManager extends EventEmitter {
 			if (resolved) {
 				routeTaken = resolved.route
 				oauthSlotTaken = resolved.oauthSlot
+				routeModelName = resolved.modelName
 				Object.assign(envVars, resolved.envVars)
 			}
 		} catch (err) {
@@ -1804,16 +1858,33 @@ export class SessionManager extends EventEmitter {
 
 		// Persist the chosen route on the session config so cron-based quota
 		// queries (and later analytics) can find fallback sessions cheaply.
+		// On the maskin_plan route we ALSO stamp `sessions.model_name` with the
+		// OpenRouter model that will actually run: the follow-on local cost
+		// resolver keys OpenRouter's pricing table on that value, and without
+		// it every non-Anthropic session reads as an Opus-priced number.
+		// claude_oauth and BYO routes leave `model_name` null on purpose —
+		// Claude Code's own `total_cost_usd` stays ground truth for those.
 		if (routeTaken) {
 			const existingConfig = (session.config as Record<string, unknown>) ?? {}
 			const nextOauthSlot = routeTaken === LLM_ROUTE_OAUTH ? oauthSlotTaken : undefined
 			const updatedConfig = mergeLaunchRouteConfig(existingConfig, routeTaken, nextOauthSlot)
-			if (updatedConfig) {
-				await this.db
-					.update(sessions)
-					.set({ config: updatedConfig })
-					.where(eq(sessions.id, session.id))
-				;(session as { config: Record<string, unknown> }).config = updatedConfig
+			const modelNameToPersist =
+				routeTaken === LLM_ROUTE_MASKIN_PLAN &&
+				routeModelName &&
+				routeModelName !== session.modelName
+					? routeModelName
+					: undefined
+			if (updatedConfig || modelNameToPersist !== undefined) {
+				const patch: Partial<typeof sessions.$inferInsert> = {}
+				if (updatedConfig) patch.config = updatedConfig
+				if (modelNameToPersist !== undefined) patch.modelName = modelNameToPersist
+				await this.db.update(sessions).set(patch).where(eq(sessions.id, session.id))
+				if (updatedConfig) {
+					;(session as { config: Record<string, unknown> }).config = updatedConfig
+				}
+				if (modelNameToPersist !== undefined) {
+					;(session as { modelName: string | null }).modelName = modelNameToPersist
+				}
 			}
 		}
 
@@ -2985,7 +3056,7 @@ export class SessionManager extends EventEmitter {
 		}
 
 		try {
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				action: `session_${status}`,
@@ -3184,6 +3255,29 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * Loads the two inputs the cost resolver needs off the session row: the
+	 * route the session was dispatched under (`config.llm_route`) and the
+	 * model name recorded for it. Both are written at dispatch time. One
+	 * query, shared by the sessionId-only callsites —
+	 * `enforceRunningSessionBudget` already holds the session row and reads
+	 * the fields directly instead.
+	 */
+	private async loadSessionRouteAndModel(
+		sessionId: string,
+	): Promise<{ route: string; modelName: string | null }> {
+		const [row] = await this.db
+			.select({ config: sessions.config, modelName: sessions.modelName })
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		const config = ((row?.config as Record<string, unknown>) ?? {}) as Record<string, unknown>
+		return {
+			route: typeof config.llm_route === 'string' ? config.llm_route : '',
+			modelName: row?.modelName ?? null,
+		}
+	}
+
+	/**
 	 * Parses usage from the session's log tail (same source `handleCompletion`
 	 * uses) and adds it onto the session's cumulative usage columns. Additive,
 	 * not overwriting: a paused-then-resumed session launches a fresh CLI
@@ -3194,6 +3288,10 @@ export class SessionManager extends EventEmitter {
 	 * for cap/billing display) reflects cost incurred even when a session
 	 * never reaches a terminal 'completed' status — pausing is the common
 	 * case for interactive sessions sitting idle between turns.
+	 *
+	 * The USD figure written is the resolver's (`resolveSessionCostUsd`), not
+	 * the CLI's `total_cost_usd` — a maskin_plan session's CLI cost is priced
+	 * against Anthropic's rate card even though it runs through OpenRouter.
 	 *
 	 * Returns the parsed segment (not the new cumulative total, and not
 	 * necessarily persisted if the DB write failed) so callers can log it;
@@ -3222,13 +3320,29 @@ export class SessionManager extends EventEmitter {
 		}
 		if (!usage) return null
 
+		// Resolve the true USD cost for this segment before it is added to the
+		// cumulative column: for a maskin_plan session the CLI's own
+		// `total_cost_usd` is Anthropic-priced and wrong. Best-effort — a
+		// lookup failure falls back to the CLI figure rather than losing the
+		// segment's cost entirely.
+		let resolvedCostUsd = usage.totalCostUsd
+		try {
+			const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
+			resolvedCostUsd = await resolveSessionCostUsd({ route, modelName, usage })
+		} catch (err) {
+			logger.warn('Failed to resolve session cost, using CLI-reported cost', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
 		try {
 			await this.db
 				.update(sessions)
 				.set({
 					totalCostUsd:
-						usage.totalCostUsd != null
-							? sql`COALESCE(${sessions.totalCostUsd}, 0) + ${usage.totalCostUsd}`
+						resolvedCostUsd != null
+							? sql`COALESCE(${sessions.totalCostUsd}, 0) + ${resolvedCostUsd}`
 							: undefined,
 					inputTokens:
 						usage.inputTokens != null
@@ -3310,15 +3424,20 @@ export class SessionManager extends EventEmitter {
 			getWorkspacePlanUsdCentsUsage(this.db, session.workspaceId, periodStartMs),
 			sumRunningSessionUsage(this.db, session.id),
 		])
-		// Same preference order as getWorkspacePlanUsdCentsUsage: the live
-		// scan's own reported totalCostUsd first, a flat token-rate estimate
-		// only when that's unavailable (e.g. no `result` event parsed yet).
-		const liveCents = liveUsage
-			? liveUsage.totalCostUsd && liveUsage.totalCostUsd > 0
-				? liveUsage.totalCostUsd * 100
-				: ((liveUsage.inputTokens ?? 0) + (liveUsage.outputTokens ?? 0)) /
-					FALLBACK_TOKENS_PER_USD_CENT
-			: 0
+		// Route-aware cost, not the live scan's own reported figure: only
+		// maskin_plan sessions reach this check (the watchdog query filters on
+		// the route), and their CLI-reported `total_cost_usd` is priced against
+		// Anthropic's rate card. The resolver also owns the never-silent-zero
+		// fallback to the legacy token rate, so a session with usage but no
+		// published price still bills.
+		const liveCostUsd = liveUsage
+			? await resolveSessionCostUsd({
+					route: ((session.config as Record<string, unknown>)?.llm_route as string) ?? '',
+					modelName: session.modelName,
+					usage: liveUsage,
+				})
+			: null
+		const liveCents = liveCostUsd && liveCostUsd > 0 ? liveCostUsd * 100 : 0
 		const totalUsedCents = persistedUsedCents + ceilCents(liveCents)
 		if (totalUsedCents < capCents) return
 
@@ -3350,22 +3469,19 @@ export class SessionManager extends EventEmitter {
 				error: String(err),
 			}),
 		)
-		await this.db
-			.insert(events)
-			.values({
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				action: 'session_budget_stopped',
-				entityType: 'session',
-				entityId: session.id,
-				data: { total_used_usd_cents: totalUsedCents, cap_usd_cents: capCents, reason: stopReason },
-			})
-			.catch((err) =>
-				logger.warn('Failed to insert session_budget_stopped event', {
-					sessionId: session.id,
-					error: String(err),
-				}),
-			)
+		await recordEvent(this.db, {
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			action: 'session_budget_stopped',
+			entityType: 'session',
+			entityId: session.id,
+			data: { total_used_usd_cents: totalUsedCents, cap_usd_cents: capCents, reason: stopReason },
+		}).catch((err) =>
+			logger.warn('Failed to insert session_budget_stopped event', {
+				sessionId: session.id,
+				error: String(err),
+			}),
+		)
 		this.budgetStopped.set(session.id, stopReason)
 		await this.stopSession(session.id).catch((err) =>
 			logger.error('Failed to stop over-budget session', {
@@ -3491,7 +3607,7 @@ export class SessionManager extends EventEmitter {
 				)
 		}
 
-		await this.db.insert(events).values({
+		await recordEvent(this.db, {
 			workspaceId: session.workspaceId,
 			actorId: session.actorId,
 			action: 'session_completed',
@@ -3618,7 +3734,7 @@ export class SessionManager extends EventEmitter {
 					)
 			}
 
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				action: 'session_timeout',
@@ -3964,7 +4080,7 @@ export class SessionManager extends EventEmitter {
 				})
 				.where(eq(sessions.id, session.id))
 
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				action: 'session_failed',
@@ -4506,6 +4622,24 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		// Resolve the route-aware cost before the CAS loop so both writes below
+		// use the same figure. Best-effort for the same reason as the tail read:
+		// stopSession() calls this after the sandbox is already dead, so a throw
+		// here would surface as a spurious "stop failed" 400. On failure the
+		// CLI-reported cost is used, which is the pre-existing behaviour.
+		let resolvedCostUsd: number | null = usage?.totalCostUsd ?? null
+		if (usage) {
+			try {
+				const { route, modelName } = await this.loadSessionRouteAndModel(sessionId)
+				resolvedCostUsd = await resolveSessionCostUsd({ route, modelName, usage })
+			} catch (err) {
+				logger.warn('Failed to resolve remote session cost, using CLI-reported cost', {
+					sessionId,
+					error: String(err),
+				})
+			}
+		}
+
 		// Mirror handleCompletion's classification + failover on this path — the
 		// remote completion path is what production uses, and until this existed
 		// it wrote `{ exit_code }` and returned, so failover never ran (see
@@ -4574,7 +4708,7 @@ export class SessionManager extends EventEmitter {
 						currentActivity: null,
 						...(usage
 							? {
-									totalCostUsd: usage.totalCostUsd?.toString() ?? null,
+									totalCostUsd: resolvedCostUsd?.toString() ?? null,
 									inputTokens: usage.inputTokens,
 									outputTokens: usage.outputTokens,
 									cacheCreationInputTokens: usage.cacheCreationInputTokens,
@@ -4686,7 +4820,7 @@ export class SessionManager extends EventEmitter {
 						currentActivity: null,
 						...(usage
 							? {
-									totalCostUsd: usage.totalCostUsd?.toString() ?? null,
+									totalCostUsd: resolvedCostUsd?.toString() ?? null,
 									inputTokens: usage.inputTokens,
 									outputTokens: usage.outputTokens,
 									cacheCreationInputTokens: usage.cacheCreationInputTokens,
@@ -4753,7 +4887,7 @@ export class SessionManager extends EventEmitter {
 		}
 
 		try {
-			await this.db.insert(events).values({
+			await recordEvent(this.db, {
 				workspaceId: updated.workspaceId,
 				actorId: updated.actorId,
 				action: `session_${status}`,
