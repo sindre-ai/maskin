@@ -669,7 +669,25 @@ export function MarkdownContent({
 			return <img src={src} alt={alt ?? ''} title={title} />
 		}
 
-		if (!mentionActors) return { code, img, pre, table }
+		// Markdown links open in a new tab so a click never navigates the app away
+		// from the page you are on — mirrors the inline-code-URL path above. Hash
+		// and relative links keep default behaviour so in-page anchors still work.
+		const link =
+			(wrapChildren?: (children: ReactNode) => ReactNode): Components['a'] =>
+			({ children, href, ...rest }) => {
+				const external = typeof href === 'string' && /^https?:\/\//.test(href)
+				return (
+					<a
+						{...rest}
+						href={href}
+						{...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+					>
+						{wrapChildren ? wrapChildren(children) : children}
+					</a>
+				)
+			}
+
+		if (!mentionActors) return { code, img, pre, table, a: link() }
 		const wrap = (children: ReactNode) => wrapWithMentions(children, mentionActors, onMentionClick)
 		return {
 			code,
@@ -682,7 +700,7 @@ export function MarkdownContent({
 			strong: ({ children }) => <strong>{wrap(children)}</strong>,
 			blockquote: ({ children }) => <blockquote>{wrap(children)}</blockquote>,
 			del: ({ children }) => <del>{wrap(children)}</del>,
-			a: ({ children, ...rest }) => <a {...rest}>{wrap(children)}</a>,
+			a: link(wrap),
 			td: ({ children, ...rest }) => <td {...rest}>{wrap(children)}</td>,
 			th: ({ children, ...rest }) => <th {...rest}>{wrap(children)}</th>,
 		}
