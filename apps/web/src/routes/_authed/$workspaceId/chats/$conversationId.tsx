@@ -137,7 +137,12 @@ function ConversationThreadPage() {
 
 	return (
 		<div className="flex min-h-0 flex-1">
-			<div className="flex min-h-0 flex-1 flex-col">
+			{/* `min-w-0` caps min-content on the cross axis so a wide descendant
+			    (markdown table, long unbroken URL) can't widen this column past the
+			    viewport. Without it the column — and its header/composer children —
+			    blow out past the phone's right edge, which `overflow-x: clip` on
+			    html/body then hides instead of surfacing as a scrollbar. */}
+			<div className="flex min-h-0 min-w-0 flex-1 flex-col">
 				<ThreadHeader
 					workspaceId={workspaceId}
 					conversationId={conversationId}
