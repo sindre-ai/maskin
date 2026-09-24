@@ -205,4 +205,65 @@ describe('ImportDialog', () => {
 
 		expect(screen.getByText('Drag and drop a file here')).toBeInTheDocument()
 	})
+
+	it('offers a match key when the type maps a title, and hides the on-match choice until one is set', async () => {
+		const importRecord = buildImportResponse({
+			totalRows: 10,
+			mapping: defaultMapping,
+			preview: defaultPreview,
+		})
+		mockCreateImportMutateAsync.mockResolvedValue(importRecord)
+		mockImportData = importRecord
+
+		render(<ImportDialog open={true} onOpenChange={vi.fn()} />, { wrapper: TestWrapper })
+
+		const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+		await userEvent.upload(fileInput, new File(['test'], 'data.csv', { type: 'text/csv' }))
+
+		await waitFor(() => {
+			expect(screen.getByRole('combobox', { name: 'Match existing on' })).toBeInTheDocument()
+		})
+		expect(
+			screen.queryByRole('combobox', { name: 'If a row matches an existing object' }),
+		).not.toBeInTheDocument()
+	})
+
+	it('sends the match key and on-match choice with the mapping before confirming', async () => {
+		const mappingWithMatch = {
+			...defaultMapping,
+			typeMappings: [{ ...defaultMapping.typeMappings[0], matchOn: 'title' }],
+		}
+		const importRecord = buildImportResponse({
+			id: 'imp-match',
+			totalRows: 10,
+			mapping: mappingWithMatch,
+			preview: defaultPreview,
+		})
+		mockCreateImportMutateAsync.mockResolvedValue(importRecord)
+		mockConfirmImportMutateAsync.mockResolvedValue(importRecord)
+		mockImportData = importRecord
+
+		render(<ImportDialog open={true} onOpenChange={vi.fn()} />, { wrapper: TestWrapper })
+
+		const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+		await userEvent.upload(fileInput, new File(['test'], 'data.csv', { type: 'text/csv' }))
+
+		await waitFor(() => {
+			expect(
+				screen.getByRole('combobox', { name: 'If a row matches an existing object' }),
+			).toBeInTheDocument()
+		})
+		await userEvent.click(screen.getByText(/Import 10 rows/))
+
+		await waitFor(() => {
+			expect(mockUpdateMappingMutateAsync).toHaveBeenCalledWith({
+				id: 'imp-match',
+				mapping: expect.objectContaining({
+					onMatch: 'skip',
+					typeMappings: [expect.objectContaining({ matchOn: 'title' })],
+				}),
+			})
+			expect(mockConfirmImportMutateAsync).toHaveBeenCalledWith('imp-match')
+		})
+	})
 })

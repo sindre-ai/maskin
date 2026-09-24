@@ -1963,6 +1963,10 @@ export interface ImportResponse {
 	totalRows: number | null
 	processedRows: number
 	successCount: number
+	/** Rows that matched an existing object and were left alone */
+	skippedCount: number
+	/** Rows that matched an existing object and were merged into it */
+	updatedCount: number
 	errorCount: number
 	mapping: ImportMappingInput | null
 	preview: ImportPreview | null
@@ -2000,6 +2004,8 @@ export interface TypeMappingInput {
 	objectType: string
 	columns: ColumnMappingInput[]
 	defaultStatus?: string
+	/** `title` or `metadata.<field>` — rows matching an existing object on this field aren't re-created */
+	matchOn?: string
 }
 
 export interface RelationshipMappingInput {
@@ -2012,6 +2018,8 @@ export interface ImportMappingInput {
 	typeMappings: TypeMappingInput[]
 	relationships?: RelationshipMappingInput[]
 	csvOptions?: CsvOptions
+	/** What happens to a row that matches an existing object. Absent means `skip`. */
+	onMatch?: 'skip' | 'update'
 }
 
 export type MarketplaceItemType = 'actor' | 'trigger' | 'skill' | 'integration'
