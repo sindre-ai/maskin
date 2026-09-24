@@ -169,7 +169,11 @@ export function MessageBubble({
 							</div>
 						</div>
 					) : message.content.length > 0 ? (
-						<span className="whitespace-pre-wrap text-balance">{message.content}</span>
+						// `break-words` is load-bearing next to the column's `min-w-0`:
+						// `min-w-0` bounds the box, this bounds the ink. Without it an
+						// unbroken token (a long URL) raises this span's min-content and
+						// paints past the bubble's `max-w` cap, out to the viewport edge.
+						<span className="whitespace-pre-wrap text-balance break-words">{message.content}</span>
 					) : null}
 				</div>
 				{spawnInfo ? <SpawnChip info={spawnInfo} /> : null}
