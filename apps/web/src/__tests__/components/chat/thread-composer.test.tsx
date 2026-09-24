@@ -88,3 +88,33 @@ describe('ThreadComposer — multi-item selection', () => {
 		)
 	})
 })
+
+describe('ThreadComposer — draft persistence', () => {
+	it('restores an unsent draft after the composer remounts', async () => {
+		sessionStorage.clear()
+		const user = userEvent.setup()
+		const first = render(<ThreadComposer workspaceId="ws-1" conversationId="convo-1" />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+
+		await user.type(screen.getByLabelText('Message this conversation'), 'half-written prompt')
+		first.unmount()
+
+		render(<ThreadComposer workspaceId="ws-1" conversationId="convo-1" />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+		expect(screen.getByLabelText('Message this conversation')).toHaveValue('half-written prompt')
+	})
+
+	it('does not carry a draft into another conversation', async () => {
+		sessionStorage.clear()
+		const user = userEvent.setup()
+		const { rerender } = render(<ThreadComposer workspaceId="ws-1" conversationId="convo-1" />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+		await user.type(screen.getByLabelText('Message this conversation'), 'for convo one')
+
+		rerender(<ThreadComposer workspaceId="ws-1" conversationId="convo-2" />)
+		expect(screen.getByLabelText('Message this conversation')).toHaveValue('')
+	})
+})

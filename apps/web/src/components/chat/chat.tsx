@@ -192,6 +192,34 @@ export interface ComposerProps {
 	 *  composer's own internal state. */
 	value?: string
 	onValueChange?: (value: string) => void
+	/**
+	 * Opt-in draft persistence key. When set (and the composer is uncontrolled),
+	 * the draft is mirrored to `sessionStorage` under `composer-draft:<key>` and
+	 * restored on mount. iOS reloads the tab when the user switches apps and
+	 * comes back, which otherwise discards unsent text; `sessionStorage`
+	 * survives that, and dies with the tab so an unsent prompt never outlives it.
+	 */
+	draftKey?: string
+}
+
+const DRAFT_PREFIX = 'composer-draft:'
+
+function readDraft(key: string): string {
+	try {
+		return sessionStorage.getItem(`${DRAFT_PREFIX}${key}`) ?? ''
+	} catch {
+		return ''
+	}
+}
+
+function writeDraft(key: string, value: string): void {
+	try {
+		if (value) sessionStorage.setItem(`${DRAFT_PREFIX}${key}`, value)
+		else sessionStorage.removeItem(`${DRAFT_PREFIX}${key}`)
+	} catch {
+		// Safari private mode throws on write; losing the draft is preferable to
+		// breaking typing.
+	}
 }
 
 /**
@@ -227,8 +255,11 @@ export function Composer({
 	textareaLabel,
 	value: controlledValue,
 	onValueChange,
+	draftKey,
 }: ComposerProps) {
-	const [internalValue, setInternalValue] = useState('')
+	const [internalValue, setInternalValue] = useState(() =>
+		controlledValue === undefined && draftKey ? readDraft(draftKey) : '',
+	)
 	const value = controlledValue ?? internalValue
 	// Mirrors `value` for the functional-update path — a controlled caller has
 	// no state for us to read back synchronously.
@@ -243,6 +274,19 @@ export function Composer({
 		},
 		[controlledValue, onValueChange],
 	)
+	// Mirror the draft into sessionStorage. The chat route swaps `draftKey`
+	// without remounting the composer, so on a key change load the incoming
+	// key's stored draft instead of writing the outgoing text under it.
+	const draftKeyRef = useRef(draftKey)
+	useEffect(() => {
+		if (draftKey === undefined || controlledValue !== undefined) return
+		if (draftKeyRef.current !== draftKey) {
+			draftKeyRef.current = draftKey
+			setValue(readDraft(draftKey))
+			return
+		}
+		writeDraft(draftKey, value)
+	}, [draftKey, value, controlledValue, setValue])
 	const [sending, setSending] = useState(false)
 	const [sendError, setSendError] = useState<string | null>(null)
 	const [pickerOpen, setPickerOpen] = useState(false)
