@@ -16,6 +16,7 @@ export const ApiErrorCode = {
 	// apps/dev/src/lib/workspace-capacity.ts.
 	SEAT_CAP_EXCEEDED: 'SEAT_CAP_EXCEEDED',
 	OWNERSHIP_CAP_EXCEEDED: 'OWNERSHIP_CAP_EXCEEDED',
+	NOT_IMPLEMENTED: 'NOT_IMPLEMENTED',
 } as const
 
 export type ApiErrorCode = (typeof ApiErrorCode)[keyof typeof ApiErrorCode]

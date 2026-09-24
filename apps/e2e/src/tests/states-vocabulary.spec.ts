@@ -54,7 +54,7 @@ test.describe('Shared state vocabulary — loading / empty / error / offline', (
 	})
 
 	test('inline error UI appears when the marketplace fetch fails', async ({ page, account }) => {
-		await page.route('**/api/marketplace/loops**', async (route) => {
+		await page.route('**/api/marketplace/catalog**', async (route) => {
 			await route.fulfill({
 				status: 500,
 				contentType: 'application/json',
@@ -66,8 +66,8 @@ test.describe('Shared state vocabulary — loading / empty / error / offline', (
 
 		// The marketplace isError branch renders inline muted text, not a
 		// button — there is no retry control on this surface yet.
-		await expect(page.getByText(/Couldn't load the marketplace/i)).toBeVisible({ timeout: 10000 })
+		await expect(page.getByText(/Couldn't load the catalog/i)).toBeVisible({ timeout: 10000 })
 
-		await page.unroute('**/api/marketplace/loops**')
+		await page.unroute('**/api/marketplace/catalog**')
 	})
 })
