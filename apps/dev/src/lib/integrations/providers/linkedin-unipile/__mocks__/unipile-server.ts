@@ -413,7 +413,14 @@ const CANNED_REACTIONS_RESPONSE = () => ({
 	],
 })
 
-/** `GET /v2/:account_id/users/:identifier` — reference: "Get Profile". */
+/**
+ * `GET /v2/:account_id/users/:identifier` — reference: "Get Profile".
+ *
+ * v2 nests the provider-specific fields under `specifics`; `network_distance`
+ * is there, NOT top-level (the search endpoint is the one that answers it
+ * top-level). The mock mirrors that split on purpose — a mock that echoed the
+ * reader's shape is what let the empty-`network_distance` bug ship green.
+ */
 const CANNED_PROFILE_RESPONSE = () => ({
 	object: 'UserProfile',
 	id: 'mock-user-2',
@@ -425,6 +432,7 @@ const CANNED_PROFILE_RESPONSE = () => ({
 	public_identifier: 'gracehopper',
 	profile_url: 'https://www.linkedin.com/in/gracehopper',
 	location: 'New York',
+	specifics: { network_distance: 'SECOND_DEGREE' },
 })
 
 /**
