@@ -4,12 +4,15 @@ import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 // The Ask panel (bet T5) is reached from the bulk-action bar for the current
 // selection and shows per-ask rows backed by `needs_input` notifications.
-// Approve/Hold round-trip through POST /api/notifications/:id/respond and the
-// row flips to a done label. The panel opens as a bottom sheet on mobile
-// (ResponsiveDialog ≤768px) and a dialog on desktop, so the reachability and
-// interaction are asserted at every ship-gate viewport.
+// An ask only counts for the reader when it targets them
+// (target_actor_id === the signed-in actor), so the seed below aims at
+// account.actorId. Approve/Hold round-trip through
+// POST /api/notifications/:id/respond and the row flips to a done label. The
+// panel opens as a bottom sheet on mobile (ResponsiveDialog ≤768px) and a
+// dialog on desktop, so the reachability and interaction are asserted at every
+// ship-gate viewport.
 
-async function seedAsk(account: { api: TestAPI; workspaceId: string }) {
+async function seedAsk(account: { api: TestAPI; workspaceId: string; actorId: string }) {
 	const obj = await account.api.createObject(account.workspaceId, {
 		type: 'bet',
 		title: 'Ask Target Bet',
@@ -22,6 +25,7 @@ async function seedAsk(account: { api: TestAPI; workspaceId: string }) {
 		title: 'Approve the launch',
 		content: 'Can you approve releasing this to users?',
 		source_actor_id: agent.id,
+		target_actor_id: account.actorId,
 		object_id: obj.id,
 	})
 	return obj

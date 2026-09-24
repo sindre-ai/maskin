@@ -39,6 +39,7 @@ import {
 } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { DisplaySettingsBody, NotificationResponse, ObjectResponse } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
 import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
 import { MAX_CHAT_OBJECT_REFERENCES } from '@/lib/chat-selection'
@@ -298,42 +299,52 @@ function ObjectsRoute() {
 	// Pending asks scoped to the current selection. An ask is a needs_input
 	// notification whose object is one of the selected rows; Approve/Hold
 	// round-trips through the respond endpoint and the panel reflects the done
-	// state via the resolved status.
+	// state via the resolved status. Only asks targeted at the current actor
+	// count — the notifications feed is workspace-wide, so a mention pulling
+	// another actor into the loop lands here too and must not surface as an
+	// ask the reader can answer.
 	const actorsById = useMemo(() => new Map((actors ?? []).map((a) => [a.id, a])), [actors])
 	const [asksOpen, setAsksOpen] = useState(false)
+	const currentActorId = getStoredActor()?.id
 	const { data: needsInputNotifications } = useNotifications(workspaceId, {
 		type: 'needs_input',
 	})
+	const asksForCurrentActor = useMemo(
+		() => (needsInputNotifications ?? []).filter((n) => n.targetActorId === currentActorId),
+		[needsInputNotifications, currentActorId],
+	)
 	const selectedAsks = useMemo(() => {
-		if (!needsInputNotifications) return []
 		const selected = new Set(selectedIds)
-		return needsInputNotifications.filter((n) => n.objectId != null && selected.has(n.objectId))
-	}, [needsInputNotifications, selectedIds])
+		return asksForCurrentActor.filter((n) => n.objectId != null && selected.has(n.objectId))
+	}, [asksForCurrentActor, selectedIds])
 	const askCount = selectedAsks.length
 	// Pending asks keyed by the object they target, for the per-row ask line +
 	// "Waiting on you" pill on the List surface. Only status 'pending' counts as
 	// waiting — a resolved ask drops out of the map (and the row hides the pill).
 	const pendingAsksByObjectId = useMemo(() => {
 		const map = new Map<string, NotificationResponse>()
-		for (const n of needsInputNotifications ?? []) {
+		for (const n of asksForCurrentActor) {
 			if (n.status !== 'pending' || !n.objectId) continue
 			if (!map.has(n.objectId)) map.set(n.objectId, n)
 		}
 		return map
-	}, [needsInputNotifications])
+	}, [asksForCurrentActor])
 	// D3 · Multi-ask overflow. The ask-line on a row renders the FIRST pending
 	// ask (from `pendingAsksByObjectId`) plus a plain `+ N more` counter when
 	// this map's entry for that id is ≥ 2. Kept as a separate memo so the
 	// first-ask map's ordering (oldest first, insertion order) stays the
-	// single source of truth for which ask is "the first".
+	// single source of truth for which ask is "the first". Derived off the
+	// same per-actor list as `pendingAsksByObjectId`, so the counter counts
+	// only the reader's own asks — an ask targeting another actor is not
+	// overflow the reader can act on.
 	const pendingAskCountByObjectId = useMemo(() => {
 		const map = new Map<string, number>()
-		for (const n of needsInputNotifications ?? []) {
+		for (const n of asksForCurrentActor) {
 			if (n.status !== 'pending' || !n.objectId) continue
 			map.set(n.objectId, (map.get(n.objectId) ?? 0) + 1)
 		}
 		return map
-	}, [needsInputNotifications])
+	}, [asksForCurrentActor])
 	const respondNotification = useRespondNotification(workspaceId)
 	const handleRespond = useCallback(
 		(id: string, response: 'approve' | 'hold') => {
