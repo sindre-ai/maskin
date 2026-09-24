@@ -871,6 +871,10 @@ const V2PersonSchema = z
 		public_identifier: z.string().nullish(),
 		network_distance: z.string().nullish(),
 		location: z.string().nullish(),
+		// v2 moved the provider-specific fields under `specifics` — the profile
+		// endpoint answers `specifics.network_distance`, while the search
+		// endpoint still answers `network_distance` top-level. Read both.
+		specifics: z.object({ network_distance: z.string().nullish() }).passthrough().nullish(),
 	})
 	.passthrough()
 
@@ -892,7 +896,9 @@ function toPerson(raw: unknown): LinkedInPerson | null {
 		headline: p.headline ?? p.description ?? '',
 		profile_url: p.profile_url ?? '',
 		public_identifier: p.public_identifier ?? '',
-		network_distance: p.network_distance ?? '',
+		// Top-level on a search result; nested under `specifics` on a v2
+		// profile. Prefer top-level so the search path is unchanged.
+		network_distance: p.network_distance ?? p.specifics?.network_distance ?? '',
 		location: p.location ?? '',
 	}
 }
