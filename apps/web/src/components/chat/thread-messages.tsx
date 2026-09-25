@@ -89,7 +89,13 @@ export function ThreadMessages({
 
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 	const bottomAnchorRef = useRef<HTMLDivElement | null>(null)
+	const topSentinelRef = useRef<HTMLDivElement | null>(null)
 	const lastMessageCountRef = useRef(0)
+	// Snapshot of scrollHeight/scrollTop taken right before an older-page fetch,
+	// used to keep the reader's visual anchor stable when the prepended messages
+	// grow the scroller upward. Cleared once applied.
+	const scrollAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
+	const pageCount = data?.pages.length ?? 0
 	const [isNearBottom, setIsNearBottom] = useState(true)
 
 	// Auto-scroll to the newest message on first load and whenever a new
@@ -104,6 +110,45 @@ export function ThreadMessages({
 		if (!isNearBottom) return
 		bottomAnchorRef.current?.scrollIntoView({ block: 'end' })
 	}, [messages.length, isNearBottom])
+
+	// Auto-load older messages when the user scrolls to the top of the thread.
+	// The button below stays as an accessible fallback for keyboard users and
+	// for the case where the observer misses (jsdom, disabled JS, etc.), but
+	// the observer is what most readers actually hit — mirrors the pattern
+	// every modern chat surface uses.
+	useEffect(() => {
+		const sentinel = topSentinelRef.current
+		const scroller = scrollerRef.current
+		if (!sentinel || !scroller) return
+		if (!hasNextPage || isFetchingNextPage) return
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (!entries.some((e) => e.isIntersecting)) return
+				scrollAnchorRef.current = {
+					scrollHeight: scroller.scrollHeight,
+					scrollTop: scroller.scrollTop,
+				}
+				fetchNextPage()
+			},
+			{ root: scroller, rootMargin: '200px 0px 0px 0px' },
+		)
+		observer.observe(sentinel)
+		return () => observer.disconnect()
+	}, [hasNextPage, isFetchingNextPage, fetchNextPage])
+
+	// After an older page is prepended, restore the reader's visual anchor —
+	// otherwise the freshly-added messages push what they were reading down
+	// and out of view. Runs on pageCount change so an SSE-delivered new
+	// message at the bottom doesn't trip it.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: pageCount is the trigger — a new page just landed — and its value is not read inside the effect.
+	useEffect(() => {
+		const scroller = scrollerRef.current
+		const anchor = scrollAnchorRef.current
+		if (!scroller || !anchor) return
+		const delta = scroller.scrollHeight - anchor.scrollHeight
+		scrollAnchorRef.current = null
+		if (delta > 0) scroller.scrollTop = anchor.scrollTop + delta
+	}, [pageCount])
 
 	const handleScroll = () => {
 		const el = scrollerRef.current
@@ -183,11 +228,26 @@ export function ThreadMessages({
 			/>
 			{hasNextPage ? (
 				<div className="flex flex-col items-center gap-1">
+					{/* Sentinel above the button. When it scrolls into the scroller's
+					    viewport (with a 200px rootMargin) the IntersectionObserver
+					    fires fetchNextPage — the reader never has to spot the button
+					    to load older messages. The button stays as the fallback path
+					    for keyboard users and jsdom-shaped test environments. */}
+					<div ref={topSentinelRef} data-testid="thread-messages-top-sentinel" aria-hidden />
 					<Button
 						type="button"
 						variant="ghost"
 						size="sm"
-						onClick={() => fetchNextPage()}
+						onClick={() => {
+							const scroller = scrollerRef.current
+							if (scroller) {
+								scrollAnchorRef.current = {
+									scrollHeight: scroller.scrollHeight,
+									scrollTop: scroller.scrollTop,
+								}
+							}
+							fetchNextPage()
+						}}
 						disabled={isFetchingNextPage}
 					>
 						{isFetchingNextPage ? <Spinner /> : 'Load older messages'}
