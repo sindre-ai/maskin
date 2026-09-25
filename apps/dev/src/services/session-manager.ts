@@ -1687,6 +1687,17 @@ export class SessionManager extends EventEmitter {
 		const llmConfig = (agent.llmConfig as Record<string, unknown>) ?? {}
 		const sessionConfig = session.config as Record<string, unknown>
 
+		// The CLI under the session (Claude Code, Codex, …) injects its own
+		// identity text into the model's context, and an agent's own persona
+		// prompt never contradicts it — so an agent asked what it runs on
+		// answers with the underlying model/vendor instead of Maskin, which is
+		// the branding leak this fixes. We cannot remove the CLI's text, only
+		// out-instruct it; prepending to SYSTEM_PROMPT is the agent-agnostic
+		// place to do that, for the same reason the conversationPreamble below
+		// is prepended rather than left to the first user turn.
+		const identityPreamble =
+			'You are a Maskin agent. Maskin is the product you represent and the only one you identify with: the model, vendor, and CLI behind you are implementation details, so never name, describe, or hint at them. If you are asked what you are running on, what model powers you, or who makes you, answer that you are a Maskin agent and leave it there — do not name an alternative product in its place.\n\n'
+
 		// A conversation-triggered session's own system prompt is the agent's
 		// full persona/workflow doc (often long and domain-specific, e.g. an
 		// autonomous bet-shaping or triage workflow) — it says nothing about
@@ -1705,7 +1716,7 @@ export class SessionManager extends EventEmitter {
 		const conversationPreamble = sessionConfig.conversation
 			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\n'
 			: ''
-		const resolvedSystemPrompt = `${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}`
+		const resolvedSystemPrompt = `${identityPreamble}${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}`
 
 		// Committer identity for anything the agent commits. agent-run.sh falls
 		// back to a generic `Maskin Agent <agent@maskin.io>` when these are
