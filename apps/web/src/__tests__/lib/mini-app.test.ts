@@ -2,10 +2,16 @@ import {
 	DATA_SLOT_ID,
 	MINI_APP_CSP,
 	VIEWER_DOC_SIZE_MESSAGE,
+	VIEWER_GOTO_PAGE_MESSAGE,
+	VIEWER_PAGE_MESSAGE,
+	VIEWER_SLIDE_SELECTOR,
 	VIEWER_WHEEL_MESSAGE,
+	applyViewerPage,
+	collectViewerSlides,
 	injectIntoHtml,
 	prepareMiniAppHtml,
 	prepareViewerHtml,
+	showViewerPage,
 	stripAgentCsp,
 	stripMetaRefresh,
 } from '@/lib/mini-app'
@@ -324,5 +330,81 @@ describe('prepareViewerHtml', () => {
 	it('keeps the original document content intact', () => {
 		const html = '<!DOCTYPE html><html><body><p>hello</p></body></html>'
 		expect(prepareViewerHtml(html)).toContain('<p>hello</p>')
+	})
+})
+
+describe('viewer paging controller', () => {
+	function buildSlides(count: number): { root: HTMLElement; slides: HTMLElement[] } {
+		const root = document.createElement('div')
+		for (let i = 0; i < count; i++) {
+			const slide = document.createElement('section')
+			slide.setAttribute('data-slide', String(i))
+			root.appendChild(slide)
+		}
+		return { root, slides: Array.from(root.querySelectorAll<HTMLElement>('[data-slide]')) }
+	}
+
+	it('shows exactly one slide and hides the rest', () => {
+		const { root, slides } = buildSlides(3)
+		showViewerPage(root, 1)
+		expect(slides.map((slide) => slide.style.display)).toEqual(['none', '', 'none'])
+		// a second navigation moves the visible slide rather than adding one
+		showViewerPage(root, 2)
+		expect(slides.map((slide) => slide.style.display)).toEqual(['none', 'none', ''])
+	})
+
+	it('clamps an out-of-range page index into the slide set', () => {
+		const { root } = buildSlides(3)
+		expect(showViewerPage(root, 99)).toBe(2)
+		expect(applyViewerPage(collectViewerSlides(root), -5)).toBe(0)
+	})
+
+	it('collects every documented slide shape and ignores everything else', () => {
+		const root = document.createElement('div')
+		root.innerHTML =
+			'<div data-slide></div><section class="slide"></section><div id="slide-3"></div><p>not a slide</p>'
+		expect(collectViewerSlides(root)).toHaveLength(3)
+	})
+
+	it('injects the paging controller only for a paged document', () => {
+		const html = '<!DOCTYPE html><html><head></head><body></body></html>'
+		const paged = prepareViewerHtml(html, { paged: true })
+		const single = prepareViewerHtml(html)
+		// the goto handler matches with !== while the reporter posts with type:'…'
+		expect(paged).toContain(`!=='${VIEWER_GOTO_PAGE_MESSAGE}'`)
+		expect(paged).toContain(`type:'${VIEWER_PAGE_MESSAGE}'`)
+		expect(single).not.toContain(VIEWER_GOTO_PAGE_MESSAGE)
+		expect(single).not.toContain(VIEWER_PAGE_MESSAGE)
+	})
+
+	it('shares one injection between the paging controller and the doc-size reporter', () => {
+		const html = '<!DOCTYPE html><html><head></head><body></body></html>'
+		const paged = prepareViewerHtml(html, { paged: true })
+		// Slice 1's reporter must survive into the paged document on the same
+		// single injectIntoHtml call — a second injection would duplicate the CSP.
+		expect(paged).toContain(VIEWER_DOC_SIZE_MESSAGE)
+		expect(paged.match(/<meta http-equiv="Content-Security-Policy"/g)).toHaveLength(1)
+	})
+
+	it('embeds the same selector and page function the unit tests exercise', () => {
+		const paged = prepareViewerHtml('<!DOCTYPE html><html><body></body></html>', {
+			paged: true,
+		})
+		// The injected controller interpolates the selector constant and embeds
+		// applyViewerPage via toString(), so it cannot drift from the tested one.
+		expect(paged).toContain(`var SEL='${VIEWER_SLIDE_SELECTOR}'`)
+		expect(paged).toContain(applyViewerPage.toString())
+	})
+
+	it('measures the active slide box and defers the load-path report past layout', () => {
+		const paged = prepareViewerHtml('<!DOCTYPE html><html><body></body></html>', {
+			paged: true,
+		})
+		// jsdom cannot execute the srcdoc frame script, so this pins the two
+		// runtime properties AC3 depends on: the box comes from the rendered
+		// rect (not a synchronous scrollWidth read at `load`), and the initial
+		// report is retried across frames until the slide has a non-zero box.
+		expect(paged).toContain('getBoundingClientRect')
+		expect(paged).toContain('requestAnimationFrame')
 	})
 })

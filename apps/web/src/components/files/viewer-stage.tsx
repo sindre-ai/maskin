@@ -2,10 +2,20 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { type FileViewerZoomMode, trackFileViewerZoomUsed } from '@/lib/analytics'
+import {
+	type FileViewerZoomMode,
+	trackFileViewerPageNavigated,
+	trackFileViewerZoomUsed,
+} from '@/lib/analytics'
 import type { FileDetail } from '@/lib/api'
 import { base64ToBytes, decodeBase64Utf8, downloadFile } from '@/lib/file-utils'
-import { VIEWER_DOC_SIZE_MESSAGE, VIEWER_WHEEL_MESSAGE, prepareViewerHtml } from '@/lib/mini-app'
+import {
+	VIEWER_DOC_SIZE_MESSAGE,
+	VIEWER_GOTO_PAGE_MESSAGE,
+	VIEWER_PAGE_MESSAGE,
+	VIEWER_WHEEL_MESSAGE,
+	prepareViewerHtml,
+} from '@/lib/mini-app'
 import {
 	type Size,
 	ZOOM_MAX,
@@ -15,6 +25,7 @@ import {
 	zoomAt,
 	zoomStep,
 } from '@/lib/viewer-coord-math'
+import { resolveViewerVariant } from '@/lib/viewer-detect'
 import { AlertTriangle, Code, Download, Maximize2, Minus, Plus } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { isHtml, isInlineImage, isMarkdown, isPlainText } from './file-body'
@@ -113,7 +124,15 @@ function ImageViewerStage({ file }: { file: FileDetail }) {
 
 function HtmlViewerStage({ file }: { file: FileDetail }) {
 	const html = useMemo(() => fileText(file), [file])
-	const srcDoc = useMemo(() => prepareViewerHtml(html), [html])
+	// Variant resolution (viewer-detect.ts) decides whether a paging controller
+	// is injected. A `deck` gets one; every other variant keeps the plain
+	// document path. The override slot is `null` for Slice 2a — the viewport
+	// preset / ⋯ menu that sets it lands in Slice 2c.
+	const isPaged = useMemo(
+		() => resolveViewerVariant({ filename: file.name, html, override: null }) === 'deck',
+		[file.name, html],
+	)
+	const srcDoc = useMemo(() => prepareViewerHtml(html, { paged: isPaged }), [html, isPaged])
 
 	const viewportRef = useRef<HTMLDivElement>(null)
 	const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -122,6 +141,12 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 	// prepareViewerHtml in mini-app.ts). `null` = not yet reported, so the
 	// stage sits in the loading-into-fit state and can't compute k yet.
 	const [docSize, setDocSize] = useState<Size | null>(null)
+	// For a paged doc the doc-size reporter's numbers come from
+	// documentElement — meaningless when one slide is on screen. The paging
+	// controller instead reports the ACTIVE slide's box (VIEWER_PAGE_MESSAGE),
+	// and that is what fit k is derived from. `null` for non-paged docs.
+	const [page, setPage] = useState<{ index: number; total: number } | null>(null)
+	const [pageSize, setPageSize] = useState<Size | null>(null)
 	const [viewportSize, setViewportSize] = useState<Size | null>(null)
 	const [zoom, setZoom] = useState<number>(ZOOM_MIN)
 	// Whether the current `zoom` was chosen automatically (fit) or by the user.
@@ -162,6 +187,8 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 				type?: string
 				w?: number
 				h?: number
+				index?: number
+				total?: number
 				deltaX?: number
 				deltaY?: number
 				ctrlKey?: boolean
@@ -174,6 +201,16 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 				const h = typeof data.h === 'number' ? data.h : 0
 				if (w <= 0 || h <= 0) return
 				setDocSize({ w, h })
+				return
+			}
+			if (data.type === VIEWER_PAGE_MESSAGE) {
+				const total = typeof data.total === 'number' ? data.total : 0
+				const index = typeof data.index === 'number' ? data.index : 0
+				if (total <= 0) return
+				setPage({ index: Math.max(0, index), total })
+				const w = typeof data.w === 'number' ? data.w : 0
+				const h = typeof data.h === 'number' ? data.h : 0
+				if (w > 0 && h > 0) setPageSize({ w, h })
 				return
 			}
 			if (data.type === VIEWER_WHEEL_MESSAGE) {
@@ -203,6 +240,8 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 	useEffect(() => {
 		setBlocked(false)
 		setDocSize(null)
+		setPage(null)
+		setPageSize(null)
 		docSizeRef.current = null
 		const timer = window.setTimeout(() => {
 			if (!docSizeRef.current) setBlocked(true)
@@ -210,13 +249,19 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 		return () => window.clearTimeout(timer)
 	}, [srcDoc])
 
-	// Once both the doc size and viewport size are known, do the initial fit.
+	// The box fit k is derived from: for a paged doc that is the visible
+	// slide's own box (criterion 3) — a deck's documentElement dimensions are
+	// meaningless when exactly one slide is on screen. Non-paged docs fall back
+	// to the whole document.
+	const fitSize = isPaged ? pageSize : docSize
+
+	// Once both the fit box and viewport size are known, do the initial fit.
 	// Also re-fit on viewport resize as long as the user hasn't manually zoomed.
 	useEffect(() => {
-		if (!docSize || !viewportSize) return
+		if (!fitSize || !viewportSize) return
 		if (!zoomIsAutoFitRef.current) return
-		setZoom(computeFit(docSize, viewportSize))
-	}, [docSize, viewportSize])
+		setZoom(computeFit(fitSize, viewportSize))
+	}, [fitSize, viewportSize])
 
 	const emitZoom = useCallback(
 		(mode: FileViewerZoomMode, k: number) => {
@@ -226,12 +271,12 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 	)
 
 	const handleFit = useCallback(() => {
-		if (!docSize || !viewportSize) return
-		const next = computeFit(docSize, viewportSize)
+		if (!fitSize || !viewportSize) return
+		const next = computeFit(fitSize, viewportSize)
 		zoomIsAutoFitRef.current = true
 		setZoom(next)
 		emitZoom('fit', next)
-	}, [docSize, viewportSize, emitZoom])
+	}, [fitSize, viewportSize, emitZoom])
 
 	const handleStepZoom = useCallback(
 		(dir: 'in' | 'out') => {
@@ -241,6 +286,35 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 			emitZoom(dir === 'in' ? 'plus' : 'minus', next)
 		},
 		[zoom, emitZoom],
+	)
+
+	// Page navigation. Commands the injected controller over postMessage and
+	// emits file_viewer_page_navigated (criterion 5). Page numbers on the event
+	// are 1-based (page 1 of N) while the frame protocol is 0-based — the
+	// analytics consumer sees human page numbers.
+	const gotoPage = useCallback(
+		(nextIndex: number) => {
+			if (!isPaged || !page) return
+			const next = Math.max(0, Math.min(nextIndex, page.total - 1))
+			const from = page.index
+			if (next === from) return
+			const frame = iframeRef.current
+			if (frame?.contentWindow) {
+				frame.contentWindow.postMessage({ type: VIEWER_GOTO_PAGE_MESSAGE, page: next }, '*')
+			}
+			setPage({ index: next, total: page.total })
+			// A new slide gets a fresh auto-fit — its box may differ from the
+			// previous slide's. Manual zoom still sticks once the user steps it.
+			zoomIsAutoFitRef.current = true
+			if (fitSize && viewportSize) setZoom(computeFit(fitSize, viewportSize))
+			trackFileViewerPageNavigated({
+				file_id: file.id,
+				from_page: from + 1,
+				to_page: next + 1,
+				total_pages: page.total,
+			})
+		},
+		[isPaged, page, fitSize, viewportSize, file.id],
 	)
 
 	// Wheel-with-Ctrl and trackpad pinch: the browser reports pinch gestures as
@@ -384,10 +458,12 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 		}
 	}, [])
 
-	// Keyboard subset for Slice 1: `0` = fit, `+` = zoom in, `-` = zoom out,
-	// `F` = fullscreen, `Esc` = clear focus (no annotate mode yet). Focus is
-	// contained to the stage — the handler lives on this container's onKeyDown
-	// so nothing bubbles to the shell's routing / global shortcut listeners.
+	// Keyboard subset: Slice 1 had `0` = fit, `+` = zoom in, `-` = zoom out,
+	// `F` = fullscreen, `Esc` = clear focus (no annotate mode yet). Slice 2a
+	// adds `←` / `→` / `space` / `PageUp` / `PageDown` for page nav, but only
+	// when the doc is paged. Focus is contained to the stage — the handler
+	// lives on this container's onKeyDown so nothing bubbles to the shell's
+	// routing / global shortcut listeners.
 	const handleKeyDown = useCallback(
 		(event: React.KeyboardEvent<HTMLDivElement>) => {
 			// Ignore modifier-carrying combos so browser shortcuts (Cmd-R, etc.)
@@ -416,15 +492,26 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 				event.preventDefault()
 				event.stopPropagation()
 				;(event.currentTarget as HTMLDivElement).blur()
+			} else if (isPaged && (key === 'ArrowLeft' || key === 'PageUp')) {
+				// Page-nav keys are claimed ONLY for a paged doc: on a plain
+				// document they must keep their native scroll behaviour, so they
+				// fall through here without preventDefault.
+				event.preventDefault()
+				event.stopPropagation()
+				gotoPage((page?.index ?? 0) - 1)
+			} else if (isPaged && (key === 'ArrowRight' || key === 'PageDown' || key === ' ')) {
+				event.preventDefault()
+				event.stopPropagation()
+				gotoPage((page?.index ?? 0) + 1)
 			}
 		},
-		[handleFit, handleStepZoom, toggleFullscreen],
+		[handleFit, handleStepZoom, toggleFullscreen, isPaged, page, gotoPage],
 	)
 
 	const scaledSize = useMemo(() => {
-		if (!docSize) return null
-		return { w: docSize.w * zoom, h: docSize.h * zoom }
-	}, [docSize, zoom])
+		if (!fitSize) return null
+		return { w: fitSize.w * zoom, h: fitSize.h * zoom }
+	}, [fitSize, zoom])
 
 	return (
 		<StageFrame>
@@ -444,13 +531,13 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 				tabIndex={0}
 				onKeyDown={handleKeyDown}
 				aria-label={`Viewer for ${file.name}`}
-				data-viewer-state={blocked ? 'iframe-blocked' : docSize ? 'ready' : 'loading'}
+				data-viewer-state={blocked ? 'iframe-blocked' : fitSize ? 'ready' : 'loading'}
 			>
 				{blocked ? (
 					<IframeBlockedFallback file={file} />
 				) : (
 					<div ref={viewportRef} className="relative flex-1 overflow-auto">
-						{!docSize && (
+						{!fitSize && (
 							<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
 								<Spinner className="size-6 text-muted-foreground" />
 							</div>
@@ -472,9 +559,9 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 								// The reporter script runs inside this sandbox.
 								sandbox="allow-scripts"
 								style={{
-									width: docSize?.w ?? '100%',
-									height: docSize?.h ?? '100%',
-									transform: docSize ? `scale(${zoom})` : undefined,
+									width: fitSize?.w ?? '100%',
+									height: fitSize?.h ?? '100%',
+									transform: fitSize ? `scale(${zoom})` : undefined,
 									transformOrigin: '0 0',
 									border: 0,
 									display: 'block',
@@ -483,7 +570,7 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 						</div>
 					</div>
 				)}
-				{docSize && !blocked && (
+				{fitSize && !blocked && (
 					<ZoomControls
 						zoom={zoom}
 						onFit={handleFit}
