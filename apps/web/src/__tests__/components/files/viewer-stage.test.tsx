@@ -1,7 +1,12 @@
 import { ViewerStage } from '@/components/files/viewer-stage'
-import { trackFileViewerZoomUsed } from '@/lib/analytics'
+import { trackFileViewerPageNavigated, trackFileViewerZoomUsed } from '@/lib/analytics'
 import type { FileDetail } from '@/lib/api'
-import { VIEWER_DOC_SIZE_MESSAGE, VIEWER_WHEEL_MESSAGE } from '@/lib/mini-app'
+import {
+	VIEWER_DOC_SIZE_MESSAGE,
+	VIEWER_GOTO_PAGE_MESSAGE,
+	VIEWER_PAGE_MESSAGE,
+	VIEWER_WHEEL_MESSAGE,
+} from '@/lib/mini-app'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -13,6 +18,7 @@ vi.mock('@/lib/analytics', async () => {
 	return {
 		...actual,
 		trackFileViewerZoomUsed: vi.fn(),
+		trackFileViewerPageNavigated: vi.fn(),
 	}
 })
 
@@ -345,5 +351,141 @@ describe('ViewerStage — iframe-blocked timeout', () => {
 			if (originalRevoke) URL.revokeObjectURL = originalRevoke
 			else Reflect.deleteProperty(URL, 'revokeObjectURL')
 		}
+	})
+})
+
+describe('ViewerStage — paged deck (Slice 2a)', () => {
+	// jsdom runs no srcdoc frame scripts, so the injected paging controller never
+	// executes here. "Exactly one slide is visible" is covered by the direct unit
+	// test of showViewerPage in __tests__/lib/mini-app.test.ts; what these tests
+	// cover is the parent's half of the protocol — the page report it accepts, the
+	// goto message it posts back, and the analytics site it fires.
+	function getDeckFile(): FileDetail {
+		return buildHtmlFile({ name: 'deck.deck.html' })
+	}
+
+	function getStage(): HTMLElement {
+		return document.querySelector('[data-viewer-state]') as HTMLElement
+	}
+
+	function getDeckFrame(): HTMLIFrameElement {
+		return screen.getByTitle('Preview of deck.deck.html') as HTMLIFrameElement
+	}
+
+	// The controller reports its page over postMessage; this replays that exact
+	// boundary the same way the wheel tests replay VIEWER_WHEEL_MESSAGE.
+	function reportPage(iframe: HTMLIFrameElement, index: number, total: number) {
+		act(() => {
+			window.dispatchEvent(
+				new MessageEvent('message', {
+					source: iframe.contentWindow,
+					data: { type: VIEWER_PAGE_MESSAGE, index, total, w: 1440, h: 900 },
+				}),
+			)
+		})
+	}
+
+	beforeEach(() => {
+		vi.mocked(trackFileViewerPageNavigated).mockClear()
+		vi.mocked(trackFileViewerZoomUsed).mockClear()
+	})
+
+	it('injects the paging controller into a deck document without a second injection', () => {
+		render(<ViewerStage file={getDeckFile()} />)
+		const frame = getDeckFrame()
+		const srcDoc = frame.getAttribute('srcdoc') ?? ''
+		expect(srcDoc).toContain(VIEWER_GOTO_PAGE_MESSAGE)
+		// Slice 1's reporter rides the same injection, and one meta means the
+		// controller did not get its own injectIntoHtml call.
+		expect(srcDoc).toContain(VIEWER_DOC_SIZE_MESSAGE)
+		expect(srcDoc.match(/<meta http-equiv="Content-Security-Policy"/g)).toHaveLength(1)
+		// criterion 6: the sandbox posture Slice 1 set is unchanged for decks
+		expect(frame.getAttribute('sandbox')).toBe('allow-scripts')
+		expect(frame.getAttribute('sandbox')).not.toMatch(/allow-same-origin/)
+	})
+
+	it('omits the paging controller from a plain document', () => {
+		render(<ViewerStage file={buildHtmlFile()} />)
+		const frame = screen.getByTitle('Preview of mockup.html') as HTMLIFrameElement
+		expect(frame.getAttribute('srcdoc') ?? '').not.toContain(VIEWER_GOTO_PAGE_MESSAGE)
+	})
+
+	it('advances then rewinds the page on → / ← and reports each navigation', () => {
+		const outerHandler = vi.fn()
+		render(
+			<div onKeyDown={outerHandler}>
+				<ViewerStage file={getDeckFile()} />
+			</div>,
+		)
+		const frame = getDeckFrame()
+		const post = vi.spyOn(frame.contentWindow as Window, 'postMessage')
+		reportPage(frame, 0, 3)
+
+		fireEvent.keyDown(getStage(), { key: 'ArrowRight' })
+		expect(post).toHaveBeenLastCalledWith({ type: VIEWER_GOTO_PAGE_MESSAGE, page: 1 }, '*')
+		// the event is 1-based while the frame protocol is 0-based
+		expect(trackFileViewerPageNavigated).toHaveBeenLastCalledWith({
+			file_id: 'file-1',
+			from_page: 1,
+			to_page: 2,
+			total_pages: 3,
+		})
+
+		fireEvent.keyDown(getStage(), { key: 'ArrowLeft' })
+		expect(post).toHaveBeenLastCalledWith({ type: VIEWER_GOTO_PAGE_MESSAGE, page: 0 }, '*')
+		expect(trackFileViewerPageNavigated).toHaveBeenLastCalledWith({
+			file_id: 'file-1',
+			from_page: 2,
+			to_page: 1,
+			total_pages: 3,
+		})
+
+		expect(outerHandler).not.toHaveBeenCalled()
+	})
+
+	it('treats space / PageDown / PageUp as page navigation without leaking', () => {
+		const outerHandler = vi.fn()
+		render(
+			<div onKeyDown={outerHandler}>
+				<ViewerStage file={getDeckFile()} />
+			</div>,
+		)
+		const frame = getDeckFrame()
+		const post = vi.spyOn(frame.contentWindow as Window, 'postMessage')
+		reportPage(frame, 0, 4)
+
+		fireEvent.keyDown(getStage(), { key: ' ' })
+		expect(post).toHaveBeenLastCalledWith({ type: VIEWER_GOTO_PAGE_MESSAGE, page: 1 }, '*')
+		fireEvent.keyDown(getStage(), { key: 'PageDown' })
+		expect(post).toHaveBeenLastCalledWith({ type: VIEWER_GOTO_PAGE_MESSAGE, page: 2 }, '*')
+		fireEvent.keyDown(getStage(), { key: 'PageUp' })
+		expect(post).toHaveBeenLastCalledWith({ type: VIEWER_GOTO_PAGE_MESSAGE, page: 1 }, '*')
+
+		expect(outerHandler).not.toHaveBeenCalled()
+		expect(trackFileViewerPageNavigated).toHaveBeenCalledTimes(3)
+	})
+
+	it('clamps at the deck edges instead of navigating past them', () => {
+		render(<ViewerStage file={getDeckFile()} />)
+		const frame = getDeckFrame()
+		const post = vi.spyOn(frame.contentWindow as Window, 'postMessage')
+		reportPage(frame, 0, 3)
+		post.mockClear()
+
+		fireEvent.keyDown(getStage(), { key: 'ArrowLeft' })
+		expect(post).not.toHaveBeenCalled()
+		expect(trackFileViewerPageNavigated).not.toHaveBeenCalled()
+	})
+
+	it('leaves arrow keys to native scroll in a plain document', () => {
+		const outerHandler = vi.fn()
+		render(
+			<div onKeyDown={outerHandler}>
+				<ViewerStage file={buildHtmlFile()} />
+			</div>,
+		)
+		fireEvent.keyDown(getStage(), { key: 'ArrowRight' })
+		expect(outerHandler).toHaveBeenCalledTimes(1)
+		expect(trackFileViewerPageNavigated).not.toHaveBeenCalled()
 	})
 })
