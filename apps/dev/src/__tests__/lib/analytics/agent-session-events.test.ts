@@ -92,4 +92,57 @@ describe('trackAgentSessionStartedWithPrompt', () => {
 			}),
 		).resolves.toBeUndefined()
 	})
+
+	it('forwards trigger_type and trigger_id for a cron-dispatched session', async () => {
+		await trackAgentSessionStartedWithPrompt({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-4',
+			agentId: 'agent-1',
+			agentName: 'Bug Triage',
+			systemPrompt: 'abc',
+			triggerType: 'cron',
+			triggerId: 'trig-1',
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(
+			'agent_session_started_with_prompt',
+			'agent-1',
+			expect.objectContaining({ trigger_type: 'cron', trigger_id: 'trig-1' }),
+		)
+	})
+
+	it('forwards trigger_type and trigger_id for an event-dispatched session', async () => {
+		await trackAgentSessionStartedWithPrompt({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-5',
+			agentId: 'agent-1',
+			agentName: 'Bug Triage',
+			systemPrompt: 'abc',
+			triggerType: 'event',
+			triggerId: 'trig-2',
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(
+			'agent_session_started_with_prompt',
+			'agent-1',
+			expect.objectContaining({ trigger_type: 'event', trigger_id: 'trig-2' }),
+		)
+	})
+
+	it('leaves trigger provenance absent for a comment-fallback session', async () => {
+		await trackAgentSessionStartedWithPrompt({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-6',
+			agentId: 'agent-1',
+			agentName: 'Bug Triage',
+			systemPrompt: 'abc',
+			triggerSource: 'comment_fallback',
+			sourceCommentEventId: 42,
+		})
+
+		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
+		expect(props.trigger_source).toBe('comment_fallback')
+		expect(props.trigger_type).toBeUndefined()
+		expect(props.trigger_id).toBeUndefined()
+	})
 })
