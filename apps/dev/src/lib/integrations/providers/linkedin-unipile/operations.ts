@@ -2008,6 +2008,26 @@ function summarisePost(body: unknown): {
 	}
 }
 
+/**
+ * Extract Unipile's canonical post id off a `retrievePost` response.
+ *
+ * The retrieve route accepts LinkedIn's **native** ids (`activity:` /
+ * `ugcPost:`), but the reactions and comments sub-routes carry no such
+ * carve-out and require the provider's own preformatted id — which the
+ * retrieve response returns in the canonical `id` field (v2 dropped
+ * `social_id`). The encoding is opaque and printed nowhere, so this returns it
+ * verbatim; it never mints, rewrites or reformats. Falls back to the caller's
+ * id when the response omits one, so a route that once again accepts the input
+ * form degrades to the previous behaviour rather than failing closed.
+ */
+function resolveCanonicalPostId(body: unknown, fallback: string): string {
+	const rec = (body ?? {}) as Record<string, unknown>
+	const inner =
+		rec.data && typeof rec.data === 'object' ? (rec.data as Record<string, unknown>) : rec
+	const id = inner.id
+	return typeof id === 'string' && id.trim() ? id.trim() : fallback
+}
+
 type ReactionsCollection = {
 	total: number
 	sample: Array<{ user_urn: string; type: string }>
@@ -2176,13 +2196,18 @@ export async function getLinkedInPostEngagement(
 		client.retrievePost({ account_id: acc, post_id: postId }),
 	)
 	const summary = summarisePost(postResp.body)
+	// The reactions and comments sub-routes take Unipile's preformatted post id,
+	// not the native activity id the caller passed and retrievePost accepted —
+	// unipile-client builds all three paths from `encodeURIComponent(post_id)`,
+	// so the id threaded in here is the id on the wire.
+	const resolvedPostId = resolveCanonicalPostId(postResp.body, postId)
 	// Reactions + comments run concurrently — each is independent, and both
 	// failing degrades to a base-metadata-only envelope rather than a total
 	// failure. `Promise.all` is fine because both `safeCollectReactions` and
 	// `safeCountComments` swallow their own errors.
 	const [reactions, comments] = await Promise.all([
-		safeCollectReactions(client, acc, postId),
-		safeCountComments(client, acc, postId),
+		safeCollectReactions(client, acc, resolvedPostId),
+		safeCountComments(client, acc, resolvedPostId),
 	])
 	const isPartial = reactions.error !== null || comments.error !== null
 	return {

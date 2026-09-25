@@ -3,6 +3,11 @@ import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PurgeIdempotencyJob } from '../../jobs/purge-idempotency'
 import { encrypt } from '../../lib/crypto'
+import {
+	NATIVE_ACTIVITY_POST_ID,
+	RESOLVED_POST_ID,
+	startLinkedInMock,
+} from '../../lib/integrations/providers/linkedin-unipile/__mocks__/unipile-server'
 import { __setLinkedInClientForTests } from '../../lib/integrations/providers/linkedin-unipile/operations'
 import {
 	getLinkedInPostEngagement,
@@ -351,5 +356,54 @@ describe('get_post_engagement fan-out', () => {
 		expect(result.comments.total).toBe(0)
 		expect(result.partial_errors.reactions).toBeNull()
 		expect(result.partial_errors.comments).toBeNull()
+	})
+
+	/**
+	 * The load-bearing case: the caller hands in a LinkedIn **native** activity
+	 * id, retrievePost resolves it and answers with Unipile's canonical id, and
+	 * the reactions/comments sub-routes accept ONLY that resolved id. The real
+	 * HTTP client is used against the mock server (no client stub), so the id on
+	 * the wire is exactly the id the operation threaded through.
+	 *
+	 * Fails pre-fix: the sub-fetches are then handed the native id, the mock
+	 * answers 400 "Invalid Post ID." for both routes, `is_partial` comes back
+	 * true and the totals read 0.
+	 */
+	it('threads the resolved post id into the reactions/comments sub-fetches', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		await insertConnectedLinkedInCredential(ws.id, actorId)
+
+		const mock = await startLinkedInMock()
+		const previousBaseUrl = process.env.UNIPILE_BASE_URL
+		process.env.UNIPILE_BASE_URL = mock.baseUrl
+		try {
+			const result = await getLinkedInPostEngagement(
+				{ db, actorId, workspaceId: ws.id },
+				{ post_id: NATIVE_ACTIVITY_POST_ID },
+			)
+
+			// The fixture is discriminating by construction: the id the mock
+			// answers with is not the id handed in.
+			expect(RESOLVED_POST_ID).not.toBe(NATIVE_ACTIVITY_POST_ID)
+
+			// Both sub-routes carry the resolved id, not the native one — assert
+			// on the recorded wire path so this stays encoding-agnostic (no id
+			// format is hardcoded anywhere in the assertion).
+			const reactionCall = mock.inbox().find((c) => /\/posts\/[^/]+\/reactions/.test(c.path))
+			const commentCall = mock.inbox().find((c) => /\/posts\/[^/]+\/comments/.test(c.path))
+			expect(reactionCall?.path).toContain(`/posts/${RESOLVED_POST_ID}/reactions`)
+			expect(commentCall?.path).toContain(`/posts/${RESOLVED_POST_ID}/comments`)
+
+			// …and the sub-routes answered 200 for it, so nothing degraded.
+			expect(result.is_partial).toBe(false)
+			expect(result.partial_errors.reactions).toBeNull()
+			expect(result.partial_errors.comments).toBeNull()
+			expect(result.reactions.total).toBe(2)
+			expect(result.comments.total).toBe(1)
+		} finally {
+			await mock.close()
+			process.env.UNIPILE_BASE_URL = previousBaseUrl
+		}
 	})
 })

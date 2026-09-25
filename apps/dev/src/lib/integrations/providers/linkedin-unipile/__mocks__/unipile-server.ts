@@ -384,15 +384,37 @@ const CANNED_POST_COMMENTS_RESPONSE = () => ({
 	paging: { total_count: 1 },
 })
 
+/**
+ * The provider's canonical, preformatted post id — what `retrievePost` answers
+ * with in the `id` field, and the only id the reactions/comments sub-routes
+ * accept. The encoding is opaque and printed nowhere (base64-preformatted but
+ * no literal in the docs), so this stands in for "some value we do not mint and
+ * must not reformat".
+ */
+export const RESOLVED_POST_ID = 'mock-post-1'
+
+/**
+ * A LinkedIn **native** post id in the documented `activity:` form. The retrieve
+ * route accepts it; the reactions/comments routes do not (no native carve-out),
+ * which is the asymmetry the engagement fan-out has to bridge.
+ */
+export const NATIVE_ACTIVITY_POST_ID = 'activity:7461257878499151234'
+
 /** `GET /v2/:account_id/posts/:post_id`. */
 const CANNED_RETRIEVE_POST_RESPONSE = () => ({
 	object: 'Post',
-	id: 'mock-post-1',
+	id: RESOLVED_POST_ID,
 	author_urn: 'urn:li:person:mock-user-me',
 	author: { id: 'urn:li:person:mock-user-me', display_name: 'Sebk' },
 	published_at: '2026-09-01T09:00:00.000Z',
 	text: 'Mock post body used by the linkedin-unipile test suite.',
 })
+
+/** Extract the `:post_id` segment from a `/v2/:account_id/posts/:post_id...` path. */
+function postIdFromPath(path: string): string {
+	const match = /^\/v2\/[^/]+\/posts\/([^/?]+)/.exec(path)
+	return match?.[1] ?? ''
+}
 
 /** `GET /v2/:account_id/posts/:post_id/reactions`. */
 const CANNED_REACTIONS_RESPONSE = () => ({
@@ -716,10 +738,23 @@ export async function startLinkedInMock(): Promise<LinkedInMockServer> {
 		if (method === 'POST' && /^\/v2\/[^/]+\/comments\/[^/]+\/replies$/.test(url)) {
 			return send(200, CANNED_REPLY_TO_COMMENT_RESPONSE())
 		}
+		// Discriminating post-id contract. `retrievePost` carries the native-id
+		// carve-out and answers any id with the canonical `RESOLVED_POST_ID`; the
+		// reactions and comments routes carry NO carve-out and reject anything but
+		// the resolved id with the live 400 envelope. Without this the sub-routes
+		// answered 200 for any segment and a test could not tell whether the
+		// resolved id was threaded through — the green-by-construction trap the
+		// file header warns about.
 		if (method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+\/comments(\?.*)?$/.test(url)) {
+			if (postIdFromPath(url) !== RESOLVED_POST_ID) {
+				return send(400, { message: 'Invalid Post ID.' })
+			}
 			return send(200, CANNED_POST_COMMENTS_RESPONSE())
 		}
 		if (method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+\/reactions(\?.*)?$/.test(url)) {
+			if (postIdFromPath(url) !== RESOLVED_POST_ID) {
+				return send(400, { message: 'Invalid Post ID.' })
+			}
 			return send(200, CANNED_REACTIONS_RESPONSE())
 		}
 		if (method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+(\?.*)?$/.test(url)) {
