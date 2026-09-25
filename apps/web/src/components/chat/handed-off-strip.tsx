@@ -1,6 +1,6 @@
 import { trackHandedOffStripRowClicked, trackHandedOffStripShown } from '@/lib/analytics'
 import type { SpawnedSession } from '@/lib/api'
-import { formatDepNames, resolveDepNames, statusToPill } from '@/lib/handed-off-strip'
+import { resolveDepNames, statusToPill } from '@/lib/handed-off-strip'
 import { useEffect, useMemo, useRef } from 'react'
 import { SubAgentRow } from './sub-agent-row'
 
@@ -51,14 +51,12 @@ export function HandedOffStrip({ workspaceId, messageId, spawnedSessions }: Hand
 			</div>
 			<ul className="flex flex-col gap-0.5">
 				{visible.map((session) => {
-					const depNames = resolveDepNames(session.depends_on_session_ids, spawnedSessions)
-					const depClause = depNames.length > 0 ? formatDepNames(depNames) : null
 					return (
 						<SubAgentRow
 							key={session.id}
 							workspaceId={workspaceId}
 							session={session}
-							depClause={depClause}
+							depNames={resolveDepNames(session.depends_on_session_ids, spawnedSessions)}
 							onClick={() =>
 								trackHandedOffStripRowClicked({
 									messageId,

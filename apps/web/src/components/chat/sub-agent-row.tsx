@@ -3,7 +3,7 @@ import { useDuration } from '@/hooks/use-duration'
 import type { SpawnedSession } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationMs } from '@/lib/format-duration'
-import { failureText, statusToPill } from '@/lib/handed-off-strip'
+import { failureText, formatDepNames, statusToPill } from '@/lib/handed-off-strip'
 import type { StripPill } from '@/lib/handed-off-strip'
 import { Link } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
@@ -11,8 +11,8 @@ import { useEffect, useRef, useState } from 'react'
 interface SubAgentRowProps {
 	workspaceId: string
 	session: SpawnedSession
-	/** Comma-and-joined names of the sessions this row is behind, or empty. */
-	depClause: string | null
+	/** Names of the sessions this row is behind, already resolved within the strip. */
+	depNames: readonly string[]
 	onClick: () => void
 }
 
@@ -25,8 +25,12 @@ interface SubAgentRowProps {
  * having to compare screenshots. Rows never reorder — the flash is the only
  * motion, per the design spec's Interaction details.
  */
-export function SubAgentRow({ workspaceId, session, depClause, onClick }: SubAgentRowProps) {
+export function SubAgentRow({ workspaceId, session, depNames, onClick }: SubAgentRowProps) {
 	const pill = statusToPill(session.status)
+	// The row owns both dep forms: full names for desktop + the hover tooltip,
+	// the count for the mobile rule (`· behind 2`). Deriving them here keeps one
+	// source of truth, so the tooltip can never disagree with the visible text.
+	const depClause = depNames.length > 0 ? formatDepNames(depNames) : null
 	const previousPillRef = useRef<StripPill | null>(pill)
 	const [flash, setFlash] = useState(false)
 	// Live elapsed for a running row. `useDuration` re-renders every 30s, so the
@@ -106,9 +110,18 @@ export function SubAgentRow({ workspaceId, session, depClause, onClick }: SubAge
 						/>
 					) : null}
 					{depClause ? (
-						<span className={clauseClass} title={depClause}>
-							· behind {depClause}
-						</span>
+						<>
+							{/* Desktop: full names. The mobile rule (design spec
+							    Responsive) truncates the list to a bare count, so the
+							    two forms are swapped at the same `md:` boundary that
+							    flips the row from stacked to inline. */}
+							<span className={cn(clauseClass, 'hidden md:inline')} title={depClause}>
+								· behind {depClause}
+							</span>
+							<span className={cn(clauseClass, 'md:hidden')} title={depClause}>
+								· behind {depNames.length}
+							</span>
+						</>
 					) : null}
 					{pill === 'WORKING' && elapsedRunning ? (
 						<span className={clauseClass}>· {elapsedRunning}</span>

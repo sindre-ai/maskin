@@ -142,15 +142,31 @@ describe('HandedOffStrip', () => {
 		})
 	})
 
-	it('renders the mobile viewport at 375px without collapsing pill state', () => {
+	it('truncates the dep list to a count on mobile, with full names in the tooltip', () => {
 		Object.defineProperty(window, 'innerWidth', { configurable: true, value: 375 })
 		window.dispatchEvent(new Event('resize'))
-		renderStrip([session({ status: 'running', currentActivity: 'compiling' })])
+		renderStrip([
+			session({ id: 's1', status: 'completed', actorName: 'Sentinel' }),
+			session({ id: 's2', status: 'completed', actorName: 'Forge' }),
+			session({
+				id: 's3',
+				status: 'running',
+				actorName: 'Aegis',
+				currentActivity: 'compiling',
+				depends_on_session_ids: ['s1', 's2'],
+			}),
+		])
 		expect(screen.getByText('WORKING')).toBeInTheDocument()
-		// The row keeps its label + pill on the smallest supported viewport —
-		// the pill dropping to its own line via the row's flex-wrap is the
-		// spec's mobile rule; render sanity here just ensures nothing throws
-		// when the viewport is tight.
-		expect(screen.getByText('Sentinel')).toBeInTheDocument()
+		expect(screen.getByText('Aegis')).toBeInTheDocument()
+		// jsdom applies no Tailwind, so both dep forms are in the DOM: the
+		// desktop full-names span and the mobile count span. The count form is
+		// the design spec's `· behind 2`, and BOTH spans must carry the full
+		// names as the hover tooltip so the count is never a dead end.
+		const countSpan = screen.getByText('· behind 2')
+		expect(countSpan).toHaveAttribute('title', 'Sentinel and Forge')
+		expect(screen.getByText('· behind Sentinel and Forge')).toHaveAttribute(
+			'title',
+			'Sentinel and Forge',
+		)
 	})
 })
