@@ -1,5 +1,6 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { trackAgentSessionCompleted, trackTriggerFired } from './analytics'
+import { api } from './api'
 import { queryKeys } from './query-keys'
 import type { SSEEvent } from './sse'
 
@@ -87,12 +88,35 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			queryClient.invalidateQueries({ queryKey: queryKeys.billing.usage(workspaceId) })
 			const outcome = SESSION_COMPLETION_ACTIONS.get(event.action)
 			if (outcome) {
-				trackAgentSessionCompleted({
-					entity_id: event.entity_id,
-					entity_type: 'session',
-					outcome,
-					flow_id: event.event_id ?? null,
-				})
+				const sessionId = event.entity_id
+				// G2 trigger provenance lives on the session row — the `trigger_id`
+				// column plus the `trigger_type` folded into `config` by
+				// `createSession` — and the SSE payload has carried no `data` since
+				// migration 0006 dropped it for the 8KB NOTIFY limit. So read the row
+				// back. Fire-and-forget: `onEvent` is not awaited upstream
+				// (`sse.ts`), so this cannot stall the stream, and a completion whose
+				// row is unreadable (deleted, evicted) still emits — just without
+				// provenance, rather than being dropped.
+				void (async () => {
+					let triggerId: string | null = null
+					let triggerType: string | null = null
+					try {
+						const session = await api.sessions.get(sessionId, workspaceId)
+						triggerId = session.triggerId
+						triggerType =
+							typeof session.config?.trigger_type === 'string' ? session.config.trigger_type : null
+					} catch {
+						// Provenance is best-effort; the completion itself is not.
+					}
+					trackAgentSessionCompleted({
+						entity_id: sessionId,
+						entity_type: 'session',
+						outcome,
+						flow_id: event.event_id ?? null,
+						trigger_id: triggerId,
+						trigger_type: triggerType,
+					})
+				})()
 			}
 			break
 		}
