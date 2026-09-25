@@ -253,9 +253,13 @@ export function showViewerPage(root: ParentNode, index: number): number {
 //
 // Two responsibilities:
 //   1. On load / resize / every page change, report `{ index, total, w, h }`
-//      where `w`/`h` are the active slide's box.
+//      where `w`/`h` are the active slide's box. The load-path report is
+//      deferred across animation frames until the slide has a non-zero box:
+//      measuring synchronously at `load` can read 0x0 before the deck's own
+//      layout settles, and a 0x0 report leaves the stage stuck at
+//      `data-viewer-state="loading"` with no fit until a nav key or resize.
 //   2. Apply page changes commanded by the stage as `VIEWER_GOTO_PAGE_MESSAGE`.
-const VIEWER_PAGING_CONTROLLER = `<script>(function(){var SEL='${VIEWER_SLIDE_SELECTOR}';var apply=${applyViewerPage.toString()};function slides(){return Array.prototype.slice.call(document.querySelectorAll(SEL))}var current=0;function report(){var all=slides();if(!all.length)return;var active=all[current]||all[0];try{parent.postMessage({type:'${VIEWER_PAGE_MESSAGE}',index:current,total:all.length,w:active.scrollWidth,h:active.scrollHeight},'*')}catch(e){}}function go(i){current=apply(slides(),i);report()}window.addEventListener('message',function(e){if(!e.data||e.data.type!=='${VIEWER_GOTO_PAGE_MESSAGE}')return;go(e.data.page|0)});if(document.readyState==='complete')go(0);else window.addEventListener('load',function(){go(0)});window.addEventListener('resize',report)})();</script>`
+const VIEWER_PAGING_CONTROLLER = `<script>(function(){var SEL='${VIEWER_SLIDE_SELECTOR}';var apply=${applyViewerPage.toString()};function slides(){return Array.prototype.slice.call(document.querySelectorAll(SEL))}var current=0;function box(el){var r=el.getBoundingClientRect();return{w:r.width||el.scrollWidth,h:r.height||el.scrollHeight}}function post(w,h,total){try{parent.postMessage({type:'${VIEWER_PAGE_MESSAGE}',index:current,total:total,w:w,h:h},'*')}catch(e){}}function report(){var all=slides();if(!all.length)return;var b=box(all[current]||all[0]);post(b.w,b.h,all.length)}function settle(frames){var all=slides();var el=all[current]||all[0];if(!el)return;var b=box(el);if((b.w>0&&b.h>0)||frames<=0){post(b.w,b.h,all.length);return}requestAnimationFrame(function(){settle(frames-1)})}function go(i){current=apply(slides(),i);settle(12)}window.addEventListener('message',function(e){if(!e.data||e.data.type!=='${VIEWER_GOTO_PAGE_MESSAGE}')return;go(e.data.page|0)});if(document.readyState==='complete')go(0);else window.addEventListener('load',function(){go(0)});window.addEventListener('resize',report)})();</script>`
 
 // Viewer-shell variant of `prepareMiniAppHtml`: same CSP + data-slot
 // bootstrap, plus the doc-size + wheel-forwarding reporter so the stage can

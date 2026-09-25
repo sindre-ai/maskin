@@ -395,4 +395,16 @@ describe('viewer paging controller', () => {
 		expect(paged).toContain(`var SEL='${VIEWER_SLIDE_SELECTOR}'`)
 		expect(paged).toContain(applyViewerPage.toString())
 	})
+
+	it('measures the active slide box and defers the load-path report past layout', () => {
+		const paged = prepareViewerHtml('<!DOCTYPE html><html><body></body></html>', {
+			paged: true,
+		})
+		// jsdom cannot execute the srcdoc frame script, so this pins the two
+		// runtime properties AC3 depends on: the box comes from the rendered
+		// rect (not a synchronous scrollWidth read at `load`), and the initial
+		// report is retried across frames until the slide has a non-zero box.
+		expect(paged).toContain('getBoundingClientRect')
+		expect(paged).toContain('requestAnimationFrame')
+	})
 })
