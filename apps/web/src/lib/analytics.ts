@@ -621,6 +621,42 @@ export function trackAskBannerDecideClicked(p: {
 	})
 }
 
+// Ship-metric events for the chat thread `HANDED OFF` sub-agent delegation
+// strip bet (bet/444b-handed-off-strip). `handed_off_strip_shown` counts
+// impressions — one per assistant-message bubble that renders the strip in a
+// given browser session, not per render — so the denominator answers "how
+// often did a reader actually see it". `handed_off_strip_row_clicked` is the
+// numerator: a click through to a sub-agent's own thread, which is the value
+// the strip exists to deliver. `messageId` scopes each pair to one bubble so
+// the two events can join without double-counting. `subAgentCount` is on the
+// shown event so we can slice CTR by strip size; `sessionId` is on the click
+// event so we can attribute the drilldown to the specific sub-agent row.
+export function trackHandedOffStripShown(p: {
+	messageId: number
+	subAgentCount: number
+}): void {
+	trackEvent('handed_off_strip_shown', {
+		message_id: p.messageId,
+		sub_agent_count: p.subAgentCount,
+		source: 'web',
+	})
+}
+
+export function trackHandedOffStripRowClicked(p: {
+	messageId: number
+	sessionId: string
+	subAgentActorId: string
+	subAgentStatus: string
+}): void {
+	trackEvent('handed_off_strip_row_clicked', {
+		message_id: p.messageId,
+		session_id: p.sessionId,
+		sub_agent_actor_id: p.subAgentActorId,
+		sub_agent_status: p.subAgentStatus,
+		source: 'web',
+	})
+}
+
 // Ship-metric event for D8 of the Loops v4 UX/UI polish bet
 // (bet/d166-loops-v4-polish). Fires once per click on the "Mark read" CTA
 // inside the loop-detail TimelineTab's `NEW · {n} unread` divider.

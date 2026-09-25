@@ -34,6 +34,12 @@ function ConversationThreadPage() {
 	const headerV4Enabled = useFeatureFlag('chats-v4-polish.header')
 	const bannerV4Enabled = useFeatureFlag('chats-v4-polish.banner')
 	const bubblesV4Enabled = useFeatureFlag('chats-v4-polish.bubbles')
+	// Feature-flag boundary for the chat thread `HANDED OFF` sub-agent
+	// delegation strip bet (bet/444b-handed-off-strip). Read once at this
+	// route, threaded down as a plain boolean prop through ThreadMessages →
+	// MessageBubble — the same one-boundary-per-feature shape the v4 polish
+	// flags use above.
+	const handedOffStripEnabled = useFeatureFlag('handed-off-strip')
 	const lastMarkedRef = useRef<number | null>(null)
 	useSessionBudgetStopToast(workspaceId, conversationId)
 
@@ -63,6 +69,7 @@ function ConversationThreadPage() {
 				conversationId={conversationId}
 				v4PolishBanner={chatsV4Enabled && bannerV4Enabled}
 				v4PolishBubbles={chatsV4Enabled && bubblesV4Enabled}
+				handedOffStripEnabled={handedOffStripEnabled}
 			/>
 			{/* No rule above the composer (mockup 517): the composer draws its own
 			    border, and a second full-bleed hairline behind it cut the thread in

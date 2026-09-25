@@ -121,6 +121,16 @@ interface MessageResponse {
 	createdAt: string | null
 }
 
+interface SessionResponse {
+	id: string
+	workspaceId: string
+	actorId: string
+	status: string
+	actionPrompt: string
+	spawnedByMessageId: number | null
+	createdAt: string | null
+}
+
 interface TriggerResponse {
 	id: string
 	workspaceId: string
@@ -474,6 +484,32 @@ export class TestAPI {
 			body: JSON.stringify(data),
 		})
 		if (!res.ok) throw new Error(`postConversationMessage failed: ${res.status}`)
+		return res.json()
+	}
+
+	async createSession(
+		workspaceId: string,
+		data: {
+			actor_id: string
+			action_prompt: string
+			conversation_id?: string
+			message_id?: number
+			auto_start?: boolean
+			spawned_by_message_id?: number
+		},
+	): Promise<SessionResponse> {
+		const { conversation_id, message_id, ...rest } = data
+		const body = {
+			...rest,
+			config:
+				conversation_id && message_id ? { conversation: { conversation_id, message_id } } : {},
+		}
+		const res = await fetch(`${this.baseURL}/api/sessions`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify(body),
+		})
+		if (!res.ok) throw new Error(`createSession failed: ${res.status}`)
 		return res.json()
 	}
 

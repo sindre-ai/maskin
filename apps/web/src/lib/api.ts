@@ -1758,6 +1758,45 @@ export interface MessageResponse {
 	sessionId: string | null
 	createdAt: string | null
 	editedAt: string | null
+	/**
+	 * Sub-agent sessions spawned from this assistant message (bet/444b-handed-off-strip).
+	 * Present on list_conversation_messages responses; empty for non-agent messages
+	 * and for callers that are not participants of the conversation.
+	 */
+	spawned_sessions?: SpawnedSession[]
+}
+
+/**
+ * One entry on the message-level `spawned_sessions` embed served by
+ * `GET /conversations/:id/messages`. Casing matches the delegation-strip
+ * contract: camelCase except `depends_on_session_ids`.
+ */
+export interface SpawnedSession {
+	id: string
+	status: string
+	actorId: string
+	actorName: string
+	actionPrompt: string
+	startedAt: string | null
+	completedAt: string | null
+	durationMs: number | null
+	result: unknown
+	currentActivity: string | null
+	depends_on_session_ids: string[]
+}
+
+/**
+ * Payload of the `session.state_changed` SSE frame. Emitted alongside every
+ * generic session event for a sub-session the caller can see. `snake_case`
+ * matches the backend serialization; camelCase would break the parser.
+ */
+export interface SessionStateChangedPayload {
+	session_id: string
+	status: string
+	duration_ms: number | null
+	depends_on_session_ids: string[]
+	result: unknown
+	current_activity: string | null
 }
 
 export interface EditMessageInput {
