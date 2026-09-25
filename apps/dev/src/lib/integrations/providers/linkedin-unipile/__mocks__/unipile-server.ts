@@ -5,6 +5,7 @@ import {
 } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tryHandlePostsCrud } from './handlers/posts-crud'
+import { CANNED_POST_NOT_FOUND_ERROR } from './handlers/posts-crud'
 export {
 	CANNED_EDIT_POST_RESPONSE,
 	CANNED_POST_NOT_FOUND_ERROR,
@@ -384,10 +385,18 @@ const CANNED_POST_COMMENTS_RESPONSE = () => ({
 	paging: { total_count: 1 },
 })
 
+/**
+ * The id a *Get a Post* response carries. Unipile's reactions/comments
+ * sub-routes accept only this id, not a native activity id — the mock enforces
+ * that so a regression that forwards the caller's input fails here instead of
+ * passing green against a route production can never call.
+ */
+const CANNED_RESOLVED_POST_ID = 'mock-post-1'
+
 /** `GET /v2/:account_id/posts/:post_id`. */
 const CANNED_RETRIEVE_POST_RESPONSE = () => ({
 	object: 'Post',
-	id: 'mock-post-1',
+	id: CANNED_RESOLVED_POST_ID,
 	author_urn: 'urn:li:person:mock-user-me',
 	author: { id: 'urn:li:person:mock-user-me', display_name: 'Sebk' },
 	published_at: '2026-09-01T09:00:00.000Z',
@@ -716,11 +725,24 @@ export async function startLinkedInMock(): Promise<LinkedInMockServer> {
 		if (method === 'POST' && /^\/v2\/[^/]+\/comments\/[^/]+\/replies$/.test(url)) {
 			return send(200, CANNED_REPLY_TO_COMMENT_RESPONSE())
 		}
-		if (method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+\/comments(\?.*)?$/.test(url)) {
-			return send(200, CANNED_POST_COMMENTS_RESPONSE())
-		}
-		if (method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+\/reactions(\?.*)?$/.test(url)) {
-			return send(200, CANNED_REACTIONS_RESPONSE())
+		// Engagement sub-routes take the id a *Get a Post* response carries, not a
+		// native activity id — Unipile returns 400 for a post it can't resolve.
+		// Enforce that here so a regression forwarding the caller's input fails
+		// this suite instead of passing green against a route production rejects.
+		// The retrieve route below stays id-agnostic: it *is* the resolver.
+		{
+			const engagement = url.match(/^\/v2\/[^/]+\/posts\/([^/?]+)\/(comments|reactions)(\?.*)?$/)
+			if (method === 'GET' && engagement) {
+				const requestedId = decodeURIComponent(engagement[1] as string)
+				const kind = engagement[2] as 'comments' | 'reactions'
+				if (requestedId !== CANNED_RESOLVED_POST_ID) {
+					return send(400, CANNED_POST_NOT_FOUND_ERROR())
+				}
+				return send(
+					200,
+					kind === 'comments' ? CANNED_POST_COMMENTS_RESPONSE() : CANNED_REACTIONS_RESPONSE(),
+				)
+			}
 		}
 		if (method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+(\?.*)?$/.test(url)) {
 			return send(200, CANNED_RETRIEVE_POST_RESPONSE())
