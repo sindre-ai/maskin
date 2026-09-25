@@ -188,6 +188,14 @@ export interface CreateSessionParams {
 	 */
 	config?: Record<string, unknown>
 	triggerId?: string
+	/**
+	 * The `triggers.type` of the trigger dispatching this session (`'cron'`,
+	 * `'event'`, or `'reminder'`). Folded into `config.trigger_type` and read
+	 * back at launch, then emitted on `agent_session_started_with_prompt` as
+	 * `trigger_type` — the cron-vs-event split the G2 measurement reads.
+	 * Supplied by `trigger-runner.ts`'s dispatch sites; absent everywhere else.
+	 */
+	triggerType?: string
 	createdBy: string
 	autoStart?: boolean
 	/** ID of a prior session whose workspace snapshot should be restored at startup. */
@@ -497,9 +505,9 @@ export class SessionManager extends EventEmitter {
 		workspaceId: string,
 		params: CreateSessionParams,
 	): Promise<typeof sessions.$inferSelect> {
-		// Fold `triggerSource` / `sourceCommentEventId` into `config` so
-		// `launchContainer` can read them off the session row later — the two
-		// props are threaded through to `agent_session_started_with_prompt`
+		// Fold `triggerSource` / `sourceCommentEventId` / `triggerType` into
+		// `config` so `launchContainer` can read them off the session row later
+		// — the props are threaded through to `agent_session_started_with_prompt`
 		// from there, meaning every dispatch route benefits without each call
 		// site having to remember to fire the analytics event itself.
 		const baseConfig = params.config ?? {}
@@ -509,6 +517,9 @@ export class SessionManager extends EventEmitter {
 		}
 		if (params.sourceCommentEventId !== undefined) {
 			config.source_comment_event_id = params.sourceCommentEventId
+		}
+		if (params.triggerType !== undefined) {
+			config.trigger_type = params.triggerType
 		}
 		const interactive = config.interactive === true
 		const conversationId =
@@ -1734,6 +1745,8 @@ export class SessionManager extends EventEmitter {
 		const sourceCommentEventIdRaw = sessionCfg.source_comment_event_id
 		const sourceCommentEventId =
 			typeof sourceCommentEventIdRaw === 'number' ? sourceCommentEventIdRaw : undefined
+		const triggerType =
+			typeof sessionCfg.trigger_type === 'string' ? sessionCfg.trigger_type : undefined
 		void trackAgentSessionStartedWithPrompt({
 			workspaceId: session.workspaceId,
 			sessionId: session.id,
@@ -1742,6 +1755,8 @@ export class SessionManager extends EventEmitter {
 			systemPrompt: resolvedSystemPrompt,
 			triggerSource,
 			sourceCommentEventId,
+			triggerType,
+			triggerId: session.triggerId ?? undefined,
 		})
 
 		// Interactive sessions have no opening ACTION_PROMPT — the first user turn
