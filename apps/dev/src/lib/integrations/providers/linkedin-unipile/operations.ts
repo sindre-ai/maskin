@@ -1981,6 +1981,7 @@ export type PostEngagementResult = {
 }
 
 function summarisePost(body: unknown): {
+	id?: string
 	author_urn?: string
 	published_at?: string
 	text_preview?: string
@@ -2001,7 +2002,13 @@ function summarisePost(body: unknown): {
 	const publishedAt = typeof inner.published_at === 'string' ? inner.published_at : undefined
 	const raw = typeof inner.text === 'string' ? inner.text : ''
 	const textPreview = raw.length > 240 ? `${raw.slice(0, 240)}…` : raw || undefined
+	// The resolved Unipile post id. retrievePost accepts the caller's native
+	// activity id (e.g. urn:li:activity:…) but answers with Unipile's own
+	// preformatted post id — the same id the reactions/comments sub-routes
+	// require. See getLinkedInPostEngagement.
+	const resolvedId = typeof inner.id === 'string' ? inner.id : undefined
 	return {
+		...(resolvedId ? { id: resolvedId } : {}),
 		...(authorUrn ? { author_urn: authorUrn } : {}),
 		...(publishedAt ? { published_at: publishedAt } : {}),
 		...(textPreview ? { text_preview: textPreview } : {}),
@@ -2176,18 +2183,26 @@ export async function getLinkedInPostEngagement(
 		client.retrievePost({ account_id: acc, post_id: postId }),
 	)
 	const summary = summarisePost(postResp.body)
+	// `retrievePost` resolves on the caller's native activity id but the
+	// reactions/comments sub-routes require Unipile's own post id, which the
+	// retrieve response carries back. Thread the RESOLVED id into the
+	// sub-fetches — passing the caller's input id here is exactly the bug that
+	// made both sub-routes answer INVALID_INPUT for a valid activity id. Fall
+	// back to the input only when the response omitted an id (older tenants).
+	const { id: resolvedPostId, ...summaryFields } = summary
+	const subPostId = resolvedPostId ?? postId
 	// Reactions + comments run concurrently — each is independent, and both
 	// failing degrades to a base-metadata-only envelope rather than a total
 	// failure. `Promise.all` is fine because both `safeCollectReactions` and
 	// `safeCountComments` swallow their own errors.
 	const [reactions, comments] = await Promise.all([
-		safeCollectReactions(client, acc, postId),
-		safeCountComments(client, acc, postId),
+		safeCollectReactions(client, acc, subPostId),
+		safeCountComments(client, acc, subPostId),
 	])
 	const isPartial = reactions.error !== null || comments.error !== null
 	return {
 		post_id: postId,
-		...summary,
+		...summaryFields,
 		reactions: reactions.value,
 		comments: comments.value,
 		partial_errors: { reactions: reactions.error, comments: comments.error },

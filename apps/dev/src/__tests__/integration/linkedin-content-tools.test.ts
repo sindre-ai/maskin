@@ -3,6 +3,10 @@ import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PurgeIdempotencyJob } from '../../jobs/purge-idempotency'
 import { encrypt } from '../../lib/crypto'
+import {
+	type LinkedInMockServer,
+	startLinkedInMock,
+} from '../../lib/integrations/providers/linkedin-unipile/__mocks__/unipile-server'
 import { __setLinkedInClientForTests } from '../../lib/integrations/providers/linkedin-unipile/operations'
 import {
 	getLinkedInPostEngagement,
@@ -30,14 +34,22 @@ import { db, getTestActorId, sql } from './global-setup'
 
 const ENCRYPTION_KEY = 'a'.repeat(64)
 
-beforeAll(() => {
+let mock: LinkedInMockServer
+
+beforeAll(async () => {
 	process.env.INTEGRATION_ENCRYPTION_KEY = ENCRYPTION_KEY
-	process.env.UNIPILE_BASE_URL = 'http://ignored-by-test-stub'
 	process.env.UNIPILE_API_KEY = 'ignored-by-test-stub'
+	// Boot the shared LinkedIn mock and point the real HTTP client at it, so the
+	// engagement test below exercises the mock's actual wire behaviour (the
+	// retrieve/sub-route id asymmetry) instead of an inline stub that can't
+	// reproduce it.
+	mock = await startLinkedInMock()
+	process.env.UNIPILE_BASE_URL = mock.baseUrl
 })
 
-afterAll(() => {
+afterAll(async () => {
 	__setLinkedInClientForTests(null)
+	await mock.close()
 })
 
 beforeEach(() => {
@@ -351,5 +363,46 @@ describe('get_post_engagement fan-out', () => {
 		expect(result.comments.total).toBe(0)
 		expect(result.partial_errors.reactions).toBeNull()
 		expect(result.partial_errors.comments).toBeNull()
+	})
+
+	it('threads the retrievePost-resolved id into the reactions/comments sub-fetches', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		await insertConnectedLinkedInCredential(ws.id, actorId)
+
+		// No client stub here: build the real HTTP client against the shared mock
+		// so the sub-routes answer with their genuine wire behaviour. The caller
+		// passes the native LinkedIn activity id — retrievePost resolves it, and
+		// the mock answers with a DIFFERENT id ('mock-post-1') that the
+		// reactions/comments sub-routes require. Pre-fix the sub-fetches are
+		// handed the activity id and the mock rejects both with 400
+		// (INVALID_INPUT → is_partial=true); post-fix they are handed the
+		// resolved id and both succeed. The fixture id differing from the input
+		// is what makes this test fail against the buggy code.
+		__setLinkedInClientForTests(null)
+
+		const activityId = 'urn:li:activity:7123456789012345678'
+		const result = await getLinkedInPostEngagement(
+			{ db, actorId, workspaceId: ws.id },
+			{ post_id: activityId },
+		)
+
+		expect(result.post_id).toBe(activityId)
+		expect(result.is_partial).toBe(false)
+		expect(result.partial_errors.reactions).toBeNull()
+		expect(result.partial_errors.comments).toBeNull()
+		expect(result.reactions.total).toBe(2)
+		expect(result.comments.total).toBe(1)
+
+		// Assert the resolved id actually reached the wire on both sub-routes,
+		// and the activity id did not.
+		const subRouteCalls = mock
+			.inbox()
+			.filter((c) => /\/(?:reactions|comments)(?:\?|$)/.test(c.path))
+		expect(subRouteCalls.length).toBeGreaterThanOrEqual(2)
+		for (const call of subRouteCalls) {
+			expect(call.path).toContain('mock-post-1')
+			expect(call.path).not.toContain('7123456789012345678')
+		}
 	})
 })

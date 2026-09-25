@@ -394,6 +394,34 @@ const CANNED_RETRIEVE_POST_RESPONSE = () => ({
 	text: 'Mock post body used by the linkedin-unipile test suite.',
 })
 
+/**
+ * Id shapes LinkedIn uses natively for a post — a raw activity/share id or the
+ * URN form. Unipile's `GET /posts/{post}` resolves these, but the
+ * `reactions`/`comments` sub-routes do NOT: they require Unipile's own
+ * preformatted post id (the one the retrieve response returns, e.g.
+ * `mock-post-1`). Sending a native id to a sub-route is the real live failure
+ * this mock now reproduces rather than papering over with a constant 200.
+ */
+const NATIVE_LINKEDIN_POST_ID = /^(?:urn:li:(?:activity|share|ugcPost):\d+|\d+)$/i
+
+/** Wire envelope LinkedIn v2 returns when a sub-route is handed a native id. */
+const CANNED_SUBROUTE_NATIVE_ID_REJECTED = () => ({
+	object: 'Error',
+	error_code: 'invalid_post_id',
+	message:
+		'This route requires the LinkedIn post id returned by GET /posts/{post}; a native activity id is not accepted here.',
+})
+
+/**
+ * Pull the `{post_id}` segment out of a `/posts/{post_id}/<sub>` path and
+ * percent-decode it, so the native-id check sees `urn:li:activity:…` rather
+ * than the encoded wire form.
+ */
+function postIdBeforeSubRoute(url: string, subRoute: string): string | null {
+	const m = url.match(new RegExp(`^/v2/[^/]+/posts/([^/?]+)/${subRoute}(?:\\?.*)?$`))
+	return m ? decodeURIComponent(m[1] as string) : null
+}
+
 /** `GET /v2/:account_id/posts/:post_id/reactions`. */
 const CANNED_REACTIONS_RESPONSE = () => ({
 	object: 'ReactionList',
@@ -717,9 +745,17 @@ export async function startLinkedInMock(): Promise<LinkedInMockServer> {
 			return send(200, CANNED_REPLY_TO_COMMENT_RESPONSE())
 		}
 		if (method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+\/comments(\?.*)?$/.test(url)) {
+			const id = postIdBeforeSubRoute(url, 'comments')
+			if (id !== null && NATIVE_LINKEDIN_POST_ID.test(id)) {
+				return send(400, CANNED_SUBROUTE_NATIVE_ID_REJECTED())
+			}
 			return send(200, CANNED_POST_COMMENTS_RESPONSE())
 		}
 		if (method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+\/reactions(\?.*)?$/.test(url)) {
+			const id = postIdBeforeSubRoute(url, 'reactions')
+			if (id !== null && NATIVE_LINKEDIN_POST_ID.test(id)) {
+				return send(400, CANNED_SUBROUTE_NATIVE_ID_REJECTED())
+			}
 			return send(200, CANNED_REACTIONS_RESPONSE())
 		}
 		if (method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+(\?.*)?$/.test(url)) {
