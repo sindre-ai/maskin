@@ -39,6 +39,20 @@ interface AgentSessionStartedWithPromptProps {
 	 * `skillsAttached` is absent, for the same reason.
 	 */
 	skillsStaged?: number
+	/**
+	 * The `triggers.type` of the trigger that dispatched this session —
+	 * `'cron'`, `'event'`, or `'reminder'`. Present only for trigger-dispatched
+	 * sessions; absent for comment-fallback, interactive, and API-created ones,
+	 * where `triggerSource` carries the attribution instead. This is the
+	 * cron-vs-event split G2 needs to segment the skill-load rate.
+	 */
+	triggerType?: string
+	/**
+	 * `triggers.id` of the dispatching trigger (the `sessions.trigger_id`
+	 * column). Paired with `triggerType` so any session can be traced back to
+	 * the exact trigger that fired it.
+	 */
+	triggerId?: string
 }
 
 /**
@@ -78,6 +92,8 @@ export async function trackAgentSessionStartedWithPrompt(
 			source_comment_event_id: p.sourceCommentEventId,
 			skills_attached: p.skillsAttached,
 			skills_staged: p.skillsStaged,
+			trigger_type: p.triggerType,
+			trigger_id: p.triggerId,
 		})
 	} catch (err) {
 		logger.warn('Failed to emit agent_session_started_with_prompt', {

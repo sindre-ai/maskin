@@ -635,6 +635,7 @@ export class TriggerRunner {
 					actorId: trigger.targetActorId,
 					actionPrompt: prompt,
 					triggerId: trigger.id,
+					triggerType: trigger.type,
 					createdBy: trigger.createdBy,
 				})
 				.then(async (session) => {
@@ -798,6 +799,7 @@ export class TriggerRunner {
 				actorId: trigger.targetActorId,
 				actionPrompt,
 				triggerId: trigger.id,
+				triggerType: trigger.type,
 				createdBy: trigger.createdBy,
 			})
 			.catch((err) => this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name))
@@ -854,6 +856,7 @@ export class TriggerRunner {
 					actorId: trigger.targetActorId,
 					actionPrompt: trigger.actionPrompt,
 					triggerId: trigger.id,
+					triggerType: trigger.type,
 					createdBy: trigger.createdBy,
 				})
 				.catch((err) => this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name))
