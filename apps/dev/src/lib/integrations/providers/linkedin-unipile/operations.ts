@@ -1980,6 +1980,21 @@ export type PostEngagementResult = {
 	is_partial: boolean
 }
 
+/**
+ * The id `retrievePost` returns on the Post object. Unipile's sub-routes
+ * (reactions, comments) require the id from a *Get a Post* response, not the
+ * native activity id the caller supplies — so a read that skips this resolves
+ * the post, then asks for engagement against an id the sub-route rejects.
+ * Same `data`-unwrap as `summarisePost`, since the envelope may or may not
+ * nest the Post under `data`.
+ */
+function resolvedPostId(body: unknown): string {
+	const rec = (body ?? {}) as Record<string, unknown>
+	const inner =
+		rec.data && typeof rec.data === 'object' ? (rec.data as Record<string, unknown>) : rec
+	return typeof inner.id === 'string' ? inner.id.trim() : ''
+}
+
 function summarisePost(body: unknown): {
 	author_urn?: string
 	published_at?: string
@@ -2176,13 +2191,19 @@ export async function getLinkedInPostEngagement(
 		client.retrievePost({ account_id: acc, post_id: postId }),
 	)
 	const summary = summarisePost(postResp.body)
+	// Sub-routes take the id *retrievePost* returns, never the caller's input —
+	// Unipile's reactions/comments endpoints only accept the Get-a-Post id. Fall
+	// back to the input only when the response carried no usable id, so a
+	// degenerate response degrades to the old behaviour rather than calling with
+	// an empty segment.
+	const subRoutePostId = resolvedPostId(postResp.body) || postId
 	// Reactions + comments run concurrently — each is independent, and both
 	// failing degrades to a base-metadata-only envelope rather than a total
 	// failure. `Promise.all` is fine because both `safeCollectReactions` and
 	// `safeCountComments` swallow their own errors.
 	const [reactions, comments] = await Promise.all([
-		safeCollectReactions(client, acc, postId),
-		safeCountComments(client, acc, postId),
+		safeCollectReactions(client, acc, subRoutePostId),
+		safeCountComments(client, acc, subRoutePostId),
 	])
 	const isPartial = reactions.error !== null || comments.error !== null
 	return {
