@@ -7,7 +7,14 @@ vi.mock('@/lib/analytics', () => ({
 	trackAgentSessionCompleted: vi.fn(),
 }))
 
+vi.mock('@/lib/api', () => ({
+	api: {
+		sessions: { get: vi.fn() },
+	},
+}))
+
 import { trackAgentSessionCompleted, trackTriggerFired } from '@/lib/analytics'
+import { api } from '@/lib/api'
 
 function createMockQueryClient() {
 	return {
@@ -237,7 +244,10 @@ describe('invalidateFromSSE', () => {
 		expect(trackTriggerFired).not.toHaveBeenCalled()
 	})
 
-	it('emits agent_session_completed on completed/failed/timeout actions with outcome', () => {
+	it('emits agent_session_completed on completed/failed/timeout actions with outcome', async () => {
+		const session = { triggerId: null, config: {} }
+		vi.mocked(api.sessions.get).mockResolvedValue(session as never)
+
 		const qc = createMockQueryClient()
 		for (const [action, outcome] of [
 			['session_completed', 'completed'],
@@ -251,34 +261,89 @@ describe('invalidateFromSSE', () => {
 				event_id: 'evt-2',
 			} as never)
 		}
-		expect(trackAgentSessionCompleted).toHaveBeenCalledTimes(3)
+		await vi.waitFor(() => expect(trackAgentSessionCompleted).toHaveBeenCalledTimes(3))
 		expect(trackAgentSessionCompleted).toHaveBeenNthCalledWith(1, {
 			entity_id: 'sess-1',
 			entity_type: 'session',
 			outcome: 'completed',
 			flow_id: 'evt-2',
+			trigger_id: null,
+			trigger_type: null,
 		})
 		expect(trackAgentSessionCompleted).toHaveBeenNthCalledWith(2, {
 			entity_id: 'sess-1',
 			entity_type: 'session',
 			outcome: 'failed',
 			flow_id: 'evt-2',
+			trigger_id: null,
+			trigger_type: null,
 		})
 		expect(trackAgentSessionCompleted).toHaveBeenNthCalledWith(3, {
 			entity_id: 'sess-1',
 			entity_type: 'session',
 			outcome: 'timeout',
 			flow_id: 'evt-2',
+			trigger_id: null,
+			trigger_type: null,
 		})
 	})
 
-	it('does not emit agent_session_completed for routine session updates', () => {
+	it('forwards the session row trigger_id and config.trigger_type as G2 provenance', async () => {
+		vi.mocked(api.sessions.get).mockResolvedValue({
+			triggerId: 'trig-1',
+			config: { trigger_type: 'cron' },
+		} as never)
+
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'session',
+			entity_id: 'sess-9',
+			action: 'session_completed',
+			event_id: 'evt-9',
+		} as never)
+
+		await vi.waitFor(() => expect(trackAgentSessionCompleted).toHaveBeenCalledOnce())
+		expect(trackAgentSessionCompleted).toHaveBeenCalledWith({
+			entity_id: 'sess-9',
+			entity_type: 'session',
+			outcome: 'completed',
+			flow_id: 'evt-9',
+			trigger_id: 'trig-1',
+			trigger_type: 'cron',
+		})
+	})
+
+	it('still emits the completion without provenance when the session row cannot be read', async () => {
+		vi.mocked(api.sessions.get).mockRejectedValueOnce(new Error('404 not found'))
+
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'session',
+			entity_id: 'sess-gone',
+			action: 'session_completed',
+			event_id: 'evt-10',
+		} as never)
+
+		await vi.waitFor(() => expect(trackAgentSessionCompleted).toHaveBeenCalledOnce())
+		expect(trackAgentSessionCompleted).toHaveBeenCalledWith({
+			entity_id: 'sess-gone',
+			entity_type: 'session',
+			outcome: 'completed',
+			flow_id: 'evt-10',
+			trigger_id: null,
+			trigger_type: null,
+		})
+	})
+
+	it('does not emit agent_session_completed for routine session updates', async () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {
 			entity_type: 'session',
 			entity_id: 'sess-1',
 			action: 'updated',
 		} as never)
+		await Promise.resolve()
+		expect(api.sessions.get).not.toHaveBeenCalled()
 		expect(trackAgentSessionCompleted).not.toHaveBeenCalled()
 	})
 })

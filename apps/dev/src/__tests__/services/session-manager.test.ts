@@ -255,6 +255,32 @@ describe('SessionManager', () => {
 			expect(sessionInsert?.config.source_comment_event_id).toBe(9001)
 		})
 
+		it('persists triggerType onto session.config.trigger_type so the launch emit can segment cron-vs-event (G2)', async () => {
+			// G2: the trigger-runner passes the dispatching trigger's `type` to
+			// createSession, which must persist it onto session.config so
+			// startSession's `trackAgentSessionStartedWithPrompt` reads it back at
+			// launch. If the key shape drifts here, PostHog stops receiving
+			// trigger_type and the skill-load rate can no longer be split cron-vs-event.
+			const session = buildSession({ status: 'pending' })
+			mockResults.insertQueue = [[session], []]
+
+			await manager.createSession('ws-1', {
+				actorId: 'actor-1',
+				actionPrompt: 'Run the cron job',
+				createdBy: 'creator-1',
+				autoStart: false,
+				triggerId: 'trig-1',
+				triggerType: 'cron',
+			})
+
+			const sessionInsert = calls.inserts.find((row) => {
+				if (typeof row !== 'object' || row === null || !('config' in row)) return false
+				const cfg = (row as { config?: Record<string, unknown> }).config
+				return cfg?.trigger_type === 'cron'
+			}) as { config: { trigger_type: string } } | undefined
+			expect(sessionInsert?.config.trigger_type).toBe('cron')
+		})
+
 		it('rejects pre-insert when the workspace is over its plan cap', async () => {
 			// Workspace select returns a pro plan at cap; the cap query then
 			// returns rows whose reported dollar cost sums to ≥ hard_cap_usd_cents.
