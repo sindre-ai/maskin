@@ -330,6 +330,78 @@ describe('Loop-version-pusher — system prompt guard', () => {
 		})
 	})
 
+	it('reads the LIVE actors.systemPrompt (not metadata.snapshot.systemPrompt) so a manual PATCH correction is not clobbered by a later null-snapshot push', async () => {
+		// Seed a locked-install actor at v1 with a corrupted-looking short prompt
+		// in the marketplace snapshot, then simulate a manual PATCH that restored
+		// the real prompt live in the actors table.
+		const staleSnapshotPrompt = LONG_PROMPT
+		const patchedPrompt = 'Manually PATCHed correction — this is the truth.'
+		const sourceActorId = randomUUID()
+		const loop = await seedMarketplaceLoop({
+			name: 'Manual PATCH loop',
+			version: '1.0.0',
+			actorItems: [
+				{
+					sourceItemId: sourceActorId,
+					snapshot: { ...BASE_ACTOR_SNAPSHOT, systemPrompt: staleSnapshotPrompt },
+				},
+			],
+		})
+		const app = makeApp(actorId)
+		await install(app, loop.id, workspaceId)
+
+		// Live PATCH — the actors row diverges from what metadata.snapshot holds.
+		// The install-time snapshot in metadata still carries staleSnapshotPrompt;
+		// the actors.systemPrompt now holds the patchedPrompt correction.
+		const before = await findActor(workspaceId, sourceActorId)
+		if (!before) throw new Error('expected the installed actor row')
+		await db
+			.update(actors)
+			.set({ systemPrompt: patchedPrompt })
+			.where(eq(actors.id, before.id))
+
+		// Publish v2 with a null systemPrompt — a snapshot that would corrupt.
+		await db
+			.update(marketplaceLoops)
+			.set({ version: '2.0.0' })
+			.where(eq(marketplaceLoops.id, loop.id))
+		await db
+			.update(marketplaceLoopItems)
+			.set({
+				itemSnapshot: { ...BASE_ACTOR_SNAPSHOT, systemPrompt: null },
+			})
+			.where(
+				and(
+					eq(marketplaceLoopItems.loopId, loop.id),
+					eq(marketplaceLoopItems.sourceItemId, sourceActorId),
+				),
+			)
+
+		const pusher = new LoopVersionPusher(
+			db,
+			new AgentStorageManager(createMemoryStorage(), db),
+			60_000,
+		)
+		await pusher.tick()
+
+		// The LIVE prompt survives — not clobbered from the stale metadata snapshot.
+		const after = await findActor(workspaceId, sourceActorId)
+		expect(after?.systemPrompt).toBe(patchedPrompt)
+
+		// Sentry payload's previousLength reflects the LIVE actors.systemPrompt
+		// length, NOT the stale metadata snapshot length — proving the guard
+		// read the actors table, not metadata.snapshot.
+		expect(captureMessage).toHaveBeenCalledTimes(1)
+		const [, hint] = captureMessage.mock.calls[0] ?? []
+		expect(hint).toMatchObject({
+			extra: expect.objectContaining({
+				cause: 'null_write',
+				writePath: 'loop_version_pusher_locked_install',
+				previousLength: patchedPrompt.length,
+			}),
+		})
+	})
+
 	it('writes a shorter non-empty systemPrompt through — the guard does not block a shrink to a non-empty value', async () => {
 		const sourceActorId = randomUUID()
 		const loop = await seedMarketplaceLoop({
