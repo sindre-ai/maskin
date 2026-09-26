@@ -27,6 +27,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import { and, eq, inArray, ne, or, sql } from 'drizzle-orm'
+import { type PromptGuardCtx, guardSystemPromptWrite } from '../lib/actor-prompt-guard'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { expandBrowserCapability } from '../lib/marketplace-loops/loop-snapshot'
@@ -73,6 +74,12 @@ interface InstalledRow {
 	sourceItemId: string | null
 	type: ItemType
 	snapshot: Record<string, unknown>
+	// Only populated for actor rows — the current `actors.systemPrompt` value,
+	// used by the prompt-write guard when the pusher rewrites a row from a
+	// snapshot. Reading it here (rather than from `snapshot.systemPrompt` in
+	// metadata) means the guard sees post-PATCH corrections, not the last
+	// install snapshot.
+	systemPrompt?: string | null
 }
 
 /**
@@ -278,7 +285,16 @@ export class LoopVersionPusher {
 						case 'actor':
 							await tx
 								.update(actors)
-								.set({ ...buildActorUpdate(rewritten), metadata, updatedAt: new Date() })
+								.set({
+									...buildActorUpdate({ systemPrompt: existing.systemPrompt ?? null }, rewritten, {
+										writePath: 'loop_version_pusher_locked_install',
+										writerActorId: createdBy ?? undefined,
+										actorId: existing.id,
+										workspaceId: install.workspaceId,
+									}),
+									metadata,
+									updatedAt: new Date(),
+								})
 								.where(eq(actors.id, existing.id))
 							break
 						case 'trigger':
@@ -335,7 +351,16 @@ export class LoopVersionPusher {
 								// phantom add — the next tick diffs this row as owned.
 								await tx
 									.update(actors)
-									.set({ ...buildActorUpdate(rewritten), metadata, updatedAt: new Date() })
+									.set({
+										...buildActorUpdate({ systemPrompt: existing.systemPrompt }, rewritten, {
+											writePath: 'loop_version_pusher_dedup',
+											writerActorId: createdBy ?? undefined,
+											actorId: existing.id,
+											workspaceId: install.workspaceId,
+										}),
+										metadata,
+										updatedAt: new Date(),
+									})
 									.where(eq(actors.id, existing.id))
 								newId = existing.id
 								wasReused = true
@@ -763,11 +788,15 @@ export class LoopVersionPusher {
 		const out: InstalledRow[] = []
 
 		const actorRows = await this.db
-			.select({ id: actors.id, metadata: actors.metadata })
+			.select({
+				id: actors.id,
+				metadata: actors.metadata,
+				systemPrompt: actors.systemPrompt,
+			})
 			.from(actors)
 			.where(sql`${actors.metadata}->>'installed_loop_id' = ${installId}`)
 		for (const r of actorRows) {
-			out.push(toInstalledRow(r.id, 'actor', r.metadata))
+			out.push(toInstalledRow(r.id, 'actor', r.metadata, r.systemPrompt))
 		}
 
 		const triggerRows = await this.db
@@ -871,13 +900,19 @@ export class LoopVersionPusher {
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-function toInstalledRow(id: string, type: ItemType, metadata: unknown): InstalledRow {
+function toInstalledRow(
+	id: string,
+	type: ItemType,
+	metadata: unknown,
+	systemPrompt?: string | null,
+): InstalledRow {
 	const meta = (metadata as Record<string, unknown>) ?? {}
 	return {
 		id,
 		sourceItemId: typeof meta.source_item_id === 'string' ? meta.source_item_id : null,
 		type,
 		snapshot: (meta.snapshot as Record<string, unknown>) ?? {},
+		systemPrompt,
 	}
 }
 
@@ -885,11 +920,26 @@ function snapshotsEqual(a: unknown, b: unknown): boolean {
 	return JSON.stringify(a) === JSON.stringify(b)
 }
 
-function buildActorUpdate(snapshot: Record<string, unknown>): Partial<typeof actors.$inferInsert> {
-	return {
+// buildActorUpdate routes systemPrompt through guardSystemPromptWrite so a
+// snapshot with a null / empty prompt cannot overwrite an installed actor's
+// non-empty prompt. On guard trip we FIELD-SKIP: the returned update object
+// omits systemPrompt but keeps every other field, so the pusher tick still
+// updates name/description/tools and moves the install to the target version.
+// The Sentry emit + PostHog emit fire inside the guard.
+function buildActorUpdate(
+	existing: { systemPrompt: string | null } | null | undefined,
+	snapshot: Record<string, unknown>,
+	ctx: PromptGuardCtx,
+): Partial<typeof actors.$inferInsert> {
+	const attempted =
+		(snapshot.systemPrompt as string | null | undefined) ??
+		(snapshot.system_prompt as string | null | undefined) ??
+		null
+	const guard = guardSystemPromptWrite(existing?.systemPrompt ?? null, attempted, ctx)
+
+	const base: Partial<typeof actors.$inferInsert> = {
 		name: (snapshot.name as string) ?? 'Untitled agent',
 		description: (snapshot.description as string) ?? null,
-		systemPrompt: (snapshot.systemPrompt as string) ?? (snapshot.system_prompt as string) ?? null,
 		llmProvider: (snapshot.llmProvider as string) ?? (snapshot.llm_provider as string) ?? null,
 		llmConfig:
 			(snapshot.llmConfig as Record<string, unknown>) ??
@@ -898,6 +948,8 @@ function buildActorUpdate(snapshot: Record<string, unknown>): Partial<typeof act
 		// Same expansion as buildActorInsert — see its comment.
 		tools: (expandBrowserCapability(snapshot.tools) as Record<string, unknown>) ?? null,
 	}
+	if (guard.ok) base.systemPrompt = attempted
+	return base
 }
 
 function buildTriggerUpdate(

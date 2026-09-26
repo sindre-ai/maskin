@@ -38,9 +38,11 @@ export async function findProvisionedActorBySourceItem(
 	db: DbHandle,
 	workspaceId: string,
 	sourceItemId: string,
-): Promise<{ id: string } | undefined> {
+): Promise<{ id: string; systemPrompt: string | null } | undefined> {
+	// systemPrompt selected so the loop-version-pusher's dedup call site can pass
+	// the row through guardSystemPromptWrite before overwriting.
 	const [row] = await db
-		.select({ id: actors.id })
+		.select({ id: actors.id, systemPrompt: actors.systemPrompt })
 		.from(actors)
 		.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
 		.where(
