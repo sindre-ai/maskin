@@ -1,6 +1,11 @@
 @import "tailwindcss";
 @plugin '@tailwindcss/typography';
 
+/* Workspace packages ship React components whose utility classes live outside
+   apps/web, so Tailwind's automatic source detection misses them. Scan the
+   markdown package explicitly or its prose utilities are never generated. */
+@source "../../../packages/markdown/src";
+
 @custom-variant dark (&:is(.dark *));
 @custom-variant can-hover (@media (hover: hover));
 
