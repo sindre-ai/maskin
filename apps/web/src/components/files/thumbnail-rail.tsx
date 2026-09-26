@@ -36,7 +36,7 @@ export function ThumbnailRail({ total, activeIndex, onSelect }: ThumbnailRailPro
 							'group flex aspect-video w-full flex-col items-center justify-center rounded-md border bg-background text-xs font-medium text-muted-foreground transition-colors',
 							'hover:border-border-strong hover:text-foreground',
 							'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-							isActive ? 'border-primary text-foreground ring-1 ring-primary' : 'border-border',
+							isActive ? 'border-brand text-foreground ring-1 ring-brand' : 'border-border',
 						)}
 					>
 						{i + 1}
