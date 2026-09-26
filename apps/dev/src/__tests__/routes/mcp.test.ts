@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { mockConnect, mockHandleRequest, MockTransport, mockCreateMcpServer } = vi.hoisted(() => {
 	const mockConnect = vi.fn().mockResolvedValue(undefined)
@@ -262,6 +262,48 @@ describe('MCP Routes', () => {
 			expect(mockConnect).toHaveBeenCalledTimes(1)
 			expect(mockHandleRequest).toHaveBeenCalledWith(mockNodeReq, mockNodeRes, body)
 			expect(res.headers.get('x-hono-already-sent')).toBe('1')
+		})
+
+		it('threads triggeringEventId from X-Maskin-Triggering-Event-Id into the MCP config', async () => {
+			const app = await createApp()
+			const body = { jsonrpc: '2.0', method: 'tools/call', id: 1 }
+			await app.request(
+				jsonPostRequest('/mcp', body, { 'X-Maskin-Triggering-Event-Id': '4242' }),
+				undefined,
+				env,
+			)
+			expect(mockCreateMcpServer).toHaveBeenCalledWith(
+				expect.objectContaining({ triggeringEventId: 4242 }),
+			)
+		})
+
+		it('leaves triggeringEventId undefined when no header is set', async () => {
+			const app = await createApp()
+			const body = { jsonrpc: '2.0', method: 'tools/call', id: 1 }
+			await app.request(jsonPostRequest('/mcp', body), undefined, env)
+			expect(mockCreateMcpServer).toHaveBeenCalledWith(
+				expect.objectContaining({ triggeringEventId: undefined }),
+			)
+		})
+
+		// Callers that copy the MCP preset out of the UI can send the raw
+		// `${MASKIN_TRIGGERING_EVENT_ID}` placeholder unexpanded — the same
+		// failure mode X-Maskin-Session-Id already guards against. It must
+		// never resolve to a numeric parent id.
+		it('rejects the unexpanded placeholder and any non-positive-integer value', async () => {
+			for (const raw of ['${MASKIN_TRIGGERING_EVENT_ID}', '0', '-1', 'abc', '3.14', '']) {
+				vi.clearAllMocks()
+				const app = await createApp()
+				const body = { jsonrpc: '2.0', method: 'tools/call', id: 1 }
+				await app.request(
+					jsonPostRequest('/mcp', body, { 'X-Maskin-Triggering-Event-Id': raw }),
+					undefined,
+					env,
+				)
+				expect(mockCreateMcpServer).toHaveBeenCalledWith(
+					expect.objectContaining({ triggeringEventId: undefined }),
+				)
+			}
 		})
 	})
 })

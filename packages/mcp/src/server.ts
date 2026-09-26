@@ -88,6 +88,20 @@ interface McpConfig {
 	telemetrySessionId?: string
 	/** How `telemetrySessionId` was obtained. Ignored without it. */
 	telemetrySessionSource?: 'maskin-session' | 'process' | 'unknown'
+	/**
+	 * `events.id` of the comment that dispatched this agent session, when the
+	 * session was triggered by a comment. `create_comment` uses it as the
+	 * default `parent_event_id` unless the caller explicitly opts out via
+	 * `no_thread: true` — the tool-level guarantee that agents reply inside
+	 * their triggering thread without depending on a prompt rule each system
+	 * prompt has to remember (follow-up to PR #1709's rule-level fallback).
+	 *
+	 * Set by `routes/mcp.ts` from the `X-Maskin-Triggering-Event-Id` header
+	 * that session-manager stamps onto Maskin MCP entries when a session
+	 * carries `source_comment_event_id`. Absent otherwise, and always absent
+	 * on stdio and on external callers.
+	 */
+	triggeringEventId?: number
 }
 
 /**
@@ -4553,7 +4567,28 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, ...body } = args
+			const { workspace_id, no_thread, ...body } = args as {
+				workspace_id?: string
+				no_thread?: boolean
+				parent_event_id?: number
+				[key: string]: unknown
+			}
+			// Thread defaulting: when the session was dispatched from a comment
+			// (config.triggeringEventId set by routes/mcp.ts) and the caller
+			// didn't already pick a parent, reply inside the triggering thread
+			// by default. `no_thread: true` is the explicit opt-out for cases
+			// where a fresh top-level comment is actually intended (a status
+			// update on a bet, opening a new topic, etc.). This turns the
+			// "reply in-thread" guarantee from a per-agent prompt rule (PR
+			// #1709) into a tool-level default covering every agent and
+			// dispatch path.
+			if (
+				body.parent_event_id === undefined &&
+				no_thread !== true &&
+				typeof config.triggeringEventId === 'number'
+			) {
+				body.parent_event_id = config.triggeringEventId
+			}
 			const result = await apiCall(config, 'POST', '/api/events', body, {
 				workspaceId: workspace_id,
 			})
