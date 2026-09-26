@@ -29,6 +29,7 @@ import { resolveViewerVariant } from '@/lib/viewer-detect'
 import { AlertTriangle, Code, Download, Maximize2, Minus, Plus } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { isHtml, isInlineImage, isMarkdown, isPlainText } from './file-body'
+import { ThumbnailRail } from './thumbnail-rail'
 
 // 8 seconds is the spec's `iframe-blocked` timeout: the sandboxed frame that
 // never posts a doc-size message (agent CSP that blocks the reporter, empty
@@ -536,37 +537,42 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 				{blocked ? (
 					<IframeBlockedFallback file={file} />
 				) : (
-					<div ref={viewportRef} className="relative flex-1 overflow-auto">
-						{!fitSize && (
-							<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-								<Spinner className="size-6 text-muted-foreground" />
-							</div>
+					<div className="flex min-h-0 flex-1">
+						{isPaged && page && page.total > 1 && (
+							<ThumbnailRail total={page.total} activeIndex={page.index} onSelect={gotoPage} />
 						)}
-						<div
-							style={{
-								width: scaledSize?.w ?? '100%',
-								height: scaledSize?.h ?? '100%',
-								position: 'relative',
-							}}
-						>
-							<iframe
-								ref={iframeRef}
-								title={`Preview of ${file.name}`}
-								srcDoc={srcDoc}
-								// `allow-scripts` only — no `allow-same-origin`,
-								// so the frame's fetch/XHR sees a null origin and
-								// same-origin checks against the app fail closed.
-								// The reporter script runs inside this sandbox.
-								sandbox="allow-scripts"
+						<div ref={viewportRef} className="relative flex-1 overflow-auto">
+							{!fitSize && (
+								<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+									<Spinner className="size-6 text-muted-foreground" />
+								</div>
+							)}
+							<div
 								style={{
-									width: fitSize?.w ?? '100%',
-									height: fitSize?.h ?? '100%',
-									transform: fitSize ? `scale(${zoom})` : undefined,
-									transformOrigin: '0 0',
-									border: 0,
-									display: 'block',
+									width: scaledSize?.w ?? '100%',
+									height: scaledSize?.h ?? '100%',
+									position: 'relative',
 								}}
-							/>
+							>
+								<iframe
+									ref={iframeRef}
+									title={`Preview of ${file.name}`}
+									srcDoc={srcDoc}
+									// `allow-scripts` only — no `allow-same-origin`,
+									// so the frame's fetch/XHR sees a null origin and
+									// same-origin checks against the app fail closed.
+									// The reporter script runs inside this sandbox.
+									sandbox="allow-scripts"
+									style={{
+										width: fitSize?.w ?? '100%',
+										height: fitSize?.h ?? '100%',
+										transform: fitSize ? `scale(${zoom})` : undefined,
+										transformOrigin: '0 0',
+										border: 0,
+										display: 'block',
+									}}
+								/>
+							</div>
 						</div>
 					</div>
 				)}

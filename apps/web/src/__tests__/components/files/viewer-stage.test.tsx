@@ -489,3 +489,83 @@ describe('ViewerStage — paged deck (Slice 2a)', () => {
 		expect(trackFileViewerPageNavigated).not.toHaveBeenCalled()
 	})
 })
+
+describe('ViewerStage — thumbnail rail (Slice 2b)', () => {
+	function getDeckFile(): FileDetail {
+		return buildHtmlFile({ name: 'deck.deck.html' })
+	}
+
+	function getDeckFrame(): HTMLIFrameElement {
+		return screen.getByTitle('Preview of deck.deck.html') as HTMLIFrameElement
+	}
+
+	function reportPage(iframe: HTMLIFrameElement, index: number, total: number) {
+		act(() => {
+			window.dispatchEvent(
+				new MessageEvent('message', {
+					source: iframe.contentWindow,
+					data: { type: VIEWER_PAGE_MESSAGE, index, total, w: 1440, h: 900 },
+				}),
+			)
+		})
+	}
+
+	beforeEach(() => {
+		vi.mocked(trackFileViewerPageNavigated).mockClear()
+	})
+
+	it('is hidden for a non-paged doc', () => {
+		render(<ViewerStage file={buildHtmlFile()} />)
+		expect(screen.queryByRole('tablist', { name: 'Page thumbnails' })).not.toBeInTheDocument()
+	})
+
+	it('is hidden for a paged doc until the controller reports its pages', () => {
+		render(<ViewerStage file={getDeckFile()} />)
+		expect(screen.queryByRole('tablist', { name: 'Page thumbnails' })).not.toBeInTheDocument()
+	})
+
+	it('lists one thumbnail per page once the controller reports', () => {
+		render(<ViewerStage file={getDeckFile()} />)
+		reportPage(getDeckFrame(), 0, 4)
+		const rail = screen.getByRole('tablist', { name: 'Page thumbnails' })
+		expect(rail).toBeInTheDocument()
+		expect(rail.querySelectorAll('[role="tab"]')).toHaveLength(4)
+		expect(screen.getByRole('tab', { name: 'Go to page 1 of 4' })).toHaveAttribute(
+			'aria-selected',
+			'true',
+		)
+	})
+
+	it('is hidden for a single-page deck (nothing to navigate to)', () => {
+		render(<ViewerStage file={getDeckFile()} />)
+		reportPage(getDeckFrame(), 0, 1)
+		expect(screen.queryByRole('tablist', { name: 'Page thumbnails' })).not.toBeInTheDocument()
+	})
+
+	it('drives showPage via the same VIEWER_GOTO_PAGE_MESSAGE path as keyboard nav', () => {
+		render(<ViewerStage file={getDeckFile()} />)
+		const frame = getDeckFrame()
+		reportPage(frame, 0, 3)
+		const post = vi.spyOn(frame.contentWindow as Window, 'postMessage')
+
+		fireEvent.click(screen.getByRole('tab', { name: 'Go to page 3 of 3' }))
+		expect(post).toHaveBeenLastCalledWith({ type: VIEWER_GOTO_PAGE_MESSAGE, page: 2 }, '*')
+		expect(trackFileViewerPageNavigated).toHaveBeenLastCalledWith({
+			file_id: 'file-1',
+			from_page: 1,
+			to_page: 3,
+			total_pages: 3,
+		})
+	})
+
+	it('reflects the active slide when the controller reports a page change', () => {
+		render(<ViewerStage file={getDeckFile()} />)
+		const frame = getDeckFrame()
+		reportPage(frame, 0, 3)
+		reportPage(frame, 1, 3)
+		expect(screen.getByRole('tab', { name: 'Go to page 2 of 3' })).toHaveAttribute(
+			'aria-selected',
+			'true',
+		)
+	})
+})
