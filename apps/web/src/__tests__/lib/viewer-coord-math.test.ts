@@ -8,6 +8,7 @@ import {
 	zoomAt,
 	zoomStep,
 } from '@/lib/viewer-coord-math'
+import { MOCKUP_VIEWPORT_PRESETS } from '@/lib/viewer-detect'
 import { describe, expect, it } from 'vitest'
 
 const ROUND_TRIP_TOLERANCE_PX = 0.5
@@ -60,6 +61,41 @@ describe('viewer-coord-math', () => {
 		it('returns the min zoom on degenerate inputs', () => {
 			expect(computeFit({ w: 0, h: 100 }, { w: 100, h: 100 })).toBe(ZOOM_MIN)
 			expect(computeFit({ w: 100, h: 100 }, { w: 0, h: 100 })).toBe(ZOOM_MIN)
+		})
+
+		// Slice 2c: the mockup render path calls computeFit with a preset's
+		// (Dw, Dh) as the natural doc box, so the same clamp math applies. Cover
+		// each preset in the two shape classes that trip the letterbox: a stage
+		// where the width ratio wins, and one where the height ratio wins.
+		it('scales each mockup preset by min(Vw/Dw, Vh/Dh) inside the [0.1, 4] clamp', () => {
+			// Phone (375×812) in a 900-wide stage: width ratio 900/375 = 2.4,
+			// height ratio 900/812 ≈ 1.108 → height wins, k ≈ 1.108, in range.
+			expect(computeFit(MOCKUP_VIEWPORT_PRESETS.phone, { w: 900, h: 900 })).toBeCloseTo(
+				900 / 812,
+				6,
+			)
+			// Tablet (768×1024) in a 1200-wide square stage: width ratio 1200/768 = 1.5625,
+			// height ratio 1200/1024 ≈ 1.172 → height wins.
+			expect(computeFit(MOCKUP_VIEWPORT_PRESETS.tablet, { w: 1200, h: 1200 })).toBeCloseTo(
+				1200 / 1024,
+				6,
+			)
+			// Desktop (1440×900) in a 1200-wide square stage: width ratio 1200/1440 ≈ 0.833,
+			// height ratio 1200/900 ≈ 1.333 → width wins.
+			expect(computeFit(MOCKUP_VIEWPORT_PRESETS.desktop, { w: 1200, h: 1200 })).toBeCloseTo(
+				1200 / 1440,
+				6,
+			)
+		})
+
+		it('clamps preset fits at the upper bound in a very large stage', () => {
+			// Phone in a 10k×10k stage would fit at k ≈ 12.3 without a clamp.
+			expect(computeFit(MOCKUP_VIEWPORT_PRESETS.phone, { w: 10_000, h: 10_000 })).toBe(ZOOM_MAX)
+		})
+
+		it('clamps preset fits at the lower bound in a tiny stage', () => {
+			// Desktop preset (1440×900) into a 50×50 stage would fit at k ≈ 0.035.
+			expect(computeFit(MOCKUP_VIEWPORT_PRESETS.desktop, { w: 50, h: 50 })).toBe(ZOOM_MIN)
 		})
 	})
 

@@ -25,7 +25,12 @@ import {
 	zoomAt,
 	zoomStep,
 } from '@/lib/viewer-coord-math'
-import { resolveViewerVariant } from '@/lib/viewer-detect'
+import {
+	MOCKUP_VIEWPORT_PRESETS,
+	type MockupViewportPreset,
+	type ViewerVariantOverride,
+	resolveViewerVariant,
+} from '@/lib/viewer-detect'
 import { AlertTriangle, Code, Download, Maximize2, Minus, Plus } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { isHtml, isInlineImage, isMarkdown, isPlainText } from './file-body'
@@ -47,10 +52,22 @@ function roundZoom(k: number): number {
 
 interface ViewerStageProps {
 	file: FileDetail
+	// Per-file overrides supplied by the file-detail route. `null` on the override
+	// means "no manual override, use auto detection" (see viewer-detect.ts). The
+	// preset applies only when the resolved variant is `mockup`.
+	variantOverride?: ViewerVariantOverride
+	mockupPreset?: MockupViewportPreset
 }
 
-export function ViewerStage({ file }: ViewerStageProps) {
-	if (isHtml(file.mimeType)) return <HtmlViewerStage file={file} />
+export function ViewerStage({
+	file,
+	variantOverride = null,
+	mockupPreset = 'desktop',
+}: ViewerStageProps) {
+	if (isHtml(file.mimeType))
+		return (
+			<HtmlViewerStage file={file} variantOverride={variantOverride} mockupPreset={mockupPreset} />
+		)
 	if (isMarkdown(file.mimeType)) return <MarkdownViewerStage file={file} />
 	if (isInlineImage(file.mimeType)) return <ImageViewerStage file={file} />
 	if (isPlainText(file.mimeType)) return <TextViewerStage file={file} />
@@ -123,16 +140,25 @@ function ImageViewerStage({ file }: { file: FileDetail }) {
 	)
 }
 
-function HtmlViewerStage({ file }: { file: FileDetail }) {
+function HtmlViewerStage({
+	file,
+	variantOverride,
+	mockupPreset,
+}: {
+	file: FileDetail
+	variantOverride: ViewerVariantOverride
+	mockupPreset: MockupViewportPreset
+}) {
 	const html = useMemo(() => fileText(file), [file])
-	// Variant resolution (viewer-detect.ts) decides whether a paging controller
-	// is injected. A `deck` gets one; every other variant keeps the plain
-	// document path. The override slot is `null` for Slice 2a — the viewport
-	// preset / ⋯ menu that sets it lands in Slice 2c.
-	const isPaged = useMemo(
-		() => resolveViewerVariant({ filename: file.name, html, override: null }) === 'deck',
-		[file.name, html],
+	// Variant resolution (viewer-detect.ts) decides which render path applies:
+	// `deck` gets a paging controller; `mockup` renders in a preset-sized frame
+	// (Slice 2c); every other variant keeps the plain document path.
+	const variant = useMemo(
+		() => resolveViewerVariant({ filename: file.name, html, override: variantOverride }),
+		[file.name, html, variantOverride],
 	)
+	const isPaged = variant === 'deck'
+	const isMockup = variant === 'mockup'
 	const srcDoc = useMemo(() => prepareViewerHtml(html, { paged: isPaged }), [html, isPaged])
 
 	const viewportRef = useRef<HTMLDivElement>(null)
@@ -232,7 +258,8 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 	// moment the first doc-size message lands (which is proof the reporter ran).
 	// The timer reads `docSize` through a ref so the effect only reruns on
 	// srcDoc change — otherwise every message-driven docSize update would
-	// re-arm the timer.
+	// re-arm the timer. A mockup is sized from the active preset synchronously,
+	// so the reporter isn't on the critical path and we don't arm the timer.
 	const docSizeRef = useRef<Size | null>(null)
 	useEffect(() => {
 		docSizeRef.current = docSize
@@ -244,17 +271,24 @@ function HtmlViewerStage({ file }: { file: FileDetail }) {
 		setPage(null)
 		setPageSize(null)
 		docSizeRef.current = null
+		if (isMockup) return
 		const timer = window.setTimeout(() => {
 			if (!docSizeRef.current) setBlocked(true)
 		}, IFRAME_BLOCKED_TIMEOUT_MS)
 		return () => window.clearTimeout(timer)
-	}, [srcDoc])
+	}, [srcDoc, isMockup])
 
-	// The box fit k is derived from: for a paged doc that is the visible
-	// slide's own box (criterion 3) — a deck's documentElement dimensions are
-	// meaningless when exactly one slide is on screen. Non-paged docs fall back
-	// to the whole document.
-	const fitSize = isPaged ? pageSize : docSize
+	// The box fit k is derived from: for a mockup that is the active preset's
+	// (Dw, Dh); for a paged doc that is the visible slide's own box (a deck's
+	// documentElement dimensions are meaningless when exactly one slide is on
+	// screen); non-paged docs fall back to the whole document. `computeFit`
+	// already clamps k = min(Vw/Dw, Vh/Dh) to [ZOOM_MIN, ZOOM_MAX] = [0.1, 4],
+	// so the mockup path reuses the deck path's clamp with no separate math.
+	const presetSize = useMemo<Size | null>(
+		() => (isMockup ? { ...MOCKUP_VIEWPORT_PRESETS[mockupPreset] } : null),
+		[isMockup, mockupPreset],
+	)
+	const fitSize = isMockup ? presetSize : isPaged ? pageSize : docSize
 
 	// Once both the fit box and viewport size are known, do the initial fit.
 	// Also re-fit on viewport resize as long as the user hasn't manually zoomed.
