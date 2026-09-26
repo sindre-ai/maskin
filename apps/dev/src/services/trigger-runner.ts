@@ -1243,6 +1243,7 @@ export class CommentDispatcher {
 				objectId: event.entity_id,
 				mentions,
 				parentAuthorId,
+				parentEventId,
 				suppressedActorIds,
 				content: typeof data.content === 'string' ? data.content : '',
 			})
@@ -1264,6 +1265,7 @@ export class CommentDispatcher {
 			entityId: event.entity_id,
 			content: typeof data.content === 'string' ? data.content : '',
 			parentAuthorId,
+			parentEventId,
 		})
 	}
 
@@ -1275,6 +1277,7 @@ export class CommentDispatcher {
 		objectId: string
 		mentions: string[]
 		parentAuthorId: string | null
+		parentEventId: number | null
 		suppressedActorIds: Set<string>
 		content: string
 	}): Promise<void> {
@@ -1319,6 +1322,7 @@ export class CommentDispatcher {
 				objectId: ctx.objectId,
 				actor,
 				content: ctx.content,
+				parentEventId: ctx.parentEventId,
 			})
 			anyDispatched = true
 		}
@@ -1342,6 +1346,7 @@ export class CommentDispatcher {
 		entityId: string
 		content: string
 		parentAuthorId: string | null
+		parentEventId: number | null
 	}): Promise<void> {
 		const [obj] = await this.db
 			.select({ driver: objects.driver })
@@ -1391,6 +1396,7 @@ export class CommentDispatcher {
 					entityId: ctx.entityId,
 					commenterActorId: ctx.commenterId,
 					content: ctx.content,
+					parentEventId: ctx.parentEventId,
 				}),
 			})
 			// Only claim the case when a session actually exists — otherwise the
@@ -1447,6 +1453,7 @@ export class CommentDispatcher {
 				commenterActorId: ctx.commenterId,
 				content: ctx.content,
 				driverId,
+				parentEventId: ctx.parentEventId,
 			}),
 		})
 		await this.emitResolved(
@@ -1519,6 +1526,7 @@ export class CommentDispatcher {
 		commenterActorId: string
 		content: string
 		driverId: string | null
+		parentEventId: number | null
 	}): Promise<string> {
 		const [row] = await this.db
 			.select({ title: objects.title })
@@ -1549,6 +1557,7 @@ export class CommentDispatcher {
 			'"""',
 			ctx.content,
 			'"""',
+			...threadReplyLines(ctx.parentEventId),
 		].join('\n')
 	}
 
@@ -1598,6 +1607,7 @@ export class CommentDispatcher {
 		objectId: string
 		actor: { id: string; type: string }
 		content: string
+		parentEventId: number | null
 	}): Promise<void> {
 		const [notification] = await this.db.transaction((tx) =>
 			insertNotificationsWithEvents(tx, {
@@ -1638,6 +1648,7 @@ export class CommentDispatcher {
 					commenterActorId: ctx.commenterId,
 					content: ctx.content,
 					notificationId: notification.id,
+					parentEventId: ctx.parentEventId,
 				}),
 				config: {
 					mention: {
@@ -1682,6 +1693,7 @@ export function buildMentionPrompt(ctx: {
 	commenterActorId: string
 	content: string
 	notificationId: string
+	parentEventId: number | null
 }): string {
 	return [
 		'You were @mentioned in a comment on an object. Read the comment and the object context, then decide what the right response is. The response can be any combination of:',
@@ -1699,6 +1711,7 @@ export function buildMentionPrompt(ctx: {
 		'"""',
 		'',
 		`Once you have done whatever you decided to do (including if that's nothing), mark notification ${ctx.notificationId} as resolved.`,
+		...threadReplyLines(ctx.parentEventId),
 	].join('\n')
 }
 
@@ -1724,6 +1737,27 @@ export function normalizeParentEventId(raw: unknown): number | null {
 }
 
 /**
+ * Prompt lines telling a dispatched agent that the comment it is answering
+ * sits inside an existing thread, and how to reply into that thread instead of
+ * starting a new top-level comment.
+ *
+ * Returns an empty array when the triggering comment was itself top-level —
+ * there the new comment IS the thread, so there is nothing to say. The lines
+ * begin with a blank separator so call sites can spread the result
+ * unconditionally. The id is the thread root: the route collapses a reply to
+ * its root before storing, so passing it back as `parent_event_id` is
+ * idempotent and can never nest a thread deeper.
+ */
+export function threadReplyLines(parentEventId: number | null): string[] {
+	if (parentEventId === null) return []
+	return [
+		'',
+		`Thread parent event ID: ${parentEventId}`,
+		`The comment you are responding to is a reply inside an existing thread. Reply in that thread — pass parent_event_id: ${parentEventId} to create_comment — instead of starting a new top-level comment.`,
+	]
+}
+
+/**
  * Prompt handed to the driver on case-2 dispatch. Deliberately terse — the
  * driver knows their own object; the important part is the comment itself.
  */
@@ -1731,6 +1765,7 @@ export function buildCommentFallbackPrompt(ctx: {
 	entityId: string
 	commenterActorId: string
 	content: string
+	parentEventId: number | null
 }): string {
 	return [
 		'A comment was posted on an object you drive that was NOT @mentioning anyone — you are being pinged as the driver of last resort. Read the comment and decide what the right response is: reply in the thread, take an action, or nothing (silence is a valid outcome).',
@@ -1741,5 +1776,6 @@ export function buildCommentFallbackPrompt(ctx: {
 		'"""',
 		ctx.content,
 		'"""',
+		...threadReplyLines(ctx.parentEventId),
 	].join('\n')
 }

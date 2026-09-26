@@ -248,4 +248,73 @@ describe('Comment dispatch over a real PG NOTIFY bridge (end-to-end transport)',
 		await new Promise((r) => setTimeout(r, 1_500))
 		expect(collectDispatchCalls(sessionManager)).toHaveLength(0)
 	})
+
+	it('carries a reply comment\u2019s parent event id from the row through to the dispatched prompt', async () => {
+		const humanActor = getTestActorId()
+		const driverAgent = await insertActor(db, {
+			type: 'agent',
+			name: 'Strategist thread',
+			email: 'strategist-thread@integration.test',
+			apiKey: 'ank_strategist_thread',
+		})
+		const ws = await insertWorkspace(db, humanActor)
+		const object = await insertObject(db, ws.id, humanActor, {
+			type: 'bet',
+			title: 'Does a reply carry its thread parent into the dispatch prompt?',
+			driver: driverAgent.id,
+		})
+
+		// A top-level comment first — this is the thread the reply below belongs
+		// to. Its own dispatch (case 2, no parent) is expected and harmless; the
+		// assertion below looks for the reply's dispatch specifically.
+		const [rootRow] = await db
+			.insert(events)
+			.values({
+				workspaceId: ws.id,
+				actorId: humanActor,
+				action: 'commented',
+				entityType: 'object',
+				entityId: object.id,
+				data: { content: 'What is the state of play?', mentions: [] },
+			})
+			.returning({ id: events.id })
+
+		// The reply carries the collapsed thread root in its stored data — the
+		// exact shape `routes/events.ts` writes after `resolveRootParentEventId`.
+		// The dispatcher re-fetches this row from the DB, so nothing in the
+		// NOTIFY payload can stand in for it: reaching the assertion below is
+		// proof the value survived the INSERT → trigger → bridge round-trip.
+		await db.insert(events).values({
+			workspaceId: ws.id,
+			actorId: humanActor,
+			action: 'commented',
+			entityType: 'object',
+			entityId: object.id,
+			data: {
+				content: 'Following up in the same thread.',
+				mentions: [],
+				parentEventId: rootRow.id,
+			},
+		})
+
+		await vi.waitFor(
+			() =>
+				expect(
+					collectDispatchCalls(sessionManager).some((call) =>
+						String(dispatchPayload(call).actionPrompt ?? '').includes(
+							`Thread parent event ID: ${rootRow.id}`,
+						),
+					),
+				).toBe(true),
+			{ timeout: 10_000, interval: 25 },
+		)
+
+		const replyDispatch = collectDispatchCalls(sessionManager).find((call) =>
+			String(dispatchPayload(call).actionPrompt ?? '').includes(
+				`Thread parent event ID: ${rootRow.id}`,
+			),
+		)
+		const prompt = String(dispatchPayload(replyDispatch as unknown[]).actionPrompt)
+		expect(prompt).toContain(`parent_event_id: ${rootRow.id}`)
+	})
 })
