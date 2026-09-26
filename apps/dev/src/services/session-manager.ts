@@ -2146,6 +2146,7 @@ export class SessionManager extends EventEmitter {
 			'INTERACTIVE',
 			'MASKIN_API_URL',
 			'MASKIN_WORKSPACE_ID',
+			'MASKIN_TRIGGERING_EVENT_ID',
 			'ANTHROPIC_API_KEY',
 			'ANTHROPIC_AUTH_TOKEN',
 			'ANTHROPIC_BASE_URL',
@@ -2283,8 +2284,23 @@ export class SessionManager extends EventEmitter {
 		// 0014_backfill_maskin_mcp_on_agents.sql — no data migration needed. The
 		// `${SESSION_ID}` placeholder is expanded by the same `envsubst` pass in
 		// agent-run.sh's setup_mcps() that already expands ${MASKIN_API_KEY}.
-		const stampedAgentToolsMcpServers = stampMaskinSessionHeader(gatedAgentToolsMcpServers)
-		const stampedSessionMcpServers = stampMaskinSessionHeader(gatedSessionMcpServers) ?? {}
+		//
+		// When the session was dispatched from a comment we also inject
+		// MASKIN_TRIGGERING_EVENT_ID into the container env and ask the stamper
+		// to add the matching header, so create_comment defaults reply-in-thread
+		// on the /mcp route without any per-agent prompt rule (task-tool level
+		// fix for the "agents post standalone comments" defect).
+		const hasTriggeringEventId = sourceCommentEventId !== undefined
+		if (hasTriggeringEventId) {
+			envVars.MASKIN_TRIGGERING_EVENT_ID = String(sourceCommentEventId)
+		}
+		const stampedAgentToolsMcpServers = stampMaskinSessionHeader(gatedAgentToolsMcpServers, {
+			includeTriggeringEventId: hasTriggeringEventId,
+		})
+		const stampedSessionMcpServers =
+			stampMaskinSessionHeader(gatedSessionMcpServers, {
+				includeTriggeringEventId: hasTriggeringEventId,
+			}) ?? {}
 
 		if (agentTools && Object.keys(agentTools).length > 0) {
 			const gatedAgentTools = stampedAgentToolsMcpServers
