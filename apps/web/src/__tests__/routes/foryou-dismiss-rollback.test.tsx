@@ -239,6 +239,39 @@ describe('For You — dismiss rollback', () => {
 		])
 	})
 
+	// The reader's own reply becomes a new unread event on the object, so the
+	// unread feed's next refetch returns the card again — leaving them looking
+	// at a card they just answered. Hide it optimistically the same way the
+	// "Mark as read" button does.
+	it('hides the card when the reader types an answer', async () => {
+		const user = userEvent.setup()
+		await renderFeed()
+		expect(screen.getByTestId('foryou-feed-card')).toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'reply' }))
+		await act(async () => {
+			await Promise.resolve()
+		})
+
+		expect(screen.queryByTestId('foryou-feed-card')).not.toBeInTheDocument()
+	})
+
+	// Symmetric to the bulk-dismiss rollback: if the mark-read fails after a
+	// typed reply, the card has to come back — otherwise it stays hidden
+	// forever behind an optimistic dismiss whose write never landed.
+	it('puts the card back when the mark-read after a typed reply fails', async () => {
+		const user = userEvent.setup()
+		await renderFeed()
+
+		testState.__markReadFails = true
+		await user.click(screen.getByRole('button', { name: 'reply' }))
+		await act(async () => {
+			await Promise.resolve()
+		})
+
+		expect(screen.getByTestId('foryou-feed-card')).toBeInTheDocument()
+	})
+
 	it('still hides the card when the dismissal succeeds', async () => {
 		const user = userEvent.setup()
 		await renderFeed()
