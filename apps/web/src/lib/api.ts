@@ -437,17 +437,32 @@ export const api = {
 	integrations: {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
-		connect: (workspaceId: string, provider: string, body?: { api_key?: string }) =>
-			request<{ install_url?: string; webhook_url?: string; integration_id?: string }>(
-				`/integrations/${provider}/connect`,
-				{
-					method: 'POST',
-					body,
-					workspaceId,
-					// The response carries the Set-Cookie that binds this browser to the
-					// OAuth `state`; without `include` it is dropped and the callback 400s.
-					credentials: 'include',
-				},
+		connect: (
+			workspaceId: string,
+			provider: string,
+			body?: { api_key?: string; receive_subdomain?: string },
+		) =>
+			request<{
+				install_url?: string
+				webhook_url?: string
+				integration_id?: string
+				// Populated by Resend's two-call handshake (Task 2) — the domain-status
+				// records the customer must add to their DNS plus the initial pending
+				// verification state.
+				dns_records?: ResendDnsRecord[]
+				verification_status?: 'pending' | 'verified' | 'failed'
+			}>(`/integrations/${provider}/connect`, {
+				method: 'POST',
+				body,
+				workspaceId,
+				// The response carries the Set-Cookie that binds this browser to the
+				// OAuth `state`; without `include` it is dropped and the callback 400s.
+				credentials: 'include',
+			}),
+		resendDnsPrecheck: (workspaceId: string, domain: string) =>
+			request<{ existing_mx: string[]; is_subdomain: boolean; warn: boolean }>(
+				'/integrations/resend/dns-precheck',
+				{ method: 'POST', body: { domain }, workspaceId },
 			),
 		complete: (id: string, workspaceId: string, secret: string) =>
 			request<{ activated: boolean }>(`/integrations/${id}/complete`, {
@@ -1422,6 +1437,22 @@ export interface UpdateTriggerInput {
 	action_prompt?: string
 	target_actor_id?: string
 	enabled?: boolean
+}
+
+/** One DNS record the customer must add to verify the sending / receiving
+ *  half of a Resend domain. Priority is only populated for MX. Status flips
+ *  from `pending` → `verified` (or `failed`) as the domain-verifier job (Task
+ *  5) polls Resend's per-record domain-status API. Mirrored into
+ *  `config.resend.dns_records` on the integration row by the connect handler,
+ *  which is what the resume affordance rehydrates from. */
+export interface ResendDnsRecord {
+	record: 'SPF' | 'DKIM' | 'MX'
+	type: string
+	name: string
+	value: string
+	priority?: number
+	status: 'pending' | 'verified' | 'failed'
+	ttl?: number
 }
 
 export interface IntegrationResponse {
