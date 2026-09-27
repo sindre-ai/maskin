@@ -330,10 +330,12 @@ function ForYouFeed() {
 	)
 
 	// Typing an answer settles the thread exactly as taking an option does, so
-	// it leaves the feed the same way: the card shows "Waiting on <agent>" until
-	// the next fetch drops it. The composer has already posted the comment by
-	// the time this fires — all that is left is the high-water mark, which is
-	// what the card was missing.
+	// the card has to leave the column the same way. The composer has already
+	// posted the comment by the time this fires; the reply itself is now an
+	// unread event on the object, so the server's next unread refetch would
+	// return the card carrying the reader's own answer — leaving them staring
+	// at a card they just replied to unless we hide it optimistically the same
+	// way the "Mark as read" button does.
 	const handleReplied = useCallback(
 		(item: UnreadItem) => {
 			const key = feedItemKey(item)
@@ -344,21 +346,27 @@ function ForYouFeed() {
 				card_kind: classifyCardKind(item),
 				card_id: item.entity_id,
 			})
-			const forget = () =>
+			const forget = () => {
 				setRepliedKeys((prev) => {
 					const next = new Set(prev)
 					next.delete(key)
 					return next
 				})
+				restorePending(key)
+			}
 			// Same honesty as a taken option: an unmarkable thread comes back on
 			// the next fetch carrying the reader's own answer, so say so rather
-			// than implying it is settled.
-			if (!markItemRead(item, forget)) {
+			// than implying it is settled. Only hide the card when the mark-read
+			// was actually dispatched — otherwise `restorePending` on failure has
+			// nothing meaningful to un-hide.
+			if (markItemRead(item, forget)) {
+				setPendingKeys((prev) => new Set(prev).add(key))
+			} else {
 				forget()
 				toast.warning('Reply sent, but the thread stayed unread.')
 			}
 		},
-		[markItemRead],
+		[markItemRead, restorePending],
 	)
 
 	// Dismissing is marking read: the high-water mark moves and the card leaves
