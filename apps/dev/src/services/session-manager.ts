@@ -3808,6 +3808,14 @@ export class SessionManager extends EventEmitter {
 				)
 			}
 
+			// A timeout that ran real work still spent real tokens — persist
+			// whatever this segment accrued before the terminal row lands, so
+			// the session record can be triaged. Without this the totalCostUsd
+			// / inputTokens / outputTokens columns stay NULL forever and a
+			// timeout that produced output is indistinguishable from one that
+			// produced nothing. Additive so a prior pause's segment survives.
+			await this.accumulateSessionUsage(session.id)
+
 			await this.db
 				.update(sessions)
 				.set({
@@ -3908,6 +3916,10 @@ export class SessionManager extends EventEmitter {
 				)
 				continue
 			}
+			// Same rationale as the primary reaper above: preserve accumulated
+			// token/cost columns so the row is legible to a human or agent
+			// triaging why the session ended.
+			await this.accumulateSessionUsage(session.id)
 			await this.db
 				.update(sessions)
 				.set({
