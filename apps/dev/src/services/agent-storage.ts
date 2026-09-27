@@ -40,6 +40,22 @@ export type PullWorkspaceSkillsResult = {
 	failures: { name: string; storageKey: string; error: string }[]
 }
 
+/**
+ * One entry of the dispatch-payload skill manifest — everything the agent-
+ * server host-side stager needs to reconstruct `<sessionDir>/skills/<name>/`
+ * without a DB. Bytes are NOT included; agent-server fetches each `storageKey`
+ * from S3 directly (`session-workspace.stageSessionSkills`).
+ *
+ * Folder skills expand into multiple `files` entries; single-file skills
+ * carry exactly one entry with `relativePath: 'SKILL.md'`. The manifest
+ * shape lets agent-server treat the two cases uniformly — no listing,
+ * no prefix-derivation, no per-provider quirks.
+ */
+export type WorkspaceSkillManifestEntry = {
+	name: string
+	files: { relativePath: string; storageKey: string }[]
+}
+
 export class AgentStorageManager {
 	constructor(
 		private storage: StorageProvider,
@@ -566,6 +582,73 @@ export class AgentStorageManager {
 		})
 
 		return { pulled, skipped, failures }
+	}
+
+	/**
+	 * Resolve every workspace skill attached to `actorId` in `workspaceId` into
+	 * the payload manifest agent-server needs to stage `<sessionDir>/skills/`
+	 * host-side. Reads the exact same `agentSkills × workspaceSkills` join
+	 * `pullWorkspaceSkillsForAgent` reads — same `isValid=true` filter, same
+	 * per-workspace scoping — so a session dispatched to a remote agent-server
+	 * receives byte-for-byte the same skill set the dev-fallback path would
+	 * have staged locally, without duplicating the join predicate.
+	 *
+	 * For folder skills, expands to the full per-file listing via `listWorkspaceSkillFiles`.
+	 * For single-file skills, emits one `SKILL.md` entry keyed on `workspaceSkillKey`.
+	 *
+	 * Returns an empty array (never throws) when the agent has no attached skills —
+	 * an agent-server that receives an empty manifest simply skips staging.
+	 */
+	async resolveWorkspaceSkillManifest(
+		actorId: string,
+		workspaceId: string,
+	): Promise<WorkspaceSkillManifestEntry[]> {
+		const rows = await this.db
+			.select({
+				id: workspaceSkills.id,
+				name: workspaceSkills.name,
+				storageKey: workspaceSkills.storageKey,
+				isFolder: workspaceSkills.isFolder,
+			})
+			.from(agentSkills)
+			.innerJoin(workspaceSkills, eq(workspaceSkills.id, agentSkills.workspaceSkillId))
+			.where(
+				and(
+					eq(agentSkills.actorId, actorId),
+					eq(workspaceSkills.workspaceId, workspaceId),
+					eq(workspaceSkills.isValid, true),
+				),
+			)
+
+		if (rows.length === 0) return []
+
+		const manifest: WorkspaceSkillManifestEntry[] = []
+		for (const { id: skillId, name, storageKey, isFolder } of rows) {
+			if (isFolder) {
+				const entries = await this.listWorkspaceSkillFiles(workspaceId, skillId)
+				// A folder skill with zero files is a partial-write artefact — the
+				// same case `fetchFolderSkillFiles` treats as a per-skill failure.
+				// Skip it here so agent-server doesn't stage an empty `<name>/` dir
+				// that would masquerade as a working skill. Log so the operator
+				// can still see the anomaly rather than losing it entirely.
+				if (entries.length === 0) {
+					logger.warn('Folder skill has no files — omitting from dispatch manifest', {
+						actorId,
+						workspaceId,
+						skillId,
+						name,
+					})
+					continue
+				}
+				manifest.push({
+					name,
+					files: entries.map(({ relativePath, key }) => ({ relativePath, storageKey: key })),
+				})
+			} else {
+				manifest.push({ name, files: [{ relativePath: 'SKILL.md', storageKey }] })
+			}
+		}
+		return manifest
 	}
 
 	// Fetch every entry of a folder skill into memory (bundles are capped at
