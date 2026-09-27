@@ -83,6 +83,22 @@ export const FLAGS = {
 	 */
 	GOOGLE_MEET_INTEGRATION_UI: 'google-meet-integration-ui',
 	/**
+	 * Resend integration visibility on the Settings > Integrations page. When
+	 * off, the provider card + multi-step connect dialog are filtered out of the
+	 * providers list rendered by `apps/web/src/routes/_authed/$workspaceId/settings/integrations.tsx`
+	 * and the awaiting_secret resume affordance for resend never shows. When on,
+	 * the resend card appears with the Slice 2 connect dialog (Task 4). Per-actor
+	 * behaviour gate, never shared state: the backend registers the provider
+	 * unconditionally so `POST /api/integrations/resend/connect`, the dedicated
+	 * `/api/webhooks/resend/:token` route, and MCP env-var injection stay
+	 * reachable for tester actors (add them to `FF_TESTER_ACTOR_IDS` +
+	 * `resend-integration-ui` to `FF_TESTER_FEATURES`). See parent bet [Resend
+	 * integration per workspace](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/cf2bcc85-8a71-460b-975b-1635dd87594e)
+	 * for the rollout plan. Retire (drop the boundary + delete this entry) once
+	 * resend ships to every workspace.
+	 */
+	RESEND_INTEGRATION_UI: 'resend-integration-ui',
+	/**
 	 * Chat composer `+` menu collapse — replaces the three-item **Reference an
 	 * object** / **Mention an agent** / **Create an object** dropdown with a
 	 * single **Attach a file** row, and promotes the `/` and `@` primitives via
