@@ -9,6 +9,7 @@ import {
 	pullSessionWorkspace,
 	pushSessionWorkspace,
 	sessionWorkspaceKey,
+	stageSessionSkills,
 } from '../services/session-workspace'
 
 // Windows-only local-dev caveat (does not affect CI, which runs on Linux): these
@@ -382,5 +383,179 @@ describe('pushSessionWorkspace — transient storage failures', () => {
 			}),
 		).rejects.toThrow(/SlowDown/)
 		expect(storage.attempts).toBe(3)
+	})
+})
+
+// The discriminating assertion from the bet's test approach (tech spec §9):
+// a session dispatched with an attached workspace skill AND no prior S3
+// snapshot must end with the skill's SKILL.md present under
+// `<sessionDir>/skills/<name>/`. Today, before this bet lands, that state is
+// unreachable: `pullSessionWorkspace` restores `/agent/` only from the
+// snapshot, then `ensureSkeleton` mkdirs an empty `skills/`. Anyone who
+// reverts the staging call must fail this test.
+describe('stageSessionSkills — empty-snapshot Layer 1 fix', () => {
+	it('materialises an attached single-file skill into /agent/skills/<name>/SKILL.md when the snapshot is empty', async () => {
+		const storage = new InMemoryStorage()
+		const sessionId = 'empty-snapshot-single'
+		const sessionDir = join(tmpRoot, 'empty-snapshot-single')
+
+		// First-boot: no snapshot in S3, `pullSessionWorkspace` creates the four
+		// skeleton dirs with an empty `skills/` — the exact broken state a
+		// dispatch-created session lands in today.
+		const pullResult = await pullSessionWorkspace(storage, sessionId, sessionDir)
+		expect(pullResult.restored).toBe(false)
+		const skillsDir = join(sessionDir, 'skills')
+		expect((await import('node:fs/promises').then((fs) => fs.readdir(skillsDir))).length).toBe(0)
+
+		// The dispatch payload's manifest names one attached workspace skill.
+		const storageKey = 'workspaces/ws-1/skills/skill-uuid/SKILL.md'
+		const skillBody = '---\nname: rune-voice\n---\n\nRune voice guardrails.\n'
+		await storage.put(storageKey, Buffer.from(skillBody, 'utf8'))
+
+		const result = await stageSessionSkills(storage, sessionDir, [
+			{ name: 'rune-voice', files: [{ relativePath: 'SKILL.md', storageKey }] },
+		])
+		expect(result.staged).toBe(1)
+		expect(result.failures).toEqual([])
+
+		// The bet's actual claim: `<sessionDir>/skills/<name>/SKILL.md` exists
+		// and carries the exact bytes agent-server fetched from S3. If this
+		// assertion regresses, the guest boots with an empty `/agent/skills/`
+		// and the `Skill` tool returns `Unknown skill` again — the defect this
+		// bet exists to fix.
+		expect((await readFile(join(skillsDir, 'rune-voice', 'SKILL.md'))).toString()).toBe(skillBody)
+	})
+
+	it('materialises a multi-file folder skill preserving relative paths', async () => {
+		const storage = new InMemoryStorage()
+		const sessionId = 'empty-snapshot-folder'
+		const sessionDir = join(tmpRoot, 'empty-snapshot-folder')
+		await pullSessionWorkspace(storage, sessionId, sessionDir)
+
+		const base = 'workspaces/ws-1/skills/folder-uuid'
+		await storage.put(`${base}/SKILL.md`, Buffer.from('folder skill body', 'utf8'))
+		await storage.put(`${base}/reference/style.md`, Buffer.from('style ref', 'utf8'))
+		await storage.put(`${base}/examples/example1.md`, Buffer.from('example one', 'utf8'))
+
+		const result = await stageSessionSkills(storage, sessionDir, [
+			{
+				name: 'magnus-voice',
+				files: [
+					{ relativePath: 'SKILL.md', storageKey: `${base}/SKILL.md` },
+					{ relativePath: 'reference/style.md', storageKey: `${base}/reference/style.md` },
+					{ relativePath: 'examples/example1.md', storageKey: `${base}/examples/example1.md` },
+				],
+			},
+		])
+		expect(result.staged).toBe(1)
+		expect(result.failures).toEqual([])
+
+		const skillsDir = join(sessionDir, 'skills')
+		expect((await readFile(join(skillsDir, 'magnus-voice', 'SKILL.md'))).toString()).toBe(
+			'folder skill body',
+		)
+		expect(
+			(await readFile(join(skillsDir, 'magnus-voice', 'reference', 'style.md'))).toString(),
+		).toBe('style ref')
+		expect(
+			(await readFile(join(skillsDir, 'magnus-voice', 'examples', 'example1.md'))).toString(),
+		).toBe('example one')
+	})
+
+	it('reports a per-skill failure but still stages every other skill (degraded-start)', async () => {
+		// Manifest carries two skills; one's S3 object is missing. The session
+		// must still boot with the working skill present — this is the tech
+		// spec §6 "start degraded, do not fail the session" invariant. A
+		// throwing implementation here would take down the whole agent on a
+		// single missing skill.
+		const storage = new InMemoryStorage()
+		const sessionDir = join(tmpRoot, 'degraded-boot')
+		await pullSessionWorkspace(storage, 'degraded-boot', sessionDir)
+
+		const goodKey = 'workspaces/ws-1/skills/good-uuid/SKILL.md'
+		const missingKey = 'workspaces/ws-1/skills/missing-uuid/SKILL.md'
+		await storage.put(goodKey, Buffer.from('# good skill', 'utf8'))
+
+		const result = await stageSessionSkills(storage, sessionDir, [
+			{ name: 'good-skill', files: [{ relativePath: 'SKILL.md', storageKey: goodKey }] },
+			{ name: 'broken-skill', files: [{ relativePath: 'SKILL.md', storageKey: missingKey }] },
+		])
+		expect(result.staged).toBe(1)
+		expect(result.failures).toHaveLength(1)
+		expect(result.failures[0]?.name).toBe('broken-skill')
+
+		const skillsDir = join(sessionDir, 'skills')
+		expect((await readFile(join(skillsDir, 'good-skill', 'SKILL.md'))).toString()).toBe(
+			'# good skill',
+		)
+		// The failed skill must not have left a partial folder that would read
+		// as a complete skill on the next resume (see stageSessionSkills's own
+		// all-or-nothing comment). No `broken-skill/` should exist.
+		await expect(
+			import('node:fs/promises').then((fs) => fs.stat(join(skillsDir, 'broken-skill'))),
+		).rejects.toThrow()
+	})
+
+	it('is a no-op with an empty manifest and never touches the skills dir', async () => {
+		const storage = new InMemoryStorage()
+		const sessionDir = join(tmpRoot, 'empty-manifest')
+		await pullSessionWorkspace(storage, 'empty-manifest', sessionDir)
+
+		const result = await stageSessionSkills(storage, sessionDir, [])
+		expect(result).toEqual({ staged: 0, failures: [] })
+	})
+
+	it('overwrites a stale skill folder inherited from a restored snapshot', async () => {
+		// Resumed session: the S3 snapshot restore may have carried a stale
+		// copy of a skill under the same name. stageSessionSkills's overwrite
+		// semantics must replace it — the dispatch manifest is the source of
+		// truth. A regression here would boot the session with edits from the
+		// prior segment invisible to the agent.
+		const storage = new InMemoryStorage()
+		const sessionDir = join(tmpRoot, 'stale-overwrite')
+		await pullSessionWorkspace(storage, 'stale-overwrite', sessionDir)
+
+		// Simulate a stale skill folder left by a snapshot restore.
+		const skillsDir = join(sessionDir, 'skills')
+		await mkdir(join(skillsDir, 'rune-voice'), { recursive: true })
+		await writeFile(join(skillsDir, 'rune-voice', 'SKILL.md'), 'STALE from snapshot')
+		// A file the fresh manifest does NOT reference — must be gone after
+		// staging so a deleted-from-manifest attribute doesn't linger.
+		await writeFile(join(skillsDir, 'rune-voice', 'stale-side-file.md'), 'leftover')
+
+		const storageKey = 'workspaces/ws-1/skills/skill-uuid/SKILL.md'
+		await storage.put(storageKey, Buffer.from('FRESH from dispatch', 'utf8'))
+		const result = await stageSessionSkills(storage, sessionDir, [
+			{ name: 'rune-voice', files: [{ relativePath: 'SKILL.md', storageKey }] },
+		])
+		expect(result.staged).toBe(1)
+		expect((await readFile(join(skillsDir, 'rune-voice', 'SKILL.md'))).toString()).toBe(
+			'FRESH from dispatch',
+		)
+		await expect(
+			import('node:fs/promises').then((fs) =>
+				fs.stat(join(skillsDir, 'rune-voice', 'stale-side-file.md')),
+			),
+		).rejects.toThrow()
+	})
+
+	it('rejects a path-traversal-shaped skill name without touching disk', async () => {
+		// Defence-in-depth: the SESSION_REQUEST_SCHEMA validator upstream is
+		// meant to catch this, but stageSessionSkills's own regex must also
+		// reject a poisoned manifest so a caller that bypasses the schema
+		// (or a future in-process invocation) can't escape the mount.
+		const storage = new InMemoryStorage()
+		const sessionDir = join(tmpRoot, 'traversal-defence')
+		await pullSessionWorkspace(storage, 'traversal-defence', sessionDir)
+
+		const storageKey = 'workspaces/ws-1/skills/skill-uuid/SKILL.md'
+		await storage.put(storageKey, Buffer.from('body', 'utf8'))
+
+		const result = await stageSessionSkills(storage, sessionDir, [
+			{ name: '../etc', files: [{ relativePath: 'SKILL.md', storageKey }] },
+		])
+		expect(result.staged).toBe(0)
+		expect(result.failures).toHaveLength(1)
+		expect(result.failures[0]?.error).toBe('invalid_skill_name')
 	})
 })
