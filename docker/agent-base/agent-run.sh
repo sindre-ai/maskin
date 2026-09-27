@@ -174,6 +174,40 @@ install_runtime() {
   esac
 }
 
+# Confirm the baked ~/.claude/skills -> /agent/skills symlink survived to
+# runtime. Claude Code's Skill tool walks ~/.claude/skills for SKILL.md files;
+# the agent-server stages workspace skills at /agent/skills on every dispatch
+# (stageSessionSkills). Registration is baked at image build in the Dockerfile
+# (single source of truth, no per-session work). The spike (task bf2ab627)
+# resolved the loader/walker on cases A-C via $CLAUDE_CONFIG_DIR/skills as its
+# discovery base — the literal ~/.claude/skills path is harness-write-protected
+# in-session, so the spike could not create or verify it directly. This is the
+# guard the spike named for that gap: if the Dockerfile ever regresses, a
+# chown/COPY reorder ever clobbers the link, or entrypoint tampering removes
+# it, the log line names it directly rather than showing up as silent
+# "Unknown skill" from the Skill tool. Warning-only: a session with no
+# workspace skills is degraded but still useful; exit 1 here would kill every
+# session on any image regression, since agent-base ships to every dispatch.
+assert_skills_symlink() {
+  local expected="/agent/skills"
+  local link="/home/agent/.claude/skills"
+  if [ ! -L "$link" ]; then
+    echo "[system] ERROR: ${link} is missing or not a symlink — workspace skills will not resolve" >&2
+    return 0
+  fi
+  local target
+  target=$(readlink "$link")
+  if [ "$target" != "$expected" ]; then
+    echo "[system] ERROR: ${link} points to '${target}', expected '${expected}' — workspace skills will not resolve" >&2
+    return 0
+  fi
+  if [ ! -e "$link" ]; then
+    echo "[system] ERROR: ${link} -> ${target} is a broken symlink (target missing) — workspace skills will not resolve" >&2
+    return 0
+  fi
+  echo "[system] workspace skills registered: ${link} -> ${target}"
+}
+
 # Build CLAUDE.md from system prompt + skills
 build_context() {
   local context_file="/agent/workspace/CLAUDE.md"
@@ -606,6 +640,7 @@ echo "[system] Starting agent session: ${SESSION_ID:-unknown}"
 echo "[system] Runtime: $RUNTIME"
 
 install_runtime
+assert_skills_symlink
 build_context
 setup_mcps
 setup_claude_credentials
