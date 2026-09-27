@@ -8,6 +8,7 @@ import {
 	trackFileViewerZoomUsed,
 } from '@/lib/analytics'
 import type { FileDetail } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { base64ToBytes, decodeBase64Utf8, downloadFile } from '@/lib/file-utils'
 import {
 	VIEWER_DOC_SIZE_MESSAGE,
@@ -22,6 +23,8 @@ import {
 	ZOOM_MIN,
 	clampZoom,
 	computeFit,
+	docToStage,
+	stageToDoc,
 	zoomAt,
 	zoomStep,
 } from '@/lib/viewer-coord-math'
@@ -50,6 +53,18 @@ function roundZoom(k: number): number {
 	return Math.round(k * 100) / 100
 }
 
+// Rendered marker for a pinned comment or draft on the stage. The route (which
+// owns the review data) hands these to the stage so the stage can position them
+// counter-scaled above the iframe using the same coord model pins were saved in
+// — 0-1 doc fractions. See viewer-coord-math.ts §docToStage / §stageToDoc.
+export interface StagePin {
+	id: string
+	page: number | null
+	positionDoc: { x: number; y: number }
+	kind: 'saved' | 'draft'
+	label?: string
+}
+
 interface ViewerStageProps {
 	file: FileDetail
 	// Per-file overrides supplied by the file-detail route. `null` on the override
@@ -57,16 +72,34 @@ interface ViewerStageProps {
 	// preset applies only when the resolved variant is `mockup`.
 	variantOverride?: ViewerVariantOverride
 	mockupPreset?: MockupViewportPreset
+	// Pin-placement surface (Slice 3). When `annotateMode` is true, the stage
+	// turns clicks over the scaled document into an onPinPlace call carrying
+	// the click position in normalized doc space and the currently-visible page
+	// (null for unpaged docs). `pins` renders any already-placed pins on top of
+	// the iframe, counter-scaled so they stay 24px regardless of zoom.
+	annotateMode?: boolean
+	pins?: StagePin[]
+	onPinPlace?: (position: { x: number; y: number }, page: number | null) => void
 }
 
 export function ViewerStage({
 	file,
 	variantOverride = null,
 	mockupPreset = 'desktop',
+	annotateMode = false,
+	pins,
+	onPinPlace,
 }: ViewerStageProps) {
 	if (isHtml(file.mimeType))
 		return (
-			<HtmlViewerStage file={file} variantOverride={variantOverride} mockupPreset={mockupPreset} />
+			<HtmlViewerStage
+				file={file}
+				variantOverride={variantOverride}
+				mockupPreset={mockupPreset}
+				annotateMode={annotateMode}
+				pins={pins}
+				onPinPlace={onPinPlace}
+			/>
 		)
 	if (isMarkdown(file.mimeType)) return <MarkdownViewerStage file={file} />
 	if (isInlineImage(file.mimeType)) return <ImageViewerStage file={file} />
@@ -144,10 +177,16 @@ function HtmlViewerStage({
 	file,
 	variantOverride,
 	mockupPreset,
+	annotateMode = false,
+	pins,
+	onPinPlace,
 }: {
 	file: FileDetail
 	variantOverride: ViewerVariantOverride
 	mockupPreset: MockupViewportPreset
+	annotateMode?: boolean
+	pins?: StagePin[]
+	onPinPlace?: (position: { x: number; y: number }, page: number | null) => void
 }) {
 	const html = useMemo(() => fileText(file), [file])
 	// Variant resolution (viewer-detect.ts) decides which render path applies:
@@ -575,7 +614,26 @@ function HtmlViewerStage({
 						{isPaged && page && page.total > 1 && (
 							<ThumbnailRail total={page.total} activeIndex={page.index} onSelect={gotoPage} />
 						)}
-						<div ref={viewportRef} className="relative flex-1 overflow-auto">
+						{/* biome-ignore lint/a11y/useKeyWithClickEvents: viewport is a pin-placement surface, not a button — pin placement is a mouse-first interaction, and the outer <div role="application" tabIndex={0}> owns the keyboard shortcuts (0/+/-/F/C/Esc). Keyboard equivalent of "click anywhere to place a pin at that pixel" isn't a coherent affordance; annotate mode itself is the affordance a keyboard-only user would use, and it's already exposed via the C key from the route. */}
+						<div
+							ref={viewportRef}
+							className={cn('relative flex-1 overflow-auto', annotateMode && 'cursor-crosshair')}
+							data-annotate-mode={annotateMode || undefined}
+							onClick={(event) => {
+								if (!annotateMode || !onPinPlace || !fitSize) return
+								const source = pageSize ?? docSize
+								if (!source) return
+								const rect = event.currentTarget.getBoundingClientRect()
+								// stage-space offset from the transform origin (top-left
+								// of the scaled area). The viewport can scroll, so we add
+								// the current scroll offset — the transform origin is
+								// pinned at (0,0) of the (D * k) box.
+								const stageX = event.clientX - rect.left + event.currentTarget.scrollLeft
+								const stageY = event.clientY - rect.top + event.currentTarget.scrollTop
+								const pos = stageToDoc({ x: stageX, y: stageY }, source, zoom)
+								onPinPlace(pos, page ? page.index : null)
+							}}
+						>
 							{!fitSize && (
 								<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
 									<Spinner className="size-6 text-muted-foreground" />
@@ -605,6 +663,12 @@ function HtmlViewerStage({
 										border: 0,
 										display: 'block',
 									}}
+								/>
+								<PinOverlay
+									pins={pins}
+									docSize={pageSize ?? docSize}
+									zoom={zoom}
+									pageIndex={page?.index ?? null}
 								/>
 							</div>
 						</div>
@@ -717,6 +781,59 @@ function IframeBlockedFallback({ file }: { file: FileDetail }) {
 					</Button>
 				</div>
 			</div>
+		</div>
+	)
+}
+
+// Pin overlay — renders one node per pin above the scaled iframe, positioned
+// at `posDoc.x * Dw * k` / `posDoc.y * Dh * k` and counter-scaled with
+// `scale(1 / k)` so the 24px hit target stays 24px regardless of zoom.
+// Only pins belonging to the currently-visible page render (paged docs); for
+// unpaged docs, every pin renders.
+function PinOverlay({
+	pins,
+	docSize,
+	zoom,
+	pageIndex,
+}: {
+	pins: StagePin[] | undefined
+	docSize: Size | null
+	zoom: number
+	pageIndex: number | null
+}) {
+	if (!pins || pins.length === 0 || !docSize || zoom <= 0) return null
+	const visible = pins.filter((p) => (p.page === null ? true : p.page === pageIndex))
+	return (
+		<div
+			className="pointer-events-none absolute inset-0"
+			style={{ position: 'absolute', inset: 0 }}
+			data-testid="viewer-pin-overlay"
+		>
+			{visible.map((pin) => {
+				const stage = docToStage(pin.positionDoc, docSize, zoom)
+				return (
+					<div
+						key={pin.id}
+						data-pin-id={pin.id}
+						data-pin-kind={pin.kind}
+						className={cn(
+							'pointer-events-auto absolute flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-medium shadow-md',
+							pin.kind === 'draft'
+								? 'bg-warning text-warning-foreground'
+								: 'bg-primary text-primary-foreground',
+						)}
+						style={{
+							left: stage.x,
+							top: stage.y,
+							transform: `translate(-50%, -50%) scale(${1 / zoom})`,
+							transformOrigin: 'center center',
+						}}
+						title={pin.label}
+					>
+						{pin.label ?? ''}
+					</div>
+				)
+			})}
 		</div>
 	)
 }
