@@ -131,6 +131,15 @@ describe('ResendConnectDialog', () => {
 			expect(screen.getByText(/feedback-smtp\.us-east-1/i)).toBeInTheDocument()
 			expect(screen.getByText(/Waiting on 3 records/i)).toBeInTheDocument()
 			expect(screen.getByLabelText(/webhook signing secret/i)).toBeInTheDocument()
+
+			// Design-spec deltas (2026-09-27 review).
+			// (1) Copy-all-as-zone-file outline button lives next to the eyebrow.
+			expect(
+				screen.getByRole('button', { name: /copy all dns records as a zone file/i }),
+			).toBeInTheDocument()
+			// (2) Bold prefix on record captions ("Sending half.", "Receiving half.").
+			expect(screen.getAllByText('Sending half.').length).toBeGreaterThan(0)
+			expect(screen.getByText('Receiving half.')).toBeInTheDocument()
 		})
 	})
 
@@ -230,6 +239,9 @@ describe('ResendConnectDialog', () => {
 				capabilities: { sending: 'verified', receiving: 'pending' },
 			})
 			expect(await screen.findByRole('heading', { name: /mx still missing/i })).toBeInTheDocument()
+			// (3) Partial-verified callout interpolates the domain instead of hardcoding "your domain".
+			expect(screen.getByText(/no MX record at/i)).toBeInTheDocument()
+			expect(screen.getByText('mail.example.com')).toBeInTheDocument()
 		})
 	})
 
@@ -256,6 +268,10 @@ describe('ResendConnectDialog', () => {
 			)
 			expect(
 				await screen.findByRole('heading', { name: /resend is connected/i }),
+			).toBeInTheDocument()
+			// (4) Step-4 footer meta renders under the next-step cards.
+			expect(
+				screen.getByText(/Connected 2 minutes ago · Workspace credential/i),
 			).toBeInTheDocument()
 		})
 	})

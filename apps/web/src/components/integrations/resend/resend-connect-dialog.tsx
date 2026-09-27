@@ -224,7 +224,7 @@ export function ResendConnectDialog({ workspaceId, open, onClose, prefill }: Pro
 						<StepThreeRootMx domain={domain} existingMxHost={existingMxHost} />
 					)}
 					{scene === 's3-partial' && (
-						<StepThreePartial dnsRecords={dnsRecords} webhookUrl={webhookUrl} />
+						<StepThreePartial dnsRecords={dnsRecords} webhookUrl={webhookUrl} domain={domain} />
 					)}
 					{scene === 's4-done' && <StepFourDone domain={domain} workspaceId={workspaceId} />}
 				</div>
@@ -564,13 +564,16 @@ function StepThreePending({
 	return (
 		<div className="space-y-5">
 			<div className="space-y-3">
-				<div>
-					<p className="text-[8px] font-bold tracking-[0.11em] uppercase text-muted-foreground font-mono">
-						1 · ADD THREE RECORDS TO YOUR DNS
-					</p>
-					<p className="mt-1 text-xs text-muted-foreground">
-						SPF + DKIM let agents send from your domain. MX lets them receive.
-					</p>
+				<div className="flex items-start justify-between gap-3">
+					<div>
+						<p className="text-[8px] font-bold tracking-[0.11em] uppercase text-muted-foreground font-mono">
+							1 · ADD THREE RECORDS TO YOUR DNS
+						</p>
+						<p className="mt-1 text-xs text-muted-foreground">
+							SPF + DKIM let agents send from your domain. MX lets them receive.
+						</p>
+					</div>
+					<CopyAllAsZoneFileButton records={dnsRecords} />
 				</div>
 				<div className="space-y-2" aria-live="polite">
 					{dnsRecords.map((record, index) => (
@@ -633,7 +636,9 @@ function DnsRecordRow({ record }: { record: ResendDnsRecord }) {
 				<p className="truncate text-xs font-mono text-foreground" title={record.value}>
 					{record.value}
 				</p>
-				<p className="mt-0.5 text-[11px] text-muted-foreground">{caption}</p>
+				<p className="mt-0.5 text-[11px] text-muted-foreground">
+					<strong>{caption.prefix}</strong> {caption.rest}
+				</p>
 			</div>
 			<Button
 				variant="secondary"
@@ -654,15 +659,55 @@ function DnsRecordRow({ record }: { record: ResendDnsRecord }) {
 	)
 }
 
-function captionForRecord(record: 'SPF' | 'DKIM' | 'MX'): string {
+function captionForRecord(record: 'SPF' | 'DKIM' | 'MX'): { prefix: string; rest: string } {
 	switch (record) {
 		case 'SPF':
-			return 'Sending half. Tells recipients that mail from your domain via Resend is legitimate.'
+			return {
+				prefix: 'Sending half.',
+				rest: 'Tells recipients that mail from your domain via Resend is legitimate.',
+			}
 		case 'DKIM':
-			return "Sending half. Signs each outgoing message so it isn't spoofable."
+			return {
+				prefix: 'Sending half.',
+				rest: "Signs each outgoing message so it isn't spoofable.",
+			}
 		case 'MX':
-			return 'Receiving half. Routes inbound mail on this domain to Resend, which forwards it here as an event.'
+			return {
+				prefix: 'Receiving half.',
+				rest: 'Routes inbound mail on this domain to Resend, which forwards it here as an event.',
+			}
 	}
+}
+
+function CopyAllAsZoneFileButton({ records }: { records: ResendDnsRecord[] }) {
+	const [copied, setCopied] = useState(false)
+	const handleCopy = () => {
+		const lines = records.map((r) => {
+			const ttl = 3600
+			if (r.type === 'MX') {
+				return `${r.name}. ${ttl} IN MX ${r.priority ?? 10} ${r.value}.`
+			}
+			if (r.type === 'CNAME') {
+				return `${r.name}. ${ttl} IN CNAME ${r.value}.`
+			}
+			return `${r.name}. ${ttl} IN TXT "${r.value}"`
+		})
+		navigator.clipboard.writeText(lines.join('\n'))
+		setCopied(true)
+		setTimeout(() => setCopied(false), 2000)
+	}
+	return (
+		<Button
+			variant="outline"
+			size="sm"
+			className="shrink-0"
+			onClick={handleCopy}
+			aria-label="Copy all DNS records as a zone file"
+		>
+			{copied ? <Check className="mr-1 h-3.5 w-3.5" /> : <Copy className="mr-1 h-3.5 w-3.5" />}
+			Copy all as zone file
+		</Button>
+	)
 }
 
 function StatusDot({
@@ -817,9 +862,11 @@ function StepThreeRootMx({
 function StepThreePartial({
 	dnsRecords,
 	webhookUrl,
+	domain,
 }: {
 	dnsRecords: ResendDnsRecord[]
 	webhookUrl: string
+	domain: string
 }) {
 	return (
 		<div className="space-y-4">
@@ -831,10 +878,10 @@ function StepThreePartial({
 					<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
 					<div>
 						<p>
-							<strong>MX not visible yet.</strong> DNS says no MX record at your domain.
-							Double-check the priority is 10 and the value has no trailing dot in your
-							registrar&apos;s UI (Cloudflare adds one automatically, GoDaddy asks you to add it —
-							either can trip you up).
+							<strong>MX not visible yet.</strong> DNS says no MX record at{' '}
+							<strong>{domain || 'your domain'}</strong>. Double-check the priority is 10 and the
+							value has no trailing dot in your registrar&apos;s UI (Cloudflare adds one
+							automatically, GoDaddy asks you to add it — either can trip you up).
 						</p>
 					</div>
 				</div>
@@ -894,6 +941,9 @@ function StepFourDone({ domain, workspaceId }: { domain: string; workspaceId: st
 					<p className="mt-2 text-xs text-brand">New trigger →</p>
 				</a>
 			</div>
+			<p className="text-[11px] text-muted-foreground">
+				Connected 2 minutes ago · Workspace credential
+			</p>
 		</div>
 	)
 }
