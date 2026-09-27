@@ -36,6 +36,12 @@ import {
 	propagateRecoveredInstallationId,
 } from '../lib/integrations/providers/github/installation-recovery'
 import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
+import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/body-fetch'
+import {
+	type ResendEmailReceived,
+	resendEmailReceivedSchema,
+} from '../lib/integrations/providers/resend/schemas'
+import { verifyResendSvix } from '../lib/integrations/providers/resend/svix'
 import { upsertSkjaldMeeting } from '../lib/integrations/providers/skjald/meeting-sync'
 import {
 	dispatchAccountLinkAction,
@@ -2581,6 +2587,236 @@ webhookApp.post('/skjald/:token', async (c) => {
 			integrationId: integration.id,
 			workspaceId: integration.workspaceId,
 			error: err instanceof Error ? err.message : String(err),
+		})
+		await releaseClaim()
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to process webhook'), 500)
+	}
+})
+
+// ── Resend inbound-email webhook ────────────────────────────────────────
+// Registered BEFORE the generic `/:provider` catch-all so this literal-prefix
+// route wins Hono's trie match. If the order were reversed, `/resend/*` would
+// hit the generic handler, which resolves `resend`'s ProviderConfig, finds no
+// `webhook` field, and returns 400 "Provider does not support webhooks" — the
+// exact regression tech-spec §12.4 pins with a framework test.
+//
+// The Svix verifier can't be wired via `ResolvedProvider.customWebhookVerifier`
+// — that hook's `(body, headers) => boolean` signature has no db handle and
+// can't reach the per-row `whsec_...` secret. Every Resend install mints its
+// own webhook and its own signing secret, so verification MUST happen after we
+// look up the integration row. That's why this looks like Skjald's route
+// rather than the catch-all path.
+webhookApp.post('/resend/:token', async (c) => {
+	const db = c.get('db')
+	const token = c.req.param('token')
+
+	const [integration] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.provider, 'resend'),
+				eq(integrations.externalId, token),
+				eq(integrations.status, 'active'),
+			),
+		)
+		.limit(1)
+
+	if (!integration) {
+		return c.json(createApiError('NOT_FOUND', 'Unknown webhook'), 404)
+	}
+
+	const body = await c.req.text()
+	const headers: Record<string, string> = {}
+	for (const [key, value] of Object.entries(c.req.header())) {
+		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+
+	// Δ vs Skjald #1 — JSON credentials blob `{ accessToken, webhookSecret }`.
+	// Skjald stores the raw signing secret; Resend needs the API key alongside
+	// it so `session-manager` can inject `RESEND_API_KEY` on the send path.
+	let stored: { accessToken: string; webhookSecret: string }
+	try {
+		stored = JSON.parse(decrypt(integration.credentials)) as {
+			accessToken: string
+			webhookSecret: string
+		}
+	} catch {
+		logger.error('Resend webhook: credentials blob is unparseable', {
+			integrationId: integration.id,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Integration misconfigured'), 500)
+	}
+
+	// Δ vs Skjald #2 — Svix HMAC-SHA256 base64, not sha256-hex over `{ts}.{body}`.
+	const verified = verifyResendSvix(body, headers, stored.webhookSecret)
+	if (!verified) {
+		logger.warn('Resend webhook: signature verification failed', {
+			integrationId: integration.id,
+		})
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
+	}
+
+	const integrationConfig = integration.config as IntegrationConfig
+	const systemActorId = integrationConfig?.system_actor_id
+	if (!systemActorId) {
+		logger.error('Resend webhook: integration missing system_actor_id', {
+			integrationId: integration.id,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Integration misconfigured'), 500)
+	}
+
+	let payload: unknown
+	try {
+		payload = JSON.parse(body)
+	} catch {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON'), 400)
+	}
+
+	// Δ vs Skjald #3 — event type comes from the payload body, not a header.
+	const parsed = resendEmailReceivedSchema.safeParse(payload)
+	if (!parsed.success || parsed.data.type !== 'email.received') {
+		return c.json({ ok: true, skipped: 'unhandled_event' })
+	}
+	// Δ vs Skjald #4 — dedup key = `email_id` from body.
+	const emailId = parsed.data.data.email_id
+
+	logger.info('resend.webhook.received', {
+		email_id: emailId,
+		workspace_id: integration.workspaceId,
+		ts: new Date().toISOString(),
+	})
+
+	// Claim the delivery so a retry that lands mid-fetch is recognised as a
+	// duplicate — same pattern as Skjald (2488-2504) + the /:provider catch-all.
+	// Fail open on a dedup-table outage so a Postgres blip doesn't stall
+	// legitimate deliveries.
+	let claimRowId: string | null = null
+	try {
+		const rows = await db
+			.insert(webhookDeliveries)
+			.values({
+				provider: 'resend',
+				externalId: emailId,
+				workspaceId: integration.workspaceId,
+			})
+			.onConflictDoNothing({
+				target: [
+					webhookDeliveries.provider,
+					webhookDeliveries.externalId,
+					webhookDeliveries.workspaceId,
+				],
+			})
+			.returning({ id: webhookDeliveries.id })
+		if (rows.length === 0) {
+			logger.info('resend.dedupe.hit', {
+				email_id: emailId,
+				workspace_id: integration.workspaceId,
+			})
+			return c.json({ ok: true, skipped: true })
+		}
+		claimRowId = rows[0]?.id ?? null
+	} catch (err) {
+		logger.error('Failed to claim resend delivery; processing without dedup', {
+			email_id: emailId,
+			workspace_id: integration.workspaceId,
+			err: err instanceof Error ? err.message : String(err),
+		})
+	}
+
+	const releaseClaim = async () => {
+		if (!claimRowId) return
+		try {
+			await db.delete(webhookDeliveries).where(eq(webhookDeliveries.id, claimRowId))
+		} catch (err) {
+			logger.error('Failed to release resend webhook delivery claim', {
+				email_id: emailId,
+				workspace_id: integration.workspaceId,
+				err: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
+	// verify → claim → fetch → enrich → commit. Fetch after the claim so a
+	// retry mid-fetch doesn't burn 2× the API budget; fetch before the commit
+	// so `events.data` carries the full body when the trigger fires.
+	let enriched: ResendEmailReceived
+	try {
+		enriched = await fetchResendBodyWithRetry(stored.accessToken, emailId, parsed.data)
+	} catch (err) {
+		logger.error('resend.body_fetch.failed', {
+			email_id: emailId,
+			workspace_id: integration.workspaceId,
+			err: err instanceof Error ? err.message : String(err),
+		})
+		await releaseClaim()
+		return c.json(createApiError('INTERNAL_ERROR', 'Body fetch failed — will retry'), 500)
+	}
+
+	// Empty-body guard (spec §5.3 — load-bearing). If Resend returned a body
+	// with neither html nor text, do NOT dispatch a session — that's the
+	// prevented failure mode. Do NOT release the claim either: a retry would
+	// fetch the same empty body. Commit an empty eventRows + claimRowId so
+	// `webhook_deliveries.processed_at` is set (empty eventRows skips the
+	// events insert but still runs the gated UPDATE at commit.ts:49-55).
+	if (!enriched.data.html && !enriched.data.text) {
+		logger.warn('resend.body_empty', {
+			email_id: emailId,
+			workspace_id: integration.workspaceId,
+		})
+		try {
+			await commitWebhookDelivery(db, { eventRows: [], claimRowId })
+		} catch (err) {
+			if (err instanceof ClaimReleasedError) {
+				logger.warn('resend.claim.released', {
+					email_id: emailId,
+					workspace_id: integration.workspaceId,
+					claim_row_id: err.claimRowId,
+				})
+			} else {
+				logger.error('Resend webhook: failed to mark claim processed on empty body', {
+					email_id: emailId,
+					workspace_id: integration.workspaceId,
+					err: err instanceof Error ? err.message : String(err),
+				})
+			}
+		}
+		return c.json({ ok: true, skipped: 'empty_body' })
+	}
+
+	try {
+		await commitWebhookDelivery(db, {
+			eventRows: [
+				{
+					workspaceId: integration.workspaceId,
+					actorId: systemActorId,
+					action: 'received',
+					entityType: 'resend.email',
+					entityId: integration.id,
+					data: enriched.data as Record<string, unknown>,
+				},
+			],
+			claimRowId,
+		})
+		logger.info('resend.session_dispatched', {
+			workspace_id: integration.workspaceId,
+			email_id: emailId,
+			entity_type: 'resend.email',
+		})
+		return c.json({ ok: true })
+	} catch (err) {
+		if (err instanceof ClaimReleasedError) {
+			logger.warn('resend.claim.released', {
+				email_id: emailId,
+				workspace_id: integration.workspaceId,
+				claim_row_id: err.claimRowId,
+			})
+			return c.json({ ok: true, skipped: true })
+		}
+		logger.error('Resend webhook processing failed', {
+			integrationId: integration.id,
+			workspace_id: integration.workspaceId,
+			err: err instanceof Error ? err.message : String(err),
 		})
 		await releaseClaim()
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to process webhook'), 500)
