@@ -1,7 +1,7 @@
 import { ProvenanceStrip } from '@/components/files/provenance-strip'
 import type { AttachingObject } from '@/lib/viewer-provenance'
 import { QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { createTestQueryClient } from '../../setup'
@@ -56,6 +56,7 @@ function renderStrip(props: {
 	attachers: AttachingObject[]
 	selectedTargetId?: string | null
 	onSelectTarget?: (id: string | null) => void
+	onReattach?: () => void
 }) {
 	const queryClient = createTestQueryClient()
 	return render(
@@ -65,6 +66,7 @@ function renderStrip(props: {
 				attachers={props.attachers}
 				selectedTargetId={props.selectedTargetId ?? null}
 				onSelectTarget={props.onSelectTarget ?? (() => {})}
+				onReattach={props.onReattach}
 			/>
 		</QueryClientProvider>,
 	)
@@ -107,21 +109,28 @@ describe('ProvenanceStrip — 6 variants + agent-driver special', () => {
 		).toHaveTextContent(/3 objects/)
 	})
 
-	it('variant 5 (archived) — muted, labels the attacher as archived, no send', () => {
+	it('variant 5 (archived) — warning-tinted, labels the attacher as archived, no send', () => {
 		const archived = makeAttacher({ archived: true, title: 'Stale bet' })
 		const { container } = renderStrip({ attachers: [archived] })
 		const strip = container.querySelector('[data-viewer-provenance-strip]')
 		expect(strip?.getAttribute('data-variant')).toBe('archived')
+		expect(strip?.className).toMatch(/bg-warning\/10/)
+		expect(strip?.className).toMatch(/border-warning\/40/)
 		expect(screen.getByText(/Attached to \(archived\):/)).toBeInTheDocument()
 	})
 
-	it('variant 6 (orphaned) — labels the attacher as orphaned + re-attach', () => {
+	it('variant 6 (orphaned) — destructive-tinted, labels as orphaned, Re-attach button fires callback', () => {
+		const onReattach = vi.fn()
 		const orphan = makeAttacher({ targetArchived: true, title: 'Removed bet' })
-		const { container } = renderStrip({ attachers: [orphan] })
+		const { container } = renderStrip({ attachers: [orphan], onReattach })
 		const strip = container.querySelector('[data-viewer-provenance-strip]')
 		expect(strip?.getAttribute('data-variant')).toBe('orphaned')
+		expect(strip?.className).toMatch(/bg-destructive\/10/)
+		expect(strip?.className).toMatch(/border-destructive\/40/)
 		expect(screen.getByText(/Orphaned:/)).toBeInTheDocument()
-		expect(screen.getByText(/re-attach/i)).toBeInTheDocument()
+		const reattach = screen.getByRole('button', { name: /re-attach/i })
+		fireEvent.click(reattach)
+		expect(onReattach).toHaveBeenCalledTimes(1)
 	})
 
 	it('agent-attached-human-driver special — no agent marker when driver is human', () => {

@@ -34,6 +34,8 @@ export interface ProvenanceStripProps {
 	// same resolved state.
 	selectedTargetId: string | null
 	onSelectTarget: (targetId: string | null) => void
+	// Fires when the orphaned-variant Re-attach button is clicked.
+	onReattach?: () => void
 }
 
 export function ProvenanceStrip({
@@ -41,6 +43,7 @@ export function ProvenanceStrip({
 	attachers,
 	selectedTargetId,
 	onSelectTarget,
+	onReattach,
 }: ProvenanceStripProps) {
 	const resolved = useMemo<ProvenanceResolution>(() => {
 		const base = resolveProvenance(attachers)
@@ -62,12 +65,15 @@ export function ProvenanceStrip({
 			data-viewer-provenance-strip
 			data-variant={resolved.variant}
 			className={cn(
-				'flex items-center gap-2 border-b bg-muted/40 px-4 py-1.5 text-xs',
-				(resolved.variant === 'archived' || resolved.variant === 'orphaned') &&
-					'text-muted-foreground',
+				'flex items-center gap-2 border-b px-4 py-1.5 text-xs',
+				resolved.variant === 'archived'
+					? 'border-warning/40 bg-warning/10'
+					: resolved.variant === 'orphaned'
+						? 'border-destructive/40 bg-destructive/10'
+						: 'bg-muted/40',
 			)}
 		>
-			{renderStripContent({ workspaceId, resolved, selectedTargetId, onSelectTarget })}
+			{renderStripContent({ workspaceId, resolved, selectedTargetId, onSelectTarget, onReattach })}
 		</div>
 	)
 }
@@ -77,11 +83,13 @@ function renderStripContent({
 	resolved,
 	selectedTargetId,
 	onSelectTarget,
+	onReattach,
 }: {
 	workspaceId: string
 	resolved: ProvenanceResolution
 	selectedTargetId: string | null
 	onSelectTarget: (targetId: string | null) => void
+	onReattach?: () => void
 }) {
 	// Variant #1 — one attaching object.
 	if (resolved.variant === 'single') {
@@ -185,7 +193,15 @@ function renderStripContent({
 			<>
 				<span>Orphaned:</span>
 				<AttacherLink workspaceId={workspaceId} attacher={orphan} muted />
-				<span className="text-muted-foreground">— re-attach to send</span>
+				<Button
+					type="button"
+					variant="link"
+					size="sm"
+					className="h-6 px-1 text-xs"
+					onClick={() => onReattach?.()}
+				>
+					Re-attach
+				</Button>
 			</>
 		)
 	}
