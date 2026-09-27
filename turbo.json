@@ -150,6 +150,7 @@
 			"outputs": ["**/*.tsbuildinfo"]
 		},
 		"lint": {},
+		"lint:terminal-status": {},
 		"db:generate": {
 			"cache": false
 		},
