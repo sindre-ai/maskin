@@ -613,7 +613,17 @@ function HtmlViewerStage({
 				) : (
 					<div className="flex min-h-0 flex-1">
 						{isPaged && page && page.total > 1 && (
-							<ThumbnailRail total={page.total} activeIndex={page.index} onSelect={gotoPage} />
+							// Slice 4 responsive shape (spec §Responsive):
+							// - >1200 (xl:): full thumbnail rail alongside the stage.
+							// - 900-1200 (below xl): rail is hidden by default — page nav
+							//   remains fully keyboard-driven (Slice 2a) and via the on-stage
+							//   prev/next controls, so the rail is not load-bearing at this
+							//   size. This is the "peel-out" degradation for narrow desktops.
+							// - <900 (lg-and-below, tablet + mobile): rail stays hidden;
+							//   the panel-as-drawer flow owns the mobile UX.
+							<div className="hidden shrink-0 xl:flex" data-testid="viewer-thumbnail-rail">
+								<ThumbnailRail total={page.total} activeIndex={page.index} onSelect={gotoPage} />
+							</div>
 						)}
 						{/* biome-ignore lint/a11y/useKeyWithClickEvents: viewport is a pin-placement surface, not a button — pin placement is a mouse-first interaction, and the outer <div role="application" tabIndex={0}> owns the keyboard shortcuts (0/+/-/F/C/Esc). Keyboard equivalent of "click anywhere to place a pin at that pixel" isn't a coherent affordance; annotate mode itself is the affordance a keyboard-only user would use, and it's already exposed via the C key from the route. */}
 						<div

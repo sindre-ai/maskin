@@ -17,6 +17,7 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import { useActors } from '@/hooks/use-actors'
 import { useAttachingObjects } from '@/hooks/use-attaching-objects'
@@ -27,10 +28,12 @@ import {
 	useUpdateFileComment,
 } from '@/hooks/use-file-comments'
 import { useFile } from '@/hooks/use-files'
+import { useIsDesktopViewport, useIsMobile } from '@/hooks/use-mobile'
 import { useViewerPreferences } from '@/hooks/use-viewer-preferences'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { trackFileViewerPinPlaced } from '@/lib/analytics'
 import { ApiError, type FileDetail } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import {
 	type FileCommentDraft,
 	FileCommentsProvider,
@@ -119,6 +122,19 @@ function FileViewerPage() {
 	)
 	const [filter, setFilter] = useState<ReviewFilter>('open')
 	const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null)
+
+	// Slice 4 responsive layout (spec §Responsive, 4 breakpoints):
+	// - lg+ (≥1024): panel is an inline right rail; thumbnail rail visible on xl+.
+	// - md–lg (768–1023): panel becomes a right-side drawer (Sheet side="right").
+	// - <md (≤767): panel becomes a bottom sheet (Sheet side="bottom").
+	// The breakpoints are Tailwind defaults per apps/web/CLAUDE.md ("Do not
+	// introduce custom breakpoints"). The task's descriptive boundaries
+	// (1200/900/600) map to the closest Tailwind tokens (xl/lg/md); the
+	// acceptance-criteria test viewports (1440/1024/800/400) align cleanly.
+	const isDesktop = useIsDesktopViewport()
+	const isMobile = useIsMobile()
+	const panelLayout: 'inline' | 'sheet' = isDesktop ? 'inline' : 'sheet'
+	const sheetSide: 'right' | 'bottom' = isMobile ? 'bottom' : 'right'
 
 	// Post-send lock (spec §Solution sketch, §No-gos: send is final).
 	const [sendPhase, setSendPhase] = useState<'idle' | 'sending' | 'sent'>('idle')
@@ -381,6 +397,38 @@ function FileViewerPage() {
 		/>
 	)
 
+	// Both the inline panel (lg+ desktop) and the Sheet-wrapped panel (below lg)
+	// take the same props; the only difference is `layout`. Build the shared
+	// tail once so the responsive branch stays a shape-only choice.
+	const commonPanelProps = {
+		fileId,
+		workspaceId,
+		comments,
+		drafts,
+		filter,
+		onFilterChange: setFilter,
+		provenance: resolvedProvenance,
+		sendState: {
+			phase: sendPhase,
+			lockedDriverName,
+			lockedDriverType,
+		},
+		onSendRound: handleSendRound,
+		onUpdateDraftBody: updateDraftBody,
+		onRemoveDraft: removeDraft,
+		onPostDraft: handlePostDraft,
+		onResolveComment: (c: (typeof comments)[number]) =>
+			updateComment.mutate({ commentId: c.id, data: { resolved: true } }),
+		onReopenComment: (c: (typeof comments)[number]) =>
+			updateComment.mutate({ commentId: c.id, data: { resolved: false } }),
+		roundFilter: search.round ?? null,
+		onClearRoundFilter: () =>
+			navigate({
+				search: (prev) => ({ ...prev, round: undefined }),
+				params: (p) => p,
+			}),
+	} as const
+
 	return (
 		<>
 			<PageHeader
@@ -422,41 +470,40 @@ function FileViewerPage() {
 							onPinPlace={handlePinPlace}
 						/>
 					</div>
-					{panelOpen && (
-						<ReviewPanel
-							fileId={fileId}
-							workspaceId={workspaceId}
-							comments={comments}
-							drafts={drafts}
-							filter={filter}
-							onFilterChange={setFilter}
-							provenance={resolvedProvenance}
-							sendState={{
-								phase: sendPhase,
-								lockedDriverName,
-								lockedDriverType,
-							}}
-							onSendRound={handleSendRound}
-							onUpdateDraftBody={updateDraftBody}
-							onRemoveDraft={removeDraft}
-							onPostDraft={handlePostDraft}
-							onResolveComment={(c) =>
-								updateComment.mutate({ commentId: c.id, data: { resolved: true } })
-							}
-							onReopenComment={(c) =>
-								updateComment.mutate({ commentId: c.id, data: { resolved: false } })
-							}
-							roundFilter={search.round ?? null}
-							onClearRoundFilter={() =>
-								navigate({
-									search: (prev) => ({ ...prev, round: undefined }),
-									params: (p) => p,
-								})
-							}
-						/>
+					{panelOpen && panelLayout === 'inline' && (
+						<ReviewPanel {...commonPanelProps} layout="inline" />
 					)}
 				</div>
 			</ViewerShell>
+			{panelLayout === 'sheet' && (
+				<Sheet open={panelOpen} onOpenChange={setPanelOpen}>
+					<SheetContent
+						side={sheetSide}
+						hideCloseButton
+						data-review-panel-sheet
+						data-sheet-side={sheetSide}
+						className={cn(
+							'flex flex-col p-0 gap-0',
+							// Bottom sheet on mobile: cap to 85dvh (per apps/web/CLAUDE.md's
+							// mobile sheet convention), full width, no left border.
+							sheetSide === 'bottom' && 'inset-x-0 bottom-0 max-h-[85dvh] rounded-t-lg',
+							// Right drawer on tablet: 344px wide (matches the inline spec).
+							// `sm:max-w-sm` from the sheet variant is overridden here to
+							// keep the drawer at the panel's spec width instead of the
+							// primitive's default 384px.
+							sheetSide === 'right' && 'w-[344px] sm:max-w-none',
+						)}
+						aria-label="Review panel"
+					>
+						{/* Radix Sheet (built on Dialog) requires a Title node for
+						    screen-reader users; the visible header lives inside
+						    ReviewPanel's own filter row, so we render an sr-only
+						    title here for a11y parity with ResponsivePopover. */}
+						<SheetTitle className="sr-only">Review panel</SheetTitle>
+						<ReviewPanel {...commonPanelProps} layout="sheet" />
+					</SheetContent>
+				</Sheet>
+			)}
 		</>
 	)
 }
