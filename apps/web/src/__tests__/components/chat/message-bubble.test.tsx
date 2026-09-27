@@ -34,7 +34,9 @@ vi.mock('@/hooks/use-actors', async () => {
 	return { ...actual, useActors: () => ({ data: [] }) }
 })
 
-const mockUseFiles = vi.fn(() => ({ data: [] as unknown[] }))
+const mockUseFiles = vi.fn((_workspaceId: string, _params?: { ids?: string[] }) => ({
+	data: [] as unknown[],
+}))
 vi.mock('@/hooks/use-files', () => ({
 	useFiles: (workspaceId: string, params?: { ids?: string[] }) => mockUseFiles(workspaceId, params),
 	useFile: () => ({ data: undefined }),
