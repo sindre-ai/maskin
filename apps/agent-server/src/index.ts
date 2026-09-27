@@ -42,11 +42,52 @@ import {
 	deleteSessionDir,
 	pullSessionWorkspace,
 	pushSessionWorkspace,
+	stageSessionSkills,
 } from './services/session-workspace'
 
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 
 export const MAX_PREVIEW_GUEST_PORTS = 8
+
+// Skill-name whitelist mirroring `workspaceSkills.name`'s file-system safety
+// contract — reject anything with a slash, `..`, or a NUL byte before it
+// becomes a directory name under `<sessionDir>/skills/`. Same regex that
+// `pullWorkspaceSkillsForAgent`'s DB layer already enforces on write, applied
+// here so a poisoned manifest (e.g. via a stolen bearer token) can't escape
+// the mount and land bytes elsewhere on the host.
+const SKILL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+// Each entry lands at `<sessionDir>/skills/<name>/<relativePath>`. The
+// relative-path regex forbids leading slashes, `..` segments and NUL bytes
+// so a folder skill can't traverse out of its own directory. The full-file-
+// listing pattern is intentionally strict — an empty prefix means "at the
+// skill root" (i.e. `SKILL.md` — the common single-file case).
+const SKILL_RELATIVE_PATH_RE =
+	/^(?!\.\.?(?:\/|$))(?!.*\/\.\.?(?:\/|$))[A-Za-z0-9._][A-Za-z0-9._/-]*$/
+// Storage keys are opaque to agent-server; the storage provider validates
+// the actual key on `.get()`. But we still cap length and reject control
+// bytes here as a network-input sanity floor (`.claude/rules/input-validation.md`).
+const SKILL_STORAGE_KEY_RE = /^[\x20-\x7e]{1,1024}$/
+
+// Bounded to keep a poisoned/malformed manifest from ballooning the dispatch
+// payload beyond a few hundred KB. Real agents attach fewer than 20 skills;
+// the ceiling is generous enough that a legitimate change never hits it.
+const MAX_MANIFEST_SKILLS = 100
+const MAX_MANIFEST_FILES_PER_SKILL = 200
+
+const SESSION_SKILL_MANIFEST_ENTRY_SCHEMA = z.object({
+	name: z.string().regex(SKILL_NAME_RE, 'skill name must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'),
+	files: z
+		.array(
+			z.object({
+				relativePath: z
+					.string()
+					.regex(SKILL_RELATIVE_PATH_RE, 'skill file relativePath must not traverse'),
+				storageKey: z.string().regex(SKILL_STORAGE_KEY_RE, 'storageKey out of range'),
+			}),
+		)
+		.min(1)
+		.max(MAX_MANIFEST_FILES_PER_SKILL),
+})
 
 const SESSION_REQUEST_SCHEMA = z
 	.object({
@@ -80,6 +121,14 @@ const SESSION_REQUEST_SCHEMA = z
 			.max(MAX_PREVIEW_GUEST_PORTS)
 			.optional(),
 		sourceSessionId: z.string().regex(SESSION_ID_RE).optional(),
+		// Workspace skills the dispatcher resolved for this session's agent.
+		// Staged host-side into `<sessionDir>/skills/<name>/` after the S3
+		// snapshot restore and BEFORE `spawnSession` mounts `<sessionDir>` as
+		// `/agent` — the only mount that reaches the guest. Optional + `.default([])`
+		// so an older apps/dev that predates the field (or a session for an agent
+		// with no attached skills) is indistinguishable from an empty manifest
+		// and the host-side stager treats them the same.
+		skills: z.array(SESSION_SKILL_MANIFEST_ENTRY_SCHEMA).max(MAX_MANIFEST_SKILLS).default([]),
 	})
 	.refine((data) => !data.previewGuestPorts || data.browserRequired === true, {
 		message: 'previewGuestPorts requires browserRequired to be true',
@@ -226,6 +275,53 @@ export function truncateLogLine(line: string, maxBytes: number = MAX_LOG_LINE_BY
 	const truncated = new TextDecoder('utf-8', { fatal: false }).decode(truncatedBytes)
 	const droppedBytes = bytes.length - maxBytes
 	return `${truncated}...[truncated ${droppedBytes} bytes]${hasTrailingNewline ? '\n' : ''}`
+}
+
+/**
+ * Fire-and-forget POST to apps/dev reporting the outcome of host-side skill
+ * staging for `sessionId`. Feeds the G1 signal set on the dev side —
+ * `skills_staged` for the count actually landed on disk, `session_skill_load_failed`
+ * for the per-skill failure list — without adding a hard dependency on
+ * apps/dev's availability at spawn time. A failed report is logged and
+ * dropped; the session boots regardless. Never throws (its caller wraps it
+ * in `.catch` but we defend in depth here too).
+ */
+export async function reportSkillStagingToBackend(
+	sessionId: string,
+	maskinBaseUrl: string,
+	agentServerSecret: string,
+	manifestSkills: number,
+	stagingResult: { staged: number; failures: { name: string; error: string }[] },
+	fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+	try {
+		const res = await fetchImpl(
+			`${maskinBaseUrl}/api/internal/agent-servers/sessions/${sessionId}/skill-staging`,
+			{
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${agentServerSecret}`,
+				},
+				body: JSON.stringify({
+					manifest_skills: manifestSkills,
+					staged: stagingResult.staged,
+					failures: stagingResult.failures,
+				}),
+			},
+		)
+		if (!res.ok) {
+			logger.warn('backend rejected skill-staging report', {
+				sessionId,
+				status: res.status,
+			})
+		}
+	} catch (err) {
+		logger.warn('failed to POST skill-staging report to backend', {
+			sessionId,
+			error: String(err),
+		})
+	}
 }
 
 // Delay before stopping a microVM after it signals completion. `msb stop` tears
@@ -1082,6 +1178,49 @@ export function buildApp(deps: AppDeps): Hono {
 					error: String(err),
 				})
 				return c.json({ error: 'workspace_pull_failed' }, 502)
+			}
+
+			// Stage workspace skills into <sessionDir>/skills/<name>/ AFTER the
+			// snapshot restore + ensureSkeleton() and BEFORE spawnSession — the
+			// mount `<sessionDir>:/agent` only reaches the guest on entry, so a
+			// write after spawnSession would land host-side and never enter the
+			// VM. This is the fix for the Layer 1 provisioning gap: prior to
+			// this call, `/agent/skills/` was always empty for a fresh queue-
+			// dispatched session (see tech spec §2). Report the outcome back to
+			// apps/dev so `session_skill_load_failed` fires on a real failure
+			// (per tech spec §7) rather than the defect reproducing invisibly.
+			//
+			// Degraded-start: `stageSessionSkills` never throws; a per-skill
+			// failure is recorded and the session still boots, so an S3 blip
+			// on one skill does not take down the whole agent (see spec §6).
+			const stagingResult = await stageSessionSkills(deps.storage, sessionDir, body.skills ?? [])
+			logger.info('session skills staged', {
+				sessionId: body.sessionId,
+				manifestSkills: body.skills?.length ?? 0,
+				staged: stagingResult.staged,
+				failed: stagingResult.failures.length,
+			})
+			// Best-effort back-report to apps/dev. Fire-and-forget so a slow or
+			// unreachable Maskin backend never delays session spawn — an outage
+			// on the reporting side degrades to the same observable state as
+			// today (session boots, no G1 signal), rather than blocking dispatch.
+			if (
+				(body.skills?.length ?? 0) > 0 &&
+				deps.env.MASKIN_BASE_URL &&
+				deps.env.AGENT_SERVER_SECRET
+			) {
+				void reportSkillStagingToBackend(
+					body.sessionId,
+					deps.env.MASKIN_BASE_URL,
+					deps.env.AGENT_SERVER_SECRET,
+					body.skills?.length ?? 0,
+					stagingResult,
+				).catch((err) => {
+					logger.warn('Failed to report skill staging outcome to backend', {
+						sessionId: body.sessionId,
+						error: String(err),
+					})
+				})
 			}
 		}
 

@@ -143,6 +143,13 @@ describe('SessionManager', () => {
 		mockResults = ctx.mockResults
 		calls = ctx.calls
 		manager = new SessionManager(ctx.db, storageProvider as StorageProvider)
+		// buildLaunchSpec resolves the workspace-skill manifest for the
+		// dispatch payload — the shape used by apps/agent-server's host-side
+		// stager (see agent-storage.ts `resolveWorkspaceSkillManifest`).
+		// Mock to an empty manifest by default so tests that queue their own
+		// select responses don't need to add a row for this internal DB read,
+		// mirroring the same-file spy on `pullWorkspaceSkillsForAgent`.
+		vi.spyOn(AgentStorageManager.prototype, 'resolveWorkspaceSkillManifest').mockResolvedValue([])
 		// Default: pretend GitHub is healthy so preflight in buildLaunchSpec does
 		// not touch the real network. Individual tests override this for the
 		// broken-identity path.

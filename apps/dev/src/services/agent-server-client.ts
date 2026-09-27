@@ -27,6 +27,25 @@ export class AgentServerHttpError extends Error {
 	}
 }
 
+/**
+ * One skill in the dispatch-payload manifest. Every attached workspace skill
+ * lands as one of these; agent-server iterates the array, fetches each
+ * `files[*].storageKey` from S3, and writes it to
+ * `<sessionDir>/skills/<name>/<files[*].relativePath>` — reconstructing the
+ * same on-disk shape `pullWorkspaceSkillsForAgent` builds on the dev-fallback
+ * path, but on the host that actually mounts `<sessionDir>` as `/agent`
+ * inside the guest.
+ *
+ * Kept structurally identical to
+ * `WorkspaceSkillManifestEntry` in `agent-storage.ts`; treating them as
+ * type-compatible lets `buildStartRequest` pass the resolver's output
+ * straight through to `StartSessionRequest.skills` with no re-shaping.
+ */
+export type StartSessionSkillManifestEntry = {
+	name: string
+	files: { relativePath: string; storageKey: string }[]
+}
+
 export type StartSessionRequest = {
 	sessionId: string
 	image: string
@@ -36,6 +55,14 @@ export type StartSessionRequest = {
 	browserRequired?: boolean
 	sourceSessionId?: string
 	previewGuestPorts?: number[]
+	/**
+	 * Workspace skills to stage into `<sessionDir>/skills/` host-side, before
+	 * `spawnSession` mounts the dir as `/agent` in the guest. Optional and
+	 * omitted-when-empty so an agent-server image predating the field ignores
+	 * it and boots identically to today (see agent-server SESSION_REQUEST_SCHEMA
+	 * — the field passes through Zod's default-empty semantics).
+	 */
+	skills?: StartSessionSkillManifestEntry[]
 }
 
 export type StartSessionResponse = {
