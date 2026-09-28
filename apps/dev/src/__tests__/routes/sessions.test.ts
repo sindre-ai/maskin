@@ -599,6 +599,112 @@ describe('Sessions Routes', () => {
 		})
 	})
 
+	describe('GET /api/sessions/:id (with include_logs)', () => {
+		it('include_logs=true returns a logs array and honors log_limit', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const log1 = buildSessionLog({ sessionId: session.id })
+			const log2 = buildSessionLog({ sessionId: session.id })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			// First select: session auth check. Second select: logs query.
+			mockResults.selectQueue = [[session], [log1, log2]]
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}?include_logs=true&log_limit=25`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.id).toBe(session.id)
+			expect(body.logs).toHaveLength(2)
+			expect(body.logs[0].content).toBe(log1.content)
+		})
+
+		it('include_logs omitted returns session without a logs key (bug fix regression pin)', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.selectQueue = [[session]]
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).not.toHaveProperty('logs')
+		})
+	})
+
+	describe('GET /api/sessions/:id/logs/deep', () => {
+		it('direction=newest_first returns rows in id DESC order (NOT reversed)', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			// Rows returned by the DB in DESC order — the handler must NOT
+			// reverse them (deliberate break from /:id/logs at 712-798).
+			const log100 = buildSessionLog({ sessionId: session.id, id: 100, content: 'newest' })
+			const log50 = buildSessionLog({ sessionId: session.id, id: 50, content: 'mid' })
+			const log10 = buildSessionLog({ sessionId: session.id, id: 10, content: 'oldest' })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.selectQueue = [[session], [log100, log50, log10]]
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}/logs/deep`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(3)
+			expect(body[0].id).toBe(100)
+			expect(body[2].id).toBe(10)
+		})
+
+		it('direction=oldest_first returns rows in id ASC order (jump to boot)', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const log10 = buildSessionLog({ sessionId: session.id, id: 10, content: 'boot' })
+			const log50 = buildSessionLog({ sessionId: session.id, id: 50, content: 'mid' })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.selectQueue = [[session], [log10, log50]]
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}/logs/deep?direction=oldest_first`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body[0].id).toBe(10)
+			expect(body[1].id).toBe(50)
+		})
+
+		it('honors before_id, after_id, stream and limit (parses without error)', async () => {
+			const session = buildSession({ workspaceId: wsId })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.selectQueue = [[session], []]
+
+			const res = await app.request(
+				jsonGet(
+					`/api/sessions/${session.id}/logs/deep?before_id=100&after_id=10&stream=stderr&limit=25`,
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+		})
+
+		it('returns 404 when session not found', async () => {
+			const { app } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+
+			const res = await app.request(
+				jsonGet('/api/sessions/00000000-0000-0000-0000-000000000099/logs/deep', {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+	})
+
 	describe('Session re-fetch null safety', () => {
 		it('POST /stop returns 404 when session disappears after stop', async () => {
 			const session = buildSession({ workspaceId: wsId })
