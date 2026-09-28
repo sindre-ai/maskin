@@ -36,21 +36,55 @@ async function assertNoHorizontalOverflow(page: Page, surface: string, viewport:
 			return `${el.tagName.toLowerCase()}${id}${cls}`.slice(0, 160)
 		}
 
-		// A container is an *intentional* horizontal scroller only when the source
-		// explicitly asked for it — an inline `overflow-x: auto|scroll` style or a
-		// Tailwind `overflow-x-auto` / `overflow-x-scroll` class. Computed overflow
-		// is not enough on its own: per CSS spec, `overflow-y: auto` alone makes
-		// `overflow-x` compute to `auto`, which is exactly why the chats thread
-		// scroller (`data-testid="thread-messages"`, source class `overflow-y-auto`)
-		// silently swallowed the 4917d6f3 regression while looking like a
-		// legitimate horizontal scroller.
-		const HORIZONTAL_INTENT_TOKENS = ['overflow-x-auto', 'overflow-x-scroll', 'overflow-auto']
-		const isIntendedHorizontalScroller = (el: Element) => {
-			const inline = (el as HTMLElement).style?.overflowX
-			if (inline === 'auto' || inline === 'scroll') return true
+		// The assertion fires when an element's own content is wider than its box
+		// AND the source did not declare any horizontal-overflow intent. Two
+		// intent categories are legitimate — both mean "the developer asked for
+		// this shape, not a silent clip":
+		//   1. Horizontal scroller: `overflow-x-auto|scroll`, `overflow-auto`, or
+		//      inline `overflow-x: auto|scroll`. The user can pan the content.
+		//   2. Explicit clip: Tailwind `sr-only` (a11y hide, 1×1 box on purpose),
+		//      `truncate` (single-line ellipsis, `overflow: hidden`), `line-clamp-*`
+		//      (multi-line ellipsis), `overflow-hidden`, `overflow-x-hidden`, or
+		//      inline `overflow-x: hidden` / `overflow: hidden`. The clip IS the
+		//      feature.
+		// Computed overflow is not enough on its own — per CSS spec, `overflow-y:
+		// auto` alone makes `overflow-x` compute to `auto`, which is exactly why
+		// the chats thread scroller (`data-testid="thread-messages"`, source class
+		// `overflow-y-auto`) silently swallowed the 4917d6f3 regression while
+		// looking like a legitimate horizontal scroller. Reading source-level
+		// intent (the class list or an inline style) is what separates "developer
+		// asked for this" from "a vertical-primary container silently accepted an
+		// `auto` overflow-x it never wanted".
+		const HORIZONTAL_SCROLL_INTENT_TOKENS = [
+			'overflow-x-auto',
+			'overflow-x-scroll',
+			'overflow-auto',
+		]
+		const HORIZONTAL_CLIP_INTENT_TOKENS = [
+			'sr-only',
+			'truncate',
+			'overflow-hidden',
+			'overflow-x-hidden',
+		]
+		const hasHorizontalOverflowIntent = (el: Element) => {
+			const inlineOverflowX = (el as HTMLElement).style?.overflowX
+			if (
+				inlineOverflowX === 'auto' ||
+				inlineOverflowX === 'scroll' ||
+				inlineOverflowX === 'hidden'
+			) {
+				return true
+			}
+			const inlineOverflow = (el as HTMLElement).style?.overflow
+			if (inlineOverflow === 'hidden') return true
 			if (typeof el.className === 'string') {
-				for (const token of HORIZONTAL_INTENT_TOKENS) {
-					if (el.className.includes(token)) return true
+				const classes = el.className.trim().split(/\s+/)
+				for (const cls of classes) {
+					if (HORIZONTAL_SCROLL_INTENT_TOKENS.includes(cls)) return true
+					if (HORIZONTAL_CLIP_INTENT_TOKENS.includes(cls)) return true
+					// Tailwind `line-clamp-1`, `line-clamp-2`, … all set
+					// `overflow: hidden` for multi-line ellipsis.
+					if (cls.startsWith('line-clamp-')) return true
 				}
 			}
 			return false
@@ -69,7 +103,7 @@ async function assertNoHorizontalOverflow(page: Page, surface: string, viewport:
 		// class of failure that reached `main` in #1700.
 		for (const el of document.body.querySelectorAll<HTMLElement>('*')) {
 			if (el.scrollWidth <= el.clientWidth + tolerance) continue
-			if (isIntendedHorizontalScroller(el)) continue
+			if (hasHorizontalOverflowIntent(el)) continue
 			offenders.push({
 				selector: describe(el),
 				scrollWidth: el.scrollWidth,
