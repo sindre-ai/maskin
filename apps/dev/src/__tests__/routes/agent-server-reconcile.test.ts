@@ -471,12 +471,7 @@ describe('POST /api/internal/agent-servers/sessions/:id/skill-staging', () => {
 		vi.spyOn(logger, 'error').mockImplementation(() => {})
 
 		const res = await app.request(
-			jsonRequest(
-				'POST',
-				stagingPath(),
-				stagingBody(),
-				{ Authorization: `Bearer ${SECRET}` },
-			),
+			jsonRequest('POST', stagingPath(), stagingBody(), { Authorization: `Bearer ${SECRET}` }),
 		)
 
 		// Retrying the report has no useful effect at this point — the manifest is
@@ -513,12 +508,9 @@ describe('POST /api/internal/agent-servers/sessions/:id/skill-staging', () => {
 		}))
 
 		const res = await app.request(
-			jsonRequest(
-				'POST',
-				stagingPath(),
-				stagingBody({ failures: oversized }),
-				{ Authorization: `Bearer ${SECRET}` },
-			),
+			jsonRequest('POST', stagingPath(), stagingBody({ failures: oversized }), {
+				Authorization: `Bearer ${SECRET}`,
+			}),
 		)
 
 		expect(res.status).toBe(400)
