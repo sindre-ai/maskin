@@ -223,6 +223,62 @@ export const sessionLogQuerySchema = z.object({
 	order: z.enum(['asc', 'desc']).default('asc'),
 })
 
+/**
+ * Query params for the deep-read log endpoint that mirrors the `get_session_logs`
+ * MCP tool. Distinct from `sessionLogQuerySchema` above (which serves today's
+ * `/api/sessions/:id/logs` UI/HTTP callers and keeps ascending order for
+ * backward compat — see spec §8 rabbit hole 5).
+ *
+ * `direction` is the one axis the caller sets — it fixes both which end to
+ * page from AND the response order. Default `newest_first` lands on the
+ * ending, where a failure lives; `oldest_first` is the rare "jump to boot"
+ * case. Response rows are returned in the requested direction (NOT reversed).
+ *
+ * Cursors compose: `before_id: N` walks backward through history (rows
+ * satisfy `id < N`), `after_id: N` is a live tail (rows satisfy `id > N`),
+ * and passing both yields the bounded window `after_id < id < before_id`.
+ */
+export const sessionLogsDeepQuerySchema = z.object({
+	direction: z.enum(['newest_first', 'oldest_first']).default('newest_first'),
+	before_id: z.coerce.number().int().positive().optional(),
+	after_id: z.coerce.number().int().positive().optional(),
+	stream: z.enum(['stdout', 'stderr', 'system']).optional(),
+	limit: z.coerce.number().int().min(1).max(500).default(100),
+})
+
+/**
+ * Row shape returned by the deep-read log endpoint and by `get_session` when
+ * `include_logs` is true. `id` is the monotonic `bigserial` primary key on
+ * `session_logs` — safe for cursor pagination.
+ */
+export const sessionLogRowSchema = z.object({
+	id: z.number().int().positive(),
+	stream: z.enum(['stdout', 'stderr', 'system']),
+	content: z.string(),
+	created_at: z.string().datetime().nullable(),
+})
+
+/**
+ * Query params for `GET /api/sessions/:id`. `include_logs=true` folds the
+ * newest-first log tail into the response body under a `logs` key, honoring
+ * `log_limit`. The bug this closes was that today's handler ignores both
+ * flags — the MCP `get_session` tool advertised them for months while
+ * silently returning session metadata only.
+ *
+ * String coercion for `include_logs`: HTTP query params arrive as strings, so
+ * `z.boolean()` alone rejects `?include_logs=true`. Preprocess the literal
+ * "true"/"false" strings to actual booleans before parsing.
+ */
+export const getSessionQuerySchema = z.object({
+	include_logs: z
+		.preprocess(
+			(v) => (v === 'true' ? true : v === 'false' ? false : v),
+			z.boolean().default(false),
+		)
+		.optional(),
+	log_limit: z.coerce.number().int().min(1).max(500).default(100),
+})
+
 export const sessionParamsSchema = z.object({
 	id: z.string().uuid(),
 })

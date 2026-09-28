@@ -1407,14 +1407,16 @@ export const tools = {
 	},
 	get_session: {
 		description:
-			'Get session details by ID. Optionally include log output from the container (stdout/stderr/system).',
+			'Get session details by ID. Optionally include log output from the container (stdout/stderr/system) — logs are returned newest-first so the failure lands at the top of the array. For paginated walks through log history, use get_session_logs instead.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
 			include_logs: z
 				.boolean()
 				.default(false)
-				.describe('Include log output from the session container'),
+				.describe(
+					'Include log output from the session container. When true, the response gains a `logs` array ordered newest-first (id DESC), so the ending — where a failure lives — is at the top.',
+				),
 			log_limit: z
 				.number()
 				.int()
@@ -1422,6 +1424,41 @@ export const tools = {
 				.max(500)
 				.default(100)
 				.describe('Max log lines to return (only used when include_logs is true)'),
+		}),
+	},
+	get_session_logs: {
+		description:
+			'Read a session\'s log history with cursor pagination. Default direction is newest-first so the caller lands on the ending, where a failure lives. Walk backward through history with before_id (rows satisfy id < before_id), tail the live stream with after_id (rows satisfy id > after_id), or compose both for the bounded window after_id < id < before_id. Pass direction: "oldest_first" (no cursor) to jump to boot. Row shape: { id, stream, content, created_at }.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('Session id'),
+			direction: z
+				.enum(['newest_first', 'oldest_first'])
+				.default('newest_first')
+				.describe(
+					'Which end to page from. `newest_first` (the default) returns the latest rows first — id DESC — so a caller lands on the failure. `oldest_first` returns id ASC, for the rare "jump to boot" case.',
+				),
+			before_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Half-open, exclusive: rows satisfy `id < before_id`. Pages backward through history. Compose with after_id to bound the window.',
+				),
+			after_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Half-open, exclusive: rows satisfy `id > after_id`. Live-tail from a known cursor. Compose with before_id to bound the window.',
+				),
+			stream: z
+				.enum(['stdout', 'stderr', 'system'])
+				.optional()
+				.describe('Filter to a single log stream.'),
+			limit: z.number().int().min(1).max(500).default(100).describe('Max rows per page.'),
 		}),
 	},
 	stop_session: {

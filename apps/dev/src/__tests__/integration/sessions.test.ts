@@ -707,6 +707,173 @@ describe('Sessions Integration', () => {
 		})
 	})
 
+	describe('Deep log read — /api/sessions/:id/logs/deep', () => {
+		it('newest_first pages backward through history covering every row exactly once', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+
+			// Seed 500 log rows. bigserial ids are monotonic, so the sequence
+			// is a stable ordered set we can reason about.
+			const seeded: { id: number }[] = []
+			for (let i = 0; i < 500; i++) {
+				const row = await insertSessionLog(db, session.id, { content: `line ${i}` })
+				if (row) seeded.push(row)
+			}
+			expect(seeded).toHaveLength(500)
+
+			// Walk backward via before_id four times at limit=100. Each page
+			// must be contiguous with the last and cover every row exactly
+			// once between them.
+			const pages: number[][] = []
+			let cursor: number | undefined
+			for (let i = 0; i < 4; i++) {
+				const url = `/api/sessions/${session.id}/logs/deep?limit=100${
+					cursor !== undefined ? `&before_id=${cursor}` : ''
+				}`
+				const res = await app.request(jsonGet(url, headers))
+				expect(res.status).toBe(200)
+				const page = (await res.json()) as { id: number }[]
+				expect(page).toHaveLength(100)
+				const first = page[0]
+				const last = page[page.length - 1]
+				if (!first || !last) throw new Error('page is empty')
+				// Response order is id DESC on newest_first — NOT reversed.
+				expect(first.id).toBeGreaterThan(last.id)
+				pages.push(page.map((r) => r.id))
+				cursor = last.id
+			}
+
+			// Concatenate the four pages and assert they cover every seeded id
+			// exactly once. Sort ascending for the equality check.
+			const all = pages.flat().sort((a, b) => a - b)
+			const expected = seeded.map((r) => r.id).sort((a, b) => a - b)
+			expect(all).toEqual(expected)
+			// And a hard uniqueness check — no id appears twice across pages.
+			expect(new Set(all).size).toBe(500)
+		})
+
+		it('oldest_first with no cursor returns boot lines first (id ASC)', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			const seeded: { id: number }[] = []
+			for (let i = 0; i < 5; i++) {
+				const row = await insertSessionLog(db, session.id, { content: `line ${i}` })
+				if (row) seeded.push(row)
+			}
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}/logs/deep?direction=oldest_first&limit=3`, headers),
+			)
+			expect(res.status).toBe(200)
+			const page = (await res.json()) as { id: number }[]
+			expect(page.map((r) => r.id)).toEqual([seeded[0]?.id, seeded[1]?.id, seeded[2]?.id])
+		})
+
+		it('after_id tails the newest rows above the cursor', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			const seeded: { id: number }[] = []
+			for (let i = 0; i < 10; i++) {
+				const row = await insertSessionLog(db, session.id, { content: `line ${i}` })
+				if (row) seeded.push(row)
+			}
+			const cursor = seeded[5]?.id
+			if (!cursor) throw new Error('seeded row missing')
+
+			const res = await app.request(
+				jsonGet(
+					`/api/sessions/${session.id}/logs/deep?direction=newest_first&after_id=${cursor}`,
+					headers,
+				),
+			)
+			expect(res.status).toBe(200)
+			const page = (await res.json()) as { id: number }[]
+			// Rows satisfy id > cursor, so seeded[6..9].
+			expect(page.every((r) => r.id > cursor)).toBe(true)
+			expect(page).toHaveLength(4)
+		})
+
+		it('stream filter narrows the where clause', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			await insertSessionLog(db, session.id, { stream: 'stdout', content: 'out 1' })
+			await insertSessionLog(db, session.id, { stream: 'stderr', content: 'err 1' })
+			await insertSessionLog(db, session.id, { stream: 'stdout', content: 'out 2' })
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}/logs/deep?stream=stderr`, headers),
+			)
+			expect(res.status).toBe(200)
+			const page = (await res.json()) as { stream: string }[]
+			expect(page).toHaveLength(1)
+			expect(page[0]?.stream).toBe('stderr')
+		})
+
+		it('does NOT change /api/sessions/:id/logs semantics (regression pin for spec §8 rabbit hole 5)', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			const seeded: { id: number }[] = []
+			for (let i = 0; i < 3; i++) {
+				const row = await insertSessionLog(db, session.id, { content: `line ${i}` })
+				if (row) seeded.push(row)
+			}
+
+			// Old endpoint still returns ascending order.
+			const res = await app.request(jsonGet(`/api/sessions/${session.id}/logs`, headers))
+			expect(res.status).toBe(200)
+			const page = (await res.json()) as { id: number }[]
+			expect(page.map((r) => r.id)).toEqual(seeded.map((r) => r.id))
+		})
+
+		it('returns 404 for a non-existent session', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const res = await app.request(jsonGet(`/api/sessions/${randomUUID()}/logs/deep`, headers))
+			expect(res.status).toBe(404)
+		})
+	})
+
+	describe('GET /api/sessions/:id — include_logs bug fix (routes/sessions.ts:309)', () => {
+		it('include_logs=true returns a logs array ordered newest-first and honors log_limit', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			const seeded: { id: number }[] = []
+			for (let i = 0; i < 10; i++) {
+				const row = await insertSessionLog(db, session.id, { content: `line ${i}` })
+				if (row) seeded.push(row)
+			}
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}?include_logs=true&log_limit=3`, headers),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as { id: string; logs: { id: number }[] }
+			expect(body.id).toBe(session.id)
+			expect(body.logs).toHaveLength(3)
+			// Newest first — the last three seeded rows, in DESC id order.
+			expect(body.logs.map((l) => l.id)).toEqual([seeded[9]?.id, seeded[8]?.id, seeded[7]?.id])
+		})
+
+		it('include_logs omitted returns session with no logs key', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			await insertSessionLog(db, session.id, { content: 'seed' })
+
+			const res = await app.request(jsonGet(`/api/sessions/${session.id}`, headers))
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as Record<string, unknown>
+			expect('logs' in body).toBe(false)
+		})
+	})
+
 	describe('Logs stream (SSE) — terminal-session replay honors Last-Event-ID', () => {
 		it('replays every log when no Last-Event-ID is provided', async () => {
 			const app = createSessionApp()
