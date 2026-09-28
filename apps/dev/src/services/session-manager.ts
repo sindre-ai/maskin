@@ -43,7 +43,11 @@ import {
 	or,
 	sql,
 } from 'drizzle-orm'
-import { trackAgentSessionStartedWithPrompt } from '../lib/analytics/agent-session-events'
+import {
+	trackAgentSessionCompletedWithSkills,
+	trackAgentSessionStartedWithPrompt,
+	trackSessionSkillLoadFailed,
+} from '../lib/analytics/agent-session-events'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import {
@@ -188,6 +192,14 @@ export interface CreateSessionParams {
 	 */
 	config?: Record<string, unknown>
 	triggerId?: string
+	/**
+	 * The `triggers.type` of the trigger dispatching this session (`'cron'`,
+	 * `'event'`, or `'reminder'`). Folded into `config.trigger_type` and read
+	 * back at launch, then emitted on `agent_session_started_with_prompt` as
+	 * `trigger_type` — the cron-vs-event split the G2 measurement reads.
+	 * Supplied by `trigger-runner.ts`'s dispatch sites; absent everywhere else.
+	 */
+	triggerType?: string
 	createdBy: string
 	autoStart?: boolean
 	/** ID of a prior session whose workspace snapshot should be restored at startup. */
@@ -497,9 +509,9 @@ export class SessionManager extends EventEmitter {
 		workspaceId: string,
 		params: CreateSessionParams,
 	): Promise<typeof sessions.$inferSelect> {
-		// Fold `triggerSource` / `sourceCommentEventId` into `config` so
-		// `launchContainer` can read them off the session row later — the two
-		// props are threaded through to `agent_session_started_with_prompt`
+		// Fold `triggerSource` / `sourceCommentEventId` / `triggerType` into
+		// `config` so `launchContainer` can read them off the session row later
+		// — the props are threaded through to `agent_session_started_with_prompt`
 		// from there, meaning every dispatch route benefits without each call
 		// site having to remember to fire the analytics event itself.
 		const baseConfig = params.config ?? {}
@@ -509,6 +521,9 @@ export class SessionManager extends EventEmitter {
 		}
 		if (params.sourceCommentEventId !== undefined) {
 			config.source_comment_event_id = params.sourceCommentEventId
+		}
+		if (params.triggerType !== undefined) {
+			config.trigger_type = params.triggerType
 		}
 		const interactive = config.interactive === true
 		const conversationId =
@@ -1673,6 +1688,25 @@ export class SessionManager extends EventEmitter {
 		cpuShares: number
 		browserRequired: boolean
 		previewGuestPorts: number[]
+		/**
+		 * Workspace-skill manifest for the agent's attached skills. Passed
+		 * through to `StartSessionRequest.skills` for the remote-dispatch path;
+		 * ignored on the local-Docker path (that path stages skills directly via
+		 * `pullWorkspaceSkillsForAgent`). Empty array when the agent has no
+		 * attached skills — treated identically to omission at the receiver.
+		 */
+		skillsManifest: {
+			name: string
+			files: { relativePath: string; storageKey: string }[]
+		}[]
+		/**
+		 * Number of workspace skills resolved from the join at dispatch time —
+		 * the ground-truth "should be present" count for the G1 signal.
+		 * Emitted on `agent_session_started_with_prompt` so a query for a
+		 * dispatch-created session with attached skills but a low
+		 * `skills_staged` catches the Layer 1 regression automatically.
+		 */
+		skillsAttached: number
 	}> {
 		const [agent] = await this.db
 			.select()
@@ -1723,6 +1757,36 @@ export class SessionManager extends EventEmitter {
 			GIT_IDENTITY_EMAIL: gitIdentity.email,
 		}
 
+		// Resolve the workspace-skill manifest here so both the emitted
+		// `agent_session_started_with_prompt` signal AND the dispatch payload
+		// see the exact same set. On the local-Docker path the manifest is
+		// unused (staging happens up-stack via pullWorkspaceSkillsForAgent);
+		// on the remote-dispatch path apps/agent-server materialises it into
+		// `<sessionDir>/skills/<name>/` before `spawnSession`.
+		let skillsManifest: {
+			name: string
+			files: { relativePath: string; storageKey: string }[]
+		}[] = []
+		try {
+			skillsManifest = await this.agentStorage.resolveWorkspaceSkillManifest(
+				session.actorId,
+				session.workspaceId,
+			)
+		} catch (err) {
+			// Degraded-start: a manifest resolution failure (S3 listing or DB
+			// blip) must not fail session build. The session boots with an
+			// empty `/agent/skills/` — the same observable state as today's
+			// bug — and the failure is loud in Sentry/logs so a chronic issue
+			// is diagnosable rather than repeating this defect invisibly.
+			logger.error('Failed to resolve workspace-skill manifest for session', {
+				sessionId: session.id,
+				actorId: session.actorId,
+				workspaceId: session.workspaceId,
+				error: String(err),
+			})
+		}
+		const skillsAttached = skillsManifest.length
+
 		// Fire-and-forget prompt-size emit — the parent bet's second ship metric
 		// (per-agent preamble token reduction) needs per-launch systemPrompt size
 		// samples in PostHog. Runs on every launch (start + resume) since both
@@ -1734,6 +1798,17 @@ export class SessionManager extends EventEmitter {
 		const sourceCommentEventIdRaw = sessionCfg.source_comment_event_id
 		const sourceCommentEventId =
 			typeof sourceCommentEventIdRaw === 'number' ? sourceCommentEventIdRaw : undefined
+		const triggerType =
+			typeof sessionCfg.trigger_type === 'string' ? sessionCfg.trigger_type : undefined
+		// `skillsStaged` at start defaults to 0 for the remote-dispatch path —
+		// staging happens on the agent-server AFTER this event fires. The count
+		// is updated when agent-server reports back over `recordSkillStagingResult`.
+		// The local-Docker path stages before this call and could pass its own
+		// pullResult through — but the ground-truth failure signal
+		// `session_skill_load_failed` fires separately either way, so keeping
+		// the start-event's `skills_staged` at 0 for both paths keeps queries
+		// simple: `skills_attached > 0 AND session_skill_load_failed absent`
+		// is a passing session on either path.
 		void trackAgentSessionStartedWithPrompt({
 			workspaceId: session.workspaceId,
 			sessionId: session.id,
@@ -1742,6 +1817,10 @@ export class SessionManager extends EventEmitter {
 			systemPrompt: resolvedSystemPrompt,
 			triggerSource,
 			sourceCommentEventId,
+			skillsAttached,
+			skillsStaged: 0,
+			triggerType,
+			triggerId: session.triggerId ?? undefined,
 		})
 
 		// Interactive sessions have no opening ACTION_PROMPT — the first user turn
@@ -2319,7 +2398,17 @@ export class SessionManager extends EventEmitter {
 		const cpuShares = (sessionConfig.cpu_shares as number) ?? 1024
 		const cpus = Math.max(1, Math.round(cpuShares / 1024))
 
-		return { image, env: envVars, memoryMib, cpus, cpuShares, browserRequired, previewGuestPorts }
+		return {
+			image,
+			env: envVars,
+			memoryMib,
+			cpus,
+			cpuShares,
+			browserRequired,
+			previewGuestPorts,
+			skillsManifest,
+			skillsAttached,
+		}
 	}
 
 	/**
@@ -3070,6 +3159,15 @@ export class SessionManager extends EventEmitter {
 				status,
 				error: String(err),
 			})
+		}
+
+		// G1: emit `agent_session_completed` dev-side with the workspace-skill
+		// provisioning counts recorded at session start (+ any staging report).
+		// See `trackAgentSessionCompletedWithSkills` for why this rides alongside
+		// the frontend emission rather than replacing it. Fire-and-forget; a
+		// PostHog outage must not block the terminal path.
+		if (status === 'completed' || status === 'failed' || status === 'timeout') {
+			void this.emitCompletedWithSkills(session, status)
 		}
 
 		if (status === 'failed') {
@@ -4153,6 +4251,147 @@ export class SessionManager extends EventEmitter {
 	 * `result.failure_reason` alone only renders once the session detail panel is
 	 * open; the log line is what appears in the live stream.
 	 */
+	/**
+	 * Ingest the outcome of host-side skill staging reported by apps/agent-
+	 * server over `POST /api/internal/agent-servers/sessions/:id/skill-staging`.
+	 * Stores the counts on `sessions.config` so downstream events (the terminal
+	 * `agent_session_completed` emit below, the system log, any future debug
+	 * inspection) see a single ground truth for what actually landed in
+	 * `/agent/skills/`, and fires `session_skill_load_failed` when the manifest
+	 * reported any per-skill errors (the loud G1 signal from tech spec §7).
+	 *
+	 * Never throws: analytics failure and a DB-write blip must not fail the
+	 * inbound HTTP call (the sandbox is already up and running by the time
+	 * this fires; a failed record has no useful retry on the caller side).
+	 */
+	async recordSkillStagingResult(
+		sessionId: string,
+		result: {
+			manifestSkills: number
+			staged: number
+			failures: { name: string; error: string }[]
+		},
+	): Promise<void> {
+		let session: typeof sessions.$inferSelect | undefined
+		try {
+			const rows = await this.db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
+			session = rows[0]
+		} catch (err) {
+			logger.error('Failed to load session for skill-staging record', {
+				sessionId,
+				error: String(err),
+			})
+			return
+		}
+		if (!session) {
+			logger.warn('Skill-staging report for unknown session — dropping', { sessionId })
+			return
+		}
+
+		const [agent] = await this.db
+			.select({ id: actors.id })
+			.from(actors)
+			.where(eq(actors.id, session.actorId))
+			.limit(1)
+
+		const priorConfig = (session.config as Record<string, unknown>) ?? {}
+		const nextConfig = {
+			...priorConfig,
+			skill_staging: {
+				manifest_skills: result.manifestSkills,
+				staged: result.staged,
+				failure_count: result.failures.length,
+				failure_names: result.failures.slice(0, 20).map((f) => f.name),
+			},
+		}
+		try {
+			await this.db
+				.update(sessions)
+				.set({ config: nextConfig as typeof sessions.$inferInsert.config, updatedAt: new Date() })
+				.where(eq(sessions.id, sessionId))
+		} catch (err) {
+			logger.warn('Failed to persist skill-staging outcome onto session config', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
+		logger.info('Recorded session skill-staging outcome', {
+			sessionId,
+			manifestSkills: result.manifestSkills,
+			staged: result.staged,
+			failureCount: result.failures.length,
+		})
+
+		if (result.failures.length > 0 && agent) {
+			void trackSessionSkillLoadFailed({
+				workspaceId: session.workspaceId,
+				sessionId,
+				agentId: agent.id,
+				failureCount: result.failures.length,
+				failureNames: result.failures.slice(0, 20).map((f) => f.name),
+			})
+			// Surface into the session's own transcript so an operator diagnosing
+			// a live "Unknown skill" report sees the staging failure inline
+			// rather than having to correlate to PostHog. Prefix stays terse —
+			// this fires inside the session's log stream.
+			try {
+				await this.insertSystemLog(
+					sessionId,
+					`Skill staging: ${result.staged}/${result.manifestSkills} skills landed, ${result.failures.length} failed (${result.failures
+						.slice(0, 5)
+						.map((f) => f.name)
+						.join(', ')})`,
+				)
+			} catch (err) {
+				logger.warn('Failed to insert skill-staging system log line', {
+					sessionId,
+					error: String(err),
+				})
+			}
+		}
+	}
+
+	/**
+	 * Fire the dev-side `agent_session_completed` PostHog event carrying the
+	 * G1 skill-provisioning counts recorded at start + updated on staging.
+	 * Reads directly from `session.config.skill_staging` so a session that
+	 * predates this bet (no `skill_staging` written) emits `undefined`
+	 * for both counts, which PostHog surfaces as "property absent" — the
+	 * correct semantics for "we don't know".
+	 *
+	 * Best-effort — a PostHog outage must not block the terminal path that
+	 * SSE clients + downstream watchdogs depend on.
+	 */
+	private async emitCompletedWithSkills(
+		session: typeof sessions.$inferSelect,
+		outcome: 'completed' | 'failed' | 'timeout',
+	): Promise<void> {
+		try {
+			const config = (session.config as Record<string, unknown>) ?? {}
+			const staging = config.skill_staging as
+				| { manifest_skills?: number; staged?: number }
+				| undefined
+			const skillsAttached =
+				typeof staging?.manifest_skills === 'number' ? staging.manifest_skills : undefined
+			const skillsStaged = typeof staging?.staged === 'number' ? staging.staged : undefined
+			await trackAgentSessionCompletedWithSkills({
+				workspaceId: session.workspaceId,
+				sessionId: session.id,
+				agentId: session.actorId,
+				outcome,
+				skillsAttached,
+				skillsStaged,
+			})
+		} catch (err) {
+			// Never propagate — completion path must not be blocked by analytics.
+			logger.warn('Failed to emit dev-side agent_session_completed', {
+				sessionId: session.id,
+				error: String(err),
+			})
+		}
+	}
+
 	async insertSystemLog(sessionId: string, content: string): Promise<void> {
 		const [log] = await this.db
 			.insert(sessionLogs)
@@ -4905,6 +5144,14 @@ export class SessionManager extends EventEmitter {
 				error: String(err),
 			})
 		}
+
+		// G1: mirror the terminal `agent_session_completed` emission from the
+		// local-Docker path (handleCompletion). This runs on every remote
+		// session's terminal transition — the production path for every
+		// dispatch-created session — so the skill-provisioning counts recorded
+		// at start (and updated by `recordSkillStagingResult`) reach PostHog
+		// on both the started and completed events. Best-effort.
+		void this.emitCompletedWithSkills(updated, status)
 
 		if (status === 'failed') {
 			await this.maybeRetryClaudeOAuthOnNextSlot({

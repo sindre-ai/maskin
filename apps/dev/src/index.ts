@@ -251,6 +251,12 @@ if (process.env.NODE_ENV === 'production') {
 				...(spec.browserRequired && { browserRequired: true }),
 				...(spec.previewGuestPorts.length > 0 && { previewGuestPorts: spec.previewGuestPorts }),
 				sourceSessionId: session.sourceSessionId ?? undefined,
+				// Layer 1 skills provisioning — agent-server materialises the
+				// manifest into `<sessionDir>/skills/<name>/` after the S3
+				// snapshot restore and before `spawnSession` mounts the dir.
+				// Omitted when empty so the payload stays byte-identical to
+				// pre-bet behaviour for agents with no attached skills.
+				...(spec.skillsManifest.length > 0 && { skills: spec.skillsManifest }),
 			}
 		},
 		// Interactive sessions get no ACTION_PROMPT env var — agent-run.sh's
