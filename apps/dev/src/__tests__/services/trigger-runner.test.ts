@@ -579,6 +579,8 @@ describe('TriggerRunner', () => {
 			mockResults.selectQueue = [
 				[trigger], // cron triggers on load
 				[], // reminder triggers on load
+				[], // trigger_cooldowns on load (S1 — persistent cooldown store)
+				[], // workspace_suppressions on load (S1)
 				[match], // scope query — 1 match
 			]
 			mockResults.insert = []
