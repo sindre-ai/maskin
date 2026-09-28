@@ -4,9 +4,11 @@ import { sessionLogs, sessions } from '@maskin/db/schema'
 import {
 	createSessionSchema,
 	formatQuestionsAsMarkdown,
+	getSessionQuerySchema,
 	sessionAskSchema,
 	sessionInputSchema,
 	sessionLogQuerySchema,
+	sessionLogsDeepQuerySchema,
 	sessionParamsSchema,
 	sessionQuerySchema,
 	sessionUsageQuerySchema,
@@ -285,6 +287,12 @@ app.openapi(sessionUsageRoute, (async (c) => {
 }) as RouteHandler<typeof sessionUsageRoute, Env>)
 
 // GET /:id - Get session detail
+const getSessionResponseSchema = sessionResponseSchema.extend({
+	// Present only when the caller passed include_logs=true. Ordered newest-first
+	// (id DESC) so the ending — where a failure lives — is at index 0.
+	logs: z.array(sessionLogResponseSchema).optional(),
+})
+
 const getSessionRoute = createRoute({
 	method: 'get',
 	path: '/{id}',
@@ -293,10 +301,11 @@ const getSessionRoute = createRoute({
 	request: {
 		headers: workspaceIdHeader,
 		params: sessionParamsSchema,
+		query: getSessionQuerySchema,
 	},
 	responses: {
 		200: {
-			content: { 'application/json': { schema: sessionResponseSchema } },
+			content: { 'application/json': { schema: getSessionResponseSchema } },
 			description: 'Session details',
 		},
 		404: {
@@ -310,11 +319,32 @@ app.openapi(getSessionRoute, (async (c) => {
 	const db = c.get('db')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { include_logs, log_limit } = c.req.valid('query')
 
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	return c.json(serialize(session) as z.infer<typeof sessionResponseSchema>)
+	const serialized = serialize(session) as z.infer<typeof sessionResponseSchema>
+
+	if (!include_logs) {
+		return c.json(serialized as z.infer<typeof getSessionResponseSchema>)
+	}
+
+	// Newest-first tail, honoring log_limit. Response order is id DESC (NOT
+	// reversed) so the failure lands at index 0. Serves the same slice as the
+	// dedicated /logs/deep endpoint, so callers who only want a peek at the
+	// tail can skip the second round trip.
+	const logRows = await db
+		.select()
+		.from(sessionLogs)
+		.where(eq(sessionLogs.sessionId, id))
+		.orderBy(desc(sessionLogs.id))
+		.limit(log_limit)
+
+	return c.json({
+		...serialized,
+		logs: serializeArray(logRows) as z.infer<typeof sessionLogResponseSchema>[],
+	} as z.infer<typeof getSessionResponseSchema>)
 }) as RouteHandler<typeof getSessionRoute, Env>)
 
 // PATCH /:id - Update mutable session fields (agents call this to record active step)
@@ -766,6 +796,64 @@ app.openapi(getSessionLogsRoute, (async (c) => {
 
 	return c.json(serializeArray(results) as z.infer<typeof sessionLogResponseSchema>[])
 }) as RouteHandler<typeof getSessionLogsRoute, Env>)
+
+// GET /:id/logs/deep - Cursor-paginated log read that mirrors the get_session_logs
+// MCP tool. Distinct from /:id/logs above: this route returns rows in the
+// requested direction (newest_first → id DESC) rather than always ascending.
+// The existing /:id/logs route KEEPS its ascending semantics for today's UI
+// callers (spec §8 rabbit hole 5 — do not break existing consumers).
+const getSessionLogsDeepRoute = createRoute({
+	method: 'get',
+	path: '/{id}/logs/deep',
+	tags: ['Sessions'],
+	summary: 'Deep-read session logs with cursor pagination (newest-first by default)',
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		query: sessionLogsDeepQuerySchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: z.array(sessionLogResponseSchema) } },
+			description: 'Session logs in the requested direction',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+	},
+})
+
+app.openapi(getSessionLogsDeepRoute, (async (c) => {
+	const db = c.get('db')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const query = c.req.valid('query')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	const conditions = [eq(sessionLogs.sessionId, id)]
+	if (query.before_id !== undefined) conditions.push(lt(sessionLogs.id, query.before_id))
+	if (query.after_id !== undefined) conditions.push(gt(sessionLogs.id, query.after_id))
+	if (query.stream) conditions.push(eq(sessionLogs.stream, query.stream))
+
+	// Rows returned in the requested direction, NOT reversed. This is the
+	// deliberate break from the /:id/logs route at 712-798 above: a caller
+	// asking for newest_first wants the failure at index 0.
+	//
+	// Uses composite index session_logs_session_id_id_idx on (session_id, id)
+	// at packages/db/src/schema.ts:439 — the index's own docstring names this
+	// exact query as the reason it exists. Verified via EXPLAIN.
+	const rows = await db
+		.select()
+		.from(sessionLogs)
+		.where(and(...conditions))
+		.limit(query.limit)
+		.orderBy(query.direction === 'newest_first' ? desc(sessionLogs.id) : asc(sessionLogs.id))
+
+	return c.json(serializeArray(rows) as z.infer<typeof sessionLogResponseSchema>[])
+}) as RouteHandler<typeof getSessionLogsDeepRoute, Env>)
 
 // GET /:id/logs/stream - SSE stream of live logs
 app.get('/:id/logs/stream', async (c) => {

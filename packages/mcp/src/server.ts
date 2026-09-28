@@ -5747,14 +5747,18 @@ export function createMcpServer(config: McpConfig) {
 		async (args) => {
 			const wsOpts = { workspaceId: args.workspace_id }
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
-			const session = (await apiCall(
-				config,
-				'GET',
-				`/api/sessions/${args.id}`,
-				undefined,
-				wsOpts,
-			)) as SessionRow
-			const enriched = await enrichSessionActorName(config, wsId, session)
+			const params = new URLSearchParams()
+			if (args.include_logs) {
+				params.set('include_logs', 'true')
+				if (args.log_limit) params.set('log_limit', String(args.log_limit))
+			}
+			const query = params.toString()
+			const path = `/api/sessions/${args.id}${query ? `?${query}` : ''}`
+			const raw = (await apiCall(config, 'GET', path, undefined, wsOpts)) as SessionRow & {
+				logs?: unknown[]
+			}
+			const { logs, ...session } = raw
+			const enriched = await enrichSessionActorName(config, wsId, session as SessionRow)
 			const sessionWithUrl = wsId
 				? addUrl(enriched as Record<string, unknown>, config, wsId, {
 						kind: 'session',
@@ -5764,21 +5768,12 @@ export function createMcpServer(config: McpConfig) {
 				: enriched
 
 			if (args.include_logs) {
-				const params = new URLSearchParams()
-				if (args.log_limit) params.set('limit', String(args.log_limit))
-				const logs = await apiCall(
-					config,
-					'GET',
-					`/api/sessions/${args.id}/logs?${params}`,
-					undefined,
-					wsOpts,
-				)
 				return {
 					_meta: meta('get_session', config, (args as { workspace_id?: string }).workspace_id),
 					content: [
 						{
 							type: 'text' as const,
-							text: JSON.stringify({ session: sessionWithUrl, logs }),
+							text: JSON.stringify({ session: sessionWithUrl, logs: logs ?? [] }),
 						},
 					],
 				}
@@ -5787,6 +5782,35 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: meta('get_session', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(sessionWithUrl) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_session_logs',
+		{
+			description: tools.get_session_logs.description,
+			inputSchema: tools.get_session_logs.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.sessions, csp: CSP } },
+		},
+		async (args) => {
+			const params = new URLSearchParams()
+			params.set('direction', args.direction)
+			params.set('limit', String(args.limit))
+			if (args.before_id !== undefined) params.set('before_id', String(args.before_id))
+			if (args.after_id !== undefined) params.set('after_id', String(args.after_id))
+			if (args.stream) params.set('stream', args.stream)
+			const logs = await apiCall(
+				config,
+				'GET',
+				`/api/sessions/${args.id}/logs/deep?${params}`,
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('get_session_logs', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(logs) }],
 			}
 		},
 	)
