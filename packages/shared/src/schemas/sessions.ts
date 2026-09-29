@@ -187,15 +187,49 @@ export const createSessionSchema = z.object({
 export const sessionQuerySchema = z.object({
 	status: sessionStatusSchema.optional(),
 	actor_id: z.string().uuid().optional(),
+	trigger_id: z.string().uuid().optional(),
 	mention_object_id: z.string().uuid().optional(),
 	conversation_id: z.string().uuid().optional(),
 	/** Half-open: rows satisfy `updated_at < updated_before`. Bound excluded. */
 	updated_before: z.string().datetime({ offset: true }).optional(),
 	/** Half-open: rows satisfy `updated_at > updated_after`. Bound excluded. */
 	updated_after: z.string().datetime({ offset: true }).optional(),
-	limit: z.coerce.number().int().min(1).max(100).default(20),
+	/**
+	 * Cursor for backward pagination through the lean list. Half-open, exclusive:
+	 * returns rows with `updated_at < before`. Pass the last row's `updated_at`
+	 * back to walk further into history. Composes with `updated_after` for a
+	 * bounded window. Both cursor styles (this + `updated_before`) coexist because
+	 * the UI's offset-based paging still needs `updated_before`/`offset` for a
+	 * stable page-index view.
+	 */
+	before: z.string().datetime({ offset: true }).optional(),
+	/**
+	 * When false (the default), rows arrive in the lean shape
+	 * `{ id, title, status, updated_at }` — roughly 10x smaller than the fat
+	 * payload, so a caller sees ~50 sessions at a glance instead of ~4.
+	 * When true, rows are the full serialized `sessions` row (today's shape)
+	 * so existing callers keep working during the compat window. The UI hook
+	 * ships this PR with `verbose: true` so `main` is unchanged; the follow-up
+	 * bet migrates the UI to lean rows and drops the flag.
+	 */
+	verbose: z.coerce.boolean().default(false),
+	limit: z.coerce.number().int().min(1).max(200).default(50),
 	offset: z.coerce.number().int().min(0).default(0),
 })
+
+/**
+ * Lean row shape returned by `list_sessions` when `verbose` is false (the
+ * default). `title` is synthesized on the read path (see route handler):
+ * trigger name if `trigger_id` is set, else the first ~60 chars of
+ * `action_prompt`, else the fallback `Session <id[:8]>`.
+ */
+export const sessionLeanRowSchema = z.object({
+	id: z.string().uuid(),
+	title: z.string(),
+	status: sessionStatusSchema,
+	updated_at: z.string().datetime().nullable(),
+})
+export type SessionLeanRow = z.infer<typeof sessionLeanRowSchema>
 
 export const sessionLogQuerySchema = z.object({
 	since: z.coerce.number().int().optional(),
