@@ -131,6 +131,203 @@ describe('Sessions Routes', () => {
 			const body = await res.json()
 			expect(body).toHaveLength(1)
 		})
+
+		it('returns lean rows { id, title, status, updated_at } by default', async () => {
+			const s1 = buildSession({
+				workspaceId: wsId,
+				actionPrompt: 'Investigate the flaky login test',
+				status: 'running',
+			})
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			// Route handler's lean path selects only these columns from the leftJoin.
+			// The mock resolves the same rows for every db.select() shape; supply
+			// the fields the handler consumes so title synthesis has something to
+			// work with.
+			mockResults.select = [
+				{
+					id: s1.id,
+					status: s1.status,
+					updatedAt: s1.updatedAt,
+					actionPrompt: s1.actionPrompt,
+					triggerName: null,
+				},
+			]
+
+			const res = await app.request(jsonGet('/api/sessions', { 'x-workspace-id': wsId }))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+			// Lean shape carries exactly these four keys and no others — no
+			// config, no result, no cost/tokens, no timestamps other than
+			// updated_at.
+			expect(Object.keys(body[0]).sort()).toEqual(['id', 'status', 'title', 'updated_at'])
+			expect(body[0].id).toBe(s1.id)
+			expect(body[0].title).toBe('Investigate the flaky login test')
+			expect(body[0].status).toBe('running')
+		})
+
+		it('synthesizes the title from the trigger name when trigger_id is set', async () => {
+			const s1 = buildSession({
+				workspaceId: wsId,
+				actionPrompt: 'Do the scheduled thing',
+			})
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [
+				{
+					id: s1.id,
+					status: s1.status,
+					updatedAt: s1.updatedAt,
+					actionPrompt: s1.actionPrompt,
+					triggerName: 'Nightly triage',
+				},
+			]
+
+			const res = await app.request(jsonGet('/api/sessions', { 'x-workspace-id': wsId }))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body[0].title).toBe('Nightly triage')
+		})
+
+		it('truncates a long actionPrompt for the lean title with an ellipsis', async () => {
+			const s1 = buildSession({
+				workspaceId: wsId,
+				actionPrompt:
+					'Reproduce the flaky login test, then trace every failing assertion back to whichever fixture set them up',
+			})
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [
+				{
+					id: s1.id,
+					status: s1.status,
+					updatedAt: s1.updatedAt,
+					actionPrompt: s1.actionPrompt,
+					triggerName: null,
+				},
+			]
+
+			const res = await app.request(jsonGet('/api/sessions', { 'x-workspace-id': wsId }))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body[0].title.endsWith('…')).toBe(true)
+			// Trimmed to under 60 chars including the ellipsis marker.
+			expect(body[0].title.length).toBeLessThanOrEqual(60)
+		})
+
+		it('falls back to Session <id[:8]> when actionPrompt is empty and no trigger name', async () => {
+			const s1 = buildSession({ workspaceId: wsId })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [
+				{
+					id: s1.id,
+					status: s1.status,
+					updatedAt: s1.updatedAt,
+					actionPrompt: '',
+					triggerName: null,
+				},
+			]
+
+			const res = await app.request(jsonGet('/api/sessions', { 'x-workspace-id': wsId }))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body[0].title).toBe(`Session ${s1.id.slice(0, 8)}`)
+		})
+
+		it("returns today's full session payload when verbose=true", async () => {
+			const s1 = buildSession({
+				workspaceId: wsId,
+				status: 'completed',
+				config: { runtime: 'claude-code', timeout_seconds: 600 },
+				result: { exit_code: 0 },
+				currentActivity: 'Wrapping up',
+			})
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [s1]
+
+			const res = await app.request(
+				jsonGet('/api/sessions?verbose=true', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+			// Verbose payload keeps every field today's list returns — this is
+			// the regression pin the spec calls out (§4 backwards-compat).
+			expect(body[0].id).toBe(s1.id)
+			expect(body[0].workspaceId).toBe(s1.workspaceId)
+			expect(body[0].actorId).toBe(s1.actorId)
+			expect(body[0].actionPrompt).toBe(s1.actionPrompt)
+			expect(body[0].config).toEqual(s1.config)
+			expect(body[0].result).toEqual(s1.result)
+			expect(body[0].currentActivity).toBe('Wrapping up')
+			expect(body[0].status).toBe('completed')
+			// Lean-only key must NOT appear on the verbose payload.
+			expect(body[0]).not.toHaveProperty('title')
+			expect(body[0]).not.toHaveProperty('updated_at')
+		})
+
+		it('accepts trigger_id query parameter', async () => {
+			const triggerId = '00000000-0000-0000-0000-0000000000bb'
+			const s1 = buildSession({ workspaceId: wsId, triggerId })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [
+				{
+					id: s1.id,
+					status: s1.status,
+					updatedAt: s1.updatedAt,
+					actionPrompt: s1.actionPrompt,
+					triggerName: 'Some scheduled job',
+				},
+			]
+
+			const res = await app.request(
+				jsonGet(`/api/sessions?trigger_id=${triggerId}`, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+			expect(body[0].id).toBe(s1.id)
+			expect(body[0].title).toBe('Some scheduled job')
+		})
+
+		it('rejects trigger_id that is not a UUID', async () => {
+			const { app } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+
+			const res = await app.request(
+				jsonGet('/api/sessions?trigger_id=not-a-uuid', { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('accepts the before cursor for backward pagination', async () => {
+			const s1 = buildSession({ workspaceId: wsId })
+			const { app, mockResults } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			mockResults.select = [
+				{
+					id: s1.id,
+					status: s1.status,
+					updatedAt: s1.updatedAt,
+					actionPrompt: s1.actionPrompt,
+					triggerName: null,
+				},
+			]
+
+			const before = '2026-09-01T12:00:00.000Z'
+			const res = await app.request(
+				jsonGet(`/api/sessions?before=${encodeURIComponent(before)}`, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+		})
 	})
 
 	describe('GET /api/sessions/:id', () => {

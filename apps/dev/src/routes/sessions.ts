@@ -1,12 +1,13 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { sessionLogs, sessions } from '@maskin/db/schema'
+import { sessionLogs, sessions, triggers } from '@maskin/db/schema'
 import {
 	createSessionSchema,
 	formatQuestionsAsMarkdown,
 	getSessionQuerySchema,
 	sessionAskSchema,
 	sessionInputSchema,
+	sessionLeanRowSchema,
 	sessionLogQuerySchema,
 	sessionLogsDeepQuerySchema,
 	sessionParamsSchema,
@@ -108,20 +109,46 @@ app.openapi(createSessionRoute, (async (c) => {
 	return c.json(serialize(session) as z.infer<typeof sessionResponseSchema>, 201)
 }) as RouteHandler<typeof createSessionRoute, Env>)
 
+/**
+ * Trim `actionPrompt` down to a scannable title for the lean-row shape.
+ * ~60 chars matches the sidebar row width in the v2 mockup; the ellipsis
+ * signals truncation for prompts that ran long.
+ */
+const SESSION_TITLE_MAX_CHARS = 60
+function synthesizeSessionTitle(row: {
+	id: string
+	triggerName: string | null
+	actionPrompt: string | null
+}): string {
+	if (row.triggerName && row.triggerName.trim().length > 0) return row.triggerName
+	const prompt = row.actionPrompt?.trim()
+	if (prompt && prompt.length > 0) {
+		return prompt.length > SESSION_TITLE_MAX_CHARS
+			? `${prompt.slice(0, SESSION_TITLE_MAX_CHARS - 1).trimEnd()}…`
+			: prompt
+	}
+	return `Session ${row.id.slice(0, 8)}`
+}
+
 // GET / - List sessions
 const listSessionsRoute = createRoute({
 	method: 'get',
 	path: '/',
 	tags: ['Sessions'],
-	summary: 'List sessions',
+	summary: 'List sessions (lean by default; pass verbose=true for the full shape)',
 	request: {
 		headers: workspaceIdHeader,
 		query: sessionQuerySchema,
 	},
 	responses: {
 		200: {
-			content: { 'application/json': { schema: z.array(sessionResponseSchema) } },
-			description: 'List of sessions',
+			content: {
+				'application/json': {
+					schema: z.union([z.array(sessionResponseSchema), z.array(sessionLeanRowSchema)]),
+				},
+			},
+			description:
+				'List of sessions. Lean rows { id, title, status, updated_at } by default; full session rows when verbose=true.',
 		},
 	},
 })
@@ -134,6 +161,7 @@ app.openapi(listSessionsRoute, (async (c) => {
 	const conditions = [eq(sessions.workspaceId, workspaceId)]
 	if (query.status) conditions.push(eq(sessions.status, query.status))
 	if (query.actor_id) conditions.push(eq(sessions.actorId, query.actor_id))
+	if (query.trigger_id) conditions.push(eq(sessions.triggerId, query.trigger_id))
 	if (query.mention_object_id) {
 		// Match both @mention-triggered sessions and thread-reply auto-trigger
 		// sessions for this object so the UI can attach a live activity card
@@ -153,16 +181,52 @@ app.openapi(listSessionsRoute, (async (c) => {
 	// Half-open contract — Zod has already validated these as ISO-8601 strings.
 	if (query.updated_before) conditions.push(lt(sessions.updatedAt, new Date(query.updated_before)))
 	if (query.updated_after) conditions.push(gt(sessions.updatedAt, new Date(query.updated_after)))
+	if (query.before) conditions.push(lt(sessions.updatedAt, new Date(query.before)))
 
-	const results = await db
-		.select()
+	if (query.verbose) {
+		const results = await db
+			.select()
+			.from(sessions)
+			.where(and(...conditions))
+			.limit(query.limit)
+			.offset(query.offset)
+			.orderBy(desc(sessions.createdAt))
+
+		return c.json(serializeArray(results) as z.infer<typeof sessionResponseSchema>[])
+	}
+
+	// Lean path: LEFT JOIN triggers for title synthesis (the trigger's name is
+	// preferred over the raw actionPrompt when the session was scheduled). Every
+	// column touched here is already indexed — sessions_ws_status_idx covers
+	// workspace filtering, triggerId is a FK, and the JOIN is one row per
+	// session because triggerId is a single uuid column.
+	const leanRows = await db
+		.select({
+			id: sessions.id,
+			status: sessions.status,
+			updatedAt: sessions.updatedAt,
+			actionPrompt: sessions.actionPrompt,
+			triggerName: triggers.name,
+		})
 		.from(sessions)
+		.leftJoin(triggers, eq(sessions.triggerId, triggers.id))
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
 		.orderBy(desc(sessions.createdAt))
 
-	return c.json(serializeArray(results) as z.infer<typeof sessionResponseSchema>[])
+	const shaped = leanRows.map((row) => ({
+		id: row.id,
+		title: synthesizeSessionTitle({
+			id: row.id,
+			triggerName: row.triggerName,
+			actionPrompt: row.actionPrompt,
+		}),
+		status: row.status,
+		updated_at: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : row.updatedAt,
+	}))
+
+	return c.json(shaped as z.infer<typeof sessionLeanRowSchema>[])
 }) as RouteHandler<typeof listSessionsRoute, Env>)
 
 // GET /usage - Aggregated cost & token usage for an agent over time

@@ -11,6 +11,7 @@ import {
 	insertActor,
 	insertSession,
 	insertSessionLog,
+	insertTrigger,
 	insertWorkspace,
 } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
@@ -249,14 +250,16 @@ describe('Sessions Integration', () => {
 			const headers = { 'x-workspace-id': workspaceId }
 			const otherAgent = await insertActor(db, { type: 'agent', name: 'Other Agent' })
 
-			await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			const target = await insertSession(db, workspaceId, agentActorId, getTestActorId())
 			await insertSession(db, workspaceId, otherAgent.id, getTestActorId())
 
 			const res = await app.request(jsonGet(`/api/sessions?actor_id=${agentActorId}`, headers))
 			expect(res.status).toBe(200)
 			const list = await res.json()
 			expect(list).toHaveLength(1)
-			expect(list[0].actorId).toBe(agentActorId)
+			// Lean shape doesn't carry actorId; assert on id instead — proves the
+			// filter narrows to the specific agent's session, not just to one row.
+			expect(list[0].id).toBe(target.id)
 		})
 
 		it('supports pagination', async () => {
@@ -345,6 +348,168 @@ describe('Sessions Integration', () => {
 				const app = createSessionApp()
 				const headers = { 'x-workspace-id': workspaceId }
 				const res = await app.request(jsonGet('/api/sessions?updated_before=not-a-date', headers))
+				expect(res.status).toBe(400)
+			})
+		})
+
+		describe('lean rows + verbose flag + trigger_id', () => {
+			it("returns lean rows { id, title, status, updated_at } by default and today's payload on verbose=true", async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+
+				await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+					actionPrompt: 'Do the thing',
+					status: 'running',
+				})
+
+				const leanRes = await app.request(jsonGet('/api/sessions', headers))
+				expect(leanRes.status).toBe(200)
+				const leanBody = (await leanRes.json()) as Array<Record<string, unknown>>
+				expect(leanBody).toHaveLength(1)
+				expect(Object.keys(leanBody[0]).sort()).toEqual(['id', 'status', 'title', 'updated_at'])
+				expect(leanBody[0].status).toBe('running')
+
+				const verboseRes = await app.request(jsonGet('/api/sessions?verbose=true', headers))
+				expect(verboseRes.status).toBe(200)
+				const verboseBody = (await verboseRes.json()) as Array<Record<string, unknown>>
+				expect(verboseBody).toHaveLength(1)
+				// The verbose payload keeps every field today's list emits — this is
+				// the regression pin the tech spec calls out (§4 backwards-compat).
+				const row = verboseBody[0]
+				for (const key of [
+					'id',
+					'workspaceId',
+					'actorId',
+					'status',
+					'actionPrompt',
+					'config',
+					'currentActivity',
+					'startedAt',
+					'completedAt',
+					'timeoutAt',
+					'createdBy',
+					'createdAt',
+					'updatedAt',
+				]) {
+					expect(row).toHaveProperty(key)
+				}
+				// Lean-only keys stay off the verbose payload.
+				expect(row).not.toHaveProperty('title')
+				expect(row).not.toHaveProperty('updated_at')
+			})
+
+			it('lean list is at least 5x smaller than verbose for the same rows', async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+
+				// Seed 20 rows with realistic-sized action prompts + config blobs so
+				// the fat serialization has something to compare against.
+				const bigPrompt =
+					'Investigate the flaky login test on staging, then trace every failing assertion back to whichever fixture set them up and file a task for each root cause you find.'
+				const bigConfig = {
+					runtime: 'claude-code',
+					runtime_config: { max_turns: 20 },
+					timeout_seconds: 600,
+					memory_mb: 4096,
+					cpu_shares: 1024,
+					mcps: [],
+					env_vars: { FOO: 'bar', BAZ: 'qux' },
+					interactive: false,
+					entry_agent_role: 'chief-of-staff',
+				}
+				for (let i = 0; i < 20; i++) {
+					await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+						actionPrompt: bigPrompt,
+						config: bigConfig,
+					})
+				}
+
+				const leanRes = await app.request(jsonGet('/api/sessions?limit=20', headers))
+				expect(leanRes.status).toBe(200)
+				const leanText = await leanRes.text()
+
+				const verboseRes = await app.request(
+					jsonGet('/api/sessions?verbose=true&limit=20', headers),
+				)
+				expect(verboseRes.status).toBe(200)
+				const verboseText = await verboseRes.text()
+
+				// Serialized size ratio: fat / lean ≥ 5. This is the measurable
+				// success criterion the parent bet targets (bytes-per-row ≤ 50%
+				// of pre-ship baseline in PostHog).
+				expect(verboseText.length / leanText.length).toBeGreaterThanOrEqual(5)
+			})
+
+			it('filters by trigger_id and synthesizes the title from the trigger name', async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+				const trigger = await insertTrigger(db, workspaceId, getTestActorId(), agentActorId, {
+					name: 'Nightly triage sweep',
+				})
+
+				const target = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+					triggerId: trigger.id,
+					actionPrompt: 'Some prompt the trigger sent',
+				})
+				// Sibling session on the same actor but no trigger — must not match.
+				await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+					actionPrompt: 'A different one',
+				})
+
+				const res = await app.request(jsonGet(`/api/sessions?trigger_id=${trigger.id}`, headers))
+				expect(res.status).toBe(200)
+				const list = (await res.json()) as Array<{
+					id: string
+					title: string
+					status: string
+					updated_at: string | null
+				}>
+				expect(list).toHaveLength(1)
+				expect(list[0].id).toBe(target.id)
+				// Title synthesis prefers the trigger's name over actionPrompt.
+				expect(list[0].title).toBe('Nightly triage sweep')
+			})
+
+			it('lean row title falls back to actionPrompt when no trigger is joined', async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+				const prompt = 'Reproduce the flaky test and file a task'
+				await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+					actionPrompt: prompt,
+				})
+
+				const res = await app.request(jsonGet('/api/sessions', headers))
+				expect(res.status).toBe(200)
+				const list = (await res.json()) as Array<{ title: string }>
+				expect(list).toHaveLength(1)
+				expect(list[0].title).toBe(prompt)
+			})
+
+			it('supports the before cursor: rows with updated_at < before are returned', async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+				const early = new Date('2026-06-01T10:00:00.000Z')
+				const late = new Date('2026-06-01T14:00:00.000Z')
+				const earlySession = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+					updatedAt: early,
+				})
+				await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+					updatedAt: late,
+				})
+
+				const cutoff = new Date('2026-06-01T12:00:00.000Z').toISOString()
+				const res = await app.request(
+					jsonGet(`/api/sessions?before=${encodeURIComponent(cutoff)}`, headers),
+				)
+				expect(res.status).toBe(200)
+				const list = (await res.json()) as Array<{ id: string }>
+				expect(list.map((r) => r.id)).toEqual([earlySession.id])
+			})
+
+			it('cap on limit is 200; requests over 200 are rejected', async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+				const res = await app.request(jsonGet('/api/sessions?limit=500', headers))
 				expect(res.status).toBe(400)
 			})
 		})

@@ -1371,7 +1371,8 @@ export const tools = {
 		}),
 	},
 	list_sessions: {
-		description: 'List sessions with optional filters (status, actor, last-updated window).',
+		description:
+			"List sessions with optional filters (status, actor, trigger, last-updated window). By default rows are lean — { id, title, status, updated_at } — so a screen of recent sessions fits in one response. Pass verbose: true to get today's full payload (config, result, cost, tokens, timestamps) during the compat window.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			status: z
@@ -1387,6 +1388,13 @@ export const tools = {
 				])
 				.optional(),
 			actor_id: z.string().uuid().optional(),
+			trigger_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Filter to sessions spawned by a specific trigger. Complements actor_id — a session has both an actor (the agent that ran) and, when spawned automatically, the trigger that scheduled it.',
+				),
 			updated_before: z
 				.string()
 				.datetime({ offset: true })
@@ -1401,7 +1409,20 @@ export const tools = {
 				.describe(
 					'ISO-8601 timestamp. Half-open: returns rows with `updated_at > updated_after` (the bound itself is excluded). Composes with `updated_before` for a non-overlapping window.',
 				),
-			limit: z.number().int().min(1).max(100).default(20),
+			before: z
+				.string()
+				.datetime({ offset: true })
+				.optional()
+				.describe(
+					"Cursor: pass the last row's `updated_at` from the previous page to walk backward through history. Half-open, exclusive: returns rows with `updated_at < before`.",
+				),
+			verbose: z
+				.boolean()
+				.default(false)
+				.describe(
+					"When false (the default), returns lean rows { id, title, status, updated_at } — ~10x smaller than the fat shape. When true, returns today's full session payload for backwards compatibility.",
+				),
+			limit: z.number().int().min(1).max(200).default(50),
 			offset: z.number().int().min(0).default(0),
 		}),
 	},
