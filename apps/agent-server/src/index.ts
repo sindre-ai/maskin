@@ -1,7 +1,13 @@
 import './lib/sentry'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { serve } from '@hono/node-server'
+import {
+	AGENT_PUSH_DIRECTORIES,
+	type AgentPushDirectory,
+	type PushAgentFilesResponse,
+	type StopSessionOutcome,
+} from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { Hono } from 'hono'
 import { stream } from 'hono/streaming'
@@ -134,6 +140,42 @@ const SESSION_REQUEST_SCHEMA = z
 		message: 'previewGuestPorts requires browserRequired to be true',
 		path: ['previewGuestPorts'],
 	})
+
+// POST /sessions/:id/stop body — the settle-side reason/source pair so the
+// stop handler can log a legible provenance next to the FORCED_STOP_EXIT_CODE
+// seed. Mirrors `StopSessionRequest` in @maskin/shared; kept as a Zod schema
+// here so a malformed request is rejected at the boundary rather than
+// silently taking a poisoned string into the log line.
+const STOP_SESSION_REQUEST_SCHEMA = z.object({
+	reason: z.enum(['complete', 'fail', 'timeout', 'stop', 'pause']),
+	source: z.enum([
+		'sandbox-exit',
+		'reaper',
+		'reconciler',
+		'user-stop',
+		'timeout-watchdog',
+		'dispatch-queue',
+		'idle-watcher',
+	]),
+})
+
+// POST /sessions/:id/push-agent-files body — the shared constant is the only
+// legal input for `directories`; anything else is rejected so a poisoned
+// request cannot ask the handler to read from an unbounded relative path.
+// `keyPrefix` is derived by apps/dev via `agentStorageS3Prefix` and pinned to
+// the `agents/<uuid>/<uuid>` shape so the handler cannot be steered into
+// writing outside the agent-scoped tree.
+const PUSH_AGENT_FILES_KEY_PREFIX_RE =
+	/^agents\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
+const PUSH_AGENT_FILES_REQUEST_SCHEMA = z.object({
+	directories: z
+		.array(z.enum(AGENT_PUSH_DIRECTORIES))
+		.min(1)
+		.max(AGENT_PUSH_DIRECTORIES.length),
+	keyPrefix: z
+		.string()
+		.regex(PUSH_AGENT_FILES_KEY_PREFIX_RE, 'keyPrefix must match agents/<id>/<id>'),
+})
 
 // POST /sessions/:id/preview-ports body — a session's own guest-side port
 // watcher reports a port it just started listening on. Bounded to the exact
@@ -1500,19 +1542,20 @@ export function buildApp(deps: AppDeps): Hono {
 		return c.json({ ok: true })
 	})
 
-	// POST /sessions/:id/stop — apps/dev calls this to force-stop a session's
-	// sandbox (user-initiated stop). Bearer auth is inherited from the
-	// /sessions/* middleware. Idempotent, like the /complete handler's deferred
+	// POST /sessions/:id/stop — apps/dev's settleSession routes here for the
+	// remote sandbox teardown. Bearer auth is inherited from the /sessions/*
+	// middleware. Idempotent, like the /complete handler's deferred
 	// stopSandbox call above: stopping an already-stopped or absent sandbox is
-	// not an error. apps/dev treats this call as authoritative and marks the
-	// session terminal itself rather than waiting for monitorSession to report
-	// back — that watcher lives in this process's memory and would be gone
-	// after a redeploy, leaving the session stuck otherwise.
+	// not an error — the response's `stopped` outcome names which of the three
+	// non-error states applied (sandbox-stopped / sandbox-already-gone /
+	// sandbox-not-found).
 	app.post('/sessions/:id/stop', async (c) => {
 		const { id } = c.req.param()
 		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
 		// Seed BEFORE stopping the sandbox, and regardless of whether the stop
-		// below succeeds — see FORCED_STOP_EXIT_CODE's comment.
+		// below succeeds — see FORCED_STOP_EXIT_CODE's comment. Load-bearing for
+		// /complete's exit-code recovery, so this line stays put and remains
+		// unconditional on body parsing.
 		sessionExitCodes.set(id, FORCED_STOP_EXIT_CODE)
 		// Self-cleaning: only deletes if nothing has consumed or overwritten the
 		// entry by then — see SESSION_EXIT_CODE_SENTINEL_TTL_MS's comment.
@@ -1521,15 +1564,142 @@ export function buildApp(deps: AppDeps): Hono {
 				sessionExitCodes.delete(id)
 			}
 		}, SESSION_EXIT_CODE_SENTINEL_TTL_MS).unref()
+
+		let raw: unknown
 		try {
-			await stopSandbox(id, deps.msb)
+			raw = await c.req.json()
+		} catch {
+			return c.json({ error: 'invalid_json' }, 400)
+		}
+		const parsed = STOP_SESSION_REQUEST_SCHEMA.safeParse(raw)
+		if (!parsed.success) {
+			return c.json({ error: 'invalid_request', details: parsed.error.flatten() }, 400)
+		}
+		const req = parsed.data
+
+		// Distinguish "the sandbox is present and we just stopped it" from
+		// "the sandbox was never there / already reaped" so settleSession can
+		// treat the absent case as a non-error for sources that expect it
+		// (sandbox-exit, agent-completed).
+		let sandboxNames: Set<string>
+		try {
+			sandboxNames = new Set(await listSandboxNames(deps.msb))
 		} catch (err) {
-			logger.warn('failed to stop sandbox on external stop request', {
+			logger.warn('failed to list sandboxes on external stop request', {
 				sessionId: id,
 				error: String(err),
 			})
+			// If we can't observe the sandbox list at all, treat the request as a
+			// best-effort stop attempt with the outcome unknown — fall through and
+			// let the stopSandbox call itself decide between stopped/already-gone.
+			sandboxNames = new Set([id])
 		}
-		return c.json({ ok: true })
+
+		let outcome: StopSessionOutcome
+		if (!sandboxNames.has(id)) {
+			outcome = 'sandbox-not-found'
+		} else {
+			try {
+				await stopSandbox(id, deps.msb)
+				outcome = 'sandbox-stopped'
+			} catch (err) {
+				logger.warn('failed to stop sandbox on external stop request', {
+					sessionId: id,
+					error: String(err),
+				})
+				outcome = 'sandbox-already-gone'
+			}
+		}
+
+		logger.info('sandbox stop handled', {
+			sessionId: id,
+			reason: req.reason,
+			source: req.source,
+			outcome,
+		})
+		return c.json({ stopped: outcome })
+	})
+
+	// POST /sessions/:id/push-agent-files — apps/dev's settleSession dispatches
+	// here to flush the guest-side `learnings/` and `memory/` directories back
+	// to S3 for a remote session. The dirs live under `<sessionDir>/{name}/` on
+	// the agent-server host (bind-mounted as `/agent/` inside the guest), so
+	// this handler reads directly from the host without ever touching msb.
+	// Missing dirs are tolerated — the response reports zero-file entries with
+	// no error, matching the settle-side contract that a startup-stalled
+	// session (which never wrote learnings) is not itself a push failure.
+	app.post('/sessions/:id/push-agent-files', async (c) => {
+		const { id } = c.req.param()
+		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
+		if (!deps.storage) {
+			return c.json({ error: 'storage_unavailable' }, 503)
+		}
+
+		let raw: unknown
+		try {
+			raw = await c.req.json()
+		} catch {
+			return c.json({ error: 'invalid_json' }, 400)
+		}
+		const parsed = PUSH_AGENT_FILES_REQUEST_SCHEMA.safeParse(raw)
+		if (!parsed.success) {
+			return c.json({ error: 'invalid_request', details: parsed.error.flatten() }, 400)
+		}
+
+		const sessionDir = join(deps.env.AGENT_SESSION_ROOT, id)
+		const pushed: PushAgentFilesResponse['pushed'] = {}
+		const errors: PushAgentFilesResponse['errors'] = []
+		const keyPrefix = parsed.data.keyPrefix.replace(/\/$/, '')
+
+		for (const dir of parsed.data.directories as AgentPushDirectory[]) {
+			const localDir = join(sessionDir, dir)
+			try {
+				const dirStat = await stat(localDir).catch(() => null)
+				if (!dirStat?.isDirectory()) {
+					// A missing directory is a non-error — nothing was ever written.
+					pushed[dir] = { files: 0, bytes: 0 }
+					continue
+				}
+
+				let files = 0
+				let bytes = 0
+				for (const entry of await readdir(localDir)) {
+					const filePath = join(localDir, entry)
+					const fileStat = await stat(filePath).catch(() => null)
+					if (!fileStat?.isFile()) continue
+					const data = await readFile(filePath)
+					pushed[dir] = pushed[dir] ?? { files: 0, bytes: 0 }
+					// biome-ignore lint/style/noNonNullAssertion: initialised on the preceding line
+					pushed[dir]!.files += 1
+					// biome-ignore lint/style/noNonNullAssertion: initialised above
+					pushed[dir]!.bytes += data.length
+					files += 1
+					bytes += data.length
+					// Land under the workspace-scoped read prefix the concurrent
+					// bet's memory staging pulls from. `keyPrefix` came in as
+					// `agents/<ws>/<actor>` (validated by the request schema);
+					// tack on `/<dir>/<entry>` so the resulting object matches
+					// exactly what `agentStorage.pushAgentFiles`'s local path
+					// writes for a same-shape local session.
+					await deps.storage.put(`${keyPrefix}/${dir}/${entry}`, data)
+				}
+				logger.info('session agent files pushed', {
+					sessionId: id,
+					dir,
+					files,
+					bytes,
+				})
+			} catch (err) {
+				errors.push({ dir, message: err instanceof Error ? err.message : String(err) })
+				logger.warn('session agent files push failed for directory', {
+					sessionId: id,
+					dir,
+					error: String(err),
+				})
+			}
+		}
+
+		return c.json<PushAgentFilesResponse>({ pushed, errors })
 	})
 
 	return app

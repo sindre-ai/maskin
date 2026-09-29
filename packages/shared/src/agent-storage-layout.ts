@@ -83,6 +83,18 @@ export interface StopSessionResponse {
 
 export interface PushAgentFilesRequest {
 	directories: readonly AgentPushDirectory[]
+	/**
+	 * S3 key prefix derived by apps/dev via `agentStorageS3Prefix(...)` minus
+	 * the trailing `/<directory>/`. The RPC handler on the agent-server side
+	 * concatenates the directory and each file's relative path onto this
+	 * prefix so the write lands at the exact key the workspace-scoped read
+	 * path pulls from. Passed on the wire rather than derived on the server
+	 * because agent-server has no way to look up `workspaceId` / `actorId`
+	 * from a session id.
+	 *
+	 * Example: `agents/<workspaceId>/<actorId>`.
+	 */
+	keyPrefix: string
 }
 
 export interface PushAgentFilesPushedEntry {

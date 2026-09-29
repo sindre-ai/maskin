@@ -1,9 +1,12 @@
 // The only module in `apps/dev/src/**` allowed to write a terminal
 // `sessions.status`. Every other call site funnels through `settleSession()`.
-// Commit 1 lands the API surface + side-effect ordering; commit 2 wires the
-// call-site migration and the actual implementations.
 
-import type { SettleSource, TerminalOutcomeKind } from '@maskin/shared'
+import type { Database } from '@maskin/db'
+import { sessions } from '@maskin/db/schema'
+import type { SessionResult, SettleSource, TerminalOutcomeKind } from '@maskin/shared'
+import { and, eq, notInArray, sql } from 'drizzle-orm'
+import { recordEvent } from '../lib/events/record-event'
+import { logger } from '../lib/logger'
 
 export type { SettleSource, TerminalOutcomeKind }
 
@@ -63,6 +66,8 @@ export interface SettleOutcome {
 	cliReported?: SettleCliReport
 	/** S3 key of the snapshot when `kind === 'pause'`. */
 	snapshotKey?: string
+	/** Structured provider-side failure reason (feeds `sessions.result`). */
+	failureReason?: SessionResult['failure_reason']
 	/** Who called settle. */
 	source: SettleSource
 }
@@ -85,7 +90,51 @@ export interface SettleResult {
 		sessionTimeout?: number
 		sessionFailed?: number
 		sessionCompleted?: number
+		sessionStopped?: number
+		sessionPaused?: number
 	}
+}
+
+/**
+ * The subset of a `sessions` row settleSession reads before writing. Kept
+ * narrow so tests can pass a bare object without full Drizzle typing.
+ */
+export interface SessionSettleRow {
+	id: string
+	workspaceId: string
+	actorId: string
+	status: string
+	containerId: string | null
+	agentServerId: string | null
+	result: SessionResult | null
+}
+
+/**
+ * Post-commit side-effect callbacks. settleSession() has no direct import of
+ * `ContainerManager`, `AgentServerClient`, or `AgentStorageService` — the
+ * SessionManager wires those in at construction time, so this module stays
+ * standalone and the guard test's ALLOW path is unambiguous.
+ */
+export interface SettleDependencies {
+	db: Database
+	/**
+	 * Stop the sandbox this session runs on. Local sessions dispatch to
+	 * dockerode; remote sessions dispatch to the agent-server stop RPC. Both
+	 * are idempotent — an already-gone sandbox returns `'skipped-none-live'`
+	 * (never throws).
+	 */
+	stopSandbox: (row: SessionSettleRow, outcome: SettleOutcome) => Promise<StoppedSandboxOutcome>
+	/**
+	 * Push `learnings/` and `memory/` back to S3. For local sessions this
+	 * reads the on-disk temp workspace; for remote sessions it dispatches to
+	 * the agent-server push-agent-files RPC. settleSession skips this step
+	 * for classifications `startup_stalled` and `dispatch_failure` — nothing
+	 * was ever written on those paths.
+	 */
+	pushAgentFiles: (
+		row: SessionSettleRow,
+		outcome: SettleOutcome,
+	) => Promise<PushedAgentFilesOutcome>
 }
 
 /**
@@ -103,12 +152,46 @@ const TERMINAL_STATUS_BY_KIND: Record<TerminalOutcomeKind, FinalStatus> = {
 }
 
 /**
- * Public accessor so call-sites and tests never re-encode the mapping. This is
- * the only export that reads the constant; keeping it a function rather than a
- * re-export lets the guard test's AST scan continue to have exactly zero
- * `status: 'completed'`-style property assignments in this file (the assignment
- * lives inside `TERMINAL_STATUS_BY_KIND` above, which the guard test allows
- * because the file matches the `ALLOW` path).
+ * Statuses whose rows must NOT be flipped by a subsequent settleSession call —
+ * the four "truly terminal" states. `paused` is deliberately excluded even
+ * though `TERMINAL_STATUS_BY_KIND.pause` maps to it: an expired paused row is
+ * still eligible to be archived to `completed` (see session-manager.ts's
+ * 7-day archival pass), and the CAS below already lists exactly these four.
+ */
+const TRULY_TERMINAL_STATUS_SET: ReadonlySet<string> = new Set([
+	'completed',
+	'failed',
+	'timeout',
+	'user_stopped',
+])
+
+/**
+ * Domain-visible `events.action` written by settle for each kind. Matches
+ * §8.2 of the tech spec — every terminal write emits exactly one row.
+ * `session_timeout` covers the reaper's "no timeoutAt" branch, which today
+ * skips the event and silently reads as "session gone" downstream.
+ */
+const EVENT_ACTION_BY_KIND: Record<TerminalOutcomeKind, string> = {
+	complete: 'session_completed',
+	fail: 'session_failed',
+	timeout: 'session_timeout',
+	stop: 'session_stopped',
+	pause: 'session_paused',
+}
+
+/**
+ * Classifications where settleSession skips the post-commit `pushAgentFiles`
+ * step. Nothing was ever written to `/agent/learnings` or `/agent/memory`
+ * on these paths — a push would upload the empty seed directories and race
+ * the reconciler's cleanup for the same session.
+ */
+const NO_PUSH_CLASSIFICATIONS: ReadonlySet<TerminalClassification> = new Set([
+	'startup_stalled',
+	'dispatch_failure',
+])
+
+/**
+ * Public accessor so call-sites and tests never re-encode the mapping.
  */
 export function mapKindToFinalStatus(kind: TerminalOutcomeKind): FinalStatus {
 	return TERMINAL_STATUS_BY_KIND[kind]
@@ -117,57 +200,250 @@ export function mapKindToFinalStatus(kind: TerminalOutcomeKind): FinalStatus {
 /**
  * settleSession — the only writer of a terminal `sessions.status`.
  *
- * Commit 1 ships the signature and the side-effect skeleton; commit 2 wires
- * every call site through it and fleshes each step out. The comments below
- * describe the ordering the implementation will follow so a reader can verify
- * commit 2 preserves it.
- *
  * Ordered side-effects (per spec §1.5):
  *   1. Conditional UPDATE sessions — reserves the row.
  *      `WHERE status NOT IN ('completed','failed','timeout','user_stopped')`.
  *      A row already in a terminal state returns `alreadySettled: true` and
  *      settle STILL runs the idempotent side-effects (stopSandbox
- *      best-effort, pushAgentFiles best-effort with `overwrite:true`, PostHog
- *      gated by a per-session dedupe key) but does NOT overwrite the row.
- *   2. Insert an `events` row (`type: 'session_settled'`, `data: outcome`
- *      minus `resultText`).
- *   3. (after commit) stopSandbox(session, outcome.source) — §2.
- *   4. pushAgentFiles(session) — §7 (skip on `startup_stalled` and
- *      `dispatch_failure`).
- *   5. Emit `session_timeout` / `session_failed` / `session_completed` /
- *      `session_stopped` / `session_paused` — the reaper- and trigger-visible
- *      rows in the `events` table.
- *   6. emitPostHogCompletion(session, outcome) — commit 4 delivers this as a
- *      dual-emit sub-task; commit 1's skeleton emits nothing.
+ *      best-effort, pushAgentFiles best-effort) but does NOT overwrite the
+ *      row.
+ *   2. (in the same commit) Emit the domain event —
+ *      `session_completed` / `session_failed` / `session_timeout` /
+ *      `session_stopped` / `session_paused` — so a downstream consumer
+ *      subscribed to `events.action` sees exactly one terminal row per
+ *      settle.
+ *   3. (after commit) `stopSandbox(row, outcome)` — §2.
+ *   4. (after commit) `pushAgentFiles(row, outcome)` — §7. Skipped on
+ *      `startup_stalled` and `dispatch_failure`.
+ *   5. PostHog dual-emit — deferred to commit 4. `posthogEmitted` is always
+ *      false in this commit; the existing `maskin_plan_session_completed`
+ *      emit stays live at its current site in session-manager.ts.
  *
- * Error semantics (§1.6): throws ONLY when the pre-commit UPDATE errors (DB
- * unreachable). Post-commit failures surface through `SettleResult` fields
- * (`stoppedSandbox: 'skipped-error'`, `pushedAgentFiles: 'failed'`,
- * `posthogEmitted: false`) so callers can log context without retrying the
- * terminal write.
+ * Error semantics (§1.6): throws ONLY when the pre-commit UPDATE errors
+ * (DB unreachable). Post-commit failures surface through `SettleResult`
+ * fields (`stoppedSandbox: 'skipped-error'`, `pushedAgentFiles: 'failed'`)
+ * so callers can log context without retrying the terminal write.
  */
 export async function settleSession(
 	sessionId: string,
-	_outcome: SettleOutcome,
+	outcome: SettleOutcome,
+	deps: SettleDependencies,
 ): Promise<SettleResult> {
-	// Commit 2 replaces this body. The scaffold intentionally throws so nothing
-	// on `main` accidentally routes through settle before the migration commit
-	// wires it in — a silent no-op here would let a call-site's terminal write
-	// simply disappear.
-	throw new Error(
-		`settleSession(${sessionId}) not yet implemented — commit 2 wires call sites and the row-write path`,
-	)
+	const finalStatus = mapKindToFinalStatus(outcome.kind)
+	const eventAction = EVENT_ACTION_BY_KIND[outcome.kind]
+
+	// Step 1: SELECT the row (small, non-locking; the conditional UPDATE below
+	// is the actual concurrency guard via a CAS on `status NOT IN terminals`).
+	const [existing] = await deps.db
+		.select({
+			id: sessions.id,
+			workspaceId: sessions.workspaceId,
+			actorId: sessions.actorId,
+			status: sessions.status,
+			containerId: sessions.containerId,
+			agentServerId: sessions.agentServerId,
+			result: sessions.result,
+		})
+		.from(sessions)
+		.where(eq(sessions.id, sessionId))
+		.limit(1)
+
+	if (!existing) {
+		throw new Error(`settleSession: session ${sessionId} not found`)
+	}
+
+	const row: SessionSettleRow = {
+		id: existing.id,
+		workspaceId: existing.workspaceId,
+		actorId: existing.actorId,
+		status: existing.status,
+		containerId: existing.containerId,
+		agentServerId: existing.agentServerId,
+		result: (existing.result ?? null) as SessionResult | null,
+	}
+
+	const wasAlreadyTerminal = TRULY_TERMINAL_STATUS_SET.has(existing.status)
+
+	// Step 2 + 3: Conditional UPDATE and event insert inside one transaction.
+	// A CAS miss (row already terminal, or another writer beat us) leaves
+	// `flipped` empty. Best-effort side-effects still run below so an
+	// already-terminal row's sandbox does not linger.
+	let flipped: { id: string } | undefined
+	const events: SettleResult['events'] = {}
+
+	if (!wasAlreadyTerminal) {
+		await deps.db.transaction(async (tx) => {
+			const now = new Date()
+			const merged = mergeResultBlob(row.result, outcome)
+
+			const setPatch: Record<string, unknown> = {
+				status: finalStatus,
+				completedAt: now,
+				updatedAt: now,
+				result: merged,
+			}
+			// Every terminal kind empties the current-activity string so the UI
+			// stops showing "typing…" for a session that has actually stopped —
+			// including pause, whose UI-side treatment is the same "not running"
+			// state a completed row has.
+			setPatch.currentActivity = null
+			if (outcome.kind === 'pause') {
+				// A paused row's container is gone — the caller stops/removes the
+				// sandbox as part of the snapshot flow, and any resume path spins
+				// up a fresh one. Nulling containerId here means downstream
+				// isContainerAlive-style checks correctly read the row as detached
+				// from live infra.
+				setPatch.containerId = null
+				if (outcome.snapshotKey) {
+					setPatch.snapshotPath = outcome.snapshotKey
+				}
+			}
+			if (outcome.usage) {
+				if (typeof outcome.usage.inputTokens === 'number') {
+					setPatch.inputTokens = sql`COALESCE(${sessions.inputTokens}, 0) + ${outcome.usage.inputTokens}`
+				}
+				if (typeof outcome.usage.outputTokens === 'number') {
+					setPatch.outputTokens = sql`COALESCE(${sessions.outputTokens}, 0) + ${outcome.usage.outputTokens}`
+				}
+				if (typeof outcome.usage.cacheReadTokens === 'number') {
+					setPatch.cacheReadInputTokens = sql`COALESCE(${sessions.cacheReadInputTokens}, 0) + ${outcome.usage.cacheReadTokens}`
+				}
+				if (typeof outcome.usage.cacheCreationTokens === 'number') {
+					setPatch.cacheCreationInputTokens = sql`COALESCE(${sessions.cacheCreationInputTokens}, 0) + ${outcome.usage.cacheCreationTokens}`
+				}
+				if (typeof outcome.usage.costUsd === 'number') {
+					setPatch.totalCostUsd = sql`COALESCE(${sessions.totalCostUsd}, 0) + ${outcome.usage.costUsd}`
+				}
+			}
+
+			const rows = await tx
+				.update(sessions)
+				.set(setPatch)
+				.where(
+					and(
+						eq(sessions.id, sessionId),
+						notInArray(sessions.status, [
+							'completed',
+							'failed',
+							'timeout',
+							'user_stopped',
+						]),
+					),
+				)
+				.returning({ id: sessions.id })
+
+			flipped = rows[0]
+
+			if (!flipped) return
+
+			// Domain event — one row per settle. `recordEvent` writes to `events`
+			// and (in the same tx) the writer-hook can add lineage; we treat it
+			// as a plain audit row here.
+			await recordEvent(tx, {
+				workspaceId: row.workspaceId,
+				actorId: row.actorId,
+				action: eventAction,
+				entityType: 'session',
+				entityId: sessionId,
+				data: buildEventData(outcome),
+			}).catch((err) => {
+				// The tx `.catch` is inside the same commit — the caller's tx will
+				// still commit the row transition and we surface the event failure
+				// in the warning log, not the SettleResult (the event is
+				// reconstructible by the reconciler's own pass).
+				logger.warn('settleSession: recordEvent inside tx failed', {
+					sessionId,
+					action: eventAction,
+					error: String(err),
+				})
+			})
+		})
+	}
+
+	// Step 4: (Post-commit) stopSandbox best-effort.
+	let stoppedSandbox: StoppedSandboxOutcome
+	try {
+		stoppedSandbox = await deps.stopSandbox(row, outcome)
+	} catch (err) {
+		logger.warn('settleSession: stopSandbox threw', {
+			sessionId,
+			source: outcome.source,
+			error: String(err),
+		})
+		stoppedSandbox = 'skipped-error'
+	}
+
+	// Step 5: (Post-commit) pushAgentFiles best-effort. Skipped for
+	// startup_stalled / dispatch_failure — no learnings or memory were ever
+	// written on those paths.
+	let pushedAgentFiles: PushedAgentFilesOutcome = 'skipped-no-workspace'
+	if (!NO_PUSH_CLASSIFICATIONS.has(outcome.classification)) {
+		try {
+			pushedAgentFiles = await deps.pushAgentFiles(row, outcome)
+		} catch (err) {
+			logger.warn('settleSession: pushAgentFiles threw', {
+				sessionId,
+				classification: outcome.classification,
+				error: String(err),
+			})
+			pushedAgentFiles = 'failed'
+		}
+	}
+
+	return {
+		sessionId,
+		finalStatus,
+		alreadySettled: wasAlreadyTerminal || !flipped,
+		stoppedSandbox,
+		pushedAgentFiles,
+		// Commit 4 wires the dual-emit; commit 2 preserves the existing
+		// `maskin_plan_session_completed` emit at its current session-manager
+		// site with unchanged shape and predicate.
+		posthogEmitted: false,
+		events,
+	}
 }
 
 /**
- * Classify a provider error surfaced during a session run. Commit 1 stubs it
- * out (returns `undefined` — caller falls back to `'sandbox_crash'` or
- * whatever classification the current path uses); commit 2 fills in the 402 /
- * 429-with-reset / provider-auth branches per §9.1.
- *
- * This helper does NOT implement retry — that belongs to bet #0 ("waiting is
- * waiting"). Its sole job is to classify accurately so the reset time recorded
- * downstream is trustworthy.
+ * Merge `outcome` into the session's persisted `result` JSON blob. Preserves
+ * every field the row already carries — a re-entry with a later outcome does
+ * not clobber the earlier one's `reason`, `resultText`, or `failure_reason`
+ * unless the caller explicitly supplied a replacement.
+ */
+function mergeResultBlob(
+	previous: SessionResult | null,
+	outcome: SettleOutcome,
+): SessionResult {
+	const merged: SessionResult = { ...(previous ?? {}) }
+	if (outcome.reason !== undefined) merged.error = outcome.reason
+	if (outcome.resultText !== undefined) merged.summary = outcome.resultText
+	if (outcome.exitCode !== undefined) merged.exit_code = outcome.exitCode
+	if (outcome.failureReason !== undefined) merged.failure_reason = outcome.failureReason
+	return merged
+}
+
+function buildEventData(outcome: SettleOutcome): Record<string, unknown> {
+	const data: Record<string, unknown> = {
+		classification: outcome.classification,
+		source: outcome.source,
+	}
+	if (outcome.reason !== undefined) data.reason = outcome.reason
+	if (outcome.exitCode !== undefined) data.exit_code = outcome.exitCode
+	if (outcome.usage !== undefined) data.usage = outcome.usage
+	if (outcome.cliReported !== undefined) data.cli_reported = outcome.cliReported
+	if (outcome.failureReason !== undefined) {
+		data.failure_reason = outcome.failureReason
+		if (outcome.failureReason?.reason_code) {
+			data.reason_code = outcome.failureReason.reason_code
+		}
+	}
+	return data
+}
+
+/**
+ * Classify a provider error surfaced during a session run. Stubbed here —
+ * commit 4/6 fills in the 402 / 429-with-reset / provider-auth branches
+ * once the retryAt seam lands on the trigger-engine side.
  */
 export function classifyProviderError(_err: unknown): TerminalClassification | undefined {
 	return undefined

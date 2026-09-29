@@ -35,6 +35,9 @@ importers:
       '@hono/node-server':
         specifier: ^1.19.13
         version: 1.19.13(hono@4.12.14)
+      '@maskin/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@maskin/storage':
         specifier: workspace:*
         version: link:../../packages/storage

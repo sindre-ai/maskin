@@ -221,6 +221,11 @@ vi.mock('drizzle-orm', async () => {
 			(r[col.__name] as Date).getTime() <= v.getTime(),
 	})
 	const asc = (_col: unknown) => ({})
+	// settleSession uses notInArray for its CAS on non-terminal statuses —
+	// mirror the same predicate shape so the fake DB can honour it.
+	const notInArray = (col: { __name: string }, values: unknown[]) => ({
+		__pred: (r: Record<string, unknown>) => !values.includes(r[col.__name]),
+	})
 	// The queue has exactly one raw-SQL predicate: the
 	// `status NOT IN ('completed','failed')` guard that stops markSessionFailed
 	// from overwriting a session the dispatcher already finished. Modelling it
@@ -236,7 +241,7 @@ vi.mock('drizzle-orm', async () => {
 		}
 		return { __pred: () => true }
 	}
-	return { eq, and, lte, asc, sql }
+	return { eq, and, lte, asc, notInArray, sql }
 })
 
 /**
@@ -261,7 +266,21 @@ vi.mock('@maskin/db/schema', () => {
 		sessions: {
 			_: { name: 'sessions' },
 			id: col('id'),
+			workspaceId: col('workspaceId'),
+			actorId: col('actorId'),
 			status: col('status'),
+			containerId: col('containerId'),
+			agentServerId: col('agentServerId'),
+			result: col('result'),
+			// Columns settleSession's usage overlay names via `sql\`\`` — the
+			// fake DB never applies the SQL delta, but the column stubs still
+			// need to exist so the template interpolation doesn't reference
+			// `undefined`.
+			inputTokens: col('inputTokens'),
+			outputTokens: col('outputTokens'),
+			cacheReadInputTokens: col('cacheReadInputTokens'),
+			cacheCreationInputTokens: col('cacheCreationInputTokens'),
+			totalCostUsd: col('totalCostUsd'),
 		},
 		events: {
 			_: { name: 'events' },
@@ -450,7 +469,7 @@ describe('SessionDispatchQueue.tick — outcomes', () => {
 
 		expect(events).toHaveLength(1)
 		expect(events[0]?.action).toBe('session_failed')
-		expect((events[0]?.data as { source: string }).source).toBe('dispatch_queue')
+		expect((events[0]?.data as { source: string }).source).toBe('dispatch-queue')
 	})
 
 	it('writes a user-facing failure_reason and log line when dispatch is exhausted', async () => {
