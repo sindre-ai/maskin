@@ -214,6 +214,8 @@ describe('SessionManager', () => {
 				actorId: 'actor-1',
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -228,6 +230,8 @@ describe('SessionManager', () => {
 					actorId: 'actor-1',
 					actionPrompt: 'Do the thing',
 					createdBy: 'creator-1',
+					initiatedFromObjectId: null,
+					initiatedFromObjectType: null,
 					autoStart: false,
 				}),
 			).rejects.toThrow('Failed to create session')
@@ -248,6 +252,8 @@ describe('SessionManager', () => {
 				actorId: 'actor-1',
 				actionPrompt: 'Reply to the comment',
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 				triggerSource: 'comment_fallback',
 				sourceCommentEventId: 9001,
@@ -275,6 +281,8 @@ describe('SessionManager', () => {
 				actorId: 'actor-1',
 				actionPrompt: 'Run the cron job',
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 				triggerId: 'trig-1',
 				triggerType: 'cron',
@@ -312,6 +320,8 @@ describe('SessionManager', () => {
 					actorId: 'actor-1',
 					actionPrompt: 'Do the thing',
 					createdBy: 'creator-1',
+					initiatedFromObjectId: null,
+					initiatedFromObjectType: null,
 					autoStart: false,
 				}),
 			).rejects.toMatchObject({
@@ -350,6 +360,8 @@ describe('SessionManager', () => {
 					actorId: 'actor-1',
 					actionPrompt: 'Do the thing',
 					createdBy: 'creator-1',
+					initiatedFromObjectId: null,
+					initiatedFromObjectType: null,
 					autoStart: false,
 				}),
 			).rejects.toMatchObject({ name: 'PlanCapExceededError', plan: 'pro' })
@@ -380,6 +392,8 @@ describe('SessionManager', () => {
 				actorId: 'actor-1',
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -397,6 +411,8 @@ describe('SessionManager', () => {
 				actionPrompt: '',
 				config: { interactive: true },
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -411,6 +427,8 @@ describe('SessionManager', () => {
 				actorId: 'actor-1',
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -430,6 +448,8 @@ describe('SessionManager', () => {
 				actionPrompt: '',
 				config: { interactive: true, conversation: { conversation_id: 'conv-1' } },
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -444,6 +464,8 @@ describe('SessionManager', () => {
 				actorId: 'actor-1',
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 

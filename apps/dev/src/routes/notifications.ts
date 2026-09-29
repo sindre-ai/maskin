@@ -459,6 +459,11 @@ async function wakeSourceAgent(ctx: {
 			},
 		},
 		createdBy: ctx.createdBy,
+		// Notification-response spawns run on the notification's own thread —
+		// the linkage lives on `notifications.object_id` already; per spec §3.3
+		// this site passes null/null.
+		initiatedFromObjectId: null,
+		initiatedFromObjectType: null,
 	})
 }
 

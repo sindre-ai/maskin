@@ -700,6 +700,8 @@ export async function bootstrapDefaultAgents(
 				actorId: chiefId,
 				actionPrompt: buildChiefOfStaffKickoffPrompt(owner ?? {}),
 				createdBy,
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 			})
 			.catch((err) =>
 				logger.error(
@@ -873,6 +875,8 @@ export async function provisionWorkspace(params: {
 				actorId: chiefOfStaffId,
 				actionPrompt: buildChiefOfStaffKickoffPrompt(owner ?? {}),
 				createdBy: ownerActorId,
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 			})
 			.catch((err) =>
 				logger.error('Chief of Staff welcome session failed', { workspaceId: workspace.id, err }),

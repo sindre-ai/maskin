@@ -18,6 +18,35 @@ import type { SessionManager } from './session-manager'
 const SCOPE_MATCH_LIMIT = 100
 
 /**
+ * Resolve `{ initiatedFromObjectId, initiatedFromObjectType }` for a
+ * `SessionManager.createSession()` call. The two fields on the sessions row
+ * are FK-constrained to `objects.id`, so passing an entity id that isn't an
+ * object row (a slack.message uuid, a session id, a webhook delivery id)
+ * would trip the FK on insert. This helper resolves the id → object type
+ * with one PK read, or returns `null / null` when the entity isn't an
+ * object — matching the same "not a uuid → not an object" posture the
+ * `getObjectContext()` hydration path already uses in `handleEvent()`.
+ */
+async function loadInitiatedFromObject(
+	db: Database,
+	entityId: string | null | undefined,
+): Promise<{
+	initiatedFromObjectId: string | null
+	initiatedFromObjectType: string | null
+}> {
+	if (!entityId || !UUID_RE.test(entityId)) {
+		return { initiatedFromObjectId: null, initiatedFromObjectType: null }
+	}
+	const [row] = await db
+		.select({ id: objects.id, type: objects.type })
+		.from(objects)
+		.where(eq(objects.id, entityId))
+		.limit(1)
+	if (!row) return { initiatedFromObjectId: null, initiatedFromObjectType: null }
+	return { initiatedFromObjectId: row.id, initiatedFromObjectType: row.type }
+}
+
+/**
  * Guards the objects-table hydration lookup: `objects.id` is a uuid column, so
  * probing it with a non-UUID entity id (e.g. a slack channel key) would raise
  * a Postgres "invalid input syntax for type uuid" error instead of just
@@ -630,6 +659,7 @@ export class TriggerRunner {
 			})
 
 			const prompt = `${trigger.actionPrompt}\n\nTriggering event: ${JSON.stringify(eventForPrompt)}`
+			const initiatedFrom = await loadInitiatedFromObject(this.db, event.entity_id)
 			this.sessionManager
 				.createSession(event.workspace_id, {
 					actorId: trigger.targetActorId,
@@ -637,6 +667,7 @@ export class TriggerRunner {
 					triggerId: trigger.id,
 					triggerType: trigger.type,
 					createdBy: trigger.createdBy,
+					...initiatedFrom,
 				})
 				.then(async (session) => {
 					// Link the object to the active session
@@ -801,6 +832,11 @@ export class TriggerRunner {
 				triggerId: trigger.id,
 				triggerType: trigger.type,
 				createdBy: trigger.createdBy,
+				// Cron trigger — the scope may or may not match an object. NULL
+				// is the correct value when no single originating object exists
+				// (spec §3.3, cron/reminder rows).
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 			})
 			.catch((err) => this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name))
 	}
@@ -858,6 +894,9 @@ export class TriggerRunner {
 					triggerId: trigger.id,
 					triggerType: trigger.type,
 					createdBy: trigger.createdBy,
+					// Reminder trigger — one-shot, no originating object.
+					initiatedFromObjectId: null,
+					initiatedFromObjectType: null,
 				})
 				.catch((err) => this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name))
 
@@ -1499,6 +1538,7 @@ export class CommentDispatcher {
 		actionPrompt: string
 	}): Promise<boolean> {
 		try {
+			const initiatedFrom = await loadInitiatedFromObject(this.db, ctx.entityId)
 			await this.sessionManager.createSession(ctx.workspaceId, {
 				actorId: ctx.actorId,
 				actionPrompt: ctx.actionPrompt,
@@ -1511,6 +1551,7 @@ export class CommentDispatcher {
 						source_comment_event_id: ctx.sourceCommentEventId,
 					},
 				},
+				...initiatedFrom,
 			})
 			return true
 		} catch (err) {
@@ -1643,6 +1684,7 @@ export class CommentDispatcher {
 
 		if (ctx.actor.type !== 'agent') return
 
+		const initiatedFrom = await loadInitiatedFromObject(this.db, ctx.objectId)
 		this.sessionManager
 			.createSession(ctx.workspaceId, {
 				actorId: ctx.actor.id,
@@ -1664,6 +1706,7 @@ export class CommentDispatcher {
 				triggerSource: 'comment_fallback',
 				sourceCommentEventId: ctx.eventId,
 				createdBy: ctx.commenterId,
+				...initiatedFrom,
 			})
 			.catch((err) =>
 				logger.error('Failed to create session for @mentioned agent', {

@@ -217,6 +217,18 @@ export interface CreateSessionParams {
 	 * for existing consumers; also emitted as a PostHog prop.
 	 */
 	sourceCommentEventId?: number
+	/**
+	 * The object this session was started for (bet, task, insight, or any
+	 * first-class object). Required-optional shape: every call site MUST pass
+	 * both `initiatedFromObjectId` and `initiatedFromObjectType`, either as
+	 * real values or as explicit `null`. tsc catches a missed site; NULL is
+	 * still an acceptable value (direct API creates, onboarding, cron
+	 * triggers, conversation-only spawns). Read back at session_failed emit
+	 * time and at every terminal PostHog `runtime_session_ended` emit; see
+	 * spec §3.3 / §3.5 of the sessions-inspectable bet.
+	 */
+	initiatedFromObjectId: string | null
+	initiatedFromObjectType: string | null
 }
 
 /**
@@ -505,6 +517,40 @@ export class SessionManager extends EventEmitter {
 		return new Map([[LOCAL_RUNTIME_BUCKET, Number(row?.count ?? 0)]])
 	}
 
+	/**
+	 * Build the `data.initiated_from` block for a `session_failed` event from
+	 * the session row's two `initiated_from_object_*` columns. Returns `null`
+	 * (not an object with null members) when the session has no originating
+	 * object, and also `null` if the object was deleted between spawn and
+	 * emit — the FK's ON DELETE SET NULL cascade would normally have already
+	 * nulled the id column, but this covers the race window.
+	 *
+	 * One `objects` SELECT per emit is cheap: the failure path is out-of-band,
+	 * the row lookup is a PK read (uuid primary key on `objects.id`), and
+	 * object_id + object_type come straight off the session row.
+	 */
+	private async resolveInitiatedFromBlock(session: {
+		initiatedFromObjectId: string | null
+		initiatedFromObjectType: string | null
+	}): Promise<{ object_id: string; object_type: string; object_title: string } | null> {
+		if (!session.initiatedFromObjectId) return null
+		const [obj] = await this.db
+			.select({ title: objects.title })
+			.from(objects)
+			.where(eq(objects.id, session.initiatedFromObjectId))
+			.limit(1)
+		if (!obj) return null
+		return {
+			object_id: session.initiatedFromObjectId,
+			object_type: session.initiatedFromObjectType ?? '',
+			// objects.title is nullable in the schema — coalesce so the failure
+			// card renderer never has to guard against a null title. In
+			// practice every object row carries a title (title-less objects
+			// come from failed factory writes, not the normal spawn path).
+			object_title: obj.title ?? '',
+		}
+	}
+
 	async createSession(
 		workspaceId: string,
 		params: CreateSessionParams,
@@ -584,6 +630,8 @@ export class SessionManager extends EventEmitter {
 				conversationId,
 				createdBy: params.createdBy,
 				sourceSessionId: params.sourceSessionId,
+				initiatedFromObjectId: params.initiatedFromObjectId,
+				initiatedFromObjectType: params.initiatedFromObjectType,
 			})
 			.returning()
 
@@ -839,7 +887,26 @@ export class SessionManager extends EventEmitter {
 					action: 'session_failed',
 					entityType: 'session',
 					entityId: sessionId,
-					data: { error: `Enqueue failed: ${message}` },
+					data: {
+						error: `Enqueue failed: ${message}`,
+						failure_reason: null,
+						initiated_from: await this.resolveInitiatedFromBlock(session),
+						trigger_id: session.triggerId ?? null,
+						conversation_id: session.conversationId ?? null,
+					},
+				})
+				// New recordSessionEnded site — this branch never called it,
+				// so the remote-dispatch enqueue-failure class of failures was
+				// invisible on PostHog. Closes the Criterion 3 numerator hole
+				// for this path. startedAt is null here (session never
+				// launched), so durationMs is measured from createdAt.
+				this.telemetry.recordSessionEnded({
+					sessionId,
+					endReason: 'failed',
+					durationMs: elapsedMs(null, session.createdAt),
+					agentServerUrl: LOCAL_RUNTIME_BUCKET,
+					contextObjectId: session.initiatedFromObjectId,
+					contextObjectType: session.initiatedFromObjectType,
 				})
 				throw err
 			}
@@ -1019,6 +1086,10 @@ export class SessionManager extends EventEmitter {
 				data: {
 					error: message,
 					...(launchFailureReason ? { reason_code: launchFailureReason.reason_code } : {}),
+					failure_reason: launchFailureReason ?? null,
+					initiated_from: await this.resolveInitiatedFromBlock(session),
+					trigger_id: session.triggerId ?? null,
+					conversation_id: session.conversationId ?? null,
 				},
 			})
 
@@ -1036,6 +1107,8 @@ export class SessionManager extends EventEmitter {
 				endReason: 'failed',
 				durationMs: elapsedMs(null, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				contextObjectId: session.initiatedFromObjectId,
+				contextObjectType: session.initiatedFromObjectType,
 			})
 
 			this.containers.detachStdin(sessionId)
@@ -1361,7 +1434,16 @@ export class SessionManager extends EventEmitter {
 	 */
 	async markSessionFailedAfterContainerLoss(sessionId: string, workspaceId: string): Promise<void> {
 		const [existing] = await this.db
-			.select({ startedAt: sessions.startedAt, createdAt: sessions.createdAt })
+			.select({
+				startedAt: sessions.startedAt,
+				createdAt: sessions.createdAt,
+				// Extended for the runtime_session_ended telemetry site below
+				// (v2 §3.5) — this row has no session_failed emit that already
+				// carries the enrichment, so the telemetry payload is the only
+				// place Criterion 3 can see the context on this branch.
+				initiatedFromObjectId: sessions.initiatedFromObjectId,
+				initiatedFromObjectType: sessions.initiatedFromObjectType,
+			})
 			.from(sessions)
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
@@ -1403,6 +1485,8 @@ export class SessionManager extends EventEmitter {
 				endReason: 'failed',
 				durationMs: elapsedMs(existing.startedAt, existing.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				contextObjectId: existing.initiatedFromObjectId,
+				contextObjectType: existing.initiatedFromObjectType,
 			})
 		}
 
@@ -1532,7 +1616,13 @@ export class SessionManager extends EventEmitter {
 				action: 'session_failed',
 				entityType: 'session',
 				entityId: sessionId,
-				data: { error: message },
+				data: {
+					error: message,
+					failure_reason: null,
+					initiated_from: await this.resolveInitiatedFromBlock(session),
+					trigger_id: session.triggerId ?? null,
+					conversation_id: session.conversationId ?? null,
+				},
 			})
 
 			this.telemetry.recordSessionEnded({
@@ -1540,6 +1630,8 @@ export class SessionManager extends EventEmitter {
 				endReason: 'failed',
 				durationMs: elapsedMs(session.startedAt, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				contextObjectId: session.initiatedFromObjectId,
+				contextObjectType: session.initiatedFromObjectType,
 			})
 
 			this.containers.detachStdin(sessionId)
@@ -3004,6 +3096,12 @@ export class SessionManager extends EventEmitter {
 			createdBy: session.createdBy,
 			autoStart: true,
 			sourceSessionId: session.id,
+			// Carry the originating object forward onto the retry so its
+			// terminal telemetry keeps the Criterion 3 context — otherwise a
+			// session that fails over onto a fresh id would drop out of the
+			// numerator.
+			initiatedFromObjectId: session.initiatedFromObjectId,
+			initiatedFromObjectType: session.initiatedFromObjectType,
 		})
 	}
 
@@ -3245,6 +3343,8 @@ export class SessionManager extends EventEmitter {
 			endReason,
 			durationMs: elapsedMs(session.startedAt, session.createdAt),
 			agentServerUrl: LOCAL_RUNTIME_BUCKET,
+			contextObjectId: session.initiatedFromObjectId,
+			contextObjectType: session.initiatedFromObjectType,
 		})
 
 		// Clear active session link on object
@@ -3720,6 +3820,8 @@ export class SessionManager extends EventEmitter {
 			endReason: 'completed',
 			durationMs: elapsedMs(session.startedAt, session.createdAt),
 			agentServerUrl: LOCAL_RUNTIME_BUCKET,
+			contextObjectId: session.initiatedFromObjectId,
+			contextObjectType: session.initiatedFromObjectType,
 		})
 
 		// Prefix must stay 'Session completed' — the SSE /logs/stream endpoint
@@ -3847,6 +3949,8 @@ export class SessionManager extends EventEmitter {
 				endReason: 'irrecoverable',
 				durationMs: elapsedMs(session.startedAt, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				contextObjectId: session.initiatedFromObjectId,
+				contextObjectType: session.initiatedFromObjectType,
 			})
 
 			// Prefix must stay 'Session timed out' — the SSE /logs/stream endpoint
@@ -4189,6 +4293,10 @@ export class SessionManager extends EventEmitter {
 					error: 'Session stuck in starting state',
 					reason_code: 'startup_stalled',
 					diagnosis: verbatim,
+					failure_reason: stalledFailureReason,
+					initiated_from: await this.resolveInitiatedFromBlock(session),
+					trigger_id: session.triggerId ?? null,
+					conversation_id: session.conversationId ?? null,
 				},
 			})
 
@@ -4204,6 +4312,8 @@ export class SessionManager extends EventEmitter {
 				endReason: 'failed',
 				durationMs: elapsedMs(session.startedAt, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				contextObjectId: session.initiatedFromObjectId,
+				contextObjectType: session.initiatedFromObjectType,
 			})
 
 			await this.cleanupBrowserSidecar(session.id).catch(() => {})
