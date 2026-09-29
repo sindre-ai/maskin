@@ -17,6 +17,7 @@ import {
 	type CommentResponderCase,
 	trackCommentResponderResolved,
 } from '../lib/analytics/comment-responder-events'
+import { trackTriggerMatchFailed } from '../lib/analytics/trigger-matcher-events'
 import { recordEvent } from '../lib/events/record-event'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
@@ -791,15 +792,36 @@ export class TriggerRunner {
 			// on `data.updated` (legacy) or must be hydrated from the objects table (new
 			// {changes} shape). For `commented` the root merges `data`, the comment's
 			// `actorId`, and the target object's `__target_type` (tech spec §5.4 fold 6).
+			//
+			// Matcher v2 (tech spec §2.1) is flag-gated per workspace: when
+			// `trigger_engine_v2` is ON, array-valued entries take any-of semantics
+			// and every miss emits `trigger_match_failed` so the bet #8 dashboard
+			// can watch dead triggers reactivate. When OFF, today's strict-equality
+			// body runs unchanged (array values reference-equal against a literal
+			// array → always false, matching v1 behaviour); no PostHog row emitted
+			// so a pre-rollout workspace does not spam analytics.
 			if (config.filter) {
 				const data = await getEventData()
 				if (!data) continue
 				const filterRoot = await buildFilterRoot(data)
 				const filter = config.filter as Record<string, unknown>
-				const matches = Object.entries(filter).every(
-					([key, value]) => resolvePath(filterRoot, key) === value,
-				)
-				if (!matches) continue
+				if (isTriggerEngineV2EnabledForWorkspace(event.workspace_id)) {
+					const result = evaluateFilterV2(filter, filterRoot)
+					if (!result.matches) {
+						void trackTriggerMatchFailed({
+							workspaceId: event.workspace_id,
+							triggerId: trigger.id,
+							eventId: event.event_id,
+							filterShape: result.missShape,
+						})
+						continue
+					}
+				} else {
+					const matches = Object.entries(filter).every(
+						([key, value]) => resolvePath(filterRoot, key) === value,
+					)
+					if (!matches) continue
+				}
 			}
 
 			// Check status transition conditions
@@ -1363,6 +1385,62 @@ export function resolvePath(
 		cur = (cur as Record<string, unknown>)[part]
 	}
 	return cur
+}
+
+/**
+ * Result of running the matcher v2 filter body against one event. On a miss,
+ * `missShape` is the short label carried into `trigger_match_failed` so the
+ * bet #8 dashboard can separate array-value dead triggers from scalar
+ * mismatches on healthy triggers from missing hydration paths (§Observability
+ * in the product spec).
+ */
+export type FilterMatchResult =
+	| { matches: true }
+	| {
+			matches: false
+			missShape: 'array_value_mismatch' | 'scalar_mismatch' | 'path_missing' | 'array_empty'
+			failedKey: string
+	  }
+
+/**
+ * Matcher v2 (tech spec §2.1). Semantics per filter entry:
+ *  - Scalar value  → strict equality against `resolvePath(root, key)`.
+ *  - Array value   → any-of: matches when the resolved actual is `===` any
+ *    element of the array.
+ *  - Empty array   → matches nothing (a filter that says "one of []" cannot
+ *    fire; classify separately from `array_value_mismatch` so ops can spot
+ *    the config bug).
+ *  - Missing path  → `resolvePath` returned undefined; kept distinct from a
+ *    value mismatch so a hydration slip does not read as a bad config.
+ *
+ * Short-circuits on first miss so a long filter map does not pay for every
+ * entry when the first already disqualifies the event. Exported (over
+ * inlined) so the matcher can be pinned as a contract-style spec table
+ * separately from the trigger-runner boot dance.
+ */
+export function evaluateFilterV2(
+	filter: Record<string, unknown>,
+	root: Record<string, unknown>,
+): FilterMatchResult {
+	for (const [key, value] of Object.entries(filter)) {
+		const actual = resolvePath(root, key)
+		if (Array.isArray(value)) {
+			if (value.length === 0) return { matches: false, missShape: 'array_empty', failedKey: key }
+			if (value.includes(actual)) continue
+			return {
+				matches: false,
+				missShape: actual === undefined ? 'path_missing' : 'array_value_mismatch',
+				failedKey: key,
+			}
+		}
+		if (actual === value) continue
+		return {
+			matches: false,
+			missShape: actual === undefined ? 'path_missing' : 'scalar_mismatch',
+			failedKey: key,
+		}
+	}
+	return { matches: true }
 }
 
 /**
