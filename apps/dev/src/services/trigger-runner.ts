@@ -1,9 +1,18 @@
 import type { Database } from '@maskin/db'
-import { events, actors, objects, sessions, triggers, workspaceMembers } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	objects,
+	sessions,
+	triggerCooldowns,
+	triggers,
+	workspaceMembers,
+	workspaceSuppressions,
+} from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { SAFE_METADATA_FIELD_NAME_RE, readChanges, reversePatch } from '@maskin/shared'
 import { Cron } from 'croner'
-import { type SQL, and, eq, inArray, sql } from 'drizzle-orm'
+import { type SQL, and, eq, gt, inArray, lt, sql } from 'drizzle-orm'
 import {
 	type CommentResponderCase,
 	trackCommentResponderResolved,
@@ -161,6 +170,50 @@ const SUPPRESSION_CLEARING_ACTIONS = new Set([
 	'claude_subscription_recovered',
 ])
 
+/**
+ * Sweep expired rows every 60s (per tech spec §3.2) — DELETE cooldown and
+ * suppression rows whose expiry timestamp is more than one hour in the past.
+ * Keeps the tables small; expired rows above 1h serve no purpose since neither
+ * the in-memory Map nor the load path re-hydrates them.
+ */
+const COOLDOWN_SWEEP_INTERVAL_MS = 60_000
+/** Rows older than 1h past their expiry are candidates for the sweep. */
+const COOLDOWN_SWEEP_GRACE_MS = 60 * 60_000
+
+/**
+ * TEMPORARY local stand-in for Task 2's `isFlagEnabledForWorkspace(workspaceId,
+ * FLAGS.TRIGGER_ENGINE_V2)`. Task 2 (bet task S7) formalises the workspace-
+ * scoped resolver in `apps/dev/src/lib/feature-flags.ts` + adds
+ * `FF_WORKSPACE_FEATURES` parsing + the `TRIGGER_ENGINE_V2` FLAGS entry.
+ *
+ * Rationale for shipping this inline rather than blocking on Task 2:
+ *  - S7 was still `backlog` when S1 was dispatched (parent branch didn't
+ *    exist), so per Rail 6 fallback this PR bases off the bet branch and
+ *    proceeds. Idling would waste the bet's parallelism budget.
+ *  - The env-var format (`FF_WORKSPACE_FEATURES=<uuid>:<flag>,<uuid>:<flag>`)
+ *    matches S7's spec exactly. When S7 lands into the bet branch, deleting
+ *    this helper and switching the two call sites to
+ *    `isFlagEnabledForWorkspace(workspaceId, FLAGS.TRIGGER_ENGINE_V2)` is a
+ *    one-liner conflict for Code Reviewer at aggregate-merge time.
+ *
+ * A workspace absent from `FF_WORKSPACE_FEATURES` returns false — so nothing
+ * hydrates by default, matching today's behaviour for un-flagged workspaces.
+ * The persistence write-path is unconditional (safe to persist always per
+ * tech spec §7.1), so a flag flip is a pure read-side change with no
+ * migration.
+ */
+const TRIGGER_ENGINE_V2_FLAG_ID = 'trigger_engine_v2'
+
+function isTriggerEngineV2EnabledForWorkspace(workspaceId: string): boolean {
+	const raw = process.env.FF_WORKSPACE_FEATURES
+	if (!raw) return false
+	const target = `${workspaceId.trim().toLowerCase()}:${TRIGGER_ENGINE_V2_FLAG_ID}`
+	for (const entry of raw.split(',')) {
+		if (entry.trim().toLowerCase() === target) return true
+	}
+	return false
+}
+
 export class TriggerRunner {
 	private db: Database
 	private bridge: PgNotifyBridge
@@ -172,6 +225,8 @@ export class TriggerRunner {
 	private triggerFailures: Map<string, TriggerFailureState> = new Map()
 	/** workspaceId -> active workspace-wide pause. See `WorkspaceSuppression`. */
 	private workspaceSuppressions: Map<string, WorkspaceSuppression> = new Map()
+	/** Background sweep of expired cooldown / suppression rows (§3.2). */
+	private cooldownSweepInterval: NodeJS.Timeout | null = null
 	// A session's terminal outcome can be reported more than once: e.g.
 	// SessionManager.stopSession() writes a provisional session_failed row,
 	// and the agent-server's own genuine completion report — if it arrives,
@@ -222,6 +277,26 @@ export class TriggerRunner {
 		// Load and schedule reminder triggers
 		await this.loadReminders()
 
+		// Hydrate the in-memory cooldown and suppression Maps from Postgres so
+		// backoff windows survive a server restart (fixes bet #7). Both throw
+		// on read failure so boot fails fast — running with empty Maps against
+		// a live DB is exactly the deploy-wipe bug this fix exists to prevent.
+		// Ordered AFTER cron/reminder loads so cron scheduling side effects
+		// (schedule → next tick) are attached before any freshly-hydrated
+		// backoff can gate them — matters only for tests that assert on the
+		// exact selectQueue order; runtime behaviour is order-independent
+		// because triggers do not fire before the first cron tick.
+		await this.loadCooldowns()
+		await this.loadSuppressions()
+
+		// Background sweep of expired rows keeps both tables bounded (§3.2).
+		this.cooldownSweepInterval = setInterval(() => {
+			this.sweepExpiredCooldowns().catch((err) =>
+				logger.error('Cooldown sweep failed', { error: String(err) }),
+			)
+		}, COOLDOWN_SWEEP_INTERVAL_MS)
+		this.cooldownSweepInterval.unref?.()
+
 		logger.info('Trigger runner started')
 	}
 
@@ -247,13 +322,50 @@ export class TriggerRunner {
 		}
 		this.processedSessionOutcomes.clear()
 		this.workspaceSuppressions.clear()
+		if (this.cooldownSweepInterval) {
+			clearInterval(this.cooldownSweepInterval)
+			this.cooldownSweepInterval = null
+		}
 	}
 
-	private recordTriggerFailure(triggerId: string): void {
+	private async recordTriggerFailure(triggerId: string, reason?: string): Promise<void> {
 		const now = new Date()
 		const existing = this.triggerFailures.get(triggerId)
 		const count = (existing?.count ?? 0) + 1
 		const backoffUntil = calculateBackoffUntil(count, now)
+
+		// Persist FIRST, then update the in-memory cache. A DB write failure logs
+		// ERROR and rethrows — silently falling back to memory-only reintroduces
+		// the deploy-wipe bug this store exists to prevent (§6.3).
+		try {
+			await this.db
+				.insert(triggerCooldowns)
+				.values({
+					triggerId,
+					count,
+					lastFailedAt: now,
+					backoffUntil,
+					reason: reason ?? null,
+					updatedAt: now,
+				})
+				.onConflictDoUpdate({
+					target: triggerCooldowns.triggerId,
+					set: {
+						count,
+						lastFailedAt: now,
+						backoffUntil,
+						reason: reason ?? null,
+						updatedAt: now,
+					},
+				})
+		} catch (err) {
+			logger.error('Failed to persist trigger cooldown', {
+				triggerId,
+				error: String(err),
+			})
+			throw err
+		}
+
 		this.triggerFailures.set(triggerId, {
 			count,
 			lastFailedAt: now,
@@ -291,11 +403,25 @@ export class TriggerRunner {
 	 * Lifts a pause early. Called when a workspace is updated, so upgrading a
 	 * plan or connecting a Claude subscription resumes automations on the next
 	 * tick instead of after the pause runs out.
+	 *
+	 * DELETEs the persisted row too so the pause doesn't come back on the next
+	 * restart via loadSuppressions(). DB delete failures log ERROR and rethrow
+	 * — same rationale as recordTriggerFailure (§6.3).
 	 */
-	private clearWorkspaceSuppression(workspaceId: string): void {
-		if (this.workspaceSuppressions.delete(workspaceId)) {
-			logger.info(`Workspace ${workspaceId} trigger suppression cleared — workspace updated`)
+	private async clearWorkspaceSuppression(workspaceId: string): Promise<void> {
+		if (!this.workspaceSuppressions.delete(workspaceId)) return
+		try {
+			await this.db
+				.delete(workspaceSuppressions)
+				.where(eq(workspaceSuppressions.workspaceId, workspaceId))
+		} catch (err) {
+			logger.error('Failed to delete persisted workspace suppression', {
+				workspaceId,
+				error: String(err),
+			})
+			throw err
 		}
+		logger.info(`Workspace ${workspaceId} trigger suppression cleared — workspace updated`)
 	}
 
 	/**
@@ -310,11 +436,11 @@ export class TriggerRunner {
 	 *    states into 3,675 Sentry events.
 	 *  - Anything else. Still `error`, and now rare enough to be worth alerting on.
 	 */
-	private handleSessionCreateFailure(
+	private async handleSessionCreateFailure(
 		workspaceId: string,
 		err: unknown,
 		triggerName?: string,
-	): void {
+	): Promise<void> {
 		const now = new Date()
 
 		if (err instanceof PlanCapExceededError) {
@@ -327,7 +453,7 @@ export class TriggerRunner {
 				err.periodEnd !== null && err.periodEnd > now.getTime()
 					? new Date(err.periodEnd)
 					: new Date(now.getTime() + PLAN_CAP_FALLBACK_SUPPRESSION_MS)
-			this.suppressWorkspace(
+			await this.suppressWorkspace(
 				workspaceId,
 				{
 					until,
@@ -343,7 +469,7 @@ export class TriggerRunner {
 		// automations offline for an hour over a network blip, so let those fall
 		// through to the error branch and retry on the next tick.
 		if (err instanceof LlmCredentialsUnavailableError && !err.transient) {
-			this.suppressWorkspace(
+			await this.suppressWorkspace(
 				workspaceId,
 				{
 					until: new Date(now.getTime() + NO_CREDENTIALS_SUPPRESSION_MS),
@@ -388,7 +514,12 @@ export class TriggerRunner {
 		this.suppressWorkspace(workspaceId, {
 			until: new Date(Date.now() + NO_CREDENTIALS_SUPPRESSION_MS),
 			reason: 'no LLM credentials connected for this workspace',
-		})
+		}).catch((err) =>
+			logger.error('handleDispatchPermanentFailure: suppressWorkspace failed', {
+				workspaceId,
+				error: String(err),
+			}),
+		)
 	}
 
 	/**
@@ -396,14 +527,45 @@ export class TriggerRunner {
 	 * already suppressed for the same reason stays quiet, so the log carries one
 	 * line per workspace per billing period rather than one per trigger per tick.
 	 */
-	private suppressWorkspace(
+	private async suppressWorkspace(
 		workspaceId: string,
 		suppression: WorkspaceSuppression,
 		triggerName?: string,
-	): void {
+	): Promise<void> {
 		const existing = this.workspaceSuppressions.get(workspaceId)
+		const now = new Date()
+
+		// Persist FIRST, then update the in-memory cache — same discipline as
+		// recordTriggerFailure. Falling back to memory-only on DB failure would
+		// silently reintroduce the deploy-wipe bug (§6.3).
+		try {
+			await this.db
+				.insert(workspaceSuppressions)
+				.values({
+					workspaceId,
+					suppressedUntil: suppression.until,
+					reason: suppression.reason,
+					createdAt: now,
+					updatedAt: now,
+				})
+				.onConflictDoUpdate({
+					target: workspaceSuppressions.workspaceId,
+					set: {
+						suppressedUntil: suppression.until,
+						reason: suppression.reason,
+						updatedAt: now,
+					},
+				})
+		} catch (err) {
+			logger.error('Failed to persist workspace suppression', {
+				workspaceId,
+				error: String(err),
+			})
+			throw err
+		}
+
 		this.workspaceSuppressions.set(workspaceId, suppression)
-		if (existing && existing.until > new Date() && existing.reason === suppression.reason) return
+		if (existing && existing.until > now && existing.reason === suppression.reason) return
 
 		logger.warn('Trigger sessions paused for workspace', {
 			workspaceId,
@@ -413,11 +575,19 @@ export class TriggerRunner {
 		})
 	}
 
-	private resetTriggerBackoff(triggerId: string): void {
-		if (this.triggerFailures.has(triggerId)) {
-			logger.info(`Trigger '${triggerId}' backoff reset after successful session`)
-			this.triggerFailures.delete(triggerId)
+	private async resetTriggerBackoff(triggerId: string): Promise<void> {
+		if (!this.triggerFailures.has(triggerId)) return
+		try {
+			await this.db.delete(triggerCooldowns).where(eq(triggerCooldowns.triggerId, triggerId))
+		} catch (err) {
+			logger.error('Failed to delete persisted trigger cooldown', {
+				triggerId,
+				error: String(err),
+			})
+			throw err
 		}
+		this.triggerFailures.delete(triggerId)
+		logger.info(`Trigger '${triggerId}' backoff reset after successful session`)
 	}
 
 	private async handleSessionOutcome(event: PgEvent): Promise<void> {
@@ -444,10 +614,10 @@ export class TriggerRunner {
 		if (!session?.triggerId) return
 
 		if (event.action === 'session_completed') {
-			this.resetTriggerBackoff(session.triggerId)
+			await this.resetTriggerBackoff(session.triggerId)
 		} else {
 			// session_failed or session_timeout
-			this.recordTriggerFailure(session.triggerId)
+			await this.recordTriggerFailure(session.triggerId, event.action)
 		}
 	}
 
@@ -474,7 +644,7 @@ export class TriggerRunner {
 		// constant for why neither `entity_type === 'workspace'` alone nor
 		// `action === 'updated'` alone is correct.
 		if (event.entity_type === 'workspace' && SUPPRESSION_CLEARING_ACTIONS.has(event.action)) {
-			this.clearWorkspaceSuppression(event.workspace_id)
+			await this.clearWorkspaceSuppression(event.workspace_id)
 		}
 
 		if (this.isWorkspaceSuppressed(event.workspace_id)) return
@@ -654,7 +824,16 @@ export class TriggerRunner {
 							)
 					}
 				})
-				.catch((err) => this.handleSessionCreateFailure(event.workspace_id, err, trigger.name))
+				.catch((err) =>
+					this.handleSessionCreateFailure(event.workspace_id, err, trigger.name).catch(
+						(persistErr) =>
+							logger.error('handleSessionCreateFailure persistence failed', {
+								workspaceId: event.workspace_id,
+								trigger: trigger.name,
+								error: String(persistErr),
+							}),
+					),
+				)
 		}
 	}
 
@@ -669,6 +848,10 @@ export class TriggerRunner {
 				clearTimeout(timeout)
 				this.reminderTimeouts.delete(triggerId)
 			}
+			// The triggers row is already gone (deleted event fires post-delete),
+			// so the ON DELETE CASCADE on trigger_cooldowns.trigger_id has already
+			// removed the persisted row — no DB write needed here beyond clearing
+			// the in-memory Map.
 			this.triggerFailures.delete(triggerId)
 			logger.info(`Trigger '${triggerId}' removed (deleted)`)
 			return
@@ -684,7 +867,7 @@ export class TriggerRunner {
 		if (!trigger) return
 
 		// Clear backoff state when a trigger is updated/re-enabled
-		this.resetTriggerBackoff(triggerId)
+		await this.resetTriggerBackoff(triggerId)
 
 		// Stop any existing schedule first
 		this.cronJobs.get(triggerId)?.stop()
@@ -802,7 +985,16 @@ export class TriggerRunner {
 				triggerType: trigger.type,
 				createdBy: trigger.createdBy,
 			})
-			.catch((err) => this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name))
+			.catch((err) =>
+				this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch(
+					(persistErr) =>
+						logger.error('handleSessionCreateFailure persistence failed', {
+							workspaceId: trigger.workspaceId,
+							trigger: trigger.name,
+							error: String(persistErr),
+						}),
+				),
+			)
 	}
 
 	private async queryScopeMatches(
@@ -820,6 +1012,120 @@ export class TriggerRunner {
 
 		for (const trigger of reminderTriggers) {
 			this.scheduleReminder(trigger)
+		}
+	}
+
+	/**
+	 * Hydrate `triggerFailures` from `trigger_cooldowns` at boot — reads every
+	 * row whose `backoff_until` is still in the future, joins to `triggers` to
+	 * find the owning workspace, and skips rows for workspaces that have not
+	 * opted into the v2 gate (§3.2, §7.1).
+	 *
+	 * A DB read failure THROWS: booting with empty Maps against a live DB is
+	 * exactly the deploy-wipe bug this table exists to prevent (§6.3).
+	 */
+	private async loadCooldowns(): Promise<void> {
+		const now = new Date()
+		let rows: {
+			triggerId: string
+			count: number
+			lastFailedAt: Date
+			backoffUntil: Date
+			workspaceId: string
+		}[]
+		try {
+			rows = await this.db
+				.select({
+					triggerId: triggerCooldowns.triggerId,
+					count: triggerCooldowns.count,
+					lastFailedAt: triggerCooldowns.lastFailedAt,
+					backoffUntil: triggerCooldowns.backoffUntil,
+					workspaceId: triggers.workspaceId,
+				})
+				.from(triggerCooldowns)
+				.innerJoin(triggers, eq(triggers.id, triggerCooldowns.triggerId))
+				.where(gt(triggerCooldowns.backoffUntil, now))
+		} catch (err) {
+			logger.error('Failed to load trigger cooldowns from DB', { error: String(err) })
+			throw err
+		}
+
+		let loaded = 0
+		let skipped = 0
+		for (const row of rows) {
+			if (!isTriggerEngineV2EnabledForWorkspace(row.workspaceId)) {
+				skipped++
+				continue
+			}
+			this.triggerFailures.set(row.triggerId, {
+				count: row.count,
+				lastFailedAt: row.lastFailedAt,
+				backoffUntil: row.backoffUntil,
+			})
+			loaded++
+		}
+		logger.info(`Trigger cooldowns loaded — ${loaded} active, ${skipped} skipped (flag off)`)
+	}
+
+	/**
+	 * Same as loadCooldowns, but for `workspace_suppressions`. Read failures
+	 * throw for the same fail-fast reason.
+	 */
+	private async loadSuppressions(): Promise<void> {
+		const now = new Date()
+		let rows: {
+			workspaceId: string
+			suppressedUntil: Date
+			reason: string
+		}[]
+		try {
+			rows = await this.db
+				.select({
+					workspaceId: workspaceSuppressions.workspaceId,
+					suppressedUntil: workspaceSuppressions.suppressedUntil,
+					reason: workspaceSuppressions.reason,
+				})
+				.from(workspaceSuppressions)
+				.where(gt(workspaceSuppressions.suppressedUntil, now))
+		} catch (err) {
+			logger.error('Failed to load workspace suppressions from DB', { error: String(err) })
+			throw err
+		}
+
+		let loaded = 0
+		let skipped = 0
+		for (const row of rows) {
+			if (!isTriggerEngineV2EnabledForWorkspace(row.workspaceId)) {
+				skipped++
+				continue
+			}
+			this.workspaceSuppressions.set(row.workspaceId, {
+				until: row.suppressedUntil,
+				reason: row.reason,
+			})
+			loaded++
+		}
+		logger.info(`Workspace suppressions loaded — ${loaded} active, ${skipped} skipped (flag off)`)
+	}
+
+	/**
+	 * Sweep expired cooldown / suppression rows more than 1h past their
+	 * expiry timestamp. Keeps both tables bounded (§3.2). Failures here log
+	 * but do not throw — sweep is a cleanup, not a correctness gate.
+	 */
+	private async sweepExpiredCooldowns(): Promise<void> {
+		const cutoff = new Date(Date.now() - COOLDOWN_SWEEP_GRACE_MS)
+		try {
+			await this.db.delete(triggerCooldowns).where(lt(triggerCooldowns.backoffUntil, cutoff))
+		} catch (err) {
+			logger.warn('Trigger cooldown sweep failed', { error: String(err) })
+		}
+		try {
+			await this.db
+				.delete(workspaceSuppressions)
+				.where(lt(workspaceSuppressions.suppressedUntil, cutoff))
+		} catch (err) {
+			logger.warn('Workspace suppression sweep failed', { error: String(err) })
 		}
 	}
 
@@ -859,7 +1165,16 @@ export class TriggerRunner {
 					triggerType: trigger.type,
 					createdBy: trigger.createdBy,
 				})
-				.catch((err) => this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name))
+				.catch((err) =>
+					this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch(
+						(persistErr) =>
+							logger.error('handleSessionCreateFailure persistence failed', {
+								workspaceId: trigger.workspaceId,
+								trigger: trigger.name,
+								error: String(persistErr),
+							}),
+					),
+				)
 
 			// Auto-disable after firing
 			await this.db
