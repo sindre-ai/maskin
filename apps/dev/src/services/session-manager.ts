@@ -113,6 +113,7 @@ import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './c
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
+import { startSession } from './session-lifecycle'
 import {
 	type SessionUsage,
 	extractSessionUsage,
@@ -2991,8 +2992,10 @@ export class SessionManager extends EventEmitter {
 				? 'The Claude subscription in use had its OAuth token revoked; retrying this session on the next connected subscription'
 				: 'The Claude subscription in use hit a usage limit; retrying this session on the next connected subscription',
 		)
-		await this.createSession(session.workspaceId, {
+		await startSession({
+			workspaceId: session.workspaceId,
 			actorId: session.actorId,
+			callerKind: 'internal',
 			actionPrompt: session.actionPrompt,
 			config: {
 				...config,
@@ -3002,7 +3005,8 @@ export class SessionManager extends EventEmitter {
 			triggerId: session.triggerId ?? undefined,
 			createdBy: session.createdBy,
 			autoStart: true,
-			sourceSessionId: session.id,
+			parentSessionId: session.id,
+			await: 'none',
 		})
 	}
 

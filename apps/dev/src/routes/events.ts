@@ -16,6 +16,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
+import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 import { autoSubscribe } from '../services/subscriptions'
 import { isCommentFallbackDriverEligible } from '../services/trigger-runner'
@@ -618,33 +619,34 @@ async function spawnThreadReplySessions(ctx: {
 	)
 
 	for (const agentId of threadReplyAgentIds) {
-		ctx.sessionManager
-			.createSession(ctx.workspaceId, {
-				actorId: agentId,
-				actionPrompt: buildThreadReplyPrompt({
-					objectId: ctx.objectId,
-					commenterActorId: ctx.actorId,
-					content: ctx.newCommentContent,
-					threadRootEventId: ctx.threadRootEventId,
-				}),
-				config: {
-					thread_reply: {
-						object_id: ctx.objectId,
-						comment_event_id: ctx.newCommentEventId,
-						thread_root_event_id: ctx.threadRootEventId,
-						commenter_actor_id: ctx.actorId,
-					},
+		startSession({
+			workspaceId: ctx.workspaceId,
+			actorId: agentId,
+			callerKind: 'trigger',
+			actionPrompt: buildThreadReplyPrompt({
+				objectId: ctx.objectId,
+				commenterActorId: ctx.actorId,
+				content: ctx.newCommentContent,
+				threadRootEventId: ctx.threadRootEventId,
+			}),
+			config: {
+				thread_reply: {
+					object_id: ctx.objectId,
+					comment_event_id: ctx.newCommentEventId,
+					thread_root_event_id: ctx.threadRootEventId,
+					commenter_actor_id: ctx.actorId,
 				},
-				createdBy: ctx.actorId,
-			})
-			.catch((err) =>
-				logger.error('Failed to create thread-reply session', {
-					agentId,
-					objectId: ctx.objectId,
-					threadRootEventId: ctx.threadRootEventId,
-					error: String(err),
-				}),
-			)
+			},
+			createdBy: ctx.actorId,
+			await: 'none',
+		}).catch((err) =>
+			logger.error('Failed to create thread-reply session', {
+				agentId,
+				objectId: ctx.objectId,
+				threadRootEventId: ctx.threadRootEventId,
+				error: String(err),
+			}),
+		)
 	}
 }
 

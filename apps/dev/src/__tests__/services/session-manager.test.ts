@@ -101,6 +101,7 @@ import { getProvider } from '../../lib/integrations/registry'
 import { logger } from '../../lib/logger'
 import { expandBrowserCapability } from '../../lib/marketplace-loops/loop-snapshot'
 import { AgentStorageManager } from '../../services/agent-storage'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager, mergeLaunchRouteConfig } from '../../services/session-manager'
 import { buildIntegration, buildSession } from '../factories'
 import { createTestContext } from '../setup'
@@ -143,6 +144,9 @@ describe('SessionManager', () => {
 		mockResults = ctx.mockResults
 		calls = ctx.calls
 		manager = new SessionManager(ctx.db, storageProvider as StorageProvider)
+		// SessionManager's self-spawn (claude-oauth failover retry) now routes
+		// through startSession() — wire the lifecycle to the same mock deps.
+		configureSessionLifecycle({ db: ctx.db, sessionManager: manager })
 		// buildLaunchSpec resolves the workspace-skill manifest for the
 		// dispatch payload — the shape used by apps/agent-server's host-side
 		// stager (see agent-storage.ts `resolveWorkspaceSkillManifest`).

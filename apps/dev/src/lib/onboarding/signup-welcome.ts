@@ -1,6 +1,7 @@
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
+import { startSession } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { postComment } from '../comments'
 import { logger } from '../logger'
@@ -69,7 +70,7 @@ async function resolveAgentIdByName(
 export async function postSignupWelcomeComment(
 	input: PostSignupWelcomeCommentInput,
 ): Promise<void> {
-	const { db, sessionManager, workspaceId, knowledgeObjectId, humanActorId } = input
+	const { db, workspaceId, knowledgeObjectId, humanActorId } = input
 	const metadata = (input.metadata ?? {}) as SignupCaptureMetadata
 	const name = metadata.name?.trim()
 	const organization = metadata.organization?.trim()
@@ -155,35 +156,36 @@ export async function postSignupWelcomeComment(
 		return
 	}
 
-	await sessionManager
-		.createSession(workspaceId, {
-			actorId: researcherId,
-			actionPrompt: buildSignupResearchPrompt({
-				knowledgeObjectId,
-				name,
-				email: human?.email ?? undefined,
-				organization,
-				role,
-				humanActorId,
-				notificationId: researcherNotification.id,
-			}),
-			config: {
-				mention: {
-					object_id: knowledgeObjectId,
-					commenter_actor_id: chiefOfStaffId,
-					notification_id: researcherNotification.id,
-					comment_event_id: comment.id,
-				},
+	await startSession({
+		workspaceId,
+		actorId: researcherId,
+		callerKind: 'internal',
+		actionPrompt: buildSignupResearchPrompt({
+			knowledgeObjectId,
+			name,
+			email: human?.email ?? undefined,
+			organization,
+			role,
+			humanActorId,
+			notificationId: researcherNotification.id,
+		}),
+		config: {
+			mention: {
+				object_id: knowledgeObjectId,
+				commenter_actor_id: chiefOfStaffId,
+				notification_id: researcherNotification.id,
+				comment_event_id: comment.id,
 			},
-			createdBy: chiefOfStaffId,
-		})
-		.catch((err) =>
-			logger.error('Failed to create Researcher session for signup welcome', {
-				workspaceId,
-				knowledgeObjectId,
-				error: String(err),
-			}),
-		)
+		},
+		createdBy: chiefOfStaffId,
+		await: 'none',
+	}).catch((err) =>
+		logger.error('Failed to create Researcher session for signup welcome', {
+			workspaceId,
+			knowledgeObjectId,
+			error: String(err),
+		}),
+	)
 }
 
 function buildSignupResearchPrompt(ctx: {
