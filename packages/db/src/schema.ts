@@ -1610,3 +1610,40 @@ export const workspaceSuppressions = pgTable(
 
 export type WorkspaceSuppressionRow = typeof workspaceSuppressions.$inferSelect
 export type NewWorkspaceSuppressionRow = typeof workspaceSuppressions.$inferInsert
+
+// ── Trigger dispatches (S2 of the trigger-engine fix bet) ───────────────────
+//
+// Idempotency guard for the dispatch path. Every trigger fire INSERTs the
+// (trigger_id, event_id) pair with ON CONFLICT DO NOTHING before calling
+// sessionManager.createSession(). If two trigger-runner instances (blue+green
+// during a rolling deploy, or a future horizontal scale-out) race on the
+// same event, exactly one INSERT claims — the loser's returning() is empty
+// and the dispatch is skipped.
+//
+// Ships unconditional (NOT gated by trigger_engine_v2 per tech spec §3.4 +
+// §7.3): if this sat behind the flag, a kill-switch flip would re-open the
+// double-fire window the table exists to prevent. The v1 code path simply
+// never writes to this table, so having it live pre-flag is safe.
+//
+// session_id is diagnostic only. If the UPDATE that stamps it after
+// createSession() fails, the row still guards against double-fire — its
+// presence is the guarantee.
+
+export const triggerDispatches = pgTable(
+	'trigger_dispatches',
+	{
+		triggerId: uuid('trigger_id')
+			.notNull()
+			.references(() => triggers.id, { onDelete: 'cascade' }),
+		eventId: bigint('event_id', { mode: 'number' }).notNull(),
+		dispatchedAt: timestamp('dispatched_at', { withTimezone: true }).notNull().defaultNow(),
+		sessionId: uuid('session_id'),
+	},
+	(t) => [
+		primaryKey({ columns: [t.triggerId, t.eventId] }),
+		index('trigger_dispatches_dispatched_at_idx').on(t.dispatchedAt),
+	],
+)
+
+export type TriggerDispatch = typeof triggerDispatches.$inferSelect
+export type NewTriggerDispatch = typeof triggerDispatches.$inferInsert

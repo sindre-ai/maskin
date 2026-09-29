@@ -71,7 +71,7 @@ describe('TriggerRunner', () => {
 				[trigger], // cron triggers
 				[], // reminder triggers
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()
 
 			// Fire once to confirm it works
@@ -114,7 +114,7 @@ describe('TriggerRunner', () => {
 				config: { entity_type: 'task', action: 'created' },
 			})
 			mockResults.select = [trigger]
-			mockResults.insert = [] // event insert
+			mockResults.insert = [{ triggerId: 't1' }] // event insert
 
 			bridge.emit('event', baseEvent)
 			await vi.advanceTimersByTimeAsync(0) // flush microtasks
@@ -134,7 +134,7 @@ describe('TriggerRunner', () => {
 				[trigger], // matching triggers
 				[{ data: eventData }], // fetchEventData
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 
 			bridge.emit('event', {
 				...baseEvent,
@@ -211,7 +211,7 @@ describe('TriggerRunner', () => {
 				[trigger], // matching triggers
 				[{ data: { previous: { status: 'todo' }, updated: { status: 'in_progress' } } }], // fetchEventData
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 
 			const event: PgEvent = {
 				...baseEvent,
@@ -233,7 +233,7 @@ describe('TriggerRunner', () => {
 				[trigger], // matching triggers
 				[{ data: { priority: 'high' } }], // fetchEventData from DB
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 
 			bridge.emit('event', baseEvent)
 			await vi.advanceTimersByTimeAsync(0)
@@ -275,7 +275,7 @@ describe('TriggerRunner', () => {
 					},
 				],
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 
 			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
 			await vi.advanceTimersByTimeAsync(0)
@@ -345,7 +345,7 @@ describe('TriggerRunner', () => {
 				[trigger],
 				[{ data: { id: 'rel-1', type: 'informs', sourceId: 'obj-1', targetId: 'obj-2' } }],
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 
 			bridge.emit('event', { ...baseEvent, action: 'created', entity_type: 'relationship' })
 			await vi.advanceTimersByTimeAsync(0)
@@ -371,7 +371,7 @@ describe('TriggerRunner', () => {
 				// hydrated current row from `objects`
 				[{ status: 'in_progress', driver: null, metadata: null }],
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 
 			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
 			await vi.advanceTimersByTimeAsync(0)
@@ -400,7 +400,7 @@ describe('TriggerRunner', () => {
 				// hydrated current row from `objects` — a custom-typed object
 				[{ type: 'lead', status: 'qualified', driver: null, metadata: null }],
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 
 			bridge.emit('event', { ...baseEvent, entity_type: 'lead', action: 'status_changed' })
 			await vi.advanceTimersByTimeAsync(0)
@@ -454,7 +454,7 @@ describe('TriggerRunner', () => {
 					},
 				],
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 
 			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
 			await vi.advanceTimersByTimeAsync(0)
@@ -474,7 +474,7 @@ describe('TriggerRunner', () => {
 				[trigger], // cron triggers
 				[], // reminder triggers
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()
 
 			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
@@ -489,7 +489,7 @@ describe('TriggerRunner', () => {
 				config: { expression: '0 9 * * *' },
 			})
 			mockResults.selectQueue = [[trigger], []]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()
 
 			// Should NOT have fired yet (still before 9:00)
@@ -509,7 +509,7 @@ describe('TriggerRunner', () => {
 				config: { expression: '30 8 * * 1-5' },
 			})
 			mockResults.selectQueue = [[trigger], []]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()
 
 			// Advance 30 minutes to 8:30 — Thursday is a weekday, should fire
@@ -583,7 +583,7 @@ describe('TriggerRunner', () => {
 				[], // workspace_suppressions on load (S1)
 				[match], // scope query — 1 match
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()
 
 			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
@@ -608,7 +608,7 @@ describe('TriggerRunner', () => {
 				[], // cron triggers
 				[trigger], // reminder triggers
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()
 
 			await vi.advanceTimersByTimeAsync(10_000)
@@ -631,7 +631,7 @@ describe('TriggerRunner', () => {
 
 			// Mock DB to return the new trigger when fetched
 			mockResults.selectQueue = [[trigger]]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 
 			bridge.emit('event', {
 				workspace_id: trigger.workspaceId,
@@ -658,7 +658,7 @@ describe('TriggerRunner', () => {
 				enabled: true,
 			})
 			mockResults.selectQueue = [[trigger], []]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()
 
 			// Verify it fires
@@ -693,7 +693,7 @@ describe('TriggerRunner', () => {
 				enabled: true,
 			})
 			mockResults.selectQueue = [[trigger], []]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()
 
 			// Verify it fires
@@ -735,7 +735,7 @@ describe('TriggerRunner', () => {
 		/** Boots the runner with one every-minute cron trigger and fires it once. */
 		const startWithCron = async (trigger: ReturnType<typeof buildTrigger>, rejection: unknown) => {
 			mockResults.selectQueue = [[trigger], []]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockRejectedValue(rejection)
 			await runner.start()
 			await vi.advanceTimersByTimeAsync(60 * 1000)
@@ -978,7 +978,7 @@ describe('TriggerRunner', () => {
 
 		const startWithCron = async (trigger: ReturnType<typeof buildTrigger>) => {
 			mockResults.selectQueue = [[trigger], []]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
 				id: 'session-1',
 			})
@@ -1098,7 +1098,7 @@ describe('TriggerRunner backoff', () => {
 
 		// Now try to fire the trigger — it should be in backoff
 		mockResults.select = [trigger]
-		mockResults.insert = []
+		mockResults.insert = [{ triggerId: 't1' }]
 
 		bridge.emit('event', {
 			workspace_id: 'ws-1',
@@ -1144,7 +1144,7 @@ describe('TriggerRunner backoff', () => {
 
 		// Now the trigger should fire
 		mockResults.select = [trigger]
-		mockResults.insert = []
+		mockResults.insert = [{ triggerId: 't1' }]
 
 		bridge.emit('event', {
 			workspace_id: 'ws-1',
@@ -1202,7 +1202,7 @@ describe('TriggerRunner backoff', () => {
 
 		// Trigger should fire immediately — no backoff
 		mockResults.select = [trigger]
-		mockResults.insert = []
+		mockResults.insert = [{ triggerId: 't1' }]
 
 		bridge.emit('event', {
 			workspace_id: 'ws-1',
@@ -1272,7 +1272,7 @@ describe('TriggerRunner backoff', () => {
 		await vi.advanceTimersByTimeAsync(2 * 60_000 + 1000)
 
 		mockResults.select = [trigger]
-		mockResults.insert = []
+		mockResults.insert = [{ triggerId: 't1' }]
 
 		bridge.emit('event', {
 			workspace_id: 'ws-1',
@@ -1320,7 +1320,7 @@ describe('TriggerRunner backoff', () => {
 		await vi.advanceTimersByTimeAsync(4 * 60_000)
 
 		mockResults.select = [trigger]
-		mockResults.insert = []
+		mockResults.insert = [{ triggerId: 't1' }]
 
 		bridge.emit('event', {
 			workspace_id: 'ws-1',
@@ -1391,7 +1391,7 @@ describe('TriggerRunner backoff', () => {
 
 		// Now the trigger should fire — backoff was cleared
 		mockResults.select = [trigger]
-		mockResults.insert = []
+		mockResults.insert = [{ triggerId: 't1' }]
 
 		bridge.emit('event', {
 			workspace_id: 'ws-1',
@@ -1417,7 +1417,7 @@ describe('TriggerRunner backoff', () => {
 			[trigger], // cron triggers
 			[], // reminder triggers
 		]
-		mockResults.insert = []
+		mockResults.insert = [{ triggerId: 't1' }]
 		await runner.start()
 
 		// Fire once to confirm it works
