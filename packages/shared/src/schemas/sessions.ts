@@ -182,6 +182,15 @@ export const createSessionSchema = z.object({
 	// `sessions.config.entry_agent_role` so downstream analytics can attribute
 	// every session to the agent that received the owner's first turn.
 	entry_agent_role: z.string().max(64).optional(),
+	// Object this session is being started for (bet, task, insight, or any
+	// first-class object). Optional on the wire — a missing value means
+	// "no originating object known" and lands as NULL on the row. When set
+	// the pair is threaded into `sessions.initiated_from_object_{id,type}`,
+	// carried onto the `session_failed` event's `data.initiated_from` block
+	// and onto the PostHog `runtime_session_ended` event as
+	// `context_object_id` / `context_object_type` (parent bet Criterion 3).
+	initiated_from_object_id: z.string().uuid().optional(),
+	initiated_from_object_type: z.string().max(64).optional(),
 })
 
 export const sessionQuerySchema = z.object({
