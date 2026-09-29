@@ -348,6 +348,25 @@ export const failureReasonCodeSchema = z.enum([
 ])
 export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
 
+// §7.5 / §17.2 sources for the `reset_at` value on a credit-exhaustion failure.
+// Stamped alongside `reset_at` when a companion parser (parseSubscriptionLimitReset,
+// parseCliResetBanner) produced the value; left absent when reset_at is null or
+// was written by a non-parsing path (e.g. an integration test seeding retry_at
+// directly). `reset_source` names which signal fed the parse; `reset_confidence`
+// classifies whether it was an authoritative pre-flight probe or an advisory
+// mid-session banner. The retry-scheduler carries both onto the
+// session_retry_scheduled audit event's data field.
+export const resetSourceSchema = z.enum([
+	'anthropic-ratelimit-unified-reset',
+	'retry-after-header',
+	'cli-banner',
+	'agent-server-callback',
+])
+export type ResetSource = z.infer<typeof resetSourceSchema>
+
+export const resetConfidenceSchema = z.enum(['authoritative', 'advisory'])
+export type ResetConfidence = z.infer<typeof resetConfidenceSchema>
+
 export const sessionResultFailureReasonSchema = z.object({
 	provider: z.string(),
 	reason_code: failureReasonCodeSchema,
@@ -355,6 +374,8 @@ export const sessionResultFailureReasonSchema = z.object({
 	http_status: z.number().int().nullable(),
 	reset_at: z.string().nullable(),
 	verbatim_output: z.string().nullable(),
+	reset_source: resetSourceSchema.optional(),
+	reset_confidence: resetConfidenceSchema.optional(),
 })
 export type SessionResultFailureReason = z.infer<typeof sessionResultFailureReasonSchema>
 

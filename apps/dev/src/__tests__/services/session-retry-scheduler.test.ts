@@ -33,7 +33,7 @@ import { startSession } from '../../services/session-lifecycle'
 
 interface FakeUpdateBuilder {
 	set: (patch: Record<string, unknown>) => FakeUpdateBuilder
-	where: (_: unknown) => FakeUpdateBuilder
+	where: (clause: unknown) => FakeUpdateBuilder
 	returning: () => Promise<Array<{ id: string }>>
 }
 
@@ -44,11 +44,11 @@ function buildDueRow(overrides: Partial<Record<string, unknown>> = {}) {
 		actorId: 'actor-00000000-0000-0000-0000-000000000001',
 		conversationId: null,
 		triggerId: null,
-		sourceCommentEventId: null,
 		actionPrompt: 'do the thing',
 		config: null,
 		attemptNumber: 1,
 		retryAt: new Date('2026-09-29T19:59:00Z'),
+		result: null,
 		...overrides,
 	}
 }
@@ -56,6 +56,7 @@ function buildDueRow(overrides: Partial<Record<string, unknown>> = {}) {
 function fakeDb(dueRows: Array<Record<string, unknown>>) {
 	const updates: Array<Record<string, unknown>> = []
 	const inserts: Array<Record<string, unknown>> = []
+	const whereClauses: Array<unknown> = []
 	let claimAllowed = true
 
 	const db = {
@@ -72,7 +73,8 @@ function fakeDb(dueRows: Array<Record<string, unknown>>) {
 					updates.push(patch)
 					return builder
 				},
-				where() {
+				where(clause: unknown) {
+					whereClauses.push(clause)
 					return builder
 				},
 				async returning() {
@@ -92,6 +94,7 @@ function fakeDb(dueRows: Array<Record<string, unknown>>) {
 		db,
 		updates,
 		inserts,
+		whereClauses,
 		setClaimAllowed(v: boolean) {
 			claimAllowed = v
 		},
@@ -164,5 +167,57 @@ describe('SessionRetryScheduler', () => {
 		await scheduler.tick(NOW)
 
 		expect(inserts.some((r) => r.action === 'chat_resume_interim_posted')).toBe(false)
+	})
+
+	it('skips firing when the CAS UPDATE loses (competing scheduler already claimed)', async () => {
+		const { db, inserts, setClaimAllowed } = fakeDb([buildDueRow()])
+		setClaimAllowed(false)
+		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+		await scheduler.tick(NOW)
+
+		expect(startSession).not.toHaveBeenCalled()
+		expect(inserts.some((r) => r.action === 'session_retry_scheduled')).toBe(false)
+	})
+
+	it('carries reset_source + reset_confidence from failure_reason onto the audit event', async () => {
+		const { db, inserts } = fakeDb([
+			buildDueRow({
+				result: {
+					exit_code: 1,
+					failure_reason: {
+						provider: 'anthropic',
+						reason_code: 'session_limit',
+						human_message: 'Claude session limit reached',
+						http_status: null,
+						reset_at: '2026-09-29T21:30:00Z',
+						verbatim_output: 'Resets 9:30pm',
+						reset_source: 'cli-banner',
+						reset_confidence: 'advisory',
+					},
+				},
+			}),
+		])
+		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+		await scheduler.tick(NOW)
+
+		const scheduled = inserts.find((r) => r.action === 'session_retry_scheduled')
+		expect(scheduled).toBeDefined()
+		expect((scheduled?.data as Record<string, unknown>).source).toBe('cli-banner')
+		expect((scheduled?.data as Record<string, unknown>).confidence).toBe('advisory')
+	})
+
+	it('omits source/confidence from the audit event when failure_reason has no reset parse', async () => {
+		const { db, inserts } = fakeDb([buildDueRow()])
+		const scheduler = new SessionRetryScheduler(db as never, {} as NodeJS.ProcessEnv)
+
+		await scheduler.tick(NOW)
+
+		const scheduled = inserts.find((r) => r.action === 'session_retry_scheduled')
+		expect(scheduled).toBeDefined()
+		const data = scheduled?.data as Record<string, unknown>
+		expect(data.source).toBeUndefined()
+		expect(data.confidence).toBeUndefined()
 	})
 })

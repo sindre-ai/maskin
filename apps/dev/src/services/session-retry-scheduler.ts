@@ -17,10 +17,11 @@
  * — flip to '0' at runtime to disable without a code roll.
  */
 
-import { and, eq, isNull, lte, sql as drizzleSql } from 'drizzle-orm'
+import { and, eq, isNotNull, isNull, lte, sql as drizzleSql } from 'drizzle-orm'
 
 import type { Database } from '@maskin/db'
 import { events, sessions } from '@maskin/db'
+import type { SessionResult } from '@maskin/shared'
 
 import { logger } from '../lib/logger'
 import { CHAT_RESUME_INTERIM_MESSAGE_ENABLED } from '../config/chat-resume'
@@ -37,11 +38,11 @@ type RetryableSession = {
 	actorId: string
 	conversationId: string | null
 	triggerId: string | null
-	sourceCommentEventId: number | null
 	actionPrompt: string
 	config: Record<string, unknown> | null
 	attemptNumber: number
 	retryAt: Date | null
+	result: SessionResult | null
 }
 
 export class SessionRetryScheduler {
@@ -85,11 +86,11 @@ export class SessionRetryScheduler {
 					actorId: sessions.actorId,
 					conversationId: sessions.conversationId,
 					triggerId: sessions.triggerId,
-					sourceCommentEventId: sessions.sourceCommentEventId,
 					actionPrompt: sessions.actionPrompt,
 					config: sessions.config,
 					attemptNumber: sessions.attemptNumber,
 					retryAt: sessions.retryAt,
+					result: sessions.result,
 				})
 				.from(sessions)
 				.where(
@@ -122,22 +123,35 @@ export class SessionRetryScheduler {
 			return
 		}
 
-		// CAS: one scheduler wins. WHERE retried_session_id IS NULL means a
-		// competing scheduler that already flipped the row loses this UPDATE
-		// (rowCount === 0) and skips the row.
+		// CAS: one scheduler wins. Guarding on BOTH retried_session_id IS NULL AND
+		// retry_at IS NOT NULL means a competing scheduler that already claimed
+		// this row (either by clearing retryAt in-flight below or by writing
+		// retriedSessionId after startSession returned) loses this UPDATE
+		// (rowCount === 0) and skips the row — two schedulers can't both fire a
+		// startSession call for the same original session.
 		const [claimed] = await this.db
 			.update(sessions)
 			.set({
 				retryAt: null,
 			})
-			.where(and(eq(sessions.id, row.id), isNull(sessions.retriedSessionId)))
+			.where(
+				and(
+					eq(sessions.id, row.id),
+					isNull(sessions.retriedSessionId),
+					isNotNull(sessions.retryAt),
+				),
+			)
 			.returning({ id: sessions.id })
 
 		if (!claimed) return
 
 		// Fire the retry. Same conversationId / triggerId so the reply lands on
 		// the user's existing thread (§17.6). callerKind='internal' distinguishes
-		// this from a user-initiated retry in analytics.
+		// this from a user-initiated retry in analytics. sourceCommentEventId
+		// is not passed through — it isn't a top-level sessions column (it's
+		// folded into config.source_comment_event_id at start time), and the
+		// original session's config already carries that key, so the retry
+		// inherits it via config: row.config below.
 		let newSessionId: string
 		try {
 			const handle = await startSession({
@@ -148,7 +162,6 @@ export class SessionRetryScheduler {
 				config: row.config ?? undefined,
 				conversationId: row.conversationId ?? undefined,
 				triggerId: row.triggerId ?? undefined,
-				sourceCommentEventId: row.sourceCommentEventId ?? undefined,
 				retryOf: row.id,
 				attemptNumber: row.attemptNumber + 1,
 			})
@@ -227,6 +240,19 @@ export class SessionRetryScheduler {
 		action: 'session_retry_scheduled' | 'session_retry_capped',
 		extra: Record<string, unknown>,
 	): Promise<void> {
+		// §7.5: the parse result the classifier used is stamped on
+		// result.failure_reason.reset_source / .reset_confidence — carry them
+		// through to the audit event so operators can trace WHICH signal fed the
+		// retry (§17.2 sources 1-4). Absent when retry_at was seeded outside
+		// the classifier path (e.g. test fixture); we omit the fields instead
+		// of guessing.
+		const failureReason = row.result?.failure_reason ?? null
+		const source = failureReason?.reset_source
+		const confidence = failureReason?.reset_confidence
+		const resetMeta: Record<string, unknown> = {}
+		if (source !== undefined) resetMeta.source = source
+		if (confidence !== undefined) resetMeta.confidence = confidence
+
 		try {
 			await this.db.insert(events).values({
 				workspaceId: row.workspaceId,
@@ -236,12 +262,7 @@ export class SessionRetryScheduler {
 				entityId: row.id,
 				data: {
 					attemptNumber: row.attemptNumber,
-					// The parse result the classifier used lives on
-					// sessions.result.failure_reason today. Rehydrate it when we
-					// stamp source + confidence directly on the retry row (spec
-					// widening pass).
-					source: 'cli-banner',
-					confidence: 'advisory',
+					...resetMeta,
 					...extra,
 				},
 			})

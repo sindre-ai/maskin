@@ -178,7 +178,9 @@ function parseCliBannerTail(tail: string, nowMs: number): number | null {
 	// banner, or a bare "Resets <time>" line. Match either.
 	const bannerMatch = /Resets?\s+([A-Za-z0-9 :\-,]+?)(?:\s*\(([A-Z]{2,5})\))?(?:$|[.\n])/i.exec(tail)
 	if (!bannerMatch) return null
-	const raw = bannerMatch[1].trim()
+	const rawCapture = bannerMatch[1]
+	if (!rawCapture) return null
+	const raw = rawCapture.trim()
 	const tz = (bannerMatch[2] ?? 'UTC').toUpperCase()
 
 	const resolved = resolveBannerFragment(raw, tz, nowMs)
@@ -252,7 +254,9 @@ const MONTHS: Record<string, number> = {
 }
 
 function anchorMonthDay(match: RegExpExecArray, nowMs: number): number | null {
-	const monthKey = match[1].toLowerCase().slice(0, 3)
+	const monthCapture = match[1]
+	if (!monthCapture) return null
+	const monthKey = monthCapture.toLowerCase().slice(0, 3)
 	const month = MONTHS[monthKey]
 	if (month === undefined) return null
 	const day = Number(match[2])
@@ -290,7 +294,9 @@ const WEEKDAYS: Record<string, number> = {
 }
 
 function anchorWeekday(match: RegExpExecArray, nowMs: number): number | null {
-	const weekdayKey = match[1].toLowerCase().slice(0, 3)
+	const weekdayCapture = match[1]
+	if (!weekdayCapture) return null
+	const weekdayKey = weekdayCapture.toLowerCase().slice(0, 3)
 	const target = WEEKDAYS[weekdayKey]
 	if (target === undefined) return null
 	const hours = Number(match[2])
