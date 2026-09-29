@@ -291,20 +291,106 @@ async function pollForAwait(
 }
 
 /**
- * Internal: drive a queued session to running. Called from queue-drain paths
- * (e.g. SessionManager.startQueueDrain) that own an already-persisted row.
- * Currently delegates to SessionManager.startSession() — the local docker /
- * remote dispatch fork still lives there per §14.3.
+ * Boot budget for a session in session_state='starting' — the reaper's
+ * boot-stall cutoff (Commit 6, §16.2). Colocated here (not in session-manager)
+ * because the driver in _driveToRunning() is the writer whose deadline this
+ * represents: dispatcher retries top out around 8 seconds and a healthy
+ * container/agent-server handshake finishes in single-digit seconds, so five
+ * minutes is a comfortable ceiling that still catches a real stall long before
+ * the old 10-minute zombie sweep would have.
  */
-export function _driveToRunning(sessionId: string): Promise<void> {
-	const { sessionManager } = getDeps()
-	return sessionManager.startSession(sessionId).catch((err) => {
+export const BOOT_STALL_MS = 5 * 60 * 1000
+
+/**
+ * How often _driveToRunning() rewrites driver_heartbeat_at while it is driving
+ * a session from queued through starting to running. Read by the reaper's
+ * queued-rescue cutoff (Commit 6, §16.3): a driver that crashes stops
+ * heartbeating, the row's driver_heartbeat_at goes stale >60s, and the rescue
+ * re-fires _driveToRunning() on the queued row.
+ */
+export const DRIVER_HEARTBEAT_INTERVAL_MS = 30 * 1000
+
+/**
+ * Internal: drive a queued session to running. Called from queue-drain paths
+ * (e.g. SessionManager.startQueueDrain) and the reaper's queued-rescue cutoff.
+ *
+ * While driving, stamps driver_heartbeat_at every DRIVER_HEARTBEAT_INTERVAL_MS
+ * so a crash of this process becomes observable to the reaper's queued-rescue
+ * cutoff (§16.3): a row still in session_state='queued' with a stale
+ * driver_heartbeat_at is one where the previous driver died before the state
+ * ever transitioned, so re-firing here is safe.
+ *
+ * State transitions written here (§15.3): 'queued' → 'starting' before we
+ * begin the dispatch, 'running' after startSession returns success. A failure
+ * leaves the row in 'starting' so the reaper's boot-stall cutoff (§16.2)
+ * settles it once past BOOT_STALL_MS — surfacing genuine startup failures
+ * instead of masking them as an infinite queued-rescue loop.
+ *
+ * The dispatch fork (local docker vs remote agent-server) still lives in
+ * SessionManager.startSession() per §14.3.
+ */
+export async function _driveToRunning(sessionId: string): Promise<void> {
+	const { db, sessionManager } = getDeps()
+
+	// Enter 'starting' before the dispatch — the reaper's boot-stall cutoff
+	// (§16.2) measures state_entered_at from this write. A driver crash after
+	// this point leaves state_entered_at pointing at a real starting instant
+	// that the reaper can compare against BOOT_STALL_MS.
+	await db
+		.update(sessions)
+		.set({ sessionState: 'starting', stateEnteredAt: new Date(), driverHeartbeatAt: new Date() })
+		.where(eq(sessions.id, sessionId))
+		.catch((err) => {
+			logger.warn('_driveToRunning failed to enter starting state', {
+				sessionId,
+				error: String(err),
+			})
+		})
+
+	const interval = setInterval(() => {
+		void stampDriverHeartbeat(db, sessionId).catch((err) => {
+			logger.warn('driver_heartbeat_at interval stamp failed', {
+				sessionId,
+				error: String(err),
+			})
+		})
+	}, DRIVER_HEARTBEAT_INTERVAL_MS)
+	// Node's setInterval on a background loop must not keep the process alive
+	// if this is the only outstanding timer (e.g. tests that never await the
+	// dispatch).
+	if (typeof interval.unref === 'function') interval.unref()
+
+	try {
+		await sessionManager.startSession(sessionId)
+		// Reached 'running' successfully — clear heartbeat so the reaper's
+		// stale-heartbeat check no longer applies to this row, and stamp the
+		// transition so the wall-timeout cutoff measures 2h from here.
+		await db
+			.update(sessions)
+			.set({ sessionState: 'running', stateEnteredAt: new Date(), driverHeartbeatAt: null })
+			.where(eq(sessions.id, sessionId))
+			.catch((err) => {
+				logger.warn('_driveToRunning failed to enter running state', {
+					sessionId,
+					error: String(err),
+				})
+			})
+	} catch (err) {
 		logger.error('_driveToRunning failed', {
 			sessionId,
 			error: String(err),
 		})
 		throw err
-	})
+	} finally {
+		clearInterval(interval)
+	}
+}
+
+async function stampDriverHeartbeat(db: Database, sessionId: string): Promise<void> {
+	await db
+		.update(sessions)
+		.set({ driverHeartbeatAt: new Date() })
+		.where(eq(sessions.id, sessionId))
 }
 
 
