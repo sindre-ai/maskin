@@ -60,6 +60,7 @@ import telemetryRoutes from './routes/telemetry'
 import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
 import triggersRoutes from './routes/triggers'
 import userDisplaySettingsRoutes from './routes/user-display-settings'
+import voiceSessionsRoutes from './routes/voice-sessions'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
 import type { AgentStorageManager } from './services/agent-storage'
@@ -395,6 +396,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/telemetry', telemetryRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
 	app.route('/api/feature-flags', featureFlagsRoutes)
+	app.route('/api/voice-sessions', voiceSessionsRoutes)
 
 	if (options.includeExtensions !== false) {
 		const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }

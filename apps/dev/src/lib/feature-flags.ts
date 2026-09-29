@@ -145,6 +145,20 @@ export const FLAGS = {
 	 * the edges being present.
 	 */
 	GRAPH_PROVENANCE_WRITES: 'graph-provenance-writes',
+	/**
+	 * Voice v1 — 1:1 in-app click-to-talk to a voice-enabled agent. Gates the
+	 * **POST /api/voice-sessions** session-mint route (404 when off), the
+	 * Call button on `/agents/:id`, and the VoiceCallDialog. Per-actor: a
+	 * workspace tester with this flag on sees the button; every other member
+	 * of the same workspace sees nothing. See parent bet
+	 * [Voice with Maskin agents](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/16bd0042-ff3d-4056-839c-410b0cd6f06e).
+	 *
+	 * Boot-time invariant: when this flag id appears in `FF_TESTER_FEATURES`,
+	 * `MASKIN_VOICE_OPENAI_API_KEY` must be set. `apps/dev/src/lib/voice-boot-guard.ts`
+	 * asserts it at startup so a mis-configured deploy fails fast instead of
+	 * 500-ing on the first mint call.
+	 */
+	VOICE_MODE_V1: 'voice-mode-v1',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
