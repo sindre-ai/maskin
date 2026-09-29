@@ -22,6 +22,7 @@ import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
 import { AgentStorageManager } from './services/agent-storage'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
+import { SessionRetryScheduler } from './services/session-retry-scheduler'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
@@ -177,6 +178,14 @@ logger.info('Webhook deliveries cleaner started')
 const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
 briefCacheCleaner.start()
 logger.info('Brief cache cleaner started')
+
+// §7.6 — session-retry scheduler. Ticks every 30s, reads sessions_retry_at_idx
+// for due retry_at rows and fires startSession({retryOf, attemptNumber:N+1,
+// callerKind:'internal'}). Killswitch env FEATURE_RETRY_SCHEDULER=0 disables
+// the tick without a code roll.
+const sessionRetryScheduler = new SessionRetryScheduler(db)
+sessionRetryScheduler.start()
+logger.info('Session retry scheduler started')
 
 const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()

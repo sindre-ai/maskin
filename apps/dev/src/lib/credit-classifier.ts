@@ -1,5 +1,7 @@
 import type { FailureReasonCode, SessionResultFailureReason } from '@maskin/shared'
 
+import { parseCliResetBanner } from './subscription-limit-reset'
+
 const CLI_BANNERS: ReadonlyArray<{
 	match: string
 	reasonCode: FailureReasonCode
@@ -89,6 +91,12 @@ export function classifyCreditExhaustion(
 ): SessionResultFailureReason | null {
 	const { includeAmbiguousSignals = true } = options
 
+	// §7.4: try the CLI-banner reset fragment ("Resets 2:30pm (UTC)") on every
+	// tail we see, so the reset-at parity cells succeed even when the classifier
+	// hits a banner (source 3 in §17.2). Best-effort — null when the fragment
+	// doesn't match or falls outside the [now+60s, now+24h] clamp.
+	const bannerResetAt = parseCliResetBanner(tail)?.toISOString() ?? null
+
 	for (const banner of CLI_BANNERS) {
 		if (tail.includes(banner.match)) {
 			return {
@@ -96,7 +104,7 @@ export function classifyCreditExhaustion(
 				reason_code: banner.reasonCode,
 				human_message: banner.humanMessage,
 				http_status: null,
-				reset_at: null,
+				reset_at: bannerResetAt,
 				verbatim_output: banner.match,
 			}
 		}
@@ -127,7 +135,7 @@ export function classifyCreditExhaustion(
 				? 'Claude Max plan rate limit reached — try again later'
 				: 'Anthropic billing error — credit balance may be exhausted',
 			http_status: 402,
-			reset_at: null,
+			reset_at: bannerResetAt,
 			verbatim_output: null,
 		}
 	}
@@ -138,7 +146,7 @@ export function classifyCreditExhaustion(
 			reason_code: 'rate_limit_error',
 			human_message: 'Anthropic rate limit reached',
 			http_status: 429,
-			reset_at: null,
+			reset_at: bannerResetAt,
 			verbatim_output: null,
 		}
 	}
@@ -152,12 +160,12 @@ export function classifyCreditExhaustion(
 			reason_code: 'insufficient_credits',
 			human_message: 'OpenRouter: insufficient credits',
 			http_status: 402,
-			reset_at: null,
+			reset_at: bannerResetAt,
 			verbatim_output: null,
 		}
 	}
 
-	return classifyOpenRouterEnvelope(tail)
+	return classifyOpenRouterEnvelope(tail, bannerResetAt)
 }
 
 /**
@@ -165,14 +173,17 @@ export function classifyCreditExhaustion(
  * the stdout tail. Host-gated because a bare `"error":{"code":429}` is a shape
  * plenty of other APIs share, and the tail is the whole session's stdout.
  */
-function classifyOpenRouterEnvelope(tail: string): SessionResultFailureReason | null {
+function classifyOpenRouterEnvelope(
+	tail: string,
+	resetAt: string | null,
+): SessionResultFailureReason | null {
 	if (!tail.includes('openrouter.ai')) return null
 
 	const match = /"error"\s*:\s*\{[^}]*"code"\s*:\s*(\d{3})/.exec(tail)
 	if (!match) return null
 	const status = Number(match[1])
 
-	const base = { provider: 'openrouter', reset_at: null, verbatim_output: null } as const
+	const base = { provider: 'openrouter', reset_at: resetAt, verbatim_output: null } as const
 	if (status === 402) {
 		return {
 			...base,

@@ -306,6 +306,26 @@ export interface SessionLogEvent extends LogChunk {
 	logId: number
 }
 
+/**
+ * §17.5 companion parser at the two completion paths: convert the classifier's
+ * `reset_at` (ISO-8601 string, may be null) into the Date value settleSession /
+ * these paths write to sessions.retry_at. Wrapped as a helper so both handleCompletion
+ * and markRemoteSessionComplete apply the same logic — no divergence class from
+ * .claude/rules/known-pitfalls.md "The Remote Completion Path Skipped ...".
+ *
+ * Returns null when the reason isn't credit-exhaustion-shaped (won't retry via
+ * scheduler, no reset_at to persist) or when reset_at parsing didn't produce a
+ * value in the [now+60s, now+24h] clamp band (§17.3, §17.7).
+ */
+function pickRetryAt(failureReason: SessionResultFailureReason | null): Date | null {
+	if (!failureReason) return null
+	if (failureReason.provider !== 'anthropic') return null
+	if (!failureReason.reset_at) return null
+	const parsed = Date.parse(failureReason.reset_at)
+	if (Number.isNaN(parsed)) return null
+	return new Date(parsed)
+}
+
 export class SessionManager extends EventEmitter {
 	private containers: ContainerManager
 	private agentStorage: AgentStorageManager
@@ -3071,6 +3091,16 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		// §17.5: when credit exhaustion is classified AND the tail's reset banner
+		// parses (source 3 in §17.2), persist the reset moment on sessions.retry_at
+		// so session-retry-scheduler.ts can auto-retry. The parser reads the same
+		// tail the classifier saw (companion-parser pattern, CTO note 4). Best-effort
+		// —  a parse miss leaves retry_at NULL, which the scheduler treats as "no
+		// retry" per §17.7. Skipped when the reaper turns retry_scheduler off via
+		// FEATURE_RETRY_SCHEDULER=0 — the write is inert without the scheduler tick,
+		// but we still gate here so the row's shape matches operator intent.
+		const scheduledRetryAt = pickRetryAt(classifiedFailureReason)
+
 		// A budget-stopped session's exit code (143, from the SIGTERM in
 		// stopSession) carries no stdout signal for classifyCreditExhaustion to
 		// find, so it would otherwise surface as a bare "exit code 143" — build
@@ -3116,6 +3146,7 @@ export class SessionManager extends EventEmitter {
 					completedAt: new Date(),
 					updatedAt: new Date(),
 					currentActivity: null,
+					...(scheduledRetryAt ? { retryAt: scheduledRetryAt } : {}),
 				})
 				.where(eq(sessions.id, sessionId))
 		} catch (err) {
@@ -4912,6 +4943,10 @@ export class SessionManager extends EventEmitter {
 				exitCode,
 			})
 		}
+		// §17.5 remote path (source 3 + 4 in §17.2). retry_after_seconds from the
+		// agent-server /complete callback is a follow-on producer bet — for now
+		// only the CLI-banner tail is available on this side, same as handleCompletion.
+		const scheduledRetryAt = pickRetryAt(failureReason)
 		const status = exitCode === 0 && !failureReason ? 'completed' : 'failed'
 
 		const result: SessionResult = stoppedByUser
@@ -4949,6 +4984,7 @@ export class SessionManager extends EventEmitter {
 						completedAt: new Date(),
 						updatedAt: new Date(),
 						currentActivity: null,
+						...(scheduledRetryAt ? { retryAt: scheduledRetryAt } : {}),
 						...(usage
 							? {
 									totalCostUsd: resolvedCostUsd?.toString() ?? null,
