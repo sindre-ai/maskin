@@ -437,6 +437,23 @@ export class TestAPI {
 		return res.json()
 	}
 
+	// Flips actors.metadata.voice_enabled on an agent — used by the Voice v1
+	// discovery E2E specs to seed the "voice-enabled" branch of the filter
+	// chip + row badge + agent-settings toggle without a UI round-trip.
+	async setActorVoiceMode(
+		workspaceId: string,
+		actorId: string,
+		enabled: boolean,
+	): Promise<{ voice_enabled: boolean }> {
+		const res = await fetch(`${this.baseURL}/api/actors/${actorId}/voice-mode`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify({ enabled }),
+		})
+		if (!res.ok) throw new Error(`setActorVoiceMode failed: ${res.status}`)
+		return res.json()
+	}
+
 	async createTrigger(
 		workspaceId: string,
 		data: {

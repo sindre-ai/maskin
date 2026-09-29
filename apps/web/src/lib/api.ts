@@ -326,6 +326,16 @@ export const api = {
 			}),
 		delete: (id: string, workspaceId: string) =>
 			request<{ deleted: boolean }>(`/actors/${id}`, { method: 'DELETE', workspaceId }),
+		// Flips actors.metadata.voice_enabled on an agent in this workspace.
+		// Workspace admins only (403 otherwise); the aggregated Voice v1 bet
+		// (POST /api/voice-sessions in Task 1) reads voice_enabled at mint time
+		// to allow or 403 the Call attempt.
+		voiceMode: (id: string, workspaceId: string, body: { enabled: boolean }) =>
+			request<ActorResponse>(`/actors/${id}/voice-mode`, {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
 		uploadAvatar: async (id: string, file: File, workspaceId: string): Promise<ActorResponse> => {
 			const apiKey = getApiKey()
 			const formData = new FormData()

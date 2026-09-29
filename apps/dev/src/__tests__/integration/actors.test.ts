@@ -386,3 +386,191 @@ describe('Actors Integration — signup workspace provisioning', () => {
 		expect(chief?.name).toBe('Chief of Staff')
 	})
 })
+
+describe('Actors Integration — POST /:id/voice-mode', () => {
+	// Voice v1 T4 discovery surface. The route flips
+	// actors.metadata.voice_enabled on an agent; the projected `voice_enabled`
+	// column on the response is what /agents' badge + Voice filter chip read.
+	it('flips voice_enabled and projects it back on the response', async () => {
+		const app = createApp()
+		const admin = getTestActorId()
+		const ws = await insertWorkspace(db, admin)
+		const agent = await insertActor(db, { type: 'agent', name: 'Voicey' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				`/api/actors/${agent.id}/voice-mode`,
+				{ enabled: true },
+				{
+					'x-workspace-id': ws.id,
+				},
+			),
+		)
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.voice_enabled).toBe(true)
+
+		const [row] = await db.select().from(actors).where(eq(actors.id, agent.id))
+		expect((row.metadata as { voice_enabled?: boolean } | null)?.voice_enabled).toBe(true)
+	})
+
+	it('merges into existing metadata rather than overwriting it', async () => {
+		const app = createApp()
+		const admin = getTestActorId()
+		const ws = await insertWorkspace(db, admin)
+		const agent = await insertActor(db, { type: 'agent', name: 'Voicey 2' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
+		await db
+			.update(actors)
+			.set({ metadata: { installed_loop_id: 'loop-abc', source_item_id: 'item-xyz' } })
+			.where(eq(actors.id, agent.id))
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				`/api/actors/${agent.id}/voice-mode`,
+				{ enabled: true },
+				{
+					'x-workspace-id': ws.id,
+				},
+			),
+		)
+		expect(res.status).toBe(200)
+
+		const [row] = await db.select().from(actors).where(eq(actors.id, agent.id))
+		expect(row.metadata).toEqual({
+			installed_loop_id: 'loop-abc',
+			source_item_id: 'item-xyz',
+			voice_enabled: true,
+		})
+	})
+
+	it('403s when the caller is not a workspace admin', async () => {
+		const app = createApp()
+		const nonAdmin = await insertActor(db, { type: 'human', name: 'Non Admin' })
+		const owner = await insertActor(db, { type: 'human', name: 'Ws Owner' })
+		const ws = await insertWorkspace(db, owner.id)
+		// Add both as members — non-admin as `member`, the flip requires `owner`
+		// or `admin`. The test actor (getTestActorId) is not in this workspace.
+		await db
+			.insert(workspaceMembers)
+			.values([{ workspaceId: ws.id, actorId: getTestActorId(), role: 'member' }])
+		const agent = await insertActor(db, { type: 'agent', name: 'Voicey 3' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: agent.id, role: 'member' })
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				`/api/actors/${agent.id}/voice-mode`,
+				{ enabled: true },
+				{
+					'x-workspace-id': ws.id,
+				},
+			),
+		)
+		expect(res.status).toBe(403)
+		// Silences unused-var lint on the fixture rows.
+		expect(nonAdmin.id).toBeTruthy()
+		expect(owner.id).toBeTruthy()
+	})
+
+	it('400s when the target is a human, not an agent', async () => {
+		const app = createApp()
+		const admin = getTestActorId()
+		const ws = await insertWorkspace(db, admin)
+		const human = await insertActor(db, { type: 'human', name: 'Not An Agent' })
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: ws.id, actorId: human.id, role: 'member' })
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				`/api/actors/${human.id}/voice-mode`,
+				{ enabled: true },
+				{
+					'x-workspace-id': ws.id,
+				},
+			),
+		)
+		expect(res.status).toBe(400)
+	})
+
+	it('404s when the agent is not a member of the workspace', async () => {
+		const app = createApp()
+		const admin = getTestActorId()
+		const ws = await insertWorkspace(db, admin)
+		const strangerAgent = await insertActor(db, { type: 'agent', name: 'Foreign Agent' })
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				`/api/actors/${strangerAgent.id}/voice-mode`,
+				{ enabled: true },
+				{
+					'x-workspace-id': ws.id,
+				},
+			),
+		)
+		expect(res.status).toBe(404)
+	})
+})
+
+describe('Actors Integration — GET voice_enabled projection', () => {
+	// A read-time smoke check that the projection lives on every read path a
+	// UI consumer touches: list, get, and pause/run's returning clause.
+	it('GET /:id projects voice_enabled from metadata', async () => {
+		const app = createApp()
+		const agent = await insertActor(db, { type: 'agent', name: 'Voicey Read' })
+		await db
+			.update(actors)
+			.set({ metadata: { voice_enabled: true } })
+			.where(eq(actors.id, agent.id))
+
+		const res = await app.request(jsonGet(`/api/actors/${agent.id}`))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.voice_enabled).toBe(true)
+	})
+
+	it('GET /:id returns false when metadata is null or missing the key', async () => {
+		const app = createApp()
+		const agent = await insertActor(db, { type: 'agent', name: 'Voiceless' })
+
+		const res = await app.request(jsonGet(`/api/actors/${agent.id}`))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.voice_enabled).toBe(false)
+	})
+
+	it('GET /api/actors workspace-scoped list projects voice_enabled per row', async () => {
+		const app = createApp()
+		const admin = getTestActorId()
+		const ws = await insertWorkspace(db, admin)
+		const on = await insertActor(db, { type: 'agent', name: 'On' })
+		const off = await insertActor(db, { type: 'agent', name: 'Off' })
+		await db.insert(workspaceMembers).values([
+			{ workspaceId: ws.id, actorId: on.id, role: 'member' },
+			{ workspaceId: ws.id, actorId: off.id, role: 'member' },
+		])
+		await db
+			.update(actors)
+			.set({ metadata: { voice_enabled: true } })
+			.where(eq(actors.id, on.id))
+
+		const res = await app.request(jsonGet('/api/actors', { 'x-workspace-id': ws.id }))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		const rowFor = (name: string) => body.find((r: { name: string }) => r.name === name)
+		expect(rowFor('On')?.voice_enabled).toBe(true)
+		expect(rowFor('Off')?.voice_enabled).toBe(false)
+	})
+})
