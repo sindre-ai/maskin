@@ -145,6 +145,32 @@ export const FLAGS = {
 	 * the edges being present.
 	 */
 	GRAPH_PROVENANCE_WRITES: 'graph-provenance-writes',
+	/**
+	 * Gates the trigger-engine v2 rollout (bet
+	 * [Fix the trigger engine](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/f46b18f7-1cce-487b-9113-8657a6e30b16)).
+	 * Off preserves today's behaviour on every axis — matcher, cooldown,
+	 * event queue, and comment action. On (per tester actor for frontend
+	 * reads, per workspace via `FF_WORKSPACE_FEATURES` for the backend read
+	 * sites S1 shipped) unlocks:
+	 *
+	 *  - matcher v2 list-value semantics (bet #8)
+	 *  - persistent cooldown store (bet #7)
+	 *  - hold-and-replay event queue (bet #6)
+	 *  - the `action = commented` trigger surface (bet #12) — the trigger
+	 *    builder in `apps/web/src/components/triggers/trigger-form.tsx`
+	 *    reads this flag via `useFeatureFlag('trigger_engine_v2')` and hides
+	 *    the "On comment posted" action + its filter block when off, and the
+	 *    matcher in `apps/dev/src/services/trigger-runner.ts` rejects
+	 *    `action = commented` when off so a trigger saved under an old flag
+	 *    state never silently misses events.
+	 *
+	 * Task S7 formalises the workspace-scoped resolver
+	 * (`isFlagEnabledForWorkspace`) that the matcher's cooldown/suppression
+	 * gate points at; the entry lives here from S6 so the frontend gate
+	 * resolves against the registry today. Retire once the four v2 surfaces
+	 * are on for every workspace.
+	 */
+	TRIGGER_ENGINE_V2: 'trigger_engine_v2',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
