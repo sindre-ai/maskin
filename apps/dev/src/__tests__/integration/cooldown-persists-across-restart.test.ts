@@ -1,6 +1,7 @@
 import { triggerCooldowns, triggers, workspaceSuppressions } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { eq } from 'drizzle-orm'
+import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import type { SessionManager } from '../../services/session-manager'
 import { TriggerRunner } from '../../services/trigger-runner'
 import { insertActor, insertTrigger, insertWorkspace } from '../factories'
@@ -45,6 +46,9 @@ async function startRunner(workspaceId: string): Promise<TriggerRunner> {
 	// Turn the v2 read-path gate on for this workspace so loadCooldowns /
 	// loadSuppressions hydrate its rows into the Maps.
 	process.env.FF_WORKSPACE_FEATURES = `${workspaceId}:trigger_engine_v2`
+	// Reset the memoized feature-flag config so isFlagEnabledForWorkspace
+	// picks up the env write we just made.
+	_resetFeatureFlagConfig()
 	const runner = new TriggerRunner(db, makeStubBridge(), makeStubSessionManager())
 	await runner.start()
 	return runner
@@ -53,10 +57,12 @@ async function startRunner(workspaceId: string): Promise<TriggerRunner> {
 describe('S1 — trigger cooldowns persist across trigger-runner restart', () => {
 	beforeEach(() => {
 		process.env.FF_WORKSPACE_FEATURES = undefined
+		_resetFeatureFlagConfig()
 	})
 
 	afterEach(async () => {
 		process.env.FF_WORKSPACE_FEATURES = undefined
+		_resetFeatureFlagConfig()
 		// Cross-test isolation — leftover rows would leak into the next test's
 		// loadCooldowns / loadSuppressions walk.
 		await db.delete(triggerCooldowns)
@@ -198,6 +204,7 @@ describe('S1 — trigger cooldowns persist across trigger-runner restart', () =>
 
 		// Only the gated workspace opts into the v2 read-path.
 		process.env.FF_WORKSPACE_FEATURES = `${wsGated.id}:trigger_engine_v2`
+		_resetFeatureFlagConfig()
 		const runner = new TriggerRunner(db, makeStubBridge(), makeStubSessionManager())
 		await runner.start()
 

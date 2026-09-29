@@ -21,6 +21,7 @@ import {
 import { trackTriggerDispatchDeduped } from '../lib/analytics/trigger-dispatch-events'
 import { trackTriggerMatchFailed } from '../lib/analytics/trigger-matcher-events'
 import { recordEvent } from '../lib/events/record-event'
+import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
@@ -190,40 +191,6 @@ const COOLDOWN_SWEEP_GRACE_MS = 60 * 60_000
  * DELETE. Tech spec §3.4.
  */
 const DISPATCH_SWEEP_RETENTION_MS = 30 * 24 * 60 * 60_000
-
-/**
- * TEMPORARY local stand-in for Task 2's `isFlagEnabledForWorkspace(workspaceId,
- * FLAGS.TRIGGER_ENGINE_V2)`. Task 2 (bet task S7) formalises the workspace-
- * scoped resolver in `apps/dev/src/lib/feature-flags.ts` + adds
- * `FF_WORKSPACE_FEATURES` parsing + the `TRIGGER_ENGINE_V2` FLAGS entry.
- *
- * Rationale for shipping this inline rather than blocking on Task 2:
- *  - S7 was still `backlog` when S1 was dispatched (parent branch didn't
- *    exist), so per Rail 6 fallback this PR bases off the bet branch and
- *    proceeds. Idling would waste the bet's parallelism budget.
- *  - The env-var format (`FF_WORKSPACE_FEATURES=<uuid>:<flag>,<uuid>:<flag>`)
- *    matches S7's spec exactly. When S7 lands into the bet branch, deleting
- *    this helper and switching the two call sites to
- *    `isFlagEnabledForWorkspace(workspaceId, FLAGS.TRIGGER_ENGINE_V2)` is a
- *    one-liner conflict for Code Reviewer at aggregate-merge time.
- *
- * A workspace absent from `FF_WORKSPACE_FEATURES` returns false — so nothing
- * hydrates by default, matching today's behaviour for un-flagged workspaces.
- * The persistence write-path is unconditional (safe to persist always per
- * tech spec §7.1), so a flag flip is a pure read-side change with no
- * migration.
- */
-const TRIGGER_ENGINE_V2_FLAG_ID = 'trigger_engine_v2'
-
-function isTriggerEngineV2EnabledForWorkspace(workspaceId: string): boolean {
-	const raw = process.env.FF_WORKSPACE_FEATURES
-	if (!raw) return false
-	const target = `${workspaceId.trim().toLowerCase()}:${TRIGGER_ENGINE_V2_FLAG_ID}`
-	for (const entry of raw.split(',')) {
-		if (entry.trim().toLowerCase() === target) return true
-	}
-	return false
-}
 
 export class TriggerRunner {
 	private db: Database
@@ -793,7 +760,7 @@ export class TriggerRunner {
 			// one aggregate-merge pass.
 			if (
 				event.action === 'commented' &&
-				!isTriggerEngineV2EnabledForWorkspace(event.workspace_id)
+				!isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)
 			) {
 				continue
 			}
@@ -815,7 +782,7 @@ export class TriggerRunner {
 				if (!data) continue
 				const filterRoot = await buildFilterRoot(data)
 				const filter = config.filter as Record<string, unknown>
-				if (isTriggerEngineV2EnabledForWorkspace(event.workspace_id)) {
+				if (isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)) {
 					const result = evaluateFilterV2(filter, filterRoot)
 					if (!result.matches) {
 						void trackTriggerMatchFailed({
@@ -1190,7 +1157,7 @@ export class TriggerRunner {
 		let loaded = 0
 		let skipped = 0
 		for (const row of rows) {
-			if (!isTriggerEngineV2EnabledForWorkspace(row.workspaceId)) {
+			if (!isFlagEnabledForWorkspace(row.workspaceId, FLAGS.TRIGGER_ENGINE_V2)) {
 				skipped++
 				continue
 			}
@@ -1232,7 +1199,7 @@ export class TriggerRunner {
 		let loaded = 0
 		let skipped = 0
 		for (const row of rows) {
-			if (!isTriggerEngineV2EnabledForWorkspace(row.workspaceId)) {
+			if (!isFlagEnabledForWorkspace(row.workspaceId, FLAGS.TRIGGER_ENGINE_V2)) {
 				skipped++
 				continue
 			}

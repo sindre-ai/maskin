@@ -5,6 +5,7 @@ import type { PgNotifyBridge } from '@maskin/realtime'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { postComment } from '../../lib/comments'
+import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import type { SessionManager } from '../../services/session-manager'
 import { TriggerRunner } from '../../services/trigger-runner'
 import { insertActor, insertObject, insertTrigger, insertWorkspace } from '../factories'
@@ -48,13 +49,18 @@ describe('Commented action trigger (integration)', () => {
 		// gate lets the 'commented' path through. Restored in afterEach.
 		previousFlagEnv = process.env.FF_WORKSPACE_FEATURES
 		process.env.FF_WORKSPACE_FEATURES = `${workspaceId}:trigger_engine_v2`
+		// isFlagEnabledForWorkspace reads via the memoized feature-flag config
+		// (parsed once from env). Reset so this test's env write is picked up.
+		_resetFeatureFlagConfig()
 	})
 
 	afterEach(() => {
 		// Restore the env var — assigning undefined mimics `delete` for the
-		// isTriggerEngineV2EnabledForWorkspace guard (it reads via a truthy
-		// check on the string). biome's `noDelete` is why we don't `delete`.
+		// isFlagEnabledForWorkspace check (it reads through a memoized config
+		// derived from a truthy string). biome's `noDelete` is why we don't
+		// `delete`.
 		process.env.FF_WORKSPACE_FEATURES = previousFlagEnv ?? undefined
+		_resetFeatureFlagConfig()
 	})
 
 	async function seedBet() {
@@ -244,6 +250,7 @@ describe('Commented action trigger (integration)', () => {
 		// Turn the flag off for this test only — same undefined-assignment used
 		// in afterEach's restore path.
 		process.env.FF_WORKSPACE_FEATURES = undefined
+		_resetFeatureFlagConfig()
 
 		const targetAgent = await seedAgent('Test Agent D')
 		const bet = await seedBet()

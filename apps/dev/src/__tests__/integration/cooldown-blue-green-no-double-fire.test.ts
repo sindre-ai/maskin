@@ -4,6 +4,7 @@ import { events, triggerDispatches } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import type { SessionManager } from '../../services/session-manager'
 import { TriggerRunner } from '../../services/trigger-runner'
 import { insertActor, insertObject, insertTrigger, insertWorkspace } from '../factories'
@@ -59,10 +60,12 @@ describe('S2 — trigger_dispatches idempotency prevents blue-green double-fire'
 		// regardless of flag state.
 		previousFlagEnv = process.env.FF_WORKSPACE_FEATURES
 		process.env.FF_WORKSPACE_FEATURES = undefined
+		_resetFeatureFlagConfig()
 	})
 
 	afterEach(async () => {
 		process.env.FF_WORKSPACE_FEATURES = previousFlagEnv ?? undefined
+		_resetFeatureFlagConfig()
 		await db.delete(triggerDispatches)
 	})
 
