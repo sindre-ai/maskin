@@ -887,12 +887,12 @@ describe('Sessions Integration', () => {
 			}
 			expect(seeded).toHaveLength(500)
 
-			// Walk backward via before_id four times at limit=100. Each page
-			// must be contiguous with the last and cover every row exactly
-			// once between them.
+			// Walk backward via before_id five times at limit=100. Each page
+			// must be contiguous with the last and cover every seeded row
+			// exactly once between them (500 / 100 = 5 pages).
 			const pages: number[][] = []
 			let cursor: number | undefined
-			for (let i = 0; i < 4; i++) {
+			for (let i = 0; i < 5; i++) {
 				const url = `/api/sessions/${session.id}/logs/deep?limit=100${
 					cursor !== undefined ? `&before_id=${cursor}` : ''
 				}`
@@ -909,7 +909,7 @@ describe('Sessions Integration', () => {
 				cursor = last.id
 			}
 
-			// Concatenate the four pages and assert they cover every seeded id
+			// Concatenate the five pages and assert they cover every seeded id
 			// exactly once. Sort ascending for the equality check.
 			const all = pages.flat().sort((a, b) => a - b)
 			const expected = seeded.map((r) => r.id).sort((a, b) => a - b)
