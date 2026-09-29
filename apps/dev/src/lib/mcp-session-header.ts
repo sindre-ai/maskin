@@ -12,6 +12,17 @@
 export const MASKIN_SESSION_HEADER = 'X-Maskin-Session-Id'
 export const MASKIN_SESSION_HEADER_VALUE = '${SESSION_ID}'
 
+// Second header stamped when the session was dispatched from a comment: the
+// events.id of the triggering comment (or its thread root). Consumed by
+// packages/mcp's `create_comment` handler to default `parent_event_id` to the
+// triggering thread — the tool-level guarantee that agents reply in-thread
+// even when their system prompt doesn't remember to. Only stamped when
+// session-manager.ts knows the id (i.e. the session config carries
+// `source_comment_event_id`), so the value substituted for the placeholder
+// is always a real integer rather than an unset env expanding to empty.
+export const MASKIN_TRIGGERING_EVENT_HEADER = 'X-Maskin-Triggering-Event-Id'
+export const MASKIN_TRIGGERING_EVENT_HEADER_VALUE = '${MASKIN_TRIGGERING_EVENT_ID}'
+
 /**
  * True for an MCP entry written with the platform preset's
  * `${MASKIN_API_URL}/mcp` placeholder — which every config this repo generates
@@ -39,18 +50,34 @@ function isMaskinMcpEntry(entry: unknown): entry is Record<string, unknown> {
 	return /^\$\{MASKIN_API_URL\}\/mcp\/?$/.test(url)
 }
 
+export interface StampMaskinSessionHeaderOptions {
+	/**
+	 * When true, also stamp `X-Maskin-Triggering-Event-Id: ${MASKIN_TRIGGERING_EVENT_ID}`
+	 * onto every Maskin MCP entry. Callers pass this iff they also inject the
+	 * matching container env var; otherwise the header would substitute to
+	 * empty and the /mcp route would ignore it.
+	 */
+	includeTriggeringEventId?: boolean
+}
+
 /**
  * Returns a copy of `mcpServers` with the session header added to every Maskin
  * MCP entry. Non-Maskin entries are passed through untouched, and an entry that
  * already carries the header is left alone so an explicit override wins.
+ *
+ * When `options.includeTriggeringEventId` is true, the triggering-event header
+ * is stamped alongside the session header — used to default `create_comment`
+ * back into the triggering thread on the /mcp route.
  *
  * Returns `null` unchanged so callers can keep distinguishing "no agent-level
  * MCP config" from "an empty one".
  */
 export function stampMaskinSessionHeader<T extends Record<string, unknown> | null | undefined>(
 	mcpServers: T,
+	options: StampMaskinSessionHeaderOptions = {},
 ): T {
 	if (!mcpServers || typeof mcpServers !== 'object') return mcpServers
+	const includeTriggering = options.includeTriggeringEventId === true
 	let changed = false
 	const out: Record<string, unknown> = {}
 	for (const [name, entry] of Object.entries(mcpServers)) {
@@ -72,14 +99,22 @@ export function stampMaskinSessionHeader<T extends Record<string, unknown> | nul
 			continue
 		}
 		const headers = (rawHeaders ?? {}) as Record<string, unknown>
-		if (MASKIN_SESSION_HEADER in headers) {
+		const hasSession = MASKIN_SESSION_HEADER in headers
+		const hasTriggering = MASKIN_TRIGGERING_EVENT_HEADER in headers
+		const needsSession = !hasSession
+		const needsTriggering = includeTriggering && !hasTriggering
+		if (!needsSession && !needsTriggering) {
 			out[name] = entry
 			continue
 		}
-		out[name] = {
-			...entry,
-			headers: { ...headers, [MASKIN_SESSION_HEADER]: MASKIN_SESSION_HEADER_VALUE },
+		const nextHeaders: Record<string, unknown> = { ...headers }
+		if (needsSession) {
+			nextHeaders[MASKIN_SESSION_HEADER] = MASKIN_SESSION_HEADER_VALUE
 		}
+		if (needsTriggering) {
+			nextHeaders[MASKIN_TRIGGERING_EVENT_HEADER] = MASKIN_TRIGGERING_EVENT_HEADER_VALUE
+		}
+		out[name] = { ...entry, headers: nextHeaders }
 		changed = true
 	}
 	return (changed ? out : mcpServers) as T

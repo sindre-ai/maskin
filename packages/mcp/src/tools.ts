@@ -1069,10 +1069,16 @@ export const tools = {
 	},
 	create_comment: {
 		description:
-			'Primary channel for agent-to-human communication. Post comments here for status updates, questions, findings, decisions, blockers, and anything else a human needs to see. Do NOT bury that dialogue in `bet.content`, `task.content`, or object titles — those fields are the durable spec, not the conversation, and humans don\'t scan them for new information. If you\'re tempted to edit a description to "let someone know" something, that belongs in a comment.\n\nUse both a chart and a task checklist (see the `content` and `metadata` param docs) to keep replies short: one paragraph + a chart of the data you pulled via MCP + the checklist of work this comment represents.\n\nWhen you need a human to make a call rather than just read something, put that human in `mentions` and fill in `decision` — that pair is the only way an ask reaches their For You feed as a decision they can answer in one tap. See the `decision` param docs for the required shape and house style; the API rejects a decision that breaks them, listing every violated rule at once.',
+			'Primary channel for agent-to-human communication. Post comments here for status updates, questions, findings, decisions, blockers, and anything else a human needs to see. Do NOT bury that dialogue in `bet.content`, `task.content`, or object titles — those fields are the durable spec, not the conversation, and humans don\'t scan them for new information. If you\'re tempted to edit a description to "let someone know" something, that belongs in a comment.\n\nUse both a chart and a task checklist (see the `content` and `metadata` param docs) to keep replies short: one paragraph + a chart of the data you pulled via MCP + the checklist of work this comment represents.\n\nWhen you need a human to make a call rather than just read something, put that human in `mentions` and fill in `decision` — that pair is the only way an ask reaches their For You feed as a decision they can answer in one tap. See the `decision` param docs for the required shape and house style; the API rejects a decision that breaks them, listing every violated rule at once.\n\nThread defaulting: when this session was dispatched from a comment (any triggering comment on this or another object), your reply is threaded inside that triggering thread automatically — you do not need to set `parent_event_id`. Pass `parent_event_id` explicitly only when you want to reply under a DIFFERENT comment than the one that spawned you. Set `no_thread: true` on the rare occasion you deliberately want a fresh top-level comment (e.g. opening a new topic on a bet) rather than a reply inside the current thread.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			...createCommentSchema.shape,
+			no_thread: z
+				.boolean()
+				.optional()
+				.describe(
+					'Set to true to force a new top-level comment on `entity_id`, opting out of the automatic reply-in-thread default. Only use when you deliberately want to open a new topic rather than reply inside the thread that dispatched this session. Ignored if `parent_event_id` is also set — an explicit parent always wins.',
+				),
 		}),
 	},
 
