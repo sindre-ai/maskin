@@ -110,7 +110,10 @@ describe('useWorkspaceSessions', () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data).toEqual(mockSessions)
 		expect(api.sessions.list).toHaveBeenCalledTimes(1)
-		expect(api.sessions.list).toHaveBeenCalledWith(workspaceId, { limit: '100' })
+		expect(api.sessions.list).toHaveBeenCalledWith(workspaceId, {
+			verbose: 'true',
+			limit: '100',
+		})
 	})
 
 	it('does not page past the first page unless { paged: true }', async () => {
@@ -138,10 +141,12 @@ describe('useWorkspaceSessions', () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data).toHaveLength(101)
 		expect(api.sessions.list).toHaveBeenNthCalledWith(1, workspaceId, {
+			verbose: 'true',
 			limit: '100',
 			offset: '0',
 		})
 		expect(api.sessions.list).toHaveBeenNthCalledWith(2, workspaceId, {
+			verbose: 'true',
 			limit: '100',
 			offset: '100',
 		})
@@ -201,6 +206,7 @@ describe('useActiveSessionsForActor', () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data).toEqual(mockSessions)
 		expect(api.sessions.list).toHaveBeenCalledWith(workspaceId, {
+			verbose: 'true',
 			actor_id: 'actor-1',
 			status: 'running',
 		})
@@ -239,6 +245,7 @@ describe('useMentionSessionsForObject', () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data).toEqual(sessions)
 		expect(api.sessions.list).toHaveBeenCalledWith(workspaceId, {
+			verbose: 'true',
 			mention_object_id: 'object-1',
 			limit: '100',
 		})
@@ -318,6 +325,7 @@ describe('useActorSessionsInfinite', () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data?.pages.flat()).toEqual(mockSessions)
 		expect(api.sessions.list).toHaveBeenCalledWith(workspaceId, {
+			verbose: 'true',
 			actor_id: 'actor-1',
 			limit: '5',
 			offset: '0',
@@ -348,6 +356,7 @@ describe('useActorSessionsInfinite', () => {
 
 		await waitFor(() => expect(result.current.data?.pages.flat()).toHaveLength(10))
 		expect(api.sessions.list).toHaveBeenLastCalledWith(workspaceId, {
+			verbose: 'true',
 			actor_id: 'actor-1',
 			limit: '5',
 			offset: '5',
