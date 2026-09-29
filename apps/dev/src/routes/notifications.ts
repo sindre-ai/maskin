@@ -20,6 +20,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 
 type Env = {
@@ -442,24 +443,32 @@ async function wakeSourceAgent(ctx: {
 		continuationOfSessionId = ctx.linkedSessionId
 	}
 
-	await ctx.sessionManager.createSession(ctx.workspaceId, {
-		actorId: ctx.sourceActorId,
-		actionPrompt: buildResponsePrompt({
-			notificationId: ctx.notificationId,
-			title: ctx.title,
-			content: ctx.content,
-			response: ctx.response,
-			continuationOfSessionId,
-		}),
-		config: {
-			notification_response: {
-				notification_id: ctx.notificationId,
+	await startSession(
+		{ db: ctx.db, sessionManager: ctx.sessionManager },
+		{
+			workspaceId: ctx.workspaceId,
+			callerKind: 'internal',
+			actorId: ctx.sourceActorId,
+			actionPrompt: buildResponsePrompt({
+				notificationId: ctx.notificationId,
+				title: ctx.title,
+				content: ctx.content,
 				response: ctx.response,
-				...(continuationOfSessionId ? { continuation_of_session_id: continuationOfSessionId } : {}),
+				continuationOfSessionId,
+			}),
+			config: {
+				notification_response: {
+					notification_id: ctx.notificationId,
+					response: ctx.response,
+					...(continuationOfSessionId
+						? { continuation_of_session_id: continuationOfSessionId }
+						: {}),
+				},
 			},
+			createdBy: ctx.createdBy,
+			await: 'none',
 		},
-		createdBy: ctx.createdBy,
-	})
+	)
 }
 
 function buildResponsePrompt(ctx: {

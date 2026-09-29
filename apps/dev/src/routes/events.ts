@@ -16,6 +16,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
+import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 import { autoSubscribe } from '../services/subscriptions'
 import { isCommentFallbackDriverEligible } from '../services/trigger-runner'
@@ -618,8 +619,11 @@ async function spawnThreadReplySessions(ctx: {
 	)
 
 	for (const agentId of threadReplyAgentIds) {
-		ctx.sessionManager
-			.createSession(ctx.workspaceId, {
+		startSession(
+			{ db: ctx.db, sessionManager: ctx.sessionManager },
+			{
+				workspaceId: ctx.workspaceId,
+				callerKind: 'trigger',
 				actorId: agentId,
 				actionPrompt: buildThreadReplyPrompt({
 					objectId: ctx.objectId,
@@ -636,15 +640,16 @@ async function spawnThreadReplySessions(ctx: {
 					},
 				},
 				createdBy: ctx.actorId,
-			})
-			.catch((err) =>
-				logger.error('Failed to create thread-reply session', {
-					agentId,
-					objectId: ctx.objectId,
-					threadRootEventId: ctx.threadRootEventId,
-					error: String(err),
-				}),
-			)
+				await: 'none',
+			},
+		).catch((err) =>
+			logger.error('Failed to create thread-reply session', {
+				agentId,
+				objectId: ctx.objectId,
+				threadRootEventId: ctx.threadRootEventId,
+				error: String(err),
+			}),
+		)
 	}
 }
 

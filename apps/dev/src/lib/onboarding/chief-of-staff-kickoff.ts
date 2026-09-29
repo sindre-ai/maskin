@@ -1,8 +1,8 @@
 /**
  * Shared action prompt for the one-time Chief of Staff session kicked off
  * right after a brand-new workspace's owner actor is created. Hardcoded and
- * fired directly via `sessionManager.createSession()` at all three call
- * sites (`routes/workspaces.ts`, `services/workspace-bootstrap.ts`,
+ * fired via `startSession()` (services/session-lifecycle.ts) at all three
+ * call sites (`routes/workspaces.ts`, `services/workspace-bootstrap.ts`,
  * `lib/dev-bootstrap.ts`) rather than an `actor.created` event trigger —
  * actor creation doesn't emit an audit event, so that trigger can never fire
  * for this moment live.

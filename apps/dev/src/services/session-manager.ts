@@ -113,6 +113,7 @@ import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './c
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
+import { startSession } from './session-lifecycle'
 import {
 	type SessionUsage,
 	extractSessionUsage,
@@ -2991,19 +2992,27 @@ export class SessionManager extends EventEmitter {
 				? 'The Claude subscription in use had its OAuth token revoked; retrying this session on the next connected subscription'
 				: 'The Claude subscription in use hit a usage limit; retrying this session on the next connected subscription',
 		)
-		await this.createSession(session.workspaceId, {
-			actorId: session.actorId,
-			actionPrompt: session.actionPrompt,
-			config: {
-				...config,
-				llm_oauth_slot: failover.slot,
-				claude_oauth_runtime_failover_retry_of: session.id,
+		// Self-spawn (spec §19 site #11) — goes through the same start-side
+		// entry point every wrapper uses, so idempotency, session_state, and
+		// driver heartbeat are consistent across all 11 sites.
+		await startSession(
+			{ db: this.db, sessionManager: this },
+			{
+				workspaceId: session.workspaceId,
+				callerKind: 'internal',
+				actorId: session.actorId,
+				actionPrompt: session.actionPrompt,
+				config: {
+					...config,
+					llm_oauth_slot: failover.slot,
+					claude_oauth_runtime_failover_retry_of: session.id,
+				},
+				triggerId: session.triggerId ?? undefined,
+				createdBy: session.createdBy,
+				parentSessionId: session.id,
+				await: 'none',
 			},
-			triggerId: session.triggerId ?? undefined,
-			createdBy: session.createdBy,
-			autoStart: true,
-			sourceSessionId: session.id,
-		})
+		)
 	}
 
 	private async handleCompletion(

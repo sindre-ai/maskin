@@ -12,6 +12,7 @@ import type { LLMTool } from '../lib/llm/adapter'
 import { createLLMAdapter } from '../lib/llm/index'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
+import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 
 // Cap on consecutive agent-authored messages at the tail of a conversation —
@@ -350,23 +351,33 @@ async function spawnOrJoinConversationSession(params: {
 	} = params
 
 	try {
-		await sessionManager.createSession(workspaceId, {
-			actorId: agentId,
-			actionPrompt: buildConversationReplyPrompt({
+		// §14.4 — chat sessions run with `await: 'first-response'`, so the
+		// caller can wire a WebSocket message on the queued → running
+		// transitions surfaced through outcomeStreamCallback.
+		await startSession(
+			{ db, sessionManager },
+			{
+				workspaceId,
+				callerKind: 'chat',
+				actorId: agentId,
+				actionPrompt: buildConversationReplyPrompt({
+					conversationId,
+					conversationHistory,
+					newMessageContent: message.content,
+					authorName: message.authorName,
+					authorActorId: message.actorId,
+					isDirectConversation,
+					wasMentioned,
+				}),
+				config: {
+					interactive: true,
+					conversation: { conversation_id: conversationId, message_id: messageId },
+				},
+				createdBy: message.actorId,
 				conversationId,
-				conversationHistory,
-				newMessageContent: message.content,
-				authorName: message.authorName,
-				authorActorId: message.actorId,
-				isDirectConversation,
-				wasMentioned,
-			}),
-			config: {
-				interactive: true,
-				conversation: { conversation_id: conversationId, message_id: messageId },
+				await: 'first-response',
 			},
-			createdBy: message.actorId,
-		})
+		)
 		// The seed prompt above inlines recent history up to and including this
 		// message — any turn still buffered for this pair from a previous, dead
 		// session is already covered by it. Clear those rows so the post-boot

@@ -25,6 +25,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { insertConversationMessage } from '../services/conversation-messages'
+import { startSession } from '../services/session-lifecycle'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
 
 type Env = {
@@ -81,6 +82,7 @@ const createSessionRoute = createRoute({
 
 app.openapi(createSessionRoute, (async (c) => {
 	const sessionManager = c.get('sessionManager')
+	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
@@ -93,16 +95,41 @@ app.openapi(createSessionRoute, (async (c) => {
 		? { ...body.config, entry_agent_role: body.entry_agent_role }
 		: body.config
 
-	const session = await sessionManager.createSession(workspaceId, {
-		actorId: body.actor_id,
-		actionPrompt: body.action_prompt,
-		config,
-		triggerId: body.trigger_id,
-		createdBy: actorId,
-		autoStart: body.auto_start,
-		sourceSessionId: body.source_session_id,
-	})
+	// §14.4 — REST /api/sessions defaults to `await: 'none'`, matching today's
+	// fire-and-forget contract; the caller polls via GET /api/sessions/:id.
+	// MCP create_session and run_agent both POST here, and both continue to
+	// own their own polling loops in packages/mcp (which is exempt from the
+	// start-side guard, §20).
+	const handle = await startSession(
+		{ db, sessionManager },
+		{
+			workspaceId,
+			callerKind: 'rest',
+			actorId: body.actor_id,
+			actionPrompt: body.action_prompt,
+			config,
+			triggerId: body.trigger_id,
+			createdBy: actorId,
+			parentSessionId: body.source_session_id,
+			autoStart: body.auto_start,
+			await: 'none',
+		},
+	)
 
+	// Idempotency-hit branch (§14.5) returns a handle without the row attached;
+	// re-read once so the response shape stays identical to a fresh insert.
+	const session = handle.session
+		? handle.session
+		: (
+				await db
+					.select()
+					.from(sessions)
+					.where(eq(sessions.id, handle.sessionId))
+					.limit(1)
+			)[0]
+	if (!session) {
+		return c.json(createApiError('BAD_REQUEST', 'Session vanished before serialisation'), 400)
+	}
 	return c.json(serialize(session) as z.infer<typeof sessionResponseSchema>, 201)
 }) as RouteHandler<typeof createSessionRoute, Env>)
 

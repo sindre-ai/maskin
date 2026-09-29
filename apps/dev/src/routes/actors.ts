@@ -50,6 +50,7 @@ import { isWorkspaceMember } from '../lib/workspace-auth'
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { stopSessionsForActors } from '../services/session-cleanup'
+import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 import { SeedAgentError, provisionWorkspace } from '../services/workspace-bootstrap'
 
@@ -1323,11 +1324,17 @@ app.openapi(runAgentRoute, (async (c) => {
 			if (pausedSession) {
 				await sessionManager.resumeSession(pausedSession.id)
 			} else {
-				await sessionManager.createSession(workspaceId, {
-					actorId: id,
-					actionPrompt: body.action_prompt ?? DEFAULT_RUN_ACTION_PROMPT,
-					createdBy: actorId,
-				})
+				await startSession(
+					{ db, sessionManager },
+					{
+						workspaceId,
+						callerKind: 'rest',
+						actorId: id,
+						actionPrompt: body.action_prompt ?? DEFAULT_RUN_ACTION_PROMPT,
+						createdBy: actorId,
+						await: 'none',
+					},
+				)
 			}
 		} catch (err) {
 			// A plan-cap rejection is not a bad request — flattening it to a 400

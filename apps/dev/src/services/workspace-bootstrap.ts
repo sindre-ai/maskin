@@ -41,6 +41,7 @@ import {
 	resolvePlanTier,
 } from '../lib/workspace-capacity'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
+import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 
 export const DEFAULT_AGENT_IDS = [
@@ -695,21 +696,22 @@ export async function bootstrapDefaultAgents(
 			.where(eq(actors.id, createdBy))
 			.limit(1)
 
-		sessionManager
-			.createSession(workspaceId, {
+		startSession(
+			{ db, sessionManager },
+			{
+				workspaceId,
+				callerKind: 'internal',
 				actorId: chiefId,
 				actionPrompt: buildChiefOfStaffKickoffPrompt(owner ?? {}),
 				createdBy,
-			})
-			.catch((err) =>
-				logger.error(
-					'Failed to kick off Chief of Staff welcome session during workspace bootstrap',
-					{
-						workspaceId,
-						err,
-					},
-				),
-			)
+				await: 'none',
+			},
+		).catch((err) =>
+			logger.error('Failed to kick off Chief of Staff welcome session during workspace bootstrap', {
+				workspaceId,
+				err,
+			}),
+		)
 	}
 }
 
@@ -868,15 +870,19 @@ export async function provisionWorkspace(params: {
 			.where(eq(actors.id, ownerActorId))
 			.limit(1)
 
-		sessionManager
-			.createSession(workspace.id, {
+		startSession(
+			{ db, sessionManager },
+			{
+				workspaceId: workspace.id,
+				callerKind: 'internal',
 				actorId: chiefOfStaffId,
 				actionPrompt: buildChiefOfStaffKickoffPrompt(owner ?? {}),
 				createdBy: ownerActorId,
-			})
-			.catch((err) =>
-				logger.error('Chief of Staff welcome session failed', { workspaceId: workspace.id, err }),
-			)
+				await: 'none',
+			},
+		).catch((err) =>
+			logger.error('Chief of Staff welcome session failed', { workspaceId: workspace.id, err }),
+		)
 	}
 
 	return workspace

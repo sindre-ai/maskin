@@ -12,6 +12,7 @@ import { recordEvent } from '../lib/events/record-event'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
+import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 
 /** Cap on scope-match rows appended to the action prompt so the payload stays bounded. */
@@ -630,24 +631,29 @@ export class TriggerRunner {
 			})
 
 			const prompt = `${trigger.actionPrompt}\n\nTriggering event: ${JSON.stringify(eventForPrompt)}`
-			this.sessionManager
-				.createSession(event.workspace_id, {
+			startSession(
+				{ db: this.db, sessionManager: this.sessionManager },
+				{
+					workspaceId: event.workspace_id,
+					callerKind: 'trigger',
 					actorId: trigger.targetActorId,
 					actionPrompt: prompt,
 					triggerId: trigger.id,
 					triggerType: trigger.type,
 					createdBy: trigger.createdBy,
-				})
-				.then(async (session) => {
+					await: 'none',
+				},
+			)
+				.then(async (handle) => {
 					// Link the object to the active session
 					if (event.entity_id) {
 						await this.db
 							.update(objects)
-							.set({ activeSessionId: session.id, updatedAt: new Date() })
+							.set({ activeSessionId: handle.sessionId, updatedAt: new Date() })
 							.where(eq(objects.id, event.entity_id))
 							.catch((err) =>
 								logger.debug('Could not link object to active session', {
-									sessionId: session.id,
+									sessionId: handle.sessionId,
 									entityId: event.entity_id,
 									error: String(err),
 								}),
@@ -794,15 +800,19 @@ export class TriggerRunner {
 			? `${trigger.actionPrompt}\n\nScope matches: ${JSON.stringify(scopeMatches)}`
 			: trigger.actionPrompt
 
-		this.sessionManager
-			.createSession(trigger.workspaceId, {
+		startSession(
+			{ db: this.db, sessionManager: this.sessionManager },
+			{
+				workspaceId: trigger.workspaceId,
+				callerKind: 'trigger',
 				actorId: trigger.targetActorId,
 				actionPrompt,
 				triggerId: trigger.id,
 				triggerType: trigger.type,
 				createdBy: trigger.createdBy,
-			})
-			.catch((err) => this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name))
+				await: 'none',
+			},
+		).catch((err) => this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name))
 	}
 
 	private async queryScopeMatches(
@@ -851,15 +861,19 @@ export class TriggerRunner {
 				},
 			})
 
-			this.sessionManager
-				.createSession(trigger.workspaceId, {
+			startSession(
+				{ db: this.db, sessionManager: this.sessionManager },
+				{
+					workspaceId: trigger.workspaceId,
+					callerKind: 'trigger',
 					actorId: trigger.targetActorId,
 					actionPrompt: trigger.actionPrompt,
 					triggerId: trigger.id,
 					triggerType: trigger.type,
 					createdBy: trigger.createdBy,
-				})
-				.catch((err) => this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name))
+					await: 'none',
+				},
+			).catch((err) => this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name))
 
 			// Auto-disable after firing
 			await this.db
@@ -1499,19 +1513,25 @@ export class CommentDispatcher {
 		actionPrompt: string
 	}): Promise<boolean> {
 		try {
-			await this.sessionManager.createSession(ctx.workspaceId, {
-				actorId: ctx.actorId,
-				actionPrompt: ctx.actionPrompt,
-				createdBy: ctx.actorId,
-				triggerSource: 'comment_fallback',
-				sourceCommentEventId: ctx.sourceCommentEventId,
-				config: {
-					comment_fallback: {
-						object_id: ctx.entityId,
-						source_comment_event_id: ctx.sourceCommentEventId,
+			await startSession(
+				{ db: this.db, sessionManager: this.sessionManager },
+				{
+					workspaceId: ctx.workspaceId,
+					callerKind: 'trigger',
+					actorId: ctx.actorId,
+					actionPrompt: ctx.actionPrompt,
+					createdBy: ctx.actorId,
+					triggerSource: 'comment_fallback',
+					sourceCommentEventId: ctx.sourceCommentEventId,
+					config: {
+						comment_fallback: {
+							object_id: ctx.entityId,
+							source_comment_event_id: ctx.sourceCommentEventId,
+						},
 					},
+					await: 'none',
 				},
-			})
+			)
 			return true
 		} catch (err) {
 			logger.error('Failed to create comment-fallback session', {
@@ -1643,8 +1663,11 @@ export class CommentDispatcher {
 
 		if (ctx.actor.type !== 'agent') return
 
-		this.sessionManager
-			.createSession(ctx.workspaceId, {
+		startSession(
+			{ db: this.db, sessionManager: this.sessionManager },
+			{
+				workspaceId: ctx.workspaceId,
+				callerKind: 'trigger',
 				actorId: ctx.actor.id,
 				actionPrompt: buildMentionPrompt({
 					objectId: ctx.objectId,
@@ -1664,15 +1687,16 @@ export class CommentDispatcher {
 				triggerSource: 'comment_fallback',
 				sourceCommentEventId: ctx.eventId,
 				createdBy: ctx.commenterId,
-			})
-			.catch((err) =>
-				logger.error('Failed to create session for @mentioned agent', {
-					agentId: ctx.actor.id,
-					objectId: ctx.objectId,
-					notificationId: notification.id,
-					error: String(err),
-				}),
-			)
+				await: 'none',
+			},
+		).catch((err) =>
+			logger.error('Failed to create session for @mentioned agent', {
+				agentId: ctx.actor.id,
+				objectId: ctx.objectId,
+				notificationId: notification.id,
+				error: String(err),
+			}),
+		)
 	}
 
 	private log(event: PgEvent, kind: CommentDispatchCase, resolvedActorId: string): void {
