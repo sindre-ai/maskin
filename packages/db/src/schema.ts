@@ -1561,3 +1561,52 @@ export const googleMeetSpaceIdempotency = pgTable(
 
 export type GoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferSelect
 export type NewGoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferInsert
+
+// ── Trigger cooldowns (S1 of the trigger-engine fix bet) ────────────────────
+//
+// Persisted mirror of trigger-runner.ts's in-memory `triggerFailures` Map
+// (per-trigger exponential backoff) and `workspaceSuppressions` Map
+// (workspace-wide pause). Both existed only in memory before this migration,
+// so every server restart wiped them and freed cooling triggers to fire the
+// moment we deployed — bet #7 of the trigger-engine fix bet.
+//
+// Write path is unconditional (persist FIRST, then update the in-memory
+// cache) so rollback is safe. Read path (loadCooldowns / loadSuppressions at
+// boot) is gated per tech spec §7.1 so a workspace can opt out of the v2
+// deploy-safety net if it wants to.
+
+export const triggerCooldowns = pgTable(
+	'trigger_cooldowns',
+	{
+		triggerId: uuid('trigger_id')
+			.primaryKey()
+			.references(() => triggers.id, { onDelete: 'cascade' }),
+		count: integer('count').notNull().default(0),
+		lastFailedAt: timestamp('last_failed_at', { withTimezone: true }).notNull(),
+		backoffUntil: timestamp('backoff_until', { withTimezone: true }).notNull(),
+		reason: text('reason'),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('trigger_cooldowns_backoff_until_idx').on(t.backoffUntil)],
+)
+
+export type TriggerCooldown = typeof triggerCooldowns.$inferSelect
+export type NewTriggerCooldown = typeof triggerCooldowns.$inferInsert
+
+export const workspaceSuppressions = pgTable(
+	'workspace_suppressions',
+	{
+		workspaceId: uuid('workspace_id')
+			.primaryKey()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		suppressedUntil: timestamp('suppressed_until', { withTimezone: true }).notNull(),
+		reason: text('reason').notNull(),
+		metadata: jsonb('metadata'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('workspace_suppressions_until_idx').on(t.suppressedUntil)],
+)
+
+export type WorkspaceSuppressionRow = typeof workspaceSuppressions.$inferSelect
+export type NewWorkspaceSuppressionRow = typeof workspaceSuppressions.$inferInsert
