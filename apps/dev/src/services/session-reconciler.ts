@@ -1,9 +1,9 @@
 import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
-import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
-import { recordEvent } from '../lib/events/record-event'
+import { and, eq, inArray, isNotNull } from 'drizzle-orm'
 import { logger } from '../lib/logger'
+import { type SettleDependencies, settleSession } from './session-lifecycle'
 
 /**
  * Statuses where the session is supposed to be actively running on the
@@ -64,10 +64,22 @@ export class SessionReconciler {
 	 * panel; a user watching the live log stream of a session whose sandbox was
 	 * lost otherwise sees it stop mid-sentence with no explanation.
 	 */
+	private readonly settleDeps: SettleDependencies
+
 	constructor(
 		private db: Database,
 		private appendSystemLog?: (sessionId: string, content: string) => Promise<void>,
-	) {}
+	) {
+		// Reconciler-owned sessions never have a live sandbox by definition (their
+		// agent-server restarted and lost them); stop is always a no-op. Push is
+		// skipped by settleSession's classification guard for `sandbox_crash`
+		// anyway — the check-in is here so the intent is legible.
+		this.settleDeps = {
+			db: this.db,
+			stopSandbox: async () => 'skipped-none-live',
+			pushAgentFiles: async () => 'skipped-no-workspace',
+		}
+	}
 
 	async reconcile(input: ReconcileInput): Promise<ReconcileResult> {
 		const sandboxSet = new Set(input.sandboxes)
@@ -109,7 +121,7 @@ export class SessionReconciler {
 		const markedFailed: string[] = []
 		for (const row of lost) {
 			try {
-				await this.markFailed(row.id, row.workspaceId, row.actorId)
+				await this.markFailed(row.id)
 				markedFailed.push(row.id)
 			} catch (err) {
 				logger.error('Failed to mark session as agent_server_lost', {
@@ -130,32 +142,28 @@ export class SessionReconciler {
 		return { markedFailed, orphanSandboxes }
 	}
 
-	private async markFailed(sessionId: string, workspaceId: string, actorId: string): Promise<void> {
-		const now = new Date()
-		const [updated] = await this.db
-			.update(sessions)
-			.set({
-				status: 'failed',
-				result: { exit_code: null, failure_reason: FAILURE_REASON },
-				completedAt: now,
-				updatedAt: now,
-				currentActivity: null,
-			})
-			.where(
-				and(eq(sessions.id, sessionId), sql`${sessions.status} NOT IN ('completed', 'failed')`),
-			)
-			.returning({ id: sessions.id })
+	private async markFailed(sessionId: string): Promise<void> {
+		// settleSession is the only writer of `sessions.status` for terminal
+		// values. It runs the conditional UPDATE (CAS on non-terminal), inserts
+		// the `session_failed` audit row, and returns `alreadySettled: true` on
+		// a raced write — same behaviour as the previous inline pattern, minus
+		// the duplicate write path the guard test now forbids.
+		const settled = await settleSession(
+			sessionId,
+			{
+				kind: 'fail',
+				classification: 'sandbox_crash',
+				source: 'reconciler',
+				reason: FAILURE_REASON.human_message,
+				exitCode: 0,
+				failureReason: FAILURE_REASON,
+			},
+			this.settleDeps,
+		)
 
-		if (!updated) return
-
-		await recordEvent(this.db, {
-			workspaceId,
-			actorId,
-			action: 'session_failed',
-			entityType: 'session',
-			entityId: sessionId,
-			data: { exit_code: null, failure_reason: FAILURE_REASON },
-		})
+		// A CAS miss (`alreadySettled`) means another writer beat us to it —
+		// skip the system-log append, matching the pre-migration return semantics.
+		if (settled.alreadySettled) return
 
 		if (this.appendSystemLog) {
 			try {

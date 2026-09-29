@@ -3362,6 +3362,7 @@ describe('SessionManager', () => {
 				[], // 3. expiredPaused
 				[], // 4. stuckPending
 				[stuckSession], // 5. stuckStarting
+				[stuckSession], // 5b. settleSession's own SELECT for the stuck row
 				[{ settings: {} }], // 6. drainQueue > workspace
 				[{ count: 0 }], // 7. drainQueue > count
 				[], // 8. drainQueue > nextQueued (empty = break)
