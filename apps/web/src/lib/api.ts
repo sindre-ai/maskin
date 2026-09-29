@@ -782,6 +782,21 @@ export const api = {
 		get: () => request<{ flags: Record<string, boolean> }>('/feature-flags'),
 	},
 
+	voiceSessions: {
+		// Mints an ephemeral OpenAI Realtime session for the caller-agent pair.
+		// Task 1 (voice backend) owns the route; response shape is agreed on the
+		// task-1 handoff comment. Task 2 (this file) is the sole client, so a
+		// divergence in the final Task 1 shape is a coordination bug, not an
+		// external-contract change.
+		create: (workspaceId: string, body: { agent_actor_id: string }) =>
+			request<{
+				voice_session_id: string
+				client_secret: string
+				expires_at: string
+				ws_url: string
+			}>('/voice-sessions', { method: 'POST', body, workspaceId }),
+	},
+
 	userDisplaySettings: {
 		list: (workspaceId: string) =>
 			request<UserDisplaySettingsListResponse>('/user-display-settings', { workspaceId }),
