@@ -683,6 +683,49 @@ export const agentSkills = pgTable(
 export type AgentSkill = typeof agentSkills.$inferSelect
 export type NewAgentSkill = typeof agentSkills.$inferInsert
 
+// ── Voice Sessions ──────────────────────────────────────────────────────────
+//
+// One row per 1:1 voice call between a workspace human and a voice-enabled
+// agent. `status` moves pending → active → ended; the partial unique index
+// (`voice_sessions_active_per_human_uniq`) is the concurrency guard for "one
+// live call per human" and produces the 409 branch on POST /api/voice-sessions
+// without an application-level TOCTOU shim. The audio/token/cost columns are
+// populated by the session-end pipeline (Task 4); this table's writers here
+// only fill the routing + auth fields at mint.
+export const voiceSessions = pgTable('voice_sessions', {
+	id: uuid('id').defaultRandom().primaryKey(),
+	workspaceId: uuid('workspace_id')
+		.notNull()
+		.references(() => workspaces.id, { onDelete: 'cascade' }),
+	agentActorId: uuid('agent_actor_id')
+		.notNull()
+		.references(() => actors.id),
+	humanActorId: uuid('human_actor_id')
+		.notNull()
+		.references(() => actors.id),
+	conversationId: uuid('conversation_id').references(() => conversations.id, {
+		onDelete: 'set null',
+	}),
+	status: text('status').notNull(),
+	vendor: text('vendor').notNull().default('openai_realtime'),
+	vendorSessionId: text('vendor_session_id'),
+	model: text('model'),
+	transcriptStorageKey: text('transcript_storage_key'),
+	inputAudioSeconds: integer('input_audio_seconds'),
+	outputAudioSeconds: integer('output_audio_seconds'),
+	inputTokens: integer('input_tokens'),
+	outputTokens: integer('output_tokens'),
+	totalCostUsd: numeric('total_cost_usd', { precision: 12, scale: 6 }),
+	endedReason: text('ended_reason'),
+	startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+	endedAt: timestamp('ended_at', { withTimezone: true }),
+	timeoutAt: timestamp('timeout_at', { withTimezone: true }).notNull(),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export type VoiceSession = typeof voiceSessions.$inferSelect
+export type NewVoiceSession = typeof voiceSessions.$inferInsert
+
 // ── Imports ───────────────────────────────────────────────────────────
 
 export const imports = pgTable(

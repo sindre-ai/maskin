@@ -20,6 +20,7 @@ import {
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
 import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
+import { assertVoiceOperatorEnv } from './lib/voice-boot-guard'
 import { AgentStorageManager } from './services/agent-storage'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
@@ -35,6 +36,11 @@ import { SessionManager } from './services/session-manager'
 import { CommentDispatcher, TriggerRunner } from './services/trigger-runner'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
+
+// Voice v1: fail fast when the flag is enabled for testers but the operator
+// OpenAI key is unset. Runs before any HTTP surface binds so a mis-configured
+// deploy is caught at boot rather than 500-ing the first tester click.
+assertVoiceOperatorEnv()
 
 // Database connection — POSTGRES_URL takes priority over DATABASE_URL
 const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
