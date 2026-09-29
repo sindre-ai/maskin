@@ -31,6 +31,7 @@ import { OrphanThreadDetector } from './services/orphan-thread-detector'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionDispatcher } from './services/session-dispatcher'
+import { configureSessionLifecycle } from './services/session-lifecycle'
 import { SessionManager } from './services/session-manager'
 import { CommentDispatcher, TriggerRunner } from './services/trigger-runner'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
@@ -135,6 +136,11 @@ sessionManager.setBrowserSidecarBuildContext(
 	path.resolve(import.meta.dirname ?? __dirname, '../../../docker/browser-sidecar'),
 )
 runtimeTelemetry.startGaugeLoop(() => sessionManager.getConcurrencyByAgentServer())
+
+// The one entry point for starting a session — every wrapper (chat, trigger,
+// REST, MCP, onboarding, self-spawn) routes through startSession(). See
+// apps/dev/src/services/session-lifecycle.ts + tech spec §14.
+configureSessionLifecycle({ db, sessionManager })
 
 const port = Number(process.env.PORT) || 3000
 

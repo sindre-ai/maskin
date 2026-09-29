@@ -12,6 +12,7 @@ import type { LLMTool } from '../lib/llm/adapter'
 import { createLLMAdapter } from '../lib/llm/index'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
+import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 
 // Cap on consecutive agent-authored messages at the tail of a conversation —
@@ -350,8 +351,10 @@ async function spawnOrJoinConversationSession(params: {
 	} = params
 
 	try {
-		await sessionManager.createSession(workspaceId, {
+		await startSession({
+			workspaceId,
 			actorId: agentId,
+			callerKind: 'chat',
 			actionPrompt: buildConversationReplyPrompt({
 				conversationId,
 				conversationHistory,
@@ -366,6 +369,7 @@ async function spawnOrJoinConversationSession(params: {
 				conversation: { conversation_id: conversationId, message_id: messageId },
 			},
 			createdBy: message.actorId,
+			await: 'first-response',
 		})
 		// The seed prompt above inlines recent history up to and including this
 		// message — any turn still buffered for this pair from a previous, dead

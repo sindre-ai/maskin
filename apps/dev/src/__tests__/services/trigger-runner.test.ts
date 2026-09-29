@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../../lib/llm-routing'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import {
 	TriggerRunner,
 	calculateBackoffUntil,
@@ -25,6 +26,7 @@ describe('TriggerRunner', () => {
 		sessionManager = createMockSessionManager()
 		const ctx = createTestContext()
 		mockResults = ctx.mockResults
+		configureSessionLifecycle({ db: ctx.db, sessionManager })
 		runner = new TriggerRunner(ctx.db, bridge, sessionManager)
 		;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: 'session-1',
@@ -1052,6 +1054,7 @@ describe('TriggerRunner backoff', () => {
 		sessionManager = createMockSessionManager()
 		const ctx = createTestContext()
 		mockResults = ctx.mockResults
+		configureSessionLifecycle({ db: ctx.db, sessionManager })
 		runner = new TriggerRunner(ctx.db, bridge, sessionManager)
 		;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: 'session-1',

@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
 import { trackCommentResponderResolved } from '../../lib/analytics/comment-responder-events'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import {
 	CommentDispatcher,
 	normalizeMentionsList,
@@ -39,6 +40,7 @@ describe('CommentDispatcher', () => {
 		const ctx = createTestContext()
 		mockResults = ctx.mockResults
 		calls = ctx.calls
+		configureSessionLifecycle({ db: ctx.db, sessionManager })
 		dispatcher = new CommentDispatcher(ctx.db, bridge, sessionManager)
 		;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: 'session-1',
