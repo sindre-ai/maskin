@@ -21,6 +21,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import {
+	AGENT_PUSH_DIRECTORIES,
 	type SessionResult,
 	type SessionResultFailureReason,
 	githubOwnerLoginToEnvKey,
@@ -113,6 +114,14 @@ import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './c
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
+import {
+	type PushedAgentFilesOutcome,
+	type SessionSettleRow,
+	type SettleDependencies,
+	type SettleOutcome,
+	type StoppedSandboxOutcome,
+	settleSession,
+} from './session-lifecycle'
 import {
 	type SessionUsage,
 	extractSessionUsage,
@@ -813,23 +822,31 @@ export class SessionManager extends EventEmitter {
 				})
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err)
-				await this.db
-					.update(sessions)
-					.set({
-						status: 'failed',
-						result: { error: `Enqueue failed: ${message}` },
-						completedAt: new Date(),
-						updatedAt: new Date(),
+				// settleSession is the only writer of terminal sessions.status. Enqueue
+				// failed before the session ever reached an agent-server, so there's
+				// nothing to stop and no /agent workspace to push — skip both. Classify
+				// as dispatch_failure so the settle-side event row lines up with the
+				// dispatch-queue's own permanent-failure path. Guarded so a settle
+				// failure does not mask the original enqueue error rethrown below.
+				try {
+					await settleSession(
+						sessionId,
+						{
+							kind: 'fail',
+							classification: 'dispatch_failure',
+							source: 'dispatch-queue',
+							reason: `Enqueue failed: ${message}`,
+							exitCode: 0,
+						},
+						this.buildSettleDeps({ skipStop: true, skipPush: true }),
+					)
+				} catch (settleErr) {
+					logger.warn('settleSession failed while surfacing enqueue failure', {
+						sessionId,
+						error: String(settleErr),
+						enqueueError: message,
 					})
-					.where(eq(sessions.id, sessionId))
-				await recordEvent(this.db, {
-					workspaceId: session.workspaceId,
-					actorId: session.actorId,
-					action: 'session_failed',
-					entityType: 'session',
-					entityId: sessionId,
-					data: { error: `Enqueue failed: ${message}` },
-				})
+				}
 				throw err
 			}
 			return
@@ -986,30 +1003,33 @@ export class SessionManager extends EventEmitter {
 			// internal message. Everything else keeps today's shape.
 			const launchFailureReason =
 				err instanceof LlmCredentialsUnavailableError ? err.toFailureReason() : null
-			await this.db
-				.update(sessions)
-				.set({
-					status: 'failed',
-					result: {
-						error: launchFailureReason?.human_message ?? message,
-						...(launchFailureReason ? { failure_reason: launchFailureReason } : {}),
+			// settleSession is the only writer of terminal sessions.status. The
+			// container never came up, so there's nothing to stop and no /agent
+			// workspace to push — startup_stalled is the classification the
+			// settle-side spec pairs with a launch that never reached running.
+			// Wrapped in its own try/catch so a settle failure (e.g. session
+			// row raced away by another writer) does not mask the underlying
+			// launch error the caller expects to see rethrown below.
+			try {
+				await settleSession(
+					sessionId,
+					{
+						kind: 'fail',
+						classification: 'startup_stalled',
+						source: 'sandbox-exit',
+						reason: launchFailureReason?.human_message ?? message,
+						exitCode: 0,
+						...(launchFailureReason ? { failureReason: launchFailureReason } : {}),
 					},
-					completedAt: new Date(),
-					updatedAt: new Date(),
+					this.buildSettleDeps({ skipStop: true, skipPush: true }),
+				)
+			} catch (settleErr) {
+				logger.warn('settleSession failed while surfacing launch failure', {
+					sessionId,
+					error: String(settleErr),
+					launchError: message,
 				})
-				.where(eq(sessions.id, sessionId))
-
-			await recordEvent(this.db, {
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				action: 'session_failed',
-				entityType: 'session',
-				entityId: sessionId,
-				data: {
-					error: message,
-					...(launchFailureReason ? { reason_code: launchFailureReason.reason_code } : {}),
-				},
-			})
+			}
 
 			if (launchFailureReason) {
 				await this.insertSystemLog(sessionId, launchFailureReason.human_message).catch((logErr) =>
@@ -1140,7 +1160,10 @@ export class SessionManager extends EventEmitter {
 			}
 			const client = new AgentServerClient({ server: serverRow })
 			try {
-				await client.stopSession(sessionId)
+				// User-initiated stop from `SessionManager.stopSession` — settle
+				// runs later via `markRemoteSessionComplete`, so this call just
+				// tears the sandbox down and reports the outcome (unused here).
+				await client.stopSession(sessionId, { reason: 'stop', source: 'user-stop' })
 			} catch (err) {
 				// Sanitize before rethrowing — the route handler surfaces this
 				// message verbatim to the API caller (apps/dev/src/routes/sessions.ts),
@@ -1233,6 +1256,146 @@ export class SessionManager extends EventEmitter {
 		logger.info('Workspace snapshot saved', { sessionId })
 	}
 
+	/**
+	 * Build the SettleDependencies wired to this manager's local Docker path
+	 * and the agent-server RPC path — settleSession's post-commit side-effects
+	 * flow through these callbacks. Callers pass `skipStop` / `skipPush` when
+	 * they already handled the sandbox lifecycle themselves (e.g. pauseSession
+	 * stopped and removed the container as part of the snapshot flow, so a
+	 * redundant stop-callback would 404 on a container that's already gone).
+	 */
+	private buildSettleDeps(
+		opts: { skipStop?: boolean; skipPush?: boolean } = {},
+	): SettleDependencies {
+		return {
+			db: this.db,
+			stopSandbox: opts.skipStop
+				? async () => 'skipped-none-live'
+				: (row, outcome) => this.settleStopSandbox(row, outcome),
+			pushAgentFiles: opts.skipPush
+				? async () => 'skipped-no-workspace'
+				: (row, outcome) => this.settlePushAgentFiles(row, outcome),
+		}
+	}
+
+	/**
+	 * settleSession's stopSandbox callback. Routes the terminal-side sandbox
+	 * teardown by host: remote sessions hit the agent-server /stop RPC (the
+	 * one whose body carries `{ reason, source }` and whose response returns
+	 * `{ stopped }`), local sessions call ContainerManager directly. Both
+	 * paths are idempotent and best-effort — the return value classifies
+	 * whether a live sandbox was actually stopped, was already gone, or the
+	 * stop attempt failed outright.
+	 */
+	private async settleStopSandbox(
+		row: SessionSettleRow,
+		outcome: SettleOutcome,
+	): Promise<StoppedSandboxOutcome> {
+		if (row.agentServerId) {
+			try {
+				const [serverRow] = await this.db
+					.select({
+						id: agentServers.id,
+						url: agentServers.url,
+						secret: agentServers.secret,
+					})
+					.from(agentServers)
+					.where(eq(agentServers.id, row.agentServerId))
+					.limit(1)
+				if (!serverRow) return 'skipped-none-live'
+				const client = new AgentServerClient({ server: serverRow })
+				const resp = await client.stopSession(row.id, {
+					reason: outcome.kind,
+					source: outcome.source,
+				})
+				if (resp.stopped === 'sandbox-not-found' || resp.stopped === 'sandbox-already-gone') {
+					return 'skipped-none-live'
+				}
+				return 'remote'
+			} catch (err) {
+				logger.warn('settleSession stopSandbox (remote) failed', {
+					sessionId: row.id,
+					source: outcome.source,
+					error: String(err),
+				})
+				return 'skipped-error'
+			}
+		}
+		if (row.containerId) {
+			try {
+				this.containers.detachStdin(row.id)
+				await this.containers.stop(row.containerId)
+				return 'local'
+			} catch (err) {
+				logger.warn('settleSession stopSandbox (local) failed', {
+					sessionId: row.id,
+					containerId: row.containerId,
+					error: String(err),
+				})
+				return 'skipped-error'
+			}
+		}
+		return 'skipped-none-live'
+	}
+
+	/**
+	 * settleSession's pushAgentFiles callback. Local sessions read
+	 * `learnings/` and `memory/` from the tempDir this manager staged at
+	 * session start; remote sessions call the agent-server /push-agent-files
+	 * RPC and hand it the workspace-scoped `keyPrefix` so the write lands at
+	 * the exact key the concurrent bet's boot-side memory staging pulls from.
+	 */
+	private async settlePushAgentFiles(
+		row: SessionSettleRow,
+		outcome: SettleOutcome,
+	): Promise<PushedAgentFilesOutcome> {
+		if (row.agentServerId) {
+			try {
+				const [serverRow] = await this.db
+					.select({
+						id: agentServers.id,
+						url: agentServers.url,
+						secret: agentServers.secret,
+					})
+					.from(agentServers)
+					.where(eq(agentServers.id, row.agentServerId))
+					.limit(1)
+				if (!serverRow) return 'skipped-no-workspace'
+				const client = new AgentServerClient({ server: serverRow })
+				const resp = await client.pushAgentFiles(row.id, {
+					directories: [...AGENT_PUSH_DIRECTORIES],
+					keyPrefix: `agents/${row.workspaceId}/${row.actorId}`,
+				})
+				return resp.errors.length > 0 ? 'failed' : 'ok'
+			} catch (err) {
+				logger.warn('settleSession pushAgentFiles (remote) failed', {
+					sessionId: row.id,
+					classification: outcome.classification,
+					error: String(err),
+				})
+				return 'failed'
+			}
+		}
+		const sessionData = this.activeSessions.get(row.id)
+		if (!sessionData) return 'skipped-no-workspace'
+		try {
+			await this.agentStorage.pushAgentFiles(
+				row.actorId,
+				row.workspaceId,
+				row.id,
+				sessionData.tempDir,
+			)
+			return 'ok'
+		} catch (err) {
+			logger.warn('settleSession pushAgentFiles (local) failed', {
+				sessionId: row.id,
+				classification: outcome.classification,
+				error: String(err),
+			})
+			return 'failed'
+		}
+	}
+
 	async pauseSession(sessionId: string): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -1279,16 +1442,20 @@ export class SessionManager extends EventEmitter {
 			await this.containers.stop(session.containerId)
 			await this.containers.remove(session.containerId)
 
-			await this.db
-				.update(sessions)
-				.set({
-					status: 'paused',
-					snapshotPath: snapshotKey,
-					containerId: null,
-					currentActivity: null,
-					updatedAt: new Date(),
-				})
-				.where(eq(sessions.id, sessionId))
+			// settleSession is the only writer of terminal sessions.status. The
+			// container was already stopped and removed above, and a paused
+			// session's /agent files are captured by the snapshot tar rather than
+			// pushed to the per-agent prefix — skip both side-effects.
+			await settleSession(
+				sessionId,
+				{
+					kind: 'pause',
+					classification: 'idle_timeout',
+					source: 'idle-watcher',
+					snapshotKey,
+				},
+				this.buildSettleDeps({ skipStop: true, skipPush: true }),
+			)
 
 			await this.insertSystemLog(sessionId, 'Session paused and snapshot saved')
 
@@ -1355,26 +1522,29 @@ export class SessionManager extends EventEmitter {
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 
-		// CAS on non-terminal status: a session that already completed (e.g. the
-		// watchdog's graceful idle-chat close racing a failed writeInput) must
-		// not be retroactively flipped to failed.
-		const [flipped] = await this.db
+		// settleSession is the only writer of terminal sessions.status. The
+		// container is already gone by definition on this path (that's why we
+		// are here) — skip the stop callback; push is skipped too since a
+		// failed sandbox may have left the on-disk tempDir half-written.
+		const settled = await settleSession(
+			sessionId,
+			{
+				kind: 'fail',
+				classification: 'sandbox_crash',
+				source: 'reaper',
+				reason: 'Container disappeared before pause could complete',
+				exitCode: 0,
+			},
+			this.buildSettleDeps({ skipStop: true, skipPush: true }),
+		)
+		if (settled.alreadySettled) return
+		// containerId was already null-eligible on failure, but settleSession
+		// doesn't touch it for kind='fail' — clear it explicitly so the row
+		// no longer points at a container Docker has already reaped.
+		await this.db
 			.update(sessions)
-			.set({
-				status: 'failed',
-				containerId: null,
-				completedAt: new Date(),
-				currentActivity: null,
-				updatedAt: new Date(),
-			})
-			.where(
-				and(
-					eq(sessions.id, sessionId),
-					notInArray(sessions.status, ['completed', 'failed', 'timeout']),
-				),
-			)
-			.returning({ id: sessions.id })
-		if (!flipped) return
+			.set({ containerId: null, updatedAt: new Date() })
+			.where(eq(sessions.id, sessionId))
 
 		await this.insertSystemLog(
 			sessionId,
@@ -1505,24 +1675,31 @@ export class SessionManager extends EventEmitter {
 			logger.info(`Session resumed: ${sessionId}`, { containerId })
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err)
-			await this.db
-				.update(sessions)
-				.set({
-					status: 'failed',
-					result: { error: message },
-					completedAt: new Date(),
-					updatedAt: new Date(),
+			// settleSession is the only writer of terminal sessions.status. Resume
+			// never got the container running, so there is nothing to stop and
+			// the /agent workspace was already snapshotted at pause time — skip
+			// both callbacks. startup_stalled matches the settle-side spec's
+			// name for a launch that never reached running. Guarded so a settle
+			// failure does not mask the original resume error rethrown below.
+			try {
+				await settleSession(
+					sessionId,
+					{
+						kind: 'fail',
+						classification: 'startup_stalled',
+						source: 'sandbox-exit',
+						reason: message,
+						exitCode: 0,
+					},
+					this.buildSettleDeps({ skipStop: true, skipPush: true }),
+				)
+			} catch (settleErr) {
+				logger.warn('settleSession failed while surfacing resume failure', {
+					sessionId,
+					error: String(settleErr),
+					resumeError: message,
 				})
-				.where(eq(sessions.id, sessionId))
-
-			await recordEvent(this.db, {
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				action: 'session_failed',
-				entityType: 'session',
-				entityId: sessionId,
-				data: { error: message },
-			})
+			}
 
 			this.telemetry.recordSessionEnded({
 				sessionId,
@@ -3610,63 +3787,31 @@ export class SessionManager extends EventEmitter {
 		// closes it as `timeout` so the chat UI surfaces the interruption.
 		if (await this.hasUnansweredConversationTurn(session)) return
 		const now = new Date()
-		const [updated] = await this.db
-			.update(sessions)
-			.set({
-				status: 'completed',
-				result: { summary: 'Conversation went idle — session closed' },
-				completedAt: now,
-				currentActivity: null,
-				updatedAt: now,
-			})
-			.where(and(eq(sessions.id, session.id), eq(sessions.status, 'running')))
-			.returning()
-		if (!updated) return
+		// settleSession is the only writer of terminal sessions.status. Route
+		// the flip through it AND fold the previously-inline pushAgentFiles /
+		// stopSandbox into its post-commit callbacks per §3.1 (folded from
+		// what used to be a mid-function inline `pushAgentFiles` at :3552 and
+		// a per-host `client.stopSession` / `containers.stop` branch below).
+		const settled = await settleSession(
+			session.id,
+			{
+				kind: 'complete',
+				classification: 'agent_completed',
+				source: 'idle-watcher',
+				resultText: 'Conversation went idle — session closed',
+			},
+			this.buildSettleDeps(),
+		)
+		if (settled.alreadySettled) return
 
 		logger.info(`Completing idle chat session: ${session.id}`, {
 			conversationId: session.conversationId,
 		})
 
-		// Push learnings before destroying the container (local path only — a
-		// remote session's workspace is pushed from the agent-server side).
-		const sessionData = this.activeSessions.get(session.id)
-		if (sessionData) {
-			await this.agentStorage
-				.pushAgentFiles(session.actorId, session.workspaceId, session.id, sessionData.tempDir, {
-					actionPrompt: session.actionPrompt,
-				})
-				.catch((err) =>
-					logger.warn('Failed to push learnings on idle chat close', {
-						sessionId: session.id,
-						error: String(err),
-					}),
-				)
-		}
-
-		if (session.agentServerId) {
-			const [serverRow] = await this.db
-				.select({ id: agentServers.id, url: agentServers.url, secret: agentServers.secret })
-				.from(agentServers)
-				.where(eq(agentServers.id, session.agentServerId))
-				.limit(1)
-			if (serverRow) {
-				const client = new AgentServerClient({ server: serverRow })
-				await client.stopSession(session.id).catch((err) =>
-					logger.warn('Failed to stop remote sandbox for idle chat session', {
-						sessionId: session.id,
-						error: String(err),
-					}),
-				)
-			}
-		} else if (session.containerId) {
-			this.containers.detachStdin(session.id)
-			await this.containers.stop(session.containerId).catch((err) =>
-				logger.warn('Failed to stop idle chat container', {
-					sessionId: session.id,
-					containerId: session.containerId,
-					error: String(err),
-				}),
-			)
+		// Local container-remove is not covered by settleSession's stopSandbox
+		// callback (which only stops the sandbox — remove is a docker-specific
+		// finalisation step). Keep it here so the container row does not linger.
+		if (!session.agentServerId && session.containerId) {
 			await this.containers.remove(session.containerId).catch((err) =>
 				logger.warn('Failed to remove idle chat container', {
 					sessionId: session.id,
@@ -3690,14 +3835,9 @@ export class SessionManager extends EventEmitter {
 				)
 		}
 
-		await recordEvent(this.db, {
-			workspaceId: session.workspaceId,
-			actorId: session.actorId,
-			action: 'session_completed',
-			entityType: 'session',
-			entityId: session.id,
-			data: { reason: 'idle_conversation' },
-		})
+		// session_completed audit event is emitted by settleSession above
+		// (buildEventData records `classification` + `source`), so no extra
+		// recordEvent call here.
 
 		this.telemetry.recordSessionEnded({
 			sessionId: session.id,
@@ -3759,49 +3899,46 @@ export class SessionManager extends EventEmitter {
 			}
 			logger.warn(`Session timed out: ${session.id}`)
 
-			// Push learnings before destroying container
-			const sessionData = this.activeSessions.get(session.id)
-			if (sessionData) {
-				await this.agentStorage
-					.pushAgentFiles(session.actorId, session.workspaceId, session.id, sessionData.tempDir, {
-						actionPrompt: session.actionPrompt,
-					})
-					.catch((err) =>
-						logger.warn('Failed to push learnings on timeout', {
-							sessionId: session.id,
-							error: String(err),
-						}),
-					)
-			}
+			// A timeout that ran real work still spent real tokens — persist
+			// whatever this segment accrued before the terminal row lands, so
+			// the session record can be triaged. Without this the totalCostUsd
+			// / inputTokens / outputTokens columns stay NULL forever and a
+			// timeout that produced output is indistinguishable from one that
+			// produced nothing. Additive so a prior pause's segment survives.
+			// (Same fix PR #1722 landed on this line — kept here because it
+			// reads the in-memory stdout tail that settleSession's own scope
+			// can't see; settleSession's additive-overlay handles the delta
+			// once accumulateSessionUsage has written it.)
+			await this.accumulateSessionUsage(session.id)
 
-			if (session.containerId) {
-				this.containers.detachStdin(session.id)
-				await this.containers.stop(session.containerId).catch((err) =>
-					logger.warn('Failed to stop timed-out container', {
-						sessionId: session.id,
-						containerId: session.containerId,
-						error: String(err),
-					}),
-				)
-				await this.containers.remove(session.containerId).catch((err) =>
+			// settleSession is the only writer of terminal sessions.status. Its
+			// stopSandbox / pushAgentFiles callbacks fold what used to be the
+			// inline `containers.stop` and `agentStorage.pushAgentFiles` calls
+			// (§3.1 fold-in for :3552 and :3683). Local container `.remove()`
+			// runs after the settle so the container row does not linger —
+			// settleSession's stopSandbox callback only stops, doesn't remove.
+			const containerIdToRemove =
+				!session.agentServerId && session.containerId ? session.containerId : null
+			await settleSession(
+				session.id,
+				{
+					kind: 'timeout',
+					classification: 'wall_timeout',
+					source: 'timeout-watchdog',
+					reason: 'Session timed out',
+					exitCode: 0,
+				},
+				this.buildSettleDeps(),
+			)
+			if (containerIdToRemove) {
+				await this.containers.remove(containerIdToRemove).catch((err) =>
 					logger.warn('Failed to remove timed-out container', {
 						sessionId: session.id,
-						containerId: session.containerId,
+						containerId: containerIdToRemove,
 						error: String(err),
 					}),
 				)
 			}
-
-			await this.db
-				.update(sessions)
-				.set({
-					status: 'timeout',
-					result: { error: 'Session timed out' },
-					completedAt: now,
-					currentActivity: null,
-					updatedAt: now,
-				})
-				.where(eq(sessions.id, session.id))
 
 			// Only sync the agent to idle if this was its last active session.
 			if (!(await this.hasOtherActiveSessions(session.actorId, session.id))) {
@@ -3816,15 +3953,6 @@ export class SessionManager extends EventEmitter {
 						}),
 					)
 			}
-
-			await recordEvent(this.db, {
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				action: 'session_timeout',
-				entityType: 'session',
-				entityId: session.id,
-				data: {},
-			})
 
 			this.telemetry.recordSessionEnded({
 				sessionId: session.id,
@@ -3892,16 +4020,28 @@ export class SessionManager extends EventEmitter {
 				)
 				continue
 			}
-			await this.db
-				.update(sessions)
-				.set({
-					status: 'timeout',
-					result: { error: 'Session timed out' },
-					completedAt: now,
-					currentActivity: null,
-					updatedAt: now,
-				})
-				.where(eq(sessions.id, session.id))
+			// Same rationale as the primary reaper above: preserve accumulated
+			// token/cost columns so the row is legible to a human or agent
+			// triaging why the session ended. (Kept from PR #1722's fix on
+			// this line — the settle-side additive-overlay is authoritative
+			// for the delta this call writes.)
+			await this.accumulateSessionUsage(session.id)
+			// settleSession is the only writer of terminal sessions.status.
+			// classification='reaper' + source='reaper' identifies the "no
+			// timeoutAt" branch and satisfies §8's rule that every timeout
+			// path emits session_timeout — the direct write above silently
+			// skipped the event entirely.
+			await settleSession(
+				session.id,
+				{
+					kind: 'timeout',
+					classification: 'reaper',
+					source: 'reaper',
+					reason: 'Session timed out',
+					exitCode: 0,
+				},
+				this.buildSettleDeps(),
+			)
 			await this.drainQueue(session.workspaceId).catch((err) =>
 				logger.error('Failed to drain queue after stuck agent-server session reap', {
 					error: String(err),
@@ -4070,9 +4210,28 @@ export class SessionManager extends EventEmitter {
 					}),
 				)
 			}
+			// settleSession is the only writer of terminal sessions.status. The
+			// row is already 'paused' — settleSession's `wasAlreadyTerminal`
+			// gate (only 4 truly-terminal statuses) lets a paused row flip
+			// here. No stopSandbox / pushAgentFiles: the container was gone
+			// at pause time and /agent lives in the snapshot we just deleted.
+			await settleSession(
+				session.id,
+				{
+					kind: 'complete',
+					classification: 'agent_completed',
+					source: 'reaper',
+					reason: 'Paused session archived after retention window',
+					exitCode: 0,
+				},
+				this.buildSettleDeps({ skipStop: true, skipPush: true }),
+			)
+			// settleSession doesn't touch snapshotPath on kind='complete', so
+			// clear it explicitly to match the previous archival semantics —
+			// the S3 object is already gone by the delete() above.
 			await this.db
 				.update(sessions)
-				.set({ status: 'completed', snapshotPath: null, updatedAt: now })
+				.set({ snapshotPath: null, updatedAt: now })
 				.where(eq(sessions.id, session.id))
 
 			await this.clearActiveSession(session.id)
@@ -4150,31 +4309,23 @@ export class SessionManager extends EventEmitter {
 				verbatim_output: verbatim,
 			}
 
-			await this.db
-				.update(sessions)
-				.set({
-					status: 'failed',
-					result: {
-						error: 'Session stuck in starting state',
-						failure_reason: stalledFailureReason,
-					},
-					completedAt: new Date(),
-					updatedAt: new Date(),
-				})
-				.where(eq(sessions.id, session.id))
-
-			await recordEvent(this.db, {
-				workspaceId: session.workspaceId,
-				actorId: session.actorId,
-				action: 'session_failed',
-				entityType: 'session',
-				entityId: session.id,
-				data: {
-					error: 'Session stuck in starting state',
-					reason_code: 'startup_stalled',
-					diagnosis: verbatim,
+			// settleSession is the only writer of terminal sessions.status.
+			// classification='startup_stalled' — settleSession's push guard
+			// already skips pushAgentFiles for this classification (nothing
+			// was ever written to /agent), and skipStop is redundant here
+			// since the session never reached a live runtime.
+			await settleSession(
+				session.id,
+				{
+					kind: 'fail',
+					classification: 'startup_stalled',
+					source: 'reaper',
+					reason: 'Session stuck in starting state',
+					exitCode: 0,
+					failureReason: stalledFailureReason,
 				},
-			})
+				this.buildSettleDeps({ skipStop: true, skipPush: true }),
+			)
 
 			await this.insertSystemLog(session.id, stalledFailureReason.human_message).catch((err) =>
 				logger.warn('Failed to append stalled-launch log line', {

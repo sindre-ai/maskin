@@ -151,7 +151,19 @@ const TERMINAL_STATUS_BY_KIND: Record<TerminalOutcomeKind, FinalStatus> = {
 	pause: 'paused',
 }
 
-const TERMINAL_STATUS_SET: ReadonlySet<string> = new Set(Object.values(TERMINAL_STATUS_BY_KIND))
+/**
+ * Statuses whose rows must NOT be flipped by a subsequent settleSession call —
+ * the four "truly terminal" states. `paused` is deliberately excluded even
+ * though `TERMINAL_STATUS_BY_KIND.pause` maps to it: an expired paused row is
+ * still eligible to be archived to `completed` (see session-manager.ts's
+ * 7-day archival pass), and the CAS below already lists exactly these four.
+ */
+const TRULY_TERMINAL_STATUS_SET: ReadonlySet<string> = new Set([
+	'completed',
+	'failed',
+	'timeout',
+	'user_stopped',
+])
 
 /**
  * Domain-visible `events.action` written by settle for each kind. Matches
@@ -250,7 +262,7 @@ export async function settleSession(
 		result: (existing.result ?? null) as SessionResult | null,
 	}
 
-	const wasAlreadyTerminal = TERMINAL_STATUS_SET.has(existing.status)
+	const wasAlreadyTerminal = TRULY_TERMINAL_STATUS_SET.has(existing.status)
 
 	// Step 2 + 3: Conditional UPDATE and event insert inside one transaction.
 	// A CAS miss (row already terminal, or another writer beat us) leaves
@@ -270,13 +282,21 @@ export async function settleSession(
 				updatedAt: now,
 				result: merged,
 			}
-			if (outcome.kind === 'pause' && outcome.snapshotKey) {
-				setPatch.snapshotPath = outcome.snapshotKey
-			}
-			if (outcome.kind !== 'pause') {
-				// A non-pause settle empties the current-activity string so the UI
-				// stops showing "typing…" for a session that has actually stopped.
-				setPatch.currentActivity = null
+			// Every terminal kind empties the current-activity string so the UI
+			// stops showing "typing…" for a session that has actually stopped —
+			// including pause, whose UI-side treatment is the same "not running"
+			// state a completed row has.
+			setPatch.currentActivity = null
+			if (outcome.kind === 'pause') {
+				// A paused row's container is gone — the caller stops/removes the
+				// sandbox as part of the snapshot flow, and any resume path spins
+				// up a fresh one. Nulling containerId here means downstream
+				// isContainerAlive-style checks correctly read the row as detached
+				// from live infra.
+				setPatch.containerId = null
+				if (outcome.snapshotKey) {
+					setPatch.snapshotPath = outcome.snapshotKey
+				}
 			}
 			if (outcome.usage) {
 				if (typeof outcome.usage.inputTokens === 'number') {

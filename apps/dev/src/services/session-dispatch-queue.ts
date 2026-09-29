@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { sessionDispatchAttempts, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
-import { and, asc, eq, lte, sql } from 'drizzle-orm'
+import { and, asc, eq, lte } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { type SettleDependencies, settleSession } from './session-lifecycle'
 

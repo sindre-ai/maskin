@@ -26,7 +26,13 @@ const SESSIONS_TABLE = 'sessions'
 const TSCONFIG = fileURLToPath(new URL('../../tsconfig.json', import.meta.url))
 const APPS_DEV_ROOT = fileURLToPath(new URL('../../', import.meta.url))
 
-test('only session-lifecycle.ts writes terminal session statuses', () => {
+test('only session-lifecycle.ts writes terminal session statuses', {
+	// Full-project AST walk over apps/dev/src ships on the order of 10s
+	// standalone; under parallel suite load it can hit the default 20s
+	// timeout. Bump to 60s so a busy CI worker doesn't false-fail on this
+	// gate — the timeout is generous; the walk itself is still bounded.
+	timeout: 60_000,
+}, () => {
 	const project = new Project({ tsConfigFilePath: TSCONFIG })
 	const offenders: { file: string; line: number; literal: string }[] = []
 
