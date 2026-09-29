@@ -374,6 +374,27 @@ export const sessions = pgTable(
 		cacheReadInputTokens: integer('cache_read_input_tokens'),
 		durationMs: integer('duration_ms'),
 		currentActivity: text('current_activity'),
+		// Structured lifecycle state introduced by the session-lifecycle bet.
+		// Distinct from `status` (an unconstrained text field that overloads
+		// dispatcher/reaper semantics — see tech spec §15.1). Every transition
+		// goes through settleSession / startSession; the reaper counts against
+		// starting/running/waiting_for_machine, and the retry-scheduler picks
+		// candidates on retry_at where retried_session_id IS NULL.
+		sessionState: text('session_state').notNull().default('queued'),
+		stateEnteredAt: timestamp('state_entered_at', { withTimezone: true }).notNull().defaultNow(),
+		// When set, the retry-scheduler (Commit 7) re-fires this session at or
+		// after `retry_at` and writes the new session's id to
+		// `retried_session_id`. Together they make the partial retry-queue
+		// index (retry_at WHERE retried_session_id IS NULL) small — the
+		// scheduler scans only unfulfilled retries.
+		retryAt: timestamp('retry_at', { withTimezone: true }),
+		retriedSessionId: uuid('retried_session_id').references((): AnyPgColumn => sessions.id),
+		retryOf: uuid('retry_of').references((): AnyPgColumn => sessions.id),
+		attemptNumber: integer('attempt_number').notNull().default(1),
+		// Bumped by the driver-heartbeat rescue path so a session that made it
+		// past `queued` but stopped writing progress can be rescued to
+		// `waiting_for_machine` without racing against startup.
+		driverHeartbeatAt: timestamp('driver_heartbeat_at', { withTimezone: true }),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -413,6 +434,20 @@ export const sessions = pgTable(
 		index('sessions_prune_candidates_idx')
 			.on(t.completedAt)
 			.where(sql`${t.interactive} = false AND ${t.completedAt} IS NOT NULL`),
+		// Reaper hot path: only the three live in-flight states appear in the
+		// index, so the scan is a tiny fraction of the table.
+		index('sessions_session_state_state_entered_at_idx')
+			.on(t.sessionState, t.stateEnteredAt)
+			.where(sql`${t.sessionState} IN ('starting','running','waiting_for_machine')`),
+		// Retry-scheduler hot path: unfulfilled retries only (a row whose
+		// retried_session_id is set has already been re-fired).
+		index('sessions_retry_at_idx')
+			.on(t.retryAt)
+			.where(sql`${t.retryAt} IS NOT NULL AND ${t.retriedSessionId} IS NULL`),
+		check(
+			'sessions_session_state_check',
+			sql`${t.sessionState} IN ('queued','waiting_for_machine','starting','running','done')`,
+		),
 	],
 )
 
