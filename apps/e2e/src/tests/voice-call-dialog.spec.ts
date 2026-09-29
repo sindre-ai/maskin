@@ -13,10 +13,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 test.describe('Voice call dialog — Permission state and flag boundary', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`hides the Call button when the flag is off @ ${vp.label}`, async ({
-			page,
-			account,
-		}) => {
+		test(`hides the Call button when the flag is off @ ${vp.label}`, async ({ page, account }) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 
 			const agent = await account.api.createAgentActor('Vera Voice')
@@ -78,9 +75,9 @@ test.describe('Voice call dialog — Permission state and flag boundary', () => 
 
 			// Esc ends the call — Permission → dialog dismisses.
 			await page.keyboard.press('Escape')
-			await expect(
-				page.getByRole('button', { name: 'Allow microphone & start call' }),
-			).toHaveCount(0)
+			await expect(page.getByRole('button', { name: 'Allow microphone & start call' })).toHaveCount(
+				0,
+			)
 		})
 	}
 
