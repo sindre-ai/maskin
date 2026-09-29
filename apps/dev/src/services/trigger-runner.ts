@@ -5,6 +5,7 @@ import {
 	objects,
 	sessions,
 	triggerCooldowns,
+	triggerDispatches,
 	triggers,
 	workspaceMembers,
 	workspaceSuppressions,
@@ -17,6 +18,7 @@ import {
 	type CommentResponderCase,
 	trackCommentResponderResolved,
 } from '../lib/analytics/comment-responder-events'
+import { trackTriggerDispatchDeduped } from '../lib/analytics/trigger-dispatch-events'
 import { trackTriggerMatchFailed } from '../lib/analytics/trigger-matcher-events'
 import { recordEvent } from '../lib/events/record-event'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
@@ -180,6 +182,14 @@ const SUPPRESSION_CLEARING_ACTIONS = new Set([
 const COOLDOWN_SWEEP_INTERVAL_MS = 60_000
 /** Rows older than 1h past their expiry are candidates for the sweep. */
 const COOLDOWN_SWEEP_GRACE_MS = 60 * 60_000
+/**
+ * trigger_dispatches rows are retained for 30 days after dispatch, then
+ * swept. Long enough that no legitimate replay window ever exceeds it
+ * (queue TTL is 7 days per §4.5), short enough to keep the table bounded.
+ * Piggy-backs on the cooldown sweep interval — same 60s tick, one extra
+ * DELETE. Tech spec §3.4.
+ */
+const DISPATCH_SWEEP_RETENTION_MS = 30 * 24 * 60 * 60_000
 
 /**
  * TEMPORARY local stand-in for Task 2's `isFlagEnabledForWorkspace(workspaceId,
@@ -863,6 +873,32 @@ export class TriggerRunner {
 			const dataForPrompt = await getEventData()
 			const eventForPrompt = { ...event, data: dataForPrompt ?? null }
 
+			// Idempotency claim — S2 of the trigger-engine fix bet (tech spec §3.4).
+			// Ships UNCONDITIONAL (no flag check): during blue-green rolling deploys
+			// both trigger-runner instances receive the same PG NOTIFY payload and
+			// would otherwise both dispatch. First INSERT to succeed claims the
+			// (trigger_id, event_id); the other's ON CONFLICT DO NOTHING returns
+			// zero rows and the dispatch skips. Load-bearing during rollback per
+			// §7.3 — a kill-switch flip must not re-open this window, so the
+			// guard cannot sit behind the v2 gate.
+			const eventIdBigint = Number(event.event_id)
+			const claimed = await this.db
+				.insert(triggerDispatches)
+				.values({ triggerId: trigger.id, eventId: eventIdBigint })
+				.onConflictDoNothing()
+				.returning({ triggerId: triggerDispatches.triggerId })
+			if (claimed.length === 0) {
+				logger.info(
+					`Trigger ${trigger.id} already dispatched event ${event.event_id} by another process`,
+				)
+				await trackTriggerDispatchDeduped({
+					workspaceId: event.workspace_id,
+					triggerId: trigger.id,
+					eventId: event.event_id,
+				})
+				continue
+			}
+
 			// Log trigger fired event
 			await recordEvent(this.db, {
 				workspaceId: event.workspace_id,
@@ -888,6 +924,28 @@ export class TriggerRunner {
 					createdBy: trigger.createdBy,
 				})
 				.then(async (session) => {
+					// Stamp the claim row with the session id. Diagnostic only —
+					// if this UPDATE fails, the trigger_dispatches row still
+					// guards against double-fire; its presence is the guarantee,
+					// not session_id (tech spec §6.4).
+					await this.db
+						.update(triggerDispatches)
+						.set({ sessionId: session.id })
+						.where(
+							and(
+								eq(triggerDispatches.triggerId, trigger.id),
+								eq(triggerDispatches.eventId, eventIdBigint),
+							),
+						)
+						.catch((err) =>
+							logger.debug('Could not stamp trigger_dispatches.session_id', {
+								triggerId: trigger.id,
+								eventId: event.event_id,
+								sessionId: session.id,
+								error: String(err),
+							}),
+						)
+
 					// Link the object to the active session
 					if (event.entity_id) {
 						await this.db
@@ -1189,8 +1247,9 @@ export class TriggerRunner {
 
 	/**
 	 * Sweep expired cooldown / suppression rows more than 1h past their
-	 * expiry timestamp. Keeps both tables bounded (§3.2). Failures here log
-	 * but do not throw — sweep is a cleanup, not a correctness gate.
+	 * expiry timestamp, and idempotency-claim rows older than 30 days.
+	 * Keeps all three tables bounded (§3.2 + §3.4). Failures here log but
+	 * do not throw — sweep is a cleanup, not a correctness gate.
 	 */
 	private async sweepExpiredCooldowns(): Promise<void> {
 		const cutoff = new Date(Date.now() - COOLDOWN_SWEEP_GRACE_MS)
@@ -1205,6 +1264,14 @@ export class TriggerRunner {
 				.where(lt(workspaceSuppressions.suppressedUntil, cutoff))
 		} catch (err) {
 			logger.warn('Workspace suppression sweep failed', { error: String(err) })
+		}
+		const dispatchCutoff = new Date(Date.now() - DISPATCH_SWEEP_RETENTION_MS)
+		try {
+			await this.db
+				.delete(triggerDispatches)
+				.where(lt(triggerDispatches.dispatchedAt, dispatchCutoff))
+		} catch (err) {
+			logger.warn('Trigger dispatch sweep failed', { error: String(err) })
 		}
 	}
 
