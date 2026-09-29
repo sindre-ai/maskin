@@ -1368,6 +1368,20 @@ export const tools = {
 				.describe(
 					'ID of a prior session whose workspace should be restored at startup. Use this when continuing a task that a previous session started but could not finish (e.g. code was written but could not be pushed).',
 				),
+			initiated_from_object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Object id (bet, task, insight, etc.) this session is being spawned for. Threaded into the session row so a failure event can link back to the object, and emitted on the runtime_session_ended PostHog event as context_object_id. Omit when there is no originating object (direct API create, cron, onboarding).',
+				),
+			initiated_from_object_type: z
+				.string()
+				.max(64)
+				.optional()
+				.describe(
+					"Object type of `initiated_from_object_id` (e.g. 'bet', 'task', 'insight'). Emitted on the runtime_session_ended PostHog event as context_object_type. Must be set whenever initiated_from_object_id is set.",
+				),
 		}),
 	},
 	list_sessions: {
