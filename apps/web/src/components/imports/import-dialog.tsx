@@ -344,18 +344,32 @@ function MappingStep({
 	const handleTypeChange = useCallback(
 		(typeMappingIndex: number, newType: string) => {
 			setTypeMappings((prev) =>
-				prev.map((tm, idx) =>
-					idx === typeMappingIndex
-						? {
-								...tm,
-								objectType: newType,
-								defaultStatus: settings.statuses?.[newType]?.[0],
-							}
-						: tm,
-				),
+				prev.map((tm, idx) => {
+					if (idx !== typeMappingIndex) return tm
+					// Drop column mappings that point at the previous type's fields
+					// so the Match-existing-on dropdown reflects the new type's metadata.
+					const validTargets = new Set(getTargetOptions(newType).map((o) => o.value))
+					const columns = tm.columns.map((col) => {
+						if (col.skip) return col
+						if (validTargets.has(col.targetField)) return col
+						return {
+							...col,
+							targetField: `metadata.${normalize(col.sourceColumn)}`,
+							skip: true,
+						}
+					})
+					const stillMatchable = columns.some((col) => !col.skip && col.targetField === tm.matchOn)
+					return {
+						...tm,
+						objectType: newType,
+						columns,
+						matchOn: stillMatchable ? tm.matchOn : undefined,
+						defaultStatus: settings.statuses?.[newType]?.[0],
+					}
+				}),
 			)
 		},
-		[settings],
+		[settings, getTargetOptions],
 	)
 
 	const handleAddType = useCallback(() => {
