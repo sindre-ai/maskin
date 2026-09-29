@@ -1,7 +1,8 @@
 import type { Database } from '@maskin/db'
-import { sessions } from '@maskin/db/schema'
+import { events, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
-import { and, eq, inArray, isNotNull } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, lt } from 'drizzle-orm'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { type SettleDependencies, settleSession } from './session-lifecycle'
 
@@ -32,6 +33,27 @@ const CLAIMED_STATUSES = [
 
 const FAILABLE_STATUS_SET: ReadonlySet<string> = new Set(FAILABLE_STATUSES)
 
+/**
+ * The five terminal statuses settleSession writes, paired with the
+ * `events.action` string §8.2 says each row must emit. The self-heal check
+ * (§9.4) uses this to find terminal-status sessions that never got their
+ * `session_*` audit row and back-fill it idempotently.
+ */
+const TERMINAL_STATUS_TO_EVENT_ACTION = {
+	completed: 'session_completed',
+	failed: 'session_failed',
+	timeout: 'session_timeout',
+	user_stopped: 'session_stopped',
+	paused: 'session_paused',
+} as const
+
+const TERMINAL_STATUSES = Object.keys(TERMINAL_STATUS_TO_EVENT_ACTION) as Array<
+	keyof typeof TERMINAL_STATUS_TO_EVENT_ACTION
+>
+
+/** §9.4: a session's terminal-status transition must have an events row within this window. */
+export const SELF_HEAL_GRACE_MS = 60_000
+
 const FAILURE_REASON: SessionResultFailureReason = {
 	provider: 'agent-server',
 	reason_code: 'agent_server_lost',
@@ -54,6 +76,13 @@ export interface ReconcileResult {
 	markedFailed: string[]
 	/** Sandbox names not claimed by any non-terminal DB session — caller should `msb remove -f` them. */
 	orphanSandboxes: string[]
+}
+
+export interface SelfHealResult {
+	/** How many stale-terminal candidates the check considered on this pass. */
+	staleConsidered: number
+	/** Sessions whose missing `events` row was back-filled. */
+	backFilled: Array<{ sessionId: string; action: string }>
 }
 
 export class SessionReconciler {
@@ -140,6 +169,114 @@ export class SessionReconciler {
 		})
 
 		return { markedFailed, orphanSandboxes }
+	}
+
+	/**
+	 * §9.4 self-heal check — asserts every terminal-status session has a
+	 * matching `events` row within `SELF_HEAL_GRACE_MS`. When missing, inserts
+	 * the row via `recordEvent(...)` idempotently. The events row is the
+	 * downstream contract for "this session ended" — a missing row leaves
+	 * consumers (SSE feed, per-actor completion listeners, PostHog dedupe
+	 * upstream) reading the session as silently vanished, so the back-fill is
+	 * the load-bearing part of the self-heal.
+	 *
+	 * Post-commit side-effects (stopSandbox / pushAgentFiles / PostHog) are
+	 * intentionally out of this method's scope: at t + 60s the sandbox is
+	 * almost always dead already, and the caller (Session Manager or the
+	 * reconciler cron) supplies real stopSandbox / pushAgentFiles callbacks
+	 * only where a per-session context is on hand. A future pass can wire
+	 * those in per-session; the events-row gap is the one that breaks
+	 * observability today.
+	 *
+	 * Idempotent by construction: only sessions with no matching action-typed
+	 * events row are back-filled, so a re-run does nothing.
+	 */
+	async selfHealTerminalWithoutEvents(
+		nowMs: number = Date.now(),
+		graceMs: number = SELF_HEAL_GRACE_MS,
+	): Promise<SelfHealResult> {
+		const cutoff = new Date(nowMs - graceMs)
+
+		const stale = await this.db
+			.select({
+				id: sessions.id,
+				workspaceId: sessions.workspaceId,
+				actorId: sessions.actorId,
+				status: sessions.status,
+				completedAt: sessions.completedAt,
+			})
+			.from(sessions)
+			.where(
+				and(
+					inArray(sessions.status, [...TERMINAL_STATUSES]),
+					isNotNull(sessions.completedAt),
+					lt(sessions.completedAt, cutoff),
+				),
+			)
+
+		const backFilled: Array<{ sessionId: string; action: string }> = []
+
+		for (const row of stale) {
+			const status = row.status as keyof typeof TERMINAL_STATUS_TO_EVENT_ACTION
+			const expectedAction = TERMINAL_STATUS_TO_EVENT_ACTION[status]
+
+			// Reject any impossible row shape defensively — a status value not in
+			// the table means someone widened the terminal set without updating
+			// this method; back-filling with a guessed action would corrupt the
+			// audit stream, so leave it and log.
+			if (!expectedAction) {
+				logger.warn('self-heal: unknown terminal status; skipping', {
+					sessionId: row.id,
+					status: row.status,
+				})
+				continue
+			}
+
+			const [existing] = await this.db
+				.select({ id: events.id })
+				.from(events)
+				.where(
+					and(
+						eq(events.entityType, 'session'),
+						eq(events.entityId, row.id),
+						eq(events.action, expectedAction),
+					),
+				)
+				.limit(1)
+
+			if (existing) continue
+
+			try {
+				await recordEvent(this.db, {
+					workspaceId: row.workspaceId,
+					actorId: row.actorId,
+					action: expectedAction,
+					entityType: 'session',
+					entityId: row.id,
+					data: {
+						classification: 'self_heal',
+						source: 'reconciler',
+						reason: `self-heal: terminal status ${status} carried no events row`,
+					},
+				})
+				backFilled.push({ sessionId: row.id, action: expectedAction })
+			} catch (err) {
+				logger.error('self-heal: failed to back-fill missing events row', {
+					sessionId: row.id,
+					action: expectedAction,
+					error: err instanceof Error ? err.message : String(err),
+				})
+			}
+		}
+
+		if (backFilled.length > 0) {
+			logger.info('Session self-heal pass complete', {
+				staleConsidered: stale.length,
+				backFilledCount: backFilled.length,
+			})
+		}
+
+		return { staleConsidered: stale.length, backFilled }
 	}
 
 	private async markFailed(sessionId: string): Promise<void> {
