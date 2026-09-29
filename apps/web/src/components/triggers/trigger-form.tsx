@@ -21,6 +21,7 @@ import { useAutoSave } from '@/hooks/use-auto-save'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useEntityEvents } from '@/hooks/use-events'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
@@ -33,6 +34,14 @@ import { useNavigate } from '@tanstack/react-router'
 import { Bell, Clock, Plus, X, Zap } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { z } from 'zod'
+import {
+	type CommentFilterState,
+	CommentFilters,
+	EMPTY_COMMENT_FILTER_STATE,
+	commentFilterStateFromConfig,
+	commentFilterStateToConfig,
+	isCommentFilterCondition,
+} from './comment-filters'
 import {
 	EMPTY_SLACK_FILTER_STATE,
 	type SlackFilterState,
@@ -98,7 +107,24 @@ export interface TriggerFormPayload {
 
 import { getAllWebModules } from '@maskin/module-sdk'
 
-const DEFAULT_OBJECT_ACTIONS = ['created', 'updated', 'status_changed'] as const
+const DEFAULT_OBJECT_ACTIONS = ['created', 'updated', 'status_changed', 'commented'] as const
+
+/** Human-readable label for each object action option in the "Changes to" dropdown. */
+const OBJECT_ACTION_LABEL: Record<(typeof DEFAULT_OBJECT_ACTIONS)[number], string> = {
+	created: 'created',
+	updated: 'updated',
+	status_changed: 'status_changed',
+	commented: 'On comment posted',
+}
+
+/**
+ * "NEW" ribbon shows next to the commented action for the flag rollout window.
+ * The UI spec calls for an auto-fade after ~2 weeks of `flagEnabledForWorkspaceAt`
+ * — since that timestamp is not persisted today (§Open questions #3), the
+ * ribbon ships without the fade and Developer will remove it in a follow-up
+ * once persistence lands. Non-blocking per spec.
+ */
+const NEW_RIBBON_ACTIONS = new Set<string>(['commented'])
 
 const OPERATORS_BY_TYPE: Record<string, { value: ConditionOperator; label: string }[]> = {
 	text: [
@@ -234,6 +260,9 @@ function buildTriggerSummary({
 	dayOfMonth,
 	scheduledDate,
 	scheduledTime,
+	commentFilter,
+	commentAuthorName,
+	commentMentionedActorName,
 }: {
 	type: 'cron' | 'event' | 'reminder'
 	name: string
@@ -249,10 +278,30 @@ function buildTriggerSummary({
 	dayOfMonth?: string
 	scheduledDate?: string
 	scheduledTime?: string
+	commentFilter?: CommentFilterState
+	commentAuthorName?: string
+	commentMentionedActorName?: string
 }): string {
 	const agent = agentName ? `"${agentName}"` : 'the assigned agent'
 
 	if (type === 'event') {
+		if (action === 'commented' && commentFilter) {
+			// One clause per populated filter, per UI spec §Plain-language
+			// readback. Empty filters skip their clause entirely — the
+			// deliberate firehose copy renders when nothing is set.
+			const clauses: string[] = []
+			if (commentFilter.onTargetType !== 'any')
+				clauses.push(`on a **${commentFilter.onTargetType}**`)
+			if (commentAuthorName) clauses.push(`by **${commentAuthorName}**`)
+			if (commentFilter.attention !== null) {
+				clauses.push(`with attention **${commentFilter.attention} or higher**`)
+			}
+			if (commentMentionedActorName) clauses.push(`that mentions **${commentMentionedActorName}**`)
+			if (clauses.length === 0) {
+				return `When any comment is posted anywhere in the workspace, ${agent} will be prompted to act.`
+			}
+			return `When a comment is posted ${clauses.join(' ')}, ${agent} will be prompted to act.`
+		}
 		let when = `a ${entityType ?? 'object'} is ${action ?? 'modified'}`
 		if (action === 'status_changed') {
 			const from = fromStatus && fromStatus !== '__any__' ? fromStatus : 'any status'
@@ -420,9 +469,11 @@ export function TriggerForm({
 			? (initConfig.conditions as { field: string; operator: string; value?: SafeJsonValue }[])
 			: []
 
-	// Slack filter conditions are managed by SlackFilters; regular conditions
-	// (other field/operator/value rows) are managed by ConditionEditor. We
-	// partition the loaded conditions by which group they belong to.
+	// Slack filter conditions are managed by SlackFilters; comment filter
+	// conditions (a `mentions contains <uuid>` row) are managed by CommentFilters;
+	// regular conditions (other field/operator/value rows) are managed by
+	// ConditionEditor. We partition the loaded conditions by which group they
+	// belong to.
 	const slackFilterFields = new Set([
 		'event.channel',
 		'event.item.channel',
@@ -431,9 +482,13 @@ export function TriggerForm({
 	])
 	const isSlackFilterCondition = (c: { field: string }) =>
 		isSlackEntityType(initialEntityType) && slackFilterFields.has(c.field)
+	const isCommentedInitial = initialValues?.type === 'event' && initConfig.action === 'commented'
+	const isOwnedByCommentFilters = (c: { field: string; operator: string; value?: unknown }) =>
+		isCommentedInitial && isCommentFilterCondition(c)
 
 	const editableConditionsRaw = initialConditionsRaw.filter(
-		(c) => !isSlackFilterCondition(c) && isEditableOperator(c.operator),
+		(c) =>
+			!isSlackFilterCondition(c) && !isOwnedByCommentFilters(c) && isEditableOperator(c.operator),
 	)
 
 	// Conditions this form has no editor for — `in` / `not_in` are valid per
@@ -446,7 +501,10 @@ export function TriggerForm({
 	// debounce on every keystroke.
 	const [preservedConditions] = useState(() =>
 		initialConditionsRaw.filter(
-			(c) => !isSlackFilterCondition(c) && !isEditableOperator(c.operator),
+			(c) =>
+				!isSlackFilterCondition(c) &&
+				!isOwnedByCommentFilters(c) &&
+				!isEditableOperator(c.operator),
 		),
 	)
 
@@ -464,6 +522,24 @@ export function TriggerForm({
 			? slackFiltersFromConditions(initialEntityType, initialConditionsRaw)
 			: EMPTY_SLACK_FILTER_STATE,
 	)
+
+	// Comment-filter state is only meaningful when action === 'commented' —
+	// initialise from the loaded config for edit flows so a reload preserves
+	// the four rows and the Reply-in-thread advanced field.
+	const initialFilter = (initConfig.filter as Record<string, unknown> | undefined) ?? undefined
+	const [commentFilterState, setCommentFilterState] = useState<CommentFilterState>(() =>
+		initialValues?.type === 'event' && initConfig.action === 'commented'
+			? commentFilterStateFromConfig(initialFilter, initialConditionsRaw)
+			: EMPTY_COMMENT_FILTER_STATE,
+	)
+
+	// Trigger-engine v2 flag gate — see the FLAGS entry doc for the shape.
+	// When off, the "commented" action is filtered out of the dropdown (soft
+	// hide) rather than shown as a disabled item that surprises the author;
+	// the error copy renders only in the edit path when a saved trigger's
+	// action = 'commented' and the flag is off, since the author already
+	// committed to the shape and needs to know the trigger is unshipped.
+	const triggerEngineV2Enabled = useFeatureFlag('trigger_engine_v2')
 
 	// Workspace settings
 	const settings = workspace.settings as Record<string, unknown>
@@ -524,9 +600,22 @@ export function TriggerForm({
 	const allEvents = useMemo(() => eventGroups.flatMap((g) => g.events), [eventGroups])
 
 	const currentEventDef = allEvents.find((e) => e.entityType === entityType)
-	const availableActions = currentEventDef?.actions ?? []
+	// Comment-action gating: available only for internal object types (matches
+	// the internalEntityTypes registry — comments live on `objects`) AND only
+	// when the trigger-engine v2 flag is on for this actor. Non-internal event
+	// types (Slack, GitHub, integration providers) never expose `commented`.
+	const rawActions = currentEventDef?.actions ?? []
+	const availableActions = rawActions.filter((a) => {
+		if (a !== 'commented') return true
+		if (!triggerEngineV2Enabled) return false
+		return internalEntityTypes.has(entityType)
+	})
 	const isInternal = internalEntityTypes.has(entityType)
 	const isSlack = isSlackEntityType(entityType)
+	const isCommentedAction = action === 'commented'
+	// Saved trigger uses `commented` but this actor's flag is off — surface the
+	// spec's flag-off error copy so the author knows what to do next.
+	const showCommentedFlagOffError = isCommentedAction && !triggerEngineV2Enabled
 	const slackIntegrationId = useMemo(
 		() => (integrations ?? []).find((i) => i.provider === 'slack' && i.status === 'active')?.id,
 		[integrations],
@@ -556,7 +645,25 @@ export function TriggerForm({
 		const slackConditions = isSlackEntityType(entityType)
 			? slackFiltersToConditions(entityType, slackFilterState)
 			: []
-		const allConditions = [...userConditions, ...slackConditions, ...preservedConditions]
+		const commentSerialized =
+			action === 'commented'
+				? commentFilterStateToConfig(commentFilterState)
+				: {
+						filter: undefined,
+						conditions: undefined as
+							| { field: string; operator: 'contains'; value: string }[]
+							| undefined,
+					}
+		const commentConditions = commentSerialized.conditions ?? []
+		const allConditions = [
+			...userConditions,
+			...slackConditions,
+			...commentConditions,
+			...preservedConditions,
+		]
+		// Pin entity_type = 'object' at save-time for the commented action (spec
+		// §5.4 fold 5). Pin is UI-side only — no server rewrite path.
+		const effectiveEntityType = action === 'commented' ? 'object' : entityType
 
 		const config =
 			type === 'cron'
@@ -564,10 +671,11 @@ export function TriggerForm({
 				: type === 'reminder'
 					? { scheduled_at: new Date(`${scheduledDate}T${scheduledTime}`).toISOString() }
 					: {
-							entity_type: entityType,
+							entity_type: effectiveEntityType,
 							action,
 							...(fromStatus && fromStatus !== '__any__' && { from_status: fromStatus }),
 							...(toStatus && toStatus !== '__any__' && { to_status: toStatus }),
+							...(commentSerialized.filter && { filter: commentSerialized.filter }),
 							...(allConditions.length > 0 && { conditions: allConditions }),
 						}
 
@@ -590,6 +698,7 @@ export function TriggerForm({
 		conditions,
 		preservedConditions,
 		slackFilterState,
+		commentFilterState,
 		buildCronExpression,
 		entityType,
 		action,
@@ -667,7 +776,21 @@ export function TriggerForm({
 		setToStatus('__any__')
 		setConditions([])
 		setSlackFilterState(EMPTY_SLACK_FILTER_STATE)
+		setCommentFilterState(EMPTY_COMMENT_FILTER_STATE)
 	}
+
+	// UI-side pin per spec §5.4 fold 5 — action = commented locks Subject to
+	// entity_type = 'object'. Fires from an effect (not inside setAction) so an
+	// edit form loading a commented trigger against a non-object entity_type
+	// self-heals to the pinned value before autosave sees it. NO server-side
+	// rewrite — silent server rewrites are exactly the failure mode bet #8
+	// exists to kill.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: only re-run on action change
+	useEffect(() => {
+		if (action === 'commented' && entityType !== 'object') {
+			setEntityType('object')
+		}
+	}, [action])
 
 	// Integration-sourced event types (GitHub, Linear, …) have no workspace
 	// field definitions — their conditions address the event payload by path
@@ -713,6 +836,13 @@ export function TriggerForm({
 		: []
 	const stopsForYou = typeof initConfig.stops_for_you === 'string' ? initConfig.stops_for_you : null
 
+	const commentAuthorName = commentFilterState.authorId
+		? agents.find((a) => a.id === commentFilterState.authorId)?.name
+		: undefined
+	const commentMentionedActorName = commentFilterState.mentionedActorId
+		? agents.find((a) => a.id === commentFilterState.mentionedActorId)?.name
+		: undefined
+
 	const summary = buildTriggerSummary({
 		type,
 		name,
@@ -728,6 +858,9 @@ export function TriggerForm({
 		dayOfMonth,
 		scheduledDate,
 		scheduledTime,
+		commentFilter: action === 'commented' ? commentFilterState : undefined,
+		commentAuthorName,
+		commentMentionedActorName,
 	})
 
 	const triggerId = initialValues?.id
@@ -905,40 +1038,90 @@ export function TriggerForm({
 						<h2 className="eyebrow">WHEN THIS HAPPENS</h2>
 						<div className="mt-2.5 flex max-w-[500px] flex-wrap gap-2.5">
 							<FieldColumn label="Subject" htmlFor="trigger-subject">
-								<Select value={entityType} onValueChange={handleEntityTypeChange}>
-									<SelectTrigger id="trigger-subject" className="min-h-11 w-full sm:min-h-9">
-										<SelectValue placeholder="Select an entity type" />
-									</SelectTrigger>
-									<SelectContent className="max-h-[300px]">
-										{eventGroups.map((group) => (
-											<SelectGroup key={group.label}>
-												<SelectLabel>{group.label}</SelectLabel>
-												{group.events.map((e) => (
-													<SelectItem key={e.entityType} value={e.entityType}>
-														{e.label}
-													</SelectItem>
-												))}
-											</SelectGroup>
-										))}
-									</SelectContent>
-								</Select>
+								{isCommentedAction ? (
+									<div
+										id="trigger-subject"
+										title="Comment triggers fire on any object type; use the on-target-type filter below to narrow."
+										aria-label="Subject pinned to Any object"
+										className="flex min-h-11 w-full items-center rounded-md border border-border bg-muted px-3 text-[12.5px] font-semibold text-muted-foreground sm:min-h-9"
+									>
+										Any object
+									</div>
+								) : (
+									<Select value={entityType} onValueChange={handleEntityTypeChange}>
+										<SelectTrigger id="trigger-subject" className="min-h-11 w-full sm:min-h-9">
+											<SelectValue placeholder="Select an entity type" />
+										</SelectTrigger>
+										<SelectContent className="max-h-[300px]">
+											{eventGroups.map((group) => (
+												<SelectGroup key={group.label}>
+													<SelectLabel>{group.label}</SelectLabel>
+													{group.events.map((e) => (
+														<SelectItem key={e.entityType} value={e.entityType}>
+															{e.label}
+														</SelectItem>
+													))}
+												</SelectGroup>
+											))}
+										</SelectContent>
+									</Select>
+								)}
 							</FieldColumn>
 							<FieldColumn label="Changes to" htmlFor="trigger-action">
 								<Select value={action} onValueChange={setAction}>
-									<SelectTrigger id="trigger-action" className="min-h-11 w-full sm:min-h-9">
+									<SelectTrigger
+										id="trigger-action"
+										className={cn(
+											'min-h-11 w-full sm:min-h-9',
+											showCommentedFlagOffError && 'border-error bg-error/[.06]',
+										)}
+									>
 										<SelectValue placeholder="Select an action" />
 									</SelectTrigger>
 									<SelectContent>
 										{availableActions.map((a) => (
 											<SelectItem key={a} value={a}>
-												{a}
+												<span className="inline-flex items-center gap-2">
+													{OBJECT_ACTION_LABEL[a as keyof typeof OBJECT_ACTION_LABEL] ?? a}
+													{NEW_RIBBON_ACTIONS.has(a) && (
+														<span
+															aria-label="NEW"
+															className="inline-flex h-4 items-center rounded-sm bg-brand-subtle px-1 font-mono text-[9px] font-bold uppercase tracking-[0.09em] text-brand-subtle-foreground"
+														>
+															NEW
+														</span>
+													)}
+												</span>
 											</SelectItem>
 										))}
 									</SelectContent>
 								</Select>
 							</FieldColumn>
 						</div>
+						{isCommentedAction && !showCommentedFlagOffError && (
+							<div
+								role="note"
+								className="mt-2.5 rounded-xl border border-ask-border bg-ask-surface px-3.5 py-3 text-[12.5px] leading-relaxed text-foreground"
+							>
+								Comments where an agent is @mentioned already auto-dispatch that agent. This trigger
+								runs in addition, not instead.
+							</div>
+						)}
+						{showCommentedFlagOffError && (
+							<p className="mt-2.5 text-[11.5px] leading-relaxed text-error">
+								This workspace hasn&apos;t rolled to <strong>trigger_engine_v2</strong> yet. Ask an
+								admin to enable it, or pick a different action.
+							</p>
+						)}
 					</section>
+
+					{isCommentedAction && (
+						<CommentFilters
+							workspaceId={workspaceId}
+							value={commentFilterState}
+							onChange={setCommentFilterState}
+						/>
+					)}
 
 					{action === 'status_changed' && statuses.length > 0 && (
 						<section className="mt-5">

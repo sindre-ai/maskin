@@ -673,11 +673,27 @@ export class TriggerRunner {
 		// Lazily resolve {current, previous} for object entity events. New-shape events
 		// (`data.changes`) don't carry the full pre/post snapshots, so we hydrate `current`
 		// from the objects table and reconstruct `previous` by reversing the recorded diff.
+		// For `commented` events the same hydration runs — `current` carries the target
+		// object's `type` so `filter.on_target_type` can match (tech spec §5.4 fold 6).
+		// `previous` stays undefined for commented events; a comment is not an object mutation.
 		let objectContext: { current?: ObjectData; previous?: ObjectData } | undefined
 		const resolveObjectContext = async (): Promise<{
 			current?: ObjectData
 			previous?: ObjectData
 		}> => {
+			// Commented events carry no `data.previous` / `data.updated` / `data.changes`,
+			// but `entity_id` still points at the object the comment landed on — so
+			// hydrate `current` straight from the objects table and skip the diff path.
+			if (event.action === 'commented') {
+				if (!event.entity_id || !UUID_RE.test(event.entity_id)) return {}
+				const [row] = await this.db
+					.select()
+					.from(objects)
+					.where(eq(objects.id, event.entity_id))
+					.limit(1)
+				if (!row) return {}
+				return { current: row as unknown as ObjectData }
+			}
 			const data = await getEventData()
 			if (!data) return {}
 			// Legacy `{previous, updated}` snapshot ships both sides intact.
@@ -709,6 +725,35 @@ export class TriggerRunner {
 			return objectContext
 		}
 
+		// Build the record the matcher walks for `filter` and `conditions`. For
+		// object-update events the natural root is the hydrated `current` row
+		// (so `filter.status` works). For `commented` events the natural root
+		// is the event's data JSON with two virtual keys added: `actorId` from
+		// the event row so `filter.actorId` matches the author (the JSON
+		// payload has no author field), and `on_target_type` from the hydrated
+		// object row so `filter.on_target_type` pins to bet/task/insight (tech
+		// spec §5.4 fold 6). For every other event action the root stays the
+		// raw data payload — no shape change.
+		const buildFilterRoot = async (
+			data: Record<string, unknown>,
+		): Promise<Record<string, unknown>> => {
+			if (event.action === 'commented') {
+				const ctx = await getObjectContext()
+				const targetType = (ctx.current as { type?: string } | undefined)?.type
+				return {
+					...data,
+					actorId: event.actor_id,
+					...(targetType !== undefined ? { on_target_type: targetType } : {}),
+				}
+			}
+			const isObjectUpdate = event.action === 'updated' || event.action === 'status_changed'
+			if (isObjectUpdate) {
+				const ctx = await getObjectContext()
+				return (ctx.current ?? data) as Record<string, unknown>
+			}
+			return data
+		}
+
 		for (const trigger of matchingTriggers) {
 			const config = trigger.config as Record<string, unknown>
 
@@ -725,19 +770,31 @@ export class TriggerRunner {
 			}
 			if (config.action && config.action !== event.action) continue
 
+			// Flag-gate `commented` action so a workspace that hasn't rolled to
+			// trigger_engine_v2 can never end up with commented-action triggers
+			// silently dead in the matcher — the trigger builder rejects the flag-off
+			// state with an error, so a saved trigger with action=commented always
+			// implies its workspace is expected to be on v2. If the flag flips off
+			// again (kill switch), the trigger stops firing entirely; better than
+			// firing with the on_target_type row hidden. Ships as one call site here;
+			// S1's two gate points (loadCooldowns / loadSuppressions) share the
+			// same temporary helper and get swapped to the S7 public resolver in
+			// one aggregate-merge pass.
+			if (
+				event.action === 'commented' &&
+				!isTriggerEngineV2EnabledForWorkspace(event.workspace_id)
+			) {
+				continue
+			}
+
 			// Check filter conditions — for status_changed / updated events the entity lives
 			// on `data.updated` (legacy) or must be hydrated from the objects table (new
-			// {changes} shape). Use getObjectContext() + resolvePath() so dotted paths
-			// (e.g. "metadata.decision_type") also work correctly.
+			// {changes} shape). For `commented` the root merges `data`, the comment's
+			// `actorId`, and the target object's `__target_type` (tech spec §5.4 fold 6).
 			if (config.filter) {
 				const data = await getEventData()
 				if (!data) continue
-				// Object-ness is resolved dynamically: getObjectContext() hydrates
-				// from the objects table and returns {} for non-object entities, so
-				// custom workspace-defined object types match filters too.
-				const isObjectUpdate = event.action === 'updated' || event.action === 'status_changed'
-				const ctx = isObjectUpdate ? await getObjectContext() : {}
-				const filterRoot = (ctx.current ?? data) as Record<string, unknown>
+				const filterRoot = await buildFilterRoot(data)
 				const filter = config.filter as Record<string, unknown>
 				const matches = Object.entries(filter).every(
 					([key, value]) => resolvePath(filterRoot, key) === value,
@@ -754,13 +811,13 @@ export class TriggerRunner {
 
 			// Check conditions — resolves against the full event payload with a `metadata`
 			// fallback for legacy internal-object triggers. For updated/status_changed events
-			// the "current" object (i.e. NEW.updated) is the natural root.
+			// the "current" object (i.e. NEW.updated) is the natural root. For commented
+			// events the root matches the filter root, so a condition like
+			// `data.mentions contains <uuid>` reads the same shape.
 			if (Array.isArray(config.conditions) && config.conditions.length > 0) {
 				const data = await getEventData()
 				if (!data) continue
-				const isObjectUpdate = event.action === 'updated' || event.action === 'status_changed'
-				const ctx = isObjectUpdate ? await getObjectContext() : {}
-				const conditionRoot = (ctx.current ?? data) as Record<string, unknown>
+				const conditionRoot = await buildFilterRoot(data)
 				if (!evaluateConditions(config.conditions, conditionRoot)) continue
 			}
 
