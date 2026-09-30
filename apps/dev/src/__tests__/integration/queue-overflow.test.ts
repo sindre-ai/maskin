@@ -71,6 +71,12 @@ describe('S3 — queue backpressure', () => {
 				.mocked(capturePosthogEvent)
 				.mock.calls.filter(([name]) => name === 'trigger_event_queued')
 			expect(queued).toHaveLength(0)
+			const overflowCalls = vi
+				.mocked(capturePosthogEvent)
+				.mock.calls.filter(([name]) => name === 'trigger_queue_overflow_total')
+			expect(overflowCalls).toHaveLength(1)
+			expect(overflowCalls[0][1]).toBe(ws.id)
+			expect(overflowCalls[0][2]).toEqual({ workspace_id: ws.id, trigger_id: trig.id })
 		} finally {
 			await runner.stop()
 		}
@@ -101,6 +107,11 @@ describe('S3 — queue backpressure', () => {
 				reason: 'workspace_suppression',
 				current_depth: WORKSPACE_QUEUE_CAP,
 			})
+			const overflowCalls = vi
+				.mocked(capturePosthogEvent)
+				.mock.calls.filter(([name]) => name === 'trigger_queue_overflow_total')
+			expect(overflowCalls).toHaveLength(1)
+			expect(overflowCalls[0][2]).toEqual({ workspace_id: ws.id, trigger_id: null })
 			const [{ n }] = await db
 				.select({ n: count() })
 				.from(triggerEventQueue)

@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
+import { capturePosthogEvent } from '../../lib/analytics/posthog'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../../lib/llm-routing'
 import {
 	TriggerRunner,
@@ -21,6 +22,10 @@ vi.mock('../../services/trigger-event-queue', async (importOriginal) => ({
 	findDueTriggerIds: vi.fn().mockResolvedValue([]),
 	findDueWorkspaceIds: vi.fn().mockResolvedValue([]),
 	sweepQueueRetention: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('../../lib/analytics/posthog', () => ({
+	capturePosthogEvent: vi.fn().mockResolvedValue(undefined),
 }))
 
 describe('TriggerRunner', () => {
@@ -1450,9 +1455,22 @@ describe('TriggerRunner backoff', () => {
 		} satisfies PgEvent)
 		await vi.advanceTimersByTimeAsync(0)
 
+		vi.mocked(capturePosthogEvent).mockClear()
+
 		// Next cron tick (1 minute later) — should be skipped due to backoff
 		await vi.advanceTimersByTimeAsync(60 * 1000)
 		expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+		const dropped = vi
+			.mocked(capturePosthogEvent)
+			.mock.calls.filter(([name]) => name === 'trigger_cron_tick_dropped')
+		expect(dropped).toHaveLength(1)
+		expect(dropped[0][1]).toBe(trigger.workspaceId)
+		expect(dropped[0][2]).toEqual({
+			workspace_id: trigger.workspaceId,
+			trigger_id: 'trigger-cron-1',
+			backoff_until: expect.any(String),
+		})
 	})
 })
 

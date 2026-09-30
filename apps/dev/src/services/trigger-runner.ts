@@ -20,7 +20,10 @@ import {
 } from '../lib/analytics/comment-responder-events'
 import { trackTriggerDispatchDeduped } from '../lib/analytics/trigger-dispatch-events'
 import { trackTriggerMatchFailed } from '../lib/analytics/trigger-matcher-events'
-import type { TriggerQueueDrainSource } from '../lib/analytics/trigger-queue-events'
+import {
+	type TriggerQueueDrainSource,
+	trackTriggerCronTickDropped,
+} from '../lib/analytics/trigger-queue-events'
 import { recordEvent } from '../lib/events/record-event'
 import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
@@ -1155,6 +1158,11 @@ export class TriggerRunner {
 			logger.info(
 				`Cron trigger '${trigger.name}' in backoff until ${cronBackoff.backoffUntil.toISOString()}, skipping`,
 			)
+			void trackTriggerCronTickDropped({
+				workspaceId: trigger.workspaceId,
+				triggerId: trigger.id,
+				backoffUntil: cronBackoff.backoffUntil,
+			})
 			return
 		}
 

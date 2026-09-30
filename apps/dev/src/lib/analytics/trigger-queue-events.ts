@@ -75,3 +75,56 @@ export async function trackTriggerEventReplayed(p: TriggerEventReplayedProps): P
 		})
 	}
 }
+
+interface TriggerQueueOverflowProps {
+	workspaceId: string
+	triggerId: string | null
+}
+
+/**
+ * Emitted when the queue is at its per-trigger or per-workspace cap and an
+ * event is dropped instead of parked. Sits beside the trigger_queue_overflow
+ * events row; the name mirrors the Prometheus-style counter in the tech spec
+ * (§4.5), same shape as trigger_dispatch_deduped_total. Best-effort, never
+ * throws.
+ */
+export async function trackTriggerQueueOverflow(p: TriggerQueueOverflowProps): Promise<void> {
+	try {
+		await capturePosthogEvent('trigger_queue_overflow_total', p.workspaceId, {
+			workspace_id: p.workspaceId,
+			trigger_id: p.triggerId,
+		})
+	} catch (err) {
+		logger.warn('Failed to emit trigger_queue_overflow_total', {
+			triggerId: p.triggerId,
+			error: String(err),
+		})
+	}
+}
+
+interface TriggerCronTickDroppedProps {
+	workspaceId: string
+	triggerId: string
+	backoffUntil: Date
+}
+
+/**
+ * Emitted when fireCronTrigger skips a tick because the trigger is in backoff.
+ * Cron ticks are dropped, not queued (no events row to replay), so this is the
+ * loss count that decides whether a coalesced cron replay is worth building.
+ * Best-effort, never throws.
+ */
+export async function trackTriggerCronTickDropped(p: TriggerCronTickDroppedProps): Promise<void> {
+	try {
+		await capturePosthogEvent('trigger_cron_tick_dropped', p.workspaceId, {
+			workspace_id: p.workspaceId,
+			trigger_id: p.triggerId,
+			backoff_until: p.backoffUntil.toISOString(),
+		})
+	} catch (err) {
+		logger.warn('Failed to emit trigger_cron_tick_dropped', {
+			triggerId: p.triggerId,
+			error: String(err),
+		})
+	}
+}

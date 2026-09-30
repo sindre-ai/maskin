@@ -7,6 +7,7 @@ import {
 	type TriggerQueueReason,
 	trackTriggerEventQueued,
 	trackTriggerEventReplayed,
+	trackTriggerQueueOverflow,
 } from '../lib/analytics/trigger-queue-events'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
@@ -119,6 +120,10 @@ export async function enqueueDroppedEvent(
 					scope,
 					current_depth: scope === 'trigger' ? perTrigger : perWorkspace,
 				},
+			})
+			void trackTriggerQueueOverflow({
+				workspaceId: event.workspace_id,
+				triggerId: opts.triggerId,
 			})
 			return 'overflow'
 		}
