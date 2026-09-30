@@ -103,3 +103,59 @@ export function VoiceMessageMetaTag({ className }: { className?: string } = {}) 
 		</span>
 	)
 }
+
+export interface VoiceCallBoundaries {
+	/** Head divider props, set on the first message of a call's run. */
+	start?: { durationMs?: number; startedAt?: string; endedAt?: string }
+	/** True on the last message of a call's run. */
+	end?: true
+}
+
+interface VoiceBoundaryMessage {
+	id: number
+	createdAt: string | null
+	metadata: { source?: string; voice_session_id?: string } | null
+}
+
+/**
+ * Finds each voice call's run of consecutive messages (same
+ * `metadata.voice_session_id`) and marks where its head and tail dividers go.
+ * A text message in the middle splits a call into two runs — the divider marks
+ * where the spoken part starts and stops, not the call's whole lifetime.
+ * Duration and clock range come from the run's first and last message, which is
+ * what the reader can see; the call's own timestamps are not on the message.
+ */
+export function deriveVoiceCallBoundaries(
+	messages: readonly VoiceBoundaryMessage[],
+): Map<number, VoiceCallBoundaries> {
+	const out = new Map<number, VoiceCallBoundaries>()
+	const callOf = (m: VoiceBoundaryMessage | undefined) =>
+		m?.metadata?.source === 'voice' ? (m.metadata.voice_session_id ?? null) : null
+
+	let runStart = -1
+	for (let i = 0; i < messages.length; i++) {
+		const call = callOf(messages[i])
+		if (call === null) {
+			runStart = -1
+			continue
+		}
+		if (runStart === -1 || callOf(messages[i - 1]) !== call) runStart = i
+		if (callOf(messages[i + 1]) === call) continue
+
+		// messages[i] closes the run that began at runStart.
+		const first = messages[runStart]
+		const last = messages[i]
+		if (!first || !last) continue
+		// A message with no timestamp yields a bare "Voice call" head, which the
+		// component already renders when duration and clock range are absent.
+		const startedAt = first.createdAt ?? undefined
+		const endedAt = last.createdAt ?? undefined
+		const durationMs =
+			startedAt && endedAt
+				? Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime())
+				: undefined
+		out.set(first.id, { ...out.get(first.id), start: { durationMs, startedAt, endedAt } })
+		out.set(last.id, { ...out.get(last.id), end: true })
+	}
+	return out
+}
