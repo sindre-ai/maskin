@@ -95,7 +95,6 @@ function makeFakeDb(rows: StaleRow[]) {
 
 const now = new Date('2026-09-29T12:00:00Z').getTime()
 const staleCutoff = new Date(now - SELF_HEAL_GRACE_MS - 1_000)
-const freshWithinGrace = new Date(now - 5_000)
 
 describe('SessionReconciler.selfHealTerminalWithoutEvents (§9.4)', () => {
 	it('back-fills a session_failed row when a terminal-failed session has no matching event', async () => {
@@ -195,45 +194,6 @@ describe('SessionReconciler.selfHealTerminalWithoutEvents (§9.4)', () => {
 		expect(result.staleConsidered).toBe(1)
 		expect(result.backFilled).toEqual([])
 		expect(inserted).toHaveLength(0)
-	})
-
-	it('respects the 60s grace window — a fresh terminal transition is not touched', async () => {
-		const { db, inserted } = makeFakeDb([])
-
-		const reconciler = new SessionReconciler(db as never)
-		// Simulate: the stale-fetch query filters by `completedAt < cutoff`, so a
-		// row within the grace window is invisible to it. The fake here returns
-		// an empty rowset regardless of the predicate; we just assert the method
-		// exits clean with nothing to do.
-		const result = await reconciler.selfHealTerminalWithoutEvents(now)
-
-		expect(result.staleConsidered).toBe(0)
-		expect(result.backFilled).toEqual([])
-		expect(inserted).toHaveLength(0)
-		// Reference the fresh timestamp so the compiler doesn't complain about it
-		// being unused — it's here to document intent, not to drive the fake.
-		expect(freshWithinGrace.getTime()).toBeLessThan(now)
-	})
-
-	it('accepts a caller-provided graceMs override for testability', async () => {
-		const shortGrace = 5_000
-		const inWindow = new Date(now - 2_000)
-		const { db, inserted } = makeFakeDb([
-			{
-				id: 'sess-within-window',
-				workspaceId: 'ws',
-				actorId: 'a',
-				status: 'failed',
-				completedAt: inWindow,
-			},
-		])
-		const reconciler = new SessionReconciler(db as never)
-		// The stale fetch predicate applies against `now - shortGrace = t-5s`;
-		// `completedAt = t-2s` is INSIDE the grace window — the fake still returns
-		// the row (predicate is opaque) but real Postgres would exclude it. The
-		// production behaviour is what matters; this test pins the API shape only.
-		await reconciler.selfHealTerminalWithoutEvents(now, shortGrace)
-		expect(inserted.length).toBeGreaterThanOrEqual(0)
 	})
 
 	it('applies SELF_HEAL_DEFAULT_LIMIT (500) on the stale-fetch by default', async () => {

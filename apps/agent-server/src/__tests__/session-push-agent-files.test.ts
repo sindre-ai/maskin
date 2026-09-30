@@ -1,23 +1,16 @@
 // Handler test for POST /sessions/:sessionId/push-agent-files (§7.1).
 //
-// This endpoint DOES NOT YET EXIST on the agent-server at commit 2's
-// foundation-slice head. Commit 2's second slice lands it at
-// `apps/agent-server/src/index.ts` alongside the existing /stop handler, and
-// its server-side implementation reads from `${sessionDir}/learnings/` and
-// `${sessionDir}/memory/` (host-side mount per `microsandbox.ts:337`).
-//
-// This file therefore holds a bearer-auth cell that WILL work against buildApp
-// once the route lands (a 401 on a missing bearer is a route-agnostic
-// middleware assertion — no route body needed), plus a shared-types compile
-// pin, plus §7.1 reshape cells as `it.todo(...)`.
-//
-// When commit 2's second slice lands the route, the todo cells flip to full
-// assertions on the request body, S3 push, and the response envelope.
+// The route landed with Commit 2 (apps/agent-server/src/index.ts). It reads
+// `${AGENT_SESSION_ROOT}/<id>/{learnings,memory}/` from the agent-server host
+// and uploads each file under `<keyPrefix>/<dir>/<entry>` through the storage
+// provider. These cells drive the real handler through buildApp with a stubbed
+// storage provider (no S3) and a stubbed msb runner.
 
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { StorageProvider } from '@maskin/storage'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildApp } from '../index'
 import type { AgentServerEnv } from '../lib/env'
@@ -29,6 +22,7 @@ type AgentPushDirectory = 'learnings' | 'memory'
 const AGENT_PUSH_DIRECTORIES: readonly AgentPushDirectory[] = ['learnings', 'memory']
 interface PushAgentFilesRequest {
 	directories: readonly AgentPushDirectory[]
+	keyPrefix: string
 }
 interface PushAgentFilesError {
 	dir: AgentPushDirectory | string
@@ -85,7 +79,10 @@ describe('POST /sessions/:sessionId/push-agent-files — §7.1 shared types', ()
 
 	it('shared types compile against §6.4', () => {
 		const dir: AgentPushDirectory = 'learnings'
-		const req: PushAgentFilesRequest = { directories: ['learnings', 'memory'] }
+		const req: PushAgentFilesRequest = {
+			directories: ['learnings', 'memory'],
+			keyPrefix: 'agents/ws-1/actor-1',
+		}
 		const res: PushAgentFilesResponse = {
 			pushed: { learnings: { files: 2, bytes: 64 } },
 			errors: [] as PushAgentFilesError[],
@@ -96,31 +93,136 @@ describe('POST /sessions/:sessionId/push-agent-files — §7.1 shared types', ()
 	})
 })
 
-describe('POST /sessions/:sessionId/push-agent-files — commit 2 route landing', () => {
-	// Bearer-auth is enforced by the /sessions/* middleware inside buildApp —
-	// this assertion works against the CURRENT buildApp regardless of whether
-	// the specific push-agent-files handler is registered. Once the handler
-	// lands, a missing bearer must still 401, so this cell is durable.
-	it('rejects a request without bearer auth (route-agnostic middleware assertion)', async () => {
-		const { run } = makeRunner()
-		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
-		const app = buildApp({ env, storage: null, msb: { msbBin: '/x', run } })
-		const res = await app.request('/sessions/sess-1/push-agent-files', {
+const KEY_PREFIX = 'agents/ws-1/actor-1'
+
+function makeStorage(overrides: { failKey?: (key: string) => boolean } = {}) {
+	const puts: Array<{ key: string; data: Buffer }> = []
+	const storage = {
+		put: async (key: string, data: Buffer | Uint8Array) => {
+			if (overrides.failKey?.(key)) throw new Error(`storage put failed: ${key}`)
+			puts.push({ key, data: Buffer.from(data) })
+		},
+	} as unknown as StorageProvider
+	return { storage, puts }
+}
+
+function seedFile(sessionId: string, dir: AgentPushDirectory, name: string, body: string) {
+	const d = join(sessionRoot, sessionId, dir)
+	mkdirSync(d, { recursive: true })
+	writeFileSync(join(d, name), body)
+}
+
+function setup(storage: StorageProvider | null) {
+	const { run } = makeRunner()
+	const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+	const app = buildApp({ env, storage, msb: { msbBin: '/x', run } })
+	const post = (sessionId: string, body: unknown, auth = true) =>
+		app.request(`/sessions/${sessionId}/push-agent-files`, {
 			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ directories: ['learnings'] }),
+			headers: {
+				'content-type': 'application/json',
+				...(auth ? { authorization: `Bearer ${env.AGENT_SERVER_SECRET}` } : {}),
+			},
+			body: typeof body === 'string' ? body : JSON.stringify(body),
 		})
-		// Either 401 (auth middleware) or 404 (route not yet registered) is
-		// acceptable at commit 2's foundation-slice head — both are proof the
-		// handler cannot be reached unauthenticated. The reshape cells below
-		// tighten the assertion once the route lands.
-		expect([401, 404]).toContain(res.status)
+	return { post }
+}
+
+describe('POST /sessions/:sessionId/push-agent-files — handler', () => {
+	it('rejects a request without bearer auth with 401', async () => {
+		const { post } = setup(makeStorage().storage)
+		const res = await post('sess-1', { directories: ['learnings'], keyPrefix: KEY_PREFIX }, false)
+		expect(res.status).toBe(401)
 	})
 
-	it.todo('registered at POST /sessions/:sessionId/push-agent-files under /sessions/* auth')
-	it.todo('accepts a PushAgentFilesRequest body against the §6.4 shape')
-	it.todo('reads ${sessionDir}/learnings/ + ${sessionDir}/memory/ and uploads to §6.4 prefixes')
-	it.todo('tolerates missing directories: empty `pushed` entry, no error added')
-	it.todo('records per-dir errors in `errors[]` without aborting the whole push')
-	it.todo('§7.2 stopSandbox order: stop first, THEN push — validated in the composed settle path')
+	it('rejects a malformed session id with 400', async () => {
+		const { post } = setup(makeStorage().storage)
+		const res = await post('..%2Fetc%2Fpasswd', {
+			directories: ['learnings'],
+			keyPrefix: KEY_PREFIX,
+		})
+		expect(res.status).toBe(400)
+	})
+
+	it('returns 503 storage_unavailable when the agent-server has no storage provider', async () => {
+		const { post } = setup(null)
+		const res = await post('sess-1', { directories: ['learnings'], keyPrefix: KEY_PREFIX })
+		expect(res.status).toBe(503)
+		expect(await res.json()).toEqual({ error: 'storage_unavailable' })
+	})
+
+	it('rejects a non-JSON body with 400 invalid_json', async () => {
+		const { post } = setup(makeStorage().storage)
+		const res = await post('sess-1', 'not json')
+		expect(res.status).toBe(400)
+		expect(await res.json()).toEqual({ error: 'invalid_json' })
+	})
+
+	it.each([
+		['empty directories', { directories: [], keyPrefix: KEY_PREFIX }],
+		['unknown directory', { directories: ['secrets'], keyPrefix: KEY_PREFIX }],
+		['keyPrefix outside agents/<id>/<id>', { directories: ['learnings'], keyPrefix: '../etc' }],
+		['missing keyPrefix', { directories: ['learnings'] }],
+	])('rejects %s with 400 invalid_request', async (_label, body) => {
+		const { post } = setup(makeStorage().storage)
+		const res = await post('sess-1', body)
+		expect(res.status).toBe(400)
+		expect(((await res.json()) as { error: string }).error).toBe('invalid_request')
+	})
+
+	it('uploads every file in both dirs under <keyPrefix>/<dir>/<entry> and reports counts', async () => {
+		seedFile('sess-1', 'learnings', 'a.md', 'hello')
+		seedFile('sess-1', 'learnings', 'b.md', 'world!')
+		seedFile('sess-1', 'memory', 'm.json', '{}')
+		const { storage, puts } = makeStorage()
+		const { post } = setup(storage)
+		const res = await post('sess-1', {
+			directories: ['learnings', 'memory'],
+			keyPrefix: KEY_PREFIX,
+		})
+		expect(res.status).toBe(200)
+		expect((await res.json()) as PushAgentFilesResponse).toEqual({
+			pushed: { learnings: { files: 2, bytes: 11 }, memory: { files: 1, bytes: 2 } },
+			errors: [],
+		})
+		expect(puts.map((p) => p.key).sort()).toEqual([
+			`${KEY_PREFIX}/learnings/a.md`,
+			`${KEY_PREFIX}/learnings/b.md`,
+			`${KEY_PREFIX}/memory/m.json`,
+		])
+		expect(puts.find((p) => p.key.endsWith('a.md'))?.data.toString()).toBe('hello')
+	})
+
+	it('tolerates missing directories: zero-file entry, no error, no upload', async () => {
+		const { storage, puts } = makeStorage()
+		const { post } = setup(storage)
+		const res = await post('sess-never-wrote', {
+			directories: ['learnings', 'memory'],
+			keyPrefix: KEY_PREFIX,
+		})
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({
+			pushed: { learnings: { files: 0, bytes: 0 }, memory: { files: 0, bytes: 0 } },
+			errors: [],
+		})
+		expect(puts).toEqual([])
+	})
+
+	it('records a per-dir error without aborting the other directory', async () => {
+		seedFile('sess-1', 'learnings', 'a.md', 'hello')
+		seedFile('sess-1', 'memory', 'm.json', '{}')
+		const { storage, puts } = makeStorage({ failKey: (k) => k.includes('/learnings/') })
+		const { post } = setup(storage)
+		const res = await post('sess-1', {
+			directories: ['learnings', 'memory'],
+			keyPrefix: KEY_PREFIX,
+		})
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as PushAgentFilesResponse
+		expect(body.errors).toHaveLength(1)
+		expect(body.errors[0]?.dir).toBe('learnings')
+		expect(body.errors[0]?.message).toContain('storage put failed')
+		expect(body.pushed.memory).toEqual({ files: 1, bytes: 2 })
+		expect(puts.map((p) => p.key)).toEqual([`${KEY_PREFIX}/memory/m.json`])
+	})
 })
