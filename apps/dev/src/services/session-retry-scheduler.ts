@@ -17,14 +17,14 @@
  * — flip to '0' at runtime to disable without a code roll.
  */
 
-import { and, eq, isNotNull, isNull, lte, sql as drizzleSql } from 'drizzle-orm'
+import { and, sql as drizzleSql, eq, isNotNull, isNull, lte } from 'drizzle-orm'
 
 import type { Database } from '@maskin/db'
 import { events, sessions } from '@maskin/db'
 import type { SessionResult } from '@maskin/shared'
 
-import { logger } from '../lib/logger'
 import { CHAT_RESUME_INTERIM_MESSAGE_ENABLED } from '../config/chat-resume'
+import { logger } from '../lib/logger'
 import { startSession } from './session-lifecycle'
 
 const TICK_MS = 30_000
@@ -93,12 +93,7 @@ export class SessionRetryScheduler {
 					result: sessions.result,
 				})
 				.from(sessions)
-				.where(
-					and(
-						lte(sessions.retryAt, now),
-						isNull(sessions.retriedSessionId),
-					),
-				)
+				.where(and(lte(sessions.retryAt, now), isNull(sessions.retriedSessionId)))
 				.limit(50)
 
 			for (const row of due) {
@@ -183,14 +178,11 @@ export class SessionRetryScheduler {
 				.set({ retriedSessionId: newSessionId })
 				.where(eq(sessions.id, row.id))
 		} catch (err) {
-			logger.error(
-				'SessionRetryScheduler failed to link retried_session_id on original',
-				{
-					originalSessionId: row.id,
-					retriedSessionId: newSessionId,
-					error: String(err),
-				},
-			)
+			logger.error('SessionRetryScheduler failed to link retried_session_id on original', {
+				originalSessionId: row.id,
+				retriedSessionId: newSessionId,
+				error: String(err),
+			})
 		}
 
 		// §7.5 telemetry event — carries source + confidence from the parse
@@ -219,10 +211,7 @@ export class SessionRetryScheduler {
 
 	private async clearRetryAtForCap(row: RetryableSession): Promise<void> {
 		try {
-			await this.db
-				.update(sessions)
-				.set({ retryAt: null })
-				.where(eq(sessions.id, row.id))
+			await this.db.update(sessions).set({ retryAt: null }).where(eq(sessions.id, row.id))
 		} catch (err) {
 			logger.warn('SessionRetryScheduler failed to clear retry_at on cap', {
 				sessionId: row.id,

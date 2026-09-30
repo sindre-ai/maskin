@@ -168,10 +168,7 @@ const STOP_SESSION_REQUEST_SCHEMA = z.object({
 const PUSH_AGENT_FILES_KEY_PREFIX_RE =
 	/^agents\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 const PUSH_AGENT_FILES_REQUEST_SCHEMA = z.object({
-	directories: z
-		.array(z.enum(AGENT_PUSH_DIRECTORIES))
-		.min(1)
-		.max(AGENT_PUSH_DIRECTORIES.length),
+	directories: z.array(z.enum(AGENT_PUSH_DIRECTORIES)).min(1).max(AGENT_PUSH_DIRECTORIES.length),
 	keyPrefix: z
 		.string()
 		.regex(PUSH_AGENT_FILES_KEY_PREFIX_RE, 'keyPrefix must match agents/<id>/<id>'),

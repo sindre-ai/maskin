@@ -2,8 +2,8 @@ import { events, agentServers, sessions } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../../lib/analytics/posthog'
-import { SessionManager } from '../../services/session-manager'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
+import { SessionManager } from '../../services/session-manager'
 import { insertSession, insertSessionLog, insertWorkspace } from '../factories'
 import { db, getTestActorId, sql } from './global-setup'
 
@@ -479,7 +479,7 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 			// no-op
 		} finally {
 			fetchSpy.mockRestore()
-			if (originalKey === undefined) delete process.env.POSTHOG_API_KEY
+			if (originalKey === undefined) Reflect.deleteProperty(process.env, 'POSTHOG_API_KEY')
 			else process.env.POSTHOG_API_KEY = originalKey
 			await manager.stop()
 		}
@@ -573,7 +573,9 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		).mockResolvedValue(undefined)
 		const driveSpy = vi
 			.spyOn(manager, 'startSession')
-			.mockImplementation(async () => undefined as unknown as Awaited<ReturnType<SessionManager['startSession']>>)
+			.mockImplementation(
+				async () => undefined as unknown as Awaited<ReturnType<SessionManager['startSession']>>,
+			)
 
 		try {
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
@@ -635,7 +637,7 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		// eq(sessionState, 'running') and re-fire settleSession every tick.
 		expect(row?.sessionState).toBe('done')
 		expect(row?.stateEnteredAt).not.toBeNull()
-		expect(row?.stateEnteredAt!.getTime()).toBeGreaterThan(twoHoursAgo.getTime())
+		expect(row?.stateEnteredAt?.getTime()).toBeGreaterThan(twoHoursAgo.getTime())
 		expect(row?.completedAt).not.toBeNull()
 
 		// settleSession must emit session_timeout with classification=wall_timeout
@@ -644,8 +646,8 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
 		const timeoutEvent = eventRows.find((e) => e.action === 'session_timeout')
 		expect(timeoutEvent).toBeDefined()
-		expect(
-			(timeoutEvent?.data as { classification?: string } | null)?.classification,
-		).toBe('wall_timeout')
+		expect((timeoutEvent?.data as { classification?: string } | null)?.classification).toBe(
+			'wall_timeout',
+		)
 	})
 })

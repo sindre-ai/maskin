@@ -129,9 +129,7 @@ describe('parseSubscriptionLimitReset', () => {
 				cliStdoutTail: tail,
 				now,
 			})
-			expect(result?.resetAt.getTime()).toBe(
-				Date.UTC(2026, 8, 30, 4, 0, 0, 0),
-			)
+			expect(result?.resetAt.getTime()).toBe(Date.UTC(2026, 8, 30, 4, 0, 0, 0))
 		})
 
 		it('returns null on a non-matching tail', () => {
@@ -144,7 +142,7 @@ describe('parseSubscriptionLimitReset', () => {
 		})
 
 		it('rolls forward to next day when the parsed time is at or before now', () => {
-			const tail = "resets 8:00pm (UTC)" // now is 20:00Z on 2026-09-29 — same time, so roll forward
+			const tail = 'resets 8:00pm (UTC)' // now is 20:00Z on 2026-09-29 — same time, so roll forward
 			const result = parseSubscriptionLimitReset({
 				cliStdoutTail: tail,
 				now,
@@ -176,7 +174,7 @@ describe('parseSubscriptionLimitReset', () => {
 		})
 
 		it('prefers callback over CLI banner', () => {
-			const tail = "resets 11:00pm (UTC)"
+			const tail = 'resets 11:00pm (UTC)'
 			const result = parseSubscriptionLimitReset({
 				callbackRetryAfterSeconds: 900,
 				cliStdoutTail: tail,

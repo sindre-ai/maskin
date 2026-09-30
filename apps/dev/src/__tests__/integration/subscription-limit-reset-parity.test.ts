@@ -2,10 +2,7 @@ import { events, sessions } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { SessionManager } from '../../services/session-manager'
-import {
-	MAX_RETRY_ATTEMPTS,
-	SessionRetryScheduler,
-} from '../../services/session-retry-scheduler'
+import { MAX_RETRY_ATTEMPTS, SessionRetryScheduler } from '../../services/session-retry-scheduler'
 import { insertSession, insertSessionLog, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 

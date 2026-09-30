@@ -176,7 +176,9 @@ export function parseCliResetBanner(stdoutTail: string, nowMs: number = Date.now
 function parseCliBannerTail(tail: string, nowMs: number): number | null {
 	// Two shapes: the "resets <time>" fragment inside the "You've hit your limit"
 	// banner, or a bare "Resets <time>" line. Match either.
-	const bannerMatch = /Resets?\s+([A-Za-z0-9 :\-,]+?)(?:\s*\(([A-Z]{2,5})\))?(?:$|[.\n])/i.exec(tail)
+	const bannerMatch = /Resets?\s+([A-Za-z0-9 :\-,]+?)(?:\s*\(([A-Z]{2,5})\))?(?:$|[.\n])/i.exec(
+		tail,
+	)
 	if (!bannerMatch) return null
 	const rawCapture = bannerMatch[1]
 	if (!rawCapture) return null
@@ -206,8 +208,9 @@ function resolveBannerFragment(fragment: string, tz: string, nowMs: number): num
 	}
 
 	// "Jan 3 10am" style — month/day + time
-	const monthMatch =
-		/^([A-Za-z]{3})\s+(\d{1,2})(?:\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?$/.exec(fragment)
+	const monthMatch = /^([A-Za-z]{3})\s+(\d{1,2})(?:\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?$/.exec(
+		fragment,
+	)
 	if (monthMatch) {
 		return anchorMonthDay(monthMatch, nowMs)
 	}

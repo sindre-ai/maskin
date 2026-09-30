@@ -134,10 +134,7 @@ export class AgentServerClient {
 		sessionId: string,
 		req: PushAgentFilesRequest,
 	): Promise<PushAgentFilesResponse> {
-		return this.postJson<PushAgentFilesResponse>(
-			`/sessions/${sessionId}/push-agent-files`,
-			req,
-		)
+		return this.postJson<PushAgentFilesResponse>(`/sessions/${sessionId}/push-agent-files`, req)
 	}
 
 	// Public to let lifecycle-route callers (T3 stop/snapshot/restore) reuse the

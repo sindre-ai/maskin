@@ -138,9 +138,12 @@ describe('SessionRetryScheduler', () => {
 
 	it('honours the FEATURE_RETRY_SCHEDULER=0 killswitch', async () => {
 		const { db } = fakeDb([buildDueRow()])
-		const scheduler = new SessionRetryScheduler(db as never, {
-			[KILLSWITCH_ENV_VAR]: '0',
-		} as NodeJS.ProcessEnv)
+		const scheduler = new SessionRetryScheduler(
+			db as never,
+			{
+				[KILLSWITCH_ENV_VAR]: '0',
+			} as NodeJS.ProcessEnv,
+		)
 
 		await scheduler.tick(NOW)
 

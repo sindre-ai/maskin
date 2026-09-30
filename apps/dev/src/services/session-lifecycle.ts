@@ -389,10 +389,7 @@ export async function _driveToRunning(sessionId: string): Promise<void> {
 }
 
 async function stampDriverHeartbeat(db: Database, sessionId: string): Promise<void> {
-	await db
-		.update(sessions)
-		.set({ driverHeartbeatAt: new Date() })
-		.where(eq(sessions.id, sessionId))
+	await db.update(sessions).set({ driverHeartbeatAt: new Date() }).where(eq(sessions.id, sessionId))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

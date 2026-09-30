@@ -12,7 +12,6 @@ import {
 	classifyClaudeFailure,
 	headersFrom,
 } from './claude-failure-classifier'
-import { parseSubscriptionLimitReset } from './subscription-limit-reset'
 import {
 	CLAUDE_CREDENTIAL_TIMEOUT_MS,
 	type ClaudeOAuthTokens,
@@ -35,6 +34,7 @@ import {
 } from './claude-oauth-slots'
 import { recordEvent } from './events/record-event'
 import { logger } from './logger'
+import { parseSubscriptionLimitReset } from './subscription-limit-reset'
 
 /**
  * De-dup window (ms) for the `claude_subscription_failover_triggered` event.

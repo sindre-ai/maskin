@@ -26,45 +26,49 @@ const SESSIONS_TABLE = 'sessions'
 const TSCONFIG = fileURLToPath(new URL('../../tsconfig.json', import.meta.url))
 const APPS_DEV_ROOT = fileURLToPath(new URL('../../', import.meta.url))
 
-test('only session-lifecycle.ts writes terminal session statuses', {
-	// Full-project AST walk over apps/dev/src ships on the order of 10s
-	// standalone; under parallel suite load it can hit the default 20s
-	// timeout. Bump to 60s so a busy CI worker doesn't false-fail on this
-	// gate — the timeout is generous; the walk itself is still bounded.
-	timeout: 60_000,
-}, () => {
-	const project = new Project({ tsConfigFilePath: TSCONFIG })
-	const offenders: { file: string; line: number; literal: string }[] = []
+test(
+	'only session-lifecycle.ts writes terminal session statuses',
+	{
+		// Full-project AST walk over apps/dev/src ships on the order of 10s
+		// standalone; under parallel suite load it can hit the default 20s
+		// timeout. Bump to 60s so a busy CI worker doesn't false-fail on this
+		// gate — the timeout is generous; the walk itself is still bounded.
+		timeout: 60_000,
+	},
+	() => {
+		const project = new Project({ tsConfigFilePath: TSCONFIG })
+		const offenders: { file: string; line: number; literal: string }[] = []
 
-	for (const src of project.getSourceFiles(`${APPS_DEV_ROOT}src/**/*.ts`)) {
-		if (src.getFilePath().endsWith(ALLOW)) continue
-		if (src.getFilePath().includes('/__tests__/') || src.getFilePath().endsWith('.test.ts'))
-			continue
+		for (const src of project.getSourceFiles(`${APPS_DEV_ROOT}src/**/*.ts`)) {
+			if (src.getFilePath().endsWith(ALLOW)) continue
+			if (src.getFilePath().includes('/__tests__/') || src.getFilePath().endsWith('.test.ts'))
+				continue
 
-		src.forEachDescendant((node) => {
-			// Match `.set({ status: 'completed', ... })` and any object literal
-			// binding to sessions.status
-			if (node.getKind() !== SyntaxKind.PropertyAssignment) return
-			const pa = node.asKindOrThrow(SyntaxKind.PropertyAssignment)
-			if (pa.getName() !== 'status') return
-			const init = pa.getInitializer()
-			if (!init || init.getKind() !== SyntaxKind.StringLiteral) return
-			const value = init.asKindOrThrow(SyntaxKind.StringLiteral).getLiteralText()
-			if (!TERMINALS.has(value)) return
-			if (!isEnclosedByUpdateOnSessions(pa)) return
-			offenders.push({
-				file: src.getFilePath(),
-				line: init.getStartLineNumber(),
-				literal: value,
+			src.forEachDescendant((node) => {
+				// Match `.set({ status: 'completed', ... })` and any object literal
+				// binding to sessions.status
+				if (node.getKind() !== SyntaxKind.PropertyAssignment) return
+				const pa = node.asKindOrThrow(SyntaxKind.PropertyAssignment)
+				if (pa.getName() !== 'status') return
+				const init = pa.getInitializer()
+				if (!init || init.getKind() !== SyntaxKind.StringLiteral) return
+				const value = init.asKindOrThrow(SyntaxKind.StringLiteral).getLiteralText()
+				if (!TERMINALS.has(value)) return
+				if (!isEnclosedByUpdateOnSessions(pa)) return
+				offenders.push({
+					file: src.getFilePath(),
+					line: init.getStartLineNumber(),
+					literal: value,
+				})
 			})
-		})
-	}
+		}
 
-	expect(
-		offenders,
-		`terminal status literal outside ${ALLOW}: ${JSON.stringify(offenders, null, 2)}`,
-	).toEqual([])
-})
+		expect(
+			offenders,
+			`terminal status literal outside ${ALLOW}: ${JSON.stringify(offenders, null, 2)}`,
+		).toEqual([])
+	},
+)
 
 /**
  * True when `node` sits inside a `.set({...})` object literal whose enclosing
