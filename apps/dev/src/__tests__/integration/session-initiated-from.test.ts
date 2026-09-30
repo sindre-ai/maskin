@@ -3,7 +3,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { RuntimeTelemetry, type TelemetryClient } from '../../services/runtime-telemetry'
 import { SessionManager } from '../../services/session-manager'
-import { insertObject, insertWorkspace } from '../factories'
+import { insertObject, insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 function stubStorage(): StorageProvider {
@@ -261,5 +261,97 @@ describe('SessionManager — initiated_from context (Integration)', () => {
 		expect(ended?.properties?.end_reason).toBe('failed')
 		expect(ended?.properties?.context_object_id).toBe(bet.id)
 		expect(ended?.properties?.context_object_type).toBe('task')
+	})
+
+	// The parent task (06679c31) threaded runtime_session_ended through the 8
+	// local-path sites. `markRemoteSessionComplete` is the production
+	// remote-dispatch completion callback and was left uncovered — every
+	// dispatch-created session's terminal transition on prod flows through it,
+	// so without these emissions Criterion 3's numerator undercounts in prod.
+	// These three cases pin the new remote-completion site: write path,
+	// NULL-safe payload, and no-duplicate-emission on the dropped-signal path.
+	it('emits runtime_session_ended with context_object_id + context_object_type when markRemoteSessionComplete lands the terminal transition', async () => {
+		const bet = await insertObject(db, workspaceId, actorId, {
+			type: 'bet',
+			title: 'Remote complete bet',
+		})
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+			initiatedFromObjectId: bet.id,
+			initiatedFromObjectType: 'bet',
+		})
+
+		const { telemetry, captured } = stubTelemetry()
+		const manager = new SessionManager(db, stubStorage(), telemetry)
+		try {
+			await manager.markRemoteSessionComplete(session.id, 0)
+		} finally {
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('completed')
+
+		const ended = captured.find((c) => c.event === 'runtime_session_ended')
+		expect(ended).toBeDefined()
+		expect(ended?.properties?.session_id).toBe(session.id)
+		expect(ended?.properties?.end_reason).toBe('completed')
+		expect(ended?.properties?.context_object_id).toBe(bet.id)
+		expect(ended?.properties?.context_object_type).toBe('bet')
+	})
+
+	it('omits both context properties from runtime_session_ended when markRemoteSessionComplete runs on a session with no originating object', async () => {
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+			initiatedFromObjectId: null,
+			initiatedFromObjectType: null,
+		})
+
+		const { telemetry, captured } = stubTelemetry()
+		const manager = new SessionManager(db, stubStorage(), telemetry)
+		try {
+			await manager.markRemoteSessionComplete(session.id, 0)
+		} finally {
+			await manager.stop()
+		}
+
+		const ended = captured.find((c) => c.event === 'runtime_session_ended')
+		expect(ended).toBeDefined()
+		expect(ended?.properties?.end_reason).toBe('completed')
+		// Absent, not null — matches the naming split established by parent
+		// task 06679c31 so downstream PostHog dashboards see a clean absence
+		// rather than a null value that reads as "we had context but chose null".
+		expect('context_object_id' in (ended?.properties ?? {})).toBe(false)
+		expect('context_object_type' in (ended?.properties ?? {})).toBe(false)
+	})
+
+	it('does not fire a second runtime_session_ended when markRemoteSessionComplete is called on an already-terminal session (dropped-signal path)', async () => {
+		const bet = await insertObject(db, workspaceId, actorId, {
+			type: 'bet',
+			title: 'Dropped-signal bet',
+		})
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+			initiatedFromObjectId: bet.id,
+			initiatedFromObjectType: 'bet',
+		})
+
+		const { telemetry, captured } = stubTelemetry()
+		const manager = new SessionManager(db, stubStorage(), telemetry)
+		try {
+			// First call takes the CAS-successful branch and emits.
+			await manager.markRemoteSessionComplete(session.id, 0)
+			// Second call takes the no-op "already terminal" branch at ~5220
+			// (dropped-signal main path) — the CAS matches zero rows, `updated`
+			// is undefined, and the method returns true without a terminal
+			// transition. That branch must not fire a second telemetry event.
+			await manager.markRemoteSessionComplete(session.id, 1)
+		} finally {
+			await manager.stop()
+		}
+
+		const endedEvents = captured.filter((c) => c.event === 'runtime_session_ended')
+		expect(endedEvents).toHaveLength(1)
+		expect(endedEvents[0]?.properties?.end_reason).toBe('completed')
 	})
 })
