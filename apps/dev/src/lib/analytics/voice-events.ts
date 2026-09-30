@@ -59,3 +59,44 @@ export async function captureVoiceSessionDenied(
 ): Promise<void> {
 	await capturePosthogEvent(VOICE_SESSION_DENIED_EVENT, humanActorId, props)
 }
+
+/**
+ * Fired by the WS tool-proxy, once per tool invocation — success or refusal.
+ * Property schema is frozen against the Voice v1 tech spec §Observability.
+ * `error_code` is null (never undefined) on success so the property stays
+ * queryable: PostHog drops undefined props but keeps explicit nulls.
+ */
+export const VOICE_TOOL_CALL_EVENT = 'voice_tool_call'
+export const VOICE_TURN_COMPLETED_EVENT = 'voice_turn_completed'
+
+export type VoiceToolCallProps = {
+	voice_session_id: string
+	tool_name: string
+	success: boolean
+	latency_ms: number
+	error_code: string | null
+	[key: string]: string | number | boolean | null | undefined | string[] | number[]
+}
+
+export type VoiceTurnCompletedProps = {
+	voice_session_id: string
+	turn_index: number
+	user_audio_ms: number
+	agent_audio_ms: number
+	barge_in: boolean
+	[key: string]: string | number | boolean | null | undefined | string[] | number[]
+}
+
+export async function captureVoiceToolCall(
+	humanActorId: string,
+	props: VoiceToolCallProps,
+): Promise<void> {
+	await capturePosthogEvent(VOICE_TOOL_CALL_EVENT, humanActorId, props)
+}
+
+export async function captureVoiceTurnCompleted(
+	humanActorId: string,
+	props: VoiceTurnCompletedProps,
+): Promise<void> {
+	await capturePosthogEvent(VOICE_TURN_COMPLETED_EVENT, humanActorId, props)
+}

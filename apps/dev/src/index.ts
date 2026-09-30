@@ -2,6 +2,7 @@ import './lib/sentry'
 import './extensions'
 import path from 'node:path'
 import { serve } from '@hono/node-server'
+import type { NodeWebSocket } from '@hono/node-ws'
 import { createDb, syncAgentServersFromEnv } from '@maskin/db'
 import { actors, sessions } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
@@ -144,7 +145,19 @@ runtimeTelemetry.startGaugeLoop(() => sessionManager.getConcurrencyByAgentServer
 
 const port = Number(process.env.PORT) || 3000
 
-const app = createApp({ db, notifyBridge, sessionManager, agentStorage, storageProvider }, { port })
+// Voice v1 needs a WebSocket upgrade path next to the HTTP routes. createApp
+// builds the socket handle (it owns the app instance); we hold it here and
+// attach it to the server once serve() returns it, below.
+let nodeWebSocket: NodeWebSocket | undefined
+const app = createApp(
+	{ db, notifyBridge, sessionManager, agentStorage, storageProvider },
+	{
+		port,
+		onNodeWebSocket: (ws) => {
+			nodeWebSocket = ws
+		},
+	},
+)
 
 sessionManager.start().then(() => {
 	logger.info('Session manager started')
@@ -350,7 +363,7 @@ try {
 	logger.error('Dev bootstrap failed', { error: err instanceof Error ? err.message : String(err) })
 }
 
-serve({ fetch: app.fetch, port }, () => {
+const server = serve({ fetch: app.fetch, port }, () => {
 	const webUrl = 'http://localhost:5173'
 	const apiUrl = `http://localhost:${port}`
 
@@ -406,6 +419,7 @@ ${mcpSetup}
 		})
 	})
 })
+nodeWebSocket?.injectWebSocket(server)
 
 export default app
 export type AppType = typeof app
