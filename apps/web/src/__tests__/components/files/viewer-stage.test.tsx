@@ -569,3 +569,37 @@ describe('ViewerStage — thumbnail rail (Slice 2b)', () => {
 		)
 	})
 })
+
+describe('ViewerStage — annotate mode (Slice 3)', () => {
+	it('stops the sandboxed iframe from swallowing clicks so pins can be placed on the document', () => {
+		const { rerender } = render(<ViewerStage file={buildHtmlFile()} />)
+		const frame = screen.getByTitle('Preview of mockup.html') as HTMLIFrameElement
+		expect(frame.style.pointerEvents).toBe('')
+		rerender(<ViewerStage file={buildHtmlFile()} annotateMode />)
+		expect(
+			(screen.getByTitle('Preview of mockup.html') as HTMLIFrameElement).style.pointerEvents,
+		).toBe('none')
+	})
+
+	it('lets Esc bubble in annotate mode so the route can exit it, and swallows it otherwise', () => {
+		const outerHandler = vi.fn()
+		const { rerender } = render(
+			<div onKeyDown={outerHandler}>
+				<ViewerStage file={buildHtmlFile()} annotateMode />
+			</div>,
+		)
+		const stage = document.querySelector('[data-viewer-state]') as HTMLElement
+		fireEvent.keyDown(stage, { key: 'Escape' })
+		expect(outerHandler).toHaveBeenCalledTimes(1)
+		outerHandler.mockClear()
+		rerender(
+			<div onKeyDown={outerHandler}>
+				<ViewerStage file={buildHtmlFile()} />
+			</div>,
+		)
+		fireEvent.keyDown(document.querySelector('[data-viewer-state]') as HTMLElement, {
+			key: 'Escape',
+		})
+		expect(outerHandler).not.toHaveBeenCalled()
+	})
+})

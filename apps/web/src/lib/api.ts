@@ -2,21 +2,31 @@ import type {
 	ActorListItem,
 	ActorResponse,
 	AgentState,
+	CreateFileCommentInput,
 	DisplaySettingsBody,
+	FileCommentDto,
 	ListLoopsResponse,
 	LoopSummary,
 	SafeMetadata,
+	SendRoundInput,
+	SendRoundResponse,
 	TriggerResponse,
+	UpdateFileCommentInput,
 } from '@maskin/shared'
 
 export type {
 	ActorListItem,
 	ActorResponse,
 	AgentState,
+	CreateFileCommentInput,
 	DisplaySettingsBody,
+	FileCommentDto,
 	ListLoopsResponse,
 	LoopSummary,
+	SendRoundInput,
+	SendRoundResponse,
 	TriggerResponse,
+	UpdateFileCommentInput,
 }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
@@ -953,6 +963,36 @@ export const api = {
 			request<FileDetail>(`/files/${id}`, { method: 'PATCH', body: data, workspaceId }),
 		delete: (workspaceId: string, id: string) =>
 			request<{ deleted: boolean }>(`/files/${id}`, { method: 'DELETE', workspaceId }),
+	},
+
+	fileComments: {
+		list: (workspaceId: string, fileId: string, params?: { roundId?: string }) => {
+			const qs = params?.roundId ? `?roundId=${encodeURIComponent(params.roundId)}` : ''
+			return request<FileCommentDto[]>(`/files/${fileId}/comments${qs}`, { workspaceId })
+		},
+		create: (workspaceId: string, fileId: string, data: CreateFileCommentInput) =>
+			request<FileCommentDto>(`/files/${fileId}/comments`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		update: (
+			workspaceId: string,
+			fileId: string,
+			commentId: string,
+			data: UpdateFileCommentInput,
+		) =>
+			request<FileCommentDto>(`/files/${fileId}/comments/${commentId}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		sendRound: (workspaceId: string, fileId: string, data: SendRoundInput) =>
+			request<SendRoundResponse>(`/files/${fileId}/comments/rounds`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
 	},
 }
 
