@@ -3334,69 +3334,77 @@ describe('SessionManager', () => {
 		})
 	})
 
-	describe('runWatchdog() — zombie starting sessions', () => {
-		it('fails sessions stuck in starting for >10 minutes', async () => {
-			const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000)
+	describe('runWatchdog() — boot-stall (session_state=starting past BOOT_STALL_MS)', () => {
+		it('fails sessions stuck in starting for >BOOT_STALL_MS', async () => {
+			const sixMinutesAgo = new Date(Date.now() - 6 * 60 * 1000)
 			const stuckSession = buildSession({
 				status: 'starting',
+				sessionState: 'starting',
+				stateEnteredAt: sixMinutesAgo,
 				containerId: null,
-				updatedAt: twentyMinutesAgo,
+				updatedAt: sixMinutesAgo,
 				startedAt: null,
 			})
 
-			// Set up the select queue for each watchdog query in order:
-			// 1. timedOut (running past timeout) → empty
-			// 2. runningSessions (for idle check) → empty
-			// 3. expiredPaused → empty
-			// 4. stuckPending → empty
-			// 5. stuckStarting → our stuck session
-			// 6. drainQueue > hasCapacity: workspace lookup
-			// 7. drainQueue > hasCapacity: count running sessions
-			// 8. drainQueue > nextQueued → empty (no queued sessions)
-			// 9. queuedSessions (final drain) → empty
+			// Mock queue tracks each .select() runWatchdog fires, in order.
+			// The redesigned reaper (Commit 6) fires:
+			//   1. timedOut               (wall-timeout, sessionState='running')
+			//   2. idleChatCandidates     (interactive chat idle close)
+			//   3. runningSessions        (non-interactive idle-pause)
+			//   4. maskinPlanRunning      (budget check)
+			//   5. expiredPaused          (7-day archive — reads sessions.status)
+			//   6. queuedRescueCandidates (dead-driver rescue)
+			//   7. waitingStuck           (waiting_for_machine >24h — PostHog only)
+			//   8. stuckStarting          (boot-stall — the section under test)
+			//   9-11. drainQueue chain fired from inside the boot-stall processing loop
+			//   12. queuedSessions        (final drain)
 			mockResults.selectQueue = [
 				[], // 1. timedOut
-				[], // 1.5 stuckAgentSessions
-				[], // 1.75 idleChatCandidates
-				[], // 2. runningSessions
-				[], // 3. expiredPaused
-				[], // 4. stuckPending
-				[stuckSession], // 5. stuckStarting
-				[stuckSession], // 5b. settleSession's own SELECT for the stuck row
-				[{ settings: {} }], // 6. drainQueue > workspace
-				[{ count: 0 }], // 7. drainQueue > count
-				[], // 8. drainQueue > nextQueued (empty = break)
-				[], // 9. final queuedSessions
+				[], // 2. idleChatCandidates
+				[], // 3. runningSessions
+				[], // 4. maskinPlanRunning
+				[], // 5. expiredPaused
+				[], // 6. queuedRescueCandidates
+				[], // 7. waitingStuck
+				[stuckSession], // 8. stuckStarting
+				[stuckSession], // 8b. settleSession's own SELECT for the stuck row
+				[{ settings: {} }], // 9. drainQueue > workspace
+				[{ count: 0 }], // 10. drainQueue > count
+				[], // 11. drainQueue > nextQueued (empty = break)
+				[], // 12. final queuedSessions
 			]
 
 			// Access private runWatchdog via cast
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
 
 			// The watchdog should have completed without error,
-			// processing the stuck starting session through the failure path
+			// processing the stuck starting session through the boot-stall path
 		})
 
-		it('does not fail sessions in starting for less than 10 minutes', async () => {
-			const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
+		it('does not fail sessions in starting for less than BOOT_STALL_MS', async () => {
+			const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000)
 			const recentSession = buildSession({
 				status: 'starting',
+				sessionState: 'starting',
+				stateEnteredAt: threeMinutesAgo,
 				containerId: null,
-				updatedAt: fiveMinutesAgo,
+				updatedAt: threeMinutesAgo,
 			})
 
-			// The DB query uses lt(updatedAt, tenMinutesAgo), so a session
-			// updated 5 minutes ago should NOT be returned by the query.
-			// With the mock DB, the query returns whatever we put in the queue,
-			// so we simulate the correct DB behavior by returning empty for stuckStarting.
+			// The DB query uses lt(stateEnteredAt, BOOT_STALL_MS ago), so a
+			// session in 'starting' for 3 minutes should NOT be returned by the
+			// query. The mock returns whatever we put in the queue, so we
+			// simulate the correct DB behavior by returning empty for stuckStarting.
 			mockResults.selectQueue = [
 				[], // 1. timedOut
-				[], // 1.5 stuckAgentSessions
-				[], // 1.75 idleChatCandidates
-				[], // 2. runningSessions
-				[], // 3. expiredPaused
-				[], // 4. stuckPending
-				[], // 5. stuckStarting (empty — session is too recent)
-				[], // 6. queuedSessions
+				[], // 2. idleChatCandidates
+				[], // 3. runningSessions
+				[], // 4. maskinPlanRunning
+				[], // 5. expiredPaused
+				[], // 6. queuedRescueCandidates
+				[], // 7. waitingStuck
+				[], // 8. stuckStarting (empty — session is too recent)
+				[], // 9. final queuedSessions
 			]
 
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
@@ -3424,21 +3432,23 @@ describe('SessionManager', () => {
 			// log, telemetry, drainQueue) runs as it would against a real DB.
 			mockResults.update = [{ id: orphan.id }]
 			mockResults.selectQueue = [
-				[], // 1. timedOut
-				[], // 2. stuckAgentSessions (no stuck sessions)
-				[], // 2.5 idleChatCandidates (no idle chat sessions)
-				[orphan], // 3. runningSessions (idle check)
+				// Mock queue matches the redesigned reaper's SELECT order.
+				[], // 1. timedOut (wall-timeout)
+				[], // 2. idleChatCandidates
+				[orphan], // 3. runningSessions (idle-pause)
 				[], // 4. lastLog for orphan (empty → falls back to startedAt, which is >10min old)
-				// markSessionFailedAfterContainerLoss → existing session select (new in this branch):
+				// markSessionFailedAfterContainerLoss chain:
 				[], // 5. existing session lookup (undefined → skip telemetry, update still fires)
-				// markSessionFailedAfterContainerLoss → drainQueue → hasCapacity:
 				[{ settings: {} }], // 6. drainQueue > workspace lookup
 				[{ count: 0 }], // 7. drainQueue > running count
 				[], // 8. drainQueue > nextQueued (empty = break)
-				[], // 9. expiredPaused
-				[], // 10. stuckPending
-				[], // 11. stuckStarting
-				[], // 12. final queuedSessions
+				// Back in runWatchdog, remaining sections:
+				[], // 9. maskinPlanRunning (budget)
+				[], // 10. expiredPaused
+				[], // 11. queuedRescueCandidates
+				[], // 12. waitingStuck
+				[], // 13. stuckStarting (boot-stall)
+				[], // 14. final queuedSessions
 			]
 
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
@@ -3469,16 +3479,17 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[], // 1. timedOut
-				[], // 2. stuckAgentSessions (no stuck sessions)
-				[], // 2.5 idleChatCandidates (no idle chat sessions)
+				[], // 2. idleChatCandidates
 				[stale], // 3. runningSessions
 				[], // 4. lastLog (empty → falls back to startedAt, which is >10min old)
 				// isContainerAlive → inspect mock returns { running: false } (consumed here)
 				// stale.agentServerId is set → continue, no markSessionFailedAfterContainerLoss
-				[], // 5. expiredPaused
-				[], // 6. stuckPending
-				[], // 7. stuckStarting
-				[], // 8. final queuedSessions
+				[], // 5. maskinPlanRunning
+				[], // 6. expiredPaused
+				[], // 7. queuedRescueCandidates
+				[], // 8. waitingStuck
+				[], // 9. stuckStarting
+				[], // 10. final queuedSessions
 			]
 
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
