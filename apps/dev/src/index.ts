@@ -22,7 +22,6 @@ import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
 import { AgentStorageManager } from './services/agent-storage'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
-import { SessionRetryScheduler } from './services/session-retry-scheduler'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
@@ -34,6 +33,8 @@ import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionDispatcher } from './services/session-dispatcher'
 import { configureSessionLifecycle } from './services/session-lifecycle'
 import { SessionManager } from './services/session-manager'
+import { SessionRetryScheduler } from './services/session-retry-scheduler'
+import { SessionSelfHealJob } from './services/session-self-heal-job'
 import { CommentDispatcher, TriggerRunner } from './services/trigger-runner'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
@@ -186,6 +187,12 @@ logger.info('Brief cache cleaner started')
 const sessionRetryScheduler = new SessionRetryScheduler(db)
 sessionRetryScheduler.start()
 logger.info('Session retry scheduler started')
+
+// §9.4 — self-heal: back-fills the session_* events row for terminal sessions
+// that never got one. Ticks every 60s; idempotent, so safe on every restart.
+const sessionSelfHealJob = new SessionSelfHealJob(db)
+sessionSelfHealJob.start()
+logger.info('Session self-heal job started')
 
 const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()

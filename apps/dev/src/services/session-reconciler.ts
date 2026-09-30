@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { events, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
-import { and, asc, eq, inArray, isNotNull, lt } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNotNull, lt, sql } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { type SettleDependencies, settleSession } from './session-lifecycle'
@@ -204,8 +204,9 @@ export class SessionReconciler {
 	 *   method fixes that one and nothing else. See task escalation to Planner.
 	 *
 	 * Bounded by `limit` (defaults to `SELF_HEAL_DEFAULT_LIMIT`, 500) with
-	 * `completedAt ASC` so a large backlog after a multi-hour outage still
-	 * drains in stable oldest-first order across successive ticks.
+	 * settle time ascending (completedAt, else updatedAt for paused rows) so a
+	 * large backlog after a multi-hour outage still drains in stable oldest-first
+	 * order across successive ticks.
 	 *
 	 * Idempotent by construction: only sessions with no matching action-typed
 	 * events row are back-filled, so a re-run does nothing.
@@ -216,6 +217,10 @@ export class SessionReconciler {
 		limit: number = SELF_HEAL_DEFAULT_LIMIT,
 	): Promise<SelfHealResult> {
 		const cutoff = new Date(nowMs - graceMs)
+		// Paused rows deliberately leave completedAt null (§5.2 col 2), so their
+		// terminal-transition time is updatedAt, which settleSession stamps on every
+		// write. Every other terminal kind has completedAt set.
+		const settledAt = sql<Date>`coalesce(${sessions.completedAt}, ${sessions.updatedAt})`
 
 		const stale = await this.db
 			.select({
@@ -229,11 +234,10 @@ export class SessionReconciler {
 			.where(
 				and(
 					inArray(sessions.status, [...TERMINAL_STATUSES]),
-					isNotNull(sessions.completedAt),
-					lt(sessions.completedAt, cutoff),
+					lt(settledAt, sql`${cutoff.toISOString()}::timestamptz`),
 				),
 			)
-			.orderBy(asc(sessions.completedAt))
+			.orderBy(asc(settledAt))
 			.limit(limit)
 
 		const backFilled: Array<{ sessionId: string; action: string }> = []

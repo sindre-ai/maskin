@@ -17,7 +17,8 @@ interface StaleRow {
 	workspaceId: string
 	actorId: string
 	status: string
-	completedAt: Date
+	/** Null on paused rows: settleSession leaves completedAt unset on pause (§5.2 col 2). */
+	completedAt: Date | null
 	/** Actions this row already has in the fake events table, for the existence check. */
 	existingActions?: string[]
 }
@@ -159,7 +160,7 @@ describe('SessionReconciler.selfHealTerminalWithoutEvents (§9.4)', () => {
 				workspaceId: 'ws',
 				actorId: 'a',
 				status: 'paused',
-				completedAt: staleCutoff,
+				completedAt: null,
 			},
 		])
 
