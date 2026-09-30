@@ -152,10 +152,10 @@ describe('resolveLlmRoute priority order', () => {
 		const result = await resolveLlmRoute({
 			...baseParams,
 			wsSettings: emptySettings(),
-			agent: { provider: 'anthropic', apiKey: 'sk-agent', model: 'claude-sonnet-4-6' },
+			agent: { provider: 'anthropic', apiKey: 'sk-agent', model: 'claude-sonnet-5-5' },
 		})
 		expect(result?.route).toBe(LLM_ROUTE_AGENT)
-		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 	})
 
 	it('omits ANTHROPIC_MODEL when agent has no model preference', async () => {
@@ -219,7 +219,7 @@ describe('resolveLlmRoute priority order', () => {
 		const result = await resolveLlmRoute({
 			...baseParams,
 			wsSettings: settings,
-			agent: { model: 'claude-sonnet-4-6' },
+			agent: { model: 'claude-sonnet-5-5' },
 		})
 		expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
 		expect(result?.envVars.ANTHROPIC_MODEL).toBe('deepseek/deepseek-v4-flash')
@@ -289,10 +289,10 @@ describe('resolveLlmRoute priority order', () => {
 			actorId: 'actor-1',
 			wsSettings: emptySettings(),
 			enterprise: true,
-			agent: { model: 'claude-sonnet-4-6' },
+			agent: { model: 'claude-sonnet-5-5' },
 		})
 		expect(result?.route).toBe(LLM_ROUTE_OAUTH)
-		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 	})
 
 	it('4. workspace api_key when OAuth absent', async () => {
@@ -313,10 +313,10 @@ describe('resolveLlmRoute priority order', () => {
 		const result = await resolveLlmRoute({
 			...baseParams,
 			wsSettings: settings,
-			agent: { model: 'claude-opus-4-7' },
+			agent: { model: 'claude-sonnet-5-5' },
 		})
 		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
-		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-opus-4-7')
+		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 	})
 
 	it('falls through OAuth errors to next route', async () => {

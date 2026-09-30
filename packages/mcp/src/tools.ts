@@ -84,7 +84,7 @@ const actorLlmConfigSchema = z
 			.string()
 			.optional()
 			.describe('LLM provider to run this agent on, e.g. "anthropic", "openai".'),
-		model: z.string().optional().describe('Model identifier to use, e.g. "claude-opus-4-6".'),
+		model: z.string().optional().describe('Model identifier to use, e.g. "claude-sonnet-5-5".'),
 	})
 	.passthrough()
 	.optional()
