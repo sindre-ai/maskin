@@ -237,7 +237,18 @@ export async function startSession(
 
 	const awaitMode = input.await ?? 'none'
 	if (awaitMode !== 'none') {
-		handle.awaitResult = pollForAwait(session.id, awaitMode, input.awaitTimeoutMs)
+		const awaitResult = pollForAwait(session.id, awaitMode, input.awaitTimeoutMs)
+		// Callers that never read awaitResult (e.g. conversation-responder) must
+		// not turn a poll failure into a process-killing unhandled rejection.
+		// Callers that do await it still see the rejection.
+		awaitResult.catch((err) => {
+			logger.warn('startSession: awaitResult poll failed', {
+				sessionId: session.id,
+				awaitMode,
+				error: String(err),
+			})
+		})
+		handle.awaitResult = awaitResult
 	}
 
 	return handle
