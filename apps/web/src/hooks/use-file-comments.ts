@@ -88,13 +88,19 @@ export function useUpdateFileComment(workspaceId: string, fileId: string) {
 export function useSendFileCommentsRound(workspaceId: string, fileId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
-		mutationFn: (input: SendRoundInput) => api.fileComments.sendRound(workspaceId, fileId, input),
+		// driverId is analytics-only (the server resolves the driver itself), so it
+		// is stripped before the request body is built.
+		mutationFn: ({
+			driverId: _driverId,
+			...input
+		}: SendRoundInput & { driverId?: string | null }) =>
+			api.fileComments.sendRound(workspaceId, fileId, input),
 		onSuccess: (result, variables) => {
 			trackFileViewerRoundSent({
 				file_id: fileId,
 				comment_count: result.count,
 				attaching_object_id: variables.targetObjectId,
-				driver_id: '',
+				driver_id: variables.driverId ?? '',
 				round_id: result.roundId,
 			})
 			// Server rewrote every row's roundId in one transaction; refetch the

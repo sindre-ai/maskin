@@ -564,7 +564,8 @@ function HtmlViewerStage({
 				toggleFullscreen()
 			} else if (key === 'Escape') {
 				event.preventDefault()
-				event.stopPropagation()
+				// In annotate mode let Esc bubble so the route can exit annotate mode.
+				if (!annotateMode) event.stopPropagation()
 				;(event.currentTarget as HTMLDivElement).blur()
 			} else if (isPaged && (key === 'ArrowLeft' || key === 'PageUp')) {
 				// Page-nav keys are claimed ONLY for a paged doc: on a plain
@@ -579,7 +580,7 @@ function HtmlViewerStage({
 				gotoPage((page?.index ?? 0) + 1)
 			}
 		},
-		[handleFit, handleStepZoom, toggleFullscreen, isPaged, page, gotoPage],
+		[handleFit, handleStepZoom, toggleFullscreen, isPaged, page, gotoPage, annotateMode],
 	)
 
 	const scaledSize = useMemo(() => {
@@ -631,6 +632,9 @@ function HtmlViewerStage({
 								const stageX = event.clientX - rect.left + event.currentTarget.scrollLeft
 								const stageY = event.clientY - rect.top + event.currentTarget.scrollTop
 								const pos = stageToDoc({ x: stageX, y: stageY }, source, zoom)
+								// Clicks on the gray margin around the document fall outside
+								// 0-1; the server rejects those, so don't create a draft.
+								if (pos.x < 0 || pos.x > 1 || pos.y < 0 || pos.y > 1) return
 								onPinPlace(pos, page ? page.index : null)
 							}}
 						>
@@ -662,6 +666,10 @@ function HtmlViewerStage({
 										transformOrigin: '0 0',
 										border: 0,
 										display: 'block',
+										// In annotate mode the iframe must not swallow clicks:
+										// events inside a sandboxed frame never bubble to the
+										// viewport's pin-placement handler.
+										pointerEvents: annotateMode ? 'none' : undefined,
 									}}
 								/>
 								<PinOverlay

@@ -239,26 +239,30 @@ function FileViewerPage() {
 						})
 						commentIds.push(posted.id)
 						postedTempIds.push(draft.tempId)
+						// Drop the local draft as soon as it is a server row, so a
+						// failed send (or a later failed draft) can be retried without
+						// posting this one twice.
+						removeDraft(draft.tempId)
 					} catch {
 						setSendPhase('idle')
 						return
 					}
 				}
-				const unsentServerRows = comments.filter(
-					(c) => c.roundId === null && !postedTempIds.some(() => false),
-				)
-				for (const row of unsentServerRows) commentIds.push(row.id)
+				for (const row of comments) {
+					if (row.roundId === null) commentIds.push(row.id)
+				}
 				if (commentIds.length === 0) {
 					setSendPhase('idle')
 					return
 				}
+				const target = attachers.find((a) => a.id === targetObjectId)
 				try {
 					await sendRound.mutateAsync({
 						roundId,
 						targetObjectId,
 						commentIds,
+						driverId: target?.driverId ?? null,
 					})
-					const target = attachers.find((a) => a.id === targetObjectId)
 					const driver =
 						target?.driverId && actors ? actors.find((a) => a.id === target.driverId) : null
 					setLockedDriverName(driver?.name ?? 'driver')
@@ -277,7 +281,17 @@ function FileViewerPage() {
 			}
 			void workflow()
 		},
-		[drafts, comments, createComment, sendRound, roundId, attachers, actors, completeRound],
+		[
+			drafts,
+			comments,
+			createComment,
+			sendRound,
+			roundId,
+			attachers,
+			actors,
+			completeRound,
+			removeDraft,
+		],
 	)
 
 	// Pins overlaid on the stage — every posted comment shows as a saved pin,

@@ -210,3 +210,22 @@ describe('ReviewPanel — legacy display, filter, resolve, post-send lock', () =
 		expect(onSendRound).toHaveBeenCalledWith('obj-1')
 	})
 })
+
+describe('ReviewPanel — saved-but-unsent comments', () => {
+	// A comment that was saved to the server (roundId still null) must stay
+	// sendable: Save draft removes the local draft, so the Send rule cannot
+	// depend on local drafts alone.
+	it('enables Send for a saved comment that has not been sent yet', () => {
+		const onSendRound = vi.fn()
+		renderPanel({ comments: [freshComment], drafts: [], onSendRound })
+		const btn = screen.getByTestId('panel-send-round')
+		expect(btn).toBeEnabled()
+		fireEvent.click(btn)
+		expect(onSendRound).toHaveBeenCalledWith('obj-1')
+	})
+
+	it('keeps Send disabled when every comment already belongs to a round', () => {
+		renderPanel({ comments: [{ ...freshComment, roundId: 'round-1' }], drafts: [] })
+		expect(screen.getByTestId('panel-send-round')).toBeDisabled()
+	})
+})

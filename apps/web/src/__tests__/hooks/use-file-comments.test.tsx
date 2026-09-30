@@ -170,9 +170,11 @@ describe('useSendFileCommentsRound — batched POST + rollup event', () => {
 				roundId,
 				targetObjectId,
 				commentIds: ['c1', 'c2'],
+				driverId: 'driver-1',
 			})
 		})
 		expect(api.fileComments.sendRound).toHaveBeenCalledTimes(1)
+		// driverId is analytics-only and must not reach the request body.
 		expect(api.fileComments.sendRound).toHaveBeenCalledWith(workspaceId, fileId, {
 			roundId,
 			targetObjectId,
@@ -183,6 +185,7 @@ describe('useSendFileCommentsRound — batched POST + rollup event', () => {
 				file_id: fileId,
 				comment_count: 2,
 				attaching_object_id: targetObjectId,
+				driver_id: 'driver-1',
 				round_id: roundId,
 			}),
 		)

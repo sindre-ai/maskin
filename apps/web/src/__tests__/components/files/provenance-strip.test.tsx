@@ -145,3 +145,12 @@ describe('ProvenanceStrip — 6 variants + agent-driver special', () => {
 		expect(screen.getByTestId('strip-agent-driver-marker')).toBeInTheDocument()
 	})
 })
+
+describe('ProvenanceStrip — orphaned without a re-attach handler', () => {
+	it('does not render an inert Re-attach button when no handler is wired', () => {
+		const orphan = makeAttacher({ targetArchived: true, title: 'Removed bet' })
+		renderStrip({ attachers: [orphan] })
+		expect(screen.getByText(/Orphaned:/)).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /re-attach/i })).toBeNull()
+	})
+})

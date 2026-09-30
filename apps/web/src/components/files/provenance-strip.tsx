@@ -193,15 +193,17 @@ function renderStripContent({
 			<>
 				<span>Orphaned:</span>
 				<AttacherLink workspaceId={workspaceId} attacher={orphan} muted />
-				<Button
-					type="button"
-					variant="link"
-					size="sm"
-					className="h-6 px-1 text-xs"
-					onClick={() => onReattach?.()}
-				>
-					Re-attach
-				</Button>
+				{onReattach && (
+					<Button
+						type="button"
+						variant="link"
+						size="sm"
+						className="h-6 px-1 text-xs"
+						onClick={onReattach}
+					>
+						Re-attach
+					</Button>
+				)}
 			</>
 		)
 	}

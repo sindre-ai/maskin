@@ -162,7 +162,7 @@ export function ReviewPanel(props: ReviewPanelProps) {
 				)}
 			</div>
 			<PanelFoot
-				draftCount={draftsForFile.length}
+				unsentCount={draftsForFile.length + comments.filter((c) => c.roundId === null).length}
 				provenance={provenance}
 				sendState={sendState}
 				onSendRound={onSendRound}
@@ -495,12 +495,12 @@ function DraftCard({
 }
 
 function PanelFoot({
-	draftCount,
+	unsentCount,
 	provenance,
 	sendState,
 	onSendRound,
 }: {
-	draftCount: number
+	unsentCount: number
 	provenance: ProvenanceResolution
 	sendState: ReviewPanelProps['sendState']
 	onSendRound: (targetObjectId: string) => void
@@ -510,7 +510,7 @@ function PanelFoot({
 	// variant user hasn't picked a target yet; 'disabled' covers 0-attach,
 	// archived and orphaned.
 	const target = provenance.defaultTarget
-	const disabledReason = deriveDisabledReason(provenance, target, draftCount)
+	const disabledReason = deriveDisabledReason(provenance, target, unsentCount)
 	const isSending = sendState.phase === 'sending'
 	const isSent = sendState.phase === 'sent'
 
@@ -535,15 +535,15 @@ function PanelFoot({
 	return (
 		<div className="flex flex-col gap-2 border-t p-3">
 			<div className="text-[11px] text-muted-foreground" data-testid="panel-foot-status">
-				{draftCount === 0
-					? 'Add drafts on the stage, then send the round.'
-					: `${draftCount} draft${draftCount === 1 ? '' : 's'} ready to send.`}
+				{unsentCount === 0
+					? 'Add comments on the stage, then send the round.'
+					: `${unsentCount} comment${unsentCount === 1 ? '' : 's'} ready to send.`}
 			</div>
 			<Button
 				type="button"
 				size="sm"
 				className="h-8 text-xs"
-				disabled={disabledReason !== null || draftCount === 0 || !target || isSending}
+				disabled={disabledReason !== null || unsentCount === 0 || !target || isSending}
 				onClick={() => target && onSendRound(target.id)}
 				title={disabledReason ?? undefined}
 				data-testid="panel-send-round"
@@ -557,13 +557,13 @@ function PanelFoot({
 function deriveDisabledReason(
 	provenance: ProvenanceResolution,
 	target: AttachingObject | null,
-	draftCount: number,
+	unsentCount: number,
 ): string | null {
 	if (provenance.variant === 'zero') return "This file isn't attached to any object"
 	if (provenance.variant === 'archived') return 'The attached object is archived'
 	if (provenance.variant === 'orphaned') return 'The attached object was archived mid-review'
 	if (provenance.send === 'picker-required') return 'Pick a target object first'
-	if (draftCount === 0) return 'No drafts to send'
+	if (unsentCount === 0) return 'Nothing to send yet'
 	if (!target) return 'No target object'
 	return null
 }
