@@ -55,6 +55,24 @@ type Env = {
  *
  * **Default** — any operation without configured results resolves to `[]`.
  */
+// Props reserved for Drizzle's own protocol / TypeScript internals — never
+// pass-through from target, always fall through to the trap's default logic.
+// Keeps the trap deterministic against V8 / test-runner introspection reads
+// (`then`, `Symbol.toStringTag`, etc.) that would otherwise resolve against
+// a bare `{}` target and confuse callers.
+function isReservedProp(prop: string | symbol): boolean {
+	return (
+		typeof prop === 'symbol' ||
+		prop === 'then' ||
+		prop === 'select' ||
+		prop === 'selectDistinct' ||
+		prop === 'insert' ||
+		prop === 'update' ||
+		prop === 'delete' ||
+		prop === 'transaction'
+	)
+}
+
 export function createTestContext() {
 	const mockResults: Record<string, unknown[]> = {}
 	const queues: Record<string, unknown[][]> = {}
@@ -66,7 +84,17 @@ export function createTestContext() {
 	const calls: { inserts: unknown[]; updates: unknown[] } = { inserts: [], updates: [] }
 
 	const db = new Proxy({} as Database, {
-		get: (_target, prop) => {
+		get: (target, prop) => {
+			// Tests may assign a bespoke handler onto the mock db (e.g. `db.execute = async (...) => {...}`)
+			// for query paths this Proxy does not intercept (Drizzle's `db.execute(sql`...`)`, or a
+			// custom shim). Without checking `target` first, the get-trap's default `() => createChain()`
+			// shadows the assignment and every mocked call returns an empty chain. Route tests that
+			// mock `db.execute` inline depend on this pass-through — see
+			// `apps/dev/src/__tests__/routes/marketplace-catalog-list.test.ts` for the pattern.
+			const own = Reflect.get(target, prop)
+			if (typeof own === 'function' || (own !== undefined && !isReservedProp(prop))) {
+				return own
+			}
 			if (
 				prop === 'select' ||
 				prop === 'selectDistinct' ||

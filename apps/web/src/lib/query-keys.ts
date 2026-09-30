@@ -153,6 +153,11 @@ export const queryKeys = {
 	marketplaceItems: {
 		installed: (workspaceId: string) => ['marketplace-items', workspaceId, 'installed'] as const,
 	},
+	marketplaceCatalog: {
+		all: (workspaceId: string) => ['marketplace-catalog', workspaceId] as const,
+		list: (workspaceId: string, team?: string) =>
+			['marketplace-catalog', workspaceId, 'list', team ?? null] as const,
+	},
 	marketplaceLoops: {
 		list: (filters?: { type?: string; use_case?: string; q?: string }) =>
 			['marketplace-loops', 'list', filters ?? {}] as const,

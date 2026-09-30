@@ -58,11 +58,11 @@ describe('trackLoopInstalled', () => {
 			actor_id: 'actor-1',
 			component_type_count: 3,
 			component_types: ['actor', 'trigger', 'integration'],
-			source: 'catalogue',
+			source: 'marketplace',
 		})
 	})
 
-	it("emits source 'detail' when the install came from the loop detail page", async () => {
+	it("coerces legacy 'detail' source to 'marketplace' on the wire (Marketplace-tab success metric filter shape)", async () => {
 		await trackLoopInstalled({
 			loopId: 'loop-1',
 			loopSlug: 'customer-continuous-discovery',
@@ -74,7 +74,7 @@ describe('trackLoopInstalled', () => {
 		})
 
 		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
-		expect(props.source).toBe('detail')
+		expect(props.source).toBe('marketplace')
 	})
 
 	it('reports component_type_count 0 with an empty component_types array for an item-less install', async () => {
@@ -107,7 +107,7 @@ describe('trackLoopInstalled', () => {
 		expect(props.component_types).toEqual(['actor'])
 	})
 
-	it('carries a source marker on the wire when the install starts from the detail view', async () => {
+	it("passes through explicit 'marketplace' source unchanged (card-triggered installs stay under the Marketplace filter)", async () => {
 		await trackLoopInstalled({
 			loopId: 'loop-1',
 			loopSlug: 'customer-continuous-discovery',
@@ -115,14 +115,14 @@ describe('trackLoopInstalled', () => {
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 			provisioned: { actors: 1, triggers: 0, skills: 0, integrations: 0 },
-			source: 'detail',
+			source: 'marketplace',
 		})
 
 		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
-		expect(props.source).toBe('detail')
+		expect(props.source).toBe('marketplace')
 	})
 
-	it("defaults source to 'catalogue' when it is not set (catalog installs stay distinguishable)", async () => {
+	it("defaults source to 'marketplace' when it is not set — Marketplace-tab success filter picks up every card-triggered install under one event shape (spec §8.2)", async () => {
 		await trackLoopInstalled({
 			loopId: 'loop-1',
 			loopSlug: 'customer-continuous-discovery',
@@ -132,10 +132,12 @@ describe('trackLoopInstalled', () => {
 			provisioned: { actors: 1, triggers: 0, skills: 0, integrations: 0 },
 		})
 
-		// An explicit 'catalogue' rather than an absent key: a missing property is
-		// indistinguishable from an older event shape, so the default is emitted.
+		// PR #5 extended the source enum to marketplace|seed|api and set the
+		// default to 'marketplace'. Legacy 'catalogue' / 'detail' tags coerce
+		// to 'marketplace' on the wire so every card-triggered install lands
+		// under one PostHog filter.
 		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
-		expect(props.source).toBe('catalogue')
+		expect(props.source).toBe('marketplace')
 	})
 })
 
