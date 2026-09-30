@@ -1,4 +1,5 @@
 import { expect, test } from '../fixtures/auth.fixture'
+import { TestAPI } from '../helpers/api.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const LINK_TEXT = 'the docs'
@@ -14,15 +15,22 @@ test.describe('Chat — clicking a link opens a new tab', () => {
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 
-			// The creator is auto-added to the participant list, so a single-participant
-			// conversation is enough — no extra human seat or agent session needed.
+			// The link is posted by a SECOND agent actor, never the session actor:
+			// MessageBubble forks on isOwn, and only the non-own (markdown) branch
+			// renders an anchor. Seeding it as the session actor renders a plain-text
+			// bubble with no link in the DOM.
+			const agent = await account.api.createAgentActor(`Link QA Agent ${Date.now()}`)
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
 			const conversation = await account.api.createConversation(account.workspaceId, {
 				title: 'E2E chat link target',
-				participant_actor_ids: [],
+				participant_actor_ids: [agent.id],
+				initial_message: 'Opening the thread',
 			})
-			await account.api.postConversationMessage(conversation.id, account.workspaceId, {
-				content: MESSAGE,
-			})
+			await new TestAPI(agent.api_key).postConversationMessage(
+				conversation.id,
+				account.workspaceId,
+				{ content: MESSAGE },
+			)
 
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 
