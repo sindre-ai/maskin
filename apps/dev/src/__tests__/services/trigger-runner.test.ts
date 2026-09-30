@@ -13,6 +13,16 @@ import {
 import { buildTrigger } from '../factories'
 import { createMockSessionManager, createTestContext } from '../setup'
 
+// The 30s event-queue sweep (S3) runs on the fake clock these tests advance and
+// would shift results off the positional selectQueue below. Its own coverage is
+// the queue-*.test.ts integration tests, against real Postgres.
+vi.mock('../../services/trigger-event-queue', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../services/trigger-event-queue')>()),
+	findDueTriggerIds: vi.fn().mockResolvedValue([]),
+	findDueWorkspaceIds: vi.fn().mockResolvedValue([]),
+	sweepQueueRetention: vi.fn().mockResolvedValue(undefined),
+}))
+
 describe('TriggerRunner', () => {
 	let runner: TriggerRunner
 	let bridge: EventEmitter & PgNotifyBridge
