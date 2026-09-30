@@ -20,12 +20,26 @@ import {
 } from '../lib/analytics/comment-responder-events'
 import { trackTriggerDispatchDeduped } from '../lib/analytics/trigger-dispatch-events'
 import { trackTriggerMatchFailed } from '../lib/analytics/trigger-matcher-events'
+import {
+	type TriggerQueueDrainSource,
+	trackTriggerCronTickDropped,
+} from '../lib/analytics/trigger-queue-events'
 import { recordEvent } from '../lib/events/record-event'
 import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
 import type { SessionManager } from './session-manager'
+import {
+	QUEUE_EVENT_ENTITY_TYPE,
+	QUEUE_RETENTION_MS,
+	QUEUE_SWEEP_INTERVAL_MS,
+	drainQueue,
+	enqueueDroppedEvent,
+	findDueTriggerIds,
+	findDueWorkspaceIds,
+	sweepQueueRetention,
+} from './trigger-event-queue'
 
 /** Cap on scope-match rows appended to the action prompt so the payload stays bounded. */
 const SCOPE_MATCH_LIMIT = 100
@@ -63,6 +77,8 @@ interface TriggerFailureState {
 	count: number
 	lastFailedAt: Date
 	backoffUntil: Date
+	/** Why the window opened; 'retry_at_x' rows are queued under that reason. */
+	reason?: string
 }
 
 /** Maximum backoff duration: 30 minutes */
@@ -111,7 +127,16 @@ interface WorkspaceSuppression {
 	/** Firing resumes on its own once `now >= until`. */
 	until: Date
 	reason: string
+	/** Persisted alongside the row for diagnosis; never read back into the hot path. */
+	metadata?: Record<string, unknown>
 }
+
+/**
+ * A provider-supplied reset time (session_failed data.retry_at) further out
+ * than the queue's retention would strand queued events past their 7 days, so
+ * it is treated like an unparseable one and the exponential fallback runs.
+ */
+const RETRY_AT_MAX_MS = QUEUE_RETENTION_MS
 
 /**
  * Fallback pause for a cap with no known reset time. `PlanCapExceededError`
@@ -205,6 +230,10 @@ export class TriggerRunner {
 	private workspaceSuppressions: Map<string, WorkspaceSuppression> = new Map()
 	/** Background sweep of expired cooldown / suppression rows (§3.2). */
 	private cooldownSweepInterval: NodeJS.Timeout | null = null
+	/** 30s drain sweep for the event queue (§4.4). */
+	private queueSweepInterval: NodeJS.Timeout | null = null
+	/** Scopes ('trigger:<id>' / 'workspace:<id>') being drained by THIS process, so two drains never interleave and break per-trigger FIFO. */
+	private drainingScopes: Set<string> = new Set()
 	// A session's terminal outcome can be reported more than once: e.g.
 	// SessionManager.stopSession() writes a provisional session_failed row,
 	// and the agent-server's own genuine completion report — if it arrives,
@@ -275,6 +304,15 @@ export class TriggerRunner {
 		}, COOLDOWN_SWEEP_INTERVAL_MS)
 		this.cooldownSweepInterval.unref?.()
 
+		// Background drain of the event queue (§4.4). Runs on every instance;
+		// FOR UPDATE SKIP LOCKED keeps concurrent sweeps off each other's rows.
+		this.queueSweepInterval = setInterval(() => {
+			this.sweepEventQueue().catch((err) =>
+				logger.error('Event queue sweep failed', { error: String(err) }),
+			)
+		}, QUEUE_SWEEP_INTERVAL_MS)
+		this.queueSweepInterval.unref?.()
+
 		logger.info('Trigger runner started')
 	}
 
@@ -304,13 +342,22 @@ export class TriggerRunner {
 			clearInterval(this.cooldownSweepInterval)
 			this.cooldownSweepInterval = null
 		}
+		if (this.queueSweepInterval) {
+			clearInterval(this.queueSweepInterval)
+			this.queueSweepInterval = null
+		}
 	}
 
-	private async recordTriggerFailure(triggerId: string, reason?: string): Promise<void> {
+	private async recordTriggerFailure(
+		triggerId: string,
+		reason?: string,
+		/** Provider-supplied reset time; replaces the exponential window when present. */
+		backoffUntilOverride?: Date,
+	): Promise<void> {
 		const now = new Date()
 		const existing = this.triggerFailures.get(triggerId)
 		const count = (existing?.count ?? 0) + 1
-		const backoffUntil = calculateBackoffUntil(count, now)
+		const backoffUntil = backoffUntilOverride ?? calculateBackoffUntil(count, now)
 
 		// Persist FIRST, then update the in-memory cache. A DB write failure logs
 		// ERROR and rethrows — silently falling back to memory-only reintroduces
@@ -348,6 +395,7 @@ export class TriggerRunner {
 			count,
 			lastFailedAt: now,
 			backoffUntil,
+			reason,
 		})
 		logger.warn(
 			`Trigger '${triggerId}' failure #${count}, in backoff until ${backoffUntil.toISOString()}`,
@@ -400,6 +448,9 @@ export class TriggerRunner {
 			throw err
 		}
 		logger.info(`Workspace ${workspaceId} trigger suppression cleared — workspace updated`)
+		this.drainWorkspaceQueue(workspaceId, 'workspace_unsuppress').catch((err) =>
+			logger.error('Workspace queue drain failed', { workspaceId, error: String(err) }),
+		)
 	}
 
 	/**
@@ -523,6 +574,7 @@ export class TriggerRunner {
 					workspaceId,
 					suppressedUntil: suppression.until,
 					reason: suppression.reason,
+					metadata: suppression.metadata ?? null,
 					createdAt: now,
 					updatedAt: now,
 				})
@@ -531,6 +583,7 @@ export class TriggerRunner {
 					set: {
 						suppressedUntil: suppression.until,
 						reason: suppression.reason,
+						metadata: suppression.metadata ?? null,
 						updatedAt: now,
 					},
 				})
@@ -566,6 +619,9 @@ export class TriggerRunner {
 		}
 		this.triggerFailures.delete(triggerId)
 		logger.info(`Trigger '${triggerId}' backoff reset after successful session`)
+		this.drainTriggerQueue(triggerId, 'backoff_lift').catch((err) =>
+			logger.error('Trigger queue drain failed', { triggerId, error: String(err) }),
+		)
 	}
 
 	private async handleSessionOutcome(event: PgEvent): Promise<void> {
@@ -594,9 +650,52 @@ export class TriggerRunner {
 		if (event.action === 'session_completed') {
 			await this.resetTriggerBackoff(session.triggerId)
 		} else {
-			// session_failed or session_timeout
+			// session_failed or session_timeout. A provider-truth reset time
+			// (§4.6) beats the exponential guess: the trigger AND the workspace
+			// hold until then, and the queue drains when it arrives.
+			const retryAt = await this.readRetryAt(event)
+			if (retryAt) {
+				await this.recordTriggerFailure(session.triggerId, 'retry_at_x', retryAt)
+				await this.suppressWorkspace(event.workspace_id, {
+					until: retryAt,
+					reason: 'retry_at_x',
+					metadata: { source_event_id: event.event_id, retry_at: retryAt.toISOString() },
+				})
+				return
+			}
 			await this.recordTriggerFailure(session.triggerId, event.action)
 		}
+	}
+
+	/**
+	 * The provider's reset time from a credit-exhaustion session_failed, or null
+	 * to fall back to the exponential backoff. Null when the flag is off, the
+	 * event is not a classified credit_exhaustion carrying a string retry_at,
+	 * or retry_at is unparseable, already past, or beyond RETRY_AT_MAX_MS —
+	 * event data is external input, and an epoch-9999 timestamp would otherwise
+	 * pause a workspace for good.
+	 */
+	private async readRetryAt(event: PgEvent): Promise<Date | null> {
+		if (event.action !== 'session_failed') return null
+		if (!isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)) return null
+		const data = await this.fetchEventData(event.event_id)
+		if (data?.classification !== 'credit_exhaustion' || typeof data.retry_at !== 'string') {
+			return null
+		}
+		const retryAt = new Date(data.retry_at)
+		const now = Date.now()
+		if (
+			Number.isNaN(retryAt.getTime()) ||
+			retryAt.getTime() <= now ||
+			retryAt.getTime() - now > RETRY_AT_MAX_MS
+		) {
+			logger.warn('Ignoring unusable retry_at on session_failed — using exponential backoff', {
+				eventId: event.event_id,
+				retryAt: data.retry_at,
+			})
+			return null
+		}
+		return retryAt
 	}
 
 	private async fetchEventData(eventId: string): Promise<Record<string, unknown> | null> {
@@ -607,7 +706,12 @@ export class TriggerRunner {
 		return (row?.data as Record<string, unknown>) ?? null
 	}
 
-	private async handleEvent(event: PgEvent) {
+	/**
+	 * `replay` narrows the pass to ONE trigger: the queue drain uses it to
+	 * re-run a single cooling trigger's held event without re-dispatching the
+	 * event to every healthy trigger that already handled it.
+	 */
+	private async handleEvent(event: PgEvent, replay?: { onlyTriggerId: string }) {
 		// Hot-reload: react to trigger CRUD events
 		if (event.entity_type === 'trigger') {
 			await this.handleTriggerChange(event)
@@ -625,7 +729,17 @@ export class TriggerRunner {
 			await this.clearWorkspaceSuppression(event.workspace_id)
 		}
 
-		if (this.isWorkspaceSuppressed(event.workspace_id)) return
+		if (this.isWorkspaceSuppressed(event.workspace_id)) {
+			const suppression = this.workspaceSuppressions.get(event.workspace_id)
+			if (suppression) {
+				await this.holdDroppedEvent(event, {
+					reason: suppression.reason === 'retry_at_x' ? 'retry_at_x' : 'workspace_suppression',
+					triggerId: null,
+					replayAfter: suppression.until,
+				})
+			}
+			return
+		}
 
 		// Find matching event triggers for this workspace
 		const matchingTriggers = await this.db
@@ -636,6 +750,7 @@ export class TriggerRunner {
 					eq(triggers.workspaceId, event.workspace_id),
 					eq(triggers.type, 'event'),
 					eq(triggers.enabled, true),
+					replay ? eq(triggers.id, replay.onlyTriggerId) : undefined,
 				),
 			)
 
@@ -826,6 +941,11 @@ export class TriggerRunner {
 				logger.info(
 					`Trigger '${trigger.name}' in backoff until ${backoffState.backoffUntil.toISOString()}, skipping`,
 				)
+				await this.holdDroppedEvent(event, {
+					reason: backoffState.reason === 'retry_at_x' ? 'retry_at_x' : 'trigger_backoff',
+					triggerId: trigger.id,
+					replayAfter: backoffState.backoffUntil,
+				})
 				continue
 			}
 
@@ -1038,6 +1158,11 @@ export class TriggerRunner {
 			logger.info(
 				`Cron trigger '${trigger.name}' in backoff until ${cronBackoff.backoffUntil.toISOString()}, skipping`,
 			)
+			void trackTriggerCronTickDropped({
+				workspaceId: trigger.workspaceId,
+				triggerId: trigger.id,
+				backoffUntil: cronBackoff.backoffUntil,
+			})
 			return
 		}
 
@@ -1135,6 +1260,7 @@ export class TriggerRunner {
 			count: number
 			lastFailedAt: Date
 			backoffUntil: Date
+			reason: string | null
 			workspaceId: string
 		}[]
 		try {
@@ -1144,6 +1270,7 @@ export class TriggerRunner {
 					count: triggerCooldowns.count,
 					lastFailedAt: triggerCooldowns.lastFailedAt,
 					backoffUntil: triggerCooldowns.backoffUntil,
+					reason: triggerCooldowns.reason,
 					workspaceId: triggers.workspaceId,
 				})
 				.from(triggerCooldowns)
@@ -1165,6 +1292,7 @@ export class TriggerRunner {
 				count: row.count,
 				lastFailedAt: row.lastFailedAt,
 				backoffUntil: row.backoffUntil,
+				reason: row.reason ?? undefined,
 			})
 			loaded++
 		}
@@ -1239,6 +1367,107 @@ export class TriggerRunner {
 				.where(lt(triggerDispatches.dispatchedAt, dispatchCutoff))
 		} catch (err) {
 			logger.warn('Trigger dispatch sweep failed', { error: String(err) })
+		}
+		try {
+			await sweepQueueRetention(this.db, new Date())
+		} catch (err) {
+			logger.warn('Trigger event queue retention sweep failed', { error: String(err) })
+		}
+	}
+
+	/**
+	 * Parks an event that is about to be dropped so it replays when the window
+	 * lifts (tech spec §4.2). Behind trigger_engine_v2: with the flag off the
+	 * drop is exactly today's, and nothing touches the queue. The queue's own
+	 * audit events are never parked — see QUEUE_EVENT_ENTITY_TYPE.
+	 */
+	private async holdDroppedEvent(
+		event: PgEvent,
+		opts: Parameters<typeof enqueueDroppedEvent>[2],
+	): Promise<void> {
+		if (event.entity_type === QUEUE_EVENT_ENTITY_TYPE) return
+		if (!isFlagEnabledForWorkspace(event.workspace_id, FLAGS.TRIGGER_ENGINE_V2)) return
+		await enqueueDroppedEvent(this.db, event, opts)
+	}
+
+	/**
+	 * Replays one trigger's held events in event_id order (§4.3). Skipped while
+	 * the trigger is back inside a window or its workspace is suppressed — the
+	 * rows stay pending for the next lift or sweep.
+	 */
+	private async drainTriggerQueue(
+		triggerId: string,
+		source: TriggerQueueDrainSource,
+	): Promise<void> {
+		await this.runDrain(
+			`trigger:${triggerId}`,
+			{ triggerId },
+			source,
+			(workspaceId) => {
+				const backoff = this.triggerFailures.get(triggerId)
+				return (
+					(backoff !== undefined && backoff.backoffUntil > new Date()) ||
+					this.isWorkspaceSuppressed(workspaceId)
+				)
+			},
+			(event) => this.handleEvent(event, { onlyTriggerId: triggerId }),
+		)
+	}
+
+	/**
+	 * Replays a workspace's suppression-held events through the full matcher
+	 * (§4.3): it re-checks the trigger list and each trigger's cooldown, so an
+	 * event whose trigger is cooling moves on to that trigger's own queue.
+	 */
+	private async drainWorkspaceQueue(
+		workspaceId: string,
+		source: TriggerQueueDrainSource,
+	): Promise<void> {
+		await this.runDrain(
+			`workspace:${workspaceId}`,
+			{ workspaceId },
+			source,
+			(ws) => this.isWorkspaceSuppressed(ws),
+			(event) => this.handleEvent(event),
+		)
+	}
+
+	private async runDrain(
+		scopeKey: string,
+		scope: Parameters<typeof drainQueue>[1],
+		source: TriggerQueueDrainSource,
+		isHeld: (workspaceId: string) => boolean,
+		replay: (event: PgEvent) => Promise<void>,
+	): Promise<void> {
+		if (this.drainingScopes.has(scopeKey)) return
+		this.drainingScopes.add(scopeKey)
+		try {
+			const replayed = await drainQueue(this.db, scope, {
+				source,
+				canReplay: (workspaceId) => isFlagEnabledForWorkspace(workspaceId, FLAGS.TRIGGER_ENGINE_V2),
+				isHeld,
+				replay,
+			})
+			if (replayed > 0)
+				logger.info(`Trigger event queue drained — ${replayed} replayed`, { scopeKey, source })
+		} finally {
+			this.drainingScopes.delete(scopeKey)
+		}
+	}
+
+	/**
+	 * 30s safety net (§4.4): drains any trigger or workspace whose held events
+	 * have reached their replay_after, which is how a backoff or retry_at_x
+	 * window that simply EXPIRED — no success event, no settings change to lift
+	 * it — gets its events back.
+	 */
+	private async sweepEventQueue(): Promise<void> {
+		const now = new Date()
+		for (const triggerId of await findDueTriggerIds(this.db, now)) {
+			await this.drainTriggerQueue(triggerId, 'sweep')
+		}
+		for (const workspaceId of await findDueWorkspaceIds(this.db, now)) {
+			await this.drainWorkspaceQueue(workspaceId, 'sweep')
 		}
 	}
 
