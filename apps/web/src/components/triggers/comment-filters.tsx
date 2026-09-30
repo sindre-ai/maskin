@@ -278,7 +278,7 @@ export function CommentFilters({ workspaceId, value, onChange }: CommentFiltersP
 							onChange={(e) => onChange({ ...value, replyInThreadEventId: e.target.value })}
 							inputMode="numeric"
 							placeholder="Event id, e.g. 702123"
-							className="mt-1.5 min-h-11 font-mono text-xs sm:min-h-8"
+							className="mt-1.5 min-h-11 font-mono text-base sm:min-h-8 sm:text-xs"
 						/>
 						<p className="mt-1.5 text-[11px] text-muted-foreground">
 							Fires only when the comment&apos;s <strong>parentEventId</strong> equals this event id
@@ -364,7 +364,7 @@ export function AttentionLevelSelect({ id, value, onChange }: AttentionLevelSele
 						onClick={() => onChange(selected ? null : level)}
 						onKeyDown={(e) => onKeyDown(e, level)}
 						className={cn(
-							'grid size-7 cursor-pointer place-items-center rounded-full border font-mono text-[11px] font-bold outline-none transition-colors',
+							'grid size-11 cursor-pointer place-items-center rounded-md border font-mono text-[13px] font-bold outline-none transition-colors sm:size-7 sm:text-[11px]',
 							selected
 								? 'border-brand bg-brand text-brand-foreground'
 								: 'border-border bg-card text-muted-foreground hover:border-border-strong hover:text-foreground',
@@ -436,7 +436,7 @@ function TargetTypePills({
 						onClick={() => onChange(option.value)}
 						onKeyDown={(e) => onKeyDown(e, option.value)}
 						className={cn(
-							'inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg border px-3 text-[11.5px] font-semibold outline-none transition-colors sm:min-h-8',
+							'inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-full border px-3 text-[11.5px] font-semibold outline-none transition-colors sm:min-h-8',
 							selected
 								? 'border-brand bg-brand-subtle text-brand-subtle-foreground'
 								: 'border-border bg-muted text-muted-foreground hover:border-border-strong hover:text-foreground',
@@ -446,7 +446,7 @@ function TargetTypePills({
 						<span
 							aria-hidden="true"
 							className={cn(
-								'size-1.5 rounded-full',
+								'size-2 rounded-full',
 								option.dot === 'bet' && 'bg-type-bet-text',
 								option.dot === 'task' && 'bg-type-task-text',
 								option.dot === 'insight' && 'bg-type-insight-text',
@@ -552,7 +552,7 @@ function ActorAutocomplete({
 						onChange={(e) => setSearch(e.target.value)}
 						placeholder="Search actors…"
 						aria-label="Search actors"
-						className="h-8 text-xs"
+						className="h-11 text-base sm:h-8 sm:text-xs"
 					/>
 				</div>
 				<div

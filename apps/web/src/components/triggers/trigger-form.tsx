@@ -17,6 +17,7 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { useActors } from '@/hooks/use-actors'
 import { useAutoSave } from '@/hooks/use-auto-save'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
@@ -836,11 +837,16 @@ export function TriggerForm({
 		: []
 	const stopsForYou = typeof initConfig.stops_for_you === 'string' ? initConfig.stops_for_you : null
 
+	// Author + mentioned-actor pickers in CommentFilters read the full workspace
+	// actor list (humans + agents), so the readback must resolve names from that
+	// same list — the type-filtered `agents` prop would drop the clause silently
+	// for any human author or mention. Reuses CommentFilters' cached query.
+	const { data: allActors } = useActors(workspaceId, { enabled: true })
 	const commentAuthorName = commentFilterState.authorId
-		? agents.find((a) => a.id === commentFilterState.authorId)?.name
+		? allActors?.find((a) => a.id === commentFilterState.authorId)?.name
 		: undefined
 	const commentMentionedActorName = commentFilterState.mentionedActorId
-		? agents.find((a) => a.id === commentFilterState.mentionedActorId)?.name
+		? allActors?.find((a) => a.id === commentFilterState.mentionedActorId)?.name
 		: undefined
 
 	const summary = buildTriggerSummary({
