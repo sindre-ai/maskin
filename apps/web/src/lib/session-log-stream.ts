@@ -1,7 +1,7 @@
 import type { SessionLogResponse } from './api'
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
-import { connectEventStream } from './sse'
+import { type SSEStatus, connectEventStream } from './sse'
 
 /**
  * Per-session resume cursor for the log stream.
@@ -32,10 +32,22 @@ export type SessionLogListener = (log: SessionLogResponse) => void
  */
 export type SessionDoneListener = () => void
 
+/**
+ * Fired with the connection's status each time it changes, and once on
+ * subscribe with the current status so a late subscriber to an already-open
+ * connection does not have to guess. `connected` means the response opened
+ * cleanly; `connecting` and `disconnected` (error, failed reconnect, or the
+ * silence watchdog tearing down a dead connection) both mean the stream can
+ * not be relied on to deliver lines right now.
+ */
+export type SessionStatusListener = (status: SSEStatus) => void
+
 interface Connection {
 	controller: AbortController
 	listeners: Set<SessionLogListener>
 	doneListeners: Set<SessionDoneListener>
+	statusListeners: Set<SessionStatusListener>
+	state: { status: SSEStatus }
 }
 
 /**
@@ -60,19 +72,24 @@ const connections = new Map<string, Connection>()
  * Frames arrive as `{ id, event, data }` where `event` is the log stream
  * (`stdout` | `stderr` | `system`) and `data` is the raw line; the `done`
  * frame that marks a terminal session is swallowed here (see the decoder) and
- * surfaced to `onDone` instead.
+ * surfaced to `onDone` instead. `onStatusChange` reports whether the connection
+ * is currently open, so a caller can slow its own polling while the stream is
+ * carrying the lines and speed it back up when it is not.
  */
 export function subscribeToSessionLogs(
 	workspaceId: string,
 	sessionId: string,
 	onLog: SessionLogListener,
 	onDone?: SessionDoneListener,
+	onStatusChange?: SessionStatusListener,
 ): () => void {
 	let connection = connections.get(sessionId)
 
 	if (!connection) {
 		const listeners = new Set<SessionLogListener>()
 		const doneListeners = new Set<SessionDoneListener>()
+		const statusListeners = new Set<SessionStatusListener>()
+		const state = { status: 'connecting' as SSEStatus }
 		const controller = connectEventStream<SessionLogResponse>({
 			urlBuilder: () => `${API_BASE}/sessions/${sessionId}/logs/stream`,
 			headers: () => ({
@@ -101,6 +118,10 @@ export function subscribeToSessionLogs(
 			onEvent: (log) => {
 				for (const listener of listeners) listener(log)
 			},
+			onStatusChange: (status) => {
+				state.status = status
+				for (const listener of statusListeners) listener(status)
+			},
 			onDone: () => {
 				// The core has already stopped this connection without
 				// retrying. Fan out to every subscriber that asked to hear
@@ -113,13 +134,17 @@ export function subscribeToSessionLogs(
 				connections.delete(sessionId)
 			},
 		})
-		connection = { controller, listeners, doneListeners }
+		connection = { controller, listeners, doneListeners, statusListeners, state }
 		connections.set(sessionId, connection)
 	}
 
 	const owned = connection
 	owned.listeners.add(onLog)
 	if (onDone) owned.doneListeners.add(onDone)
+	if (onStatusChange) {
+		owned.statusListeners.add(onStatusChange)
+		onStatusChange(owned.state.status)
+	}
 
 	return () => {
 		// A `done` may have replaced the registry entry since we subscribed;
@@ -127,6 +152,7 @@ export function subscribeToSessionLogs(
 		if (connections.get(sessionId) !== owned) return
 		owned.listeners.delete(onLog)
 		if (onDone) owned.doneListeners.delete(onDone)
+		if (onStatusChange) owned.statusListeners.delete(onStatusChange)
 		if (owned.listeners.size === 0) {
 			owned.controller.abort()
 			connections.delete(sessionId)

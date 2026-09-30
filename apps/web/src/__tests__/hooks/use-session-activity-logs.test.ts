@@ -22,6 +22,7 @@ import { api } from '@/lib/api'
 import type { SessionLogResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { subscribeToSessionLogs } from '@/lib/session-log-stream'
+import type { SSEStatus } from '@/lib/sse'
 import { TestWrapper } from '../setup'
 
 const workspaceId = 'ws-1'
@@ -169,20 +170,24 @@ describe('useSessionActivityLogs stream merge', () => {
 	/**
 	 * Capture the stream callbacks the hook registers, keyed by session id.
 	 * `log` is the line listener; `done` is the terminal-state listener the hook
-	 * uses to stop the fast poll and arm its single backstop tick.
+	 * uses to stop the fast poll and arm its single backstop tick; `status` is
+	 * the connection-status listener that picks between the 30s and 2s/5s poll.
 	 */
 	function captureStreamListeners() {
 		const log = new Map<string, (log: SessionLogResponse) => void>()
 		const done = new Map<string, () => void>()
-		vi.mocked(subscribeToSessionLogs).mockImplementation((_ws, sid, onLog, onDone) => {
+		const status = new Map<string, (status: SSEStatus) => void>()
+		vi.mocked(subscribeToSessionLogs).mockImplementation((_ws, sid, onLog, onDone, onStatus) => {
 			log.set(sid, onLog)
 			if (onDone) done.set(sid, onDone)
+			if (onStatus) status.set(sid, onStatus)
 			return () => {
 				log.delete(sid)
 				done.delete(sid)
+				status.delete(sid)
 			}
 		})
-		return { log, done }
+		return { log, done, status }
 	}
 
 	function render(sessionIds = [sessionId]) {
@@ -345,6 +350,79 @@ describe('useSessionActivityLogs stream merge', () => {
 	})
 })
 
+describe('useSessionActivityLogs poll interval vs stream status', () => {
+	it('polls at 30s only while the stream is connected, and falls back when it is not', async () => {
+		const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+		const wrapper = ({ children }: { children: ReactNode }) =>
+			createElement(QueryClientProvider, { client }, children)
+
+		vi.mocked(api.sessions.logs).mockResolvedValue([buildLog(1)])
+		const status = new Map<string, (status: SSEStatus) => void>()
+		const done = new Map<string, () => void>()
+		vi.mocked(subscribeToSessionLogs).mockImplementation((_ws, sid, _onLog, onDone, onStatus) => {
+			if (onDone) done.set(sid, onDone)
+			if (onStatus) status.set(sid, onStatus)
+			return () => {}
+		})
+
+		const { result } = renderHook(
+			() => useSessionActivityLogs(workspaceId, [sessionId], null, new Set([sessionId])),
+			{ wrapper },
+		)
+		await waitFor(() => expect(result.current.queries[0]?.data).toHaveLength(1))
+
+		const key = [...queryKeys.sessions.logs(sessionId), 'activity']
+		const query = client.getQueryCache().find({ queryKey: key })
+		const intervalNow = () =>
+			(
+				observerOptions(client, key)?.refetchInterval as ((query: unknown) => unknown) | undefined
+			)?.(query)
+		const setStatus = (next: SSEStatus) =>
+			act(async () => {
+				status.get(sessionId)?.(next)
+			})
+
+		// Subscribed but not yet open: the poll is carrying the transcript.
+		expect(intervalNow()).toBe(2000)
+
+		await setStatus('connected')
+		expect(intervalNow()).toBe(30_000)
+
+		// Dropped, then failing to reconnect: back to the live cadence.
+		await setStatus('disconnected')
+		expect(intervalNow()).toBe(2000)
+		await setStatus('connecting')
+		expect(intervalNow()).toBe(2000)
+
+		await setStatus('connected')
+		expect(intervalNow()).toBe(30_000)
+
+		// Done still wins over a connected stream: the fast poll is gone.
+		await act(async () => {
+			done.get(sessionId)?.()
+		})
+		expect(intervalNow()).toBe(false)
+	})
+
+	it('leaves a session that is not pollable with no interval, connected or not', async () => {
+		const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+		const wrapper = ({ children }: { children: ReactNode }) =>
+			createElement(QueryClientProvider, { client }, children)
+		vi.mocked(api.sessions.logs).mockResolvedValue([buildLog(1)])
+
+		const { result } = renderHook(
+			() => useSessionActivityLogs(workspaceId, [sessionId], null, new Set<string>()),
+			{ wrapper },
+		)
+		await waitFor(() => expect(result.current.queries[0]?.data).toHaveLength(1))
+
+		const key = [...queryKeys.sessions.logs(sessionId), 'activity']
+		const query = client.getQueryCache().find({ queryKey: key })
+		const interval = observerOptions(client, key)?.refetchInterval as (q: unknown) => unknown
+		expect(interval(query)).toBe(false)
+	})
+})
+
 describe('activityPollInterval', () => {
 	const finishedTurn = [
 		buildLog(1, JSON.stringify({ type: 'result', subtype: 'success', result: 'done' })),
@@ -377,6 +455,25 @@ describe('activityPollInterval', () => {
 
 	it('returns to the idle interval once the grace window has passed', () => {
 		expect(activityPollInterval(finishedTurn, now - 60_000, now)).toBe(5000)
+	})
+
+	describe('while the log stream is connected', () => {
+		it('polls at 30s whether the turn is in flight, finished, or unread', () => {
+			expect(activityPollInterval(midTurn, null, now, true)).toBe(30_000)
+			expect(activityPollInterval(finishedTurn, null, now, true)).toBe(30_000)
+			expect(activityPollInterval([], null, now, true)).toBe(30_000)
+			expect(activityPollInterval(undefined, null, now, true)).toBe(30_000)
+		})
+
+		it('polls at 30s even inside the post-message grace window', () => {
+			expect(activityPollInterval(finishedTurn, now - 2000, now, true)).toBe(30_000)
+		})
+	})
+
+	it('keeps the 2s/5s cadence when the stream is not connected', () => {
+		expect(activityPollInterval(midTurn, null, now, false)).toBe(2000)
+		expect(activityPollInterval(finishedTurn, null, now, false)).toBe(5000)
+		expect(activityPollInterval(finishedTurn, now - 2000, now, false)).toBe(2000)
 	})
 })
 

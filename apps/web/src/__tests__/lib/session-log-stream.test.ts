@@ -23,7 +23,11 @@ type Options = {
 	signal: AbortSignal
 	headers: Record<string, string>
 	onmessage: (msg: { id: string; event: string; data: string }) => void
+	onopen: (response: unknown) => Promise<void>
+	onerror: (err: unknown) => unknown
 }
+
+const okResponse = { ok: true, headers: new Headers({ 'content-type': 'text/event-stream' }) }
 
 /** Options of the Nth fetchEventSource call, in call order. */
 function callOptions(index = 0): Options {
@@ -193,5 +197,76 @@ describe('subscribeToSessionLogs', () => {
 
 		off2()
 		expect(activeSessionLogConnections()).toBe(0)
+	})
+
+	describe('status reporting', () => {
+		it('reports connecting on subscribe, connected once open, disconnected on error', async () => {
+			const onStatus = vi.fn()
+			const off = subscribeToSessionLogs(workspaceId, sessionA, vi.fn(), undefined, onStatus)
+
+			expect(onStatus).toHaveBeenLastCalledWith('connecting')
+
+			await callOptions().onopen(okResponse)
+			expect(onStatus).toHaveBeenLastCalledWith('connected')
+
+			callOptions().onerror(new Error('boom'))
+			expect(onStatus).toHaveBeenLastCalledWith('disconnected')
+
+			off()
+		})
+
+		it('does not report connected for a response that is not a healthy stream', async () => {
+			const onStatus = vi.fn()
+			const off = subscribeToSessionLogs(workspaceId, sessionA, vi.fn(), undefined, onStatus)
+
+			await expect(callOptions().onopen({ ok: false, status: 502 })).rejects.toThrow()
+
+			expect(onStatus).not.toHaveBeenCalledWith('connected')
+
+			off()
+		})
+
+		it('tells a late subscriber the current status of an already-open connection', async () => {
+			const first = vi.fn()
+			const late = vi.fn()
+			const offFirst = subscribeToSessionLogs(workspaceId, sessionA, vi.fn(), undefined, first)
+			await callOptions().onopen(okResponse)
+
+			const offLate = subscribeToSessionLogs(workspaceId, sessionA, vi.fn(), undefined, late)
+
+			expect(fetchEventSource).toHaveBeenCalledTimes(1)
+			expect(late).toHaveBeenCalledTimes(1)
+			expect(late).toHaveBeenCalledWith('connected')
+
+			offFirst()
+			offLate()
+		})
+
+		it('fans status changes out to every listener and stops after unsubscribe', async () => {
+			const a = vi.fn()
+			const b = vi.fn()
+			const offA = subscribeToSessionLogs(workspaceId, sessionA, vi.fn(), undefined, a)
+			const offB = subscribeToSessionLogs(workspaceId, sessionA, vi.fn(), undefined, b)
+			a.mockClear()
+			b.mockClear()
+
+			offA()
+			await callOptions().onopen(okResponse)
+
+			expect(a).not.toHaveBeenCalled()
+			expect(b).toHaveBeenCalledWith('connected')
+
+			offB()
+		})
+
+		it('reports disconnected when the server ends the stream with done', async () => {
+			const onStatus = vi.fn()
+			subscribeToSessionLogs(workspaceId, sessionA, vi.fn(), undefined, onStatus)
+			await callOptions().onopen(okResponse)
+
+			callOptions().onmessage({ id: '13', event: 'done', data: 'completed' })
+
+			expect(onStatus).toHaveBeenLastCalledWith('disconnected')
+		})
 	})
 })

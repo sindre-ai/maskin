@@ -68,6 +68,22 @@ const IDLE_POLL_MS = 5000
 const ACTIVE_GRACE_MS = 30_000
 
 /**
+ * Poll interval while the session's log stream is connected.
+ *
+ * With the stream open, lines reach the transcript as the server writes them,
+ * so the poll is only the bet's "slow backstop": it catches up anything the
+ * stream missed (a frame lost before the cursor advanced, a replay capped by
+ * the server) without costing the 2s/5s request volume that made the Worker
+ * hit its daily allowance. It is deliberately not a live cadence.
+ *
+ * Applies only while the stream reports `connected`. Connecting, reconnecting,
+ * errored or never-opened all fall back to ACTIVE_POLL_MS / IDLE_POLL_MS — the
+ * poll is the only thing carrying the transcript in those states, and a slow
+ * one there is exactly how the frozen-transcript incident happened.
+ */
+const STREAM_CONNECTED_POLL_MS = 30_000
+
+/**
  * The single backstop poll fired after the log stream reports `done`.
  *
  * The bet's "keep polling as a slow backstop" rule exists because of a past
@@ -151,6 +167,20 @@ export function useSessionActivityLogs(
 	// second one — which is what keeps the tick to EXACTLY one.
 	const graceTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
 
+	// Sessions whose log stream is currently open. State for the same reason as
+	// doneSessions: it picks the poll interval, so a change must re-render.
+	const [connectedSessions, setConnectedSessions] = useState<ReadonlySet<string>>(() => new Set())
+
+	const setStreamConnected = useCallback((sessionId: string, connected: boolean) => {
+		setConnectedSessions((prev) => {
+			if (prev.has(sessionId) === connected) return prev
+			const next = new Set(prev)
+			if (connected) next.add(sessionId)
+			else next.delete(sessionId)
+			return next
+		})
+	}, [])
+
 	const markDone = useCallback((sessionId: string) => {
 		setDoneSessions((prev) => {
 			if (prev.has(sessionId)) return prev
@@ -206,7 +236,12 @@ export function useSessionActivityLogs(
 						? (false as const)
 						: pollableSessionIds && !pollableSessionIds.has(sessionId)
 							? (false as const)
-							: activityPollInterval(query.state.data, lastMessageAt),
+							: activityPollInterval(
+									query.state.data,
+									lastMessageAt,
+									Date.now(),
+									connectedSessions.has(sessionId),
+								),
 			}
 		}),
 	}) as UseQueryResult<SessionLogResponse[], Error>[]
@@ -303,13 +338,14 @@ export function useSessionActivityLogs(
 					)
 				},
 				() => markDone(sessionId),
+				(status) => setStreamConnected(sessionId, status === 'connected'),
 			),
 		)
 
 		return () => {
 			for (const unsubscribe of unsubscribes) unsubscribe()
 		}
-	}, [streamKey, workspaceId, queryClient, markDone])
+	}, [streamKey, workspaceId, queryClient, markDone, setStreamConnected])
 
 	// The backstop: exactly one fetch per session, DONE_GRACE_TICK_MS after its
 	// stream reported `done`. It runs through `refetchQueries` rather than the
@@ -427,6 +463,12 @@ async function fetchNewLogs(
  * ACTIVE_GRACE_MS), because a turn that has just been prompted hasn't
  * produced any logs to read yet.
  *
+ * While the session's log stream is connected (`streamConnected`) the stream
+ * carries the lines, so all of the above collapses to the slow
+ * STREAM_CONNECTED_POLL_MS backstop — including inside the grace window,
+ * since a new turn's lines arrive on the stream rather than needing a poll to
+ * notice them.
+ *
  * Exported for tests: this is the whole of the latency behaviour, and it is
  * awkward to observe through the query observer.
  */
@@ -434,7 +476,9 @@ export function activityPollInterval(
 	logs: SessionLogResponse[] | undefined,
 	lastMessageAt: number | null,
 	now: number = Date.now(),
+	streamConnected = false,
 ): number {
+	if (streamConnected) return STREAM_CONNECTED_POLL_MS
 	if (lastMessageAt !== null && now - lastMessageAt < ACTIVE_GRACE_MS) return ACTIVE_POLL_MS
 	if (!logs || logs.length === 0) return ACTIVE_POLL_MS
 	return isSessionIdleAwaitingInput(logs) ? IDLE_POLL_MS : ACTIVE_POLL_MS
