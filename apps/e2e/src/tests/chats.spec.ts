@@ -1,6 +1,7 @@
 import type { Browser, Page } from '@playwright/test'
 import { CHATS_V4_FLAGS, expect, test } from '../fixtures/auth.fixture'
 import { TestAPI, createTestActor } from '../helpers/api.helper'
+import { sendFromComposer } from '../helpers/composer.helper'
 import { grantPlanHeadroom } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
@@ -83,7 +84,7 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			const messageText = `Hello from the primary actor ${Date.now()}`
 			const composer = page.getByLabel('Message this conversation')
 			await composer.fill(messageText)
-			await composer.press('Enter')
+			await sendFromComposer(page, composer, vp.width)
 
 			// Sender sees its own optimistic send immediately. Scoped to the
 			// thread's message list (not a bare page-wide text search) — the
@@ -291,7 +292,7 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 			const composer = page.getByLabel('Message this conversation')
 			await composer.fill('Original wording with a typo')
-			await composer.press('Enter')
+			await sendFromComposer(page, composer, vp.width)
 
 			const thread = page.getByTestId('thread-messages')
 			await expect(thread.getByText('Original wording with a typo')).toBeVisible({
@@ -339,7 +340,7 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 			const composer = page.getByLabel('Message this conversation')
 			await composer.fill('Anyone there? Please respond')
-			await composer.press('Enter')
+			await sendFromComposer(page, composer, vp.width)
 
 			const retryButton = page.getByRole('button', { name: 'Ask agents to respond again' })
 			await expect(retryButton).toBeVisible({ timeout: 10_000 })
@@ -367,7 +368,7 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			)
 			const composer = page.getByLabel('Message this conversation')
 			await composer.fill('The deploy pipeline keeps failing on the migrate step')
-			await composer.press('Enter')
+			await sendFromComposer(page, composer, vp.width)
 
 			await page.waitForURL(/\/chats\/[0-9a-f-]{36}/, { timeout: 15_000 })
 			const heading = page.getByRole('heading').first()

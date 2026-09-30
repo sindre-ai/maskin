@@ -1,4 +1,5 @@
 import { expect, test } from '../fixtures/auth.fixture'
+import { sendFromComposer } from '../helpers/composer.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // The first example sentence on the "Start a loop" page. It drafts a feedback
@@ -90,7 +91,7 @@ test.describe('Loop builder — language-only create flow', () => {
 
 			const composer = page.getByRole('textbox', { name: /describe your loop/i })
 			await composer.fill('track customer feedback')
-			await composer.press('Enter')
+			await sendFromComposer(page, composer, viewport.width)
 
 			// No source it listens to and no end it reports to — nothing to draw.
 			await expect(
