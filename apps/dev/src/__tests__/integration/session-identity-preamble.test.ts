@@ -96,6 +96,9 @@ describe('SessionManager.buildLaunchSpec — Maskin identity preamble (Integrati
 		// The branding end-state: nothing in the assembled prompt names the
 		// model or vendor behind the session.
 		expect(systemPrompt).not.toMatch(/claude|anthropic/i)
+		// Declines rather than denies: a closed "are you <vendor>?" must not be
+		// answered with a false "No".
+		expect(systemPrompt).toContain("can't confirm or deny")
 	})
 
 	it('keeps the identity preamble ahead of the conversation preamble for a chat session', async () => {
