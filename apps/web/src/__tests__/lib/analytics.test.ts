@@ -281,13 +281,13 @@ describe('v1 taxonomy helpers', () => {
 
 		trackSindreMessageReceived({
 			session_id: 'sess-42',
-			model: 'claude-opus-4-7',
+			model: 'claude-sonnet-5-5',
 			tokens: 128,
 		})
 
 		expect(capture).toHaveBeenCalledWith('sindre_message_received', {
 			session_id: 'sess-42',
-			model: 'claude-opus-4-7',
+			model: 'claude-sonnet-5-5',
 			tokens: 128,
 		})
 	})

@@ -14,7 +14,7 @@ RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 # Claude Code releases — the interactive chat session parses these lines
 # verbatim, so a silent CLI bump can break parsing. Bump this deliberately
 # after re-validating the stream-json fixtures.
-RUN npm install -g @anthropic-ai/claude-code@2.1.112
+RUN npm install -g @anthropic-ai/claude-code@2.1.285
 
 # Pre-install Playwright MCP server (connects to external browser via CDP)
 RUN npm install -g @playwright/mcp

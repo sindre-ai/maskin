@@ -61,6 +61,16 @@ export interface SessionDispatchQueueOptions {
 	 */
 	leaseMs?: number
 	/**
+	 * Upper bound on one tick. A batch that has not settled by then is
+	 * abandoned and the next tick is allowed to run. Without it, a single
+	 * awaited call that never settles — a DB query on a connection that died
+	 * silently, a dispatch with no socket timeout — pins the `running` flag
+	 * forever and every session in every workspace stalls in `starting`.
+	 * Defaults to `leaseMs`, after which the abandoned row is reclaimable
+	 * anyway; the stable idempotency key dedupes a late double-fire.
+	 */
+	tickTimeoutMs?: number
+	/**
 	 * Append a `system`-stream line to a session's transcript (SessionManager's
 	 * insertSystemLog). Optional and best-effort — a log write must never stop
 	 * the row from being marked failed. Without it a user watching a session
@@ -133,6 +143,7 @@ export class SessionDispatchQueue {
 	private readonly tickMs: number
 	private readonly batchSize: number
 	private readonly leaseMs: number
+	private readonly tickTimeoutMs: number
 	private readonly appendSystemLog?: (sessionId: string, content: string) => Promise<void>
 	private readonly onPermanentFailure?: SessionDispatchQueueOptions['onPermanentFailure']
 
@@ -148,6 +159,7 @@ export class SessionDispatchQueue {
 		this.tickMs = opts.tickMs ?? DEFAULTS.tickMs
 		this.batchSize = opts.batchSize ?? DEFAULTS.batchSize
 		this.leaseMs = opts.leaseMs ?? DEFAULTS.leaseMs
+		this.tickTimeoutMs = opts.tickTimeoutMs ?? this.leaseMs
 		this.appendSystemLog = opts.appendSystemLog
 		this.onPermanentFailure = opts.onPermanentFailure
 	}
@@ -224,13 +236,35 @@ export class SessionDispatchQueue {
 	async tick(): Promise<void> {
 		if (this.running) return
 		this.running = true
-		try {
+		let timer: NodeJS.Timeout | undefined
+		let current: string | null = null
+		const timedOut = new Promise<'timeout'>((resolve) => {
+			timer = setTimeout(() => resolve('timeout'), this.tickTimeoutMs)
+			timer.unref?.()
+		})
+		const batch = (async () => {
 			for (let i = 0; i < this.batchSize; i++) {
+				current = null
 				const claimed = await this.claimOne()
 				if (!claimed) break
+				current = claimed.sessionId
 				await this.processOne(claimed)
 			}
+			return 'done' as const
+		})()
+		try {
+			if ((await Promise.race([batch, timedOut])) === 'timeout') {
+				// The hung batch keeps running detached; swallow its eventual
+				// rejection so it can't surface as an unhandled one.
+				batch.catch(() => undefined)
+				logger.error('Session dispatch queue tick timed out — abandoning batch', {
+					tickTimeoutMs: this.tickTimeoutMs,
+					stage: current ? 'dispatch' : 'claim',
+					sessionId: current,
+				})
+			}
 		} finally {
+			clearTimeout(timer)
 			this.running = false
 		}
 	}

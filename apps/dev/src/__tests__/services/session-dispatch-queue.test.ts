@@ -709,6 +709,56 @@ describe('SessionDispatchQueue.tick — outcomes', () => {
 	})
 })
 
+describe('SessionDispatchQueue.tick — timeout', () => {
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it('abandons a dispatch that never settles so the next tick can run', async () => {
+		const stuck = aDispatchRow({
+			id: 'r-stuck',
+			sessionId: 's-stuck',
+			idempotencyKey: dispatchIdempotencyKey('s-stuck'),
+		})
+		const { db, dispatchRows } = makeFakeDb({ dispatchRows: [stuck] })
+		const dispatchFn = vi.fn(
+			(sessionId: string): Promise<DispatchResult> =>
+				sessionId === 's-stuck' ? new Promise(() => {}) : Promise.resolve({ kind: 'dispatched' }),
+		)
+		const queue = makeQueue(db, dispatchFn, { tickTimeoutMs: 20, batchSize: 1 })
+
+		await queue.tick()
+
+		dispatchRows.push(
+			aDispatchRow({
+				id: 'r-next',
+				sessionId: 's-next',
+				idempotencyKey: dispatchIdempotencyKey('s-next'),
+			}),
+		)
+		await queue.tick()
+		expect(dispatchFn).toHaveBeenCalledWith('s-next', dispatchIdempotencyKey('s-next'))
+		expect(dispatchRows.find((r) => r.id === 'r-next')).toBeUndefined()
+	})
+
+	it('abandons a claim whose DB call never settles so the next tick can run', async () => {
+		const { db } = makeFakeDb({ dispatchRows: [aDispatchRow()] })
+		const realTransaction = db.transaction.bind(db)
+		let hang = true
+		vi.spyOn(db, 'transaction').mockImplementation(((fn: never) =>
+			hang ? new Promise(() => {}) : realTransaction(fn)) as never)
+		const dispatchFn = vi.fn(async (): Promise<DispatchResult> => ({ kind: 'dispatched' }))
+		const queue = makeQueue(db, dispatchFn, { tickTimeoutMs: 20 })
+
+		await queue.tick()
+		expect(dispatchFn).not.toHaveBeenCalled()
+
+		hang = false
+		await queue.tick()
+		expect(dispatchFn).toHaveBeenCalledTimes(1)
+	})
+})
+
 describe('SessionDispatchQueue — exponential backoff caps', () => {
 	beforeEach(() => {
 		vi.useFakeTimers()

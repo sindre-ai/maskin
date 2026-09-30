@@ -1278,7 +1278,7 @@ describe('tool handlers', () => {
 						json: async () => ({
 							id: 'actor-new',
 							llm_provider: 'anthropic',
-							llm_config: { model: 'claude-opus-4-6' },
+							llm_config: { model: 'claude-sonnet-5-5' },
 						}),
 					} as Response
 				}
@@ -1289,16 +1289,16 @@ describe('tool handlers', () => {
 			const result = (await handler({
 				type: 'agent',
 				name: 'Bot',
-				llm_config: { provider: 'anthropic', model: 'claude-opus-4-6' },
+				llm_config: { provider: 'anthropic', model: 'claude-sonnet-5-5' },
 			})) as { content: Array<{ text: string }> }
 
 			expect(actorsPostBody).toMatchObject({
 				llm_provider: 'anthropic',
-				llm_config: { model: 'claude-opus-4-6' },
+				llm_config: { model: 'claude-sonnet-5-5' },
 			})
 			// The two API columns come back merged into one llm_config field, mirroring the input shape.
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed.llm_config).toEqual({ provider: 'anthropic', model: 'claude-opus-4-6' })
+			expect(parsed.llm_config).toEqual({ provider: 'anthropic', model: 'claude-sonnet-5-5' })
 			expect(parsed.llm_provider).toBeUndefined()
 		})
 

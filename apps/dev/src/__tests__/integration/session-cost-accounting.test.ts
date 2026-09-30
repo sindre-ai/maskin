@@ -106,7 +106,7 @@ describe('SessionManager.markRemoteSessionComplete — cost accounting by route 
 	it('keeps the CLI-reported cost for a claude_oauth session', async () => {
 		const row = await completeSession({
 			config: { llm_route: 'claude_oauth' },
-			modelName: 'claude-opus-4-7',
+			modelName: 'claude-sonnet-5-5',
 		})
 
 		expect(row?.status).toBe('completed')
