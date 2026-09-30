@@ -21,7 +21,9 @@ import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db'
 import type { SessionResult, SettleSource, TerminalOutcomeKind } from '@maskin/shared'
 
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { recordEvent } from '../lib/events/record-event'
+import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { CreateSessionParams, SessionManager } from './session-manager'
 
@@ -402,6 +404,11 @@ export interface SettleResult {
 /**
  * The subset of a `sessions` row settleSession reads before writing. Kept
  * narrow so tests can pass a bare object without full Drizzle typing.
+ *
+ * `config`, `triggerId`, `startedAt`, and the previous usage totals feed the
+ * `agent_session_completed` unified schema per §9.2 and the
+ * `maskin_plan_session_completed` predicate + shape carried over from the
+ * pre-commit baseline at session-manager.ts:3095-3111.
  */
 export interface SessionSettleRow {
 	id: string
@@ -411,6 +418,14 @@ export interface SessionSettleRow {
 	containerId: string | null
 	agentServerId: string | null
 	result: SessionResult | null
+	config: Record<string, unknown> | null
+	triggerId: string | null
+	startedAt: Date | null
+	previousInputTokens: number | null
+	previousOutputTokens: number | null
+	previousCacheReadTokens: number | null
+	previousCacheCreationTokens: number | null
+	previousCostUsd: number | null
 }
 
 /**
@@ -502,6 +517,142 @@ export function mapKindToFinalStatus(kind: TerminalOutcomeKind): FinalStatus {
 }
 
 /**
+ * PostHog `outcome` prop mapping for `agent_session_completed`. Mirrors
+ * `mapKindToFinalStatus` — kept separate so downstream can evolve the wire
+ * label independently of the DB literal if we ever need to.
+ */
+const OUTCOME_PROP_BY_KIND: Record<
+	TerminalOutcomeKind,
+	'completed' | 'failed' | 'timeout' | 'user_stopped' | 'paused'
+> = {
+	complete: 'completed',
+	fail: 'failed',
+	timeout: 'timeout',
+	stop: 'user_stopped',
+	pause: 'paused',
+}
+
+export function mapKindToOutcomeProp(
+	kind: TerminalOutcomeKind,
+): 'completed' | 'failed' | 'timeout' | 'user_stopped' | 'paused' {
+	return OUTCOME_PROP_BY_KIND[kind]
+}
+
+/**
+ * Verbatim to session-manager.ts:3178-3179 (Task 1 S3 spike output):
+ *
+ *   const llmRoute = (session.config as Record<string, unknown>)?.llm_route
+ *   if (llmRoute === LLM_ROUTE_MASKIN_PLAN && usage) { ... }
+ *
+ * The `&& usage` half stays at the call site so `emitCompletion` can gate the
+ * dual-emit on `outcome.usage` without the predicate hiding a boolean it does
+ * not name in its signature. Any deviation from this predicate shifts
+ * `maskin_plan_session_completed` volume the moment stage 1 lands — the
+ * failure mode the dashboard-migration runway is written to catch.
+ */
+export function isPlanRouteSession(session: {
+	config: Record<string, unknown> | null
+}): boolean {
+	const llmRoute = (session.config as Record<string, unknown>)?.llm_route
+	return llmRoute === LLM_ROUTE_MASKIN_PLAN
+}
+
+export interface EmitCompletionUsageTotals {
+	inputTokens: number | null
+	outputTokens: number | null
+	cacheReadTokens: number | null
+	cacheCreationTokens: number | null
+	costUsd: number | null
+}
+
+/**
+ * Dual-emit `agent_session_completed` (unified schema §9.2, all terminal
+ * outcomes on both local and remote) and — when the session was routed
+ * through `maskin_plan` and the settle carries usage — the pre-commit
+ * `maskin_plan_session_completed` with its shape and predicate unchanged.
+ * Stage 1 of the 3-stage rollover: add without cutting. Stage 2 migrates
+ * dashboards (ops), stage 3 (a follow-up commit) cuts the plan-route event.
+ *
+ * Fire-and-forget by construction — every capture is wrapped so a PostHog
+ * outage cannot escape into settleSession's terminal path. Returns whether
+ * an emit was actually dispatched (i.e. whether `posthogEmitted` should be
+ * true on the SettleResult).
+ */
+export async function emitCompletion(
+	session: {
+		id: string
+		workspaceId: string
+		actorId: string
+		agentServerId: string | null
+		config: Record<string, unknown> | null
+		triggerId: string | null
+		startedAt: Date | null
+	},
+	outcome: SettleOutcome,
+	totals: EmitCompletionUsageTotals,
+	completedAt: Date,
+): Promise<boolean> {
+	const host: 'local' | 'remote' = session.agentServerId ? 'remote' : 'local'
+	const durationMs = session.startedAt ? completedAt.getTime() - session.startedAt.getTime() : 0
+	const config = (session.config as Record<string, unknown>) ?? {}
+	const staging = config.skill_staging as { manifest_skills?: number; staged?: number } | undefined
+	const skillsAttached =
+		typeof staging?.manifest_skills === 'number' ? staging.manifest_skills : null
+	const skillsStaged = typeof staging?.staged === 'number' ? staging.staged : null
+	const triggerSource = typeof config.trigger_source === 'string' ? config.trigger_source : null
+
+	await capturePosthogEvent('agent_session_completed', session.workspaceId, {
+		session_id: session.id,
+		actor_id: session.actorId,
+		workspace_id: session.workspaceId,
+		trigger_id: session.triggerId ?? null,
+		trigger_source: triggerSource,
+		host,
+		outcome: mapKindToOutcomeProp(outcome.kind),
+		classification: outcome.classification,
+		stop_reason: outcome.reason ?? null,
+		exit_code: outcome.exitCode ?? null,
+		duration_ms: durationMs,
+		input_tokens: totals.inputTokens ?? 0,
+		output_tokens: totals.outputTokens ?? 0,
+		cache_read_tokens: totals.cacheReadTokens ?? 0,
+		cache_creation_tokens: totals.cacheCreationTokens ?? 0,
+		cost_usd: totals.costUsd,
+		skills_attached: skillsAttached,
+		skills_staged: skillsStaged,
+	}).catch((err) => {
+		logger.warn('Failed agent_session_completed PostHog emit', {
+			sessionId: session.id,
+			error: String(err),
+		})
+	})
+
+	// `maskin_plan_session_completed` — dual-emit with unchanged shape,
+	// unchanged distinct_id, unchanged predicate (verbatim to Task 1 S3).
+	// Same session-set as the pre-commit baseline: only plan-route sessions
+	// where the settle carries a usage snapshot fire, matching the guard at
+	// session-manager.ts:3179.
+	if (isPlanRouteSession(session) && outcome.usage) {
+		await capturePosthogEvent('maskin_plan_session_completed', session.workspaceId, {
+			actor_id: session.actorId,
+			session_id: session.id,
+			input_tokens: outcome.usage.inputTokens ?? 0,
+			output_tokens: outcome.usage.outputTokens ?? 0,
+			total_cost_usd: outcome.usage.costUsd ?? 0,
+			duration_ms: durationMs,
+			status: mapKindToFinalStatus(outcome.kind),
+		}).catch((err) => {
+			logger.warn('Failed maskin_plan_session_completed PostHog emit', {
+				sessionId: session.id,
+				error: String(err),
+			})
+		})
+	}
+
+	return true
+}
+
+/**
  * settleSession — the only writer of a terminal `sessions.status`.
  *
  * Ordered side-effects (per spec §1.5):
@@ -519,9 +670,13 @@ export function mapKindToFinalStatus(kind: TerminalOutcomeKind): FinalStatus {
  *   3. (after commit) `stopSandbox(row, outcome)` — §2.
  *   4. (after commit) `pushAgentFiles(row, outcome)` — §7. Skipped on
  *      `startup_stalled` and `dispatch_failure`.
- *   5. PostHog dual-emit — deferred to commit 4. `posthogEmitted` is always
- *      false in this commit; the existing `maskin_plan_session_completed`
- *      emit stays live at its current site in session-manager.ts.
+ *   5. (after commit) PostHog dual-emit — `agent_session_completed`
+ *      (unified §9.2 schema, every terminal outcome, local + remote) and
+ *      — gated on `isPlanRouteSession(row) && outcome.usage` — the pre-
+ *      commit `maskin_plan_session_completed` at unchanged shape and
+ *      distinct_id. Only fires when the CAS won; a settle that lost the
+ *      race must not double-emit. Fire-and-forget: a PostHog outage never
+ *      escapes into the terminal path.
  *
  * Error semantics (§1.6): throws ONLY when the pre-commit UPDATE errors
  * (DB unreachable). Post-commit failures surface through `SettleResult`
@@ -538,6 +693,9 @@ export async function settleSession(
 
 	// Step 1: SELECT the row (small, non-locking; the conditional UPDATE below
 	// is the actual concurrency guard via a CAS on `status NOT IN terminals`).
+	// `config`, `triggerId`, `startedAt`, and the previous usage totals feed
+	// the commit-4 PostHog dual-emit; they're on the same row read so no
+	// extra round-trip.
 	const [existing] = await deps.db
 		.select({
 			id: sessions.id,
@@ -547,6 +705,14 @@ export async function settleSession(
 			containerId: sessions.containerId,
 			agentServerId: sessions.agentServerId,
 			result: sessions.result,
+			config: sessions.config,
+			triggerId: sessions.triggerId,
+			startedAt: sessions.startedAt,
+			inputTokens: sessions.inputTokens,
+			outputTokens: sessions.outputTokens,
+			cacheReadInputTokens: sessions.cacheReadInputTokens,
+			cacheCreationInputTokens: sessions.cacheCreationInputTokens,
+			totalCostUsd: sessions.totalCostUsd,
 		})
 		.from(sessions)
 		.where(eq(sessions.id, sessionId))
@@ -556,6 +722,12 @@ export async function settleSession(
 		throw new Error(`settleSession: session ${sessionId} not found`)
 	}
 
+	// `totalCostUsd` is a Postgres `numeric` — drizzle returns it as string.
+	// A settle emit's cost_usd is a number, so coerce once here and treat
+	// non-numeric strings as null (the `null` sentinel is how PostHog reads
+	// "unknown" for this bet's Won criterion).
+	const previousCostUsd = coerceNumericColumn(existing.totalCostUsd)
+
 	const row: SessionSettleRow = {
 		id: existing.id,
 		workspaceId: existing.workspaceId,
@@ -564,6 +736,14 @@ export async function settleSession(
 		containerId: existing.containerId,
 		agentServerId: existing.agentServerId,
 		result: (existing.result ?? null) as SessionResult | null,
+		config: (existing.config ?? null) as Record<string, unknown> | null,
+		triggerId: existing.triggerId ?? null,
+		startedAt: existing.startedAt ?? null,
+		previousInputTokens: existing.inputTokens ?? null,
+		previousOutputTokens: existing.outputTokens ?? null,
+		previousCacheReadTokens: existing.cacheReadInputTokens ?? null,
+		previousCacheCreationTokens: existing.cacheCreationInputTokens ?? null,
+		previousCostUsd,
 	}
 
 	const wasAlreadyTerminal = TRULY_TERMINAL_STATUS_SET.has(existing.status)
@@ -574,10 +754,15 @@ export async function settleSession(
 	// already-terminal row's sandbox does not linger.
 	let flipped: { id: string } | undefined
 	const events: SettleResult['events'] = {}
+	// Hoisted so the post-commit PostHog emit shares the same `completedAt`
+	// the row was written with — a duration_ms computed from `Date.now()`
+	// after the transaction would drift from the row by the commit latency.
+	let completedAt: Date | undefined
 
 	if (!wasAlreadyTerminal) {
 		await deps.db.transaction(async (tx) => {
 			const now = new Date()
+			completedAt = now
 			const merged = mergeResultBlob(row.result, outcome)
 
 			const setPatch: Record<string, unknown> = {
@@ -626,12 +811,7 @@ export async function settleSession(
 				.where(
 					and(
 						eq(sessions.id, sessionId),
-						notInArray(sessions.status, [
-							'completed',
-							'failed',
-							'timeout',
-							'user_stopped',
-						]),
+						notInArray(sessions.status, ['completed', 'failed', 'timeout', 'user_stopped']),
 					),
 				)
 				.returning({ id: sessions.id })
@@ -694,18 +874,90 @@ export async function settleSession(
 		}
 	}
 
+	// Step 6: (Post-commit) PostHog dual-emit. Gated on `flipped` — a settle
+	// that lost the CAS (row already terminal, or a concurrent writer beat
+	// us) must NOT re-emit; the writer that won the CAS is the one that
+	// carries the terminal signal to downstream. `agent_session_completed`
+	// carries the §9.2 unified schema on every terminal outcome (host,
+	// outcome, duration_ms, classification, all token/cost breakdowns);
+	// `maskin_plan_session_completed` fires only when the session was
+	// routed through `maskin_plan` and the settle carries a usage snapshot,
+	// matching the pre-commit baseline predicate at session-manager.ts:3179.
+	let posthogEmitted = false
+	if (flipped && completedAt) {
+		try {
+			posthogEmitted = await emitCompletion(
+				row,
+				outcome,
+				computePostSettleTotals(row, outcome.usage),
+				completedAt,
+			)
+		} catch (err) {
+			// `emitCompletion` swallows every capture rejection, so a throw
+			// here is a defensive net for an unexpected pre-emit failure —
+			// still fire-and-forget from settleSession's point of view.
+			logger.warn('settleSession: emitCompletion threw', {
+				sessionId,
+				error: String(err),
+			})
+		}
+	}
+
 	return {
 		sessionId,
 		finalStatus,
 		alreadySettled: wasAlreadyTerminal || !flipped,
 		stoppedSandbox,
 		pushedAgentFiles,
-		// Commit 4 wires the dual-emit; commit 2 preserves the existing
-		// `maskin_plan_session_completed` emit at its current session-manager
-		// site with unchanged shape and predicate.
-		posthogEmitted: false,
+		posthogEmitted,
 		events,
 	}
+}
+
+/**
+ * Compute the post-settle row totals in memory so the PostHog emit sees the
+ * same numbers Postgres persisted, without a second SELECT. The row's
+ * previous totals plus the delta this settle contributed — mirroring the
+ * `COALESCE(col, 0) + delta` SQL patch above. Callers with no usage delta
+ * get the row's previous totals passed through unchanged.
+ */
+function computePostSettleTotals(
+	row: SessionSettleRow,
+	usage: SettleUsage | undefined,
+): EmitCompletionUsageTotals {
+	if (!usage) {
+		return {
+			inputTokens: row.previousInputTokens,
+			outputTokens: row.previousOutputTokens,
+			cacheReadTokens: row.previousCacheReadTokens,
+			cacheCreationTokens: row.previousCacheCreationTokens,
+			costUsd: row.previousCostUsd,
+		}
+	}
+	return {
+		inputTokens: addDelta(row.previousInputTokens, usage.inputTokens),
+		outputTokens: addDelta(row.previousOutputTokens, usage.outputTokens),
+		cacheReadTokens: addDelta(row.previousCacheReadTokens, usage.cacheReadTokens),
+		cacheCreationTokens: addDelta(row.previousCacheCreationTokens, usage.cacheCreationTokens),
+		costUsd: addDelta(row.previousCostUsd, usage.costUsd),
+	}
+}
+
+function addDelta(previous: number | null, delta: number | undefined): number | null {
+	if (typeof delta !== 'number') return previous
+	return (previous ?? 0) + delta
+}
+
+/**
+ * Drizzle returns Postgres `numeric` columns as strings. Coerce to number,
+ * treating unparseable values as null so the emit's `cost_usd` prop can
+ * distinguish "unknown" from a real zero cost.
+ */
+function coerceNumericColumn(value: string | number | null | undefined): number | null {
+	if (value == null) return null
+	if (typeof value === 'number') return Number.isFinite(value) ? value : null
+	const parsed = Number(value)
+	return Number.isFinite(parsed) ? parsed : null
 }
 
 /**
@@ -714,10 +966,7 @@ export async function settleSession(
  * not clobber the earlier one's `reason`, `resultText`, or `failure_reason`
  * unless the caller explicitly supplied a replacement.
  */
-function mergeResultBlob(
-	previous: SessionResult | null,
-	outcome: SettleOutcome,
-): SessionResult {
+function mergeResultBlob(previous: SessionResult | null, outcome: SettleOutcome): SessionResult {
 	const merged: SessionResult = { ...(previous ?? {}) }
 	if (outcome.reason !== undefined) merged.error = outcome.reason
 	if (outcome.resultText !== undefined) merged.summary = outcome.resultText
