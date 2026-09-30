@@ -853,7 +853,6 @@ export async function settleSession(
 
 			const setPatch: Record<string, unknown> = {
 				status: finalStatus,
-				completedAt: now,
 				updatedAt: now,
 				result: merged,
 				// Every terminal settle also stamps session_state='done', so the
@@ -864,6 +863,15 @@ export async function settleSession(
 				// sessions.status finally short-circuits — noisy, not corrupting.
 				sessionState: 'done',
 				stateEnteredAt: now,
+			}
+			// Every terminal kind except pause stamps completedAt. Pause is
+			// deliberately excluded per spec §5.2 col 2: a paused row is not
+			// "complete", it's on hold — resume paths reuse the same row and
+			// eventually transition it to a truly-terminal status that stamps
+			// completedAt at that later point. Caught by the parity integration
+			// test at apps/dev/src/__tests__/integration/session-lifecycle-parity.test.ts.
+			if (outcome.kind !== 'pause') {
+				setPatch.completedAt = now
 			}
 			// Every terminal kind empties the current-activity string so the UI
 			// stops showing "typing…" for a session that has actually stopped —

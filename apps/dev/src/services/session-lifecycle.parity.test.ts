@@ -23,15 +23,62 @@
 // `expectBootStaging(...)` — the parity matrix ASSERTS what the concurrent
 // bet's task 2 stages; it does NOT write staging code.
 
-import { describe, expect, it, vi } from 'vitest'
-import type { SessionSettleRow, SettleDependencies, SettleOutcome } from './session-lifecycle'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { SettleDependencies, SettleOutcome } from './session-lifecycle'
 import { settleSession } from './session-lifecycle'
 import { expectSessionSettled } from './session-lifecycle.assertions'
+
+type PosthogCaptureArgs = [
+	eventName: string,
+	workspaceId: string,
+	props: Record<string, unknown>,
+]
+
+const { capturePosthogEventMock } = vi.hoisted(() => ({
+	capturePosthogEventMock: vi.fn(
+		async (_event: string, _workspaceId: string, _props: Record<string, unknown>) => undefined,
+	),
+}))
+
+vi.mock('../lib/analytics/posthog', () => ({
+	capturePosthogEvent: capturePosthogEventMock,
+}))
+
+function findEmit(eventName: string): PosthogCaptureArgs | undefined {
+	return capturePosthogEventMock.mock.calls.find(
+		(call) => (call as PosthogCaptureArgs)[0] === eventName,
+	) as PosthogCaptureArgs | undefined
+}
 
 type Host = 'local' | 'remote'
 type Kind = SettleOutcome['kind']
 
-function makeRow(host: Host, id: string): SessionSettleRow {
+/**
+ * Selected columns for the parity mocked-DB read. Matches the shape
+ * `settleSession()`'s SELECT in session-lifecycle.ts:699-716 returns — a
+ * superset of `SessionSettleRow` (previous-usage totals arrive here as raw
+ * `sessions.*Tokens` / `sessions.totalCostUsd` columns for the emit-side
+ * computation, which the row-mapper then re-labels).
+ */
+interface ParityRowSelect {
+	id: string
+	workspaceId: string
+	actorId: string
+	status: string
+	containerId: string | null
+	agentServerId: string | null
+	result: null
+	config: Record<string, unknown> | null
+	triggerId: string | null
+	startedAt: Date | null
+	inputTokens: number | null
+	outputTokens: number | null
+	cacheReadInputTokens: number | null
+	cacheCreationInputTokens: number | null
+	totalCostUsd: string | null
+}
+
+function makeRow(host: Host, id: string): ParityRowSelect {
 	return {
 		id,
 		workspaceId: 'ws-parity',
@@ -40,10 +87,30 @@ function makeRow(host: Host, id: string): SessionSettleRow {
 		containerId: host === 'local' ? 'sbx-local' : 'sbx-remote',
 		agentServerId: host === 'remote' ? 'server-parity' : null,
 		result: null,
+		// Plan-route so §5.2 col 8's dual-emit gate (isPlanRouteSession + usage)
+		// fires — the pre-commit `maskin_plan_session_completed` is what the
+		// baseline predicate asserts on; the unified `agent_session_completed`
+		// event fires on every terminal outcome regardless of route.
+		config: { llm_route: 'maskin_plan' },
+		triggerId: null,
+		startedAt: new Date('2026-01-01T00:00:00Z'),
+		inputTokens: 0,
+		outputTokens: 0,
+		cacheReadInputTokens: 0,
+		cacheCreationInputTokens: 0,
+		totalCostUsd: '0',
 	}
 }
 
-function makeDb(row: SessionSettleRow) {
+/**
+ * The row this fake exposes to `settleSession()` is a superset of
+ * `SessionSettleRow` (see `ParityRowSelect`) so the emit-side computation
+ * against `previous*` columns has real numeric values to add the delta onto.
+ */
+function makeDb(row: ParityRowSelect): {
+	db: SettleDependencies['db']
+	state: { row: ParityRowSelect }
+} {
 	const state = { row: { ...row } }
 	const db = {
 		select() {
@@ -150,6 +217,10 @@ function expectedFor(host: Host, kind: Kind) {
 }
 
 describe('§5.2 parity matrix — 10 rows × 11 columns', () => {
+	beforeEach(() => {
+		capturePosthogEventMock.mockClear()
+	})
+
 	for (const host of HOSTS) {
 		for (const kind of KINDS) {
 			describe(`${host} × ${kind}`, () => {
@@ -191,14 +262,14 @@ describe('§5.2 parity matrix — 10 rows × 11 columns', () => {
 				// swap this todo for a `expectBootStaging()` call in the same test.
 				it.todo(`col 5 — expectBootStaging(${host} ${kind}): skills, memory, briefing`)
 
-				// Col 8 (PostHog): at commit 3's state, `settleSession` returns
-				// `posthogEmitted: false`. The maskin_plan_session_completed emit
-				// stays live at its current session-manager site with unchanged
-				// shape and predicate — a separate assertion on the emit call site
-				// is out of this file's scope. Commit 4 folds in `agent_session_completed`
-				// and this col's cells become full assertions on the unified schema
-				// (host + outcome props).
-				it('col 8 — posthog emit remains at session-manager site (commit 3 baseline)', async () => {
+				// Col 8 (PostHog): commit 4's dual-emit landed on the bet branch —
+				// settleSession() now emits `agent_session_completed` (unified §9.2
+				// schema, every terminal outcome, both hosts) via `emitCompletion`.
+				// The pre-commit `maskin_plan_session_completed` also fires here
+				// because makeRow() seeds config.llm_route='maskin_plan' AND every
+				// outcome carries usage (both are gates in emitCompletion, verbatim
+				// to session-manager.ts:3179).
+				it('col 8 — agent_session_completed emits with unified §9.2 schema', async () => {
 					const row = makeRow(host, `${host}-${kind}-posthog`)
 					const { db } = makeDb(row)
 					const result = await settleSession(row.id, outcomeFor(kind), {
@@ -206,14 +277,28 @@ describe('§5.2 parity matrix — 10 rows × 11 columns', () => {
 						stopSandbox: async () => (host === 'remote' ? 'remote' : 'local'),
 						pushAgentFiles: async () => 'ok',
 					})
-					expect(
-						result.posthogEmitted,
-						'commit 3 leaves posthog emit at session-manager; settle does not emit',
-					).toBe(false)
+					expect(result.posthogEmitted, 'settleSession dual-emit gate flipped').toBe(true)
+
+					const agentEmitCall = findEmit('agent_session_completed')
+					expect(agentEmitCall, 'agent_session_completed captured').toBeDefined()
+					const props = agentEmitCall?.[2] ?? {}
+					expect(props.host, 'host prop').toBe(host)
+					const expectedOutcome = {
+						complete: 'completed',
+						fail: 'failed',
+						timeout: 'timeout',
+						stop: 'user_stopped',
+						pause: 'paused',
+					}[kind]
+					expect(props.outcome, 'outcome prop').toBe(expectedOutcome)
+					expect(props.session_id, 'session_id prop').toBe(row.id)
+					expect(props.workspace_id, 'workspace_id prop').toBe('ws-parity')
+
+					// Plan-route + usage: the pre-commit `maskin_plan_session_completed`
+					// also fires with its unchanged shape. Predicate stays load-bearing
+					// through the stage-1 rollover; the shape assertion pins it.
+					expect(findEmit('maskin_plan_session_completed'), 'plan-route baseline still fires').toBeDefined()
 				})
-				it.todo(
-					`col 8 (commit 4 TODO) — agent_session_completed unified schema for ${host} × ${kind}`,
-				)
 
 				// Col 9 (idle-pause specific): only meaningful on kind === 'pause'.
 				if (kind === 'pause') {
@@ -236,15 +321,80 @@ describe('§5.2 parity matrix — 10 rows × 11 columns', () => {
 					})
 				}
 
-				// Col 10 (plan-cap specific): only meaningful when classification is
-				// 'plan_cap'. The kind here is a generic mapping — kind='fail' would
-				// exercise it once commit 2 wires the plan-cap classified writer at
-				// session-manager.ts §3.1 row 1. Left as todo per matrix cell.
-				it.todo(`col 10 — plan-cap metadata + loop_active_day (${host} × ${kind})`)
+				// Col 10 (plan-cap specific): only fires when a `fail` outcome carries
+				// classification='plan_cap'. Every other kind is explicit-N/A (parity
+				// with col 9's non-applicable-green pattern).
+				if (kind === 'fail') {
+					it('col 10 — plan-cap classification writes stop_reason on the event', async () => {
+						const row = makeRow(host, `${host}-plan-cap`)
+						const { db } = makeDb(row)
+						const outcome: SettleOutcome = {
+							kind: 'fail',
+							classification: 'plan_cap',
+							source: 'sandbox-exit',
+							reason: 'workspace plan cap reached — session halted',
+							usage: { inputTokens: 0, outputTokens: 0 },
+						}
+						const result = await settleSession(row.id, outcome, {
+							db,
+							stopSandbox: async () => (host === 'remote' ? 'remote' : 'local'),
+							pushAgentFiles: async () => 'ok',
+						})
+						expect(result.finalStatus).toBe('failed')
 
-				// Col 11 (dispatch-failure specific): only meaningful when
-				// classification is 'dispatch_failure' (§3.2, session-dispatch-queue).
-				it.todo(`col 11 — dispatch-failure agent-state cleanup (${host} × ${kind})`)
+						// The plan-cap classification rides on the PostHog emit (unified
+						// schema §9.2) and on the events-row `data.classification` written
+						// by settleSession's buildEventData. Both are settle's contract.
+						const agentEmitCall = findEmit('agent_session_completed')
+						const props = agentEmitCall?.[2] ?? {}
+						expect(props.classification, 'plan-cap ride-along on emit').toBe('plan_cap')
+						expect(props.stop_reason, 'plan-cap reason on emit').toBe(
+							'workspace plan cap reached — session halted',
+						)
+						// The `loop_active_day` write is out-of-scope for settleSession —
+						// that lives on the callers that raise the plan-cap outcome
+						// (session-manager plan-route paths). See the integration
+						// counterpart in apps/dev/src/__tests__/integration/.
+					})
+				} else {
+					it('col 10 — N/A (plan-cap classification only rides on a fail outcome)', () => {
+						expect(kind).not.toBe('fail')
+					})
+				}
+
+				// Col 11 (dispatch-failure specific): only fires when a `fail` outcome
+				// carries classification='dispatch_failure' (§3.2 dispatch-queue path).
+				// The settle-side contract for this classification is the push-skip:
+				// `pushAgentFiles` MUST NOT run because nothing was ever written on
+				// the dispatch path. Every other kind is explicit-N/A.
+				if (kind === 'fail') {
+					it('col 11 — dispatch-failure classification skips pushAgentFiles', async () => {
+						const row = makeRow(host, `${host}-dispatch-failure`)
+						const { db } = makeDb(row)
+						const pushAgentFiles = vi.fn(async () => 'ok' as const)
+						const outcome: SettleOutcome = {
+							kind: 'fail',
+							classification: 'dispatch_failure',
+							source: 'sandbox-exit',
+							usage: { inputTokens: 0, outputTokens: 0 },
+						}
+						const result = await settleSession(row.id, outcome, {
+							db,
+							stopSandbox: async () => (host === 'remote' ? 'remote' : 'local'),
+							pushAgentFiles,
+						})
+						expect(result.finalStatus).toBe('failed')
+						expect(
+							pushAgentFiles,
+							'dispatch_failure must skip push (nothing was ever written)',
+						).not.toHaveBeenCalled()
+						expect(result.pushedAgentFiles).toBe('skipped-no-workspace')
+					})
+				} else {
+					it('col 11 — N/A (dispatch_failure classification only rides on a fail outcome)', () => {
+						expect(kind).not.toBe('fail')
+					})
+				}
 			})
 		}
 	}

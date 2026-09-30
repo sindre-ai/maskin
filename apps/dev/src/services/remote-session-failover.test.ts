@@ -15,10 +15,57 @@
 // session ran), and routes stopSandbox per host.
 
 import { describe, expect, it, vi } from 'vitest'
-import type { SessionSettleRow, SettleDependencies, SettleOutcome } from './session-lifecycle'
+import type { SettleDependencies, SettleOutcome } from './session-lifecycle'
 import { settleSession } from './session-lifecycle'
 
-function makeStubDb(row: SessionSettleRow & { inputTokens?: number; outputTokens?: number }) {
+/**
+ * Rows the parity fake hands back to `settleSession()`. Superset of the
+ * exported `SessionSettleRow` so the mocked SELECT satisfies the emit-side
+ * columns (`config`, `triggerId`, `startedAt`, previous-usage totals) —
+ * settleSession's SELECT at session-lifecycle.ts:699-716 pulls a wider row
+ * than the SettleDependencies contract exposes.
+ */
+interface FailoverStubRow {
+	id: string
+	workspaceId: string
+	actorId: string
+	status: string
+	containerId: string | null
+	agentServerId: string | null
+	result: null
+	config: Record<string, unknown> | null
+	triggerId: string | null
+	startedAt: Date | null
+	inputTokens: number | null
+	outputTokens: number | null
+	cacheReadInputTokens: number | null
+	cacheCreationInputTokens: number | null
+	totalCostUsd: string | null
+}
+
+function fillStubRow(partial: {
+	id: string
+	workspaceId: string
+	actorId: string
+	status: string
+	containerId: string | null
+	agentServerId: string | null
+	result: null
+}): FailoverStubRow {
+	return {
+		...partial,
+		config: null,
+		triggerId: null,
+		startedAt: null,
+		inputTokens: 0,
+		outputTokens: 0,
+		cacheReadInputTokens: 0,
+		cacheCreationInputTokens: 0,
+		totalCostUsd: '0',
+	}
+}
+
+function makeStubDb(row: FailoverStubRow) {
 	const state = { row: { ...row } }
 	const db = {
 		select() {
@@ -65,15 +112,17 @@ describe('§3.1 row 8 — remote host failover', () => {
 	it('writes sessions.status = failed and routes stop to the remote host', async () => {
 		const remoteStop = vi.fn(async () => 'remote' as const)
 		const pushAgentFiles = vi.fn(async () => 'ok' as const)
-		const { db } = makeStubDb({
-			id: 'sess-remote-failover',
-			workspaceId: 'ws',
-			actorId: 'actor',
-			status: 'running',
-			containerId: 'sbx-remote',
-			agentServerId: 'server-1',
-			result: null,
-		})
+		const { db } = makeStubDb(
+			fillStubRow({
+				id: 'sess-remote-failover',
+				workspaceId: 'ws',
+				actorId: 'actor',
+				status: 'running',
+				containerId: 'sbx-remote',
+				agentServerId: 'server-1',
+				result: null,
+			}),
+		)
 
 		const result = await settleSession('sess-remote-failover', failoverOutcome(), {
 			db,
@@ -95,15 +144,17 @@ describe('§3.1 row 8 — local host failover', () => {
 	it('writes sessions.status = failed and routes stop to dockerode locally', async () => {
 		const localStop = vi.fn(async () => 'local' as const)
 		const pushAgentFiles = vi.fn(async () => 'ok' as const)
-		const { db } = makeStubDb({
-			id: 'sess-local-failover',
-			workspaceId: 'ws',
-			actorId: 'actor',
-			status: 'running',
-			containerId: 'sbx-local',
-			agentServerId: null,
-			result: null,
-		})
+		const { db } = makeStubDb(
+			fillStubRow({
+				id: 'sess-local-failover',
+				workspaceId: 'ws',
+				actorId: 'actor',
+				status: 'running',
+				containerId: 'sbx-local',
+				agentServerId: null,
+				result: null,
+			}),
+		)
 
 		const result = await settleSession('sess-local-failover', failoverOutcome(), {
 			db,

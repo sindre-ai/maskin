@@ -243,15 +243,54 @@ describe('RPC contract: POST /sessions/:id/stop (§2.2)', () => {
 		expect(res.stopped).toBe('sandbox-stopped')
 	})
 
+	it('client.stopSession posts the §2.2 shape to /sessions/:id/stop', async () => {
+		const { fetchImpl, calls } = makeFetchSpy(
+			new Response(JSON.stringify({ stopped: 'sandbox-stopped' }), {
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+			}),
+		)
+		const client = new AgentServerClient({ server: SERVER, fetchImpl })
+		const req: StopSessionRequest = { reason: 'stop', source: 'user-stop' }
+		await client.stopSession('sess-stop', req)
+
+		expect(calls[0]?.url).toBe('https://agent-finland.maskin.test:3001/sessions/sess-stop/stop')
+		expect(calls[0]?.init?.method).toBe('POST')
+		expect(calls[0]?.init?.body).toBe(JSON.stringify(req))
+		const headers = new Headers(calls[0]?.init?.headers)
+		expect(headers.get('authorization')).toBe(`Bearer ${SERVER.secret}`)
+	})
+
+	it('client.stopSession returns { stopped: sandbox-stopped } on 200', async () => {
+		const { fetchImpl } = makeFetchSpy(
+			new Response(JSON.stringify({ stopped: 'sandbox-stopped' } as StopSessionResponse), {
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+			}),
+		)
+		const client = new AgentServerClient({ server: SERVER, fetchImpl })
+		const res = await client.stopSession('sess-1', { reason: 'complete', source: 'sandbox-exit' })
+		expect(res).toEqual({ stopped: 'sandbox-stopped' })
+	})
+
+	it('client.stopSession returns { stopped: sandbox-already-gone } on the idempotent 200', async () => {
+		const { fetchImpl } = makeFetchSpy(
+			new Response(JSON.stringify({ stopped: 'sandbox-already-gone' } as StopSessionResponse), {
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+			}),
+		)
+		const client = new AgentServerClient({ server: SERVER, fetchImpl })
+		const res = await client.stopSession('sess-2', { reason: 'stop', source: 'user-stop' })
+		expect(res.stopped).toBe('sandbox-already-gone')
+	})
+
 	it.todo(
-		'client.stopSession(id, { reason, source }) posts the §2.2 shape when commit 2 reshape lands',
+		'client.stopSession returns { stopped: sandbox-not-found } (404 body) as the typed outcome, not a throw — needs a client-side 404 translator (not on this branch)',
 	)
-	it.todo('client.stopSession returns { stopped: sandbox-stopped } on 200')
-	it.todo('client.stopSession returns { stopped: sandbox-already-gone } on the idempotent 200')
 	it.todo(
-		'client.stopSession returns { stopped: sandbox-not-found } (404 body) as the typed outcome, not a throw',
+		'client.stopSession retries 5xx up to 3 times at 250/500/1000ms and surfaces failure — retry policy not implemented on this branch',
 	)
-	it.todo('client.stopSession retries 5xx up to 3 times at 250/500/1000ms and surfaces failure')
 })
 
 describe('RPC contract: POST /sessions/:sessionId/push-agent-files (§7.1)', () => {
@@ -265,9 +304,45 @@ describe('RPC contract: POST /sessions/:sessionId/push-agent-files (§7.1)', () 
 		expect(res.pushed.learnings?.files).toBe(3)
 	})
 
+	it('client.pushAgentFiles posts the §7.1 shape to /sessions/:id/push-agent-files', async () => {
+		const { fetchImpl, calls } = makeFetchSpy(
+			new Response(
+				JSON.stringify({
+					pushed: { learnings: { files: 3, bytes: 128 }, memory: { files: 1, bytes: 42 } },
+					errors: [],
+				} satisfies PushAgentFilesResponse),
+				{ status: 200, headers: { 'content-type': 'application/json' } },
+			),
+		)
+		const client = new AgentServerClient({ server: SERVER, fetchImpl })
+		const req: PushAgentFilesRequest = { directories: ['learnings', 'memory'] }
+		await client.pushAgentFiles('sess-push', req)
+
+		expect(calls[0]?.url).toBe(
+			'https://agent-finland.maskin.test:3001/sessions/sess-push/push-agent-files',
+		)
+		expect(calls[0]?.init?.method).toBe('POST')
+		expect(calls[0]?.init?.body).toBe(JSON.stringify(req))
+	})
+
+	it('client.pushAgentFiles surfaces per-directory errors in errors[] without throwing', async () => {
+		const { fetchImpl } = makeFetchSpy(
+			new Response(
+				JSON.stringify({
+					pushed: { learnings: { files: 2, bytes: 90 } },
+					errors: [{ directory: 'memory', message: 'ENOENT' }],
+				} satisfies PushAgentFilesResponse),
+				{ status: 200, headers: { 'content-type': 'application/json' } },
+			),
+		)
+		const client = new AgentServerClient({ server: SERVER, fetchImpl })
+		const res = await client.pushAgentFiles('sess-push-err', { directories: ['learnings', 'memory'] })
+		expect(res.errors).toEqual([{ directory: 'memory', message: 'ENOENT' }])
+		expect(res.pushed.learnings?.files).toBe(2)
+		expect(res.pushed.memory).toBeUndefined()
+	})
+
 	it.todo(
-		'client.pushSessionWorkspace(id, { directories }) posts the §7.1 shape when the method lands',
+		'pushAgentFiles() retries up to 5 times with backoff on 5xx (§7.1) — retry policy not implemented on this branch',
 	)
-	it.todo('pushSessionWorkspace() retries up to 5 times with backoff on 5xx (§7.1)')
-	it.todo('pushSessionWorkspace() surfaces per-dir errors in `errors[]` without throwing')
 })

@@ -1,7 +1,7 @@
 import type { Database } from '@maskin/db'
 import { events, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
-import { and, eq, inArray, isNotNull, lt } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNotNull, lt } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { type SettleDependencies, settleSession } from './session-lifecycle'
@@ -53,6 +53,15 @@ const TERMINAL_STATUSES = Object.keys(TERMINAL_STATUS_TO_EVENT_ACTION) as Array<
 
 /** §9.4: a session's terminal-status transition must have an events row within this window. */
 export const SELF_HEAL_GRACE_MS = 60_000
+
+/**
+ * Default batch bound for the §9.4 self-heal pass. Caps how many stale-terminal
+ * rows one tick considers before returning — a runaway backlog after a
+ * multi-hour outage still gets a bounded pass instead of one giant SELECT that
+ * ties up the reconciler cron. Callers can override for tests or a one-off
+ * back-fill sweep.
+ */
+export const SELF_HEAL_DEFAULT_LIMIT = 500
 
 const FAILURE_REASON: SessionResultFailureReason = {
 	provider: 'agent-server',
@@ -180,13 +189,23 @@ export class SessionReconciler {
 	 * upstream) reading the session as silently vanished, so the back-fill is
 	 * the load-bearing part of the self-heal.
 	 *
-	 * Post-commit side-effects (stopSandbox / pushAgentFiles / PostHog) are
-	 * intentionally out of this method's scope: at t + 60s the sandbox is
-	 * almost always dead already, and the caller (Session Manager or the
-	 * reconciler cron) supplies real stopSandbox / pushAgentFiles callbacks
-	 * only where a per-session context is on hand. A future pass can wire
-	 * those in per-session; the events-row gap is the one that breaks
-	 * observability today.
+	 * Scope — intentional narrowing vs. §9.4's original AC:
+	 *
+	 *   Post-commit side-effects (stopSandbox, pushAgentFiles overwrite:true,
+	 *   PostHog dedupe) are OUT of this method. At t + graceMs the sandbox is
+	 *   almost always dead, so `stopSandbox` would resolve `skipped-none-live`
+	 *   with no useful state change. `pushAgentFiles` needs per-session
+	 *   ContainerManager/AgentServerClient context the reconciler cron doesn't
+	 *   hold. PostHog dedupe is already guarded upstream by settleSession's
+	 *   CAS-won flag (`flipped`), so a re-emit here would either double-fire
+	 *   (no dedupe key on the cron path) or skip idempotently — neither adds
+	 *   observability. The missing events row is the one observable failure
+	 *   that breaks SSE and per-actor completion listeners today, so this
+	 *   method fixes that one and nothing else. See task escalation to Planner.
+	 *
+	 * Bounded by `limit` (defaults to `SELF_HEAL_DEFAULT_LIMIT`, 500) with
+	 * `completedAt ASC` so a large backlog after a multi-hour outage still
+	 * drains in stable oldest-first order across successive ticks.
 	 *
 	 * Idempotent by construction: only sessions with no matching action-typed
 	 * events row are back-filled, so a re-run does nothing.
@@ -194,6 +213,7 @@ export class SessionReconciler {
 	async selfHealTerminalWithoutEvents(
 		nowMs: number = Date.now(),
 		graceMs: number = SELF_HEAL_GRACE_MS,
+		limit: number = SELF_HEAL_DEFAULT_LIMIT,
 	): Promise<SelfHealResult> {
 		const cutoff = new Date(nowMs - graceMs)
 
@@ -213,6 +233,8 @@ export class SessionReconciler {
 					lt(sessions.completedAt, cutoff),
 				),
 			)
+			.orderBy(asc(sessions.completedAt))
+			.limit(limit)
 
 		const backFilled: Array<{ sessionId: string; action: string }> = []
 

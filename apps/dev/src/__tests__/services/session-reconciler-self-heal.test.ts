@@ -6,7 +6,11 @@
 // `.selfHealTerminalWithoutEvents(...)` against the same stub shape.
 
 import { describe, expect, it } from 'vitest'
-import { SELF_HEAL_GRACE_MS, SessionReconciler } from '../../services/session-reconciler'
+import {
+	SELF_HEAL_DEFAULT_LIMIT,
+	SELF_HEAL_GRACE_MS,
+	SessionReconciler,
+} from '../../services/session-reconciler'
 
 interface StaleRow {
 	id: string
@@ -21,17 +25,21 @@ interface StaleRow {
 /**
  * Fake DB shape the self-heal method needs:
  *   1) SELECT stale terminal rows (WHERE status IN terminals AND completedAt < cutoff)
+ *      .orderBy(completedAt ASC).limit(N)
  *   2) For each: SELECT one events row by (entityType, entityId, action) — LIMIT 1
  *   3) recordEvent -> INSERT events (audit only)
  *
  * Every SELECT returns a fresh Promise-resolving builder; the WHERE argument
  * itself is opaque to us — the fake picks its response based on which SELECT
- * call this is (staleFetch first, then per-row eventsCheck).
+ * call this is (staleFetch first, then per-row eventsCheck). The staleFetch
+ * builder also carries `.orderBy()` and `.limit()` so the method's bounded
+ * pass (§9.4 default 500) exercises the same fluent chain.
  */
 function makeFakeDb(rows: StaleRow[]) {
 	// Track which SELECT is which. First call → stale row fetch.
 	// Subsequent calls → per-row events existence checks in order.
 	let selectCall = 0
+	let observedStaleLimit: number | null = null
 	const inserted: Array<Record<string, unknown>> = []
 
 	const perRowActions: Array<Set<string>> = rows.map((r) => new Set(r.existingActions ?? []))
@@ -44,7 +52,16 @@ function makeFakeDb(rows: StaleRow[]) {
 				from: () => ({
 					where: (_predicate: unknown) => {
 						if (thisCall === 0) {
-							return Promise.resolve(rows.map(({ existingActions: _e, ...r }) => r))
+							// Stale-fetch path — carries orderBy() + limit() before resolving.
+							const staleRows = rows.map(({ existingActions: _e, ...r }) => r)
+							return {
+								orderBy: (_ord: unknown) => ({
+									limit: (n: number) => {
+										observedStaleLimit = n
+										return Promise.resolve(staleRows.slice(0, n))
+									},
+								}),
+							}
 						}
 						// Per-row existence check. thisCall = 1..N corresponds to row index 0..N-1.
 						const rowIdx = thisCall - 1
@@ -72,7 +89,7 @@ function makeFakeDb(rows: StaleRow[]) {
 			set: () => ({ where: () => ({ returning: () => Promise.resolve([]) }) }),
 		}),
 	}
-	return { db, inserted }
+	return { db, inserted, getStaleLimit: () => observedStaleLimit }
 }
 
 const now = new Date('2026-09-29T12:00:00Z').getTime()
@@ -216,5 +233,29 @@ describe('SessionReconciler.selfHealTerminalWithoutEvents (§9.4)', () => {
 		// production behaviour is what matters; this test pins the API shape only.
 		await reconciler.selfHealTerminalWithoutEvents(now, shortGrace)
 		expect(inserted.length).toBeGreaterThanOrEqual(0)
+	})
+
+	it('applies SELF_HEAL_DEFAULT_LIMIT (500) on the stale-fetch by default', async () => {
+		const { db, getStaleLimit } = makeFakeDb([])
+		const reconciler = new SessionReconciler(db as never)
+		await reconciler.selfHealTerminalWithoutEvents(now)
+		expect(getStaleLimit()).toBe(SELF_HEAL_DEFAULT_LIMIT)
+		expect(SELF_HEAL_DEFAULT_LIMIT).toBe(500)
+	})
+
+	it('respects a caller-provided limit override (bounded back-fill for a one-off sweep)', async () => {
+		const rows: StaleRow[] = Array.from({ length: 10 }, (_, i) => ({
+			id: `s-${i}`,
+			workspaceId: 'ws',
+			actorId: 'a',
+			status: 'failed',
+			completedAt: staleCutoff,
+		}))
+		const { db, inserted, getStaleLimit } = makeFakeDb(rows)
+		const reconciler = new SessionReconciler(db as never)
+		const result = await reconciler.selfHealTerminalWithoutEvents(now, SELF_HEAL_GRACE_MS, 3)
+		expect(getStaleLimit()).toBe(3)
+		expect(result.staleConsidered).toBe(3)
+		expect(inserted).toHaveLength(3)
 	})
 })
