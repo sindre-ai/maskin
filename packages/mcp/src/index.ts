@@ -80,3 +80,22 @@ export type {
 	PublishPostInput,
 	SendMessageInput,
 } from './lib/linkedin-tool-schemas.js'
+
+// Voice v1 Task 3: the tool whitelist + guardrails, and the Realtime tool
+// definitions / argument gate the WS tool-proxy in apps/dev runs before calling
+// invokeTool. One source of truth so session-mint (pins session.tools) and the
+// proxy (re-enforces per call) cannot drift.
+export {
+	VOICE_ALLOWED_TOOLS,
+	VOICE_CREATE_COMMENT_MAX_ATTENTION,
+	VOICE_CREATE_OBJECTS_ALLOWED_TYPES,
+	VOICE_READ_TOOLS,
+	VOICE_TOOL_ERROR_CODES,
+	VOICE_WRITE_TOOLS,
+	VoiceToolNotAllowedError,
+	assertVoiceInvocationAllowed,
+	isVoiceAllowedTool,
+} from './voice-tool-whitelist.js'
+export type { VoiceAllowedTool, VoiceToolErrorCode } from './voice-tool-whitelist.js'
+export { VOICE_REALTIME_TOOLS, parseVoiceToolArgs } from './voice-tools.js'
+export type { VoiceRealtimeTool } from './voice-tools.js'

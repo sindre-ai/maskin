@@ -70,6 +70,7 @@ export const VOICE_TOOL_ERROR_CODES = Object.freeze({
 	toolNotAllowed: 'voice_tool_not_allowed',
 	attentionTooHigh: 'voice_attention_too_high',
 	createObjectsTypeNotAllowed: 'voice_create_objects_type_not_allowed',
+	invalidArguments: 'voice_invalid_arguments',
 } as const)
 
 export type VoiceToolErrorCode =
@@ -112,31 +113,29 @@ export function assertVoiceCreateCommentAttentionAllowed(args: unknown): void {
 
 /**
  * Enforces the `type ∈ {insight, task}` cap on a `create_objects` argument
- * bag. Accepts both single-object (`{ type }`) and batch (`{ objects: [...] }`)
- * shapes — the current MCP surface is batch-shaped, but the guard stays
- * defensive so the WS layer can call it on whichever shape the Realtime
- * function-call arguments arrive in.
+ * bag. The MCP tool is shaped `{ workspace_id, nodes: [{ $id, type, ... }], edges }`
+ * (see `create_objects` in ./tools.ts), so the types live on `nodes[]`.
+ *
+ * Fails closed: a bag with no readable `nodes` array, or a node without a
+ * string `type`, is rejected rather than waved through. A guard that no-ops
+ * on a shape it does not recognise is a guard that silently stops guarding
+ * when the tool's input shape moves.
  */
 export function assertVoiceCreateObjectsTypesAllowed(args: unknown): void {
-	if (args == null || typeof args !== 'object') return
-	const bag = args as { type?: unknown; objects?: unknown }
-	const candidates: unknown[] = []
-	if (bag.type !== undefined) candidates.push(bag.type)
-	if (Array.isArray(bag.objects)) {
-		for (const obj of bag.objects) {
-			if (obj != null && typeof obj === 'object') {
-				candidates.push((obj as { type?: unknown }).type)
-			}
-		}
+	const allowed = [...VOICE_CREATE_OBJECTS_ALLOWED_TYPES].join(', ')
+	const reject = (detail: string): never => {
+		throw new VoiceToolNotAllowedError(
+			VOICE_TOOL_ERROR_CODES.createObjectsTypeNotAllowed,
+			`Voice-call create_objects only supports ${allowed}; ${detail}.`,
+		)
 	}
-	for (const t of candidates) {
-		if (typeof t !== 'string') continue
-		if (!createObjectsTypeSet.has(t)) {
-			throw new VoiceToolNotAllowedError(
-				VOICE_TOOL_ERROR_CODES.createObjectsTypeNotAllowed,
-				`Voice-call create_objects only supports ${[...VOICE_CREATE_OBJECTS_ALLOWED_TYPES].join(', ')}; got ${t}.`,
-			)
-		}
+	const nodes =
+		args != null && typeof args === 'object' ? (args as { nodes?: unknown }).nodes : null
+	if (!Array.isArray(nodes) || nodes.length === 0) reject('no nodes to create were given')
+	for (const node of nodes as unknown[]) {
+		const type = node != null && typeof node === 'object' ? (node as { type?: unknown }).type : null
+		if (typeof type !== 'string') reject('a node had no type')
+		else if (!createObjectsTypeSet.has(type)) reject(`got ${type}`)
 	}
 }
 

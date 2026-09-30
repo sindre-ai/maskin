@@ -120,19 +120,26 @@ describe('assertVoiceCreateCommentAttentionAllowed', () => {
 })
 
 describe('assertVoiceCreateObjectsTypesAllowed', () => {
-	it('accepts insight and task', () => {
+	it('accepts insight and task nodes, singly and mixed', () => {
 		for (const type of VOICE_CREATE_OBJECTS_ALLOWED_TYPES) {
-			expect(() => assertVoiceCreateObjectsTypesAllowed({ type })).not.toThrow()
 			expect(() =>
-				assertVoiceCreateObjectsTypesAllowed({ objects: [{ type, title: 'x' }] }),
+				assertVoiceCreateObjectsTypesAllowed({ nodes: [{ $id: 'a', type, title: 'x' }] }),
 			).not.toThrow()
 		}
+		expect(() =>
+			assertVoiceCreateObjectsTypesAllowed({
+				nodes: [
+					{ $id: 'a', type: 'insight' },
+					{ $id: 'b', type: 'task' },
+				],
+			}),
+		).not.toThrow()
 	})
 
 	it('rejects bet, meeting, knowledge, and every other non-allowed type', () => {
 		for (const type of ['bet', 'meeting', 'knowledge', 'contact', 'agent']) {
 			try {
-				assertVoiceCreateObjectsTypesAllowed({ type })
+				assertVoiceCreateObjectsTypesAllowed({ nodes: [{ $id: 'a', type }] })
 				throw new Error(`expected type=${type} to be rejected`)
 			} catch (err) {
 				expect(err).toBeInstanceOf(VoiceToolNotAllowedError)
@@ -146,18 +153,30 @@ describe('assertVoiceCreateObjectsTypesAllowed', () => {
 	it('rejects on the first bad type inside a batch', () => {
 		expect(() =>
 			assertVoiceCreateObjectsTypesAllowed({
-				objects: [
-					{ type: 'insight', title: 'ok' },
-					{ type: 'bet', title: 'nope' },
+				nodes: [
+					{ $id: 'a', type: 'insight', title: 'ok' },
+					{ $id: 'b', type: 'bet', title: 'nope' },
 				],
 			}),
 		).toThrow(VoiceToolNotAllowedError)
 	})
 
-	it('is a no-op on malformed input', () => {
-		expect(() => assertVoiceCreateObjectsTypesAllowed(null)).not.toThrow()
-		expect(() => assertVoiceCreateObjectsTypesAllowed({})).not.toThrow()
-		expect(() => assertVoiceCreateObjectsTypesAllowed({ type: 123 })).not.toThrow()
+	it('fails closed on a shape it cannot read', () => {
+		// Regression: the first cut read `objects` / a top-level `type` and let
+		// the real `nodes` shape through untouched.
+		for (const args of [
+			null,
+			{},
+			{ nodes: [] },
+			{ nodes: 'bet' },
+			{ nodes: [{ $id: 'a' }] },
+			{ nodes: [{ $id: 'a', type: 123 }] },
+			{ nodes: [null] },
+			{ objects: [{ type: 'insight' }] },
+			{ type: 'insight' },
+		]) {
+			expect(() => assertVoiceCreateObjectsTypesAllowed(args)).toThrow(VoiceToolNotAllowedError)
+		}
 	})
 })
 
@@ -186,7 +205,7 @@ describe('assertVoiceInvocationAllowed — one-call gate', () => {
 
 	it('rejects create_objects with a disallowed type', () => {
 		expect(() =>
-			assertVoiceInvocationAllowed('create_objects', { objects: [{ type: 'bet' }] }),
+			assertVoiceInvocationAllowed('create_objects', { nodes: [{ $id: 'a', type: 'bet' }] }),
 		).toThrow(VoiceToolNotAllowedError)
 	})
 
