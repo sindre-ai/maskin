@@ -733,6 +733,118 @@ describe('TriggerRunner', () => {
 		})
 	})
 
+	// S9: only a human editing the trigger may reset its backoff. The runner
+	// writes its own events on entity_type 'trigger' (trigger_fired), and
+	// resetting on those meant a failing trigger cleared its own backoff.
+	describe('handleTriggerChange backoff reset', () => {
+		const triggerEvent = (action: string, entityId: string): PgEvent => ({
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			action,
+			entity_type: 'trigger',
+			entity_id: entityId,
+			event_id: 'evt-1',
+		})
+
+		async function emit(action: string, entityId: string) {
+			bridge.emit('event', triggerEvent(action, entityId))
+			await vi.advanceTimersByTimeAsync(0)
+		}
+
+		let resetSpy: ReturnType<typeof vi.fn>
+
+		beforeEach(async () => {
+			mockResults.select = []
+			await runner.start()
+			resetSpy = vi
+				.spyOn(
+					runner as unknown as { resetTriggerBackoff: () => Promise<void> },
+					'resetTriggerBackoff',
+				)
+				.mockResolvedValue(undefined) as unknown as ReturnType<typeof vi.fn>
+		})
+
+		it.each(['created', 'updated'])(
+			'resets backoff on a %s event for an unseen trigger',
+			async (action) => {
+				const trigger = buildTrigger({ type: 'event', config: {} })
+				mockResults.selectQueue = [[trigger]]
+
+				await emit(action, trigger.id)
+
+				expect(resetSpy).toHaveBeenCalledTimes(1)
+				expect(resetSpy).toHaveBeenCalledWith(trigger.id)
+			},
+		)
+
+		it('drops the in-memory backoff on a deleted event', async () => {
+			const trigger = buildTrigger({ type: 'event', config: {} })
+			// The deleted branch never re-reads the row, and a deleted trigger's
+			// cooldown is cleared in memory (the row cascade already removed it).
+			const failures = (runner as unknown as { triggerFailures: Map<string, unknown> })
+				.triggerFailures
+			failures.set(trigger.id, { count: 2, lastFailedAt: new Date(), backoffUntil: new Date() })
+
+			await emit('deleted', trigger.id)
+
+			expect(failures.has(trigger.id)).toBe(false)
+		})
+
+		it.each(['trigger_fired', 'session_failed', 'auto_paused', 'anything_else'])(
+			'leaves backoff and schedules alone on a %s event',
+			async (action) => {
+				const trigger = buildTrigger({
+					type: 'cron',
+					config: { expression: '*/1 * * * *' },
+					enabled: true,
+				})
+				mockResults.selectQueue = [[trigger]]
+
+				await emit(action, trigger.id)
+
+				expect(resetSpy).not.toHaveBeenCalled()
+				// No re-read of the row and no cron job armed for it: the event was ignored.
+				expect(
+					(runner as unknown as { cronJobs: Map<string, unknown> }).cronJobs.has(trigger.id),
+				).toBe(false)
+				expect(mockResults.selectQueue).toHaveLength(1)
+			},
+		)
+
+		it('does not reset again on an updated event that changed none of the editable fields', async () => {
+			const trigger = buildTrigger({ type: 'event', config: { entity_type: 'object' } })
+			mockResults.selectQueue = [[trigger]]
+			await emit('updated', trigger.id)
+			expect(resetSpy).toHaveBeenCalledTimes(1)
+
+			// Same editable fields, different bookkeeping column: not an edit.
+			mockResults.selectQueue = [
+				[{ ...trigger, updatedAt: new Date(), lastEscalatedAt: new Date() }],
+			]
+			await emit('updated', trigger.id)
+
+			expect(resetSpy).toHaveBeenCalledTimes(1)
+		})
+
+		it.each([
+			['name', { name: 'renamed' }],
+			['config', { config: { entity_type: 'session' } }],
+			['actionPrompt', { actionPrompt: 'do something else' }],
+			['targetActorId', { targetActorId: 'other-actor' }],
+			['enabled', { enabled: false }],
+		])('resets again when %s is edited', async (_field, change) => {
+			const trigger = buildTrigger({ type: 'event', config: { entity_type: 'object' } })
+			mockResults.selectQueue = [[trigger]]
+			await emit('updated', trigger.id)
+			expect(resetSpy).toHaveBeenCalledTimes(1)
+
+			mockResults.selectQueue = [[{ ...trigger, ...change }]]
+			await emit('updated', trigger.id)
+
+			expect(resetSpy).toHaveBeenCalledTimes(2)
+		})
+	})
+
 	// Regression coverage for Sentry MASKIN-DEV-K / MASKIN-DEV-6. The plan cap is
 	// checked inside createSession BEFORE a session row exists, so no
 	// session_failed event is emitted, so the per-trigger `triggerFailures`

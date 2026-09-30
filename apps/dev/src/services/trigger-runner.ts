@@ -200,6 +200,31 @@ const SUPPRESSION_CLEARING_ACTIONS = new Set([
 ])
 
 /**
+ * Trigger-entity actions `handleTriggerChange` acts on: a human (or a route)
+ * creating, editing or deleting a trigger. Every other action on entity_type
+ * 'trigger' is runner-authored bookkeeping about the trigger — `trigger_fired`
+ * at three sites, `auto_paused`, and so on — and must leave backoff and
+ * schedules alone. Resetting on those made a failing trigger clear its own
+ * backoff each time it fired, so the exponential steps never escalated, and
+ * the reset is also a queue drain point, so a cooling trigger's queue drained
+ * early. Allowlist, not denylist, so a new runner-written action is safe by
+ * default.
+ */
+const TRIGGER_CRUD_ACTIONS = new Set(['created', 'updated', 'deleted'])
+
+/** The trigger fields a human edits; a change in any of them counts as an edit. */
+function triggerFingerprint(trigger: typeof triggers.$inferSelect): string {
+	return JSON.stringify([
+		trigger.name,
+		trigger.type,
+		trigger.enabled,
+		trigger.config,
+		trigger.actionPrompt,
+		trigger.targetActorId,
+	])
+}
+
+/**
  * Sweep expired rows every 60s (per tech spec §3.2) — DELETE cooldown and
  * suppression rows whose expiry timestamp is more than one hour in the past.
  * Keeps the tables small; expired rows above 1h serve no purpose since neither
@@ -226,6 +251,14 @@ export class TriggerRunner {
 	private eventHandler: ((event: PgEvent) => void) | null = null
 	private sessionEventHandler: ((event: PgEvent) => void) | null = null
 	private triggerFailures: Map<string, TriggerFailureState> = new Map()
+	/**
+	 * triggerId -> fingerprint of the editable config as of the last created or
+	 * updated event. Lets `handleTriggerChange` tell a real edit from an updated
+	 * event that changed nothing that matters (a Slack setup status write, a
+	 * metadata touch). In-memory only: an unseen trigger counts as edited, so the
+	 * first event after a restart resets, as it did before.
+	 */
+	private triggerFingerprints: Map<string, string> = new Map()
 	/** workspaceId -> active workspace-wide pause. See `WorkspaceSuppression`. */
 	private workspaceSuppressions: Map<string, WorkspaceSuppression> = new Map()
 	/** Background sweep of expired cooldown / suppression rows (§3.2). */
@@ -337,6 +370,7 @@ export class TriggerRunner {
 			clearTimeout(timeout)
 		}
 		this.processedSessionOutcomes.clear()
+		this.triggerFingerprints.clear()
 		this.workspaceSuppressions.clear()
 		if (this.cooldownSweepInterval) {
 			clearInterval(this.cooldownSweepInterval)
@@ -1062,9 +1096,12 @@ export class TriggerRunner {
 	}
 
 	private async handleTriggerChange(event: PgEvent) {
+		if (!TRIGGER_CRUD_ACTIONS.has(event.action)) return
+
 		const triggerId = event.entity_id
 
 		if (event.action === 'deleted') {
+			this.triggerFingerprints.delete(triggerId)
 			this.cronJobs.get(triggerId)?.stop()
 			this.cronJobs.delete(triggerId)
 			const timeout = this.reminderTimeouts.get(triggerId)
@@ -1090,8 +1127,13 @@ export class TriggerRunner {
 
 		if (!trigger) return
 
-		// Clear backoff state when a trigger is updated/re-enabled
-		await this.resetTriggerBackoff(triggerId)
+		// Clear backoff state when a human edits or re-enables the trigger. An
+		// updated event that changed none of the editable fields (a Slack setup
+		// status write, a metadata touch) is not an edit and leaves it alone.
+		const fingerprint = triggerFingerprint(trigger)
+		const edited = this.triggerFingerprints.get(triggerId) !== fingerprint
+		this.triggerFingerprints.set(triggerId, fingerprint)
+		if (edited) await this.resetTriggerBackoff(triggerId)
 
 		// Stop any existing schedule first
 		this.cronJobs.get(triggerId)?.stop()
