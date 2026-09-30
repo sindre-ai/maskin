@@ -294,6 +294,12 @@ describe('sessionQuerySchema', () => {
 		expect(sessionQuerySchema.parse({ verbose: 'true' }).verbose).toBe(true)
 	})
 
+	// Regression: z.coerce.boolean() turns the query-string 'false' into true.
+	it('parses verbose=false (boolean and string) as false', () => {
+		expect(sessionQuerySchema.parse({ verbose: false }).verbose).toBe(false)
+		expect(sessionQuerySchema.parse({ verbose: 'false' }).verbose).toBe(false)
+	})
+
 	// Cap raised 100 → 200 so a caller pulling the full lean tail can do it
 	// in one request; anything above still rejects to guard the DB.
 	it('caps limit at 200', () => {

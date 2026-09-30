@@ -215,7 +215,9 @@ app.openapi(listSessionsRoute, (async (c) => {
 		.where(and(...conditions))
 		.limit(query.limit)
 		.offset(query.offset)
-		.orderBy(desc(sessions.createdAt))
+		// Ordered by updated_at (not created_at) because the `before` cursor filters
+		// on updated_at: any other sort order skips or repeats rows across pages.
+		.orderBy(desc(sessions.updatedAt), desc(sessions.id))
 
 	const shaped = leanRows.map((row) => ({
 		id: row.id,

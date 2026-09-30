@@ -506,6 +506,41 @@ describe('Sessions Integration', () => {
 				expect(list.map((r) => r.id)).toEqual([earlySession.id])
 			})
 
+			it('walking pages with before=<last updated_at> visits every row exactly once', async () => {
+				const app = createSessionApp()
+				const headers = { 'x-workspace-id': workspaceId }
+				// Created oldest but updated most recently: a created_at sort would bury it
+				// on the last page, where the updated_at cursor then excludes it.
+				const longLived = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+					createdAt: new Date('2026-06-01T08:00:00.000Z'),
+					updatedAt: new Date('2026-06-01T20:00:00.000Z'),
+				})
+				const seeded = [longLived.id]
+				for (let i = 1; i <= 5; i++) {
+					const hour = String(8 + i).padStart(2, '0')
+					const s = await insertSession(db, workspaceId, agentActorId, getTestActorId(), {
+						createdAt: new Date(`2026-06-01T${hour}:00:00.000Z`),
+						updatedAt: new Date(`2026-06-01T${hour}:30:00.000Z`),
+					})
+					seeded.push(s.id)
+				}
+
+				const seen: string[] = []
+				let cursor: string | undefined
+				for (let page = 0; page < 5; page++) {
+					const qs = `limit=2${cursor ? `&before=${encodeURIComponent(cursor)}` : ''}`
+					const res = await app.request(jsonGet(`/api/sessions?${qs}`, headers))
+					expect(res.status).toBe(200)
+					const rows = (await res.json()) as Array<{ id: string; updated_at: string }>
+					if (rows.length === 0) break
+					seen.push(...rows.map((r) => r.id))
+					cursor = rows[rows.length - 1].updated_at
+				}
+
+				expect([...seen].sort()).toEqual([...seeded].sort())
+				expect(seen[0]).toBe(longLived.id)
+			})
+
 			it('cap on limit is 200; requests over 200 are rejected', async () => {
 				const app = createSessionApp()
 				const headers = { 'x-workspace-id': workspaceId }

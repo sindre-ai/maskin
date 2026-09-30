@@ -221,7 +221,12 @@ export const sessionQuerySchema = z.object({
 	 * ships this PR with `verbose: true` so `main` is unchanged; the follow-up
 	 * bet migrates the UI to lean rows and drops the flag.
 	 */
-	verbose: z.coerce.boolean().default(false),
+	// Not z.coerce.boolean(): Boolean('false') is true, so ?verbose=false would
+	// silently return the fat shape. Map the literal strings instead.
+	verbose: z.preprocess(
+		(v) => (v === 'true' ? true : v === 'false' ? false : v),
+		z.boolean().default(false),
+	),
 	limit: z.coerce.number().int().min(1).max(200).default(50),
 	offset: z.coerce.number().int().min(0).default(0),
 })

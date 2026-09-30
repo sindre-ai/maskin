@@ -5702,8 +5702,11 @@ export function createMcpServer(config: McpConfig) {
 			const params = new URLSearchParams()
 			if (args.status) params.set('status', args.status)
 			if (args.actor_id) params.set('actor_id', args.actor_id)
+			if (args.trigger_id) params.set('trigger_id', args.trigger_id)
 			if (args.updated_before) params.set('updated_before', args.updated_before)
 			if (args.updated_after) params.set('updated_after', args.updated_after)
+			if (args.before) params.set('before', args.before)
+			if (args.verbose) params.set('verbose', 'true')
 			if (args.limit) params.set('limit', String(args.limit))
 			if (args.offset) params.set('offset', String(args.offset))
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
