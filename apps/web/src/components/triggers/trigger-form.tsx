@@ -108,6 +108,8 @@ export interface TriggerFormPayload {
 
 import { getAllWebModules } from '@maskin/module-sdk'
 
+const DEFAULT_ENTITY_TYPE = 'insight'
+
 const DEFAULT_OBJECT_ACTIONS = ['created', 'updated', 'status_changed', 'commented'] as const
 
 /** Human-readable label for each object action option in the "Changes to" dropdown. */
@@ -442,7 +444,7 @@ export function TriggerForm({
 	const [entityType, setEntityType] = useState(
 		initialValues?.type === 'event' && initConfig.entity_type
 			? String(initConfig.entity_type)
-			: 'insight',
+			: DEFAULT_ENTITY_TYPE,
 	)
 	const [action, setAction] = useState(
 		initialValues?.type === 'event' && initConfig.action ? String(initConfig.action) : 'created',
@@ -605,11 +607,14 @@ export function TriggerForm({
 	// the internalEntityTypes registry — comments live on `objects`) AND only
 	// when the trigger-engine v2 flag is on for this actor. Non-internal event
 	// types (Slack, GitHub, integration providers) never expose `commented`.
-	const rawActions = currentEventDef?.actions ?? []
+	// The pinned 'object' subject (action = commented) is not a module type, so
+	// it has no event definition — list the default object actions for it.
+	const isPinnedObject = entityType === 'object'
+	const rawActions = isPinnedObject ? [...DEFAULT_OBJECT_ACTIONS] : (currentEventDef?.actions ?? [])
 	const availableActions = rawActions.filter((a) => {
 		if (a !== 'commented') return true
 		if (!triggerEngineV2Enabled) return false
-		return internalEntityTypes.has(entityType)
+		return isPinnedObject || internalEntityTypes.has(entityType)
 	})
 	const isInternal = internalEntityTypes.has(entityType)
 	const isSlack = isSlackEntityType(entityType)
@@ -778,6 +783,20 @@ export function TriggerForm({
 		setConditions([])
 		setSlackFilterState(EMPTY_SLACK_FILTER_STATE)
 		setCommentFilterState(EMPTY_COMMENT_FILTER_STATE)
+	}
+
+	// entity_type = 'object' is only valid for action = commented, so leaving
+	// commented while pinned resets Subject to the create-flow default rather
+	// than saving a trigger that can never match.
+	const handleActionChange = (val: string) => {
+		setAction(val)
+		if (val !== 'commented' && entityType === 'object') {
+			setEntityType(DEFAULT_ENTITY_TYPE)
+			setFromStatus('__any__')
+			setToStatus('__any__')
+			setConditions([])
+			setCommentFilterState(EMPTY_COMMENT_FILTER_STATE)
+		}
 	}
 
 	// UI-side pin per spec §5.4 fold 5 — action = commented locks Subject to
@@ -1074,7 +1093,7 @@ export function TriggerForm({
 								)}
 							</FieldColumn>
 							<FieldColumn label="Changes to" htmlFor="trigger-action">
-								<Select value={action} onValueChange={setAction}>
+								<Select value={action} onValueChange={handleActionChange}>
 									<SelectTrigger
 										id="trigger-action"
 										className={cn(
