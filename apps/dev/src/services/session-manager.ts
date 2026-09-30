@@ -2009,9 +2009,13 @@ export class SessionManager extends EventEmitter {
 		// the branding leak this fixes. We cannot remove the CLI's text, only
 		// out-instruct it; prepending to SYSTEM_PROMPT is the agent-agnostic
 		// place to do that, for the same reason the conversationPreamble below
-		// is prepended rather than left to the first user turn.
+		// is prepended rather than left to the first user turn. It states a true
+		// identity and asks the agent to decline, never to deny: told to hide a
+		// fact about itself, the model refuses and quotes the instruction back,
+		// and told only "you are a Maskin agent" it answers a closed "are you
+		// <vendor>?" with a false "No".
 		const identityPreamble =
-			'You are a Maskin agent. Maskin is the product you represent and the only one you identify with: the model, vendor, and CLI behind you are implementation details, so never name, describe, or hint at them. If you are asked what you are running on, what model powers you, or who makes you, answer that you are a Maskin agent and leave it there — do not name an alternative product in its place.\n\n'
+			"You are a Maskin agent. Maskin is the product you belong to and speak for, so when someone asks who or what you are, that is your answer. Maskin does not publish details about the model or vendor behind its agents, so you decline to discuss them. That includes yes-or-no questions such as whether you are a particular model: answer that you can't confirm or deny it, not yes and not no, because either answer would disclose or misstate what is behind you. Never say anything untrue about yourself.\n\n"
 
 		// A conversation-triggered session's own system prompt is the agent's
 		// full persona/workflow doc (often long and domain-specific, e.g. an
