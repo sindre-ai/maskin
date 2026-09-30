@@ -440,6 +440,15 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		expect(row?.status).toBe('queued')
 		expect(row?.sessionState).toBe('queued')
 		expect(row?.completedAt).toBeNull()
+
+		// Defensive: settleSession must NOT have emitted a session_timeout event
+		// for a queued row. If a future refactor accidentally routes queued rows
+		// through the wall-timeout path, this catches it before the (a) row
+		// assertion above (which reads terminal state) can appear correct via
+		// some other path.
+		const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+		expect(eventRows.some((e) => e.action === 'session_timeout')).toBe(false)
+		expect(eventRows.some((e) => e.action === 'session_failed')).toBe(false)
 	})
 
 	// (b) A row waiting on machine capacity for >24h must emit the PostHog
@@ -593,5 +602,50 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		// state is proof the driver actually re-fired (vs. the row being left
 		// stuck in 'queued', which would mean rescue silently no-op'd).
 		expect(['starting', 'running']).toContain(row?.sessionState)
+	})
+
+	// (e) A running row past the 2h wall-timeout is settled via settleSession
+	// (kind='timeout', classification='wall_timeout'). This exercises the
+	// settle-side write of session_state='done' + state_entered_at (regression
+	// for the fix in settleSession's setPatch — without it the settled row
+	// keeps re-matching sessionState='running' every tick until CAS on
+	// sessions.status short-circuits, and stopSandbox/pushAgentFiles re-fire
+	// per tick per settled row).
+	it('a running row past the 2h wall-timeout is settled via settleSession with sessionState=done', async () => {
+		const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000 - 60 * 1000)
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+			sessionState: 'running',
+			stateEnteredAt: twoHoursAgo,
+			startedAt: twoHoursAgo,
+			timeoutAt: twoHoursAgo,
+		})
+
+		const manager = await tickReaper()
+		try {
+			// no-op
+		} finally {
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('timeout')
+		// The load-bearing assertion for fix 5 — without setPatch stamping
+		// session_state='done', a subsequent tick would re-match this row on
+		// eq(sessionState, 'running') and re-fire settleSession every tick.
+		expect(row?.sessionState).toBe('done')
+		expect(row?.stateEnteredAt).not.toBeNull()
+		expect(row?.stateEnteredAt!.getTime()).toBeGreaterThan(twoHoursAgo.getTime())
+		expect(row?.completedAt).not.toBeNull()
+
+		// settleSession must emit session_timeout with classification=wall_timeout
+		// so downstream telemetry can distinguish this from an idle-close or a
+		// container-missing timeout.
+		const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+		const timeoutEvent = eventRows.find((e) => e.action === 'session_timeout')
+		expect(timeoutEvent).toBeDefined()
+		expect(
+			(timeoutEvent?.data as { classification?: string } | null)?.classification,
+		).toBe('wall_timeout')
 	})
 })

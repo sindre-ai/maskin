@@ -671,6 +671,14 @@ export async function settleSession(
 				completedAt: now,
 				updatedAt: now,
 				result: merged,
+				// Every terminal settle also stamps session_state='done', so the
+				// reaper's cutoffs (which read session_state, not the overloaded
+				// status column) stop matching this row on the next tick. Without
+				// this, wall-timeout / boot-stall settles keep re-firing
+				// stopSandbox and pushAgentFiles per tick until the CAS on
+				// sessions.status finally short-circuits — noisy, not corrupting.
+				sessionState: 'done',
+				stateEnteredAt: now,
 			}
 			// Every terminal kind empties the current-activity string so the UI
 			// stops showing "typing…" for a session that has actually stopped —
