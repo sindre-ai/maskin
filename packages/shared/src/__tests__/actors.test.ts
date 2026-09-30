@@ -169,7 +169,7 @@ describe('updateActorSchema', () => {
 			tools: { mcpServers: {} },
 			memory: { key: 'value' },
 			llm_provider: 'anthropic',
-			llm_config: { model: 'claude-opus-4-7' },
+			llm_config: { model: 'claude-sonnet-5-5' },
 		}
 		expect(updateActorSchema.parse(writableFromResponse)).toEqual(writableFromResponse)
 	})

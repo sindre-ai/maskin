@@ -817,7 +817,7 @@ describe('SessionManager', () => {
 				type: 'agent',
 				systemPrompt: 'You are a helpful AI agent.',
 				llmProvider: null,
-				llmConfig: { model: 'claude-sonnet-4-6' },
+				llmConfig: { model: 'claude-sonnet-5-5' },
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
@@ -851,7 +851,7 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.ANTHROPIC_API_KEY).toBe('sk-ant-ws')
-			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 		})
 
 		it('omits ANTHROPIC_MODEL when the agent has no model preference', async () => {
@@ -913,7 +913,7 @@ describe('SessionManager', () => {
 				type: 'agent',
 				systemPrompt: 'You are a helpful AI agent.',
 				llmProvider: null,
-				llmConfig: { model: 'claude-sonnet-4-6' },
+				llmConfig: { model: 'claude-sonnet-5-5' },
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
@@ -955,7 +955,7 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.CLAUDE_OAUTH_ACCESS_TOKEN).toBe('decrypted')
-			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 		})
 	})
 
