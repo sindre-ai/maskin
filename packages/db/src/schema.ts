@@ -1647,3 +1647,50 @@ export const triggerDispatches = pgTable(
 
 export type TriggerDispatch = typeof triggerDispatches.$inferSelect
 export type NewTriggerDispatch = typeof triggerDispatches.$inferInsert
+
+// ── Trigger event queue (S3 of the trigger-engine fix bet) ──────────────────
+//
+// Hold-and-replay store for events that used to be dropped: an event whose
+// trigger is in a backoff window, or whose workspace is suppressed, lands here
+// instead of vanishing, and replays when the window lifts (tech spec §4).
+//
+// trigger_id is nullable on purpose: a workspace-suppression drop is one row
+// per (workspace, event) at drop time and fans out to per-trigger dispatches
+// when the drain re-runs the matcher. event_snapshot carries the PgEvent so a
+// replay does not depend on anything else. replayed_at is set on drain; all
+// three indexes are partial on replayed_at IS NULL so they only ever cover
+// the pending backlog.
+//
+// The table ships unconditional (additive, nothing reads it with the flag
+// off); only ENQUEUE and REPLAY sit behind trigger_engine_v2.
+
+export const triggerEventQueue = pgTable(
+	'trigger_event_queue',
+	{
+		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		triggerId: uuid('trigger_id').references(() => triggers.id, { onDelete: 'cascade' }),
+		eventId: bigint('event_id', { mode: 'number' }).notNull(),
+		eventSnapshot: jsonb('event_snapshot').notNull(),
+		enqueuedAt: timestamp('enqueued_at', { withTimezone: true }).notNull().defaultNow(),
+		replayAfter: timestamp('replay_after', { withTimezone: true }).notNull(),
+		reason: text('reason').notNull(),
+		replayedAt: timestamp('replayed_at', { withTimezone: true }),
+	},
+	(t) => [
+		index('queue_pending_by_replay_after_idx')
+			.on(t.replayAfter)
+			.where(sql`${t.replayedAt} IS NULL`),
+		index('queue_pending_by_trigger_idx')
+			.on(t.triggerId, t.eventId)
+			.where(sql`${t.replayedAt} IS NULL AND ${t.triggerId} IS NOT NULL`),
+		index('queue_pending_by_workspace_idx')
+			.on(t.workspaceId, t.eventId)
+			.where(sql`${t.replayedAt} IS NULL`),
+	],
+)
+
+export type TriggerEventQueueRow = typeof triggerEventQueue.$inferSelect
+export type NewTriggerEventQueueRow = typeof triggerEventQueue.$inferInsert
