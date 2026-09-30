@@ -5298,6 +5298,36 @@ export class SessionManager extends EventEmitter {
 			})
 		})
 
+		// Mirror handleCompletion (line 3340) — record the terminal
+		// runtime_session_ended payload on the successful CAS / fallback
+		// transition. Without this the production remote-dispatch path is
+		// invisible on PostHog and the bet's Criterion 3 numerator undercounts.
+		// Best-effort: recordSessionEnded is fail-open internally, but keep the
+		// call inside a try/catch so any future signature change can't surface
+		// as a spurious "stop failed" 400 to stopSession()'s caller.
+		try {
+			const endReason: RuntimeEndReason = stoppedByUser
+				? 'user_stopped'
+				: status === 'completed'
+					? 'completed'
+					: failureReason
+						? 'irrecoverable'
+						: 'failed'
+			this.telemetry.recordSessionEnded({
+				sessionId,
+				endReason,
+				durationMs: elapsedMs(updated.startedAt, updated.createdAt),
+				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+				contextObjectId: updated.initiatedFromObjectId,
+				contextObjectType: updated.initiatedFromObjectType,
+			})
+		} catch (err) {
+			logger.warn('Failed to record runtime_session_ended for remote session', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
 		await this.clearActiveSession(sessionId)
 		sessionGithubLogClassifier.unregisterSession(sessionId)
 		await this.drainQueue(updated.workspaceId).catch((err) =>
