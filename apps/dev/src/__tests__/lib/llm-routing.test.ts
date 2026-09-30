@@ -271,7 +271,7 @@ describe('resolveLlmRoute priority order', () => {
 		expect(result?.envVars.ANTHROPIC_API_KEY).toBeUndefined()
 	})
 
-	it('3b. agent-level model preference is forwarded on the OAuth route', async () => {
+	it('3b. the OAuth route always uses Sonnet 5.5 at high effort, ignoring the agent model', async () => {
 		const expiresAt = Date.now() + 60 * 60 * 1000
 		const db = dbWithFallbackUsage(
 			[],
@@ -289,10 +289,11 @@ describe('resolveLlmRoute priority order', () => {
 			actorId: 'actor-1',
 			wsSettings: emptySettings(),
 			enterprise: true,
-			agent: { model: 'claude-sonnet-5-5' },
+			agent: { model: 'some-other-model' },
 		})
 		expect(result?.route).toBe(LLM_ROUTE_OAUTH)
 		expect(result?.envVars.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
+		expect(result?.envVars.MASKIN_CLAUDE_EFFORT).toBe('high')
 	})
 
 	it('4. workspace api_key when OAuth absent', async () => {
@@ -381,6 +382,8 @@ describe('resolveLlmRoute priority order', () => {
 					ANTHROPIC_MODEL: 'deepseek/deepseek-v4-flash',
 					ANTHROPIC_SMALL_FAST_MODEL: 'deepseek/deepseek-v4-flash',
 				})
+				// The high-effort setting is for the Claude-subscription route only.
+				expect(result?.envVars.MASKIN_CLAUDE_EFFORT).toBeUndefined()
 				// modelName carries through to `sessions.model_name` — the local
 				// cost resolver keys OpenRouter's pricing table on it.
 				expect(result?.modelName).toBe('deepseek/deepseek-v4-flash')
