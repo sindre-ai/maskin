@@ -2,7 +2,7 @@
 // row with a completedAt, which hid that a paused row (completedAt null per
 // §5.2 col 2) was never selected. This drives the real query end to end.
 
-import { events } from '@maskin/db/schema'
+import { events, sessions } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
 import { settleSession } from '../../services/session-lifecycle'
@@ -110,5 +110,41 @@ describe('SessionReconciler.selfHealTerminalWithoutEvents — real Postgres', ()
 		expect(outside.backFilled.filter((b) => b.sessionId === session.id)).toEqual([
 			{ sessionId: session.id, action: 'session_failed' },
 		])
+	})
+
+	it('is not starved by healthy older terminal sessions filling the batch', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		const longAgo = new Date(Date.now() - 24 * 3600_000)
+		// Three older sessions that already have their events row: with limit 3 they
+		// would fill the whole batch if the query did not exclude healthy rows.
+		for (let i = 0; i < 3; i++) {
+			const healthy = await insertSession(db, ws.id, actorId, actorId, { status: 'running' })
+			await settleSession(
+				healthy.id,
+				{ kind: 'complete', classification: 'agent_completed', source: 'sandbox-exit' },
+				makeDeps(),
+			)
+			await db
+				.update(sessions)
+				.set({ completedAt: new Date(longAgo.getTime() - 1e9 - i), updatedAt: longAgo })
+				.where(eq(sessions.id, healthy.id))
+		}
+		const lost = await insertSession(db, ws.id, actorId, actorId, { status: 'running' })
+		await settleSession(
+			lost.id,
+			{ kind: 'fail', classification: 'sandbox_crash', source: 'sandbox-exit' },
+			makeDeps(),
+		)
+		await db
+			.delete(events)
+			.where(and(eq(events.entityType, 'session'), eq(events.entityId, lost.id)))
+
+		const result = await new SessionReconciler(db).selfHealTerminalWithoutEvents(
+			Date.now() + SELF_HEAL_GRACE_MS + 5_000,
+			SELF_HEAL_GRACE_MS,
+			3,
+		)
+		expect(result.backFilled).toContainEqual({ sessionId: lost.id, action: 'session_failed' })
 	})
 })

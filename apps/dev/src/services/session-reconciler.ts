@@ -221,6 +221,21 @@ export class SessionReconciler {
 		// terminal-transition time is updatedAt, which settleSession stamps on every
 		// write. Every other terminal kind has completedAt set.
 		const settledAt = sql<Date>`coalesce(${sessions.completedAt}, ${sessions.updatedAt})`
+		// Only rows still missing their events row may occupy a batch slot. Without
+		// this, the oldest `limit` healthy terminal sessions fill every pass and
+		// newer sessions with a lost row are never reached.
+		const expectedActionSql = sql.join(
+			TERMINAL_STATUSES.map(
+				(status) => sql`when ${status} then ${TERMINAL_STATUS_TO_EVENT_ACTION[status]}`,
+			),
+			sql` `,
+		)
+		const missingEventsRow = sql`not exists (
+			select 1 from ${events}
+			where ${events.entityType} = 'session'
+				and ${events.entityId} = ${sessions.id}
+				and ${events.action} = case ${sessions.status} ${expectedActionSql} end
+		)`
 
 		const stale = await this.db
 			.select({
@@ -235,6 +250,7 @@ export class SessionReconciler {
 				and(
 					inArray(sessions.status, [...TERMINAL_STATUSES]),
 					lt(settledAt, sql`${cutoff.toISOString()}::timestamptz`),
+					missingEventsRow,
 				),
 			)
 			.orderBy(asc(settledAt))
