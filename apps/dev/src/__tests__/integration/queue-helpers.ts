@@ -30,6 +30,7 @@ export interface RunnerInternals {
 	recordTriggerFailure(triggerId: string, reason?: string, until?: Date): Promise<void>
 	resetTriggerBackoff(triggerId: string): Promise<void>
 	sweepEventQueue(): Promise<void>
+	handleEvent(event: PgEvent): Promise<void>
 	triggerFailures: Map<string, { backoffUntil: Date; reason?: string }>
 	workspaceSuppressions: Map<string, { until: Date; reason: string }>
 }
