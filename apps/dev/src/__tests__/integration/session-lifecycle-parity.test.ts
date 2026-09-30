@@ -232,4 +232,26 @@ describe('§5.2 parity matrix — DB-semantic cells against real Postgres', () =
 			PRIOR_USAGE.output + DELTA_USAGE.output * 2,
 		)
 	})
+
+	// §7.2: stop is the barrier, so the push must run after the sandbox stop.
+	it('runs stopSandbox before pushAgentFiles', async () => {
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+			containerId: 'sbx-order',
+			agentServerId: null,
+		})
+		const order: string[] = []
+		await settleSession(session.id, outcomeFor('complete'), {
+			...makeDeps('local'),
+			stopSandbox: async () => {
+				order.push('stop')
+				return 'local'
+			},
+			pushAgentFiles: async () => {
+				order.push('push')
+				return 'ok'
+			},
+		})
+		expect(order).toEqual(['stop', 'push'])
+	})
 })

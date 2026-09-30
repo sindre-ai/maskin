@@ -86,4 +86,29 @@ describe('SessionReconciler.selfHealTerminalWithoutEvents — real Postgres', ()
 		const result = await new SessionReconciler(db).selfHealTerminalWithoutEvents(Date.now())
 		expect(result.backFilled.filter((b) => b.sessionId === session.id)).toEqual([])
 	})
+
+	it('honours a caller-provided graceMs against the real cutoff', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		const session = await insertSession(db, ws.id, actorId, actorId, { status: 'running' })
+		await settleSession(
+			session.id,
+			{ kind: 'fail', classification: 'sandbox_crash', source: 'sandbox-exit' },
+			makeDeps(),
+		)
+		await db
+			.delete(events)
+			.where(and(eq(events.entityType, 'session'), eq(events.entityId, session.id)))
+
+		const reconciler = new SessionReconciler(db)
+		const nowMs = Date.now() + 10_000
+		// Default 60s grace: settled ~10s ago, still inside the window.
+		const inside = await reconciler.selfHealTerminalWithoutEvents(nowMs, SELF_HEAL_GRACE_MS)
+		expect(inside.backFilled.filter((b) => b.sessionId === session.id)).toEqual([])
+		// 5s grace: the same row is now outside the window and gets healed.
+		const outside = await reconciler.selfHealTerminalWithoutEvents(nowMs, 5_000)
+		expect(outside.backFilled.filter((b) => b.sessionId === session.id)).toEqual([
+			{ sessionId: session.id, action: 'session_failed' },
+		])
+	})
 })
