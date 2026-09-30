@@ -173,6 +173,9 @@ app.post('/:instanceSlug', async (c) => {
 	return new Response(null, { headers: { 'x-hono-already-sent': '1' } })
 })
 
+app.get('/:instanceSlug', (c) => c.text('Method Not Allowed', 405))
+app.delete('/:instanceSlug', (c) => c.text('Method Not Allowed', 405))
+
 /**
  * Legacy aggregate endpoint (pre-P3-K). Deprecated. Serves an empty tool set
  * on `tools/list` and a deprecation-pointer error on `tools/call` — the
