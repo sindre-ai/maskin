@@ -8,7 +8,7 @@ import {
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
-import { sendInviteEmail } from '@maskin/email'
+import { InviteEmailSendError, sendInviteEmail } from '@maskin/email'
 import { and, count, desc, eq, gt, lte, min, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { isEnterpriseActor } from '../lib/enterprise'
@@ -784,14 +784,21 @@ function isPendingInviteUniqueViolation(err: unknown): boolean {
 // Send failure is an upstream (Resend) failure, so 502. The shared error enum
 // has no BAD_GATEWAY code and adding one is outside this task; INTERNAL_ERROR
 // with a 502 status is the closest fit, same call T3 made for its 410s.
-function sendFailureResponse(err: unknown) {
-	const reason = err instanceof Error ? err.message : String(err)
+// The provider's own message stays in the server log: it can name our sending
+// domain or config, and API clients must not see it.
+function sendFailureResponse() {
 	return createApiError(
 		'INTERNAL_ERROR',
-		`Failed to send invite email: ${reason}`,
+		'Failed to send invite email',
 		undefined,
 		'The invite was not created. Try again in a moment.',
 	)
+}
+
+function sendFailureLogContext(err: unknown) {
+	return err instanceof InviteEmailSendError
+		? { error: err.message, providerMessage: err.providerMessage }
+		: { error: String(err) }
 }
 
 // POST / ────────────────────────────────────────────────────────────────────
@@ -1095,10 +1102,10 @@ app.openapi(createInviteRoute, (async (c) => {
 		logger.error('Invite email send failed, deleting invite', {
 			workspaceId,
 			inviteId: invite.id,
-			error: String(err),
+			...sendFailureLogContext(err),
 		})
 		await db.delete(workspaceInvitations).where(eq(workspaceInvitations.id, invite.id))
-		return c.json(sendFailureResponse(err), 502)
+		return c.json(sendFailureResponse(), 502)
 	}
 
 	await db.insert(events).values({
@@ -1217,7 +1224,7 @@ app.openapi(resendInviteRoute, (async (c) => {
 		logger.error('Invite resend email failed, restoring previous token', {
 			workspaceId: invite.workspaceId,
 			inviteId: id,
-			error: String(err),
+			...sendFailureLogContext(err),
 		})
 		// The new token never reached anyone, so put the old one back: the link
 		// in the earlier email keeps working.
@@ -1225,7 +1232,7 @@ app.openapi(resendInviteRoute, (async (c) => {
 			.update(workspaceInvitations)
 			.set({ tokenHash: invite.tokenHash, expiresAt: invite.expiresAt, updatedAt: new Date() })
 			.where(and(eq(workspaceInvitations.id, id), eq(workspaceInvitations.tokenHash, newHash)))
-		return c.json(sendFailureResponse(err), 502)
+		return c.json(sendFailureResponse(), 502)
 	}
 
 	await db.insert(events).values({

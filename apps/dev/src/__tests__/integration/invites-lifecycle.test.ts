@@ -16,7 +16,10 @@ const { capturePosthogEventMock, sendInviteEmailMock } = vi.hoisted(() => ({
 vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: capturePosthogEventMock,
 }))
-vi.mock('@maskin/email', () => ({ sendInviteEmail: sendInviteEmailMock }))
+vi.mock('@maskin/email', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@maskin/email')>()),
+	sendInviteEmail: sendInviteEmailMock,
+}))
 
 const { _resetInvitePreviewBuckets } = await import('../../lib/invite-preview-throttle')
 const { generateInviteToken, hashInviteToken } = await import('../../lib/invites-token')

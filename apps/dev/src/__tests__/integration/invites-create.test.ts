@@ -18,7 +18,10 @@ const { capturePosthogEventMock, sendInviteEmailMock } = vi.hoisted(() => ({
 vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: capturePosthogEventMock,
 }))
-vi.mock('@maskin/email', () => ({ sendInviteEmail: sendInviteEmailMock }))
+vi.mock('@maskin/email', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@maskin/email')>()),
+	sendInviteEmail: sendInviteEmailMock,
+}))
 
 const { hashInviteToken } = await import('../../lib/invites-token')
 const { default: workspaceInvitationsRoutes } = await import('../../routes/workspace-invitations')
@@ -330,7 +333,7 @@ describe('Invites — POST / (create)', () => {
 			const res = await app().request(invite(workspaceId, 'ada@example.com'))
 
 			expect(res.status).toBe(502)
-			expect((await res.json()).error.message).toContain('resend said no')
+			expect((await res.json()).error.message).not.toContain('resend said no')
 			expect(await invitesFor(workspaceId)).toHaveLength(0)
 			expect(capturePosthogEventMock).not.toHaveBeenCalled()
 			const invitationEvents = await db
