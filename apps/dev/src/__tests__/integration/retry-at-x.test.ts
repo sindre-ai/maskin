@@ -85,6 +85,15 @@ describe('S3 — retry_at_x consumer', () => {
 			})
 
 			await pollUntil(() => internals.triggerFailures.has(s.trig.id))
+			// The runner writes the trigger cooldown first and the workspace
+			// suppression after it, so wait for the second write before reading.
+			await pollUntil(async () => {
+				const rows = await db
+					.select()
+					.from(workspaceSuppressions)
+					.where(eq(workspaceSuppressions.workspaceId, s.ws.id))
+				return rows.length === 1
+			})
 			const [cooldown] = await db
 				.select()
 				.from(triggerCooldowns)
