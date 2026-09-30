@@ -1,7 +1,8 @@
 import type { Database } from '@maskin/db'
-import { sessions } from '@maskin/db/schema'
+import { events, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
-import { and, eq, inArray, isNotNull } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNotNull, lt, sql } from 'drizzle-orm'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { type SettleDependencies, settleSession } from './session-lifecycle'
 
@@ -32,6 +33,36 @@ const CLAIMED_STATUSES = [
 
 const FAILABLE_STATUS_SET: ReadonlySet<string> = new Set(FAILABLE_STATUSES)
 
+/**
+ * The five terminal statuses settleSession writes, paired with the
+ * `events.action` string §8.2 says each row must emit. The self-heal check
+ * (§9.4) uses this to find terminal-status sessions that never got their
+ * `session_*` audit row and back-fill it idempotently.
+ */
+const TERMINAL_STATUS_TO_EVENT_ACTION = {
+	completed: 'session_completed',
+	failed: 'session_failed',
+	timeout: 'session_timeout',
+	user_stopped: 'session_stopped',
+	paused: 'session_paused',
+} as const
+
+const TERMINAL_STATUSES = Object.keys(TERMINAL_STATUS_TO_EVENT_ACTION) as Array<
+	keyof typeof TERMINAL_STATUS_TO_EVENT_ACTION
+>
+
+/** §9.4: a session's terminal-status transition must have an events row within this window. */
+export const SELF_HEAL_GRACE_MS = 60_000
+
+/**
+ * Default batch bound for the §9.4 self-heal pass. Caps how many stale-terminal
+ * rows one tick considers before returning — a runaway backlog after a
+ * multi-hour outage still gets a bounded pass instead of one giant SELECT that
+ * ties up the reconciler cron. Callers can override for tests or a one-off
+ * back-fill sweep.
+ */
+export const SELF_HEAL_DEFAULT_LIMIT = 500
+
 const FAILURE_REASON: SessionResultFailureReason = {
 	provider: 'agent-server',
 	reason_code: 'agent_server_lost',
@@ -54,6 +85,13 @@ export interface ReconcileResult {
 	markedFailed: string[]
 	/** Sandbox names not claimed by any non-terminal DB session — caller should `msb remove -f` them. */
 	orphanSandboxes: string[]
+}
+
+export interface SelfHealResult {
+	/** How many stale-terminal candidates the check considered on this pass. */
+	staleConsidered: number
+	/** Sessions whose missing `events` row was back-filled. */
+	backFilled: Array<{ sessionId: string; action: string }>
 }
 
 export class SessionReconciler {
@@ -140,6 +178,147 @@ export class SessionReconciler {
 		})
 
 		return { markedFailed, orphanSandboxes }
+	}
+
+	/**
+	 * §9.4 self-heal check — asserts every terminal-status session has a
+	 * matching `events` row within `SELF_HEAL_GRACE_MS`. When missing, inserts
+	 * the row via `recordEvent(...)` idempotently. The events row is the
+	 * downstream contract for "this session ended" — a missing row leaves
+	 * consumers (SSE feed, per-actor completion listeners, PostHog dedupe
+	 * upstream) reading the session as silently vanished, so the back-fill is
+	 * the load-bearing part of the self-heal.
+	 *
+	 * Scope — intentional narrowing vs. §9.4's original AC:
+	 *
+	 *   Post-commit side-effects (stopSandbox, pushAgentFiles overwrite:true,
+	 *   PostHog dedupe) are OUT of this method. At t + graceMs the sandbox is
+	 *   almost always dead, so `stopSandbox` would resolve `skipped-none-live`
+	 *   with no useful state change. `pushAgentFiles` needs per-session
+	 *   ContainerManager/AgentServerClient context the reconciler cron doesn't
+	 *   hold. PostHog dedupe is already guarded upstream by settleSession's
+	 *   CAS-won flag (`flipped`), so a re-emit here would either double-fire
+	 *   (no dedupe key on the cron path) or skip idempotently — neither adds
+	 *   observability. The missing events row is the one observable failure
+	 *   that breaks SSE and per-actor completion listeners today, so this
+	 *   method fixes that one and nothing else. See task escalation to Planner.
+	 *
+	 * Bounded by `limit` (defaults to `SELF_HEAL_DEFAULT_LIMIT`, 500) with
+	 * settle time ascending (completedAt, else updatedAt for paused rows) so a
+	 * large backlog after a multi-hour outage still drains in stable oldest-first
+	 * order across successive ticks.
+	 *
+	 * Idempotent by construction: only sessions with no matching action-typed
+	 * events row are back-filled, so a re-run does nothing.
+	 */
+	async selfHealTerminalWithoutEvents(
+		nowMs: number = Date.now(),
+		graceMs: number = SELF_HEAL_GRACE_MS,
+		limit: number = SELF_HEAL_DEFAULT_LIMIT,
+	): Promise<SelfHealResult> {
+		const cutoff = new Date(nowMs - graceMs)
+		// Paused rows deliberately leave completedAt null (§5.2 col 2), so their
+		// terminal-transition time is updatedAt, which settleSession stamps on every
+		// write. Every other terminal kind has completedAt set.
+		const settledAt = sql<Date>`coalesce(${sessions.completedAt}, ${sessions.updatedAt})`
+		// Only rows still missing their events row may occupy a batch slot. Without
+		// this, the oldest `limit` healthy terminal sessions fill every pass and
+		// newer sessions with a lost row are never reached.
+		const expectedActionSql = sql.join(
+			TERMINAL_STATUSES.map(
+				(status) => sql`when ${status} then ${TERMINAL_STATUS_TO_EVENT_ACTION[status]}`,
+			),
+			sql` `,
+		)
+		const missingEventsRow = sql`not exists (
+			select 1 from ${events}
+			where ${events.entityType} = 'session'
+				and ${events.entityId} = ${sessions.id}
+				and ${events.action} = case ${sessions.status} ${expectedActionSql} end
+		)`
+
+		const stale = await this.db
+			.select({
+				id: sessions.id,
+				workspaceId: sessions.workspaceId,
+				actorId: sessions.actorId,
+				status: sessions.status,
+				completedAt: sessions.completedAt,
+			})
+			.from(sessions)
+			.where(
+				and(
+					inArray(sessions.status, [...TERMINAL_STATUSES]),
+					lt(settledAt, sql`${cutoff.toISOString()}::timestamptz`),
+					missingEventsRow,
+				),
+			)
+			.orderBy(asc(settledAt))
+			.limit(limit)
+
+		const backFilled: Array<{ sessionId: string; action: string }> = []
+
+		for (const row of stale) {
+			const status = row.status as keyof typeof TERMINAL_STATUS_TO_EVENT_ACTION
+			const expectedAction = TERMINAL_STATUS_TO_EVENT_ACTION[status]
+
+			// Reject any impossible row shape defensively — a status value not in
+			// the table means someone widened the terminal set without updating
+			// this method; back-filling with a guessed action would corrupt the
+			// audit stream, so leave it and log.
+			if (!expectedAction) {
+				logger.warn('self-heal: unknown terminal status; skipping', {
+					sessionId: row.id,
+					status: row.status,
+				})
+				continue
+			}
+
+			const [existing] = await this.db
+				.select({ id: events.id })
+				.from(events)
+				.where(
+					and(
+						eq(events.entityType, 'session'),
+						eq(events.entityId, row.id),
+						eq(events.action, expectedAction),
+					),
+				)
+				.limit(1)
+
+			if (existing) continue
+
+			try {
+				await recordEvent(this.db, {
+					workspaceId: row.workspaceId,
+					actorId: row.actorId,
+					action: expectedAction,
+					entityType: 'session',
+					entityId: row.id,
+					data: {
+						classification: 'self_heal',
+						source: 'reconciler',
+						reason: `self-heal: terminal status ${status} carried no events row`,
+					},
+				})
+				backFilled.push({ sessionId: row.id, action: expectedAction })
+			} catch (err) {
+				logger.error('self-heal: failed to back-fill missing events row', {
+					sessionId: row.id,
+					action: expectedAction,
+					error: err instanceof Error ? err.message : String(err),
+				})
+			}
+		}
+
+		if (backFilled.length > 0) {
+			logger.info('Session self-heal pass complete', {
+				staleConsidered: stale.length,
+				backFilledCount: backFilled.length,
+			})
+		}
+
+		return { staleConsidered: stale.length, backFilled }
 	}
 
 	private async markFailed(sessionId: string): Promise<void> {
