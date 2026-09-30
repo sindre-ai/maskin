@@ -26,6 +26,8 @@ import { useMemo, useState } from 'react'
 
 export type ReviewFilter = 'open' | 'resolved' | 'all'
 
+export type ReviewPanelLayout = 'inline' | 'sheet'
+
 export interface ReviewPanelProps {
 	fileId: string
 	workspaceId: string
@@ -54,6 +56,12 @@ export interface ReviewPanelProps {
 	// to that round").
 	roundFilter: string | null
 	onClearRoundFilter: () => void
+	// Slice 4: the route swaps this between 'inline' (lg+ desktop rail) and
+	// 'sheet' (below lg — panel lives inside a Radix Sheet as either a right
+	// drawer at md-lg or a bottom sheet at base). The panel drops its fixed
+	// 344px width and left border in sheet mode so the sheet primitive owns
+	// framing.
+	layout?: ReviewPanelLayout
 }
 
 const FILTER_LABELS: Record<ReviewFilter, string> = {
@@ -80,6 +88,7 @@ export function ReviewPanel(props: ReviewPanelProps) {
 		onReopenComment,
 		roundFilter,
 		onClearRoundFilter,
+		layout = 'inline',
 	} = props
 
 	const { data: actors } = useActors(workspaceId, { enabled: true })
@@ -114,12 +123,53 @@ export function ReviewPanel(props: ReviewPanelProps) {
 
 	const draftsForFile = useMemo(() => drafts.filter((d) => d.fileId === fileId), [drafts, fileId])
 
+	// Slice 4 viewer states, wired as data-attrs on the outermost node so
+	// rendered tests can assert them without depending on inner content.
+	// - archived-parent: attaching object is archived (provenance variant 5 or 6).
+	// - draft-in-progress: at least one unsent draft on this file.
+	// - post-send: send-round has completed and the foot is locked.
+	// Priority for `data-viewer-state`: post-send > archived-parent > draft-in-progress > default.
+	const viewerState: 'post-send' | 'archived-parent' | 'draft-in-progress' | 'default' =
+		sendState.phase === 'sent'
+			? 'post-send'
+			: provenance.variant === 'archived' || provenance.variant === 'orphaned'
+				? 'archived-parent'
+				: draftsForFile.length > 0
+					? 'draft-in-progress'
+					: 'default'
+
+	// Filter-empty state, used to differentiate "you have no comments at all"
+	// (default empty) from "the resolved filter is on but nothing is resolved"
+	// (Slice 4's resolved-only-zero state — spec §Viewer states).
+	const filterEmpty: 'resolved-only-zero' | 'open-only-zero' | 'default' =
+		filtered.length === 0 && draftsForFile.length === 0 && comments.length > 0
+			? filter === 'resolved'
+				? 'resolved-only-zero'
+				: filter === 'open'
+					? 'open-only-zero'
+					: 'default'
+			: 'default'
+
 	return (
 		<aside
 			data-review-panel
-			// Fixed 344px is spec — never mobile-first. Mobile-first responsive
-			// re-shaping lands in Slice 4 per the task's out-of-scope section.
-			className="flex h-full w-[344px] flex-shrink-0 flex-col border-l bg-card"
+			data-viewer-state={viewerState}
+			data-filter-state={filterEmpty}
+			data-layout={layout}
+			// Layout switch (Slice 4):
+			// - `inline` (lg+ desktop): fixed 344px right rail with a left border.
+			//   This is the shape the spec calls out at >1200px + the 900-1200
+			//   band that keeps the rail but drops the thumbnail column.
+			// - `sheet` (below lg): the panel is embedded inside a Radix Sheet
+			//   in the route — the sheet primitive owns framing (border, radius,
+			//   drop shadow) so the aside itself goes edge-to-edge with no left
+			//   border and drops the fixed width in favour of the sheet's own
+			//   sizing (344px right-drawer at 600-900, full-width bottom-sheet
+			//   at ≤600).
+			className={cn(
+				'flex h-full flex-col bg-card',
+				layout === 'inline' ? 'w-[344px] flex-shrink-0 border-l' : 'w-full',
+			)}
 			aria-label="Review panel"
 		>
 			<PanelHeader
@@ -133,10 +183,10 @@ export function ReviewPanel(props: ReviewPanelProps) {
 			/>
 			<div className="min-h-0 flex-1 overflow-y-auto">
 				{filtered.length === 0 && draftsForFile.length === 0 ? (
-					<div className="p-6">
+					<div className="p-6" data-testid="review-panel-empty">
 						<EmptyState
-							title="No review comments yet"
-							description="Click on the stage to place a pin and start a round."
+							title={emptyStateCopy(filter, comments.length).title}
+							description={emptyStateCopy(filter, comments.length).description}
 						/>
 					</div>
 				) : (
@@ -416,10 +466,15 @@ function DraftGroup({
 	onPostDraft: (draft: FileCommentDraft) => void
 }) {
 	return (
-		<div className="border-b bg-warning/5 last:border-b-0">
+		<div className="border-b bg-warning/5 last:border-b-0" data-viewer-state="draft-in-progress">
 			<div className="sticky top-0 z-10 flex items-center justify-between border-b bg-warning/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-warning">
 				<span>Drafts</span>
-				<span className="tabular-nums">{drafts.length}</span>
+				<span
+					className="tabular-nums"
+					aria-label={`${drafts.length} unsent draft${drafts.length === 1 ? '' : 's'}`}
+				>
+					{drafts.length}
+				</span>
 			</div>
 			<ul className="flex flex-col gap-0">
 				{drafts.map((draft) => (
@@ -516,7 +571,11 @@ function PanelFoot({
 
 	if (isSent) {
 		return (
-			<div className="flex flex-col gap-1 border-t p-3 text-xs" data-testid="panel-foot-sent">
+			<div
+				className="flex flex-col gap-1 border-t p-3 text-xs"
+				data-testid="panel-foot-sent"
+				data-viewer-state="post-send"
+			>
 				<div className="flex items-center gap-2 font-medium text-foreground">
 					<span>Sent · {sendState.lockedDriverName ?? 'driver'}</span>
 					{sendState.lockedDriverType === 'agent' && (
@@ -552,6 +611,39 @@ function PanelFoot({
 			</Button>
 		</div>
 	)
+}
+
+// Slice 4 spec §Remaining viewer states: the review panel's empty affordance
+// differentiates by filter so a user who set filter=Resolved on a file with
+// only open comments sees "no resolved comments yet" instead of the generic
+// "no review comments yet" — the latter would misread as "there is nothing
+// here at all", which is not true.
+function emptyStateCopy(
+	filter: ReviewFilter,
+	totalCommentCount: number,
+): { title: string; description: string } {
+	if (totalCommentCount === 0) {
+		return {
+			title: 'No review comments yet',
+			description: 'Click on the stage to place a pin and start a round.',
+		}
+	}
+	if (filter === 'resolved') {
+		return {
+			title: 'No resolved comments yet',
+			description: 'Resolved comments show up here once you check them off.',
+		}
+	}
+	if (filter === 'open') {
+		return {
+			title: 'No open comments',
+			description: 'Every comment on this file has been resolved.',
+		}
+	}
+	return {
+		title: 'No comments match',
+		description: 'Change the filter to see comments in other states.',
+	}
 }
 
 function deriveDisabledReason(
