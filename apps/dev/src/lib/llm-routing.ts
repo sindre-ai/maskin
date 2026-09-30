@@ -21,6 +21,16 @@ const DEFAULT_CHAT_MODEL: Record<'anthropic' | 'openai' | 'ollama', string> = {
 	ollama: 'llama3',
 }
 
+/**
+ * Every session on the Claude-subscription route runs this model at this
+ * effort, whatever the agent's own `llm_config.model` says. Other routes (the
+ * Maskin-funded DeepSeek fallback, custom endpoints, API keys) never receive
+ * these — `MASKIN_CLAUDE_EFFORT` is read by docker/agent-base/agent-run.sh and
+ * turned into `--effort`.
+ */
+export const CLAUDE_SUBSCRIPTION_MODEL = 'claude-sonnet-5-5'
+export const CLAUDE_SUBSCRIPTION_EFFORT = 'high'
+
 export const LLM_ROUTE_CUSTOM = 'workspace_custom'
 export const LLM_ROUTE_OAUTH = 'claude_oauth'
 export const LLM_ROUTE_API_KEY = 'workspace_api_key'
@@ -437,10 +447,11 @@ function buildMaskinPlanEnv(
  * caller continues to handle OPENAI_API_KEY injection itself (also gated on
  * `enterprise` — see session-manager.ts).
  *
- * `agent.model`, when set, is forwarded as ANTHROPIC_MODEL on routes #1, #3,
- * and #4 (the routes that don't already carry an explicit model of their
- * own). Routes #2 and #5 already source their model from workspace/operator
- * config and are left as-is.
+ * `agent.model`, when set, is forwarded as ANTHROPIC_MODEL on routes #1 and #4
+ * (the routes that don't already carry an explicit model of their own). Route
+ * #2 (Claude subscription) ignores it and always uses CLAUDE_SUBSCRIPTION_MODEL
+ * at CLAUDE_SUBSCRIPTION_EFFORT; routes #3 and #5 source their model from
+ * workspace/operator config and are left as-is.
  */
 /**
  * Is a Claude OAuth slot configured at all — i.e. does the slot that
@@ -543,9 +554,8 @@ export async function resolveLlmRoute(params: {
 				if (oauthResult.tokens.subscriptionType) {
 					envVars.CLAUDE_OAUTH_SUBSCRIPTION_TYPE = oauthResult.tokens.subscriptionType
 				}
-				if (agent.model) {
-					envVars.ANTHROPIC_MODEL = agent.model
-				}
+				envVars.ANTHROPIC_MODEL = CLAUDE_SUBSCRIPTION_MODEL
+				envVars.MASKIN_CLAUDE_EFFORT = CLAUDE_SUBSCRIPTION_EFFORT
 				return { route: LLM_ROUTE_OAUTH, envVars, oauthSlot: oauthResult.slot }
 			}
 

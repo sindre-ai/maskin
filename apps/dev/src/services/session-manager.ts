@@ -2230,6 +2230,7 @@ export class SessionManager extends EventEmitter {
 			'ANTHROPIC_BASE_URL',
 			'ANTHROPIC_MODEL',
 			'ANTHROPIC_SMALL_FAST_MODEL',
+			'MASKIN_CLAUDE_EFFORT',
 			'OPENAI_API_KEY',
 			'MAX_TURNS',
 			'CODEX_APPROVAL_MODE',
