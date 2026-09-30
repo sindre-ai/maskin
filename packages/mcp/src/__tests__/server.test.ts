@@ -1278,7 +1278,7 @@ describe('tool handlers', () => {
 						json: async () => ({
 							id: 'actor-new',
 							llm_provider: 'anthropic',
-							llm_config: { model: 'claude-opus-4-6' },
+							llm_config: { model: 'claude-sonnet-5-5' },
 						}),
 					} as Response
 				}
@@ -1289,16 +1289,16 @@ describe('tool handlers', () => {
 			const result = (await handler({
 				type: 'agent',
 				name: 'Bot',
-				llm_config: { provider: 'anthropic', model: 'claude-opus-4-6' },
+				llm_config: { provider: 'anthropic', model: 'claude-sonnet-5-5' },
 			})) as { content: Array<{ text: string }> }
 
 			expect(actorsPostBody).toMatchObject({
 				llm_provider: 'anthropic',
-				llm_config: { model: 'claude-opus-4-6' },
+				llm_config: { model: 'claude-sonnet-5-5' },
 			})
 			// The two API columns come back merged into one llm_config field, mirroring the input shape.
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed.llm_config).toEqual({ provider: 'anthropic', model: 'claude-opus-4-6' })
+			expect(parsed.llm_config).toEqual({ provider: 'anthropic', model: 'claude-sonnet-5-5' })
 			expect(parsed.llm_provider).toBeUndefined()
 		})
 
@@ -4238,6 +4238,78 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.heroCard.kind).toBe('single')
 		})
 
+		// Regression: `heroCard.objects` used to slice at 25 while `page.returned`
+		// / next_cursor advanced by the full fetched row count. That silently
+		// dropped rows 26–limit on every hop of a `limit > 25` walk. Now every
+		// row the API returned ships in `heroCard.objects`, so shipped-rows,
+		// `page.returned`, and the cursor advance count all agree.
+		it('list_actors returns every row when paged with limit > 25 (no silent 25-row clamp)', async () => {
+			const totalRows = 60
+			const requestedLimit = 50
+			const seen = new Set<string>()
+			// Assemble a fake table indexed by (createdAt, id) so the mock can
+			// respond to a cursor by returning the slice after the cursor's row.
+			const table = Array.from({ length: totalRows }, (_, i) => ({
+				id: `a-${String(i).padStart(3, '0')}`,
+				createdAt: new Date(2026, 0, 1, 0, 0, totalRows - i).toISOString(),
+				type: 'agent' as const,
+				name: `Actor ${String(i).padStart(3, '0')}`,
+			}))
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors')) {
+					const parsed = new URL(urlStr, 'http://x')
+					const limitParam = Number(parsed.searchParams.get('limit'))
+					const cursorCreatedAt = parsed.searchParams.get('cursor_created_at')
+					const cursorId = parsed.searchParams.get('cursor_id')
+					let start = 0
+					if (cursorCreatedAt && cursorId) {
+						start = table.findIndex((r) => r.createdAt === cursorCreatedAt && r.id === cursorId) + 1
+					}
+					const slice = table.slice(start, start + limitParam)
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': String(totalRows) }),
+						json: () => Promise.resolve(slice),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_actors')
+			let cursor: string | undefined
+			let hops = 0
+			// Walk until the tool stops handing back a cursor. Bound the loop so
+			// a regression that never emits a null cursor can't hang the suite.
+			while (hops < 10) {
+				hops++
+				const result = (await handler({
+					workspace_id: 'ws-1',
+					limit: requestedLimit,
+					cursor,
+				})) as {
+					structuredContent: {
+						heroCard: { objects?: Array<{ id: string }> }
+						next_cursor?: string
+						page?: { returned?: number }
+					}
+				}
+				const shipped = result.structuredContent.heroCard.objects ?? []
+				for (const row of shipped) {
+					// A duplicate would mean the cursor did not advance past the
+					// last shipped row; a skip surfaces below by the size check.
+					expect(seen.has(row.id)).toBe(false)
+					seen.add(row.id)
+				}
+				if (result.structuredContent.page) {
+					expect(result.structuredContent.page.returned).toBe(shipped.length)
+				}
+				cursor = result.structuredContent.next_cursor
+				if (!cursor) break
+			}
+			// Every seeded row shows up exactly once across the walk.
+			expect(seen.size).toBe(totalRows)
+		})
+
 		it('emits a list heroCard for list_triggers with type=trigger rows + resolved target actor', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
@@ -4331,6 +4403,73 @@ describe('tool handlers', () => {
 			expect(triggersCalls.some((u) => u.includes('limit=2') && u.includes('offset=0'))).toBe(true)
 			expect(result.structuredContent.heroCard.kind).toBe('list')
 			expect(result.structuredContent.heroCard.totalCount).toBe(987)
+		})
+
+		// Regression: same bug as `list_actors returns every row…` above. See
+		// that test for the fuller comment; both tools share the fix.
+		it('list_triggers returns every row when paged with limit > 25 (no silent 25-row clamp)', async () => {
+			const totalRows = 60
+			const requestedLimit = 50
+			const seen = new Set<string>()
+			const table = Array.from({ length: totalRows }, (_, i) => ({
+				id: `t-${String(i).padStart(3, '0')}`,
+				createdAt: new Date(2026, 0, 1, 0, 0, totalRows - i).toISOString(),
+				type: 'cron' as const,
+				name: `Trigger ${String(i).padStart(3, '0')}`,
+				enabled: true,
+				targetActorId: null,
+			}))
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/triggers')) {
+					const parsed = new URL(urlStr, 'http://x')
+					const limitParam = Number(parsed.searchParams.get('limit'))
+					const cursorCreatedAt = parsed.searchParams.get('cursor_created_at')
+					const cursorId = parsed.searchParams.get('cursor_id')
+					let start = 0
+					if (cursorCreatedAt && cursorId) {
+						start = table.findIndex((r) => r.createdAt === cursorCreatedAt && r.id === cursorId) + 1
+					}
+					const slice = table.slice(start, start + limitParam)
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': String(totalRows) }),
+						json: () => Promise.resolve(slice),
+					} as Response
+				}
+				if (urlStr.includes('/api/actors')) {
+					return { ok: true, json: () => Promise.resolve([]) } as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_triggers')
+			let cursor: string | undefined
+			let hops = 0
+			while (hops < 10) {
+				hops++
+				const result = (await handler({
+					workspace_id: 'ws-1',
+					limit: requestedLimit,
+					cursor,
+				})) as {
+					structuredContent: {
+						heroCard: { objects?: Array<{ id: string }> }
+						next_cursor?: string
+						page?: { returned?: number }
+					}
+				}
+				const shipped = result.structuredContent.heroCard.objects ?? []
+				for (const row of shipped) {
+					expect(seen.has(row.id)).toBe(false)
+					seen.add(row.id)
+				}
+				if (result.structuredContent.page) {
+					expect(result.structuredContent.page.returned).toBe(shipped.length)
+				}
+				cursor = result.structuredContent.next_cursor
+				if (!cursor) break
+			}
+			expect(seen.size).toBe(totalRows)
 		})
 
 		it('swaps to the hero-card resource for a single organization (customer variant)', async () => {

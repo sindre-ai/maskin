@@ -423,7 +423,7 @@ export function AgentDocumentView({
 									value={modelDraft}
 									onChange={(e) => !isManaged && setModelDraft(e.target.value)}
 									onBlur={isManaged ? undefined : handleModelBlur}
-									placeholder="e.g. claude-opus-4-7"
+									placeholder="e.g. claude-sonnet-5-5"
 									readOnly={isManaged}
 								/>
 							</div>

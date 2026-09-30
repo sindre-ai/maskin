@@ -143,6 +143,13 @@ describe('SessionManager', () => {
 		mockResults = ctx.mockResults
 		calls = ctx.calls
 		manager = new SessionManager(ctx.db, storageProvider as StorageProvider)
+		// buildLaunchSpec resolves the workspace-skill manifest for the
+		// dispatch payload — the shape used by apps/agent-server's host-side
+		// stager (see agent-storage.ts `resolveWorkspaceSkillManifest`).
+		// Mock to an empty manifest by default so tests that queue their own
+		// select responses don't need to add a row for this internal DB read,
+		// mirroring the same-file spy on `pullWorkspaceSkillsForAgent`.
+		vi.spyOn(AgentStorageManager.prototype, 'resolveWorkspaceSkillManifest').mockResolvedValue([])
 		// Default: pretend GitHub is healthy so preflight in buildLaunchSpec does
 		// not touch the real network. Individual tests override this for the
 		// broken-identity path.
@@ -253,6 +260,32 @@ describe('SessionManager', () => {
 			}) as { config: { trigger_source: string; source_comment_event_id: number } } | undefined
 			expect(sessionInsert?.config.trigger_source).toBe('comment_fallback')
 			expect(sessionInsert?.config.source_comment_event_id).toBe(9001)
+		})
+
+		it('persists triggerType onto session.config.trigger_type so the launch emit can segment cron-vs-event (G2)', async () => {
+			// G2: the trigger-runner passes the dispatching trigger's `type` to
+			// createSession, which must persist it onto session.config so
+			// startSession's `trackAgentSessionStartedWithPrompt` reads it back at
+			// launch. If the key shape drifts here, PostHog stops receiving
+			// trigger_type and the skill-load rate can no longer be split cron-vs-event.
+			const session = buildSession({ status: 'pending' })
+			mockResults.insertQueue = [[session], []]
+
+			await manager.createSession('ws-1', {
+				actorId: 'actor-1',
+				actionPrompt: 'Run the cron job',
+				createdBy: 'creator-1',
+				autoStart: false,
+				triggerId: 'trig-1',
+				triggerType: 'cron',
+			})
+
+			const sessionInsert = calls.inserts.find((row) => {
+				if (typeof row !== 'object' || row === null || !('config' in row)) return false
+				const cfg = (row as { config?: Record<string, unknown> }).config
+				return cfg?.trigger_type === 'cron'
+			}) as { config: { trigger_type: string } } | undefined
+			expect(sessionInsert?.config.trigger_type).toBe('cron')
 		})
 
 		it('rejects pre-insert when the workspace is over its plan cap', async () => {
@@ -780,7 +813,7 @@ describe('SessionManager', () => {
 				type: 'agent',
 				systemPrompt: 'You are a helpful AI agent.',
 				llmProvider: null,
-				llmConfig: { model: 'claude-sonnet-4-6' },
+				llmConfig: { model: 'claude-sonnet-5-5' },
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
@@ -814,7 +847,7 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.ANTHROPIC_API_KEY).toBe('sk-ant-ws')
-			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 		})
 
 		it('omits ANTHROPIC_MODEL when the agent has no model preference', async () => {
@@ -876,7 +909,7 @@ describe('SessionManager', () => {
 				type: 'agent',
 				systemPrompt: 'You are a helpful AI agent.',
 				llmProvider: null,
-				llmConfig: { model: 'claude-sonnet-4-6' },
+				llmConfig: { model: 'claude-sonnet-5-5' },
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
@@ -918,7 +951,7 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.CLAUDE_OAUTH_ACCESS_TOKEN).toBe('decrypted')
-			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 		})
 	})
 

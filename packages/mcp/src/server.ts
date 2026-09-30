@@ -3394,10 +3394,12 @@ export function createMcpServer(config: McpConfig) {
 			const rawRows = Array.isArray(data) ? (data as RawActor[]) : []
 			// Trim the sentinel + seed next_cursor from the last-visible row's
 			// (createdAt, id) tuple. The cross-workspace branch never gets a
-			// cursor and sees the raw response.
+			// cursor; still cap at `pagination.limit` client-side so the shipped
+			// count matches what the caller asked for even if the API ignored
+			// `limit` (belt-and-suspenders — the API respects it in production).
 			const { nextCursor, trimmed } = workspaceScoped
 				? encodeNextCursor(pagination, rawRows as Array<{ id: string; createdAt?: string | null }>)
-				: { nextCursor: null, trimmed: rawRows }
+				: { nextCursor: null, trimmed: rawRows.slice(0, pagination.limit) }
 			const rows = trimmed as RawActor[]
 			const trimmedData = Array.isArray(data) ? (data as unknown[]).slice(0, rows.length) : data
 			// URLs aren't part of buildActorHeroCardObject's output — they come
@@ -3433,6 +3435,11 @@ export function createMcpServer(config: McpConfig) {
 				return obj
 			})
 			const totalCount = parseTotalCountHeader(response, heroObjects.length)
+			// heroCard.objects carries every row the API returned on this page —
+			// `structuredContent` has no separate rich row array for this tool, so
+			// trimming here would silently drop rows the caller can't recover
+			// (the hero-card widget already caps display client-side, so a
+			// larger array only means more data on the wire, not a wider render).
 			const heroCard: HeroCardPayload =
 				heroObjects.length === 0
 					? { kind: 'empty', tool: 'list_actors' }
@@ -3441,13 +3448,12 @@ export function createMcpServer(config: McpConfig) {
 						: {
 								kind: 'list',
 								tool: 'list_actors',
-								objects: heroObjects.slice(0, HERO_CARD_UI_PAGE_SIZE),
+								objects: heroObjects,
 								totalCount,
 								page: {
-									limit: Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE),
+									limit: heroObjects.length,
 									offset,
-									hasMore:
-										offset + Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE) < totalCount,
+									hasMore: offset + heroObjects.length < totalCount,
 								},
 							}
 			return {
@@ -4733,6 +4739,11 @@ export function createMcpServer(config: McpConfig) {
 				),
 			)
 			const totalCount = parseTotalCountHeader(response, heroObjects.length)
+			// heroCard.objects carries every row the API returned on this page —
+			// `structuredContent` has no separate rich row array for this tool, so
+			// trimming here would silently drop rows the caller can't recover
+			// (the hero-card widget already caps display client-side, so a
+			// larger array only means more data on the wire, not a wider render).
 			const heroCard: HeroCardPayload =
 				heroObjects.length === 0
 					? { kind: 'empty', tool: 'list_triggers' }
@@ -4741,13 +4752,12 @@ export function createMcpServer(config: McpConfig) {
 						: {
 								kind: 'list',
 								tool: 'list_triggers',
-								objects: heroObjects.slice(0, HERO_CARD_UI_PAGE_SIZE),
+								objects: heroObjects,
 								totalCount,
 								page: {
-									limit: Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE),
+									limit: heroObjects.length,
 									offset,
-									hasMore:
-										offset + Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE) < totalCount,
+									hasMore: offset + heroObjects.length < totalCount,
 								},
 							}
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId

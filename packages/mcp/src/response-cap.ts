@@ -27,9 +27,10 @@
 //                               different operation)
 //
 // `list_actors` / `list_workspaces` / `list_triggers` are omitted deliberately:
-// their `structuredContent` only carries the 25-item heroCard slice, not a
-// separately-paginated rich row array like the tools above. `list_actors`
-// does fold a bounded amount of extra data onto each of those 25 objects
+// their `structuredContent` carries only the `heroCard.objects` array (sized
+// to whatever the cursor walk returned this page — up to LIST_ENDPOINT_MAX_LIMIT
+// - 1), not a separately-paginated rich row array like the tools above.
+// `list_actors` does fold a bounded amount of extra data onto each row
 // (`connectedTriggers`/`connectedLoops`, capped per-actor at
 // MAX_CONNECTED_LINKS_PER_ACTOR in server.ts) but is still left out here —
 // real workspaces don't approach the size needed to threaten the token

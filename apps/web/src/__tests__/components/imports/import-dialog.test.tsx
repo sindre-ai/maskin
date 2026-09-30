@@ -11,6 +11,7 @@ const mockConfirmImportMutateAsync = vi.fn()
 const mockCreateImportReset = vi.fn()
 const mockConfirmImportReset = vi.fn()
 let mockImportData: ImportResponse | undefined
+let mockWorkspaceSettings: Record<string, unknown> = {}
 
 vi.mock('@/hooks/use-imports', () => ({
 	useCreateImport: () => ({
@@ -36,7 +37,7 @@ vi.mock('@/hooks/use-imports', () => ({
 vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({
 		workspaceId: 'ws-1',
-		workspace: { settings: {} },
+		workspace: { settings: mockWorkspaceSettings },
 	}),
 }))
 
@@ -63,6 +64,7 @@ describe('ImportDialog', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockImportData = undefined
+		mockWorkspaceSettings = {}
 	})
 
 	it('renders upload step when open=true', () => {
@@ -226,6 +228,88 @@ describe('ImportDialog', () => {
 		expect(
 			screen.queryByRole('combobox', { name: 'If a row matches an existing object' }),
 		).not.toBeInTheDocument()
+	})
+
+	it('refreshes the match-existing-on options to the new type when the object type changes', async () => {
+		mockWorkspaceSettings = {
+			statuses: {
+				contact: ['active'],
+				company: ['active'],
+			},
+			field_definitions: {
+				contact: [
+					{ name: 'email', type: 'string' },
+					{ name: 'phone', type: 'string' },
+				],
+				company: [
+					{ name: 'domain', type: 'string' },
+					{ name: 'employees', type: 'number' },
+				],
+			},
+			display_names: { contact: 'Contact', company: 'Company' },
+		}
+		const mappingOnContact = {
+			typeMappings: [
+				{
+					objectType: 'contact',
+					columns: [
+						{
+							sourceColumn: 'email',
+							targetField: 'metadata.email',
+							transform: 'none' as const,
+							skip: false,
+						},
+						{
+							sourceColumn: 'phone',
+							targetField: 'metadata.phone',
+							transform: 'none' as const,
+							skip: false,
+						},
+					],
+				},
+			],
+			relationships: [],
+		}
+		const importRecord = buildImportResponse({
+			id: 'imp-type-change',
+			totalRows: 5,
+			mapping: mappingOnContact,
+			preview: {
+				columns: ['email', 'phone'],
+				sampleRows: [{ email: 'a@b.co', phone: '+1' }],
+				totalRows: 5,
+			},
+		})
+		mockCreateImportMutateAsync.mockResolvedValue(importRecord)
+		mockImportData = importRecord
+
+		render(<ImportDialog open={true} onOpenChange={vi.fn()} />, { wrapper: TestWrapper })
+
+		const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+		await userEvent.upload(fileInput, new File(['test'], 'data.csv', { type: 'text/csv' }))
+
+		// While type is "contact", the match dropdown offers the contact metadata fields.
+		const matchDropdownContact = await screen.findByRole('combobox', {
+			name: 'Match existing on',
+		})
+		await userEvent.click(matchDropdownContact)
+		expect(await screen.findByRole('option', { name: 'email' })).toBeInTheDocument()
+		expect(screen.getByRole('option', { name: 'phone' })).toBeInTheDocument()
+		// Close the popover before switching type
+		await userEvent.keyboard('{Escape}')
+
+		// Switch the object type to "company".
+		const typeCombos = screen.getAllByRole('combobox')
+		const typeSelect = typeCombos.find((el) => el.textContent === 'Contact')
+		if (!typeSelect) throw new Error('type select not found')
+		await userEvent.click(typeSelect)
+		await userEvent.click(await screen.findByRole('option', { name: 'Company' }))
+
+		// After the change, the contact fields must not be offered as dedupe keys — the
+		// column mappings pointed at the previous type's metadata and are now stale.
+		await waitFor(() => {
+			expect(screen.queryByRole('combobox', { name: 'Match existing on' })).not.toBeInTheDocument()
+		})
 	})
 
 	it('sends the match key and on-match choice with the mapping before confirming', async () => {
