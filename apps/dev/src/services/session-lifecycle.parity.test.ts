@@ -28,11 +28,7 @@ import type { SettleDependencies, SettleOutcome } from './session-lifecycle'
 import { settleSession } from './session-lifecycle'
 import { expectSessionSettled } from './session-lifecycle.assertions'
 
-type PosthogCaptureArgs = [
-	eventName: string,
-	workspaceId: string,
-	props: Record<string, unknown>,
-]
+type PosthogCaptureArgs = [eventName: string, workspaceId: string, props: Record<string, unknown>]
 
 const { capturePosthogEventMock } = vi.hoisted(() => ({
 	capturePosthogEventMock: vi.fn(
@@ -297,7 +293,10 @@ describe('§5.2 parity matrix — 10 rows × 11 columns', () => {
 					// Plan-route + usage: the pre-commit `maskin_plan_session_completed`
 					// also fires with its unchanged shape. Predicate stays load-bearing
 					// through the stage-1 rollover; the shape assertion pins it.
-					expect(findEmit('maskin_plan_session_completed'), 'plan-route baseline still fires').toBeDefined()
+					expect(
+						findEmit('maskin_plan_session_completed'),
+						'plan-route baseline still fires',
+					).toBeDefined()
 				})
 
 				// Col 9 (idle-pause specific): only meaningful on kind === 'pause'.

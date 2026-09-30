@@ -17,9 +17,13 @@
 // with a plain literal). Only a real conditional UPDATE against a row with
 // pre-existing usage catches that class of regression.
 
-import { agentServers, events, sessions } from '@maskin/db/schema'
+import { events, agentServers, sessions } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
-import type { SessionSettleRow, SettleDependencies, SettleOutcome } from '../../services/session-lifecycle'
+import type {
+	SessionSettleRow,
+	SettleDependencies,
+	SettleOutcome,
+} from '../../services/session-lifecycle'
 import { settleSession } from '../../services/session-lifecycle'
 import { expectSessionSettled } from '../../services/session-lifecycle.assertions'
 import { insertSession, insertWorkspace } from '../factories'
@@ -153,10 +157,7 @@ describe('§5.2 parity matrix — DB-semantic cells against real Postgres', () =
 
 				const result = await settleSession(session.id, outcomeFor(kind), makeDeps(host))
 
-				const [row] = await db
-					.select()
-					.from(sessions)
-					.where(eq(sessions.id, session.id))
+				const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
 
 				const expected = {
 					finalStatus: finalStatusFor(kind),
@@ -222,10 +223,7 @@ describe('§5.2 parity matrix — DB-semantic cells against real Postgres', () =
 		// 'failed', 'timeout', 'user_stopped').
 		await settleSession(session.id, outcomeFor('complete'), makeDeps('local'))
 
-		const [row] = await db
-			.select()
-			.from(sessions)
-			.where(eq(sessions.id, session.id))
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
 		expect(row?.status, 'row settled to completed after paused').toBe('completed')
 		expect(row?.inputTokens, 'input tokens = 100 baseline + 100 + 100').toBe(
 			PRIOR_USAGE.input + DELTA_USAGE.input * 2,

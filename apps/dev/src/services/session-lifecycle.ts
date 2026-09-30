@@ -395,7 +395,6 @@ async function stampDriverHeartbeat(db: Database, sessionId: string): Promise<vo
 		.where(eq(sessions.id, sessionId))
 }
 
-
 // ═══════════════════════════════════════════════════════════════════════════
 // ─── SETTLE SIDE (Bet #1 Commit 2 — merged in from bet/add4d986 branch) ────
 // ═══════════════════════════════════════════════════════════════════════════

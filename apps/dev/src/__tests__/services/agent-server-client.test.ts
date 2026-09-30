@@ -336,7 +336,9 @@ describe('RPC contract: POST /sessions/:sessionId/push-agent-files (§7.1)', () 
 			),
 		)
 		const client = new AgentServerClient({ server: SERVER, fetchImpl })
-		const res = await client.pushAgentFiles('sess-push-err', { directories: ['learnings', 'memory'] })
+		const res = await client.pushAgentFiles('sess-push-err', {
+			directories: ['learnings', 'memory'],
+		})
 		expect(res.errors).toEqual([{ directory: 'memory', message: 'ENOENT' }])
 		expect(res.pushed.learnings?.files).toBe(2)
 		expect(res.pushed.memory).toBeUndefined()
