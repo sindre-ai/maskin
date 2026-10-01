@@ -8,6 +8,7 @@ import {
 	VOICE_WRITE_TOOLS,
 	VoiceToolNotAllowedError,
 	assertVoiceCreateCommentAttentionAllowed,
+	assertVoiceCreateCommentMentionsAllowed,
 	assertVoiceCreateObjectsTypesAllowed,
 	assertVoiceInvocationAllowed,
 	assertVoiceToolAllowed,
@@ -116,6 +117,29 @@ describe('assertVoiceCreateCommentAttentionAllowed', () => {
 
 	it('is aligned with the shared attention cap constant', () => {
 		expect(VOICE_CREATE_COMMENT_MAX_ATTENTION).toBe(3)
+	})
+})
+
+describe('assertVoiceCreateCommentMentionsAllowed', () => {
+	it('fails closed on any non-empty mentions and passes when there are none', () => {
+		const actor = '11111111-1111-1111-1111-111111111111'
+		for (const mentions of [[actor], actor, {}, true]) {
+			try {
+				assertVoiceInvocationAllowed('create_comment', { content: 'hi', mentions })
+				throw new Error('expected the gate to throw')
+			} catch (err) {
+				expect(err).toBeInstanceOf(VoiceToolNotAllowedError)
+				expect((err as VoiceToolNotAllowedError).code).toBe(
+					VOICE_TOOL_ERROR_CODES.mentionsNotAllowed,
+				)
+			}
+		}
+		for (const mentions of [undefined, null, []]) {
+			expect(() =>
+				assertVoiceCreateCommentMentionsAllowed({ content: 'hi', attention: 2, mentions }),
+			).not.toThrow()
+		}
+		expect(() => assertVoiceInvocationAllowed('create_comment', { content: 'hi' })).not.toThrow()
 	})
 })
 

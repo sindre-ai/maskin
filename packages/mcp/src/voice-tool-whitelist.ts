@@ -69,6 +69,7 @@ export function isVoiceWriteTool(name: string): boolean {
 export const VOICE_TOOL_ERROR_CODES = Object.freeze({
 	toolNotAllowed: 'voice_tool_not_allowed',
 	attentionTooHigh: 'voice_attention_too_high',
+	mentionsNotAllowed: 'voice_mentions_not_allowed',
 	createObjectsTypeNotAllowed: 'voice_create_objects_type_not_allowed',
 	invalidArguments: 'voice_invalid_arguments',
 } as const)
@@ -112,6 +113,24 @@ export function assertVoiceCreateCommentAttentionAllowed(args: unknown): void {
 }
 
 /**
+ * Refuses any `create_comment` that carries `mentions`. A mention spawns an
+ * agent session, so a hands-free call could wake agents on a misheard name —
+ * the same spam class the attention cap blocks. Fails closed: only an absent,
+ * null or empty `mentions` passes; any other value (including a non-array)
+ * is rejected.
+ */
+export function assertVoiceCreateCommentMentionsAllowed(args: unknown): void {
+	if (args == null || typeof args !== 'object') return
+	const mentions = (args as { mentions?: unknown }).mentions
+	if (mentions == null) return
+	if (Array.isArray(mentions) && mentions.length === 0) return
+	throw new VoiceToolNotAllowedError(
+		VOICE_TOOL_ERROR_CODES.mentionsNotAllowed,
+		'Voice-call comments cannot @mention anyone; leave mentions out or post it from a text chat.',
+	)
+}
+
+/**
  * Enforces the `type ∈ {insight, task}` cap on a `create_objects` argument
  * bag. The MCP tool is shaped `{ workspace_id, nodes: [{ $id, type, ... }], edges }`
  * (see `create_objects` in ./tools.ts), so the types live on `nodes[]`.
@@ -146,6 +165,9 @@ export function assertVoiceCreateObjectsTypesAllowed(args: unknown): void {
  */
 export function assertVoiceInvocationAllowed(name: string, args: unknown): void {
 	assertVoiceToolAllowed(name)
-	if (name === 'create_comment') assertVoiceCreateCommentAttentionAllowed(args)
+	if (name === 'create_comment') {
+		assertVoiceCreateCommentAttentionAllowed(args)
+		assertVoiceCreateCommentMentionsAllowed(args)
+	}
 	if (name === 'create_objects') assertVoiceCreateObjectsTypesAllowed(args)
 }
