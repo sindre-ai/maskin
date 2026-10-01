@@ -263,6 +263,28 @@ describe('ReviewPanel — Slice 4 viewer states', () => {
 		expect(screen.getByText(/no open comments/i)).toBeInTheDocument()
 	})
 
+	// With a round filter on, "No open comments" must describe that round, not
+	// the whole file: the file can still have open comments in other rounds.
+	it('open filter + round filter renders round-scoped "no open comments" copy', () => {
+		const comments: FileCommentDto[] = [
+			{ ...resolvedComment, roundId: 'round-a' },
+			{ ...freshComment, roundId: 'round-b' },
+		]
+		renderPanel({ filter: 'open', comments, roundFilter: 'round-a' })
+		expect(screen.getByText('No open comments in this round')).toBeInTheDocument()
+		expect(screen.queryByText(/every comment on this file/i)).toBeNull()
+	})
+
+	it('round filter on a round with no comments says so instead of the file-empty copy', () => {
+		renderPanel({
+			filter: 'open',
+			comments: [{ ...freshComment, roundId: 'round-b' }],
+			roundFilter: 'round-a',
+		})
+		expect(screen.getByText('No comments in this round')).toBeInTheDocument()
+		expect(screen.queryByText(/click on the stage to place a pin/i)).toBeNull()
+	})
+
 	// The default empty state — file with zero comments and zero drafts —
 	// keeps the Slice 1 invitation copy. This test pins that the differentiated
 	// copy doesn't leak into the truly-empty case.

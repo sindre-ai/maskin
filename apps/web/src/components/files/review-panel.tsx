@@ -108,18 +108,27 @@ export function ReviewPanel(props: ReviewPanelProps) {
 		return { open: openCount, resolved: resolvedCount }
 	}, [comments])
 
+	// Comments inside the active round (all comments when no round filter is
+	// set). The empty-state copy reads from this so it describes what the user
+	// is actually looking at.
+	const roundComments = useMemo(
+		() => (roundFilter ? comments.filter((c) => c.roundId === roundFilter) : comments),
+		[comments, roundFilter],
+	)
+
 	const filtered = useMemo(() => {
-		let subset = comments
-		if (roundFilter) subset = subset.filter((c) => c.roundId === roundFilter)
+		let subset = roundComments
 		if (filter === 'open') subset = subset.filter((c) => !c.resolvedAt)
 		else if (filter === 'resolved') subset = subset.filter((c) => c.resolvedAt)
 		return subset
-	}, [comments, filter, roundFilter])
+	}, [roundComments, filter])
 
 	// Group by page — comments carrying `page: null` (unpaged files, or legacy
 	// pins that lost their page during migration) get their own "No page" bucket
 	// pinned at the end.
 	const groups = useMemo(() => groupByPage(filtered), [filtered])
+
+	const emptyCopy = emptyStateCopy(filter, roundComments.length, roundFilter !== null)
 
 	const draftsForFile = useMemo(() => drafts.filter((d) => d.fileId === fileId), [drafts, fileId])
 
@@ -184,10 +193,7 @@ export function ReviewPanel(props: ReviewPanelProps) {
 			<div className="min-h-0 flex-1 overflow-y-auto">
 				{filtered.length === 0 && draftsForFile.length === 0 ? (
 					<div className="p-6" data-testid="review-panel-empty">
-						<EmptyState
-							title={emptyStateCopy(filter, comments.length).title}
-							description={emptyStateCopy(filter, comments.length).description}
-						/>
+						<EmptyState title={emptyCopy.title} description={emptyCopy.description} />
 					</div>
 				) : (
 					<>
@@ -621,7 +627,30 @@ function PanelFoot({
 function emptyStateCopy(
 	filter: ReviewFilter,
 	totalCommentCount: number,
+	roundScoped: boolean,
 ): { title: string; description: string } {
+	// With a round filter active, the counts below are for that round only, so
+	// the copy names the round instead of claiming something about the file.
+	if (roundScoped) {
+		if (totalCommentCount === 0) {
+			return {
+				title: 'No comments in this round',
+				description: 'Clear the round filter to see the rest of the file.',
+			}
+		}
+		if (filter === 'open') {
+			return {
+				title: 'No open comments in this round',
+				description: 'Every comment in this round has been resolved.',
+			}
+		}
+		if (filter === 'resolved') {
+			return {
+				title: 'No resolved comments in this round',
+				description: 'Resolved comments show up here once you check them off.',
+			}
+		}
+	}
 	if (totalCommentCount === 0) {
 		return {
 			title: 'No review comments yet',
