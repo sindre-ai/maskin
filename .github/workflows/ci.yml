@@ -1,8 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
 
@@ -11,187 +9,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Config-only gate. The Alloy configs and Grafana alert rules under
-  # observability/ are shipped as text and applied by hand — nothing in the
-  # build or the test suite ever parses them, so without this job their first
-  # syntax check is a human pasting them onto a production box.
+  # THROWAWAY NARROWED RUN. Not for merge. Same steps as verify-e2e in the real
+  # ci.yml, minus sharding, with the Playwright invocation restricted to the two
+  # invite specs and an explicit per-spec assertion.
   #
-  # It is deliberately cheap and has no dependency on the pnpm workspace, so it
-  # gives a signal in well under a minute rather than waiting on a full install.
-  observability-config:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      # `alloy validate` catches syntax and component-graph errors — an
-      # undefined component reference, a bad argument name, a forward_to
-      # pointing at something that does not exist. Run in the same container
-      # image the hosts run, so a version-specific rejection surfaces here.
-      #
-      # NOTE WHAT IT CANNOT CATCH, because this is the recurring trap in this
-      # directory: a config that validates cleanly and still matches nothing.
-      # Discovery returning zero targets, a `job` label set upstream of the
-      # component that overwrites it, an allowlist regex that excludes every
-      # real container — all of these are "valid". See
-      # .claude/rules/known-pitfalls.md, "A Healthy Collector Component That
-      # Silently Matches Nothing". This job is a floor, not a proof.
-      - name: alloy validate
-        env:
-          ALLOY_IMAGE: grafana/alloy:v1.19.0
-        run: |
-          set -euo pipefail
-          for cfg in apps/agent-server/observability/alloy.alloy observability/coolify-host/alloy.alloy; do
-            echo "==> $cfg"
-            docker run --rm -v "$PWD:/w" -w /w "$ALLOY_IMAGE" validate "$cfg"
-          done
-
-      - name: Install promtool
-        env:
-          PROMETHEUS_VERSION: 2.55.1
-        run: |
-          set -euo pipefail
-          tarball="prometheus-${PROMETHEUS_VERSION}.linux-amd64"
-          url="https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/${tarball}.tar.gz"
-          curl -sSfL "$url" | sudo tar xz --strip-components=1 -C /usr/local/bin "${tarball}/promtool"
-          promtool --version
-
-      # Validates the Grafana alert rules: PromQL syntax via promtool, plus the
-      # structural invariants promtool cannot see because these are unified
-      # alerting files rather than Prometheus rule files. See the script header.
-      - name: Validate alert rules
-        run: |
-          pip install --quiet pyyaml
-          python observability/validate-alerts.py
-
-  lint-typecheck:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: pnpm/action-setup@v5
-        with:
-          version: 9.15.0
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Cache turbo build outputs
-        uses: ./.github/actions/cache-turbo
-        with:
-          job-name: lint-typecheck
-
-      - run: pnpm lint
-      - run: pnpm type-check
-
-  unit-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: pnpm/action-setup@v5
-        with:
-          version: 9.15.0
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Cache turbo build outputs
-        uses: ./.github/actions/cache-turbo
-        with:
-          job-name: unit-tests
-
-      - run: pnpm test -- -- --run
-
-  integration-tests:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: maskin_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 5
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: pnpm/action-setup@v5
-        with:
-          version: 9.15.0
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Cache turbo build outputs
-        uses: ./.github/actions/cache-turbo
-        with:
-          job-name: integration-tests
-
-      - run: pnpm build
-
-      # Boots the actual bundled artifact (apps/dev/dist/index.js) that ships to
-      # production — not `tsx src/index.ts` like the dev server or e2e webServer
-      # use. Catches bugs that only exist in the flattened esbuild bundle, e.g. a
-      # module reading a file relative to its own compiled path (which points
-      # into dist/ once bundled, not next to a checked-in data/ folder anymore).
-      - name: Smoke test — boot the built server
-        run: |
-          set -e
-          pnpm db:migrate
-          node apps/dev/dist/index.js &
-          SERVER_PID=$!
-          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:3000/api/health > /dev/null; then
-              echo "Server booted and responded to /api/health"
-              exit 0
-            fi
-            if ! kill -0 $SERVER_PID 2>/dev/null; then
-              echo "Server process exited before responding to /api/health — see logs above"
-              exit 1
-            fi
-            sleep 1
-          done
-          echo "Server did not respond to /api/health within 30s"
-          exit 1
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
-          INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
-
-      - run: pnpm test:integration -- --run
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_test
-          INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
-
+  # Why the extra assertion: the real step ends in `|| true` and then
+  # assert-results.mjs, which exits 0 when expected=0 and unexpected=0. A filter
+  # that matches nothing would therefore go green. The check below fails unless
+  # both spec files appear in the JSON report with every test passed.
   verify-e2e:
     runs-on: ubuntu-latest
-    # A healthy shard finishes in ~6 minutes. Without a cap, one wedged shard
-    # (a spec waiting on something that can never happen — see the SSE /
-    # networkidle note in the a11y specs) runs to GitHub's 6-hour default and
-    # holds the PR open with no signal.
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7]
     services:
       postgres:
         image: postgres:16-alpine
@@ -209,14 +37,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # SeaweedFS is the S3-compatible backend the dev server writes skill
-      # content to. The install path (POST /api/installed-loops) puts one S3
-      # object per provisioned skill inside the install transaction — with no
-      # backend reachable, every marketplace bundle install fails the whole
-      # transaction with ECONNREFUSED and returns a generic 500 (root-caused
-      # 2026-08-13). Started as a step (not `services:`) so it can mount
-      # `seaweedfs-s3.json`; same image + credentials + bucket name as
-      # docker-compose.yml so behaviour matches local dev.
       - name: Start SeaweedFS (S3-compatible backend)
         run: |
           set -euo pipefail
@@ -225,18 +45,11 @@ jobs:
             -v "$PWD/seaweedfs-s3.json":/etc/seaweedfs/s3.json:ro \
             chrislusf/seaweedfs \
             server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data
-          # Poll until the S3 port responds with any HTTP status. Not `curl -f`:
-          # an unauthenticated GET returns 403, which still means "port open,
-          # server up." Only status=000 (connection refused) means "not ready."
           for i in $(seq 1 30); do
             status=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8333/ || echo 000)
             if [ "$status" != "000" ]; then break; fi
             sleep 1
           done
-          # The port opens before the S3 filer can actually serve a bucket PUT,
-          # so an open port is necessary but not sufficient — retry the PUT
-          # itself rather than assuming readiness. Without this a single early
-          # non-2xx fails the whole shard under `set -e`, with no diagnostics.
           for i in $(seq 1 30); do
             if curl -sf --aws-sigv4 "aws:amz:us-east-1:s3" \
               --user "admin:admin" \
@@ -288,50 +101,15 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: pnpm --filter @maskin/e2e exec playwright install-deps chromium
 
-      - name: Run E2E tests (shard ${{ matrix.shard }}/7)
-        # Argos's upload() can reject via a promise that safe-argos-reporter.ts's
-        # own try/catch doesn't end up wrapping — an unhandled rejection there
-        # has previously crashed an otherwise-green shard. Rather than keep
-        # patching that from the reporter side, don't let this step's exit
-        # code decide pass/fail at all: `|| true` lets a non-zero exit through,
-        # and assert-results.mjs makes the real call from Playwright's own
-        # JSON report, which is written to disk before Argos's reporter ever
-        # runs (see playwright.config.ts). A problem anywhere in Argos's
-        # upload path — quota, outage, auth, a library bug — can then never
-        # fail the job, while an actual test regression still does.
+      - name: Run the two invite E2E specs only
         run: |
-          pnpm --filter @maskin/e2e exec playwright test --shard=${{ matrix.shard }}/7 || true
-          node apps/e2e/scripts/assert-results.mjs apps/e2e/playwright-report/e2e-results.json
+          pnpm --filter @maskin/e2e exec playwright test invite-email-new-user invite-email-existing-user || true
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
-          # Mounts POST /api/test-grants so specs can obtain a paid tier / the
-          # BYO-LLM entitlement, neither of which is self-service in the product.
-          # Playwright spawns the API itself (webServer in playwright.config.ts),
-          # so this one entry reaches both the specs and the stack under test.
-          # Never set in production — the route is not mounted without it.
           MASKIN_TEST_GRANT_TOKEN: e2e-local-test-grant-token
-          # Bearer for the internal agent-server log-ingest endpoint
-          # (POST /api/internal/agent-servers/sessions/:id/logs), which the
-          # live-update spec posts to in order to drive the real SSE log
-          # stream. The route 503s when unset, so without this the spec fails
-          # at the first ingest call. Mirrors MASKIN_TEST_GRANT_TOKEN: the
-          # value is fixed and test-only, and reaches the stack because
-          # Playwright spawns the API itself.
           AGENT_SERVER_SECRET: e2e-agent-server-secret
-          # Argos visual-regression uploads are opt-in and never gate a PR: the
-          # free-plan screenshot quota is shared across all shards of all runs,
-          # so an exhausted quota fails the upload for reasons unrelated to the
-          # code under test. Only pushes to `main` capture and upload; on PRs
-          # `isArgosEnabled()` is false, so the reporter is not registered and
-          # `safeArgosScreenshot()` is a no-op.
-          ARGOS_ENABLED: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          ARGOS_TOKEN: ${{ secrets.ARGOS_TOKEN }}
-          # `warn` is a Node-level backstop for the enabled (main) path: Argos's
-          # upload() can reject via a promise that safe-argos-reporter.ts's own
-          # try/catch doesn't end up wrapping (see that file's comment), and
-          # `warn` stops that unhandled rejection from crashing the process
-          # before assert-results.mjs gets to run.
+          ARGOS_ENABLED: 'false'
           NODE_OPTIONS: --unhandled-rejections=warn
           S3_ENDPOINT: http://localhost:8333
           S3_BUCKET: agent-files
@@ -339,10 +117,37 @@ jobs:
           S3_SECRET_KEY: admin
           S3_REGION: us-east-1
 
+      - name: Assert both invite specs ran and every test passed
+        run: |
+          node apps/e2e/scripts/assert-results.mjs apps/e2e/playwright-report/e2e-results.json
+          node - <<'EOF'
+          const fs = require('node:fs')
+          const report = JSON.parse(fs.readFileSync('apps/e2e/playwright-report/e2e-results.json', 'utf8'))
+          const specs = []
+          const walk = (suite) => {
+            for (const s of suite.specs ?? []) specs.push(s)
+            for (const child of suite.suites ?? []) walk(child)
+          }
+          for (const suite of report.suites ?? []) walk(suite)
+          let failed = false
+          for (const name of ['invite-email-new-user', 'invite-email-existing-user']) {
+            const mine = specs.filter((s) => (s.file ?? '').includes(name))
+            const passed = mine.filter((s) => s.tests.every((t) => t.status === 'expected'))
+            console.log(`[invite-proof] ${name}: ${mine.length} test(s) ran, ${passed.length} passed`)
+            for (const s of mine) console.log(`[invite-proof]   ${s.ok ? 'PASS' : 'FAIL'} ${s.file} :: ${s.title}`)
+            if (mine.length === 0 || passed.length !== mine.length) failed = true
+          }
+          if (failed) {
+            console.error('[invite-proof] FAILED: a spec did not run or did not pass')
+            process.exit(1)
+          }
+          console.log('[invite-proof] OK: both invite specs ran and every test passed')
+          EOF
+
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-${{ matrix.shard }}
+          name: playwright-report-invite
           path: apps/e2e/playwright-report/
           retention-days: 7
