@@ -518,32 +518,6 @@ export class TestAPI {
 		return res.json()
 	}
 
-	async createSession(
-		workspaceId: string,
-		data: {
-			actor_id: string
-			action_prompt: string
-			conversation_id?: string
-			message_id?: number
-			auto_start?: boolean
-			spawned_by_message_id?: number
-		},
-	): Promise<SessionResponse> {
-		const { conversation_id, message_id, ...rest } = data
-		const body = {
-			...rest,
-			config:
-				conversation_id && message_id ? { conversation: { conversation_id, message_id } } : {},
-		}
-		const res = await fetch(`${this.baseURL}/api/sessions`, {
-			method: 'POST',
-			headers: this.headers(workspaceId),
-			body: JSON.stringify(body),
-		})
-		if (!res.ok) throw new Error(`createSession failed: ${res.status}`)
-		return res.json()
-	}
-
 	async updateConversationMe(
 		id: string,
 		workspaceId: string,
@@ -574,13 +548,23 @@ export class TestAPI {
 			actor_id: string
 			action_prompt: string
 			config?: Record<string, unknown>
+			conversation_id?: string
+			message_id?: number
 			auto_start?: boolean
+			spawned_by_message_id?: number
 		},
 	): Promise<SessionResponse> {
+		// conversation_id + message_id is shorthand for config.conversation, which
+		// anchors the session to a conversation turn.
+		const { conversation_id, message_id, ...rest } = data
+		const body =
+			conversation_id && message_id && !rest.config
+				? { ...rest, config: { conversation: { conversation_id, message_id } } }
+				: rest
 		const res = await fetch(`${this.baseURL}/api/sessions`, {
 			method: 'POST',
 			headers: this.headers(workspaceId),
-			body: JSON.stringify(data),
+			body: JSON.stringify(body),
 		})
 		if (!res.ok) throw new Error(`createSession failed: ${res.status}`)
 		return res.json()
