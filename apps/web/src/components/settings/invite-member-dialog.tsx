@@ -164,7 +164,11 @@ export function InviteMemberDialog({
 							onValueChange={(value) => setRole(value as InviteRole)}
 							disabled={createInvite.isPending}
 						>
-							<SelectTrigger id="invite-role" aria-label="Role for the new member">
+							<SelectTrigger
+								id="invite-role"
+								className="w-full"
+								aria-label="Role for the new member"
+							>
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>

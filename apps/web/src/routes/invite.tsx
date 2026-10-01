@@ -212,8 +212,13 @@ function AuthenticatedAccept({
 			)}
 			{error && <FormError error={error} className="text-center" />}
 			<div className="space-y-2">
-				<Button type="button" className="w-full" onClick={handleAccept} disabled={loading}>
-					<span className="truncate">
+				<Button
+					type="button"
+					className="h-auto w-full whitespace-normal py-2"
+					onClick={handleAccept}
+					disabled={loading}
+				>
+					<span className="break-all">
 						{loading ? 'Joining…' : matches ? 'Accept invite' : `Accept as ${actorEmail}`}
 					</span>
 				</Button>
@@ -232,11 +237,11 @@ function AuthenticatedAccept({
 						<Button
 							type="button"
 							variant="outline"
-							className="w-full"
+							className="h-auto w-full whitespace-normal py-2"
 							onClick={handleSignOut}
 							disabled={loading}
 						>
-							<span className="truncate">Sign out to use {invite.inviteEmail}</span>
+							<span className="break-all">Sign out to use {invite.inviteEmail}</span>
 						</Button>
 						<p className="text-center text-xs text-muted-foreground">
 							Signing out will end your current session.
