@@ -78,7 +78,10 @@ function WorkspaceLayout() {
 		// it is crash reporting, the same category as Sentry, which is likewise
 		// ungated.
 		setFaroUser(actor.id, workspaceId)
-		void identifyForWorkspace(actor.id, anonymizeWorkspace)
+		void identifyForWorkspace(actor.id, anonymizeWorkspace, {
+			name: actor.name,
+			email: actor.email,
+		})
 	}, [workspace, workspaceId, shareUsage, anonymizeWorkspace])
 
 	if (!workspace) {
