@@ -19,6 +19,7 @@ jobs:
   # It is deliberately cheap and has no dependency on the pnpm workspace, so it
   # gives a signal in well under a minute rather than waiting on a full install.
   observability-config:
+    if: ${{ false }} # throwaway narrowing, do not merge
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -64,6 +65,7 @@ jobs:
           python observability/validate-alerts.py
 
   lint-typecheck:
+    if: ${{ false }} # throwaway narrowing, do not merge
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -88,6 +90,7 @@ jobs:
       - run: pnpm type-check
 
   unit-tests:
+    if: ${{ false }} # throwaway narrowing, do not merge
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -111,6 +114,7 @@ jobs:
       - run: pnpm test -- -- --run
 
   integration-tests:
+    if: ${{ false }} # throwaway narrowing, do not merge
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -191,7 +195,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7]
+        shard: [1] # throwaway narrowing: one shard, two specs
     services:
       postgres:
         image: postgres:16-alpine
@@ -288,7 +292,7 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: pnpm --filter @maskin/e2e exec playwright install-deps chromium
 
-      - name: Run E2E tests (shard ${{ matrix.shard }}/7)
+      - name: Run E2E tests (invite-email-new-user + invite-email-existing-user only)
         # Argos's upload() can reject via a promise that safe-argos-reporter.ts's
         # own try/catch doesn't end up wrapping — an unhandled rejection there
         # has previously crashed an otherwise-green shard. Rather than keep
@@ -300,7 +304,7 @@ jobs:
         # upload path — quota, outage, auth, a library bug — can then never
         # fail the job, while an actual test regression still does.
         run: |
-          pnpm --filter @maskin/e2e exec playwright test --shard=${{ matrix.shard }}/7 || true
+          pnpm --filter @maskin/e2e exec playwright test invite-email-new-user invite-email-existing-user || true
           node apps/e2e/scripts/assert-results.mjs apps/e2e/playwright-report/e2e-results.json
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
@@ -338,6 +342,34 @@ jobs:
           S3_ACCESS_KEY: admin
           S3_SECRET_KEY: admin
           S3_REGION: us-east-1
+
+      # Throwaway: assert-results.mjs only fails on `unexpected > 0`, so a typo'd
+      # spec name that matches one file would still go green. Fail unless BOTH
+      # spec files reported at least one test and every test passed (a retry
+      # pass counts as a pass but is named in the annotation).
+      - name: Assert both invite specs ran and passed
+        run: |
+          node - <<'EOF'
+          const fs = require('node:fs')
+          const report = JSON.parse(
+            fs.readFileSync('apps/e2e/playwright-report/e2e-results.json', 'utf8'),
+          )
+          const specs = []
+          const walk = (suite) => {
+            for (const spec of suite.specs ?? []) specs.push(spec)
+            for (const child of suite.suites ?? []) walk(child)
+          }
+          for (const suite of report.suites ?? []) walk(suite)
+          let failed = false
+          for (const file of ['invite-email-new-user.spec.ts', 'invite-email-existing-user.spec.ts']) {
+            const tests = specs.filter((s) => s.file.endsWith(file)).flatMap((s) => s.tests)
+            const statuses = tests.map((t) => t.status)
+            const ok = tests.length > 0 && statuses.every((s) => s === 'expected' || s === 'flaky')
+            console.log(`::notice title=e2e ${file}::${ok ? 'PASS' : 'FAIL'} - ${tests.length} test(s): ${statuses.join(',')}`)
+            if (!ok) failed = true
+          }
+          process.exit(failed ? 1 : 0)
+          EOF
 
       - name: Upload Playwright report
         if: always()
