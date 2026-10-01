@@ -23,4 +23,11 @@ describe('useDocumentTitle', () => {
 		unmount()
 		expect(document.title).toBe('Maskin Workspace')
 	})
+
+	it('leaves a title another route already set when it unmounts', () => {
+		const { unmount } = renderHook(() => useDocumentTitle('Roadmap'))
+		document.title = 'Log in to Maskin'
+		unmount()
+		expect(document.title).toBe('Log in to Maskin')
+	})
 })
