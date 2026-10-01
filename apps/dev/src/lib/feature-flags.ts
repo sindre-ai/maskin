@@ -179,6 +179,16 @@ export const FLAGS = {
 	 * are on for every workspace.
 	 */
 	TRIGGER_ENGINE_V2: 'trigger_engine_v2',
+	/**
+	 * Workspace desktop: one long-lived, viewable Linux desktop VM per workspace
+	 * (POST /api/desktop/connect, the /api/desktop/stream WebSocket, and the
+	 * Desktop panel in the web app). Off for everyone except the tester actors
+	 * (`FF_TESTER_ACTOR_IDS`) or workspaces listed in `FF_WORKSPACE_FEATURES`.
+	 * The backend routes read it too, because starting a desktop provisions a
+	 * multi-GB microVM on an agent-server — a cost, not just a UI branch.
+	 * Retire by deleting the flag once the feature ships to everyone.
+	 */
+	WORKSPACE_DESKTOP: 'workspace-desktop',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

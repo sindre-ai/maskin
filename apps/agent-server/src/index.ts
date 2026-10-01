@@ -1,5 +1,6 @@
 import './lib/sentry'
 import { readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import type { Server } from 'node:http'
 import { join } from 'node:path'
 import { serve } from '@hono/node-server'
 import {
@@ -50,6 +51,12 @@ import {
 	pushSessionWorkspace,
 	stageSessionSkills,
 } from './services/session-workspace'
+import {
+	DESKTOP_PREFIX,
+	WorkspaceDesktopRegistry,
+	handleDesktopUpgrade,
+	isValidWorkspaceId,
+} from './services/workspace-desktop'
 
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 
@@ -246,6 +253,13 @@ export type AppDeps = {
 	 * omitted. Omitted -> buildApp creates its own, which tests can ignore.
 	 */
 	stallTracker?: StallTracker
+	/**
+	 * Workspace desktops (see services/workspace-desktop.ts). Shared with
+	 * `main()` for the boot-time reconcile pass and the WebSocket upgrade
+	 * handler, which lives on the raw http.Server rather than in Hono. Omitted
+	 * → the /desktops routes are not registered.
+	 */
+	desktops?: WorkspaceDesktopRegistry
 }
 
 /**
@@ -1167,6 +1181,39 @@ export function buildApp(deps: AppDeps): Hono {
 	app.use('/sessions', requireBearer)
 	app.use('/sessions/*', requireBearer)
 
+	// Workspace desktops — one long-lived noVNC desktop VM per workspace,
+	// independent of any session. The WebSocket stream itself is served from
+	// the raw http.Server (see handleDesktopUpgrade); these are the control routes.
+	const desktops = deps.desktops
+	if (desktops) {
+		app.use('/desktops/*', requireBearer)
+
+		// PUT is idempotent: returns the running desktop, provisioning if needed.
+		app.put('/desktops/:workspaceId', async (c) => {
+			const { workspaceId } = c.req.param()
+			if (!isValidWorkspaceId(workspaceId)) return c.json({ error: 'Invalid workspace id' }, 400)
+			if (deps.drainState?.draining) return c.json({ error: 'draining' }, 503)
+			const desktop = await desktops.ensure(workspaceId)
+			if (!desktop) return c.json({ error: 'desktop_provision_failed' }, 502)
+			return c.json({ status: 'running', password: desktop.password })
+		})
+
+		app.get('/desktops/:workspaceId', (c) => {
+			const { workspaceId } = c.req.param()
+			if (!isValidWorkspaceId(workspaceId)) return c.json({ error: 'Invalid workspace id' }, 400)
+			const desktop = desktops.get(workspaceId)
+			if (!desktop) return c.json({ error: 'not_found' }, 404)
+			return c.json({ status: 'running', password: desktop.password })
+		})
+
+		app.delete('/desktops/:workspaceId', async (c) => {
+			const { workspaceId } = c.req.param()
+			if (!isValidWorkspaceId(workspaceId)) return c.json({ error: 'Invalid workspace id' }, 400)
+			const existed = await desktops.remove(workspaceId)
+			return c.json({ removed: existed })
+		})
+	}
+
 	app.post('/sessions', async (c) => {
 		// Reject new work once shutdown has begun — otherwise a session created
 		// in the ~10s shutdown window could be only half-spawned (sandbox
@@ -1746,6 +1793,8 @@ export type ReconcileOnBootDeps = {
 	 * unobserved rather than healthy.
 	 */
 	stallTracker?: StallTracker
+	/** Same registry buildApp serves — see AppDeps.desktops. */
+	desktops?: WorkspaceDesktopRegistry
 }
 
 /**
@@ -1793,7 +1842,17 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 	const browserSidecarNames = new Set(
 		names.filter((name) => name.startsWith(BROWSER_SIDECAR_PREFIX)),
 	)
-	const claimableSandboxes = names.filter((name) => !browserSidecarNames.has(name))
+	// Workspace desktops have no session row either, and must NOT reach
+	// /reconcile — apps/dev would call them orphans and remove them. Adopt (or
+	// sweep) them locally instead.
+	if (deps.desktops) {
+		await deps.desktops.reconcile(names).catch((err) => {
+			logger.error('reconcile-on-boot: desktop reconcile failed', { error: String(err) })
+		})
+	}
+	const claimableSandboxes = names.filter(
+		(name) => !browserSidecarNames.has(name) && !name.startsWith(DESKTOP_PREFIX),
+	)
 
 	let result: { marked_failed: string[]; orphan_sandboxes: string[] }
 	try {
@@ -2011,6 +2070,11 @@ async function main(): Promise<void> {
 	// see AppDeps.readyState for why that gate has to be closed before any new
 	// session can be created on this box.
 	const readyState = { ready: false }
+	const desktops = new WorkspaceDesktopRegistry({
+		msb,
+		image: env.DESKTOP_IMAGE,
+		stateFile: join(env.AGENT_SESSION_ROOT, '.workspace-desktops.json'),
+	})
 
 	const app = buildApp({
 		env,
@@ -2023,6 +2087,7 @@ async function main(): Promise<void> {
 		stallTracker,
 		drainState,
 		readyState,
+		desktops,
 	})
 
 	// Resolved once, logged once, and handed to the metrics registry. Logging it
@@ -2033,6 +2098,12 @@ async function main(): Promise<void> {
 
 	const server = serve({ fetch: app.fetch, port: env.PORT, hostname: '0.0.0.0' }, ({ port }) => {
 		logger.info('agent-server listening', { port })
+	})
+
+	// Hono has no WebSocket support here, so desktop streams are spliced at the
+	// raw http.Server level — see handleDesktopUpgrade.
+	;(server as Server).on('upgrade', (req, socket, head) => {
+		handleDesktopUpgrade(req, socket, head, { registry: desktops, secret: env.AGENT_SERVER_SECRET })
 	})
 
 	// Metrics listener — SEPARATE from the main one, and bound to LOOPBACK.
@@ -2062,6 +2133,7 @@ async function main(): Promise<void> {
 		sessionExitCodes,
 		sessionPreviewState,
 		stallTracker,
+		desktops,
 	})
 		.catch((err) => {
 			logger.error('reconcile-on-boot failed unexpectedly', { error: String(err) })

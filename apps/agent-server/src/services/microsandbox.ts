@@ -37,15 +37,15 @@ const HOST_RULE_HOST = 'host'
 // can reach the Maskin API (maskin.io), external MCP servers, etc.
 // Private addresses remain blocked by default (msb's "public" group covers
 // only globally-routable IPs).
-const PUBLIC_EGRESS_RULE = 'allow@public'
+export const PUBLIC_EGRESS_RULE = 'allow@public'
 
 // microsandbox intercepts DNS queries at the smoltcp layer before they ever
 // reach the IP routing stage, so `allow@private` (or any IP-based rule) has
 // no effect on DNS. The DNS forwarder runs its own policy check via
 // decide_dns_action() which only honours explicit protocol/port rules.
 // `allow@any:udp:53` and `allow@any:tcp:53` are the rules it recognises.
-const DNS_UDP_RULE = 'allow@any:udp:53'
-const DNS_TCP_RULE = 'allow@any:tcp:53'
+export const DNS_UDP_RULE = 'allow@any:udp:53'
+export const DNS_TCP_RULE = 'allow@any:tcp:53'
 
 // msb 0.5.7's `allow@host:tcp` guest-to-host forwarding resets the
 // connection when `host.microsandbox.internal` resolves via IPv6 — the TCP
@@ -64,7 +64,7 @@ const DNS_TCP_RULE = 'allow@any:tcp:53'
 // against this deployment's actual guest addresses, not just the
 // documented default. Must be listed before any `allow@host:tcp:*` rule
 // (net-rules are first-match-wins).
-const DENY_HOST_ALIAS_IPV6_RESET_RULE = 'deny@[fd42:6d73:62::/48]'
+export const DENY_HOST_ALIAS_IPV6_RESET_RULE = 'deny@[fd42:6d73:62::/48]'
 
 // Static allow@host:tcp range covering effectively every common local
 // dev-server port (3000 Node/CRA/Next/Rails, 4200 Angular, 4000/5000
@@ -112,7 +112,7 @@ const PRIVATE_NET_RULE = 'allow@private'
 // msb assigns the bridge host 10.0.1.1 by default; override via
 // provisionBrowserSidecar's bridgeGateway option when running a custom msb
 // network config.
-const DEFAULT_BRIDGE_GATEWAY = '10.0.1.1'
+export const DEFAULT_BRIDGE_GATEWAY = '10.0.1.1'
 
 // Default Chromium CDP sidecar image. Production can override this with the
 // registry tag published by the browser-sidecar Docker workflow.
@@ -376,7 +376,7 @@ export function defaultRunner(): CommandRunner {
 	}
 }
 
-function defaultSleep(ms: number): Promise<void> {
+export function defaultSleep(ms: number): Promise<void> {
 	return new Promise((r) => setTimeout(r, ms))
 }
 
@@ -488,7 +488,7 @@ export async function spawnSession(
 	}
 }
 
-async function waitForRunning(
+export async function waitForRunning(
 	msbBin: string,
 	sessionId: string,
 	deps: { run: CommandRunner; sleep: (ms: number) => Promise<void>; now: () => number },
@@ -644,7 +644,7 @@ const heldHostPorts = new Map<number, ReturnType<typeof createServer>>()
  * once the invocation that consumes the port has run (success or failure) —
  * releasing earlier re-opens the TOCTOU window this exists to close.
  */
-function findFreeHostPort(host: string): Promise<number> {
+export function findFreeHostPort(host: string): Promise<number> {
 	return new Promise((resolve, reject) => {
 		const srv = createServer()
 		srv.on('error', reject)
@@ -666,7 +666,7 @@ function findFreeHostPort(host: string): Promise<number> {
  * test-injected deps.findPort value, or a port already released — so it's
  * safe to call unconditionally from a finally block.
  */
-function releaseHostPort(port: number): void {
+export function releaseHostPort(port: number): void {
 	const srv = heldHostPorts.get(port)
 	if (!srv) return
 	heldHostPorts.delete(port)
@@ -795,7 +795,7 @@ export type SshRelay = {
  * `ssh -L` tunnel's local bind have actually come up before handing the port
  * to a caller.
  */
-async function defaultTcpPollReady(
+export async function defaultTcpPollReady(
 	host: string,
 	port: number,
 	timeoutMs: number,

@@ -117,6 +117,8 @@ const envSchema = z.object({
 	// Chromium sidecar image used for browser-enabled sessions. Set this to the
 	// same repository/tag published by the browser-sidecar Docker workflow.
 	BROWSER_SIDECAR_IMAGE: z.string().optional().default('browser-sidecar:latest'),
+	// Desktop image for per-workspace noVNC desktops (docker/desktop-test).
+	DESKTOP_IMAGE: z.string().optional().default('desktop:latest'),
 	// Path to the persistent SSH keypair agent-server uses to open SSH-relay
 	// tunnels (`msb ssh serve` + `ssh -L`) into session/sidecar microVMs — the
 	// replacement for the old allow@private / bridge-gateway networking. The

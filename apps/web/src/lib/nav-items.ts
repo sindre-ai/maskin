@@ -1,6 +1,6 @@
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
-import { Layers, type LucideIcon, MessageSquare, RefreshCw, Zap } from 'lucide-react'
+import { Layers, type LucideIcon, MessageSquare, Monitor, RefreshCw, Zap } from 'lucide-react'
 import { useMemo } from 'react'
 
 export interface NavItemDef {
@@ -23,6 +23,17 @@ export const CORE_NAV_ITEMS: NavItemDef[] = [
 	{ key: 'chats', label: 'Chats', to: CHATS_ROUTE, icon: MessageSquare },
 	{ key: 'loops', label: 'Loops', to: '/$workspaceId/loops', icon: RefreshCw },
 ]
+
+// Feature flag id for the workspace desktop (see apps/dev/src/lib/feature-flags.ts).
+// Read at two boundaries only: the sidebar entry and the /desktop route.
+export const DESKTOP_FLAG = 'workspace-desktop'
+
+export const DESKTOP_NAV_ITEM: NavItemDef = {
+	key: 'desktop',
+	label: 'Desktop',
+	to: '/$workspaceId/desktop',
+	icon: Monitor,
+}
 
 export const OBJECTS_NAV_ITEM: NavItemDef = {
 	key: 'objects',

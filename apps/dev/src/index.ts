@@ -1,5 +1,6 @@
 import './lib/sentry'
 import './extensions'
+import type { Server } from 'node:http'
 import path from 'node:path'
 import { serve } from '@hono/node-server'
 import { createDb, syncAgentServersFromEnv } from '@maskin/db'
@@ -17,11 +18,14 @@ import {
 	maybeBootstrapDev,
 	seedMarketplaceIfEmpty,
 } from './lib/dev-bootstrap'
+import { FLAGS, isFlagEnabledForWorkspace } from './lib/feature-flags'
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
 import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
+import { isWorkspaceMember } from './lib/workspace-auth'
 import { AgentStorageManager } from './services/agent-storage'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
+import { handleDesktopStreamUpgrade } from './services/desktop-relay'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
@@ -38,6 +42,7 @@ import { SessionSelfHealJob } from './services/session-self-heal-job'
 import { CommentDispatcher, TriggerRunner } from './services/trigger-runner'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
+import { createWorkspaceDesktopService } from './services/workspace-desktop'
 
 // Database connection — POSTGRES_URL takes priority over DATABASE_URL
 const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
@@ -376,7 +381,7 @@ try {
 	logger.error('Dev bootstrap failed', { error: err instanceof Error ? err.message : String(err) })
 }
 
-serve({ fetch: app.fetch, port }, () => {
+const server = serve({ fetch: app.fetch, port }, () => {
 	const webUrl = 'http://localhost:5173'
 	const apiUrl = `http://localhost:${port}`
 
@@ -431,6 +436,26 @@ ${mcpSetup}
 			error: err instanceof Error ? err.message : String(err),
 		})
 	})
+})
+
+// Hono has no WebSocket support, so the workspace-desktop stream is handled on
+// the raw http.Server — see services/desktop-relay.ts. Any other upgrade
+// request is refused rather than left hanging.
+const desktopService = createWorkspaceDesktopService(db)
+;(server as Server).on('upgrade', (req, socket, head) => {
+	handleDesktopStreamUpgrade(req, socket, head, {
+		isMember: (actorId, workspaceId) => isWorkspaceMember(db, actorId, workspaceId),
+		isEnabled: (actorId, workspaceId) =>
+			isFlagEnabledForWorkspace(workspaceId, FLAGS.WORKSPACE_DESKTOP, { actorId }),
+		locate: (workspaceId) => desktopService.locate(workspaceId),
+	})
+		.then((handled) => {
+			if (!handled) socket.destroy()
+		})
+		.catch((err) => {
+			logger.error('Desktop upgrade handler threw', { error: String(err) })
+			socket.destroy()
+		})
 })
 
 export default app

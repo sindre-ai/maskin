@@ -10,10 +10,13 @@ import {
 	SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { useChatUnreadCount } from '@/hooks/use-chat-unread'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useUnread } from '@/hooks/use-subscriptions'
 import {
 	CHATS_ROUTE,
 	CORE_NAV_ITEMS,
+	DESKTOP_FLAG,
+	DESKTOP_NAV_ITEM,
 	FOR_YOU_ROUTE,
 	type NavItemDef,
 	OBJECTS_NAV_ITEM,
@@ -45,9 +48,15 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	const unreadCount = unread?.items.length ?? 0
 	const chatUnread = useChatUnreadCount(workspaceId)
 
+	const desktopEnabled = useFeatureFlag(DESKTOP_FLAG)
+
 	const navItems = useMemo(
-		() => (hasObjectTypes ? [...CORE_NAV_ITEMS, OBJECTS_NAV_ITEM] : CORE_NAV_ITEMS),
-		[hasObjectTypes],
+		() => [
+			...CORE_NAV_ITEMS,
+			...(hasObjectTypes ? [OBJECTS_NAV_ITEM] : []),
+			...(desktopEnabled ? [DESKTOP_NAV_ITEM] : []),
+		],
+		[hasObjectTypes, desktopEnabled],
 	)
 
 	return (

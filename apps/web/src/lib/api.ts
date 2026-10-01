@@ -26,6 +26,13 @@ import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
 
+export interface DesktopConnectResponse {
+	ticket: string
+	// Path of the stream WebSocket on the API origin; the ticket goes in `?ticket=`.
+	path: string
+	password: string
+}
+
 export interface PlanCapContext {
 	plan: string
 	used: number
@@ -774,6 +781,15 @@ export const api = {
 				workspaceId,
 			})
 		},
+	},
+
+	desktop: {
+		// Idempotent: starts the workspace desktop if needed (slow the first time) and
+		// returns a one-time ticket for the stream WebSocket plus the VNC password.
+		connect: (workspaceId: string) =>
+			request<DesktopConnectResponse>('/desktop/connect', { method: 'POST', workspaceId }),
+		remove: (workspaceId: string) =>
+			request<{ removed: boolean }>('/desktop', { method: 'DELETE', workspaceId }),
 	},
 
 	featureFlags: {
