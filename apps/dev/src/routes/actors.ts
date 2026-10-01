@@ -403,6 +403,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					agentState: actors.agentState,
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
+					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -451,6 +452,7 @@ app.openapi(listActorsRoute, (async (c) => {
 					agentState: actors.agentState,
 					createdAt: actors.createdAt,
 					role: workspaceMembers.role,
+					voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 				})
 				.from(workspaceMembers)
 				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -497,6 +499,7 @@ app.openapi(listActorsRoute, (async (c) => {
 				workspaceId: workspaces.id,
 				workspaceName: workspaces.name,
 				role: workspaceMembers.role,
+				voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 			})
 			.from(workspaceMembers)
 			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
@@ -565,6 +568,7 @@ interface ActorMembershipRow {
 	workspaceId: string
 	workspaceName: string
 	role: string
+	voice_enabled: boolean
 }
 
 function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
@@ -576,6 +580,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 	isSystem: boolean
 	agentState: AgentState
 	createdAt: Date | null
+	voice_enabled: boolean
 	workspaces: { id: string; name: string; role: string }[]
 }> {
 	const byActor = new Map<
@@ -589,6 +594,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 			isSystem: boolean
 			agentState: AgentState
 			createdAt: Date | null
+			voice_enabled: boolean
 			workspaces: { id: string; name: string; role: string }[]
 		}
 	>()
@@ -607,6 +613,7 @@ function groupActorMemberships(rows: ActorMembershipRow[]): Array<{
 				isSystem: r.isSystem,
 				agentState: r.agentState,
 				createdAt: r.createdAt,
+				voice_enabled: r.voice_enabled,
 				workspaces: [membership],
 			})
 		}
@@ -666,6 +673,7 @@ app.openapi(getActorRoute, (async (c) => {
 				createdAt: actors.createdAt,
 				updatedAt: actors.updatedAt,
 				installedLoopId: sql<string | null>`${actors.metadata}->>'installed_loop_id'`,
+				voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 			})
 			.from(actors)
 			.where(eq(actors.id, id))
@@ -793,6 +801,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			agentState: actors.agentState,
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
 			updatedAt: actors.updatedAt,
+			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 		})
 
 	if (!updated) {
@@ -920,6 +929,7 @@ app.openapi(resetActorRoute, (async (c) => {
 			agentState: actors.agentState,
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
 			updatedAt: actors.updatedAt,
+			voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 		})
 
 	if (!updated) {
@@ -1089,7 +1099,9 @@ app.openapi(deleteActorRoute, (async (c) => {
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteActorRoute, Env>)
 
-// Returning shape used by /pause and /run handlers — full actor row.
+// Returning shape used by /pause, /run, and /voice-mode handlers — full actor
+// row. voice_enabled is projected off the metadata JSONB so the wire shape
+// stays flat and callers never reach into raw metadata.
 const actorReturningCols = {
 	id: actors.id,
 	type: actors.type,
@@ -1106,6 +1118,7 @@ const actorReturningCols = {
 	agentStateUpdatedAt: actors.agentStateUpdatedAt,
 	createdAt: actors.createdAt,
 	updatedAt: actors.updatedAt,
+	voice_enabled: sql<boolean>`COALESCE((${actors.metadata}->>'voice_enabled')::boolean, false)`,
 } as const
 
 // POST /:id/pause - Pause an agent (and any in-flight session for it)
@@ -1366,5 +1379,125 @@ app.openapi(runAgentRoute, (async (c) => {
 
 	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof runAgentRoute, Env>)
+
+// POST /:id/voice-mode - Flip actors.metadata.voice_enabled on a workspace
+// agent. This is the discovery-layer control for [Voice with Maskin agents]
+// (https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/16bd0042-ff3d-4056-839c-410b0cd6f06e):
+// the row is written here, and the session-mint route (Task 1) reads
+// `voice_enabled` at mint time to allow or 403 a Call attempt. This
+// endpoint deliberately does NOT gate on VOICE_MODE_V1 — a workspace admin
+// must be able to turn the flag off for an agent even when the tester flag
+// itself is off, so the setting persists across flag flips. Writes merge
+// into the existing metadata JSONB rather than overwriting it, so the
+// installed-loop marker keys (installed_loop_id, source_item_id) survive.
+const voiceModeBodySchema = z.object({
+	enabled: z.boolean(),
+})
+
+const setVoiceModeRoute = createRoute({
+	method: 'post',
+	path: '/{id}/voice-mode',
+	tags: ['Actors'],
+	summary: "Toggle an agent's voice_enabled flag",
+	description:
+		'Sets actors.metadata.voice_enabled for an agent in a workspace. Workspace admins only. Writes merge into the existing metadata JSONB so other keys (installed_loop_id, source_item_id) are preserved.',
+	request: {
+		params: idParamSchema,
+		headers: workspaceIdHeader,
+		body: {
+			content: {
+				'application/json': {
+					schema: voiceModeBodySchema,
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: actorResponseSchema } },
+			description: 'Voice mode updated',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor is not an agent',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Only workspace admins can toggle voice mode',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found in workspace',
+		},
+	},
+})
+
+app.openapi(setVoiceModeRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { enabled } = c.req.valid('json')
+
+	// Caller must be a workspace member (any role) — the admin check runs
+	// after so a stranger can't probe existence.
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	const [callerMembership] = await db
+		.select({ role: workspaceMembers.role })
+		.from(workspaceMembers)
+		.where(
+			and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+		)
+		.limit(1)
+
+	if (!callerMembership || !['owner', 'admin'].includes(callerMembership.role)) {
+		return c.json(createApiError('FORBIDDEN', 'Only workspace admins can toggle voice mode'), 403)
+	}
+
+	const [existing] = await db.select().from(actors).where(eq(actors.id, id)).limit(1)
+	if (!existing) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	// Target agent must also be a workspace member — a workspace admin can't
+	// flip voice on an agent that doesn't belong to their workspace.
+	if (!(await isWorkspaceMember(db, id, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	if (existing.type !== 'agent') {
+		return c.json(createApiError('BAD_REQUEST', 'Actor is not an agent'), 400)
+	}
+
+	// Merge into existing metadata via `||` (jsonb concat) so installed-loop
+	// marker keys survive the write. When metadata is NULL the concat with
+	// `{}` produces a fresh object rather than crashing on NULL||jsonb.
+	const [updated] = await db
+		.update(actors)
+		.set({
+			metadata: sql`COALESCE(${actors.metadata}, '{}'::jsonb) || jsonb_build_object('voice_enabled', ${enabled}::boolean)`,
+			updatedAt: new Date(),
+		})
+		.where(eq(actors.id, id))
+		.returning(actorReturningCols)
+
+	if (!updated) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	await recordEvent(db, {
+		workspaceId,
+		actorId,
+		action: 'agent_voice_mode_set',
+		entityType: 'actor',
+		entityId: id,
+		data: { enabled },
+	})
+
+	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
+}) as RouteHandler<typeof setVoiceModeRoute, Env>)
 
 export default app
