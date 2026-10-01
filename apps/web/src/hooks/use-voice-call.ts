@@ -1,5 +1,14 @@
 import { api } from '@/lib/api'
+import { API_BASE } from '@/lib/constants'
+import {
+	type VoiceRelay,
+	type VoiceTranscriptLine,
+	buildVoiceEventsUrl,
+	createVoiceRelay,
+} from '@/lib/voice-relay'
+import { showVoiceCallEndedToast } from '@/lib/voice-toast'
 import { useWorkspace } from '@/lib/workspace-context'
+import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 // The seven primary states from the Voice v1 design SPEC. Error / empty /
@@ -21,6 +30,8 @@ export interface VoiceCall {
 	 *  land in Task 4. */
 	notice: string | null
 	transcriptOpen: boolean
+	/** Finished turns plus tool-in-flight tags, in order, for the transcript pane. */
+	transcriptLines: VoiceTranscriptLine[]
 	/** Kick off the WebRTC handshake — call this from the Permission screen's
 	 *  Allow button. Requests the mic, mints a Realtime session, and negotiates
 	 *  SDP against the OpenAI Realtime edge. */
@@ -35,11 +46,13 @@ export interface VoiceCall {
 const OPENAI_REALTIME_URL = 'https://api.openai.com/v1/realtime'
 const REALTIME_MODEL = 'gpt-realtime'
 
-export function useVoiceCall(agentActorId: string, open: boolean): VoiceCall {
+export function useVoiceCall(agentActorId: string, agentName: string, open: boolean): VoiceCall {
 	const { workspaceId } = useWorkspace()
+	const navigate = useNavigate()
 	const [state, setState] = useState<VoiceCallState>('permission')
 	const [notice, setNotice] = useState<string | null>(null)
 	const [transcriptOpen, setTranscriptOpen] = useState(false)
+	const [transcriptLines, setTranscriptLines] = useState<VoiceTranscriptLine[]>([])
 	const mutedRef = useRef(false)
 	const preMuteStateRef = useRef<VoiceCallState>('live-agent-speaking')
 
@@ -50,8 +63,18 @@ export function useVoiceCall(agentActorId: string, open: boolean): VoiceCall {
 	const localStreamRef = useRef<MediaStream | null>(null)
 	const remoteAudioRef = useRef<HTMLAudioElement | null>(null)
 	const dataChannelRef = useRef<RTCDataChannel | null>(null)
+	const relayRef = useRef<VoiceRelay | null>(null)
+	// What the post-call toast needs. Set once the call is connecting, cleared
+	// when the toast fires, so the toast fires at most once per call.
+	const callRef = useRef<{
+		startedAt: number
+		persistTranscripts: boolean | null
+		conversationId: string | null
+	} | null>(null)
 
 	const teardown = useCallback(() => {
+		relayRef.current?.close()
+		relayRef.current = null
 		try {
 			dataChannelRef.current?.close()
 		} catch {
@@ -76,13 +99,38 @@ export function useVoiceCall(agentActorId: string, open: boolean): VoiceCall {
 		mutedRef.current = false
 	}, [])
 
+	// Post-call toast. Only when the transcript's fate is known: saved (a
+	// conversation exists) or the workspace opted out. If the control channel
+	// never connected we know neither, and either message would be a guess.
+	const finishCall = useCallback(() => {
+		const call = callRef.current
+		callRef.current = null
+		if (!call) return
+		const conversationId = call.conversationId
+		if (!conversationId && call.persistTranscripts !== false) return
+		showVoiceCallEndedToast({
+			durationMs: Date.now() - call.startedAt,
+			agentName,
+			conversationUrl: conversationId ? `/${workspaceId}/chats/${conversationId}` : null,
+			onOpen: () => {
+				if (!conversationId) return
+				navigate({
+					to: '/$workspaceId/chats/$conversationId',
+					params: { workspaceId, conversationId },
+				})
+			},
+		})
+	}, [agentName, navigate, workspaceId])
+
 	// End the call and let the caller close the dialog.
 	const end = useCallback(() => {
 		teardown()
+		finishCall()
 		setState('permission')
 		setNotice(null)
 		setTranscriptOpen(false)
-	}, [teardown])
+		setTranscriptLines([])
+	}, [teardown, finishCall])
 
 	// Mount / unmount cleanup — the dialog can be closed at any time (Esc, tap
 	// outside, hardware back), and none of those paths currently route through
@@ -91,14 +139,16 @@ export function useVoiceCall(agentActorId: string, open: boolean): VoiceCall {
 	useEffect(() => {
 		if (!open) {
 			teardown()
+			finishCall()
 			setState('permission')
 			setNotice(null)
 			setTranscriptOpen(false)
+			setTranscriptLines([])
 		}
 		return () => {
 			teardown()
 		}
-	}, [open, teardown])
+	}, [open, teardown, finishCall])
 
 	const start = useCallback(async () => {
 		setNotice(null)
@@ -164,9 +214,31 @@ export function useVoiceCall(agentActorId: string, open: boolean): VoiceCall {
 		// mirrors the state, it does not have to cancel anything.
 		const dc = pc.createDataChannel('oai-events')
 		dataChannelRef.current = dc
+
+		// Tool round-trip and transcript persistence ride the Maskin control
+		// channel. The call does not depend on it: if the socket can't be opened,
+		// tool calls are answered with an error the agent can voice.
+		callRef.current = { startedAt: Date.now(), persistTranscripts: null, conversationId: null }
+		setTranscriptLines([])
+		const relay = createVoiceRelay({
+			url: buildVoiceEventsUrl(session.voice_session_id, API_BASE),
+			channel: dc,
+			onReady: ({ persistTranscripts, conversationId }) => {
+				if (!callRef.current) return
+				callRef.current.persistTranscripts = persistTranscripts
+				callRef.current.conversationId = conversationId
+			},
+			onConversation: (conversationId) => {
+				if (callRef.current) callRef.current.conversationId = conversationId
+			},
+			onLine: (line) => setTranscriptLines((prev) => [...prev, line]),
+		})
+		relayRef.current = relay
+
 		dc.addEventListener('message', (e) => {
 			try {
 				const evt = JSON.parse(e.data)
+				relay.handleRealtimeEvent(evt)
 				handleRealtimeEvent(evt, mutedRef, preMuteStateRef, setState)
 			} catch {
 				// Ignore non-JSON frames (Realtime never sends any).
@@ -208,6 +280,7 @@ export function useVoiceCall(agentActorId: string, open: boolean): VoiceCall {
 			await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp })
 		} catch (err) {
 			teardown()
+			callRef.current = null
 			const message = err instanceof Error ? err.message : 'Could not connect to the voice service.'
 			setNotice(message)
 			setState('permission')
@@ -233,7 +306,16 @@ export function useVoiceCall(agentActorId: string, open: boolean): VoiceCall {
 
 	const toggleTranscript = useCallback(() => setTranscriptOpen((v) => !v), [])
 
-	return { state, notice, transcriptOpen, start, toggleMute, toggleTranscript, end }
+	return {
+		state,
+		notice,
+		transcriptOpen,
+		transcriptLines,
+		start,
+		toggleMute,
+		toggleTranscript,
+		end,
+	}
 }
 
 // Realtime event handler kept outside the component so the closure captured in
