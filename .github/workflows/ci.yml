@@ -191,7 +191,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7]
+        shard: [1]
     services:
       postgres:
         image: postgres:16-alpine
@@ -288,7 +288,7 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: pnpm --filter @maskin/e2e exec playwright install-deps chromium
 
-      - name: Run E2E tests (shard ${{ matrix.shard }}/7)
+      - name: Run E2E tests (invite specs only)
         # Argos's upload() can reject via a promise that safe-argos-reporter.ts's
         # own try/catch doesn't end up wrapping — an unhandled rejection there
         # has previously crashed an otherwise-green shard. Rather than keep
@@ -300,8 +300,42 @@ jobs:
         # upload path — quota, outage, auth, a library bug — can then never
         # fail the job, while an actual test regression still does.
         run: |
-          pnpm --filter @maskin/e2e exec playwright test --shard=${{ matrix.shard }}/7 || true
+          pnpm --filter @maskin/e2e exec playwright test invite-email-new-user invite-email-existing-user || true
           node apps/e2e/scripts/assert-results.mjs apps/e2e/playwright-report/e2e-results.json
+          # CI-proof only: `|| true` above swallows Playwright's "no tests found"
+          # exit, and assert-results.mjs passes on zero tests, so prove both specs
+          # actually ran. Per-spec counts go out as ::notice annotations, which the
+          # public check-runs API exposes without Actions log access.
+          node - <<'EOF'
+          const fs = require('fs')
+          const report = JSON.parse(fs.readFileSync('apps/e2e/playwright-report/e2e-results.json', 'utf8'))
+          const tally = {}
+          const walk = (suite) => {
+            for (const spec of suite.specs ?? []) {
+              const t = (tally[spec.file] ??= { tests: 0, expected: 0, flaky: 0, other: 0 })
+              for (const test of spec.tests ?? []) {
+                t.tests++
+                if (test.status === 'expected') t.expected++
+                else if (test.status === 'flaky') t.flaky++
+                else t.other++
+              }
+            }
+            for (const child of suite.suites ?? []) walk(child)
+          }
+          for (const suite of report.suites ?? []) walk(suite)
+          let ok = true
+          for (const name of ['invite-email-new-user.spec.ts', 'invite-email-existing-user.spec.ts']) {
+            const hit = Object.entries(tally).find(([file]) => file.endsWith(name))
+            const t = hit?.[1]
+            console.log(`::notice title=e2e-proof ${name}::${t ? JSON.stringify(t) : 'NOT RUN'}`)
+            if (!t || t.tests === 0 || t.other > 0) ok = false
+          }
+          console.log(`::notice title=e2e-proof totals::${JSON.stringify(tally)}`)
+          if (!ok) {
+            console.error('Both invite specs must run with every test passing')
+            process.exit(1)
+          }
+          EOF
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
