@@ -510,9 +510,11 @@ function FileViewerPage() {
 				</Sheet>
 			)}
 			<Sheet open={linkedOpen} onOpenChange={setLinkedOpen}>
-				<SheetContent side="right" className="w-[420px] overflow-y-auto sm:max-w-none">
+				<SheetContent side="right" className="w-[640px] max-w-full overflow-y-auto sm:max-w-none">
 					<SheetTitle className="sr-only">Linked objects and files</SheetTitle>
-					<LinkedObjectsForFile fileId={file.id} />
+					<div className="pt-12">
+						<LinkedObjectsForFile fileId={file.id} />
+					</div>
 				</SheetContent>
 			</Sheet>
 		</>
