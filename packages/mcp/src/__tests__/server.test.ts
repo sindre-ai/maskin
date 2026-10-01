@@ -775,6 +775,37 @@ describe('tool handlers', () => {
 			expect(calledUrl).toContain('updated_before=2026-06-30T12%3A00%3A00.000Z')
 			expect(calledUrl).toContain('updated_after=2026-06-29T12%3A00%3A00.000Z')
 		})
+
+		it('forwards trigger_id, before and verbose=true to the route', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_sessions')
+			await handler({
+				trigger_id: '3f6fd7e1-92f3-46d0-adfb-f93bfea9f810',
+				before: '2026-06-30T12:00:00.000Z',
+				verbose: true,
+			})
+
+			const sessionsCall = vi
+				.mocked(fetch)
+				.mock.calls.find((c) => (c[0] as string).includes('/api/sessions?'))
+			const calledUrl = sessionsCall?.[0] as string
+			expect(calledUrl).toContain('trigger_id=3f6fd7e1-92f3-46d0-adfb-f93bfea9f810')
+			expect(calledUrl).toContain('before=2026-06-30T12%3A00%3A00.000Z')
+			expect(calledUrl).toContain('verbose=true')
+		})
+
+		it('omits verbose from the query when false so the lean default applies', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_sessions')
+			await handler({ verbose: false })
+
+			const sessionsCall = vi
+				.mocked(fetch)
+				.mock.calls.find((c) => (c[0] as string).includes('/api/sessions?'))
+			expect(sessionsCall?.[0] as string).not.toContain('verbose=')
+		})
 	})
 
 	describe('update_objects handler — file attachments', () => {

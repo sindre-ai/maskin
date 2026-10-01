@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { postComment } from '../../lib/comments'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { TriggerRunner } from '../../services/trigger-runner'
 import { insertActor, insertObject, insertTrigger, insertWorkspace } from '../factories'
@@ -76,9 +77,10 @@ describe('Commented action trigger (integration)', () => {
 	}
 
 	function newRunner(createSession: ReturnType<typeof vi.fn>) {
-		return new TriggerRunner(db, mockBridge, {
-			createSession,
-		} as unknown as SessionManager)
+		const sessionManager = { createSession } as unknown as SessionManager
+		// Trigger sessions start via the lifecycle's startSession(), which delegates here.
+		configureSessionLifecycle({ db, sessionManager })
+		return new TriggerRunner(db, mockBridge, sessionManager)
 	}
 
 	async function postSampleComment(

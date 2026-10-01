@@ -1,3 +1,10 @@
+import type {
+	PushAgentFilesRequest,
+	PushAgentFilesResponse,
+	StopSessionRequest,
+	StopSessionResponse,
+} from '@maskin/shared'
+
 // The shape of a row from the `agent_servers` table (T5). Kept inline so this
 // client doesn't depend on the schema export landing on `bet/session-infra-scale`
 // in any particular order — any caller can satisfy it with a Drizzle row, a
@@ -104,8 +111,30 @@ export class AgentServerClient {
 		})
 	}
 
-	async stopSession(sessionId: string): Promise<void> {
-		await this.postJson<{ ok: boolean }>(`/sessions/${sessionId}/stop`, {})
+	/**
+	 * Stop the remote sandbox for a session. Request carries the settle-side
+	 * `{ reason, source }` so the agent-server can log a legible provenance
+	 * on the forced-stop marker path. Response reports whether a sandbox was
+	 * actually stopped, already gone, or never found — a non-error outcome
+	 * for both `agent-completed` and `sandbox-exit` sources.
+	 */
+	async stopSession(sessionId: string, req: StopSessionRequest): Promise<StopSessionResponse> {
+		return this.postJson<StopSessionResponse>(`/sessions/${sessionId}/stop`, req)
+	}
+
+	/**
+	 * Push the guest-side `learnings/` and `memory/` directories back to S3.
+	 * Reads from the agent-server host's `<sessionDir>/{learnings,memory}/`
+	 * (bind-mounted as `/agent/` inside the guest) and uploads to the S3
+	 * prefixes documented in §6.4 of the settle-session spec. Missing
+	 * directories are tolerated — the response reports zero-file entries
+	 * with no error.
+	 */
+	async pushAgentFiles(
+		sessionId: string,
+		req: PushAgentFilesRequest,
+	): Promise<PushAgentFilesResponse> {
+		return this.postJson<PushAgentFilesResponse>(`/sessions/${sessionId}/push-agent-files`, req)
 	}
 
 	// Public to let lifecycle-route callers (T3 stop/snapshot/restore) reuse the

@@ -5,6 +5,7 @@ import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { TriggerRunner } from '../../services/trigger-runner'
 import { insertActor, insertObject, insertTrigger, insertWorkspace } from '../factories'
@@ -94,6 +95,9 @@ describe('S2 — trigger_dispatches idempotency prevents blue-green double-fire'
 		const bridge = makeStubBridge()
 		const blue = trackingSessionManager()
 		const green = trackingSessionManager()
+		// startSession() reads one process-wide SessionManager; route it to blue's
+		// spy. Both runners' calls are summed below, so the totals still cover both.
+		configureSessionLifecycle({ db, sessionManager: blue.manager })
 		const runnerBlue = new TriggerRunner(db, bridge, blue.manager)
 		const runnerGreen = new TriggerRunner(db, bridge, green.manager)
 		await runnerBlue.start()

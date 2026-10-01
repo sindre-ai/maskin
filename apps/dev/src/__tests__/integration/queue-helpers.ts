@@ -4,6 +4,7 @@ import { events } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { TriggerRunner } from '../../services/trigger-runner'
 import { db } from './global-setup'
@@ -44,7 +45,11 @@ export function newQueueRunner() {
 		dispatches.push({ actorId: String(opts.actorId), eventId: Number(event.event_id) })
 		return { id: randomUUID() }
 	})
-	const runner = new TriggerRunner(db, bridge, { createSession } as unknown as SessionManager)
+	const sessionManager = { createSession } as unknown as SessionManager
+	// Trigger sessions start through the lifecycle's startSession(), which
+	// delegates to sessionManager.createSession() — point it at the stub.
+	configureSessionLifecycle({ db, sessionManager })
+	const runner = new TriggerRunner(db, bridge, sessionManager)
 	return {
 		bridge,
 		dispatches,

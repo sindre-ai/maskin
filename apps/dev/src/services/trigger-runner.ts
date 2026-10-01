@@ -29,6 +29,7 @@ import { FLAGS, isFlagEnabledForWorkspace } from '../lib/feature-flags'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
+import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 import {
 	QUEUE_EVENT_ENTITY_TYPE,
@@ -43,6 +44,35 @@ import {
 
 /** Cap on scope-match rows appended to the action prompt so the payload stays bounded. */
 const SCOPE_MATCH_LIMIT = 100
+
+/**
+ * Resolve `{ initiatedFromObjectId, initiatedFromObjectType }` for a
+ * `SessionManager.createSession()` call. The two fields on the sessions row
+ * are FK-constrained to `objects.id`, so passing an entity id that isn't an
+ * object row (a slack.message uuid, a session id, a webhook delivery id)
+ * would trip the FK on insert. This helper resolves the id → object type
+ * with one PK read, or returns `null / null` when the entity isn't an
+ * object — matching the same "not a uuid → not an object" posture the
+ * `getObjectContext()` hydration path already uses in `handleEvent()`.
+ */
+async function loadInitiatedFromObject(
+	db: Database,
+	entityId: string | null | undefined,
+): Promise<{
+	initiatedFromObjectId: string | null
+	initiatedFromObjectType: string | null
+}> {
+	if (!entityId || !UUID_RE.test(entityId)) {
+		return { initiatedFromObjectId: null, initiatedFromObjectType: null }
+	}
+	const [row] = await db
+		.select({ id: objects.id, type: objects.type })
+		.from(objects)
+		.where(eq(objects.id, entityId))
+		.limit(1)
+	if (!row) return { initiatedFromObjectId: null, initiatedFromObjectType: null }
+	return { initiatedFromObjectId: row.id, initiatedFromObjectType: row.type }
+}
 
 /**
  * Guards the objects-table hydration lookup: `objects.id` is a uuid column, so
@@ -245,7 +275,6 @@ const DISPATCH_SWEEP_RETENTION_MS = 30 * 24 * 60 * 60_000
 export class TriggerRunner {
 	private db: Database
 	private bridge: PgNotifyBridge
-	private sessionManager: SessionManager
 	private cronJobs: Map<string, Cron> = new Map()
 	private reminderTimeouts: Map<string, NodeJS.Timeout> = new Map()
 	private eventHandler: ((event: PgEvent) => void) | null = null
@@ -281,10 +310,9 @@ export class TriggerRunner {
 	private processedSessionOutcomes: Map<string, NodeJS.Timeout> = new Map()
 	private static readonly SESSION_OUTCOME_DEDUPE_TTL_MS = 10 * 60_000
 
-	constructor(db: Database, bridge: PgNotifyBridge, sessionManager: SessionManager) {
+	constructor(db: Database, bridge: PgNotifyBridge, _sessionManager: SessionManager) {
 		this.db = db
 		this.bridge = bridge
-		this.sessionManager = sessionManager
 	}
 
 	async start() {
@@ -672,21 +700,41 @@ export class TriggerRunner {
 		dedupeTimeout.unref?.()
 		this.processedSessionOutcomes.set(sessionId, dedupeTimeout)
 
-		// Look up the session to find which trigger spawned it
+		// Look up the session to find which trigger spawned it, and whether the
+		// session is itself a scheduler-fired retry (retry_of != null) or has a
+		// retry scheduled (retry_at != null). §17.6: the trigger-runner defers
+		// to session-retry-scheduler.ts on retry chains — it should not
+		// double-account a subscription-limit failure as a trigger backoff, or
+		// pre-emptively record a trigger failure for a session the scheduler is
+		// about to retry on the same triggerId.
 		const [session] = await this.db
-			.select({ triggerId: sessions.triggerId })
+			.select({
+				triggerId: sessions.triggerId,
+				retryOf: sessions.retryOf,
+				retryAt: sessions.retryAt,
+			})
 			.from(sessions)
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 
 		if (!session?.triggerId) return
 
+		// Scheduler-fired retry — the trigger's failure/backoff bookkeeping
+		// already accounted for the original session; skip the re-fire so a
+		// retry chain doesn't inflate the failure count.
+		if (session.retryOf) return
+
 		if (event.action === 'session_completed') {
 			await this.resetTriggerBackoff(session.triggerId)
+		} else if (session.retryAt) {
+			// session_failed / session_timeout but the scheduler is going to
+			// retry on the same triggerId — don't record a backoff yet; wait
+			// for the retry chain's terminal outcome.
 		} else {
-			// session_failed or session_timeout. A provider-truth reset time
-			// (§4.6) beats the exponential guess: the trigger AND the workspace
-			// hold until then, and the queue drains when it arrives.
+			// session_failed or session_timeout with no retry scheduled. A
+			// provider-truth reset time (§4.6) beats the exponential guess: the
+			// trigger AND the workspace hold until then, and the queue drains when
+			// it arrives.
 			const retryAt = await this.readRetryAt(event)
 			if (retryAt) {
 				await this.recordTriggerFailure(session.triggerId, 'retry_at_x', retryAt)
@@ -1036,22 +1084,26 @@ export class TriggerRunner {
 			})
 
 			const prompt = `${trigger.actionPrompt}\n\nTriggering event: ${JSON.stringify(eventForPrompt)}`
-			this.sessionManager
-				.createSession(event.workspace_id, {
-					actorId: trigger.targetActorId,
-					actionPrompt: prompt,
-					triggerId: trigger.id,
-					triggerType: trigger.type,
-					createdBy: trigger.createdBy,
-				})
-				.then(async (session) => {
+			const initiatedFrom = await loadInitiatedFromObject(this.db, event.entity_id)
+			startSession({
+				workspaceId: event.workspace_id,
+				actorId: trigger.targetActorId,
+				callerKind: 'trigger',
+				actionPrompt: prompt,
+				triggerId: trigger.id,
+				triggerType: trigger.type,
+				createdBy: trigger.createdBy,
+				...initiatedFrom,
+				await: 'none',
+			})
+				.then(async (handle) => {
 					// Stamp the claim row with the session id. Diagnostic only —
 					// if this UPDATE fails, the trigger_dispatches row still
 					// guards against double-fire; its presence is the guarantee,
 					// not session_id (tech spec §6.4).
 					await this.db
 						.update(triggerDispatches)
-						.set({ sessionId: session.id })
+						.set({ sessionId: handle.sessionId })
 						.where(
 							and(
 								eq(triggerDispatches.triggerId, trigger.id),
@@ -1062,7 +1114,7 @@ export class TriggerRunner {
 							logger.debug('Could not stamp trigger_dispatches.session_id', {
 								triggerId: trigger.id,
 								eventId: event.event_id,
-								sessionId: session.id,
+								sessionId: handle.sessionId,
 								error: String(err),
 							}),
 						)
@@ -1071,11 +1123,11 @@ export class TriggerRunner {
 					if (event.entity_id) {
 						await this.db
 							.update(objects)
-							.set({ activeSessionId: session.id, updatedAt: new Date() })
+							.set({ activeSessionId: handle.sessionId, updatedAt: new Date() })
 							.where(eq(objects.id, event.entity_id))
 							.catch((err) =>
 								logger.debug('Could not link object to active session', {
-									sessionId: session.id,
+									sessionId: handle.sessionId,
 									entityId: event.entity_id,
 									error: String(err),
 								}),
@@ -1248,24 +1300,29 @@ export class TriggerRunner {
 			? `${trigger.actionPrompt}\n\nScope matches: ${JSON.stringify(scopeMatches)}`
 			: trigger.actionPrompt
 
-		this.sessionManager
-			.createSession(trigger.workspaceId, {
-				actorId: trigger.targetActorId,
-				actionPrompt,
-				triggerId: trigger.id,
-				triggerType: trigger.type,
-				createdBy: trigger.createdBy,
-			})
-			.catch((err) =>
-				this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch(
-					(persistErr) =>
-						logger.error('handleSessionCreateFailure persistence failed', {
-							workspaceId: trigger.workspaceId,
-							trigger: trigger.name,
-							error: String(persistErr),
-						}),
-				),
-			)
+		startSession({
+			workspaceId: trigger.workspaceId,
+			actorId: trigger.targetActorId,
+			callerKind: 'trigger',
+			actionPrompt,
+			triggerId: trigger.id,
+			triggerType: trigger.type,
+			createdBy: trigger.createdBy,
+			// Cron trigger: the scope may or may not match an object. NULL is the
+			// correct value when no single originating object exists (spec §3.3,
+			// cron/reminder rows).
+			initiatedFromObjectId: null,
+			initiatedFromObjectType: null,
+			await: 'none',
+		}).catch((err) =>
+			this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch((persistErr) =>
+				logger.error('handleSessionCreateFailure persistence failed', {
+					workspaceId: trigger.workspaceId,
+					trigger: trigger.name,
+					error: String(persistErr),
+				}),
+			),
+		)
 	}
 
 	private async queryScopeMatches(
@@ -1541,24 +1598,28 @@ export class TriggerRunner {
 				},
 			})
 
-			this.sessionManager
-				.createSession(trigger.workspaceId, {
-					actorId: trigger.targetActorId,
-					actionPrompt: trigger.actionPrompt,
-					triggerId: trigger.id,
-					triggerType: trigger.type,
-					createdBy: trigger.createdBy,
-				})
-				.catch((err) =>
-					this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch(
-						(persistErr) =>
-							logger.error('handleSessionCreateFailure persistence failed', {
-								workspaceId: trigger.workspaceId,
-								trigger: trigger.name,
-								error: String(persistErr),
-							}),
-					),
-				)
+			startSession({
+				workspaceId: trigger.workspaceId,
+				actorId: trigger.targetActorId,
+				callerKind: 'trigger',
+				actionPrompt: trigger.actionPrompt,
+				triggerId: trigger.id,
+				triggerType: trigger.type,
+				createdBy: trigger.createdBy,
+				// Reminder trigger: one-shot, no originating object.
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
+				await: 'none',
+			}).catch((err) =>
+				this.handleSessionCreateFailure(trigger.workspaceId, err, trigger.name).catch(
+					(persistErr) =>
+						logger.error('handleSessionCreateFailure persistence failed', {
+							workspaceId: trigger.workspaceId,
+							trigger: trigger.name,
+							error: String(persistErr),
+						}),
+				),
+			)
 
 			// Auto-disable after firing
 			await this.db
@@ -1921,7 +1982,7 @@ export class CommentDispatcher {
 	constructor(
 		private db: Database,
 		private bridge: PgNotifyBridge,
-		private sessionManager: SessionManager,
+		_sessionManager: SessionManager,
 	) {}
 
 	start(): void {
@@ -2254,8 +2315,11 @@ export class CommentDispatcher {
 		actionPrompt: string
 	}): Promise<boolean> {
 		try {
-			await this.sessionManager.createSession(ctx.workspaceId, {
+			const initiatedFrom = await loadInitiatedFromObject(this.db, ctx.entityId)
+			await startSession({
+				workspaceId: ctx.workspaceId,
 				actorId: ctx.actorId,
+				callerKind: 'trigger',
 				actionPrompt: ctx.actionPrompt,
 				createdBy: ctx.actorId,
 				triggerSource: 'comment_fallback',
@@ -2266,6 +2330,8 @@ export class CommentDispatcher {
 						source_comment_event_id: ctx.sourceCommentEventId,
 					},
 				},
+				...initiatedFrom,
+				await: 'none',
 			})
 			return true
 		} catch (err) {
@@ -2398,36 +2464,39 @@ export class CommentDispatcher {
 
 		if (ctx.actor.type !== 'agent') return
 
-		this.sessionManager
-			.createSession(ctx.workspaceId, {
-				actorId: ctx.actor.id,
-				actionPrompt: buildMentionPrompt({
-					objectId: ctx.objectId,
-					commenterActorId: ctx.commenterId,
-					content: ctx.content,
-					notificationId: notification.id,
-					parentEventId: ctx.parentEventId,
-				}),
-				config: {
-					mention: {
-						object_id: ctx.objectId,
-						commenter_actor_id: ctx.commenterId,
-						notification_id: notification.id,
-						comment_event_id: ctx.eventId,
-					},
+		const initiatedFrom = await loadInitiatedFromObject(this.db, ctx.objectId)
+		startSession({
+			workspaceId: ctx.workspaceId,
+			actorId: ctx.actor.id,
+			callerKind: 'trigger',
+			actionPrompt: buildMentionPrompt({
+				objectId: ctx.objectId,
+				commenterActorId: ctx.commenterId,
+				content: ctx.content,
+				notificationId: notification.id,
+				parentEventId: ctx.parentEventId,
+			}),
+			config: {
+				mention: {
+					object_id: ctx.objectId,
+					commenter_actor_id: ctx.commenterId,
+					notification_id: notification.id,
+					comment_event_id: ctx.eventId,
 				},
-				triggerSource: 'comment_fallback',
-				sourceCommentEventId: ctx.eventId,
-				createdBy: ctx.commenterId,
-			})
-			.catch((err) =>
-				logger.error('Failed to create session for @mentioned agent', {
-					agentId: ctx.actor.id,
-					objectId: ctx.objectId,
-					notificationId: notification.id,
-					error: String(err),
-				}),
-			)
+			},
+			triggerSource: 'comment_fallback',
+			sourceCommentEventId: ctx.eventId,
+			createdBy: ctx.commenterId,
+			...initiatedFrom,
+			await: 'none',
+		}).catch((err) =>
+			logger.error('Failed to create session for @mentioned agent', {
+				agentId: ctx.actor.id,
+				objectId: ctx.objectId,
+				notificationId: notification.id,
+				error: String(err),
+			}),
+		)
 	}
 
 	private log(event: PgEvent, kind: CommentDispatchCase, resolvedActorId: string): void {

@@ -2,6 +2,7 @@ import { triggerCooldowns, triggers, workspaceSuppressions } from '@maskin/db/sc
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { eq } from 'drizzle-orm'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { TriggerRunner } from '../../services/trigger-runner'
 import { insertActor, insertTrigger, insertWorkspace } from '../factories'
@@ -41,6 +42,13 @@ function makeStubSessionManager(): SessionManager {
 	} as unknown as SessionManager
 }
 
+function newRunner(): TriggerRunner {
+	const sessionManager = makeStubSessionManager()
+	// Trigger sessions start via the lifecycle's startSession(), which delegates here.
+	configureSessionLifecycle({ db, sessionManager })
+	return new TriggerRunner(db, makeStubBridge(), sessionManager)
+}
+
 // A trigger-runner instance for one restart in the deploy rehearsal.
 async function startRunner(workspaceId: string): Promise<TriggerRunner> {
 	// Turn the v2 read-path gate on for this workspace so loadCooldowns /
@@ -49,7 +57,7 @@ async function startRunner(workspaceId: string): Promise<TriggerRunner> {
 	// Reset the memoized feature-flag config so isFlagEnabledForWorkspace
 	// picks up the env write we just made.
 	_resetFeatureFlagConfig()
-	const runner = new TriggerRunner(db, makeStubBridge(), makeStubSessionManager())
+	const runner = newRunner()
 	await runner.start()
 	return runner
 }
@@ -205,7 +213,7 @@ describe('S1 — trigger cooldowns persist across trigger-runner restart', () =>
 		// Only the gated workspace opts into the v2 read-path.
 		process.env.FF_WORKSPACE_FEATURES = `${wsGated.id}:trigger_engine_v2`
 		_resetFeatureFlagConfig()
-		const runner = new TriggerRunner(db, makeStubBridge(), makeStubSessionManager())
+		const runner = newRunner()
 		await runner.start()
 
 		const failures = (runner as unknown as { triggerFailures: Map<string, unknown> })

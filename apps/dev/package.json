@@ -14,7 +14,8 @@
 		"test": "vitest",
 		"test:integration": "vitest run --config vitest.integration.config.ts",
 		"trigger:lint": "tsx scripts/trigger-lint.ts",
-		"type-check": "tsc --noEmit"
+		"type-check": "tsc --noEmit",
+		"lint:terminal-status": "bash ../../scripts/guard-terminal-status.sh"
 	},
 	"dependencies": {
 		"@hono/node-server": "^1.19.13",
@@ -55,6 +56,7 @@
 		"@types/tar-stream": "^3.1.4",
 		"@vitest/coverage-v8": "^3.2.4",
 		"esbuild": "^0.28.0",
+		"ts-morph": "^24.0.0",
 		"tsx": "^4.19.0",
 		"typescript": "^5.7.0",
 		"vitest": "^3.0.0"

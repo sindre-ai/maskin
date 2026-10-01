@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
 import { trackCommentResponderResolved } from '../../lib/analytics/comment-responder-events'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import {
 	CommentDispatcher,
 	normalizeMentionsList,
@@ -39,6 +40,7 @@ describe('CommentDispatcher', () => {
 		const ctx = createTestContext()
 		mockResults = ctx.mockResults
 		calls = ctx.calls
+		configureSessionLifecycle({ db: ctx.db, sessionManager })
 		dispatcher = new CommentDispatcher(ctx.db, bridge, sessionManager)
 		;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: 'session-1',
@@ -67,8 +69,12 @@ describe('CommentDispatcher', () => {
 		bridge.emit('event', event)
 		// Yield enough microtask ticks to drain every await inside
 		// handleEvent → dispatchMention → insertNotificationsWithEvents. Each
-		// mock resolves synchronously, so a small loop is plenty.
-		for (let i = 0; i < 20; i++) await Promise.resolve()
+		// mock resolves synchronously, so a small loop is plenty. Bumped to
+		// 40 with the initiated_from lookup added to dispatchMention /
+		// dispatchCommentFallback: each mention now has an extra `await`
+		// (`loadInitiatedFromObject`), so multi-mention fanouts were racing
+		// the assertion at the old 20-tick budget.
+		for (let i = 0; i < 40; i++) await Promise.resolve()
 	}
 
 	it('ignores events that are not commented-on-object', async () => {
