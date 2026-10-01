@@ -1,6 +1,7 @@
 import type { Database, Transaction } from '@maskin/db'
-import { events, agentServers, sessions } from '@maskin/db/schema'
+import { agentServers, sessions } from '@maskin/db/schema'
 import { and, eq, inArray } from 'drizzle-orm'
+import { recordEvents } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { AgentServerClient } from './agent-server-client'
 import type { SessionManager } from './session-manager'
@@ -39,7 +40,7 @@ export interface StopSessionsForActorsResult {
 	failed: string[]
 }
 
-function withTimeout(promise: Promise<void>, ms: number, label: string): Promise<void> {
+function withTimeout(promise: Promise<unknown>, ms: number, label: string): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
 		promise.then(
@@ -149,39 +150,37 @@ export async function stopSessionsForActors(
 	// wiped milliseconds after it is written and never reaches the feed. The
 	// deleted agent is still identifiable from `data.agent_actor_id`.
 	if (stopped.length > 0 || failed.length > 0) {
-		await db
-			.insert(events)
-			.values(
-				live.map((row) => ({
-					workspaceId: row.workspaceId,
-					actorId: deletedByActorId,
-					action: 'session_failed' as const,
-					entityType: 'session' as const,
-					entityId: row.id,
-					data: {
-						exit_code: null,
-						source: 'agent_deleted',
-						agent_actor_id: row.actorId,
-						stopped: stopped.includes(row.id),
-						failure_reason: {
-							provider: 'agent-server',
-							reason_code: 'agent_deleted',
-							human_message:
-								'This session was stopped because its agent was deleted while the session was still running.',
-							http_status: null,
-							reset_at: null,
-							verbatim_output: null,
-						},
+		await recordEvents(
+			db,
+			live.map((row) => ({
+				workspaceId: row.workspaceId,
+				actorId: deletedByActorId,
+				action: 'session_failed',
+				entityType: 'session',
+				entityId: row.id,
+				data: {
+					exit_code: null,
+					source: 'agent_deleted',
+					agent_actor_id: row.actorId,
+					stopped: stopped.includes(row.id),
+					failure_reason: {
+						provider: 'agent-server',
+						reason_code: 'agent_deleted',
+						human_message:
+							'This session was stopped because its agent was deleted while the session was still running.',
+						http_status: null,
+						reset_at: null,
+						verbatim_output: null,
 					},
-				})),
-			)
-			.catch((err) => {
-				// Audit-only — never block the delete on it.
-				logger.error('Failed to record stop events for deleted agent sessions', {
-					actorIds,
-					error: err instanceof Error ? err.message : String(err),
-				})
+				},
+			})),
+		).catch((err) => {
+			// Audit-only — never block the delete on it.
+			logger.error('Failed to record stop events for deleted agent sessions', {
+				actorIds,
+				error: err instanceof Error ? err.message : String(err),
 			})
+		})
 	}
 
 	logger.info('Stopped live sessions ahead of agent deletion', {
@@ -252,7 +251,11 @@ export async function stopCapturedSandboxes(
 			if (!serverRow) return
 			const client = new AgentServerClient({ server: serverRow })
 			try {
-				await withTimeout(client.stopSession(row.id), STOP_TIMEOUT_MS, `stopSession ${row.id}`)
+				await withTimeout(
+					client.stopSession(row.id, { reason: 'stop', source: 'user-stop' }),
+					STOP_TIMEOUT_MS,
+					`stopSession ${row.id}`,
+				)
 			} catch (err) {
 				logger.error('Failed to stop a stranded sandbox after its session was deleted', {
 					sessionId: row.id,

@@ -27,7 +27,7 @@ function buildRow(
 ) {
 	const object = buildObjectResponse(objectOverrides)
 	const rel = buildRelationshipResponse({ targetId: object.id, ...relOverrides })
-	return { rel, object }
+	return { kind: 'object' as const, rel, object }
 }
 
 const baseProps = {

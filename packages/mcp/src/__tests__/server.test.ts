@@ -775,6 +775,37 @@ describe('tool handlers', () => {
 			expect(calledUrl).toContain('updated_before=2026-06-30T12%3A00%3A00.000Z')
 			expect(calledUrl).toContain('updated_after=2026-06-29T12%3A00%3A00.000Z')
 		})
+
+		it('forwards trigger_id, before and verbose=true to the route', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_sessions')
+			await handler({
+				trigger_id: '3f6fd7e1-92f3-46d0-adfb-f93bfea9f810',
+				before: '2026-06-30T12:00:00.000Z',
+				verbose: true,
+			})
+
+			const sessionsCall = vi
+				.mocked(fetch)
+				.mock.calls.find((c) => (c[0] as string).includes('/api/sessions?'))
+			const calledUrl = sessionsCall?.[0] as string
+			expect(calledUrl).toContain('trigger_id=3f6fd7e1-92f3-46d0-adfb-f93bfea9f810')
+			expect(calledUrl).toContain('before=2026-06-30T12%3A00%3A00.000Z')
+			expect(calledUrl).toContain('verbose=true')
+		})
+
+		it('omits verbose from the query when false so the lean default applies', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_sessions')
+			await handler({ verbose: false })
+
+			const sessionsCall = vi
+				.mocked(fetch)
+				.mock.calls.find((c) => (c[0] as string).includes('/api/sessions?'))
+			expect(sessionsCall?.[0] as string).not.toContain('verbose=')
+		})
 	})
 
 	describe('update_objects handler — file attachments', () => {
@@ -1001,6 +1032,212 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('create_relationship handler', () => {
+		const OBJ_A = '11111111-1111-4111-8111-111111111111'
+		const OBJ_B = '22222222-2222-4222-8222-222222222222'
+		const FILE_A = '33333333-3333-4333-8333-333333333333'
+		const FILE_B = '44444444-4444-4444-8444-444444444444'
+
+		/**
+		 * Mock a workspace where two ids live in `objects` and two ids live in
+		 * `files`. The MCP tool preflights each endpoint by hitting
+		 * `/api/files/:id` first and falling back to `/api/objects/:id`; both
+		 * routes 404 when the id doesn't belong. Anything else 500s.
+		 */
+		function mockWorkspace(existing: Set<string>, filesSet: Set<string>) {
+			const relRows: Array<Record<string, unknown>> = []
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				const filesMatch = u.match(/\/api\/files\/([0-9a-fA-F-]{36})$/)
+				if (filesMatch) {
+					const id = filesMatch[1] as string
+					if (filesSet.has(id)) {
+						return {
+							ok: true,
+							headers: new Headers(),
+							json: () => Promise.resolve({ id, name: `file-${id}` }),
+						} as Response
+					}
+					return {
+						ok: false,
+						status: 404,
+						headers: new Headers(),
+						text: () => Promise.resolve('{"error":{"code":"NOT_FOUND","message":"not found"}}'),
+					} as unknown as Response
+				}
+				const objectsMatch = u.match(/\/api\/objects\/([0-9a-fA-F-]{36})$/)
+				if (objectsMatch) {
+					const id = objectsMatch[1] as string
+					if (existing.has(id) && !filesSet.has(id)) {
+						return {
+							ok: true,
+							headers: new Headers(),
+							json: () => Promise.resolve({ id, title: `obj-${id}` }),
+						} as Response
+					}
+					return {
+						ok: false,
+						status: 404,
+						headers: new Headers(),
+						text: () => Promise.resolve('{"error":{"code":"NOT_FOUND","message":"not found"}}'),
+					} as unknown as Response
+				}
+				if (u.endsWith('/api/relationships') && (init?.method ?? 'GET') === 'POST') {
+					const body = JSON.parse((init as RequestInit).body as string) as {
+						source_id: string
+						target_id: string
+						type: string
+					}
+					// Idempotency mirror: (source_id, target_id, type) unique.
+					const existing = relRows.find(
+						(r) =>
+							r.sourceId === body.source_id &&
+							r.targetId === body.target_id &&
+							r.type === body.type,
+					)
+					const row = existing ?? {
+						id: `rel-${relRows.length + 1}`,
+						sourceId: body.source_id,
+						targetId: body.target_id,
+						type: body.type,
+						sourceType: filesSet.has(body.source_id) ? 'file' : 'object',
+						targetType: filesSet.has(body.target_id) ? 'file' : 'object',
+						createdAt: '2026-09-22T00:00:00.000Z',
+						sourceTitle: filesSet.has(body.source_id)
+							? `file-${body.source_id}`
+							: `obj-${body.source_id}`,
+						targetTitle: filesSet.has(body.target_id)
+							? `file-${body.target_id}`
+							: `obj-${body.target_id}`,
+					}
+					if (!existing) relRows.push(row)
+					return {
+						ok: true,
+						status: 201,
+						headers: new Headers(),
+						json: () => Promise.resolve(row),
+					} as Response
+				}
+				return {
+					ok: false,
+					status: 500,
+					headers: new Headers(),
+					text: () => Promise.resolve('{"error":{"code":"INTERNAL_ERROR","message":"unexpected"}}'),
+				} as unknown as Response
+			})
+			return { relRows }
+		}
+
+		it.each([
+			['object', 'object', OBJ_A, OBJ_B],
+			['object', 'file', OBJ_A, FILE_A],
+			['file', 'object', FILE_A, OBJ_A],
+			['file', 'file', FILE_A, FILE_B],
+		])(
+			'round-trips a %s → %s pair — server derives types from ids',
+			async (_sourceKind, _targetKind, sourceId, targetId) => {
+				mockWorkspace(new Set([OBJ_A, OBJ_B, FILE_A, FILE_B]), new Set([FILE_A, FILE_B]))
+				const handler = getHandler('create_relationship')
+				const result = (await handler({
+					workspace_id: 'ws-1',
+					source_id: sourceId,
+					target_id: targetId,
+					type: 'relates_to',
+				})) as { structuredContent: { relationship: Record<string, unknown> } }
+				expect(result.structuredContent.relationship.sourceId).toBe(sourceId)
+				expect(result.structuredContent.relationship.targetId).toBe(targetId)
+
+				// The POST body must NOT reflect caller-supplied labels; the
+				// preflight resolved kinds from the ids and passed them as
+				// placeholders the server derives past anyway.
+				const relCall = vi
+					.mocked(fetch)
+					.mock.calls.find(
+						(c) =>
+							(c[0] as string).endsWith('/api/relationships') &&
+							(c[1] as RequestInit).method === 'POST',
+					)
+				expect(relCall).toBeDefined()
+				const relBody = JSON.parse((relCall?.[1] as RequestInit).body as string)
+				expect(relBody.source_id).toBe(sourceId)
+				expect(relBody.target_id).toBe(targetId)
+				expect(relBody.type).toBe('relates_to')
+			},
+		)
+
+		it('returns 404 when source_id belongs to neither an object nor a file', async () => {
+			mockWorkspace(new Set([OBJ_A]), new Set())
+			const handler = getHandler('create_relationship')
+			await expect(
+				handler({
+					workspace_id: 'ws-1',
+					source_id: OBJ_B,
+					target_id: OBJ_A,
+					type: 'relates_to',
+				}),
+			).rejects.toThrow(/404/)
+		})
+
+		it('returns 404 when target_id is unknown', async () => {
+			mockWorkspace(new Set([OBJ_A]), new Set([FILE_A]))
+			const handler = getHandler('create_relationship')
+			await expect(
+				handler({
+					workspace_id: 'ws-1',
+					source_id: OBJ_A,
+					target_id: OBJ_B,
+					type: 'relates_to',
+				}),
+			).rejects.toThrow(/404/)
+		})
+
+		it('is idempotent — double-call with identical params returns the same row', async () => {
+			const { relRows } = mockWorkspace(new Set([OBJ_A, FILE_A]), new Set([FILE_A]))
+			const handler = getHandler('create_relationship')
+
+			const first = (await handler({
+				workspace_id: 'ws-1',
+				source_id: OBJ_A,
+				target_id: FILE_A,
+				type: 'attached',
+			})) as { structuredContent: { relationship: { id: string } } }
+			const second = (await handler({
+				workspace_id: 'ws-1',
+				source_id: OBJ_A,
+				target_id: FILE_A,
+				type: 'attached',
+			})) as { structuredContent: { relationship: { id: string } } }
+
+			expect(first.structuredContent.relationship.id).toBe(second.structuredContent.relationship.id)
+			expect(relRows).toHaveLength(1)
+		})
+
+		it('ignores caller-supplied source_type / target_type labels', async () => {
+			mockWorkspace(new Set([OBJ_A, FILE_A]), new Set([FILE_A]))
+			const handler = getHandler('create_relationship')
+			await handler({
+				workspace_id: 'ws-1',
+				source_id: OBJ_A,
+				target_id: FILE_A,
+				type: 'attached',
+				// These would be stripped by the schema and never reach the
+				// wire. The handler derives kinds from the id itself.
+				source_type: 'anything',
+				target_type: 'anything-else',
+			})
+			const relCall = vi
+				.mocked(fetch)
+				.mock.calls.find(
+					(c) =>
+						(c[0] as string).endsWith('/api/relationships') &&
+						(c[1] as RequestInit).method === 'POST',
+				)
+			const relBody = JSON.parse((relCall?.[1] as RequestInit).body as string)
+			expect(relBody.source_type).toBe('object')
+			expect(relBody.target_type).toBe('file')
+		})
+	})
+
 	describe('create_actor handler', () => {
 		it('POSTs to /api/actors with skipAuth', async () => {
 			mockFetchSuccess({ id: 'actor-new', name: 'Bot', type: 'agent' })
@@ -1072,7 +1309,7 @@ describe('tool handlers', () => {
 						json: async () => ({
 							id: 'actor-new',
 							llm_provider: 'anthropic',
-							llm_config: { model: 'claude-opus-4-6' },
+							llm_config: { model: 'claude-sonnet-5-5' },
 						}),
 					} as Response
 				}
@@ -1083,16 +1320,16 @@ describe('tool handlers', () => {
 			const result = (await handler({
 				type: 'agent',
 				name: 'Bot',
-				llm_config: { provider: 'anthropic', model: 'claude-opus-4-6' },
+				llm_config: { provider: 'anthropic', model: 'claude-sonnet-5-5' },
 			})) as { content: Array<{ text: string }> }
 
 			expect(actorsPostBody).toMatchObject({
 				llm_provider: 'anthropic',
-				llm_config: { model: 'claude-opus-4-6' },
+				llm_config: { model: 'claude-sonnet-5-5' },
 			})
 			// The two API columns come back merged into one llm_config field, mirroring the input shape.
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed.llm_config).toEqual({ provider: 'anthropic', model: 'claude-opus-4-6' })
+			expect(parsed.llm_config).toEqual({ provider: 'anthropic', model: 'claude-sonnet-5-5' })
 			expect(parsed.llm_provider).toBeUndefined()
 		})
 
@@ -2734,6 +2971,109 @@ describe('tool handlers', () => {
 				headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
 			})
 		})
+
+		it('strips no_thread from the POST body', async () => {
+			mockFetchSuccess({})
+
+			const handler = getHandler('create_comment')
+			await handler({
+				entity_id: objectId,
+				content: 'top-level on purpose',
+				no_thread: true,
+			})
+
+			const call = vi.mocked(fetch).mock.calls[0]
+			const body = JSON.parse((call[1] as RequestInit).body as string)
+			expect(body).not.toHaveProperty('no_thread')
+			expect(body.entity_id).toBe(objectId)
+			expect(body.content).toBe('top-level on purpose')
+		})
+	})
+
+	// Thread defaulting lives on a server built with `triggeringEventId` set,
+	// which mirrors what `routes/mcp.ts` does when the caller carries the
+	// `X-Maskin-Triggering-Event-Id` header. A separate handler map is built
+	// here so the default doesn't leak into the other create_comment tests.
+	describe('create_comment thread defaulting', () => {
+		const objectId = '550e8400-e29b-41d4-a716-446655440000'
+		let threadedHandlers: Map<string, (args: Record<string, unknown>) => Promise<unknown>>
+
+		beforeEach(() => {
+			vi.clearAllMocks()
+			threadedHandlers = new Map()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				threadedHandlers.set(
+					name as string,
+					handler as (args: Record<string, unknown>) => Promise<unknown>,
+				)
+			})
+			createMcpServer({ ...config, triggeringEventId: 4242 })
+		})
+
+		function getThreadedHandler(name: string) {
+			const h = threadedHandlers.get(name)
+			if (!h) throw new Error(`Handler ${name} not registered`)
+			return h
+		}
+
+		function mockOk() {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () => Promise.resolve({ id: 1 }),
+			} as Response)
+		}
+
+		it('defaults parent_event_id to the triggering event id when the caller omits it', async () => {
+			mockOk()
+			const handler = getThreadedHandler('create_comment')
+			await handler({ entity_id: objectId, content: 'ack' })
+
+			const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)
+			expect(body.parent_event_id).toBe(4242)
+		})
+
+		it('honours an explicit parent_event_id — a different comment always wins over the default', async () => {
+			mockOk()
+			const handler = getThreadedHandler('create_comment')
+			await handler({
+				entity_id: objectId,
+				content: 'reply to another thread',
+				parent_event_id: 99,
+			})
+
+			const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)
+			expect(body.parent_event_id).toBe(99)
+		})
+
+		it('opts out of threading when no_thread: true', async () => {
+			mockOk()
+			const handler = getThreadedHandler('create_comment')
+			await handler({ entity_id: objectId, content: 'new topic', no_thread: true })
+
+			const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)
+			expect(body).not.toHaveProperty('parent_event_id')
+			expect(body).not.toHaveProperty('no_thread')
+		})
+
+		it('does not inject a default when the server was built without a triggeringEventId', async () => {
+			// Independent server without triggeringEventId — mirrors a session
+			// dispatched from something other than a comment (cron, chat, etc.).
+			const isolated = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+			vi.clearAllMocks()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				isolated.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
+			})
+			createMcpServer(config)
+
+			mockOk()
+			const handler = isolated.get('create_comment')
+			if (!handler) throw new Error('create_comment not registered')
+			await handler({ entity_id: objectId, content: 'standalone' })
+
+			const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)
+			expect(body).not.toHaveProperty('parent_event_id')
+		})
 	})
 
 	describe('workspace schema handlers', () => {
@@ -4032,6 +4372,78 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.heroCard.kind).toBe('single')
 		})
 
+		// Regression: `heroCard.objects` used to slice at 25 while `page.returned`
+		// / next_cursor advanced by the full fetched row count. That silently
+		// dropped rows 26–limit on every hop of a `limit > 25` walk. Now every
+		// row the API returned ships in `heroCard.objects`, so shipped-rows,
+		// `page.returned`, and the cursor advance count all agree.
+		it('list_actors returns every row when paged with limit > 25 (no silent 25-row clamp)', async () => {
+			const totalRows = 60
+			const requestedLimit = 50
+			const seen = new Set<string>()
+			// Assemble a fake table indexed by (createdAt, id) so the mock can
+			// respond to a cursor by returning the slice after the cursor's row.
+			const table = Array.from({ length: totalRows }, (_, i) => ({
+				id: `a-${String(i).padStart(3, '0')}`,
+				createdAt: new Date(2026, 0, 1, 0, 0, totalRows - i).toISOString(),
+				type: 'agent' as const,
+				name: `Actor ${String(i).padStart(3, '0')}`,
+			}))
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors')) {
+					const parsed = new URL(urlStr, 'http://x')
+					const limitParam = Number(parsed.searchParams.get('limit'))
+					const cursorCreatedAt = parsed.searchParams.get('cursor_created_at')
+					const cursorId = parsed.searchParams.get('cursor_id')
+					let start = 0
+					if (cursorCreatedAt && cursorId) {
+						start = table.findIndex((r) => r.createdAt === cursorCreatedAt && r.id === cursorId) + 1
+					}
+					const slice = table.slice(start, start + limitParam)
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': String(totalRows) }),
+						json: () => Promise.resolve(slice),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_actors')
+			let cursor: string | undefined
+			let hops = 0
+			// Walk until the tool stops handing back a cursor. Bound the loop so
+			// a regression that never emits a null cursor can't hang the suite.
+			while (hops < 10) {
+				hops++
+				const result = (await handler({
+					workspace_id: 'ws-1',
+					limit: requestedLimit,
+					cursor,
+				})) as {
+					structuredContent: {
+						heroCard: { objects?: Array<{ id: string }> }
+						next_cursor?: string
+						page?: { returned?: number }
+					}
+				}
+				const shipped = result.structuredContent.heroCard.objects ?? []
+				for (const row of shipped) {
+					// A duplicate would mean the cursor did not advance past the
+					// last shipped row; a skip surfaces below by the size check.
+					expect(seen.has(row.id)).toBe(false)
+					seen.add(row.id)
+				}
+				if (result.structuredContent.page) {
+					expect(result.structuredContent.page.returned).toBe(shipped.length)
+				}
+				cursor = result.structuredContent.next_cursor
+				if (!cursor) break
+			}
+			// Every seeded row shows up exactly once across the walk.
+			expect(seen.size).toBe(totalRows)
+		})
+
 		it('emits a list heroCard for list_triggers with type=trigger rows + resolved target actor', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
@@ -4125,6 +4537,73 @@ describe('tool handlers', () => {
 			expect(triggersCalls.some((u) => u.includes('limit=2') && u.includes('offset=0'))).toBe(true)
 			expect(result.structuredContent.heroCard.kind).toBe('list')
 			expect(result.structuredContent.heroCard.totalCount).toBe(987)
+		})
+
+		// Regression: same bug as `list_actors returns every row…` above. See
+		// that test for the fuller comment; both tools share the fix.
+		it('list_triggers returns every row when paged with limit > 25 (no silent 25-row clamp)', async () => {
+			const totalRows = 60
+			const requestedLimit = 50
+			const seen = new Set<string>()
+			const table = Array.from({ length: totalRows }, (_, i) => ({
+				id: `t-${String(i).padStart(3, '0')}`,
+				createdAt: new Date(2026, 0, 1, 0, 0, totalRows - i).toISOString(),
+				type: 'cron' as const,
+				name: `Trigger ${String(i).padStart(3, '0')}`,
+				enabled: true,
+				targetActorId: null,
+			}))
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/triggers')) {
+					const parsed = new URL(urlStr, 'http://x')
+					const limitParam = Number(parsed.searchParams.get('limit'))
+					const cursorCreatedAt = parsed.searchParams.get('cursor_created_at')
+					const cursorId = parsed.searchParams.get('cursor_id')
+					let start = 0
+					if (cursorCreatedAt && cursorId) {
+						start = table.findIndex((r) => r.createdAt === cursorCreatedAt && r.id === cursorId) + 1
+					}
+					const slice = table.slice(start, start + limitParam)
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': String(totalRows) }),
+						json: () => Promise.resolve(slice),
+					} as Response
+				}
+				if (urlStr.includes('/api/actors')) {
+					return { ok: true, json: () => Promise.resolve([]) } as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_triggers')
+			let cursor: string | undefined
+			let hops = 0
+			while (hops < 10) {
+				hops++
+				const result = (await handler({
+					workspace_id: 'ws-1',
+					limit: requestedLimit,
+					cursor,
+				})) as {
+					structuredContent: {
+						heroCard: { objects?: Array<{ id: string }> }
+						next_cursor?: string
+						page?: { returned?: number }
+					}
+				}
+				const shipped = result.structuredContent.heroCard.objects ?? []
+				for (const row of shipped) {
+					expect(seen.has(row.id)).toBe(false)
+					seen.add(row.id)
+				}
+				if (result.structuredContent.page) {
+					expect(result.structuredContent.page.returned).toBe(shipped.length)
+				}
+				cursor = result.structuredContent.next_cursor
+				if (!cursor) break
+			}
+			expect(seen.size).toBe(totalRows)
 		})
 
 		it('swaps to the hero-card resource for a single organization (customer variant)', async () => {

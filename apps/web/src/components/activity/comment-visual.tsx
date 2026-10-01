@@ -6,6 +6,9 @@ interface CommentVisualProps {
 }
 
 export function CommentVisual({ language, source }: CommentVisualProps) {
+	// An empty fenced block is what a streaming or partial render leaves behind.
+	// That is not a broken chart — render nothing rather than an error box.
+	if (!source.trim()) return null
 	if (language === 'chart') {
 		const result = parseChartSpec(source)
 		if (!result.ok) return <CommentChartFallback reason={result.reason} />

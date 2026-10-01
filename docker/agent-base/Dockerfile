@@ -14,7 +14,7 @@ RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 # Claude Code releases — the interactive chat session parses these lines
 # verbatim, so a silent CLI bump can break parsing. Bump this deliberately
 # after re-validating the stream-json fixtures.
-RUN npm install -g @anthropic-ai/claude-code@2.1.112
+RUN npm install -g @anthropic-ai/claude-code@2.1.285
 
 # Pre-install Playwright MCP server (connects to external browser via CDP)
 RUN npm install -g @playwright/mcp
@@ -54,7 +54,18 @@ RUN chmod +x /agent-hooks/preview-ports-changed.sh
 COPY hooks/ask-user-question.sh /agent-hooks/ask-user-question.sh
 RUN chmod +x /agent-hooks/ask-user-question.sh
 
-RUN mkdir -p /home/agent/.claude
+# Register workspace skills for the Claude Code harness. The harness walks
+# ~/.claude/skills for SKILL.md files, but the agent-server stages workspace
+# skills at /agent/skills (a mount on every dispatched session, populated by
+# stageSessionSkills in the agent-server). Baking a single dir symlink at
+# image build lets every session's Skill tool resolve staged skills with no
+# per-session host-side work. Route decided by the spike (task bf2ab627,
+# resolved 2026-09-25) — Case B, primary; the boot-time guard
+# assert_skills_symlink in agent-run.sh is the check that this link is
+# still present at runtime, since the spike could not verify the literal
+# ~/.claude/skills path in-session (harness-write-protected).
+RUN mkdir -p /home/agent/.claude \
+    && ln -s /agent/skills /home/agent/.claude/skills
 COPY claude-settings.json /home/agent/.claude/settings.json
 RUN chown -R agent:agent /home/agent/.claude
 

@@ -1,7 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
-	events,
 	actors,
 	conversationParticipants,
 	conversations,
@@ -22,6 +21,7 @@ import {
 } from '@maskin/shared'
 import { and, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import {
 	conversationDetailResponseSchema,
@@ -278,7 +278,7 @@ app.openapi(createConversationRoute, (async (c) => {
 				.where(eq(conversations.id, created.id))
 		}
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId: callerId,
 			action: 'conversation_created',
@@ -547,7 +547,7 @@ app.openapi(updateConversationRoute, (async (c) => {
 		.returning()
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId: callerId,
 		action: 'conversation_updated',
@@ -619,7 +619,7 @@ app.openapi(addParticipantsRoute, (async (c) => {
 
 	await addParticipantsToConversation(db, id, body.actor_ids, callerId)
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId: callerId,
 		action: 'conversation_participant_added',
@@ -685,7 +685,7 @@ app.openapi(removeParticipantRoute, (async (c) => {
 		.returning({ actorId: conversationParticipants.actorId })
 
 	if (removed.length > 0) {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId: callerId,
 			action: 'conversation_participant_removed',
@@ -861,7 +861,7 @@ app.openapi(postMessageRoute, (async (c) => {
 			const toAdd = notYetJoined.filter((actorId) => memberIds.has(actorId))
 			if (toAdd.length > 0) {
 				await addParticipantsToConversation(db, id, toAdd, callerId)
-				await db.insert(events).values({
+				await recordEvent(db, {
 					workspaceId,
 					actorId: callerId,
 					action: 'conversation_participant_added',
@@ -963,7 +963,7 @@ app.openapi(editMessageRoute, (async (c) => {
 		.returning()
 	if (!updated) throw new Error('Failed to update message')
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId: callerId,
 		action: 'message_updated',
@@ -1117,7 +1117,14 @@ app.openapi(updateMeRoute, (async (c) => {
 	const setValues: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.pinned !== undefined) setValues.pinned = body.pinned
 	if (body.archived !== undefined) setValues.archived = body.archived
-	if (body.last_read_message_id !== undefined) {
+	// mark_unread is a reset, so it must bypass the GREATEST guard below — that
+	// guard is advance-only by design and would clamp any reset straight back up
+	// to the existing cursor, turning the write into a silent no-op. Null is the
+	// stored "never read" value (a fresh participant row starts at null and every
+	// read query coalesces it to 0), so the reset is a direct assignment.
+	if (body.mark_unread === true) {
+		setValues.lastReadMessageId = null
+	} else if (body.last_read_message_id !== undefined) {
 		// GREATEST — read state never regresses even if updates race or arrive
 		// out of order.
 		setValues.lastReadMessageId = sql`GREATEST(COALESCE(${conversationParticipants.lastReadMessageId}, 0), ${body.last_read_message_id})`
@@ -1135,7 +1142,7 @@ app.openapi(updateMeRoute, (async (c) => {
 		.returning()
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId: callerId,
 		action: 'conversation_participant_state_updated',
@@ -1145,6 +1152,7 @@ app.openapi(updateMeRoute, (async (c) => {
 			pinned: body.pinned,
 			archived: body.archived,
 			last_read_message_id: body.last_read_message_id,
+			mark_unread: body.mark_unread,
 		},
 	})
 

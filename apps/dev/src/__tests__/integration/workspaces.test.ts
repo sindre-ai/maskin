@@ -1031,7 +1031,10 @@ describe('Workspaces Integration', () => {
 				.select({ name: triggers.name })
 				.from(triggers)
 				.where(eq(triggers.workspaceId, ws.id))
-			expect(triggerRows).toHaveLength(13)
+			// Bumped from 13 to 14 with the addition of the Beat 6 chained
+			// "Deep-research brief validated → Signal Analyst clustering" trigger
+			// in DEFAULT_WORKSPACE_TRIGGERS.
+			expect(triggerRows).toHaveLength(14)
 		})
 
 		it('seeds the Bet discovery loop, Workspace improvements, and Knowledge Wiki loops wired to their triggers', async () => {

@@ -34,6 +34,7 @@ import {
 	trackLoopUninstalled,
 } from '../lib/analytics/loop-events'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
@@ -541,7 +542,7 @@ app.openapi(installLoopRoute, async (c) => {
 				.set({ objectId: loopObject.id })
 				.where(eq(installedLoops.id, installRow.id))
 
-			await tx.insert(events).values({
+			await recordEvent(tx, {
 				workspaceId,
 				actorId,
 				action: 'created',
@@ -550,7 +551,7 @@ app.openapi(installLoopRoute, async (c) => {
 				data: loopObject,
 			})
 
-			await tx.insert(events).values({
+			await recordEvent(tx, {
 				workspaceId,
 				actorId,
 				action: 'created',
@@ -779,7 +780,7 @@ app.openapi(forkLoopRoute, async (c) => {
 			.returning({ id: integrations.id })
 		detached.integrations = integrationRes.length
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId: row.workspaceId,
 			actorId,
 			action: 'forked',
@@ -1184,7 +1185,7 @@ app.openapi(uninstallLoopRoute, async (c) => {
 			removedLoopObject = true
 		}
 
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId: install.workspaceId,
 			actorId,
 			action: 'deleted',

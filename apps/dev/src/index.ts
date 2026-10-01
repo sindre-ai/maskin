@@ -8,23 +8,34 @@ import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
+import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
+import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
+import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import {
 	type DevBootstrapResult,
 	maybeBootstrapDev,
 	seedMarketplaceIfEmpty,
 } from './lib/dev-bootstrap'
+import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
 import { logger } from './lib/logger'
+import { getStripeClient } from './lib/stripe'
 import { AgentStorageManager } from './services/agent-storage'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
+import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
+import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
+import { MeetWatchRenewer } from './services/meet-watch-renewer'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionDispatcher } from './services/session-dispatcher'
+import { configureSessionLifecycle } from './services/session-lifecycle'
 import { SessionManager } from './services/session-manager'
-import { TriggerRunner } from './services/trigger-runner'
+import { SessionRetryScheduler } from './services/session-retry-scheduler'
+import { SessionSelfHealJob } from './services/session-self-heal-job'
+import { CommentDispatcher, TriggerRunner } from './services/trigger-runner'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
 
@@ -52,6 +63,19 @@ try {
 		error: err instanceof Error ? err.message : String(err),
 	})
 }
+
+// Repopulate the in-process LinkedIn MCP fan-out registry from every active
+// `linkedin-unipile` credential in the DB. Fire-and-forget on purpose:
+// every Coolify redeploy of apps/dev wipes the registry, and until this
+// runs `tools/list` on the LinkedIn MCP returns zero tools for a workspace
+// with an active credential — but boot must not block on Unipile latency
+// either, and the self-heal path in the /mcp route covers any credential
+// whose enumeration hasn't landed by the time the first request arrives.
+repopulateLinkedInMcpRegistryOnBoot(db).catch((err) => {
+	logger.error('linkedin-unipile boot repopulation: unexpected failure', {
+		error: err instanceof Error ? err.message : String(err),
+	})
+})
 
 // Real-time: PG NOTIFY → SSE bridge
 // LISTEN/NOTIFY requires a direct (session-mode) connection when using a connection
@@ -81,6 +105,24 @@ try {
 	)
 }
 
+// VAT bet Task 1 (Delta 1b): log a warning when the live Stripe
+// maskin_credits_growth / maskin_credits_scale Price amounts drift from the
+// USD-minor thresholds pinned in credit-billing.ts. Fire-and-forget so a
+// Stripe outage or a deployment without STRIPE_SECRET_KEY at boot does not
+// take the API down over an application-level bonus classification.
+try {
+	const stripe = getStripeClient()
+	verifyVolumeBonusThresholds(stripe).catch((err) => {
+		logger.warn('verifyVolumeBonusThresholds failed', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+	})
+} catch (err) {
+	logger.info('Skipping volume-bonus threshold verification — Stripe not configured', {
+		error: err instanceof Error ? err.message : String(err),
+	})
+}
+
 const agentStorage = new AgentStorageManager(storageProvider, db)
 
 const runtimeTelemetry = new RuntimeTelemetry({
@@ -97,6 +139,11 @@ sessionManager.setBrowserSidecarBuildContext(
 )
 runtimeTelemetry.startGaugeLoop(() => sessionManager.getConcurrencyByAgentServer())
 
+// The one entry point for starting a session — every wrapper (chat, trigger,
+// REST, MCP, onboarding, self-spawn) routes through startSession(). See
+// apps/dev/src/services/session-lifecycle.ts + tech spec §14.
+configureSessionLifecycle({ db, sessionManager })
+
 const port = Number(process.env.PORT) || 3000
 
 const app = createApp({ db, notifyBridge, sessionManager, agentStorage, storageProvider }, { port })
@@ -106,13 +153,34 @@ sessionManager.start().then(() => {
 })
 
 const triggerRunner = new TriggerRunner(db, notifyBridge, sessionManager)
-triggerRunner.start().then(() => {
-	logger.info('Trigger runner started')
-})
+// Fail fast if trigger-runner cannot boot — a boot failure here is almost
+// always loadCooldowns / loadSuppressions unable to read the persisted state,
+// and running with empty Maps against a live DB reintroduces the deploy-wipe
+// bug (bet #7). Refusing to start is safer than silently masking it.
+triggerRunner
+	.start()
+	.then(() => {
+		logger.info('Trigger runner started')
+	})
+	.catch((err) => {
+		logger.error('Trigger runner failed to start — exiting', { error: String(err) })
+		process.exit(1)
+	})
+
+const commentDispatcher = new CommentDispatcher(db, notifyBridge, sessionManager)
+commentDispatcher.start()
 
 const gmailWatchRenewer = new GmailWatchRenewer(db)
 gmailWatchRenewer.start()
 logger.info('Gmail watch renewer started')
+
+const meetWatchRenewer = new MeetWatchRenewer(db)
+meetWatchRenewer.start()
+logger.info('Meet watch renewer started')
+
+const meetTranscriptReconciler = new MeetTranscriptReconciler(db, storageProvider)
+meetTranscriptReconciler.start()
+logger.info('Meet transcript reconciler started')
 
 const webhookDeliveriesCleaner = new WebhookDeliveriesCleaner(db)
 webhookDeliveriesCleaner.start()
@@ -122,13 +190,46 @@ const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
 briefCacheCleaner.start()
 logger.info('Brief cache cleaner started')
 
+// §7.6 — session-retry scheduler. Ticks every 30s, reads sessions_retry_at_idx
+// for due retry_at rows and fires startSession({retryOf, attemptNumber:N+1,
+// callerKind:'internal'}). Killswitch env FEATURE_RETRY_SCHEDULER=0 disables
+// the tick without a code roll.
+const sessionRetryScheduler = new SessionRetryScheduler(db)
+sessionRetryScheduler.start()
+logger.info('Session retry scheduler started')
+
+// §9.4 — self-heal: back-fills the session_* events row for terminal sessions
+// that never got one. Ticks every 60s; idempotent, so safe on every restart.
+const sessionSelfHealJob = new SessionSelfHealJob(db)
+sessionSelfHealJob.start()
+logger.info('Session self-heal job started')
+
 const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()
 logger.info('Webhook deliveries reconciler started')
 
+const purgeIdempotencyJob = new PurgeIdempotencyJob(db)
+purgeIdempotencyJob.start()
+logger.info('Purge idempotency job started')
+
+// VIES-hold scheduler: 15-min cron running T+2h reminder + T+24h timeout
+// sweeps for the VAT-correct-checkout bet (a9e19ca4). Both sweeps early-return
+// when no rows are eligible, so this is a no-op until the webhook starts
+// writing rows to the `awaiting_vies` table.
+const viesSchedulerJob = new ViesSchedulerJob(db)
+viesSchedulerJob.start()
+logger.info('VIES scheduler job started')
+
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
+
+// D6b — Loops v4 escalation reconciler. Runs iff BOTH `loops-v4-polish` and
+// `loops-v4-polish.step_flow` are in FF_TESTER_FEATURES; noop otherwise, so
+// unsetting the sub-flag from the env + restarting is the rollback path.
+const loopEscalationReconciler = new LoopEscalationReconciler(db)
+loopEscalationReconciler.start()
+logger.info('Loop escalation reconciler started')
 
 const orphanThreadDetector = new OrphanThreadDetector(db)
 orphanThreadDetector.start()
@@ -182,6 +283,12 @@ if (process.env.NODE_ENV === 'production') {
 				...(spec.browserRequired && { browserRequired: true }),
 				...(spec.previewGuestPorts.length > 0 && { previewGuestPorts: spec.previewGuestPorts }),
 				sourceSessionId: session.sourceSessionId ?? undefined,
+				// Layer 1 skills provisioning — agent-server materialises the
+				// manifest into `<sessionDir>/skills/<name>/` after the S3
+				// snapshot restore and before `spawnSession` mounts the dir.
+				// Omitted when empty so the payload stays byte-identical to
+				// pre-bet behaviour for agents with no attached skills.
+				...(spec.skillsManifest.length > 0 && { skills: spec.skillsManifest }),
 			}
 		},
 		// Interactive sessions get no ACTION_PROMPT env var — agent-run.sh's
@@ -234,6 +341,7 @@ const shutdown = async (signal: string) => {
 	shuttingDown = true
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
+	purgeIdempotencyJob.stop()
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.

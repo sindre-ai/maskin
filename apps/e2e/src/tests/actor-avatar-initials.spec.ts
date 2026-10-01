@@ -1,4 +1,5 @@
 import { expect, test } from '../fixtures/auth.fixture'
+import { TestAPI } from '../helpers/api.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // Covers ActorAvatar (T1 of Per-agent avatars in Maskin):
@@ -95,6 +96,46 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 			)
 
 			expect(secondColor).toBe(firstColor)
+		})
+	}
+})
+
+// Regression for the post-ship defect: an agent named "Linker (Sigrid)" rendered
+// initials "L(" because the initial was taken from the raw word rather than its
+// first letter/digit. The punctuation-only trailing word must be skipped.
+test.describe('ActorAvatar — punctuated agent names skip punctuation', () => {
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		test(`renders LS for "Linker (Sigrid)" at ${viewport.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+
+			const agentName = `Linker (Sigrid) ${Date.now()}`
+			const agent = await account.api.createAgentActor(agentName)
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+
+			const bet = await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Bet for punctuated initials',
+				status: 'signal',
+			})
+
+			// Author the comment as the punctuated agent so its avatar renders in
+			// the timeline. The agent's own key posts as the agent.
+			const agentApi = new TestAPI(agent.api_key)
+			await agentApi.createComment(account.workspaceId, {
+				entity_id: bet.id,
+				content: 'Authored by the punctuated agent',
+			})
+
+			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+			await expect(
+				page.getByRole('heading', { level: 1, name: 'Bet for punctuated initials' }),
+			).toBeVisible({ timeout: 20000 })
+
+			// The punctuated word's own first character is "(" — the bug. The
+			// correct initials are L + S, letters only.
+			const avatar = page.locator(`main .rounded-full[title="${agentName}"]`).first()
+			await expect(avatar).toBeVisible({ timeout: 10000 })
+			await expect(avatar).toHaveText('LS')
 		})
 	}
 })

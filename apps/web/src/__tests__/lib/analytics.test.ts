@@ -4,6 +4,7 @@ import {
 	trackAgentCreated,
 	trackAgentSessionCompleted,
 	trackAgentSessionStarted,
+	trackAskBannerDecideClicked,
 	trackBetArchived,
 	trackBetCreated,
 	trackBetStatusChanged,
@@ -187,7 +188,36 @@ describe('v1 taxonomy helpers', () => {
 		)
 	})
 
-	it('chat_session_started carries the entry point + entry_agent_role for the CoS bet', () => {
+	it('agent_session_completed carries G2 trigger provenance and defaults it to null', () => {
+		const capture = captureSpy()
+
+		trackAgentSessionCompleted({
+			entity_id: 'sess-1',
+			entity_type: 'session',
+			outcome: 'completed',
+			flow_id: 'evt-1',
+			trigger_id: 'trig-1',
+			trigger_type: 'cron',
+		})
+		trackAgentSessionCompleted({
+			entity_id: 'sess-2',
+			entity_type: 'session',
+			outcome: 'completed',
+		})
+
+		expect(capture).toHaveBeenNthCalledWith(
+			1,
+			'agent_session_completed',
+			expect.objectContaining({ trigger_id: 'trig-1', trigger_type: 'cron' }),
+		)
+		expect(capture).toHaveBeenNthCalledWith(
+			2,
+			'agent_session_completed',
+			expect.objectContaining({ trigger_id: null, trigger_type: null }),
+		)
+	})
+
+	it('chat_session_started carries the entry point + entry_agent_role + participant_count', () => {
 		const capture = captureSpy()
 
 		trackChatSessionStarted({
@@ -195,18 +225,21 @@ describe('v1 taxonomy helpers', () => {
 			entity_type: 'session',
 			entry_point: 'sindre_session',
 			entry_agent_role: 'chief-of-staff',
+			participant_count: 1,
 		})
 		trackChatSessionStarted({
 			entity_id: 'sess-8',
 			entity_type: 'session',
 			entry_point: 'agent_one_shot',
 			entry_agent_role: 'workspace-coach',
+			participant_count: 3,
 		})
 		trackChatSessionStarted({
 			entity_id: 'sess-9',
 			entity_type: 'session',
 			entry_point: 'sindre_session',
 			entry_agent_role: null,
+			participant_count: 2,
 		})
 
 		expect(capture).toHaveBeenNthCalledWith(1, 'chat_session_started', {
@@ -216,6 +249,7 @@ describe('v1 taxonomy helpers', () => {
 			flow_id: null,
 			entry_point: 'sindre_session',
 			entry_agent_role: 'chief-of-staff',
+			participant_count: 1,
 		})
 		expect(capture).toHaveBeenNthCalledWith(2, 'chat_session_started', {
 			entity_id: 'sess-8',
@@ -224,6 +258,7 @@ describe('v1 taxonomy helpers', () => {
 			flow_id: null,
 			entry_point: 'agent_one_shot',
 			entry_agent_role: 'workspace-coach',
+			participant_count: 3,
 		})
 		expect(capture).toHaveBeenNthCalledWith(3, 'chat_session_started', {
 			entity_id: 'sess-9',
@@ -232,6 +267,7 @@ describe('v1 taxonomy helpers', () => {
 			flow_id: null,
 			entry_point: 'sindre_session',
 			entry_agent_role: null,
+			participant_count: 2,
 		})
 	})
 
@@ -250,13 +286,13 @@ describe('v1 taxonomy helpers', () => {
 
 		trackSindreMessageReceived({
 			session_id: 'sess-42',
-			model: 'claude-opus-4-7',
+			model: 'claude-sonnet-5-5',
 			tokens: 128,
 		})
 
 		expect(capture).toHaveBeenCalledWith('sindre_message_received', {
 			session_id: 'sess-42',
-			model: 'claude-opus-4-7',
+			model: 'claude-sonnet-5-5',
 			tokens: 128,
 		})
 	})
@@ -454,6 +490,17 @@ describe('v1 taxonomy helpers', () => {
 			'trigger_updated',
 			expect.objectContaining({ entity_id: 'trg-2', entity_type: 'trigger', source: 'web' }),
 		)
+	})
+
+	it('ask_banner_decide_clicked carries {loopId, pendingCount} for the loops-v4-polish falsification metric', () => {
+		const capture = captureSpy()
+
+		trackAskBannerDecideClicked({ loopId: 'loop-42', pendingCount: 3 })
+
+		expect(capture).toHaveBeenCalledWith('ask_banner_decide_clicked', {
+			loopId: 'loop-42',
+			pendingCount: 3,
+		})
 	})
 
 	it('object_attached_file carries file_id and parent entity type', () => {

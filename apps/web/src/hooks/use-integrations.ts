@@ -139,3 +139,17 @@ export function useSlackUsers(integrationId: string | undefined, workspaceId: st
 		staleTime: FIVE_MINUTES,
 	})
 }
+
+/**
+ * P3-K · Enumerate LinkedIn identities for a workspace. Every connected
+ * identity — the human profile plus each admined page — is one Quick Add
+ * button in the agent MCP panel. Returns [] when linkedin-unipile is not
+ * connected.
+ */
+export function useLinkedInIdentities(workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.integrations.linkedinIdentities(workspaceId),
+		queryFn: () => api.integrations.linkedinIdentities(workspaceId),
+		staleTime: FIVE_MINUTES,
+	})
+}

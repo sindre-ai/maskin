@@ -1,0 +1,816 @@
+import {
+	type IncomingMessage,
+	type ServerResponse,
+	createServer as createHttpServer,
+} from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { tryHandlePostsCrud } from './handlers/posts-crud'
+export {
+	CANNED_EDIT_POST_RESPONSE,
+	CANNED_POST_NOT_FOUND_ERROR,
+	clearPostsCrudPending,
+	setNextPostsCrudError,
+} from './handlers/posts-crud'
+export type { PostsCrudErrorTrigger } from './handlers/posts-crud'
+
+/**
+ * In-process LinkedIn mock server for tests, rebuilt against LinkedIn Hosted
+ * Auth v2 + Messaging v2. Starts on a random port so multiple test suites
+ * can run in parallel; the caller passes the resolved base URL to the
+ * linkedin-unipile client/route via UNIPILE_BASE_URL.
+ *
+ * Covers the subset of LinkedIn's v2 API this bet touches:
+ *   - POST /v2/auth/link                                    — hosted-auth
+ *   - POST /v2/:account_id/inboxes/:inbox_id/chats/send      — new-chat send
+ *   - GET  /v2/:account_id/inboxes/:inbox_id/chats           — list chats
+ *   - POST /v2/:account_id/chats/:chat_id/messages/send     — reply in thread
+ *   - GET  /v2/:account_id/chats/:chat_id/messages          — read a thread
+ *   - GET  /v2/:account_id/users/me/relations               — connections
+ *   - POST /v2/:account_id/linkedin/search                  — people search
+ *   - GET  /v2/:account_id/users/:identifier                — one profile
+ *   - POST /v2/:account_id/users/me/relation-requests       — connect-request
+ *   - DELETE /v2/accounts/:account_id                       — P3-B account delete
+ *
+ * The v1 handlers (`/api/v1/hosted/accounts/link`, `/api/v1/messages`,
+ * `/api/v1/chats*`) are gone. Signature verification is gone too — v2 uses a
+ * GET redirect callback whose auth is the round-trip `state` binding, not
+ * HMAC; test helpers `simulateCallbackSuccess`/`simulateCallbackError`
+ * replace v1's `postSignedCallback`.
+ *
+ * Connect-request errors are simulated by request body — the mock inspects
+ * the incoming `user_id` and returns the matching LinkedIn error envelope
+ * (see `CONNECTION_REQUEST_TRIGGERS` below). This is the same pattern the
+ * live LinkedIn API uses to signal `invite_quota_exceeded` and
+ * `already_connected` (error envelopes on the same route), so a test that
+ * drives a specific `user_id` exercises the classifier end-to-end without a
+ * separate stub layer.
+ */
+
+export interface LinkedInMockServer {
+	baseUrl: string
+	close: () => Promise<void>
+	/** Return the list of inbound requests recorded by the mock so tests can assert on what LinkedIn received. */
+	inbox: () => Array<{ method: string; path: string; body: unknown }>
+	/** Reset the recorded inbox between test cases. */
+	resetInbox: () => void
+	/**
+	 * Plant a single-shot response override matched by a well-known trigger
+	 * name. Currently supports:
+	 *
+	 *   - `page-admin-revoked` — the next request to any page-scoped Unipile
+	 *     route (posts, comments, engagement, business-page publish) answers
+	 *     with the LinkedIn 403 + `error_code: 'page_admin_revoked'`
+	 *     envelope. Consumed once, then removed. Used by the R11-C 403
+	 *     safety-net tests to force the classifier + deregister-and-re-enum
+	 *     path without a live LinkedIn account.
+	 *
+	 * Named lookup rather than freeform override so a suite that adds a new
+	 * failure mode registers it here — the trigger names are the contract
+	 * with the classifier and body-marker discriminators.
+	 */
+	setNext: (trigger: MockNextTrigger) => void
+}
+
+/** Named single-shot response triggers. See `LinkedInMockServer.setNext`. */
+export type MockNextTrigger =
+	| 'page-admin-revoked'
+	| 'delete-account-already-gone'
+	| 'delete-account-unavailable'
+
+// Verified against the live api.unipile.com response on 2026-09-04:
+// `{"object":"HostedAuthLink","link":"https://auth.unipile.com/?token=..."}`.
+// `link` is top-level — it is NOT nested under `data` (this mock and the
+// client schema both had it nested, so the suite was green while every real
+// connect failed schema validation and reported "temporarily unavailable").
+const CANNED_AUTH_LINK = (state: string, base: string) => ({
+	object: 'HostedAuthLink',
+	link: `${base}/mock-wizard?state=${encodeURIComponent(state)}`,
+})
+
+// Shapes below are copied from the LinkedIn v2 reference pages, not invented.
+// An invented mock is worse than no mock: it makes the suite green against a
+// payload production will never send.
+
+/**
+ * LinkedIn's 501 envelope for a route it does not implement for this provider.
+ * Copied from the live response shape, not invented.
+ */
+const CANNED_NOT_IMPLEMENTED = (useInstead: string) => ({
+	status: 501,
+	type: 'api/not_implemented',
+	title: 'Not implemented',
+	detail: `Use ${useInstead} endpoint for this provider.`,
+})
+
+/**
+ * `POST /v2/:account_id/inboxes/:inbox_id/chats/send` — reference: "Start a
+ * Chat from Inbox". NOT the bare `/chats/send` ("Start a Chat"), which is for
+ * providers with no inbox concept and which LinkedIn answers 501 on.
+ */
+const CANNED_START_CHAT_RESPONSE = () => ({
+	object: 'ChatStarted',
+	chat_id: `mock-chat-${Date.now()}`,
+	message_id: `mock-msg-${Date.now()}`,
+})
+
+/** `POST /v2/:account_id/chats/:chat_id/messages/send` — reference: "Send a Message". */
+const CANNED_SEND_MESSAGE_RESPONSE = () => ({
+	object: 'MessageSent',
+	message_id: `mock-msg-${Date.now()}`,
+})
+
+/**
+ * `GET /v2/:account_id/inboxes/:inbox_id/chats` — reference: "List inbox
+ * Chats". Page nests under `data`.
+ *
+ * The bare `/v2/:account_id/chats` route this mock used to serve is one
+ * LinkedIn does not implement — the live API answers 501 there. Serving it
+ * here made the suite green against a route production can never call.
+ */
+const CANNED_CHATS_RESPONSE = () => ({
+	object: 'ChatList',
+	data: [
+		{
+			object: 'Chat',
+			id: 'mock-chat-1',
+			name: 'Ada Lovelace',
+			user_id: 'mock-user-1',
+			type: '1to1',
+			is_1to1: true,
+			is_group: false,
+			is_archived: false,
+			unread_count: 2,
+			last_message_timestamp: '2026-09-01T10:00:00.000Z',
+			last_message: { object: 'MessagePreview', text: 'Thanks for reaching out!' },
+			provider: 'linkedin',
+		},
+	],
+})
+
+/**
+ * `GET /v2/:account_id/chats/:chat_id/messages` — reference: "List Messages".
+ * Field names are copied from a live api.unipile.com response (2026-09-04):
+ * `text`, `timestamp`, `sender_id`, `is_sender`.
+ */
+const CANNED_MESSAGES_RESPONSE = () => ({
+	data: [
+		{
+			object: 'Message',
+			id: 'mock-msg-1',
+			chat_id: 'mock-chat-1',
+			sender_id: 'mock-user-1',
+			text: 'Thanks for reaching out!',
+			timestamp: '2026-09-01T10:00:00.000Z',
+			is_sender: false,
+		},
+		{
+			object: 'Message',
+			id: 'mock-msg-2',
+			chat_id: 'mock-chat-1',
+			sender_id: 'mock-user-me',
+			text: 'Happy to help — what are you working on?',
+			timestamp: '2026-09-01T10:05:00.000Z',
+			is_sender: true,
+		},
+	],
+	next_cursor: 'mock-cursor-msg',
+})
+
+/**
+ * `GET /v2/:account_id/users/me/relations` — reference: "List Relations".
+ * The person nests under `user`; the outer object is the relation itself.
+ */
+const CANNED_RELATIONS_RESPONSE = () => ({
+	data: [
+		{
+			object: 'UserRelation',
+			id: 'mock-relation-1',
+			created_at: '2026-08-01T00:00:00.000Z',
+			user: {
+				object: 'User',
+				id: 'mock-user-1',
+				type: 'individual',
+				display_name: 'Ada Lovelace',
+				first_name: 'Ada',
+				last_name: 'Lovelace',
+				description: 'Mathematician',
+				public_identifier: 'adalovelace',
+				profile_url: 'https://www.linkedin.com/in/adalovelace',
+			},
+		},
+	],
+	next_cursor: 'mock-cursor-rel',
+})
+
+/**
+ * `POST /v2/:account_id/linkedin/search` — reference: "LinkedIn Search".
+ * Search results are flat (no `user` wrapper) and carry `headline` +
+ * `network_distance` where a relation carries `description` and neither.
+ */
+const CANNED_SEARCH_RESPONSE = () => ({
+	data: [
+		{
+			object: 'PeopleSearchResult',
+			id: 'mock-user-2',
+			display_name: 'Grace Hopper',
+			headline: 'Rear Admiral, compiler pioneer',
+			network_distance: 'SECOND_DEGREE',
+			location: 'New York',
+			public_identifier: 'gracehopper',
+			profile_url: 'https://www.linkedin.com/in/gracehopper',
+		},
+	],
+	next_cursor: 'mock-cursor-search',
+})
+
+// ── Content / community v2 responses (Task 7b) ────────────────────────────
+
+/** `POST /v2/:account_id/posts` — reference: "Create a Post". */
+const CANNED_PUBLISH_POST_RESPONSE = () => ({
+	object: 'PostPublished',
+	post_id: `mock-post-${Date.now()}`,
+	post_url: 'https://www.linkedin.com/feed/update/mock-post',
+	published_at: '2026-09-01T10:00:00.000Z',
+})
+
+/** Simulated LinkedIn post-too-long envelope. */
+const CANNED_POST_TOO_LONG_ERROR = () => ({
+	object: 'Error',
+	error_code: 'post_too_long',
+	message: 'Post body exceeds the LinkedIn 3000-character maximum length',
+})
+
+/**
+ * Simulated LinkedIn page-admin-revoked envelope (403). Shape mirrors the
+ * live LinkedIn error body — `error_code: 'page_admin_revoked'` is the
+ * discriminator the classifier reads, so a test forcing this envelope
+ * exercises the real detection branch and not a mock-only path.
+ */
+const CANNED_PAGE_ADMIN_REVOKED_ERROR = () => ({
+	object: 'Error',
+	error_code: 'page_admin_revoked',
+	message: 'The connected LinkedIn account no longer has admin access to this page.',
+})
+
+/**
+ * Unipile v2 `DELETE /v2/accounts/{account_id}` success envelope. Verified
+ * against api.unipile.com/v2/docs/json 2026-09-12 — the wire body is
+ * `{ "object": "AccountDeleted" }` on 200.
+ */
+const CANNED_ACCOUNT_DELETED_RESPONSE = () => ({
+	object: 'AccountDeleted',
+})
+
+/**
+ * Unipile v2 `DELETE /v2/accounts/{account_id}` "already gone" envelope
+ * (404). Shape matches the reference-page documented response — every field
+ * beyond `status` / `type` is best-effort and the classifier is expected to
+ * treat any 404 on this route as "already deleted upstream, log-and-continue"
+ * per the symmetric-disconnect (P3-B) semantics.
+ */
+const CANNED_ACCOUNT_NOT_FOUND_RESPONSE = () => ({
+	status: 404,
+	type: 'errors/AccountNotFound',
+	title: 'Account not found',
+	detail: 'No Unipile account exists for this id — it may already have been deleted.',
+})
+
+/**
+ * Unipile v2 upstream 5xx on account delete. Shape matches the generic
+ * Problem+JSON envelope Unipile serves on internal errors, so a test forcing
+ * this exercises the "other 4xx/5xx → log the error and STILL proceed"
+ * branch of `preDisconnect`.
+ */
+const CANNED_ACCOUNT_DELETE_UNAVAILABLE = () => ({
+	status: 503,
+	type: 'errors/ServiceUnavailable',
+	title: 'Service temporarily unavailable',
+	detail: 'Unipile is temporarily unable to process account deletions.',
+})
+
+/**
+ * `GET /v2/{account_id}/users/me/company-pages` — the pages the connected
+ * account currently administers. Shape mirrors what the R11-A / R11-C
+ * consumers need: `provider_id` (for the identity URN), `public_identifier`
+ * (identity slug), `messaging_enabled` (§2 filter), `mailbox_id` (messaging
+ * routing). The test-side helpers below let a suite plant a specific page
+ * set for one call so webhook-diff coverage does not have to mutate module
+ * state.
+ */
+type MockManagedPage = {
+	id: string
+	provider_id: string
+	public_identifier: string
+	name: string
+	messaging_enabled: boolean
+	mailbox_id: string | null
+}
+
+const DEFAULT_MANAGED_PAGES: MockManagedPage[] = [
+	{
+		id: 'mock-page-1',
+		provider_id: '11111111',
+		public_identifier: 'maskinio',
+		name: 'Maskin',
+		messaging_enabled: true,
+		mailbox_id: 'mock-mailbox-1',
+	},
+]
+
+let nextManagedPagesResponse: MockManagedPage[] | null = null
+
+/**
+ * Plant the exact page list the NEXT `GET /users/me/company-pages` call
+ * returns. Consumed once. Test-only affordance for the webhook diff suites
+ * — page rename, admin revoke, new-page grant are all expressed as
+ * different values here. The runtime code sees a plain
+ * `{ object: 'ManagedCompanyPages', data: [...] }` envelope either way.
+ */
+export function planManagedPagesResponse(pages: MockManagedPage[]): void {
+	nextManagedPagesResponse = pages
+}
+
+export function resetManagedPagesResponse(): void {
+	nextManagedPagesResponse = null
+}
+
+const CANNED_MANAGED_PAGES_RESPONSE = () => ({
+	object: 'ManagedCompanyPages',
+	data: nextManagedPagesResponse ?? DEFAULT_MANAGED_PAGES,
+})
+
+/**
+ * `GET /v2/{account_id}/users/me` — the connected account's own profile,
+ * used at fan-out register time for the personal instance's identity slug
+ * (`public_identifier`) and identity URN (`urn:li:person:{provider_id}`).
+ */
+const CANNED_ME_PROFILE_RESPONSE = () => ({
+	object: 'UserProfile',
+	id: 'mock-user-me',
+	provider_id: 'mock-user-me-provider-id',
+	public_identifier: 'sebastianbille',
+	first_name: 'Sebastian',
+	last_name: 'Bille',
+	display_name: 'Sebastian Bille',
+	profile_url: 'https://www.linkedin.com/in/sebastianbille',
+})
+
+/** `POST /v2/:account_id/posts/:post_id/comments` — reference: "Comment on Post". */
+const CANNED_COMMENT_RESPONSE = () => ({
+	object: 'CommentCreated',
+	comment_id: `mock-comment-${Date.now()}`,
+	commented_at: '2026-09-01T10:00:00.000Z',
+})
+
+/** `POST /v2/:account_id/comments/:comment_id/replies` — reference: "Reply to Comment". */
+const CANNED_REPLY_TO_COMMENT_RESPONSE = () => ({
+	object: 'CommentReplyCreated',
+	comment_id: `mock-reply-${Date.now()}`,
+	commented_at: '2026-09-01T10:05:00.000Z',
+})
+
+/** `GET /v2/:account_id/posts/:post_id/comments`. */
+const CANNED_POST_COMMENTS_RESPONSE = () => ({
+	object: 'CommentList',
+	data: [
+		{
+			object: 'Comment',
+			id: 'mock-comment-1',
+			text: 'Great post!',
+			created_at: '2026-09-01T10:01:00.000Z',
+			author: { id: 'mock-user-1', display_name: 'Ada Lovelace' },
+		},
+	],
+	paging: { total_count: 1 },
+})
+
+/** `GET /v2/:account_id/posts/:post_id`. */
+const CANNED_RETRIEVE_POST_RESPONSE = () => ({
+	object: 'Post',
+	id: 'mock-post-1',
+	author_urn: 'urn:li:person:mock-user-me',
+	author: { id: 'urn:li:person:mock-user-me', display_name: 'Sebk' },
+	published_at: '2026-09-01T09:00:00.000Z',
+	text: 'Mock post body used by the linkedin-unipile test suite.',
+})
+
+/** `GET /v2/:account_id/posts/:post_id/reactions`. */
+const CANNED_REACTIONS_RESPONSE = () => ({
+	object: 'ReactionList',
+	data: [
+		{
+			object: 'Reaction',
+			user_id: 'mock-user-1',
+			reaction_type: 'LIKE',
+			user: { id: 'mock-user-1', display_name: 'Ada Lovelace' },
+		},
+		{
+			object: 'Reaction',
+			user_id: 'mock-user-2',
+			reaction_type: 'CELEBRATE',
+			user: { id: 'mock-user-2', display_name: 'Grace Hopper' },
+		},
+	],
+})
+
+/** `GET /v2/:account_id/users/:identifier` — reference: "Get Profile". */
+const CANNED_PROFILE_RESPONSE = () => ({
+	object: 'UserProfile',
+	id: 'mock-user-2',
+	type: 'individual',
+	display_name: 'Grace Hopper',
+	first_name: 'Grace',
+	last_name: 'Hopper',
+	description: 'Rear Admiral, compiler pioneer',
+	public_identifier: 'gracehopper',
+	profile_url: 'https://www.linkedin.com/in/gracehopper',
+	location: 'New York',
+})
+
+/**
+ * `POST /v2/:account_id/users/me/relation-requests` — LinkedIn connect
+ * request. The live LinkedIn API answers with a thin `{ object,
+ * invitation_id }` envelope on success (some tenants return a bare 200);
+ * this mock returns the fuller shape so a test that reads `invitation_id`
+ * exercises the normalizer's happy path.
+ */
+const CANNED_CONNECTION_REQUEST_RESPONSE = () => ({
+	object: 'UserInvitationSent',
+	invitation_id: `mock-invite-${Date.now()}`,
+})
+
+/**
+ * Trigger `user_id` values a test can send to force an error envelope on the
+ * connect-request route. The values match the wire discriminators in
+ * `LINKEDIN_CONNECTION_REQUEST_MARKERS` so the classifier exercises its real
+ * detection branches, not a mock-only side path.
+ */
+export const CONNECTION_REQUEST_TRIGGERS = {
+	/** Force the invite-quota-exceeded envelope (400 with error_code marker). */
+	inviteQuotaExceeded: 'mock-trigger-invite-quota-exceeded',
+	/** Force the already-connected envelope (409 with error_code marker). */
+	alreadyConnected: 'mock-trigger-already-connected',
+} as const
+
+async function readBody(req: IncomingMessage): Promise<string> {
+	const chunks: Buffer[] = []
+	for await (const chunk of req) {
+		chunks.push(chunk as Buffer)
+	}
+	return Buffer.concat(chunks).toString('utf8')
+}
+
+/**
+ * Overrides for test cases that need a non-happy-path response — LINKEDIN_POST_TOO_LONG
+ * on the two publish routes, network flakes, etc. `setResponseOverride`
+ * plants a single-shot override matched by (method, path-regex) that returns
+ * the given status + body once, then removes itself.
+ */
+type ResponseOverride = {
+	match: (method: string, path: string) => boolean
+	status: number
+	body: unknown
+}
+
+const responseOverrides: ResponseOverride[] = []
+
+export function planPostTooLongResponse(): void {
+	responseOverrides.push({
+		match: (method, path) => method === 'POST' && /^\/v2\/[^/]+\/posts$/.test(path),
+		status: 400,
+		body: CANNED_POST_TOO_LONG_ERROR(),
+	})
+}
+
+/**
+ * Plant a single-shot 403 `page_admin_revoked` on the next page-scoped
+ * Unipile call. Matches any of the routes an agent hits when acting as a
+ * page — posts create, comments create, post reads, engagement reads, and
+ * their business-page variants. The 403 fires once, then the override
+ * removes itself.
+ *
+ * Deliberately does NOT match the enumeration routes (`GET /users/me` /
+ * `GET /users/me/company-pages`) — a revoked-page state should surface
+ * only on THAT page's routes, not on the enumeration call that comes
+ * after the deregister side-effect fires.
+ */
+export function planPageAdminRevokedResponse(): void {
+	responseOverrides.push({
+		match: (method, path) => {
+			// Runtime callers to page-scoped routes: publish, comment, reply, read
+			// post comments, engagement. Enumeration + own-profile calls are
+			// intentionally NOT matched (see the docstring above).
+			return (
+				(method === 'POST' && /^\/v2\/[^/]+\/posts$/.test(path)) ||
+				(method === 'POST' && /^\/v2\/[^/]+\/posts\/[^/]+\/comments$/.test(path)) ||
+				(method === 'POST' && /^\/v2\/[^/]+\/comments\/[^/]+\/replies$/.test(path)) ||
+				(method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+(\?.*)?$/.test(path)) ||
+				(method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+\/comments(\?.*)?$/.test(path)) ||
+				(method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+\/reactions(\?.*)?$/.test(path))
+			)
+		},
+		status: 403,
+		body: CANNED_PAGE_ADMIN_REVOKED_ERROR(),
+	})
+}
+
+/**
+ * Plant a single-shot 404 on the next `DELETE /v2/accounts/{account_id}`
+ * call. The P3-B disconnect handler treats this as "already deleted
+ * upstream — log-and-continue" and still flips local status. Consumed
+ * once, then removed.
+ */
+export function planAccountDeleteAlreadyGoneResponse(): void {
+	responseOverrides.push({
+		match: (method, path) => method === 'DELETE' && /^\/v2\/accounts\/[^/]+$/.test(path),
+		status: 404,
+		body: CANNED_ACCOUNT_NOT_FOUND_RESPONSE(),
+	})
+}
+
+/**
+ * Plant a single-shot 503 on the next `DELETE /v2/accounts/{account_id}`
+ * call. The P3-B disconnect handler treats this as "log the error, still
+ * proceed with local disconnect" — never blocks the user's disconnect on a
+ * Unipile-side transient. Consumed once, then removed.
+ */
+export function planAccountDeleteUnavailableResponse(): void {
+	responseOverrides.push({
+		match: (method, path) => method === 'DELETE' && /^\/v2\/accounts\/[^/]+$/.test(path),
+		status: 503,
+		body: CANNED_ACCOUNT_DELETE_UNAVAILABLE(),
+	})
+}
+
+export function planResponseOverride(override: ResponseOverride): void {
+	responseOverrides.push(override)
+}
+
+export function clearResponseOverrides(): void {
+	responseOverrides.length = 0
+}
+
+export async function startLinkedInMock(): Promise<LinkedInMockServer> {
+	const recorded: Array<{ method: string; path: string; body: unknown }> = []
+	const server = createHttpServer(async (req: IncomingMessage, res: ServerResponse) => {
+		const method = (req.method ?? 'GET').toUpperCase()
+		const url = req.url ?? '/'
+		const rawBody = await readBody(req)
+		let parsed: unknown = null
+		if (rawBody) {
+			try {
+				parsed = JSON.parse(rawBody)
+			} catch {
+				parsed = rawBody
+			}
+		}
+		recorded.push({ method, path: url, body: parsed })
+
+		const send = (status: number, body: unknown): void => {
+			res.statusCode = status
+			res.setHeader('Content-Type', 'application/json')
+			res.end(JSON.stringify(body))
+		}
+
+		// Single-shot response overrides fire before any canned route so a test
+		// can inject a specific error envelope on a matching path.
+		const overrideIndex = responseOverrides.findIndex((o) => o.match(method, url))
+		if (overrideIndex !== -1) {
+			const override = responseOverrides[overrideIndex] as ResponseOverride
+			responseOverrides.splice(overrideIndex, 1)
+			return send(override.status, override.body)
+		}
+
+		// P3-B: symmetric-disconnect account delete. Unipile-level route (not
+		// LinkedIn-scoped), so it must be matched at the top before any
+		// account-id-prefixed route. Happy path is 200 with the
+		// `AccountDeleted` envelope; the 404 (already-gone) and 5xx branches
+		// are exercised via `setNext('delete-account-already-gone' |
+		// 'delete-account-unavailable')` planted overrides.
+		if (method === 'DELETE' && /^\/v2\/accounts\/[^/]+$/.test(url)) {
+			return send(200, CANNED_ACCOUNT_DELETED_RESPONSE())
+		}
+		if (method === 'POST' && url === '/v2/auth/link') {
+			// Unipile v2 discriminates fresh vs reconnect on which of
+			// `providers` / `account_id` the body carries — the two shapes are
+			// `anyOf` in the openapi schema. Sending both together is a
+			// validation error on the live API; the mock rejects that
+			// combination too so a caller that regresses the client's branch
+			// selection fails a test here rather than shipping a call that
+			// only breaks against production. Same envelope for both shapes:
+			// `{ object: 'HostedAuthLink', link }` on 200.
+			const bodyObj =
+				typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {}
+			const hasProviders = 'providers' in bodyObj
+			const hasAccountId = 'account_id' in bodyObj
+			if (hasProviders && hasAccountId) {
+				return send(400, {
+					status: 400,
+					type: 'errors/validation',
+					title: 'Invalid request',
+					detail: '`providers` and `account_id` are mutually exclusive.',
+				})
+			}
+			if (!hasProviders && !hasAccountId) {
+				return send(400, {
+					status: 400,
+					type: 'errors/validation',
+					title: 'Invalid request',
+					detail: 'One of `providers` or `account_id` is required.',
+				})
+			}
+			const state = 'state' in bodyObj ? String(bodyObj.state ?? '') : ''
+			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+			return send(200, CANNED_AUTH_LINK(state, base))
+		}
+		// v2 messaging endpoints — account_id is a path segment.
+		if (method === 'POST' && /^\/v2\/[^/]+\/inboxes\/[^/]+\/chats\/send$/.test(url)) {
+			return send(200, CANNED_START_CHAT_RESPONSE())
+		}
+		// The bare "Start a Chat" route, served the way the live API serves it:
+		// 501 for a provider that uses inboxes. Answering 200 here is what let
+		// the suite stay green while every new-thread send failed in production.
+		if (method === 'POST' && /^\/v2\/[^/]+\/chats\/send$/.test(url)) {
+			return send(501, CANNED_NOT_IMPLEMENTED('Start a Chat in the given inbox'))
+		}
+		if (method === 'GET' && /^\/v2\/[^/]+\/inboxes\/[^/]+\/chats(\?.*)?$/.test(url)) {
+			return send(200, CANNED_CHATS_RESPONSE())
+		}
+		if (method === 'POST' && /^\/v2\/[^/]+\/chats\/[^/]+\/messages\/send$/.test(url)) {
+			return send(200, CANNED_SEND_MESSAGE_RESPONSE())
+		}
+		// Read surfaces. The messages route must be tested BEFORE the send route
+		// above would ever be reached by a GET, and the relations route before
+		// the generic `/users/:identifier` one — `/users/me/relations` also
+		// matches `/users/:identifier` with identifier="me", which is exactly
+		// the collision that makes `/users/relations` answer 200 with one
+		// unrelated profile on the live API.
+		if (method === 'GET' && /^\/v2\/[^/]+\/chats\/[^/]+\/messages(\?.*)?$/.test(url)) {
+			return send(200, CANNED_MESSAGES_RESPONSE())
+		}
+		if (method === 'GET' && /^\/v2\/[^/]+\/users\/me\/relations(\?.*)?$/.test(url)) {
+			return send(200, CANNED_RELATIONS_RESPONSE())
+		}
+		// Enumeration routes — the connect callback (R11-A) and the
+		// account.reconnect webhook (R11-C) both call these. Must be
+		// checked BEFORE the generic `/users/:identifier` catch-all so
+		// `/users/me` is not resolved as a profile handle. The page list lives
+		// under `/v2/{acc}/linkedin/company/pages` (see the block below and
+		// `unipile-client.ts` — the R11-A canonical path).
+		if (method === 'GET' && /^\/v2\/[^/]+\/users\/me(\?.*)?$/.test(url)) {
+			return send(200, CANNED_ME_PROFILE_RESPONSE())
+		}
+		// Connect-request route must be checked BEFORE the generic
+		// `/users/:identifier` route below — the URL `/users/me/relation-requests`
+		// also matches `/users/:identifier` with identifier="me" as a prefix,
+		// same collision family that gave us the `/users/relations` bug.
+		if (method === 'POST' && /^\/v2\/[^/]+\/users\/me\/relation-requests$/.test(url)) {
+			const userId =
+				typeof parsed === 'object' && parsed !== null && 'user_id' in parsed
+					? String((parsed as { user_id?: unknown }).user_id ?? '')
+					: ''
+			if (userId === CONNECTION_REQUEST_TRIGGERS.inviteQuotaExceeded) {
+				// Shape mirrors LinkedIn's own error envelope: `error_code` is
+				// the discriminator the classifier reads.
+				return send(400, {
+					error_code: 'invite_quota_exceeded',
+					message: "LinkedIn's weekly invitation limit for this account is reached.",
+				})
+			}
+			if (userId === CONNECTION_REQUEST_TRIGGERS.alreadyConnected) {
+				return send(409, {
+					error_code: 'already_connected',
+					message: 'Target member is already a connection or has a pending invitation.',
+				})
+			}
+			return send(200, CANNED_CONNECTION_REQUEST_RESPONSE())
+		}
+		if (method === 'POST' && /^\/v2\/[^/]+\/linkedin\/search(\?.*)?$/.test(url)) {
+			return send(200, CANNED_SEARCH_RESPONSE())
+		}
+		// R11-A enumeration route: pages the connected member admins. Must
+		// be tested BEFORE the generic /users/:identifier catch-all below, and
+		// BEFORE the generic /posts routes (the path doesn't overlap those but
+		// grouping the linkedin/ namespace here keeps the R11 additions together).
+		if (method === 'GET' && /^\/v2\/[^/]+\/linkedin\/company\/pages(\?.*)?$/.test(url)) {
+			return send(200, CANNED_MANAGED_PAGES_RESPONSE())
+		}
+		// ── Content / community routes (Task 7b) ──────────────────────────
+		// Order matters: nested paths must be tested before the /users/:identifier
+		// catch-all, otherwise "posts" would be resolved as a user handle.
+		if (method === 'POST' && /^\/v2\/[^/]+\/posts$/.test(url)) {
+			return send(200, CANNED_PUBLISH_POST_RESPONSE())
+		}
+		// R11-B destructive post CRUD (edit/delete). Delegated to the
+		// `posts-crud` handler so this main switch stays flat as more surfaces
+		// arrive (reactions CRUD in R11-C, message CRUD later). Runs BEFORE
+		// the retrieve-post / comments routes so `/posts/:id` on PATCH+DELETE
+		// dispatches here rather than falling through to the GET-only handlers.
+		{
+			const crud = tryHandlePostsCrud(method, url)
+			if (crud) return send(crud.status, crud.body)
+		}
+		if (method === 'POST' && /^\/v2\/[^/]+\/posts\/[^/]+\/comments$/.test(url)) {
+			return send(200, CANNED_COMMENT_RESPONSE())
+		}
+		if (method === 'POST' && /^\/v2\/[^/]+\/comments\/[^/]+\/replies$/.test(url)) {
+			return send(200, CANNED_REPLY_TO_COMMENT_RESPONSE())
+		}
+		if (method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+\/comments(\?.*)?$/.test(url)) {
+			return send(200, CANNED_POST_COMMENTS_RESPONSE())
+		}
+		if (method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+\/reactions(\?.*)?$/.test(url)) {
+			return send(200, CANNED_REACTIONS_RESPONSE())
+		}
+		if (method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+(\?.*)?$/.test(url)) {
+			return send(200, CANNED_RETRIEVE_POST_RESPONSE())
+		}
+		// `/users/me` returns the connected account's own profile — spec §1.4
+		// step 1 reads `public_identifier` off it as the account slug. Must
+		// resolve BEFORE the catch-all `/users/:identifier` route below so it
+		// isn't misread as a lookup of a user literally named "me".
+		if (method === 'GET' && /^\/v2\/[^/]+\/users\/me(\?.*)?$/.test(url)) {
+			return send(200, CANNED_ME_PROFILE_RESPONSE())
+		}
+		if (method === 'GET' && /^\/v2\/[^/]+\/users\/[^/]+(\?.*)?$/.test(url)) {
+			return send(200, CANNED_PROFILE_RESPONSE())
+		}
+		if (method === 'GET' && url.startsWith('/mock-wizard')) {
+			res.statusCode = 200
+			res.setHeader('Content-Type', 'text/html')
+			return res.end('<html><body>mock linkedin wizard</body></html>')
+		}
+		return send(404, { error: 'not_found', path: url })
+	})
+
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+	const port = (server.address() as AddressInfo).port
+	const baseUrl = `http://127.0.0.1:${port}`
+
+	return {
+		baseUrl,
+		close: () =>
+			new Promise<void>((resolve, reject) =>
+				server.close((err) => (err ? reject(err) : resolve())),
+			),
+		inbox: () => recorded.slice(),
+		resetInbox: () => {
+			recorded.length = 0
+		},
+		setNext: (trigger) => {
+			if (trigger === 'page-admin-revoked') {
+				planPageAdminRevokedResponse()
+				return
+			}
+			if (trigger === 'delete-account-already-gone') {
+				planAccountDeleteAlreadyGoneResponse()
+				return
+			}
+			if (trigger === 'delete-account-unavailable') {
+				planAccountDeleteUnavailableResponse()
+				return
+			}
+			// Compile-time exhaustiveness — a new trigger added to the union
+			// but missing here fails the build rather than silently no-oping.
+			const _exhaustive: never = trigger
+			throw new Error(`Unknown mock trigger: ${_exhaustive as string}`)
+		},
+	}
+}
+
+/**
+ * Test helper: GET the Maskin callback URL with the success query params
+ * LinkedIn v2 sends after a hosted-wizard completion. `redirect: 'manual'` so
+ * the test sees the 302 rather than following it.
+ */
+export async function simulateCallbackSuccess(
+	callbackUrl: string,
+	args: { state: string; account_id: string; provider?: string },
+): Promise<Response> {
+	const url = new URL(callbackUrl)
+	url.searchParams.set('state', args.state)
+	url.searchParams.set('account_id', args.account_id)
+	url.searchParams.set('provider', args.provider ?? 'linkedin')
+	return fetch(url.toString(), { method: 'GET', redirect: 'manual' })
+}
+
+/**
+ * Test helper: GET the Maskin callback URL with the error query params
+ * LinkedIn v2 sends on a hosted-wizard failure.
+ */
+export async function simulateCallbackError(
+	callbackUrl: string,
+	args: {
+		state?: string
+		error_type: string
+		error_title?: string
+		error_detail?: string
+	},
+): Promise<Response> {
+	const url = new URL(callbackUrl)
+	if (args.state) url.searchParams.set('state', args.state)
+	url.searchParams.set('error_type', args.error_type)
+	if (args.error_title) url.searchParams.set('error_title', args.error_title)
+	if (args.error_detail) url.searchParams.set('error_detail', args.error_detail)
+	return fetch(url.toString(), { method: 'GET', redirect: 'manual' })
+}

@@ -4,6 +4,7 @@ import { ProvenanceStrip } from '@/components/files/provenance-strip'
 import { type ReviewFilter, ReviewPanel } from '@/components/files/review-panel'
 import { type StagePin, ViewerStage } from '@/components/files/viewer-stage'
 import { PageHeader } from '@/components/layout/page-header'
+import { LinkedObjectsForFile } from '@/components/objects/linked-objects'
 import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
@@ -21,6 +22,7 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import { useActors } from '@/hooks/use-actors'
 import { useAttachingObjects } from '@/hooks/use-attaching-objects'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import {
 	useCreateFileComment,
 	useFileComments,
@@ -50,7 +52,7 @@ import {
 import { pickTarget, resolveProvenance } from '@/lib/viewer-provenance'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { Download, MessageSquare, MoreHorizontal } from 'lucide-react'
+import { Download, Link2, MessageSquare, MoreHorizontal } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 // URL search params for the deep-link contract (spec §Solution sketch):
@@ -91,6 +93,7 @@ function FileViewerPage() {
 	const { workspace, workspaceId } = useWorkspace()
 
 	const { data: file, isLoading, error } = useFile(workspaceId, fileId)
+	useDocumentTitle(file?.name)
 	const { data: attachers = [] } = useAttachingObjects(workspaceId, fileId)
 	const { data: comments = [] } = useFileComments(workspaceId, fileId)
 	const createComment = useCreateFileComment(workspaceId, fileId)
@@ -120,6 +123,7 @@ function FileViewerPage() {
 	const [panelOpen, setPanelOpen] = useState<boolean>(
 		search.panel === 'open' || Boolean(search.round),
 	)
+	const [linkedOpen, setLinkedOpen] = useState(false)
 	const [filter, setFilter] = useState<ReviewFilter>('open')
 	const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null)
 
@@ -450,6 +454,7 @@ function FileViewerPage() {
 						onMockupPresetChange={setMockupPreset}
 						panelOpen={panelOpen}
 						onTogglePanel={() => setPanelOpen((prev) => !prev)}
+						onOpenLinked={() => setLinkedOpen(true)}
 						annotateMode={annotateMode}
 						onToggleAnnotate={() => {
 							setAnnotateMode(!annotateMode)
@@ -504,6 +509,12 @@ function FileViewerPage() {
 					</SheetContent>
 				</Sheet>
 			)}
+			<Sheet open={linkedOpen} onOpenChange={setLinkedOpen}>
+				<SheetContent side="right" className="w-[420px] overflow-y-auto sm:max-w-none">
+					<SheetTitle className="sr-only">Linked objects and files</SheetTitle>
+					<LinkedObjectsForFile fileId={file.id} />
+				</SheetContent>
+			</Sheet>
 		</>
 	)
 }
@@ -539,6 +550,7 @@ function TopBarActions({
 	onMockupPresetChange,
 	panelOpen,
 	onTogglePanel,
+	onOpenLinked,
 	annotateMode,
 	onToggleAnnotate,
 }: {
@@ -551,6 +563,7 @@ function TopBarActions({
 	onMockupPresetChange: (next: MockupViewportPreset) => void
 	panelOpen: boolean
 	onTogglePanel: () => void
+	onOpenLinked: () => void
 	annotateMode: boolean
 	onToggleAnnotate: () => void
 }) {
@@ -564,6 +577,10 @@ function TopBarActions({
 				aria-label="Download file"
 			>
 				<Download size={14} />
+			</Button>
+			<Button variant="ghost" size="sm" onClick={onOpenLinked} aria-label="Linked objects and files">
+				<Link2 size={14} />
+				Linked
 			</Button>
 			<Button
 				variant={annotateMode ? 'secondary' : 'ghost'}

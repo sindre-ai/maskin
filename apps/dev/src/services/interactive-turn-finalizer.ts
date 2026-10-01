@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import { sessionLogs, sessions } from '@maskin/db/schema'
 import { MESSAGE_MAX_LENGTH, parseResultLine, scanTurnLine, splitLines } from '@maskin/shared'
 import { and, desc, eq, like, lte } from 'drizzle-orm'
+import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { logger } from '../lib/logger'
 import { detectPseudoToolCalls } from '../lib/pseudo-tool-call'
 import { classifyTurnError } from '../lib/turn-error-classifier'
@@ -168,6 +169,17 @@ const permanentErrorMessage = (detail: string): string =>
 	`I couldn't complete that turn — the model API returned an error:\n\n${detail}`
 
 /**
+ * The workspace's active subscription has moved onto the next slot AND this
+ * live session has been stopped, since it launched with the now-spent
+ * credentials and can't be resumed in place. Sending a new message in the
+ * same chat spawns a fresh session on the new credentials — the human doesn't
+ * have to start over anywhere. The error text is included so the human can
+ * see what happened, not to prompt any action.
+ */
+const subscriptionMovedMessage = (detail: string): string =>
+	`That Claude subscription is out of capacity, so I've switched this workspace to the next connected one and stopped this session. Send your next message here and I'll pick up on the new subscription.\n\nThe error was:\n\n${detail}`
+
+/**
  * A replayed turn we are waiting on, plus everything needed to report it if it
  * never comes back. Held rather than closed over so any of the three things
  * that can end the wait — the turn answering, the session going away, the
@@ -234,6 +246,23 @@ export type InteractiveTurnFinalizerOptions = {
 	delay?: (ms: number) => Promise<void>
 	/** Test seam: how long a replayed turn has to answer. */
 	replyTimeoutMs?: number
+	/**
+	 * Injected — this class runs on the log-ingest path and must not import
+	 * the session manager. Resolves to the slot moved to, or `null` if nothing
+	 * moved (no chain left, another session already moved, wired-off).
+	 */
+	onSubscriptionLimit?: (sessionId: string, reason: string) => Promise<string | null>
+	/**
+	 * Injected for the same reason as `onSubscriptionLimit` — no session-manager
+	 * import here. Called right after a live session's pointer has moved onto
+	 * the next Claude slot, to stop the still-running container. The current
+	 * container launched with the now-spent (or revoked) credentials and can't
+	 * be resumed in place; stopping it means the human's next message spawns a
+	 * fresh session that reads the workspace's new `active_slot` and lands on
+	 * the good credential. Best-effort by contract — a stop failure is logged
+	 * and swallowed so the human still sees the moved-subscription message.
+	 */
+	onStopSession?: (sessionId: string, reason: string) => Promise<void>
 }
 
 export class InteractiveTurnFinalizer {
@@ -260,12 +289,16 @@ export class InteractiveTurnFinalizer {
 	 */
 	private readonly pseudoToolCallNudges = new Map<string, number>()
 	private readonly retryTurn?: RetryTurnFn
+	private readonly onSubscriptionLimit?: InteractiveTurnFinalizerOptions['onSubscriptionLimit']
+	private readonly onStopSession?: InteractiveTurnFinalizerOptions['onStopSession']
 	private readonly delay: (ms: number) => Promise<void>
 	private readonly replyTimeoutMs: number
 
 	constructor(db: Database, options: InteractiveTurnFinalizerOptions = {}) {
 		this.db = db
 		this.retryTurn = options.retryTurn
+		this.onSubscriptionLimit = options.onSubscriptionLimit
+		this.onStopSession = options.onStopSession
 		this.delay =
 			options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
 		this.replyTimeoutMs = options.replyTimeoutMs ?? REPLAY_ANSWER_TIMEOUT_MS
@@ -637,6 +670,25 @@ export class InteractiveTurnFinalizer {
 		}
 	}
 
+	/** Move the workspace onto its next Claude subscription; `null` if nothing moved. */
+	private async failOverOnSubscriptionLimit(
+		sessionId: string,
+		detail: string,
+	): Promise<string | null> {
+		if (!this.onSubscriptionLimit) return null
+		// Reuse the session-exit classifier so both paths agree on "spent".
+		const failure = classifyCreditExhaustion(detail, { includeAmbiguousSignals: false })
+		if (!failure || failure.provider !== 'anthropic') return null
+		try {
+			return await this.onSubscriptionLimit(sessionId, failure.reason_code)
+		} catch (err) {
+			logger.warn(
+				`Interactive session ${sessionId} hit a subscription limit but the failover could not be recorded: ${err instanceof Error ? err.message : String(err)}`,
+			)
+			return null
+		}
+	}
+
 	/**
 	 * A turn that closed with `is_error: true`: replay it if that stands a
 	 * chance of working, otherwise tell the human in words.
@@ -668,17 +720,39 @@ export class InteractiveTurnFinalizer {
 			logger.warn(
 				`Interactive session ${sessionId} turn failed permanently (log ${logId}): ${detail}`,
 			)
+			// Session-exit failover never sees an interactive turn (see
+			// turn-error-classifier.ts), so route the same move from here.
+			const movedTo = await this.failOverOnSubscriptionLimit(sessionId, detail)
 			await this.postTurnMessage(
 				sessionId,
 				gate,
 				conversationId,
 				result,
 				logId,
-				permanentErrorMessage(detail),
+				movedTo ? subscriptionMovedMessage(detail) : permanentErrorMessage(detail),
 				{
 					error_kind: 'permanent',
+					...(movedTo ? { subscription_moved_to: movedTo } : {}),
 				},
 			)
+			// Stop the running container AFTER posting the moved-subscription
+			// notice so the human sees the reason even if the stop itself takes
+			// a moment (or fails). The current session launched with the spent
+			// credentials and cannot be resumed in place; stopping means the
+			// human's next message spawns a fresh session on the new active_slot.
+			// stopSession funnels back into markRemoteSessionComplete which
+			// re-classifies the same tail — that path's runtime failover is
+			// idempotent (CAS on active_slot in recordRuntimeClaudeOAuthFailover),
+			// so no double advance.
+			if (movedTo && this.onStopSession) {
+				try {
+					await this.onStopSession(sessionId, 'subscription_moved')
+				} catch (err) {
+					logger.warn(
+						`Interactive session ${sessionId} could not be stopped after subscription move: ${err instanceof Error ? err.message : String(err)}`,
+					)
+				}
+			}
 			return
 		}
 

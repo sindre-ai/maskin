@@ -98,6 +98,54 @@ describe('Claude OAuth refresh — slot-safe under concurrency', () => {
 		})
 	})
 
+	it('keeps the slot nickname when a token refresh is persisted over it', async () => {
+		// Regression: a refresh rebuilt the token record from the refresh
+		// response, which carries no nickname, and `persistRefreshedSlot`
+		// writes the slot wholesale — so every renamed subscription silently
+		// lost its label the first time its token was refreshed.
+		const actor = await insertActor(db)
+		const ws = await insertWorkspace(db, actor.id, {
+			settings: {
+				enabled_modules: ['work'],
+				claude_oauth: {
+					primary: { ...seedPrimary, nickname: 'Work account' },
+					failover: { active_slot: 'primary' },
+				},
+			},
+		})
+
+		// `freshPrimary` has no nickname — exactly what a refreshed blob looks
+		// like when the nickname is dropped upstream.
+		await persistRefreshedSlot(db, ws.id, 'primary', freshPrimary)
+
+		const [stored] = await db.select().from(workspaces).where(eq(workspaces.id, ws.id)).limit(1)
+		const settings = stored.settings as Record<string, unknown>
+		const oauth = settings.claude_oauth as {
+			primary: { encryptedAccessToken: string; nickname?: string }
+		}
+		expect(oauth.primary.encryptedAccessToken).toBe('p-new-enc')
+		expect(oauth.primary.nickname).toBe('Work account')
+	})
+
+	it('lets a rename that lands after a refresh win', async () => {
+		// The nickname is only carried over when the incoming blob has none —
+		// a blob that explicitly names the slot must still be able to set it.
+		const actor = await insertActor(db)
+		const ws = await insertWorkspace(db, actor.id, {
+			settings: {
+				enabled_modules: ['work'],
+				claude_oauth: { primary: { ...seedPrimary, nickname: 'Old name' } },
+			},
+		})
+
+		await persistRefreshedSlot(db, ws.id, 'primary', { ...freshPrimary, nickname: 'New name' })
+
+		const [stored] = await db.select().from(workspaces).where(eq(workspaces.id, ws.id)).limit(1)
+		const settings = stored.settings as Record<string, unknown>
+		const oauth = settings.claude_oauth as { primary: { nickname?: string } }
+		expect(oauth.primary.nickname).toBe('New name')
+	})
+
 	it('upgrades a legacy single-slot row to the new shape on first refresh', async () => {
 		const actor = await insertActor(db)
 		const ws = await insertWorkspace(db, actor.id, {

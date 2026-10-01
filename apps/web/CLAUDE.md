@@ -233,20 +233,29 @@ always a plain boolean, never undefined, no loading state. The flags are
 resolved server-side and loaded in `_authed.tsx`'s `beforeLoad`.
 
 **One boundary per feature, as high in the tree as possible** — the shell or a
-route layout, not scattered checks on individual components. No flag is live
-right now; the pattern to copy is the retired `new-design` flag, which shipped
-the v2 redesign: it was read once per route component, each swapping a whole
-page, plus one shell read in `src/components/layout/sidebar.tsx`, with the
-pre-v2 components vendored under sibling `src/components/*/legacy/` directories
-that were deleted with the flag. **One route component = one boundary** — a flag
-governing several pages legitimately has several read sites. What must never
-happen is a *second* check inside a page already on one side of the boundary;
-that means the boundary is too low — move it up rather than add another check.
-See `.claude/rules/feature-flags.md` for the full rule.
+route layout, not scattered checks on individual components.
+`linkedin-addon-visible` is the one live flag; the pattern to copy is the
+retired `new-design` flag, which shipped the v2 redesign: it was read once per
+route component, each swapping a whole page, plus one shell read in
+`src/components/layout/sidebar.tsx`, with the pre-v2 components vendored under
+sibling `src/components/*/legacy/` directories that were deleted with the flag.
+**One route component = one boundary** — a flag governing several pages
+legitimately has several read sites. What must never happen is a *second* check
+inside a page already on one side of the boundary; that means the boundary is
+too low — move it up rather than add another check. See
+`.claude/rules/feature-flags.md` for the full rule.
 
-Flags cover the **visual layer only**; never gate data fetching, API calls, or
-anything a flag-off user still depends on. Full guide (env vars, the test-only
-`ff:<flagId>` override, retirement checklist): `.claude/rules/feature-flags.md`.
+
+Flags gate **per-actor behaviour**, never shared state. A flag may gate any
+behaviour whose off-state is the already-shipped state — visual (a UI branch) or
+behavioural (an action the system takes for the flagging actor, read per
+driver-actor); SALES_REP_LINKEDIN_AUTOSEND is the precedent. A flag must
+**never** make a data-layer, API, or migration change safe: those change shared
+state for everyone, and an actor-scoped flag read at runtime cannot isolate the
+un-flagged population, so such changes must be safe for all users on their own.
+If a design needs a breaking backend change, raise it rather than wrapping it in
+a flag. Full guide (env vars, the test-only `ff:<flagId>` override, retirement
+checklist): `.claude/rules/feature-flags.md`.
 
 ## Testing
 - **Framework**: Vitest + React Testing Library + jsdom

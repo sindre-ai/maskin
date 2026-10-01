@@ -2,6 +2,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { AssignedInChatRow } from '@/components/loops/assigned-in-chat-row'
 import { LoopRow } from '@/components/loops/loop-row'
 import { DisplayPanel } from '@/components/objects/data-table/display-panel'
+import { BuyCreditsDialog } from '@/components/settings/buy-credits-dialog'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -10,7 +11,10 @@ import { RouteError } from '@/components/shared/route-error'
 import { TriggerRow } from '@/components/triggers/trigger-row'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
+import { useBillingUsage } from '@/hooks/use-billing'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
+import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useLoops } from '@/hooks/use-loops'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useTriggers } from '@/hooks/use-triggers'
@@ -55,6 +59,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/loops/')({
 })
 
 function LoopsRoute() {
+	useDocumentTitle('Loops')
 	const { workspaceId } = useWorkspace()
 	const {
 		data: loops,
@@ -69,6 +74,18 @@ function LoopsRoute() {
 	const { data: conversationPages } = useConversationsInfinite(workspaceId)
 	const updateTrigger = useUpdateTrigger(workspaceId)
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
+	const [buyCreditsOpen, setBuyCreditsOpen] = useState(false)
+
+	// Feature-flag boundary for the loops v4 polish bet. Read once at the route
+	// level per the feature-flags rule (`.claude/rules/feature-flags.md`), then
+	// composed with the workspace credit balance into a single boolean the
+	// row component can render against — no scattered flag checks in LoopRow.
+	const loopsV4Enabled = useFeatureFlag('loops-v4-polish')
+	const { data: billingUsage } = useBillingUsage(workspaceId)
+	const showNoCreditsPill =
+		loopsV4Enabled && typeof billingUsage?.credit_balance_cents === 'number'
+			? billingUsage.credit_balance_cents <= 0
+			: false
 
 	const settingsQuery = useUserDisplaySettings(workspaceId, LOOP_SETTINGS_KEY)
 	const upsertSettings = useUpdateUserDisplaySettings(workspaceId)
@@ -188,6 +205,8 @@ function LoopsRoute() {
 									loop={loop}
 									actors={actors}
 									busyAgentCount={loop.agentIds.filter((id) => workingAgentIds.has(id)).length}
+									showNoCreditsPill={showNoCreditsPill}
+									onNoCreditsClick={() => setBuyCreditsOpen(true)}
 								/>
 							))
 						) : (
@@ -242,6 +261,7 @@ function LoopsRoute() {
 											onToggleEnabled={(next) =>
 												updateTrigger.mutate({ id: trigger.id, data: { enabled: next } })
 											}
+											v4Polish={loopsV4Enabled}
 										/>
 									)
 								})}
@@ -282,6 +302,11 @@ function LoopsRoute() {
 				</div>
 			)}
 			<CreatePicker open={createPickerOpen} onOpenChange={setCreatePickerOpen} defaultType="loop" />
+			<BuyCreditsDialog
+				open={buyCreditsOpen}
+				onOpenChange={setBuyCreditsOpen}
+				workspaceId={workspaceId}
+			/>
 		</div>
 	)
 }

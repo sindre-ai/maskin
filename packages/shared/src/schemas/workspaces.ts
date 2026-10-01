@@ -45,14 +45,39 @@ const claudeOAuthLegacySlotSchema = z
 		expiresAt: z.number(),
 		subscriptionType: z.string().optional(),
 		scopes: z.array(z.string()).optional(),
+		// User-authored label for the slot. Omitting it here did NOT strip it
+		// (the schema is strict, not stripping) — it failed the whole
+		// `workspaceSettingsSchema` parse for any workspace that had named a
+		// slot, which is how `billing` silently read back as undefined on the
+		// credit-checkout and plan-cap paths.
+		nickname: z.string().optional(),
+	})
+	.strict()
+
+// Slot ids are chain positions: `primary`, `backup`, then `slot_3`… — see
+// apps/dev/src/lib/claude-oauth-slots.ts, which owns the ordering.
+const claudeOAuthExtraSlotIdSchema = z.string().regex(/^slot_(?:[3-9]|10)$/)
+
+const claudeOAuthSlotFailureSchema = z
+	.object({
+		at: z.number().optional(),
+		reason: z.string().optional(),
 	})
 	.strict()
 
 const claudeOAuthFailoverStateSchema = z
 	.object({
+		// A slot id, no longer only the first two — a workspace can hold up to
+		// MAX_OAUTH_SLOTS subscriptions and any of them can be the active one.
+		active_slot: z.string(),
+		// Per-slot failure records keyed by slot id. The four `last_*` fields
+		// below are legacy mirrors of the primary/backup entries, still written
+		// so a rollback to a two-slot build reads the same state.
+		failures: z.record(claudeOAuthSlotFailureSchema).optional(),
 		last_primary_failure_at: z.number().optional(),
-		active_slot: z.enum(['primary', 'backup']),
 		last_classified_reason: z.string().optional(),
+		last_backup_failure_at: z.number().optional(),
+		last_backup_classified_reason: z.string().optional(),
 	})
 	.strict()
 
@@ -65,12 +90,22 @@ const claudeOAuthSlotStorageSchema = z
 	.object({
 		primary: claudeOAuthLegacySlotSchema.optional(),
 		backup: claudeOAuthLegacySlotSchema.optional(),
+		// Slots beyond the second. `primary`/`backup` stay top-level keys so
+		// existing rows need no migration and an older build still finds them.
+		extras: z.record(claudeOAuthExtraSlotIdSchema, claudeOAuthLegacySlotSchema).optional(),
 		failover: claudeOAuthFailoverStateSchema.optional(),
 	})
 	.strict()
-	.refine((v) => v.primary !== undefined || v.backup !== undefined || v.failover !== undefined, {
-		message: 'claude_oauth must define at least one of primary, backup, or failover',
-	})
+	.refine(
+		(v) =>
+			v.primary !== undefined ||
+			v.backup !== undefined ||
+			v.extras !== undefined ||
+			v.failover !== undefined,
+		{
+			message: 'claude_oauth must define at least one of primary, backup, extras, or failover',
+		},
+	)
 
 export const workspaceSettingsSchema = z.object({
 	display_names: z.record(z.string()).default({
@@ -119,8 +154,8 @@ export const workspaceSettingsSchema = z.object({
 		.default({}),
 	// claude_oauth has two valid on-disk shapes — legacy single-slot (kept for
 	// back-compat per AC-T1 of the subscription-failover bet, no migration of
-	// existing rows) and the new primary/backup/failover shape introduced by
-	// T1. Resolver lives in apps/dev/src/lib/claude-oauth-slots.ts.
+	// existing rows) and the slot-chain shape (primary, backup, extras,
+	// failover). Resolver lives in apps/dev/src/lib/claude-oauth-slots.ts.
 	claude_oauth: z.union([claudeOAuthLegacySlotSchema, claudeOAuthSlotStorageSchema]).optional(),
 	// Privacy & data block surfaced in workspace Settings → General.
 	// `share_usage` toggles posthog opt-in capturing; `anonymize_workspace` swaps
@@ -177,6 +212,21 @@ export const workspaceSettingsSchema = z.object({
 			// the customer's money, not forfeited — but is only spendable while
 			// `canUseCreditBalance()` (pro/team + status active) is true.
 			credit_balance_cents: z.number().int().nonnegative().optional(),
+			// ── LinkedIn Identity add-on ($49/connected identity/month) ──
+			// Two shapes, because the add-on has to bill a workspace that may
+			// not have a plan subscription to hang an item on:
+			//   pro/team — an item on the plan subscription itself, so the
+			//     $49 lines lands on the same invoice as the plan. Only
+			//     `linkedin_addon_item_id` is set.
+			//   trial — its own single-line subscription created by its own
+			//     Checkout, since there is no plan subscription. BOTH ids are
+			//     set, and `linkedin_addon_subscription_id` is what tells the
+			//     Stripe webhook that an incoming subscription event is the
+			//     add-on's and must not be mistaken for a plan change.
+			// Quantity always equals the count of `active` linkedin-unipile
+			// integration rows on the workspace — see lib/linkedin-addon.ts.
+			linkedin_addon_subscription_id: z.string().nullable().optional(),
+			linkedin_addon_item_id: z.string().nullable().optional(),
 		})
 		.optional(),
 	// North Star onboarding prompt answer — stored when a user submits the

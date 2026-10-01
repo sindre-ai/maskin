@@ -3,11 +3,27 @@ import {
 	caretOffsetInSource,
 	continueListOnEnter,
 	isIndentContext,
+	parseFileViewerUrl,
 	shiftIndent,
 } from '@/components/shared/markdown-content'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
+import { TestWrapper } from '../../setup'
+
+vi.mock('@/lib/api', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api')
+	return {
+		...actual,
+		api: {
+			...actual.api,
+			files: {
+				...actual.api.files,
+				get: vi.fn(),
+			},
+		},
+	}
+})
 
 vi.mock('recharts', async () => {
 	const actual = await vi.importActual<typeof import('recharts')>('recharts')
@@ -99,6 +115,23 @@ describe('MarkdownContent', () => {
 
 		expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
 		expect(screen.getByRole('link', { name: 'the docs' })).toBeInTheDocument()
+	})
+
+	it('opens an absolute link in a new tab so a click never navigates away', () => {
+		render(<MarkdownContent content="See [the docs](https://example.com/docs) first." />)
+
+		const link = screen.getByRole('link', { name: 'the docs' })
+		expect(link).toHaveAttribute('href', 'https://example.com/docs')
+		expect(link).toHaveAttribute('target', '_blank')
+		expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+	})
+
+	it('leaves a hash link on default target so in-page anchors still work', () => {
+		render(<MarkdownContent content="See [the docs](#docs) first." />)
+
+		const link = screen.getByRole('link', { name: 'the docs' })
+		expect(link).toHaveAttribute('href', '#docs')
+		expect(link).not.toHaveAttribute('target')
 	})
 
 	it('puts the caret at the end when the click position cannot be mapped', async () => {
@@ -288,6 +321,21 @@ describe('MarkdownContent', () => {
 		expect(screen.getByText('tail')).toBeInTheDocument()
 	})
 
+	// A wide markdown table (paste of a big table into chat) used to push the whole
+	// chat window sideways because `overflow-x-auto` on the <table> element itself
+	// doesn't clamp — the table's own intrinsic width from the table layout
+	// algorithm can still exceed its containing block. The fix wraps every
+	// rendered table in a block-level scroll container that DOES obey max-w-full.
+	it('wraps a markdown table in a horizontal scroll container', () => {
+		const table = '| a | b |\n| - | - |\n| 1 | 2 |'
+		const { container } = render(<MarkdownContent content={table} />)
+		const tableEl = container.querySelector('table')
+		expect(tableEl).not.toBeNull()
+		const wrapper = tableEl?.parentElement
+		expect(wrapper?.className).toMatch(/overflow-x-auto/)
+		expect(wrapper?.className).toMatch(/max-w-full/)
+	})
+
 	it('renders @mentions as chips inside formatted markdown', () => {
 		const actors = [
 			{
@@ -412,5 +460,112 @@ describe('shiftIndent', () => {
 
 	it('shifts every line a selection touches, skipping blank ones', () => {
 		expect(shiftIndent('- one\n\n- two', 2, 10, false).value).toBe('  - one\n\n  - two')
+	})
+})
+
+describe('parseFileViewerUrl', () => {
+	const ws = 'e2877e32-2c11-489e-96c8-a76200908ed4'
+	const fid = '282b2497-5fa7-4639-ab71-cdc450db6e8b'
+
+	it('matches an absolute maskin.io viewer URL', () => {
+		expect(parseFileViewerUrl(`https://maskin.io/${ws}/files/${fid}`)).toEqual({
+			workspaceId: ws,
+			fileId: fid,
+		})
+	})
+
+	it('matches a localhost viewer URL from a dev-minted description', () => {
+		expect(parseFileViewerUrl(`http://localhost:5173/${ws}/files/${fid}`)).toEqual({
+			workspaceId: ws,
+			fileId: fid,
+		})
+	})
+
+	it('matches a bare path (e.g. relative link inside the app)', () => {
+		expect(parseFileViewerUrl(`/${ws}/files/${fid}`)).toEqual({
+			workspaceId: ws,
+			fileId: fid,
+		})
+	})
+
+	it('returns null for URLs that are not file viewer routes', () => {
+		expect(parseFileViewerUrl(`https://maskin.io/${ws}/objects/${fid}`)).toBeNull()
+		expect(parseFileViewerUrl('https://example.com/cat.png')).toBeNull()
+		expect(parseFileViewerUrl(undefined)).toBeNull()
+		expect(parseFileViewerUrl('not-a-url')).toBeNull()
+	})
+})
+
+describe('MarkdownContent — file viewer image swap', () => {
+	const ws = 'e2877e32-2c11-489e-96c8-a76200908ed4'
+	const fid = '282b2497-5fa7-4639-ab71-cdc450db6e8b'
+	// Real image file (tiny 1x1 PNG) — the swap must inline these as data-URI.
+	const png1x1 =
+		'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+
+	it('inlines a maskin file viewer image URL as a data URI', async () => {
+		const { api } = await import('@/lib/api')
+		vi.mocked(api.files.get).mockResolvedValue({
+			id: fid,
+			workspaceId: ws,
+			name: 'loop.png',
+			description: null,
+			mimeType: 'image/png',
+			sizeBytes: 68,
+			storageKey: `workspaces/${ws}/files/${fid}`,
+			createdBy: 'a',
+			createdAt: '2026-09-09T00:00:00Z',
+			updatedAt: '2026-09-09T00:00:00Z',
+			content: png1x1,
+			encoding: 'base64',
+			url: `https://maskin.io/${ws}/files/${fid}`,
+			annotations: [],
+		})
+
+		render(
+			<TestWrapper>
+				<MarkdownContent content={`![loop](https://maskin.io/${ws}/files/${fid})`} />
+			</TestWrapper>,
+		)
+
+		await waitFor(() => {
+			const img = screen.getByAltText('loop')
+			expect(img.getAttribute('src')).toBe(`data:image/png;base64,${png1x1}`)
+		})
+	})
+
+	it('falls back to a link when the referenced file is not an inline-safe image', async () => {
+		const { api } = await import('@/lib/api')
+		vi.mocked(api.files.get).mockResolvedValue({
+			id: fid,
+			workspaceId: ws,
+			name: 'unsafe.svg',
+			description: null,
+			mimeType: 'image/svg+xml',
+			sizeBytes: 10,
+			storageKey: `workspaces/${ws}/files/${fid}`,
+			createdBy: 'a',
+			createdAt: '2026-09-09T00:00:00Z',
+			updatedAt: '2026-09-09T00:00:00Z',
+			content: '',
+			encoding: 'base64',
+			url: `https://maskin.io/${ws}/files/${fid}`,
+			annotations: [],
+		})
+
+		render(
+			<TestWrapper>
+				<MarkdownContent content={`![svg alt](https://maskin.io/${ws}/files/${fid})`} />
+			</TestWrapper>,
+		)
+
+		const link = await screen.findByRole('link', { name: 'svg alt' })
+		expect(link).toHaveAttribute('href', `/${ws}/files/${fid}`)
+	})
+
+	it('leaves external image URLs alone', () => {
+		render(<MarkdownContent content="![cat](https://example.com/cat.png)" />)
+		const img = screen.getByAltText('cat')
+		expect(img.getAttribute('src')).toBe('https://example.com/cat.png')
 	})
 })

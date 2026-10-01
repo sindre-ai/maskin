@@ -1,7 +1,7 @@
 import type { SignalKind } from './types.js'
 
 export const PATH_FLOOR_SCORE = 100
-export const REGEX_FLOOR_SCORE = 60
+export const REGEX_FLOOR_SCORE = 80
 
 export const SIGNAL_WEIGHTS: Record<
 	Exclude<SignalKind, 'protected_path' | 'regex_floor_hit' | 'codeql_or_semgrep_alert'>,

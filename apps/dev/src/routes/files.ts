@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, files } from '@maskin/db/schema'
+import { files } from '@maskin/db/schema'
 import {
 	createFileSchema,
 	fileDetailSchema,
@@ -13,6 +13,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, asc, desc, eq, ilike, inArray } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { fileStorageKey, fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -24,6 +25,10 @@ type Env = {
 		db: Database
 		actorId: string
 		storageProvider: StorageProvider
+		/** Set by app-factory when the request carried a well-formed
+		 * `X-Maskin-Session-Id` header — the S2 writer hook reads it to attribute
+		 * file mutations to their originating session. */
+		maskinSessionId?: string
 	}
 }
 
@@ -146,9 +151,11 @@ app.openapi(createFileRoute, (async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to store file bytes'), 500)
 	}
 
-	// Audit event — never include the file content (8KB NOTIFY cap).
+	// Audit event — never include the file content (8KB NOTIFY cap). Passes
+	// provenance context so the S2 writer hook can also upsert a
+	// `session → file` `produced_by` edge when the mutation came in via MCP.
 	try {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId,
 			action: 'created',
@@ -160,6 +167,7 @@ app.openapi(createFileRoute, (async (c) => {
 				mimeType: created.mimeType,
 				sizeBytes: created.sizeBytes,
 			},
+			provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'file' },
 		})
 	} catch (err) {
 		logger.error('Failed to record file created audit event', {
@@ -410,7 +418,7 @@ app.openapi(updateFileRoute, (async (c) => {
 	}
 
 	try {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId: updated.workspaceId,
 			actorId,
 			action: 'updated',
@@ -422,6 +430,7 @@ app.openapi(updateFileRoute, (async (c) => {
 				mimeType: updated.mimeType,
 				sizeBytes: updated.sizeBytes,
 			},
+			provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'file' },
 		})
 	} catch (err) {
 		logger.error('Failed to record file updated audit event', {
@@ -497,7 +506,7 @@ app.openapi(deleteFileRoute, (async (c) => {
 	}
 
 	try {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId: existing.workspaceId,
 			actorId,
 			action: 'deleted',
@@ -509,6 +518,7 @@ app.openapi(deleteFileRoute, (async (c) => {
 				mimeType: existing.mimeType,
 				sizeBytes: existing.sizeBytes,
 			},
+			provenance: { sessionId: c.get('maskinSessionId'), entityKind: 'file' },
 		})
 	} catch (err) {
 		logger.error('Failed to record file deleted audit event', {

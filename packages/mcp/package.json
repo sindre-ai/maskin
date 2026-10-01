@@ -8,6 +8,10 @@
 		".": {
 			"types": "./src/index.ts",
 			"default": "./dist/index.js"
+		},
+		"./linkedin": {
+			"types": "./src/lib/linkedin-fan-out.ts",
+			"default": "./dist/lib/linkedin-fan-out.js"
 		}
 	},
 	"scripts": {

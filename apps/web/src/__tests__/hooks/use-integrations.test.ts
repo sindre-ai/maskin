@@ -30,6 +30,7 @@ function buildIntegration(
 		status: 'connected',
 		externalId: null,
 		config: {},
+		actorId: null,
 		createdBy: 'actor-1',
 		createdAt: null,
 		updatedAt: null,

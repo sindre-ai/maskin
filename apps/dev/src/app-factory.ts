@@ -23,6 +23,7 @@ import {
 import { createIdempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
 import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
+import adminLinkedinUnipileRoutes from './routes/admin-linkedin-unipile'
 import agentServerReconcileRoutes from './routes/agent-server-reconcile'
 import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
@@ -39,6 +40,9 @@ import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
 import installedLoopsRoutes from './routes/installed-loops'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
+import integrationsGoogleMeetMcpRoutes from './routes/integrations-google-meet-mcp'
+import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
+import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import loopsRoutes from './routes/loops'
 import marketplaceLoopsRoutes from './routes/marketplace-loops'
@@ -57,6 +61,7 @@ import telemetryRoutes from './routes/telemetry'
 import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
 import triggersRoutes from './routes/triggers'
 import userDisplaySettingsRoutes from './routes/user-display-settings'
+import workspaceInvitationsRoutes from './routes/workspace-invitations'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
 import type { AgentStorageManager } from './services/agent-storage'
@@ -71,6 +76,15 @@ export type Env = {
 		sessionManager: SessionManager
 		agentStorage: AgentStorageManager
 		storageProvider: StorageProvider
+		/**
+		 * The originating session's id, when the request carried a well-formed
+		 * `X-Maskin-Session-Id` header (S2 writer hook). Undefined for human
+		 * writes direct from the UI and for any request whose header was
+		 * missing / not a uuid. Route handlers pass this to `recordEvent` via
+		 * `provenance: { sessionId, entityKind }` on object/file mutations to
+		 * trigger the `produced_by` edge write.
+		 */
+		maskinSessionId?: string
 	}
 }
 
@@ -252,6 +266,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//     (per-IP rate-limited inside the handler).
 	//   - /api/internal/agent-servers/*: authenticated via the shared bearer
 	//     secret enforced inside the handler, not our API key.
+	//   - POST /api/invites/:token/accept and GET /api/invites/preview: the
+	//     invitee is not yet a member of any workspace, so the standard
+	//     Bearer + X-Workspace-Id middleware cannot admit them. The accept
+	//     handler reads Authorization itself for the authenticated branch;
+	//     preview is IP-rate-limited inside the handler. Frontends MUST NOT
+	//     send X-Workspace-Id on these calls.
 	const auth = authMiddleware(db)
 	app.use('/api/*', async (c, next) => {
 		const path = c.req.path
@@ -264,7 +284,15 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/public/landing-events' && method === 'POST') return next()
 		if (path === '/api/public/bet-strategist/drafts' && method === 'POST') return next()
 		if (path === '/api/public/bet-strategist/claim' && method === 'POST') return next()
+		if (path === '/api/invites/preview' && method === 'GET') return next()
+		if (method === 'POST' && /^\/api\/invites\/[^/]+\/accept$/.test(path)) return next()
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
+		// R11-C · linkedin-unipile fan-out webhook. Unipile POSTs the
+		// `account.reconnect` event from outside our network, so it cannot
+		// carry a Maskin API key — authenticated by Unipile v2's per-endpoint
+		// `unipile-signature` HMAC header, verified inside the handler
+		// against `UNIPILE_WEBHOOK_SECRET`.
+		if (path === '/api/integrations/linkedin-unipile/webhook' && method === 'POST') return next()
 
 		return auth(c, next)
 	})
@@ -299,6 +327,23 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		await next()
 	})
 
+	// S2 writer-hook · attribute a mutation to its originating session by
+	// reading the `X-Maskin-Session-Id` header once at the boundary and
+	// stashing it on the context. Any route that then calls `recordEvent`
+	// with `provenance: { sessionId: c.get('maskinSessionId'), entityKind }`
+	// gets a `session → object|file` `produced_by` edge for free (gated on
+	// the `graph-provenance-writes` flag inside recordEvent). Non-mutating
+	// requests are unaffected; requests without the header — human writes
+	// direct from the UI — leave the context value undefined and no edge
+	// lands, exactly the intended contract.
+	app.use('/api/*', async (c, next) => {
+		const raw = c.req.header('X-Maskin-Session-Id')?.trim()
+		if (raw && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)) {
+			c.set('maskinSessionId', raw)
+		}
+		await next()
+	})
+
 	app.use('/api/*', createIdempotencyMiddleware(db))
 
 	app.route('/api/objects', objectsRoutes)
@@ -306,15 +351,32 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/public/landing-events', publicLandingEventsRoutes)
 	app.route('/api/public/bet-strategist', publicBetStrategistRoutes)
 	app.route('/api/admin/landing-funnel', adminLandingFunnelRoutes)
+	// R11-A · workspace-scoped admin re-run of linkedin identity enumeration.
+	// Not surfaced as an MCP tool per spec §10 R11 item 3 — humans/ops only.
+	app.route('/api/admin/linkedin-unipile', adminLinkedinUnipileRoutes)
 	app.route('/api/actors', actorsRoutes)
 	app.route('/api/auth', authRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
 	app.route('/api/actors', agentSkillAttachmentsRoutes)
 	app.route('/api/workspaces', workspacesRoutes)
 	app.route('/api/workspaces', workspaceSkillsRoutes)
+	app.route('/api/invites', workspaceInvitationsRoutes)
 	app.route('/api/relationships', relationshipsRoutes)
 	app.route('/api/triggers', triggersRoutes)
 	app.route('/api/loops', loopsRoutes)
+	// linkedin-unipile connect + callback use LinkedIn's Hosted Auth Wizard, NOT
+	// OAuth2 — so this dedicated route file handles /connect + /callback for
+	// that provider directly. Mounted BEFORE the generic /api/integrations so
+	// the more-specific prefix wins Hono's trie; without this, the generic
+	// /{provider}/connect handler would try to build an OAuth2 authorization
+	// URL for linkedin-unipile and fail.
+	// The /mcp subtree is registered BEFORE the provider's own routes so the
+	// more specific prefix wins the trie — same ordering as Slack's below.
+	app.route('/api/integrations/linkedin-unipile/mcp', integrationsLinkedinMcpRoutes)
+	app.route('/api/integrations/linkedin-unipile', integrationsLinkedinRoutes)
+	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
+	// mount the /mcp subtree BEFORE the generic /api/integrations catch-all.
+	app.route('/api/integrations/google-meet/mcp', integrationsGoogleMeetMcpRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations

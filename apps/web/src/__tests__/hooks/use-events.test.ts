@@ -10,7 +10,12 @@ vi.mock('@/lib/api', () => ({
 	},
 }))
 
-import { useCreateComment, useEntityEvents, useEvents } from '@/hooks/use-events'
+import {
+	useCreateComment,
+	useEntityEvents,
+	useEvents,
+	useSessionAffectedObjects,
+} from '@/hooks/use-events'
 import type { EventResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { TestWrapper } from '../setup'
@@ -137,5 +142,82 @@ describe('useCreateComment', () => {
 		result.current.mutate({ entity_id: 'obj-1', content: 'Bad' })
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Forbidden')
+	})
+})
+
+// S2 · bet 34706e2f, task 5 — the hook that powers both the Session Sheet's
+// Produced section and the chat-detail ProducedPane's session-level entries.
+// Returns objects (bet/task/insight created/updated) AND files (created/updated)
+// during the session's [startedAt, completedAt] window.
+describe('useSessionAffectedObjects · Produced shape', () => {
+	it('derives producedObjects from bet/task/insight created events', async () => {
+		vi.mocked(api.events.history).mockResolvedValue([
+			buildEvent({ id: 1, entityType: 'bet', entityId: 'b-1', data: { title: 'Bet A' } }),
+			buildEvent({
+				id: 2,
+				entityType: 'task',
+				entityId: 't-1',
+				action: 'updated',
+				data: { title: 'Task 1' },
+			}),
+			buildEvent({
+				id: 3,
+				entityType: 'insight',
+				entityId: 'i-1',
+				action: 'status_changed',
+				data: { title: 'Insight X' },
+			}),
+			// Non-object entity type should be ignored on the objects side.
+			buildEvent({ id: 4, entityType: 'session', entityId: 's-1' }),
+		])
+		const { result } = renderHook(
+			() => useSessionAffectedObjects('2026-09-22T09:00:00Z', '2026-09-22T09:05:00Z', workspaceId),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.producedObjects.map((o) => o.entityId)).toEqual(['b-1', 't-1', 'i-1'])
+		// Alias: producedObjects === affectedObjects for backwards compat.
+		expect(result.current.affectedObjects).toBe(result.current.producedObjects)
+	})
+
+	it('derives producedFiles from file created/updated events with mime + size hydrated from data', async () => {
+		vi.mocked(api.events.history).mockResolvedValue([
+			buildEvent({
+				id: 1,
+				entityType: 'file',
+				entityId: 'f-1',
+				action: 'created',
+				data: {
+					id: 'f-1',
+					name: 'plan.md',
+					mimeType: 'text/markdown',
+					sizeBytes: 1024,
+				},
+			}),
+			buildEvent({
+				id: 2,
+				entityType: 'file',
+				entityId: 'f-1',
+				action: 'updated',
+				data: { id: 'f-1', name: 'plan.md' },
+			}),
+		])
+		const { result } = renderHook(
+			() => useSessionAffectedObjects('2026-09-22T09:00:00Z', null, workspaceId),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.producedFiles).toEqual([
+			{ fileId: 'f-1', name: 'plan.md', mimeType: 'text/markdown', sizeBytes: 1024 },
+		])
+	})
+
+	it('returns empty arrays when startedAt is null (does not fetch)', () => {
+		const { result } = renderHook(() => useSessionAffectedObjects(null, null, workspaceId), {
+			wrapper: TestWrapper,
+		})
+		expect(result.current.producedObjects).toEqual([])
+		expect(result.current.producedFiles).toEqual([])
+		expect(api.events.history).not.toHaveBeenCalled()
 	})
 })

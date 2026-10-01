@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest'
-import { parseUsageFromLogChunks } from '../../services/usage-parser'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const { getModelPricingMock } = vi.hoisted(() => ({ getModelPricingMock: vi.fn() }))
+
+vi.mock('../../lib/openrouter-pricing', () => ({ getModelPricing: getModelPricingMock }))
+
+import { parseUsageFromLogChunks, resolveSessionCostUsd } from '../../services/usage-parser'
+import type { SessionUsage } from '../../services/usage-parser'
 
 const RESULT_SUCCESS = JSON.stringify({
 	type: 'result',
@@ -94,5 +100,97 @@ describe('parseUsageFromLogChunks', () => {
 			cacheReadInputTokens: null,
 			durationMs: null,
 		})
+	})
+})
+
+const DEEPSEEK_PRICING = {
+	prompt: 0.00000007,
+	completion: 0.00000014,
+	cacheRead: 0.000000014,
+	cacheWrite: 0,
+}
+
+const usage = (overrides: Partial<SessionUsage> = {}): SessionUsage => ({
+	totalCostUsd: 0.42,
+	inputTokens: null,
+	outputTokens: null,
+	cacheCreationInputTokens: null,
+	cacheReadInputTokens: null,
+	durationMs: null,
+	...overrides,
+})
+
+describe('resolveSessionCostUsd', () => {
+	beforeEach(() => {
+		getModelPricingMock.mockReset()
+	})
+
+	it('passes the CLI-reported cost through untouched on the claude_oauth route', async () => {
+		const resolved = await resolveSessionCostUsd({
+			route: 'claude_oauth',
+			modelName: null,
+			usage: usage({ totalCostUsd: 0.42, inputTokens: 1000, outputTokens: 500 }),
+		})
+		expect(resolved).toBe(0.42)
+		expect(getModelPricingMock).not.toHaveBeenCalled()
+	})
+
+	it('prices a maskin_plan session from tokens at the model per-token rates', async () => {
+		getModelPricingMock.mockResolvedValue(DEEPSEEK_PRICING)
+		const resolved = await resolveSessionCostUsd({
+			route: 'maskin_plan',
+			modelName: 'deepseek/deepseek-v4-flash',
+			usage: usage({
+				totalCostUsd: 0.42,
+				inputTokens: 1000,
+				outputTokens: 500,
+				cacheReadInputTokens: 10000,
+			}),
+		})
+		// 1000*7e-8 + 500*1.4e-7 + 10000*1.4e-8 = 0.00028, ignoring the CLI figure.
+		expect(resolved).toBeCloseTo(0.00028, 12)
+		expect(getModelPricingMock).toHaveBeenCalledWith('deepseek/deepseek-v4-flash')
+	})
+
+	it('falls back to the legacy token rate on input+output when the model is unknown', async () => {
+		getModelPricingMock.mockResolvedValue(null)
+		const resolved = await resolveSessionCostUsd({
+			route: 'maskin_plan',
+			modelName: 'absent/model',
+			usage: usage({ inputTokens: 1000, outputTokens: 500 }),
+		})
+		// 1500 tokens / 200_000 tokens-per-cent / 100 = 0.000075.
+		expect(resolved).toBeCloseTo(0.000075, 12)
+	})
+
+	it('falls back to the legacy token rate when no model name was recorded', async () => {
+		const resolved = await resolveSessionCostUsd({
+			route: 'maskin_plan',
+			modelName: null,
+			usage: usage({ inputTokens: 1000, outputTokens: 500 }),
+		})
+		expect(resolved).toBeCloseTo(0.000075, 12)
+		expect(getModelPricingMock).not.toHaveBeenCalled()
+	})
+
+	it('bills cache-only usage rather than returning free when the model is unknown', async () => {
+		getModelPricingMock.mockResolvedValue(null)
+		const resolved = await resolveSessionCostUsd({
+			route: 'maskin_plan',
+			modelName: 'absent/model',
+			usage: usage({ cacheReadInputTokens: 10000 }),
+		})
+		// 10000 / 200_000 / 100 = 0.0005.
+		expect(resolved).toBeCloseTo(0.0005, 12)
+	})
+
+	it('returns null when there are no tokens to price at all', async () => {
+		getModelPricingMock.mockResolvedValue(null)
+		const resolved = await resolveSessionCostUsd({
+			route: 'maskin_plan',
+			modelName: 'absent/model',
+			usage: usage({ totalCostUsd: null }),
+		})
+		expect(resolved).toBeNull()
 	})
 })

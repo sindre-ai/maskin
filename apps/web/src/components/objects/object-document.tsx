@@ -27,6 +27,7 @@ import { deriveSidebarViewport, trackEvent, trackSidebarToggle } from '@/lib/ana
 import type {
 	DisplaySettingsBody,
 	EventResponse,
+	GraphFileSummary,
 	MemberResponse,
 	ObjectResponse,
 	RelationshipResponse,
@@ -61,6 +62,10 @@ interface ObjectDocumentViewProps {
 	allRelationships?: RelationshipResponse[]
 	relationships?: { asSource: RelationshipResponse[]; asTarget: RelationshipResponse[] }
 	connectedObjects?: ObjectResponse[]
+	/** Files hydrated by the graph endpoint, keyed by the FE's `fileMap` in
+	 *  `LinkedObjectsView`. Slice 1 makes files first-class Related-tab
+	 *  endpoints — omit and file endpoints render as unresolvable. */
+	files?: GraphFileSummary[]
 	events?: EventResponse[]
 	onUpdateTitle: (title: string) => void
 	onUpdateContent: (content: string) => void
@@ -122,6 +127,7 @@ export function ObjectDocumentView({
 	allRelationships,
 	relationships,
 	connectedObjects,
+	files,
 	events,
 	onUpdateTitle,
 	onUpdateContent,
@@ -282,6 +288,7 @@ export function ObjectDocumentView({
 						asSource={relationships.asSource}
 						asTarget={relationships.asTarget}
 						connectedObjects={connectedObjects}
+						files={files}
 					/>
 				</div>
 			)}
@@ -701,6 +708,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 					allRelationships={allRelationships}
 					relationships={relationships}
 					connectedObjects={graph?.connected_objects}
+					files={graph?.files}
 					events={events}
 					onUpdateTitle={handleUpdateTitle}
 					onUpdateContent={handleUpdateContent}

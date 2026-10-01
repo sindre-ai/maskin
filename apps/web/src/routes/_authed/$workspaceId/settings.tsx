@@ -1,4 +1,5 @@
 import { PageHeader } from '@/components/layout/page-header'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, Outlet, createFileRoute, useMatchRoute } from '@tanstack/react-router'
@@ -26,6 +27,7 @@ const keysNavItem = {
 }
 
 function SettingsLayout() {
+	useDocumentTitle('Settings')
 	const { workspace, workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
 	const navItems = workspace?.enterprise ? [...settingsNav, keysNavItem] : settingsNav

@@ -24,7 +24,7 @@ Outputs the `## Risk Score` block to stdout and exits with:
 | ------------------------ | --------- |
 | auto                     | 0         |
 | agent_recommends_human   | 1         |
-| two_human_required       | 2         |
+| human_review_required    | 2         |
 
 `--output json` emits the full verdict object; `--output check-run` emits the GitHub check-run summary used by the `maskin/risk-score` required check.
 
@@ -45,7 +45,7 @@ The verdict carries a `deterministic_seed` derived from `(commit_sha, score, sor
 The adapter reads three YAML files at the repo root — see the files themselves for the exact schema and rationale for each entry:
 
 - [`.maskin/protected-paths.yml`](../../.maskin/protected-paths.yml) — path-floor patterns (any match → score 100)
-- [`.maskin/risk-floors.yml`](../../.maskin/risk-floors.yml) — regex-floor patterns (any line match → score ≥60)
+- [`.maskin/risk-floors.yml`](../../.maskin/risk-floors.yml) — regex-floor patterns (any line match → score ≥80)
 - [`.maskin/hot-tables.yml`](../../.maskin/hot-tables.yml) — table allowlist that promotes squawk findings
 
 `loadMaskinConfig` (used by `bin/risk-classifier.mjs`) degrades a missing file to an empty floor so a scoring run always produces a verdict. That tolerance is intentional for the scorer, but a floor silently going empty is exactly the R4 gap the `risk-gate` skill calls out — so CI checks separately, with a hard failure instead of a silent degrade:
