@@ -1604,3 +1604,136 @@ export const googleMeetSpaceIdempotency = pgTable(
 
 export type GoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferSelect
 export type NewGoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferInsert
+
+// ── Trigger cooldowns (S1 of the trigger-engine fix bet) ────────────────────
+//
+// Persisted mirror of trigger-runner.ts's in-memory `triggerFailures` Map
+// (per-trigger exponential backoff) and `workspaceSuppressions` Map
+// (workspace-wide pause). Both existed only in memory before this migration,
+// so every server restart wiped them and freed cooling triggers to fire the
+// moment we deployed — bet #7 of the trigger-engine fix bet.
+//
+// Write path is unconditional (persist FIRST, then update the in-memory
+// cache) so rollback is safe. Read path (loadCooldowns / loadSuppressions at
+// boot) is gated per tech spec §7.1 so a workspace can opt out of the v2
+// deploy-safety net if it wants to.
+
+export const triggerCooldowns = pgTable(
+	'trigger_cooldowns',
+	{
+		triggerId: uuid('trigger_id')
+			.primaryKey()
+			.references(() => triggers.id, { onDelete: 'cascade' }),
+		count: integer('count').notNull().default(0),
+		lastFailedAt: timestamp('last_failed_at', { withTimezone: true }).notNull(),
+		backoffUntil: timestamp('backoff_until', { withTimezone: true }).notNull(),
+		reason: text('reason'),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('trigger_cooldowns_backoff_until_idx').on(t.backoffUntil)],
+)
+
+export type TriggerCooldown = typeof triggerCooldowns.$inferSelect
+export type NewTriggerCooldown = typeof triggerCooldowns.$inferInsert
+
+export const workspaceSuppressions = pgTable(
+	'workspace_suppressions',
+	{
+		workspaceId: uuid('workspace_id')
+			.primaryKey()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		suppressedUntil: timestamp('suppressed_until', { withTimezone: true }).notNull(),
+		reason: text('reason').notNull(),
+		metadata: jsonb('metadata'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('workspace_suppressions_until_idx').on(t.suppressedUntil)],
+)
+
+export type WorkspaceSuppressionRow = typeof workspaceSuppressions.$inferSelect
+export type NewWorkspaceSuppressionRow = typeof workspaceSuppressions.$inferInsert
+
+// ── Trigger dispatches (S2 of the trigger-engine fix bet) ───────────────────
+//
+// Idempotency guard for the dispatch path. Every trigger fire INSERTs the
+// (trigger_id, event_id) pair with ON CONFLICT DO NOTHING before calling
+// sessionManager.createSession(). If two trigger-runner instances (blue+green
+// during a rolling deploy, or a future horizontal scale-out) race on the
+// same event, exactly one INSERT claims — the loser's returning() is empty
+// and the dispatch is skipped.
+//
+// Ships unconditional (NOT gated by trigger_engine_v2 per tech spec §3.4 +
+// §7.3): if this sat behind the flag, a kill-switch flip would re-open the
+// double-fire window the table exists to prevent. The v1 code path simply
+// never writes to this table, so having it live pre-flag is safe.
+//
+// session_id is diagnostic only. If the UPDATE that stamps it after
+// createSession() fails, the row still guards against double-fire — its
+// presence is the guarantee.
+
+export const triggerDispatches = pgTable(
+	'trigger_dispatches',
+	{
+		triggerId: uuid('trigger_id')
+			.notNull()
+			.references(() => triggers.id, { onDelete: 'cascade' }),
+		eventId: bigint('event_id', { mode: 'number' }).notNull(),
+		dispatchedAt: timestamp('dispatched_at', { withTimezone: true }).notNull().defaultNow(),
+		sessionId: uuid('session_id'),
+	},
+	(t) => [
+		primaryKey({ columns: [t.triggerId, t.eventId] }),
+		index('trigger_dispatches_dispatched_at_idx').on(t.dispatchedAt),
+	],
+)
+
+export type TriggerDispatch = typeof triggerDispatches.$inferSelect
+export type NewTriggerDispatch = typeof triggerDispatches.$inferInsert
+
+// ── Trigger event queue (S3 of the trigger-engine fix bet) ──────────────────
+//
+// Hold-and-replay store for events that used to be dropped: an event whose
+// trigger is in a backoff window, or whose workspace is suppressed, lands here
+// instead of vanishing, and replays when the window lifts (tech spec §4).
+//
+// trigger_id is nullable on purpose: a workspace-suppression drop is one row
+// per (workspace, event) at drop time and fans out to per-trigger dispatches
+// when the drain re-runs the matcher. event_snapshot carries the PgEvent so a
+// replay does not depend on anything else. replayed_at is set on drain; all
+// three indexes are partial on replayed_at IS NULL so they only ever cover
+// the pending backlog.
+//
+// The table ships unconditional (additive, nothing reads it with the flag
+// off); only ENQUEUE and REPLAY sit behind trigger_engine_v2.
+
+export const triggerEventQueue = pgTable(
+	'trigger_event_queue',
+	{
+		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		triggerId: uuid('trigger_id').references(() => triggers.id, { onDelete: 'cascade' }),
+		eventId: bigint('event_id', { mode: 'number' }).notNull(),
+		eventSnapshot: jsonb('event_snapshot').notNull(),
+		enqueuedAt: timestamp('enqueued_at', { withTimezone: true }).notNull().defaultNow(),
+		replayAfter: timestamp('replay_after', { withTimezone: true }).notNull(),
+		reason: text('reason').notNull(),
+		replayedAt: timestamp('replayed_at', { withTimezone: true }),
+	},
+	(t) => [
+		index('queue_pending_by_replay_after_idx')
+			.on(t.replayAfter)
+			.where(sql`${t.replayedAt} IS NULL`),
+		index('queue_pending_by_trigger_idx')
+			.on(t.triggerId, t.eventId)
+			.where(sql`${t.replayedAt} IS NULL AND ${t.triggerId} IS NOT NULL`),
+		index('queue_pending_by_workspace_idx')
+			.on(t.workspaceId, t.eventId)
+			.where(sql`${t.replayedAt} IS NULL`),
+	],
+)
+
+export type TriggerEventQueueRow = typeof triggerEventQueue.$inferSelect
+export type NewTriggerEventQueueRow = typeof triggerEventQueue.$inferInsert
