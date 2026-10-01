@@ -37,11 +37,24 @@ interface SessionStartedEvent {
 	sessionStartLatencyMs: number
 }
 
-interface SessionEndedEvent {
+export interface SessionEndedEvent {
 	sessionId: string
 	endReason: RuntimeEndReason
 	durationMs: number
 	agentServerUrl?: string
+	/**
+	 * The object this session was started for (bet, task, insight, or any
+	 * first-class object). Carried onto the PostHog `runtime_session_ended`
+	 * event as `context_object_id` / `context_object_type` so the parent bet's
+	 * Criterion 3 — "≥ 80% of failed sessions carry a `context_object_id`
+	 * property" — can filter on it in PostHog, next to Criterion 1 which lives
+	 * on `mcp_tool_call_response_size`. When both are null (or absent) the
+	 * capture payload omits both properties entirely (not `null` strings) —
+	 * downstream dashboards see a clean absence, not a null value that reads as
+	 * "we had context but chose null".
+	 */
+	contextObjectId?: string | null
+	contextObjectType?: string | null
 }
 
 interface CrossSessionCheckEvent {
@@ -109,6 +122,8 @@ export class RuntimeTelemetry {
 		endReason,
 		durationMs,
 		agentServerUrl,
+		contextObjectId,
+		contextObjectType,
 	}: SessionEndedEvent): void {
 		this.capture({
 			distinctId: sessionId,
@@ -118,6 +133,19 @@ export class RuntimeTelemetry {
 				end_reason: endReason,
 				duration_ms: durationMs,
 				...(agentServerUrl ? { agent_server_url: agentServerUrl } : {}),
+				// Only emit the two context properties when we actually know
+				// the originating object. Emitting `null` values would inflate
+				// PostHog cardinality and read to downstream dashboards as
+				// "we had context but chose null" rather than "we never knew".
+				// Gated on contextObjectId — the id is the load-bearing
+				// filter for Criterion 3; a bare type without an id is not
+				// useful and never emitted alone.
+				...(contextObjectId
+					? {
+							context_object_id: contextObjectId,
+							context_object_type: contextObjectType ?? null,
+						}
+					: {}),
 			},
 		})
 	}

@@ -604,6 +604,10 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 					actionPrompt:
 						'A workspace has been enabled for onboarding (onboarding_enabled flipped to true). Run the workspace-observer-onboarding skill.\n\nBefore starting: check whether this workspace already has an onboarding_session object. If one exists, exit silently.\n\nIf none exists, follow the workspace-observer-onboarding skill to:\n1. Create the onboarding_session object.\n2. Subscribe the workspace owner.\n3. Post the five context prompts in sequence, waiting for each reply before the next.\n4. For each reply, call create_objects ONCE with both the knowledge node and the `about` edge in the same batch — owner-targeted prompts (product_vision, icp, first_bet_hypothesis, customer_evidence) edge to the workspace owner\'s actor id; the north_star_metric prompt edges to the workspace id. Populate metadata.source = "workspace_onboarding", subject_kind, subject_id, claim, confidence, valid_from, valid_to per the skill. Do NOT write to the actor\'s memory field.\n5. Close the session when all prompts are answered (or after 24h).',
 					createdBy: actorId,
+					// Onboarding kickoff — spawned on workspace flip, not on
+					// any originating object. Explicit null/null.
+					initiatedFromObjectId: null,
+					initiatedFromObjectType: null,
 				})
 				.catch((err) =>
 					logger.error('Failed to create onboarding session', { workspaceId: id, err }),
