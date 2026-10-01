@@ -16,6 +16,20 @@ vi.mock('../../services/voice-transcript', () => ({
 	isTranscriptPersistenceEnabled: (...args: unknown[]) => persistenceEnabled(...args),
 }))
 
+const endSession = vi.fn()
+const recordTurn = vi.fn()
+const recordToolCall = vi.fn()
+vi.mock('../../services/voice-session-lifecycle', () => ({
+	endVoiceSession: (...args: unknown[]) => endSession(...args),
+	recordVoiceTurn: (...args: unknown[]) => recordTurn(...args),
+	recordVoiceToolCall: (...args: unknown[]) => recordToolCall(...args),
+}))
+
+const captureException = vi.fn()
+vi.mock('../../lib/sentry-voice', () => ({
+	captureVoiceException: (...args: unknown[]) => captureException(...args),
+}))
+
 const { createVoiceChannel } = await import('../../services/voice-session-channel')
 type Channel = ReturnType<typeof createVoiceChannel>
 
@@ -74,6 +88,10 @@ const lastResult = (sent: Array<Record<string, unknown>>) =>
 beforeEach(() => {
 	captureToolCall.mockReset()
 	captureTurnCompleted.mockReset()
+	endSession.mockReset().mockResolvedValue({})
+	recordTurn.mockReset()
+	recordToolCall.mockReset()
+	captureException.mockReset()
 	writeLine.mockReset()
 	persistenceEnabled.mockReset().mockResolvedValue(true)
 })
@@ -335,5 +353,50 @@ describe('voice channel — turn telemetry and frame handling', () => {
 		expect(sent.every((m) => m.type === 'error' && m.code === 'voice_invalid_message')).toBe(true)
 		expect(sent).toHaveLength(7)
 		expect(writeLine).not.toHaveBeenCalled()
+	})
+})
+
+describe('voice channel — session lifecycle hooks', () => {
+	it('records each turn and each tool call against the session counters', async () => {
+		const { channel, toolCall } = setup(vi.fn().mockResolvedValue(textResult('ok')))
+		await channel.onMessage(
+			JSON.stringify({
+				type: 'turn_completed',
+				turn_index: 0,
+				user_audio_ms: 4_000,
+				agent_audio_ms: 9_000,
+				barge_in: false,
+			}),
+		)
+		await toolCall('search_objects', { query: 'loops', workspace_id: WORKSPACE })
+		expect(recordTurn).toHaveBeenCalledWith(SESSION_ID, { userAudioMs: 4_000, agentAudioMs: 9_000 })
+		expect(recordToolCall).toHaveBeenCalledWith(SESSION_ID)
+	})
+
+	it('ends the call as vendor_error, tags Sentry with the session id, and tells the browser', async () => {
+		const { channel, sent } = setup()
+		await channel.onMessage(
+			JSON.stringify({ type: 'vendor_error', code: 'server_error', message: 'upstream blew up' }),
+		)
+		expect(endSession).toHaveBeenCalledWith(expect.anything(), {
+			id: SESSION_ID,
+			reason: 'vendor_error',
+			vendorErrorCode: 'server_error',
+		})
+		expect(captureException).toHaveBeenCalledWith(SESSION_ID, expect.any(Error))
+		expect(sent).toContainEqual({ type: 'ended', reason: 'vendor_error' })
+	})
+
+	it('stays silent to the browser when the call had already ended', async () => {
+		endSession.mockResolvedValue(null)
+		const { channel, sent } = setup()
+		await channel.onMessage(JSON.stringify({ type: 'vendor_error', code: 'x', message: 'y' }))
+		expect(sent).toEqual([])
+	})
+
+	it('tags a tool-proxy exception with the session id', async () => {
+		const { toolCall } = setup(vi.fn().mockRejectedValue(new Error('db down')))
+		await toolCall('search_objects', { q: 'x' })
+		expect(captureException).toHaveBeenCalledWith(SESSION_ID, expect.any(Error))
 	})
 })

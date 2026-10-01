@@ -4,6 +4,8 @@ import type { InvokeTool } from '@maskin/mcp'
 import { z } from 'zod'
 import { captureVoiceToolCall, captureVoiceTurnCompleted } from '../lib/analytics/voice-events'
 import { logger } from '../lib/logger'
+import { captureVoiceException } from '../lib/sentry-voice'
+import { endVoiceSession, recordVoiceToolCall, recordVoiceTurn } from './voice-session-lifecycle'
 import {
 	type VoiceSessionRow,
 	isTranscriptPersistenceEnabled,
@@ -21,6 +23,8 @@ import {
  *                                                    response.function_call_arguments.done
  *     transcript      { role, text }                 one finished user / assistant turn
  *     turn_completed  { turn_index, user_audio_ms, agent_audio_ms, barge_in }
+ *     vendor_error    { code, message }              an error event relayed from the Realtime
+ *                                                    DataChannel; ends the call as errored
  *
  *   server → browser
  *     ready           { persist_transcripts, conversation_id }
@@ -30,6 +34,7 @@ import {
  *                     response.create so the model speaks the result
  *     conversation    { conversation_id }            first time a transcript line
  *                                                    landed in a conversation
+ *     ended           { reason }                     the call was ended server-side; tear down
  *     error           { code }
  */
 
@@ -51,6 +56,11 @@ const clientMessageSchema = z.discriminatedUnion('type', [
 		text: z.string().max(50_000),
 	}),
 	z.object({
+		type: z.literal('vendor_error'),
+		code: z.string().max(200).default('unknown'),
+		message: z.string().max(2_000).default(''),
+	}),
+	z.object({
 		type: z.literal('turn_completed'),
 		turn_index: z.number().int().min(0),
 		user_audio_ms: z.number().min(0),
@@ -70,6 +80,7 @@ export type VoiceServerMessage =
 			event: { type: 'conversation.item.create'; item: Record<string, unknown> }
 	  }
 	| { type: 'conversation'; conversation_id: string }
+	| { type: 'ended'; reason: string }
 	| { type: 'error'; code: string }
 
 export interface VoiceChannelDeps {
@@ -159,6 +170,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 					tool_name: msg.name,
 					error: err instanceof Error ? err.message : String(err),
 				})
+				captureVoiceException(session.id, err)
 				output = JSON.stringify({
 					error: `The ${msg.name} call failed: ${(err instanceof Error ? err.message : String(err)).slice(0, 300)}`,
 					error_code: errorCode,
@@ -177,6 +189,7 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				item: { type: 'function_call_output', call_id: msg.call_id, output },
 			},
 		})
+		recordVoiceToolCall(session.id)
 		void captureVoiceToolCall(session.humanActorId, {
 			voice_session_id: session.id,
 			tool_name: msg.name,
@@ -238,7 +251,30 @@ export function createVoiceChannel(deps: VoiceChannelDeps): VoiceChannel {
 				case 'transcript':
 					enqueueTranscript(msg.role, msg.text)
 					return
+				case 'vendor_error': {
+					// The browser relays the Realtime `error` event; the vendor has
+					// already given up on the call, so end it as errored.
+					const vendorError = new Error(
+						`Voice vendor error ${msg.code}: ${msg.message}`.slice(0, 500),
+					)
+					logger.error('Voice vendor error', {
+						voice_session_id: session.id,
+						vendor_error_code: msg.code,
+					})
+					captureVoiceException(session.id, vendorError)
+					const ended = await endVoiceSession(db, {
+						id: session.id,
+						reason: 'vendor_error',
+						vendorErrorCode: msg.code,
+					})
+					if (ended) send({ type: 'ended', reason: 'vendor_error' })
+					return
+				}
 				case 'turn_completed':
+					recordVoiceTurn(session.id, {
+						userAudioMs: msg.user_audio_ms,
+						agentAudioMs: msg.agent_audio_ms,
+					})
 					void captureVoiceTurnCompleted(session.humanActorId, {
 						voice_session_id: session.id,
 						turn_index: msg.turn_index,
