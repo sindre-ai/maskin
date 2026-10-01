@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../../lib/llm-routing'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import {
 	TriggerRunner,
 	calculateBackoffUntil,
@@ -25,6 +26,7 @@ describe('TriggerRunner', () => {
 		sessionManager = createMockSessionManager()
 		const ctx = createTestContext()
 		mockResults = ctx.mockResults
+		configureSessionLifecycle({ db: ctx.db, sessionManager })
 		runner = new TriggerRunner(ctx.db, bridge, sessionManager)
 		;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: 'session-1',
@@ -1052,6 +1054,7 @@ describe('TriggerRunner backoff', () => {
 		sessionManager = createMockSessionManager()
 		const ctx = createTestContext()
 		mockResults = ctx.mockResults
+		configureSessionLifecycle({ db: ctx.db, sessionManager })
 		runner = new TriggerRunner(ctx.db, bridge, sessionManager)
 		;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
 			id: 'session-1',
@@ -1199,6 +1202,109 @@ describe('TriggerRunner backoff', () => {
 		await vi.advanceTimersByTimeAsync(0)
 
 		// Trigger should fire immediately — no backoff
+		mockResults.select = [trigger]
+		mockResults.insert = []
+
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			entity_type: 'task',
+			entity_id: 'obj-1',
+			action: 'created',
+			actor_id: 'actor-1',
+			event_id: 'evt-3',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		expect(sessionManager.createSession).toHaveBeenCalled()
+	})
+
+	it('does not record a trigger failure when the failed session has retry_at pending', async () => {
+		// §17.6 / §7.7: subscription-limit-scheduled retries stay off the trigger
+		// backoff ledger — recording a failure for a session the scheduler will
+		// re-fire on the same triggerId inflates the count and pushes the trigger
+		// into unwarranted backoff before the retry chain even runs.
+		const trigger = buildTrigger({
+			id: 'trigger-1',
+			workspaceId: 'ws-1',
+			type: 'event',
+			config: { entity_type: 'task', action: 'created' },
+		})
+
+		mockResults.selectQueue = [[], []]
+		await runner.start()
+
+		mockResults.selectQueue = [
+			[], // eventHandler: no triggers match entity_type=session
+			[
+				{
+					triggerId: 'trigger-1',
+					retryOf: null,
+					retryAt: new Date('2026-09-29T20:05:00Z'),
+				},
+			], // sessionEventHandler: retry pending
+		]
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			action: 'session_failed',
+			entity_type: 'session',
+			entity_id: 'session-limit-1',
+			event_id: 'evt-fail-limit',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		// Trigger should still be able to fire — no backoff was recorded.
+		mockResults.select = [trigger]
+		mockResults.insert = []
+
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			entity_type: 'task',
+			entity_id: 'obj-1',
+			action: 'created',
+			actor_id: 'actor-1',
+			event_id: 'evt-3',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		expect(sessionManager.createSession).toHaveBeenCalled()
+	})
+
+	it('does not record a trigger failure when the failed session is itself a scheduler retry', async () => {
+		// §17.6: a session with retry_of != null is a scheduler-fired retry —
+		// the original session already accounted for the trigger's fire, and
+		// the trigger-runner defers all retry-chain bookkeeping to the scheduler.
+		const trigger = buildTrigger({
+			id: 'trigger-1',
+			workspaceId: 'ws-1',
+			type: 'event',
+			config: { entity_type: 'task', action: 'created' },
+		})
+
+		mockResults.selectQueue = [[], []]
+		await runner.start()
+
+		mockResults.selectQueue = [
+			[], // eventHandler: no triggers match entity_type=session
+			[
+				{
+					triggerId: 'trigger-1',
+					retryOf: 'session-original-1',
+					retryAt: null,
+				},
+			], // sessionEventHandler: retry session lookup
+		]
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			action: 'session_failed',
+			entity_type: 'session',
+			entity_id: 'session-retry-1',
+			event_id: 'evt-fail-retry',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		// Trigger should still be able to fire — no backoff was recorded.
 		mockResults.select = [trigger]
 		mockResults.insert = []
 

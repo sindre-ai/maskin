@@ -28,6 +28,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { insertConversationMessage } from '../services/conversation-messages'
+import { startSession } from '../services/session-lifecycle'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
 
 type Env = {
@@ -83,7 +84,7 @@ const createSessionRoute = createRoute({
 })
 
 app.openapi(createSessionRoute, (async (c) => {
-	const sessionManager = c.get('sessionManager')
+	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
@@ -96,18 +97,31 @@ app.openapi(createSessionRoute, (async (c) => {
 		? { ...body.config, entry_agent_role: body.entry_agent_role }
 		: body.config
 
-	const session = await sessionManager.createSession(workspaceId, {
+	const handle = await startSession({
+		workspaceId,
 		actorId: body.actor_id,
+		callerKind: 'rest',
 		actionPrompt: body.action_prompt,
 		config,
 		triggerId: body.trigger_id,
 		createdBy: actorId,
 		autoStart: body.auto_start,
-		sourceSessionId: body.source_session_id,
+		parentSessionId: body.source_session_id,
 		initiatedFromObjectId: body.initiated_from_object_id ?? null,
 		initiatedFromObjectType: body.initiated_from_object_type ?? null,
+		await: 'none',
 	})
 
+	// startSession returns a lightweight handle plus the underlying row on a
+	// fresh insert. On an idempotency hit the row is absent — fetch it then.
+	let session = handle.session
+	if (!session) {
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, handle.sessionId)).limit(1)
+		if (!row) {
+			throw new Error(`Session ${handle.sessionId} vanished immediately after startSession`)
+		}
+		session = row
+	}
 	return c.json(serialize(session) as z.infer<typeof sessionResponseSchema>, 201)
 }) as RouteHandler<typeof createSessionRoute, Env>)
 

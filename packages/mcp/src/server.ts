@@ -5928,14 +5928,22 @@ export function createMcpServer(config: McpConfig) {
 				wsOpts,
 			)) as { id: string; status: string }
 
-			const sessionId = session.id
+			let sessionId = session.id
 			const pollMs = (args.poll_interval_seconds ?? 5) * 1000
 			const timeoutMs = (args.timeout_seconds ?? 660) * 1000
 			const deadline = Date.now() + timeoutMs
 			const terminalStatuses = ['completed', 'failed', 'timeout']
+			// §17.6: when a session hits a subscription limit its terminal report
+			// carries retried_session_id — the id of the retry the scheduler
+			// enqueued. Follow the redirect so a caller waiting on run_agent
+			// sees the retry's outcome instead of an intermediate "failed",
+			// with the same cap (5) the scheduler enforces so a broken chain
+			// can't hold the polling loop for the full timeout.
+			const MAX_RETRY_FOLLOWS = 5
+			let retryFollows = 0
 
-			// 2. Poll until terminal
-			let current = session
+			// 2. Poll until terminal, following retried_session_id redirects
+			let current = session as typeof session & { retriedSessionId?: string | null }
 			while (Date.now() < deadline) {
 				await new Promise((resolve) => setTimeout(resolve, pollMs))
 				current = (await apiCall(
@@ -5944,8 +5952,16 @@ export function createMcpServer(config: McpConfig) {
 					`/api/sessions/${sessionId}`,
 					undefined,
 					wsOpts,
-				)) as typeof session
-				if (terminalStatuses.includes(current.status)) break
+				)) as typeof current
+				if (terminalStatuses.includes(current.status)) {
+					const retryId = current.retriedSessionId
+					if (retryId && retryFollows < MAX_RETRY_FOLLOWS) {
+						retryFollows += 1
+						sessionId = retryId
+						continue
+					}
+					break
+				}
 			}
 
 			// 3. Fetch logs
@@ -5965,13 +5981,20 @@ export function createMcpServer(config: McpConfig) {
 						actorId: (current as { actorId?: string }).actorId,
 					})
 				: current
+			// Surface how many retry redirects the poll followed so callers can
+			// distinguish a straight-through completion from one that rode the
+			// subscription-limit retry chain.
+			const currentWithRetryMeta =
+				retryFollows > 0
+					? { ...(currentWithUrl as Record<string, unknown>), retry_follows: retryFollows }
+					: currentWithUrl
 
 			return {
 				_meta: meta('run_agent', config, (args as { workspace_id?: string }).workspace_id),
 				content: [
 					{
 						type: 'text' as const,
-						text: JSON.stringify({ session: currentWithUrl, logs }),
+						text: JSON.stringify({ session: currentWithRetryMeta, logs }),
 					},
 				],
 			}

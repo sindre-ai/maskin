@@ -6,6 +6,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentStorageManager } from '../../services/agent-storage'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { TriggerRunner } from '../../services/trigger-runner'
 import { bootstrapDefaultAgents } from '../../services/workspace-bootstrap'
@@ -201,9 +202,9 @@ describe('Beat 6 — Signal Analyst chained trigger (integration)', () => {
 		// forget, so we poll for BOTH triggers to fire (Beat 2 + Beat 6 both
 		// match knowledge status_changed → validated in the seeded config).
 		const createSession = vi.fn().mockResolvedValue({ id: randomUUID() })
-		const runner = new TriggerRunner(db, bridge, {
-			createSession,
-		} as unknown as SessionManager)
+		const sessionManager = { createSession } as unknown as SessionManager
+		configureSessionLifecycle({ db, sessionManager })
+		const runner = new TriggerRunner(db, bridge, sessionManager)
 		await runner.start()
 		try {
 			bridge.emit('event', {
@@ -288,9 +289,9 @@ describe('Beat 6 — Signal Analyst chained trigger (integration)', () => {
 
 		const bridge = new EventEmitter() as EventEmitter & PgNotifyBridge
 		const createSession = vi.fn().mockResolvedValue({ id: randomUUID() })
-		const runner = new TriggerRunner(db, bridge, {
-			createSession,
-		} as unknown as SessionManager)
+		const sessionManager = { createSession } as unknown as SessionManager
+		configureSessionLifecycle({ db, sessionManager })
+		const runner = new TriggerRunner(db, bridge, sessionManager)
 		await runner.start()
 		try {
 			bridge.emit('event', {

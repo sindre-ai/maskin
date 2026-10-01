@@ -20,6 +20,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 
 type Env = {
@@ -442,8 +443,10 @@ async function wakeSourceAgent(ctx: {
 		continuationOfSessionId = ctx.linkedSessionId
 	}
 
-	await ctx.sessionManager.createSession(ctx.workspaceId, {
+	await startSession({
+		workspaceId: ctx.workspaceId,
 		actorId: ctx.sourceActorId,
+		callerKind: 'trigger',
 		actionPrompt: buildResponsePrompt({
 			notificationId: ctx.notificationId,
 			title: ctx.title,
@@ -459,11 +462,12 @@ async function wakeSourceAgent(ctx: {
 			},
 		},
 		createdBy: ctx.createdBy,
-		// Notification-response spawns run on the notification's own thread —
-		// the linkage lives on `notifications.object_id` already; per spec §3.3
-		// this site passes null/null.
+		// Notification-response spawns run on the notification's own thread: the
+		// linkage lives on notifications.object_id already; per spec §3.3 this
+		// site passes null/null.
 		initiatedFromObjectId: null,
 		initiatedFromObjectType: null,
+		await: 'none',
 	})
 }
 

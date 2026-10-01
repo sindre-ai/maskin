@@ -11,7 +11,7 @@
 -- than blocking the session row.
 --
 -- The CONCURRENTLY partial index on initiated_from_object_id lives in the
--- next migration (0077) — packages/db/MIGRATIONS.md Rule 1 requires
+-- next migration (0078) — packages/db/MIGRATIONS.md Rule 1 requires
 -- CREATE INDEX CONCURRENTLY to be the only statement in its file.
 --
 -- Idempotent — safe to re-run.

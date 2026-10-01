@@ -6,6 +6,8 @@ import { events, sessionLogs, sessions } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
+import type { SessionManager } from '../../services/session-manager'
 import {
 	buildCreateSessionBody,
 	insertActor,
@@ -154,6 +156,7 @@ function createSessionApp() {
 		},
 	})
 	const sessionManager = createMockSessionManager(db)
+	configureSessionLifecycle({ db, sessionManager: sessionManager as unknown as SessionManager })
 
 	app.use('*', async (c, next) => {
 		c.set('db', db)
