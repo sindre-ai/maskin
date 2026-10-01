@@ -374,6 +374,20 @@ export const sessions = pgTable(
 		cacheReadInputTokens: integer('cache_read_input_tokens'),
 		durationMs: integer('duration_ms'),
 		currentActivity: text('current_activity'),
+		// Redesigned lifecycle state (§15.1) — distinct from the ambiguous
+		// `status` text because reaper + retry-scheduler need to tell
+		// waiting-on-machine apart from a genuine stall. Landed in migration
+		// 0076; readers/writers land in Commits 5, 6, 7.
+		sessionState: text('session_state')
+			.notNull()
+			.default('queued')
+			.$type<'queued' | 'waiting_for_machine' | 'starting' | 'running' | 'done'>(),
+		stateEnteredAt: timestamp('state_entered_at', { withTimezone: true }).notNull().defaultNow(),
+		retryAt: timestamp('retry_at', { withTimezone: true }),
+		retriedSessionId: uuid('retried_session_id').references((): AnyPgColumn => sessions.id),
+		retryOf: uuid('retry_of').references((): AnyPgColumn => sessions.id),
+		attemptNumber: integer('attempt_number').notNull().default(1),
+		driverHeartbeatAt: timestamp('driver_heartbeat_at', { withTimezone: true }),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -381,6 +395,10 @@ export const sessions = pgTable(
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 	},
 	(t) => [
+		check(
+			'sessions_session_state_check',
+			sql`${t.sessionState} IN ('queued','waiting_for_machine','starting','running','done')`,
+		),
 		index('sessions_ws_status_idx').on(t.workspaceId, t.status),
 		// Range-scan path for list_sessions(updated_before/updated_after) — the
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0044.
@@ -413,6 +431,16 @@ export const sessions = pgTable(
 		index('sessions_prune_candidates_idx')
 			.on(t.completedAt)
 			.where(sql`${t.interactive} = false AND ${t.completedAt} IS NOT NULL`),
+		// Reaper's live-session scan (Commit 6): only the states the reaper
+		// cares about, so the index carries a tiny slice of the table.
+		index('sessions_session_state_state_entered_at_idx')
+			.on(t.sessionState, t.stateEnteredAt)
+			.where(sql`${t.sessionState} IN ('starting','running','waiting_for_machine')`),
+		// Retry-scheduler's 30s tick (Commit 7): excludes rows already retried,
+		// so each retry_at is picked at most once.
+		index('sessions_retry_at_idx')
+			.on(t.retryAt)
+			.where(sql`${t.retryAt} IS NOT NULL AND ${t.retriedSessionId} IS NULL`),
 	],
 )
 

@@ -3,6 +3,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { and, eq, ne } from 'drizzle-orm'
 import type { EncryptedOAuthData } from '../../lib/claude-oauth'
 import { encrypt } from '../../lib/crypto'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager } from '../../services/session-manager'
 import { insertActor, insertSession, insertSessionLog, insertWorkspace } from '../factories'
 import { db, sql } from './global-setup'
@@ -100,6 +101,7 @@ describe('Remote session completion — Claude subscription failover (Integratio
 		await insertSessionLog(db, session.id, { stream: 'stdout', content: LIMIT_TAIL })
 
 		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
 		// The retry session is created with autoStart — stub the launch so the
 		// test asserts on the row that gets created, not on Docker.
 		const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
@@ -204,6 +206,7 @@ describe('Remote session completion — Claude subscription failover (Integratio
 		await insertSessionLog(db, session.id, { stream: 'stdout', content: REVOKED_TAIL })
 
 		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
 		const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
 		try {
 			await manager.markRemoteSessionComplete(session.id, 1)
@@ -253,6 +256,7 @@ describe('Remote session completion — Claude subscription failover (Integratio
 		})
 
 		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
 		const startSpy = vi.spyOn(manager, 'startSession').mockResolvedValue(undefined)
 		try {
 			await manager.markRemoteSessionComplete(session.id, 1)
