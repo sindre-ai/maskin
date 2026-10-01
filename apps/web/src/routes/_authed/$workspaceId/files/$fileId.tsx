@@ -8,6 +8,7 @@ import { RelativeTime } from '@/components/shared/relative-time'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFile } from '@/hooks/use-files'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import type { AnnotationJson } from '@/lib/annotations'
@@ -51,6 +52,7 @@ function FileViewerPage() {
 	const { fileId } = Route.useParams()
 	const { workspace, workspaceId } = useWorkspace()
 	const { data: file, isLoading, error } = useFile(workspaceId, fileId)
+	useDocumentTitle(file?.name)
 	const { data: actors } = useActors(workspaceId)
 	const [isRevising, setIsRevising] = useState(false)
 	const [linkPickerSignal, setLinkPickerSignal] = useState<{

@@ -4,6 +4,7 @@ import { MarkdownContent } from '@/components/shared/markdown-content'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useBriefing } from '@/hooks/use-briefing'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 
@@ -13,6 +14,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/briefing')({
 })
 
 function BriefingPage() {
+	useDocumentTitle('Briefing')
 	const { workspaceId } = useWorkspace()
 	const { data, isLoading, isError, error, refetch } = useBriefing(workspaceId)
 
