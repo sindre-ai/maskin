@@ -7,8 +7,11 @@ import { type VoiceCall, type VoiceCallState, useVoiceCall } from '@/hooks/use-v
 import type { ActorResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
-import { Mic, MicOff, PhoneOff, ScrollText, X } from 'lucide-react'
+import { ExternalLink, Mic, MicOff, PhoneOff, ScrollText, X } from 'lucide-react'
 import { useEffect } from 'react'
+
+/** The slice of an actor the call dialog needs; agent rows pass list items, the detail header passes the full record. */
+export type VoiceCallAgent = Pick<ActorResponse, 'id' | 'name' | 'type'>
 
 // Verbatim strings — the SPEC's §Copy table is authoritative. A prototype
 // string not listed there is a bug.
@@ -20,14 +23,24 @@ const COPY = {
 	connectingBody: 'Establishing a WebRTC session (typically < 1s).',
 	muted: 'Muted — agent still hears silence',
 	reconnectingBody: 'Network dipped — retrying for 15s. The call auto-resumes if we get back.',
+	micBlockedTitle: 'Microphone blocked',
+	micBlockedBody: "Enable microphone access in your browser's site settings, then try again.",
+	micBlockedAction: 'How to enable →',
+	noMicTitle: 'No microphone found',
+	noMicBody:
+		'Connect a microphone (or check that headphones with a mic are plugged in), then try again.',
+	noMicAction: 'Retry',
 } as const
+
+// External help page for the Mic-blocked state's "How to enable →" link.
+const MIC_HELP_URL = 'https://support.google.com/chrome/answer/2693767'
 
 export function VoiceCallDialog({
 	agent,
 	open,
 	onOpenChange,
 }: {
-	agent: ActorResponse
+	agent: VoiceCallAgent
 	open: boolean
 	onOpenChange: (open: boolean) => void
 }) {
@@ -117,15 +130,16 @@ function VoiceCallDialogBody({
 	onClose,
 	variant,
 }: {
-	agent: ActorResponse
+	agent: VoiceCallAgent
 	call: VoiceCall
 	onClose: () => void
 	variant: 'mobile' | 'desktop'
 }) {
-	const { state, notice, transcriptOpen, start, toggleMute, toggleTranscript, end } = call
+	const { state, notice, transcriptOpen, start, retryMic, toggleMute, toggleTranscript, end } = call
 	const isLive = state.startsWith('live-') || state === 'reconnecting'
 	const isMuted = state === 'live-muted'
 	const isDesktop = variant === 'desktop'
+	const isMicError = state === 'mic-blocked' || state === 'no-mic'
 
 	return (
 		<div data-voice-call-state={state} className="flex h-full flex-col">
@@ -144,6 +158,14 @@ function VoiceCallDialogBody({
 						</h2>
 					) : state === 'reconnecting' ? (
 						<h2 className="text-lg font-semibold tracking-tight text-foreground">Reconnecting…</h2>
+					) : state === 'mic-blocked' ? (
+						<h2 className="text-lg font-semibold tracking-tight text-foreground">
+							{COPY.micBlockedTitle}
+						</h2>
+					) : state === 'no-mic' ? (
+						<h2 className="text-lg font-semibold tracking-tight text-foreground">
+							{COPY.noMicTitle}
+						</h2>
 					) : (
 						<h2 className="sr-only">Call with {agent.name}</h2>
 					)}
@@ -151,11 +173,27 @@ function VoiceCallDialogBody({
 			</div>
 
 			<div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 pb-6 pt-4">
-				<AgentAvatar
-					agent={agent}
-					state={state}
-					sizeClass={isDesktop ? 'size-28 text-3xl' : 'size-36 text-4xl'}
-				/>
+				{isMicError ? (
+					// Error states swap the avatar for a status circle: red for a
+					// blocked mic (the user can fix it), muted for no device. No motion
+					// in either, so prefers-reduced-motion has nothing to opt out of.
+					<div
+						aria-hidden="true"
+						className={cn(
+							'flex items-center justify-center rounded-full',
+							isDesktop ? 'size-28' : 'size-36',
+							state === 'mic-blocked' ? 'bg-error/10 text-error' : 'bg-muted text-muted-foreground',
+						)}
+					>
+						<MicOff size={isDesktop ? 44 : 56} />
+					</div>
+				) : (
+					<AgentAvatar
+						agent={agent}
+						state={state}
+						sizeClass={isDesktop ? 'size-28 text-3xl' : 'size-36 text-4xl'}
+					/>
+				)}
 
 				{/* aria-live=polite region — announces state transitions to screen
 				    readers without stealing focus. Rendered here so it's present in
@@ -175,6 +213,39 @@ function VoiceCallDialogBody({
 						<div className="flex flex-col items-stretch gap-2 sm:flex-row">
 							<Button type="button" onClick={start} className="min-h-[44px]">
 								{COPY.permissionAllow}
+							</Button>
+							<Button type="button" variant="ghost" onClick={onClose} className="min-h-[44px]">
+								{COPY.permissionCancel}
+							</Button>
+						</div>
+					</>
+				)}
+
+				{state === 'mic-blocked' && (
+					<>
+						<p className="max-w-md text-center text-sm text-muted-foreground">
+							{COPY.micBlockedBody}
+						</p>
+						<div className="flex flex-col items-stretch gap-2 sm:flex-row">
+							<Button asChild className="min-h-[44px]">
+								<a href={MIC_HELP_URL} target="_blank" rel="noopener noreferrer">
+									{COPY.micBlockedAction}
+									<ExternalLink aria-hidden="true" />
+								</a>
+							</Button>
+							<Button type="button" variant="ghost" onClick={onClose} className="min-h-[44px]">
+								{COPY.permissionCancel}
+							</Button>
+						</div>
+					</>
+				)}
+
+				{state === 'no-mic' && (
+					<>
+						<p className="max-w-md text-center text-sm text-muted-foreground">{COPY.noMicBody}</p>
+						<div className="flex flex-col items-stretch gap-2 sm:flex-row">
+							<Button type="button" onClick={retryMic} className="min-h-[44px]">
+								{COPY.noMicAction}
 							</Button>
 							<Button type="button" variant="ghost" onClick={onClose} className="min-h-[44px]">
 								{COPY.permissionCancel}
@@ -275,7 +346,7 @@ function AgentAvatar({
 	state,
 	sizeClass,
 }: {
-	agent: ActorResponse
+	agent: VoiceCallAgent
 	state: VoiceCallState
 	/** Tailwind size utility overriding ActorAvatar's own xl (52px). SPEC
 	 *  wants 112 desktop / 140 mobile — tailwind-merge lets us swap the size
@@ -398,6 +469,10 @@ function ariaLiveMessageFor(state: VoiceCallState, agentName: string): string {
 	switch (state) {
 		case 'permission':
 			return `Voice call with ${agentName} awaiting microphone permission.`
+		case 'mic-blocked':
+			return 'Microphone blocked.'
+		case 'no-mic':
+			return 'No microphone found.'
 		case 'connecting':
 			return `Connecting to ${agentName}.`
 		case 'live-agent-speaking':

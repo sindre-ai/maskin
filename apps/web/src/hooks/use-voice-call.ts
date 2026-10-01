@@ -1,12 +1,15 @@
-import { api } from '@/lib/api'
+import { ApiError, api } from '@/lib/api'
+import { VOICE_UNAVAILABLE_TOOLTIP, markVoiceUnavailable } from '@/lib/voice-availability'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-// The seven primary states from the Voice v1 design SPEC. Error / empty /
-// mic-blocked states land in Task 4. Anything the SPEC calls a "Live (…)" state
-// maps here so the dialog can key its render off a single string.
+// The primary states from the Voice v1 design SPEC, plus its two microphone
+// error states. Anything the SPEC calls a "Live (…)" state maps here so the
+// dialog can key its render off a single string.
 export type VoiceCallState =
 	| 'permission'
+	| 'mic-blocked'
+	| 'no-mic'
 	| 'connecting'
 	| 'live-agent-speaking'
 	| 'live-user-speaking'
@@ -16,18 +19,40 @@ export type VoiceCallState =
 
 export interface VoiceCall {
 	state: VoiceCallState
-	/** Non-fatal message surfaced under the primary control (e.g. mic denied
-	 *  while still on the Permission screen). Full mic-blocked / no-mic states
-	 *  land in Task 4. */
+	/** Non-fatal message surfaced under the primary control on the Permission
+	 *  screen (mint failed, handshake failed, connection dropped). Microphone
+	 *  problems have their own states instead. */
 	notice: string | null
 	transcriptOpen: boolean
 	/** Kick off the WebRTC handshake — call this from the Permission screen's
 	 *  Allow button. Requests the mic, mints a Realtime session, and negotiates
 	 *  SDP against the OpenAI Realtime edge. */
 	start: () => Promise<void>
+	/** No-mic state's Retry: re-enumerate devices, and move on to Permission
+	 *  once an input exists. */
+	retryMic: () => Promise<void>
 	toggleMute: () => void
 	toggleTranscript: () => void
 	end: () => void
+}
+
+/** How long a dropped connection gets to come back before the call is ended (SPEC §Reconnecting). */
+export const VOICE_RECONNECT_WINDOW_MS = 15_000
+
+/** Browser mic failures that mean "the user said no", as opposed to "there is no mic". */
+function isMicBlocked(err: unknown): boolean {
+	return (
+		err instanceof DOMException && (err.name === 'NotAllowedError' || err.name === 'SecurityError')
+	)
+}
+
+function isMicMissing(err: unknown): boolean {
+	return (
+		err instanceof DOMException &&
+		(err.name === 'NotFoundError' ||
+			err.name === 'OverconstrainedError' ||
+			err.name === 'DevicesNotFoundError')
+	)
 }
 
 // The Realtime endpoint. Documented in the tech spec §Auth flow (POST to
@@ -50,6 +75,21 @@ export function useVoiceCall(agentActorId: string, open: boolean): VoiceCall {
 	const localStreamRef = useRef<MediaStream | null>(null)
 	const remoteAudioRef = useRef<HTMLAudioElement | null>(null)
 	const dataChannelRef = useRef<RTCDataChannel | null>(null)
+
+	// Server-side call bookkeeping. The voice_sessions row stays pending / active
+	// (and the caller's one-live-call slot stays taken) until a hangup lands, so
+	// every way out of a minted call has to go through finish().
+	const voiceSessionIdRef = useRef<string | null>(null)
+	const connectedAtRef = useRef<number | null>(null)
+	const agentSpeakingSinceRef = useRef<number | null>(null)
+	const outputAudioMsRef = useRef(0)
+	const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+	const iceRestartedRef = useRef(false)
+
+	const clearReconnectTimer = useCallback(() => {
+		if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+		reconnectTimerRef.current = null
+	}, [])
 
 	const teardown = useCallback(() => {
 		try {
@@ -74,15 +114,46 @@ export function useVoiceCall(agentActorId: string, open: boolean): VoiceCall {
 			remoteAudioRef.current = null
 		}
 		mutedRef.current = false
-	}, [])
+		clearReconnectTimer()
+		iceRestartedRef.current = false
+	}, [clearReconnectTimer])
+
+	// The one exit from a minted call: tell the server, then release everything.
+	// Fire-and-forget: a hangup that fails (offline, 5xx) must not trap the user
+	// in the dialog, and the server's idle sweeper closes the row regardless.
+	const finish = useCallback(
+		(reason: 'user_hangup' | 'network_error') => {
+			const voiceSessionId = voiceSessionIdRef.current
+			if (voiceSessionId) {
+				voiceSessionIdRef.current = null
+				const now = Date.now()
+				const inputSeconds = connectedAtRef.current
+					? Math.round((now - connectedAtRef.current) / 1000)
+					: 0
+				const speakingMs = agentSpeakingSinceRef.current ? now - agentSpeakingSinceRef.current : 0
+				api.voiceSessions
+					.hangup(workspaceId, voiceSessionId, {
+						reason,
+						input_audio_seconds: inputSeconds,
+						output_audio_seconds: Math.round((outputAudioMsRef.current + speakingMs) / 1000),
+					})
+					.catch(() => {})
+			}
+			connectedAtRef.current = null
+			agentSpeakingSinceRef.current = null
+			outputAudioMsRef.current = 0
+			teardown()
+		},
+		[teardown, workspaceId],
+	)
 
 	// End the call and let the caller close the dialog.
 	const end = useCallback(() => {
-		teardown()
+		finish('user_hangup')
 		setState('permission')
 		setNotice(null)
 		setTranscriptOpen(false)
-	}, [teardown])
+	}, [finish])
 
 	// Mount / unmount cleanup — the dialog can be closed at any time (Esc, tap
 	// outside, hardware back), and none of those paths currently route through
@@ -90,15 +161,40 @@ export function useVoiceCall(agentActorId: string, open: boolean): VoiceCall {
 	// dialog.
 	useEffect(() => {
 		if (!open) {
-			teardown()
+			finish('user_hangup')
 			setState('permission')
 			setNotice(null)
 			setTranscriptOpen(false)
 		}
 		return () => {
-			teardown()
+			finish('user_hangup')
 		}
-	}, [open, teardown])
+	}, [open, finish])
+
+	// Mic-blocked recovers on its own once the user flips the site permission
+	// back on, so the dialog does not need a Retry control the SPEC does not
+	// list. Browsers without the Permissions API for the microphone just stay
+	// on the state until the dialog is reopened.
+	useEffect(() => {
+		if (state !== 'mic-blocked') return
+		let status: PermissionStatus | null = null
+		let cancelled = false
+		const onChange = () => {
+			if (status && status.state !== 'denied') setState('permission')
+		}
+		navigator.permissions
+			?.query({ name: 'microphone' as PermissionName })
+			.then((result) => {
+				if (cancelled) return
+				status = result
+				result.addEventListener('change', onChange)
+			})
+			.catch(() => {})
+		return () => {
+			cancelled = true
+			status?.removeEventListener('change', onChange)
+		}
+	}, [state])
 
 	const start = useCallback(async () => {
 		setNotice(null)
@@ -107,35 +203,40 @@ export function useVoiceCall(agentActorId: string, open: boolean): VoiceCall {
 		try {
 			stream = await navigator.mediaDevices.getUserMedia({ audio: true })
 		} catch (err) {
-			// Full mic-blocked / no-mic states are Task 4. For Task 2 we hold the
-			// dialog on Permission and surface a one-line notice, so a tester who
-			// clicks Deny by accident can retry without reopening the dialog.
-			const message =
-				err instanceof DOMException && err.name === 'NotAllowedError'
-					? 'Microphone permission denied. Enable it in your browser settings, then try again.'
-					: 'Could not access a microphone. Check your device settings, then try again.'
-			setNotice(message)
-			setState('permission')
+			// No session has been minted yet, so there is nothing to hang up.
+			if (isMicBlocked(err)) {
+				setState('mic-blocked')
+			} else if (isMicMissing(err)) {
+				setState('no-mic')
+			} else {
+				setNotice('Could not access a microphone. Check your device settings, then try again.')
+				setState('permission')
+			}
 			return
 		}
 		localStreamRef.current = stream
 
 		setState('connecting')
 
-		// Session mint. Task 1 owns the route; the client shape is agreed on the
-		// task-1 handoff comment. A failure here (route not deployed, agent not
-		// voice-enabled, 429) returns the dialog to Permission with a notice —
-		// Task 4 owns the dedicated error states.
+		// Session mint. A failure here (route not deployed, agent not
+		// voice-enabled, 429) returns the dialog to Permission with a notice.
 		let session: Awaited<ReturnType<typeof api.voiceSessions.create>>
 		try {
 			session = await api.voiceSessions.create(workspaceId, { agent_actor_id: agentActorId })
 		} catch (err) {
 			teardown()
-			const message = err instanceof Error ? err.message : 'Could not start the voice session.'
-			setNotice(message)
+			if (err instanceof ApiError && err.status === 429) {
+				// Vendor rate limit or the workspace's daily minutes: every Call
+				// button disables until the server says to retry.
+				markVoiceUnavailable(err.retryAfterSeconds ?? 30)
+				setNotice(VOICE_UNAVAILABLE_TOOLTIP)
+			} else {
+				setNotice(err instanceof Error ? err.message : 'Could not start the voice session.')
+			}
 			setState('permission')
 			return
 		}
+		voiceSessionIdRef.current = session.voice_session_id
 
 		const pc = new RTCPeerConnection()
 		pcRef.current = pc
@@ -167,18 +268,41 @@ export function useVoiceCall(agentActorId: string, open: boolean): VoiceCall {
 		dc.addEventListener('message', (e) => {
 			try {
 				const evt = JSON.parse(e.data)
+				trackOutputAudio(evt, agentSpeakingSinceRef, outputAudioMsRef)
 				handleRealtimeEvent(evt, mutedRef, preMuteStateRef, setState)
+				if (evt?.type === 'session.created' && connectedAtRef.current === null) {
+					connectedAtRef.current = Date.now()
+				}
 			} catch {
 				// Ignore non-JSON frames (Realtime never sends any).
 			}
 		})
 
 		pc.addEventListener('iceconnectionstatechange', () => {
-			if (mutedRef.current) return
 			const s = pc.iceConnectionState
 			if (s === 'disconnected' || s === 'failed') {
-				setState('reconnecting')
+				if (!mutedRef.current) setState('reconnecting')
+				// One ICE restart per drop, then the call gets the SPEC's 15s window
+				// to recover before it is ended as a network error.
+				if (s === 'failed' && !iceRestartedRef.current) {
+					iceRestartedRef.current = true
+					try {
+						pc.restartIce()
+					} catch {
+						// Closed connection: the timer below ends the call.
+					}
+				}
+				if (!reconnectTimerRef.current) {
+					reconnectTimerRef.current = setTimeout(() => {
+						reconnectTimerRef.current = null
+						finish('network_error')
+						setNotice('The connection dropped and could not be restored. Try again.')
+						setState('permission')
+					}, VOICE_RECONNECT_WINDOW_MS)
+				}
 			} else if (s === 'connected' || s === 'completed') {
+				clearReconnectTimer()
+				iceRestartedRef.current = false
 				// The initial connect flip to live-agent-speaking is driven by
 				// `session.created` in the data channel; this branch handles the
 				// recovery flip out of reconnecting.
@@ -207,12 +331,23 @@ export function useVoiceCall(agentActorId: string, open: boolean): VoiceCall {
 			const answerSdp = await sdpResponse.text()
 			await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp })
 		} catch (err) {
-			teardown()
+			// The row was minted, so release it; otherwise the caller could not
+			// start another call until the idle timeout.
+			finish('network_error')
 			const message = err instanceof Error ? err.message : 'Could not connect to the voice service.'
 			setNotice(message)
 			setState('permission')
 		}
-	}, [agentActorId, teardown, workspaceId])
+	}, [agentActorId, clearReconnectTimer, finish, teardown, workspaceId])
+
+	const retryMic = useCallback(async () => {
+		try {
+			const devices = await navigator.mediaDevices.enumerateDevices()
+			if (devices.some((d) => d.kind === 'audioinput')) setState('permission')
+		} catch {
+			// Enumeration unavailable: stay on No-mic; the user can close and reopen.
+		}
+	}, [])
 
 	const toggleMute = useCallback(() => {
 		const stream = localStreamRef.current
@@ -233,7 +368,26 @@ export function useVoiceCall(agentActorId: string, open: boolean): VoiceCall {
 
 	const toggleTranscript = useCallback(() => setTranscriptOpen((v) => !v), [])
 
-	return { state, notice, transcriptOpen, start, toggleMute, toggleTranscript, end }
+	return { state, notice, transcriptOpen, start, retryMic, toggleMute, toggleTranscript, end }
+}
+
+// Agent audio the call produced, for the cost the server finalises on hangup.
+// WebRTC sessions emit output_audio_buffer.started / .stopped (and .cleared on
+// barge-in) around every agent utterance.
+function trackOutputAudio(
+	evt: { type?: string },
+	speakingSinceRef: React.RefObject<number | null>,
+	outputAudioMsRef: React.RefObject<number>,
+) {
+	if (evt?.type === 'output_audio_buffer.started') {
+		speakingSinceRef.current = Date.now()
+	} else if (
+		(evt?.type === 'output_audio_buffer.stopped' || evt?.type === 'output_audio_buffer.cleared') &&
+		speakingSinceRef.current !== null
+	) {
+		outputAudioMsRef.current += Date.now() - speakingSinceRef.current
+		speakingSinceRef.current = null
+	}
 }
 
 // Realtime event handler kept outside the component so the closure captured in
