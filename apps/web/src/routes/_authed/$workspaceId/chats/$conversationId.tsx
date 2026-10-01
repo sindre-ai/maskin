@@ -18,6 +18,7 @@ import {
 import { useSessionBudgetStopToast } from '@/hooks/use-conversation-activity'
 import { useConversationProduced } from '@/hooks/use-conversation-produced'
 import { useUpdateConversationMe } from '@/hooks/use-conversations'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIsDesktopViewport } from '@/hooks/use-mobile'
 import { useOriginDeepLinkScroll } from '@/hooks/use-origin-deep-link-scroll'
@@ -46,6 +47,7 @@ function ConversationThreadPage() {
 	const { msg: deepLinkMessageId } = Route.useSearch()
 	const { workspaceId } = useWorkspace()
 	const { data: conversation } = useConversation(conversationId, workspaceId)
+	useDocumentTitle(conversation?.title)
 	const { data: messagesData } = useConversationMessages(conversationId, workspaceId)
 	const updateMe = useUpdateConversationMe(workspaceId)
 	// Feature-flag boundary for the chats v4 polish bet (bet/bdda1c1e-chats-v4-polish).

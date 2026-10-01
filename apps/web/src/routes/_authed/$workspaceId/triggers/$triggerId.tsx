@@ -12,6 +12,7 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useActors } from '@/hooks/use-actors'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import {
 	readAutoPausedInfo,
 	resumeTriggerLabel,
@@ -39,6 +40,7 @@ function TriggerDetailRoute() {
 	const { triggerId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
 	const { data: trigger, isLoading, isError, error, refetch } = useTrigger(triggerId, workspaceId)
+	useDocumentTitle(trigger?.name)
 	const { data: actors } = useActors(workspaceId)
 	const createTrigger = useCreateTrigger(workspaceId)
 	const updateTrigger = useUpdateTrigger(workspaceId)

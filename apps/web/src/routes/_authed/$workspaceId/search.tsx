@@ -6,6 +6,7 @@ import { QueryStateError } from '@/components/shared/query-state'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useObjects } from '@/hooks/use-objects'
 import {
 	SEARCH_GROUPS,
@@ -65,6 +66,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/search')({
 })
 
 function SearchRoute() {
+	useDocumentTitle('Search')
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const router = useRouter()

@@ -32,6 +32,7 @@ import {
 	updateActorSchema,
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -266,10 +267,26 @@ app.openapi(createActorRoute, async (c) => {
 		else if (!atOwnershipCap) workspaceProvisioningFailed = true
 	}
 
+	// Baseline for the invite conversion metric: a human who signs up and lands
+	// in their own workspace is a workspace_member_joined with from_invite:false.
+	if (workspaceId && actor.type === 'human') {
+		void capturePosthogEvent('workspace_member_joined', actor.id, {
+			from_invite: false,
+			workspace_id: workspaceId,
+		})
+	}
+
 	// Return actor WITHOUT api_key, but WITH it in the expected response field.
 	// Field names must be snake_case to match actorResponseSchema so MCP read→update
 	// round trips don't get keys stripped.
-	const { apiKey: _, systemPrompt, llmProvider, llmConfig, ...actorWithoutKey } = actor
+	const {
+		apiKey: _,
+		passwordHash: __,
+		systemPrompt,
+		llmProvider,
+		llmConfig,
+		...actorWithoutKey
+	} = actor
 	return c.json(
 		{
 			...serialize(actorWithoutKey),
