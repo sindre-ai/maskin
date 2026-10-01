@@ -18,6 +18,8 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 		browser,
 		account,
 	}) => {
+		// Two browser contexts, a signup and several cold route loads: past the 30s default.
+		test.slow()
 		// A trial workspace caps humans at one seat, so accepting would 403.
 		await grantPlanHeadroom(account.apiKey, account.workspaceId)
 		await clearSentEmails()

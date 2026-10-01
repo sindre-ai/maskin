@@ -23,6 +23,8 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 		browser,
 		account,
 	}) => {
+		// Two browser contexts, a signup and several cold route loads: past the 30s default.
+		test.slow()
 		await grantPlanHeadroom(account.apiKey, account.workspaceId)
 		await clearSentEmails()
 		const inviteeEmail = `existing-${Date.now()}-${Math.floor(Math.random() * 1e6)}@test.com`
