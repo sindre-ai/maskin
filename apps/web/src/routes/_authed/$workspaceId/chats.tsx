@@ -3,6 +3,7 @@ import { ConversationList } from '@/components/chat/conversation-list'
 import { PageHeader } from '@/components/layout/page-header'
 import { useChatUnreadCount } from '@/hooks/use-chat-unread'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/cn'
@@ -44,6 +45,14 @@ const THREAD_ROUTE_IDS = new Set([
 	'/_authed/$workspaceId/chats/$conversationId',
 	'/_authed/$workspaceId/chats/new',
 ])
+
+// The list-only states never mount the index leaf route, so the list sets its
+// own title. Rendered only while no thread is open: a thread leaf sets the
+// conversation title itself, and this layout's effects would run after it.
+function ChatsListTitle() {
+	useDocumentTitle('Chats')
+	return null
+}
 
 function ChatsLayout() {
 	const { workspaceId } = useWorkspace()
@@ -112,6 +121,7 @@ function ChatsLayout() {
 		return (
 			<>
 				{header}
+				{hasThread ? null : <ChatsListTitle />}
 				{hasThread ? (
 					<div className="-m-4 flex min-h-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)]">
 						<Outlet />
@@ -134,6 +144,7 @@ function ChatsLayout() {
 		return (
 			<>
 				{header}
+				<ChatsListTitle />
 				<ConversationList
 					workspaceId={workspaceId}
 					filter={filter}
