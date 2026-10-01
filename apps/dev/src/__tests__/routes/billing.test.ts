@@ -13,6 +13,7 @@ vi.mock('../../lib/stripe', async () => {
 })
 
 import { TRIAL_HARD_CAP_DEFAULT_USD_CENTS } from '../../lib/billing-defaults'
+import { _resetBillingUsageCache } from '../../lib/billing-usage-cache'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { createCheckoutSession, createCreditCheckoutSession } from '../../lib/stripe'
 import billingRoutes from '../../routes/billing'
@@ -51,6 +52,7 @@ const clearEnv = () => {
 }
 
 beforeEach(() => {
+	_resetBillingUsageCache()
 	vi.mocked(createCheckoutSession).mockReset()
 	vi.mocked(createCreditCheckoutSession).mockReset()
 	clearEnv()
@@ -901,6 +903,68 @@ describe('GET /api/billing/usage', () => {
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
 		expect(await res.json()).toMatchObject({ period_start: periodStart })
+	})
+
+	describe('short-lived cache', () => {
+		const usageGet = (workspaceId: string) =>
+			jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId })
+
+		it('answers a repeat read from the cache instead of reading the workspace again', async () => {
+			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+			const workspaceId = randomUUID()
+			// Only enough rows for ONE read. A second uncached read would find the
+			// queue empty, see no workspace and 404.
+			mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], []]
+
+			const first = await app.request(usageGet(workspaceId))
+			const second = await app.request(usageGet(workspaceId))
+
+			expect(first.status).toBe(200)
+			expect(second.status).toBe(200)
+			expect(await second.json()).toMatchObject({ plan: 'trial', usd_cents_used: 0 })
+		})
+
+		it("does not serve one actor's cached read to another actor in the same workspace", async () => {
+			const workspaceId = randomUUID()
+			process.env.FF_TESTER_ACTOR_IDS = 'tester-actor'
+			process.env.FF_TESTER_FEATURES = 'linkedin-addon-visible'
+			_resetFeatureFlagConfig()
+
+			const tester = createTestApp(billingRoutes, '/api/billing', 'tester-actor')
+			tester.mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [], [{ n: 2 }]]
+			const testerRes = await tester.app.request(usageGet(workspaceId))
+			expect(await testerRes.json()).toMatchObject({
+				linkedin_identity_addon: { count: 2 },
+			})
+
+			const other = createTestApp(billingRoutes, '/api/billing', 'other-actor')
+			other.mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], []]
+			const otherRes = await other.app.request(usageGet(workspaceId))
+			expect(otherRes.status).toBe(200)
+			expect(await otherRes.json()).toMatchObject({ linkedin_identity_addon: null })
+
+			process.env.FF_TESTER_ACTOR_IDS = undefined
+			process.env.FF_TESTER_FEATURES = undefined
+			_resetFeatureFlagConfig()
+		})
+
+		it("does not serve one workspace's cached read for another workspace", async () => {
+			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+			const wsA = randomUUID()
+			const wsB = randomUUID()
+			mockResults.selectQueue = [
+				[{ id: wsA, settings: { billing: { plan: 'pro', status: 'active' } } }],
+				[],
+				[{ id: wsB, settings: {} }],
+				[],
+			]
+
+			const a = await app.request(usageGet(wsA))
+			const b = await app.request(usageGet(wsB))
+
+			expect(await a.json()).toMatchObject({ plan: 'pro' })
+			expect(await b.json()).toMatchObject({ plan: 'trial' })
+		})
 	})
 
 	describe('LinkedIn Identity add-on line', () => {
