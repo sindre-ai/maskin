@@ -1,3 +1,7 @@
+import {
+	ResendConnectDialog,
+	type ResendConnectPrefill,
+} from '@/components/integrations/resend/resend-connect-dialog'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
@@ -26,7 +30,7 @@ import {
 	useProviders,
 	useSelectGithubInstallation,
 } from '@/hooks/use-integrations'
-import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
+import type { IntegrationResponse, ProviderInfo, ResendDnsRecord } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Check, Copy, Link2, Plus } from 'lucide-react'
@@ -67,9 +71,18 @@ function IntegrationsPage() {
 	// but the connect entry point stays hidden from everyone else until the flag
 	// flips on. Per-actor behaviour gate, never a shared-state change.
 	const googleMeetVisible = useFeatureFlag('google-meet-integration-ui')
-	const visibleProviders = (providers ?? []).filter(
-		(p) => p.name !== 'google-meet' || googleMeetVisible,
-	)
+	// Slice 2 of bet cf2bcc85 — off by default, tester-actor-only until the
+	// second workspace has connected cleanly. Same shape as `googleMeetVisible`:
+	// backend registers the provider unconditionally so its endpoints stay
+	// reachable for Slice 1 operators (curl the connect handshake by hand), but
+	// the connect entry point + resume affordance stay hidden from everyone
+	// else until the flag flips on.
+	const resendVisible = useFeatureFlag('resend-integration-ui')
+	const visibleProviders = (providers ?? []).filter((p) => {
+		if (p.name === 'google-meet' && !googleMeetVisible) return false
+		if (p.name === 'resend' && !resendVisible) return false
+		return true
+	})
 
 	// GitHub only installs its App once per org, so a workspace that wants an org
 	// someone already connected elsewhere can't go through the install flow — it
@@ -93,17 +106,39 @@ function IntegrationsPage() {
 		webhookUrl: string
 		integrationId: string
 	} | null>(null)
+	// Slice 2 resend dialog state. `open` alone opens fresh at Step 1; `prefill`
+	// (populated by the Resume affordance) opens straight into Step 3 with the
+	// row's config.resend rehydrated.
+	const [resendDialog, setResendDialog] = useState<{
+		open: boolean
+		prefill: ResendConnectPrefill | null
+	}>({ open: false, prefill: null })
 
 	// Group active integrations by provider — GitHub can have multiple
 	// installations (one per org) and LinkedIn multiple accounts (one per
 	// workspace member); other providers currently have one.
 	const activeByProvider = new Map<string, IntegrationResponse[]>()
+	// Rows that finished /connect but haven't posted the webhook signing secret
+	// yet. Skjald reaches this state on Cancel-at-secret today; Slice 2 adds a
+	// Resume affordance for the resend rows in this bucket. Only rendered when
+	// the flag is on — see `resendVisible` above.
+	const awaitingSecretByProvider = new Map<string, IntegrationResponse[]>()
 	for (const integration of integrations ?? []) {
-		if (integration.status !== 'active') continue
-		const existing = activeByProvider.get(integration.provider) ?? []
-		existing.push(integration)
-		activeByProvider.set(integration.provider, existing)
+		if (integration.status === 'active') {
+			const existing = activeByProvider.get(integration.provider) ?? []
+			existing.push(integration)
+			activeByProvider.set(integration.provider, existing)
+			continue
+		}
+		if (integration.status === 'awaiting_secret') {
+			// Gate hiding behind the flag lives at the render call site — surfacing
+			// every row here keeps the bucket tests honest.
+			const existing = awaitingSecretByProvider.get(integration.provider) ?? []
+			existing.push(integration)
+			awaitingSecretByProvider.set(integration.provider, existing)
+		}
 	}
+	const resendAwaitingSecret = resendVisible ? (awaitingSecretByProvider.get('resend') ?? []) : []
 
 	return (
 		<div>
@@ -143,11 +178,22 @@ function IntegrationsPage() {
 								onManualConnected={(webhookUrl, integrationId) =>
 									setManualConnect({ provider, webhookUrl, integrationId })
 								}
+								onRequestResendConnect={
+									provider.name === 'resend'
+										? () => setResendDialog({ open: true, prefill: null })
+										: undefined
+								}
 								linkableCount={provider.name === 'github' ? linkableCount : 0}
 								onRequestLink={() => setLinkGithubOpen(true)}
 							/>
 						)
 					})}
+					{resendAwaitingSecret.length > 0 && (
+						<ResendResumeSection
+							rows={resendAwaitingSecret}
+							onResume={(prefill) => setResendDialog({ open: true, prefill })}
+						/>
+					)}
 				</div>
 			)}
 			<ApiKeyDialog
@@ -175,8 +221,93 @@ function IntegrationsPage() {
 				integrationId={selectGithubId ?? null}
 				onClose={closeGithubSelect}
 			/>
+			{resendVisible && (
+				<ResendConnectDialog
+					workspaceId={workspaceId}
+					open={resendDialog.open}
+					prefill={resendDialog.prefill}
+					onClose={() => setResendDialog({ open: false, prefill: null })}
+				/>
+			)}
 		</div>
 	)
+}
+
+/** Renders the row(s) whose resend row is stuck at `awaiting_secret` — usually
+ *  one, because a workspace has one resend row. Each carries a Resume connect
+ *  affordance that reopens the dialog directly at Step 3 with the row's
+ *  `config.resend` blob rehydrated. */
+function ResendResumeSection({
+	rows,
+	onResume,
+}: {
+	rows: IntegrationResponse[]
+	onResume: (prefill: ResendConnectPrefill) => void
+}) {
+	return (
+		<div className="space-y-2">
+			<p className="text-[8px] font-bold tracking-[0.11em] uppercase text-muted-foreground font-mono pt-2">
+				CONNECTIONS AWAITING A SECRET
+			</p>
+			{rows.map((row) => {
+				const prefill = extractResendPrefill(row)
+				if (!prefill) return null
+				return (
+					<div
+						key={row.id}
+						className="flex items-center gap-3 rounded-lg border border-warning/40 bg-warning/5 p-4"
+					>
+						<div className="h-3 w-3 shrink-0 rounded-full bg-warning" aria-hidden="true" />
+						<div className="flex-1 min-w-0">
+							<p className="text-sm font-medium text-foreground truncate">
+								Resend — {prefill.receiveSubdomain}
+							</p>
+							<p className="text-xs text-muted-foreground truncate">
+								Awaiting the whsec_… secret. Pick up where you left off in Step 3.
+							</p>
+						</div>
+						<Button size="sm" onClick={() => onResume(prefill)}>
+							Resume connect
+						</Button>
+					</div>
+				)
+			})}
+		</div>
+	)
+}
+
+/** Read the `config.resend` blob off an integration row and reshape it into
+ *  the prefill the dialog consumes. Returns null when the row is missing the
+ *  shape Task 2's connect handler writes — a defensive guard against a
+ *  half-migrated row from Slice 1 hand-connects. */
+function extractResendPrefill(row: IntegrationResponse): ResendConnectPrefill | null {
+	const resend = (row.config as { resend?: Record<string, unknown> } | undefined)?.resend
+	if (!resend) return null
+	const receiveSubdomain =
+		typeof resend.receive_subdomain === 'string' ? resend.receive_subdomain : ''
+	const webhookUrl = typeof resend.webhook_url === 'string' ? resend.webhook_url : ''
+	const dnsRecordsRaw = Array.isArray(resend.dns_records) ? resend.dns_records : []
+	const dnsRecords = dnsRecordsRaw.filter(
+		(r): r is ResendDnsRecord =>
+			typeof r === 'object' && r !== null && 'record' in r && 'status' in r,
+	)
+	const verificationStatus =
+		resend.verification_status === 'verified' || resend.verification_status === 'failed'
+			? resend.verification_status
+			: 'pending'
+	const capabilities =
+		typeof resend.capabilities === 'object' && resend.capabilities !== null
+			? (resend.capabilities as { sending?: string; receiving?: string })
+			: undefined
+	if (!webhookUrl || !receiveSubdomain) return null
+	return {
+		integrationId: row.id,
+		webhookUrl,
+		dnsRecords,
+		verificationStatus,
+		receiveSubdomain,
+		capabilities,
+	}
 }
 
 function ProviderRow({
@@ -185,6 +316,7 @@ function ProviderRow({
 	workspaceId,
 	onRequestApiKey,
 	onManualConnected,
+	onRequestResendConnect,
 	linkableCount,
 	onRequestLink,
 }: {
@@ -193,6 +325,10 @@ function ProviderRow({
 	workspaceId: string
 	onRequestApiKey: () => void
 	onManualConnected: (webhookUrl: string, integrationId: string) => void
+	/** Resend needs its own multi-step dialog — bypass the manual-branch /connect
+	 *  round-trip and hand off to the caller's ResendConnectDialog state.
+	 *  Undefined for every other provider. */
+	onRequestResendConnect?: () => void
 	/** Installations bindable to this workspace; 0 for every non-GitHub provider. */
 	linkableCount: number
 	onRequestLink: () => void
@@ -203,6 +339,10 @@ function ProviderRow({
 	const handleConnect = () => {
 		if (provider.authType === 'api_key') {
 			onRequestApiKey()
+			return
+		}
+		if (provider.name === 'resend' && onRequestResendConnect) {
+			onRequestResendConnect()
 			return
 		}
 		if (provider.authType === 'manual') {
