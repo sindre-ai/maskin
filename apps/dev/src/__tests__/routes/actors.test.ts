@@ -25,6 +25,22 @@ describe('Actors Routes', () => {
 			expect(body.type).toBe('human')
 		})
 
+		it('does not return passwordHash in the 201 body for a human signup with a password', async () => {
+			const actor = buildActor({
+				passwordHash: '$2b$10$abcdefghijklmnopqrstuuvwxyz0123456789ABCDEFGHIJKLMNOPQ',
+			})
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.insert = [actor]
+
+			const res = await app.request(jsonRequest('POST', '/api/actors', buildCreateActorBody()))
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body).not.toHaveProperty('passwordHash')
+			expect(body).not.toHaveProperty('password_hash')
+			expect(body.api_key).toBeDefined()
+		})
+
 		it('creates an agent actor and returns 201', async () => {
 			const actor = buildActor({ type: 'agent' })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
