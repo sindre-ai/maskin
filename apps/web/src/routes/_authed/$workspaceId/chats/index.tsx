@@ -1,5 +1,6 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
 
@@ -14,6 +15,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/chats/')({
  * kept because it is a shipped, reachable route.
  */
 function ChatsIndexPage() {
+	useDocumentTitle('Chats')
 	const { workspaceId } = useWorkspace()
 
 	return (

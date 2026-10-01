@@ -27,6 +27,7 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useActors } from '@/hooks/use-actors'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useLoop, useLoopActivity, useLoopSteps } from '@/hooks/use-loops'
 import { useDeleteObject, useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
@@ -83,6 +84,7 @@ function LoopDetailRoute() {
 		refetch: refetchLoop,
 	} = useLoop(loopId, workspaceId)
 	const { data: object } = useObject(loopId)
+	useDocumentTitle(loop?.name)
 	const { data: triggers } = useTriggers(workspaceId)
 	const { data: actors } = useActors(workspaceId)
 	const { data: membershipEdges } = useRelationships(workspaceId, {
