@@ -578,7 +578,12 @@ function TopBarActions({
 			>
 				<Download size={14} />
 			</Button>
-			<Button variant="ghost" size="sm" onClick={onOpenLinked} aria-label="Linked objects and files">
+			<Button
+				variant="ghost"
+				size="sm"
+				onClick={onOpenLinked}
+				aria-label="Linked objects and files"
+			>
 				<Link2 size={14} />
 				Linked
 			</Button>
