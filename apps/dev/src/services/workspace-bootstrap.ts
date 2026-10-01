@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
-	events,
 	actors,
 	agentSkills,
 	objects,
@@ -27,6 +26,7 @@ import {
 import { and, eq, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { isEnterpriseActor } from '../lib/enterprise'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import {
 	buildChiefOfStaffKickoffPrompt,
@@ -41,6 +41,7 @@ import {
 	resolvePlanTier,
 } from '../lib/workspace-capacity'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
+import { startSession } from './session-lifecycle'
 import type { SessionManager } from './session-manager'
 
 export const DEFAULT_AGENT_IDS = [
@@ -507,15 +508,27 @@ export async function bootstrapDefaultAgents(
 			continue
 		}
 
+		// If the seed prompt references its own trigger id via {{trigger_id}},
+		// pre-generate the UUID and interpolate before insert so the agent has
+		// a literal id to pass to update_trigger for self-disable. Used by the
+		// onboarding-only Chief of Staff triggers that must fire once per
+		// workspace and disable themselves afterwards.
+		const referencesTriggerId = trigger.actionPrompt.includes('{{trigger_id}}')
+		const preGeneratedId = referencesTriggerId ? randomUUID() : undefined
+		const actionPrompt = preGeneratedId
+			? trigger.actionPrompt.replaceAll('{{trigger_id}}', preGeneratedId)
+			: trigger.actionPrompt
+
 		try {
 			const [created] = await db
 				.insert(triggers)
 				.values({
+					...(preGeneratedId ? { id: preGeneratedId } : {}),
 					workspaceId,
 					name: trigger.name,
 					type: trigger.type,
 					config: trigger.config as Record<string, unknown>,
-					actionPrompt: trigger.actionPrompt,
+					actionPrompt,
 					targetActorId,
 					enabled: trigger.enabled,
 					createdBy,
@@ -589,7 +602,7 @@ export async function bootstrapDefaultAgents(
 				continue
 			}
 
-			await db.insert(events).values({
+			await recordEvent(db, {
 				workspaceId,
 				actorId: createdBy,
 				action: 'created',
@@ -650,7 +663,7 @@ export async function bootstrapDefaultAgents(
 				continue
 			}
 
-			await db.insert(events).values({
+			await recordEvent(db, {
 				workspaceId,
 				actorId: chiefId ?? createdBy,
 				action: 'created',
@@ -683,21 +696,22 @@ export async function bootstrapDefaultAgents(
 			.where(eq(actors.id, createdBy))
 			.limit(1)
 
-		sessionManager
-			.createSession(workspaceId, {
-				actorId: chiefId,
-				actionPrompt: buildChiefOfStaffKickoffPrompt(owner ?? {}),
-				createdBy,
-			})
-			.catch((err) =>
-				logger.error(
-					'Failed to kick off Chief of Staff welcome session during workspace bootstrap',
-					{
-						workspaceId,
-						err,
-					},
-				),
-			)
+		startSession({
+			workspaceId,
+			actorId: chiefId,
+			callerKind: 'internal',
+			actionPrompt: buildChiefOfStaffKickoffPrompt(owner ?? {}),
+			createdBy,
+			// Welcome kickoff has no originating object.
+			initiatedFromObjectId: null,
+			initiatedFromObjectType: null,
+			await: 'none',
+		}).catch((err) =>
+			logger.error('Failed to kick off Chief of Staff welcome session during workspace bootstrap', {
+				workspaceId,
+				err,
+			}),
+		)
 	}
 }
 
@@ -856,15 +870,19 @@ export async function provisionWorkspace(params: {
 			.where(eq(actors.id, ownerActorId))
 			.limit(1)
 
-		sessionManager
-			.createSession(workspace.id, {
-				actorId: chiefOfStaffId,
-				actionPrompt: buildChiefOfStaffKickoffPrompt(owner ?? {}),
-				createdBy: ownerActorId,
-			})
-			.catch((err) =>
-				logger.error('Chief of Staff welcome session failed', { workspaceId: workspace.id, err }),
-			)
+		startSession({
+			workspaceId: workspace.id,
+			actorId: chiefOfStaffId,
+			callerKind: 'internal',
+			actionPrompt: buildChiefOfStaffKickoffPrompt(owner ?? {}),
+			createdBy: ownerActorId,
+			// Welcome kickoff has no originating object.
+			initiatedFromObjectId: null,
+			initiatedFromObjectType: null,
+			await: 'none',
+		}).catch((err) =>
+			logger.error('Chief of Staff welcome session failed', { workspaceId: workspace.id, err }),
+		)
 	}
 
 	return workspace

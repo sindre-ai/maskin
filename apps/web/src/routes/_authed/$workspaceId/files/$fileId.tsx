@@ -1,6 +1,7 @@
 import { FileBody } from '@/components/files/file-body'
 import { PinFileButton } from '@/components/files/pin-file-button'
 import { PageHeader } from '@/components/layout/page-header'
+import { LinkedObjectsForFile } from '@/components/objects/linked-objects'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RelativeTime } from '@/components/shared/relative-time'
@@ -16,7 +17,7 @@ import { base64ToBytes } from '@/lib/file-utils'
 import { isPinned, togglePinnedFile } from '@/lib/pinned-files'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
-import { Download } from 'lucide-react'
+import { Download, Link2 } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -52,6 +53,10 @@ function FileViewerPage() {
 	const { data: file, isLoading, error } = useFile(workspaceId, fileId)
 	const { data: actors } = useActors(workspaceId)
 	const [isRevising, setIsRevising] = useState(false)
+	const [linkPickerSignal, setLinkPickerSignal] = useState<{
+		kind: 'object' | 'file'
+		nonce: number
+	} | null>(null)
 	const updateWorkspace = useUpdateWorkspace(workspaceId)
 	const pinned = useMemo(() => isPinned(workspace, fileId), [workspace, fileId])
 
@@ -130,6 +135,16 @@ function FileViewerPage() {
 				</header>
 
 				<div className="flex items-center justify-end gap-2">
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={() =>
+							setLinkPickerSignal((prev) => ({ kind: 'object', nonce: (prev?.nonce ?? 0) + 1 }))
+						}
+					>
+						<Link2 size={14} />
+						Link to object
+					</Button>
 					<PinFileButton file={file} isPinned={pinned} onToggle={handleTogglePin} />
 					<Button variant="outline" size="sm" onClick={() => downloadFile(file)}>
 						<Download size={14} />
@@ -142,6 +157,15 @@ function FileViewerPage() {
 					onReviseWithAnnotations={designAgent ? handleReviseWithAnnotations : undefined}
 					isRevising={isRevising}
 				/>
+
+				{/* Linked section — reciprocal rows for objects and files this
+				 * file is linked to. Same `LinkedObjectsView` component the
+				 * object-detail Related tab renders, entered with
+				 * `objectId=file.id` and `objectType='file'` per design spec §10.
+				 */}
+				<div>
+					<LinkedObjectsForFile fileId={file.id} openPickerSignal={linkPickerSignal} />
+				</div>
 			</div>
 		</>
 	)

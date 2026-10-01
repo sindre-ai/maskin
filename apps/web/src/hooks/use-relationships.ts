@@ -20,13 +20,25 @@ export function useRelationships(workspaceId: string, params?: Record<string, st
 // property Analytics called out on comment 522050 of the parent bet.
 export type CreateRelationshipVariables = CreateRelationshipInput & {
 	source?: RelationshipCreatedSource
+	/** Human-readable title of the endpoint being linked — passed through so
+	 *  the success toast can read `Linked <name> to <object>` per Designer
+	 *  §6, rather than a generic "Linked" message. */
+	linkedTitle?: string
+	/** Human-readable title of the anchor object (the source object the link
+	 *  is being added on). Optional; when both are present the toast reads
+	 *  `Linked <linkedTitle> to <anchorTitle>`. */
+	anchorTitle?: string
 }
 
 export function useCreateRelationship(workspaceId: string, objectId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
-		mutationFn: ({ source: _source, ...data }: CreateRelationshipVariables) =>
-			api.relationships.create(workspaceId, data),
+		mutationFn: ({
+			source: _source,
+			linkedTitle: _lt,
+			anchorTitle: _at,
+			...data
+		}: CreateRelationshipVariables) => api.relationships.create(workspaceId, data),
 		onSuccess: (created, variables) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(objectId) })
@@ -56,6 +68,33 @@ export function useCreateRelationship(workspaceId: string, objectId: string) {
 					parent_entity_type: created.sourceType,
 				})
 			}
+
+			// Success toast: `Linked <name> to <object title>` with an Undo
+			// action that deletes the freshly-created edge. Falls back to a
+			// terser reading when the caller couldn't hand us titles (older
+			// call sites don't set `linkedTitle`/`anchorTitle`).
+			const linkedTitle = variables.linkedTitle ?? 'item'
+			const anchorTitle = variables.anchorTitle
+			const message = anchorTitle
+				? `Linked ${linkedTitle} to ${anchorTitle}`
+				: `Linked ${linkedTitle}`
+			toast.success(message, {
+				action: {
+					label: 'Undo',
+					onClick: async () => {
+						try {
+							await api.relationships.delete(created.id, workspaceId)
+							queryClient.invalidateQueries({ queryKey: queryKeys.relationships.all(workspaceId) })
+							queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(objectId) })
+							queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(otherId) })
+						} catch {
+							// Undo is best-effort — a failed unlink surfaces in the
+							// Related list on next refetch; a second toast here would
+							// pile on the user without adding actionable info.
+						}
+					},
+				},
+			})
 		},
 		onError: () => {
 			toast.error('Failed to link objects')

@@ -35,6 +35,7 @@ import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'driz
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
@@ -50,6 +51,7 @@ import { isWorkspaceMember } from '../lib/workspace-auth'
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { stopSessionsForActors } from '../services/session-cleanup'
+import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 import { SeedAgentError, provisionWorkspace } from '../services/workspace-bootstrap'
 
@@ -935,7 +937,7 @@ app.openapi(resetActorRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'reset',
@@ -1086,7 +1088,7 @@ app.openapi(deleteActorRoute, (async (c) => {
 		await tx.delete(actors).where(eq(actors.id, id))
 	})
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'deleted',
@@ -1217,7 +1219,7 @@ app.openapi(pauseAgentRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'agent_paused',
@@ -1332,10 +1334,16 @@ app.openapi(runAgentRoute, (async (c) => {
 			if (pausedSession) {
 				await sessionManager.resumeSession(pausedSession.id)
 			} else {
-				await sessionManager.createSession(workspaceId, {
+				await startSession({
+					workspaceId,
 					actorId: id,
+					callerKind: 'rest',
 					actionPrompt: body.action_prompt ?? DEFAULT_RUN_ACTION_PROMPT,
 					createdBy: actorId,
+					// Ad-hoc actor run: no originating object.
+					initiatedFromObjectId: null,
+					initiatedFromObjectType: null,
+					await: 'none',
 				})
 			}
 		} catch (err) {
@@ -1364,7 +1372,7 @@ app.openapi(runAgentRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'agent_run',

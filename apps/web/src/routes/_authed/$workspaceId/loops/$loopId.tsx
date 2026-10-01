@@ -29,7 +29,7 @@ import {
 import { useActors } from '@/hooks/use-actors'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useLoop, useLoopActivity, useLoopSteps } from '@/hooks/use-loops'
-import { useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
+import { useDeleteObject, useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
 import { useTriggers } from '@/hooks/use-triggers'
 import { trackAskBannerDecideClicked } from '@/lib/analytics'
@@ -38,8 +38,8 @@ import { nextFireAt, nextFireLabel } from '@/lib/loop-next-fire'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
 import { useWorkspace } from '@/lib/workspace-context'
 import { isWaitingOnViewer, useWaitingOnViewer } from '@maskin/shared'
-import { Link, createFileRoute } from '@tanstack/react-router'
-import { MoreHorizontal, Pause, Play } from 'lucide-react'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -103,6 +103,8 @@ function LoopDetailRoute() {
 	const stepFlowEnabled = useFeatureFlag('loops-v4-polish.step_flow')
 	const { data: loopSteps } = useLoopSteps(loopId, workspaceId, { enabled: stepFlowEnabled })
 	const updateObject = useUpdateObject(workspaceId)
+	const deleteObject = useDeleteObject(workspaceId)
+	const navigate = useNavigate()
 	// Feature-flag boundary for the loops v4 polish bet. Read once at the route
 	// level per the feature-flags rule (`.claude/rules/feature-flags.md`); kept
 	// above the early returns below so the hook order stays stable across renders.
@@ -110,6 +112,7 @@ function LoopDetailRoute() {
 
 	const composerRef = useRef<HTMLDivElement>(null)
 	const [proposedEdit, setProposedEdit] = useState<ProposedEdit | null>(null)
+	const [confirmDelete, setConfirmDelete] = useState(false)
 	const loopsV4Polish = useFeatureFlag('loops-v4-polish')
 
 	// D3 AskBanner wiring — the shared `useWaitingOnViewer` (T1) takes a getter
@@ -181,6 +184,19 @@ function LoopDetailRoute() {
 		},
 		[loopId, updateObject],
 	)
+
+	// A loop IS an object, so deletion routes through the shared
+	// `DELETE /api/objects/:id` — `useDeleteObject` already toasts, tracks and
+	// invalidates the objects/bets caches; on success the viewer lands back on
+	// `/loops` since the current route's data has just been removed. Mirrors the
+	// agent-detail trash affordance restored in PR #1667.
+	const handleDelete = useCallback(() => {
+		deleteObject.mutate(loopId, {
+			onSuccess: () => {
+				navigate({ to: '/$workspaceId/loops', params: { workspaceId } })
+			},
+		})
+	}, [deleteObject, loopId, navigate, workspaceId])
 
 	// An utterance is read back as a diff against the plan snapshot `/loops/new`
 	// wrote to `metadata.plan`. Loops without one (marketplace installs, MCP
@@ -324,50 +340,76 @@ function LoopDetailRoute() {
 			<PageHeader
 				title={loop.name ?? 'Untitled loop'}
 				actions={
-					<>
-						<span
-							data-testid="loop-pill"
-							className={cn(
-								'inline-flex items-center gap-1.5 text-[11.5px] font-semibold',
-								pill.text,
-							)}
-						>
+					confirmDelete ? (
+						// Inline confirm mirrors the agent-detail delete affordance
+						// (PR #1667) — a Radix Dialog would collide with the
+						// LoopUtteranceInput at the bottom of the page on mobile.
+						<div className="flex items-center gap-2">
+							<span className="text-xs text-error">Delete this loop?</span>
+							<Button
+								variant="destructive"
+								size="sm"
+								onClick={handleDelete}
+								disabled={deleteObject.isPending}
+							>
+								{deleteObject.isPending ? 'Deleting...' : 'Confirm'}
+							</Button>
+							<Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
+								Cancel
+							</Button>
+						</div>
+					) : (
+						<>
 							<span
-								aria-hidden="true"
+								data-testid="loop-pill"
 								className={cn(
-									'size-1.5 rounded-full',
-									pill.dot,
-									isLiveLoopPill(loop.pill) && 'animate-pulse',
+									'inline-flex items-center gap-1.5 text-[11.5px] font-semibold',
+									pill.text,
 								)}
-							/>
-							{pill.label}
-						</span>
-						<DropdownMenu>
-							<DropdownMenuTrigger asChild>
-								<Button
-									variant="ghost"
-									size="icon"
-									className="h-7 w-7 text-muted-foreground"
-									aria-label="More"
-								>
-									<MoreHorizontal size={15} />
-								</Button>
-							</DropdownMenuTrigger>
-							<DropdownMenuContent align="end">
-								<DropdownMenuItem onSelect={togglePause} disabled={updateObject.isPending}>
-									{isPaused ? (
-										<>
-											<Play size={14} /> Resume loop
-										</>
-									) : (
-										<>
-											<Pause size={14} /> Pause loop
-										</>
+							>
+								<span
+									aria-hidden="true"
+									className={cn(
+										'size-1.5 rounded-full',
+										pill.dot,
+										isLiveLoopPill(loop.pill) && 'animate-pulse',
 									)}
-								</DropdownMenuItem>
-							</DropdownMenuContent>
-						</DropdownMenu>
-					</>
+								/>
+								{pill.label}
+							</span>
+							<DropdownMenu>
+								<DropdownMenuTrigger asChild>
+									<Button
+										variant="ghost"
+										size="icon"
+										className="h-7 w-7 text-muted-foreground"
+										aria-label="More"
+									>
+										<MoreHorizontal size={15} />
+									</Button>
+								</DropdownMenuTrigger>
+								<DropdownMenuContent align="end">
+									<DropdownMenuItem onSelect={togglePause} disabled={updateObject.isPending}>
+										{isPaused ? (
+											<>
+												<Play size={14} /> Resume loop
+											</>
+										) : (
+											<>
+												<Pause size={14} /> Pause loop
+											</>
+										)}
+									</DropdownMenuItem>
+									<DropdownMenuItem
+										onSelect={() => setConfirmDelete(true)}
+										className="text-error focus:text-error"
+									>
+										<Trash2 size={14} /> Delete loop
+									</DropdownMenuItem>
+								</DropdownMenuContent>
+							</DropdownMenu>
+						</>
+					)
 				}
 			/>
 			<div className="mx-auto flex w-full max-w-3xl flex-col">

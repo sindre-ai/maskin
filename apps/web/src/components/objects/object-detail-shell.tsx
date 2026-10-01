@@ -15,6 +15,7 @@ import {
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { deriveSidebarViewport, trackSidebarToggle } from '@/lib/analytics'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
@@ -27,6 +28,7 @@ import { getAsk } from './object-detail-fixtures'
 import { ObjectDetailBarActions, ObjectDetailIdentity } from './object-detail-header'
 import { DeleteConfirmDialog } from './object-document'
 import { ObjectPropertiesSidebar } from './object-properties-sidebar'
+import { Origin } from './origin'
 import { PropertiesSidebarProvider, SIDEBAR_WIDTH } from './properties-sidebar-provider'
 import { RelatedTab } from './related-tab'
 import { resolveRelatedRows } from './related-tab-utils'
@@ -64,16 +66,25 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 
 	// The ask banner prefers the live needs_input notification targeting this
 	// object; `metadata._ask` stays as the fallback for seeded/fixture rows.
-	// The same cache also drives the D4 verb swap on the shared New button —
-	// a `useMemo` over the sorted pending asks so both surfaces read the same
-	// oldest-first pick and re-render together when SSE flushes.
+	// An ask only belongs to the reader when it's explicitly targeted at them —
+	// otherwise the object may be waiting on another actor (e.g. an @mentioned
+	// agent) and rendering the banner here would show "waiting for you" with no
+	// answerable action attached. The same cache also drives the D4 verb swap on
+	// the shared New button, so this list is sorted oldest-first and both
+	// surfaces read the same pick and re-render together when SSE flushes.
 	const { data: needsInputNotifications } = useNotifications(workspaceId, { type: 'needs_input' })
+	const currentActorId = getStoredActor()?.id
 	const pendingAsks = useMemo(
 		() =>
 			(needsInputNotifications ?? [])
-				.filter((n) => n.objectId === object.id && n.status === 'pending')
+				.filter(
+					(n) =>
+						n.objectId === object.id &&
+						n.status === 'pending' &&
+						n.targetActorId === currentActorId,
+				)
 				.sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? '')),
-		[needsInputNotifications, object.id],
+		[needsInputNotifications, object.id, currentActorId],
 	)
 	const liveAsk = pendingAsks[0]
 	const askActor = liveAsk?.sourceActorId
@@ -391,6 +402,16 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 							onStatusChange={handleUpdateStatus}
 							onDriverChange={handleUpdateDriver}
 							onTitleChange={handleUpdateTitle}
+						/>
+
+						{/* System-written lineage — renders NOTHING when the object has no
+						    produced_by ancestor (absence contract). Placed between identity
+						    and the ask banner per CPO 2026-09-22 (top-of-page, not
+						    right-rail). Depends on the graph query already firing above. */}
+						<Origin
+							object={object}
+							relationships={graph?.relationships ?? []}
+							workspaceId={workspaceId}
 						/>
 
 						{askText && (

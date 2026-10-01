@@ -1,5 +1,6 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { trackAgentSessionCompleted, trackTriggerFired } from './analytics'
+import { api } from './api'
 import { queryKeys } from './query-keys'
 import type { SSEEvent } from './sse'
 
@@ -8,6 +9,31 @@ const SESSION_COMPLETION_ACTIONS = new Map<string, 'completed' | 'failed' | 'tim
 	['session_failed', 'failed'],
 	['session_timeout', 'timeout'],
 ])
+
+// Session events that can move the credit balance or end a run. Billing usage
+// only needs a refetch on these; routine session_updated / session_started
+// traffic does not change it.
+const BILLING_INVALIDATING_ACTIONS = new Set(['session_credit_debited', 'session_budget_stopped'])
+
+// Trailing window for the sidebar's workspace sessions list (?limit=100).
+// Agents PATCH current_activity on every step, so one busy run emits a burst
+// of session events; the list refetches once per window instead of per event.
+const SESSIONS_LIST_REFETCH_MS = 5_000
+const sessionsListTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+function scheduleSessionsListRefetch(queryClient: QueryClient, workspaceId: string) {
+	if (sessionsListTimers.has(workspaceId)) return
+	sessionsListTimers.set(
+		workspaceId,
+		setTimeout(() => {
+			sessionsListTimers.delete(workspaceId)
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.sessions.all(workspaceId),
+				exact: true,
+			})
+		}, SESSIONS_LIST_REFETCH_MS),
+	)
+}
 
 export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string, event: SSEEvent) {
 	// Always invalidate events history
@@ -73,26 +99,58 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			}
 			break
 		case 'session': {
-			// Broad prefix invalidation covers all session queries including byActor
-			queryClient.invalidateQueries({ queryKey: ['sessions'] })
+			// Broad prefix invalidation covers all session queries including byActor,
+			// detail and logs — except the workspace list (exactly ['sessions', ws]),
+			// which is coalesced below. The prefix also matches it, so exclude it here.
+			queryClient.invalidateQueries({
+				queryKey: ['sessions'],
+				predicate: (query) => {
+					const key = query.queryKey
+					return !(key.length === 2 && key[1] === workspaceId)
+				},
+			})
+			scheduleSessionsListRefetch(queryClient, workspaceId)
 			// Same reasoning as trigger_fired above — session lifecycle events feed
 			// into the loop activity view via the trigger id join.
 			queryClient.invalidateQueries({ queryKey: ['loops', workspaceId, 'activity'] })
 			// Sessions burn credits and can flip the workspace into PAUSED · NO
 			// CREDITS mid-flight. The D6 chip reads through `useUsageState` →
-			// `useBillingUsage`, so invalidating billing usage on every session
-			// lifecycle event keeps the chip's re-render workspace-scoped and
-			// SSE-driven (D6 acceptance: reacts to workspace-level SSE, not
-			// per-object).
-			queryClient.invalidateQueries({ queryKey: queryKeys.billing.usage(workspaceId) })
+			// `useBillingUsage`; only credit debits, budget stops and terminal
+			// events can change that, so routine session updates skip the refetch.
 			const outcome = SESSION_COMPLETION_ACTIONS.get(event.action)
+			if (outcome || BILLING_INVALIDATING_ACTIONS.has(event.action)) {
+				queryClient.invalidateQueries({ queryKey: queryKeys.billing.usage(workspaceId) })
+			}
 			if (outcome) {
-				trackAgentSessionCompleted({
-					entity_id: event.entity_id,
-					entity_type: 'session',
-					outcome,
-					flow_id: event.event_id ?? null,
-				})
+				const sessionId = event.entity_id
+				// G2 trigger provenance lives on the session row — the `trigger_id`
+				// column plus the `trigger_type` folded into `config` by
+				// `createSession` — and the SSE payload has carried no `data` since
+				// migration 0006 dropped it for the 8KB NOTIFY limit. So read the row
+				// back. Fire-and-forget: `onEvent` is not awaited upstream
+				// (`sse.ts`), so this cannot stall the stream, and a completion whose
+				// row is unreadable (deleted, evicted) still emits — just without
+				// provenance, rather than being dropped.
+				void (async () => {
+					let triggerId: string | null = null
+					let triggerType: string | null = null
+					try {
+						const session = await api.sessions.get(sessionId, workspaceId)
+						triggerId = session.triggerId
+						triggerType =
+							typeof session.config?.trigger_type === 'string' ? session.config.trigger_type : null
+					} catch {
+						// Provenance is best-effort; the completion itself is not.
+					}
+					trackAgentSessionCompleted({
+						entity_id: sessionId,
+						entity_type: 'session',
+						outcome,
+						flow_id: event.event_id ?? null,
+						trigger_id: triggerId,
+						trigger_type: triggerType,
+					})
+				})()
 			}
 			break
 		}

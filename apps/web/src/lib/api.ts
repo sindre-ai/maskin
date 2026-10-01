@@ -1360,6 +1360,11 @@ export interface RelationshipResponse {
 	targetId: string
 	targetTitle?: string | null
 	type: string
+	// S2 · edge-level context the writer hook persists at CREATE time.
+	// A `conversation → session` `spawned` edge carries `{ messageId }` so
+	// the Origin block can build a deep-link into the chat at the exact
+	// spawning message.
+	metadata?: Record<string, unknown> | null
 	createdBy: string
 	createdAt: string | null
 }
@@ -1369,6 +1374,24 @@ export interface ObjectGraphResponse {
 	relationships: RelationshipResponse[]
 	connected_objects: ObjectResponse[]
 	events: EventResponse[]
+	/** Files this object references — attached via a relationship endpoint
+	 *  OR referenced from a comment's `data.attachmentFileIds`. The FE builds
+	 *  its `fileMap` off this so file endpoints render as first-class rows in
+	 *  the Related tab without a follow-up round-trip. Optional for
+	 *  back-compat with older test fixtures; the server always emits it. */
+	files?: GraphFileSummary[]
+}
+
+/** Compact file summary carried on `ObjectGraphResponse.files`. Not the same
+ *  shape as `FileListItem`/`FileDetail` — this omits storageKey/description
+ *  and adds the pre-minted viewer `url`. Matches the backend's
+ *  `fileSummarySchema`. */
+export interface GraphFileSummary {
+	id: string
+	name: string
+	mimeType: string
+	sizeBytes: number
+	url: string
 }
 
 export interface KnowledgeReferencesResponse {
@@ -1940,6 +1963,10 @@ export interface ImportResponse {
 	totalRows: number | null
 	processedRows: number
 	successCount: number
+	/** Rows that matched an existing object and were left alone */
+	skippedCount: number
+	/** Rows that matched an existing object and were merged into it */
+	updatedCount: number
 	errorCount: number
 	mapping: ImportMappingInput | null
 	preview: ImportPreview | null
@@ -1977,6 +2004,8 @@ export interface TypeMappingInput {
 	objectType: string
 	columns: ColumnMappingInput[]
 	defaultStatus?: string
+	/** `title` or `metadata.<field>` — rows matching an existing object on this field aren't re-created */
+	matchOn?: string
 }
 
 export interface RelationshipMappingInput {
@@ -1989,6 +2018,8 @@ export interface ImportMappingInput {
 	typeMappings: TypeMappingInput[]
 	relationships?: RelationshipMappingInput[]
 	csvOptions?: CsvOptions
+	/** What happens to a row that matches an existing object. Absent means `skip`. */
+	onMatch?: 'skip' | 'update'
 }
 
 export type MarketplaceItemType = 'actor' | 'trigger' | 'skill' | 'integration'

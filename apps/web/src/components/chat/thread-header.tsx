@@ -25,6 +25,7 @@ import {
 	ArrowLeft,
 	Copy,
 	EyeOff,
+	Layers,
 	Maximize2,
 	Minimize2,
 	MoreHorizontal,
@@ -45,6 +46,15 @@ interface ThreadHeaderProps {
 	 *  conversation, no Mark-as-unread, and no mobile ⋯ overflow menu — Pin and
 	 *  Archive stay inline at every width. */
 	v4Polish?: boolean
+	/** S2 · bet 34706e2f-graph-nodes, task 5. Composed at the route boundary
+	 *  from the `graph-provenance-writes` flag AND presence of any downstream
+	 *  produced items — the Produced toggle only mounts for the flagging actor
+	 *  so the pane doesn't ship to workspaces that have never seen a
+	 *  `produced_by` edge. */
+	producedEnabled?: boolean
+	producedCount?: number
+	producedOpen?: boolean
+	onToggleProduced?: () => void
 }
 
 const LOOP_CHIP_MAX = 24
@@ -55,7 +65,15 @@ const LOOP_CHIP_MAX = 24
  * pin/archive state toggles. A single row collapsed the title to a few pixels
  * at 768px once the fixed-width controls were laid out beside it.
  */
-export function ThreadHeader({ workspaceId, conversationId, v4Polish = false }: ThreadHeaderProps) {
+export function ThreadHeader({
+	workspaceId,
+	conversationId,
+	v4Polish = false,
+	producedEnabled = false,
+	producedCount = 0,
+	producedOpen = false,
+	onToggleProduced,
+}: ThreadHeaderProps) {
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const messagesQuery = useConversationMessages(conversationId, workspaceId)
 	const isMobile = useIsMobile()
@@ -282,6 +300,42 @@ export function ThreadHeader({ workspaceId, conversationId, v4Polish = false }: 
 							</button>
 						</TooltipTrigger>
 						<TooltipContent>{loopName ?? loopLabel}</TooltipContent>
+					</Tooltip>
+				) : null}
+				{/* S2 Produced toggle (bet 34706e2f, task 5). Sits beside the
+				    loop chip so it reads as a per-thread indicator (a stateful
+				    label) rather than as a right-cluster action. Renders only
+				    when the parent route has resolved the
+				    `graph-provenance-writes` flag on. Count is a `<span>` with
+				    `aria-label` so screen readers hear "N items produced"
+				    rather than the pill glyph. */}
+				{producedEnabled && onToggleProduced ? (
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<button
+								type="button"
+								onClick={onToggleProduced}
+								aria-pressed={producedOpen}
+								aria-label={producedOpen ? 'Close Produced pane' : 'Open Produced pane'}
+								className={cn(
+									'inline-flex h-[22px] shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-2 text-[11px] font-semibold text-foreground transition-colors hover:border-[color:var(--border-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+									producedOpen &&
+										'bg-brand-subtle text-brand-subtle-foreground hover:bg-brand-subtle',
+								)}
+							>
+								<Layers size={11} aria-hidden />
+								Produced
+								<span
+									className="inline-flex min-w-[16px] items-center justify-center rounded-full bg-muted px-1 text-[10px] font-bold text-muted-foreground"
+									aria-label={`${producedCount} items produced`}
+								>
+									{producedCount}
+								</span>
+							</button>
+						</TooltipTrigger>
+						<TooltipContent>
+							{producedOpen ? 'Hide Produced pane' : 'Show Produced pane · press P'}
+						</TooltipContent>
 					</Tooltip>
 				) : null}
 				<span className="ml-auto" />

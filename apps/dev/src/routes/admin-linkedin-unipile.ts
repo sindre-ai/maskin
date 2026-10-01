@@ -1,8 +1,9 @@
 import type { Database } from '@maskin/db'
-import { events, integrations } from '@maskin/db/schema'
+import { integrations } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { createApiError } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { enumerateLinkedInIdentitiesAndRegister } from '../lib/integrations/providers/linkedin-unipile/enumeration'
 import { logger } from '../lib/logger'
 import { isWorkspaceMember } from '../lib/workspace-auth'
@@ -85,7 +86,7 @@ app.post('/refresh-identities', async (c) => {
 					.update(integrations)
 					.set({ unipileAccSlug: result.unipileAccSlug, updatedAt: new Date() })
 					.where(eq(integrations.id, row.id))
-				await db.insert(events).values({
+				await recordEvent(db, {
 					workspaceId,
 					actorId: row.actorId ?? row.createdBy,
 					action: 'updated',

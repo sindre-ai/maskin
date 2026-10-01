@@ -101,6 +101,7 @@ import { getProvider } from '../../lib/integrations/registry'
 import { logger } from '../../lib/logger'
 import { expandBrowserCapability } from '../../lib/marketplace-loops/loop-snapshot'
 import { AgentStorageManager } from '../../services/agent-storage'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager, mergeLaunchRouteConfig } from '../../services/session-manager'
 import { buildIntegration, buildSession } from '../factories'
 import { createTestContext } from '../setup'
@@ -143,6 +144,16 @@ describe('SessionManager', () => {
 		mockResults = ctx.mockResults
 		calls = ctx.calls
 		manager = new SessionManager(ctx.db, storageProvider as StorageProvider)
+		// SessionManager's self-spawn (claude-oauth failover retry) now routes
+		// through startSession() — wire the lifecycle to the same mock deps.
+		configureSessionLifecycle({ db: ctx.db, sessionManager: manager })
+		// buildLaunchSpec resolves the workspace-skill manifest for the
+		// dispatch payload — the shape used by apps/agent-server's host-side
+		// stager (see agent-storage.ts `resolveWorkspaceSkillManifest`).
+		// Mock to an empty manifest by default so tests that queue their own
+		// select responses don't need to add a row for this internal DB read,
+		// mirroring the same-file spy on `pullWorkspaceSkillsForAgent`.
+		vi.spyOn(AgentStorageManager.prototype, 'resolveWorkspaceSkillManifest').mockResolvedValue([])
 		// Default: pretend GitHub is healthy so preflight in buildLaunchSpec does
 		// not touch the real network. Individual tests override this for the
 		// broken-identity path.
@@ -207,6 +218,8 @@ describe('SessionManager', () => {
 				actorId: 'actor-1',
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -221,6 +234,8 @@ describe('SessionManager', () => {
 					actorId: 'actor-1',
 					actionPrompt: 'Do the thing',
 					createdBy: 'creator-1',
+					initiatedFromObjectId: null,
+					initiatedFromObjectType: null,
 					autoStart: false,
 				}),
 			).rejects.toThrow('Failed to create session')
@@ -241,6 +256,8 @@ describe('SessionManager', () => {
 				actorId: 'actor-1',
 				actionPrompt: 'Reply to the comment',
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 				triggerSource: 'comment_fallback',
 				sourceCommentEventId: 9001,
@@ -253,6 +270,34 @@ describe('SessionManager', () => {
 			}) as { config: { trigger_source: string; source_comment_event_id: number } } | undefined
 			expect(sessionInsert?.config.trigger_source).toBe('comment_fallback')
 			expect(sessionInsert?.config.source_comment_event_id).toBe(9001)
+		})
+
+		it('persists triggerType onto session.config.trigger_type so the launch emit can segment cron-vs-event (G2)', async () => {
+			// G2: the trigger-runner passes the dispatching trigger's `type` to
+			// createSession, which must persist it onto session.config so
+			// startSession's `trackAgentSessionStartedWithPrompt` reads it back at
+			// launch. If the key shape drifts here, PostHog stops receiving
+			// trigger_type and the skill-load rate can no longer be split cron-vs-event.
+			const session = buildSession({ status: 'pending' })
+			mockResults.insertQueue = [[session], []]
+
+			await manager.createSession('ws-1', {
+				actorId: 'actor-1',
+				actionPrompt: 'Run the cron job',
+				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
+				autoStart: false,
+				triggerId: 'trig-1',
+				triggerType: 'cron',
+			})
+
+			const sessionInsert = calls.inserts.find((row) => {
+				if (typeof row !== 'object' || row === null || !('config' in row)) return false
+				const cfg = (row as { config?: Record<string, unknown> }).config
+				return cfg?.trigger_type === 'cron'
+			}) as { config: { trigger_type: string } } | undefined
+			expect(sessionInsert?.config.trigger_type).toBe('cron')
 		})
 
 		it('rejects pre-insert when the workspace is over its plan cap', async () => {
@@ -279,6 +324,8 @@ describe('SessionManager', () => {
 					actorId: 'actor-1',
 					actionPrompt: 'Do the thing',
 					createdBy: 'creator-1',
+					initiatedFromObjectId: null,
+					initiatedFromObjectType: null,
 					autoStart: false,
 				}),
 			).rejects.toMatchObject({
@@ -317,6 +364,8 @@ describe('SessionManager', () => {
 					actorId: 'actor-1',
 					actionPrompt: 'Do the thing',
 					createdBy: 'creator-1',
+					initiatedFromObjectId: null,
+					initiatedFromObjectType: null,
 					autoStart: false,
 				}),
 			).rejects.toMatchObject({ name: 'PlanCapExceededError', plan: 'pro' })
@@ -347,6 +396,8 @@ describe('SessionManager', () => {
 				actorId: 'actor-1',
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -364,6 +415,8 @@ describe('SessionManager', () => {
 				actionPrompt: '',
 				config: { interactive: true },
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -378,6 +431,8 @@ describe('SessionManager', () => {
 				actorId: 'actor-1',
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -397,6 +452,8 @@ describe('SessionManager', () => {
 				actionPrompt: '',
 				config: { interactive: true, conversation: { conversation_id: 'conv-1' } },
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -411,6 +468,8 @@ describe('SessionManager', () => {
 				actorId: 'actor-1',
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -780,7 +839,7 @@ describe('SessionManager', () => {
 				type: 'agent',
 				systemPrompt: 'You are a helpful AI agent.',
 				llmProvider: null,
-				llmConfig: { model: 'claude-sonnet-4-6' },
+				llmConfig: { model: 'claude-sonnet-5-5' },
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
@@ -814,7 +873,7 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.ANTHROPIC_API_KEY).toBe('sk-ant-ws')
-			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 		})
 
 		it('omits ANTHROPIC_MODEL when the agent has no model preference', async () => {
@@ -876,7 +935,7 @@ describe('SessionManager', () => {
 				type: 'agent',
 				systemPrompt: 'You are a helpful AI agent.',
 				llmProvider: null,
-				llmConfig: { model: 'claude-sonnet-4-6' },
+				llmConfig: { model: 'claude-sonnet-5-5' },
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
@@ -918,7 +977,7 @@ describe('SessionManager', () => {
 				env: Record<string, string>
 			}
 			expect(createArgs.env.CLAUDE_OAUTH_ACCESS_TOKEN).toBe('decrypted')
-			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+			expect(createArgs.env.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
 		})
 	})
 
@@ -3297,68 +3356,77 @@ describe('SessionManager', () => {
 		})
 	})
 
-	describe('runWatchdog() — zombie starting sessions', () => {
-		it('fails sessions stuck in starting for >10 minutes', async () => {
-			const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000)
+	describe('runWatchdog() — boot-stall (session_state=starting past BOOT_STALL_MS)', () => {
+		it('fails sessions stuck in starting for >BOOT_STALL_MS', async () => {
+			const sixMinutesAgo = new Date(Date.now() - 6 * 60 * 1000)
 			const stuckSession = buildSession({
 				status: 'starting',
+				sessionState: 'starting',
+				stateEnteredAt: sixMinutesAgo,
 				containerId: null,
-				updatedAt: twentyMinutesAgo,
+				updatedAt: sixMinutesAgo,
 				startedAt: null,
 			})
 
-			// Set up the select queue for each watchdog query in order:
-			// 1. timedOut (running past timeout) → empty
-			// 2. runningSessions (for idle check) → empty
-			// 3. expiredPaused → empty
-			// 4. stuckPending → empty
-			// 5. stuckStarting → our stuck session
-			// 6. drainQueue > hasCapacity: workspace lookup
-			// 7. drainQueue > hasCapacity: count running sessions
-			// 8. drainQueue > nextQueued → empty (no queued sessions)
-			// 9. queuedSessions (final drain) → empty
+			// Mock queue tracks each .select() runWatchdog fires, in order.
+			// The redesigned reaper (Commit 6) fires:
+			//   1. timedOut               (wall-timeout, sessionState='running')
+			//   2. idleChatCandidates     (interactive chat idle close)
+			//   3. runningSessions        (non-interactive idle-pause)
+			//   4. maskinPlanRunning      (budget check)
+			//   5. expiredPaused          (7-day archive — reads sessions.status)
+			//   6. queuedRescueCandidates (dead-driver rescue)
+			//   7. waitingStuck           (waiting_for_machine >24h — PostHog only)
+			//   8. stuckStarting          (boot-stall — the section under test)
+			//   9-11. drainQueue chain fired from inside the boot-stall processing loop
+			//   12. queuedSessions        (final drain)
 			mockResults.selectQueue = [
 				[], // 1. timedOut
-				[], // 1.5 stuckAgentSessions
-				[], // 1.75 idleChatCandidates
-				[], // 2. runningSessions
-				[], // 3. expiredPaused
-				[], // 4. stuckPending
-				[stuckSession], // 5. stuckStarting
-				[{ settings: {} }], // 6. drainQueue > workspace
-				[{ count: 0 }], // 7. drainQueue > count
-				[], // 8. drainQueue > nextQueued (empty = break)
-				[], // 9. final queuedSessions
+				[], // 2. idleChatCandidates
+				[], // 3. runningSessions
+				[], // 4. maskinPlanRunning
+				[], // 5. expiredPaused
+				[], // 6. queuedRescueCandidates
+				[], // 7. waitingStuck
+				[stuckSession], // 8. stuckStarting
+				[stuckSession], // 8b. settleSession's own SELECT for the stuck row
+				[{ settings: {} }], // 9. drainQueue > workspace
+				[{ count: 0 }], // 10. drainQueue > count
+				[], // 11. drainQueue > nextQueued (empty = break)
+				[], // 12. final queuedSessions
 			]
 
 			// Access private runWatchdog via cast
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
 
 			// The watchdog should have completed without error,
-			// processing the stuck starting session through the failure path
+			// processing the stuck starting session through the boot-stall path
 		})
 
-		it('does not fail sessions in starting for less than 10 minutes', async () => {
-			const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
+		it('does not fail sessions in starting for less than BOOT_STALL_MS', async () => {
+			const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000)
 			const recentSession = buildSession({
 				status: 'starting',
+				sessionState: 'starting',
+				stateEnteredAt: threeMinutesAgo,
 				containerId: null,
-				updatedAt: fiveMinutesAgo,
+				updatedAt: threeMinutesAgo,
 			})
 
-			// The DB query uses lt(updatedAt, tenMinutesAgo), so a session
-			// updated 5 minutes ago should NOT be returned by the query.
-			// With the mock DB, the query returns whatever we put in the queue,
-			// so we simulate the correct DB behavior by returning empty for stuckStarting.
+			// The DB query uses lt(stateEnteredAt, BOOT_STALL_MS ago), so a
+			// session in 'starting' for 3 minutes should NOT be returned by the
+			// query. The mock returns whatever we put in the queue, so we
+			// simulate the correct DB behavior by returning empty for stuckStarting.
 			mockResults.selectQueue = [
 				[], // 1. timedOut
-				[], // 1.5 stuckAgentSessions
-				[], // 1.75 idleChatCandidates
-				[], // 2. runningSessions
-				[], // 3. expiredPaused
-				[], // 4. stuckPending
-				[], // 5. stuckStarting (empty — session is too recent)
-				[], // 6. queuedSessions
+				[], // 2. idleChatCandidates
+				[], // 3. runningSessions
+				[], // 4. maskinPlanRunning
+				[], // 5. expiredPaused
+				[], // 6. queuedRescueCandidates
+				[], // 7. waitingStuck
+				[], // 8. stuckStarting (empty — session is too recent)
+				[], // 9. final queuedSessions
 			]
 
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
@@ -3386,21 +3454,23 @@ describe('SessionManager', () => {
 			// log, telemetry, drainQueue) runs as it would against a real DB.
 			mockResults.update = [{ id: orphan.id }]
 			mockResults.selectQueue = [
-				[], // 1. timedOut
-				[], // 2. stuckAgentSessions (no stuck sessions)
-				[], // 2.5 idleChatCandidates (no idle chat sessions)
-				[orphan], // 3. runningSessions (idle check)
+				// Mock queue matches the redesigned reaper's SELECT order.
+				[], // 1. timedOut (wall-timeout)
+				[], // 2. idleChatCandidates
+				[orphan], // 3. runningSessions (idle-pause)
 				[], // 4. lastLog for orphan (empty → falls back to startedAt, which is >10min old)
-				// markSessionFailedAfterContainerLoss → existing session select (new in this branch):
+				// markSessionFailedAfterContainerLoss chain:
 				[], // 5. existing session lookup (undefined → skip telemetry, update still fires)
-				// markSessionFailedAfterContainerLoss → drainQueue → hasCapacity:
 				[{ settings: {} }], // 6. drainQueue > workspace lookup
 				[{ count: 0 }], // 7. drainQueue > running count
 				[], // 8. drainQueue > nextQueued (empty = break)
-				[], // 9. expiredPaused
-				[], // 10. stuckPending
-				[], // 11. stuckStarting
-				[], // 12. final queuedSessions
+				// Back in runWatchdog, remaining sections:
+				[], // 9. maskinPlanRunning (budget)
+				[], // 10. expiredPaused
+				[], // 11. queuedRescueCandidates
+				[], // 12. waitingStuck
+				[], // 13. stuckStarting (boot-stall)
+				[], // 14. final queuedSessions
 			]
 
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
@@ -3431,16 +3501,17 @@ describe('SessionManager', () => {
 
 			mockResults.selectQueue = [
 				[], // 1. timedOut
-				[], // 2. stuckAgentSessions (no stuck sessions)
-				[], // 2.5 idleChatCandidates (no idle chat sessions)
+				[], // 2. idleChatCandidates
 				[stale], // 3. runningSessions
 				[], // 4. lastLog (empty → falls back to startedAt, which is >10min old)
 				// isContainerAlive → inspect mock returns { running: false } (consumed here)
 				// stale.agentServerId is set → continue, no markSessionFailedAfterContainerLoss
-				[], // 5. expiredPaused
-				[], // 6. stuckPending
-				[], // 7. stuckStarting
-				[], // 8. final queuedSessions
+				[], // 5. maskinPlanRunning
+				[], // 6. expiredPaused
+				[], // 7. queuedRescueCandidates
+				[], // 8. waitingStuck
+				[], // 9. stuckStarting
+				[], // 10. final queuedSessions
 			]
 
 			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()

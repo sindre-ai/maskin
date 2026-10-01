@@ -29,6 +29,7 @@ const ALL_TOOL_NAMES = [
 	'delete_object',
 	'list_objects',
 	'search_objects',
+	'create_relationship',
 	'list_relationships',
 	'traverse_graph',
 	'delete_relationship',
@@ -71,6 +72,7 @@ const ALL_TOOL_NAMES = [
 	'create_session',
 	'list_sessions',
 	'get_session',
+	'get_session_logs',
 	'stop_session',
 	'pause_session',
 	'resume_session',
@@ -400,6 +402,48 @@ describe('traverse_graph schema', () => {
 	})
 })
 
+describe('create_relationship schema', () => {
+	const schema = tools.create_relationship.inputSchema
+
+	it('accepts a valid pair with a type', () => {
+		const result = schema.parse({
+			workspace_id: uuid,
+			source_id: uuid,
+			target_id: uuid2,
+			type: 'attached',
+		})
+		expect(result.source_id).toBe(uuid)
+		expect(result.target_id).toBe(uuid2)
+		expect(result.type).toBe('attached')
+	})
+
+	it('rejects non-uuid source_id', () => {
+		expect(() => schema.parse({ source_id: 'nope', target_id: uuid2, type: 'attached' })).toThrow()
+	})
+
+	it('rejects non-uuid target_id', () => {
+		expect(() => schema.parse({ source_id: uuid, target_id: 'nope', type: 'attached' })).toThrow()
+	})
+
+	it('rejects empty type', () => {
+		expect(() => schema.parse({ source_id: uuid, target_id: uuid2, type: '' })).toThrow()
+	})
+
+	it('rejects extra source_type / target_type — server derives kinds internally', () => {
+		// The schema is strict enough that unknown fields are stripped but not
+		// rejected; the tool handler ignores any caller-supplied labels regardless.
+		const result = schema.parse({
+			source_id: uuid,
+			target_id: uuid2,
+			type: 'attached',
+			source_type: 'object',
+			target_type: 'file',
+		}) as Record<string, unknown>
+		expect(result.source_type).toBeUndefined()
+		expect(result.target_type).toBeUndefined()
+	})
+})
+
 describe('delete_object schema', () => {
 	const schema = tools.delete_object.inputSchema
 
@@ -646,10 +690,31 @@ describe('create_session schema', () => {
 describe('list_sessions schema', () => {
 	const schema = tools.list_sessions.inputSchema
 
-	it('defaults limit to 20', () => {
+	// Bumped from 20 → 50 alongside the lean-row payload cut (spec §1.1):
+	// lean rows are ~10x smaller so a screen of recent sessions fits in the
+	// same tool response budget today's 20 verbose rows do.
+	it('defaults limit to 50 and offset to 0', () => {
 		const result = schema.parse({})
-		expect(result.limit).toBe(20)
+		expect(result.limit).toBe(50)
 		expect(result.offset).toBe(0)
+	})
+
+	// The lean row shape is the default; verbose keeps today's fat payload
+	// during the migration window (spec §4 backwards-compat).
+	it('defaults verbose to false', () => {
+		const result = schema.parse({})
+		expect(result.verbose).toBe(false)
+	})
+
+	it('accepts verbose=true', () => {
+		expect(schema.parse({ verbose: true }).verbose).toBe(true)
+	})
+
+	// Cap raised 100 → 200 so a caller can pull the full lean tail in one
+	// request; anything above still rejects to guard the DB.
+	it('caps limit at 200', () => {
+		expect(schema.parse({ limit: 200 }).limit).toBe(200)
+		expect(() => schema.parse({ limit: 201 })).toThrow()
 	})
 
 	it('accepts status filter', () => {
@@ -659,6 +724,24 @@ describe('list_sessions schema', () => {
 
 	it('rejects invalid status', () => {
 		expect(() => schema.parse({ status: 'cancelled' })).toThrow()
+	})
+
+	it('accepts trigger_id filter (spec §1.1)', () => {
+		const result = schema.parse({ trigger_id: uuid })
+		expect(result.trigger_id).toBe(uuid)
+	})
+
+	it('rejects trigger_id that is not a UUID', () => {
+		expect(() => schema.parse({ trigger_id: 'not-a-uuid' })).toThrow()
+	})
+
+	it('accepts the before cursor as ISO-8601', () => {
+		const result = schema.parse({ before: '2026-06-30T12:00:00.000Z' })
+		expect(result.before).toBe('2026-06-30T12:00:00.000Z')
+	})
+
+	it('rejects a malformed before cursor', () => {
+		expect(() => schema.parse({ before: 'not-a-date' })).toThrow()
 	})
 
 	it('accepts updated_before / updated_after as ISO-8601', () => {

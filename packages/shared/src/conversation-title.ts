@@ -1,3 +1,10 @@
+/**
+ * Deterministic first-sentence extractor for conversation titles. Same logic
+ * runs on the frontend (before create-conversation calls) and the backend
+ * (auto-titler fallback when the LLM path can't produce a title), so a
+ * placeholder like "New chat" never survives on either side.
+ */
+
 /** Longest title we keep intact; past this the title is cut on a word boundary. */
 const MAX_TITLE_LENGTH = 72
 /** Below this a word-boundary cut would leave a stub, so we cut mid-word instead. */
@@ -27,14 +34,12 @@ const FIRST_SENTENCE = /^.*?[.!?](?=\s|$)/
  * reads ("Which accounts went quiet this week?", "Why did trial signups dip
  * last week?") — the topic, not the participants.
  *
- * Every entry point that starts a conversation used to title it either by the
- * agent's name (so every thread with the same agent shared one title) or by a
- * blind `slice(0, 60)` (so a title could end mid-word with no ellipsis). Both
- * are replaced by this: the first sentence of the message, trimmed to a word
- * boundary when it runs long.
- *
  * This is a deterministic local derivation, not a model-written summary — a
  * long opening message still yields its first sentence rather than a précis.
+ * Both the frontend composer and the backend auto-titler use it: the frontend
+ * so a new conversation carries a real title from the moment it lands, the
+ * backend so the LLM-less path still ends up with a content-derived title
+ * instead of the placeholder the frontend passed as a fallback.
  */
 export function deriveConversationTitle(message: string, fallback: string): string {
 	const cleaned = message.replace(/\s+/g, ' ').trim()

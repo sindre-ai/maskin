@@ -408,3 +408,111 @@ describe('POST /api/internal/agent-servers/sessions/:id/complete', () => {
 		expect(res.status).toBe(401)
 	})
 })
+
+describe('POST /api/internal/agent-servers/sessions/:id/skill-staging', () => {
+	beforeEach(() => {
+		vi.stubEnv('AGENT_SERVER_SECRET', SECRET)
+	})
+
+	afterEach(() => {
+		vi.unstubAllEnvs()
+		vi.restoreAllMocks()
+	})
+
+	function stagingPath(id = sessionId) {
+		return `/api/internal/agent-servers/sessions/${id}/skill-staging`
+	}
+
+	function stagingBody(
+		overrides: Partial<{
+			manifest_skills: number
+			staged: number
+			failures: { name: string; error: string }[]
+		}> = {},
+	) {
+		return { manifest_skills: 3, staged: 3, failures: [], ...overrides }
+	}
+
+	it('returns 200 and forwards the outcome to sessionManager.recordSkillStagingResult', async () => {
+		const { app, sessionManager } = createSessionTestApp(
+			agentServerReconcileRoutes,
+			'/api/internal/agent-servers',
+		)
+		sessionManager.recordSkillStagingResult = vi.fn().mockResolvedValue(undefined)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				stagingPath(),
+				stagingBody({
+					manifest_skills: 4,
+					staged: 3,
+					failures: [{ name: 'broken-skill', error: 'NoSuchKey' }],
+				}),
+				{ Authorization: `Bearer ${SECRET}` },
+			),
+		)
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ ok: true })
+		expect(sessionManager.recordSkillStagingResult).toHaveBeenCalledWith(sessionId, {
+			manifestSkills: 4,
+			staged: 3,
+			failures: [{ name: 'broken-skill', error: 'NoSuchKey' }],
+		})
+	})
+
+	it('still returns 200 when recordSkillStagingResult throws (best-effort record)', async () => {
+		const { app, sessionManager } = createSessionTestApp(
+			agentServerReconcileRoutes,
+			'/api/internal/agent-servers',
+		)
+		sessionManager.recordSkillStagingResult = vi.fn().mockRejectedValue(new Error('db blip'))
+		vi.spyOn(logger, 'error').mockImplementation(() => {})
+
+		const res = await app.request(
+			jsonRequest('POST', stagingPath(), stagingBody(), { Authorization: `Bearer ${SECRET}` }),
+		)
+
+		// Retrying the report has no useful effect at this point — the manifest is
+		// already staged on the guest by the time this fires. Report success so
+		// the agent-server doesn't spin on retries with no side effect.
+		expect(res.status).toBe(200)
+	})
+
+	it('returns 401 when the Authorization header is missing', async () => {
+		const { app } = createSessionTestApp(agentServerReconcileRoutes, '/api/internal/agent-servers')
+
+		const res = await app.request(jsonRequest('POST', stagingPath(), stagingBody()))
+
+		expect(res.status).toBe(401)
+	})
+
+	it('returns 401 on wrong bearer token', async () => {
+		const { app } = createSessionTestApp(agentServerReconcileRoutes, '/api/internal/agent-servers')
+
+		const res = await app.request(
+			jsonRequest('POST', stagingPath(), stagingBody(), {
+				Authorization: 'Bearer wrong-secret',
+			}),
+		)
+
+		expect(res.status).toBe(401)
+	})
+
+	it('rejects a body whose failures array exceeds the max cap with a validation error', async () => {
+		const { app } = createSessionTestApp(agentServerReconcileRoutes, '/api/internal/agent-servers')
+		const oversized = Array.from({ length: 300 }, (_, i) => ({
+			name: `skill-${i}`,
+			error: 'oops',
+		}))
+
+		const res = await app.request(
+			jsonRequest('POST', stagingPath(), stagingBody({ failures: oversized }), {
+				Authorization: `Bearer ${SECRET}`,
+			}),
+		)
+
+		expect(res.status).toBe(400)
+	})
+})

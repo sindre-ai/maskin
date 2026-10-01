@@ -158,9 +158,18 @@ describe('Integrations Routes', () => {
 				'ubersuggest',
 			])
 
-			// github is the one exemption — its entries are named per installation
-			// with literal tokens, so there is no single spec to hand out.
-			expect(body.filter((p) => p.mcp && !p.mcp.server).map((p) => p.name)).toEqual(['github'])
+			// Two multi-identity exemptions omit a single `server` spec:
+			//   - github: per-installation entries with literal tokens (github-<owner>)
+			//   - linkedin-unipile: per-identity entries built from
+			//     /api/integrations/linkedin-unipile/identities; the aggregate
+			//     URL that used to be advertised was a deprecated, empty-tool
+			//     endpoint that silently trapped any client pasting it verbatim.
+			expect(
+				body
+					.filter((p) => p.mcp && !p.mcp.server)
+					.map((p) => p.name)
+					.sort(),
+			).toEqual(['github', 'linkedin-unipile'])
 		})
 
 		// The handler casts its response rather than parsing it, so a field can be

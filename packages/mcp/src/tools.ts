@@ -84,7 +84,7 @@ const actorLlmConfigSchema = z
 			.string()
 			.optional()
 			.describe('LLM provider to run this agent on, e.g. "anthropic", "openai".'),
-		model: z.string().optional().describe('Model identifier to use, e.g. "claude-opus-4-6".'),
+		model: z.string().optional().describe('Model identifier to use, e.g. "claude-sonnet-5-5".'),
 	})
 	.passthrough()
 	.optional()
@@ -462,6 +462,31 @@ export const tools = {
 				.default(false)
 				.describe(
 					'When false (the default), rows with `status = "archived"` are excluded regardless of type. Set to `true` to include archived rows — used when a caller deliberately wants to see closed-out work.',
+				),
+		}),
+	},
+	create_relationship: {
+		description:
+			"Create a relationship (graph edge) between two endpoints. Each endpoint id may point at an object or a file in the workspace — the server derives `sourceType`/`targetType` internally from the id, so callers do NOT supply type labels. Idempotent on (source_id, target_id, type): a second call with identical params returns the existing row. Returns 404 when either id resolves to neither an object nor a file in the caller's workspace. Use this to link a file to a bet from the file-detail page, wire two objects together, or attach any first-class node to any other. For edge deletion, use the UI's DELETE /api/relationships/:id — the MCP surface does not expose delete_relationship for file endpoints on purpose.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			source_id: z
+				.string()
+				.uuid()
+				.describe(
+					"UUID of the source endpoint. Must be an existing object or file in the caller's workspace — 404 otherwise.",
+				),
+			target_id: z
+				.string()
+				.uuid()
+				.describe(
+					"UUID of the target endpoint. Must be an existing object or file in the caller's workspace — 404 otherwise.",
+				),
+			type: z
+				.string()
+				.min(1)
+				.describe(
+					"Relationship type. Call get_workspace_schema to see this workspace's configured relationship types — built-ins like informs/breaks_into/blocks/relates_to/duplicates are common defaults, plus `attached` for file-attach edges.",
 				),
 		}),
 	},
@@ -1343,10 +1368,25 @@ export const tools = {
 				.describe(
 					'ID of a prior session whose workspace should be restored at startup. Use this when continuing a task that a previous session started but could not finish (e.g. code was written but could not be pushed).',
 				),
+			initiated_from_object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Object id (bet, task, insight, etc.) this session is being spawned for. Threaded into the session row so a failure event can link back to the object, and emitted on the runtime_session_ended PostHog event as context_object_id. Omit when there is no originating object (direct API create, cron, onboarding).',
+				),
+			initiated_from_object_type: z
+				.string()
+				.max(64)
+				.optional()
+				.describe(
+					"Object type of `initiated_from_object_id` (e.g. 'bet', 'task', 'insight'). Emitted on the runtime_session_ended PostHog event as context_object_type. Must be set whenever initiated_from_object_id is set.",
+				),
 		}),
 	},
 	list_sessions: {
-		description: 'List sessions with optional filters (status, actor, last-updated window).',
+		description:
+			"List sessions with optional filters (status, actor, trigger, last-updated window). By default rows are lean — { id, title, status, updated_at } — so a screen of recent sessions fits in one response. Pass verbose: true to get today's full payload (config, result, cost, tokens, timestamps) during the compat window.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			status: z
@@ -1362,6 +1402,13 @@ export const tools = {
 				])
 				.optional(),
 			actor_id: z.string().uuid().optional(),
+			trigger_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Filter to sessions spawned by a specific trigger. Complements actor_id — a session has both an actor (the agent that ran) and, when spawned automatically, the trigger that scheduled it.',
+				),
 			updated_before: z
 				.string()
 				.datetime({ offset: true })
@@ -1376,20 +1423,35 @@ export const tools = {
 				.describe(
 					'ISO-8601 timestamp. Half-open: returns rows with `updated_at > updated_after` (the bound itself is excluded). Composes with `updated_before` for a non-overlapping window.',
 				),
-			limit: z.number().int().min(1).max(100).default(20),
+			before: z
+				.string()
+				.datetime({ offset: true })
+				.optional()
+				.describe(
+					"Cursor: pass the last row's `updated_at` from the previous page to walk backward through history. Half-open, exclusive: returns rows with `updated_at < before`.",
+				),
+			verbose: z
+				.boolean()
+				.default(false)
+				.describe(
+					"When false (the default), returns lean rows { id, title, status, updated_at } — ~10x smaller than the fat shape. When true, returns today's full session payload for backwards compatibility.",
+				),
+			limit: z.number().int().min(1).max(200).default(50),
 			offset: z.number().int().min(0).default(0),
 		}),
 	},
 	get_session: {
 		description:
-			'Get session details by ID. Optionally include log output from the container (stdout/stderr/system).',
+			'Get session details by ID. Optionally include log output from the container (stdout/stderr/system) — logs are returned newest-first so the failure lands at the top of the array. For paginated walks through log history, use get_session_logs instead.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
 			include_logs: z
 				.boolean()
 				.default(false)
-				.describe('Include log output from the session container'),
+				.describe(
+					'Include log output from the session container. When true, the response gains a `logs` array ordered newest-first (id DESC), so the ending — where a failure lives — is at the top.',
+				),
 			log_limit: z
 				.number()
 				.int()
@@ -1397,6 +1459,41 @@ export const tools = {
 				.max(500)
 				.default(100)
 				.describe('Max log lines to return (only used when include_logs is true)'),
+		}),
+	},
+	get_session_logs: {
+		description:
+			'Read a session\'s log history with cursor pagination. Default direction is newest-first so the caller lands on the ending, where a failure lives. Walk backward through history with before_id (rows satisfy id < before_id), tail the live stream with after_id (rows satisfy id > after_id), or compose both for the bounded window after_id < id < before_id. Pass direction: "oldest_first" (no cursor) to jump to boot. Row shape: { id, sessionId, stream, content, createdAt }.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('Session id'),
+			direction: z
+				.enum(['newest_first', 'oldest_first'])
+				.default('newest_first')
+				.describe(
+					'Which end to page from. `newest_first` (the default) returns the latest rows first — id DESC — so a caller lands on the failure. `oldest_first` returns id ASC, for the rare "jump to boot" case.',
+				),
+			before_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Half-open, exclusive: rows satisfy `id < before_id`. Pages backward through history. Compose with after_id to bound the window.',
+				),
+			after_id: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Half-open, exclusive: rows satisfy `id > after_id`. Live-tail from a known cursor. Compose with before_id to bound the window.',
+				),
+			stream: z
+				.enum(['stdout', 'stderr', 'system'])
+				.optional()
+				.describe('Filter to a single log stream.'),
+			limit: z.number().int().min(1).max(500).default(100).describe('Max rows per page.'),
 		}),
 	},
 	stop_session: {

@@ -30,7 +30,11 @@ import {
 
 /**
  * In-process MCP server for the LinkedIn (LinkedIn-backed) provider, served
- * over Streamable HTTP at `/api/integrations/linkedin-unipile/mcp`.
+ * over Streamable HTTP at `/api/integrations/linkedin-unipile/mcp/{instanceSlug}`
+ * (one endpoint per connected LinkedIn identity). The un-slugged aggregate
+ * `/api/integrations/linkedin-unipile/mcp` path is a deprecated, empty-tool
+ * endpoint kept live for backwards compatibility — see
+ * `routes/integrations-linkedin-unipile-mcp.ts`.
  *
  * R11-A rebuilds this file around the fan-out identity model — see
  * linkedin-mcp-phase2-technical-spec.md §1 and §2. The old flat

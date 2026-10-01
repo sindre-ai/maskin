@@ -15,9 +15,8 @@ import {
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
-import { deriveConversationTitle } from '@/lib/conversation-title'
 import { useWorkspace } from '@/lib/workspace-context'
-import { MESSAGE_MAX_MENTIONS } from '@maskin/shared'
+import { MESSAGE_MAX_MENTIONS, deriveConversationTitle } from '@maskin/shared'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { X } from 'lucide-react'
 import {
@@ -464,8 +463,10 @@ function NewChatV4({ search }: { search: NewChatSearch }) {
 								aria-label={typedMode ? 'Add someone — person or agent' : 'Recent collaborators'}
 								className={cn(
 									'flex list-none flex-col gap-0.5 overflow-y-auto p-0',
-									// Desktop: single column, max 8 rows before scroll.
-									'max-h-[calc(8*40px)]',
+									// Mobile: cap at 4 rows so the composer stays visible on small
+									// phones (dvh alone can't help — the To row is shrink-0). md+
+									// gets the full 8-row list.
+									'max-h-[calc(4*40px)] md:max-h-[calc(8*40px)]',
 									// Tablet 641–1024px: 2-col when RECENT has >4 rows.
 									!typedMode && dropdownRows.length > 4
 										? 'md:grid md:max-h-[calc(4*40px)] md:grid-cols-2 lg:flex lg:max-h-[calc(8*40px)]'

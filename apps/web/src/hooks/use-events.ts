@@ -67,12 +67,20 @@ export function useCreateComment(workspaceId: string, entityId: string) {
 
 const OBJECT_ENTITY_TYPES = new Set(['bet', 'task', 'insight'])
 const OBJECT_ACTIONS = new Set(['created', 'updated', 'status_changed'])
+const FILE_ACTIONS = new Set(['created', 'updated'])
 
 export interface AffectedObject {
 	entityId: string
 	entityType: string
 	title: string | null
 	actions: string[]
+}
+
+export interface ProducedFile {
+	fileId: string
+	name: string | null
+	mimeType: string | null
+	sizeBytes: number | null
 }
 
 function deriveAffectedObjects(events: EventResponse[]): AffectedObject[] {
@@ -106,6 +114,39 @@ function deriveAffectedObjects(events: EventResponse[]): AffectedObject[] {
 	return Array.from(map.values())
 }
 
+// Derives the file half of "what a session produced" from the events feed —
+// file `created` / `updated` events during the session's time window. The
+// object half stays in `deriveAffectedObjects`; the two together are the shape
+// the S2 `<ProducedPane>` and the Session Sheet's `Produced` section both read.
+function deriveProducedFiles(events: EventResponse[]): ProducedFile[] {
+	const map = new Map<string, ProducedFile>()
+	for (const event of events) {
+		if (event.entityType !== 'file') continue
+		if (!FILE_ACTIONS.has(event.action)) continue
+		if (map.has(event.entityId)) continue
+		const data = (event.data ?? {}) as Record<string, unknown>
+		map.set(event.entityId, {
+			fileId: event.entityId,
+			name: (data.name as string | null) ?? null,
+			mimeType: (data.mimeType as string | null) ?? null,
+			sizeBytes: (data.sizeBytes as number | null) ?? null,
+		})
+	}
+	return Array.from(map.values())
+}
+
+/**
+ * Given a session's [startedAt, completedAt] window, returns everything it
+ * produced — objects (`affectedObjects` / `producedObjects` alias) plus files
+ * (`producedFiles`). One events fetch per session; the S2 `<ProducedPane>` on
+ * chat detail and the Session Sheet's `Produced` section both consume this
+ * same shape (task 5 acceptance criteria: "extended to include files … Reused
+ * across chat detail + session sheet — no duplicate fetch").
+ *
+ * The chat-detail pane's chat-level aggregate iterates sessions and lets
+ * TanStack Query de-dupe repeats via the `after/before` key, so a session sheet
+ * opened for a session already listed in the pane hits the cache.
+ */
 export function useSessionAffectedObjects(
 	startedAt: string | null,
 	completedAt: string | null,
@@ -116,7 +157,7 @@ export function useSessionAffectedObjects(
 		? {
 				after: startedAt,
 				...(completedAt ? { before: completedAt } : {}),
-				limit: '100',
+				limit: '200',
 			}
 		: undefined
 
@@ -127,9 +168,15 @@ export function useSessionAffectedObjects(
 	})
 
 	const affectedObjects = query.data ? deriveAffectedObjects(query.data) : []
+	const producedFiles = query.data ? deriveProducedFiles(query.data) : []
 
 	return {
 		...query,
 		affectedObjects,
+		// `producedObjects` is the S2 alias — same array as `affectedObjects`,
+		// but names the concept the pane copy uses ("Objects · <n>") rather
+		// than the older "objects affected" phrasing.
+		producedObjects: affectedObjects,
+		producedFiles,
 	}
 }

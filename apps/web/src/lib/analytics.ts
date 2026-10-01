@@ -195,10 +195,25 @@ export function deriveEntryAgentRole(name: string | null | undefined): string | 
 		.replace(/^-+|-+$/g, '')
 }
 
+// G2 trigger provenance. `trigger_id` / `trigger_type` are present only for
+// trigger-dispatched sessions (`cron` / `event` / `reminder`); they are null for
+// comment-fallback, interactive, and API-created sessions, whose attribution
+// rides on `source` instead. Emitted on the same event so the skill-load rate
+// can be segmented cron-vs-event.
 export function trackAgentSessionCompleted(
-	p: BaseProps & { entity_type: 'session'; outcome: 'completed' | 'failed' | 'timeout' },
+	p: BaseProps & {
+		entity_type: 'session'
+		outcome: 'completed' | 'failed' | 'timeout'
+		trigger_id?: string | null
+		trigger_type?: string | null
+	},
 ): void {
-	trackEvent('agent_session_completed', { ...fillBase(p), outcome: p.outcome })
+	trackEvent('agent_session_completed', {
+		...fillBase(p),
+		outcome: p.outcome,
+		trigger_id: p.trigger_id ?? null,
+		trigger_type: p.trigger_type ?? null,
+	})
 }
 
 export function trackCommentPosted(

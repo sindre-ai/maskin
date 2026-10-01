@@ -7,12 +7,15 @@ import {
 	useConversationMessages,
 } from '@/hooks/use-conversation'
 import { useConversationActivity } from '@/hooks/use-conversation-activity'
+import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
+import type { SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
 import { MessageDivider, isNewDay } from './message-divider'
 import { ResumeBanner } from './resume-banner'
+import { type MessageSpawnInfo, deriveMessageSpawnMap } from './spawn-indicator'
 
 // A thread nobody has touched in this long reads as history rather than as a
 // live conversation — the mockup's `chatIsOld` note (623–625).
@@ -36,6 +39,12 @@ interface ThreadMessagesProps {
 	/** Chats v4 polish — umbrella flag AND the `.bubbles` sub-flag — into each
 	 *  message bubble. */
 	v4PolishBubbles?: boolean
+	/** S2 · bet 34706e2f, task 5. When on, messages that spawned a session get
+	 *  a persistent vertical --brand bar to their right and a spawn chip below
+	 *  the bubble ("Session started · <duration> · <status>"). Gated at the
+	 *  route boundary on `graph-provenance-writes` so the sessions query fires
+	 *  only for tester actors. */
+	producedEnabled?: boolean
 }
 
 export function ThreadMessages({
@@ -44,6 +53,7 @@ export function ThreadMessages({
 	className,
 	v4PolishBanner = false,
 	v4PolishBubbles = false,
+	producedEnabled = false,
 }: ThreadMessagesProps) {
 	const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
@@ -53,6 +63,20 @@ export function ThreadMessages({
 		workspaceId,
 		conversationId,
 		messages,
+	)
+	// Every session `useActiveSessionsForConversation` returns already carries
+	// `config.conversation.message_id` — the message that triggered its spawn.
+	// Building the map here keeps MessageBubble stateless about sessions and
+	// the query cache-shared with useConversationActivity above (same key).
+	// Only fires when the S2 pane is enabled for the actor.
+	const { data: sessionList } = useActiveSessionsForConversation(
+		workspaceId,
+		producedEnabled ? conversationId : null,
+	)
+	const spawnByMessageId = useMemo<Map<number, MessageSpawnInfo>>(
+		() =>
+			producedEnabled ? deriveMessageSpawnMap((sessionList ?? []) as SessionResponse[]) : new Map(),
+		[sessionList, producedEnabled],
 	)
 
 	// Which agent questions already have a human answer, so an answered set of
@@ -190,7 +214,11 @@ export function ThreadMessages({
 					const turnsBelow = byTriggerMessageId.get(message.id) ?? []
 					const turnsBelowHere = isLast ? [...turnsBelow, ...fallback] : turnsBelow
 					return (
-						<div key={message.id} className="flex flex-col gap-1">
+						<div
+							key={message.id}
+							data-message-id={message.id}
+							className="flex flex-col gap-1 scroll-mt-[60px]"
+						>
 							{/* A divider separates two days; there is nothing above the
 							    first message to separate it from, so the thread doesn't
 							    open with a "Today" rule floating over its own first line. */}
@@ -208,6 +236,7 @@ export function ThreadMessages({
 								message={message}
 								questionAnswered={answeredQuestionIds.has(message.id)}
 								v4Polish={v4PolishBubbles}
+								spawnInfo={spawnByMessageId.get(message.id)}
 								// Keyed by index as well as session: one session can put two
 								// turns under the same message (a result segment plus the
 								// live turn that follows it), so `sessionId` alone is not

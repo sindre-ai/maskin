@@ -1,11 +1,12 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, workspaces } from '@maskin/db/schema'
+import { workspaces } from '@maskin/db/schema'
 import { CREDIT_TOPUP_MAX_USD, CREDIT_TOPUP_MIN_USD, workspaceSettingsSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
 import { isEnterprise, isEnterpriseWorkspace } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { FLAGS, getFeatureFlagConfig, resolveFlags } from '../lib/feature-flags'
 import {
 	getConnectedLinkedInIdentityCount,
@@ -605,7 +606,7 @@ app.openapi(cancelRoute, async (c) => {
 		// A cancellation is the single most disputable billing action; without
 		// this row there is no record of who cancelled or when, and no SSE
 		// invalidation to refresh the billing UI off the stale plan.
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId: callerId,
 			action: 'workspace_billing_canceled',

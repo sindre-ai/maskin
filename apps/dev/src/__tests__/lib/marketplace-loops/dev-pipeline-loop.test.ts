@@ -27,7 +27,7 @@ function fakeActor(over: Partial<ActorRow> = {}): ActorRow {
 		tools: { allowed: ['done'] },
 		memory: { jobs_done: 42 },
 		llmProvider: 'anthropic',
-		llmConfig: { model: 'claude-opus-4-7' },
+		llmConfig: { model: 'claude-sonnet-5-5' },
 		isSystem: false,
 		agentState: 'idle',
 		agentStateUpdatedAt: new Date('2026-01-01'),

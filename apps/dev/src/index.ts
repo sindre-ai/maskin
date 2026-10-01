@@ -31,7 +31,10 @@ import { OrphanThreadDetector } from './services/orphan-thread-detector'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionDispatcher } from './services/session-dispatcher'
+import { configureSessionLifecycle } from './services/session-lifecycle'
 import { SessionManager } from './services/session-manager'
+import { SessionRetryScheduler } from './services/session-retry-scheduler'
+import { SessionSelfHealJob } from './services/session-self-heal-job'
 import { CommentDispatcher, TriggerRunner } from './services/trigger-runner'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
@@ -136,6 +139,11 @@ sessionManager.setBrowserSidecarBuildContext(
 )
 runtimeTelemetry.startGaugeLoop(() => sessionManager.getConcurrencyByAgentServer())
 
+// The one entry point for starting a session — every wrapper (chat, trigger,
+// REST, MCP, onboarding, self-spawn) routes through startSession(). See
+// apps/dev/src/services/session-lifecycle.ts + tech spec §14.
+configureSessionLifecycle({ db, sessionManager })
+
 const port = Number(process.env.PORT) || 3000
 
 const app = createApp({ db, notifyBridge, sessionManager, agentStorage, storageProvider }, { port })
@@ -145,9 +153,19 @@ sessionManager.start().then(() => {
 })
 
 const triggerRunner = new TriggerRunner(db, notifyBridge, sessionManager)
-triggerRunner.start().then(() => {
-	logger.info('Trigger runner started')
-})
+// Fail fast if trigger-runner cannot boot — a boot failure here is almost
+// always loadCooldowns / loadSuppressions unable to read the persisted state,
+// and running with empty Maps against a live DB reintroduces the deploy-wipe
+// bug (bet #7). Refusing to start is safer than silently masking it.
+triggerRunner
+	.start()
+	.then(() => {
+		logger.info('Trigger runner started')
+	})
+	.catch((err) => {
+		logger.error('Trigger runner failed to start — exiting', { error: String(err) })
+		process.exit(1)
+	})
 
 const commentDispatcher = new CommentDispatcher(db, notifyBridge, sessionManager)
 commentDispatcher.start()
@@ -171,6 +189,20 @@ logger.info('Webhook deliveries cleaner started')
 const briefCacheCleaner = new BriefCacheCleaner(storageProvider)
 briefCacheCleaner.start()
 logger.info('Brief cache cleaner started')
+
+// §7.6 — session-retry scheduler. Ticks every 30s, reads sessions_retry_at_idx
+// for due retry_at rows and fires startSession({retryOf, attemptNumber:N+1,
+// callerKind:'internal'}). Killswitch env FEATURE_RETRY_SCHEDULER=0 disables
+// the tick without a code roll.
+const sessionRetryScheduler = new SessionRetryScheduler(db)
+sessionRetryScheduler.start()
+logger.info('Session retry scheduler started')
+
+// §9.4 — self-heal: back-fills the session_* events row for terminal sessions
+// that never got one. Ticks every 60s; idempotent, so safe on every restart.
+const sessionSelfHealJob = new SessionSelfHealJob(db)
+sessionSelfHealJob.start()
+logger.info('Session self-heal job started')
 
 const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()
@@ -251,6 +283,12 @@ if (process.env.NODE_ENV === 'production') {
 				...(spec.browserRequired && { browserRequired: true }),
 				...(spec.previewGuestPorts.length > 0 && { previewGuestPorts: spec.previewGuestPorts }),
 				sourceSessionId: session.sourceSessionId ?? undefined,
+				// Layer 1 skills provisioning — agent-server materialises the
+				// manifest into `<sessionDir>/skills/<name>/` after the S3
+				// snapshot restore and before `spawnSession` mounts the dir.
+				// Omitted when empty so the payload stays byte-identical to
+				// pre-bet behaviour for agents with no attached skills.
+				...(spec.skillsManifest.length > 0 && { skills: spec.skillsManifest }),
 			}
 		},
 		// Interactive sessions get no ACTION_PROMPT env var — agent-run.sh's

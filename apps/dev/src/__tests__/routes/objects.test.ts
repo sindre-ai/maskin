@@ -646,9 +646,21 @@ describe('Objects Routes', () => {
 			// 3) files-membership lookup (endpoint resolves to the `files` table so
 			// it is bucketed as a file — skips connected_objects), 4) events,
 			// 5-8) the four parallel queries fired via Promise.all (isSubscribed,
-			// getUnreadCount, getSubscriberCount, getStarredObjectIds), 9) files
-			// summary.
-			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [], [], [file]]
+			// getUnreadCount, getSubscriberCount, getStarredObjectIds), 9) file
+			// title hydration (Slice 1 — populates `titleById` so file endpoints
+			// on relationships get a hydrated name), 10) files summary.
+			mockResults.selectQueue = [
+				[obj],
+				[rel],
+				[{ id: file.id }],
+				[],
+				[],
+				[],
+				[],
+				[],
+				[{ id: file.id, name: file.name }],
+				[file],
+			]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),
@@ -756,8 +768,20 @@ describe('Objects Routes', () => {
 			// 1) object, 2) relationships, 3) files-membership lookup returns the
 			// file (endpoint id resolves to `files.id`), so no connected_objects
 			// fetch, 4) events, 5-8) parallel queries (subscribed, unreadCount,
-			// subscriberCount, starredIds), 9) files summary.
-			mockResults.selectQueue = [[obj], [rel], [{ id: file.id }], [], [], [], [], [], [file]]
+			// subscriberCount, starredIds), 9) file-title hydration for
+			// `titleById` (Slice 1), 10) files summary.
+			mockResults.selectQueue = [
+				[obj],
+				[rel],
+				[{ id: file.id }],
+				[],
+				[],
+				[],
+				[],
+				[],
+				[{ id: file.id, name: file.name }],
+				[file],
+			]
 
 			const res = await app.request(
 				jsonGet(`/api/objects/${obj.id}/graph`, { 'x-workspace-id': wsId }),

@@ -7,6 +7,11 @@
 // P3-K (Magnus 2026-09-14) reversed the auto-inject product decision — no
 // provider auto-injects any more; every provider is user-added per-agent (see
 // the per-identity Quick Add flow in `apps/web/src/components/agents/mcp-servers.tsx`).
+// The follow-up de-trap then dropped linkedin-unipile's `mcp.server` entirely
+// (multi-identity provider, no single paste-ready URL — the deprecated
+// aggregate URL used to sit there and silently trapped clients pasting it
+// verbatim); slack is now the load-bearing case that DOES still advertise a
+// `Bearer ${MASKIN_API_KEY}` server spec and drives the coverage row below.
 //
 // **What survives.** P3-F's runtime code path — `serverConsumesEnvKey` short-
 // circuiting the `Failed to load credentials for <provider>` warning for
@@ -14,11 +19,13 @@
 // stays in `session-manager.ts`. It is no longer user-visible via auto-inject,
 // but it is still load-bearing for any provider a user hand-adds whose HTTP
 // endpoint authenticates on `${MASKIN_API_KEY}` rather than a per-integration
-// token. The linkedin-unipile shape is the reference: its credential blob is
-// `{ account_id }` with no `accessToken`, `TokenManager.getValidToken` throws
-// exactly `Integration <id> has no access token`, and the auto-inject path
-// (still exercised here as a driver, because that's the code that would trip
-// the throw) must not treat that throw as a reason to skip.
+// token. slack is the surviving reference: its credential blob is `xoxb-...`
+// but the MCP server template uses `${MASKIN_API_KEY}`, so a session-manager
+// path that dropped the short-circuit would still warn even though the server
+// works fine. linkedin-unipile remains covered at the runtime level (a user
+// hand-adds a per-identity mcpServers entry and the same short-circuit fires),
+// but no config-level `mcp.server` means it falls outside the filter this
+// contract test iterates.
 //
 // The invariant is stated as an end-state contract rather than "autoInject
 // attaches": for every registered provider whose `mcp.server` is defined but
@@ -169,12 +176,14 @@ const LAUNCHABLE_WS_SETTINGS = { llm_keys: { anthropic: 'sk-ant-test-ws' } }
  * are the providers P3-F's session-manager short-circuit protects: a
  * token-resolution failure must not stop the session from booting.
  *
- * linkedin-unipile is the load-bearing case: credential blob `{ account_id }`,
- * no `accessToken`, so `TokenManager.getValidToken` throws
- * `Integration <id> has no access token`. Slack matches the pattern too — its
- * MCP server authenticates on `Bearer ${MASKIN_API_KEY}`, not `${SLACK_BOT_TOKEN}`
- * — but session-manager's Slack branch still refuses to inject a non-bot
- * token, so the test drives it with a real xoxb- shape.
+ * Slack is the surviving load-bearing case: its MCP server authenticates on
+ * `Bearer ${MASKIN_API_KEY}`, not `${SLACK_BOT_TOKEN}`. Session-manager's
+ * Slack branch still refuses to inject a non-bot token, so the test drives it
+ * with a real xoxb- shape below. linkedin-unipile used to live in this filter
+ * too — same short-circuit still fires at runtime for a hand-added per-
+ * identity mcpServers entry — but the config no longer advertises a single
+ * `mcp.server` spec (the aggregate URL was deprecated + de-trapped), so the
+ * filter no longer includes it.
  */
 const envKeyIndependentProviders = listProviders()
 	.map((p) => p.config)
@@ -217,14 +226,16 @@ describe('providers.contract — envKey-independent-provider path', () => {
 		await manager.stop()
 	})
 
-	// Sanity: the class fix has to cover linkedin-unipile at minimum. If a
+	// Sanity: the class fix has to cover slack at minimum (linkedin-unipile
+	// used to live here too; the de-trap that dropped its config-level
+	// `mcp.server` moved coverage to the runtime path, not this filter). If a
 	// provider is added later whose server authenticates on the Maskin API
 	// key, it lands in this set automatically and gets a coverage row below.
-	// If linkedin-unipile is ever removed from the registry, this test tells
-	// you before the runtime code goes untested.
-	it('names at least linkedin-unipile as an envKey-independent provider', () => {
+	// If slack is ever removed from the registry, this test tells you before
+	// the runtime code goes untested.
+	it('names at least slack as an envKey-independent provider', () => {
 		const names = envKeyIndependentProviders.map((c) => c.name).sort()
-		expect(names).toContain('linkedin-unipile')
+		expect(names).toContain('slack')
 	})
 
 	for (const providerConfig of envKeyIndependentProviders) {
@@ -278,10 +289,10 @@ describe('providers.contract — envKey-independent-provider path', () => {
 			]
 
 			// Slack still needs an xoxb- token to survive its own bot-token guard
-			// even though the MCP server doesn't consume it. Every other envKey-
-			// independent provider (currently linkedin-unipile) mirrors the
-			// production shape: credential blob without an accessToken →
-			// getValidToken throws.
+			// even though the MCP server doesn't consume it. Any future envKey-
+			// independent provider added to this filter mirrors the production
+			// shape used by linkedin-unipile at runtime: credential blob without
+			// an accessToken → getValidToken throws.
 			if (providerName === 'slack') {
 				mockGetValidToken.mockResolvedValueOnce('xoxb-real-bot-token')
 			} else {

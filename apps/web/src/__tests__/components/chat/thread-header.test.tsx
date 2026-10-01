@@ -153,10 +153,21 @@ function TestWrapper({ children }: { children: ReactNode }) {
 
 // Every test below asserts v4-only chrome, so the flag boundary defaults on;
 // the rollback test at the end opts back out with `false`.
-function renderHeader(v4Polish = true) {
-	return render(<ThreadHeader workspaceId="ws-1" conversationId="conv-1" v4Polish={v4Polish} />, {
-		wrapper: TestWrapper,
-	})
+function renderHeader(
+	v4Polish = true,
+	producedProps: Partial<React.ComponentProps<typeof ThreadHeader>> = {},
+) {
+	return render(
+		<ThreadHeader
+			workspaceId="ws-1"
+			conversationId="conv-1"
+			v4Polish={v4Polish}
+			{...producedProps}
+		/>,
+		{
+			wrapper: TestWrapper,
+		},
+	)
 }
 
 describe('ThreadHeader — v4 actions', () => {
@@ -294,6 +305,69 @@ describe('ThreadHeader — v4 actions', () => {
 			expect(screen.getByRole('button', { name: 'Archive conversation' })).toBeInTheDocument()
 			// The loop lookup is skipped entirely rather than fetched and wasted.
 			expect(mockUseLoop).toHaveBeenLastCalledWith('', 'ws-1')
+		})
+	})
+
+	// S2 · bet 34706e2f, task 5 — the Produced toggle mounts only when the
+	// route resolves `graph-provenance-writes` on. Count is a `<span>` with
+	// `aria-label` so screen readers hear "N items produced" rather than the
+	// pill glyph, and the toggle carries aria-pressed for open/closed state.
+	describe('Produced toggle (S2 · graph-provenance-writes)', () => {
+		it('renders the toggle with the count pill when producedEnabled', () => {
+			mockUseConversation.mockReturnValue({ data: buildConversation() })
+			mockUseConversationMessages.mockReturnValue({ data: messagesPages([]) })
+			mockUseLoop.mockReturnValue({ data: null })
+			renderHeader(true, {
+				producedEnabled: true,
+				producedCount: 4,
+				producedOpen: false,
+				onToggleProduced: vi.fn(),
+			})
+			const toggle = screen.getByRole('button', { name: /Open Produced pane/i })
+			expect(toggle).toBeInTheDocument()
+			expect(toggle).toHaveAttribute('aria-pressed', 'false')
+			expect(screen.getByLabelText('4 items produced')).toHaveTextContent('4')
+		})
+
+		it('does not render the toggle when producedEnabled is false', () => {
+			mockUseConversation.mockReturnValue({ data: buildConversation() })
+			mockUseConversationMessages.mockReturnValue({ data: messagesPages([]) })
+			mockUseLoop.mockReturnValue({ data: null })
+			renderHeader(true, { producedEnabled: false, producedCount: 4 })
+			expect(screen.queryByRole('button', { name: /Produced pane/i })).not.toBeInTheDocument()
+		})
+
+		it('calls onToggleProduced when clicked and flips aria-pressed', async () => {
+			const user = userEvent.setup()
+			const onToggle = vi.fn()
+			mockUseConversation.mockReturnValue({ data: buildConversation() })
+			mockUseConversationMessages.mockReturnValue({ data: messagesPages([]) })
+			mockUseLoop.mockReturnValue({ data: null })
+			const { rerender } = renderHeader(true, {
+				producedEnabled: true,
+				producedCount: 2,
+				producedOpen: false,
+				onToggleProduced: onToggle,
+			})
+			await user.click(screen.getByRole('button', { name: /Open Produced pane/i }))
+			expect(onToggle).toHaveBeenCalledOnce()
+			rerender(
+				<ThreadHeader
+					workspaceId="ws-1"
+					conversationId="conv-1"
+					v4Polish={true}
+					producedEnabled={true}
+					producedCount={2}
+					producedOpen={true}
+					onToggleProduced={onToggle}
+				/>,
+			)
+			await waitFor(() =>
+				expect(screen.getByRole('button', { name: /Close Produced pane/i })).toHaveAttribute(
+					'aria-pressed',
+					'true',
+				),
+			)
 		})
 	})
 })

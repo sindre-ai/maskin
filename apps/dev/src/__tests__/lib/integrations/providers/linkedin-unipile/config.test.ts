@@ -12,11 +12,16 @@ import { config } from '../../../../../lib/integrations/providers/linkedin-unipi
  *
  * P3-K (Magnus 2026-09-14) flipped `mcp.autoInject` from true to false —
  * workspace-wide auto-inject was reversed in favour of per-identity Quick
- * Add. The canonical server spec surfaced here is still the aggregate URL
- * (the legacy endpoint now returns an empty tool set); the frontend's
- * per-identity buttons build per-instance URLs from
- * `/api/integrations/linkedin-unipile/identities` rather than reading this
- * shape. See core principle 4 in `.claude/rules/integrations-mcp.md`.
+ * Add. The follow-up de-trap then dropped the `mcp.server` field entirely:
+ * linkedin-unipile is multi-identity (personal profile + N admined pages),
+ * so there is no single paste-ready `.../mcp` URL to hand out; the aggregate
+ * URL is a deprecated, empty-tool endpoint (see
+ * `routes/integrations-linkedin-unipile-mcp.ts`). Discovery surfaces
+ * `mcp: { envKey, autoInject: false }` without a `server`, and the frontend
+ * Quick Add UI builds per-instance URLs from
+ * `/api/integrations/linkedin-unipile/identities`. Same "no single spec"
+ * shape github's multi-installation surface has always used. See core
+ * principle 4 in `.claude/rules/integrations-mcp.md`.
  */
 describe('linkedin-unipile provider config', () => {
 	it('has correct name and display name', () => {
@@ -24,17 +29,14 @@ describe('linkedin-unipile provider config', () => {
 		expect(config.displayName).toBe('LinkedIn')
 	})
 
-	it('declares the Maskin-hosted LinkedIn MCP HTTP server for discovery but does not auto-inject', () => {
+	it('declares the LinkedIn MCP envKey without a canonical server spec and does not auto-inject', () => {
 		expect(config.mcp).toBeDefined()
 		expect(config.mcp?.envKey).toBe('LINKEDIN_UNIPILE_TOKEN')
 		expect(config.mcp?.autoInject).toBe(false)
-		expect(config.mcp?.server).toEqual({
-			type: 'http',
-			url: '${MASKIN_API_URL}/api/integrations/linkedin-unipile/mcp',
-			headers: {
-				Authorization: 'Bearer ${MASKIN_API_KEY}',
-				'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
-			},
-		})
+		// Multi-identity provider — Quick Add writes per-slug URLs from
+		// /api/integrations/linkedin-unipile/identities; no single paste-ready
+		// server spec exists. The deprecated aggregate URL that used to sit
+		// here silently trapped any client that pasted it verbatim.
+		expect(config.mcp?.server).toBeUndefined()
 	})
 })
