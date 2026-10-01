@@ -117,6 +117,23 @@ describe('MarkdownContent', () => {
 		expect(screen.getByRole('link', { name: 'the docs' })).toBeInTheDocument()
 	})
 
+	it('opens an absolute link in a new tab so a click never navigates away', () => {
+		render(<MarkdownContent content="See [the docs](https://example.com/docs) first." />)
+
+		const link = screen.getByRole('link', { name: 'the docs' })
+		expect(link).toHaveAttribute('href', 'https://example.com/docs')
+		expect(link).toHaveAttribute('target', '_blank')
+		expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+	})
+
+	it('leaves a hash link on default target so in-page anchors still work', () => {
+		render(<MarkdownContent content="See [the docs](#docs) first." />)
+
+		const link = screen.getByRole('link', { name: 'the docs' })
+		expect(link).toHaveAttribute('href', '#docs')
+		expect(link).not.toHaveAttribute('target')
+	})
+
 	it('puts the caret at the end when the click position cannot be mapped', async () => {
 		const user = userEvent.setup()
 		// jsdom implements neither caretPositionFromPoint nor caretRangeFromPoint,
