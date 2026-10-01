@@ -1793,8 +1793,6 @@ export type ReconcileOnBootDeps = {
 	 * unobserved rather than healthy.
 	 */
 	stallTracker?: StallTracker
-	/** Same registry buildApp serves — see AppDeps.desktops. */
-	desktops?: WorkspaceDesktopRegistry
 }
 
 /**
@@ -1843,13 +1841,8 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 		names.filter((name) => name.startsWith(BROWSER_SIDECAR_PREFIX)),
 	)
 	// Workspace desktops have no session row either, and must NOT reach
-	// /reconcile — apps/dev would call them orphans and remove them. Adopt (or
-	// sweep) them locally instead.
-	if (deps.desktops) {
-		await deps.desktops.reconcile(names).catch((err) => {
-			logger.error('reconcile-on-boot: desktop reconcile failed', { error: String(err) })
-		})
-	}
+	// /reconcile — apps/dev would call them orphans and remove them. They are
+	// adopted separately in main(), before the listener starts.
 	const claimableSandboxes = names.filter(
 		(name) => !browserSidecarNames.has(name) && !name.startsWith(DESKTOP_PREFIX),
 	)
@@ -2076,6 +2069,19 @@ async function main(): Promise<void> {
 		stateFile: join(env.AGENT_SESSION_ROOT, '.workspace-desktops.json'),
 	})
 
+	// Adopt desktops that survived a restart BEFORE the listener accepts
+	// requests, so an early PUT can't race the adoption and try to re-create a
+	// desktop that already exists. Deliberately not part of reconcileOnBoot: that
+	// pass is skipped when AGENT_SERVER_ID/MASKIN_BASE_URL are unset, and
+	// desktops must be adopted either way.
+	try {
+		await desktops.reconcile(await listSandboxNames(msb))
+	} catch (err) {
+		logger.error('workspace desktop adoption failed, continuing without it', {
+			error: String(err),
+		})
+	}
+
 	const app = buildApp({
 		env,
 		storage,
@@ -2133,7 +2139,6 @@ async function main(): Promise<void> {
 		sessionExitCodes,
 		sessionPreviewState,
 		stallTracker,
-		desktops,
 	})
 		.catch((err) => {
 			logger.error('reconcile-on-boot failed unexpectedly', { error: String(err) })
