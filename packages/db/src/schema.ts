@@ -368,6 +368,21 @@ export const sessions = pgTable(
 		// which prices maskin_plan sessions from OpenRouter's pricing table
 		// keyed on this value.
 		modelName: text('model_name'),
+		// The object this session was started for — a bet, task, insight, or
+		// any first-class object. Threaded onto the `session_failed` event's
+		// `data.initiated_from` block so a failure card can link back to what
+		// the session was doing, and onto the PostHog `runtime_session_ended`
+		// event as `context_object_id` / `context_object_type` so Criterion 3
+		// of the parent bet is measurable. Both columns nullable; NULL means
+		// "no originating object known" (direct API create, onboarding,
+		// notification response, cron trigger). FK uses ON DELETE SET NULL so
+		// deleting the object nulls the linkage rather than blocking the row.
+		// Partial index (WHERE NOT NULL) lives in migration 0078.
+		initiatedFromObjectId: uuid('initiated_from_object_id').references(
+			(): AnyPgColumn => objects.id,
+			{ onDelete: 'set null' },
+		),
+		initiatedFromObjectType: text('initiated_from_object_type'),
 		inputTokens: integer('input_tokens'),
 		outputTokens: integer('output_tokens'),
 		cacheCreationInputTokens: integer('cache_creation_input_tokens'),

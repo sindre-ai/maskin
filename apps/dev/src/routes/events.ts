@@ -618,6 +618,18 @@ async function spawnThreadReplySessions(ctx: {
 		(id) => !ctx.excludedAgentIds.has(id),
 	)
 
+	// Resolve the object type once for the whole thread-reply fanout — a
+	// thread-reply spawn is on a first-class object by construction (the
+	// `commented` event's entity_type is 'object'), so a single PK read
+	// per commented event is cheap even for a big fanout.
+	const [obj] = await ctx.db
+		.select({ type: objects.type })
+		.from(objects)
+		.where(eq(objects.id, ctx.objectId))
+		.limit(1)
+	const initiatedFromObjectId = obj ? ctx.objectId : null
+	const initiatedFromObjectType = obj?.type ?? null
+
 	for (const agentId of threadReplyAgentIds) {
 		startSession({
 			workspaceId: ctx.workspaceId,
@@ -638,6 +650,8 @@ async function spawnThreadReplySessions(ctx: {
 				},
 			},
 			createdBy: ctx.actorId,
+			initiatedFromObjectId,
+			initiatedFromObjectType,
 			await: 'none',
 		}).catch((err) =>
 			logger.error('Failed to create thread-reply session', {

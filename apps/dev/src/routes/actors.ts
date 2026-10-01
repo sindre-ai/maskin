@@ -1330,6 +1330,9 @@ app.openapi(runAgentRoute, (async (c) => {
 					callerKind: 'rest',
 					actionPrompt: body.action_prompt ?? DEFAULT_RUN_ACTION_PROMPT,
 					createdBy: actorId,
+					// Ad-hoc actor run: no originating object.
+					initiatedFromObjectId: null,
+					initiatedFromObjectType: null,
 					await: 'none',
 				})
 			}

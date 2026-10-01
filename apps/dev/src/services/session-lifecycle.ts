@@ -18,7 +18,7 @@
 import { and, eq, notInArray, sql } from 'drizzle-orm'
 
 import type { Database } from '@maskin/db'
-import { sessions } from '@maskin/db'
+import { objects, sessions } from '@maskin/db'
 import type { SessionResult, SettleSource, TerminalOutcomeKind } from '@maskin/shared'
 
 import { capturePosthogEvent } from '../lib/analytics/posthog'
@@ -67,6 +67,18 @@ export interface StartSessionInput {
 	awaitTimeoutMs?: number
 	createdBy?: string
 	autoStart?: boolean
+	/**
+	 * The object this session was started for (bet, task, insight, or any
+	 * first-class object). Required-optional shape: every call site MUST pass
+	 * both fields, either as real values or as explicit null, so tsc catches a
+	 * missed site. NULL is still a valid value (direct API creates, onboarding,
+	 * cron triggers, conversation-only spawns). Persisted on the sessions row,
+	 * read back by settleSession() for the session_failed event's
+	 * data.initiated_from block, and by every terminal runtime_session_ended
+	 * emit as context_object_id / context_object_type.
+	 */
+	initiatedFromObjectId: string | null
+	initiatedFromObjectType: string | null
 }
 
 export interface StartSessionHandle {
@@ -191,6 +203,8 @@ export async function startSession(
 		createdBy,
 		autoStart: input.autoStart,
 		sourceSessionId: input.parentSessionId,
+		initiatedFromObjectId: input.initiatedFromObjectId,
+		initiatedFromObjectType: input.initiatedFromObjectType,
 	}
 
 	const session = await sessionManager.createSession(input.workspaceId, params)
@@ -800,6 +814,9 @@ export async function settleSession(
 			result: sessions.result,
 			config: sessions.config,
 			triggerId: sessions.triggerId,
+			conversationId: sessions.conversationId,
+			initiatedFromObjectId: sessions.initiatedFromObjectId,
+			initiatedFromObjectType: sessions.initiatedFromObjectType,
 			startedAt: sessions.startedAt,
 			inputTokens: sessions.inputTokens,
 			outputTokens: sessions.outputTokens,
@@ -851,6 +868,18 @@ export async function settleSession(
 	// the row was written with — a duration_ms computed from `Date.now()`
 	// after the transaction would drift from the row by the commit latency.
 	let completedAt: Date | undefined
+
+	// session_failed rows carry the context a failure card needs to link back
+	// to what the session was doing. Resolved before the transaction so the
+	// object-title read never holds the terminal write open.
+	const failureContext =
+		outcome.kind === 'fail' && !wasAlreadyTerminal
+			? {
+					initiated_from: await resolveInitiatedFromBlock(deps.db, existing),
+					trigger_id: existing.triggerId ?? null,
+					conversation_id: existing.conversationId ?? null,
+				}
+			: undefined
 
 	if (!wasAlreadyTerminal) {
 		await deps.db.transaction(async (tx) => {
@@ -938,7 +967,7 @@ export async function settleSession(
 				action: eventAction,
 				entityType: 'session',
 				entityId: sessionId,
-				data: buildEventData(outcome),
+				data: buildEventData(outcome, failureContext),
 			}).catch((err) => {
 				// The tx `.catch` is inside the same commit — the caller's tx will
 				// still commit the row transition and we surface the event failure
@@ -1084,10 +1113,54 @@ function mergeResultBlob(previous: SessionResult | null, outcome: SettleOutcome)
 	return merged
 }
 
-function buildEventData(outcome: SettleOutcome): Record<string, unknown> {
+interface FailureEventContext {
+	initiated_from: InitiatedFromBlock | null
+	trigger_id: string | null
+	conversation_id: string | null
+}
+
+interface InitiatedFromBlock {
+	object_id: string
+	object_type: string
+	object_title: string
+}
+
+/**
+ * Build the data.initiated_from block for a session_failed event from the
+ * session row's two initiated_from_object_* columns. Returns null (not an
+ * object with null members) when the session has no originating object, and
+ * also null if the object was deleted between spawn and settle: the FK's
+ * ON DELETE SET NULL cascade would normally have already nulled the id
+ * column, but this covers the race window. One PK read per failed settle.
+ */
+async function resolveInitiatedFromBlock(
+	db: Database,
+	session: { initiatedFromObjectId: string | null; initiatedFromObjectType: string | null },
+): Promise<InitiatedFromBlock | null> {
+	if (!session.initiatedFromObjectId) return null
+	const [obj] = await db
+		.select({ title: objects.title })
+		.from(objects)
+		.where(eq(objects.id, session.initiatedFromObjectId))
+		.limit(1)
+	if (!obj) return null
+	return {
+		object_id: session.initiatedFromObjectId,
+		object_type: session.initiatedFromObjectType ?? '',
+		// objects.title is nullable in the schema; coalesce so the failure card
+		// renderer never has to guard against a null title.
+		object_title: obj.title ?? '',
+	}
+}
+
+function buildEventData(
+	outcome: SettleOutcome,
+	failureContext?: FailureEventContext,
+): Record<string, unknown> {
 	const data: Record<string, unknown> = {
 		classification: outcome.classification,
 		source: outcome.source,
+		...failureContext,
 	}
 	if (outcome.reason !== undefined) data.reason = outcome.reason
 	if (outcome.exitCode !== undefined) data.exit_code = outcome.exitCode
