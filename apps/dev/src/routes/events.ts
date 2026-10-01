@@ -16,6 +16,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
+import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 import { autoSubscribe } from '../services/subscriptions'
 import { isCommentFallbackDriverEligible } from '../services/trigger-runner'
@@ -617,34 +618,49 @@ async function spawnThreadReplySessions(ctx: {
 		(id) => !ctx.excludedAgentIds.has(id),
 	)
 
+	// Resolve the object type once for the whole thread-reply fanout — a
+	// thread-reply spawn is on a first-class object by construction (the
+	// `commented` event's entity_type is 'object'), so a single PK read
+	// per commented event is cheap even for a big fanout.
+	const [obj] = await ctx.db
+		.select({ type: objects.type })
+		.from(objects)
+		.where(eq(objects.id, ctx.objectId))
+		.limit(1)
+	const initiatedFromObjectId = obj ? ctx.objectId : null
+	const initiatedFromObjectType = obj?.type ?? null
+
 	for (const agentId of threadReplyAgentIds) {
-		ctx.sessionManager
-			.createSession(ctx.workspaceId, {
-				actorId: agentId,
-				actionPrompt: buildThreadReplyPrompt({
-					objectId: ctx.objectId,
-					commenterActorId: ctx.actorId,
-					content: ctx.newCommentContent,
-					threadRootEventId: ctx.threadRootEventId,
-				}),
-				config: {
-					thread_reply: {
-						object_id: ctx.objectId,
-						comment_event_id: ctx.newCommentEventId,
-						thread_root_event_id: ctx.threadRootEventId,
-						commenter_actor_id: ctx.actorId,
-					},
+		startSession({
+			workspaceId: ctx.workspaceId,
+			actorId: agentId,
+			callerKind: 'trigger',
+			actionPrompt: buildThreadReplyPrompt({
+				objectId: ctx.objectId,
+				commenterActorId: ctx.actorId,
+				content: ctx.newCommentContent,
+				threadRootEventId: ctx.threadRootEventId,
+			}),
+			config: {
+				thread_reply: {
+					object_id: ctx.objectId,
+					comment_event_id: ctx.newCommentEventId,
+					thread_root_event_id: ctx.threadRootEventId,
+					commenter_actor_id: ctx.actorId,
 				},
-				createdBy: ctx.actorId,
-			})
-			.catch((err) =>
-				logger.error('Failed to create thread-reply session', {
-					agentId,
-					objectId: ctx.objectId,
-					threadRootEventId: ctx.threadRootEventId,
-					error: String(err),
-				}),
-			)
+			},
+			createdBy: ctx.actorId,
+			initiatedFromObjectId,
+			initiatedFromObjectType,
+			await: 'none',
+		}).catch((err) =>
+			logger.error('Failed to create thread-reply session', {
+				agentId,
+				objectId: ctx.objectId,
+				threadRootEventId: ctx.threadRootEventId,
+				error: String(err),
+			}),
+		)
 	}
 }
 
