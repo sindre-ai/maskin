@@ -775,6 +775,37 @@ describe('tool handlers', () => {
 			expect(calledUrl).toContain('updated_before=2026-06-30T12%3A00%3A00.000Z')
 			expect(calledUrl).toContain('updated_after=2026-06-29T12%3A00%3A00.000Z')
 		})
+
+		it('forwards trigger_id, before and verbose=true to the route', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_sessions')
+			await handler({
+				trigger_id: '3f6fd7e1-92f3-46d0-adfb-f93bfea9f810',
+				before: '2026-06-30T12:00:00.000Z',
+				verbose: true,
+			})
+
+			const sessionsCall = vi
+				.mocked(fetch)
+				.mock.calls.find((c) => (c[0] as string).includes('/api/sessions?'))
+			const calledUrl = sessionsCall?.[0] as string
+			expect(calledUrl).toContain('trigger_id=3f6fd7e1-92f3-46d0-adfb-f93bfea9f810')
+			expect(calledUrl).toContain('before=2026-06-30T12%3A00%3A00.000Z')
+			expect(calledUrl).toContain('verbose=true')
+		})
+
+		it('omits verbose from the query when false so the lean default applies', async () => {
+			mockFetchSuccess([])
+
+			const handler = getHandler('list_sessions')
+			await handler({ verbose: false })
+
+			const sessionsCall = vi
+				.mocked(fetch)
+				.mock.calls.find((c) => (c[0] as string).includes('/api/sessions?'))
+			expect(sessionsCall?.[0] as string).not.toContain('verbose=')
+		})
 	})
 
 	describe('update_objects handler — file attachments', () => {
@@ -2939,6 +2970,109 @@ describe('tool handlers', () => {
 			expect(call[1]).toMatchObject({
 				headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
 			})
+		})
+
+		it('strips no_thread from the POST body', async () => {
+			mockFetchSuccess({})
+
+			const handler = getHandler('create_comment')
+			await handler({
+				entity_id: objectId,
+				content: 'top-level on purpose',
+				no_thread: true,
+			})
+
+			const call = vi.mocked(fetch).mock.calls[0]
+			const body = JSON.parse((call[1] as RequestInit).body as string)
+			expect(body).not.toHaveProperty('no_thread')
+			expect(body.entity_id).toBe(objectId)
+			expect(body.content).toBe('top-level on purpose')
+		})
+	})
+
+	// Thread defaulting lives on a server built with `triggeringEventId` set,
+	// which mirrors what `routes/mcp.ts` does when the caller carries the
+	// `X-Maskin-Triggering-Event-Id` header. A separate handler map is built
+	// here so the default doesn't leak into the other create_comment tests.
+	describe('create_comment thread defaulting', () => {
+		const objectId = '550e8400-e29b-41d4-a716-446655440000'
+		let threadedHandlers: Map<string, (args: Record<string, unknown>) => Promise<unknown>>
+
+		beforeEach(() => {
+			vi.clearAllMocks()
+			threadedHandlers = new Map()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				threadedHandlers.set(
+					name as string,
+					handler as (args: Record<string, unknown>) => Promise<unknown>,
+				)
+			})
+			createMcpServer({ ...config, triggeringEventId: 4242 })
+		})
+
+		function getThreadedHandler(name: string) {
+			const h = threadedHandlers.get(name)
+			if (!h) throw new Error(`Handler ${name} not registered`)
+			return h
+		}
+
+		function mockOk() {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				headers: new Headers(),
+				json: () => Promise.resolve({ id: 1 }),
+			} as Response)
+		}
+
+		it('defaults parent_event_id to the triggering event id when the caller omits it', async () => {
+			mockOk()
+			const handler = getThreadedHandler('create_comment')
+			await handler({ entity_id: objectId, content: 'ack' })
+
+			const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)
+			expect(body.parent_event_id).toBe(4242)
+		})
+
+		it('honours an explicit parent_event_id — a different comment always wins over the default', async () => {
+			mockOk()
+			const handler = getThreadedHandler('create_comment')
+			await handler({
+				entity_id: objectId,
+				content: 'reply to another thread',
+				parent_event_id: 99,
+			})
+
+			const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)
+			expect(body.parent_event_id).toBe(99)
+		})
+
+		it('opts out of threading when no_thread: true', async () => {
+			mockOk()
+			const handler = getThreadedHandler('create_comment')
+			await handler({ entity_id: objectId, content: 'new topic', no_thread: true })
+
+			const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)
+			expect(body).not.toHaveProperty('parent_event_id')
+			expect(body).not.toHaveProperty('no_thread')
+		})
+
+		it('does not inject a default when the server was built without a triggeringEventId', async () => {
+			// Independent server without triggeringEventId — mirrors a session
+			// dispatched from something other than a comment (cron, chat, etc.).
+			const isolated = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+			vi.clearAllMocks()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				isolated.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
+			})
+			createMcpServer(config)
+
+			mockOk()
+			const handler = isolated.get('create_comment')
+			if (!handler) throw new Error('create_comment not registered')
+			await handler({ entity_id: objectId, content: 'standalone' })
+
+			const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)
+			expect(body).not.toHaveProperty('parent_event_id')
 		})
 	})
 

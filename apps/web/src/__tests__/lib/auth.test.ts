@@ -6,7 +6,9 @@ import {
 	setApiKey,
 	setStoredActor,
 } from '@/lib/auth'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { __setInitializedForTesting } from '@/lib/posthog'
+import posthog from 'posthog-js'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 beforeEach(() => {
 	localStorage.clear()
@@ -62,6 +64,18 @@ describe('clearAuth', () => {
 		clearAuth()
 		expect(getApiKey()).toBeNull()
 		expect(getStoredActor()).toBeNull()
+	})
+
+	it('resets the PostHog identity so the next user starts anonymous', () => {
+		const resetSpy = vi.spyOn(posthog, 'reset').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+		try {
+			clearAuth()
+			expect(resetSpy).toHaveBeenCalledTimes(1)
+		} finally {
+			__setInitializedForTesting(false)
+			resetSpy.mockRestore()
+		}
 	})
 })
 
