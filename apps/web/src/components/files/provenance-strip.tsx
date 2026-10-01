@@ -226,7 +226,7 @@ function AttacherLink({
 			params={{ workspaceId, objectId: attacher.id }}
 			className={cn(
 				'flex items-center gap-1.5 hover:underline',
-				muted ? 'text-muted-foreground line-through' : 'text-foreground',
+				muted ? 'text-foreground/70 line-through' : 'text-foreground',
 			)}
 			data-testid="strip-attacher-link"
 		>
