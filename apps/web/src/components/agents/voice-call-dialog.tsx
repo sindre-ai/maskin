@@ -122,16 +122,8 @@ function VoiceCallDialogBody({
 	onClose: () => void
 	variant: 'mobile' | 'desktop'
 }) {
-	const {
-		state,
-		notice,
-		transcriptOpen,
-		transcriptLines,
-		start,
-		toggleMute,
-		toggleTranscript,
-		end,
-	} = call
+	const { state, notice, transcriptOpen, transcriptLines, start, toggleMute, toggleTranscript } =
+		call
 	const isLive = state.startsWith('live-') || state === 'reconnecting'
 	const isMuted = state === 'live-muted'
 	const isDesktop = variant === 'desktop'
@@ -206,7 +198,7 @@ function VoiceCallDialogBody({
 						<p className="max-w-md text-center text-sm text-muted-foreground">
 							{COPY.reconnectingBody}
 						</p>
-						<Button type="button" variant="outline" onClick={end} className="min-h-[44px]">
+						<Button type="button" variant="outline" onClick={onClose} className="min-h-[44px]">
 							Hang up
 						</Button>
 					</>
@@ -235,7 +227,7 @@ function VoiceCallDialogBody({
 						</CallControl>
 						<CallControl
 							ariaLabel="End call"
-							onClick={end}
+							onClick={onClose}
 							variant="danger"
 							size={variant === 'mobile' ? 'xl' : 'lg'}
 						>
