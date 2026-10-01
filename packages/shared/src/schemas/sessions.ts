@@ -182,20 +182,68 @@ export const createSessionSchema = z.object({
 	// `sessions.config.entry_agent_role` so downstream analytics can attribute
 	// every session to the agent that received the owner's first turn.
 	entry_agent_role: z.string().max(64).optional(),
+	// Object this session is being started for (bet, task, insight, or any
+	// first-class object). Optional on the wire — a missing value means
+	// "no originating object known" and lands as NULL on the row. When set
+	// the pair is threaded into `sessions.initiated_from_object_{id,type}`,
+	// carried onto the `session_failed` event's `data.initiated_from` block
+	// and onto the PostHog `runtime_session_ended` event as
+	// `context_object_id` / `context_object_type` (parent bet Criterion 3).
+	initiated_from_object_id: z.string().uuid().optional(),
+	initiated_from_object_type: z.string().max(64).optional(),
 })
 
 export const sessionQuerySchema = z.object({
 	status: sessionStatusSchema.optional(),
 	actor_id: z.string().uuid().optional(),
+	trigger_id: z.string().uuid().optional(),
 	mention_object_id: z.string().uuid().optional(),
 	conversation_id: z.string().uuid().optional(),
 	/** Half-open: rows satisfy `updated_at < updated_before`. Bound excluded. */
 	updated_before: z.string().datetime({ offset: true }).optional(),
 	/** Half-open: rows satisfy `updated_at > updated_after`. Bound excluded. */
 	updated_after: z.string().datetime({ offset: true }).optional(),
-	limit: z.coerce.number().int().min(1).max(100).default(20),
+	/**
+	 * Cursor for backward pagination through the lean list. Half-open, exclusive:
+	 * returns rows with `updated_at < before`. Pass the last row's `updated_at`
+	 * back to walk further into history. Composes with `updated_after` for a
+	 * bounded window. Both cursor styles (this + `updated_before`) coexist because
+	 * the UI's offset-based paging still needs `updated_before`/`offset` for a
+	 * stable page-index view.
+	 */
+	before: z.string().datetime({ offset: true }).optional(),
+	/**
+	 * When false (the default), rows arrive in the lean shape
+	 * `{ id, title, status, updated_at }` — roughly 10x smaller than the fat
+	 * payload, so a caller sees ~50 sessions at a glance instead of ~4.
+	 * When true, rows are the full serialized `sessions` row (today's shape)
+	 * so existing callers keep working during the compat window. The UI hook
+	 * ships this PR with `verbose: true` so `main` is unchanged; the follow-up
+	 * bet migrates the UI to lean rows and drops the flag.
+	 */
+	// Not z.coerce.boolean(): Boolean('false') is true, so ?verbose=false would
+	// silently return the fat shape. Map the literal strings instead.
+	verbose: z.preprocess(
+		(v) => (v === 'true' ? true : v === 'false' ? false : v),
+		z.boolean().default(false),
+	),
+	limit: z.coerce.number().int().min(1).max(200).default(50),
 	offset: z.coerce.number().int().min(0).default(0),
 })
+
+/**
+ * Lean row shape returned by `list_sessions` when `verbose` is false (the
+ * default). `title` is synthesized on the read path (see route handler):
+ * trigger name if `trigger_id` is set, else the first ~60 chars of
+ * `action_prompt`, else the fallback `Session <id[:8]>`.
+ */
+export const sessionLeanRowSchema = z.object({
+	id: z.string().uuid(),
+	title: z.string(),
+	status: sessionStatusSchema,
+	updated_at: z.string().datetime().nullable(),
+})
+export type SessionLeanRow = z.infer<typeof sessionLeanRowSchema>
 
 export const sessionLogQuerySchema = z.object({
 	since: z.coerce.number().int().optional(),
@@ -221,6 +269,62 @@ export const sessionLogQuerySchema = z.object({
 	 * the tail and then page forward with `since`.
 	 */
 	order: z.enum(['asc', 'desc']).default('asc'),
+})
+
+/**
+ * Query params for the deep-read log endpoint that mirrors the `get_session_logs`
+ * MCP tool. Distinct from `sessionLogQuerySchema` above (which serves today's
+ * `/api/sessions/:id/logs` UI/HTTP callers and keeps ascending order for
+ * backward compat — see spec §8 rabbit hole 5).
+ *
+ * `direction` is the one axis the caller sets — it fixes both which end to
+ * page from AND the response order. Default `newest_first` lands on the
+ * ending, where a failure lives; `oldest_first` is the rare "jump to boot"
+ * case. Response rows are returned in the requested direction (NOT reversed).
+ *
+ * Cursors compose: `before_id: N` walks backward through history (rows
+ * satisfy `id < N`), `after_id: N` is a live tail (rows satisfy `id > N`),
+ * and passing both yields the bounded window `after_id < id < before_id`.
+ */
+export const sessionLogsDeepQuerySchema = z.object({
+	direction: z.enum(['newest_first', 'oldest_first']).default('newest_first'),
+	before_id: z.coerce.number().int().positive().optional(),
+	after_id: z.coerce.number().int().positive().optional(),
+	stream: z.enum(['stdout', 'stderr', 'system']).optional(),
+	limit: z.coerce.number().int().min(1).max(500).default(100),
+})
+
+/**
+ * Row shape returned by the deep-read log endpoint and by `get_session` when
+ * `include_logs` is true. `id` is the monotonic `bigserial` primary key on
+ * `session_logs` — safe for cursor pagination.
+ */
+export const sessionLogRowSchema = z.object({
+	id: z.number().int().positive(),
+	stream: z.enum(['stdout', 'stderr', 'system']),
+	content: z.string(),
+	created_at: z.string().datetime().nullable(),
+})
+
+/**
+ * Query params for `GET /api/sessions/:id`. `include_logs=true` folds the
+ * newest-first log tail into the response body under a `logs` key, honoring
+ * `log_limit`. The bug this closes was that today's handler ignores both
+ * flags — the MCP `get_session` tool advertised them for months while
+ * silently returning session metadata only.
+ *
+ * String coercion for `include_logs`: HTTP query params arrive as strings, so
+ * `z.boolean()` alone rejects `?include_logs=true`. Preprocess the literal
+ * "true"/"false" strings to actual booleans before parsing.
+ */
+export const getSessionQuerySchema = z.object({
+	include_logs: z
+		.preprocess(
+			(v) => (v === 'true' ? true : v === 'false' ? false : v),
+			z.boolean().default(false),
+		)
+		.optional(),
+	log_limit: z.coerce.number().int().min(1).max(500).default(100),
 })
 
 export const sessionParamsSchema = z.object({
@@ -348,6 +452,25 @@ export const failureReasonCodeSchema = z.enum([
 ])
 export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
 
+// §7.5 / §17.2 sources for the `reset_at` value on a credit-exhaustion failure.
+// Stamped alongside `reset_at` when a companion parser (parseSubscriptionLimitReset,
+// parseCliResetBanner) produced the value; left absent when reset_at is null or
+// was written by a non-parsing path (e.g. an integration test seeding retry_at
+// directly). `reset_source` names which signal fed the parse; `reset_confidence`
+// classifies whether it was an authoritative pre-flight probe or an advisory
+// mid-session banner. The retry-scheduler carries both onto the
+// session_retry_scheduled audit event's data field.
+export const resetSourceSchema = z.enum([
+	'anthropic-ratelimit-unified-reset',
+	'retry-after-header',
+	'cli-banner',
+	'agent-server-callback',
+])
+export type ResetSource = z.infer<typeof resetSourceSchema>
+
+export const resetConfidenceSchema = z.enum(['authoritative', 'advisory'])
+export type ResetConfidence = z.infer<typeof resetConfidenceSchema>
+
 export const sessionResultFailureReasonSchema = z.object({
 	provider: z.string(),
 	reason_code: failureReasonCodeSchema,
@@ -355,6 +478,8 @@ export const sessionResultFailureReasonSchema = z.object({
 	http_status: z.number().int().nullable(),
 	reset_at: z.string().nullable(),
 	verbatim_output: z.string().nullable(),
+	reset_source: resetSourceSchema.optional(),
+	reset_confidence: resetConfidenceSchema.optional(),
 })
 export type SessionResultFailureReason = z.infer<typeof sessionResultFailureReasonSchema>
 
