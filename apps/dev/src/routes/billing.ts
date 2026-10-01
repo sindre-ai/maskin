@@ -4,7 +4,7 @@ import { workspaces } from '@maskin/db/schema'
 import { CREDIT_TOPUP_MAX_USD, CREDIT_TOPUP_MIN_USD, workspaceSettingsSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
-import { cachedBillingUsage } from '../lib/billing-usage-cache'
+import { cachedBillingUsage, evictBillingUsage } from '../lib/billing-usage-cache'
 import { isEnterprise, isEnterpriseWorkspace } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -609,6 +609,9 @@ app.openapi(cancelRoute, async (c) => {
 			.update(workspaces)
 			.set({ settings: { ...settings, billing: downgraded }, updatedAt: new Date() })
 			.where(eq(workspaces.id, workspaceId))
+		// The web app refetches usage as soon as this returns; a read cached in
+		// the last 2s would still show the paid plan.
+		evictBillingUsage(workspaceId)
 
 		// Audit + real-time, per the "events logged on every mutation" rule.
 		// A cancellation is the single most disputable billing action; without

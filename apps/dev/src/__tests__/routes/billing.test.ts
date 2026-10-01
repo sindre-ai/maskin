@@ -948,6 +948,33 @@ describe('GET /api/billing/usage', () => {
 			_resetFeatureFlagConfig()
 		})
 
+		it('reads again right after the subscription is cancelled', async () => {
+			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+			const workspaceId = randomUUID()
+			const paid = { plan: 'pro', status: 'active' }
+			// No stripe_subscription_id, so the cancel skips Stripe and only
+			// downgrades the row. Queue: usage read, cancel's workspace lookup,
+			// then the usage read after the cancel.
+			mockResults.selectQueue = [
+				[{ id: workspaceId, settings: { billing: paid } }],
+				[],
+				[{ id: workspaceId, settings: { billing: paid }, billingOwnerId: 'test-actor-id' }],
+				[{ id: workspaceId, settings: { billing: { plan: 'trial', status: 'canceled' } } }],
+				[],
+			]
+
+			const before = await app.request(usageGet(workspaceId))
+			const cancel = await app.request(
+				jsonRequest('POST', '/api/billing/cancel', undefined, { 'X-Workspace-Id': workspaceId }),
+			)
+			const after = await app.request(usageGet(workspaceId))
+
+			expect(await before.json()).toMatchObject({ plan: 'pro' })
+			expect(cancel.status).toBe(200)
+			// Inside the 2s TTL, so only the eviction makes this a fresh read.
+			expect(await after.json()).toMatchObject({ plan: 'trial' })
+		})
+
 		it("does not serve one workspace's cached read for another workspace", async () => {
 			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 			const wsA = randomUUID()

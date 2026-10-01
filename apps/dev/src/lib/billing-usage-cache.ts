@@ -49,6 +49,15 @@ export function cachedBillingUsage<T>(
 	return value
 }
 
+// Drops every actor's entry for one workspace. Call it after a write the usage
+// response reflects and the caller refetches straight away (cancelling the
+// subscription), so that refetch is not answered with the pre-write read.
+export function evictBillingUsage(workspaceId: string): void {
+	for (const key of entries.keys()) {
+		if (key.endsWith(`|${workspaceId}`)) entries.delete(key)
+	}
+}
+
 // Test-only reset so cases don't see each other's cached reads.
 export function _resetBillingUsageCache(): void {
 	entries.clear()

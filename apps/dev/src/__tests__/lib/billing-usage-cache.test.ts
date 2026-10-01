@@ -3,6 +3,7 @@ import {
 	BILLING_USAGE_CACHE_TTL_MS,
 	_resetBillingUsageCache,
 	cachedBillingUsage,
+	evictBillingUsage,
 } from '../../lib/billing-usage-cache'
 
 beforeEach(() => {
@@ -88,5 +89,21 @@ describe('cachedBillingUsage', () => {
 
 		expect(retry).toBe('recovered')
 		expect(compute).toHaveBeenCalledTimes(2)
+	})
+
+	it('evicts every actor for one workspace and leaves other workspaces alone', async () => {
+		const compute = vi.fn().mockResolvedValue('v')
+		await cachedBillingUsage('actor-a', 'ws-1', compute, 1_000)
+		await cachedBillingUsage('actor-b', 'ws-1', compute, 1_000)
+		await cachedBillingUsage('actor-a', 'ws-2', compute, 1_000)
+		expect(compute).toHaveBeenCalledTimes(3)
+
+		evictBillingUsage('ws-1')
+
+		await cachedBillingUsage('actor-a', 'ws-1', compute, 1_100)
+		await cachedBillingUsage('actor-b', 'ws-1', compute, 1_100)
+		await cachedBillingUsage('actor-a', 'ws-2', compute, 1_100)
+		// Both ws-1 entries recomputed; the ws-2 entry was still cached.
+		expect(compute).toHaveBeenCalledTimes(5)
 	})
 })
