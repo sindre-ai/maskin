@@ -19,6 +19,14 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.285
 # Pre-install Playwright MCP server (connects to external browser via CDP)
 RUN npm install -g @playwright/mcp
 
+# Shared libraries Chromium needs to start (libglib, libnss3, libX11 and
+# friends), so agents can run Playwright E2E in-session. Libraries only: the
+# browser binary is not baked in, `playwright install chromium` fetches the
+# version the repo under test pins. install-deps resolves package names for
+# the base distro, so a node:22-slim distro bump does not break this layer.
+RUN npx -y playwright install-deps chromium \
+    && rm -rf /var/lib/apt/lists/* /root/.npm
+
 # Non-root user (Claude Code refuses --dangerously-skip-permissions as root)
 RUN useradd -m -s /bin/bash agent
 
