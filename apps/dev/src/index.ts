@@ -153,9 +153,19 @@ sessionManager.start().then(() => {
 })
 
 const triggerRunner = new TriggerRunner(db, notifyBridge, sessionManager)
-triggerRunner.start().then(() => {
-	logger.info('Trigger runner started')
-})
+// Fail fast if trigger-runner cannot boot — a boot failure here is almost
+// always loadCooldowns / loadSuppressions unable to read the persisted state,
+// and running with empty Maps against a live DB reintroduces the deploy-wipe
+// bug (bet #7). Refusing to start is safer than silently masking it.
+triggerRunner
+	.start()
+	.then(() => {
+		logger.info('Trigger runner started')
+	})
+	.catch((err) => {
+		logger.error('Trigger runner failed to start — exiting', { error: String(err) })
+		process.exit(1)
+	})
 
 const commentDispatcher = new CommentDispatcher(db, notifyBridge, sessionManager)
 commentDispatcher.start()

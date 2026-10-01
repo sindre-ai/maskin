@@ -38,6 +38,8 @@ type RetryableSession = {
 	actorId: string
 	conversationId: string | null
 	triggerId: string | null
+	initiatedFromObjectId: string | null
+	initiatedFromObjectType: string | null
 	actionPrompt: string
 	config: Record<string, unknown> | null
 	attemptNumber: number
@@ -86,6 +88,8 @@ export class SessionRetryScheduler {
 					actorId: sessions.actorId,
 					conversationId: sessions.conversationId,
 					triggerId: sessions.triggerId,
+					initiatedFromObjectId: sessions.initiatedFromObjectId,
+					initiatedFromObjectType: sessions.initiatedFromObjectType,
 					actionPrompt: sessions.actionPrompt,
 					config: sessions.config,
 					attemptNumber: sessions.attemptNumber,
@@ -157,6 +161,10 @@ export class SessionRetryScheduler {
 				config: row.config ?? undefined,
 				conversationId: row.conversationId ?? undefined,
 				triggerId: row.triggerId ?? undefined,
+				// The retry keeps the originating object so its terminal telemetry and
+				// any session_failed event still link back to what it was doing.
+				initiatedFromObjectId: row.initiatedFromObjectId,
+				initiatedFromObjectType: row.initiatedFromObjectType,
 				retryOf: row.id,
 				attemptNumber: row.attemptNumber + 1,
 			})

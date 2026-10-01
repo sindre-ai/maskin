@@ -555,7 +555,7 @@ function ForYouFeed() {
 				bulkActions={bulkActions}
 			/>
 
-			<div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1 pb-14">
+			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">
 				<div className="mx-auto flex w-full max-w-[700px] flex-col">
 					<BriefCard workspaceId={workspaceId} />
 					<ReleaseCard />

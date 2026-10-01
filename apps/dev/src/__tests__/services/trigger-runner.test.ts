@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
+import { capturePosthogEvent } from '../../lib/analytics/posthog'
 import { LlmCredentialsUnavailableError, PlanCapExceededError } from '../../lib/llm-routing'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import {
@@ -13,6 +14,20 @@ import {
 } from '../../services/trigger-runner'
 import { buildTrigger } from '../factories'
 import { createMockSessionManager, createTestContext } from '../setup'
+
+// The 30s event-queue sweep (S3) runs on the fake clock these tests advance and
+// would shift results off the positional selectQueue below. Its own coverage is
+// the queue-*.test.ts integration tests, against real Postgres.
+vi.mock('../../services/trigger-event-queue', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../services/trigger-event-queue')>()),
+	findDueTriggerIds: vi.fn().mockResolvedValue([]),
+	findDueWorkspaceIds: vi.fn().mockResolvedValue([]),
+	sweepQueueRetention: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('../../lib/analytics/posthog', () => ({
+	capturePosthogEvent: vi.fn().mockResolvedValue(undefined),
+}))
 
 describe('TriggerRunner', () => {
 	let runner: TriggerRunner
@@ -73,7 +88,7 @@ describe('TriggerRunner', () => {
 				[trigger], // cron triggers
 				[], // reminder triggers
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()
 
 			// Fire once to confirm it works
@@ -116,7 +131,7 @@ describe('TriggerRunner', () => {
 				config: { entity_type: 'task', action: 'created' },
 			})
 			mockResults.select = [trigger]
-			mockResults.insert = [] // event insert
+			mockResults.insert = [{ triggerId: 't1' }] // event insert
 
 			bridge.emit('event', baseEvent)
 			await vi.advanceTimersByTimeAsync(0) // flush microtasks
@@ -136,7 +151,7 @@ describe('TriggerRunner', () => {
 				[trigger], // matching triggers
 				[{ data: eventData }], // fetchEventData
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 
 			bridge.emit('event', {
 				...baseEvent,
@@ -213,7 +228,7 @@ describe('TriggerRunner', () => {
 				[trigger], // matching triggers
 				[{ data: { previous: { status: 'todo' }, updated: { status: 'in_progress' } } }], // fetchEventData
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 
 			const event: PgEvent = {
 				...baseEvent,
@@ -235,7 +250,7 @@ describe('TriggerRunner', () => {
 				[trigger], // matching triggers
 				[{ data: { priority: 'high' } }], // fetchEventData from DB
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 
 			bridge.emit('event', baseEvent)
 			await vi.advanceTimersByTimeAsync(0)
@@ -277,7 +292,7 @@ describe('TriggerRunner', () => {
 					},
 				],
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 
 			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
 			await vi.advanceTimersByTimeAsync(0)
@@ -347,7 +362,7 @@ describe('TriggerRunner', () => {
 				[trigger],
 				[{ data: { id: 'rel-1', type: 'informs', sourceId: 'obj-1', targetId: 'obj-2' } }],
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 
 			bridge.emit('event', { ...baseEvent, action: 'created', entity_type: 'relationship' })
 			await vi.advanceTimersByTimeAsync(0)
@@ -373,7 +388,7 @@ describe('TriggerRunner', () => {
 				// hydrated current row from `objects`
 				[{ status: 'in_progress', driver: null, metadata: null }],
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 
 			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
 			await vi.advanceTimersByTimeAsync(0)
@@ -402,7 +417,7 @@ describe('TriggerRunner', () => {
 				// hydrated current row from `objects` — a custom-typed object
 				[{ type: 'lead', status: 'qualified', driver: null, metadata: null }],
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 
 			bridge.emit('event', { ...baseEvent, entity_type: 'lead', action: 'status_changed' })
 			await vi.advanceTimersByTimeAsync(0)
@@ -456,7 +471,7 @@ describe('TriggerRunner', () => {
 					},
 				],
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 
 			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
 			await vi.advanceTimersByTimeAsync(0)
@@ -476,7 +491,7 @@ describe('TriggerRunner', () => {
 				[trigger], // cron triggers
 				[], // reminder triggers
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()
 
 			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
@@ -491,7 +506,7 @@ describe('TriggerRunner', () => {
 				config: { expression: '0 9 * * *' },
 			})
 			mockResults.selectQueue = [[trigger], []]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()
 
 			// Should NOT have fired yet (still before 9:00)
@@ -511,7 +526,7 @@ describe('TriggerRunner', () => {
 				config: { expression: '30 8 * * 1-5' },
 			})
 			mockResults.selectQueue = [[trigger], []]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()
 
 			// Advance 30 minutes to 8:30 — Thursday is a weekday, should fire
@@ -581,9 +596,11 @@ describe('TriggerRunner', () => {
 			mockResults.selectQueue = [
 				[trigger], // cron triggers on load
 				[], // reminder triggers on load
+				[], // trigger_cooldowns on load (S1 — persistent cooldown store)
+				[], // workspace_suppressions on load (S1)
 				[match], // scope query — 1 match
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()
 
 			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
@@ -608,7 +625,7 @@ describe('TriggerRunner', () => {
 				[], // cron triggers
 				[trigger], // reminder triggers
 			]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()
 
 			await vi.advanceTimersByTimeAsync(10_000)
@@ -631,7 +648,7 @@ describe('TriggerRunner', () => {
 
 			// Mock DB to return the new trigger when fetched
 			mockResults.selectQueue = [[trigger]]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 
 			bridge.emit('event', {
 				workspace_id: trigger.workspaceId,
@@ -658,7 +675,7 @@ describe('TriggerRunner', () => {
 				enabled: true,
 			})
 			mockResults.selectQueue = [[trigger], []]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()
 
 			// Verify it fires
@@ -693,7 +710,7 @@ describe('TriggerRunner', () => {
 				enabled: true,
 			})
 			mockResults.selectQueue = [[trigger], []]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			await runner.start()
 
 			// Verify it fires
@@ -718,6 +735,118 @@ describe('TriggerRunner', () => {
 		})
 	})
 
+	// S9: only a human editing the trigger may reset its backoff. The runner
+	// writes its own events on entity_type 'trigger' (trigger_fired), and
+	// resetting on those meant a failing trigger cleared its own backoff.
+	describe('handleTriggerChange backoff reset', () => {
+		const triggerEvent = (action: string, entityId: string): PgEvent => ({
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			action,
+			entity_type: 'trigger',
+			entity_id: entityId,
+			event_id: 'evt-1',
+		})
+
+		async function emit(action: string, entityId: string) {
+			bridge.emit('event', triggerEvent(action, entityId))
+			await vi.advanceTimersByTimeAsync(0)
+		}
+
+		let resetSpy: ReturnType<typeof vi.fn>
+
+		beforeEach(async () => {
+			mockResults.select = []
+			await runner.start()
+			resetSpy = vi
+				.spyOn(
+					runner as unknown as { resetTriggerBackoff: () => Promise<void> },
+					'resetTriggerBackoff',
+				)
+				.mockResolvedValue(undefined) as unknown as ReturnType<typeof vi.fn>
+		})
+
+		it.each(['created', 'updated'])(
+			'resets backoff on a %s event for an unseen trigger',
+			async (action) => {
+				const trigger = buildTrigger({ type: 'event', config: {} })
+				mockResults.selectQueue = [[trigger]]
+
+				await emit(action, trigger.id)
+
+				expect(resetSpy).toHaveBeenCalledTimes(1)
+				expect(resetSpy).toHaveBeenCalledWith(trigger.id)
+			},
+		)
+
+		it('drops the in-memory backoff on a deleted event', async () => {
+			const trigger = buildTrigger({ type: 'event', config: {} })
+			// The deleted branch never re-reads the row, and a deleted trigger's
+			// cooldown is cleared in memory (the row cascade already removed it).
+			const failures = (runner as unknown as { triggerFailures: Map<string, unknown> })
+				.triggerFailures
+			failures.set(trigger.id, { count: 2, lastFailedAt: new Date(), backoffUntil: new Date() })
+
+			await emit('deleted', trigger.id)
+
+			expect(failures.has(trigger.id)).toBe(false)
+		})
+
+		it.each(['trigger_fired', 'session_failed', 'auto_paused', 'anything_else'])(
+			'leaves backoff and schedules alone on a %s event',
+			async (action) => {
+				const trigger = buildTrigger({
+					type: 'cron',
+					config: { expression: '*/1 * * * *' },
+					enabled: true,
+				})
+				mockResults.selectQueue = [[trigger]]
+
+				await emit(action, trigger.id)
+
+				expect(resetSpy).not.toHaveBeenCalled()
+				// No re-read of the row and no cron job armed for it: the event was ignored.
+				expect(
+					(runner as unknown as { cronJobs: Map<string, unknown> }).cronJobs.has(trigger.id),
+				).toBe(false)
+				expect(mockResults.selectQueue).toHaveLength(1)
+			},
+		)
+
+		it('does not reset again on an updated event that changed none of the editable fields', async () => {
+			const trigger = buildTrigger({ type: 'event', config: { entity_type: 'object' } })
+			mockResults.selectQueue = [[trigger]]
+			await emit('updated', trigger.id)
+			expect(resetSpy).toHaveBeenCalledTimes(1)
+
+			// Same editable fields, different bookkeeping column: not an edit.
+			mockResults.selectQueue = [
+				[{ ...trigger, updatedAt: new Date(), lastEscalatedAt: new Date() }],
+			]
+			await emit('updated', trigger.id)
+
+			expect(resetSpy).toHaveBeenCalledTimes(1)
+		})
+
+		it.each([
+			['name', { name: 'renamed' }],
+			['config', { config: { entity_type: 'session' } }],
+			['actionPrompt', { actionPrompt: 'do something else' }],
+			['targetActorId', { targetActorId: 'other-actor' }],
+			['enabled', { enabled: false }],
+		])('resets again when %s is edited', async (_field, change) => {
+			const trigger = buildTrigger({ type: 'event', config: { entity_type: 'object' } })
+			mockResults.selectQueue = [[trigger]]
+			await emit('updated', trigger.id)
+			expect(resetSpy).toHaveBeenCalledTimes(1)
+
+			mockResults.selectQueue = [[{ ...trigger, ...change }]]
+			await emit('updated', trigger.id)
+
+			expect(resetSpy).toHaveBeenCalledTimes(2)
+		})
+	})
+
 	// Regression coverage for Sentry MASKIN-DEV-K / MASKIN-DEV-6. The plan cap is
 	// checked inside createSession BEFORE a session row exists, so no
 	// session_failed event is emitted, so the per-trigger `triggerFailures`
@@ -735,7 +864,7 @@ describe('TriggerRunner', () => {
 		/** Boots the runner with one every-minute cron trigger and fires it once. */
 		const startWithCron = async (trigger: ReturnType<typeof buildTrigger>, rejection: unknown) => {
 			mockResults.selectQueue = [[trigger], []]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockRejectedValue(rejection)
 			await runner.start()
 			await vi.advanceTimersByTimeAsync(60 * 1000)
@@ -978,7 +1107,7 @@ describe('TriggerRunner', () => {
 
 		const startWithCron = async (trigger: ReturnType<typeof buildTrigger>) => {
 			mockResults.selectQueue = [[trigger], []]
-			mockResults.insert = []
+			mockResults.insert = [{ triggerId: 't1' }]
 			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
 				id: 'session-1',
 			})
@@ -1099,7 +1228,7 @@ describe('TriggerRunner backoff', () => {
 
 		// Now try to fire the trigger — it should be in backoff
 		mockResults.select = [trigger]
-		mockResults.insert = []
+		mockResults.insert = [{ triggerId: 't1' }]
 
 		bridge.emit('event', {
 			workspace_id: 'ws-1',
@@ -1145,7 +1274,7 @@ describe('TriggerRunner backoff', () => {
 
 		// Now the trigger should fire
 		mockResults.select = [trigger]
-		mockResults.insert = []
+		mockResults.insert = [{ triggerId: 't1' }]
 
 		bridge.emit('event', {
 			workspace_id: 'ws-1',
@@ -1203,7 +1332,7 @@ describe('TriggerRunner backoff', () => {
 
 		// Trigger should fire immediately — no backoff
 		mockResults.select = [trigger]
-		mockResults.insert = []
+		mockResults.insert = [{ triggerId: 't1' }]
 
 		bridge.emit('event', {
 			workspace_id: 'ws-1',
@@ -1255,7 +1384,8 @@ describe('TriggerRunner backoff', () => {
 
 		// Trigger should still be able to fire — no backoff was recorded.
 		mockResults.select = [trigger]
-		mockResults.insert = []
+		// trigger_dispatches claim succeeds (a returned row = this runner owns the event)
+		mockResults.insert = [{ triggerId: 't1' }]
 
 		bridge.emit('event', {
 			workspace_id: 'ws-1',
@@ -1306,7 +1436,8 @@ describe('TriggerRunner backoff', () => {
 
 		// Trigger should still be able to fire — no backoff was recorded.
 		mockResults.select = [trigger]
-		mockResults.insert = []
+		// trigger_dispatches claim succeeds (a returned row = this runner owns the event)
+		mockResults.insert = [{ triggerId: 't1' }]
 
 		bridge.emit('event', {
 			workspace_id: 'ws-1',
@@ -1376,7 +1507,7 @@ describe('TriggerRunner backoff', () => {
 		await vi.advanceTimersByTimeAsync(2 * 60_000 + 1000)
 
 		mockResults.select = [trigger]
-		mockResults.insert = []
+		mockResults.insert = [{ triggerId: 't1' }]
 
 		bridge.emit('event', {
 			workspace_id: 'ws-1',
@@ -1424,7 +1555,7 @@ describe('TriggerRunner backoff', () => {
 		await vi.advanceTimersByTimeAsync(4 * 60_000)
 
 		mockResults.select = [trigger]
-		mockResults.insert = []
+		mockResults.insert = [{ triggerId: 't1' }]
 
 		bridge.emit('event', {
 			workspace_id: 'ws-1',
@@ -1495,7 +1626,7 @@ describe('TriggerRunner backoff', () => {
 
 		// Now the trigger should fire — backoff was cleared
 		mockResults.select = [trigger]
-		mockResults.insert = []
+		mockResults.insert = [{ triggerId: 't1' }]
 
 		bridge.emit('event', {
 			workspace_id: 'ws-1',
@@ -1521,7 +1652,7 @@ describe('TriggerRunner backoff', () => {
 			[trigger], // cron triggers
 			[], // reminder triggers
 		]
-		mockResults.insert = []
+		mockResults.insert = [{ triggerId: 't1' }]
 		await runner.start()
 
 		// Fire once to confirm it works
@@ -1544,9 +1675,22 @@ describe('TriggerRunner backoff', () => {
 		} satisfies PgEvent)
 		await vi.advanceTimersByTimeAsync(0)
 
+		vi.mocked(capturePosthogEvent).mockClear()
+
 		// Next cron tick (1 minute later) — should be skipped due to backoff
 		await vi.advanceTimersByTimeAsync(60 * 1000)
 		expect(sessionManager.createSession).not.toHaveBeenCalled()
+
+		const dropped = vi
+			.mocked(capturePosthogEvent)
+			.mock.calls.filter(([name]) => name === 'trigger_cron_tick_dropped')
+		expect(dropped).toHaveLength(1)
+		expect(dropped[0][1]).toBe(trigger.workspaceId)
+		expect(dropped[0][2]).toEqual({
+			workspace_id: trigger.workspaceId,
+			trigger_id: 'trigger-cron-1',
+			backoff_until: expect.any(String),
+		})
 	})
 })
 

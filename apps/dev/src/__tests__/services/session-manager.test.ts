@@ -218,6 +218,8 @@ describe('SessionManager', () => {
 				actorId: 'actor-1',
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -232,6 +234,8 @@ describe('SessionManager', () => {
 					actorId: 'actor-1',
 					actionPrompt: 'Do the thing',
 					createdBy: 'creator-1',
+					initiatedFromObjectId: null,
+					initiatedFromObjectType: null,
 					autoStart: false,
 				}),
 			).rejects.toThrow('Failed to create session')
@@ -252,6 +256,8 @@ describe('SessionManager', () => {
 				actorId: 'actor-1',
 				actionPrompt: 'Reply to the comment',
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 				triggerSource: 'comment_fallback',
 				sourceCommentEventId: 9001,
@@ -279,6 +285,8 @@ describe('SessionManager', () => {
 				actorId: 'actor-1',
 				actionPrompt: 'Run the cron job',
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 				triggerId: 'trig-1',
 				triggerType: 'cron',
@@ -316,6 +324,8 @@ describe('SessionManager', () => {
 					actorId: 'actor-1',
 					actionPrompt: 'Do the thing',
 					createdBy: 'creator-1',
+					initiatedFromObjectId: null,
+					initiatedFromObjectType: null,
 					autoStart: false,
 				}),
 			).rejects.toMatchObject({
@@ -354,6 +364,8 @@ describe('SessionManager', () => {
 					actorId: 'actor-1',
 					actionPrompt: 'Do the thing',
 					createdBy: 'creator-1',
+					initiatedFromObjectId: null,
+					initiatedFromObjectType: null,
 					autoStart: false,
 				}),
 			).rejects.toMatchObject({ name: 'PlanCapExceededError', plan: 'pro' })
@@ -384,6 +396,8 @@ describe('SessionManager', () => {
 				actorId: 'actor-1',
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -401,6 +415,8 @@ describe('SessionManager', () => {
 				actionPrompt: '',
 				config: { interactive: true },
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -415,6 +431,8 @@ describe('SessionManager', () => {
 				actorId: 'actor-1',
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -434,6 +452,8 @@ describe('SessionManager', () => {
 				actionPrompt: '',
 				config: { interactive: true, conversation: { conversation_id: 'conv-1' } },
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -448,6 +468,8 @@ describe('SessionManager', () => {
 				actorId: 'actor-1',
 				actionPrompt: 'Do the thing',
 				createdBy: 'creator-1',
+				initiatedFromObjectId: null,
+				initiatedFromObjectType: null,
 				autoStart: false,
 			})
 
@@ -1232,6 +1254,77 @@ describe('SessionManager', () => {
 
 			expect(spec.previewGuestPorts).toEqual([])
 			expect(spec.browserRequired).toBe(false)
+		})
+
+		it('injects MASKIN_TRIGGERING_EVENT_ID and stamps the triggering-event header when the session was dispatched from a comment', async () => {
+			// Agent config carries a Maskin MCP entry so the header-stamper has
+			// something to stamp — mirrors what session-manager gates on at
+			// launch time.
+			const agentToolsMcp = {
+				maskin: {
+					type: 'http',
+					url: '${MASKIN_API_URL}/mcp',
+					headers: {
+						Authorization: 'Bearer ${MASKIN_API_KEY}',
+						'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+					},
+				},
+			}
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				config: { source_comment_event_id: 7777 },
+			})
+			const agent = {
+				...buildTestAgent(session.actorId),
+				tools: { mcpServers: agentToolsMcp },
+			}
+			const workspace = buildTestWorkspace(session.workspaceId)
+
+			mockResults.selectQueue = [[agent], [workspace], []]
+
+			const spec = await manager.buildLaunchSpec(
+				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
+			)
+
+			expect(spec.env.MASKIN_TRIGGERING_EVENT_ID).toBe('7777')
+			const stamped = JSON.parse(spec.env.AGENT_MCP_JSON as string)
+			expect(stamped.mcpServers.maskin.headers['X-Maskin-Triggering-Event-Id']).toBe(
+				'${MASKIN_TRIGGERING_EVENT_ID}',
+			)
+		})
+
+		it('leaves MASKIN_TRIGGERING_EVENT_ID and the triggering header out on a non-comment-dispatched session', async () => {
+			const agentToolsMcp = {
+				maskin: {
+					type: 'http',
+					url: '${MASKIN_API_URL}/mcp',
+					headers: {
+						Authorization: 'Bearer ${MASKIN_API_KEY}',
+						'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+					},
+				},
+			}
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				config: {},
+			})
+			const agent = {
+				...buildTestAgent(session.actorId),
+				tools: { mcpServers: agentToolsMcp },
+			}
+			const workspace = buildTestWorkspace(session.workspaceId)
+
+			mockResults.selectQueue = [[agent], [workspace], []]
+
+			const spec = await manager.buildLaunchSpec(
+				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
+			)
+
+			expect(spec.env).not.toHaveProperty('MASKIN_TRIGGERING_EVENT_ID')
+			const stamped = JSON.parse(spec.env.AGENT_MCP_JSON as string)
+			expect(stamped.mcpServers.maskin.headers).not.toHaveProperty('X-Maskin-Triggering-Event-Id')
 		})
 	})
 

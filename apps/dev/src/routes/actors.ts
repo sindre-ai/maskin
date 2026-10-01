@@ -269,7 +269,14 @@ app.openapi(createActorRoute, async (c) => {
 	// Return actor WITHOUT api_key, but WITH it in the expected response field.
 	// Field names must be snake_case to match actorResponseSchema so MCP read→update
 	// round trips don't get keys stripped.
-	const { apiKey: _, systemPrompt, llmProvider, llmConfig, ...actorWithoutKey } = actor
+	const {
+		apiKey: _,
+		passwordHash: __,
+		systemPrompt,
+		llmProvider,
+		llmConfig,
+		...actorWithoutKey
+	} = actor
 	return c.json(
 		{
 			...serialize(actorWithoutKey),
@@ -1330,6 +1337,9 @@ app.openapi(runAgentRoute, (async (c) => {
 					callerKind: 'rest',
 					actionPrompt: body.action_prompt ?? DEFAULT_RUN_ACTION_PROMPT,
 					createdBy: actorId,
+					// Ad-hoc actor run: no originating object.
+					initiatedFromObjectId: null,
+					initiatedFromObjectType: null,
 					await: 'none',
 				})
 			}

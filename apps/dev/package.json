@@ -13,6 +13,7 @@
 		"start": "node dist/index.js",
 		"test": "vitest",
 		"test:integration": "vitest run --config vitest.integration.config.ts",
+		"trigger:lint": "tsx scripts/trigger-lint.ts",
 		"type-check": "tsc --noEmit",
 		"lint:terminal-status": "bash ../../scripts/guard-terminal-status.sh"
 	},

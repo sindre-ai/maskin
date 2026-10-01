@@ -69,8 +69,12 @@ describe('CommentDispatcher', () => {
 		bridge.emit('event', event)
 		// Yield enough microtask ticks to drain every await inside
 		// handleEvent → dispatchMention → insertNotificationsWithEvents. Each
-		// mock resolves synchronously, so a small loop is plenty.
-		for (let i = 0; i < 20; i++) await Promise.resolve()
+		// mock resolves synchronously, so a small loop is plenty. Bumped to
+		// 40 with the initiated_from lookup added to dispatchMention /
+		// dispatchCommentFallback: each mention now has an extra `await`
+		// (`loadInitiatedFromObject`), so multi-mention fanouts were racing
+		// the assertion at the old 20-tick budget.
+		for (let i = 0; i < 40; i++) await Promise.resolve()
 	}
 
 	it('ignores events that are not commented-on-object', async () => {
