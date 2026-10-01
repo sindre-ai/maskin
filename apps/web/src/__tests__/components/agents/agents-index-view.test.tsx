@@ -2,13 +2,18 @@ import { AgentsIndexView } from '@/components/agents/agents-index-view'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildActorListItem, buildSessionResponse } from '../../factories'
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
 	return { ...mockTanStackRouter() }
 })
+
+// The row Call button mounts VoiceCallDialog, whose hook reads the workspace.
+vi.mock('@/lib/workspace-context', () => ({
+	useWorkspace: () => ({ workspaceId: 'ws-1' }),
+}))
 
 type DisplaySettingsBody = Record<string, unknown>
 type MockState = {
@@ -458,5 +463,34 @@ describe('AgentsIndexView', () => {
 			expect(within(row).getByText('Crunching numbers')).toBeInTheDocument()
 			expect(within(row).getByText('1 session')).toBeInTheDocument()
 		}, 10_000)
+	})
+})
+
+describe('AgentsIndexView — row Call button (voice-mode-v1)', () => {
+	const voiceAda = () => ({ ...agentAda(), voice_enabled: true })
+
+	beforeEach(() => window.localStorage.setItem('ff:voice-mode-v1', 'on'))
+	afterEach(() => window.localStorage.removeItem('ff:voice-mode-v1'))
+
+	it('gives a voice-enabled agent row a Call button, beside the row link and not inside it', () => {
+		mount([voiceAda(), agentBrian()], [])
+		const call = screen.getByRole('button', { name: 'Call Ada' })
+		expect(call).toHaveTextContent('Call')
+		// A button nested in the row's anchor is invalid markup and would navigate.
+		expect(screen.getByRole('link', { name: /Ada/ })).not.toContainElement(call)
+		// Hover-reveal is desktop-only; below md the button is plain inline.
+		expect(call.className).toContain('md:opacity-0')
+		expect(call.className).not.toMatch(/(^|\s)opacity-0/)
+	})
+
+	it('gives agents without voice enabled no Call button', () => {
+		mount([voiceAda(), agentBrian()], [])
+		expect(screen.queryByRole('button', { name: 'Call Brian' })).not.toBeInTheDocument()
+	})
+
+	it('renders no Call button when the flag is off, even for a voice-enabled agent', () => {
+		window.localStorage.setItem('ff:voice-mode-v1', 'off')
+		mount([voiceAda()], [])
+		expect(screen.queryByRole('button', { name: 'Call Ada' })).not.toBeInTheDocument()
 	})
 })

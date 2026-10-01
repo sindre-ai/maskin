@@ -1,3 +1,4 @@
+import { AgentCallButton } from '@/components/agents/agent-call-button'
 import {
 	AgentStatusPill,
 	type PortraitStatus,
@@ -254,6 +255,8 @@ export function AgentsIndexView({
 		() => rows.reduce((n, row) => (row.agent.voice_enabled ? n + 1 : n), 0),
 		[rows],
 	)
+	// With the flag on and any voice-enabled agent, rows hold a Call slot on md+.
+	const reserveCallSlot = voiceModeFlag && voiceCount > 0
 
 	// The Display menu's Status row (mockup 2304). Same buckets and the same
 	// pre-filter counts the chip strip draws, built once so the two can't
@@ -393,6 +396,7 @@ export function AgentsIndexView({
 							showActivity={showActivity}
 							showSessions={showSessions}
 							showStatus={showStatus}
+							reserveCallSlot={reserveCallSlot}
 						/>
 					))}
 				</div>
@@ -408,6 +412,7 @@ function AgentGroupSection({
 	showActivity,
 	showSessions,
 	showStatus,
+	reserveCallSlot,
 }: {
 	workspaceId: string
 	group: { id: string; label?: string; note?: string; rows: AgentRow[] }
@@ -415,6 +420,7 @@ function AgentGroupSection({
 	showActivity: boolean
 	showSessions: boolean
 	showStatus: boolean
+	reserveCallSlot: boolean
 }) {
 	if (group.label === undefined) {
 		return (
@@ -428,6 +434,7 @@ function AgentGroupSection({
 						showActivity={showActivity}
 						showSessions={showSessions}
 						showStatus={showStatus}
+						reserveCallSlot={reserveCallSlot}
 					/>
 				))}
 			</ul>
@@ -465,6 +472,7 @@ function AgentGroupSection({
 							showActivity={showActivity}
 							showSessions={showSessions}
 							showStatus={showStatus}
+							reserveCallSlot={reserveCallSlot}
 						/>
 					))
 				) : (
@@ -486,6 +494,7 @@ function AgentRowItem({
 	showActivity,
 	showSessions,
 	showStatus,
+	reserveCallSlot,
 }: {
 	workspaceId: string
 	row: AgentRow
@@ -493,6 +502,8 @@ function AgentRowItem({
 	showActivity: boolean
 	showSessions: boolean
 	showStatus: boolean
+	/** Some row in the list carries a Call button: non-voice rows hold the same slot on md+ so the columns line up. */
+	reserveCallSlot: boolean
 }) {
 	const { agent, portrait, latestSession } = row
 	// Mockup 2330 puts a mono uppercase KIND badge beside the name, tinted in the
@@ -507,12 +518,12 @@ function AgentRowItem({
 		// A hairline under every row, including the last — the group below butts
 		// straight onto it, so the list reads as one unbroken column of rows rather
 		// than a stack of framed cards (mockup 2327).
-		<li className="border-b border-border-subtle">
+		<li className="group/row flex items-center border-b border-border-subtle">
 			{/* The whole row is the click target (mockup 2327), not just the name. */}
 			<Link
 				to="/$workspaceId/agents/$agentId"
 				params={{ workspaceId, agentId: agent.id }}
-				className="group flex items-center gap-3 rounded-xl px-3.5 py-[15px] transition-colors duration-150 hover:bg-muted/50 md:gap-3.5"
+				className="group flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3.5 py-[15px] transition-colors duration-150 hover:bg-muted/50 md:gap-3.5"
 			>
 				<ActorAvatar
 					name={agent.name}
@@ -571,6 +582,16 @@ function AgentRowItem({
 					aria-hidden
 				/>
 			</Link>
+			{/* Row-level Call. A sibling of the row link, not a child: a button
+			    inside an anchor is invalid nesting and would navigate on click. Only
+			    voice-enabled agents get one; the button itself is hover-revealed on
+			    md+ and always inline below that. Renders nothing when the
+			    voice-mode-v1 flag is off. */}
+			{agent.voice_enabled ? (
+				<AgentCallButton agent={agent} variant="row" shortcut={false} />
+			) : reserveCallSlot ? (
+				<span aria-hidden className="mr-3 hidden w-[62px] shrink-0 md:block" />
+			) : null}
 		</li>
 	)
 }
