@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useBillingUsage } from '@/hooks/use-billing'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useLoops } from '@/hooks/use-loops'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
@@ -58,6 +59,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/loops/')({
 })
 
 function LoopsRoute() {
+	useDocumentTitle('Loops')
 	const { workspaceId } = useWorkspace()
 	const {
 		data: loops,

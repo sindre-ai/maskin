@@ -3,6 +3,7 @@ import { LegacyNewChatForm } from '@/components/chat/legacy/new-chat-form'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { useActors, useDefaultChatAgent } from '@/hooks/use-actors'
 import { useConversationsInfinite, useCreateConversation } from '@/hooks/use-conversations'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
@@ -79,6 +80,7 @@ interface Recipient {
  * flag ids in `apps/dev/src/lib/feature-flags.ts`.
  */
 function NewChatRoute() {
+	useDocumentTitle('New chat')
 	const search = Route.useSearch()
 	const chatsV4Enabled = useFeatureFlag('chats-v4-polish')
 	const newChatV4Enabled = useFeatureFlag('chats-v4-polish.new_chat')

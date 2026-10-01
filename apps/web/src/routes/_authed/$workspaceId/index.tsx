@@ -12,6 +12,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useMarkRead, useMarkUnread, useUnread } from '@/hooks/use-subscriptions'
 import {
 	useUpdateUserDisplaySettings,
@@ -60,6 +61,7 @@ export function feedModeToForyouViewMode(
  * open one. Nothing leaves the column until it is answered or dismissed.
  */
 function ForYouFeed() {
+	useDocumentTitle('For You')
 	const { workspaceId } = useWorkspace()
 	const queryClient = useQueryClient()
 	const { data, isLoading, isError, error, refetch } = useUnread(workspaceId, undefined, true)
@@ -553,7 +555,7 @@ function ForYouFeed() {
 				bulkActions={bulkActions}
 			/>
 
-			<div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1 pb-14">
+			<div className="-ml-1 min-h-0 w-[calc(100%+0.25rem)] flex-1 overflow-y-auto px-1 pb-14">
 				<div className="mx-auto flex w-full max-w-[700px] flex-col">
 					<BriefCard workspaceId={workspaceId} />
 					<ReleaseCard />
