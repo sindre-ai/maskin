@@ -1,0 +1,143 @@
+name: Invite E2E probe (throwaway, do not merge)
+
+on:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  invite-specs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: maskin_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Start SeaweedFS (S3-compatible backend)
+        run: |
+          set -euo pipefail
+          docker run -d --name seaweedfs \
+            -p 8333:8333 -p 9333:9333 \
+            -v "$PWD/seaweedfs-s3.json":/etc/seaweedfs/s3.json:ro \
+            chrislusf/seaweedfs \
+            server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data
+          for i in $(seq 1 30); do
+            status=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8333/ || echo 000)
+            if [ "$status" != "000" ]; then break; fi
+            sleep 1
+          done
+          for i in $(seq 1 30); do
+            if curl -sf --aws-sigv4 "aws:amz:us-east-1:s3" \
+              --user "admin:admin" \
+              -X PUT http://localhost:8333/agent-files; then
+              echo "SeaweedFS ready; bucket agent-files created."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::SeaweedFS never accepted the agent-files bucket PUT after 30s."
+          docker logs seaweedfs || true
+          exit 1
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Cache turbo build outputs
+        uses: ./.github/actions/cache-turbo
+        with:
+          job-name: invite-e2e-probe
+
+      - run: pnpm build
+
+      - name: Run database migrations
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
+
+      - name: Install Playwright browsers
+        run: pnpm --filter @maskin/e2e exec playwright install --with-deps chromium
+
+      - name: Run the two invite specs
+        run: |
+          pnpm --filter @maskin/e2e exec playwright test invite-email-new-user invite-email-existing-user || true
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
+          INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+          MASKIN_TEST_GRANT_TOKEN: e2e-local-test-grant-token
+          AGENT_SERVER_SECRET: e2e-agent-server-secret
+          ARGOS_ENABLED: 'false'
+          NODE_OPTIONS: --unhandled-rejections=warn
+          S3_ENDPOINT: http://localhost:8333
+          S3_BUCKET: agent-files
+          S3_ACCESS_KEY: admin
+          S3_SECRET_KEY: admin
+          S3_REGION: us-east-1
+
+      # assert-results.mjs in ci.yml passes when zero tests match (expected=0,
+      # unexpected=0), so it cannot prove a spec ran. This step does: each
+      # named spec must have at least one passed test, and no test may have
+      # failed, been skipped or been flaky.
+      - name: Assert both specs ran and passed
+        run: |
+          node --input-type=module -e '
+          import { readFileSync, existsSync } from "node:fs";
+          const p = "apps/e2e/playwright-report/e2e-results.json";
+          if (!existsSync(p)) { console.error("no JSON report at " + p); process.exit(1); }
+          const report = JSON.parse(readFileSync(p, "utf8"));
+          console.log("stats", JSON.stringify(report.stats));
+          if (report.errors?.length) { console.error("global errors", JSON.stringify(report.errors)); process.exit(1); }
+          const byFile = {};
+          const walk = (s) => {
+            for (const spec of s.specs ?? []) {
+              for (const t of spec.tests ?? []) {
+                const f = spec.file;
+                byFile[f] ??= {};
+                byFile[f][t.status] = (byFile[f][t.status] ?? 0) + 1;
+              }
+            }
+            for (const c of s.suites ?? []) walk(c);
+          };
+          for (const s of report.suites ?? []) walk(s);
+          console.log("per-file", JSON.stringify(byFile, null, 2));
+          let ok = true;
+          for (const name of ["invite-email-new-user", "invite-email-existing-user"]) {
+            const hit = Object.entries(byFile).filter(([f]) => f.includes(name));
+            const passed = hit.reduce((n, [, c]) => n + (c.expected ?? 0), 0);
+            const bad = hit.reduce((n, [, c]) => n + Object.entries(c).filter(([k]) => k !== "expected").reduce((m, [, v]) => m + v, 0), 0);
+            console.log(name + ": passed=" + passed + " not-passed=" + bad);
+            if (passed < 1 || bad > 0) ok = false;
+          }
+          if (!ok) process.exit(1);
+          console.log("OK: both invite specs ran and passed");
+          '
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-invite-probe
+          path: apps/e2e/playwright-report/
+          retention-days: 7
