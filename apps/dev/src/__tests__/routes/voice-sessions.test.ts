@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { VOICE_ALLOWED_TOOLS } from '@maskin/mcp'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -191,6 +192,43 @@ describe('POST /api/voice-sessions', () => {
 			expires_at: '2026-09-29T10:00:00.000Z',
 			ws_url: 'wss://api.openai.com/v1/realtime',
 		})
+	})
+
+	it('pins the voice tool whitelist on the vendor session it mints', async () => {
+		enableFlagFor(HUMAN)
+		// Real mint function, stubbed transport: what leaves the process is what
+		// OpenAI would receive.
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					id: 'sess_vendor1',
+					model: 'gpt-realtime',
+					client_secret: { value: 'ek_live_abc', expires_at: 1_790_000_000 },
+				}),
+				{ status: 200 },
+			),
+		)
+		vi.stubGlobal('fetch', fetchMock)
+		try {
+			const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
+			mockResults.selectQueue = [[membershipRow()], [agentRow()], []]
+			mockResults.insert = [{ id: '11111111-1111-4111-8111-111111111111' }]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/voice-sessions', { agent_actor_id: AGENT }),
+			)
+			expect(res.status).toBe(201)
+
+			const sent = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string) as {
+				tools: Array<{ type: string; name: string }>
+				tool_choice: string
+			}
+			expect(sent.tools.map((t) => t.name).sort()).toEqual([...VOICE_ALLOWED_TOOLS].sort())
+			expect(sent.tools.every((t) => t.type === 'function')).toBe(true)
+			expect(sent.tool_choice).toBe('auto')
+		} finally {
+			vi.unstubAllGlobals()
+		}
 	})
 
 	it('rejects a body missing agent_actor_id with 400 VALIDATION_ERROR', async () => {

@@ -7,6 +7,7 @@ import {
 	workspaceMembers,
 	workspaceSkills,
 } from '@maskin/db/schema'
+import { VOICE_REALTIME_TOOLS } from '@maskin/mcp'
 import { and, eq } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import {
@@ -116,9 +117,11 @@ async function defaultRealtimeMint(input: {
 		voice: input.voice,
 		instructions: input.instructions,
 		turn_detection: { type: 'server_vad' as const },
-		// Tool whitelist lands in Task 3. Empty here so the vendor session
-		// answers voice-only from the bound instructions.
-		tools: [] as unknown[],
+		// The v1 whitelist, pinned at mint (tech spec §Auth flow step 3). The WS
+		// tool-proxy (routes/voice-session-events.ts) re-enforces it per call, so
+		// this list and the proxy's gate share one source: @maskin/mcp.
+		tools: VOICE_REALTIME_TOOLS,
+		tool_choice: 'auto' as const,
 	}
 	let res: Response
 	try {
