@@ -570,7 +570,7 @@ function TopBarActions({
 	onToggleAnnotate: () => void
 }) {
 	return (
-		<div className="flex items-center gap-1">
+		<div className="flex max-w-full flex-wrap items-center gap-1">
 			<PinFileButton file={file} isPinned={pinnedFlag} onToggle={onTogglePin} />
 			<Button
 				variant="ghost"
