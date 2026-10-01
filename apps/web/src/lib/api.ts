@@ -792,6 +792,21 @@ export const api = {
 		get: () => request<{ flags: Record<string, boolean> }>('/feature-flags'),
 	},
 
+	voiceSessions: {
+		// Mints an ephemeral OpenAI Realtime session for the caller-agent pair.
+		// Task 1 (voice backend) owns the route; response shape is agreed on the
+		// task-1 handoff comment. Task 2 (this file) is the sole client, so a
+		// divergence in the final Task 1 shape is a coordination bug, not an
+		// external-contract change.
+		create: (workspaceId: string, body: { agent_actor_id: string }) =>
+			request<{
+				voice_session_id: string
+				client_secret: string
+				expires_at: string
+				ws_url: string
+			}>('/voice-sessions', { method: 'POST', body, workspaceId }),
+	},
+
 	userDisplaySettings: {
 		list: (workspaceId: string) =>
 			request<UserDisplaySettingsListResponse>('/user-display-settings', { workspaceId }),
@@ -1792,8 +1807,11 @@ export interface MessageMetadata {
 	 * Backend-owned; stripped from anything a client sends. 'final_output'
 	 * marks an agent's automatically-posted end-of-turn reply, as opposed to
 	 * one it posted mid-turn via the post_conversation_message MCP tool.
+	 * 'voice' marks a transcript line written by the voice tool-proxy.
 	 */
-	source?: 'final_output'
+	source?: 'final_output' | 'voice'
+	/** Backend-owned: the voice call a 'voice' message was transcribed from. */
+	voice_session_id?: string
 	final_output?: MessageFinalOutput
 	/**
 	 * Backend-owned; stripped from anything a client sends, so a forged message

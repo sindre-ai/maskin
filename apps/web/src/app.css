@@ -847,4 +847,103 @@
 			background-color: color-mix(in oklab, var(--brand) 0%, transparent);
 		}
 	}
+
+	/* Voice call — speaking-ring around the agent avatar while the agent is
+	   speaking on a live voice call. Same shape as .actor-avatar-working-ring
+	   above (2px conic-gradient ring, ::before spins, mask cuts the interior)
+	   but swings the gradient to --brand so the visual grammar is
+	   "voice-active" instead of "session-working". Paused state (reduced
+	   motion) is a static 300° arc — matches the design SPEC verbatim. */
+	.speaking-ring {
+		position: relative;
+		padding: 4px;
+		border-radius: 9999px;
+	}
+	.speaking-ring::before {
+		content: "";
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		background: conic-gradient(
+			from 0deg,
+			var(--brand) 0deg,
+			var(--brand) 300deg,
+			transparent 300deg,
+			transparent 360deg
+		);
+		-webkit-mask: radial-gradient(
+			farthest-side,
+			transparent calc(100% - 4px),
+			#000 calc(100% - 4px)
+		);
+		mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 4px));
+		animation: speaking-ring-spin 1.6s linear infinite;
+		will-change: transform;
+		pointer-events: none;
+	}
+	@keyframes speaking-ring-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	/* Voice-level breathing shadow around the avatar. Amplitude is a static
+	   swell in this task — Task 3 wires it to the Realtime data-channel audio
+	   frames. Halted by prefers-reduced-motion (global rule above zeros
+	   animation-duration) and by the .speaking-ring-paused sibling class the
+	   agent-thinking + reconnecting states use. */
+	.voice-level {
+		animation: voice-level-breathe 1.2s ease-in-out infinite;
+	}
+	@keyframes voice-level-breathe {
+		0%,
+		100% {
+			box-shadow: 0 0 0 0 color-mix(in oklab, var(--brand) 24%, transparent);
+		}
+		50% {
+			box-shadow: 0 0 0 10px color-mix(in oklab, var(--brand) 0%, transparent);
+		}
+	}
+
+	/* Five vertical audio bars — the industry-conventional "we're hearing you"
+	   glyph. Rendered by the user-speaking + agent-thinking states in
+	   VoiceCallDialog. Staggered 120ms per bar (5 × 120ms = 600ms across the
+	   set, comfortably inside the 900ms bar keyframe). */
+	.voice-bars {
+		display: inline-flex;
+		align-items: flex-end;
+		gap: 2px;
+		height: 14px;
+	}
+	.voice-bars > span {
+		display: block;
+		width: 2px;
+		background-color: currentColor;
+		border-radius: 1px;
+		animation: voice-bars-bounce 900ms ease-in-out infinite;
+	}
+	.voice-bars > span:nth-child(1) {
+		animation-delay: 0ms;
+	}
+	.voice-bars > span:nth-child(2) {
+		animation-delay: 120ms;
+	}
+	.voice-bars > span:nth-child(3) {
+		animation-delay: 240ms;
+	}
+	.voice-bars > span:nth-child(4) {
+		animation-delay: 360ms;
+	}
+	.voice-bars > span:nth-child(5) {
+		animation-delay: 480ms;
+	}
+	@keyframes voice-bars-bounce {
+		0%,
+		100% {
+			height: 30%;
+		}
+		50% {
+			height: 100%;
+		}
+	}
 }

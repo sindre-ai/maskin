@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { serveStatic } from '@hono/node-server/serve-static'
+import { type NodeWebSocket, createNodeWebSocket } from '@hono/node-ws'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { authMiddleware } from '@maskin/auth'
 import type { Database } from '@maskin/db'
@@ -60,6 +61,8 @@ import telemetryRoutes from './routes/telemetry'
 import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
 import triggersRoutes from './routes/triggers'
 import userDisplaySettingsRoutes from './routes/user-display-settings'
+import { createVoiceSessionEventsRoutes } from './routes/voice-session-events'
+import voiceSessionsRoutes from './routes/voice-sessions'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
 import type { AgentStorageManager } from './services/agent-storage'
@@ -108,6 +111,13 @@ export interface CreateAppOptions {
 	 * side effects for no benefit when we just want the spec.
 	 */
 	includeExtensions?: boolean
+	/**
+	 * Receives the Node WebSocket handle created for this app. The server boot
+	 * (index.ts) calls `injectWebSocket(server)` on it once `serve()` returns —
+	 * upgrade requests are only routed to the app after that. Optional so tests
+	 * and spec-export paths, which never open a socket, can ignore it.
+	 */
+	onNodeWebSocket?: (nodeWebSocket: NodeWebSocket) => void
 }
 
 const OPENAPI_INFO = {
@@ -134,6 +144,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 			: ['http://localhost:5173'])
 
 	const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
+	const nodeWebSocket = createNodeWebSocket({ app })
+	options.onNodeWebSocket?.(nodeWebSocket)
 
 	app.onError((err, c) => {
 		if (err instanceof PlanCapExceededError) {
@@ -395,6 +407,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/telemetry', telemetryRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
 	app.route('/api/feature-flags', featureFlagsRoutes)
+	app.route('/api/voice-sessions', voiceSessionsRoutes)
+	app.route('/api/voice-sessions', createVoiceSessionEventsRoutes(nodeWebSocket.upgradeWebSocket))
 
 	if (options.includeExtensions !== false) {
 		const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }

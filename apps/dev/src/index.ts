@@ -2,6 +2,7 @@ import './lib/sentry'
 import './extensions'
 import path from 'node:path'
 import { serve } from '@hono/node-server'
+import type { NodeWebSocket } from '@hono/node-ws'
 import { createDb, syncAgentServersFromEnv } from '@maskin/db'
 import { actors, sessions } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
@@ -20,6 +21,7 @@ import {
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
 import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
+import { assertVoiceOperatorEnv } from './lib/voice-boot-guard'
 import { AgentStorageManager } from './services/agent-storage'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
@@ -35,6 +37,11 @@ import { SessionManager } from './services/session-manager'
 import { CommentDispatcher, TriggerRunner } from './services/trigger-runner'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
+
+// Voice v1: fail fast when the flag is enabled for testers but the operator
+// OpenAI key is unset. Runs before any HTTP surface binds so a mis-configured
+// deploy is caught at boot rather than 500-ing the first tester click.
+assertVoiceOperatorEnv()
 
 // Database connection — POSTGRES_URL takes priority over DATABASE_URL
 const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL
@@ -138,7 +145,19 @@ runtimeTelemetry.startGaugeLoop(() => sessionManager.getConcurrencyByAgentServer
 
 const port = Number(process.env.PORT) || 3000
 
-const app = createApp({ db, notifyBridge, sessionManager, agentStorage, storageProvider }, { port })
+// Voice v1 needs a WebSocket upgrade path next to the HTTP routes. createApp
+// builds the socket handle (it owns the app instance); we hold it here and
+// attach it to the server once serve() returns it, below.
+let nodeWebSocket: NodeWebSocket | undefined
+const app = createApp(
+	{ db, notifyBridge, sessionManager, agentStorage, storageProvider },
+	{
+		port,
+		onNodeWebSocket: (ws) => {
+			nodeWebSocket = ws
+		},
+	},
+)
 
 sessionManager.start().then(() => {
 	logger.info('Session manager started')
@@ -344,7 +363,7 @@ try {
 	logger.error('Dev bootstrap failed', { error: err instanceof Error ? err.message : String(err) })
 }
 
-serve({ fetch: app.fetch, port }, () => {
+const server = serve({ fetch: app.fetch, port }, () => {
 	const webUrl = 'http://localhost:5173'
 	const apiUrl = `http://localhost:${port}`
 
@@ -400,6 +419,7 @@ ${mcpSetup}
 		})
 	})
 })
+nodeWebSocket?.injectWebSocket(server)
 
 export default app
 export type AppType = typeof app

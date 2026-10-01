@@ -155,9 +155,12 @@ export const messageMetadataSchema = z.object({
 	/**
 	 * Marks how the message came to exist. Absent for anything a human typed
 	 * or an agent posted via the post_conversation_message MCP tool;
-	 * 'final_output' for an agent's automatically-posted end-of-turn reply.
+	 * 'final_output' for an agent's automatically-posted end-of-turn reply;
+	 * 'voice' for a transcript line written by the voice tool-proxy.
 	 */
-	source: z.enum(['final_output']).optional(),
+	source: z.enum(['final_output', 'voice']).optional(),
+	/** Backend-owned: the voice_sessions row a 'voice' message was transcribed from. */
+	voice_session_id: z.string().uuid().optional(),
 	final_output: messageFinalOutputSchema.optional(),
 	/** Backend-owned: an agent's AskUserQuestion, surfaced as chips in chat. */
 	question: messageQuestionSchema.optional(),
@@ -174,7 +177,13 @@ export function stripServerOwnedMetadata<T extends Record<string, unknown> | und
 	metadata: T,
 ): T {
 	if (!metadata) return metadata
-	const { source: _source, final_output: _finalOutput, question: _question, ...rest } = metadata
+	const {
+		source: _source,
+		final_output: _finalOutput,
+		question: _question,
+		voice_session_id: _voiceSessionId,
+		...rest
+	} = metadata
 	return rest as T
 }
 
