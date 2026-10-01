@@ -127,6 +127,36 @@ test.describe('File viewer stage — shell, controls, and solid surfaces', () =>
 			expect(stageBg).toMatch(/^rgb\(/)
 			expect(stageBg).not.toBe('rgb(0, 0, 0)')
 		})
+
+		test(`keeps Review and More actions on screen at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			test.skip(!!process.env.CI, 'S3/SeaweedFS not available in CI')
+
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+
+			const file = await seedViewerFile(account.api, account.workspaceId)
+			await page.goto(`/${account.workspaceId}/files/${file.id}`)
+			await expect(stageFor(page, file.name)).toBeVisible({ timeout: 10000 })
+
+			// The top button row wraps instead of clipping: both controls must sit
+			// fully inside the viewport, not just be "visible" in the DOM.
+			for (const name of ['Toggle review panel', 'More actions']) {
+				const button = page.getByRole('button', { name, exact: true })
+				await expect(button).toBeVisible()
+				const box = await button.boundingBox()
+				if (!box) throw new Error(`${name} has no box`)
+				expect(box.x).toBeGreaterThanOrEqual(0)
+				expect(box.x + box.width).toBeLessThanOrEqual(viewport.width)
+			}
+
+			// And the row is genuinely clickable: Review opens the panel.
+			const review = page.getByRole('button', { name: 'Toggle review panel', exact: true })
+			const pressedBefore = await review.getAttribute('aria-pressed')
+			await review.click()
+			await expect(review).not.toHaveAttribute('aria-pressed', pressedBefore ?? 'false')
+		})
 	}
 })
 
