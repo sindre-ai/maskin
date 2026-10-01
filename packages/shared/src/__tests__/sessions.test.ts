@@ -273,10 +273,38 @@ describe('createSessionSchema', () => {
 })
 
 describe('sessionQuerySchema', () => {
-	it('provides default limit of 20', () => {
+	// Bumped from 20 → 50 alongside the lean-row payload cut (spec §1.1) —
+	// lean rows are ~10x smaller so 50 fits in the same tool response budget
+	// today's 20 verbose rows do.
+	it('provides default limit of 50 and offset of 0', () => {
 		const result = sessionQuerySchema.parse({})
-		expect(result.limit).toBe(20)
+		expect(result.limit).toBe(50)
 		expect(result.offset).toBe(0)
+	})
+
+	// The lean shape is the default; verbose keeps today's payload during
+	// the migration window (spec §4 backwards-compat).
+	it('defaults verbose to false', () => {
+		const result = sessionQuerySchema.parse({})
+		expect(result.verbose).toBe(false)
+	})
+
+	it('accepts verbose=true (boolean and coerced string)', () => {
+		expect(sessionQuerySchema.parse({ verbose: true }).verbose).toBe(true)
+		expect(sessionQuerySchema.parse({ verbose: 'true' }).verbose).toBe(true)
+	})
+
+	// Regression: z.coerce.boolean() turns the query-string 'false' into true.
+	it('parses verbose=false (boolean and string) as false', () => {
+		expect(sessionQuerySchema.parse({ verbose: false }).verbose).toBe(false)
+		expect(sessionQuerySchema.parse({ verbose: 'false' }).verbose).toBe(false)
+	})
+
+	// Cap raised 100 → 200 so a caller pulling the full lean tail can do it
+	// in one request; anything above still rejects to guard the DB.
+	it('caps limit at 200', () => {
+		expect(sessionQuerySchema.parse({ limit: 200 }).limit).toBe(200)
+		expect(() => sessionQuerySchema.parse({ limit: 201 })).toThrow()
 	})
 
 	it('accepts optional status filter', () => {
@@ -287,6 +315,24 @@ describe('sessionQuerySchema', () => {
 	it('accepts optional actor_id filter', () => {
 		const result = sessionQuerySchema.parse({ actor_id: uuid })
 		expect(result.actor_id).toBe(uuid)
+	})
+
+	it('accepts optional trigger_id filter', () => {
+		const result = sessionQuerySchema.parse({ trigger_id: uuid })
+		expect(result.trigger_id).toBe(uuid)
+	})
+
+	it('rejects trigger_id that is not a UUID', () => {
+		expect(() => sessionQuerySchema.parse({ trigger_id: 'not-a-uuid' })).toThrow()
+	})
+
+	it('accepts the before cursor (ISO-8601)', () => {
+		const result = sessionQuerySchema.parse({ before: '2026-06-30T00:00:00.000Z' })
+		expect(result.before).toBe('2026-06-30T00:00:00.000Z')
+	})
+
+	it('rejects a malformed before cursor', () => {
+		expect(() => sessionQuerySchema.parse({ before: 'not-a-date' })).toThrow()
 	})
 
 	it('accepts ISO-8601 updated_before and updated_after', () => {
