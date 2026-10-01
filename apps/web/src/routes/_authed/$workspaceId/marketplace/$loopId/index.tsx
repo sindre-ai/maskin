@@ -4,6 +4,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
 import { useMarketplaceLoop } from '@/hooks/use-marketplace-loops'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -18,6 +19,7 @@ function MarketplaceLoopDetailRoute() {
 	const { loopId } = Route.useParams()
 	const { workspaceId } = useWorkspace()
 	const { data, isLoading, isError, error, refetch } = useMarketplaceLoop(loopId)
+	useDocumentTitle(data?.loop.name)
 	const { data: installsData } = useInstalledLoops(workspaceId)
 	const install = installsData?.installs.find((row) => row.sourceLoopId === loopId)
 
