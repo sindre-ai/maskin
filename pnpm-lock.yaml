@@ -81,6 +81,9 @@ importers:
       '@maskin/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@maskin/email':
+        specifier: workspace:*
+        version: link:../../packages/email
       '@maskin/ext-crm':
         specifier: workspace:*
         version: link:../../extensions/crm

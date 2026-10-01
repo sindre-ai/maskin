@@ -35,7 +35,10 @@ describe('invites-token', () => {
 		it('rejects a tampered token when compared by hash', () => {
 			const token = generateInviteToken()
 			const good = hashInviteToken(token)
-			const tampered = hashInviteToken(`${token.slice(0, -1)}A`)
+			// The last base64url char carries only 4 payload bits, so it is 'A' about
+			// 1 time in 16. Swap in a character that is guaranteed to differ.
+			const swapped = token.endsWith('A') ? 'B' : 'A'
+			const tampered = hashInviteToken(`${token.slice(0, -1)}${swapped}`)
 			expect(good).not.toBe(tampered)
 		})
 	})

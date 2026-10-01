@@ -8,6 +8,18 @@ export interface SendInviteEmailParams {
 	acceptUrl: string
 }
 
+// Thrown when the email provider rejects a send. The provider's message stays on
+// the server (logs); callers must not forward it to API clients.
+export class InviteEmailSendError extends Error {
+	constructor(
+		public readonly providerErrorName: string,
+		public readonly providerMessage: string,
+	) {
+		super(`Invite email send failed: ${providerErrorName}`)
+		this.name = 'InviteEmailSendError'
+	}
+}
+
 function buildSubject(params: SendInviteEmailParams): string {
 	return `${params.inviterName} invited you to ${params.workspaceName} on Maskin`
 }
@@ -79,5 +91,8 @@ export async function sendInviteEmail(params: SendInviteEmailParams): Promise<vo
 	}
 
 	const client = new Resend(apiKey)
-	await client.emails.send({ from, to: params.to, subject, text, html })
+	// The Resend SDK resolves with { data: null, error } on API failures (bad key,
+	// unverified domain, rejected recipient) and only throws on network errors.
+	const { error } = await client.emails.send({ from, to: params.to, subject, text, html })
+	if (error) throw new InviteEmailSendError(error.name, error.message)
 }

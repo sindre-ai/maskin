@@ -1,4 +1,4 @@
-import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
+import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { generateApiKey, hashPassword, validateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
@@ -8,16 +8,18 @@ import {
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
-import { and, eq, sql } from 'drizzle-orm'
+import { InviteEmailSendError, sendInviteEmail } from '@maskin/email'
+import { and, count, desc, eq, gt, lte, min, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, formatZodError, validationFailureHook } from '../lib/errors'
 import { takeInvitePreviewToken } from '../lib/invite-preview-throttle'
-import { hashInviteToken } from '../lib/invites-token'
+import { generateInviteToken, hashInviteToken } from '../lib/invites-token'
 import { logger } from '../lib/logger'
-import { errorSchema } from '../lib/openapi-schemas'
+import { errorSchema, idParamSchema } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { extractClientIp } from '../lib/trusted-proxy'
+import { isWorkspaceHumanAdminOrOwner, isWorkspaceMember } from '../lib/workspace-auth'
 import {
 	SeatCapExceededError,
 	countHumanMembers,
@@ -696,5 +698,691 @@ app.openapi(previewRoute, async (c) => {
 		200,
 	)
 })
+
+// ─── Admin lifecycle: create / resend / revoke / list ──────────────────────
+// All four run behind the standard auth middleware (Bearer + optional
+// X-Workspace-Id). The workspace is derived from the body/query/invite row, so
+// each handler does its own membership check.
+
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const INVITE_RATE_WINDOW_MS = 24 * 60 * 60 * 1000
+// The 21st invite inside the window is rejected.
+const INVITE_RATE_LIMIT = 20
+
+export const createInviteBodySchema = z.object({
+	workspaceId: z.string().uuid(),
+	email: z.string().trim().email().max(320),
+	// Owner is deliberately absent: ownership moves via transfer-ownership only.
+	role: z.enum(['member', 'viewer']),
+})
+
+export const inviteSummarySchema = z.object({
+	id: z.string().uuid(),
+	email: z.string(),
+	role: z.string(),
+	expiresAt: z.string(),
+})
+
+export const pendingInviteResponseSchema = z.object({
+	status: z.literal('pending'),
+	invite: inviteSummarySchema,
+})
+
+export const linkedMemberResponseSchema = z.object({
+	status: z.literal('linked'),
+	member: z.object({
+		workspaceId: z.string().uuid(),
+		actorId: z.string().uuid(),
+		role: z.string(),
+	}),
+})
+
+export const revokeInviteResponseSchema = z.object({ revoked: z.literal(true) })
+
+export const listInvitesQuerySchema = z.object({ workspaceId: z.string().uuid() })
+
+export const pendingInviteListItemSchema = inviteSummarySchema.extend({
+	invitedByActorId: z.string().uuid(),
+	invitedByName: z.string(),
+	createdAt: z.string(),
+})
+
+function resolveAcceptUrl(rawToken: string): string | null {
+	const configured = process.env.APP_URL?.trim().replace(/\/+$/, '')
+	// Unset APP_URL is only tolerable when nothing is really sent: in dev mode
+	// (no RESEND_API_KEY) sendInviteEmail just logs the link. With a real key a
+	// localhost link would go out to a customer, so refuse instead.
+	const base = configured || (process.env.RESEND_API_KEY ? null : 'http://localhost:5173')
+	return base ? `${base}/invite?token=${encodeURIComponent(rawToken)}` : null
+}
+
+function toInviteSummary(invite: { id: string; email: string; role: string; expiresAt: Date }) {
+	return {
+		id: invite.id,
+		email: invite.email,
+		role: invite.role,
+		expiresAt: invite.expiresAt.toISOString(),
+	}
+}
+
+function isPendingInviteUniqueViolation(err: unknown): boolean {
+	for (let cur: unknown = err; cur && typeof cur === 'object'; ) {
+		const e = cur as {
+			code?: string
+			constraint_name?: string
+			constraint?: string
+			cause?: unknown
+		}
+		if (e.code === '23505') {
+			return (e.constraint_name ?? e.constraint) === 'workspace_invitations_pending_ws_email_uniq'
+		}
+		cur = e.cause
+	}
+	return false
+}
+
+// Send failure is an upstream (Resend) failure, so 502. The shared error enum
+// has no BAD_GATEWAY code and adding one is outside this task; INTERNAL_ERROR
+// with a 502 status is the closest fit, same call T3 made for its 410s.
+// The provider's own message stays in the server log: it can name our sending
+// domain or config, and API clients must not see it.
+function sendFailureResponse() {
+	return createApiError(
+		'INTERNAL_ERROR',
+		'Failed to send invite email',
+		undefined,
+		'The invite was not created. Try again in a moment.',
+	)
+}
+
+function sendFailureLogContext(err: unknown) {
+	return err instanceof InviteEmailSendError
+		? { error: err.message, providerMessage: err.providerMessage }
+		: { error: String(err) }
+}
+
+// POST / ────────────────────────────────────────────────────────────────────
+
+const createInviteRoute = createRoute({
+	method: 'post',
+	path: '/',
+	tags: ['workspace-invitations'],
+	summary: 'Invite someone to a workspace by email',
+	description:
+		'If the email belongs to an existing actor who is not yet a member, that actor is added ' +
+		'directly (status "linked"). Otherwise a pending invite is created and emailed (status ' +
+		'"pending"). Re-inviting an email with a live pending invite returns that invite unchanged.',
+	request: {
+		body: { content: { 'application/json': { schema: createInviteBodySchema } } },
+	},
+	responses: {
+		200: {
+			description: 'A live pending invite for this email already exists (returned unchanged)',
+			content: { 'application/json': { schema: pendingInviteResponseSchema } },
+		},
+		201: {
+			description: 'Actor linked directly, or a new pending invite created and emailed',
+			content: {
+				'application/json': {
+					schema: z.union([linkedMemberResponseSchema, pendingInviteResponseSchema]),
+				},
+			},
+		},
+		403: {
+			description: 'Caller is not a human owner/admin of the workspace, or the seat cap is reached',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'That email already belongs to a member of this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		429: {
+			description: 'This workspace already sent 20 invites in the last 24 hours',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		502: {
+			description: 'The invite email could not be sent; the invite was not created',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(createInviteRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { workspaceId, email, role } = c.req.valid('json')
+
+	if (!(await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only workspace owners and admins can invite members'),
+			403,
+		)
+	}
+
+	const emailLower = email.toLowerCase()
+
+	// Branch A / C: the email already belongs to a Maskin actor.
+	const [existingActor] = await db
+		.select({ id: actors.id, type: actors.type })
+		.from(actors)
+		.where(sql`lower(${actors.email}) = ${emailLower}`)
+		.limit(1)
+
+	if (existingActor) {
+		type LinkOutcome =
+			| { kind: 'added' }
+			| { kind: 'already_member' }
+			| { kind: 'workspace_missing' }
+		let outcome: LinkOutcome
+		try {
+			outcome = await db.transaction(async (tx): Promise<LinkOutcome> => {
+				// Same lock + seat-cap + insert sequence as POST /workspaces/:id/members.
+				const [locked] = await tx
+					.select({
+						id: workspaces.id,
+						settings: workspaces.settings,
+						billingOwnerId: workspaces.billingOwnerId,
+					})
+					.from(workspaces)
+					.where(eq(workspaces.id, workspaceId))
+					.for('update')
+					.limit(1)
+				if (!locked) return { kind: 'workspace_missing' }
+
+				if (existingActor.type === 'human' && !isEnterpriseActor(locked.billingOwnerId)) {
+					const [alreadyMember] = await tx
+						.select({ actorId: workspaceMembers.actorId })
+						.from(workspaceMembers)
+						.where(
+							and(
+								eq(workspaceMembers.workspaceId, workspaceId),
+								eq(workspaceMembers.actorId, existingActor.id),
+							),
+						)
+						.limit(1)
+					// A member is never blocked by the cap, so answer 409 rather than 403.
+					if (alreadyMember) return { kind: 'already_member' }
+					const plan = resolvePlanTier(locked.settings)
+					const cap = seatCapForPlan(plan)
+					if (cap !== null) {
+						const used = await countHumanMembers(tx, workspaceId)
+						if (used >= cap) throw new SeatCapExceededError({ workspaceId, plan, used, cap })
+					}
+				}
+
+				const inserted = await tx
+					.insert(workspaceMembers)
+					.values({ workspaceId, actorId: existingActor.id, role })
+					.onConflictDoNothing({
+						target: [workspaceMembers.workspaceId, workspaceMembers.actorId],
+					})
+					.returning()
+				if (!inserted.length) return { kind: 'already_member' }
+
+				await tx.insert(events).values({
+					workspaceId,
+					actorId: callerId,
+					action: 'created',
+					entityType: 'workspace_member',
+					entityId: existingActor.id,
+					data: { role, added_actor_id: existingActor.id },
+				})
+				return { kind: 'added' }
+			})
+		} catch (err) {
+			if (err instanceof SeatCapExceededError) {
+				logger.warn('Invite blocked by seat cap (link existing actor)', {
+					workspaceId: err.workspaceId,
+					plan: err.plan,
+					used: err.used,
+					cap: err.cap,
+				})
+				return c.json(seatCapErrorBody(err), 403)
+			}
+			throw err
+		}
+
+		if (outcome.kind === 'workspace_missing') {
+			return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+		}
+		if (outcome.kind === 'already_member') {
+			return c.json(
+				createApiError('CONFLICT', `${email} is already a member of this workspace`, [
+					{ field: 'email', message: 'Already a member of this workspace' },
+				]),
+				409,
+			)
+		}
+
+		void capturePosthogEvent('workspace_member_invited', callerId, {
+			invite_method: 'email',
+			workspace_id: workspaceId,
+			role,
+		})
+		// A direct link is not a redemption, so this is not from_invite.
+		void capturePosthogEvent('workspace_member_joined', existingActor.id, {
+			from_invite: false,
+			workspace_id: workspaceId,
+			role,
+		})
+		return c.json(
+			{ status: 'linked' as const, member: { workspaceId, actorId: existingActor.id, role } },
+			201,
+		)
+	}
+
+	// Branch B: no matching actor, so a pending invite.
+	const now = new Date()
+
+	// An invite past its expiry keeps status 'pending' until something flips it,
+	// and the partial unique index only frees the (workspace, email) slot once
+	// it is no longer 'pending'. Retire stale rows first so they don't block.
+	await db
+		.update(workspaceInvitations)
+		.set({ status: 'expired', updatedAt: now })
+		.where(
+			and(
+				eq(workspaceInvitations.workspaceId, workspaceId),
+				sql`lower(${workspaceInvitations.email}) = ${emailLower}`,
+				eq(workspaceInvitations.status, 'pending'),
+				lte(workspaceInvitations.expiresAt, now),
+			),
+		)
+
+	const findLivePending = async () => {
+		const [row] = await db
+			.select()
+			.from(workspaceInvitations)
+			.where(
+				and(
+					eq(workspaceInvitations.workspaceId, workspaceId),
+					sql`lower(${workspaceInvitations.email}) = ${emailLower}`,
+					eq(workspaceInvitations.status, 'pending'),
+					gt(workspaceInvitations.expiresAt, now),
+				),
+			)
+			.limit(1)
+		return row
+	}
+
+	// Idempotent: same invite back, token NOT rotated (resend does that).
+	const existingInvite = await findLivePending()
+	if (existingInvite) {
+		return c.json({ status: 'pending' as const, invite: toInviteSummary(existingInvite) }, 200)
+	}
+
+	const windowStart = new Date(now.getTime() - INVITE_RATE_WINDOW_MS)
+	const [usage] = await db
+		.select({ sent: count(), oldest: min(workspaceInvitations.createdAt) })
+		.from(workspaceInvitations)
+		.where(
+			and(
+				eq(workspaceInvitations.workspaceId, workspaceId),
+				gt(workspaceInvitations.createdAt, windowStart),
+			),
+		)
+	if ((usage?.sent ?? 0) >= INVITE_RATE_LIMIT) {
+		const oldest = usage?.oldest?.getTime() ?? now.getTime()
+		const retryAfter = Math.max(
+			1,
+			Math.ceil((oldest + INVITE_RATE_WINDOW_MS - now.getTime()) / 1000),
+		)
+		c.header('Retry-After', String(retryAfter))
+		return c.json(
+			createApiError(
+				'RATE_LIMITED',
+				`This workspace has sent ${INVITE_RATE_LIMIT} invites in the last 24 hours`,
+			),
+			429,
+		)
+	}
+
+	const [workspace] = await db
+		.select({ name: workspaces.name })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	if (!workspace) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	const [inviter] = await db
+		.select({ name: actors.name })
+		.from(actors)
+		.where(eq(actors.id, callerId))
+		.limit(1)
+
+	const rawToken = generateInviteToken()
+	const acceptUrl = resolveAcceptUrl(rawToken)
+	if (!acceptUrl) {
+		logger.error('Invite not created: APP_URL is unset while RESEND_API_KEY is set')
+		return c.json(
+			createApiError('INTERNAL_ERROR', 'Invite links are not configured (APP_URL)'),
+			500,
+		)
+	}
+
+	let invite: typeof workspaceInvitations.$inferSelect | undefined
+	try {
+		;[invite] = await db
+			.insert(workspaceInvitations)
+			.values({
+				workspaceId,
+				email,
+				role,
+				tokenHash: hashInviteToken(rawToken),
+				invitedByActorId: callerId,
+				expiresAt: new Date(now.getTime() + INVITE_TTL_MS),
+			})
+			.returning()
+	} catch (err) {
+		// Two concurrent invites for the same email: the loser gets the winner's row.
+		if (isPendingInviteUniqueViolation(err)) {
+			const winner = await findLivePending()
+			if (winner) {
+				return c.json({ status: 'pending' as const, invite: toInviteSummary(winner) }, 200)
+			}
+		}
+		throw err
+	}
+	if (!invite) throw new Error('Invite insert returned no row')
+
+	// The row is committed by now. A Postgres transaction can't stay open across
+	// an HTTP call to Resend, so a failed send is undone by deleting the row.
+	try {
+		await sendInviteEmail({
+			to: email,
+			workspaceName: workspace.name,
+			inviterName: inviter?.name ?? 'A teammate',
+			role,
+			acceptUrl,
+		})
+	} catch (err) {
+		logger.error('Invite email send failed, deleting invite', {
+			workspaceId,
+			inviteId: invite.id,
+			...sendFailureLogContext(err),
+		})
+		await db.delete(workspaceInvitations).where(eq(workspaceInvitations.id, invite.id))
+		return c.json(sendFailureResponse(), 502)
+	}
+
+	await db.insert(events).values({
+		workspaceId,
+		actorId: callerId,
+		action: 'created',
+		entityType: 'workspace_invitation',
+		entityId: invite.id,
+		data: { email, role },
+	})
+	void capturePosthogEvent('workspace_member_invited', callerId, {
+		invite_method: 'email',
+		workspace_id: workspaceId,
+		role,
+	})
+	return c.json({ status: 'pending' as const, invite: toInviteSummary(invite) }, 201)
+}) as RouteHandler<typeof createInviteRoute, Env>)
+
+// POST /:id/resend ──────────────────────────────────────────────────────────
+
+const resendInviteRoute = createRoute({
+	method: 'post',
+	path: '/{id}/resend',
+	tags: ['workspace-invitations'],
+	summary: 'Resend a pending invite with a fresh token and expiry',
+	request: { params: idParamSchema },
+	responses: {
+		200: {
+			description: 'Token rotated, expiry reset to 7 days, email sent again',
+			content: { 'application/json': { schema: pendingInviteResponseSchema } },
+		},
+		403: {
+			description: 'Caller is not a human owner/admin of the invite workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Invite not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'Invite is no longer pending (accepted or revoked)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		502: {
+			description: 'The email could not be sent; the previous token and expiry are restored',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(resendInviteRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { id } = c.req.valid('param')
+
+	const [invite] = await db
+		.select()
+		.from(workspaceInvitations)
+		.where(eq(workspaceInvitations.id, id))
+		.limit(1)
+	if (!invite) return c.json(createApiError('NOT_FOUND', 'Invite not found'), 404)
+	if (!(await isWorkspaceHumanAdminOrOwner(db, callerId, invite.workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only workspace owners and admins can resend invites'),
+			403,
+		)
+	}
+	if (invite.status !== 'pending') {
+		return c.json(createApiError('CONFLICT', `Invite is already ${invite.status}`), 409)
+	}
+
+	const [workspace] = await db
+		.select({ name: workspaces.name })
+		.from(workspaces)
+		.where(eq(workspaces.id, invite.workspaceId))
+		.limit(1)
+	// Same inviter name the preview page shows.
+	const [inviter] = await db
+		.select({ name: actors.name })
+		.from(actors)
+		.where(eq(actors.id, invite.invitedByActorId))
+		.limit(1)
+	if (!workspace) return c.json(createApiError('NOT_FOUND', 'Invite not found'), 404)
+
+	const rawToken = generateInviteToken()
+	const acceptUrl = resolveAcceptUrl(rawToken)
+	if (!acceptUrl) {
+		logger.error('Invite not resent: APP_URL is unset while RESEND_API_KEY is set')
+		return c.json(
+			createApiError('INTERNAL_ERROR', 'Invite links are not configured (APP_URL)'),
+			500,
+		)
+	}
+
+	const newHash = hashInviteToken(rawToken)
+	const newExpiresAt = new Date(Date.now() + INVITE_TTL_MS)
+	// Conditional on still being pending so a racing accept or revoke wins.
+	const [rotated] = await db
+		.update(workspaceInvitations)
+		.set({ tokenHash: newHash, expiresAt: newExpiresAt, updatedAt: new Date() })
+		.where(and(eq(workspaceInvitations.id, id), eq(workspaceInvitations.status, 'pending')))
+		.returning()
+	if (!rotated) {
+		return c.json(createApiError('CONFLICT', 'Invite is no longer pending'), 409)
+	}
+
+	try {
+		await sendInviteEmail({
+			to: rotated.email,
+			workspaceName: workspace.name,
+			inviterName: inviter?.name ?? 'A teammate',
+			role: rotated.role,
+			acceptUrl,
+		})
+	} catch (err) {
+		logger.error('Invite resend email failed, restoring previous token', {
+			workspaceId: invite.workspaceId,
+			inviteId: id,
+			...sendFailureLogContext(err),
+		})
+		// The new token never reached anyone, so put the old one back: the link
+		// in the earlier email keeps working.
+		await db
+			.update(workspaceInvitations)
+			.set({ tokenHash: invite.tokenHash, expiresAt: invite.expiresAt, updatedAt: new Date() })
+			.where(and(eq(workspaceInvitations.id, id), eq(workspaceInvitations.tokenHash, newHash)))
+		return c.json(sendFailureResponse(), 502)
+	}
+
+	await db.insert(events).values({
+		workspaceId: invite.workspaceId,
+		actorId: callerId,
+		action: 'updated',
+		entityType: 'workspace_invitation',
+		entityId: id,
+		data: { resent: true },
+	})
+	void capturePosthogEvent('workspace_member_invited', callerId, {
+		invite_method: 'email',
+		workspace_id: invite.workspaceId,
+		role: rotated.role,
+	})
+	return c.json({ status: 'pending' as const, invite: toInviteSummary(rotated) }, 200)
+}) as RouteHandler<typeof resendInviteRoute, Env>)
+
+// DELETE /:id ───────────────────────────────────────────────────────────────
+
+const revokeInviteRoute = createRoute({
+	method: 'delete',
+	path: '/{id}',
+	tags: ['workspace-invitations'],
+	summary: 'Revoke a pending invite',
+	request: { params: idParamSchema },
+	responses: {
+		200: {
+			description: 'Invite revoked; its link no longer works',
+			content: { 'application/json': { schema: revokeInviteResponseSchema } },
+		},
+		403: {
+			description: 'Caller is not a human owner/admin of the invite workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Invite not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'Invite is no longer pending (accepted or already revoked)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(revokeInviteRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { id } = c.req.valid('param')
+
+	const [invite] = await db
+		.select({ id: workspaceInvitations.id, workspaceId: workspaceInvitations.workspaceId })
+		.from(workspaceInvitations)
+		.where(eq(workspaceInvitations.id, id))
+		.limit(1)
+	if (!invite) return c.json(createApiError('NOT_FOUND', 'Invite not found'), 404)
+	if (!(await isWorkspaceHumanAdminOrOwner(db, callerId, invite.workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only workspace owners and admins can revoke invites'),
+			403,
+		)
+	}
+
+	const now = new Date()
+	// Conditional on pending: an accepted invite can't be revoked after the fact.
+	const [revoked] = await db
+		.update(workspaceInvitations)
+		.set({ status: 'revoked', revokedAt: now, revokedByActorId: callerId, updatedAt: now })
+		.where(and(eq(workspaceInvitations.id, id), eq(workspaceInvitations.status, 'pending')))
+		.returning({ id: workspaceInvitations.id })
+	if (!revoked) {
+		return c.json(createApiError('CONFLICT', 'Invite is no longer pending'), 409)
+	}
+
+	await db.insert(events).values({
+		workspaceId: invite.workspaceId,
+		actorId: callerId,
+		action: 'updated',
+		entityType: 'workspace_invitation',
+		entityId: id,
+		data: { status: 'revoked' },
+	})
+	void capturePosthogEvent('workspace_invite_revoked', callerId, {
+		workspace_id: invite.workspaceId,
+		invite_id: id,
+		revoked_by_actor_id: callerId,
+	})
+	return c.json({ revoked: true as const }, 200)
+}) as RouteHandler<typeof revokeInviteRoute, Env>)
+
+// GET / ─────────────────────────────────────────────────────────────────────
+
+const listInvitesRoute = createRoute({
+	method: 'get',
+	path: '/',
+	tags: ['workspace-invitations'],
+	summary: 'List pending invites for a workspace',
+	request: { query: listInvitesQuerySchema },
+	responses: {
+		200: {
+			description: 'Pending, unexpired invites, newest first',
+			content: { 'application/json': { schema: z.array(pendingInviteListItemSchema) } },
+		},
+		403: {
+			description: 'Caller is not a member of the workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(listInvitesRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { workspaceId } = c.req.valid('query')
+
+	if (!(await isWorkspaceMember(db, callerId, workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
+
+	const rows = await db
+		.select({
+			id: workspaceInvitations.id,
+			email: workspaceInvitations.email,
+			role: workspaceInvitations.role,
+			expiresAt: workspaceInvitations.expiresAt,
+			invitedByActorId: workspaceInvitations.invitedByActorId,
+			invitedByName: actors.name,
+			createdAt: workspaceInvitations.createdAt,
+		})
+		.from(workspaceInvitations)
+		.innerJoin(actors, eq(actors.id, workspaceInvitations.invitedByActorId))
+		.where(
+			and(
+				eq(workspaceInvitations.workspaceId, workspaceId),
+				eq(workspaceInvitations.status, 'pending'),
+				gt(workspaceInvitations.expiresAt, new Date()),
+			),
+		)
+		.orderBy(desc(workspaceInvitations.createdAt))
+
+	return c.json(
+		rows.map((r) => ({
+			...toInviteSummary(r),
+			invitedByActorId: r.invitedByActorId,
+			invitedByName: r.invitedByName,
+			createdAt: r.createdAt.toISOString(),
+		})),
+		200,
+	)
+}) as RouteHandler<typeof listInvitesRoute, Env>)
 
 export default app
