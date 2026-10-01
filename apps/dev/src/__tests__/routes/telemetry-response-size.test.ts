@@ -7,7 +7,9 @@ import { createTestApp } from '../setup'
 // response, which is 202 either way. These tests pin the fan-out payload,
 // because a dropped or mislabelled dimension here shows up as a dashboard that
 // quietly answers the wrong question rather than as a failure.
-const capturePosthogEvent = vi.fn().mockResolvedValue(undefined)
+const { capturePosthogEvent } = vi.hoisted(() => ({
+	capturePosthogEvent: vi.fn().mockResolvedValue(undefined),
+}))
 vi.mock('../../lib/analytics/posthog', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../lib/analytics/posthog')>()
 	return { ...actual, capturePosthogEvent }

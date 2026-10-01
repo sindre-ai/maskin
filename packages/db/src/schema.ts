@@ -368,12 +368,41 @@ export const sessions = pgTable(
 		// which prices maskin_plan sessions from OpenRouter's pricing table
 		// keyed on this value.
 		modelName: text('model_name'),
+		// The object this session was started for — a bet, task, insight, or
+		// any first-class object. Threaded onto the `session_failed` event's
+		// `data.initiated_from` block so a failure card can link back to what
+		// the session was doing, and onto the PostHog `runtime_session_ended`
+		// event as `context_object_id` / `context_object_type` so Criterion 3
+		// of the parent bet is measurable. Both columns nullable; NULL means
+		// "no originating object known" (direct API create, onboarding,
+		// notification response, cron trigger). FK uses ON DELETE SET NULL so
+		// deleting the object nulls the linkage rather than blocking the row.
+		// Partial index (WHERE NOT NULL) lives in migration 0078.
+		initiatedFromObjectId: uuid('initiated_from_object_id').references(
+			(): AnyPgColumn => objects.id,
+			{ onDelete: 'set null' },
+		),
+		initiatedFromObjectType: text('initiated_from_object_type'),
 		inputTokens: integer('input_tokens'),
 		outputTokens: integer('output_tokens'),
 		cacheCreationInputTokens: integer('cache_creation_input_tokens'),
 		cacheReadInputTokens: integer('cache_read_input_tokens'),
 		durationMs: integer('duration_ms'),
 		currentActivity: text('current_activity'),
+		// Redesigned lifecycle state (§15.1) — distinct from the ambiguous
+		// `status` text because reaper + retry-scheduler need to tell
+		// waiting-on-machine apart from a genuine stall. Landed in migration
+		// 0076; readers/writers land in Commits 5, 6, 7.
+		sessionState: text('session_state')
+			.notNull()
+			.default('queued')
+			.$type<'queued' | 'waiting_for_machine' | 'starting' | 'running' | 'done'>(),
+		stateEnteredAt: timestamp('state_entered_at', { withTimezone: true }).notNull().defaultNow(),
+		retryAt: timestamp('retry_at', { withTimezone: true }),
+		retriedSessionId: uuid('retried_session_id').references((): AnyPgColumn => sessions.id),
+		retryOf: uuid('retry_of').references((): AnyPgColumn => sessions.id),
+		attemptNumber: integer('attempt_number').notNull().default(1),
+		driverHeartbeatAt: timestamp('driver_heartbeat_at', { withTimezone: true }),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -381,6 +410,10 @@ export const sessions = pgTable(
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 	},
 	(t) => [
+		check(
+			'sessions_session_state_check',
+			sql`${t.sessionState} IN ('queued','waiting_for_machine','starting','running','done')`,
+		),
 		index('sessions_ws_status_idx').on(t.workspaceId, t.status),
 		// Range-scan path for list_sessions(updated_before/updated_after) — the
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0044.
@@ -413,6 +446,16 @@ export const sessions = pgTable(
 		index('sessions_prune_candidates_idx')
 			.on(t.completedAt)
 			.where(sql`${t.interactive} = false AND ${t.completedAt} IS NOT NULL`),
+		// Reaper's live-session scan (Commit 6): only the states the reaper
+		// cares about, so the index carries a tiny slice of the table.
+		index('sessions_session_state_state_entered_at_idx')
+			.on(t.sessionState, t.stateEnteredAt)
+			.where(sql`${t.sessionState} IN ('starting','running','waiting_for_machine')`),
+		// Retry-scheduler's 30s tick (Commit 7): excludes rows already retried,
+		// so each retry_at is picked at most once.
+		index('sessions_retry_at_idx')
+			.on(t.retryAt)
+			.where(sql`${t.retryAt} IS NOT NULL AND ${t.retriedSessionId} IS NULL`),
 	],
 )
 

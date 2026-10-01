@@ -20,6 +20,12 @@ export function useSession(id: string | null, workspaceId: string) {
  * page past the API's 100-row clamp (sessionQuerySchema) until a short page —
  * the Agents index's per-agent counts and latest-session status are
  * load-bearing on full history.
+ *
+ * `verbose: true` keeps today's fat SessionResponse payload during the
+ * lean-list compat window — the UI's per-agent counts, activity indicators
+ * and status branches all read fields (config, result, currentActivity, ...)
+ * the lean shape doesn't carry. A follow-up bet migrates each consumer to
+ * the lean shape and drops this flag.
  */
 export function useWorkspaceSessions(
 	workspaceId: string,
@@ -30,12 +36,13 @@ export function useWorkspaceSessions(
 			? [...queryKeys.sessions.all(workspaceId), 'paged']
 			: queryKeys.sessions.all(workspaceId),
 		queryFn: async () => {
-			if (!paged) return api.sessions.list(workspaceId, { limit: '100' })
+			if (!paged) return api.sessions.list(workspaceId, { verbose: 'true', limit: '100' })
 			const pageSize = 100
 			const all: SessionResponse[] = []
 			let offset = 0
 			for (;;) {
 				const page = await api.sessions.list(workspaceId, {
+					verbose: 'true',
 					limit: String(pageSize),
 					offset: String(offset),
 				})
@@ -59,7 +66,8 @@ export function useWorkspaceSessions(
 export function useActorSessions(actorId: string, workspaceId: string) {
 	return useQuery({
 		queryKey: queryKeys.sessions.byActorAll(workspaceId, actorId),
-		queryFn: () => api.sessions.list(workspaceId, { actor_id: actorId, limit: '100' }),
+		queryFn: () =>
+			api.sessions.list(workspaceId, { verbose: 'true', actor_id: actorId, limit: '100' }),
 		enabled: !!actorId && !!workspaceId,
 	})
 }
@@ -123,7 +131,11 @@ export function useMentionSessionsForObject(workspaceId: string, objectId: strin
 	return useQuery({
 		queryKey: queryKeys.sessions.byMentionObject(workspaceId, objectId ?? ''),
 		queryFn: () =>
-			api.sessions.list(workspaceId, { mention_object_id: objectId as string, limit: '100' }),
+			api.sessions.list(workspaceId, {
+				verbose: 'true',
+				mention_object_id: objectId as string,
+				limit: '100',
+			}),
 		enabled: !!workspaceId && !!objectId,
 	})
 }
@@ -131,7 +143,8 @@ export function useMentionSessionsForObject(workspaceId: string, objectId: strin
 export function useActiveSessionsForActor(actorId: string, workspaceId: string) {
 	return useQuery({
 		queryKey: queryKeys.sessions.byActor(workspaceId, actorId),
-		queryFn: () => api.sessions.list(workspaceId, { actor_id: actorId, status: 'running' }),
+		queryFn: () =>
+			api.sessions.list(workspaceId, { verbose: 'true', actor_id: actorId, status: 'running' }),
 		enabled: !!actorId && !!workspaceId,
 	})
 }
@@ -153,6 +166,7 @@ export function useActiveSessionsForConversation(
 		queryKey: queryKeys.sessions.byConversation(workspaceId, conversationId ?? ''),
 		queryFn: () =>
 			api.sessions.list(workspaceId, {
+				verbose: 'true',
 				conversation_id: conversationId as string,
 			}),
 		enabled: !!workspaceId && !!conversationId,
@@ -188,6 +202,7 @@ export function useActorSessionsInfinite(actorId: string, workspaceId: string) {
 		queryKey: queryKeys.sessions.byActorAllInfinite(workspaceId, actorId),
 		queryFn: ({ pageParam }) =>
 			api.sessions.list(workspaceId, {
+				verbose: 'true',
 				actor_id: actorId,
 				limit: String(ACTOR_SESSIONS_PAGE_SIZE),
 				offset: String(pageParam),
