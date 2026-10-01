@@ -98,16 +98,50 @@ export async function hashDistinctId(value: string): Promise<string> {
 		.join('')
 }
 
+export interface IdentifiedPerson {
+	name?: string | null
+	email?: string | null
+}
+
 // Identify the actor for analytics, applying the workspace's anonymise pref.
 // When anonymised, the distinct_id sent to PostHog is SHA-256(actor.id) so the
 // raw actor id never leaves the browser; the Synthesizer's joins still resolve
 // because they key off `actor_id` registered as a super property, not
-// `$distinct_id` (per the bet's property-contract decision).
-export async function identifyForWorkspace(actorId: string, anonymize: boolean): Promise<void> {
+// `$distinct_id` (per the bet's property-contract decision). The optional
+// `person` name/email become PostHog person properties so people show up as
+// themselves instead of an id — dropped when anonymised, for the same reason
+// the id is hashed.
+export async function identifyForWorkspace(
+	actorId: string,
+	anonymize: boolean,
+	person?: IdentifiedPerson,
+): Promise<void> {
 	if (!initialized) return
 	try {
 		const distinctId = anonymize ? await hashDistinctId(actorId) : actorId
-		posthog.identify(distinctId)
+		const properties: Record<string, string> = {}
+		if (!anonymize) {
+			if (person?.email) properties.email = person.email
+			if (person?.name) properties.name = person.name
+		}
+		// Only pass the second arg when there is something to set — keeps the
+		// single-arg call shape the existing identify specs assert on.
+		if (Object.keys(properties).length > 0) {
+			posthog.identify(distinctId, properties)
+		} else {
+			posthog.identify(distinctId)
+		}
+	} catch {
+		// Analytics must never break the UI.
+	}
+}
+
+// Called on sign-out so the next person on this browser starts from a fresh
+// anonymous id instead of inheriting the previous user's identity.
+export function resetPosthogIdentity(): void {
+	if (!initialized) return
+	try {
+		posthog.reset()
 	} catch {
 		// Analytics must never break the UI.
 	}

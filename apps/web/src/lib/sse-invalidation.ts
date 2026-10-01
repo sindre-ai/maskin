@@ -10,6 +10,31 @@ const SESSION_COMPLETION_ACTIONS = new Map<string, 'completed' | 'failed' | 'tim
 	['session_timeout', 'timeout'],
 ])
 
+// Session events that can move the credit balance or end a run. Billing usage
+// only needs a refetch on these; routine session_updated / session_started
+// traffic does not change it.
+const BILLING_INVALIDATING_ACTIONS = new Set(['session_credit_debited', 'session_budget_stopped'])
+
+// Trailing window for the sidebar's workspace sessions list (?limit=100).
+// Agents PATCH current_activity on every step, so one busy run emits a burst
+// of session events; the list refetches once per window instead of per event.
+const SESSIONS_LIST_REFETCH_MS = 5_000
+const sessionsListTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+function scheduleSessionsListRefetch(queryClient: QueryClient, workspaceId: string) {
+	if (sessionsListTimers.has(workspaceId)) return
+	sessionsListTimers.set(
+		workspaceId,
+		setTimeout(() => {
+			sessionsListTimers.delete(workspaceId)
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.sessions.all(workspaceId),
+				exact: true,
+			})
+		}, SESSIONS_LIST_REFETCH_MS),
+	)
+}
+
 export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string, event: SSEEvent) {
 	// Always invalidate events history
 	queryClient.invalidateQueries({ queryKey: queryKeys.events.history(workspaceId) })
@@ -74,19 +99,28 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			}
 			break
 		case 'session': {
-			// Broad prefix invalidation covers all session queries including byActor
-			queryClient.invalidateQueries({ queryKey: ['sessions'] })
+			// Broad prefix invalidation covers all session queries including byActor,
+			// detail and logs — except the workspace list (exactly ['sessions', ws]),
+			// which is coalesced below. The prefix also matches it, so exclude it here.
+			queryClient.invalidateQueries({
+				queryKey: ['sessions'],
+				predicate: (query) => {
+					const key = query.queryKey
+					return !(key.length === 2 && key[1] === workspaceId)
+				},
+			})
+			scheduleSessionsListRefetch(queryClient, workspaceId)
 			// Same reasoning as trigger_fired above — session lifecycle events feed
 			// into the loop activity view via the trigger id join.
 			queryClient.invalidateQueries({ queryKey: ['loops', workspaceId, 'activity'] })
 			// Sessions burn credits and can flip the workspace into PAUSED · NO
 			// CREDITS mid-flight. The D6 chip reads through `useUsageState` →
-			// `useBillingUsage`, so invalidating billing usage on every session
-			// lifecycle event keeps the chip's re-render workspace-scoped and
-			// SSE-driven (D6 acceptance: reacts to workspace-level SSE, not
-			// per-object).
-			queryClient.invalidateQueries({ queryKey: queryKeys.billing.usage(workspaceId) })
+			// `useBillingUsage`; only credit debits, budget stops and terminal
+			// events can change that, so routine session updates skip the refetch.
 			const outcome = SESSION_COMPLETION_ACTIONS.get(event.action)
+			if (outcome || BILLING_INVALIDATING_ACTIONS.has(event.action)) {
+				queryClient.invalidateQueries({ queryKey: queryKeys.billing.usage(workspaceId) })
+			}
 			if (outcome) {
 				const sessionId = event.entity_id
 				// G2 trigger provenance lives on the session row — the `trigger_id`
