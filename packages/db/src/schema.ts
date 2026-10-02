@@ -91,6 +91,71 @@ export const workspaceMembers = pgTable(
 	(t) => [primaryKey({ columns: [t.workspaceId, t.actorId] })],
 )
 
+// ── Workspace Invitations ──────────────────────────────────────────────────
+// Email-based invites into a workspace. The admin flow inserts a pending row
+// and dispatches an email carrying an opaque token; the invitee redeems the
+// token to attach (existing actor) or sign up + attach (new actor). Only the
+// SHA-256 of the token lives here — the raw string only ever appears in the
+// email URL and the accept-request path parameter. See bet
+// 6fe44b48-3939-4c29-80cf-533b4976601c for the shape.
+
+export const workspaceInvitations = pgTable(
+	'workspace_invitations',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		// Case-preserving on storage so the members list can render the email
+		// exactly as the admin typed it; case-insensitive uniqueness for the
+		// pending-per-workspace-per-email guard is enforced by the partial
+		// unique index on `lower(email)` below.
+		email: text('email').notNull(),
+		// 'member' | 'viewer'. Owner is deliberately excluded from the invite
+		// flow — ownership is transferred via POST /api/workspaces/:id/transfer-ownership.
+		role: text('role').notNull(),
+		// SHA-256 (hex) of the opaque token from the invite URL. Defense in
+		// depth against DB dumps and query-log leaks: a leaked hash cannot be
+		// redeemed. Never store the raw token.
+		tokenHash: text('token_hash').notNull(),
+		invitedByActorId: uuid('invited_by_actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'restrict' }),
+		// 'pending' | 'accepted' | 'revoked' | 'expired'
+		status: text('status').notNull().default('pending'),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+		acceptedByActorId: uuid('accepted_by_actor_id').references(() => actors.id, {
+			onDelete: 'set null',
+		}),
+		revokedAt: timestamp('revoked_at', { withTimezone: true }),
+		revokedByActorId: uuid('revoked_by_actor_id').references(() => actors.id, {
+			onDelete: 'set null',
+		}),
+		// Free-form audit context, e.g. { email_mismatch: true } when an
+		// invitee accepted from a signed-in actor whose email differs from
+		// the invite email.
+		metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// Token lookup on POST /api/invites/:token/accept.
+		index('workspace_invitations_token_hash_idx').on(t.tokenHash),
+		// "Does this workspace already have a pending invite for ada@example.com?"
+		// Case-insensitive via a functional index on lower(email); scoped to
+		// pending so a revoked/expired row does not block a re-invite.
+		uniqueIndex('workspace_invitations_pending_ws_email_uniq')
+			.on(t.workspaceId, sql`lower(${t.email})`)
+			.where(sql`status = 'pending'`),
+		// Drives GET /api/invites?workspaceId=… (members-list pending row shape).
+		index('workspace_invitations_workspace_status_idx').on(t.workspaceId, t.status),
+	],
+)
+
+export type WorkspaceInvitation = typeof workspaceInvitations.$inferSelect
+export type NewWorkspaceInvitation = typeof workspaceInvitations.$inferInsert
+
 // ── Objects ─────────────────────────────────────────────────────────────────
 
 export const objects = pgTable(
@@ -356,6 +421,17 @@ export const sessions = pgTable(
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
+		// Handed-off strip anchors: the assistant message that triggered this
+		// sub-agent spawn, and the sessions this one is blocked behind. Both
+		// nullable — pre-migration rows read NULL ("no strip"). Written from the
+		// run_agent path when the caller supplies a message id / blockers.
+		// ON DELETE SET NULL: the anchor is a pointer, not ownership — a deleted
+		// message must not delete the session, it just stops rendering a strip.
+		spawnedByMessageId: bigint('spawned_by_message_id', { mode: 'number' }).references(
+			(): AnyPgColumn => messages.id,
+			{ onDelete: 'set null' },
+		),
+		dependsOnSessionIds: uuid('depends_on_session_ids').array(),
 		startedAt: timestamp('started_at', { withTimezone: true }),
 		completedAt: timestamp('completed_at', { withTimezone: true }),
 		timeoutAt: timestamp('timeout_at', { withTimezone: true }),
@@ -1564,6 +1640,60 @@ export const awaitingVies = pgTable(
 
 export type AwaitingViesRow = typeof awaitingVies.$inferSelect
 export type NewOrphanThreadDetection = typeof orphanThreadDetections.$inferInsert
+
+// ── File Comments ───────────────────────────────────────────────────────────
+// Threaded review comments pinned to positions on a file's rendered document.
+// Replaces the viewport-fraction `files.annotations` blob so pins can (a)
+// round-trip across resize / zoom and (b) group into batched review "rounds"
+// that write ONE rollup timeline event on the attaching object (see
+// routes/file-comments.ts) instead of one event per pin. Legacy pins on the
+// old blob are ported into rows on first read (see
+// lib/file-comments-migration.ts) with `selector='legacy'` as the idempotence
+// marker.
+
+export const fileComments = pgTable(
+	'file_comments',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		fileId: uuid('file_id')
+			.notNull()
+			.references(() => files.id, { onDelete: 'cascade' }),
+		// Null when the file isn't paged (a single-page mockup / doc). Set to the
+		// 1-based page/slide index the pin was dropped on for a deck.
+		page: integer('page'),
+		// { x, y } floats in [0, 1] of the natural document dimensions — NOT
+		// viewport fractions. See spec §Coord math.
+		positionDoc: jsonb('position_doc').notNull().$type<{ x: number; y: number }>(),
+		// Kept from the pre-refactor annotation-overlay so a CSS-selector-based
+		// pin still round-trips. `'legacy'` is reserved as the migration marker.
+		selector: text('selector'),
+		authorId: uuid('author_id')
+			.notNull()
+			.references(() => actors.id),
+		body: text('body').notNull(),
+		// biome-ignore lint/suspicious/noExplicitAny: self-referential FK requires type escape
+		parentId: uuid('parent_id').references((): any => fileComments.id, { onDelete: 'cascade' }),
+		// Set on send; null while the comment is a draft. Every comment in a
+		// single sent round shares one uuid so the round endpoint's upsert makes
+		// retries idempotent.
+		roundId: uuid('round_id'),
+		resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+		resolvedBy: uuid('resolved_by').references(() => actors.id),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// Panel reads: "all comments on this file", ordered by page then time.
+		index('file_comments_file_page_created_at_idx').on(t.fileId, t.page, t.createdAt),
+		// Round-scoped re-hydration (?round=<id> deep-links from the rollup event).
+		index('file_comments_round_id_idx')
+			.on(t.roundId)
+			.where(sql`${t.roundId} IS NOT NULL`),
+	],
+)
+
+export type FileComment = typeof fileComments.$inferSelect
+export type NewFileComment = typeof fileComments.$inferInsert
 
 // ── Google Meet — create_space idempotency ─────────────────────────────────
 // Maskin-side dedup ledger for `google_meet__create_space`. Meet's spaces.create

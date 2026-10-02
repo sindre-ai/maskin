@@ -11,6 +11,7 @@ import {
 	updateWorkspaceSchema,
 } from '@maskin/shared'
 import { and, count, eq, inArray } from 'drizzle-orm'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { isEnterprise, isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -749,6 +750,17 @@ app.openapi(addMemberRoute, (async (c) => {
 			cap: outcome.cap,
 		})
 		return c.json(seatCapErrorBody(err), 403)
+	}
+
+	// Telemetry for the retirement-observation window: counts residual actor-ID
+	// adds so we can see whether this endpoint's usage goes to zero. Only a real
+	// insert counts; the idempotent already-a-member no-op is not an invite.
+	if (outcome.kind === 'added') {
+		void capturePosthogEvent('workspace_member_invited', callerId, {
+			invite_method: 'actor_id',
+			workspace_id: workspaceId,
+			role: role || 'member',
+		})
 	}
 
 	return c.json({ added: outcome.kind === 'added' }, 201)

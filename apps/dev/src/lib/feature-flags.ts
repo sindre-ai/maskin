@@ -91,6 +91,22 @@ export const FLAGS = {
 	 */
 	GOOGLE_MEET_INTEGRATION_UI: 'google-meet-integration-ui',
 	/**
+	 * Resend integration visibility on the Settings > Integrations page. When
+	 * off, the provider card + multi-step connect dialog are filtered out of the
+	 * providers list rendered by `apps/web/src/routes/_authed/$workspaceId/settings/integrations.tsx`
+	 * and the awaiting_secret resume affordance for resend never shows. When on,
+	 * the resend card appears with the Slice 2 connect dialog (Task 4). Per-actor
+	 * behaviour gate, never shared state: the backend registers the provider
+	 * unconditionally so `POST /api/integrations/resend/connect`, the dedicated
+	 * `/api/webhooks/resend/:token` route, and MCP env-var injection stay
+	 * reachable for tester actors (add them to `FF_TESTER_ACTOR_IDS` +
+	 * `resend-integration-ui` to `FF_TESTER_FEATURES`). See parent bet [Resend
+	 * integration per workspace](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/cf2bcc85-8a71-460b-975b-1635dd87594e)
+	 * for the rollout plan. Retire (drop the boundary + delete this entry) once
+	 * resend ships to every workspace.
+	 */
+	RESEND_INTEGRATION_UI: 'resend-integration-ui',
+	/**
 	 * Chat composer `+` menu collapse — replaces the three-item **Reference an
 	 * object** / **Mention an agent** / **Create an object** dropdown with a
 	 * single **Attach a file** row, and promotes the `/` and `@` primitives via
@@ -123,6 +139,18 @@ export const FLAGS = {
 	chatsV4PolishBanner: 'chats-v4-polish.banner',
 	chatsV4PolishBubbles: 'chats-v4-polish.bubbles',
 	chatsV4PolishNewChat: 'chats-v4-polish.new_chat',
+	/**
+	 * Chat thread `HANDED OFF` sub-agent delegation strip
+	 * (bet/444b-handed-off-strip). When on, an agent message with ≥1
+	 * **spawned_sessions** row renders the delegation strip beneath its
+	 * content: one row per sub-agent with a live-updating QUEUED / WORKING /
+	 * DONE / FAILED pill, deps clause, elapsed timer, current activity and
+	 * row-click through to the sub-agent's own thread. Visual-layer only —
+	 * the embed and SSE contract ship to everyone regardless of this flag,
+	 * so a flag flip toggles the strip on or off without affecting how sub-
+	 * sessions run or how their state propagates.
+	 */
+	HANDED_OFF_STRIP: 'handed-off-strip',
 	/**
 	 * Chat composer `/` picker v2 — unified search-and-create surface.
 	 * When off, typing `/` opens the create-only "Turn this into an object"

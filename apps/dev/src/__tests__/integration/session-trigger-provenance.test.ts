@@ -49,6 +49,7 @@ describe('SessionManager.createSession — trigger provenance (Integration)', ()
 				triggerId: trigger.id,
 				triggerType: 'cron',
 				createdBy: actorId,
+				autoStart: false,
 				initiatedFromObjectId: null,
 				initiatedFromObjectType: null,
 			})
@@ -74,6 +75,7 @@ describe('SessionManager.createSession — trigger provenance (Integration)', ()
 				triggerId: trigger.id,
 				triggerType: 'event',
 				createdBy: actorId,
+				autoStart: false,
 				initiatedFromObjectId: null,
 				initiatedFromObjectType: null,
 			})
@@ -95,6 +97,7 @@ describe('SessionManager.createSession — trigger provenance (Integration)', ()
 				actorId,
 				actionPrompt: 'interactive turn',
 				createdBy: actorId,
+				autoStart: false,
 				initiatedFromObjectId: null,
 				initiatedFromObjectType: null,
 			})
