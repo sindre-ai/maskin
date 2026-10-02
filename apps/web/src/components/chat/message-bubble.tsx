@@ -14,6 +14,7 @@ import { Link } from '@tanstack/react-router'
 import { Bell, Box, Copy, Pencil, RotateCcw } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { HandedOffStrip } from './handed-off-strip'
 import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
@@ -43,6 +44,12 @@ interface MessageBubbleProps {
 	 *  session — render the persistent vertical --brand bar to the bubble's
 	 *  right and the spawn chip below it. */
 	spawnInfo?: MessageSpawnInfo
+	/** Chat thread `HANDED OFF` sub-agent delegation strip
+	 *  (bet/444b-handed-off-strip). Threaded from the route boundary. When on,
+	 *  an agent message with a non-empty `spawned_sessions` embed renders the
+	 *  delegation strip beneath its content. Off suppresses the strip
+	 *  regardless of the embed. */
+	handedOffStripEnabled?: boolean
 }
 
 /**
@@ -59,6 +66,7 @@ export function MessageBubble({
 	questionAnswered = false,
 	v4Polish = false,
 	spawnInfo,
+	handedOffStripEnabled = false,
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
@@ -288,6 +296,23 @@ export function MessageBubble({
 						questionMessageId={message.id}
 						question={message.metadata.question}
 						answered={questionAnswered}
+					/>
+				) : null}
+				{/* Chat thread `HANDED OFF` sub-agent delegation strip
+				    (bet/444b-handed-off-strip). Renders inside the agent branch under
+				    the message text and above the REFERENCED rail — the spec's
+				    `When to render` position. Feature-flag gate is deliberately here
+				    at the render site so the embed and SSE contract stay unflagged
+				    (Rail 3 — visual layer only) and the strip vanishes cleanly on
+				    a flag flip. HandedOffStrip itself no-ops when the embed is
+				    empty, so this is safe on non-spawning agent messages too. */}
+				{handedOffStripEnabled &&
+				message.spawned_sessions &&
+				message.spawned_sessions.length > 0 ? (
+					<HandedOffStrip
+						workspaceId={workspaceId}
+						messageId={message.id}
+						spawnedSessions={message.spawned_sessions}
 					/>
 				) : null}
 				{hasMentions ? (
