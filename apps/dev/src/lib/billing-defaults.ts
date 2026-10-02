@@ -6,9 +6,9 @@
  * frontend tests that pin the same numbers.
  *
  * `scripts/verify-billing-cap-literals.mjs` runs in CI to enforce the contract
- * — bump the literals here and the script will fail until `.env.example` and
- * `apps/web/src/__tests__/components/settings/billing-section.test.tsx` are
- * updated too.
+ * — bump the literals here and the script will fail until the frontend plan card
+ * copy and `apps/web/src/__tests__/components/settings/billing-section.test.tsx`
+ * are updated too.
  */
 
 import { logger } from './logger'
@@ -87,9 +87,9 @@ export function parsePositiveIntEnv(
 /**
  * Fallback hard caps for paid plans when `billing.hard_cap_usd_cents` hasn't
  * been populated yet (delayed Stripe webhook, partial state after a webhook
- * failure), in USD cents. Mirrored in `.env.example` and the frontend billing
- * tests — change here and the CI `verify-billing-cap-literals` step will fail
- * until the other sites are updated.
+ * failure), in USD cents, and the cap the Stripe webhook writes for a plan.
+ * Mirrored in the frontend billing tests — change here and the CI
+ * `verify-billing-cap-literals` step will fail until the other sites are updated.
  *
  * Each paid plan's included-usage cap equals its monthly price in dollars —
  * $49 for Pro (raised from $20 in Sep 2026, matching the Stripe price change)
@@ -107,8 +107,10 @@ export const TEAM_HARD_CAP_DEFAULT_USD_CENTS = 20_000
 export const DEFAULT_PERIOD_LENGTH_MS = 30 * 24 * 60 * 60 * 1000
 
 /**
- * Resolves the included-usage cap (USD cents) for a plan tier, env first then
- * the documented literal above.
+ * Resolves the included-usage cap (USD cents) for a plan tier. Pro and team
+ * come from the literals above only: a stale deploy env must not be able to pin
+ * a paid plan below its price (prod held a $20 Pro cap after the Sep 2026 move
+ * to $49). Trial reads env first, then its literal.
  *
  * This is the single resolver for both the *enforcement* path
  * (`lib/llm-routing.ts`'s `effectivePlanCap`, which gates spend) and the
@@ -129,14 +131,9 @@ export function resolvePlanCapCents(
 ): number {
 	switch (plan) {
 		case 'pro':
-			return (
-				parsePositiveIntEnv('MASKIN_PRO_HARD_CAP_USD_CENTS', env) ?? PRO_HARD_CAP_DEFAULT_USD_CENTS
-			)
+			return PRO_HARD_CAP_DEFAULT_USD_CENTS
 		case 'team':
-			return (
-				parsePositiveIntEnv('MASKIN_TEAM_HARD_CAP_USD_CENTS', env) ??
-				TEAM_HARD_CAP_DEFAULT_USD_CENTS
-			)
+			return TEAM_HARD_CAP_DEFAULT_USD_CENTS
 		default:
 			return (
 				parsePositiveIntEnv('MASKIN_TRIAL_HARD_CAP_USD_CENTS', env) ??

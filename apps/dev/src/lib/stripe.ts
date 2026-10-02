@@ -1,5 +1,5 @@
 import Stripe from 'stripe'
-import { parsePositiveIntEnv } from './billing-defaults'
+import { PRO_HARD_CAP_DEFAULT_USD_CENTS, TEAM_HARD_CAP_DEFAULT_USD_CENTS } from './billing-defaults'
 import { logger } from './logger'
 
 type PaidMaskinPlan = 'pro' | 'team'
@@ -179,37 +179,18 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 		'STRIPE_PRICE_PRO',
 		'STRIPE_PRICE_TEAM',
 		'STRIPE_PRICE_CREDITS_CUSTOM',
-		'MASKIN_PRO_HARD_CAP_USD_CENTS',
-		'MASKIN_TEAM_HARD_CAP_USD_CENTS',
 	] as const
 	const missing = required.filter((k) => !env[k])
 	if (missing.length > 0) {
 		throw new Error(`Stripe env vars missing: ${missing.join(', ')}`)
-	}
-	const parseCapCents = (
-		key: 'MASKIN_PRO_HARD_CAP_USD_CENTS' | 'MASKIN_TEAM_HARD_CAP_USD_CENTS',
-	) => {
-		// Boot-time strict variant: env was just confirmed non-empty by the
-		// `missing` check above, so a `null` return from the shared parser means
-		// the value is malformed (non-digit, zero, or negative). Throw so misconfig
-		// surfaces at first request instead of silently falling back.
-		const parsed = parsePositiveIntEnv(key, env)
-		if (parsed === null) {
-			// Intentionally does not echo the raw env value — billing caps aren't
-			// secrets today, but normalising "no env values in thrown errors"
-			// prevents the next contributor from leaking a secret-bearing key
-			// through error monitors when they reuse this helper.
-			throw new Error(`${key} must be a positive integer string`)
-		}
-		return parsed
 	}
 	return {
 		secretKey: env.STRIPE_SECRET_KEY as string,
 		webhookSecret: env.STRIPE_WEBHOOK_SECRET as string,
 		pricePro: env.STRIPE_PRICE_PRO as string,
 		priceTeam: env.STRIPE_PRICE_TEAM as string,
-		proHardCapUsdCents: parseCapCents('MASKIN_PRO_HARD_CAP_USD_CENTS'),
-		teamHardCapUsdCents: parseCapCents('MASKIN_TEAM_HARD_CAP_USD_CENTS'),
+		proHardCapUsdCents: PRO_HARD_CAP_DEFAULT_USD_CENTS,
+		teamHardCapUsdCents: TEAM_HARD_CAP_DEFAULT_USD_CENTS,
 		priceLinkedinIdentity: env.STRIPE_PRICE_LINKEDIN_IDENTITY || null,
 		priceCreditsCustom: env.STRIPE_PRICE_CREDITS_CUSTOM as string,
 	}

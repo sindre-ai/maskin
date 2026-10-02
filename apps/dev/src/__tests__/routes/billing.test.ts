@@ -546,7 +546,7 @@ describe('GET /api/billing/usage', () => {
 		expect(res.status).toBe(404)
 	})
 
-	it('falls back to env-driven cap when a Pro workspace has no hard_cap_usd_cents', async () => {
+	it('uses the code Pro cap, not a stale env, when a Pro workspace has no hard_cap_usd_cents', async () => {
 		process.env.MASKIN_PRO_HARD_CAP_USD_CENTS = '4000'
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
@@ -563,10 +563,10 @@ describe('GET /api/billing/usage', () => {
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
 		const body = await res.json()
-		expect(body).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 4_000 })
+		expect(body).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 4_900 })
 	})
 
-	it('falls back to env-driven cap when a Team workspace has no hard_cap_usd_cents', async () => {
+	it('uses the code Team cap, not a stale env, when a Team workspace has no hard_cap_usd_cents', async () => {
 		process.env.MASKIN_TEAM_HARD_CAP_USD_CENTS = '40000'
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
@@ -583,7 +583,7 @@ describe('GET /api/billing/usage', () => {
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
 		const body = await res.json()
-		expect(body).toMatchObject({ plan: 'team', hard_cap_usd_cents: 40_000 })
+		expect(body).toMatchObject({ plan: 'team', hard_cap_usd_cents: 20_000 })
 	})
 
 	it('falls back to plan default when stored hard_cap_usd_cents is zero or negative', async () => {
@@ -639,10 +639,11 @@ describe('GET /api/billing/usage', () => {
 
 		const negRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': negWs }))
 		expect(negRes.status).toBe(200)
-		// Team env is still set to the sentinel by setupEnv — fallback hits env.
+		// Team env is still set to the sentinel by setupEnv — ignored, fallback
+		// hits the literal.
 		expect(await negRes.json()).toMatchObject({
 			plan: 'team',
-			hard_cap_usd_cents: Number(TEAM_ENV_SENTINEL),
+			hard_cap_usd_cents: 20_000,
 		})
 
 		const oneRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': oneWs }))

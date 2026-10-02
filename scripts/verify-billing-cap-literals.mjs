@@ -6,14 +6,14 @@
  * TEAM_HARD_CAP_DEFAULT_USD_CENTS are the single source of truth in:
  *
  *   1. apps/dev/src/lib/billing-defaults.ts            (source of truth — TS)
- *   2. .env.example                                    (operator-facing default)
- *   3. apps/web/src/__tests__/components/settings/
+ *   2. apps/web/src/__tests__/components/settings/
  *      billing-section.test.tsx                        (frontend pinned literals)
- *   4. apps/web/src/components/settings/
+ *   3. apps/web/src/components/settings/
  *      billing-section.tsx                             (CAP_DEFAULTS — plan card copy)
  *
- * A bumper who edits one but forgets to grep the others silently drifts prod
- * away from `.env.example` and the frontend tests. JSDoc cross-references are
+ * Pro and team caps are code-only (no env var), so `.env.example` is not a
+ * site. A bumper who edits one but forgets to grep the others silently drifts
+ * the frontend tests and plan card copy. JSDoc cross-references are
  * the weakest enforcement available — this script is the CI tripwire.
  */
 
@@ -49,28 +49,7 @@ const expected = { trial: 0, pro: 0, team: 0 }
 	}
 }
 
-// Site 2 — .env.example
-{
-	const path = '.env.example'
-	const source = read(path)
-	const proMatch = source.match(/^MASKIN_PRO_HARD_CAP_USD_CENTS=([\d_]+)/m)
-	const teamMatch = source.match(/^MASKIN_TEAM_HARD_CAP_USD_CENTS=([\d_]+)/m)
-	if (!proMatch || !teamMatch) {
-		errors.push(`${path}: could not find MASKIN_PRO/TEAM_HARD_CAP_USD_CENTS entries`)
-	} else {
-		const pro = Number(stripUnderscores(proMatch[1]))
-		const team = Number(stripUnderscores(teamMatch[1]))
-		observed.push({ path, pro, team })
-		if (pro !== expected.pro) {
-			errors.push(`${path}: pro cap ${pro} ≠ expected ${expected.pro}`)
-		}
-		if (team !== expected.team) {
-			errors.push(`${path}: team cap ${team} ≠ expected ${expected.team}`)
-		}
-	}
-}
-
-// Site 3 — apps/web/src/__tests__/components/settings/billing-section.test.tsx
+// Site 2 — apps/web/src/__tests__/components/settings/billing-section.test.tsx
 //
 // The web test pins `hard_cap_usd_cents` literals in several places (trial cap +
 // the Pro and Team upgrade flows). Rather than match a brittle index of
@@ -113,7 +92,7 @@ const expected = { trial: 0, pro: 0, team: 0 }
 	})
 }
 
-// Site 4 — apps/web/src/components/settings/billing-section.tsx (CAP_DEFAULTS)
+// Site 3 — apps/web/src/components/settings/billing-section.tsx (CAP_DEFAULTS)
 //
 // Drives the dollar amounts shown in the plan comparison cards via
 // formatCredits(CAP_DEFAULTS.<plan>) — must match the backend source of truth.
@@ -147,11 +126,11 @@ if (errors.length > 0) {
 	for (const e of errors) console.error(`  - ${e}`)
 	console.error('\nObserved values:')
 	for (const o of observed) console.error(`  ${JSON.stringify(o)}`)
-	console.error('\nFix by updating all four sites to the same numbers. See')
+	console.error('\nFix by updating all three sites to the same numbers. See')
 	console.error('apps/dev/src/lib/billing-defaults.ts for the source of truth.')
 	process.exit(1)
 }
 
 console.log(
-	`verify-billing-cap-literals: OK — trial=${expected.trial}, pro=${expected.pro}, team=${expected.team} (USD cents) across 4 sites`,
+	`verify-billing-cap-literals: OK — trial=${expected.trial}, pro=${expected.pro}, team=${expected.team} (USD cents) across 3 sites`,
 )
