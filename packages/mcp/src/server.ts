@@ -6976,6 +6976,98 @@ ${claudeCredsBlock}`,
 		}
 	}
 
+	// Workspace desktop. Every tool goes through apps/dev's /api/desktop/*, which
+	// applies the `workspace-desktop` flag and workspace membership.
+	registerAppTool(
+		server,
+		'desktop_screenshot',
+		{
+			description: tools.desktop_screenshot.description,
+			inputSchema: tools.desktop_screenshot.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const shot = (await apiCall(
+				config,
+				'POST',
+				'/api/desktop/screenshot',
+				{},
+				{ workspaceId: args.workspace_id },
+			)) as { image_base64: string; mime_type: string; width: number; height: number }
+			return {
+				_meta: meta('desktop_screenshot', config, args.workspace_id),
+				content: [
+					{ type: 'image' as const, data: shot.image_base64, mimeType: shot.mime_type },
+					{
+						type: 'text' as const,
+						text: `Desktop screenshot, ${shot.width}x${shot.height} pixels. (0,0) is the top-left.`,
+					},
+				],
+			}
+		},
+	)
+
+	const desktopInputActions = {
+		desktop_click: 'click',
+		desktop_move: 'move',
+		desktop_drag: 'drag',
+		desktop_scroll: 'scroll',
+		desktop_type: 'type',
+		desktop_key: 'key',
+	} as const
+	for (const [toolName, action] of Object.entries(desktopInputActions) as Array<
+		[keyof typeof desktopInputActions, string]
+	>) {
+		registerAppTool(
+			server,
+			toolName,
+			{
+				description: tools[toolName].description,
+				inputSchema: tools[toolName].inputSchema.shape,
+				_meta: {},
+			},
+			async (args: { workspace_id?: string } & Record<string, unknown>) => {
+				const { workspace_id, ...input } = args
+				await apiCall(
+					config,
+					'POST',
+					'/api/desktop/input',
+					{ action, ...input },
+					{ workspaceId: workspace_id },
+				)
+				return {
+					_meta: meta(toolName, config, workspace_id),
+					content: [
+						{
+							type: 'text' as const,
+							text: 'Input sent. Call desktop_screenshot to see the result.',
+						},
+					],
+				}
+			},
+		)
+	}
+
+	registerAppTool(
+		server,
+		'desktop_run',
+		{
+			description: tools.desktop_run.description,
+			inputSchema: tools.desktop_run.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, ...body } = args
+			const result = await apiCall(config, 'POST', '/api/desktop/exec', body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('desktop_run', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+			}
+		},
+	)
+
 	return server
 }
 

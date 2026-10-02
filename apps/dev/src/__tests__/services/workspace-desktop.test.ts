@@ -121,3 +121,54 @@ describe('WorkspaceDesktopService', () => {
 		expect(await empty.remove(WS)).toBe(false)
 	})
 })
+
+describe('WorkspaceDesktopService.control', () => {
+	it('provisions the desktop first, then forwards the action with the server secret', async () => {
+		const calls: Array<{ method: string; url: string; auth?: string; body?: string }> = []
+		const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+			const headers = init?.headers as Record<string, string>
+			calls.push({
+				method: String(init?.method),
+				url: String(url),
+				auth: headers.Authorization,
+				body: init?.body as string | undefined,
+			})
+			if (init?.method === 'GET') return res(404) // not located yet
+			if (init?.method === 'PUT') return res(200, { password: 'pw' })
+			return res(200, { ok: true })
+		}) as unknown as typeof fetch
+		const svc = new WorkspaceDesktopService({ listServers: async () => [server('a')], fetchImpl })
+
+		const result = await svc.control(WS, 'input', { action: 'move', x: 1, y: 2 })
+
+		expect(result).toEqual({ status: 200, body: { ok: true } })
+		expect(calls.map((c) => c.method)).toEqual(['GET', 'PUT', 'POST'])
+		const post = calls[2]
+		expect(post?.url).toBe(`https://a.example/desktops/${WS}/input`)
+		expect(post?.auth).toBe('Bearer secret-a')
+		expect(JSON.parse(post?.body ?? '{}')).toEqual({ action: 'move', x: 1, y: 2 })
+	})
+
+	it('returns null when no server can host a desktop', async () => {
+		const svc = new WorkspaceDesktopService({
+			listServers: async () => [],
+			fetchImpl: vi.fn() as unknown as typeof fetch,
+		})
+
+		expect(await svc.control(WS, 'screenshot', {})).toBeNull()
+	})
+
+	it("passes through the desktop's own error status instead of masking it", async () => {
+		const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) =>
+			init?.method === 'POST'
+				? res(400, { error: 'invalid_request' })
+				: res(200, { password: 'pw' }),
+		) as unknown as typeof fetch
+		const svc = new WorkspaceDesktopService({ listServers: async () => [server('a')], fetchImpl })
+
+		expect(await svc.control(WS, 'exec', { command: 'x' })).toEqual({
+			status: 400,
+			body: { error: 'invalid_request' },
+		})
+	})
+})

@@ -1,7 +1,7 @@
 # desktop-test
 
 Throwaway image to check that an msb microVM can show a live desktop in a
-browser. Mirrors `docker/browser-sidecar` (Xvfb + Chromium) and adds openbox,
+browser. Mirrors `docker/browser-sidecar` (Xvfb + Chromium) and adds XFCE,
 x11vnc and noVNC. Not built by CI and not used by the session launcher.
 
 ## Build and push (from a machine with Docker)
@@ -29,3 +29,16 @@ Open `http://10.0.1.1:16080/vnc.html` from the server (or an SSH tunnel:
 - Does it still work over the `allow@private` or SSH-relay path
   (see issue #1327 notes in `microsandbox.ts`)?
 - `xdotool` and `scrot` work in the VM (`DISPLAY=:99`) so an agent can drive it.
+
+## Agent control (desktopd)
+
+`desktopd.py` serves a small bearer-authenticated HTTP API on guest port 6081
+(`POST /screenshot`, `/input`, `/exec`; `GET /healthz`), published on the msb
+bridge next to noVNC. The agent-server proxies to it; apps/dev exposes it as
+`/api/desktop/{screenshot,input,exec}` and the Maskin MCP as `desktop_*` tools.
+
+It exists because `msb exec <vm> -- <cmd>` hangs (even `echo hi`) while the
+entrypoint's own `msb exec` holds the VM — verified on msb 0.5.7 — so the host
+cannot run `xdotool`/`scrot` by exec'ing into the VM. `/healthz` returns 200
+only once X and noVNC are up; the agent-server waits on it, because a TCP connect
+to a published port succeeds before anything listens in the guest.

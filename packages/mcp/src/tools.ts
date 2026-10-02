@@ -1839,4 +1839,82 @@ export const tools = {
 				.describe('Extension ID to remove. Pass the extension ID, not individual type names.'),
 		}),
 	},
+	// Workspace desktop: a shared, long-lived Linux desktop (1280x720, Chromium +
+	// xterm) that agents drive and humans can watch and take over from the
+	// Desktop page. Behind the `workspace-desktop` flag.
+	desktop_screenshot: {
+		description:
+			'Take a screenshot of the workspace desktop (a 1280x720 Linux screen with Chromium and a terminal). Starts the desktop if it is not running — the first call can take up to a minute. Humans can watch this same screen live on the workspace Desktop page and may take over, so call this again to see the current state before acting. Coordinates for desktop_click, desktop_move, desktop_drag and desktop_scroll are pixels in this image: (0,0) is the top-left.',
+		inputSchema: z.object({ workspace_id: optionalWorkspaceId }),
+	},
+	desktop_click: {
+		description:
+			'Click at a pixel position on the workspace desktop. Take a screenshot first to find the target, and another afterwards to confirm the result. Humans watching see the pointer move and click.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			x: z.number().int().min(0).max(1279),
+			y: z.number().int().min(0).max(719),
+			button: z.enum(['left', 'middle', 'right']).optional().describe('Defaults to left.'),
+			double: z.boolean().optional().describe('Double-click. Defaults to false.'),
+		}),
+	},
+	desktop_move: {
+		description:
+			'Move the pointer to a pixel position on the workspace desktop without clicking (hover).',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			x: z.number().int().min(0).max(1279),
+			y: z.number().int().min(0).max(719),
+		}),
+	},
+	desktop_drag: {
+		description:
+			'Press at one pixel position on the workspace desktop, drag, and release at another (select text, move a window, drag a slider).',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			from_x: z.number().int().min(0).max(1279),
+			from_y: z.number().int().min(0).max(719),
+			to_x: z.number().int().min(0).max(1279),
+			to_y: z.number().int().min(0).max(719),
+		}),
+	},
+	desktop_scroll: {
+		description:
+			'Scroll the mouse wheel on the workspace desktop. Optionally move the pointer to (x, y) first so the right window receives it.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			direction: z.enum(['up', 'down']),
+			amount: z.number().int().min(1).max(20).optional().describe('Wheel clicks. Defaults to 3.'),
+			x: z.number().int().min(0).max(1279).optional(),
+			y: z.number().int().min(0).max(719).optional(),
+		}),
+	},
+	desktop_type: {
+		description:
+			'Type text into whatever has keyboard focus on the workspace desktop (click a field first). Up to 2000 characters. Use desktop_key for Enter, Tab, Escape and shortcuts. Typed text is visible to anyone watching the desktop — never type secrets you would not show them.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			text: z.string().min(1).max(2000),
+		}),
+	},
+	desktop_key: {
+		description:
+			'Press key combinations on the workspace desktop, in order. Each entry is an xdotool key name or "+"-joined combo, e.g. ["ctrl+l"], ["Tab", "Return"], ["alt+Tab"], ["ctrl+shift+t"].',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			keys: z
+				.array(z.string().regex(/^[A-Za-z0-9_]+(\+[A-Za-z0-9_]+)*$/))
+				.min(1)
+				.max(20),
+		}),
+	},
+	desktop_run: {
+		description:
+			'Run a shell command inside the workspace desktop VM (not on the host and not in your own sandbox). DISPLAY is already set, so GUI programs launched here appear on the shared screen, e.g. `chromium --no-sandbox https://example.com &`. Returns exit code, stdout and stderr (each truncated to 20,000 characters). Default timeout 30s, max 120s. Anything meant to keep running after the command returns must be backgrounded with `&`.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			command: z.string().min(1).max(10000),
+			timeout_s: z.number().int().min(1).max(120).optional().describe('Defaults to 30.'),
+		}),
+	},
 } as const

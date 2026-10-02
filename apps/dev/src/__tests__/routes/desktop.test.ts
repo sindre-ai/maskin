@@ -146,3 +146,125 @@ describe('DELETE /api/desktop', () => {
 		expect(remove).not.toHaveBeenCalled()
 	})
 })
+
+const control = (app: TestApp, path: string, body?: unknown) =>
+	app.request(`/api/desktop/${path}`, {
+		method: 'POST',
+		headers: { 'X-Workspace-Id': WS, 'Content-Type': 'application/json' },
+		body: body === undefined ? undefined : JSON.stringify(body),
+	})
+
+describe('agent control routes', () => {
+	beforeEach(() => {
+		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(true)
+	})
+
+	it('404s every control route without touching the service when the flag is off', async () => {
+		vi.mocked(isFlagEnabledForWorkspace).mockReturnValue(false)
+		const controlFn = vi.fn()
+		const { app } = build({ control: controlFn })
+
+		for (const [path, body] of [
+			['screenshot', undefined],
+			['input', { action: 'move', x: 1, y: 1 }],
+			['exec', { command: 'ls' }],
+		] as const) {
+			expect((await control(app, path, body)).status).toBe(404)
+		}
+		expect(controlFn).not.toHaveBeenCalled()
+	})
+
+	it('screenshot returns the desktop image and records no event (it is a read)', async () => {
+		const shot = { image_base64: 'abc', mime_type: 'image/jpeg', width: 1280, height: 720 }
+		const controlFn = vi.fn(async () => ({ status: 200, body: shot }))
+		const { app, inserts } = build({ control: controlFn })
+
+		const res = await control(app, 'screenshot')
+
+		expect(res.status).toBe(200)
+		expect(res.headers.get('cache-control')).toBe('no-store')
+		expect(await res.json()).toEqual(shot)
+		expect(controlFn).toHaveBeenCalledWith(WS, 'screenshot', {})
+		expect(inserts).toHaveLength(0)
+	})
+
+	it('input forwards a valid action and audits it without the typed text', async () => {
+		const controlFn = vi.fn(async () => ({ status: 200, body: { ok: true } }))
+		const { app, inserts } = build({ control: controlFn })
+
+		const res = await control(app, 'input', { action: 'type', text: 'hunter2' })
+
+		expect(res.status).toBe(200)
+		expect(controlFn).toHaveBeenCalledWith(WS, 'input', { action: 'type', text: 'hunter2' })
+		expect(inserts).toHaveLength(1)
+		expect(inserts[0]).toMatchObject({
+			workspaceId: WS,
+			actorId: ACTOR,
+			action: 'updated',
+			entityType: 'workspace_desktop',
+			data: { control: 'input', input_action: 'type' },
+		})
+		expect(JSON.stringify(inserts[0])).not.toContain('hunter2')
+	})
+
+	it.each([
+		['out-of-range x', { action: 'click', x: 5000, y: 10 }],
+		['unknown action', { action: 'format-disk' }],
+		['non-integer y', { action: 'move', x: 1, y: 1.5 }],
+		['shell metacharacters in a key', { action: 'key', keys: ['ctrl+l; rm -rf /'] }],
+		['empty text', { action: 'type', text: '' }],
+	])('input rejects %s with 400 and never reaches the desktop', async (_name, body) => {
+		const controlFn = vi.fn()
+		const { app } = build({ control: controlFn })
+
+		expect((await control(app, 'input', body)).status).toBe(400)
+		expect(controlFn).not.toHaveBeenCalled()
+	})
+
+	it('exec forwards the command and audits it without the command text', async () => {
+		const result = { exit_code: 0, stdout: 'hi', stderr: '', timed_out: false }
+		const controlFn = vi.fn(async () => ({ status: 200, body: result }))
+		const { app, inserts } = build({ control: controlFn })
+
+		const res = await control(app, 'exec', { command: 'echo $API_TOKEN' })
+
+		expect(await res.json()).toEqual(result)
+		expect(controlFn).toHaveBeenCalledWith(WS, 'exec', {
+			command: 'echo $API_TOKEN',
+			timeout_s: 30,
+		})
+		expect(inserts[0]).toMatchObject({ data: { control: 'exec' } })
+		expect(JSON.stringify(inserts[0])).not.toContain('API_TOKEN')
+	})
+
+	it('exec rejects an over-long timeout', async () => {
+		const { app } = build({ control: vi.fn() })
+
+		expect((await control(app, 'exec', { command: 'sleep 1', timeout_s: 9999 })).status).toBe(400)
+	})
+
+	it('relays a desktop-side failure and records no event for it', async () => {
+		const controlFn = vi.fn(async () => ({
+			status: 502,
+			body: { error: 'desktop_command_failed' },
+		}))
+		const { app, inserts } = build({ control: controlFn })
+
+		const res = await control(app, 'input', { action: 'move', x: 1, y: 1 })
+
+		expect(res.status).toBe(502)
+		expect(inserts).toHaveLength(0)
+	})
+
+	it('404s when no desktop could be started and 502s when the agent-server is unreachable', async () => {
+		const none = build({ control: vi.fn(async () => null) })
+		expect((await control(none.app, 'screenshot')).status).toBe(404)
+
+		const down = build({
+			control: vi.fn(async () => {
+				throw new Error('ECONNREFUSED')
+			}),
+		})
+		expect((await control(down.app, 'screenshot')).status).toBe(502)
+	})
+})

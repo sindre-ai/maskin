@@ -16,7 +16,6 @@ import {
 	assertValidSessionId,
 	defaultRunner,
 	defaultSleep,
-	defaultTcpPollReady,
 	findFreeHostPort,
 	releaseHostPort,
 	waitForRunning,
@@ -40,6 +39,9 @@ const WORKSPACE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 const DESKTOP_MEMORY_MIB = 3072
 const DESKTOP_CPUS = 2
 const DESKTOP_GUEST_PORT = 6080
+// desktopd (docker/desktop-test/desktopd.py): the agent control API.
+const DESKTOP_CONTROL_GUEST_PORT = 6081
+const CONTROL_REQUEST_TIMEOUT_MS = 150_000
 const DESKTOP_CREATE_TIMEOUT_MS = 120_000
 const DESKTOP_REMOVE_TIMEOUT_MS = 30_000
 const DESKTOP_READY_TIMEOUT_MS = 60_000
@@ -48,6 +50,8 @@ export type WorkspaceDesktop = {
 	workspaceId: string
 	name: string
 	hostPort: number
+	// Host side of desktopd's published port.
+	controlPort: number
 	// VNC password, generated per desktop. Handed to apps/dev (never the
 	// browser directly) so other VMs on the msb bridge can't connect without it.
 	password: string
@@ -73,9 +77,10 @@ export type WorkspaceDesktopRegistryDeps = {
 	// re-adopt desktops that are still running. Holds VNC passwords — written 0600.
 	stateFile: string
 	bridgeGateway?: string
+	fetchImpl?: typeof fetch
 }
 
-type PersistedDesktop = { hostPort: number; password: string }
+type PersistedDesktop = { hostPort: number; controlPort?: number; password: string }
 
 export class WorkspaceDesktopRegistry {
 	private readonly desktops = new Map<string, WorkspaceDesktop>()
@@ -149,10 +154,19 @@ export class WorkspaceDesktopRegistry {
 			if (!isValidWorkspaceId(workspaceId)) continue
 			const name = desktopName(workspaceId)
 			if (!present.delete(name)) continue
+			// A desktop from before the control API has no controlPort and an image
+			// without desktopd: viewable but never drivable by an agent. Put it back in
+			// `present` so the sweep below removes it and the next ensure() provisions
+			// a current one.
+			if (typeof entry.controlPort !== 'number') {
+				present.add(name)
+				continue
+			}
 			this.desktops.set(workspaceId, {
 				workspaceId,
 				name,
 				hostPort: entry.hostPort,
+				controlPort: entry.controlPort,
 				password: entry.password,
 			})
 		}
@@ -173,8 +187,10 @@ export class WorkspaceDesktopRegistry {
 		const findPort = msb.findPort ?? findFreeHostPort
 
 		let hostPort: number
+		let controlPort: number
 		try {
 			hostPort = await findPort(this.bridgeGateway)
+			controlPort = await findPort(this.bridgeGateway)
 		} catch (err) {
 			logger.error('workspace desktop: failed to allocate host port', {
 				workspaceId,
@@ -200,6 +216,8 @@ export class WorkspaceDesktopRegistry {
 			// here, and a desktop that can is a lateral-movement path.
 			'-p',
 			`${this.bridgeGateway}:${hostPort}:${DESKTOP_GUEST_PORT}`,
+			'-p',
+			`${this.bridgeGateway}:${controlPort}:${DESKTOP_CONTROL_GUEST_PORT}`,
 			'--net-rule',
 			DENY_HOST_ALIAS_IPV6_RESET_RULE,
 			'--net-rule',
@@ -215,15 +233,16 @@ export class WorkspaceDesktopRegistry {
 
 		// msb create binds hostPort itself, so release our reservation first.
 		releaseHostPort(hostPort)
+		releaseHostPort(controlPort)
 		try {
 			await run(msb.msbBin, createArgs, { timeoutMs: DESKTOP_CREATE_TIMEOUT_MS })
 			await waitForRunning(msb.msbBin, name, { run, sleep, now })
 			this.launchEntrypoint(name)
-			const poll =
-				msb.tcpPollReady ??
-				((host: string, port: number, timeoutMs: number) =>
-					defaultTcpPollReady(host, port, timeoutMs, { sleep, now }))
-			await poll(this.bridgeGateway, hostPort, DESKTOP_READY_TIMEOUT_MS)
+			// Not a TCP poll: msb's port forwarder accepts connections on the host
+			// before anything listens in the guest, so a TCP connect succeeds at
+			// once and a stream opened right after provisioning hangs. desktopd's
+			// /healthz only answers 200 when X and noVNC are really up.
+			await this.waitUntilReady(controlPort, { sleep, now })
 		} catch (err) {
 			const e = err as { stderr?: unknown; message?: string }
 			logger.error('workspace desktop provision failed', {
@@ -235,8 +254,8 @@ export class WorkspaceDesktopRegistry {
 			return null
 		}
 
-		logger.info('workspace desktop started', { workspaceId, name, hostPort })
-		return { workspaceId, name, hostPort, password }
+		logger.info('workspace desktop started', { workspaceId, name, hostPort, controlPort })
+		return { workspaceId, name, hostPort, controlPort, password }
 	}
 
 	// `msb create` boots the VM but does not run ENTRYPOINT — `msb exec` does.
@@ -250,6 +269,52 @@ export class WorkspaceDesktopRegistry {
 			logger.info('workspace desktop exec process exited', { name, code, signal: sig })
 		})
 		proc.unref()
+	}
+
+	private async waitUntilReady(
+		controlPort: number,
+		clock: { sleep: (ms: number) => Promise<void>; now: () => number },
+	): Promise<void> {
+		const doFetch = this.deps.fetchImpl ?? fetch
+		const deadline = clock.now() + DESKTOP_READY_TIMEOUT_MS
+		while (clock.now() < deadline) {
+			try {
+				const res = await doFetch(`http://${this.bridgeGateway}:${controlPort}/healthz`, {
+					signal: AbortSignal.timeout(3_000),
+				})
+				if (res.ok) return
+			} catch {
+				// not listening yet
+			}
+			await clock.sleep(500)
+		}
+		throw new Error(`desktop did not become ready within ${DESKTOP_READY_TIMEOUT_MS}ms`)
+	}
+
+	/**
+	 * Proxies one request to the desktop's desktopd. Returns null if there is no
+	 * such desktop. Authenticates with the desktop's own password, which never
+	 * leaves this process.
+	 */
+	async control(
+		workspaceId: string,
+		path: '/screenshot' | '/input' | '/exec',
+		body: unknown,
+	): Promise<{ status: number; body: unknown } | null> {
+		const desktop = this.get(workspaceId)
+		if (!desktop) return null
+		const doFetch = this.deps.fetchImpl ?? fetch
+		const res = await doFetch(`http://${this.bridgeGateway}:${desktop.controlPort}${path}`, {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${desktop.password}`,
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify(body ?? {}),
+			signal: AbortSignal.timeout(CONTROL_REQUEST_TIMEOUT_MS),
+		})
+		const parsed: unknown = await res.json().catch(() => ({ error: 'bad_gateway' }))
+		return { status: res.status, body: parsed }
 	}
 
 	private async isRunning(name: string): Promise<boolean> {
@@ -292,7 +357,11 @@ export class WorkspaceDesktopRegistry {
 	private async persist(): Promise<void> {
 		const state: Record<string, PersistedDesktop> = {}
 		for (const d of this.desktops.values()) {
-			state[d.workspaceId] = { hostPort: d.hostPort, password: d.password }
+			state[d.workspaceId] = {
+				hostPort: d.hostPort,
+				controlPort: d.controlPort,
+				password: d.password,
+			}
 		}
 		try {
 			await mkdir(dirname(this.deps.stateFile), { recursive: true })

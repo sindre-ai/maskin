@@ -1212,6 +1212,28 @@ export function buildApp(deps: AppDeps): Hono {
 			const existed = await desktops.remove(workspaceId)
 			return c.json({ removed: existed })
 		})
+
+		// Agent control (screenshot / input / exec). The body is forwarded to the
+		// desktop's own desktopd, which re-validates it; apps/dev validates first.
+		for (const action of ['screenshot', 'input', 'exec'] as const) {
+			app.post(`/desktops/:workspaceId/${action}`, async (c) => {
+				const { workspaceId } = c.req.param()
+				if (!isValidWorkspaceId(workspaceId)) return c.json({ error: 'Invalid workspace id' }, 400)
+				const body = await c.req.json().catch(() => ({}))
+				try {
+					const result = await desktops.control(workspaceId, `/${action}`, body)
+					if (!result) return c.json({ error: 'not_found' }, 404)
+					return c.json(result.body as Record<string, unknown>, result.status as 200)
+				} catch (err) {
+					logger.warn('workspace desktop control failed', {
+						workspaceId,
+						action,
+						error: String(err),
+					})
+					return c.json({ error: 'desktop_unreachable' }, 502)
+				}
+			})
+		}
 	}
 
 	app.post('/sessions', async (c) => {

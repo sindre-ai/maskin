@@ -92,6 +92,14 @@ const ALL_TOOL_NAMES = [
 	'create_extension',
 	'update_extension',
 	'delete_extension',
+	'desktop_screenshot',
+	'desktop_click',
+	'desktop_move',
+	'desktop_drag',
+	'desktop_scroll',
+	'desktop_type',
+	'desktop_key',
+	'desktop_run',
 	// No linkedin__* entries: those three tools moved to the provider's own MCP
 	// server (apps/dev/src/lib/integrations/providers/linkedin-unipile/
 	// mcp-server.ts) so they appear only when LinkedIn is connected. Their

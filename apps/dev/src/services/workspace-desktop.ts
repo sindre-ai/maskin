@@ -34,6 +34,8 @@ export interface WorkspaceDesktopServiceDeps {
 const LOOKUP_TIMEOUT_MS = 5_000
 // First-time provisioning pulls an image and boots a microVM.
 const ENSURE_TIMEOUT_MS = 200_000
+// exec may run up to 120s in the VM; leave headroom for the extra hop.
+const CONTROL_TIMEOUT_MS = 150_000
 
 function joinUrl(base: string, path: string): string {
 	return `${base.replace(/\/+$/, '')}${path}`
@@ -100,6 +102,36 @@ export class WorkspaceDesktopService {
 		return typeof body.password === 'string'
 			? { server: target, password: body.password, created: true }
 			: null
+	}
+
+	/**
+	 * Agent control of an existing desktop: forwards `screenshot` / `input` /
+	 * `exec` to the hosting agent-server, which relays it to the VM's desktopd.
+	 * Provisions the desktop first, so an agent's first call just works.
+	 * Returns null when no desktop could be found or started.
+	 */
+	async control(
+		workspaceId: string,
+		action: 'screenshot' | 'input' | 'exec',
+		body: unknown,
+		timeoutMs = CONTROL_TIMEOUT_MS,
+	): Promise<{ status: number; body: unknown } | null> {
+		const located = await this.ensure(workspaceId)
+		if (!located) return null
+		const res = await this.fetchImpl(
+			joinUrl(located.server.url, `/desktops/${workspaceId}/${action}`),
+			{
+				method: 'POST',
+				headers: {
+					Authorization: `Bearer ${located.server.secret}`,
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify(body ?? {}),
+				signal: AbortSignal.timeout(timeoutMs),
+			},
+		)
+		const parsed: unknown = await res.json().catch(() => ({ error: 'bad_gateway' }))
+		return { status: res.status, body: parsed }
 	}
 
 	/** Removes the desktop wherever it lives. Returns whether one existed. */
