@@ -23,8 +23,6 @@ const VALID_ENV = {
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
 	STRIPE_PRICE_CREDITS_CUSTOM: 'price_credits_custom_test',
-	MASKIN_PRO_HARD_CAP_USD_CENTS: '4900',
-	MASKIN_TEAM_HARD_CAP_USD_CENTS: '20000',
 }
 
 beforeEach(() => {
@@ -54,16 +52,16 @@ describe('readStripeEnv', () => {
 		expect(() => readStripeEnv(missing)).toThrow(/STRIPE_PRICE_CREDITS_CUSTOM/)
 	})
 
-	it('throws when a cap is non-numeric', () => {
-		expect(() => readStripeEnv({ ...VALID_ENV, MASKIN_PRO_HARD_CAP_USD_CENTS: 'abc' })).toThrow(
-			/positive integer string/,
-		)
-	})
-
-	it('throws when a cap is zero or negative', () => {
-		expect(() => readStripeEnv({ ...VALID_ENV, MASKIN_TEAM_HARD_CAP_USD_CENTS: '0' })).toThrow(
-			/positive integer string/,
-		)
+	it('ignores stale or malformed Pro/Team cap env values', () => {
+		// Prod's Pro env was stuck at 2000 while the code default is 4900.
+		const env = readStripeEnv({
+			...VALID_ENV,
+			MASKIN_PRO_HARD_CAP_USD_CENTS: '2000',
+			MASKIN_TEAM_HARD_CAP_USD_CENTS: 'abc',
+		})
+		expect(env.proHardCapUsdCents).toBe(4_900)
+		expect(env.teamHardCapUsdCents).toBe(20_000)
+		expect(hardCapForPlan('pro', env)).toBe(4_900)
 	})
 })
 

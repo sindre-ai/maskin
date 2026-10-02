@@ -26,10 +26,11 @@ import { createTestApp } from '../setup'
 // one fixture satisfy both reads - the routes are owner/admin-gated now.
 const OWNER_CALLER = { role: 'owner', type: 'human' } as const
 
-// Sentinel cap values (USD cents) that are intentionally NOT the literal
-// defaults (4_900 / 20_000), AND chosen arithmetically far from them so that
-// a swapped or off-by-one test value couldn't accidentally satisfy a literal-
-// default assertion. Pi / Euler digits keep them memorable.
+// Stale Pro/Team cap env values (USD cents). Pro and Team caps no longer come
+// from env, so these must have no effect: every assertion below expects the
+// literal defaults (4_900 / 20_000). Chosen arithmetically far from the
+// defaults so a leaked env read can't accidentally satisfy a literal-default
+// assertion. Pi / Euler digits keep them memorable.
 const PRO_ENV_SENTINEL = '31415926'
 const TEAM_ENV_SENTINEL = '27182818'
 
@@ -546,8 +547,8 @@ describe('GET /api/billing/usage', () => {
 		expect(res.status).toBe(404)
 	})
 
-	it('falls back to env-driven cap when a Pro workspace has no hard_cap_usd_cents', async () => {
-		process.env.MASKIN_PRO_HARD_CAP_USD_CENTS = '4000'
+	it('ignores the Pro cap env when a Pro workspace has no hard_cap_usd_cents', async () => {
+		process.env.MASKIN_PRO_HARD_CAP_USD_CENTS = '2000'
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.selectQueue = [
@@ -563,10 +564,10 @@ describe('GET /api/billing/usage', () => {
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
 		const body = await res.json()
-		expect(body).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 4_000 })
+		expect(body).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 4_900 })
 	})
 
-	it('falls back to env-driven cap when a Team workspace has no hard_cap_usd_cents', async () => {
+	it('ignores the Team cap env when a Team workspace has no hard_cap_usd_cents', async () => {
 		process.env.MASKIN_TEAM_HARD_CAP_USD_CENTS = '40000'
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
@@ -583,22 +584,19 @@ describe('GET /api/billing/usage', () => {
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
 		const body = await res.json()
-		expect(body).toMatchObject({ plan: 'team', hard_cap_usd_cents: 40_000 })
+		expect(body).toMatchObject({ plan: 'team', hard_cap_usd_cents: 20_000 })
 	})
 
 	it('falls back to plan default when stored hard_cap_usd_cents is zero or negative', async () => {
 		// Regression: the `billing?.hard_cap_usd_cents && billing.hard_cap_usd_cents > 0`
 		// guard's false branch was untested. A 0 (or negative) value stored on the
-		// workspace must NOT be treated as "an explicit cap" — the env/literal
+		// workspace must NOT be treated as "an explicit cap" — the literal
 		// fallback should kick in just like when the field is missing. Also pin
 		// `hard_cap_usd_cents: 1` as the boundary value of the `> 0` guard: a
 		// positive integer is honored verbatim, even at the smallest possible
 		// value, so callers can't accidentally tip into the fallback by saving 1.
-		// And with env unset, the Pro response must equal the literal $49.00
-		// default — the env-driven test above only proves the false branch hits
-		// the sentinel, not the literal that fires in prod when the env is
-		// missing.
-		for (const k of ['MASKIN_PRO_HARD_CAP_USD_CENTS']) delete process.env[k]
+		// The Pro/Team env sentinels stay set (setupEnv) and must be ignored:
+		// the response is the literal $49.00 / $200.00 default.
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const zeroWs = randomUUID()
 		const negWs = randomUUID()
@@ -629,9 +627,8 @@ describe('GET /api/billing/usage', () => {
 
 		const zeroRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': zeroWs }))
 		expect(zeroRes.status).toBe(200)
-		// Env is unset, so the fallback path resolves to the literal $49.00
-		// default — the actual prod failure mode (no env, stored 0). Proves the
-		// route took the `> 0` false branch all the way to the literal.
+		// Proves the route took the `> 0` false branch all the way to the literal,
+		// not to the stale env sentinel.
 		expect(await zeroRes.json()).toMatchObject({
 			plan: 'pro',
 			hard_cap_usd_cents: 4_900,
@@ -639,10 +636,10 @@ describe('GET /api/billing/usage', () => {
 
 		const negRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': negWs }))
 		expect(negRes.status).toBe(200)
-		// Team env is still set to the sentinel by setupEnv — fallback hits env.
+		// Team env is still set to the sentinel by setupEnv — and ignored.
 		expect(await negRes.json()).toMatchObject({
 			plan: 'team',
-			hard_cap_usd_cents: Number(TEAM_ENV_SENTINEL),
+			hard_cap_usd_cents: 20_000,
 		})
 
 		const oneRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': oneWs }))
@@ -653,7 +650,7 @@ describe('GET /api/billing/usage', () => {
 		})
 	})
 
-	it('falls back to literal Pro/Team defaults when env caps are unset', async () => {
+	it('returns the literal Pro/Team defaults when the cap envs are unset', async () => {
 		for (const k of ['MASKIN_PRO_HARD_CAP_USD_CENTS', 'MASKIN_TEAM_HARD_CAP_USD_CENTS']) {
 			delete process.env[k]
 		}
@@ -674,20 +671,6 @@ describe('GET /api/billing/usage', () => {
 		const teamRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': teamWs }))
 		expect(teamRes.status).toBe(200)
 		expect(await teamRes.json()).toMatchObject({ plan: 'team', hard_cap_usd_cents: 20_000 })
-	})
-
-	it('falls back to literal default when the env cap is malformed', async () => {
-		process.env.MASKIN_TEAM_HARD_CAP_USD_CENTS = 'not-a-number'
-		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
-		const workspaceId = randomUUID()
-		mockResults.selectQueue = [
-			[{ id: workspaceId, settings: { billing: { plan: 'team', status: 'active' } } }],
-			[],
-		]
-
-		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
-		expect(res.status).toBe(200)
-		expect(await res.json()).toMatchObject({ plan: 'team', hard_cap_usd_cents: 20_000 })
 	})
 
 	it('still honours an explicit billing.hard_cap_usd_cents when set', async () => {
