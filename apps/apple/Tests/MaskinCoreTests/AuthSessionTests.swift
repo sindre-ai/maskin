@@ -218,6 +218,111 @@ struct AuthSessionTests {
 	}
 }
 
+@MainActor
+@Suite("AuthSession key rotation")
+struct AuthSessionRotationTests {
+	@Test("adopting a rotated key keeps the actor and workspace and persists it")
+	func adopt() async throws {
+		let store = InMemorySecretStore()
+		let auth = AuthSession(authenticator: FakeAuthenticator(result: .success(alice)), store: store)
+		await auth.signIn(email: "a", password: "b")
+
+		try auth.adoptRotatedKey("ank_new")
+
+		#expect(auth.credentials == MaskinCredentials(apiKey: "ank_new", workspaceId: "ws-1"))
+		#expect(auth.session?.actorId == "actor-1")
+		let relaunched = AuthSession(
+			authenticator: FakeAuthenticator(result: .failure(.invalidCredentials)), store: store)
+		relaunched.restore()
+		#expect(relaunched.session?.apiKey == "ank_new")
+	}
+
+	@Test("a late 401 for the OLD key must not sign out the new session")
+	func staleRejectionIgnored() async throws {
+		let auth = AuthSession(
+			authenticator: FakeAuthenticator(result: .success(alice)), store: InMemorySecretStore())
+		await auth.signIn(email: "a", password: "b")
+		try auth.adoptRotatedKey("ank_new")
+
+		auth.sessionRejected(apiKey: "ank_secret")  // the pre-rotation key
+
+		#expect(auth.session?.apiKey == "ank_new")
+		#expect(auth.sessionExpired == false)
+		auth.sessionRejected(apiKey: "ank_new")  // but the live key being refused does end it
+		#expect(auth.state == .signedOut)
+		#expect(auth.sessionExpired)
+	}
+
+	@Test("adopting while signed out, or an empty key, throws and changes nothing")
+	func guards() async throws {
+		let auth = AuthSession(
+			authenticator: FakeAuthenticator(result: .success(alice)), store: InMemorySecretStore())
+		#expect(throws: AuthSessionError.notSignedIn) { try auth.adoptRotatedKey("ank_x") }
+		await auth.signIn(email: "a", password: "b")
+		#expect(throws: AuthSessionError.emptyKey) { try auth.adoptRotatedKey("") }
+		#expect(auth.session?.apiKey == "ank_secret")
+	}
+}
+
+@MainActor
+@Suite("AuthSession rotation guard and rename")
+struct AuthSessionRotationGuardTests {
+	@Test("a 401 for the live key is ignored while a rotation is in progress")
+	func rejectionIgnoredDuringRotation() async throws {
+		let auth = AuthSession(
+			authenticator: FakeAuthenticator(result: .success(alice)), store: InMemorySecretStore())
+		await auth.signIn(email: "a", password: "b")
+
+		auth.beginKeyRotation()
+		auth.sessionRejected(apiKey: "ank_secret")  // in-flight request with the about-to-die key
+
+		#expect(auth.session != nil)
+		#expect(auth.sessionExpired == false)
+		try auth.adoptRotatedKey("ank_new")
+		#expect(auth.isRotatingKey == false)
+	}
+
+	@Test("cancelling a failed rotation makes 401s count again")
+	func cancelRestoresRejection() async {
+		let auth = AuthSession(
+			authenticator: FakeAuthenticator(result: .success(alice)), store: InMemorySecretStore())
+		await auth.signIn(email: "a", password: "b")
+		auth.beginKeyRotation()
+		auth.cancelKeyRotation()
+
+		auth.sessionRejected(apiKey: "ank_secret")
+
+		#expect(auth.state == .signedOut)
+	}
+
+	@Test("signing out clears a rotation left half-done")
+	func signOutClearsFlag() async {
+		let auth = AuthSession(
+			authenticator: FakeAuthenticator(result: .success(alice)), store: InMemorySecretStore())
+		await auth.signIn(email: "a", password: "b")
+		auth.beginKeyRotation()
+		auth.signOut()
+		#expect(auth.isRotatingKey == false)
+	}
+
+	@Test("a renamed profile reaches the session and survives a relaunch")
+	func updateName() async {
+		let store = InMemorySecretStore()
+		let auth = AuthSession(authenticator: FakeAuthenticator(result: .success(alice)), store: store)
+		await auth.signIn(email: "a", password: "b")
+
+		auth.updateName("Alice B.")
+
+		#expect(auth.session?.name == "Alice B.")
+		let relaunched = AuthSession(
+			authenticator: FakeAuthenticator(result: .failure(.invalidCredentials)), store: store)
+		relaunched.restore()
+		#expect(relaunched.session?.name == "Alice B.")
+		auth.updateName("")  // an empty name is ignored
+		#expect(auth.session?.name == "Alice B.")
+	}
+}
+
 @Suite("KeychainSecretStore")
 struct KeychainSecretStoreTests {
 	@Test("round-trips, overwrites and deletes a value")

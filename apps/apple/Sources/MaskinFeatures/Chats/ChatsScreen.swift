@@ -64,7 +64,7 @@ private struct ChatsContainer: View {
 		_store = State(
 			initialValue: ConversationsStore(
 				api: APIChatsSource(client: environment.client, workspaceID: workspaceID),
-				events: environment.events))
+				events: environment.events, cache: environment.snapshotCache))
 	}
 
 	var body: some View {
@@ -76,6 +76,7 @@ private struct ChatsContainer: View {
 				onNewChat: { showNewChat = true }
 			)
 			.shellToolbar(environment: environment)
+			.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
 		} detail: {
 			if let selection {
 				ChatThreadHost(environment: environment, conversations: store, conversationID: selection)
@@ -104,25 +105,31 @@ private struct ChatThreadHost: View {
 	let environment: AppEnvironment
 	let conversations: ConversationsStore
 	@State private var chat: ChatStore
+	@State private var composer: ChatComposerModel
 	@State private var showParticipants = false
 
 	init(environment: AppEnvironment, conversations: ConversationsStore, conversationID: String) {
 		self.environment = environment
 		self.conversations = conversations
 		let session = environment.auth.session
+		let source = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
 		let chat = ChatStore(
 			conversationID: conversationID, currentActorID: session?.actorId ?? "",
-			currentActorName: session?.name ?? "You",
-			api: APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? ""),
-			events: environment.events)
+			currentActorName: session?.name ?? "You", api: source,
+			queue: ChatsRuntime.shared(environment: environment).queue, events: environment.events,
+			cache: environment.snapshotCache)
 		chat.onMarkedRead = { [conversations] id, _ in
 			Task { await conversations.markRead(id, serverAlreadyKnows: true) }
 		}
 		_chat = State(initialValue: chat)
+		let composer = ChatComposerModel(uploader: source, selfActorID: session?.actorId ?? "")
+		composer.text = ChatDraftStore.text(for: conversationID)
+		_composer = State(initialValue: composer)
 	}
 
 	var body: some View {
-		ChatThreadView(store: chat, onShowParticipants: { showParticipants = true })
+		ChatThreadView(store: chat, composer: composer, conversations: conversations, onShowParticipants: { showParticipants = true })
+			.onDisappear { ChatDraftStore.set(composer.text, for: chat.conversationID) }
 			.sheet(isPresented: $showParticipants) {
 				ParticipantsSheet(chat: chat, conversations: conversations)
 					.presentationDetents([.medium, .large])

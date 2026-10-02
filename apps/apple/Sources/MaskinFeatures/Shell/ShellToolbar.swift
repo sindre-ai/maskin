@@ -21,6 +21,13 @@ private struct ShellToolbarModifier: ViewModifier {
 		content
 			.toolbar {
 				ToolbarItemGroup(placement: .primaryAction) {
+					if let runtime, !ShellTab.searchIsTab {
+						Button {
+							runtime.showSearch = true
+						} label: {
+							Label("Search", systemImage: "magnifyingglass")
+						}
+					}
 					NotificationsBell(unread: runtime?.notifications.unreadCount ?? 0) {
 						if let runtime { runtime.showNotifications = true } else { showNotifications = true }
 					}
@@ -55,6 +62,7 @@ struct ProfileMenu: View {
 	let environment: AppEnvironment
 	var runtime: AppRuntime?
 	let switchWorkspace: () -> Void
+	@State private var confirmSignOut = false
 
 	var body: some View {
 		let session = environment.auth.session
@@ -70,17 +78,32 @@ struct ProfileMenu: View {
 					environment.workspaces.selected?.name ?? "Choose workspace",
 					systemImage: "arrow.left.arrow.right")
 			}
-			Button(role: .destructive) {
-				if let runtime {
-					Task { await runtime.signOut() }
-				} else {
-					environment.signOut()
+			if let runtime {
+				Button {
+					runtime.showSettings = true
+				} label: {
+					Label("Settings", systemImage: "gearshape")
 				}
+			}
+			Button(role: .destructive) {
+				confirmSignOut = true
 			} label: {
 				Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
 			}
 		} label: {
 			Label("Account", systemImage: "person.crop.circle")
+		}
+		// Signing out discards writes still waiting to send, so ask first (Settings does too).
+		.confirmationDialog("Sign out of Maskin?", isPresented: $confirmSignOut, titleVisibility: .visible) {
+			Button("Sign out", role: .destructive) {
+				if let runtime {
+					Task { await runtime.signOut() }
+				} else {
+					environment.signOut()
+				}
+			}
+		} message: {
+			Text("Anything still waiting to send will be discarded.")
 		}
 	}
 }

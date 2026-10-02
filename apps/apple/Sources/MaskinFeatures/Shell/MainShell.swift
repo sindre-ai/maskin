@@ -5,7 +5,7 @@ import SwiftUI
 /// declaration (`.sidebarAdaptable`).
 ///
 /// CONTRACT FOR SCREENS. Each tab hosts a screen taking `AppEnvironment`:
-/// `ForYouScreen`, `ChatsScreen`, `ObjectsScreen`. A screen OWNS its `NavigationStack` (or split
+/// `ForYouScreen`, `ChatsScreen`, `ObjectsScreen`, `LoopsScreen`, `AgentsScreen`, `SearchScreen`. A screen OWNS its `NavigationStack` (or split
 /// view) and applies `.shellToolbar(environment:)` to its root content so the profile menu
 /// (workspace switcher, sign out) and the notifications bell appear on every tab.
 public struct MainShell: View {
@@ -23,7 +23,7 @@ public struct MainShell: View {
 				AdaptiveTabs(environment: environment, runtime: runtime)
 			} else {
 				TabView(selection: $runtime.selectedTab) {
-					ForEach(ShellTab.allCases) { tab in
+					ForEach(ShellTab.visible) { tab in
 						ShellTabContent(tab: tab, environment: environment, runtime: runtime)
 							.tabItem { Label(tab.title, systemImage: tab.systemImage) }
 							.tag(tab)
@@ -33,12 +33,10 @@ public struct MainShell: View {
 		}
 		.environment(runtime)
 		.environment(runtime.router)
-		.sheet(isPresented: $runtime.showNotifications) {
-			NotificationsScreen(environment: environment, store: runtime.notifications)
-				.environment(runtime.router)
-		}
-		.sheet(item: $runtime.presentedObject) { object in
-			ObjectSheet(environment: environment, runtime: runtime, objectId: object.id)
+		.syncOfflineBanner(isOnline: runtime.isOnline)
+		.sheet(item: $runtime.presentation) { presentation in
+			PresentationContent(
+				presentation: presentation, environment: environment, runtime: runtime)
 		}
 		.alert(
 			"Can't open link", isPresented: rejectionBinding,
@@ -60,14 +58,47 @@ private struct AdaptiveTabs: View {
 
 	var body: some View {
 		TabView(selection: $runtime.selectedTab) {
-			ForEach(ShellTab.allCases) { tab in
+			ForEach(ShellTab.allCases.filter { $0 != .search }) { tab in
 				Tab(tab.title, systemImage: tab.systemImage, value: tab) {
 					ShellTabContent(tab: tab, environment: environment, runtime: runtime)
+				}
+			}
+			// The system search role: a detached search button on iOS 26 (and a sidebar entry on the
+			// Mac). Below iOS 26 search is a toolbar button instead — see `ShellTab.searchIsTab`.
+			if ShellTab.searchIsTab {
+				Tab(value: ShellTab.search, role: .search) {
+					ShellTabContent(tab: .search, environment: environment, runtime: runtime)
 				}
 			}
 		}
 		.tabViewStyle(.sidebarAdaptable)
 		.minimizeTabBarOnScroll()
+	}
+}
+
+/// The content of the shell's single sheet.
+private struct PresentationContent: View {
+	let presentation: AppRuntime.Presentation
+	let environment: AppEnvironment
+	@Bindable var runtime: AppRuntime
+
+	var body: some View {
+		switch presentation {
+		case .object(let id):
+			ObjectSheet(environment: environment, runtime: runtime, objectId: id)
+		case .agent(let id):
+			DetailSheet { AgentDetailScreen(environment: environment, agentId: id) }
+		case .file(let id):
+			DetailSheet { FileScreen(environment: environment, fileId: id) }
+		case .search:
+			DetailSheet { SearchScreen(environment: environment) { runtime.openSearchResult($0) } }
+		case .settings:
+			SettingsScreen(environment: environment)
+				.environment(runtime)
+		case .notifications:
+			NotificationsScreen(environment: environment, store: runtime.notifications)
+				.environment(runtime.router)
+		}
 	}
 }
 
@@ -84,6 +115,10 @@ private struct ShellTabContent: View {
 			ChatsScreen(
 				environment: environment, requestedConversationId: $runtime.requestedConversationId)
 		case .objects: ObjectsScreen(environment: environment)
+		case .loops: LoopsScreen(environment: environment)
+		case .agents: AgentsScreen(environment: environment)
+		case .search:
+			SearchScreen(environment: environment) { runtime.openSearchResult($0) }
 		}
 	}
 }

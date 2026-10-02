@@ -46,3 +46,35 @@ filter:
     - /api/installed-loops
     - /api/devices
     - /api/devices/{id_or_token}
+    - /api/loops/{id}/activity
+    - /api/loops/{id}/steps
+    - /api/installed-loops/{id}
+    - /api/installed-loops/{id}/fork
+    - /api/triggers
+    - /api/triggers/{id}
+    - /api/actors/{id}/pause
+    - /api/actors/{id}/reset
+    - /api/actors/{id}/run
+    - /api/actors/{id}/api-keys
+    - /api/actors/{actorId}/skills
+    - /api/actors/{actorId}/skills/{skillName}
+    - /api/sessions
+    - /api/sessions/{id}/stop
+    - /api/sessions/{id}/pause
+    - /api/sessions/{id}/resume
+    - /api/sessions/{id}/logs
+    - /api/workspaces/{id}
+    - /api/workspaces/{id}/members/{actorId}
+    - /api/workspaces/{workspaceId}/skills
+    - /api/workspaces/{workspaceId}/skills/{name}
+    - /api/integrations
+    - /api/integrations/providers
+    - /api/integrations/{id}
+    - /api/integrations/{provider}/connect
+    - /api/integrations/{id}/complete
+    - /api/marketplace/loops
+    - /api/marketplace/loops/{id}
+    - /api/marketplace/items/installed
+    - /api/marketplace/items/{id}/install
+    - /api/marketplace/items/{id}/uninstall
+    - /api/conversations/{id}/participants/{actorId}

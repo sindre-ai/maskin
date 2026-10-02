@@ -4,16 +4,19 @@ import MaskinUI
 import SwiftUI
 
 /// The thread for one conversation: history, live messages, a composer pinned above the keyboard.
-/// Takes a ready `ChatStore` so it previews and snapshots without a server.
+/// Takes a ready `ChatStore` and `ChatComposerModel` so it previews and snapshots without a server.
 struct ChatThreadView: View {
 	let store: ChatStore
+	let composer: ChatComposerModel
+	var conversations: ConversationsStore?
 	var onShowParticipants: () -> Void = {}
 
 	@Environment(\.scenePhase) private var scenePhase
-	@State private var draft = ""
-	@State private var isDictating = false
 	@State private var isAtBottom = true
 	@State private var hasUnseen = false
+	@State private var stopTarget: ChatAgentSession?
+	@State private var renaming = false
+	@State private var newTitle = ""
 
 	private static let bottomID = "thread-bottom"
 	private static let maxReadableWidth: CGFloat = 760
@@ -21,24 +24,47 @@ struct ChatThreadView: View {
 	var body: some View {
 		content
 			.background(MaskinSurface.grouped)
-			.safeAreaInset(edge: .bottom, spacing: 0) { composer }
+			.safeAreaInset(edge: .bottom, spacing: 0) { composerBar }
 			.navigationTitle(store.title)
 			#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
 			#endif
 			.toolbar {
 				ToolbarItem(placement: .automatic) {
-					Button(action: onShowParticipants) {
-						Label("People", systemImage: "person.2")
+					Menu {
+						Button(action: onShowParticipants) { Label("People", systemImage: "person.2") }
+						if let conversations, let row = conversations.conversation(id: store.conversationID) {
+							Button {
+								Task { await conversations.setPinned(row.id, !row.pinned) }
+							} label: {
+								Label(row.pinned ? "Unpin" : "Pin", systemImage: row.pinned ? "pin.slash" : "pin")
+							}
+							Button {
+								Task { await conversations.setArchived(row.id, !row.archived) }
+							} label: {
+								Label(row.archived ? "Unarchive" : "Archive", systemImage: "archivebox")
+							}
+						}
+						Button {
+							newTitle = store.title
+							renaming = true
+						} label: {
+							Label("Rename", systemImage: "pencil")
+						}
+					} label: {
+						Label("Conversation", systemImage: "ellipsis.circle")
 					}
-					.accessibilityHint("Shows who is in this conversation")
+					.accessibilityHint("People, pin, archive and rename")
 				}
 			}
 			.task {
 				store.isActive = scenePhase == .active
 				await store.start()
 			}
-			.onDisappear { store.stop() }
+			.onDisappear {
+				store.isActive = false
+				store.stop()
+			}
 			.onChange(of: scenePhase) { _, phase in store.isActive = phase == .active }
 			.alert(
 				"Something went wrong",
@@ -47,6 +73,19 @@ struct ChatThreadView: View {
 				Button("OK", role: .cancel) {}
 			} message: {
 				Text(store.notice ?? "")
+			}
+			.alert("Rename conversation", isPresented: $renaming) {
+				TextField("Title", text: $newTitle)
+				Button("Cancel", role: .cancel) {}
+				Button("Save") { Task { await store.rename(to: newTitle) } }
+			}
+			.confirmationDialog(
+				"Stop this agent?", isPresented: Binding(get: { stopTarget != nil }, set: { if !$0 { stopTarget = nil } }),
+				titleVisibility: .visible, presenting: stopTarget
+			) { session in
+				Button("Stop", role: .destructive) { Task { await store.stopSession(session.id) } }
+			} message: { _ in
+				Text("It will stop what it's doing. You can ask it to continue afterwards.")
 			}
 	}
 
@@ -79,7 +118,7 @@ struct ChatThreadView: View {
 							.frame(maxWidth: .infinity)
 							.onAppear { loadEarlier(proxy) }
 					}
-					ThreadTranscript(store: store)
+					ThreadTranscript(store: store, onStop: { stopTarget = $0 })
 					Color.clear.frame(height: 1).id(Self.bottomID)
 						.onAppear {
 							isAtBottom = true
@@ -95,6 +134,7 @@ struct ChatThreadView: View {
 				.frame(maxWidth: .infinity)
 			}
 			.defaultScrollAnchor(.bottom)
+			.refreshable { await store.refresh() }
 			.scrollDismissesKeyboard(.interactively)
 			.onChange(of: store.messages.last?.id) { _, _ in
 				// Follow new messages only while the reader is at the bottom (or just sent one);
@@ -126,10 +166,15 @@ struct ChatThreadView: View {
 		}
 	}
 
-	private var composer: some View {
-		GlassComposer(
-			text: $draft, isDictating: $isDictating, placeholder: "Message \(store.title)",
-			onSend: send
+	private var composerBar: some View {
+		ChatComposer(
+			model: composer, placeholder: "Message \(store.title)",
+			suggestions: { query in
+				MentionTrigger.candidates(
+					query: query, participants: store.participants, workspace: store.workspaceActors,
+					selfID: store.currentActorID, excluding: Set(composer.mentions.map(\.id)))
+			},
+			inConversation: Set(store.participants.map(\.id)), onSend: send
 		)
 		.frame(maxWidth: Self.maxReadableWidth)
 		.padding(.horizontal, MaskinSpace.s7)
@@ -138,8 +183,11 @@ struct ChatThreadView: View {
 	}
 
 	private func send() {
-		guard store.send(draft) != nil else { return }
-		draft = ""
+		guard let (text, metadata) = composer.take() else { return }
+		if store.send(text, metadata: metadata) == nil {
+			// Nothing was queued: give the words back rather than lose them.
+			composer.text = text
+		}
 	}
 
 	private func scrollToBottom(_ proxy: ScrollViewProxy) {
@@ -157,13 +205,14 @@ struct ChatThreadView: View {
 	}
 }
 
-/// The messages, day separators and "working" row, without scrolling. Split out so it renders
+/// The messages, day separators and "working" rows, without scrolling. Split out so it renders
 /// in snapshot tests (`ImageRenderer` doesn't draw scroll views). `lazy: false` swaps the lazy
 /// stack for a plain one there.
 struct ThreadTranscript: View {
 	let store: ChatStore
 	var lazy = true
 	var now = Date()
+	var onStop: (ChatAgentSession) -> Void = { _ in }
 
 	var body: some View {
 		if lazy {
@@ -175,19 +224,41 @@ struct ThreadTranscript: View {
 
 	@ViewBuilder
 	private var rows: some View {
+		let answers = store.questionAnswerIndex
 		ForEach(ThreadLayout.items(for: store.messages)) { item in
-			row(item)
+			row(item, answers: answers)
 		}
 		TimelineView(.periodic(from: now, by: 15)) { context in
-			let agents = store.workingAgents(at: context.date)
-			if !agents.isEmpty {
-				WorkingIndicator(agents: agents).transition(.opacity)
+			activity(at: context.date)
+		}
+	}
+
+	@ViewBuilder
+	private func activity(at date: Date) -> some View {
+		let live = store.liveSessions(at: date)
+		if live.isEmpty {
+			ForEach(store.workingAgents(at: date)) { agent in
+				WorkingIndicator(agent: agent).transition(.opacity)
+			}
+			if let stalled = store.stalledSession() {
+				ResumeBanner(agent: store.participant(for: stalled.actorID)) {
+					Task { await store.resumeSession(stalled.id) }
+				}
+			}
+		} else {
+			ForEach(live) { session in
+				WorkingIndicator(
+					agent: store.participant(for: session.actorID), activity: session.currentActivity,
+					// A run that has not started its container yet can't be stopped (the server 400s).
+					onStop: session.status == .running ? { onStop(session) } : nil
+				)
+				.transition(.opacity)
 			}
 		}
 	}
 
 	@ViewBuilder
-	private func row(_ item: ThreadItem) -> some View {
+	private func row(_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]]) -> some View {
 		switch item {
 		case .daySeparator(let day):
 			ThreadDivider(label: ThreadLayout.dayLabel(day, now: now))
@@ -196,9 +267,12 @@ struct ThreadTranscript: View {
 		case .message(let message, let showsAuthor):
 			MessageRow(
 				message: message, isOwn: message.actorID == store.currentActorID, showsAuthor: showsAuthor,
+				mentionNames: message.mentionIDs.compactMap { store.displayName(for: $0) },
+				questionAnswers: message.serverID.flatMap { answers[$0] },
 				onRetrySend: { store.retrySend(message.id) },
 				onDiscard: { store.discard(message.id) },
-				onRetryAgent: { Task { await store.retryAgent(for: message) } }
+				onRetryAgent: { Task { await store.retryAgent(for: message) } },
+				onAnswer: { picks in _ = store.answer(question: message, picks: picks) }
 			)
 			.padding(.top, showsAuthor ? MaskinSpace.s4 : 0)
 		}

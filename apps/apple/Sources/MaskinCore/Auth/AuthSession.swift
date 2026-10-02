@@ -81,6 +81,11 @@ public struct LoginResult: Sendable, Equatable {
 	}
 }
 
+public enum AuthSessionError: Error, Sendable, Equatable {
+	case notSignedIn
+	case emptyKey
+}
+
 public enum AuthError: Error, Sendable, Equatable {
 	case invalidCredentials
 	case server(status: Int)
@@ -109,6 +114,11 @@ public final class AuthSession {
 	/// Set when `restore()` could not read the Keychain (as opposed to finding nothing): the
 	/// stored session, if any, was left alone and a later `restore()` can try again.
 	public private(set) var restoreFailed = false
+
+	/// True between starting a key rotation and adopting the new key (or giving up). While the server
+	/// may already have switched keys but this device hasn't yet, an in-flight request still carries
+	/// the dead key and gets 401: that must not end the session.
+	public private(set) var isRotatingKey = false
 
 	@ObservationIgnored private let authenticator: any Authenticating
 	@ObservationIgnored private let store: any SecretStore
@@ -199,14 +209,44 @@ public final class AuthSession {
 	/// if the Keychain delete fails the owed delete is remembered and finished by the next
 	/// `restore()`, so the session can't resurrect at launch.
 	public func signOut() {
+		isRotatingKey = false
 		clearStored()
 		state = .signedOut
+	}
+
+	/// Call right BEFORE asking the server to rotate this actor's key. Until `adoptRotatedKey`
+	/// (or `cancelKeyRotation` if the call failed) a 401 from the old key is ignored.
+	public func beginKeyRotation() { isRotatingKey = true }
+
+	/// The rotation call failed without issuing a new key: 401s count again.
+	public func cancelKeyRotation() { isRotatingKey = false }
+
+	/// Update the display name after a successful profile edit, so every surface that shows
+	/// the signed-in user stops being stale. Persisted with the rest of the session.
+	public func updateName(_ name: String) {
+		guard var s = session, !name.isEmpty, s.name != name else { return }
+		s.name = name
+		try? persist(s)
+		state = .signedIn(s)
+	}
+
+	/// Adopt a key the server just issued for THIS actor (rotating invalidates the old one at once),
+	/// keeping actor, name, email and workspace. Persists before it changes state, so a failed
+	/// write leaves the old session untouched and the caller can say so. Call it before any other
+	/// `await` after the rotate response: until then every request still carries the dead key.
+	public func adoptRotatedKey(_ apiKey: String) throws {
+		guard var s = session else { throw AuthSessionError.notSignedIn }
+		guard !apiKey.isEmpty else { throw AuthSessionError.emptyKey }
+		s.apiKey = apiKey
+		try persist(s)
+		state = .signedIn(s)
+		isRotatingKey = false
 	}
 
 	/// A request made with `apiKey` came back 401. Ends the session, but only if that key is still
 	/// the live one: a late 401 from before a re-login must not sign the new session out.
 	public func sessionRejected(apiKey: String) {
-		guard session?.apiKey == apiKey else { return }
+		guard session?.apiKey == apiKey, !isRotatingKey else { return }
 		clearStored()
 		state = .signedOut
 		sessionExpired = true

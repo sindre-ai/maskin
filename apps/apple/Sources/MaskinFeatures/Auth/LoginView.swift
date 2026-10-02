@@ -45,6 +45,16 @@ public struct LoginView: View {
 						.fieldStyle()
 				}
 
+				if let notice = LoginForm.sessionNotice(
+					sessionExpired: auth.sessionExpired, lastError: auth.lastError,
+					isSigningIn: auth.isSigningIn)
+				{
+					Text(notice)
+						.font(.footnote)
+						.foregroundStyle(MaskinColor.ink4)
+						.onAppear { AccessibilityNotification.Announcement(notice).post() }
+				}
+
 				if let error = auth.lastError {
 					Text(error.message)
 						.font(.footnote)

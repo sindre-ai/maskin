@@ -15,10 +15,17 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 
 	// MARK: - List
 
-	public func list(archived: Bool, limit: Int, offset: Int) async throws -> ConversationPage {
+	public func list(archived: Bool, pinnedOnly: Bool, unreadOnly: Bool, limit: Int, offset: Int)
+		async throws -> ConversationPage
+	{
 		let output = try await client.get_sol_api_sol_conversations(
 			.init(
-				query: .init(archived: archived, limit: limit, offset: offset),
+				// The server parses `?archived=false` with `z.coerce.boolean()`, which reads the string
+				// "false" as true and returns the ARCHIVED list. Omit it for the default (active) list.
+				query: .init(
+					pinned: pinnedOnly ? true : nil, archived: archived ? true : nil,
+					unread_only: unreadOnly ? true : nil, limit: min(limit, ChatLimits.maxConversationsPage),
+					offset: offset),
 				headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
 		switch output {
 		case .ok(let ok):
@@ -151,15 +158,21 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 		}
 	}
 
-	public func send(conversationID: String, content: String, idempotencyKey: String) async throws
-		-> ChatMessage
-	{
+	public func send(
+		conversationID: String, content: String, metadata: ChatSendMetadata?, idempotencyKey: String
+	) async throws -> ChatMessage {
+		let wireMetadata = try metadata.flatMap { value -> Metadata? in
+			guard !value.isEmpty else { return nil }
+			// Round-trip through JSON: ChatSendMetadata already uses the API's exact keys, so the
+			// generated payload type decodes it without a field-by-field copy.
+			return try JSONDecoder().decode(Metadata.self, from: JSONEncoder().encode(value))
+		}
 		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
 			try await client.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages(
 				.init(
 					path: .init(id: conversationID),
 					headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
-					body: .json(.init(content: content))))
+					body: .json(.init(content: content, metadata: wireMetadata))))
 		}
 		switch output {
 		case .created(let created):
@@ -169,10 +182,16 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 				actorName: row.actorName, author: row.actorType == "agent" ? .agent : .human,
 				kind: row.kind, content: row.content, createdAt: ChatDates.parse(row.createdAt),
 				editedAt: ChatDates.parse(row.editedAt), metadata: Self.json(row.metadata))
-		default:
-			throw ChatsError("Couldn't send the message.")
+		case .notFound:
+			throw ChatsHTTPError(status: 404, message: "This conversation no longer exists.")
+		case .undocumented(let status, _):
+			throw ChatsHTTPError(status: status, message: "Couldn't send the message.")
 		}
 	}
+
+	private typealias Metadata = Operations
+		.post_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Input.Body.jsonPayload
+		.metadataPayload
 
 	public func retry(conversationID: String, messageID: Int, agentID: String?) async throws {
 		let output = try await client
@@ -199,8 +218,84 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 		guard case .ok = output else { throw ChatsError("Couldn't add people.") }
 	}
 
+	public func removeParticipant(conversationID: String, actorID: String) async throws {
+		let output = try await client
+			.delete_sol_api_sol_conversations_sol__lcub_id_rcub__sol_participants_sol__lcub_actorId_rcub_(
+				.init(
+					path: .init(id: conversationID, actorId: actorID),
+					headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+		switch output {
+		case .noContent: return
+		case .forbidden: throw ChatsError("You can't remove that person.")
+		default: throw ChatsError("Couldn't remove that person.")
+		}
+	}
+
+	public func rename(conversationID: String, title: String) async throws {
+		let output = try await client.patch_sol_api_sol_conversations_sol__lcub_id_rcub_(
+			.init(
+				path: .init(id: conversationID),
+				headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
+				body: .json(.init(title: title))))
+		guard case .ok = output else { throw ChatsError("Couldn't rename the conversation.") }
+	}
+
+	// MARK: - Sessions
+
+	public func sessions(conversationID: String) async throws -> [ChatAgentSession] {
+		let output = try await client.get_sol_api_sol_sessions(
+			.init(
+				query: .init(conversation_id: conversationID, limit: 50),
+				headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+		guard case .ok(let ok) = output else { throw ChatsError("Couldn't check on the agents.") }
+		return try ok.body.json.map { row in
+			let config = Self.json(row.config)
+			return ChatAgentSession(
+				id: row.id, actorID: row.actorId, status: .init(row.status),
+				currentActivity: row.currentActivity, startedAt: ChatDates.parse(row.startedAt),
+				updatedAt: ChatDates.parse(row.updatedAt),
+				messageID: config?["conversation"]?["message_id"]?.intValue)
+		}
+	}
+
+	public func stopSession(sessionID: String) async throws {
+		let output = try await client.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_stop(
+			.init(
+				path: .init(id: sessionID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+		guard case .ok = output else { throw ChatsError("Couldn't stop the agent.") }
+	}
+
+	public func resumeSession(sessionID: String) async throws {
+		let output = try await client.post_sol_api_sol_sessions_sol__lcub_id_rcub__sol_resume(
+			.init(
+				path: .init(id: sessionID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+		guard case .ok = output else { throw ChatsError("Couldn't resume the agent.") }
+	}
+
 	private static func json(_ container: (any Encodable)?) -> JSONValue? {
 		guard let container, let data = try? JSONEncoder().encode(container) else { return nil }
 		return try? JSONDecoder().decode(JSONValue.self, from: data)
+	}
+}
+
+extension APIChatsSource: ChatFileUploading {
+	public func upload(name: String, mimeType: String, data: Data) async throws -> ChatAttachmentRef {
+		let output = try await client.post_sol_api_sol_files(
+			.init(
+				headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
+				body: .json(
+					.init(
+						name: name, mime_type: mimeType, content: data.base64EncodedString(),
+						encoding: .base64))))
+		switch output {
+		case .created(let created):
+			let row = try created.body.json
+			return ChatAttachmentRef(
+				fileID: row.id, name: row.name, mimeType: row.mimeType, sizeBytes: Int(row.sizeBytes))
+		case .badRequest:
+			throw ChatsError("That file can't be attached.")
+		default:
+			throw ChatsError("Couldn't upload the file.")
+		}
 	}
 }

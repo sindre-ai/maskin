@@ -18,7 +18,10 @@ public struct ObjectsScreen: View {
 		self.environment = environment
 		let services = ObjectsServices(environment: environment)
 		self.services = services
-		_store = State(initialValue: ObjectsStore(remote: services.remote, directory: services.directory))
+		_store = State(
+			initialValue: ObjectsStore(
+				remote: services.remote, directory: services.directory,
+				cache: environment.snapshotCache))
 	}
 
 	public var body: some View {

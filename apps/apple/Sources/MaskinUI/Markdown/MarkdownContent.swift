@@ -3,8 +3,13 @@ import SwiftUI
 
 /// Renders markdown natively. Block structure comes from `MarkdownParser`; inline
 /// styling from `AttributedString(markdown:)`, restyled with design tokens.
+///
+/// The text is untrusted (agents and other people write it), so links are filtered: only
+/// http(s) and mailto survive, and an http(s) link asks for confirmation naming its host first.
 public struct MarkdownContent: View {
 	private let blocks: [MarkdownBlock]
+	@Environment(\.openURL) private var openURL
+	@State private var pending: URL?
 
 	public init(_ markdown: String) {
 		blocks = MarkdownParser.parse(markdown)
@@ -12,6 +17,42 @@ public struct MarkdownContent: View {
 
 	public var body: some View {
 		MarkdownBlocksView(blocks: blocks)
+			.environment(
+				\.openURL,
+				OpenURLAction { url in
+					switch MarkdownLinkPolicy.decision(for: url) {
+					case .open: return .systemAction
+					case .confirm: pending = url; return .handled
+					case .reject: return .discarded
+					}
+				}
+			)
+			.confirmationDialog(
+				"Open this link?", isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }),
+				titleVisibility: .visible, presenting: pending
+			) { url in
+				Button("Open \(MarkdownLinkPolicy.host(of: url) ?? "link")") { openURL(url) }
+			} message: { url in
+				Text(url.absoluteString)
+			}
+	}
+}
+
+/// What may happen when a link in untrusted markdown is tapped.
+enum MarkdownLinkPolicy {
+	enum Decision: Equatable { case open, confirm, reject }
+
+	static func decision(for url: URL) -> Decision {
+		switch url.scheme?.lowercased() {
+		case "mailto": return url.absoluteString.count > "mailto:".count ? .open : .reject
+		case "http", "https": return host(of: url) == nil ? .reject : .confirm
+		default: return .reject
+		}
+	}
+
+	static func host(of url: URL) -> String? {
+		guard let host = url.host(percentEncoded: false), !host.isEmpty else { return nil }
+		return host
 	}
 }
 
@@ -126,7 +167,10 @@ enum MarkdownInline {
 				attr[run.range].font = font
 			}
 			if intent.contains(.strikethrough) { attr[run.range].strikethroughStyle = .single }
-			if run.link != nil {
+			if let link = run.link, MarkdownLinkPolicy.decision(for: link) == .reject {
+				// tel:, sms:, facetime:, maskin:// ...: shown as plain text, never tappable.
+				attr[run.range].link = nil
+			} else if run.link != nil {
 				attr[run.range].foregroundColor = MaskinColor.accentStrong
 				attr[run.range].underlineStyle = .single
 			}

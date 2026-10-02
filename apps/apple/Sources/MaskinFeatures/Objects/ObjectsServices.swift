@@ -26,6 +26,7 @@ struct ObjectsServices {
 	func detailStore(for id: String, preload: WorkObject? = nil) -> ObjectDetailStore {
 		ObjectDetailStore(
 			objectId: id, remote: remote, directory: directory,
-			currentActorId: environment.auth.session?.actorId, preload: preload)
+			currentActorId: environment.auth.session?.actorId, preload: preload,
+			cache: environment.snapshotCache)
 	}
 }

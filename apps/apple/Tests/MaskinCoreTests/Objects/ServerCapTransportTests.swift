@@ -31,6 +31,8 @@ private final class CapTransport: ClientTransport, @unchecked Sendable {
 		}
 		var response = HTTPResponse(status: .ok)
 		response.headerFields[.contentType] = "application/json"
+		// The spec declares `x-total-count` on the actors 200 response (apps/dev sends it).
+		if parts[0].hasSuffix("/actors") { response.headerFields[HTTPField.Name("x-total-count")!] = "0" }
 		return (response, HTTPBody("[]"))
 	}
 }

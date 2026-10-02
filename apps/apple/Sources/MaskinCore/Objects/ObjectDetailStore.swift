@@ -76,6 +76,8 @@ public final class ObjectDetailStore {
 	public private(set) var actionError: String?
 	public private(set) var didDelete = false
 	public private(set) var isDeleting = false
+	/// How current the object on screen is (cache-hydrated until the first fetch succeeds).
+	public private(set) var freshness = Freshness()
 
 	public let directory: ObjectsDirectory
 	/// The signed-in actor, to mark "You" in the timeline.
@@ -89,16 +91,34 @@ public final class ObjectDetailStore {
 	@ObservationIgnored private var refreshing = false
 	@ObservationIgnored private var refreshQueued = false
 	@ObservationIgnored private var editCount = 0
+	@ObservationIgnored private let cache: SnapshotCache?
+
+	/// The object and its links, as last seen. The activity stream is not cached: it is message
+	/// text, which only ever comes fresh from the server.
+	struct Snapshot: Codable, Sendable {
+		var object: WorkObject
+		var links: [ObjectLink]
+	}
+
+	var cacheName: String { "object.\(objectId)" }
 
 	public init(
 		objectId: String, remote: any ObjectsRemote, directory: ObjectsDirectory,
-		currentActorId: String?, preload: WorkObject? = nil
+		currentActorId: String?, preload: WorkObject? = nil, cache: SnapshotCache? = nil
 	) {
 		self.objectId = objectId
 		self.remote = remote
 		self.directory = directory
 		self.currentActorId = currentActorId
 		self.object = preload
+		self.cache = cache
+		if let entry = cache?.read(Snapshot.self, "object.\(objectId)") {
+			// A preload from the list is as fresh as the list; the cached links still help.
+			if preload == nil { object = entry.value.object }
+			links = entry.value.links
+			phase = .loaded
+			freshness.hydrated(from: entry.savedAt)
+		}
 	}
 
 	// MARK: Derived
@@ -145,10 +165,14 @@ public final class ObjectDetailStore {
 				mergeTimeline(graph.events)
 				phase = .loaded
 				isOffline = false
+				freshness.refreshed(at: cache?.now() ?? Date())
+				if let object { cache?.write(Snapshot(object: object, links: links), cacheName) }
 			} catch let error as ObjectsError where error.message == ObjectsRemoteMessages.notFound {
 				phase = .gone
+				cache?.remove(cacheName)
 			} catch {
 				isOffline = (error as? ObjectsError)?.isOffline ?? false
+				freshness.revalidateFailed()
 				if object == nil { phase = .failed(Self.message(error)) }
 			}
 		} while refreshQueued

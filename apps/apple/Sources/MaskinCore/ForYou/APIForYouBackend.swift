@@ -3,7 +3,7 @@ import MaskinAPI
 import OpenAPIRuntime
 
 /// A person or agent, resolved so cards say "from Forge", never a uuid.
-public struct ForYouActor: Sendable, Equatable, Identifiable {
+public struct ForYouActor: Sendable, Equatable, Identifiable, Codable {
 	public var id: String
 	public var name: String
 	public var isAgent: Bool

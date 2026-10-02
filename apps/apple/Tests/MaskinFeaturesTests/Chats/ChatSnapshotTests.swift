@@ -37,7 +37,7 @@ private actor FixtureAPI: ChatAPI {
 	func messages(conversationID: String, beforeID: Int?, afterID: Int?, limit: Int) async throws -> MessagePage {
 		MessagePage(messages: rows, hasMore: false)
 	}
-	func send(conversationID: String, content: String, idempotencyKey: String) async throws -> ChatMessage {
+	func send(conversationID: String, content: String, metadata: ChatSendMetadata?, idempotencyKey: String) async throws -> ChatMessage {
 		try await Task.sleep(for: .seconds(60))
 		throw ChatsError("offline")
 	}
@@ -69,9 +69,14 @@ private func threadStore(streaming: Bool) async -> ChatStore {
 		message(4, me, "Yes please, and flag anything risky.", minutesAgo: 8),
 		message(5, sam, "I'll check legal.", minutesAgo: 7),
 	] + (streaming ? [] : [failed])
+	let api = FixtureAPI(rows)
+	let outbox = Outbox(
+		fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("snap-\(UUID().uuidString).json"),
+		executor: ChatSendExecutor(api: api, onDelivered: { _, _ in }), network: ManualNetworkMonitor(isOnline: false),
+		workspaceId: { "w1" })
 	let store = ChatStore(
-		conversationID: "c1", currentActorID: "me", currentActorName: me.name, api: FixtureAPI(rows),
-		events: nil)
+		conversationID: "c1", currentActorID: "me", currentActorName: me.name, api: api,
+		queue: ChatSendQueue(outbox: outbox), events: nil, pollInterval: nil)
 	await store.load()
 	if streaming {
 		// A message still on its way out, plus agents we are waiting on.

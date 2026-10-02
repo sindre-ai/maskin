@@ -1,0 +1,15 @@
+// Shared build settings for every Maskin target (attached as the project-level xcconfig in
+// project.yml). Values here must NOT also be set in a target's `settings:` in project.yml —
+// target settings outrank xcconfig values.
+
+// iOS entitlements file. Default is the full set (Push + Associated Domains + keychain group).
+// Point it at Apps/Maskin/Maskin-nopush.entitlements (in Local.xcconfig) to install on a device
+// whose team has not enabled Push/Associated Domains on the App ID. See docs/device-install.md.
+MASKIN_IOS_ENTITLEMENTS = Apps/Maskin/Maskin.entitlements
+
+// Where the app opens web-only settings pages. Empty = the API's own origin (production).
+MASKIN_WEB_BASE_URL =
+
+// Optional, gitignored: DEVELOPMENT_TEAM and any overrides. CI has none and builds with
+// CODE_SIGNING_ALLOWED=NO.
+#include? "Local.xcconfig"

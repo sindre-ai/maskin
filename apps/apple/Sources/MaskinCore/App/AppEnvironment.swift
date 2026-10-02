@@ -45,12 +45,14 @@ public final class AppEnvironment {
 			serverURL: baseURL, clientSource: clientSource, credentials: credentials,
 			onUnauthorized: { [weak auth] key in await auth?.sessionRejected(apiKey: key) })
 		let events = EventHub(baseURL: baseURL, clientSource: clientSource, credentials: credentials)
-		events.onUnauthorized = { [weak auth] in
-			if let key = auth?.session?.apiKey { auth?.sessionRejected(apiKey: key) }
+		events.onUnauthorized = { [weak auth] key in
+			// The key the refused stream was opened with — not the current one (see EventHub).
+			if let key { auth?.sessionRejected(apiKey: key) }
 		}
 		self.init(
 			baseURL: baseURL, clientSource: clientSource, auth: auth,
-			workspaces: WorkspaceStore(source: APIWorkspaceSource(client: client), auth: auth),
+			workspaces: WorkspaceStore(
+				source: APIWorkspaceSource(client: client), auth: auth, disk: .shared),
 			client: client, events: events)
 	}
 
@@ -59,7 +61,9 @@ public final class AppEnvironment {
 
 	/// Called by the shell whenever the signed-in user or workspace changes: points the event
 	/// stream at the current workspace, or stops it when signed out.
-	public func syncEvents() { events.connect(workspaceId: workspaceId) }
+	public func syncEvents() {
+		events.connect(workspaceId: workspaceId, credentialKey: auth.session?.apiKey)
+	}
 
 	public func signOut() {
 		auth.signOut()

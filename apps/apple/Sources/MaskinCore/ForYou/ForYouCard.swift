@@ -2,7 +2,7 @@ import Foundation
 
 /// An option an agent attached to its ask. Rendered as a tappable row; `consequences` are the
 /// agent's own lines, one clause each, including the downside.
-public struct DecisionOption: Sendable, Equatable, Identifiable {
+public struct DecisionOption: Sendable, Equatable, Identifiable, Codable {
 	public var label: String
 	public var consequences: [String]
 	public var recommended: Bool
@@ -16,7 +16,7 @@ public struct DecisionOption: Sendable, Equatable, Identifiable {
 }
 
 /// The call an agent cannot make alone (`decision` on the comment that put a card in the feed).
-public struct DecisionPrompt: Sendable, Equatable {
+public struct DecisionPrompt: Sendable, Equatable, Codable {
 	public var title: String
 	/// State of the world and what is already done.
 	public var summary: String
@@ -35,7 +35,7 @@ public struct DecisionPrompt: Sendable, Equatable {
 }
 
 /// The latest comment that @-mentioned the reader: why the card exists.
-public struct ForYouMention: Sendable, Equatable {
+public struct ForYouMention: Sendable, Equatable, Codable {
 	public var eventId: Int
 	public var actorId: String?
 	public var createdAt: Date?
@@ -58,7 +58,7 @@ public struct ForYouMention: Sendable, Equatable {
 
 /// One entry of the For You feed: an object with unread activity that mentions the reader.
 /// Mirrors the web's `UnreadItem` without any generated-client types.
-public struct ForYouCard: Sendable, Equatable, Identifiable {
+public struct ForYouCard: Sendable, Equatable, Identifiable, Codable {
 	/// The object id (what the feed, comments and read marks all key on).
 	public var id: String
 	public var entityType: String

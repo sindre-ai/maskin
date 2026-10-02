@@ -10,14 +10,18 @@ struct ActorPickerList: View {
 	let excluding: Set<String>
 	@Binding var selection: Set<String>
 	let query: String
+	/// Actor ids to float to the top of each section (people you talk to most recently).
+	var recent: [String] = []
 
 	var body: some View {
 		let visible = actors.filter {
 			!excluding.contains($0.id) && !$0.isSystem
 				&& (query.isEmpty || $0.participant.name.localizedCaseInsensitiveContains(query))
 		}
-		let agents = visible.filter { $0.participant.kind == .agent }
-		let people = visible.filter { $0.participant.kind == .human }
+		let rank = Dictionary(recent.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+		let ordered = visible.sorted { (rank[$0.id] ?? .max) < (rank[$1.id] ?? .max) }
+		let agents = ordered.filter { $0.participant.kind == .agent }
+		let people = ordered.filter { $0.participant.kind == .human }
 		if visible.isEmpty {
 			Section { Text(query.isEmpty ? "No one to add." : "No matches.").foregroundStyle(MaskinColor.ink4) }
 		}

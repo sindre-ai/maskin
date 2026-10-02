@@ -26,4 +26,13 @@ struct LoginFormTests {
 		#expect(AuthError.server(status: 503).message.contains("503"))
 		#expect(!AuthError.network("NSURLErrorDomain -1009").message.contains("NSURL"))
 	}
+
+	@Test("the session-ended notice shows only until the user tries again")
+	func sessionNotice() {
+		let shown = LoginForm.sessionNotice(sessionExpired: true, lastError: nil, isSigningIn: false)
+		#expect(shown == LoginForm.sessionEndedMessage)
+		#expect(LoginForm.sessionNotice(sessionExpired: false, lastError: nil, isSigningIn: false) == nil)
+		#expect(LoginForm.sessionNotice(sessionExpired: true, lastError: .invalidCredentials, isSigningIn: false) == nil)
+		#expect(LoginForm.sessionNotice(sessionExpired: true, lastError: nil, isSigningIn: true) == nil)
+	}
 }

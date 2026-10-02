@@ -3,6 +3,12 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
+
 /// A day separator or system divider line.
 struct ThreadDivider: View {
 	let label: String
@@ -22,18 +28,105 @@ struct ThreadDivider: View {
 	}
 }
 
+/// Files a message cites (read-only chips: name and size, never an id).
+struct MessageAttachments: View {
+	let attachments: [ChatAttachmentRef]
+	var alignment: HorizontalAlignment = .leading
+
+	var body: some View {
+		if !attachments.isEmpty {
+			ChipFlow {
+				ForEach(attachments) { file in
+					HStack(spacing: MaskinSpace.s3) {
+						Image(systemName: (file.mimeType ?? "").hasPrefix("image/") ? "photo" : "doc")
+							.foregroundStyle(MaskinColor.ink3).accessibilityHidden(true)
+						Text(file.name ?? "Attachment").maskinText(.caption).foregroundStyle(MaskinColor.ink)
+							.lineLimit(1).truncationMode(.middle)
+						if let size = ChatByteFormat.string(file.sizeBytes) {
+							Text(size).maskinText(.microLabel).foregroundStyle(MaskinColor.ink4)
+						}
+					}
+					.padding(.horizontal, MaskinSpace.s5)
+					.frame(minHeight: MaskinSpace.s12 + MaskinSpace.s4, alignment: .leading)
+					.frame(maxWidth: 260, alignment: .leading)
+					.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
+					.overlay(
+						RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous)
+							.strokeBorder(MaskinSurface.line, lineWidth: 1))
+					.accessibilityElement(children: .combine)
+					.accessibilityLabel("Attachment \(file.name ?? "file")")
+				}
+			}
+		}
+	}
+}
+
+/// "You mentioned Relay" / "Mentioned Relay, Sam".
+struct MentionLine: View {
+	let names: [String]
+	let isOwn: Bool
+
+	var body: some View {
+		if !names.isEmpty {
+			HStack(spacing: MaskinSpace.s2) {
+				Image(systemName: "at").accessibilityHidden(true)
+				Text("\(isOwn ? "You mentioned" : "Mentioned") \(names.joined(separator: ", "))")
+					.lineLimit(2)
+			}
+			.maskinText(.caption)
+			.foregroundStyle(MaskinColor.accentFgStrong)
+			.accessibilityElement(children: .combine)
+		}
+	}
+}
+
 /// One message. Own messages are a right-aligned inverse plate; everyone else's (people and
-/// agents) sit left on the page with an avatar, agents rendered as markdown.
+/// agents) sit left on the page with an avatar, agents rendered as markdown. An agent's question
+/// renders as tappable options under its text.
 struct MessageRow: View {
 	let message: ChatMessage
 	let isOwn: Bool
 	let showsAuthor: Bool
+	var mentionNames: [String] = []
+	/// What the human picked, once this question has been answered.
+	var questionAnswers: [ChatQuestionAnswer.Answer]?
 	let onRetrySend: () -> Void
 	let onDiscard: () -> Void
 	let onRetryAgent: () -> Void
+	var onAnswer: ([Int: [String]]) -> Void = { _ in }
 
 	var body: some View {
-		if isOwn { own } else { other }
+		Group {
+			if isOwn { own } else { other }
+		}
+		.contextMenu { actions }
+		.accessibilityActions {
+			if !message.content.isEmpty {
+				Button("Copy message") { Clipboard.copy(message.content) }
+			}
+			if message.isFailed {
+				Button("Retry sending", action: onRetrySend)
+				Button("Delete message", action: onDiscard)
+			}
+			if message.isErrorReply { Button("Try again", action: onRetryAgent) }
+		}
+	}
+
+	// MARK: Actions
+
+	@ViewBuilder
+	private var actions: some View {
+		if !message.content.isEmpty {
+			Button { Clipboard.copy(message.content) } label: { Label("Copy", systemImage: "doc.on.doc") }
+			ShareLink(item: message.content) { Label("Share", systemImage: "square.and.arrow.up") }
+		}
+		if message.isFailed {
+			Button(action: onRetrySend) { Label("Retry", systemImage: "arrow.clockwise") }
+			Button(role: .destructive, action: onDiscard) { Label("Delete", systemImage: "trash") }
+		}
+		if message.isErrorReply {
+			Button(action: onRetryAgent) { Label("Try again", systemImage: "arrow.clockwise") }
+		}
 	}
 
 	// MARK: Own
@@ -53,8 +146,20 @@ struct MessageRow: View {
 						bottomTrailingRadius: MaskinRadius.tag2, topTrailingRadius: MaskinRadius.hero,
 						style: .continuous)
 				)
-				.opacity(message.status == .sending ? 0.6 : 1)
+				.opacity(message.isPending && !message.isFailed ? 0.6 : 1)
+				.overlay(alignment: .topLeading) {
+					if message.isFailed {
+						UnevenRoundedRectangle(
+							topLeadingRadius: MaskinRadius.hero, bottomLeadingRadius: MaskinRadius.hero,
+							bottomTrailingRadius: MaskinRadius.tag2, topTrailingRadius: MaskinRadius.hero,
+							style: .continuous
+						)
+						.strokeBorder(MaskinColor.danger, lineWidth: 1.5)
+					}
+				}
 				.textSelection(.enabled)
+			MessageAttachments(attachments: message.attachments, alignment: .trailing)
+			MentionLine(names: mentionNames, isOwn: true)
 			statusLine
 		}
 		.frame(maxWidth: .infinity, alignment: .trailing)
@@ -70,15 +175,30 @@ struct MessageRow: View {
 			EmptyView()
 		case .sending:
 			Text("Sending…").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+		case .waiting(let reason):
+			HStack(spacing: MaskinSpace.s2) {
+				Image(systemName: "clock").accessibilityHidden(true)
+				Text("Queued · \(reason)")
+			}
+			.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 		case .failed(let reason):
-			HStack(spacing: MaskinSpace.s4) {
-				Image(systemName: "exclamationmark.circle.fill").foregroundStyle(MaskinColor.danger)
-					.accessibilityHidden(true)
-				Text("Not sent").foregroundStyle(MaskinColor.danger)
-				Button("Retry", action: onRetrySend).buttonStyle(.plain).foregroundStyle(MaskinColor.accentFgStrong)
-					.accessibilityHint(reason)
-				Button("Delete", role: .destructive, action: onDiscard).buttonStyle(.plain)
-					.foregroundStyle(MaskinColor.ink4)
+			VStack(alignment: .trailing, spacing: 0) {
+				HStack(spacing: MaskinSpace.s4) {
+					Image(systemName: "exclamationmark.circle.fill").foregroundStyle(MaskinColor.danger)
+						.accessibilityHidden(true)
+					Text("Not sent").foregroundStyle(MaskinColor.danger)
+					Button("Retry", action: onRetrySend).buttonStyle(.plain)
+						.foregroundStyle(MaskinColor.accentFgStrong)
+						.frame(minWidth: MaskinSpace.touchMin, minHeight: MaskinSpace.touchMin)
+						.contentShape(Rectangle())
+						.accessibilityHint(reason)
+					Button("Delete", role: .destructive, action: onDiscard).buttonStyle(.plain)
+						.foregroundStyle(MaskinColor.ink4)
+						.frame(minWidth: MaskinSpace.touchMin, minHeight: MaskinSpace.touchMin)
+						.contentShape(Rectangle())
+				}
+				Text(reason).maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+					.multilineTextAlignment(.trailing)
 			}
 			.maskinText(.caption)
 		}
@@ -109,6 +229,12 @@ struct MessageRow: View {
 					}
 				}
 				content
+				if !message.questions.isEmpty {
+					QuestionOptionsView(
+						questions: message.questions, answers: questionAnswers, onSubmit: onAnswer)
+				}
+				MessageAttachments(attachments: message.attachments)
+				MentionLine(names: mentionNames, isOwn: false)
 				if message.isErrorReply {
 					Button {
 						onRetryAgent()
@@ -135,31 +261,50 @@ struct MessageRow: View {
 	}
 }
 
-/// "Relay is working…" with animated dots; static under Reduce Motion.
+enum Clipboard {
+	static func copy(_ string: String) {
+		#if canImport(UIKit)
+		UIPasteboard.general.string = string
+		#elseif canImport(AppKit)
+		NSPasteboard.general.clearContents()
+		NSPasteboard.general.setString(string, forType: .string)
+		#endif
+	}
+}
+
+/// "Relay is working · Reading the brief" with animated dots (static under Reduce Motion) and,
+/// for a live run, a Stop control.
 struct WorkingIndicator: View {
-	let agents: [ChatParticipant]
+	let agent: ChatParticipant
+	var activity: String?
+	var onStop: (() -> Void)?
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	var body: some View {
 		HStack(spacing: MaskinSpace.s5) {
-			if let first = agents.first {
-				ActorAvatar(name: first.name, kind: .agent, size: MaskinSpace.s12 + MaskinSpace.s4, seed: first.id, working: true)
+			ActorAvatar(name: agent.name, kind: .agent, size: MaskinSpace.s12 + MaskinSpace.s4, seed: agent.id, working: true)
+			VStack(alignment: .leading, spacing: 0) {
+				HStack(spacing: MaskinSpace.s4) {
+					Text("\(agent.name) is working").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+					dots
+				}
+				if let activity, !activity.isEmpty {
+					Text(activity).maskinText(.caption).foregroundStyle(MaskinColor.ink5).lineLimit(2)
+				}
 			}
-			Text(label).maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
-			dots
 			Spacer(minLength: 0)
+			if let onStop {
+				Button(action: onStop) {
+					Text("Stop").maskinText(.subhead).foregroundStyle(MaskinColor.ink3)
+						.padding(.horizontal, MaskinSpace.s7)
+						.frame(minHeight: MaskinSpace.touchMin)
+						.contentShape(Rectangle())
+				}
+				.buttonStyle(.plain)
+				.accessibilityLabel("Stop \(agent.name)")
+			}
 		}
-		.accessibilityElement(children: .ignore)
-		.accessibilityLabel(label)
-	}
-
-	private var label: String {
-		switch agents.count {
-		case 0: "Working"
-		case 1: "\(agents[0].name) is working"
-		case 2: "\(agents[0].name) and \(agents[1].name) are working"
-		default: "\(agents.count) agents are working"
-		}
+		.accessibilityElement(children: .combine)
 	}
 
 	private var dots: some View {
@@ -174,5 +319,35 @@ struct WorkingIndicator: View {
 			}
 		}
 		.accessibilityHidden(true)
+	}
+}
+
+/// An agent that paused (or whose run was suspended): offer to continue it.
+struct ResumeBanner: View {
+	let agent: ChatParticipant
+	let onResume: () -> Void
+
+	var body: some View {
+		HStack(spacing: MaskinSpace.s6) {
+			Image(systemName: "pause.circle.fill").foregroundStyle(MaskinColor.ink4).accessibilityHidden(true)
+			Text("\(agent.name) is paused").maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
+			Spacer(minLength: 0)
+			Button(action: onResume) {
+				Text("Resume").maskinText(.subhead).fontWeight(.semibold)
+					.foregroundStyle(MaskinSurface.onInverse)
+					.padding(.horizontal, MaskinSpace.s8)
+					.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s3)
+					.background(MaskinSurface.inverse, in: Capsule())
+			}
+			.buttonStyle(.plain)
+			.accessibilityLabel("Resume \(agent.name)")
+		}
+		.padding(.horizontal, MaskinSpace.s8)
+		.padding(.vertical, MaskinSpace.s4)
+		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
+		.overlay(
+			RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous)
+				.strokeBorder(MaskinSurface.line, lineWidth: 1))
+		.accessibilityElement(children: .contain)
 	}
 }

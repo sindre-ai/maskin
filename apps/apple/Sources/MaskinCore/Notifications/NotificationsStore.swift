@@ -45,7 +45,10 @@ public final class NotificationsStore {
 	public private(set) var isOffline = false
 	/// Ids with a mutation in flight, so a row can disable its buttons.
 	public private(set) var busyIDs: Set<String> = []
+	/// How current the inbox on screen is (cache-hydrated until the first fetch succeeds).
+	public private(set) var freshness = Freshness()
 
+	@ObservationIgnored private let cache: SnapshotCache?
 	@ObservationIgnored private let source: any NotificationsSource
 	@ObservationIgnored private let currentActorId: () -> String?
 	@ObservationIgnored private var listener: Task<Void, Never>?
@@ -56,16 +59,47 @@ public final class NotificationsStore {
 	/// belongs to the old workspace or user and must not write its result.
 	@ObservationIgnored private var generation = 0
 
-	public init(source: any NotificationsSource, currentActorId: @escaping () -> String?) {
+	public init(
+		source: any NotificationsSource, currentActorId: @escaping () -> String?,
+		cache: SnapshotCache? = nil
+	) {
 		self.source = source
 		self.currentActorId = currentActorId
+		self.cache = cache
+		hydrateIfNeeded()
+	}
+
+	/// What the inbox keeps on disk: the rows the screen shows and the names beside them.
+	struct Snapshot: Codable, Sendable {
+		var notifications: [AppNotification]
+		var actors: [NotificationActor]
+	}
+	static let cacheName = "notifications.inbox"
+	static let cacheLimit = 200
+
+	private func hydrateIfNeeded() {
+		guard phase == .idle, notifications.isEmpty,
+			let entry = cache?.read(Snapshot.self, Self.cacheName)
+		else { return }
+		notifications = entry.value.notifications
+		actors = Dictionary(entry.value.actors.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+		phase = .loaded
+		freshness.hydrated(from: entry.savedAt)
+	}
+
+	private func persist() {
+		cache?.write(
+			Snapshot(
+				notifications: Array(notifications.prefix(Self.cacheLimit)),
+				actors: Array(actors.values)), Self.cacheName)
 	}
 
 	/// Production wiring: loads on `start`, then follows the environment's event hub.
 	public convenience init(environment: AppEnvironment) {
 		self.init(
 			source: APINotificationsSource(environment: environment),
-			currentActorId: { [unowned environment] in environment.auth.session?.actorId })
+			currentActorId: { [unowned environment] in environment.auth.session?.actorId },
+			cache: environment.snapshotCache)
 	}
 
 	/// Unresolved notifications nobody has opened.
@@ -90,6 +124,7 @@ public final class NotificationsStore {
 
 	/// Subscribe to live updates (once) and load. Call when the shell appears.
 	public func start(events: EventHub?) {
+		hydrateIfNeeded()
 		if listener == nil, let events {
 			let stream = events.subscribe()
 			listener = Task { [weak self] in
@@ -120,6 +155,7 @@ public final class NotificationsStore {
 		actionError = nil
 		isOffline = false
 		busyIDs = []
+		freshness.reset()
 	}
 
 	/// Fetch the list. Overlapping calls coalesce into one trailing reload, so a burst of events
@@ -141,6 +177,7 @@ public final class NotificationsStore {
 		let mine = generation
 		let me = currentActorId()
 		if notifications.isEmpty { phase = .loading }
+		let started = ContinuousClock.now
 		do {
 			let all = try await source.list()
 			guard mine == generation, me == currentActorId() else { return }
@@ -152,10 +189,15 @@ public final class NotificationsStore {
 				visible.compactMap { busy.contains($0.id) ? local[$0.id] : $0 })
 			phase = .loaded
 			isOffline = false
+			freshness.refreshed(at: cache?.now() ?? Date())
+			SyncLog.revalidated(Self.cacheName, ok: true, since: started)
 			await resolveActors(generation: mine)
+			if mine == generation { persist() }
 		} catch {
 			guard mine == generation else { return }
 			isOffline = true
+			freshness.revalidateFailed()
+			SyncLog.revalidated(Self.cacheName, ok: false, since: started)
 			// A failed refresh keeps showing what we have; only an empty screen shows the error.
 			if notifications.isEmpty { phase = .failed(Self.message(error)) }
 		}

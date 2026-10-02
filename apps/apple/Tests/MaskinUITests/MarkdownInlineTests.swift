@@ -64,3 +64,34 @@ import Testing
 
 private extension Int { var asCGFloat: CGFloat { CGFloat(self) } }
 #endif
+
+@Suite("Markdown link policy") struct MarkdownLinkPolicyTests {
+	@Test("only http(s) with a host and mailto are allowed; web links confirm", arguments: [
+		("https://maskin.io/x", MarkdownLinkPolicy.Decision.confirm),
+		("http://example.com", .confirm),
+		("HTTPS://Example.com", .confirm),
+		("mailto:a@b.co", .open),
+		("tel:+4512345678", .reject),
+		("sms:+4512345678", .reject),
+		("facetime:a@b.co", .reject),
+		("maskin://objects/1", .reject),
+		("javascript:alert(1)", .reject),
+		("file:///etc/passwd", .reject),
+		("https:///nohost", .reject),
+	])
+	func decisions(raw: String, expected: MarkdownLinkPolicy.Decision) throws {
+		#expect(MarkdownLinkPolicy.decision(for: try #require(URL(string: raw))) == expected)
+	}
+
+	@Test("hostile links lose their link attribute; safe ones keep it")
+	func stripped() {
+		func hasLink(_ md: String) -> Bool {
+			MarkdownInline.attributed(md, base: .body).runs.contains { $0.link != nil }
+		}
+		#expect(hasLink("[x](https://maskin.io)"))
+		#expect(hasLink("[x](mailto:a@b.co)"))
+		#expect(!hasLink("[call](tel:+4512345678)"))
+		#expect(!hasLink("[open](maskin://objects/1)"))
+		#expect(!hasLink("[x](facetime:a@b.co)"))
+	}
+}

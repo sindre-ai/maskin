@@ -22,16 +22,22 @@ struct NewChatSheet: View {
 		NavigationStack {
 			List {
 				Section {
-					TextField("Title (optional)", text: $title)
+					TextField(titlePlaceholder, text: $title)
 					TextField("First message (optional)", text: $firstMessage, axis: .vertical)
 						.lineLimit(1...4)
 				}
 				if let error {
 					Section { FormError(error) }
 				}
+				if !selection.isEmpty {
+					Section("With") {
+						Text(selectedNames.joined(separator: ", ")).maskinText(.body)
+							.accessibilityLabel("Chatting with \(selectedNames.joined(separator: ", "))")
+					}
+				}
 				ActorPickerList(
 					actors: store.actors, excluding: Set([currentActorID].compactMap { $0 }),
-					selection: $selection, query: query)
+					selection: $selection, query: query, recent: store.recentCollaboratorIDs)
 			}
 			.searchable(text: $query, prompt: "Search people and agents")
 			.navigationTitle("New chat")
@@ -42,12 +48,22 @@ struct NewChatSheet: View {
 				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
 				ToolbarItem(placement: .confirmationAction) {
 					Button("Start") { Task { await create() } }
-						.disabled(selection.isEmpty || isCreating)
+						.disabled(selection.isEmpty || isCreating || firstMessage.count > ChatLimits.maxMessageLength)
+						.keyboardShortcut(.return, modifiers: .command)
 				}
 			}
 			.overlay { if isCreating { ProgressView() } }
 			.task { await store.loadActors() }
 		}
+	}
+
+	private var selectedNames: [String] {
+		store.actors.filter { selection.contains($0.id) }.map(\.participant.name)
+	}
+
+	/// The title that will be used when this is left blank, so it never surprises.
+	private var titlePlaceholder: String {
+		selection.isEmpty ? "Title (optional)" : ThreadLayout.defaultTitle(for: selectedNames)
 	}
 
 	private func create() async {
@@ -79,6 +95,7 @@ struct ParticipantsSheet: View {
 	@State private var adding = false
 	@State private var selection: Set<String> = []
 	@State private var query = ""
+	@State private var removeTarget: ChatParticipant?
 
 	var body: some View {
 		NavigationStack {
@@ -101,9 +118,25 @@ struct ParticipantsSheet: View {
 									.foregroundStyle(MaskinColor.ink4)
 							}
 							.accessibilityElement(children: .combine)
+							.swipeActions(edge: .trailing, allowsFullSwipe: false) {
+								if p.id != chat.currentActorID {
+									Button("Remove", role: .destructive) { removeTarget = p }
+								}
+							}
 						}
 					}
 				}
+			}
+			.confirmationDialog(
+				"Remove from this conversation?",
+				isPresented: Binding(get: { removeTarget != nil }, set: { if !$0 { removeTarget = nil } }),
+				titleVisibility: .visible, presenting: removeTarget
+			) { person in
+				Button("Remove \(person.name)", role: .destructive) {
+					Task { await chat.removeParticipant(person.id) }
+				}
+			} message: { person in
+				Text("\(person.name) will no longer see new messages here.")
 			}
 			.searchable(text: $query, isPresented: .constant(adding), prompt: "Search people and agents")
 			.navigationTitle(adding ? "Add people" : "People")

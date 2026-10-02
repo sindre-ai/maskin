@@ -2,7 +2,7 @@ import Foundation
 
 /// One row of the unified `objects` table: an insight, bet, task, or any custom type a workspace
 /// defines. Every field the screens read is here as a plain value.
-public struct WorkObject: Identifiable, Sendable, Equatable, Hashable {
+public struct WorkObject: Identifiable, Sendable, Equatable, Hashable, Codable {
 	public var id: String
 	public var type: String
 	public var title: String?
@@ -49,7 +49,7 @@ public struct WorkObject: Identifiable, Sendable, Equatable, Hashable {
 }
 
 /// How another object is linked to the one on screen, read from the viewing object's side.
-public struct ObjectLink: Identifiable, Sendable, Equatable, Hashable {
+public struct ObjectLink: Identifiable, Sendable, Equatable, Hashable, Codable {
 	public var id: String
 	/// `informs`, `breaks_into`, `blocks`, `relates_to`, `duplicates`, or any custom type.
 	public var relation: String

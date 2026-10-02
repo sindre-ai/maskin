@@ -13,9 +13,12 @@ public final class ConversationsStore {
 	}
 
 	public enum Scope: Sendable { case active, archived }
+	/// Narrows the active list on the server (so a filtered list pages correctly).
+	public enum Filter: Sendable, CaseIterable { case all, unread, pinned }
 
 	public private(set) var conversations: [ConversationSummary] = []
 	public private(set) var phase: Phase = .idle
+	public private(set) var freshness = Freshness()
 	public private(set) var hasMore = false
 	public private(set) var isLoadingMore = false
 	public private(set) var actors: [ChatActor] = []
@@ -24,18 +27,47 @@ public final class ConversationsStore {
 	public var scope: Scope = .active {
 		didSet { if scope != oldValue { Task { await refresh() } } }
 	}
+	public var filter: Filter = .all {
+		didSet {
+			guard filter != oldValue else { return }
+			conversations = []
+			Task { await refresh() }
+		}
+	}
 
 	@ObservationIgnored private let api: any ConversationsAPI
 	@ObservationIgnored private let events: EventHub?
+	@ObservationIgnored private let cache: SnapshotCache?
 	@ObservationIgnored private let pageSize = 30
 	@ObservationIgnored private var listener: Task<Void, Never>?
 	@ObservationIgnored private var refreshing = false
 	@ObservationIgnored private var refreshQueued = false
 	@ObservationIgnored private var generation = 0
 
-	public init(api: any ConversationsAPI, events: EventHub?) {
+	public init(api: any ConversationsAPI, events: EventHub?, cache: SnapshotCache? = nil) {
 		self.api = api
 		self.events = events
+		self.cache = cache
+		hydrateIfNeeded()
+	}
+
+	/// First frame from disk: the unfiltered active list, before any network call.
+	func hydrateIfNeeded() {
+		guard phase == .idle, conversations.isEmpty, scope == .active, filter == .all,
+			let entry = cache?.read(
+				ChatCaching.ListSnapshot.self, ChatCaching.listName, version: ChatCaching.version)
+		else { return }
+		conversations = entry.value.conversations
+		phase = .loaded
+		freshness.hydrated(from: entry.savedAt)
+	}
+
+	private func writeCache() {
+		guard scope == .active, filter == .all else { return }
+		cache?.write(
+			ChatCaching.ListSnapshot(
+				conversations: Array(conversations.prefix(ChatCaching.listLimit))),
+			ChatCaching.listName, version: ChatCaching.version)
 	}
 
 	public var totalUnread: Int { conversations.reduce(0) { $0 + $1.unreadCount } }
@@ -54,6 +86,12 @@ public final class ConversationsStore {
 		return ConversationGrouping.group(filtered, now: now)
 	}
 
+	/// Actor ids in order of how recently you talked with them (newest conversation first).
+	public var recentCollaboratorIDs: [String] {
+		var seen: Set<String> = []
+		return conversations.flatMap(\.participants).map(\.id).filter { seen.insert($0).inserted }
+	}
+
 	public func conversation(id: String) -> ConversationSummary? {
 		conversations.first { $0.id == id }
 	}
@@ -62,6 +100,7 @@ public final class ConversationsStore {
 
 	/// Initial load plus the live subscription. Safe to call repeatedly.
 	public func start() async {
+		hydrateIfNeeded()
 		if listener == nil, let events {
 			let stream = events.subscribe()
 			listener = Task { [weak self] in
@@ -102,14 +141,19 @@ public final class ConversationsStore {
 			if conversations.isEmpty { phase = .loading }
 			do {
 				let limit = ServerLimits.refreshLimit(minimum: pageSize, loaded: conversations.count)
-				let page = try await api.list(archived: scope == .archived, limit: limit, offset: 0)
+				let page = try await api.list(
+					archived: scope == .archived, pinnedOnly: filter == .pinned, unreadOnly: filter == .unread,
+					limit: limit, offset: 0)
 				guard mine == generation else { continue }
 				// Re-read what's on screen (capped by the server) so paged-in rows survive an event.
 				let keptTail = conversations.count > limit
 				conversations = ServerLimits.mergeHead(head: page.conversations, previous: conversations)
 				hasMore = keptTail ? hasMore || page.hasMore : page.hasMore
 				phase = .loaded
+				freshness.refreshed(at: cache?.now() ?? Date())
+				writeCache()
 			} catch {
+				freshness.revalidateFailed()
 				if conversations.isEmpty { phase = .failed(Self.message(error)) }
 			}
 		} while refreshQueued
@@ -121,7 +165,8 @@ public final class ConversationsStore {
 		defer { isLoadingMore = false }
 		do {
 			let page = try await api.list(
-				archived: scope == .archived, limit: pageSize, offset: conversations.count)
+				archived: scope == .archived, pinnedOnly: filter == .pinned, unreadOnly: filter == .unread,
+				limit: pageSize, offset: conversations.count)
 			let known = Set(conversations.map(\.id))
 			conversations += page.conversations.filter { !known.contains($0.id) }
 			hasMore = page.hasMore
@@ -188,6 +233,12 @@ public final class ConversationsStore {
 		guard conversation(id: id)?.isUnread == true || messageID != nil else { return }
 		if serverAlreadyKnows {
 			update(id) { $0.unreadCount = 0 }
+			// A list fetch already in flight was computed before this read: its stale unread count
+			// would put the badge back, and nothing else would clear it. Discard it and re-read.
+			if refreshing {
+				generation += 1
+				refreshQueued = true
+			}
 			return
 		}
 		guard let messageID else { return }

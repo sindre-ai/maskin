@@ -1,0 +1,159 @@
+import Foundation
+import MaskinAPI
+import OpenAPIRuntime
+
+/// Production source for the loop stores. The generated client's operation names stay inside this
+/// file; the stores see `LoopsAPI` and plain models.
+public struct APILoopsSource: LoopsAPI {
+	private let client: Client
+	private let workspaceID: String
+
+	public init(client: Client, workspaceID: String) {
+		self.client = client
+		self.workspaceID = workspaceID
+	}
+
+	public func loops() async throws -> [LoopSummary] {
+		let output = try await client.get_sol_api_sol_loops(
+			.init(headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+		guard case .ok(let ok) = output else { throw AutomationError("Couldn't load loops.") }
+		return try Self.decode(LoopsWire.self, from: ok.body.json).loops.map(\.model)
+	}
+
+	public func steps(loopID: String) async throws -> [LoopStep] {
+		let output = try await client.get_sol_api_sol_loops_sol__lcub_id_rcub__sol_steps(
+			.init(
+				path: .init(id: loopID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+		guard case .ok(let ok) = output else { throw AutomationError("Couldn't load this loop's steps.") }
+		return try Self.decode(StepsWire.self, from: ok.body.json).steps.map(\.model)
+	}
+
+	public func activity(loopID: String) async throws -> [LoopActivityEntry] {
+		let output = try await client.get_sol_api_sol_loops_sol__lcub_id_rcub__sol_activity(
+			.init(
+				path: .init(id: loopID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+		guard case .ok(let ok) = output else {
+			throw AutomationError("Couldn't load this loop's activity.")
+		}
+		return try Self.decode(ActivityWire.self, from: ok.body.json).events.map(\.model)
+	}
+
+	public func actors() async throws -> [AutomationActor] {
+		try await AutomationActorsSource.load(client: client, workspaceID: workspaceID)
+	}
+
+	public func installs() async throws -> [LoopInstall] {
+		let output = try await client.get_sol_api_sol_installed_hyphen_loops(
+			.init(query: .init(workspaceId: workspaceID)))
+		guard case .ok(let ok) = output else { throw AutomationError("Couldn't load installed loops.") }
+		return try Self.decode(InstallsWire.self, from: ok.body.json).installs.map {
+			LoopInstall(
+				objectID: $0.objectId, hasUpdate: $0.hasUpdate, availableVersion: $0.availableVersion,
+				isForked: $0.forkedAt != nil)
+		}
+	}
+
+	public func setStatus(loopID: String, status: LoopPill, idempotencyKey: String) async throws {
+		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+			try await client.patch_sol_api_sol_objects_sol__lcub_id_rcub_(
+				.init(
+					path: .init(id: loopID),
+					body: .json(.init(status: status.rawValue))))
+		}
+		switch output {
+		case .ok: return
+		case .notFound: throw AutomationError("This loop no longer exists.")
+		default: throw AutomationError("The server refused the change.")
+		}
+	}
+
+	// MARK: Wire
+
+	private struct LoopsWire: Decodable { var loops: [LoopWire] }
+	private struct StepsWire: Decodable { var steps: [StepWire] }
+	private struct ActivityWire: Decodable { var events: [EventWire] }
+	private struct InstallsWire: Decodable {
+		struct Row: Decodable {
+			var objectId: String?
+			var hasUpdate: Bool
+			var availableVersion: String
+			var forkedAt: String?
+		}
+		var installs: [Row]
+	}
+
+	private struct LoopWire: Decodable {
+		var id: String
+		var name: String?
+		var content: String?
+		var status: String
+		var pill: String
+		var entryCondition: String?
+		var closeCondition: String?
+		var inProgressCount: Int
+		var closedCount: Int
+		var medianTimeToCloseMs: Double?
+		var agentIds: [String]
+		var triggerIds: [String]
+		var waitingCount: Int
+		var createdAt: String?
+		var updatedAt: String?
+
+		var model: LoopSummary {
+			LoopSummary(
+				id: id, name: name, content: content, status: LoopPill(wire: status),
+				pill: LoopPill(wire: pill), entryCondition: entryCondition,
+				closeCondition: closeCondition, inProgressCount: inProgressCount,
+				closedCount: closedCount, medianTimeToClose: medianTimeToCloseMs.map { $0 / 1000 },
+				agentIDs: agentIds, triggerIDs: triggerIds, waitingCount: waitingCount,
+				createdAt: AutomationDates.parse(createdAt), updatedAt: AutomationDates.parse(updatedAt))
+		}
+	}
+
+	private struct ActorRef: Decodable {
+		var id: String
+		var name: String?
+	}
+
+	private struct StepWire: Decodable {
+		var triggerId: String
+		var triggerName: String?
+		var triggerActionPrompt: String?
+		var triggerType: String?
+		var triggerConfig: JSONValue?
+		var agent: ActorRef?
+		var handsOffToActor: ActorRef?
+		var escalatesToActor: ActorRef?
+		var pendingCount: Int?
+		var escalateAfterMs: Double?
+
+		var model: LoopStep {
+			LoopStep(
+				triggerID: triggerId, name: triggerName, actionPrompt: triggerActionPrompt,
+				triggerKind: Trigger.Kind(wire: triggerType ?? ""),
+				triggerConfig: triggerConfig ?? .object([:]), agentName: agent?.name,
+				agentID: agent?.id, handsOffName: handsOffToActor?.name,
+				escalatesToName: escalatesToActor?.name, escalateAfter: escalateAfterMs.map { $0 / 1000 },
+				pendingCount: pendingCount ?? 0)
+		}
+	}
+
+	private struct EventWire: Decodable {
+		var id: Double
+		var actorId: String?
+		var action: String
+		var entityType: String
+		var description: String?
+		var createdAt: String?
+
+		var model: LoopActivityEntry {
+			LoopActivityEntry(
+				id: String(Int(id)), action: action, entityType: entityType, actorID: actorId,
+				description: description, createdAt: AutomationDates.parse(createdAt))
+		}
+	}
+
+	private static func decode<T: Decodable>(_ type: T.Type, from value: some Encodable) throws -> T {
+		try JSONDecoder().decode(T.self, from: JSONEncoder().encode(value))
+	}
+}

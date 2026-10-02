@@ -7,39 +7,7 @@ import XCTest
 /// `LIVE_APPEARANCE` (light|dark), `LIVE_TAG` (screenshot filename prefix).
 /// Verifies by query: after each UI write the test GETs the row back from the API.
 @MainActor
-final class LiveFlowTests: XCTestCase {
-	// No defaults on purpose: credentials and API origin come from the environment.
-	private var api = ""
-	private var email = ""
-	private var password = ""
-	private var seed: [String: String] = [:]
-	private var app = XCUIApplication()
-	private var shotsDir = ""
-	private var tag = "run"
-	private var step = 0
-
-	override func setUpWithError() throws {
-		continueAfterFailure = false
-		let env = ProcessInfo.processInfo.environment
-		let seedPath = env["LIVE_SEED_ENV"] ?? ""
-		let text = try String(contentsOfFile: seedPath, encoding: .utf8)
-		for line in text.split(separator: "\n") {
-			let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
-			if parts.count == 2 { seed[parts[0]] = parts[1] }
-		}
-		api = try XCTUnwrap(env["LIVE_API"], "set TEST_RUNNER_LIVE_API (e.g. http://host:port/api)")
-		email = try XCTUnwrap(env["LIVE_EMAIL"], "set TEST_RUNNER_LIVE_EMAIL")
-		password = try XCTUnwrap(env["LIVE_PASSWORD"], "set TEST_RUNNER_LIVE_PASSWORD")
-		shotsDir = env["LIVE_SHOTS_DIR"] ?? NSTemporaryDirectory()
-		tag = env["LIVE_TAG"] ?? "run"
-		try? FileManager.default.createDirectory(atPath: shotsDir, withIntermediateDirectories: true)
-		app = XCUIApplication()
-		if env["LIVE_APPEARANCE"] == "dark" {
-			app.launchArguments += ["-AppleInterfaceStyle", "Dark"]
-		}
-		app.launch()
-	}
-
+final class LiveFlowTests: LiveTestCase {
 	// MARK: Flows
 
 	func test1_SignInAndForYouDecision() throws {
@@ -62,7 +30,13 @@ final class LiveFlowTests: XCTestCase {
 		try signInIfNeeded()
 		openSidebarTab("Chats")
 		let row = el("Launch planning")
-		XCTAssertTrue(row.waitForExistence(timeout: 15), "seeded conversation row")
+		if !row.waitForExistence(timeout: 15) {
+			shot("chats-missing-row")
+			let dump = "\(shotsDir)/\(tag)-chats-debugDescription.txt"
+			try? app.debugDescription.write(toFile: dump, atomically: true, encoding: .utf8)
+			XCTFail("seeded conversation row missing; UI tree dumped to \(dump)")
+			return
+		}
 		shot("chats-list")
 		row.tap()
 		XCTAssertTrue(el("where are we on the beta").waitForExistence(timeout: 10), "seeded human message")
@@ -133,6 +107,7 @@ final class LiveFlowTests: XCTestCase {
 		account.tap()
 		shot("account-menu")
 		app.buttons["Sign out"].tap()
+		confirmSignOutDialog()
 		XCTAssertTrue(app.textFields["Email"].waitForExistence(timeout: 10), "back at login")
 		shot("login")
 		try signIn()
@@ -162,92 +137,5 @@ final class LiveFlowTests: XCTestCase {
 			],
 		]
 		try post("/events", body: ["entity_id": seed["BET"]!, "content": "Beta is ready for **your call** \(Int(Date().timeIntervalSince1970)).", "mentions": [seed["ME"]!], "attention": 4, "decision": decision], key: seed["AKEY"]!)
-	}
-
-	/// Any element (text, button, combined container) whose label contains `text`.
-	private func el(_ text: String) -> XCUIElement {
-		app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
-	}
-
-	private func waitForServer(_ path: String, contains text: String, timeout: TimeInterval = 20) throws -> String {
-		let deadline = Date().addingTimeInterval(timeout)
-		var last = ""
-		while Date() < deadline {
-			last = try get(path)
-			if last.contains(text) { return last }
-			sleep(1)
-		}
-		return last
-	}
-
-	private func signInIfNeeded() throws {
-		if app.textFields["Email"].waitForExistence(timeout: 6) { shot("login"); try signIn() }
-		XCTAssertTrue(app.buttons["Account"].firstMatch.waitForExistence(timeout: 20), "signed-in shell visible")
-	}
-
-	private func signIn(password pw: String? = nil) throws {
-		let field = app.textFields["Email"]
-		field.tap()
-		field.typeText(email)
-		let secure = app.secureTextFields["Password"]
-		secure.tap()
-		secure.typeText(pw ?? password)
-		app.buttons["Sign in"].tap()
-	}
-
-	/// iPhone: tab bar button. iPad: the sidebar-adaptable bar (top tab bar or sidebar).
-	private func openSidebarTab(_ name: String) {
-		let tab = app.tabBars.buttons[name]
-		if tab.exists { tab.tap(); return }
-		let any = app.buttons[name].firstMatch
-		if any.waitForExistence(timeout: 5) { any.tap() }
-	}
-
-	private var testName: String {
-		name.split(separator: " ").last.map { String($0).replacingOccurrences(of: "]", with: "") } ?? "t"
-	}
-
-	private func shot(_ name: String) {
-		step += 1
-		sleep(1)
-		let png = XCUIScreen.main.screenshot().pngRepresentation
-		let file = "\(shotsDir)/\(tag)-\(testName)-\(String(format: "%02d", step))-\(name).png"
-		try? png.write(to: URL(fileURLWithPath: file))
-		let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-		attachment.name = name
-		attachment.lifetime = .keepAlways
-		add(attachment)
-	}
-
-	private func get(_ path: String, key: String? = nil) throws -> String {
-		var req = URLRequest(url: URL(string: api + path)!)
-		req.setValue("Bearer \(key ?? seed["KEY"]!)", forHTTPHeaderField: "Authorization")
-		req.setValue(seed["WS"]!, forHTTPHeaderField: "X-Workspace-Id")
-		return try send(req)
-	}
-
-	@discardableResult
-	private func post(_ path: String, body: [String: Any], key: String) throws -> String {
-		var req = URLRequest(url: URL(string: api + path)!)
-		req.httpMethod = "POST"
-		req.httpBody = try JSONSerialization.data(withJSONObject: body)
-		req.setValue("application/json", forHTTPHeaderField: "content-type")
-		req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-		req.setValue(seed["WS"]!, forHTTPHeaderField: "X-Workspace-Id")
-		return try send(req)
-	}
-
-	private func send(_ req: URLRequest) throws -> String {
-		let sem = DispatchSemaphore(value: 0)
-		nonisolated(unsafe) var out = ""
-		nonisolated(unsafe) var err: Error?
-		URLSession.shared.dataTask(with: req) { data, _, e in
-			err = e
-			out = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-			sem.signal()
-		}.resume()
-		sem.wait()
-		if let err { throw err }
-		return out
 	}
 }

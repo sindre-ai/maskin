@@ -46,6 +46,20 @@ public final class ForYouRuntime {
 		try? fileManager.removeItem(at: outboxFileURL(actorId: actorId, directory: directory))
 	}
 
+	/// Delete every queue file that belongs to someone else. A session that ended involuntarily
+	/// keeps its queue for the same actor to resume; the moment a DIFFERENT actor signs in, that
+	/// queue can never be replayed by anyone, so it goes.
+	static func purgeOutboxes(
+		except actorId: String, directory: URL? = nil, fileManager: FileManager = .default
+	) {
+		let dir = outboxFileURL(actorId: actorId, directory: directory).deletingLastPathComponent()
+		let keep = outboxFileURL(actorId: actorId, directory: directory).lastPathComponent
+		let names = (try? fileManager.contentsOfDirectory(atPath: dir.path)) ?? []
+		for name in names where name.hasPrefix("outbox-") && name.hasSuffix(".json") && name != keep {
+			try? fileManager.removeItem(at: dir.appendingPathComponent(name))
+		}
+	}
+
 	/// Build the runtime for the environment's current actor. `start: false` makes an inert one
 	/// (no listeners, no replay) for when nobody is signed in.
 	public static func make(
@@ -55,13 +69,15 @@ public final class ForYouRuntime {
 			client: environment.client,
 			workspaceId: { @Sendable in await MainActor.run { environment.workspaceId ?? "" } })
 		let actorId = environment.auth.session?.actorId
+		if start, let actorId { purgeOutboxes(except: actorId, directory: directory) }
 		let outbox = Outbox(
 			fileURL: outboxFileURL(actorId: actorId, directory: directory),
 			executor: DecisionOutboxExecutor(backend: backend),
 			workspaceId: { environment.workspaceId })
 		let decisions = DecisionService(outbox: outbox)
 		let store = ForYouStore(
-			source: backend, decisions: decisions, workspaceId: { environment.workspaceId })
+			source: backend, decisions: decisions, workspaceId: { environment.workspaceId },
+			cache: environment.snapshotCache)
 		if start {
 			outbox.start(events: environment.events)
 			store.start(events: environment.events)

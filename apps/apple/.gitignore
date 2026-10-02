@@ -8,3 +8,4 @@ Maskin.xcodeproj/
 Apps/Maskin/Info.plist
 Apps/*/Info.plist
 *.xcodeproj/
+Config/Local.xcconfig

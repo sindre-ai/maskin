@@ -290,6 +290,54 @@ struct AppRuntimeSignOutTests {
 		#expect(queue.outbox.entries.count == 1)
 	}
 
+	@Test("after a 401: queue held; same actor signing in resumes it, a different actor loses it")
+	func expiryThenRelogin() async throws {
+		struct Login: Authenticating {
+			let result: LoginResult
+			func login(email: String, password: String) async throws -> LoginResult { result }
+		}
+		func result(_ actor: String) -> LoginResult {
+			LoginResult(apiKey: "key-\(actor)", actorId: actor, name: actor, email: nil, workspaceId: "ws-1")
+		}
+		for (relogin, survives) in [("actor-1", true), ("actor-2", false)] {
+			let dir = tempDirectory()
+			let secrets = InMemorySecretStore()
+			let auth = AuthSession(authenticator: Login(result: result("actor-1")), store: secrets)
+			await auth.signIn(email: "a", password: "b")
+			let preview = AppEnvironment.preview()
+			let environment = AppEnvironment(
+				baseURL: preview.baseURL, clientSource: "test", auth: auth,
+				workspaces: WorkspaceStore(source: StaticWorkspaceSource([]), auth: auth),
+				client: preview.client, events: EventHub(client: nil))
+			let notes = NotificationsStore(source: StubSource(), currentActorId: { nil })
+			let runtime = AppRuntime(environment: environment, notifications: notes, forYouDirectory: dir)
+			try runtime.forYou.outbox.enqueue(
+				kind: "decision.reply", lane: "o", summary: "Reply", payload: "hi", holdFor: 3600)
+			let file = ForYouRuntime.outboxFileURL(actorId: "actor-1", directory: dir)
+
+			// The server rejects the key (what the request middleware / event stream report).
+			auth.sessionRejected(apiKey: "key-actor-1")
+			runtime.sync()
+			#expect(auth.session == nil)
+			#expect(FileManager.default.fileExists(atPath: file.path), "held, not dropped")
+
+			// Sign in again.
+			let again = AuthSession(authenticator: Login(result: result(relogin)), store: secrets)
+			await again.signIn(email: "a", password: "b")
+			let env2 = AppEnvironment(
+				baseURL: preview.baseURL, clientSource: "test", auth: again,
+				workspaces: WorkspaceStore(source: StaticWorkspaceSource([]), auth: again),
+				client: preview.client, events: EventHub(client: nil))
+			let runtime2 = AppRuntime(environment: env2, notifications: notes, forYouDirectory: dir)
+			let resumed = runtime2.forYou
+
+			#expect((resumed.outbox.entries.count == 1) == survives)
+			#expect(FileManager.default.fileExists(atPath: file.path) == survives)
+			resumed.outbox.discardAll()
+			ForYouRuntime.deletePersistedOutbox(actorId: relogin, directory: dir)
+		}
+	}
+
 	@Test("a view reading the runtime while signed out neither retains one nor touches a queue")
 	func signedOutReadIsInert() async throws {
 		let environment = AppEnvironment.preview(signedIn: false)
@@ -372,5 +420,200 @@ struct ShellIntegrationTests {
 		#expect(ObjectDecisionSection.entry(for: "b", in: entries) == nil)
 		#expect(ObjectDecisionSection.entry(for: "c", in: entries)?.id == "c")
 		#expect(ObjectDecisionSection.entry(for: "zzz", in: entries) == nil)
+	}
+}
+
+// MARK: - Search results and new sheets
+
+@MainActor
+@Suite("AppRuntime search routing")
+struct AppRuntimeSearchRoutingTests {
+	private func result(_ kind: SearchKind, _ id: String) -> SearchResult {
+		SearchResult(kind: kind, entityId: id, title: "T")
+	}
+
+	@Test("an object result opens the object sheet")
+	func object() async {
+		let (runtime, _) = await makeRuntime()
+		runtime.openSearchResult(result(.object, "obj-1"))
+		#expect(runtime.presentedObject == .init(id: "obj-1"))
+	}
+
+	@Test("a chat result selects Chats and requests that thread")
+	func chat() async {
+		let (runtime, _) = await makeRuntime()
+		runtime.selectedTab = .search
+		runtime.openSearchResult(result(.chat, "chat-1"))
+		#expect(runtime.selectedTab == .chats)
+		#expect(runtime.requestedConversationId == "chat-1")
+	}
+
+	@Test("an agent result opens the agent sheet; a file result then replaces it")
+	func agentAndFile() async {
+		let (runtime, _) = await makeRuntime()
+		runtime.openSearchResult(result(.agent, "agent-1"))
+		#expect(runtime.presentedAgentId == "agent-1")
+		runtime.openSearchResult(result(.file, "file-1"))
+		// One sheet at a time: the file replaces the agent instead of stacking on it.
+		#expect(runtime.presentedFileId == "file-1")
+		#expect(runtime.presentedAgentId == nil)
+	}
+
+	@Test("sign-out closes every sheet and returns to For you")
+	func signOutClearsSheets() async {
+		let (runtime, _) = await makeRuntime()
+		runtime.openAgent("agent-1")
+		runtime.showSettings = true
+		runtime.selectedTab = .loops
+
+		await runtime.signOut()
+
+		#expect(runtime.presentation == nil)
+		#expect(runtime.selectedTab == .forYou)
+	}
+
+	@Test("a session ended by the server also closes the new sheets")
+	func sessionEndedClearsSheets() async {
+		let (runtime, _) = await makeRuntime()
+		runtime.openFile("file-1")
+
+		runtime.sessionEnded()
+
+		#expect(runtime.presentation == nil)
+	}
+
+	@Test("the tab bar has the five destinations plus search")
+	func tabs() {
+		#expect(
+			ShellTab.allCases == [.forYou, .chats, .objects, .loops, .agents, .search])
+	}
+}
+
+// MARK: - One sheet, workspace changes
+
+@MainActor
+@Suite("AppRuntime presentation")
+struct AppRuntimePresentationTests {
+	@Test("a second presentation replaces the first instead of stacking")
+	func replaces() async {
+		let (runtime, _) = await makeRuntime()
+		runtime.showNotifications = true
+		runtime.openObject("obj-1")  // an inbox tap opening an object, in the same tick
+		#expect(runtime.presentation == .object("obj-1"))
+		#expect(runtime.showNotifications == false)
+	}
+
+	@Test("closing a sheet that was already replaced does not close its replacement")
+	func staleCloseIgnored() async {
+		let (runtime, _) = await makeRuntime()
+		runtime.showSettings = true
+		runtime.openObject("obj-1")
+		runtime.showSettings = false  // the settings sheet's late dismissal callback
+		#expect(runtime.presentation == .object("obj-1"))
+	}
+
+	@Test("switching workspace drops sheets and a pending thread that belong to the old one")
+	func workspaceSwitchDropsStale() async {
+		let (runtime, environment) = await makeRuntime()
+		runtime.sync()
+		runtime.openObject("obj-from-ws-1")
+		runtime.requestedConversationId = "chat-from-ws-1"
+
+		environment.auth.selectWorkspace("ws-2")
+		runtime.sync()
+
+		#expect(runtime.presentation == nil)
+		#expect(runtime.requestedConversationId == nil)
+	}
+
+	@Test("switching workspace leaves the settings sheet open (it rebuilds itself)")
+	func workspaceSwitchKeepsSettings() async {
+		let (runtime, environment) = await makeRuntime()
+		runtime.sync()
+		runtime.showSettings = true
+
+		environment.auth.selectWorkspace("ws-2")
+		runtime.sync()
+
+		#expect(runtime.showSettings)
+	}
+
+	@Test("a session the server ended also resets the selected tab")
+	func sessionEndedResetsTab() async {
+		let (runtime, _) = await makeRuntime()
+		runtime.selectedTab = .agents
+		runtime.sessionEnded()
+		#expect(runtime.selectedTab == .forYou)
+	}
+
+	@Test("signing out erases the user's search history from the device")
+	func signOutClearsSearchHistory() async {
+		let (runtime, _) = await makeRuntime()
+		let recents = SearchRecents(actorId: "actor-1")
+		recents.push("secret roadmap", workspaceId: "ws-1")
+		#expect(recents.load(workspaceId: "ws-1") == ["secret roadmap"])
+
+		await runtime.signOut()
+
+		#expect(recents.load(workspaceId: "ws-1").isEmpty)
+	}
+
+	@Test("the visible tabs hide Search where it isn't a tab")
+	func visibleTabs() {
+		let visible = ShellTab.visible
+		#expect(visible.contains(.search) == ShellTab.searchIsTab)
+		#expect(visible.first == .forYou)
+	}
+}
+
+// MARK: - Sync lifecycle
+
+@MainActor
+@Suite("AppRuntime sync")
+struct AppRuntimeSyncTests {
+	@Test("a signed-in sync starts the coordinator; signing out stops it")
+	func coordinatorLifecycle() async {
+		let (runtime, _) = await makeRuntime()
+		#expect(runtime.syncCoordinator == nil)
+		#expect(runtime.isOnline)  // no banner before we know
+
+		runtime.sync()
+		#expect(runtime.syncCoordinator != nil)
+
+		await runtime.signOut()
+		#expect(runtime.syncCoordinator == nil)
+		#expect(runtime.isOnline)
+	}
+
+	@Test("a session ended by the server stops the coordinator too")
+	func sessionEndedStops() async {
+		let (runtime, _) = await makeRuntime()
+		runtime.sync()
+		#expect(runtime.syncCoordinator != nil)
+
+		runtime.sessionEnded()
+
+		#expect(runtime.syncCoordinator == nil)
+	}
+
+	@Test("syncing twice keeps the same coordinator for the same actor")
+	func idempotent() async {
+		let (runtime, _) = await makeRuntime()
+		runtime.sync()
+		let first = runtime.syncCoordinator
+		runtime.sync()
+		#expect(runtime.syncCoordinator === first)
+	}
+
+	@Test("signing out erases the cached copy of the account's data")
+	func signOutWipesDiskCache() async {
+		let (runtime, _) = await makeRuntime()
+		let key = DiskCache.Key(actorId: "actor-1", workspaceId: "ws-1", name: "test-sync-wipe")
+		DiskCache.shared.write(["secret"], key: key, version: 1)
+		#expect(DiskCache.shared.read([String].self, key: key, version: 1)?.value == ["secret"])
+
+		await runtime.signOut()
+
+		#expect(DiskCache.shared.read([String].self, key: key, version: 1)?.value == nil)
 	}
 }

@@ -13,6 +13,11 @@ options:
 configs:
   Debug: debug
   Release: release
+# Project-level xcconfig: signing style, DEVELOPMENT_TEAM (optional Local.xcconfig), entitlement
+# selection. Targets must not re-set these in `settings:` (target settings outrank xcconfig).
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -32,6 +37,7 @@ targets:
           - Info.plist
           - Maskin.entitlements
           - Maskin-macOS.entitlements
+          - Maskin-nopush.entitlements
       # A folder reference keeps the Fonts/ directory in the bundle, so UIAppFonts and
       # ATSApplicationFontsPath can name it.
       - path: Apps/Maskin/Resources/Fonts
@@ -56,7 +62,15 @@ targets:
         CFBundleDisplayName: Maskin
         CFBundleName: Maskin
         MaskinAPIBaseURL: $(MASKIN_API_BASE_URL)
-        UILaunchScreen: {}
+        # Where web-only settings (integrations, billing) open. Empty = the API origin, right for
+        # production; set MASKIN_WEB_BASE_URL in Local.xcconfig when the web app is on another port.
+        MaskinWebBaseURL: $(MASKIN_WEB_BASE_URL)
+        # Dictation in the chat composer (SFSpeechRecognizer, on-device where supported).
+        NSSpeechRecognitionUsageDescription: Maskin turns your speech into message text.
+        NSMicrophoneUsageDescription: Maskin uses the microphone so you can dictate messages.
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+          UIImageName: LaunchMark
         # maskin://<workspaceId>/objects/<id> (and chats/<id>, notifications): the form the backend
         # puts in push payloads. Universal links (https://maskin.io/...) come via associated-domains.
         CFBundleURLTypes:
@@ -102,7 +116,7 @@ targets:
         ENABLE_PREVIEWS: YES
         # iOS (device + simulator): push, associated domains, keychain group. `aps-environment` is
         # filled from MASKIN_APS_ENVIRONMENT (development in Debug, production in Release).
-        "CODE_SIGN_ENTITLEMENTS[sdk=iphone*]": Apps/Maskin/Maskin.entitlements
+        "CODE_SIGN_ENTITLEMENTS[sdk=iphone*]": $(MASKIN_IOS_ENTITLEMENTS)
         # macOS: the same capabilities are RESTRICTED entitlements, so an ad-hoc/unsigned build that
         # carries them is killed at launch. Debug therefore ships none by default (unsigned dev
         # builds launch; no push there). Release carries them. To exercise push/universal links in
@@ -111,7 +125,8 @@ targets:
         "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": $(MASKIN_MACOS_ENTITLEMENTS)
         "CODE_SIGN_IDENTITY[sdk=macosx*]": "-"
         ENABLE_USER_SCRIPT_SANDBOXING: NO
-        # TODO(release): set DEVELOPMENT_TEAM before archiving.
+        # DEVELOPMENT_TEAM comes from the optional gitignored Config/Local.xcconfig.
+        CODE_SIGN_STYLE: Automatic
       configs:
         Debug:
           MASKIN_API_BASE_URL: http://localhost:3000
@@ -179,13 +194,14 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         GENERATE_INFOPLIST_FILE: NO
         ENABLE_USER_SCRIPT_SANDBOXING: NO
+        CODE_SIGN_STYLE: Automatic
       configs:
         Debug:
           MASKIN_API_BASE_URL: http://localhost:3000
         Release:
           MASKIN_API_BASE_URL: https://maskin.io
-  # Apple TV: same glance UI, driven by the focus engine. No AppIcon yet (tvOS needs a layered
-  # brand-asset stack from design).
+  # Apple TV: same glance UI, driven by the focus engine. Icon + top shelf are the generated
+  # layered brand assets in Apps/MaskinTV/Assets.xcassets (scripts/gen-app-icons.swift).
   MaskinTV:
     type: application
     platform: tvOS
@@ -204,7 +220,9 @@ targets:
       properties:
         CFBundleDisplayName: Maskin
         CFBundleName: Maskin
-        UILaunchScreen: {}
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+          UIImageName: LaunchMark
         MaskinAPIBaseURL: $(MASKIN_API_BASE_URL)
         NSAppTransportSecurity:
           NSExceptionDomains:
@@ -214,9 +232,11 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app.tv
         PRODUCT_NAME: Maskin
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         GENERATE_INFOPLIST_FILE: NO
         ENABLE_USER_SCRIPT_SANDBOXING: NO
+        CODE_SIGN_STYLE: Automatic
       configs:
         Debug:
           MASKIN_API_BASE_URL: http://localhost:3000

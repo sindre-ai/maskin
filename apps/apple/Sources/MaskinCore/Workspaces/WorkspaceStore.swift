@@ -3,7 +3,7 @@ import MaskinAPI
 import Observation
 import OpenAPIRuntime
 
-public struct WorkspaceSummary: Identifiable, Sendable, Equatable {
+public struct WorkspaceSummary: Identifiable, Sendable, Equatable, Codable {
 	public var id: String
 	public var name: String
 	/// The signed-in actor's role in it (`owner`, `member`, …).
@@ -71,15 +71,40 @@ public final class WorkspaceStore {
 
 	public private(set) var workspaces: [WorkspaceSummary] = []
 	public private(set) var phase: Phase = .idle
+	/// How current the list on screen is (cache-hydrated until the first fetch succeeds).
+	public private(set) var freshness = Freshness()
 
 	@ObservationIgnored private let source: any WorkspaceListing
 	@ObservationIgnored private let auth: AuthSession
 	/// Bumped on `reset()` and every `refresh()`; only the latest load for the same actor may write.
 	@ObservationIgnored private var generation = 0
 
-	public init(source: any WorkspaceListing, auth: AuthSession) {
+	@ObservationIgnored private let disk: DiskCache?
+	static let cacheName = "workspaces.list"
+
+	/// - Parameter disk: when given, the list is remembered per signed-in actor so the switcher and
+	///   the selected workspace's name are there on the first frame. Per actor, never per
+	///   workspace: it is the list OF workspaces.
+	public init(source: any WorkspaceListing, auth: AuthSession, disk: DiskCache? = nil) {
 		self.source = source
 		self.auth = auth
+		self.disk = disk
+		hydrateIfNeeded()
+	}
+
+	private var cacheKey: DiskCache.Key? {
+		auth.session.map { DiskCache.Key(actorId: $0.actorId, name: Self.cacheName) }
+	}
+
+	/// Fill from disk for the current actor. Called at init and again from `refresh()` because
+	/// the session is usually restored after the store is built.
+	private func hydrateIfNeeded() {
+		guard phase == .idle, workspaces.isEmpty, let disk, let key = cacheKey,
+			let entry = disk.read([WorkspaceSummary].self, key: key, version: 1)
+		else { return }
+		workspaces = entry.value
+		phase = .loaded
+		freshness.hydrated(from: entry.savedAt)
 	}
 
 	public var selectedID: String? { auth.session?.workspaceId }
@@ -93,10 +118,12 @@ public final class WorkspaceStore {
 			reset()
 			return
 		}
+		hydrateIfNeeded()
 		if workspaces.isEmpty { phase = .loading }
 		generation += 1
 		let mine = generation
 		let actor = auth.session?.actorId
+		let started = ContinuousClock.now
 		do {
 			let list = try await source.listWorkspaces()
 			// Signed out, or a different user signed in, or a newer refresh started meanwhile:
@@ -104,11 +131,17 @@ public final class WorkspaceStore {
 			guard mine == generation, auth.session?.actorId == actor else { return }
 			workspaces = list
 			phase = .loaded
+			freshness.refreshed(at: Date())
+			SyncLog.revalidated(Self.cacheName, ok: true, since: started)
+			if let disk, let key = cacheKey { disk.write(list, key: key, version: 1) }
 			if selected == nil, let first = list.first { auth.selectWorkspace(first.id) }
 		} catch {
 			guard mine == generation, auth.session?.actorId == actor else { return }
 			let message = (error as? WorkspaceListingError)?.message ?? error.localizedDescription
-			phase = .failed(message)
+			freshness.revalidateFailed()
+			SyncLog.revalidated(Self.cacheName, ok: false, since: started)
+			// A failed revalidate never blanks a list that is already on screen.
+			if workspaces.isEmpty { phase = .failed(message) }
 		}
 	}
 
@@ -122,5 +155,6 @@ public final class WorkspaceStore {
 		generation += 1
 		workspaces = []
 		phase = .idle
+		freshness.reset()
 	}
 }

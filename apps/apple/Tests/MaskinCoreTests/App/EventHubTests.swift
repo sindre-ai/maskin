@@ -118,6 +118,37 @@ struct EventHubTests {
 		#expect(hub.workspaceId == nil)
 	}
 
+	@Test("a rotated API key restarts the stream for the same workspace")
+	func rotatedKeyRestarts() async throws {
+		let script = Script([])
+		let (hub, _) = hub([], script: script)
+		hub.connect(workspaceId: "w1", credentialKey: "old")
+		#expect(await script.waitForOpens(1))
+		// Same workspace, same key: nothing new (negative check, short grace).
+		hub.connect(workspaceId: "w1", credentialKey: "old")
+		try await Task.sleep(for: .milliseconds(100))
+		#expect(await script.opens == 1)
+		// Same workspace, NEW key: the old stream carries a dead key and must be replaced.
+		hub.connect(workspaceId: "w1", credentialKey: "new")
+		#expect(await script.waitForOpens(2))
+		hub.disconnect()
+	}
+
+	@Test("the connection after a key restart tells stores to refetch")
+	func keyRestartAnnouncesTheGap() async {
+		let script = Script([])
+		let (hub, _) = hub([], script: script)
+		hub.connect(workspaceId: "w1", credentialKey: "old")
+		#expect(await script.waitForOpens(1))
+		let signals = hub.subscribe()
+
+		hub.connect(workspaceId: "w1", credentialKey: "new")  // rotated key: events may have been missed
+
+		let first = await take(1, from: signals)
+		#expect(first == [.reconnected])
+		hub.disconnect()
+	}
+
 	@Test("an inert hub never connects")
 	func inert() {
 		let hub = EventHub(client: nil)
@@ -136,7 +167,7 @@ struct EventHubAuthTests {
 			backoff: SSEBackoff(initial: .milliseconds(1), max: .milliseconds(2)))
 		let hub = EventHub(client: client)
 		var called = 0
-		hub.onUnauthorized = { called += 1 }
+		hub.onUnauthorized = { _ in called += 1 }
 
 		hub.connect(workspaceId: "w1")
 		let deadline = ContinuousClock.now.advanced(by: .seconds(20))
@@ -149,12 +180,30 @@ struct EventHubAuthTests {
 		#expect(called == 1)
 	}
 
+	@Test("the 401 reports the key the stream was opened with, not a later one")
+	func reportsTheOpenedKey() async {
+		let client = SSEClient(
+			open: { _ in throw SSEError.badStatus(401) },
+			backoff: SSEBackoff(initial: .milliseconds(1), max: .milliseconds(2)))
+		let hub = EventHub(client: client)
+		var reported: [String?] = []
+		hub.onUnauthorized = { reported.append($0) }
+
+		hub.connect(workspaceId: "w1", credentialKey: "ank_old")
+		let deadline = ContinuousClock.now.advanced(by: .seconds(20))
+		while hub.connection != .failed, ContinuousClock.now < deadline {
+			try? await Task.sleep(for: .milliseconds(5))
+		}
+
+		#expect(reported == ["ank_old"])
+	}
+
 	@Test("a 404 (workspace gone) fails without claiming the key is bad")
 	func notFound() async {
 		let client = SSEClient(open: { _ in throw SSEError.badStatus(404) })
 		let hub = EventHub(client: client)
 		var called = 0
-		hub.onUnauthorized = { called += 1 }
+		hub.onUnauthorized = { _ in called += 1 }
 		hub.connect(workspaceId: "w1")
 		let deadline = ContinuousClock.now.advanced(by: .seconds(20))
 		while hub.connection != .failed, ContinuousClock.now < deadline {

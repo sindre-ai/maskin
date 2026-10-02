@@ -56,17 +56,21 @@ public struct OutboxRejection: Error, Sendable, Equatable {
 	}
 
 	/// Whether an HTTP status is a permanent rejection. 408 and 429 are asked to be retried, and
-	/// 401/403 are about the credentials, not the write (see `isAuthFailure`).
+	/// 401 is about the credentials, not the write (see `isAuthFailure`). A 403 IS a rejection of
+	/// the write: the user is authenticated but not permitted, so nothing they do about their
+	/// sign-in changes it, and holding the queue for it would strand the entry (and everything
+	/// behind it) forever. It fails visibly instead, like any other refused write.
 	public static func isPermanent(status: Int) -> Bool {
 		(400..<500).contains(status) && status != 408 && status != 429 && !isAuthFailure(status: status)
 	}
 
-	/// 401/403: the key or membership is the problem, not the queued write. The outbox holds the
-	/// whole queue instead of dropping the entry, so it survives a re-login or a restored grant.
-	public static func isAuthFailure(status: Int) -> Bool { status == 401 || status == 403 }
+	/// 401: the key is the problem, not the queued write. The outbox holds the whole queue instead
+	/// of dropping the entry, so it survives a re-login. (The server answers 401 only for bad
+	/// credentials; a non-member gets 404 and a permission refusal 403, which are rejections.)
+	public static func isAuthFailure(status: Int) -> Bool { status == 401 }
 }
 
-/// Throw from an executor for a 401/403. Never counts as an attempt and never drops the entry.
+/// Throw from an executor for a 401. Never counts as an attempt and never drops the entry.
 public struct OutboxAuthRequired: Error, Sendable, Equatable {
 	public var status: Int
 	public init(status: Int) { self.status = status }
@@ -117,6 +121,9 @@ public final class Outbox {
 	@ObservationIgnored private var wake: Task<Void, Never>?
 	@ObservationIgnored private var tasks: [Task<Void, Never>] = []
 	@ObservationIgnored private var isDiscarded = false
+	/// While `isAuthBlocked`, the only entry allowed out: the one that was refused, retried after
+	/// its back-off as a probe. Everything else waits for it to get through.
+	@ObservationIgnored private var authProbe: UUID?
 
 	public static let defaultBackoff: @Sendable (Int) -> TimeInterval = { attempts in
 		min(2 * pow(2, Double(max(attempts - 1, 0))), 300)
@@ -172,7 +179,10 @@ public final class Outbox {
 				for await online in updates {
 					guard let self else { return }
 					self.isOnline = online
-					if online { await self.drain() }
+					if online {
+						self.resumeAfterAuth()
+						await self.drain()
+					}
 				}
 			})
 		if let hub {
@@ -181,7 +191,10 @@ public final class Outbox {
 				Task { [weak self] in
 					for await signal in signals {
 						guard let self else { return }
-						if signal == .reconnected { await self.drain() }
+						if signal == .reconnected {
+							self.resumeAfterAuth()
+							await self.drain()
+						}
 					}
 				})
 		}
@@ -191,6 +204,18 @@ public final class Outbox {
 	/// Call when the app returns to the foreground.
 	public func appDidBecomeActive() {
 		isOnline = network.isOnline
+		resumeAfterAuth()
+		Task { await drain() }
+	}
+
+	/// Lift an auth hold (the credentials are valid again, or worth trying again) and replay.
+	/// The queue never drops entries over a 401/403, so nothing is lost while it was held.
+	public func resumeAfterAuth() {
+		guard isAuthBlocked else { return }
+		isAuthBlocked = false
+		authProbe = nil
+		for index in entries.indices { entries[index].nextAttemptAt = min(entries[index].nextAttemptAt, now()) }
+		save()
 		Task { await drain() }
 	}
 
@@ -263,6 +288,8 @@ public final class Outbox {
 		wake?.cancel()
 		entries = []
 		failures = []
+		isAuthBlocked = false
+		authProbe = nil
 		try? fileManager.removeItem(at: fileURL)
 	}
 
@@ -319,6 +346,7 @@ public final class Outbox {
 			switch outcome {
 			case .success:
 				isAuthBlocked = false
+				authProbe = nil
 				remove(entry.id)
 				broadcast(.sent(entry))
 			case .failure(let error):
@@ -327,6 +355,7 @@ public final class Outbox {
 					// The credentials are the problem, so every lane would fail the same way:
 					// hold the whole queue, spend no attempt, and let the next trigger retry.
 					isAuthBlocked = true
+					authProbe = entry.id
 					holdForAuth(entry, status: status)
 					return
 				}
@@ -359,9 +388,15 @@ public final class Outbox {
 		let t = now()
 		let workspace = currentWorkspace()
 		var seenLanes: Set<String> = []
+		if isAuthBlocked, !entries.contains(where: { $0.id == authProbe }) {
+			// The refused write is gone (cancelled), so nothing is left to probe with.
+			isAuthBlocked = false
+			authProbe = nil
+		}
 		for entry in entries {
 			let isHead = seenLanes.insert(entry.lane).inserted
 			guard isHead, !blocked.contains(entry.lane) else { continue }
+			if isAuthBlocked, entry.id != authProbe { continue }
 			guard entry.workspaceId == nil || entry.workspaceId == workspace else { continue }
 			guard entry.notBefore <= t, entry.nextAttemptAt <= t else { continue }
 			return entry

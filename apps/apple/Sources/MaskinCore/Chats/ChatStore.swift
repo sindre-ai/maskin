@@ -2,14 +2,18 @@ import Foundation
 import MaskinAPI
 import Observation
 
-/// One open conversation: paged history, optimistic send with a stable idempotency key, live
-/// updates from the event hub, read state, and "an agent is working" status.
+/// One open conversation: paged history, durable optimistic send, live updates from the event
+/// hub, read state, and "an agent is working" status.
 ///
 /// Message model (matches the backend): every message has an integer id that only grows.
 /// Agent replies are not token-streamed over the wire. A turn's text lands as one message when
-/// the agent finishes, announced by a `conversation` event. What the user sees between sending
-/// and that reply is `workingAgents`: the participants that are running, or all agent
-/// participants for a while after a send. The list stays ordered by id however events arrive.
+/// the agent finishes, announced by a `conversation` event (ids only, so the store refetches).
+/// What the user sees between sending and that reply comes from the conversation's agent
+/// sessions (`GET /api/sessions?conversation_id=`), not a guess.
+///
+/// `messages` is the server's rows (by id) followed by sends the server has not confirmed yet.
+/// Those come from the `ChatSendQueue`, so they survive the app being killed, and they vanish
+/// from the list the moment their confirmed twin is in `confirmed` (no ghost, no duplicate).
 @MainActor
 @Observable
 public final class ChatStore {
@@ -23,66 +27,189 @@ public final class ChatStore {
 	public let currentActorName: String
 
 	public private(set) var detail: ConversationSummary?
-	/// Oldest first: confirmed messages by server id, then messages still being sent.
-	public private(set) var messages: [ChatMessage] = []
+	/// What the server has, oldest first by server id.
+	public private(set) var confirmed: [ChatMessage] = []
 	public private(set) var phase: Phase = .idle
+	/// Cache vs. network, for an optional "Updated …" line. A failed refresh never blanks the thread.
+	public private(set) var freshness = Freshness()
 	public private(set) var hasEarlier = false
 	public private(set) var isLoadingEarlier = false
 	public private(set) var agentStates: [String: ChatActor.AgentState] = [:]
-	/// Agents the user is waiting on, newest send first. Cleared when a reply lands.
+	/// Everyone in the workspace (for the `@` picker and for naming a mentioned actor).
+	public private(set) var workspaceActors: [ChatActor] = []
+	/// Agent runs for this conversation, newest first.
+	public private(set) var agentSessions: [ChatAgentSession] = []
+	/// Set right after a send until a reply lands or the spawn grace runs out.
 	public private(set) var awaitingReplySince: Date?
 	public var notice: String?
-	/// Set while the thread is on screen; read state only advances then.
+	/// True while the thread is on screen AND the app is active; read state only advances then.
 	public var isActive = true {
-		didSet { if isActive && !oldValue { Task { await markReadIfNeeded() } } }
+		didSet {
+			guard isActive, !oldValue else { return }
+			Task {
+				await sync(full: true)
+				await refreshSessions()
+			}
+		}
 	}
 	/// Told after the server accepted a read cursor, so the list's unread badge clears too.
 	@ObservationIgnored public var onMarkedRead: (@MainActor (String, Int) -> Void)?
 
-	@ObservationIgnored private let api: any ChatAPI
+	@ObservationIgnored let api: any ChatAPI
+	@ObservationIgnored let queue: ChatSendQueue
+	@ObservationIgnored private let cache: SnapshotCache?
 	@ObservationIgnored private let events: EventHub?
 	@ObservationIgnored private let now: @Sendable () -> Date
-	@ObservationIgnored private let makeKey: @Sendable () -> String
 	@ObservationIgnored private let pageSize: Int
-	@ObservationIgnored private let replyWindow: TimeInterval
+	@ObservationIgnored private let spawnGrace: TimeInterval
+	@ObservationIgnored private let staleSessionAfter: TimeInterval
+	@ObservationIgnored private let pollInterval: Duration?
 	@ObservationIgnored private var listener: Task<Void, Never>?
+	@ObservationIgnored private var queueListener: Task<Void, Never>?
+	@ObservationIgnored private var poller: Task<Void, Never>?
 	@ObservationIgnored private var syncing = false
 	@ObservationIgnored private var syncQueued = false
+	@ObservationIgnored private var syncQueuedFull = false
+	@ObservationIgnored private var syncWaiters: [CheckedContinuation<Void, Never>] = []
 	@ObservationIgnored private var readSent = 0
-	@ObservationIgnored private var inFlight: Set<String> = []
+	/// A delivered message keeps the row id of the optimistic bubble, so SwiftUI never swaps it.
+	@ObservationIgnored private var aliases: [Int: String] = [:]
+	@ObservationIgnored private var deliveredClientIDs: Set<String> = []
 
 	public init(
 		conversationID: String, currentActorID: String, currentActorName: String,
-		api: any ChatAPI, events: EventHub?, pageSize: Int = 50, replyWindow: TimeInterval = 180,
-		now: @escaping @Sendable () -> Date = { Date() },
-		makeKey: @escaping @Sendable () -> String = { IdempotencyKey.make() }
+		api: any ChatAPI, queue: ChatSendQueue, events: EventHub?, pageSize: Int = 50,
+		spawnGrace: TimeInterval = 20, staleSessionAfter: TimeInterval = 20 * 60,
+		pollInterval: Duration? = .seconds(5), cache: SnapshotCache? = nil,
+		now: @escaping @Sendable () -> Date = { Date() }
 	) {
 		self.conversationID = conversationID
 		self.currentActorID = currentActorID
 		self.currentActorName = currentActorName
 		self.api = api
+		self.queue = queue
 		self.events = events
-		self.pageSize = pageSize
-		self.replyWindow = replyWindow
+		self.pageSize = min(max(pageSize, 1), ChatLimits.maxMessagesPage)
+		self.spawnGrace = spawnGrace
+		self.staleSessionAfter = staleSessionAfter
+		self.pollInterval = pollInterval
+		self.cache = cache
 		self.now = now
-		self.makeKey = makeKey
+		hydrateIfNeeded()
+	}
+
+	deinit {
+		MainActor.assumeIsolated {
+			listener?.cancel()
+			queueListener?.cancel()
+			poller?.cancel()
+		}
 	}
 
 	// MARK: - Derived
 
 	public var participants: [ChatParticipant] { detail?.participants ?? [] }
 	public var title: String { detail?.title ?? "Chat" }
-	public var lastServerID: Int? { messages.compactMap(\.serverID).max() }
+	public var lastServerID: Int? { confirmed.last?.serverID }
 
-	/// Agents to show a "working" row for. Running agents win; otherwise, shortly after a send,
-	/// every agent participant (the backend is routing the message to them).
+	/// Server rows, then unconfirmed sends. Failed sends always show; a queued one is hidden once
+	/// its confirmed twin is in the list.
+	public var messages: [ChatMessage] {
+		let rows = queue.pending(in: conversationID)
+		var consumed: Set<Int> = []
+		var shown: [ChatMessage] = []
+		for row in rows {
+			if case .failed = row.state {
+				shown.append(row.asMessage(actorID: currentActorID, actorName: currentActorName))
+				continue
+			}
+			if deliveredClientIDs.contains(row.id) { continue }
+			if let twin = confirmedTwin(of: row, excluding: consumed) {
+				consumed.insert(twin)
+				continue
+			}
+			shown.append(row.asMessage(actorID: currentActorID, actorName: currentActorName))
+		}
+		return confirmed + shown
+	}
+
+	/// The confirmed row that is the server's copy of a queued send: mine, same text, and newer
+	/// than anything I had seen when I sent it.
+	private func confirmedTwin(of row: PendingChatSend, excluding consumed: Set<Int>) -> Int? {
+		confirmed.first { message in
+			guard let id = message.serverID, !consumed.contains(id) else { return false }
+			return message.actorID == currentActorID && message.content == row.content
+				&& id > (row.afterServerID ?? 0)
+		}?.serverID
+	}
+
+	/// Question messages that a later human message already answered.
+	public var answeredQuestionIDs: Set<Int> {
+		Set(messages.compactMap(\.answeredQuestionID))
+	}
+
+	/// For each answered question (by its message id): what was picked.
+	public var questionAnswerIndex: [Int: [ChatQuestionAnswer.Answer]] {
+		var index: [Int: [ChatQuestionAnswer.Answer]] = [:]
+		for message in messages {
+			if let id = message.answeredQuestionID, index[id] == nil { index[id] = message.questionAnswers }
+		}
+		return index
+	}
+
+	/// A name for an actor id: someone in the conversation, else anyone in the workspace. Nil when
+	/// it can't be resolved (callers omit it; a raw id is never shown).
+	public func displayName(for actorID: String) -> String? {
+		if actorID == currentActorID { return currentActorName }
+		return participants.first { $0.id == actorID }?.name
+			?? workspaceActors.first { $0.id == actorID }?.participant.name
+	}
+
+	public func participant(for actorID: String) -> ChatParticipant {
+		participants.first { $0.id == actorID }
+			?? workspaceActors.first { $0.id == actorID }?.participant
+			?? ChatParticipant(id: actorID, name: "An agent", kind: .agent)
+	}
+
+	/// Live agent sessions, one per agent (the newest), ignoring ones that have gone quiet.
+	public func liveSessions(at date: Date? = nil) -> [ChatAgentSession] {
+		let t = date ?? now()
+		var seen: Set<String> = []
+		return agentSessions.filter { session in
+			guard session.status.isLive else { return false }
+			if let touched = session.updatedAt ?? session.startedAt,
+				t.timeIntervalSince(touched) > staleSessionAfter
+			{
+				return false
+			}
+			return seen.insert(session.actorID).inserted
+		}
+	}
+
+	/// The newest session of an agent that stopped without finishing: paused (resumable) or
+	/// failed. Only shown while nothing of theirs is running.
+	public func stalledSession() -> ChatAgentSession? {
+		guard liveSessions().isEmpty else { return nil }
+		guard let latest = agentSessions.first else { return nil }
+		guard latest.status == .paused else { return nil }
+		return latest
+	}
+
+	/// Agents to show a "working" row for. Real running sessions win. Right after a send, before
+	/// the backend has created a session, every agent participant is shown for `spawnGrace`.
 	public func workingAgents(at date: Date? = nil) -> [ChatParticipant] {
-		let agents = participants.filter { $0.kind == .agent && $0.id != currentActorID }
-		let running = agents.filter { agentStates[$0.id] == .running }
-		if !running.isEmpty { return running }
-		guard let since = awaitingReplySince, (date ?? now()).timeIntervalSince(since) < replyWindow
+		let live = liveSessions(at: date)
+		if !live.isEmpty {
+			return live.map { participant(for: $0.actorID) }
+		}
+		guard let since = awaitingReplySince, (date ?? now()).timeIntervalSince(since) < spawnGrace
 		else { return [] }
-		return agents
+		return participants.filter { $0.kind == .agent && $0.id != currentActorID }
+	}
+
+	/// What a working agent is doing right now, when the session says.
+	public func activity(for agentID: String) -> String? {
+		liveSessions().first { $0.actorID == agentID }?.currentActivity.flatMap { $0.isEmpty ? nil : $0 }
 	}
 
 	// MARK: - Loading
@@ -96,13 +223,33 @@ public final class ChatStore {
 					switch signal {
 					case .reconnected:
 						await self.sync(full: true)
+						await self.refreshSessions()
 					case .event(let event) where event.entityType == .conversation && event.entityId == self.conversationID:
 						await self.sync(full: event.action == "message_updated")
-					case .event(let event) where event.entityType == .actor:
-						await self.refreshAgentStates()
+						await self.refreshSessions()
+					case .event(let event) where event.entityType == .actor || event.entityType == .session:
+						await self.refreshSessions()
 					case .event:
 						break
 					}
+				}
+			}
+		}
+		if queueListener == nil {
+			let stream = queue.events()
+			queueListener = Task { [weak self] in
+				for await event in stream {
+					guard let self else { return }
+					self.apply(event)
+				}
+			}
+		}
+		if poller == nil, let interval = pollInterval {
+			poller = Task { [weak self] in
+				while !Task.isCancelled {
+					try? await Task.sleep(for: interval)
+					guard let self, !Task.isCancelled else { return }
+					if self.isActive, self.needsSessionPoll { await self.refreshSessions() }
 				}
 			}
 		}
@@ -112,10 +259,44 @@ public final class ChatStore {
 	public func stop() {
 		listener?.cancel()
 		listener = nil
+		queueListener?.cancel()
+		queueListener = nil
+		poller?.cancel()
+		poller = nil
+	}
+
+	/// Only poll sessions while something could change: an agent is running or a reply is due.
+	private var needsSessionPoll: Bool {
+		!liveSessions().isEmpty || awaitingReplySince != nil
+	}
+
+	/// First frame from disk: the newest page of this thread, before any network call.
+	func hydrateIfNeeded() {
+		guard phase == .idle, confirmed.isEmpty,
+			let entry = cache?.read(
+				ChatCaching.ThreadSnapshot.self, ChatCaching.threadName(conversationID),
+				version: ChatCaching.version),
+			entry.value.detail.id == conversationID
+		else { return }
+		detail = entry.value.detail
+		readSent = max(readSent, entry.value.detail.lastReadMessageID ?? 0)
+		merge(entry.value.messages.map(\.message))
+		hasEarlier = confirmed.count >= ChatCaching.threadMessageLimit
+		phase = .loaded
+		freshness.hydrated(from: entry.savedAt)
+	}
+
+	private func writeCache() {
+		guard let cache, let detail else { return }
+		let rows = confirmed.suffix(ChatCaching.threadMessageLimit).compactMap(ChatCaching.CachedMessage.init)
+		cache.write(
+			ChatCaching.ThreadSnapshot(detail: detail, messages: rows),
+			ChatCaching.threadName(conversationID), version: ChatCaching.version)
 	}
 
 	public func load() async {
-		if messages.isEmpty { phase = .loading }
+		hydrateIfNeeded()
+		if confirmed.isEmpty { phase = .loading }
 		do {
 			async let detailTask = api.detail(conversationID: conversationID)
 			async let pageTask = api.messages(
@@ -123,18 +304,22 @@ public final class ChatStore {
 			let (loadedDetail, page) = try await (detailTask, pageTask)
 			detail = loadedDetail
 			readSent = max(readSent, loadedDetail.lastReadMessageID ?? 0)
-			merge(page.messages)
-			hasEarlier = page.hasMore
+			mergeNewest(page)
 			phase = .loaded
+			freshness.refreshed(at: cache?.now() ?? now())
+			writeCache()
 			await markReadIfNeeded()
 			await refreshAgentStates()
+			await refreshSessions()
 		} catch {
-			if messages.isEmpty { phase = .failed(Self.message(error)) } else { notice = Self.message(error) }
+			// Cached or loaded rows stay on screen; only an empty thread shows the error.
+			freshness.revalidateFailed()
+			if confirmed.isEmpty { phase = .failed(Self.message(error)) }
 		}
 	}
 
 	public func loadEarlier() async {
-		guard hasEarlier, !isLoadingEarlier, let oldest = messages.compactMap(\.serverID).min() else { return }
+		guard hasEarlier, !isLoadingEarlier, let oldest = confirmed.first?.serverID else { return }
 		isLoadingEarlier = true
 		defer { isLoadingEarlier = false }
 		do {
@@ -147,38 +332,55 @@ public final class ChatStore {
 		}
 	}
 
+	/// Pull-to-refresh: everything, and wait for it.
+	public func refresh() async {
+		await sync(full: true)
+		await refreshAgentStates()
+		await refreshSessions()
+	}
+
 	/// Pull what changed. Incremental (`after_id`) for new messages; `full` re-reads the newest
-	/// page so edits and anything missed during a reconnect are picked up. Bursts coalesce.
+	/// page so edits and anything missed during a reconnect are picked up. Bursts coalesce into
+	/// one trailing pass, and every caller returns only after the pass that covers its request.
 	public func sync(full: Bool = false) async {
 		if syncing {
 			syncQueued = true
+			syncQueuedFull = syncQueuedFull || full
+			await withCheckedContinuation { syncWaiters.append($0) }
 			return
 		}
 		syncing = true
-		defer { syncing = false }
 		var wantFull = full
 		repeat {
 			syncQueued = false
+			let thisPassFull = wantFull || syncQueuedFull
+			syncQueuedFull = false
 			do {
 				let page: MessagePage
-				if wantFull || lastServerID == nil {
+				if thisPassFull || lastServerID == nil {
 					page = try await api.messages(
 						conversationID: conversationID, beforeID: nil, afterID: nil, limit: pageSize)
 				} else {
 					page = try await api.messages(
 						conversationID: conversationID, beforeID: nil, afterID: lastServerID, limit: pageSize)
 				}
-				merge(page.messages)
+				mergeNewest(page)
 				if let detail = try? await api.detail(conversationID: conversationID) {
 					self.detail = detail
 					readSent = max(readSent, detail.lastReadMessageID ?? 0)
 				}
+				freshness.refreshed(at: cache?.now() ?? now())
+				writeCache()
 				await markReadIfNeeded()
 			} catch {
-				notice = Self.message(error)
+				freshness.revalidateFailed()
 			}
 			wantFull = false
 		} while syncQueued
+		syncing = false
+		let waiters = syncWaiters
+		syncWaiters = []
+		for waiter in waiters { waiter.resume() }
 	}
 
 	public func refreshAgentStates() async {
@@ -186,55 +388,68 @@ public final class ChatStore {
 		var states: [String: ChatActor.AgentState] = [:]
 		for a in actors where a.participant.kind == .agent { states[a.id] = a.agentState }
 		agentStates = states
+		workspaceActors = actors
+	}
+
+	public func refreshSessions() async {
+		guard let sessions = try? await api.sessions(conversationID: conversationID) else { return }
+		agentSessions = sessions.sorted {
+			($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast)
+		}
 	}
 
 	// MARK: - Send
 
-	/// Send a message. The bubble appears immediately; on failure it stays with a failed state
-	/// and `retrySend` reuses the same idempotency key, so a lost response never double-posts.
+	/// Queue a message. The bubble appears at once (it is read from the queue, which is on disk),
+	/// and the outbox delivers it exactly once, now or when the network is back.
 	@discardableResult
-	public func send(_ text: String) -> String? {
+	public func send(_ text: String, metadata: ChatSendMetadata? = nil) -> String? {
 		let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !content.isEmpty else { return nil }
-		let key = makeKey()
-		let pending = ChatMessage(
-			id: "local-\(key)", conversationID: conversationID, actorID: currentActorID,
-			actorName: currentActorName, author: .human, content: content, createdAt: now(),
-			status: .sending, idempotencyKey: key)
-		messages.append(pending)
-		reorder()
-		Task { await deliver(pending.id) }
-		return pending.id
+		do {
+			let pending = try queue.send(
+				conversationID: conversationID, content: content, metadata: metadata,
+				afterServerID: lastServerID)
+			awaitingReplySince = now()
+			return "local-\(pending.id)"
+		} catch {
+			notice = "Couldn't queue that message."
+			return nil
+		}
 	}
 
+	/// Retry a failed send (the row id is `local-<clientID>`).
 	public func retrySend(_ id: String) {
-		guard let index = messages.firstIndex(where: { $0.id == id }), messages[index].isFailed else { return }
-		messages[index].status = .sending
-		Task { await deliver(id) }
+		queue.retry(Self.clientID(of: id))
+		awaitingReplySince = now()
 	}
 
 	/// Drop a message that never reached the server.
 	public func discard(_ id: String) {
-		guard let m = messages.first(where: { $0.id == id }), m.isPending else { return }
-		messages.removeAll { $0.id == id }
+		if !queue.discard(Self.clientID(of: id)) {
+			notice = "That message is already being sent."
+		}
 	}
 
-	/// Awaitable form of the delivery, for tests and callers that need completion.
-	public func deliver(_ id: String) async {
-		guard let message = messages.first(where: { $0.id == id }), message.isPending,
-			let key = message.idempotencyKey, inFlight.insert(id).inserted
-		else { return }
-		defer { inFlight.remove(id) }
-		do {
-			let saved = try await api.send(
-				conversationID: conversationID, content: message.content, idempotencyKey: key)
-			confirm(localID: id, with: saved)
+	private static func clientID(of rowID: String) -> String {
+		rowID.hasPrefix("local-") ? String(rowID.dropFirst("local-".count)) : rowID
+	}
+
+	private func apply(_ event: ChatSendEvent) {
+		switch event {
+		case .delivered(let clientID, let message):
+			guard message.conversationID == conversationID, let serverID = message.serverID else { return }
+			deliveredClientIDs.insert(clientID)
+			aliases[serverID] = "local-\(clientID)"
+			merge([message])
 			awaitingReplySince = now()
-			Task { await self.refreshAgentStates() }
-		} catch {
-			if let index = messages.firstIndex(where: { $0.id == id }) {
-				messages[index].status = .failed(Self.message(error))
+			Task {
+				await markReadIfNeeded()
+				await refreshAgentStates()
+				await refreshSessions()
 			}
+		case .failed:
+			break
 		}
 	}
 
@@ -244,7 +459,7 @@ public final class ChatStore {
 	public func retryAgent(for message: ChatMessage) async {
 		let target: Int?
 		if message.author == .agent {
-			target = messages.last(where: { ($0.serverID ?? 0) < (message.serverID ?? 0) && $0.author == .human })?.serverID
+			target = confirmed.last(where: { ($0.serverID ?? 0) < (message.serverID ?? 0) && $0.author == .human })?.serverID
 		} else {
 			target = message.serverID
 		}
@@ -259,6 +474,29 @@ public final class ChatStore {
 		}
 	}
 
+	/// Answer an agent's question. Posts the ordinary chat message the web posts: the text repeats
+	/// each question with the pick (what the agent reads), and `question_answer` pairs it to the
+	/// question for the UI. Goes through the outbox like any send, so it survives being offline.
+	@discardableResult
+	public func answer(question message: ChatMessage, picks: [Int: [String]]) -> String? {
+		guard let questionID = message.serverID, !answeredQuestionIDs.contains(questionID) else { return nil }
+		let items = message.questions
+		let answers = items.compactMap { item -> ChatQuestionAnswer.Answer? in
+			guard let picked = picks[item.index], !picked.isEmpty else { return nil }
+			return .init(header: item.header, selected: picked)
+		}
+		guard answers.count == items.count, !items.isEmpty else { return nil }
+		let content = items.map { item in
+			"**\(item.header)** \u{2014} \(item.question)\n\((picks[item.index] ?? []).joined(separator: ", "))"
+		}.joined(separator: "\n\n")
+		return send(
+			content,
+			metadata: ChatSendMetadata(
+				questionAnswer: ChatQuestionAnswer(questionMessageID: questionID, answers: answers)))
+	}
+
+	// MARK: - Participants, title, sessions
+
 	public func addParticipants(_ ids: [String]) async {
 		guard !ids.isEmpty else { return }
 		do {
@@ -269,9 +507,54 @@ public final class ChatStore {
 		}
 	}
 
+	public func removeParticipant(_ actorID: String) async {
+		let before = detail
+		detail?.participants.removeAll { $0.id == actorID }
+		do {
+			try await api.removeParticipant(conversationID: conversationID, actorID: actorID)
+		} catch {
+			detail = before
+			notice = Self.message(error)
+		}
+	}
+
+	/// Optimistic rename; rolled back if the server refuses.
+	public func rename(to title: String) async {
+		let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !trimmed.isEmpty, trimmed != detail?.title else { return }
+		let before = detail?.title
+		detail?.title = trimmed
+		do {
+			try await api.rename(conversationID: conversationID, title: trimmed)
+		} catch {
+			if let before { detail?.title = before }
+			notice = Self.message(error)
+		}
+	}
+
+	public func stopSession(_ id: String) async {
+		do {
+			try await api.stopSession(sessionID: id)
+		} catch {
+			notice = Self.message(error)
+		}
+		await refreshSessions()
+	}
+
+	public func resumeSession(_ id: String) async {
+		do {
+			try await api.resumeSession(sessionID: id)
+			awaitingReplySince = now()
+		} catch {
+			notice = Self.message(error)
+		}
+		await refreshSessions()
+	}
+
 	// MARK: - Read state
 
 	/// Advance the read cursor to the newest confirmed message. Never regresses, never repeats.
+	/// Only while the thread is visible and the app is active.
 	public func markReadIfNeeded() async {
 		guard isActive, let last = lastServerID, last > readSent else { return }
 		let previous = readSent
@@ -287,50 +570,44 @@ public final class ChatStore {
 
 	// MARK: - Merging
 
-	/// Fold server rows into the list. A row already present (by server id) is updated in place,
-	/// so ids stay stable; an incoming row that matches a message we are still sending (its
-	/// response lost the race with the event) adopts that row instead of duplicating it.
+	/// Fold in the newest page. When more than a page arrived since the last sync the page does
+	/// not touch what we hold (a gap): drop the old rows and let `loadEarlier` page them back,
+	/// rather than showing history with a hole in it.
+	func mergeNewest(_ page: MessagePage) {
+		let held = lastServerID
+		let wasEmpty = confirmed.isEmpty
+		if let held, page.hasMore, let first = page.messages.first?.serverID, first > held {
+			confirmed = []
+			hasEarlier = true
+		}
+		merge(page.messages)
+		if wasEmpty { hasEarlier = page.hasMore }
+	}
+
+	/// Fold server rows into the confirmed list, ordered by server id however they arrive. A row
+	/// already present is updated in place (keeping its row id), so SwiftUI never re-creates it.
 	func merge(_ incoming: [ChatMessage]) {
-		for message in incoming {
+		for var message in incoming {
 			guard let serverID = message.serverID else { continue }
-			if let index = messages.firstIndex(where: { $0.serverID == serverID }) {
-				var updated = message
-				updated.id = messages[index].id
-				messages[index] = updated
+			if let index = confirmed.firstIndex(where: { $0.serverID == serverID }) {
+				message.id = confirmed[index].id
+				confirmed[index] = message
 			} else {
-				messages.append(message)
+				if let alias = aliases[serverID] { message.id = alias }
+				confirmed.append(message)
 			}
 			if message.author == .agent, awaitingReplySince != nil,
-				let sent = messages.last(where: { $0.actorID == currentActorID && $0.serverID != nil })?.serverID,
+				let sent = confirmed.last(where: { $0.actorID == currentActorID })?.serverID,
 				serverID > sent
 			{
 				awaitingReplySince = nil
 			}
 		}
-		reorder()
-	}
-
-	private func confirm(localID: String, with saved: ChatMessage) {
-		guard let serverID = saved.serverID else { return }
-		if messages.contains(where: { $0.serverID == serverID }) {
-			// The event-driven refetch already inserted this message: keep that one.
-			messages.removeAll { $0.id == localID }
-		} else if let index = messages.firstIndex(where: { $0.id == localID }) {
-			var confirmed = saved
-			confirmed.id = localID
-			messages[index] = confirmed
-		}
-		reorder()
-		Task { await markReadIfNeeded() }
-	}
-
-	private func reorder() {
-		let confirmed = messages.filter { !$0.isPending }.sorted { ($0.serverID ?? 0) < ($1.serverID ?? 0) }
-		let pending = messages.filter(\.isPending).sorted { ($0.createdAt ?? .distantPast) < ($1.createdAt ?? .distantPast) }
-		messages = confirmed + pending
+		confirmed.sort { ($0.serverID ?? 0) < ($1.serverID ?? 0) }
 	}
 
 	static func message(_ error: Error) -> String {
-		(error as? ChatsError)?.message ?? error.localizedDescription
+		if let http = error as? ChatsHTTPError { return http.message }
+		return (error as? ChatsError)?.message ?? error.localizedDescription
 	}
 }

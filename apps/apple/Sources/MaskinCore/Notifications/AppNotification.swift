@@ -1,8 +1,8 @@
 import Foundation
 
 /// One row of the workspace's notification inbox, reduced to what the app renders.
-public struct AppNotification: Identifiable, Sendable, Equatable {
-	public enum Kind: Sendable, Equatable {
+public struct AppNotification: Identifiable, Sendable, Equatable, Codable {
+	public enum Kind: Sendable, Equatable, Codable {
 		case needsInput, recommendation, goodNews, alert
 		/// A type the backend added after this release.
 		case other(String)
@@ -18,7 +18,7 @@ public struct AppNotification: Identifiable, Sendable, Equatable {
 		}
 	}
 
-	public enum Status: Sendable, Equatable {
+	public enum Status: Sendable, Equatable, Codable {
 		/// Never opened: the unread state.
 		case pending
 		case seen
@@ -48,8 +48,8 @@ public struct AppNotification: Identifiable, Sendable, Equatable {
 	}
 
 	/// A button the agent attached (`metadata.actions`) or a choice (`metadata.options`).
-	public struct Action: Sendable, Equatable, Identifiable {
-		public enum Style: Sendable, Equatable { case primary, secondary, destructive }
+	public struct Action: Sendable, Equatable, Identifiable, Codable {
+		public enum Style: Sendable, Equatable, Codable { case primary, secondary, destructive }
 		public var id: String
 		public var label: String
 		/// What `/respond` sends back to the agent.
@@ -130,7 +130,7 @@ public struct AppNotification: Identifiable, Sendable, Equatable {
 }
 
 /// A person or agent a notification came from, for the avatar and name.
-public struct NotificationActor: Sendable, Equatable {
+public struct NotificationActor: Sendable, Equatable, Codable {
 	public var id: String
 	public var name: String
 	public var isAgent: Bool

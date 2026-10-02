@@ -68,10 +68,19 @@ struct ConversationListView: View {
 		.overlay { overlay(isEmpty: groups.isEmpty) }
 		.refreshable { await store.refresh() }
 		.searchable(text: $search, prompt: "Search chats")
-		.navigationTitle(store.scope == .archived ? "Archived" : "Chats")
+		.navigationTitle(store.scope == .archived ? "Archived" : (store.filter == .unread ? "Unread" : (store.filter == .pinned ? "Pinned" : "Chats")))
 		.toolbar {
 			ToolbarItem(placement: .automatic) {
 				Menu {
+					Picker(
+						"Show",
+						selection: Binding(get: { store.filter }, set: { store.filter = $0 })
+					) {
+						Text("All").tag(ConversationsStore.Filter.all)
+						Text("Unread").tag(ConversationsStore.Filter.unread)
+						Text("Pinned").tag(ConversationsStore.Filter.pinned)
+					}
+					.disabled(store.scope == .archived)
 					Toggle(
 						"Archived",
 						isOn: Binding(
@@ -83,6 +92,7 @@ struct ConversationListView: View {
 			}
 			ToolbarItem(placement: .automatic) {
 				Button(action: onNewChat) { Label("New chat", systemImage: "square.and.pencil") }
+					.keyboardShortcut("n", modifiers: .command)
 			}
 		}
 	}
@@ -101,10 +111,11 @@ struct ConversationListView: View {
 				if search.isEmpty {
 					EmptyState(
 						symbol: "bubble.left.and.bubble.right",
-						title: store.scope == .archived ? "Nothing archived" : "No conversations yet",
-						message: store.scope == .archived ? nil : "Start one with a teammate or an agent."
+						title: emptyTitle,
+						message: store.scope == .archived || store.filter != .all
+							? nil : "Start one with a teammate or an agent."
 					) {
-						if store.scope == .active {
+						if store.scope == .active, store.filter == .all {
 							Button("New chat", action: onNewChat).buttonStyle(.primaryAction)
 						}
 					}
@@ -112,6 +123,15 @@ struct ConversationListView: View {
 					ContentUnavailableView.search(text: search)
 				}
 			}
+		}
+	}
+
+	private var emptyTitle: String {
+		if store.scope == .archived { return "Nothing archived" }
+		switch store.filter {
+		case .all: return "No conversations yet"
+		case .unread: return "You're all caught up"
+		case .pinned: return "Nothing pinned"
 		}
 	}
 

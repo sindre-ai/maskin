@@ -5,7 +5,7 @@ import Testing
 @testable import MaskinCore
 
 @MainActor
-@Suite("Outbox holds on 401/403")
+@Suite("Outbox holds on 401 and rejects 403")
 struct OutboxAuthTests {
 	private func make(
 		executor: ScriptedExecutor = ScriptedExecutor(), maxAttempts: Int = 1
@@ -15,7 +15,7 @@ struct OutboxAuthTests {
 			workspaceId: { "ws-1" }, backoff: { _ in 3600 }, maxAttempts: maxAttempts)
 	}
 
-	@Test("a 401 keeps the entry, spends no attempts and drops nothing", arguments: [401, 403])
+	@Test("a 401 keeps the entry, spends no attempts and drops nothing", arguments: [401])
 	func holds(status: Int) async throws {
 		let executor = ScriptedExecutor()
 		let outbox = make(executor: executor, maxAttempts: 1)
@@ -57,8 +57,25 @@ struct OutboxAuthTests {
 		#expect(outbox.entries.isEmpty)
 		#expect(outbox.failures.count == 1)
 		#expect(!OutboxRejection.isPermanent(status: 401))
-		#expect(!OutboxRejection.isPermanent(status: 403))
+		// 403 is a refusal of the write itself (not a credentials problem): it fails visibly.
+		#expect(OutboxRejection.isPermanent(status: 403))
 		#expect(OutboxRejection.isPermanent(status: 404))
+	}
+
+	@Test("a 403 is a visible failure and does not hold the queue behind it")
+	func forbiddenFailsVisibly() async throws {
+		let executor = ScriptedExecutor()
+		let outbox = make(executor: executor, maxAttempts: 1)
+		executor.fail(payload: "forbidden", with: [OutboxRejection(status: 403, message: "Not allowed.")])
+		try outbox.enqueue(kind: "t", lane: "a", summary: "s", payload: "forbidden", holdFor: 0)
+		try outbox.enqueue(kind: "t", lane: "b", summary: "s", payload: "other", holdFor: 0)
+
+		await outbox.drain()
+
+		#expect(outbox.isAuthBlocked == false)
+		#expect(outbox.failures.count == 1)
+		#expect(outbox.entries.isEmpty)  // the refused write is dropped; the other lane went out
+		#expect(executor.calls.map(\.payload).contains("other"))
 	}
 
 	@Test("stop() cancels triggers but keeps the queue and file")

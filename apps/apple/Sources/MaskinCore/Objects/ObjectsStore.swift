@@ -30,15 +30,45 @@ public final class ObjectsStore {
 	public var grouping: ObjectsGrouping = .status
 
 	public let directory: ObjectsDirectory
+	/// How current the list on screen is (cache-hydrated until the first fetch succeeds).
+	public private(set) var freshness = Freshness()
 
 	@ObservationIgnored private let remote: any ObjectsRemote
+	@ObservationIgnored private let cache: SnapshotCache?
+	/// The list on screen came from disk and has not been confirmed by the server yet, so
+	/// `load()` must still revalidate it.
+	@ObservationIgnored private var hydratedFromCache = false
+	static let cacheName = "objects.list"
 	@ObservationIgnored private var generation = 0
 	@ObservationIgnored private var refreshing = false
 	@ObservationIgnored private var refreshQueued = false
 
-	public init(remote: any ObjectsRemote, directory: ObjectsDirectory) {
+	public init(
+		remote: any ObjectsRemote, directory: ObjectsDirectory, cache: SnapshotCache? = nil
+	) {
 		self.remote = remote
 		self.directory = directory
+		self.cache = cache
+		hydrateIfNeeded()
+	}
+
+	/// Show the last-known first page before any network call. Only the unfiltered head is ever
+	/// cached, so this only applies while no filter or search is set.
+	private func hydrateIfNeeded() {
+		guard phase == .idle, objects.isEmpty, !isFiltered,
+			let entry = cache?.read([WorkObject].self, Self.cacheName)
+		else { return }
+		objects = entry.value
+		hasMore = entry.value.count >= Self.pageSize
+		phase = .loaded
+		hydratedFromCache = true
+		freshness.hydrated(from: entry.savedAt)
+	}
+
+	/// Remember the unfiltered head so the next launch opens on it.
+	private func persistHead() {
+		guard !isFiltered else { return }
+		cache?.write(Array(objects.prefix(Self.pageSize)), Self.cacheName)
 	}
 
 	// MARK: Derived
@@ -63,9 +93,12 @@ public final class ObjectsStore {
 
 	/// First load (skipped once loaded; use `reload()` to force) plus the directory.
 	public func load() async {
+		hydrateIfNeeded()
 		await directory.load()
-		guard phase == .idle || { if case .failed = phase { true } else { false } }() else { return }
-		await fetchFirstPage(showSpinner: true)
+		guard phase == .idle || hydratedFromCache || { if case .failed = phase { true } else { false } }()
+		else { return }
+		// With data on screen (from disk) revalidate quietly: no spinner, and a failure keeps it.
+		await fetchFirstPage(showSpinner: objects.isEmpty, keepOnFailure: !objects.isEmpty)
 	}
 
 	/// Forget everything (workspace switch); the next `load()` starts clean.
@@ -79,6 +112,8 @@ public final class ObjectsStore {
 		statusFilter = nil
 		searchText = ""
 		actionError = nil
+		hydratedFromCache = false
+		freshness.reset()
 	}
 
 	/// Pull to refresh.
@@ -126,9 +161,10 @@ public final class ObjectsStore {
 		await fetchFirstPage(showSpinner: false)
 	}
 
-	private func fetchFirstPage(showSpinner: Bool) async {
+	private func fetchFirstPage(showSpinner: Bool, keepOnFailure: Bool = false) async {
 		generation += 1
 		let mine = generation
+		let started = ContinuousClock.now
 		if showSpinner || objects.isEmpty { phase = .loading }
 		do {
 			let page = try await remote.list(query)
@@ -137,10 +173,21 @@ public final class ObjectsStore {
 			hasMore = page.count >= Self.pageSize
 			phase = .loaded
 			isOffline = false
+			hydratedFromCache = false
+			freshness.refreshed(at: cache?.now() ?? Date())
+			persistHead()
+			SyncLog.revalidated(Self.cacheName, ok: true, since: started)
 		} catch {
 			guard mine == generation else { return }
 			isOffline = (error as? ObjectsError)?.isOffline ?? false
-			phase = .failed(Self.message(error))
+			SyncLog.revalidated(Self.cacheName, ok: false, since: started)
+			if keepOnFailure {
+				// A failed revalidate never blanks good data.
+				phase = .loaded
+				freshness.revalidateFailed()
+			} else {
+				phase = .failed(Self.message(error))
+			}
 		}
 	}
 
@@ -171,9 +218,13 @@ public final class ObjectsStore {
 				hasMore = keptTail ? hasMore : page.count >= q.limit
 				phase = .loaded
 				isOffline = false
+				hydratedFromCache = false
+				freshness.refreshed(at: cache?.now() ?? Date())
+				persistHead()
 			} catch {
 				guard mine == generation else { continue }
 				isOffline = (error as? ObjectsError)?.isOffline ?? false
+				freshness.revalidateFailed()
 				if objects.isEmpty {
 					phase = .failed(Self.message(error))
 				} else if !isOffline {

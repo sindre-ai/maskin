@@ -20,16 +20,93 @@ public final class AppRuntime {
 	public let push: PushRegistrar?
 
 	var selectedTab: ShellTab = .forYou
-	public var presentedObject: ObjectPresentation?
-	/// The inbox sheet. Opening it is the first moment the app asks about push permission (see
-	/// `requestPushPermission()`): by then the person has seen what a notification is.
-	public var showNotifications = false {
-		didSet { if showNotifications, !oldValue { Task { await requestPushPermission() } } }
+
+	/// What the shell shows in its ONE sheet. A single value (not a flag per sheet) so two
+	/// presentations requested in the same tick (an inbox tap that opens an object) replace each
+	/// other deterministically instead of racing, and the sheet can't outlive its workspace.
+	public enum Presentation: Identifiable, Equatable, Sendable {
+		case object(String)
+		case agent(String)
+		case file(String)
+		case search
+		case settings
+		case notifications
+
+		public var id: String {
+			switch self {
+			case .object(let id): "object:\(id)"
+			case .agent(let id): "agent:\(id)"
+			case .file(let id): "file:\(id)"
+			case .search: "search"
+			case .settings: "settings"
+			case .notifications: "notifications"
+			}
+		}
 	}
+
+	/// The sheet currently requested. Asking for the inbox is the first moment the app asks about
+	/// push permission (see `requestPushPermission()`): by then the person has seen what a
+	/// notification is.
+	public var presentation: Presentation? {
+		didSet {
+			if presentation == .notifications, oldValue != .notifications {
+				Task { await requestPushPermission() }
+			}
+		}
+	}
+
+	// Per-sheet accessors over `presentation` (the surface existing callers and tests use).
+	public var presentedObject: ObjectPresentation? {
+		get { if case .object(let id) = presentation { ObjectPresentation(id: id) } else { nil } }
+		set { presentation = newValue.map { .object($0.id) } ?? clearing(.object) }
+	}
+	public var presentedAgentId: String? {
+		get { if case .agent(let id) = presentation { id } else { nil } }
+		set { presentation = newValue.map { .agent($0) } ?? clearing(.agent) }
+	}
+	public var presentedFileId: String? {
+		get { if case .file(let id) = presentation { id } else { nil } }
+		set { presentation = newValue.map { .file($0) } ?? clearing(.file) }
+	}
+	public var showSettings: Bool {
+		get { presentation == .settings }
+		set { presentation = newValue ? .settings : clearing(.settings) }
+	}
+	public var showNotifications: Bool {
+		get { presentation == .notifications }
+		set { presentation = newValue ? .notifications : clearing(.notifications) }
+	}
+	public var showSearch: Bool {
+		get { presentation == .search }
+		set { presentation = newValue ? .search : clearing(.search) }
+	}
+
+	private enum Kind { case object, agent, file, settings, notifications, search }
+
+	/// Closing one kind of sheet must not close a DIFFERENT one that replaced it meanwhile.
+	private func clearing(_ kind: Kind) -> Presentation? {
+		switch (kind, presentation) {
+		case (.object, .object), (.agent, .agent), (.file, .file), (.settings, .settings),
+			(.notifications, .notifications), (.search, .search):
+			return nil
+		default:
+			return presentation
+		}
+	}
+
 	/// Set by a chat link; `ChatsScreen` takes it and resets it to nil.
 	public var requestedConversationId: String?
 	public private(set) var isSigningOut = false
 
+	/// Keeps data current: refetch on returning to the app, connectivity (for the global offline
+	/// banner) and replaying queued writes when the network is back. Built once a session is active;
+	/// observed, so the banner appears as soon as it exists.
+	public private(set) var syncCoordinator: SyncCoordinator?
+	@ObservationIgnored private var syncActorId: String?
+	/// `true` until the coordinator says otherwise (no banner before we know).
+	public var isOnline: Bool { syncCoordinator?.isOnline ?? true }
+
+	@ObservationIgnored private var lastSyncedWorkspaceId: String?
 	@ObservationIgnored private let signOutTimeout: Duration
 	@ObservationIgnored private let forYouDirectory: URL?
 	@ObservationIgnored private var forYouRuntime: ForYouRuntime?
@@ -90,11 +167,53 @@ public final class AppRuntime {
 	func sync() {
 		guard environment.auth.session != nil else {
 			if !isSigningOut { sessionEnded() }
+			lastSyncedWorkspaceId = nil
 			return
 		}
+		// Anything open (an object, an agent, a file, a thread) belongs to the OLD workspace and
+		// would fetch with the new one's header and 404. Settings and the inbox are workspace
+		// scoped but rebuild themselves, so only the id-addressed sheets are dropped.
+		if let previous = lastSyncedWorkspaceId, previous != environment.workspaceId {
+			switch presentation {
+			case .object, .agent, .file: presentation = nil
+			default: break
+			}
+			requestedConversationId = nil
+		}
+		lastSyncedWorkspaceId = environment.workspaceId
 		notifications.activate(workspaceId: environment.workspaceId, events: environment.events)
+		// Start the chat runtime now (not when the Chats tab first appears) so messages queued
+		// offline, or before the app was last killed, replay as soon as the user is signed in.
+		_ = ChatsRuntime.shared(environment: environment)
+		ensureSyncCoordinator()
 		router.evaluate()
 		handlePendingLink()
+	}
+
+	/// One coordinator per signed-in actor: created on first sync, rebuilt if the actor changes.
+	private func ensureSyncCoordinator() {
+		let actorId = environment.auth.session?.actorId
+		if syncCoordinator != nil, syncActorId == actorId { return }
+		syncCoordinator?.stop()
+		let coordinator = SyncCoordinator(events: environment.events, outbox: forYou.outbox)
+		coordinator.start()
+		syncCoordinator = coordinator
+		syncActorId = actorId
+	}
+
+	private func stopSyncCoordinator() {
+		syncCoordinator?.stop()
+		syncCoordinator = nil
+		syncActorId = nil
+	}
+
+	/// Map the app's scene phase onto the coordinator, and tell the chat outbox too (the For You
+	/// outbox is driven by the coordinator itself).
+	public func scenePhaseChanged(_ phase: SyncScenePhase) {
+		syncCoordinator?.scenePhaseChanged(phase)
+		if phase == .active, environment.auth.session != nil {
+			ChatsRuntime.shared(environment: environment).outbox.appDidBecomeActive()
+		}
 	}
 
 	/// The session ended without the user signing out (the server rejected the key). Stops
@@ -103,14 +222,16 @@ public final class AppRuntime {
 	func sessionEnded() {
 		forYouRuntime?.stop()
 		forYouRuntime = nil
+		stopSyncCoordinator()
 		notifications.stop()
 		notifications.reset()
 		router.reset()
 		environment.workspaces.reset()
 		environment.events.disconnect()
-		presentedObject = nil
-		showNotifications = false
+		presentation = nil
 		requestedConversationId = nil
+		selectedTab = .forYou
+		FileStore.clearExports()
 	}
 
 	/// The signed-in actor changed (`nil` = signed out): keep the push token registered for them.
@@ -152,22 +273,36 @@ public final class AppRuntime {
 	public func present(_ link: DeepLink) {
 		switch link {
 		case .object(_, let id):
-			showNotifications = false
-			presentedObject = ObjectPresentation(id: id)
+			presentation = .object(id)
 		case .chat(_, let id):
-			showNotifications = false
-			presentedObject = nil
+			presentation = nil
 			selectedTab = .chats
 			requestedConversationId = id
 		case .notifications:
-			presentedObject = nil
-			showNotifications = true
+			presentation = .notifications
 		}
 	}
 
 	/// For You and the shell's own surfaces open objects through here.
 	public func openObject(_ id: String) {
-		presentedObject = ObjectPresentation(id: id)
+		presentation = .object(id)
+	}
+
+	public func openAgent(_ id: String) { presentedAgentId = id }
+	public func openFile(_ id: String) { presentedFileId = id }
+
+	/// Where a search result lands: objects, agents and files open in a sheet over the current
+	/// tab; a chat selects the Chats tab and requests the thread.
+	public func openSearchResult(_ result: SearchResult) {
+		switch result.kind {
+		case .object: openObject(result.entityId)
+		case .agent: openAgent(result.entityId)
+		case .file: openFile(result.entityId)
+		case .chat:
+			presentation = nil
+			selectedTab = .chats
+			requestedConversationId = result.entityId
+		}
 	}
 
 	/// A user-facing sentence for a link the router refused, or `nil`.
@@ -202,13 +337,20 @@ public final class AppRuntime {
 		}
 		running?.outbox.discardAll()
 		ForYouRuntime.deletePersistedOutbox(actorId: actorId, directory: forYouDirectory)
+		// Queued chat messages belong to this account and must never replay as another.
+		ChatsRuntime.signOut(actorId: actorId)
 		notifications.stop()
 		notifications.reset()
 		router.reset()
-		presentedObject = nil
-		showNotifications = false
+		presentation = nil
 		requestedConversationId = nil
 		selectedTab = .forYou
+		// Local traces of this account: what they searched for and files they exported to share.
+		SearchRecents.clearAll()
+		FileStore.clearExports()
+		stopSyncCoordinator()
+		// The cached copy of this account's data (feed, objects, inbox...) goes with the session.
+		DiskCache.clearAll()
 		push?.setBadge(0)
 	}
 }

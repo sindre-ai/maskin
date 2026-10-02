@@ -1,8 +1,8 @@
 import Foundation
 
 /// A person or agent in a conversation, or a candidate for the new-chat picker.
-public struct ChatParticipant: Identifiable, Hashable, Sendable {
-	public enum Kind: String, Sendable { case human, agent }
+public struct ChatParticipant: Identifiable, Hashable, Sendable, Codable {
+	public enum Kind: String, Sendable, Codable { case human, agent }
 
 	public var id: String
 	public var name: String
@@ -43,7 +43,7 @@ public struct ChatActor: Identifiable, Hashable, Sendable {
 }
 
 /// One row of the Chats list, and the header of an open thread.
-public struct ConversationSummary: Identifiable, Hashable, Sendable {
+public struct ConversationSummary: Identifiable, Hashable, Sendable, Codable {
 	public var id: String
 	public var title: String
 	public var lastMessageAt: Date?
@@ -97,6 +97,8 @@ public struct ChatMessage: Identifiable, Equatable, Sendable {
 	public enum Status: Equatable, Sendable {
 		case sent
 		case sending
+		/// Held back (offline, signed out, backing off); the reason is for the user.
+		case waiting(String)
 		case failed(String)
 	}
 
@@ -193,4 +195,63 @@ extension JSONValue {
 		if case .bool(let b) = self { return b }
 		return nil
 	}
+}
+
+/// An agent run that belongs to a conversation (a row of `GET /api/sessions?conversation_id=`).
+public struct ChatAgentSession: Identifiable, Equatable, Sendable {
+	public enum Status: Equatable, Sendable {
+		case pending, starting, running, paused, completed, failed, timeout, other(String)
+
+		public init(_ raw: String) {
+			switch raw {
+			case "pending", "queued": self = .pending
+			case "starting": self = .starting
+			case "running", "snapshotting": self = .running
+			case "paused": self = .paused
+			case "completed": self = .completed
+			case "failed": self = .failed
+			case "timeout": self = .timeout
+			default: self = .other(raw)
+			}
+		}
+
+		/// The agent is (about to be) working on the reply.
+		public var isLive: Bool { self == .pending || self == .starting || self == .running }
+		public var isTroubled: Bool { self == .failed || self == .timeout }
+	}
+
+	public var id: String
+	public var actorID: String
+	public var status: Status
+	public var currentActivity: String?
+	public var startedAt: Date?
+	public var updatedAt: Date?
+	/// The conversation message that spawned this session, when the backend recorded it.
+	public var messageID: Int?
+
+	public init(
+		id: String, actorID: String, status: Status, currentActivity: String? = nil,
+		startedAt: Date? = nil, updatedAt: Date? = nil, messageID: Int? = nil
+	) {
+		self.id = id
+		self.actorID = actorID
+		self.status = status
+		self.currentActivity = currentActivity
+		self.startedAt = startedAt
+		self.updatedAt = updatedAt
+		self.messageID = messageID
+	}
+}
+
+/// Caps the server enforces (`packages/shared/src/schemas/{conversations,sessions}.ts`).
+public enum ChatLimits {
+	/// `GET /conversations/{id}/messages?limit=` max.
+	public static let maxMessagesPage = 200
+	/// `GET /conversations?limit=` max.
+	public static let maxConversationsPage = 100
+	/// `GET /sessions?limit=` max.
+	public static let maxSessionsPage = 100
+	public static let maxMessageLength = 8000
+	public static let maxAttachments = 10
+	public static let maxFileBytes = 10 * 1024 * 1024
 }

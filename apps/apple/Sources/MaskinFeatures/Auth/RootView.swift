@@ -6,6 +6,7 @@ import SwiftUI
 /// inbox at the selected workspace, and routes deep links (held until signed in).
 public struct RootView: View {
 	private let environment: AppEnvironment
+	@Environment(\.scenePhase) private var scenePhase
 	@State private var runtime: AppRuntime
 	private let onRuntimeReady: (AppRuntime) -> Void
 
@@ -37,6 +38,14 @@ public struct RootView: View {
 		.task(id: runtime.syncKey) { runtime.sync() }
 		.task(id: auth.session?.actorId) { await runtime.actorChanged(auth.session?.actorId) }
 		.onChange(of: runtime.notifications.unreadCount, initial: true) { runtime.updateBadge() }
+		.onChange(of: scenePhase) { _, phase in
+			switch phase {
+			case .active: runtime.scenePhaseChanged(.active)
+			case .inactive: runtime.scenePhaseChanged(.inactive)
+			case .background: runtime.scenePhaseChanged(.background)
+			@unknown default: break
+			}
+		}
 	}
 }
 

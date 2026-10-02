@@ -76,6 +76,8 @@ public final class ForYouStore {
 	public private(set) var cards: [ForYouCard] = []
 	public private(set) var actors: [String: ForYouActor] = [:]
 	public private(set) var brief: BriefState = .idle
+	/// How current the cards on screen are (cache-hydrated until the first fetch succeeds).
+	public private(set) var freshness = Freshness()
 	public var options: ForYouDisplayOptions {
 		didSet { if options != oldValue { persistOptions() } }
 	}
@@ -95,13 +97,15 @@ public final class ForYouStore {
 	@ObservationIgnored private var listener: Task<Void, Never>?
 	@ObservationIgnored private var debounce: Task<Void, Never>?
 	@ObservationIgnored private let eventDebounce: Duration
+	@ObservationIgnored private let cache: SnapshotCache?
 	private static let optionsKey = "foryou.displayOptions.v1"
 
 	public init(
 		source: any ForYouSource, decisions: DecisionService,
 		workspaceId: @escaping @MainActor () -> String?, defaults: UserDefaults = .standard,
-		eventDebounce: Duration = .milliseconds(350)
+		eventDebounce: Duration = .milliseconds(350), cache: SnapshotCache? = nil
 	) {
+		self.cache = cache
 		self.source = source
 		self.decisions = decisions
 		self.workspaceId = workspaceId
@@ -114,6 +118,33 @@ public final class ForYouStore {
 		} else {
 			options = ForYouDisplayOptions()
 		}
+		// First frame shows the last-known feed; `load()` then revalidates it.
+		if let ws = workspaceId() { hydrate(workspace: ws) }
+	}
+
+	/// What `ForYouStore` keeps on disk: the feed and the names its cards need, nothing else
+	/// (decisions in flight and the brief are never cached).
+	struct Snapshot: Codable, Sendable {
+		var cards: [ForYouCard]
+		var actors: [ForYouActor]
+	}
+	static let cacheName = "foryou.feed"
+	static let cacheLimit = 100
+
+	/// Fill the feed from disk when it is empty. A no-op without a cache or an entry.
+	private func hydrate(workspace ws: String) {
+		guard cards.isEmpty, let entry = cache?.read(Snapshot.self, Self.cacheName) else { return }
+		cards = entry.value.cards
+		actors = Dictionary(entry.value.actors.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+		phase = .loaded
+		loadedWorkspace = ws
+		freshness.hydrated(from: entry.savedAt)
+	}
+
+	private func persist() {
+		cache?.write(
+			Snapshot(cards: Array(cards.prefix(Self.cacheLimit)), actors: Array(actors.values)),
+			Self.cacheName)
 	}
 
 	deinit {
@@ -174,8 +205,10 @@ public final class ForYouStore {
 			actors = [:]
 			brief = .idle
 			phase = .idle
+			freshness.reset()
 			loadedWorkspace = ws
 			generation += 1  // anything still in flight belongs to the previous workspace
+			hydrate(workspace: ws)
 		}
 		if cards.isEmpty { phase = .loading }
 		await fetch(workspace: ws)
@@ -197,19 +230,27 @@ public final class ForYouStore {
 	private func fetch(workspace ws: String) async {
 		generation += 1
 		let mine = generation
+		let started = ContinuousClock.now
 		async let actorsResult = try? source.fetchActors(workspaceId: ws)
+		var succeeded = false
 		do {
 			let fetched = try await source.fetchFeed(workspaceId: ws)
 			guard mine == generation, workspaceId() == ws else { return }
 			cards = fetched
 			phase = .loaded
+			freshness.refreshed(at: cache?.now() ?? Date())
+			succeeded = true
 		} catch {
 			guard mine == generation, workspaceId() == ws else { return }
+			// A failed revalidate never blanks good data: only an empty feed shows the error.
 			if cards.isEmpty { phase = .failed(Self.message(for: error)) }
+			freshness.revalidateFailed()
 		}
+		SyncLog.revalidated(Self.cacheName, ok: succeeded, since: started)
 		if let list = await actorsResult, mine == generation, workspaceId() == ws {
 			actors = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
 		}
+		if succeeded, mine == generation, workspaceId() == ws { persist() }
 	}
 
 	public func loadBrief() async {
