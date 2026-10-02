@@ -1,4 +1,4 @@
-import type { QueryClient } from '@tanstack/react-query'
+import type { InvalidateQueryFilters, QueryClient } from '@tanstack/react-query'
 import { trackAgentSessionCompleted, trackTriggerFired } from './analytics'
 import { api } from './api'
 import { queryKeys } from './query-keys'
@@ -15,23 +15,32 @@ const SESSION_COMPLETION_ACTIONS = new Map<string, 'completed' | 'failed' | 'tim
 // traffic does not change it.
 const BILLING_INVALIDATING_ACTIONS = new Set(['session_credit_debited', 'session_budget_stopped'])
 
-// Trailing window for the sidebar's workspace sessions list (?limit=100).
-// Agents PATCH current_activity on every step, so one busy run emits a burst
-// of session events; the list refetches once per window instead of per event.
-const SESSIONS_LIST_REFETCH_MS = 5_000
-const sessionsListTimers = new Map<string, ReturnType<typeof setTimeout>>()
+// Trailing window for the refetches a burst of session events would otherwise
+// multiply: the sidebar's workspace sessions list (?limit=100) and billing
+// usage. Agents PATCH current_activity on every step and a scheduled trigger
+// can finish dozens of runs at once, so one busy minute emits a burst of
+// session events; each target refetches once per window instead of per event.
+// The server caches billing usage for less than this window, so a refetch
+// triggered by an event is never answered from a snapshot older than the event.
+const TRAILING_REFETCH_MS = 5_000
+const trailingRefetchTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-function scheduleSessionsListRefetch(queryClient: QueryClient, workspaceId: string) {
-	if (sessionsListTimers.has(workspaceId)) return
-	sessionsListTimers.set(
-		workspaceId,
+function scheduleTrailingRefetch(
+	queryClient: QueryClient,
+	timerKey: string,
+	filters: InvalidateQueryFilters,
+) {
+	if (trailingRefetchTimers.has(timerKey)) return
+	trailingRefetchTimers.set(
+		timerKey,
 		setTimeout(() => {
-			sessionsListTimers.delete(workspaceId)
-			queryClient.invalidateQueries({
-				queryKey: queryKeys.sessions.all(workspaceId),
-				exact: true,
-			})
-		}, SESSIONS_LIST_REFETCH_MS),
+			trailingRefetchTimers.delete(timerKey)
+			// cancelRefetch: false joins a fetch that is already in flight instead
+			// of cancelling it and starting another (the cancelled request still
+			// reaches the server). An event that lands mid-fetch re-arms the timer,
+			// so it is never lost.
+			queryClient.invalidateQueries(filters, { cancelRefetch: false })
+		}, TRAILING_REFETCH_MS),
 	)
 }
 
@@ -109,17 +118,23 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 					return !(key.length === 2 && key[1] === workspaceId)
 				},
 			})
-			scheduleSessionsListRefetch(queryClient, workspaceId)
+			scheduleTrailingRefetch(queryClient, `sessions:${workspaceId}`, {
+				queryKey: queryKeys.sessions.all(workspaceId),
+				exact: true,
+			})
 			// Same reasoning as trigger_fired above — session lifecycle events feed
 			// into the loop activity view via the trigger id join.
 			queryClient.invalidateQueries({ queryKey: ['loops', workspaceId, 'activity'] })
 			// Sessions burn credits and can flip the workspace into PAUSED · NO
 			// CREDITS mid-flight. The D6 chip reads through `useUsageState` →
 			// `useBillingUsage`; only credit debits, budget stops and terminal
-			// events can change that, so routine session updates skip the refetch.
+			// events can change that, so routine session updates skip the refetch
+			// and the rest coalesce into one refetch per window.
 			const outcome = SESSION_COMPLETION_ACTIONS.get(event.action)
 			if (outcome || BILLING_INVALIDATING_ACTIONS.has(event.action)) {
-				queryClient.invalidateQueries({ queryKey: queryKeys.billing.usage(workspaceId) })
+				scheduleTrailingRefetch(queryClient, `billing:${workspaceId}`, {
+					queryKey: queryKeys.billing.usage(workspaceId),
+				})
 			}
 			if (outcome) {
 				const sessionId = event.entity_id
