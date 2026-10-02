@@ -19,6 +19,13 @@ import { MessageDivider } from './message-divider'
 import { QuestionOptions } from './question-options'
 import { type MessageSpawnInfo, SpawnBar, SpawnChip } from './spawn-indicator'
 
+function copyMessage(content: string) {
+	void navigator.clipboard?.writeText(content).then(
+		() => toast.success('Copied to clipboard'),
+		() => toast.error('Copy failed'),
+	)
+}
+
 interface MessageBubbleProps {
 	workspaceId: string
 	message: MessageResponse
@@ -72,6 +79,9 @@ export function MessageBubble({
 	// Real, persisted, own message (not a system row, not an optimistic
 	// bubble) — the only kind that can be edited or retried.
 	const canAct = isOwn && message.id > 0 && message.kind === 'message'
+	// Any real, persisted message with text can be copied, own or not, and
+	// independent of the v4 polish flag.
+	const canCopy = message.id > 0 && message.kind === 'message' && message.content.length > 0
 	const [editing, setEditing] = useState(false)
 	const [draft, setDraft] = useState('')
 	const editMessage = useEditMessage(message.conversationId, workspaceId)
@@ -197,6 +207,16 @@ export function MessageBubble({
 						format="clock"
 						className="text-[10px] text-muted-foreground"
 					/>
+					{canCopy && !editing ? (
+						<button
+							type="button"
+							onClick={() => copyMessage(message.content)}
+							aria-label="Copy message"
+							className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
+						>
+							<Copy size={12} aria-hidden />
+						</button>
+					) : null}
 					{canAct && !editing ? (
 						<>
 							<button
@@ -223,12 +243,11 @@ export function MessageBubble({
 		)
 	}
 
-	// Real, persisted, agent-side (non-own) message — the only kind that can
-	// be Copy/Retry'd. Optimistic bubbles (id ≤ 0) get no action row. The row
-	// itself is a v4 delta, so it is additionally gated by `v4Polish`.
-	const canActOnAgent = v4Polish && !isOwn && message.id > 0 && message.kind === 'message'
+	// Optimistic bubbles (id ≤ 0) get no action row. Copy is always available;
+	// Retry is a v4 delta, so it is additionally gated by `v4Polish`.
+	const canRetryAgent = v4Polish && message.id > 0 && message.kind === 'message'
 	return (
-		<div className={cn('flex items-start gap-[11px]', v4Polish && 'group')}>
+		<div className="group flex items-start gap-[11px]">
 			<ActorAvatar
 				id={message.actorId}
 				name={message.actorName}
@@ -332,33 +351,30 @@ export function MessageBubble({
 					</div>
 				) : null}
 				{spawnInfo ? <SpawnChip info={spawnInfo} className="mt-1.5" /> : null}
-				{canActOnAgent ? (
+				{canCopy ? (
 					<div
-						className="mt-1.5 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100"
+						className="mt-1.5 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100"
 						aria-label="Message actions"
 					>
 						<button
 							type="button"
-							onClick={() => {
-								void navigator.clipboard?.writeText(message.content).then(
-									() => toast.success('Copied to clipboard'),
-									() => toast.error('Copy failed'),
-								)
-							}}
+							onClick={() => copyMessage(message.content)}
 							aria-label="Copy message"
 							className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
 						>
 							<Copy size={12} aria-hidden />
 						</button>
-						<button
-							type="button"
-							onClick={() => retryMessage.mutate({ messageId: message.id })}
-							disabled={retryMessage.isPending}
-							aria-label="Retry"
-							className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-						>
-							<RotateCcw size={12} aria-hidden />
-						</button>
+						{canRetryAgent ? (
+							<button
+								type="button"
+								onClick={() => retryMessage.mutate({ messageId: message.id })}
+								disabled={retryMessage.isPending}
+								aria-label="Retry"
+								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+							>
+								<RotateCcw size={12} aria-hidden />
+							</button>
+						) : null}
 					</div>
 				) : null}
 			</div>
