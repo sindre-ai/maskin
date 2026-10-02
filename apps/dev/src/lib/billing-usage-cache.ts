@@ -1,7 +1,7 @@
 // Short per-process cache for `GET /api/billing/usage`.
 //
-// Every open tab refetches usage when a session ends, and each read scans all
-// of the workspace's plan sessions for the period. A burst of session events
+// Every open tab refetches usage when a session ends, and each read sums
+// the workspace's plan sessions for the period. A burst of session events
 // across N tabs would otherwise run that scan N times. The cache holds the
 // in-flight promise as well as the settled value, so concurrent identical
 // requests share one computation.
@@ -14,11 +14,12 @@
 // Freshness does not depend on the TTL being shorter than the web app's refetch
 // window: `recordEvent` evicts a workspace's entries whenever it records a
 // session event that moves the number (BILLING_MOVING_SESSION_ACTIONS in
-// lib/events/record-event.ts), so the refetch the app schedules in response is
-// never answered from a pre-event snapshot. The TTL only bounds how stale the
-// mid-session token/cost counters can get, since those change without an event.
-// The cache is per process, so eviction does not reach a second app instance;
-// the TTL is the fallback there.
+// lib/events/record-event.ts). Callers that record such an event inside a
+// transaction evict again after it commits, because the eviction inside
+// `recordEvent` runs before the commit and a racing read could re-cache the old
+// value. The TTL bounds how stale the mid-session token/cost counters can get,
+// since those change without an event. The cache is per process, so eviction
+// does not reach a second app instance; the TTL is the fallback there.
 
 export const BILLING_USAGE_CACHE_TTL_MS = 15_000
 
@@ -55,7 +56,8 @@ export function cachedBillingUsage<T>(
 
 // Drops every actor's entry for one workspace. Call it after a write the usage
 // response reflects and the caller refetches straight away (cancelling the
-// subscription), so that refetch is not answered with the pre-write read.
+// subscription), so that refetch is not answered with the pre-write read. Inside
+// a transaction, call it after the commit, not before.
 export function evictBillingUsage(workspaceId: string): void {
 	for (const key of entries.keys()) {
 		if (key.endsWith(`|${workspaceId}`)) entries.delete(key)

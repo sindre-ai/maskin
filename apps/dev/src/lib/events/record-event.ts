@@ -15,7 +15,13 @@ export type EventsWriter = Database | Transaction
 // Session events after which `GET /api/billing/usage` reads differently: runs
 // ending (their cost is final), credit debits and budget stops. The usage cache
 // is evicted for the workspace when one is recorded so the refetch the web app
-// schedules in response is never answered from a pre-event snapshot.
+// schedules in response is not answered from a pre-event snapshot.
+//
+// This eviction runs right after the INSERT, which is before the commit when
+// the writer is a `Transaction`. A usage read landing in that gap re-caches the
+// pre-commit state, so a caller that records one of these events inside a
+// transaction must also call `evictBillingUsage` after the transaction
+// resolves (see `settleSession` and `debitCreditForSession`).
 const BILLING_MOVING_SESSION_ACTIONS = new Set([
 	'session_completed',
 	'session_failed',
