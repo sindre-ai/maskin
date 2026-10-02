@@ -1,0 +1,12 @@
+-- Rollback for 0083_pro_hard_cap_4900.sql. Intentionally a no-op.
+--
+-- The forward migration matches rows by value (plan = 'pro' AND cap = 2000)
+-- and records nothing about which rows it touched. Reversing it by value
+-- (4900 -> 2000) would also rewrite every Pro row that legitimately holds 4900
+-- today, including every Pro workspace the Stripe webhook has written since
+-- the code change. That is worse than leaving the corrected rows alone.
+--
+-- A code revert does not need the rows reverted: the stored cap is read first
+-- and 4900 is the correct Pro cap. To put specific workspaces back to 2000,
+-- run an explicit UPDATE scoped by workspace id.
+SELECT 1;
