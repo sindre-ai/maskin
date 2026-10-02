@@ -52,7 +52,7 @@ import {
 import { pickTarget, resolveProvenance } from '@/lib/viewer-provenance'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { Download, Link2, MessageSquare, MoreHorizontal } from 'lucide-react'
+import { Download, Link2, MapPin, MessageSquare, MoreHorizontal } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 // URL search params for the deep-link contract (spec §Solution sketch):
@@ -570,7 +570,7 @@ function TopBarActions({
 	onToggleAnnotate: () => void
 }) {
 	return (
-		<div className="flex items-center gap-1 max-md:min-w-0 max-md:max-w-full max-md:flex-wrap">
+		<div className="flex flex-wrap items-center gap-1 max-md:min-w-0 max-md:max-w-full">
 			<PinFileButton file={file} isPinned={pinnedFlag} onToggle={onTogglePin} />
 			<Button
 				variant="ghost"
@@ -587,7 +587,7 @@ function TopBarActions({
 				aria-label="Linked objects and files"
 			>
 				<Link2 size={14} />
-				Linked
+				<span className="hidden md:inline">Linked</span>
 			</Button>
 			<Button
 				variant={annotateMode ? 'secondary' : 'ghost'}
@@ -596,7 +596,8 @@ function TopBarActions({
 				aria-label="Toggle annotate mode"
 				aria-pressed={annotateMode}
 			>
-				Annotate
+				<MapPin size={14} className="md:hidden" />
+				<span className="hidden md:inline">Annotate</span>
 			</Button>
 			<Button
 				variant={panelOpen ? 'secondary' : 'ghost'}
@@ -607,7 +608,7 @@ function TopBarActions({
 				title="Toggle review panel (C)"
 			>
 				<MessageSquare size={14} />
-				Review
+				<span className="hidden md:inline">Review</span>
 			</Button>
 			<ViewerMoreMenu
 				file={file}
