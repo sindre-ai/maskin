@@ -2,6 +2,7 @@ import { events, agentServers, sessions } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../../lib/analytics/posthog'
+import { logger } from '../../lib/logger'
 import { configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager } from '../../services/session-manager'
 import { insertSession, insertSessionLog, insertWorkspace } from '../factories'
@@ -605,6 +606,62 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		// stuck in 'queued', which would mean rescue silently no-op'd).
 		expect(['starting', 'running']).toContain(row?.sessionState)
 	})
+
+	// (d2) A row whose status is already terminal but whose session_state is
+	// still stuck at 'queued' must not be re-driven: startSession() only
+	// accepts pending/queued, so the rescue could only throw and log an error
+	// every tick (Sentry MASKIN-DEV-15 / MASKIN-DEV-16).
+	it.each(['completed', 'failed', 'timeout', 'user_stopped'])(
+		'a %s row stuck in session_state=queued is skipped by queued-rescue, not re-driven',
+		async (status) => {
+			const threeMinAgo = new Date(Date.now() - 3 * 60 * 1000)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status,
+				sessionState: 'queued',
+				stateEnteredAt: threeMinAgo,
+				driverHeartbeatAt: null,
+				startedAt: null,
+				timeoutAt: null,
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			configureSessionLifecycle({ db, sessionManager: manager })
+			vi.spyOn(
+				manager as unknown as { drainQueue: (id: string) => Promise<void> },
+				'drainQueue',
+			).mockResolvedValue(undefined)
+			const startSpy = vi
+				.spyOn(manager, 'startSession')
+				.mockImplementation(
+					async () => undefined as unknown as Awaited<ReturnType<SessionManager['startSession']>>,
+				)
+			const warnSpy = vi.spyOn(logger, 'warn')
+			const errorSpy = vi.spyOn(logger, 'error')
+
+			try {
+				await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+				// The rescue is fire-and-forget, so give any wrongly-fired driver
+				// a moment to reach startSession before asserting it did not.
+				await new Promise((r) => setTimeout(r, 100))
+			} finally {
+				await manager.stop()
+			}
+
+			expect(startSpy).not.toHaveBeenCalled()
+			expect(warnSpy).not.toHaveBeenCalledWith(
+				expect.stringContaining('Queued rescue: re-firing driver'),
+				expect.anything(),
+			)
+			expect(errorSpy).not.toHaveBeenCalledWith(
+				expect.stringContaining('Queued rescue'),
+				expect.anything(),
+			)
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe(status)
+			expect(row?.sessionState).toBe('queued')
+		},
+	)
 
 	// (e) A running row past the 2h wall-timeout is settled via settleSession
 	// (kind='timeout', classification='wall_timeout'). This exercises the
