@@ -1,0 +1,48 @@
+generate:
+  - types
+  - client
+accessModifier: public
+filter:
+  paths:
+    - /api/auth/login
+    - /api/actors
+    - /api/actors/{id}
+    - /api/workspaces
+    - /api/workspaces/{id}/members
+    - /api/conversations
+    - /api/conversations/{id}
+    - /api/conversations/{id}/me
+    - /api/conversations/{id}/messages
+    - /api/conversations/{id}/messages/{messageId}
+    - /api/conversations/{id}/messages/{messageId}/retry
+    - /api/conversations/{id}/participants
+    - /api/objects
+    - /api/objects/search
+    - /api/objects/{id}
+    - /api/objects/{id}/graph
+    - /api/notifications
+    - /api/notifications/{id}
+    - /api/notifications/{id}/respond
+    - /api/briefing
+    - /api/events/history
+    - /api/feature-flags
+    - /api/events
+    - /api/subscriptions
+    - /api/subscriptions/read
+    - /api/subscriptions/unread
+    - /api/subscriptions/subscribers
+    - /api/files
+    - /api/files/{id}
+    - /api/relationships
+    - /api/relationships/{id}
+    - /api/objects/board
+    - /api/objects/{id}/star
+    - /api/objects/{id}/references
+    - /api/objects/{id}/graph/traverse
+    - /api/user-display-settings
+    - /api/user-display-settings/{object_type}
+    - /api/sessions/{id}
+    - /api/loops
+    - /api/installed-loops
+    - /api/devices
+    - /api/devices/{id_or_token}

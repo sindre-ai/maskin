@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- iOS entitlements (see Maskin-macOS.entitlements for the Mac set). Needs the Push
+	     Notifications and Associated Domains capabilities enabled on the App ID; see docs/push-and-links.md. -->
+	<!-- development in Debug, production in Release (MASKIN_APS_ENVIRONMENT in project.yml). -->
+	<key>aps-environment</key>
+	<string>$(MASKIN_APS_ENVIRONMENT)</string>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:maskin.io</string>
+	</array>
+	<!-- Stub: lets the iOS app, a future watch app and the Mac app share one Keychain session.
+	     Pass the same string as KeychainSecretStore(accessGroup:) when that lands. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)io.maskin.app</string>
+	</array>
+</dict>
+</plist>

@@ -1,0 +1,237 @@
+name: Maskin
+# Generated project: `xcodegen generate` (Maskin.xcodeproj is gitignored). Logic lives in the
+# MaskinKit package (Package.swift); this target is the thin multiplatform app shell.
+options:
+  bundleIdPrefix: io.maskin
+  deploymentTarget:
+    iOS: "17.0"
+    macOS: "14.0"
+    watchOS: "10.0"
+    tvOS: "17.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+configs:
+  Debug: debug
+  Release: release
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+packages:
+  MaskinKit:
+    path: .
+targets:
+  Maskin:
+    type: application
+    supportedDestinations: [iOS, macOS]
+    sources:
+      - path: Apps/Maskin
+        excludes:
+          - Resources/Fonts
+          - Info.plist
+          - Maskin.entitlements
+          - Maskin-macOS.entitlements
+      # A folder reference keeps the Fonts/ directory in the bundle, so UIAppFonts and
+      # ATSApplicationFontsPath can name it.
+      - path: Apps/Maskin/Resources/Fonts
+        type: folder
+    dependencies:
+      - package: MaskinKit
+        product: MaskinFeatures
+      - package: MaskinKit
+        product: MaskinCore
+      - package: MaskinKit
+        product: MaskinDesign
+      - package: MaskinKit
+        product: MaskinAPI
+    postCompileScripts:
+      - name: Strip dev-only ATS exception
+        basedOnDependencyAnalysis: false
+        script: |
+          "$SRCROOT/scripts/strip-dev-ats.sh"
+    info:
+      path: Apps/Maskin/Info.plist
+      properties:
+        CFBundleDisplayName: Maskin
+        CFBundleName: Maskin
+        MaskinAPIBaseURL: $(MASKIN_API_BASE_URL)
+        UILaunchScreen: {}
+        # maskin://<workspaceId>/objects/<id> (and chats/<id>, notifications): the form the backend
+        # puts in push payloads. Universal links (https://maskin.io/...) come via associated-domains.
+        CFBundleURLTypes:
+          - CFBundleURLName: io.maskin.app
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes:
+              - maskin
+        # Silent/background pushes. Ignored by macOS, which has no UIBackgroundModes.
+        UIBackgroundModes:
+          - remote-notification
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        ITSAppUsesNonExemptEncryption: false
+        LSApplicationCategoryType: public.app-category.productivity
+        UIAppFonts:
+          - Fonts/SchibstedGrotesk.ttf
+          - Fonts/JetBrainsMono.ttf
+        ATSApplicationFontsPath: Fonts
+        # Plain HTTP to localhost only (the dev backend). Every other host stays HTTPS-only.
+        # Debug-only: the "Strip dev-only ATS exception" build phase removes this from Release.
+        NSAppTransportSecurity:
+          NSExceptionDomains:
+            localhost:
+              NSExceptionAllowsInsecureHTTPLoads: true
+              NSIncludesSubdomains: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app
+        PRODUCT_NAME: Maskin
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_PREVIEWS: YES
+        # iOS (device + simulator): push, associated domains, keychain group. `aps-environment` is
+        # filled from MASKIN_APS_ENVIRONMENT (development in Debug, production in Release).
+        "CODE_SIGN_ENTITLEMENTS[sdk=iphone*]": Apps/Maskin/Maskin.entitlements
+        # macOS: the same capabilities are RESTRICTED entitlements, so an ad-hoc/unsigned build that
+        # carries them is killed at launch. Debug therefore ships none by default (unsigned dev
+        # builds launch; no push there). Release carries them. To exercise push/universal links in
+        # a signed Debug mac build, set MASKIN_MACOS_ENTITLEMENTS=Apps/Maskin/Maskin-macOS.entitlements
+        # in a local xcconfig or the scheme, together with DEVELOPMENT_TEAM.
+        "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": $(MASKIN_MACOS_ENTITLEMENTS)
+        "CODE_SIGN_IDENTITY[sdk=macosx*]": "-"
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        # TODO(release): set DEVELOPMENT_TEAM before archiving.
+      configs:
+        Debug:
+          MASKIN_API_BASE_URL: http://localhost:3000
+          MASKIN_APS_ENVIRONMENT: development
+          MASKIN_MACOS_ENTITLEMENTS: ""
+        Release:
+          MASKIN_APS_ENVIRONMENT: production
+          MASKIN_MACOS_ENTITLEMENTS: Apps/Maskin/Maskin-macOS.entitlements
+          # ASSUMPTION: production serves API and web from this origin (maskin.io is what the
+          # repo's deep-link/docs URLs use). Confirm before the first TestFlight build.
+          MASKIN_API_BASE_URL: https://maskin.io
+  # Live end-to-end UI tests: drives the real app against a real API on localhost:3000.
+  # Run: xcodebuild test -scheme Maskin (see Apps/MaskinUITests/README in the test file header).
+  MaskinUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Apps/MaskinUITests
+    dependencies:
+      - target: Maskin
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Maskin
+  # Standalone watch app (no phone required): signs in on the watch, glanceable For-you list.
+  MaskinWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - path: Apps/MaskinWatch
+        excludes: [Info.plist]
+      - path: Apps/Shared
+    dependencies: &glanceDeps
+      - package: MaskinKit
+        product: MaskinCore
+      - package: MaskinKit
+        product: MaskinDesign
+      - package: MaskinKit
+        product: MaskinUI
+      - package: MaskinKit
+        product: MaskinAPI
+    postCompileScripts:
+      - name: Strip dev-only ATS exception
+        basedOnDependencyAnalysis: false
+        script: |
+          "$SRCROOT/scripts/strip-dev-ats.sh"
+    info:
+      path: Apps/MaskinWatch/Info.plist
+      properties:
+        CFBundleDisplayName: Maskin
+        CFBundleName: Maskin
+        WKApplication: true
+        WKWatchOnly: true
+        MaskinAPIBaseURL: $(MASKIN_API_BASE_URL)
+        NSAppTransportSecurity:
+          NSExceptionDomains:
+            localhost:
+              NSExceptionAllowsInsecureHTTPLoads: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app.watchkitapp
+        PRODUCT_NAME: Maskin
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+      configs:
+        Debug:
+          MASKIN_API_BASE_URL: http://localhost:3000
+        Release:
+          MASKIN_API_BASE_URL: https://maskin.io
+  # Apple TV: same glance UI, driven by the focus engine. No AppIcon yet (tvOS needs a layered
+  # brand-asset stack from design).
+  MaskinTV:
+    type: application
+    platform: tvOS
+    sources:
+      - path: Apps/MaskinTV
+        excludes: [Info.plist]
+      - path: Apps/Shared
+    dependencies: *glanceDeps
+    postCompileScripts:
+      - name: Strip dev-only ATS exception
+        basedOnDependencyAnalysis: false
+        script: |
+          "$SRCROOT/scripts/strip-dev-ats.sh"
+    info:
+      path: Apps/MaskinTV/Info.plist
+      properties:
+        CFBundleDisplayName: Maskin
+        CFBundleName: Maskin
+        UILaunchScreen: {}
+        MaskinAPIBaseURL: $(MASKIN_API_BASE_URL)
+        NSAppTransportSecurity:
+          NSExceptionDomains:
+            localhost:
+              NSExceptionAllowsInsecureHTTPLoads: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app.tv
+        PRODUCT_NAME: Maskin
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+      configs:
+        Debug:
+          MASKIN_API_BASE_URL: http://localhost:3000
+        Release:
+          MASKIN_API_BASE_URL: https://maskin.io
+schemes:
+  Maskin:
+    build:
+      targets:
+        Maskin: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - MaskinUITests
+    archive:
+      config: Release
