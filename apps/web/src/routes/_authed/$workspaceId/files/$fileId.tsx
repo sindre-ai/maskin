@@ -510,9 +510,11 @@ function FileViewerPage() {
 				</Sheet>
 			)}
 			<Sheet open={linkedOpen} onOpenChange={setLinkedOpen}>
-				<SheetContent side="right" className="w-[420px] overflow-y-auto sm:max-w-none">
+				<SheetContent side="right" className="w-[640px] max-w-full overflow-y-auto sm:max-w-none">
 					<SheetTitle className="sr-only">Linked objects and files</SheetTitle>
-					<LinkedObjectsForFile fileId={file.id} />
+					<div className="pt-12">
+						<LinkedObjectsForFile fileId={file.id} />
+					</div>
 				</SheetContent>
 			</Sheet>
 		</>
@@ -568,7 +570,7 @@ function TopBarActions({
 	onToggleAnnotate: () => void
 }) {
 	return (
-		<div className="flex flex-wrap items-center gap-1">
+		<div className="flex flex-wrap items-center gap-1 max-md:min-w-0 max-md:max-w-full">
 			<PinFileButton file={file} isPinned={pinnedFlag} onToggle={onTogglePin} />
 			<Button
 				variant="ghost"
