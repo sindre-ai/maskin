@@ -6,7 +6,8 @@
  * TEAM_HARD_CAP_DEFAULT_USD_CENTS are the single source of truth in:
  *
  *   1. apps/dev/src/lib/billing-defaults.ts            (source of truth — TS)
- *   2. .env.example                                    (operator-facing default)
+ *   2. .env.example                                    (operator-facing trial default; pro and
+ *                                                       team caps are code-only, not env)
  *   3. apps/web/src/__tests__/components/settings/
  *      billing-section.test.tsx                        (frontend pinned literals)
  *   4. apps/web/src/components/settings/
@@ -50,23 +51,28 @@ const expected = { trial: 0, pro: 0, team: 0 }
 }
 
 // Site 2 — .env.example
+//
+// Only the trial cap is env-configurable. Pro and team caps come from the
+// literals in billing-defaults.ts; a MASKIN_PRO/TEAM_HARD_CAP_USD_CENTS entry
+// here would be dead config that implies otherwise (a stale prod value of it
+// once pinned Pro workspaces at $20).
 {
 	const path = '.env.example'
 	const source = read(path)
-	const proMatch = source.match(/^MASKIN_PRO_HARD_CAP_USD_CENTS=([\d_]+)/m)
-	const teamMatch = source.match(/^MASKIN_TEAM_HARD_CAP_USD_CENTS=([\d_]+)/m)
-	if (!proMatch || !teamMatch) {
-		errors.push(`${path}: could not find MASKIN_PRO/TEAM_HARD_CAP_USD_CENTS entries`)
+	const trialMatch = source.match(/^MASKIN_TRIAL_HARD_CAP_USD_CENTS=([\d_]+)/m)
+	if (!trialMatch) {
+		errors.push(`${path}: could not find MASKIN_TRIAL_HARD_CAP_USD_CENTS entry`)
 	} else {
-		const pro = Number(stripUnderscores(proMatch[1]))
-		const team = Number(stripUnderscores(teamMatch[1]))
-		observed.push({ path, pro, team })
-		if (pro !== expected.pro) {
-			errors.push(`${path}: pro cap ${pro} ≠ expected ${expected.pro}`)
+		const trial = Number(stripUnderscores(trialMatch[1]))
+		observed.push({ path, trial })
+		if (trial !== expected.trial) {
+			errors.push(`${path}: trial cap ${trial} ≠ expected ${expected.trial}`)
 		}
-		if (team !== expected.team) {
-			errors.push(`${path}: team cap ${team} ≠ expected ${expected.team}`)
-		}
+	}
+	if (/^MASKIN_(PRO|TEAM)_HARD_CAP_USD_CENTS=/m.test(source)) {
+		errors.push(
+			`${path}: MASKIN_PRO/TEAM_HARD_CAP_USD_CENTS must not be set — pro and team caps are code-only`,
+		)
 	}
 }
 
