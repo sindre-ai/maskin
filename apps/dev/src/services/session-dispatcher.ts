@@ -12,6 +12,8 @@ import {
 } from './agent-server-client'
 import type { DispatchResult } from './session-dispatch-queue'
 
+const TERMINAL_STATUSES: readonly string[] = ['completed', 'failed', 'timeout', 'user_stopped']
+
 /**
  * Routes a session-start over HTTPS to the least-loaded `active`
  * `agent_servers` row. The dispatcher is the `DispatchFn` the T12 queue calls
@@ -168,7 +170,16 @@ export class SessionDispatcher {
 		const client = this.clientFactory(serverRow)
 		try {
 			const response = await client.startSession(request)
-			await this.markDispatched(sessionId, picked.server.id, response.sandboxName)
+			const marked = await this.markDispatched(sessionId, picked.server.id, response.sandboxName)
+			if (!marked) {
+				// The row left pending/queued/starting while startSession was in
+				// flight, so the sandbox we just created may have no owner.
+				await this.stopOrphanedSandbox(client, sessionId, picked.server.id)
+				return {
+					kind: 'permanent_failure',
+					error: `Session ${sessionId} left a dispatchable state while its sandbox was starting`,
+				}
+			}
 			if (this.seedInteractiveTurn) {
 				try {
 					await this.seedInteractiveTurn(sessionId)
@@ -376,7 +387,7 @@ export class SessionDispatcher {
 		sessionId: string,
 		serverId: string,
 		sandboxName: string,
-	): Promise<void> {
+	): Promise<boolean> {
 		const [session] = await this.db
 			.select({
 				config: sessions.config,
@@ -400,7 +411,10 @@ export class SessionDispatcher {
 				updatedAt: now,
 			})
 			.where(
-				and(eq(sessions.id, sessionId), sql`${sessions.status} NOT IN ('completed', 'failed')`),
+				and(
+					eq(sessions.id, sessionId),
+					inArray(sessions.status, ['pending', 'queued', 'starting']),
+				),
 			)
 			.returning({ id: sessions.id })
 
@@ -416,6 +430,41 @@ export class SessionDispatcher {
 				entityType: 'session',
 				entityId: sessionId,
 				data: {},
+			})
+		}
+		return Boolean(updated)
+	}
+
+	/**
+	 * Called when markDispatched matched nothing: the sandbox startSession just
+	 * created is not tied to a live row. Stops it only when the row is truly
+	 * terminal. A running, paused or waiting_for_input row means another worker
+	 * owns the same session id, and stopping by id would kill its sandbox.
+	 * Best-effort: a failed stop is logged, never thrown, so the caller still
+	 * returns a typed DispatchResult.
+	 */
+	private async stopOrphanedSandbox(
+		client: AgentServerClient,
+		sessionId: string,
+		serverId: string,
+	): Promise<void> {
+		try {
+			const [row] = await this.db
+				.select({ status: sessions.status })
+				.from(sessions)
+				.where(eq(sessions.id, sessionId))
+				.limit(1)
+			if (row && !TERMINAL_STATUSES.includes(row.status)) return
+			await client.stopSession(sessionId, { reason: 'stop', source: 'dispatch-queue' })
+			logger.warn('Stopped orphaned sandbox for a session that left a dispatchable state', {
+				sessionId,
+				agentServerId: serverId,
+			})
+		} catch (err) {
+			logger.error('Failed to stop orphaned sandbox', {
+				sessionId,
+				agentServerId: serverId,
+				error: err instanceof Error ? err.message : String(err),
 			})
 		}
 	}
