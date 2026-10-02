@@ -107,8 +107,10 @@ export const TEAM_HARD_CAP_DEFAULT_USD_CENTS = 20_000
 export const DEFAULT_PERIOD_LENGTH_MS = 30 * 24 * 60 * 60 * 1000
 
 /**
- * Resolves the included-usage cap (USD cents) for a plan tier, env first then
- * the documented literal above.
+ * Resolves the included-usage cap (USD cents) for a plan tier. Pro and Team
+ * return the literals above and ignore env (a stale prod env value used to pin
+ * Pro at $20); the trial cap can still be overridden by
+ * MASKIN_TRIAL_HARD_CAP_USD_CENTS.
  *
  * This is the single resolver for both the *enforcement* path
  * (`lib/llm-routing.ts`'s `effectivePlanCap`, which gates spend) and the
@@ -129,14 +131,9 @@ export function resolvePlanCapCents(
 ): number {
 	switch (plan) {
 		case 'pro':
-			return (
-				parsePositiveIntEnv('MASKIN_PRO_HARD_CAP_USD_CENTS', env) ?? PRO_HARD_CAP_DEFAULT_USD_CENTS
-			)
+			return PRO_HARD_CAP_DEFAULT_USD_CENTS
 		case 'team':
-			return (
-				parsePositiveIntEnv('MASKIN_TEAM_HARD_CAP_USD_CENTS', env) ??
-				TEAM_HARD_CAP_DEFAULT_USD_CENTS
-			)
+			return TEAM_HARD_CAP_DEFAULT_USD_CENTS
 		default:
 			return (
 				parsePositiveIntEnv('MASKIN_TRIAL_HARD_CAP_USD_CENTS', env) ??

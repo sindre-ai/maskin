@@ -28,8 +28,6 @@ const VALID_ENV = {
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
 	STRIPE_PRICE_CREDITS_CUSTOM: 'price_credits_custom_test',
-	MASKIN_PRO_HARD_CAP_USD_CENTS: '4900',
-	MASKIN_TEAM_HARD_CAP_USD_CENTS: '20000',
 	STRIPE_PRICE_LINKEDIN_IDENTITY: 'price_linkedin',
 }
 
@@ -305,6 +303,44 @@ describe('POST /api/webhooks/stripe', () => {
 			period_start: 1_700_000_000,
 			period_end: 1_702_592_000,
 		})
+	})
+
+	it('writes the Pro cap from code even when the env still holds the old value', async () => {
+		// Prod's MASKIN_PRO_HARD_CAP_USD_CENTS was stuck at 2000 and the webhook
+		// copied it into the stored cap on every renewal. The env must be ignored.
+		process.env.MASKIN_PRO_HARD_CAP_USD_CENTS = '2000'
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-pro-env' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: { billing: { plan: 'pro', status: 'active', hard_cap_usd_cents: 2_000 } },
+				},
+			],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_pro_env',
+			type: 'customer.subscription.updated',
+			data: {
+				object: {
+					id: 'sub_pro',
+					customer: 'cus_pro',
+					status: 'active',
+					current_period_start: 1_700_000_000,
+					current_period_end: 1_702_592_000,
+					metadata: { workspace_id: workspaceId },
+					items: { data: [{ price: { id: 'price_pro' } }] },
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		expect((await postWebhook(app, {})).status).toBe(200)
+		const update = findWorkspaceUpdate(calls.updates)
+		expect(update.settings.billing).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 4_900 })
 	})
 
 	it('downgrades an unentitled workspace to trial on customer.subscription.deleted', async () => {
