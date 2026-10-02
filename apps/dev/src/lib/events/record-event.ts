@@ -2,6 +2,7 @@ import type { Database, Transaction } from '@maskin/db'
 import { events, relationships, sessions } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../analytics/posthog'
+import { evictBillingUsage } from '../billing-usage-cache'
 import { FLAGS, isFlagEnabled } from '../feature-flags'
 import { logger } from '../logger'
 
@@ -10,6 +11,35 @@ import { logger } from '../logger'
 // transaction can pass its `tx` and stay in the same commit. Every call site
 // in the codebase reads as one of these two shapes.
 export type EventsWriter = Database | Transaction
+
+// Session events after which `GET /api/billing/usage` reads differently: runs
+// ending (their cost is final), credit debits and budget stops. The usage cache
+// is evicted for the workspace when one is recorded so the refetch the web app
+// schedules in response is not answered from a pre-event snapshot.
+//
+// This eviction runs right after the INSERT, which is before the commit when
+// the writer is a `Transaction`. A usage read landing in that gap re-caches the
+// pre-commit state, so a caller that records one of these events inside a
+// transaction must also call `evictBillingUsage` after the transaction
+// resolves (see `settleSession` and `debitCreditForSession`).
+const BILLING_MOVING_SESSION_ACTIONS = new Set([
+	'session_completed',
+	'session_failed',
+	'session_timeout',
+	'session_stopped',
+	'session_credit_debited',
+	'session_budget_stopped',
+])
+
+function evictBillingUsageIfMoved(params: {
+	workspaceId: string
+	action: string
+	entityType: string
+}) {
+	if (params.entityType === 'session' && BILLING_MOVING_SESSION_ACTIONS.has(params.action)) {
+		evictBillingUsage(params.workspaceId)
+	}
+}
 
 // The two provenance-relevant object endpoints — the writer hook can only
 // upsert a `session → object|file` `produced_by` edge when the mutation is
@@ -72,6 +102,7 @@ export async function recordEvent(dbOrTx: EventsWriter, params: RecordEventParam
 		entityId: params.entityId,
 		data: (params.data ?? null) as unknown as never,
 	})
+	evictBillingUsageIfMoved(params)
 
 	const provenance = params.provenance
 	if (!provenance?.sessionId || !provenance.entityKind) return
@@ -119,6 +150,7 @@ export async function recordEvents(
 			data: (r.data ?? null) as unknown as never,
 		})),
 	)
+	for (const r of rows) evictBillingUsageIfMoved(r)
 }
 
 /**

@@ -22,6 +22,7 @@ import { objects, sessions } from '@maskin/db'
 import type { SessionResult, SettleSource, TerminalOutcomeKind } from '@maskin/shared'
 
 import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { evictBillingUsage } from '../lib/billing-usage-cache'
 import { recordEvent } from '../lib/events/record-event'
 import { LLM_ROUTE_MASKIN_PLAN } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
@@ -989,6 +990,11 @@ export async function settleSession(
 			})
 		})
 	}
+
+	// The eviction inside `recordEvent` runs before the settle transaction
+	// commits, so a usage read landing in between could re-cache the pre-settle
+	// cost. Evict again now that the final cost is visible to every connection.
+	if (flipped) evictBillingUsage(row.workspaceId)
 
 	// Step 4: (Post-commit) stopSandbox best-effort.
 	let stoppedSandbox: StoppedSandboxOutcome

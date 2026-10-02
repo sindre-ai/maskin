@@ -609,8 +609,8 @@ app.openapi(cancelRoute, async (c) => {
 			.update(workspaces)
 			.set({ settings: { ...settings, billing: downgraded }, updatedAt: new Date() })
 			.where(eq(workspaces.id, workspaceId))
-		// The web app refetches usage as soon as this returns; a read cached in
-		// the last 2s would still show the paid plan.
+		// The web app refetches usage as soon as this returns; a read cached within
+		// the cache TTL would still show the paid plan.
 		evictBillingUsage(workspaceId)
 
 		// Audit + real-time, per the "events logged on every mutation" rule.

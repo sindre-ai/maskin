@@ -431,7 +431,7 @@ describe('invalidateFromSSE session batching', () => {
 			const { qc, keys, invalidated } = seededClient()
 			invalidateFromSSE(qc, workspaceId, sessionEvent(action))
 			expect(invalidated(keys.billing)).toBe(false)
-			vi.advanceTimersByTime(5_000)
+			vi.advanceTimersByTime(15_000)
 			expect(invalidated(keys.billing)).toBe(true)
 		},
 	)
@@ -443,7 +443,7 @@ describe('invalidateFromSSE session batching', () => {
 			const { qc, keys, invalidated } = seededClient()
 			invalidateFromSSE(qc, workspaceId, sessionEvent(action))
 			expect(invalidated(keys.billing)).toBe(false)
-			vi.advanceTimersByTime(5_000)
+			vi.advanceTimersByTime(15_000)
 			expect(invalidated(keys.billing)).toBe(true)
 		},
 	)
@@ -471,6 +471,9 @@ describe('invalidateFromSSE session batching', () => {
 		}
 		expect(billingCalls()).toHaveLength(0)
 		vi.advanceTimersByTime(5_000)
+		// Billing has its own, longer window than the sessions list.
+		expect(billingCalls()).toHaveLength(0)
+		vi.advanceTimersByTime(10_000)
 		expect(billingCalls()).toHaveLength(1)
 		// Joins a fetch already in flight rather than cancelling it.
 		expect(billingCalls()[0][1]).toEqual({ cancelRefetch: false })
@@ -497,18 +500,18 @@ describe('invalidateFromSSE session batching', () => {
 		it('does not restart a billing fetch that is already in flight', async () => {
 			vi.mocked(api.sessions.get).mockResolvedValue({ triggerId: null, config: {} } as never)
 			const qc = new QueryClient()
-			const requests = mountSlow(qc, queryKeys.billing.usage(workspaceId), 10_000)
+			const requests = mountSlow(qc, queryKeys.billing.usage(workspaceId), 20_000)
 			// Let the first load finish: only a query that already has data is
 			// cancelled and restarted by an invalidation.
-			await vi.advanceTimersByTimeAsync(10_000)
+			await vi.advanceTimersByTimeAsync(20_000)
 
 			invalidateFromSSE(qc, workspaceId, sessionEvent('session_completed'))
-			await vi.advanceTimersByTimeAsync(5_000)
-			expect(requests.n).toBe(2) // the window's refetch, now in flight for 10s
+			await vi.advanceTimersByTimeAsync(15_000)
+			expect(requests.n).toBe(2) // the window's refetch, now in flight for 20s
 
 			// A second event whose window fires mid-fetch.
 			invalidateFromSSE(qc, workspaceId, sessionEvent('session_completed', 'sess-2'))
-			await vi.advanceTimersByTimeAsync(5_000)
+			await vi.advanceTimersByTimeAsync(15_000)
 
 			expect(requests.n).toBe(2)
 		})
@@ -532,5 +535,66 @@ describe('invalidateFromSSE session batching', () => {
 			expect(billing.n).toBe(1)
 			expect(list.n).toBe(1)
 		})
+	})
+})
+
+describe('invalidateFromSSE in a background tab', () => {
+	const sessionEvent = (action: string, id = 'sess-1') =>
+		({ entity_type: 'session', entity_id: id, action }) as never
+
+	function setVisibility(state: 'visible' | 'hidden') {
+		Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
+		document.dispatchEvent(new Event('visibilitychange'))
+	}
+
+	afterEach(() => {
+		Reflect.deleteProperty(document, 'visibilityState')
+	})
+
+	function mountSlow(qc: QueryClient, queryKey: readonly unknown[]) {
+		const requests = { n: 0 }
+		new QueryObserver(qc, {
+			queryKey,
+			queryFn: async () => {
+				requests.n++
+				await new Promise((r) => setTimeout(r, 300))
+				return 'ok'
+			},
+		}).subscribe(() => {})
+		return requests
+	}
+
+	it('marks queries stale without refetching while hidden, then catches up once on return', async () => {
+		const qc = new QueryClient()
+		const list = mountSlow(qc, queryKeys.sessions.all(workspaceId))
+		const history = mountSlow(qc, queryKeys.events.history(workspaceId))
+		await vi.advanceTimersByTimeAsync(1_000)
+		list.n = 0
+		history.n = 0
+
+		setVisibility('hidden')
+		for (let i = 0; i < 20; i++) {
+			invalidateFromSSE(qc, workspaceId, sessionEvent('session_updated', `s-${i}`))
+		}
+		await vi.advanceTimersByTimeAsync(30_000)
+		expect(list.n).toBe(0)
+		expect(history.n).toBe(0)
+
+		setVisibility('visible')
+		await vi.advanceTimersByTimeAsync(1_000)
+		expect(list.n).toBe(1)
+		expect(history.n).toBe(1)
+	})
+
+	it('does not refetch on return when nothing was invalidated while hidden', async () => {
+		const qc = new QueryClient()
+		const list = mountSlow(qc, queryKeys.sessions.all(workspaceId))
+		await vi.advanceTimersByTimeAsync(1_000)
+		list.n = 0
+
+		setVisibility('hidden')
+		setVisibility('visible')
+		await vi.advanceTimersByTimeAsync(1_000)
+		expect(list.n).toBe(0)
 	})
 })

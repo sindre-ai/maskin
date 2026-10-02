@@ -170,7 +170,11 @@ export async function getWorkspacePlanUsdCentsUsage(
 ): Promise<number> {
 	const conds = [
 		eq(sessions.workspaceId, workspaceId),
-		sql`${sessions.config}->>'llm_route' = ${LLM_ROUTE_MASKIN_PLAN}`,
+		// Inlined as a literal rather than a bind parameter: sessions_ws_plan_usage_idx
+		// is a partial index on this exact predicate. A per-execution plan can match a
+		// bound value, but a generic (cached) plan can only prove a match against a
+		// literal. LLM_ROUTE_MASKIN_PLAN is a code constant, never user input.
+		sql`${sessions.config}->>'llm_route' = ${sql.raw(`'${LLM_ROUTE_MASKIN_PLAN}'`)}`,
 	]
 	if (periodStartMs !== undefined) {
 		conds.push(gte(sessions.createdAt, new Date(periodStartMs)))

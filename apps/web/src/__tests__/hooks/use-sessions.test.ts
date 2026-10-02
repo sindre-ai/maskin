@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', () => ({
 	api: {
@@ -14,6 +14,7 @@ vi.mock('@/lib/api', () => ({
 
 import {
 	useActiveSessionsForActor,
+	useActiveSessionsForConversation,
 	useActorSessionsInfinite,
 	useCreateSession,
 	useMentionSessionsForObject,
@@ -394,5 +395,44 @@ describe('useActorSessionsInfinite', () => {
 
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Server error')
+	})
+})
+
+describe('useActiveSessionsForConversation polling', () => {
+	beforeEach(() => {
+		vi.useFakeTimers()
+		vi.mocked(api.sessions.list).mockReset()
+	})
+	afterEach(() => {
+		vi.useRealTimers()
+	})
+
+	async function mount(sessions: SessionResponse[]) {
+		vi.mocked(api.sessions.list).mockResolvedValue(sessions)
+		renderHook(() => useActiveSessionsForConversation(workspaceId, 'conv-1'), {
+			wrapper: TestWrapper,
+		})
+		await vi.advanceTimersByTimeAsync(0)
+		return vi.mocked(api.sessions.list)
+	}
+
+	it('polls every few seconds while a session in the conversation is live', async () => {
+		const list = await mount([buildSession({ id: 's1', status: 'running' })])
+		expect(list).toHaveBeenCalledTimes(1)
+
+		await vi.advanceTimersByTimeAsync(5_000)
+		expect(list).toHaveBeenCalledTimes(2)
+		await vi.advanceTimersByTimeAsync(5_000)
+		expect(list).toHaveBeenCalledTimes(3)
+	})
+
+	it('falls back to a slow floor when no session in the conversation is live', async () => {
+		const list = await mount([buildSession({ id: 's1', status: 'completed' })])
+		expect(list).toHaveBeenCalledTimes(1)
+
+		await vi.advanceTimersByTimeAsync(20_000)
+		expect(list).toHaveBeenCalledTimes(1)
+		await vi.advanceTimersByTimeAsync(10_000)
+		expect(list).toHaveBeenCalledTimes(2)
 	})
 })
