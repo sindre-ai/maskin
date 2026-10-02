@@ -257,6 +257,12 @@ export function AgentsIndexView({
 		() => rows.reduce((n, row) => (row.agent.voice_enabled ? n + 1 : n), 0),
 		[rows],
 	)
+	// Voice mode lives on each agent's detail page, and the Empty state has no
+	// single agent to point at, so it links to the first agent by name.
+	const voiceSettingsAgent = useMemo(
+		() => [...agents].sort((a, b) => a.name.localeCompare(b.name))[0],
+		[agents],
+	)
 	// With the flag on and any voice-enabled agent, rows hold a Call slot on md+.
 	const reserveCallSlot = voiceModeFlag && voiceCount > 0
 
@@ -374,8 +380,19 @@ export function AgentsIndexView({
 						</div>
 						<p className="text-sm font-semibold text-foreground">No voice-enabled agents yet</p>
 						<p className="max-w-sm text-[12.5px] text-muted-foreground">
-							Open an agent and switch on <span className="font-semibold">Voice mode</span> to let
-							workspace members hold a live voice call with them.
+							Voice is off for every agent in this workspace. Enable it on{' '}
+							{voiceSettingsAgent ? (
+								<Link
+									to="/$workspaceId/agents/$agentId"
+									params={{ workspaceId, agentId: voiceSettingsAgent.id }}
+									className="font-semibold text-brand underline-offset-2 hover:underline"
+								>
+									any agent's settings
+								</Link>
+							) : (
+								"any agent's settings"
+							)}
+							.
 						</p>
 					</div>
 				) : (

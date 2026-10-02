@@ -497,6 +497,29 @@ describe('AgentsIndexView — row Call button (voice-mode-v1)', () => {
 		expect(screen.queryByRole('link', { name: /Brian/ })).not.toBeInTheDocument()
 	})
 
+	it('the Voice chip with no voice-enabled agent shows the SPEC Empty state, with a link to agent settings', async () => {
+		const user = userEvent.setup()
+		mount([agentAda(), agentBrian()], [])
+		await user.click(screen.getByRole('button', { name: /^Voice/ }))
+		expect(screen.getByText('No voice-enabled agents yet')).toBeInTheDocument()
+		expect(
+			screen.getByText(/Voice is off for every agent in this workspace\. Enable it on/),
+		).toHaveTextContent(
+			"Voice is off for every agent in this workspace. Enable it on any agent's settings.",
+		)
+		// The link points at an agent detail page, where the Voice mode toggle lives.
+		const link = screen.getByRole('link', { name: "any agent's settings" })
+		expect(link).toHaveAttribute('href', '/$workspaceId/agents/$agentId')
+	})
+
+	it('the Voice Empty state is plain text, not a link, when the workspace has no agents', async () => {
+		const user = userEvent.setup()
+		mount([], [])
+		await user.click(screen.getByRole('button', { name: /^Voice/ }))
+		expect(screen.getByText('No voice-enabled agents yet')).toBeInTheDocument()
+		expect(screen.queryByRole('link', { name: "any agent's settings" })).not.toBeInTheDocument()
+	})
+
 	it('renders no Call button when the flag is off, even for a voice-enabled agent', () => {
 		window.localStorage.setItem('ff:voice-mode-v1', 'off')
 		mount([voiceAda()], [])
