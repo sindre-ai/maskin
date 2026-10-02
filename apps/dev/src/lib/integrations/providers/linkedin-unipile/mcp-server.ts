@@ -452,7 +452,7 @@ export function registerLinkedInMcpInstance(
 			toolName(cfg, 'get_profile'),
 			{
 				description: scopedDescription(
-					'Fetch one LinkedIn profile by public handle or provider id',
+					'Fetch one LinkedIn profile by public handle, provider id, or the recipient_urn a prior search_people / list_connections result surfaced (a urn:li:... member URN is accepted and reduced to its bare provider id).',
 					cfg,
 				),
 				inputSchema: { identifier: z.string().min(1) },
