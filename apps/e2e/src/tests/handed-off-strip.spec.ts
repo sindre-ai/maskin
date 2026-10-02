@@ -62,7 +62,7 @@ test.describe('Chats v2 — handed-off strip', () => {
 			const region = page.getByRole('region', { name: 'Handed off to sub-agents' })
 			await expect(region).toBeVisible({ timeout: 15_000 })
 
-			const row = region.getByRole('listitem', { name: `Sub-agent ${agentName}: QUEUED` })
+			const row = region.getByRole('link', { name: `Sub-agent ${agentName}: QUEUED` })
 			await expect(row).toBeVisible()
 			await expect(row).toContainText('QUEUED')
 		})
@@ -103,7 +103,7 @@ test.describe('Chats v2 — handed-off strip (light + dark)', () => {
 			const region = page.getByRole('region', { name: 'Handed off to sub-agents' })
 			await expect(region).toBeVisible({ timeout: 15_000 })
 
-			const row = region.getByRole('listitem', { name: `Sub-agent ${agentName}: QUEUED` })
+			const row = region.getByRole('link', { name: `Sub-agent ${agentName}: QUEUED` })
 			await expect(row).toBeVisible()
 		})
 	}
