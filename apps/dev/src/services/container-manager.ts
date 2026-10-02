@@ -97,7 +97,14 @@ export class ContainerManager {
 				} else {
 					const content = readFileSync(fullPath)
 					const stat = statSync(fullPath)
-					pack.entry({ name: relPath, size: content.length, mode: stat.mode }, content)
+					// Capture the per-entry Sink and attach 'error' BEFORE writing: the two-arg
+					// pack.entry(header, content) writes synchronously, so a listener added
+					// afterwards lands too late. With no Docker socket the Sink emits an
+					// unhandled 'error' that kills the process; the failure still reaches the
+					// caller through buildImage's rejection.
+					const sink = pack.entry({ name: relPath, size: content.length, mode: stat.mode })
+					sink.on('error', () => {})
+					sink.end(content)
 				}
 			}
 		}

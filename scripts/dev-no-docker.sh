@@ -7,6 +7,9 @@ set -e
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+source "$REPO_ROOT/scripts/lib/docker-absent-guard.sh"
+maskin_docker_absent_guard || exit 1
+
 # TTV instrumentation: fire `install_started` and stamp the state file the
 # backend reads to compute `install_completed`/`workspace_first_ready`.
 # Silent + fire-and-forget; can never fail the install.
