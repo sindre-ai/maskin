@@ -5,7 +5,7 @@ import { RouteError } from '@/components/shared/route-error'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { DESKTOP_FLAG } from '@/lib/nav-items'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_authed/$workspaceId/desktop')({
 	component: DesktopRoute,
@@ -19,8 +19,18 @@ export const Route = createFileRoute('/_authed/$workspaceId/desktop')({
 function DesktopRoute() {
 	const { workspaceId } = useWorkspace()
 	const enabled = useFeatureFlag(DESKTOP_FLAG)
+	const navigate = useNavigate()
 
-	if (enabled) return <DesktopViewer workspaceId={workspaceId} />
+	if (enabled) {
+		return (
+			<DesktopViewer
+				workspaceId={workspaceId}
+				onOpenAgent={(agentId) =>
+					navigate({ to: '/$workspaceId/agents/$agentId', params: { workspaceId, agentId } })
+				}
+			/>
+		)
+	}
 
 	return (
 		<>

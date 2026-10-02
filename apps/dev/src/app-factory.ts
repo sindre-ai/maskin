@@ -33,6 +33,7 @@ import briefingRoutes from './routes/briefing'
 import claudeOauthRoutes from './routes/claude-oauth'
 import conversationsRoutes from './routes/conversations'
 import desktopRoutes from './routes/desktop'
+import desktopTeachRoutes from './routes/desktop-teach'
 import eventsRoutes from './routes/events'
 import featureFlagsRoutes from './routes/feature-flags'
 import filesRoutes from './routes/files'
@@ -397,6 +398,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
 	app.route('/api/feature-flags', featureFlagsRoutes)
 	app.route('/api/desktop', desktopRoutes)
+	app.route('/api/desktop/teach', desktopTeachRoutes)
 
 	if (options.includeExtensions !== false) {
 		const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }

@@ -1,4 +1,5 @@
 import { api } from '@/lib/api'
+import type { TeachRequest } from '@maskin/shared'
 import { useMutation } from '@tanstack/react-query'
 
 /**
@@ -15,5 +16,12 @@ export function useConnectDesktop(workspaceId: string) {
 export function useRemoveDesktop(workspaceId: string) {
 	return useMutation({
 		mutationFn: () => api.desktop.remove(workspaceId),
+	})
+}
+
+/** Hands a recorded demonstration to the chosen agent (see "Teach a task"). */
+export function useTeachDesktop(workspaceId: string) {
+	return useMutation({
+		mutationFn: (body: TeachRequest) => api.desktop.teach(workspaceId, body),
 	})
 }

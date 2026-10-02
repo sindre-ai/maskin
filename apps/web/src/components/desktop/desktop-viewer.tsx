@@ -1,11 +1,13 @@
+import { TeachDialog } from '@/components/desktop/teach-dialog'
 import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useConnectDesktop } from '@/hooks/use-desktop'
+import { type TeachingStatus, useDesktopTeaching } from '@/hooks/use-desktop-teaching'
 import { cn } from '@/lib/cn'
 import type RfbClient from '@novnc/novnc/lib/rfb'
-import { Eye, MousePointer2, RefreshCw } from 'lucide-react'
+import { Eye, GraduationCap, MousePointer2, RefreshCw, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 type Phase = 'starting' | 'connecting' | 'connected' | 'disconnected' | 'error'
@@ -27,7 +29,44 @@ const STATUS_TEXT: Record<Phase, string> = {
 
 // Lives in the page header's title cluster, beside the "Desktop" title, so the
 // picture itself can use the whole page.
-function DesktopStatus({ phase }: { phase: Phase }) {
+function formatElapsed(ms: number): string {
+	const total = Math.floor(ms / 1000)
+	return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}
+
+function DesktopStatus({
+	phase,
+	teaching,
+	elapsedMs,
+	agentName,
+}: {
+	phase: Phase
+	teaching: TeachingStatus
+	elapsedMs: number
+	agentName: string | null
+}) {
+	if (teaching !== 'idle') {
+		return (
+			<p
+				className="flex min-w-0 max-w-[45vw] items-center gap-1.5 text-[11.5px] text-muted-foreground sm:max-w-none"
+				aria-live="polite"
+			>
+				{teaching === 'recording' ? (
+					<span
+						aria-hidden="true"
+						className="size-1.5 shrink-0 animate-pulse rounded-full bg-destructive"
+					/>
+				) : (
+					<Spinner className="shrink-0" />
+				)}
+				<span className="truncate">
+					{teaching === 'recording'
+						? `Recording · ${formatElapsed(elapsedMs)}${agentName ? ` · teaching ${agentName}` : ''}`
+						: `Sending to ${agentName ?? 'the agent'}…`}
+				</span>
+			</p>
+		)
+	}
 	const busy = phase === 'starting' || phase === 'connecting'
 	return (
 		<p
@@ -48,7 +87,14 @@ function DesktopStatus({ phase }: { phase: Phase }) {
  * watching an agent work can never nudge it by accident. The ticket from
  * connect is single-use, so every (re)connect asks for a fresh one.
  */
-export function DesktopViewer({ workspaceId }: { workspaceId: string }) {
+export function DesktopViewer({
+	workspaceId,
+	onOpenAgent,
+}: {
+	workspaceId: string
+	/** Where "View agent" goes after a recording is sent. Optional: needs the router. */
+	onOpenAgent?: (agentId: string) => void
+}) {
 	const targetRef = useRef<HTMLDivElement>(null)
 	const rfbRef = useRef<RfbHandle | null>(null)
 	const [phase, setPhase] = useState<Phase>('starting')
@@ -124,6 +170,15 @@ export function DesktopViewer({ workspaceId }: { workspaceId: string }) {
 
 	const busy = phase === 'starting' || phase === 'connecting'
 	const failed = phase === 'disconnected' || phase === 'error'
+	const teaching = useDesktopTeaching({
+		workspaceId,
+		targetRef,
+		connected: phase === 'connected',
+		onControl: setControlling,
+		onOpenAgent,
+	})
+	const recording = teaching.status === 'recording'
+	const sending = teaching.status === 'sending'
 
 	return (
 		<>
@@ -133,20 +188,52 @@ export function DesktopViewer({ workspaceId }: { workspaceId: string }) {
 			<PageHeader
 				title="Desktop"
 				scrollLocked
-				titleTabs={<DesktopStatus phase={phase} />}
+				titleTabs={
+					<DesktopStatus
+						phase={phase}
+						teaching={teaching.status}
+						elapsedMs={teaching.elapsedMs}
+						agentName={teaching.agentName}
+					/>
+				}
 				leadingActions={
 					phase === 'connected' ? (
-						<Button
-							variant={controlling ? 'default' : 'outline'}
-							size="sm"
-							aria-label={controlling ? 'Stop controlling' : 'Take over'}
-							onClick={() => setControlling((v) => !v)}
-						>
-							{controlling ? <Eye size={15} /> : <MousePointer2 size={15} />}
-							<span className="hidden sm:inline">
-								{controlling ? 'Stop controlling' : 'Take over'}
-							</span>
-						</Button>
+						recording ? (
+							<Button
+								variant="destructive"
+								size="sm"
+								aria-label="Stop recording"
+								onClick={() => void teaching.stop()}
+							>
+								<Square size={14} />
+								<span className="hidden sm:inline">Stop</span>
+							</Button>
+						) : (
+							<>
+								<Button
+									variant="outline"
+									size="sm"
+									aria-label="Teach a task"
+									disabled={sending}
+									onClick={teaching.openDialog}
+								>
+									<GraduationCap size={15} />
+									<span className="hidden sm:inline">Teach a task</span>
+								</Button>
+								<Button
+									variant={controlling ? 'default' : 'outline'}
+									size="sm"
+									aria-label={controlling ? 'Stop controlling' : 'Take over'}
+									disabled={sending}
+									onClick={() => setControlling((v) => !v)}
+								>
+									{controlling ? <Eye size={15} /> : <MousePointer2 size={15} />}
+									<span className="hidden sm:inline">
+										{controlling ? 'Stop controlling' : 'Take over'}
+									</span>
+								</Button>
+							</>
+						)
 					) : null
 				}
 			/>
@@ -155,7 +242,12 @@ export function DesktopViewer({ workspaceId }: { workspaceId: string }) {
 			    wrapper is a size container so the 16:9 frame can fit whichever of
 			    width or height runs out first, without hard-coding the header height. */}
 			<div className="-m-2 flex min-h-0 flex-1 items-center justify-center [container-type:size] md:-m-5">
-				<div className="relative aspect-video w-[min(100cqw,calc(100cqh*16/9))] overflow-hidden rounded-lg border bg-muted">
+				<div
+					className={cn(
+						'relative aspect-video w-[min(100cqw,calc(100cqh*16/9))] overflow-hidden rounded-lg border bg-muted',
+						recording && 'ring-2 ring-destructive',
+					)}
+				>
 					{/* noVNC mounts its canvas into this element and scales it to fit. */}
 					<div ref={targetRef} className={cn('size-full', phase !== 'connected' && 'invisible')} />
 					{busy && (
@@ -186,6 +278,12 @@ export function DesktopViewer({ workspaceId }: { workspaceId: string }) {
 					)}
 				</div>
 			</div>
+			<TeachDialog
+				open={teaching.dialogOpen}
+				onOpenChange={teaching.setDialogOpen}
+				workspaceId={workspaceId}
+				onStart={teaching.start}
+			/>
 		</>
 	)
 }

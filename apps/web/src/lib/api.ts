@@ -26,6 +26,8 @@ import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 import { reportApiFailure } from './faro'
 
+import type { TeachRequest, TeachResponse } from '@maskin/shared'
+
 export interface DesktopConnectResponse {
 	ticket: string
 	// Path of the stream WebSocket on the API origin; the ticket goes in `?ticket=`.
@@ -790,6 +792,16 @@ export const api = {
 			request<DesktopConnectResponse>('/desktop/connect', { method: 'POST', workspaceId }),
 		remove: (workspaceId: string) =>
 			request<{ removed: boolean }>('/desktop', { method: 'DELETE', workspaceId }),
+		// "Teach a task": hands a recorded demonstration to the chosen agent, which
+		// writes a draft skill from it.
+		teach: (workspaceId: string, body: TeachRequest) =>
+			request<TeachResponse>('/desktop/teach', { method: 'POST', body, workspaceId }),
+		// The recording is an input; the page deletes it once the agent's session ends.
+		deleteTeaching: (workspaceId: string, recordingId: string, agentId: string) =>
+			request<{ deleted: number }>(
+				`/desktop/teach/${recordingId}?agent_id=${encodeURIComponent(agentId)}`,
+				{ method: 'DELETE', workspaceId },
+			),
 	},
 
 	featureFlags: {
