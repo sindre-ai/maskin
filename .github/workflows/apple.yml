@@ -118,7 +118,10 @@ jobs:
 
       - name: swift test
         working-directory: apps/apple
-        run: swift test
+        # --no-parallel: several suites render SwiftUI snapshots on the main actor, which starves
+        # the timing-sensitive store/outbox tests when everything runs at once (they pass alone and
+        # in serial: 657 tests, 0 failures, ~23 s). Serial is deterministic and still fast.
+        run: swift test --no-parallel
 
       # --- 4. Platform builds ---
       - name: Install xcodegen
