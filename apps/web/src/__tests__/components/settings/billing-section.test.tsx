@@ -472,4 +472,35 @@ describe('BillingSection', () => {
 		expect(screen.getByText('$49/mo × 2 = $98.00')).toBeInTheDocument()
 		expect(screen.getByText(/\$49\/month covers connectivity to LinkedIn/)).toBeInTheDocument()
 	})
+
+	describe('returning from Stripe Checkout', () => {
+		afterEach(() => {
+			vi.useRealTimers()
+			window.history.replaceState(null, '', '/')
+		})
+
+		// The server caches GET /api/billing/usage for 2s
+		// (BILLING_USAGE_CACHE_TTL_MS in apps/dev/src/lib/billing-usage-cache.ts).
+		// A retry at or under that can be answered by the read the first refetch
+		// just made, before the webhook landed. Pin the retry clearly past it.
+		it('retries the usage refetch only after the server cache has expired', async () => {
+			vi.useFakeTimers()
+			window.history.replaceState(null, '', '/settings?billing=success')
+			vi.mocked(api.billing.usage).mockResolvedValue(baseUsage)
+
+			render(
+				<TestWrapper>
+					<BillingSection workspaceId="ws-1" enterprise />
+				</TestWrapper>,
+			)
+			await vi.advanceTimersByTimeAsync(100)
+			const settled = vi.mocked(api.billing.usage).mock.calls.length
+
+			await vi.advanceTimersByTimeAsync(2_500)
+			expect(vi.mocked(api.billing.usage).mock.calls.length).toBe(settled)
+
+			await vi.advanceTimersByTimeAsync(1_000)
+			expect(vi.mocked(api.billing.usage).mock.calls.length).toBe(settled + 1)
+		})
+	})
 })
