@@ -488,6 +488,15 @@ describe('AgentsIndexView — row Call button (voice-mode-v1)', () => {
 		expect(screen.queryByRole('button', { name: 'Call Brian' })).not.toBeInTheDocument()
 	})
 
+	it('the Voice chip shows only voice-enabled agents (grouped by status, the default)', async () => {
+		const user = userEvent.setup()
+		mount([voiceAda(), agentBrian()], [])
+		expect(screen.getByRole('link', { name: /Brian/ })).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: /^Voice/ }))
+		expect(screen.getByRole('link', { name: /Ada/ })).toBeInTheDocument()
+		expect(screen.queryByRole('link', { name: /Brian/ })).not.toBeInTheDocument()
+	})
+
 	it('renders no Call button when the flag is off, even for a voice-enabled agent', () => {
 		window.localStorage.setItem('ff:voice-mode-v1', 'off')
 		mount([voiceAda()], [])

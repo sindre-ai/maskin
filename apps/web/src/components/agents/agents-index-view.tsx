@@ -202,8 +202,10 @@ export function AgentsIndexView({
 			// Filter the active statuses against the known buckets instead of
 			// casting: a stale persisted filter can't crash the group render
 			// via an undefined STATUS_GROUP_META entry.
+			// Voice is orthogonal to status (see statusOnlyFilters), so it must not
+			// count here: with only Voice active every bucket would be dropped.
 			const buckets: StatusBucket[] = [...AGENT_STATUSES].filter((b) =>
-				activeStatuses.length === 0 ? true : activeStatuses.includes(b),
+				statusOnlyFilters.length === 0 ? true : statusOnlyFilters.includes(b),
 			)
 			return buckets.map((bucket) => {
 				const meta = STATUS_GROUP_META[bucket]
@@ -233,7 +235,7 @@ export function AgentsIndexView({
 				}))
 		}
 		return [{ id: 'all', label: undefined, note: undefined, rows: sortedRows }]
-	}, [groupBy, activeStatuses, sortedRows])
+	}, [groupBy, statusOnlyFilters, sortedRows])
 
 	const showKind = columnVisibility.kind !== false
 	const showActivity = columnVisibility.activity !== false
