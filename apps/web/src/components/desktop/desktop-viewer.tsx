@@ -1,3 +1,4 @@
+import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -22,6 +23,24 @@ const STATUS_TEXT: Record<Phase, string> = {
 	connected: 'Live',
 	disconnected: 'Disconnected',
 	error: 'Not connected',
+}
+
+// Lives in the page header's title cluster, beside the "Desktop" title, so the
+// picture itself can use the whole page.
+function DesktopStatus({ phase }: { phase: Phase }) {
+	const busy = phase === 'starting' || phase === 'connecting'
+	return (
+		<p
+			className="flex min-w-0 max-w-[45vw] items-center gap-1.5 text-[11.5px] text-muted-foreground sm:max-w-none"
+			aria-live="polite"
+		>
+			{busy && <Spinner className="shrink-0" />}
+			{phase === 'connected' && (
+				<span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-primary" />
+			)}
+			<span className="truncate">{STATUS_TEXT[phase]}</span>
+		</p>
+	)
 }
 
 /**
@@ -107,52 +126,66 @@ export function DesktopViewer({ workspaceId }: { workspaceId: string }) {
 	const failed = phase === 'disconnected' || phase === 'error'
 
 	return (
-		<div className="flex w-full max-w-5xl flex-col gap-3">
-			<div className="flex flex-wrap items-center justify-between gap-2">
-				<p className="flex items-center gap-2 text-sm text-muted-foreground" aria-live="polite">
-					{busy && <Spinner />}
-					{STATUS_TEXT[phase]}
-				</p>
-				{phase === 'connected' && (
-					<Button
-						variant={controlling ? 'default' : 'outline'}
-						size="sm"
-						onClick={() => setControlling((v) => !v)}
-					>
-						{controlling ? <Eye size={15} /> : <MousePointer2 size={15} />}
-						{controlling ? 'Stop controlling' : 'Take over'}
-					</Button>
-				)}
-			</div>
+		<>
+			{/* One writer for the nav row: the route renders its own header only when
+			    the flag is off, so this is the only <PageHeader> on the page. The
+			    page is scroll-locked so the picture can take the full height. */}
+			<PageHeader
+				title="Desktop"
+				scrollLocked
+				titleTabs={<DesktopStatus phase={phase} />}
+				leadingActions={
+					phase === 'connected' ? (
+						<Button
+							variant={controlling ? 'default' : 'outline'}
+							size="sm"
+							aria-label={controlling ? 'Stop controlling' : 'Take over'}
+							onClick={() => setControlling((v) => !v)}
+						>
+							{controlling ? <Eye size={15} /> : <MousePointer2 size={15} />}
+							<span className="hidden sm:inline">
+								{controlling ? 'Stop controlling' : 'Take over'}
+							</span>
+						</Button>
+					) : null
+				}
+			/>
 
-			<div className="relative aspect-video w-full overflow-hidden rounded-lg border bg-muted">
-				{/* noVNC mounts its canvas into this element and scales it to fit. */}
-				<div ref={targetRef} className={cn('size-full', phase !== 'connected' && 'invisible')} />
-				{phase === 'starting' && (
-					<EmptyState
-						className="absolute inset-0 py-0"
-						compact
-						title="Starting your desktop"
-						description="The first start can take up to a minute."
-					/>
-				)}
-				{failed && (
-					<EmptyState
-						className="absolute inset-0 py-0"
-						compact
-						title={
-							phase === 'disconnected' ? 'The connection was closed' : "Couldn't open the desktop"
-						}
-						description={error ?? undefined}
-						action={
-							<Button variant="outline" size="sm" onClick={() => setAttempt((n) => n + 1)}>
-								<RefreshCw size={15} />
-								Reconnect
-							</Button>
-						}
-					/>
-				)}
+			{/* Reclaims most of the shell's page padding and fills what is left. The
+			    wrapper is a size container so the 16:9 frame can fit whichever of
+			    width or height runs out first, without hard-coding the header height. */}
+			<div className="-m-2 flex min-h-0 flex-1 items-center justify-center [container-type:size] md:-m-5">
+				<div className="relative aspect-video w-[min(100cqw,calc(100cqh*16/9))] overflow-hidden rounded-lg border bg-muted">
+					{/* noVNC mounts its canvas into this element and scales it to fit. */}
+					<div ref={targetRef} className={cn('size-full', phase !== 'connected' && 'invisible')} />
+					{busy && (
+						<EmptyState
+							className="absolute inset-0 py-0"
+							compact
+							title={phase === 'starting' ? 'This can take a moment' : 'Almost there'}
+							description={
+								phase === 'starting' ? 'The first start can take up to a minute.' : undefined
+							}
+						/>
+					)}
+					{failed && (
+						<EmptyState
+							className="absolute inset-0 py-0"
+							compact
+							title={
+								phase === 'disconnected' ? 'The connection was closed' : "Couldn't open the desktop"
+							}
+							description={error ?? undefined}
+							action={
+								<Button variant="outline" size="sm" onClick={() => setAttempt((n) => n + 1)}>
+									<RefreshCw size={15} />
+									Reconnect
+								</Button>
+							}
+						/>
+					)}
+				</div>
 			</div>
-		</div>
+		</>
 	)
 }

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Terminal
+Exec=xfce4-terminal
+Icon=/usr/share/icons/maskin/terminal.png
+StartupWMClass=Xfce4-terminal
+StartupNotify=true
+Categories=System;TerminalEmulator;

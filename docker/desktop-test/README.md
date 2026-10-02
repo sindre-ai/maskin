@@ -42,3 +42,13 @@ entrypoint's own `msb exec` holds the VM — verified on msb 0.5.7 — so the ho
 cannot run `xdotool`/`scrot` by exec'ing into the VM. `/healthz` returns 200
 only once X and noVNC are up; the agent-server waits on it, because a TCP connect
 to a published port succeeds before anything listens in the guest.
+
+## Users and the browser sandbox
+
+The desktop runs as an ordinary user (`user`), not root, because Chromium refuses
+to enable its security sandbox as root. `user` has passwordless `sudo`, so anything
+needing administrator rights (`sudo apt-get install ...`, editing system files)
+still works; it is just explicit. `entrypoint.sh` starts as root and drops to
+`user` before launching anything, so desktopd (and therefore every `desktop_run`
+command) is `user` too. Verified on msb 0.5.7: unprivileged user namespaces are
+available in the microVM, so the sandbox works without `--no-sandbox`.

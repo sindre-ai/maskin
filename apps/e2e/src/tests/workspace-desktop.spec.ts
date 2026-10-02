@@ -59,8 +59,11 @@ test.describe('Workspace desktop', () => {
 			await expect(reconnect).toBeVisible()
 			await expectNoHorizontalOverflow(page)
 
+			// Relative, not absolute: the dev server runs StrictMode, which mounts the
+			// effect twice, so the count before the click is 1 in CI and 2 locally.
+			const callsBeforeRetry = connectCalls
 			await reconnect.click()
-			await expect.poll(() => connectCalls).toBe(2)
+			await expect.poll(() => connectCalls).toBe(callsBeforeRetry + 1)
 		})
 
 		test(`shows the starting state while the desktop boots at ${vp.label}`, async ({
@@ -74,9 +77,38 @@ test.describe('Workspace desktop', () => {
 
 			await page.goto(`/${account.workspaceId}/desktop`)
 
-			await expect(page.getByText('Starting your desktop')).toBeVisible()
+			// The status lives in the page header, so the picture can use the whole
+			// page; the frame only carries the hint.
+			await expect(page.getByText('Starting your desktop…')).toBeVisible()
 			await expect(page.getByText(/first start can take up to a minute/i)).toBeVisible()
+			await expect(page.getByText(/starting your desktop/i)).toHaveCount(1)
 			await expectNoHorizontalOverflow(page)
+		})
+
+		test(`lets the desktop frame fill the page at ${vp.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await setFlag(page, 'on')
+			await page.route('**/api/desktop/connect', () => {})
+
+			await page.goto(`/${account.workspaceId}/desktop`)
+
+			const hint = page.getByText(/first start can take up to a minute/i)
+			await expect(hint).toBeVisible()
+			const frame = hint.locator('xpath=ancestor::div[contains(@class,"aspect-video")]')
+			const root = page.locator('[data-scroll-root]')
+			const f = await frame.boundingBox()
+			const r = await root.boundingBox()
+			if (!f || !r) throw new Error('desktop frame or page container not laid out')
+
+			// 16:9 inside the page container: it must not overflow it...
+			expect(f.width).toBeLessThanOrEqual(r.width + 1)
+			expect(f.height).toBeLessThanOrEqual(r.height + 1)
+			// ...and whichever of width or height runs out first must be nearly used up.
+			expect(Math.max(f.width / r.width, f.height / r.height)).toBeGreaterThan(0.9)
+			expect(Math.abs(f.width / f.height - 16 / 9)).toBeLessThan(0.02)
+			// The page itself must not scroll: the frame fits what is left.
+			const scrolls = await root.evaluate((el) => el.scrollHeight - el.clientHeight)
+			expect(scrolls).toBeLessThanOrEqual(1)
 		})
 	}
 

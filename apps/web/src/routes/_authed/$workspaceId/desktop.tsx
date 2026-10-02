@@ -13,24 +13,22 @@ export const Route = createFileRoute('/_authed/$workspaceId/desktop')({
 })
 
 // The flag is read once here: this route is the boundary for the whole page,
-// so DesktopViewer and everything under it stay flag-free.
+// so DesktopViewer and everything under it stay flag-free. DesktopViewer
+// publishes its own nav row (status + Take over) and fills the page; this route
+// only owns the header for the flag-off state, so there is one writer at a time.
 function DesktopRoute() {
 	const { workspaceId } = useWorkspace()
 	const enabled = useFeatureFlag(DESKTOP_FLAG)
 
+	if (enabled) return <DesktopViewer workspaceId={workspaceId} />
+
 	return (
 		<>
 			<PageHeader title="Desktop" />
-			<div className="p-4 md:p-6">
-				{enabled ? (
-					<DesktopViewer workspaceId={workspaceId} />
-				) : (
-					<EmptyState
-						title="Desktop isn't available yet"
-						description="This workspace doesn't have access to the desktop."
-					/>
-				)}
-			</div>
+			<EmptyState
+				title="Desktop isn't available yet"
+				description="This workspace doesn't have access to the desktop."
+			/>
 		</>
 	)
 }

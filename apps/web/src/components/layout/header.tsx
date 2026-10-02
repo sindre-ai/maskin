@@ -141,6 +141,7 @@ export function Header() {
 		title,
 		subtitle,
 		actions,
+		leadingActions,
 		titleTabs,
 		stickyIdentity,
 		crumb,
@@ -286,6 +287,7 @@ export function Header() {
 			    zero-basis title above. It still right-aligns the controls when no
 			    heading or breadcrumb renders. */}
 			<div className="ml-auto flex shrink-0 items-center gap-2">
+				{leadingActions}
 				<NavSearch />
 				{actions}
 				<span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />

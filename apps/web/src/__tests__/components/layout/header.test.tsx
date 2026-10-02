@@ -166,6 +166,7 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setLeadingActions: vi.fn(),
 			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setCrumb: vi.fn(),
@@ -187,6 +188,7 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setLeadingActions: vi.fn(),
 			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setCrumb: vi.fn(),
@@ -213,6 +215,7 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setLeadingActions: vi.fn(),
 			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setCrumb: vi.fn(),
@@ -245,6 +248,7 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setLeadingActions: vi.fn(),
 			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setCrumb: vi.fn(),
@@ -279,6 +283,7 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setLeadingActions: vi.fn(),
 			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setCrumb: vi.fn(),
@@ -315,6 +320,7 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setLeadingActions: vi.fn(),
 			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setCrumb: vi.fn(),
@@ -391,6 +397,7 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setLeadingActions: vi.fn(),
 			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setCrumb: vi.fn(),
@@ -408,5 +415,33 @@ describe('Header', () => {
 		] as unknown as ReturnType<typeof useMatches>)
 		render(<Header />)
 		expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument()
+	})
+})
+
+describe('Header leadingActions', () => {
+	it('renders a page control before the workspace search, and plain actions after it', () => {
+		vi.mocked(usePageHeader).mockReturnValue({
+			leadingActions: <button type="button">Take over</button>,
+			actions: <button type="button">After search</button>,
+			stickyIdentity: null,
+			setTitle: vi.fn(),
+			setSubtitle: vi.fn(),
+			setActions: vi.fn(),
+			setLeadingActions: vi.fn(),
+			setTitleTabs: vi.fn(),
+			setStickyIdentity: vi.fn(),
+			setCrumb: vi.fn(),
+			setContentPush: vi.fn(),
+			setScrollLocked: vi.fn(),
+			setNewMenuPrimaryOverride: vi.fn(),
+			setNewMenuDisabled: vi.fn(),
+		})
+		render(<Header />)
+
+		const lead = screen.getByRole('button', { name: 'Take over' })
+		const search = screen.getByRole('button', { name: 'Search the workspace' })
+		const after = screen.getByRole('button', { name: 'After search' })
+		expect(lead.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+		expect(search.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 	})
 })

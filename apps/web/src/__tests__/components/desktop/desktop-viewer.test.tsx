@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -39,16 +39,16 @@ vi.mock('@/lib/api', () => ({
 
 import { DesktopViewer } from '@/components/desktop/desktop-viewer'
 import { api } from '@/lib/api'
-import { TestWrapper } from '../../setup'
+import { createWorkspaceWrapper } from '../../setup'
 
 const WS = '11111111-1111-4111-8111-111111111111'
 
+// The viewer publishes its status and Take over button into the page header, so
+// render it under the header stand-in the app shell's nav row is replaced by.
 function renderViewer() {
-	return render(
-		<TestWrapper>
-			<DesktopViewer workspaceId={WS} />
-		</TestWrapper>,
-	)
+	return render(<DesktopViewer workspaceId={WS} />, {
+		wrapper: createWorkspaceWrapper({}, { renderPageHeader: true }),
+	})
 }
 
 describe('DesktopViewer', () => {
@@ -66,8 +66,23 @@ describe('DesktopViewer', () => {
 		vi.mocked(api.desktop.connect).mockReturnValue(new Promise(() => {}))
 		renderViewer()
 
-		expect(await screen.findByText('Starting your desktop')).toBeInTheDocument()
+		// The status lives in the header; the frame only carries the hint.
+		const header = screen.getByRole('banner')
+		expect(await within(header).findByText('Starting your desktop…')).toBeInTheDocument()
 		expect(screen.getByText(/first start can take up to a minute/i)).toBeInTheDocument()
+		expect(screen.getAllByText(/starting your desktop/i)).toHaveLength(1)
+	})
+
+	it('puts the live status and Take over in the header, not the page', async () => {
+		renderViewer()
+		await waitFor(() => expect(instances).toHaveLength(1))
+		act(() => (instances[0] as InstanceType<typeof FakeRfb>).emit('connect'))
+
+		const header = screen.getByRole('banner')
+		expect(await within(header).findByText('Live')).toBeInTheDocument()
+		expect(within(header).getByRole('button', { name: /take over/i })).toBeInTheDocument()
+		expect(screen.getAllByText('Live')).toHaveLength(1)
+		expect(screen.getAllByRole('button', { name: /take over/i })).toHaveLength(1)
 	})
 
 	it('connects with the ticket and password, view-only by default', async () => {

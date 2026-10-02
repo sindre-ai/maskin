@@ -149,16 +149,23 @@ export function TestWrapper({ children }: { children: ReactNode }) {
 
 /**
  * Stands in for the app shell's nav row: renders whatever the page under test
- * published through `PageHeader` (its crumb label and its actions). Opt in via
+ * published through `PageHeader` (its crumb label, title tabs and actions). Opt in via
  * `createWorkspaceWrapper(overrides, { renderPageHeader: true })` when the
  * assertions cover controls the page publishes rather than renders itself.
  */
 function PageHeaderOutlet({ children }: { children: ReactNode }) {
-	const { crumb, actions } = usePageHeader()
+	const { crumb, actions, leadingActions, titleTabs } = usePageHeader()
 	return React.createElement(
 		React.Fragment,
 		null,
-		React.createElement('header', null, crumb ? crumb.label : null, actions),
+		React.createElement(
+			'header',
+			null,
+			crumb ? crumb.label : null,
+			titleTabs,
+			leadingActions,
+			actions,
+		),
 		children,
 	)
 }
