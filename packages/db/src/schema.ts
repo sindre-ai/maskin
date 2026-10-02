@@ -1561,3 +1561,36 @@ export const googleMeetSpaceIdempotency = pgTable(
 
 export type GoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferSelect
 export type NewGoogleMeetSpaceIdempotency = typeof googleMeetSpaceIdempotency.$inferInsert
+
+// ── Device Tokens (APNs push) ───────────────────────────────────────────────
+//
+// One row per (APNs token, environment). The token is the identity: when a
+// device changes hands (sign-out / sign-in as someone else) re-registering the
+// same token by a different actor MOVES the row to that actor via
+// ON CONFLICT DO UPDATE — otherwise the previous user would keep receiving the
+// new user's pushes. Cascades with the actor.
+
+export const deviceTokens = pgTable(
+	'device_tokens',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		// 'ios' | 'macos' | 'watchos' | 'tvos' — validated by registerDeviceSchema.
+		platform: text('platform').notNull(),
+		apnsToken: text('apns_token').notNull(),
+		// 'sandbox' | 'production' — selects the APNs host.
+		environment: text('environment').notNull(),
+		appVersion: text('app_version'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('device_tokens_apns_token_environment_uniq').on(t.apnsToken, t.environment),
+		index('device_tokens_actor_id_idx').on(t.actorId),
+	],
+)
+
+export type DeviceToken = typeof deviceTokens.$inferSelect
+export type NewDeviceToken = typeof deviceTokens.$inferInsert
