@@ -73,6 +73,12 @@ function ConversationThreadPage() {
 	// the pane as a bottom Sheet — the "no persistent third column" rail from
 	// the acceptance criteria.
 	const isDesktop = useIsDesktopViewport()
+	// Feature-flag boundary for the chat thread `HANDED OFF` sub-agent
+	// delegation strip bet (bet/444b-handed-off-strip). Read once at this
+	// route, threaded down as a plain boolean prop through ThreadMessages →
+	// MessageBubble — the same one-boundary-per-feature shape the v4 polish
+	// flags use above.
+	const handedOffStripEnabled = useFeatureFlag('handed-off-strip')
 	const lastMarkedRef = useRef<number | null>(null)
 	useSessionBudgetStopToast(workspaceId, conversationId)
 
@@ -160,6 +166,7 @@ function ConversationThreadPage() {
 					v4PolishBanner={chatsV4Enabled && bannerV4Enabled}
 					v4PolishBubbles={chatsV4Enabled && bubblesV4Enabled}
 					producedEnabled={producedEnabled}
+					handedOffStripEnabled={handedOffStripEnabled}
 				/>
 				{/* Live region for the Origin deep-link jump — announced once per
 				    navigation (spec §7 accessibility). Kept out of ThreadMessages so
