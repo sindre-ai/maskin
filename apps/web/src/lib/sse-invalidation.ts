@@ -15,20 +15,63 @@ const SESSION_COMPLETION_ACTIONS = new Map<string, 'completed' | 'failed' | 'tim
 // traffic does not change it.
 const BILLING_INVALIDATING_ACTIONS = new Set(['session_credit_debited', 'session_budget_stopped'])
 
-// Trailing window for the refetches a burst of session events would otherwise
-// multiply: the sidebar's workspace sessions list (?limit=100) and billing
-// usage. Agents PATCH current_activity on every step and a scheduled trigger
+// Trailing windows for the refetches a burst of session events would otherwise
+// multiply. Agents PATCH current_activity on every step and a scheduled trigger
 // can finish dozens of runs at once, so one busy minute emits a burst of
 // session events; each target refetches once per window instead of per event.
-// The server caches billing usage for less than this window, so a refetch
-// triggered by an event is never answered from a snapshot older than the event.
-const TRAILING_REFETCH_MS = 5_000
+//
+// The workspace sessions list (?limit=100) drives the sidebar's live activity
+// text, so it keeps a short window. Billing usage only moves on terminal and
+// credit events and is the most expensive read in the app, so it gets a longer
+// one. The server evicts its usage cache when it records those events
+// (lib/events/record-event.ts), so a refetch is never answered from a snapshot
+// older than the event no matter how long the window is.
+const SESSIONS_REFETCH_MS = 5_000
+const BILLING_REFETCH_MS = 15_000
 const trailingRefetchTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+const isTabHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden'
+
+// Query clients that have deferred invalidations waiting for their tab to
+// come back, and the ones we have already attached a visibility listener to.
+const dirtyWhileHidden = new WeakSet<QueryClient>()
+const listening = new WeakSet<QueryClient>()
+
+// A background tab has nobody looking at it, but invalidating an active query
+// refetches it right away — with several tabs open that multiplies every SSE
+// event by the tab count. While hidden, only mark queries stale (no refetch)
+// and catch up once, on the invalidated ones that are still on screen, when
+// the tab becomes visible again.
+function invalidate(
+	queryClient: QueryClient,
+	filters: InvalidateQueryFilters,
+	options?: { cancelRefetch?: boolean },
+) {
+	if (!isTabHidden()) {
+		return options
+			? queryClient.invalidateQueries(filters, options)
+			: queryClient.invalidateQueries(filters)
+	}
+	dirtyWhileHidden.add(queryClient)
+	if (!listening.has(queryClient)) {
+		listening.add(queryClient)
+		document.addEventListener('visibilitychange', () => {
+			if (isTabHidden() || !dirtyWhileHidden.has(queryClient)) return
+			dirtyWhileHidden.delete(queryClient)
+			void queryClient.refetchQueries({
+				type: 'active',
+				predicate: (query) => query.state.isInvalidated,
+			})
+		})
+	}
+	return queryClient.invalidateQueries({ ...filters, refetchType: 'none' }, options)
+}
 
 function scheduleTrailingRefetch(
 	queryClient: QueryClient,
 	timerKey: string,
 	filters: InvalidateQueryFilters,
+	delayMs: number,
 ) {
 	if (trailingRefetchTimers.has(timerKey)) return
 	trailingRefetchTimers.set(
@@ -39,8 +82,8 @@ function scheduleTrailingRefetch(
 			// of cancelling it and starting another (the cancelled request still
 			// reaches the server). An event that lands mid-fetch re-arms the timer,
 			// so it is never lost.
-			queryClient.invalidateQueries(filters, { cancelRefetch: false })
-		}, TRAILING_REFETCH_MS),
+			invalidate(queryClient, filters, { cancelRefetch: false })
+		}, delayMs),
 	)
 }
 
@@ -60,35 +103,35 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		// invalidation would have to walk cached pages to find the strip that
 		// owns the sub-session. The prefix here matches `queryKeys.conversations`
 		// so a future refactor of the key shape keeps the invalidation in step.
-		queryClient.invalidateQueries({ queryKey: ['conversations', 'detail'] })
+		invalidate(queryClient, { queryKey: ['conversations', 'detail'] })
 		return
 	}
 
 	// Always invalidate events history
-	queryClient.invalidateQueries({ queryKey: queryKeys.events.history(workspaceId) })
-	queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(event.entity_id) })
+	invalidate(queryClient, { queryKey: queryKeys.events.history(workspaceId) })
+	invalidate(queryClient, { queryKey: queryKeys.events.byEntity(event.entity_id) })
 
 	// Live-refresh the knowledge doc-header reference-count chip. The DoD
 	// tolerates a 5-minute lag (matches the hook's staleTime), but when a
 	// fresh cite lands over SSE we already know a downstream agent read this
 	// object — invalidate the counter so the chip catches up in the same tick.
 	if (event.action === 'workspace_knowledge_referenced') {
-		queryClient.invalidateQueries({ queryKey: queryKeys.objects.references(event.entity_id) })
+		invalidate(queryClient, { queryKey: queryKeys.objects.references(event.entity_id) })
 	}
 
 	// New comments may change unread counts for any subscriber in this workspace
 	// and the subscriber list for the entity that was commented on (the latter
 	// because the commenter auto-subscribes server-side).
 	if (event.action === 'commented') {
-		queryClient.invalidateQueries({
+		invalidate(queryClient, {
 			queryKey: ['subscriptions', 'unread', workspaceId],
 		})
-		queryClient.invalidateQueries({
+		invalidate(queryClient, {
 			queryKey: queryKeys.subscriptions.subscribers(event.entity_type, event.entity_id),
 		})
 		// Also refresh the detail/graph so unread_count + subscriber_count update.
-		queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(event.entity_id) })
-		queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(event.entity_id) })
+		invalidate(queryClient, { queryKey: queryKeys.objects.detail(event.entity_id) })
+		invalidate(queryClient, { queryKey: queryKeys.objects.graph(event.entity_id) })
 	}
 
 	// Invalidate based on entity type
@@ -98,27 +141,27 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		case 'task':
 		case 'loop':
 		case 'knowledge':
-			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
-			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(event.entity_id) })
-			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(event.entity_id) })
+			invalidate(queryClient, { queryKey: queryKeys.objects.all(workspaceId) })
+			invalidate(queryClient, { queryKey: queryKeys.objects.detail(event.entity_id) })
+			invalidate(queryClient, { queryKey: queryKeys.objects.graph(event.entity_id) })
 			if (event.entity_type === 'bet') {
-				queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
+				invalidate(queryClient, { queryKey: queryKeys.bets.all(workspaceId) })
 			}
 			if (event.entity_type === 'loop') {
-				queryClient.invalidateQueries({ queryKey: queryKeys.loops.all(workspaceId) })
+				invalidate(queryClient, { queryKey: queryKeys.loops.all(workspaceId) })
 			}
 			break
 		case 'relationship':
-			queryClient.invalidateQueries({ queryKey: queryKeys.relationships.all(workspaceId) })
-			queryClient.invalidateQueries({ queryKey: ['objects', 'graph'] })
+			invalidate(queryClient, { queryKey: queryKeys.relationships.all(workspaceId) })
+			invalidate(queryClient, { queryKey: ['objects', 'graph'] })
 			break
 		case 'trigger':
-			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
+			invalidate(queryClient, { queryKey: queryKeys.triggers.all(workspaceId) })
 			if (event.action === 'trigger_fired') {
 				// Loop-detail "Latest activity" is a join through metadata.trigger_ids
 				// keyed to the trigger — we don't know which loop from the payload,
 				// so invalidate every open loop-activity query in this workspace.
-				queryClient.invalidateQueries({ queryKey: ['loops', workspaceId, 'activity'] })
+				invalidate(queryClient, { queryKey: ['loops', workspaceId, 'activity'] })
 				trackTriggerFired({
 					entity_id: event.entity_id,
 					entity_type: 'trigger',
@@ -130,20 +173,25 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			// Broad prefix invalidation covers all session queries including byActor,
 			// detail and logs — except the workspace list (exactly ['sessions', ws]),
 			// which is coalesced below. The prefix also matches it, so exclude it here.
-			queryClient.invalidateQueries({
+			invalidate(queryClient, {
 				queryKey: ['sessions'],
 				predicate: (query) => {
 					const key = query.queryKey
 					return !(key.length === 2 && key[1] === workspaceId)
 				},
 			})
-			scheduleTrailingRefetch(queryClient, `sessions:${workspaceId}`, {
-				queryKey: queryKeys.sessions.all(workspaceId),
-				exact: true,
-			})
+			scheduleTrailingRefetch(
+				queryClient,
+				`sessions:${workspaceId}`,
+				{
+					queryKey: queryKeys.sessions.all(workspaceId),
+					exact: true,
+				},
+				SESSIONS_REFETCH_MS,
+			)
 			// Same reasoning as trigger_fired above — session lifecycle events feed
 			// into the loop activity view via the trigger id join.
-			queryClient.invalidateQueries({ queryKey: ['loops', workspaceId, 'activity'] })
+			invalidate(queryClient, { queryKey: ['loops', workspaceId, 'activity'] })
 			// Sessions burn credits and can flip the workspace into PAUSED · NO
 			// CREDITS mid-flight. The D6 chip reads through `useUsageState` →
 			// `useBillingUsage`; only credit debits, budget stops and terminal
@@ -151,9 +199,14 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			// and the rest coalesce into one refetch per window.
 			const outcome = SESSION_COMPLETION_ACTIONS.get(event.action)
 			if (outcome || BILLING_INVALIDATING_ACTIONS.has(event.action)) {
-				scheduleTrailingRefetch(queryClient, `billing:${workspaceId}`, {
-					queryKey: queryKeys.billing.usage(workspaceId),
-				})
+				scheduleTrailingRefetch(
+					queryClient,
+					`billing:${workspaceId}`,
+					{
+						queryKey: queryKeys.billing.usage(workspaceId),
+					},
+					BILLING_REFETCH_MS,
+				)
 			}
 			if (outcome) {
 				const sessionId = event.entity_id
@@ -189,34 +242,34 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			break
 		}
 		case 'notification':
-			queryClient.invalidateQueries({ queryKey: queryKeys.notifications.all(workspaceId) })
+			invalidate(queryClient, { queryKey: queryKeys.notifications.all(workspaceId) })
 			break
 		case 'actor':
-			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
+			invalidate(queryClient, { queryKey: queryKeys.actors.all(workspaceId) })
 			break
 		case 'workspace':
-			queryClient.invalidateQueries({ queryKey: queryKeys.workspaces.all() })
+			invalidate(queryClient, { queryKey: queryKeys.workspaces.all() })
 			break
 		case 'workspace_skill':
 			// all() is a prefix of detail() so this covers both list and detail queries
-			queryClient.invalidateQueries({ queryKey: queryKeys.workspaceSkills.all(workspaceId) })
+			invalidate(queryClient, { queryKey: queryKeys.workspaceSkills.all(workspaceId) })
 			break
 		case 'agent_skill':
 			// The event's entity_id is the workspace-skill id; the target actorId is not in the
 			// SSE payload, so invalidate all attachment queries in this tab with a broad prefix.
-			queryClient.invalidateQueries({ queryKey: ['agent-skill-attachments'] })
+			invalidate(queryClient, { queryKey: ['agent-skill-attachments'] })
 			break
 		case 'file':
 			// all() is a prefix of detail() so this covers both list and detail queries.
-			queryClient.invalidateQueries({ queryKey: queryKeys.files.all(workspaceId) })
+			invalidate(queryClient, { queryKey: queryKeys.files.all(workspaceId) })
 			break
 		case 'conversation':
 			// Message posts also carry entity_type 'conversation' (entity_id is the
 			// conversation, not the message) — detail(id) is a prefix of
 			// messages(id, ...) so this one invalidation covers the thread's
 			// detail, participants, and message pages too.
-			queryClient.invalidateQueries({ queryKey: queryKeys.conversations.all(workspaceId) })
-			queryClient.invalidateQueries({ queryKey: queryKeys.conversations.detail(event.entity_id) })
+			invalidate(queryClient, { queryKey: queryKeys.conversations.all(workspaceId) })
+			invalidate(queryClient, { queryKey: queryKeys.conversations.detail(event.entity_id) })
 			break
 	}
 }

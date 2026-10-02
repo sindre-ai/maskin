@@ -183,6 +183,11 @@ export const objects = pgTable(
 		// Range-scan path for list_objects(updated_before/updated_after) — the
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0043.
 		index('objects_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
+		// Session teardown clears objects by active_session_id. Built CONCURRENTLY
+		// in migration 0083.
+		index('objects_active_session_idx')
+			.on(t.activeSessionId)
+			.where(sql`${t.activeSessionId} IS NOT NULL`),
 	],
 )
 
@@ -243,6 +248,10 @@ export const events = pgTable(
 	(t) => [
 		index('events_ws_created_at_idx').on(t.workspaceId, t.createdAt),
 		index('events_ws_entity_id_idx').on(t.workspaceId, t.entityId, t.id),
+		// For You unread feed: comments only. Built CONCURRENTLY in migration 0084.
+		index('events_ws_entity_commented_idx')
+			.on(t.workspaceId, t.entityId, t.id)
+			.where(sql`${t.action} = 'commented'`),
 	],
 )
 
@@ -495,6 +504,11 @@ export const sessions = pgTable(
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0044.
 		index('sessions_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
 		index('sessions_actor_idx').on(t.actorId),
+		// Period usage sum behind GET /api/billing/usage; maskin_plan sessions only.
+		// Built CONCURRENTLY in migration 0085.
+		index('sessions_ws_plan_usage_idx')
+			.on(t.workspaceId, t.createdAt)
+			.where(sql`${t.config}->>'llm_route' = 'maskin_plan'`),
 		index('sessions_actor_completed_idx')
 			.on(t.actorId, t.completedAt)
 			.where(sql`${t.completedAt} IS NOT NULL`),

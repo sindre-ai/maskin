@@ -11,12 +11,16 @@
 // let one member's response answer another's. Callers sit behind authMiddleware,
 // which has already proven the actor is a member of the workspace.
 //
-// The TTL has to stay below the web app's trailing refetch window
-// (TRAILING_REFETCH_MS in apps/web/src/lib/sse-invalidation.ts, 5s): the app
-// refetches usage a full window after a session event, so the snapshot it gets
-// is guaranteed to postdate the event instead of being a cached pre-event read.
+// Freshness does not depend on the TTL being shorter than the web app's refetch
+// window: `recordEvent` evicts a workspace's entries whenever it records a
+// session event that moves the number (BILLING_MOVING_SESSION_ACTIONS in
+// lib/events/record-event.ts), so the refetch the app schedules in response is
+// never answered from a pre-event snapshot. The TTL only bounds how stale the
+// mid-session token/cost counters can get, since those change without an event.
+// The cache is per process, so eviction does not reach a second app instance;
+// the TTL is the fallback there.
 
-export const BILLING_USAGE_CACHE_TTL_MS = 2_000
+export const BILLING_USAGE_CACHE_TTL_MS = 15_000
 
 const CACHE_MAP_CAP = 1_000
 
