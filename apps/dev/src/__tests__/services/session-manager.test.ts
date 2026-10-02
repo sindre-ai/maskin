@@ -1671,6 +1671,81 @@ describe('SessionManager', () => {
 			expect(mcpKeys).toContain('github-vaerksted-ai')
 		})
 
+		describe('MASKIN_GITHUB_MCP kill-switch', () => {
+			const legacySpec = { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'] }
+			const officialSpec = {
+				command: 'github-mcp-server',
+				args: ['stdio', '--toolsets', 'context,repos,git,issues,pull_requests,actions,users'],
+			}
+
+			afterEach(() => {
+				vi.unstubAllEnvs()
+			})
+
+			async function launchGithubEntries(flag: string | undefined) {
+				vi.stubEnv('MASKIN_GITHUB_MCP', flag)
+				const wsId = randomUUID()
+				const fixtures = buildLaunchFixtures([
+					buildIntegration({
+						workspaceId: wsId,
+						provider: 'github',
+						externalId: 'install-aaa',
+						config: { owner_login: 'Sindre-AI' },
+					}),
+				])
+				fixtures.session.workspaceId = wsId
+				fixtures.workspace.id = wsId
+				vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+				mockGetValidToken.mockResolvedValueOnce('ghs_token_sindre_ai')
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+					mcpServers: Record<string, { type: string; command: string; args: string[] }>
+				}
+				return Object.fromEntries(
+					Object.entries(parsed.mcpServers).filter(([k]) => k.startsWith('github-')),
+				)
+			}
+
+			it('emits the legacy npx spec when the flag is unset', async () => {
+				const entries = await launchGithubEntries(undefined)
+				expect(Object.keys(entries)).toEqual(['github-sindre-ai'])
+				expect(entries['github-sindre-ai']).toMatchObject({ type: 'stdio', ...legacySpec })
+			})
+
+			it('emits the legacy npx spec when the flag is legacy', async () => {
+				const entries = await launchGithubEntries('legacy')
+				expect(entries['github-sindre-ai']).toMatchObject({ type: 'stdio', ...legacySpec })
+			})
+
+			it('emits the legacy npx spec for any unrecognised flag value', async () => {
+				const entries = await launchGithubEntries('Official ')
+				expect(entries['github-sindre-ai']).toMatchObject({ type: 'stdio', ...legacySpec })
+			})
+
+			it('emits the shared official spec when the flag is official', async () => {
+				const entries = await launchGithubEntries('official')
+				expect(entries['github-sindre-ai']).toMatchObject({ type: 'stdio', ...officialSpec })
+			})
+
+			it('keeps entry names and env identical across legacy and official', async () => {
+				const legacy = await launchGithubEntries('legacy')
+				mockContainerManager.create.mockClear()
+				const official = await launchGithubEntries('official')
+				expect(Object.keys(official)).toEqual(Object.keys(legacy))
+				expect(Object.keys(official)).toEqual(['github-sindre-ai'])
+				expect((official['github-sindre-ai'] as unknown as { env: unknown }).env).toEqual({
+					GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_sindre_ai',
+				})
+				expect((legacy['github-sindre-ai'] as unknown as { env: unknown }).env).toEqual({
+					GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_sindre_ai',
+				})
+			})
+		})
+
 		it('sets GITHUB_REPO alongside GITHUB_INTEGRATION_ID when a scoped bet carries metadata.repo', async () => {
 			// End-to-end wiring for T8: the credential helper forwards `?repo=` only
 			// when GITHUB_REPO is populated, so buildLaunchSpec must resolve and set
