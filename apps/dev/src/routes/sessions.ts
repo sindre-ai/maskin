@@ -110,6 +110,8 @@ app.openapi(createSessionRoute, (async (c) => {
 		initiatedFromObjectId: body.initiated_from_object_id ?? null,
 		initiatedFromObjectType: body.initiated_from_object_type ?? null,
 		await: 'none',
+		spawnedByMessageId: body.spawned_by_message_id,
+		dependsOnSessionIds: body.depends_on_session_ids,
 	})
 
 	// startSession returns a lightweight handle plus the underlying row on a

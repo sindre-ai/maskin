@@ -5,11 +5,10 @@ import { ApiError } from './api'
 export const queryClient = new QueryClient({
 	mutationCache: new MutationCache({
 		onError: (error, _variables, _context, mutation) => {
+			// A mutation that sets `meta: { handlesOwnErrors: true }` shows its own
+			// message; a second generic toast here would stack on top of it.
+			if (mutation.meta?.handlesOwnErrors) return
 			if (error instanceof ApiError && error.hasFieldErrors()) return
-			// A mutation that renders its own errors (inline in a dialog, say) opts out
-			// with `meta: { ownsErrorPresentation: true }`; otherwise the raw backend
-			// string lands in a toast next to the call site's own message.
-			if (mutation?.meta?.ownsErrorPresentation) return
 			// PLAN_CAP_EXCEEDED is always rendered by the call site via
 			// `toastSessionCreateError`, which shows an actionable "upgrade / buy
 			// credits" toast with a Go to Billing action. Without this bail-out the

@@ -170,3 +170,106 @@ export function prepareMiniAppHtml(html: string): string {
 	const scrubbed = stripMetaRefresh(stripAgentCsp(html))
 	return injectIntoHtml(scrubbed, CSP_META + DATA_SLOT_BOOTSTRAP)
 }
+
+// postMessage type the viewer stage listens for to learn the natural document
+// dimensions of the sandboxed iframe. Payload is the frame's
+// `documentElement.scrollWidth/scrollHeight` at load + on resize.
+export const VIEWER_DOC_SIZE_MESSAGE = 'maskin:viewer:doc-size'
+
+// postMessage type the viewer stage listens for to receive wheel events that
+// fired inside the sandboxed iframe. Sandboxed iframes swallow their own wheel
+// events — they never bubble to the parent listener — so without forwarding,
+// ctrl+wheel zoom and plain-scroll pan are dead wherever a user actually
+// points (the document itself). Payload carries the deltas, the ctrl flag,
+// and the cursor in the iframe's own document coordinate space (unscaled).
+export const VIEWER_WHEEL_MESSAGE = 'maskin:viewer:wheel'
+
+// One-line reporter script injected into the same platform footer as the CSP
+// and data-slot bootstrap, so `prepareViewerHtml` still passes through a
+// single `injectIntoHtml` call. Runs inside the sandboxed frame (null origin,
+// no allow-same-origin) and posts to `window.parent` with `targetOrigin: '*'`
+// because the frame has no origin of its own. The stage validates the source
+// against its own iframe reference (`event.source === iframeRef.contentWindow`)
+// before trusting either payload.
+//
+// Two responsibilities:
+//   1. Report the natural document size on load + resize so the stage can
+//      compute fit-to-screen against the frame's real dimensions.
+//   2. Forward every wheel event to the parent, always calling
+//      preventDefault: the iframe has no scroll room of its own (it's sized
+//      to its content), so the default action either does nothing or falls
+//      back to browser page zoom — both wrong. The parent's message handler
+//      translates the payload into a stage zoom or a viewport scroll.
+const VIEWER_REPORTER = `<script>(function(){function s(){try{var d=document.documentElement;parent.postMessage({type:'${VIEWER_DOC_SIZE_MESSAGE}',w:d.scrollWidth,h:d.scrollHeight},'*')}catch(e){}}if(document.readyState==='complete')s();else window.addEventListener('load',s);window.addEventListener('resize',s);window.addEventListener('wheel',function(e){try{parent.postMessage({type:'${VIEWER_WHEEL_MESSAGE}',deltaX:e.deltaX,deltaY:e.deltaY,ctrlKey:e.ctrlKey,docX:e.clientX,docY:e.clientY},'*');e.preventDefault()}catch(err){}},{passive:false})})();</script>`
+
+// postMessage type the paging controller posts back to the stage on load and
+// after every page change. Payload: `{ index, total, w, h }` where `w`/`h` are
+// the ACTIVE slide's own scroll box — the stage derives fit k from the visible
+// slide, not the whole deck (a deck's documentElement size is meaningless when
+// one slide is on screen).
+export const VIEWER_PAGE_MESSAGE = 'maskin:viewer:page'
+
+// postMessage type the stage posts into the frame to change page. Payload:
+// `{ page: number }` (zero-based slide index).
+export const VIEWER_GOTO_PAGE_MESSAGE = 'maskin:viewer:goto-page'
+
+// Slide selector — the same three signals viewer-detect.ts's DOM heuristic
+// accepts as "this is a deck", so whatever resolved to `deck` is what the
+// controller can page.
+export const VIEWER_SLIDE_SELECTOR = '[data-slide], section.slide, [id^="slide"]'
+
+// Applies the one-slide-at-a-time invariant to an already-collected slide
+// list: the active slide keeps its natural display, every other slide gets
+// `display: none`. Returns the clamped active index. Kept as a plain function
+// over `(slides, index)` — no module-scope references — because the injected
+// controller embeds its source via `toString()` (see below), which is what
+// keeps the in-frame behaviour and the unit-tested behaviour the same code.
+export function applyViewerPage(slides: HTMLElement[], index: number): number {
+	if (slides.length === 0) return 0
+	const clamped = Math.max(0, Math.min(index, slides.length - 1))
+	for (let i = 0; i < slides.length; i++) {
+		slides[i].style.display = i === clamped ? '' : 'none'
+	}
+	return clamped
+}
+
+export function collectViewerSlides(root: ParentNode): HTMLElement[] {
+	return Array.from(root.querySelectorAll<HTMLElement>(VIEWER_SLIDE_SELECTOR))
+}
+
+// Testable counterpart of the injected controller's `showPage(i)`: page the
+// document rooted at `root` to `index`.
+export function showViewerPage(root: ParentNode, index: number): number {
+	return applyViewerPage(collectViewerSlides(root), index)
+}
+
+// Paging controller, injected only when the doc resolved to `deck`. Lives in
+// the same platform footer as the doc-size reporter so `prepareViewerHtml`
+// still makes exactly ONE `injectIntoHtml` call — a second injection would be
+// the byte-preserving placement seam's failure mode, and would risk an
+// `allow-same-origin` regression. Same source-window validation applies on the
+// stage side: the frame posts with `targetOrigin: '*'` (null origin) and the
+// stage checks `event.source === iframeRef.contentWindow`.
+//
+// Two responsibilities:
+//   1. On load / resize / every page change, report `{ index, total, w, h }`
+//      where `w`/`h` are the active slide's box. The load-path report is
+//      deferred across animation frames until the slide has a non-zero box:
+//      measuring synchronously at `load` can read 0x0 before the deck's own
+//      layout settles, and a 0x0 report leaves the stage stuck at
+//      `data-viewer-state="loading"` with no fit until a nav key or resize.
+//   2. Apply page changes commanded by the stage as `VIEWER_GOTO_PAGE_MESSAGE`.
+const VIEWER_PAGING_CONTROLLER = `<script>(function(){var SEL='${VIEWER_SLIDE_SELECTOR}';var apply=${applyViewerPage.toString()};function slides(){return Array.prototype.slice.call(document.querySelectorAll(SEL))}var current=0;function box(el){var r=el.getBoundingClientRect();return{w:r.width||el.scrollWidth,h:r.height||el.scrollHeight}}function post(w,h,total){try{parent.postMessage({type:'${VIEWER_PAGE_MESSAGE}',index:current,total:total,w:w,h:h},'*')}catch(e){}}function report(){var all=slides();if(!all.length)return;var b=box(all[current]||all[0]);post(b.w,b.h,all.length)}function settle(frames){var all=slides();var el=all[current]||all[0];if(!el)return;var b=box(el);if((b.w>0&&b.h>0)||frames<=0){post(b.w,b.h,all.length);return}requestAnimationFrame(function(){settle(frames-1)})}function go(i){current=apply(slides(),i);settle(12)}window.addEventListener('message',function(e){if(!e.data||e.data.type!=='${VIEWER_GOTO_PAGE_MESSAGE}')return;go(e.data.page|0)});if(document.readyState==='complete')go(0);else window.addEventListener('load',function(){go(0)});window.addEventListener('resize',report)})();</script>`
+
+// Viewer-shell variant of `prepareMiniAppHtml`: same CSP + data-slot
+// bootstrap, plus the doc-size + wheel-forwarding reporter so the stage can
+// compute fit-to-screen and drive its own zoom/scroll from gestures that
+// land over the document. Pass `{ paged: true }` for a doc that resolved to
+// deck render mode to additionally inject the paging controller. Both scripts
+// ride the same fragment, so this stays a single `injectIntoHtml` call — see
+// the header comment on `injectIntoHtml` above.
+export function prepareViewerHtml(html: string, options?: { paged?: boolean }): string {
+	const scrubbed = stripMetaRefresh(stripAgentCsp(html))
+	const paging = options?.paged ? VIEWER_PAGING_CONTROLLER : ''
+	return injectIntoHtml(scrubbed, CSP_META + DATA_SLOT_BOOTSTRAP + VIEWER_REPORTER + paging)
+}

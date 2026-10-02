@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
-import { sessionLogs, sessions } from '@maskin/db/schema'
+import { messages, sessionLogs, sessions } from '@maskin/db/schema'
 import { MESSAGE_MAX_LENGTH, parseResultLine, scanTurnLine, splitLines } from '@maskin/shared'
-import { and, desc, eq, like, lte } from 'drizzle-orm'
+import { and, desc, eq, gte, isNull, like, lte, sql } from 'drizzle-orm'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { logger } from '../lib/logger'
 import { detectPseudoToolCalls } from '../lib/pseudo-tool-call'
@@ -661,6 +661,24 @@ export class InteractiveTurnFinalizer {
 
 		this.rememberKey(dedupeKey)
 
+		// Anchor the handed-off strip: every sub-agent spawned inside this turn
+		// carries source_session_id = primarySessionId but was inserted with
+		// spawned_by_message_id = NULL (the assistant message row it needs to
+		// point at did not exist yet — insertConversationMessage above is what
+		// created it). Backfill the anchor now.
+		//
+		// On the recovery-scan replay path (the finalizer re-processes an already-
+		// posted result line — the `!created` branch below), the previous pass
+		// usually completed the same backfill; the UPDATE's IS NULL guard makes
+		// it a no-op. If the previous pass crashed between insert and backfill,
+		// looking up the existing dedupe-matched message id lets the replay
+		// complete the anchor rather than leaving the strip permanently unanchored.
+		const anchorMessageId =
+			created?.id ?? (await this.findExistingFinalOutputMessageId(sessionId, dedupeKey))
+		if (anchorMessageId !== null) {
+			await this.backfillSpawnAnchor(sessionId, logId, anchorMessageId)
+		}
+
 		if (!created) {
 			// The unique index suppressed it — a replayed log line, not a new turn.
 			// Logged because a false positive here is a silently dropped reply.
@@ -668,6 +686,107 @@ export class InteractiveTurnFinalizer {
 				`Skipped duplicate final output for session ${sessionId} (dedupe_key ${dedupeKey})`,
 			)
 		}
+	}
+
+	/**
+	 * Backfill sessions.spawned_by_message_id for every sub-agent spawned during
+	 * this turn, so the handed-off strip's per-row render can find its anchor
+	 * bubble.
+	 *
+	 * The WHERE is keyed on the session_logs row that opened this turn — the
+	 * user-turn envelope SessionManager.writeInput persists — rather than a
+	 * wall-clock turnStart timestamp. The finalizer has a recovery-scan replay
+	 * path bounded by RECOVERY_SCAN_LIMIT (a Docker log stream tails 'all' on
+	 * first connect after an apps/dev restart, re-ingesting every past chunk);
+	 * a wall-clock filter reads a different bound on each pass and would either
+	 * miss rows or over-scope on replay. Anchoring on already-persisted log-row
+	 * createdAt values gives the same window every time.
+	 *
+	 * The primary session's own createdAt is the fallback lower bound for a
+	 * seeded first turn that carries no user-turn envelope — a sub-agent cannot
+	 * be created before its parent session exists.
+	 *
+	 * Best-effort: any error here must not break log ingest (see onStdout's
+	 * per-line try/catch). Not awaited by callers that ingest lines — but this
+	 * one runs synchronously with insertConversationMessage so the anchor
+	 * arrives in the same DB round as the message it points at.
+	 */
+	private async backfillSpawnAnchor(
+		primarySessionId: string,
+		logId: number,
+		messageId: number,
+	): Promise<void> {
+		try {
+			const [currentLog] = await this.db
+				.select({ createdAt: sessionLogs.createdAt })
+				.from(sessionLogs)
+				.where(eq(sessionLogs.id, logId))
+				.limit(1)
+			if (!currentLog?.createdAt) return
+
+			const [turnStartLog] = await this.db
+				.select({ createdAt: sessionLogs.createdAt })
+				.from(sessionLogs)
+				.where(
+					and(
+						eq(sessionLogs.sessionId, primarySessionId),
+						lte(sessionLogs.id, logId),
+						eq(sessionLogs.stream, 'stdout'),
+						like(sessionLogs.content, '%maskin_message_id%'),
+					),
+				)
+				.orderBy(desc(sessionLogs.id))
+				.limit(1)
+
+			let lowerBound = turnStartLog?.createdAt ?? null
+			if (!lowerBound) {
+				const [session] = await this.db
+					.select({ createdAt: sessions.createdAt })
+					.from(sessions)
+					.where(eq(sessions.id, primarySessionId))
+					.limit(1)
+				lowerBound = session?.createdAt ?? null
+			}
+			if (!lowerBound) return
+
+			await this.db
+				.update(sessions)
+				.set({ spawnedByMessageId: messageId })
+				.where(
+					and(
+						eq(sessions.sourceSessionId, primarySessionId),
+						isNull(sessions.spawnedByMessageId),
+						gte(sessions.createdAt, lowerBound),
+						lte(sessions.createdAt, currentLog.createdAt),
+					),
+				)
+		} catch (err) {
+			logger.warn(
+				`Interactive session ${primarySessionId} could not backfill spawn anchor for message ${messageId}: ${describeError(err)}`,
+			)
+		}
+	}
+
+	/**
+	 * The existing final-output row for this (session, dedupe_key) — a hit
+	 * proves the previous pass already inserted the message, so the replay path
+	 * can still anchor sub-agents at it even though the insert conflicted.
+	 */
+	private async findExistingFinalOutputMessageId(
+		sessionId: string,
+		dedupeKey: string,
+	): Promise<number | null> {
+		const [row] = await this.db
+			.select({ id: messages.id })
+			.from(messages)
+			.where(
+				and(
+					eq(messages.sessionId, sessionId),
+					sql`(${messages.metadata}->'final_output'->>'dedupe_key') = ${dedupeKey}`,
+				),
+			)
+			.limit(1)
+		return row?.id ?? null
 	}
 
 	/** Move the workspace onto its next Claude subscription; `null` if nothing moved. */

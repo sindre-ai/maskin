@@ -28,6 +28,7 @@ import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
+import { ResendDomainVerifier } from './services/resend-domain-verifier'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionDispatcher } from './services/session-dispatcher'
@@ -177,6 +178,10 @@ logger.info('Gmail watch renewer started')
 const meetWatchRenewer = new MeetWatchRenewer(db)
 meetWatchRenewer.start()
 logger.info('Meet watch renewer started')
+
+const resendDomainVerifier = new ResendDomainVerifier(db)
+resendDomainVerifier.start()
+logger.info('Resend domain verifier started')
 
 const meetTranscriptReconciler = new MeetTranscriptReconciler(db, storageProvider)
 meetTranscriptReconciler.start()

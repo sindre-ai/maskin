@@ -87,9 +87,9 @@ describe('queryClient', () => {
 			expect(toast.error).toHaveBeenCalledWith('Database connection failed')
 		})
 
-		it('stays quiet when the mutation owns its error presentation', () => {
+		it('stays quiet for a mutation that shows its own error message', () => {
 			vi.mocked(toast.error).mockClear()
-			triggerMutationError(new ApiError(409, 'Conflict'), { ownsErrorPresentation: true })
+			triggerMutationError(new ApiError(429, 'Too Many Requests'), { handlesOwnErrors: true })
 			expect(toast.error).not.toHaveBeenCalled()
 		})
 

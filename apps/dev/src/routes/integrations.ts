@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto'
+import { promises as dns } from 'node:dns'
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
@@ -36,6 +37,17 @@ import {
 	propagateRecoveredInstallationId,
 } from '../lib/integrations/providers/github/installation-recovery'
 import { resolveMeetPeopleId } from '../lib/integrations/providers/google-meet/resolve-id'
+import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/body-fetch'
+import {
+	DomainAlreadyClaimedError,
+	DomainRegisterError,
+	registerResendDomain,
+} from '../lib/integrations/providers/resend/domain-register'
+import {
+	type ResendEmailReceived,
+	resendEmailReceivedSchema,
+} from '../lib/integrations/providers/resend/schemas'
+import { verifyResendSvix } from '../lib/integrations/providers/resend/svix'
 import { upsertSkjaldMeeting } from '../lib/integrations/providers/skjald/meeting-sync'
 import {
 	dispatchAccountLinkAction,
@@ -761,6 +773,11 @@ const connectRoute = createRoute({
 						install_url: z.string().optional(),
 						webhook_url: z.string().optional(),
 						integration_id: z.string().optional(),
+						// resend two-call handshake extension (spec §2): /connect
+						// returns the DNS records + verification status alongside the
+						// webhook URL so the Slice 2 UI can render Step 3 immediately.
+						dns_records: z.array(z.record(z.unknown())).optional(),
+						verification_status: z.string().optional(),
 					}),
 				},
 			},
@@ -945,6 +962,157 @@ app.openapi(connectRoute, (async (c) => {
 		}
 
 		const token = randomBytes(24).toString('hex')
+		const webhookUrl = `${resolvePublicOrigin(c.req.url, c.req.header())}/api/webhooks/${providerName}/${token}`
+
+		// Resend two-call handshake (spec §2 + §Load-bearing #3). When the
+		// caller supplies { api_key, receive_subdomain } we verify the key,
+		// register the receive subdomain on the customer's own Resend account,
+		// and seed credentials + config.resend with the DNS records Slice 2
+		// renders at Step 3. Body-absent falls through to the Skjald-style
+		// insert below — unchanged.
+		const rawBody = (await c.req.json().catch(() => ({}))) as {
+			api_key?: unknown
+			receive_subdomain?: unknown
+		}
+		const resendApiKey =
+			typeof rawBody.api_key === 'string' && rawBody.api_key.trim().length > 0
+				? rawBody.api_key.trim()
+				: null
+		const resendSubdomain =
+			typeof rawBody.receive_subdomain === 'string' && rawBody.receive_subdomain.trim().length > 0
+				? rawBody.receive_subdomain.trim()
+				: null
+
+		if (providerName === 'resend' && resendApiKey && resendSubdomain) {
+			// Step 1 — verify the API key against Resend by listing domains.
+			// 401 → INVALID_API_KEY (Step 1 error state).
+			const verifyRes = await fetch('https://api.resend.com/domains', {
+				method: 'GET',
+				headers: { Authorization: `Bearer ${resendApiKey}` },
+			})
+			if (verifyRes.status === 401) {
+				const errBody = (await verifyRes.json().catch(() => null)) as {
+					name?: string
+				} | null
+				return c.json(
+					createApiError(
+						'BAD_REQUEST',
+						'Resend rejected the API key',
+						[
+							{ field: 'code', message: 'INVALID_API_KEY' },
+							{ field: 'resend_error', message: errBody?.name ?? 'unauthorized' },
+						],
+						'Resend GET /domains returned 401',
+					),
+					400,
+				)
+			}
+			if (!verifyRes.ok) {
+				logger.warn('resend.connect.verify_failed', {
+					workspaceId,
+					status: verifyRes.status,
+				})
+				return c.json(
+					createApiError('BAD_REQUEST', 'Could not verify the Resend API key', [
+						{ field: 'code', message: 'INVALID_API_KEY' },
+					]),
+					400,
+				)
+			}
+
+			// Step 2 — register the subdomain on the customer's Resend account.
+			let registration: Awaited<ReturnType<typeof registerResendDomain>>
+			try {
+				registration = await registerResendDomain(resendApiKey, resendSubdomain)
+			} catch (err) {
+				if (err instanceof DomainAlreadyClaimedError) {
+					return c.json(
+						createApiError('BAD_REQUEST', 'Resend reports this domain is already claimed', [
+							{ field: 'code', message: 'DOMAIN_ALREADY_CLAIMED' },
+							{ field: 'resend_error', message: err.resendCode ?? 'domain_already_claimed' },
+						]),
+						400,
+					)
+				}
+				if (err instanceof DomainRegisterError) {
+					logger.warn('resend.connect.domain_register_failed', {
+						workspaceId,
+						status: err.status,
+						resend_code: err.resendCode,
+					})
+					return c.json(
+						createApiError(
+							'BAD_REQUEST',
+							err.message || 'Resend rejected the domain registration',
+							[{ field: 'code', message: 'DOMAIN_REGISTER_FAILED' }],
+						),
+						400,
+					)
+				}
+				logger.error('resend.connect.unexpected_error', {
+					workspaceId,
+					err: String(err),
+				})
+				throw err
+			}
+
+			const resendConfig: IntegrationConfig = {
+				system_actor_id: systemActor.id,
+				resend: {
+					receive_subdomain: resendSubdomain,
+					resend_domain_id: registration.resendDomainId,
+					verification_status: 'pending',
+					last_polled_at: null,
+					webhook_url: webhookUrl,
+					dns_records: registration.dnsRecords,
+					capabilities: registration.capabilities,
+					verification_error: null,
+				},
+			}
+
+			const encryptedResendCredentials = encrypt(
+				JSON.stringify({ accessToken: resendApiKey } satisfies StoredCredentials),
+			)
+
+			const [resendRow] = await db
+				.insert(integrations)
+				.values({
+					workspaceId,
+					provider: providerName,
+					status: 'awaiting_secret',
+					externalId: token,
+					credentials: encryptedResendCredentials,
+					config: resendConfig,
+					createdBy: actorId,
+				})
+				.returning({ id: integrations.id })
+
+			if (!resendRow) {
+				return c.json(createApiError('INTERNAL_ERROR', 'Failed to create integration'), 500)
+			}
+
+			await recordEvent(db, {
+				workspaceId,
+				actorId,
+				action: 'created',
+				entityType: 'integration',
+				entityId: resendRow.id,
+				data: {
+					provider: providerName,
+					external_id: token,
+					auth_type: 'manual',
+					resend_domain_id: registration.resendDomainId,
+				},
+			})
+
+			return c.json({
+				integration_id: resendRow.id,
+				webhook_url: webhookUrl,
+				dns_records: registration.dnsRecords,
+				verification_status: 'pending',
+			})
+		}
+
 		const activeConfig: IntegrationConfig = { system_actor_id: systemActor.id }
 
 		const [row] = await db
@@ -973,7 +1141,6 @@ app.openapi(connectRoute, (async (c) => {
 			data: { provider: providerName, external_id: token, auth_type: 'manual' },
 		})
 
-		const webhookUrl = `${resolvePublicOrigin(c.req.url, c.req.header())}/api/webhooks/${providerName}/${token}`
 		return c.json({ webhook_url: webhookUrl, integration_id: row.id })
 	}
 
@@ -1698,10 +1865,37 @@ app.openapi(completeIntegrationRoute, (async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Integration is not awaiting a secret'), 400)
 	}
 
+	// Parse-then-merge fallback (spec §2). Skjald stores credentials as an
+	// encrypted raw string; the resend two-call handshake seeds credentials as
+	// encrypt(JSON.stringify({ accessToken })) at /connect and expects /complete
+	// to merge { webhookSecret } into that same JSON blob. Preserve both shapes
+	// with one handler.
+	let credentialsPayload: string
+	let parsedAccessToken: string | null = null
+	try {
+		if (existing.credentials) {
+			const parsed = JSON.parse(decrypt(existing.credentials)) as StoredCredentials
+			if (parsed && typeof parsed.accessToken === 'string' && parsed.accessToken.length > 0) {
+				credentialsPayload = encrypt(
+					JSON.stringify({ ...parsed, webhookSecret: secret } satisfies StoredCredentials),
+				)
+				parsedAccessToken = parsed.accessToken
+			} else {
+				credentialsPayload = encrypt(secret)
+			}
+		} else {
+			credentialsPayload = encrypt(secret)
+		}
+	} catch {
+		// Existing blob wasn't parseable JSON (Skjald raw shape, or empty) —
+		// preserve Skjald's shape verbatim.
+		credentialsPayload = encrypt(secret)
+	}
+
 	await db.transaction(async (tx) => {
 		await tx
 			.update(integrations)
-			.set({ credentials: encrypt(secret), status: 'active', updatedAt: new Date() })
+			.set({ credentials: credentialsPayload, status: 'active', updatedAt: new Date() })
 			.where(eq(integrations.id, id))
 
 		await recordEvent(tx, {
@@ -1714,8 +1908,118 @@ app.openapi(completeIntegrationRoute, (async (c) => {
 		})
 	})
 
+	// Endpoint-cap soft warning for resend (spec §7). Pro=5, Scale=10 webhook
+	// endpoints per Resend account. When a customer connects the same Resend
+	// account to N Maskin workspaces, they burn N of their plan's endpoints —
+	// so log when the count hits the ceiling. Never hard-fail: the customer
+	// has already added the endpoint on their side; refusing to activate the
+	// row leaves them holding a live webhook we've disowned.
+	if (existing.provider === 'resend' && parsedAccessToken) {
+		try {
+			const cap = await fetch('https://api.resend.com/webhooks', {
+				method: 'GET',
+				headers: { Authorization: `Bearer ${parsedAccessToken}` },
+			})
+			if (cap.ok) {
+				const payload = (await cap.json().catch(() => null)) as {
+					data?: unknown[]
+				} | null
+				const endpointCount = Array.isArray(payload?.data) ? payload.data.length : 0
+				if (endpointCount >= 5) {
+					logger.warn('resend.webhook_endpoints.at_ceiling', {
+						workspace_id: existing.workspaceId,
+						endpoint_count: endpointCount,
+					})
+				}
+			}
+		} catch (err) {
+			logger.warn('resend.webhook_endpoints.check_failed', {
+				workspace_id: existing.workspaceId,
+				err: String(err),
+			})
+		}
+	}
+
 	return c.json({ activated: true })
 }) as RouteHandler<typeof completeIntegrationRoute, Env>)
+
+// ── POST /api/integrations/resend/dns-precheck ──────────────────────────
+//
+// Server-side DNS pre-check for the Slice 2 connect dialog (spec §8.2). The
+// customer pastes a receive subdomain in Step 2; before we ship them the
+// DNS records to add, we look up whatever MX records that name already has
+// so the UI can surface the s3-root-mx warning ("this domain already has
+// mail — adding our MX will replace it"). Node's dns.promises.resolveMx
+// fires a UDP lookup direct to the OS resolver; no external service, no
+// egress config change.
+
+const dnsPrecheckRoute = createRoute({
+	method: 'post',
+	path: '/resend/dns-precheck',
+	tags: ['integrations'],
+	summary: 'Server-side MX pre-check for the resend connect dialog',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: {
+				'application/json': {
+					schema: z.object({ domain: z.string().min(1) }),
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: 'MX pre-check result',
+			content: {
+				'application/json': {
+					schema: z.object({
+						existing_mx: z.array(z.string()),
+						is_subdomain: z.boolean(),
+						warn: z.boolean(),
+					}),
+				},
+			},
+		},
+		400: {
+			description: 'Missing or malformed domain',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(dnsPrecheckRoute, (async (c) => {
+	const { domain } = c.req.valid('json')
+	const trimmed = domain.trim()
+	if (!trimmed) {
+		return c.json(createApiError('BAD_REQUEST', 'domain is required'), 400)
+	}
+
+	// A subdomain has at least three labels (mail.example.com → true;
+	// example.com → false). We treat any three-plus-label input as a
+	// subdomain, which is the shape the design assumes — sending on a bare
+	// apex changes the whole domain's mail routing, whereas a subdomain is
+	// carved out.
+	const parts = trimmed.split('.')
+	const isSubdomain = parts.length >= 3
+
+	let existingMx: string[] = []
+	try {
+		const records = await dns.resolveMx(trimmed)
+		existingMx = records.sort((a, b) => a.priority - b.priority).map((r) => r.exchange)
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException).code
+		if (code !== 'ENOTFOUND' && code !== 'ENODATA') {
+			logger.warn('resend.dns_precheck.error', { domain: trimmed, err: String(err) })
+		}
+	}
+
+	const isResendMx = existingMx.some(
+		(h) => h.toLowerCase().includes('resend') || h.toLowerCase().includes('amazonses'),
+	)
+	const warn = !isSubdomain && existingMx.length > 0 && !isResendMx
+	return c.json({ existing_mx: existingMx, is_subdomain: isSubdomain, warn })
+}) as RouteHandler<typeof dnsPrecheckRoute, Env>)
 
 // ── GET /api/integrations/:id/github-token ──────────────────────────────
 
@@ -2581,6 +2885,236 @@ webhookApp.post('/skjald/:token', async (c) => {
 			integrationId: integration.id,
 			workspaceId: integration.workspaceId,
 			error: err instanceof Error ? err.message : String(err),
+		})
+		await releaseClaim()
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to process webhook'), 500)
+	}
+})
+
+// ── Resend inbound-email webhook ────────────────────────────────────────
+// Registered BEFORE the generic `/:provider` catch-all so this literal-prefix
+// route wins Hono's trie match. If the order were reversed, `/resend/*` would
+// hit the generic handler, which resolves `resend`'s ProviderConfig, finds no
+// `webhook` field, and returns 400 "Provider does not support webhooks" — the
+// exact regression tech-spec §12.4 pins with a framework test.
+//
+// The Svix verifier can't be wired via `ResolvedProvider.customWebhookVerifier`
+// — that hook's `(body, headers) => boolean` signature has no db handle and
+// can't reach the per-row `whsec_...` secret. Every Resend install mints its
+// own webhook and its own signing secret, so verification MUST happen after we
+// look up the integration row. That's why this looks like Skjald's route
+// rather than the catch-all path.
+webhookApp.post('/resend/:token', async (c) => {
+	const db = c.get('db')
+	const token = c.req.param('token')
+
+	const [integration] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.provider, 'resend'),
+				eq(integrations.externalId, token),
+				eq(integrations.status, 'active'),
+			),
+		)
+		.limit(1)
+
+	if (!integration) {
+		return c.json(createApiError('NOT_FOUND', 'Unknown webhook'), 404)
+	}
+
+	const body = await c.req.text()
+	const headers: Record<string, string> = {}
+	for (const [key, value] of Object.entries(c.req.header())) {
+		if (typeof value === 'string') headers[key.toLowerCase()] = value
+	}
+
+	// Δ vs Skjald #1 — JSON credentials blob `{ accessToken, webhookSecret }`.
+	// Skjald stores the raw signing secret; Resend needs the API key alongside
+	// it so `session-manager` can inject `RESEND_API_KEY` on the send path.
+	let stored: { accessToken: string; webhookSecret: string }
+	try {
+		stored = JSON.parse(decrypt(integration.credentials)) as {
+			accessToken: string
+			webhookSecret: string
+		}
+	} catch {
+		logger.error('Resend webhook: credentials blob is unparseable', {
+			integrationId: integration.id,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Integration misconfigured'), 500)
+	}
+
+	// Δ vs Skjald #2 — Svix HMAC-SHA256 base64, not sha256-hex over `{ts}.{body}`.
+	const verified = verifyResendSvix(body, headers, stored.webhookSecret)
+	if (!verified) {
+		logger.warn('Resend webhook: signature verification failed', {
+			integrationId: integration.id,
+		})
+		return c.json(createApiError('UNAUTHORIZED', 'Invalid webhook signature'), 401)
+	}
+
+	const integrationConfig = integration.config as IntegrationConfig
+	const systemActorId = integrationConfig?.system_actor_id
+	if (!systemActorId) {
+		logger.error('Resend webhook: integration missing system_actor_id', {
+			integrationId: integration.id,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Integration misconfigured'), 500)
+	}
+
+	let payload: unknown
+	try {
+		payload = JSON.parse(body)
+	} catch {
+		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON'), 400)
+	}
+
+	// Δ vs Skjald #3 — event type comes from the payload body, not a header.
+	const parsed = resendEmailReceivedSchema.safeParse(payload)
+	if (!parsed.success || parsed.data.type !== 'email.received') {
+		return c.json({ ok: true, skipped: 'unhandled_event' })
+	}
+	// Δ vs Skjald #4 — dedup key = `email_id` from body.
+	const emailId = parsed.data.data.email_id
+
+	logger.info('resend.webhook.received', {
+		email_id: emailId,
+		workspace_id: integration.workspaceId,
+		ts: new Date().toISOString(),
+	})
+
+	// Claim the delivery so a retry that lands mid-fetch is recognised as a
+	// duplicate — same pattern as Skjald (2488-2504) + the /:provider catch-all.
+	// Fail open on a dedup-table outage so a Postgres blip doesn't stall
+	// legitimate deliveries.
+	let claimRowId: string | null = null
+	try {
+		const rows = await db
+			.insert(webhookDeliveries)
+			.values({
+				provider: 'resend',
+				externalId: emailId,
+				workspaceId: integration.workspaceId,
+			})
+			.onConflictDoNothing({
+				target: [
+					webhookDeliveries.provider,
+					webhookDeliveries.externalId,
+					webhookDeliveries.workspaceId,
+				],
+			})
+			.returning({ id: webhookDeliveries.id })
+		if (rows.length === 0) {
+			logger.info('resend.dedupe.hit', {
+				email_id: emailId,
+				workspace_id: integration.workspaceId,
+			})
+			return c.json({ ok: true, skipped: true })
+		}
+		claimRowId = rows[0]?.id ?? null
+	} catch (err) {
+		logger.error('Failed to claim resend delivery; processing without dedup', {
+			email_id: emailId,
+			workspace_id: integration.workspaceId,
+			err: err instanceof Error ? err.message : String(err),
+		})
+	}
+
+	const releaseClaim = async () => {
+		if (!claimRowId) return
+		try {
+			await db.delete(webhookDeliveries).where(eq(webhookDeliveries.id, claimRowId))
+		} catch (err) {
+			logger.error('Failed to release resend webhook delivery claim', {
+				email_id: emailId,
+				workspace_id: integration.workspaceId,
+				err: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
+	// verify → claim → fetch → enrich → commit. Fetch after the claim so a
+	// retry mid-fetch doesn't burn 2× the API budget; fetch before the commit
+	// so `events.data` carries the full body when the trigger fires.
+	let enriched: ResendEmailReceived
+	try {
+		enriched = await fetchResendBodyWithRetry(stored.accessToken, emailId, parsed.data)
+	} catch (err) {
+		logger.error('resend.body_fetch.failed', {
+			email_id: emailId,
+			workspace_id: integration.workspaceId,
+			err: err instanceof Error ? err.message : String(err),
+		})
+		await releaseClaim()
+		return c.json(createApiError('INTERNAL_ERROR', 'Body fetch failed — will retry'), 500)
+	}
+
+	// Empty-body guard (spec §5.3 — load-bearing). If Resend returned a body
+	// with neither html nor text, do NOT dispatch a session — that's the
+	// prevented failure mode. Do NOT release the claim either: a retry would
+	// fetch the same empty body. Commit an empty eventRows + claimRowId so
+	// `webhook_deliveries.processed_at` is set (empty eventRows skips the
+	// events insert but still runs the gated UPDATE at commit.ts:49-55).
+	if (!enriched.data.html && !enriched.data.text) {
+		logger.warn('resend.body_empty', {
+			email_id: emailId,
+			workspace_id: integration.workspaceId,
+		})
+		try {
+			await commitWebhookDelivery(db, { eventRows: [], claimRowId })
+		} catch (err) {
+			if (err instanceof ClaimReleasedError) {
+				logger.warn('resend.claim.released', {
+					email_id: emailId,
+					workspace_id: integration.workspaceId,
+					claim_row_id: err.claimRowId,
+				})
+			} else {
+				logger.error('Resend webhook: failed to mark claim processed on empty body', {
+					email_id: emailId,
+					workspace_id: integration.workspaceId,
+					err: err instanceof Error ? err.message : String(err),
+				})
+			}
+		}
+		return c.json({ ok: true, skipped: 'empty_body' })
+	}
+
+	try {
+		await commitWebhookDelivery(db, {
+			eventRows: [
+				{
+					workspaceId: integration.workspaceId,
+					actorId: systemActorId,
+					action: 'received',
+					entityType: 'resend.email',
+					entityId: integration.id,
+					data: enriched.data as Record<string, unknown>,
+				},
+			],
+			claimRowId,
+		})
+		logger.info('resend.session_dispatched', {
+			workspace_id: integration.workspaceId,
+			email_id: emailId,
+			entity_type: 'resend.email',
+		})
+		return c.json({ ok: true })
+	} catch (err) {
+		if (err instanceof ClaimReleasedError) {
+			logger.warn('resend.claim.released', {
+				email_id: emailId,
+				workspace_id: integration.workspaceId,
+				claim_row_id: err.claimRowId,
+			})
+			return c.json({ ok: true, skipped: true })
+		}
+		logger.error('Resend webhook processing failed', {
+			integrationId: integration.id,
+			workspace_id: integration.workspaceId,
+			err: err instanceof Error ? err.message : String(err),
 		})
 		await releaseClaim()
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to process webhook'), 500)

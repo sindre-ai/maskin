@@ -4,7 +4,7 @@ import { queryKeys } from '../lib/query-keys'
 
 // The invite dialog and pending rows render their own errors (409, 429, seat cap
 // inline; resend/revoke failures in place), so the global error toast stays quiet.
-const OWNS_ERRORS = { ownsErrorPresentation: true }
+const OWNS_ERRORS = { handlesOwnErrors: true }
 
 export function useWorkspaceInvites(workspaceId: string) {
 	return useQuery({

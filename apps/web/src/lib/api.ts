@@ -2,25 +2,35 @@ import type {
 	ActorListItem,
 	ActorResponse,
 	AgentState,
+	CreateFileCommentInput,
 	DisplaySettingsBody,
+	FileCommentDto,
 	ListLoopStepsResponse,
 	ListLoopsResponse,
 	LoopStep,
 	LoopSummary,
 	SafeMetadata,
+	SendRoundInput,
+	SendRoundResponse,
 	TriggerResponse,
+	UpdateFileCommentInput,
 } from '@maskin/shared'
 
 export type {
 	ActorListItem,
 	ActorResponse,
 	AgentState,
+	CreateFileCommentInput,
 	DisplaySettingsBody,
+	FileCommentDto,
 	ListLoopStepsResponse,
 	ListLoopsResponse,
 	LoopStep,
 	LoopSummary,
+	SendRoundInput,
+	SendRoundResponse,
 	TriggerResponse,
+	UpdateFileCommentInput,
 }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
@@ -39,6 +49,8 @@ export class ApiError extends Error {
 	code?: string
 	/** Populated when `code === 'PLAN_CAP_EXCEEDED'` — the plan/used/cap/reset context for a typed upgrade CTA. */
 	planCapContext?: PlanCapContext
+	/** Set on a flat `{ code, retryAfterMs }` body (the file-comments round route) — how long until a rate-limited call can be retried. */
+	retryAfterMs?: number
 	/** Seconds from the response's `Retry-After` header, when the server sent one (429s). */
 	retryAfter?: number
 
@@ -114,8 +126,14 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		let message: string
 		let code: string | undefined
 		let planCapContext: PlanCapContext | undefined
+		let retryAfterMs: number | undefined
 
-		if (typeof data.error === 'object' && data.error?.code) {
+		if (typeof data.code === 'string' && typeof data.message === 'string') {
+			// Flat format used by the file-comments round route: { code, message, retryAfterMs? }
+			message = data.message
+			code = data.code
+			if (typeof data.retryAfterMs === 'number') retryAfterMs = data.retryAfterMs
+		} else if (typeof data.error === 'object' && data.error?.code) {
 			// Structured error format: { error: { code, message, details?, suggestion? } }
 			message = data.error.message
 			code = data.error.code
@@ -145,6 +163,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		const err = new ApiError(res.status, message, fieldErrors)
 		err.code = code
 		err.planCapContext = planCapContext
+		err.retryAfterMs = retryAfterMs
 		const retryAfter = Number(res.headers.get('Retry-After'))
 		if (Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfter = retryAfter
 		// This is the single chokepoint for every /api call the UI makes, so a
@@ -464,17 +483,32 @@ export const api = {
 	integrations: {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
-		connect: (workspaceId: string, provider: string, body?: { api_key?: string }) =>
-			request<{ install_url?: string; webhook_url?: string; integration_id?: string }>(
-				`/integrations/${provider}/connect`,
-				{
-					method: 'POST',
-					body,
-					workspaceId,
-					// The response carries the Set-Cookie that binds this browser to the
-					// OAuth `state`; without `include` it is dropped and the callback 400s.
-					credentials: 'include',
-				},
+		connect: (
+			workspaceId: string,
+			provider: string,
+			body?: { api_key?: string; receive_subdomain?: string },
+		) =>
+			request<{
+				install_url?: string
+				webhook_url?: string
+				integration_id?: string
+				// Populated by Resend's two-call handshake (Task 2) — the domain-status
+				// records the customer must add to their DNS plus the initial pending
+				// verification state.
+				dns_records?: ResendDnsRecord[]
+				verification_status?: 'pending' | 'verified' | 'failed'
+			}>(`/integrations/${provider}/connect`, {
+				method: 'POST',
+				body,
+				workspaceId,
+				// The response carries the Set-Cookie that binds this browser to the
+				// OAuth `state`; without `include` it is dropped and the callback 400s.
+				credentials: 'include',
+			}),
+		resendDnsPrecheck: (workspaceId: string, domain: string) =>
+			request<{ existing_mx: string[]; is_subdomain: boolean; warn: boolean }>(
+				'/integrations/resend/dns-precheck',
+				{ method: 'POST', body: { domain }, workspaceId },
 			),
 		complete: (id: string, workspaceId: string, secret: string) =>
 			request<{ activated: boolean }>(`/integrations/${id}/complete`, {
@@ -1007,6 +1041,36 @@ export const api = {
 		delete: (workspaceId: string, id: string) =>
 			request<{ deleted: boolean }>(`/files/${id}`, { method: 'DELETE', workspaceId }),
 	},
+
+	fileComments: {
+		list: (workspaceId: string, fileId: string, params?: { roundId?: string }) => {
+			const qs = params?.roundId ? `?roundId=${encodeURIComponent(params.roundId)}` : ''
+			return request<FileCommentDto[]>(`/files/${fileId}/comments${qs}`, { workspaceId })
+		},
+		create: (workspaceId: string, fileId: string, data: CreateFileCommentInput) =>
+			request<FileCommentDto>(`/files/${fileId}/comments`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		update: (
+			workspaceId: string,
+			fileId: string,
+			commentId: string,
+			data: UpdateFileCommentInput,
+		) =>
+			request<FileCommentDto>(`/files/${fileId}/comments/${commentId}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		sendRound: (workspaceId: string, fileId: string, data: SendRoundInput) =>
+			request<SendRoundResponse>(`/files/${fileId}/comments/rounds`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+	},
 }
 
 /**
@@ -1495,6 +1559,22 @@ export interface UpdateTriggerInput {
 	enabled?: boolean
 }
 
+/** One DNS record the customer must add to verify the sending / receiving
+ *  half of a Resend domain. Priority is only populated for MX. Status flips
+ *  from `pending` → `verified` (or `failed`) as the domain-verifier job (Task
+ *  5) polls Resend's per-record domain-status API. Mirrored into
+ *  `config.resend.dns_records` on the integration row by the connect handler,
+ *  which is what the resume affordance rehydrates from. */
+export interface ResendDnsRecord {
+	record: 'SPF' | 'DKIM' | 'MX'
+	type: string
+	name: string
+	value: string
+	priority?: number
+	status: 'pending' | 'verified' | 'failed'
+	ttl?: number
+}
+
 export interface IntegrationResponse {
 	id: string
 	workspaceId: string
@@ -1877,6 +1957,45 @@ export interface MessageResponse {
 	sessionId: string | null
 	createdAt: string | null
 	editedAt: string | null
+	/**
+	 * Sub-agent sessions spawned from this assistant message (bet/444b-handed-off-strip).
+	 * Present on list_conversation_messages responses; empty for non-agent messages
+	 * and for callers that are not participants of the conversation.
+	 */
+	spawned_sessions?: SpawnedSession[]
+}
+
+/**
+ * One entry on the message-level `spawned_sessions` embed served by
+ * `GET /conversations/:id/messages`. Casing matches the delegation-strip
+ * contract: camelCase except `depends_on_session_ids`.
+ */
+export interface SpawnedSession {
+	id: string
+	status: string
+	actorId: string
+	actorName: string
+	actionPrompt: string
+	startedAt: string | null
+	completedAt: string | null
+	durationMs: number | null
+	result: unknown
+	currentActivity: string | null
+	depends_on_session_ids: string[]
+}
+
+/**
+ * Payload of the `session.state_changed` SSE frame. Emitted alongside every
+ * generic session event for a sub-session the caller can see. `snake_case`
+ * matches the backend serialization; camelCase would break the parser.
+ */
+export interface SessionStateChangedPayload {
+	session_id: string
+	status: string
+	duration_ms: number | null
+	depends_on_session_ids: string[]
+	result: unknown
+	current_activity: string | null
 }
 
 export interface EditMessageInput {

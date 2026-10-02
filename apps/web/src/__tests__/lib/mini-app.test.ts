@@ -1,8 +1,17 @@
 import {
 	DATA_SLOT_ID,
 	MINI_APP_CSP,
+	VIEWER_DOC_SIZE_MESSAGE,
+	VIEWER_GOTO_PAGE_MESSAGE,
+	VIEWER_PAGE_MESSAGE,
+	VIEWER_SLIDE_SELECTOR,
+	VIEWER_WHEEL_MESSAGE,
+	applyViewerPage,
+	collectViewerSlides,
 	injectIntoHtml,
 	prepareMiniAppHtml,
+	prepareViewerHtml,
+	showViewerPage,
 	stripAgentCsp,
 	stripMetaRefresh,
 } from '@/lib/mini-app'
@@ -264,5 +273,138 @@ describe('data-slot contract', () => {
 
 		removeAppDataGlobal()
 		slot.remove()
+	})
+})
+
+describe('prepareViewerHtml', () => {
+	it('injects the platform CSP + data-slot bootstrap + reporter in ONE injection', () => {
+		const html = '<!DOCTYPE html><html><head></head><body>hi</body></html>'
+		const result = prepareViewerHtml(html)
+		expect(result).toContain(MINI_APP_CSP)
+		expect(result).toContain(DATA_SLOT_ID)
+		expect(result).toContain(VIEWER_DOC_SIZE_MESSAGE)
+		expect(result).toContain(VIEWER_WHEEL_MESSAGE)
+		// One contiguous injection point: the CSP meta, the bootstrap script,
+		// and the reporter script all sit immediately after <head>.
+		const headEnd = result.indexOf('<head>') + '<head>'.length
+		const cspIdx = result.indexOf('<meta http-equiv="Content-Security-Policy"')
+		expect(cspIdx).toBe(headEnd)
+	})
+
+	it('strips agent CSP metas before stamping the platform policy', () => {
+		const html =
+			'<html><head><meta http-equiv="Content-Security-Policy" content="default-src *"></head><body></body></html>'
+		const result = prepareViewerHtml(html)
+		expect(result).not.toContain('default-src *')
+		expect(result).toContain(MINI_APP_CSP)
+	})
+
+	it('doc-size reporter posts a message on load using the shared type name', () => {
+		const html = '<!DOCTYPE html><html><body></body></html>'
+		const result = prepareViewerHtml(html)
+		// The reporter script uses parent.postMessage with our exact type token
+		// so the stage's listener can filter cross-frame chatter deterministically.
+		expect(result).toMatch(
+			new RegExp(`parent\\.postMessage\\(\\{type:'${VIEWER_DOC_SIZE_MESSAGE}'`),
+		)
+	})
+
+	it('wheel-forwarding reporter posts every wheel to the parent with delta + ctrl + doc-space cursor', () => {
+		const html = '<!DOCTYPE html><html><body></body></html>'
+		const result = prepareViewerHtml(html)
+		// Sandboxed frames swallow their own wheel events (they fire in the
+		// frame's browsing context and never bubble to the parent listener),
+		// so ctrl+wheel zoom over the document depends on this forwarding path.
+		expect(result).toMatch(new RegExp(`parent\\.postMessage\\(\\{type:'${VIEWER_WHEEL_MESSAGE}'`))
+		expect(result).toContain('deltaX:e.deltaX')
+		expect(result).toContain('deltaY:e.deltaY')
+		expect(result).toContain('ctrlKey:e.ctrlKey')
+		expect(result).toContain('docX:e.clientX')
+		expect(result).toContain('docY:e.clientY')
+		// passive:false is what lets the reporter's preventDefault suppress the
+		// browser's Ctrl+wheel page zoom inside the frame — a passive listener
+		// cannot preventDefault, so a page zoom would race the stage zoom.
+		expect(result).toContain('{passive:false}')
+	})
+
+	it('keeps the original document content intact', () => {
+		const html = '<!DOCTYPE html><html><body><p>hello</p></body></html>'
+		expect(prepareViewerHtml(html)).toContain('<p>hello</p>')
+	})
+})
+
+describe('viewer paging controller', () => {
+	function buildSlides(count: number): { root: HTMLElement; slides: HTMLElement[] } {
+		const root = document.createElement('div')
+		for (let i = 0; i < count; i++) {
+			const slide = document.createElement('section')
+			slide.setAttribute('data-slide', String(i))
+			root.appendChild(slide)
+		}
+		return { root, slides: Array.from(root.querySelectorAll<HTMLElement>('[data-slide]')) }
+	}
+
+	it('shows exactly one slide and hides the rest', () => {
+		const { root, slides } = buildSlides(3)
+		showViewerPage(root, 1)
+		expect(slides.map((slide) => slide.style.display)).toEqual(['none', '', 'none'])
+		// a second navigation moves the visible slide rather than adding one
+		showViewerPage(root, 2)
+		expect(slides.map((slide) => slide.style.display)).toEqual(['none', 'none', ''])
+	})
+
+	it('clamps an out-of-range page index into the slide set', () => {
+		const { root } = buildSlides(3)
+		expect(showViewerPage(root, 99)).toBe(2)
+		expect(applyViewerPage(collectViewerSlides(root), -5)).toBe(0)
+	})
+
+	it('collects every documented slide shape and ignores everything else', () => {
+		const root = document.createElement('div')
+		root.innerHTML =
+			'<div data-slide></div><section class="slide"></section><div id="slide-3"></div><p>not a slide</p>'
+		expect(collectViewerSlides(root)).toHaveLength(3)
+	})
+
+	it('injects the paging controller only for a paged document', () => {
+		const html = '<!DOCTYPE html><html><head></head><body></body></html>'
+		const paged = prepareViewerHtml(html, { paged: true })
+		const single = prepareViewerHtml(html)
+		// the goto handler matches with !== while the reporter posts with type:'…'
+		expect(paged).toContain(`!=='${VIEWER_GOTO_PAGE_MESSAGE}'`)
+		expect(paged).toContain(`type:'${VIEWER_PAGE_MESSAGE}'`)
+		expect(single).not.toContain(VIEWER_GOTO_PAGE_MESSAGE)
+		expect(single).not.toContain(VIEWER_PAGE_MESSAGE)
+	})
+
+	it('shares one injection between the paging controller and the doc-size reporter', () => {
+		const html = '<!DOCTYPE html><html><head></head><body></body></html>'
+		const paged = prepareViewerHtml(html, { paged: true })
+		// Slice 1's reporter must survive into the paged document on the same
+		// single injectIntoHtml call — a second injection would duplicate the CSP.
+		expect(paged).toContain(VIEWER_DOC_SIZE_MESSAGE)
+		expect(paged.match(/<meta http-equiv="Content-Security-Policy"/g)).toHaveLength(1)
+	})
+
+	it('embeds the same selector and page function the unit tests exercise', () => {
+		const paged = prepareViewerHtml('<!DOCTYPE html><html><body></body></html>', {
+			paged: true,
+		})
+		// The injected controller interpolates the selector constant and embeds
+		// applyViewerPage via toString(), so it cannot drift from the tested one.
+		expect(paged).toContain(`var SEL='${VIEWER_SLIDE_SELECTOR}'`)
+		expect(paged).toContain(applyViewerPage.toString())
+	})
+
+	it('measures the active slide box and defers the load-path report past layout', () => {
+		const paged = prepareViewerHtml('<!DOCTYPE html><html><body></body></html>', {
+			paged: true,
+		})
+		// jsdom cannot execute the srcdoc frame script, so this pins the two
+		// runtime properties AC3 depends on: the box comes from the rendered
+		// rect (not a synchronous scrollWidth read at `load`), and the initial
+		// report is retried across frames until the slide has a non-zero box.
+		expect(paged).toContain('getBoundingClientRect')
+		expect(paged).toContain('requestAnimationFrame')
 	})
 })
