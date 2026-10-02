@@ -168,7 +168,7 @@ describe('AgentServerClient.startSession', () => {
 })
 
 describe('AgentServerClient.stopSession', () => {
-	it('POSTs an empty body to /sessions/:id/stop with bearer auth', async () => {
+	it('POSTs a body carrying both reason and source to /sessions/:id/stop with bearer auth', async () => {
 		const { fetchImpl, calls } = makeFetchSpy(
 			new Response(JSON.stringify({ ok: true }), {
 				status: 200,
@@ -177,11 +177,15 @@ describe('AgentServerClient.stopSession', () => {
 		)
 		const client = new AgentServerClient({ server: SERVER, fetchImpl })
 
-		await client.stopSession('s1')
+		await client.stopSession('s1', { reason: 'stop', source: 'user-stop' })
 
 		expect(calls).toHaveLength(1)
 		expect(calls[0]?.url).toBe('https://agent-finland.maskin.test:3001/sessions/s1/stop')
 		expect(calls[0]?.init?.method).toBe('POST')
+		// agent-server answers 400 (invalid_request) when either field is missing.
+		const body = JSON.parse(String(calls[0]?.init?.body)) as Record<string, unknown>
+		expect(body.reason).toEqual(expect.any(String))
+		expect(body.source).toEqual(expect.any(String))
 		const headers = new Headers(calls[0]?.init?.headers)
 		expect(headers.get('authorization')).toBe(`Bearer ${SERVER.secret}`)
 	})
@@ -190,7 +194,9 @@ describe('AgentServerClient.stopSession', () => {
 		const { fetchImpl } = makeFetchSpy(new Response('boom', { status: 500 }))
 		const client = new AgentServerClient({ server: SERVER, fetchImpl })
 
-		await expect(client.stopSession('s1')).rejects.toThrow(AgentServerHttpError)
+		await expect(client.stopSession('s1', { reason: 'stop', source: 'user-stop' })).rejects.toThrow(
+			AgentServerHttpError,
+		)
 	})
 })
 
