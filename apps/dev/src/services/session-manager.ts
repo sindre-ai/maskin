@@ -46,7 +46,6 @@ import {
 	sql,
 } from 'drizzle-orm'
 import {
-	trackAgentSessionCompleted,
 	trackAgentSessionCompletedWithSkills,
 	trackAgentSessionStartedWithPrompt,
 	trackSessionSkillLoadFailed,
@@ -927,12 +926,6 @@ export class SessionManager extends EventEmitter {
 					contextObjectId: session.initiatedFromObjectId,
 					contextObjectType: session.initiatedFromObjectType,
 				})
-				void trackAgentSessionCompleted({
-					workspaceId: session.workspaceId,
-					sessionId,
-					actorId: session.actorId,
-					outcome: 'failed',
-				})
 				throw err
 			}
 			return
@@ -1116,13 +1109,6 @@ export class SessionManager extends EventEmitter {
 					launchError: message,
 				})
 			}
-
-			void trackAgentSessionCompleted({
-				workspaceId: session.workspaceId,
-				sessionId,
-				actorId: session.actorId,
-				outcome: 'failed',
-			})
 
 			if (launchFailureReason) {
 				await this.insertSystemLog(sessionId, launchFailureReason.human_message).catch((logErr) =>
@@ -1806,13 +1792,6 @@ export class SessionManager extends EventEmitter {
 					resumeError: message,
 				})
 			}
-
-			void trackAgentSessionCompleted({
-				workspaceId: session.workspaceId,
-				sessionId,
-				actorId: session.actorId,
-				outcome: 'failed',
-			})
 
 			this.telemetry.recordSessionEnded({
 				sessionId,
@@ -3488,12 +3467,6 @@ export class SessionManager extends EventEmitter {
 		if (status === 'completed' || status === 'failed' || status === 'timeout') {
 			void this.emitCompletedWithSkills(session, status)
 		}
-		void trackAgentSessionCompleted({
-			workspaceId: session.workspaceId,
-			sessionId,
-			actorId: session.actorId,
-			outcome: status,
-		})
 
 		if (status === 'failed') {
 			await this.maybeRetryClaudeOAuthOnNextSlot({ session, failureReason, stdoutTail }).catch(
@@ -4004,13 +3977,6 @@ export class SessionManager extends EventEmitter {
 		// (buildEventData records `classification` + `source`), so no extra
 		// recordEvent call here.
 
-		void trackAgentSessionCompleted({
-			workspaceId: session.workspaceId,
-			sessionId: session.id,
-			actorId: session.actorId,
-			outcome: 'completed',
-		})
-
 		this.telemetry.recordSessionEnded({
 			sessionId: session.id,
 			endReason: 'completed',
@@ -4152,13 +4118,6 @@ export class SessionManager extends EventEmitter {
 						}),
 					)
 			}
-
-			void trackAgentSessionCompleted({
-				workspaceId: session.workspaceId,
-				sessionId: session.id,
-				actorId: session.actorId,
-				outcome: 'timeout',
-			})
 
 			this.telemetry.recordSessionEnded({
 				sessionId: session.id,
@@ -4525,13 +4484,6 @@ export class SessionManager extends EventEmitter {
 				},
 				this.buildSettleDeps({ skipStop: true, skipPush: true }),
 			)
-
-			void trackAgentSessionCompleted({
-				workspaceId: session.workspaceId,
-				sessionId: session.id,
-				actorId: session.actorId,
-				outcome: 'failed',
-			})
 
 			await this.insertSystemLog(session.id, stalledFailureReason.human_message).catch((err) =>
 				logger.warn('Failed to append stalled-launch log line', {
@@ -5505,12 +5457,6 @@ export class SessionManager extends EventEmitter {
 		// at start (and updated by `recordSkillStagingResult`) reach PostHog
 		// on both the started and completed events. Best-effort.
 		void this.emitCompletedWithSkills(updated, status)
-		void trackAgentSessionCompleted({
-			workspaceId: updated.workspaceId,
-			sessionId,
-			actorId: updated.actorId,
-			outcome: status,
-		})
 
 		if (status === 'failed') {
 			await this.maybeRetryClaudeOAuthOnNextSlot({
