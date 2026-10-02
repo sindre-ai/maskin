@@ -55,6 +55,13 @@ export function formatResetsIn(ms: number | null): string {
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
+// Delay of the second usage refetch after returning from Stripe Checkout. It
+// has to stay clearly above the server's usage cache TTL
+// (BILLING_USAGE_CACHE_TTL_MS in apps/dev/src/lib/billing-usage-cache.ts, 2s):
+// at or under it, the retry can be answered by the pre-webhook read the first
+// refetch just made, and the page keeps showing the old plan.
+const CHECKOUT_RETURN_RETRY_MS = 3_000
+
 // SEAT_CAPS / OWNERSHIP_CAPS come from @maskin/shared (packages/shared/src/billing-caps.ts) —
 // the same numbers the backend enforces on invite (SEAT_CAP_EXCEEDED) and on
 // workspace creation / ownership transfer (OWNERSHIP_CAP_EXCEEDED), so this
@@ -283,7 +290,7 @@ export function BillingSection({
 		const invalidate = () =>
 			queryClient.invalidateQueries({ queryKey: queryKeys.billing.usage(workspaceId) })
 		invalidate()
-		const timeout = setTimeout(invalidate, 2000)
+		const timeout = setTimeout(invalidate, CHECKOUT_RETURN_RETRY_MS)
 		return () => clearTimeout(timeout)
 	}, [workspaceId])
 

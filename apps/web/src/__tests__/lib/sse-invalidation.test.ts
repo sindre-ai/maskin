@@ -1,6 +1,6 @@
 import { queryKeys } from '@/lib/query-keys'
 import { invalidateFromSSE } from '@/lib/sse-invalidation'
-import { QueryClient } from '@tanstack/react-query'
+import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/analytics', () => ({
@@ -430,6 +430,8 @@ describe('invalidateFromSSE session batching', () => {
 		(action) => {
 			const { qc, keys, invalidated } = seededClient()
 			invalidateFromSSE(qc, workspaceId, sessionEvent(action))
+			expect(invalidated(keys.billing)).toBe(false)
+			vi.advanceTimersByTime(5_000)
 			expect(invalidated(keys.billing)).toBe(true)
 		},
 	)
@@ -440,6 +442,8 @@ describe('invalidateFromSSE session batching', () => {
 			vi.mocked(api.sessions.get).mockResolvedValue({ triggerId: null, config: {} } as never)
 			const { qc, keys, invalidated } = seededClient()
 			invalidateFromSSE(qc, workspaceId, sessionEvent(action))
+			expect(invalidated(keys.billing)).toBe(false)
+			vi.advanceTimersByTime(5_000)
 			expect(invalidated(keys.billing)).toBe(true)
 		},
 	)
@@ -452,4 +456,81 @@ describe('invalidateFromSSE session batching', () => {
 			expect(invalidated(keys.billing)).toBe(false)
 		},
 	)
+
+	it('a burst of billing events gives one billing refetch per window', () => {
+		vi.mocked(api.sessions.get).mockResolvedValue({ triggerId: null, config: {} } as never)
+		const qc = createMockQueryClient()
+		const billingCalls = () =>
+			qc.invalidateQueries.mock.calls.filter(
+				([arg]) =>
+					JSON.stringify(arg.queryKey) === JSON.stringify(queryKeys.billing.usage(workspaceId)),
+			)
+		for (let i = 0; i < 25; i++) {
+			invalidateFromSSE(qc as never, workspaceId, sessionEvent('session_completed', `s-${i}`))
+			invalidateFromSSE(qc as never, workspaceId, sessionEvent('session_credit_debited', `s-${i}`))
+		}
+		expect(billingCalls()).toHaveLength(0)
+		vi.advanceTimersByTime(5_000)
+		expect(billingCalls()).toHaveLength(1)
+		// Joins a fetch already in flight rather than cancelling it.
+		expect(billingCalls()[0][1]).toEqual({ cancelRefetch: false })
+		vi.advanceTimersByTime(60_000)
+		expect(billingCalls()).toHaveLength(1)
+	})
+
+	describe('against a real query client with a slow endpoint', () => {
+		// Counts requests that would reach the server. A cancelled fetch still
+		// counts: the request has already left the browser.
+		function mountSlow(qc: QueryClient, queryKey: readonly unknown[], durationMs: number) {
+			const requests = { n: 0 }
+			new QueryObserver(qc, {
+				queryKey,
+				queryFn: async () => {
+					requests.n++
+					await new Promise((r) => setTimeout(r, durationMs))
+					return 'ok'
+				},
+			}).subscribe(() => {})
+			return requests
+		}
+
+		it('does not restart a billing fetch that is already in flight', async () => {
+			vi.mocked(api.sessions.get).mockResolvedValue({ triggerId: null, config: {} } as never)
+			const qc = new QueryClient()
+			const requests = mountSlow(qc, queryKeys.billing.usage(workspaceId), 10_000)
+			// Let the first load finish: only a query that already has data is
+			// cancelled and restarted by an invalidation.
+			await vi.advanceTimersByTimeAsync(10_000)
+
+			invalidateFromSSE(qc, workspaceId, sessionEvent('session_completed'))
+			await vi.advanceTimersByTimeAsync(5_000)
+			expect(requests.n).toBe(2) // the window's refetch, now in flight for 10s
+
+			// A second event whose window fires mid-fetch.
+			invalidateFromSSE(qc, workspaceId, sessionEvent('session_completed', 'sess-2'))
+			await vi.advanceTimersByTimeAsync(5_000)
+
+			expect(requests.n).toBe(2)
+		})
+
+		it('turns 100 replayed session events into one billing refetch', async () => {
+			vi.mocked(api.sessions.get).mockResolvedValue({ triggerId: null, config: {} } as never)
+			const qc = new QueryClient()
+			const billing = mountSlow(qc, queryKeys.billing.usage(workspaceId), 300)
+			const list = mountSlow(qc, queryKeys.sessions.all(workspaceId), 300)
+			await vi.advanceTimersByTimeAsync(1_000)
+			billing.n = 0
+			list.n = 0
+
+			// What reconnect replay delivers after a deploy: up to 100 events at once.
+			for (let i = 0; i < 100; i++) {
+				const action = i % 2 ? 'session_credit_debited' : 'session_completed'
+				invalidateFromSSE(qc, workspaceId, sessionEvent(action, `s-${i}`))
+			}
+			await vi.advanceTimersByTimeAsync(20_000)
+
+			expect(billing.n).toBe(1)
+			expect(list.n).toBe(1)
+		})
+	})
 })
