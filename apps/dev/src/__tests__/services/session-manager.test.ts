@@ -3342,10 +3342,10 @@ describe('SessionManager', () => {
 			expect(result).toBe(true)
 		})
 
-		it('uses the default cap of 3 when workspace has no max_concurrent_sessions setting', async () => {
+		it('uses the default cap of 10 when workspace has no max_concurrent_sessions setting', async () => {
 			mockResults.selectQueue = [
 				[{ settings: {} }], // workspace with no cap setting
-				[{ count: 3 }], // three sessions active = at default cap
+				[{ count: 10 }], // ten sessions active = at default cap
 			]
 
 			const result = await (
