@@ -49,6 +49,8 @@ export class ApiError extends Error {
 	code?: string
 	/** Populated when `code === 'PLAN_CAP_EXCEEDED'` — the plan/used/cap/reset context for a typed upgrade CTA. */
 	planCapContext?: PlanCapContext
+	/** Set on a flat `{ code, retryAfterMs }` body (the file-comments round route) — how long until a rate-limited call can be retried. */
+	retryAfterMs?: number
 
 	constructor(
 		public status: number,
@@ -122,8 +124,14 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		let message: string
 		let code: string | undefined
 		let planCapContext: PlanCapContext | undefined
+		let retryAfterMs: number | undefined
 
-		if (typeof data.error === 'object' && data.error?.code) {
+		if (typeof data.code === 'string' && typeof data.message === 'string') {
+			// Flat format used by the file-comments round route: { code, message, retryAfterMs? }
+			message = data.message
+			code = data.code
+			if (typeof data.retryAfterMs === 'number') retryAfterMs = data.retryAfterMs
+		} else if (typeof data.error === 'object' && data.error?.code) {
 			// Structured error format: { error: { code, message, details?, suggestion? } }
 			message = data.error.message
 			code = data.error.code
@@ -153,6 +161,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		const err = new ApiError(res.status, message, fieldErrors)
 		err.code = code
 		err.planCapContext = planCapContext
+		err.retryAfterMs = retryAfterMs
 		// This is the single chokepoint for every /api call the UI makes, so a
 		// non-2xx here is where a backend problem becomes visible to a user.
 		// Method, path (query stripped), status and the structured error code

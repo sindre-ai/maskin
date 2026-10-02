@@ -57,35 +57,42 @@ function toDto(row: typeof fileComments.$inferSelect): z.infer<typeof fileCommen
 	}
 }
 
-// Attaching-object validation body (spec §Attaching-object lookup rules).
-// The three error shapes below are returned RAW — not wrapped in the standard
-// `error` envelope — because the task pins the exact top-level field names
-// the client renders against (`code`, `targetArchived`). See tests for the
-// full matrix.
+// Round-send error bodies. These are returned flat — not wrapped in the
+// standard `error` envelope — with `code` (and `retryAfterMs` /
+// `targetArchived` where relevant) at the top level. The web client's
+// `request()` reads this shape and the send hook turns each `code` into a
+// short message for the user. See tests for the full matrix.
 function noAttacherBody() {
 	return {
 		code: FILE_COMMENTS_ROUND_ERROR_CODES.NO_ATTACHER,
-		message: 'file not attached to any object.',
+		message: "This file isn't linked to anything yet.",
 	}
 }
 function wrongTargetBody() {
 	return {
 		code: FILE_COMMENTS_ROUND_ERROR_CODES.WRONG_TARGET,
-		message: "target object is not one of this file's attachers.",
+		message: "That item isn't linked to this file.",
 	}
 }
 function targetArchivedBody() {
 	return {
 		code: FILE_COMMENTS_ROUND_ERROR_CODES.TARGET_ARCHIVED,
-		message: 'target object was archived before the round could be written.',
+		message: 'That item was archived.',
 		targetArchived: true as const,
 	}
 }
 function rateLimitedBody(retryAfterMs: number) {
+	const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000))
 	return {
 		code: FILE_COMMENTS_ROUND_ERROR_CODES.RATE_LIMITED,
-		message: 'rate limit exceeded: 10 rounds per minute per user.',
+		message: `Too many rounds sent. Try again in ${seconds} second${seconds === 1 ? '' : 's'}.`,
 		retryAfterMs,
+	}
+}
+function staleCommentsBody() {
+	return {
+		code: FILE_COMMENTS_ROUND_ERROR_CODES.STALE_COMMENTS,
+		message: 'Some of these comments have changed.',
 	}
 }
 
@@ -244,6 +251,10 @@ const patchFileCommentRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Invalid request',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: "Only the author can edit a comment's text",
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Comment not found',
@@ -269,6 +280,15 @@ app.openapi(patchFileCommentRoute, (async (c) => {
 		.limit(1)
 	if (!existing) {
 		return c.json(createApiError('NOT_FOUND', 'Comment not found'), 404 as never)
+	}
+
+	// Anyone in the workspace can resolve or reopen a comment, but only the
+	// author can change what it says.
+	if (body.body !== undefined && existing.authorId !== actorId) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only the author can edit this comment'),
+			403 as never,
+		)
 	}
 
 	const patch: Partial<typeof fileComments.$inferInsert> = {}
@@ -340,38 +360,41 @@ app.openapi(sendRoundRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'File not found'), 404 as never)
 	}
 
-	// -- Idempotency short-circuit (must precede rate-limit slot reservation).
-	// A retried Send from a wobbly client (same roundId) should be a no-op —
-	// return the already-committed state without burning a rate-limit slot or
-	// re-writing the rollup event.
-	const alreadySent = await db
-		.select()
-		.from(fileComments)
-		.where(and(eq(fileComments.fileId, fileId), eq(fileComments.roundId, roundId)))
-
-	if (alreadySent.length > 0) {
-		const [existingEvent] = await db
+	// The already-committed state of this round, or null if nothing has been
+	// written under this roundId yet. The event is found by roundId alone, not
+	// by the request's target, so a replay reports the event that was really
+	// written even if the retry named a different target.
+	const findCommittedRound = async () => {
+		const committed = await db
+			.select()
+			.from(fileComments)
+			.where(and(eq(fileComments.fileId, fileId), eq(fileComments.roundId, roundId)))
+		if (committed.length === 0) return null
+		const [rollupEvent] = await db
 			.select({ id: events.id })
 			.from(events)
 			.where(
 				and(
 					eq(events.workspaceId, file.workspaceId),
-					eq(events.entityId, targetObjectId),
 					eq(events.action, 'commented'),
 					sql`(${events.data}->'metadata'->'file_comments_round'->>'roundId') = ${roundId}`,
 				),
 			)
 			.limit(1)
-		return c.json(
-			{
-				roundId,
-				count: alreadySent.length,
-				rollupEventId: existingEvent?.id ?? 0,
-				comments: alreadySent.map(toDto),
-			},
-			200,
-		)
+		return {
+			roundId,
+			count: committed.length,
+			rollupEventId: rollupEvent?.id ?? 0,
+			comments: committed.map(toDto),
+		}
 	}
+
+	// -- Idempotency short-circuit (must precede rate-limit slot reservation).
+	// A retried Send from a wobbly client (same roundId) should be a no-op —
+	// return the already-committed state without burning a rate-limit slot or
+	// re-writing the rollup event.
+	const replay = await findCommittedRound()
+	if (replay) return c.json(replay, 200)
 
 	// -- Rate limit (10 rounds / 60s / actor).
 	const slot = reserveRoundSlot(actorId)
@@ -410,8 +433,8 @@ app.openapi(sendRoundRoute, (async (c) => {
 	}
 
 	// Comments must all belong to this file, be unsent (roundId IS NULL), and
-	// exist. Anything else is a stale client — 400 with a clear message so the
-	// caller re-reads the file's panel before retrying.
+	// exist. Anything else is a stale client — STALE_COMMENTS so the caller
+	// re-reads the file's panel before retrying.
 	const targetComments = await db
 		.select()
 		.from(fileComments)
@@ -423,13 +446,7 @@ app.openapi(sendRoundRoute, (async (c) => {
 			),
 		)
 	if (targetComments.length !== commentIds.length) {
-		return c.json(
-			createApiError(
-				'BAD_REQUEST',
-				'One or more comment ids are missing, on a different file, or already sent',
-			),
-			400,
-		)
+		return c.json(staleCommentsBody() as never, 400)
 	}
 
 	// -- Transactional round write: mark comments + rollup event or nothing.
@@ -454,12 +471,11 @@ app.openapi(sendRoundRoute, (async (c) => {
 			}
 			const driverId = targetLocked.driver ?? target.driver
 
-			// Set roundId. Upsert-style: only touch rows still unsent. The
-			// idempotency short-circuit above catches the retry case; this
-			// path only runs when the roundId is brand new so a race between
-			// two concurrent Sends with the same roundId ends with one of
-			// them updating zero rows here — which is not a bug (they'd have
-			// been idempotent no-ops if they'd landed a millisecond later).
+			// Conditional update: only touch rows still unsent. The idempotency
+			// short-circuit above catches a retry of an already-committed round,
+			// but two Sends can both pass it before either commits. The loser's
+			// UPDATE waits on the winner's row locks and then matches fewer
+			// rows than were asked for.
 			const updated = await tx
 				.update(fileComments)
 				.set({ roundId })
@@ -472,16 +488,13 @@ app.openapi(sendRoundRoute, (async (c) => {
 				)
 				.returning()
 
-			// If two concurrent Sends collide, one wins the UPDATE and the
-			// other sees zero-updated. Treat the loser as an idempotent retry
-			// and read the committed row set back out.
-			const finalComments =
-				updated.length === commentIds.length
-					? updated
-					: await tx
-							.select()
-							.from(fileComments)
-							.where(and(eq(fileComments.fileId, fileId), eq(fileComments.roundId, roundId)))
+			// Someone else took some or all of these comments first. Abort so
+			// nothing is written — no rollup event, no second mention of the
+			// driver, and no half-sent round. The catch below decides whether
+			// this was a duplicate of our own round or a genuine conflict.
+			if (updated.length !== commentIds.length) {
+				throw new RoundRaceError()
+			}
 
 			// ONE rollup event on the target object — see spec §Comment→timeline
 			// write model, Option B. `postComment` handles the mentions +
@@ -507,7 +520,7 @@ app.openapi(sendRoundRoute, (async (c) => {
 				},
 			})
 
-			return { rollupEventId: comment.id, comments: finalComments }
+			return { rollupEventId: comment.id, comments: updated }
 		})
 
 		return c.json(
@@ -523,6 +536,14 @@ app.openapi(sendRoundRoute, (async (c) => {
 		if (err instanceof TargetArchivedError) {
 			return c.json(targetArchivedBody() as never, 409)
 		}
+		if (err instanceof RoundRaceError) {
+			// The transaction rolled back, so anything under this roundId was
+			// written by the winning Send. Same round → report it as a replay.
+			// Otherwise another round took the comments first.
+			const winner = await findCommittedRound()
+			if (winner) return c.json(winner, 200)
+			return c.json(staleCommentsBody() as never, 400)
+		}
 		logger.error('file-comments round-send failed', {
 			fileId,
 			roundId,
@@ -537,6 +558,13 @@ class TargetArchivedError extends Error {
 	constructor() {
 		super('target archived mid-round')
 		this.name = 'TargetArchivedError'
+	}
+}
+
+class RoundRaceError extends Error {
+	constructor() {
+		super('comments were sent by another request')
+		this.name = 'RoundRaceError'
 	}
 }
 

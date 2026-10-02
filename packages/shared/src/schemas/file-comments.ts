@@ -82,6 +82,9 @@ export const FILE_COMMENTS_ROUND_ERROR_CODES = {
 	WRONG_TARGET: 'WRONG_TARGET',
 	TARGET_ARCHIVED: 'TARGET_ARCHIVED',
 	RATE_LIMITED: 'RATE_LIMITED',
+	// One or more of the listed comments is gone, belongs to another file, or
+	// was already sent — the client's view of the panel is out of date.
+	STALE_COMMENTS: 'STALE_COMMENTS',
 } as const
 
 export type FileCommentsRoundErrorCode =

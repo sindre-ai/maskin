@@ -18,7 +18,9 @@ vi.mock('sonner', () => ({
 	},
 }))
 
-vi.mock('@/lib/api', () => ({
+// Keep the real ApiError class — the send hook branches on `err instanceof ApiError`.
+vi.mock('@/lib/api', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/lib/api')>()),
 	api: {
 		fileComments: {
 			list: vi.fn(),
@@ -40,7 +42,8 @@ import {
 	trackFileViewerCommentResolved,
 	trackFileViewerRoundSent,
 } from '@/lib/analytics'
-import { type FileCommentDto, type SendRoundResponse, api } from '@/lib/api'
+import { ApiError, type FileCommentDto, type SendRoundResponse, api } from '@/lib/api'
+import { toast } from 'sonner'
 import { TestWrapper } from '../setup'
 
 const workspaceId = 'ws-1'
@@ -211,5 +214,59 @@ describe('useSendFileCommentsRound — batched POST + rollup event', () => {
 			})
 		})
 		expect(api.fileComments.sendRound).toHaveBeenCalledTimes(1)
+	})
+})
+
+describe('useSendFileCommentsRound — failures are explained in plain words', () => {
+	async function sendAndFail(error: unknown) {
+		vi.mocked(api.fileComments.sendRound).mockRejectedValue(error)
+		const { result } = renderHook(() => useSendFileCommentsRound(workspaceId, fileId), {
+			wrapper: TestWrapper,
+		})
+		await act(async () => {
+			await result.current
+				.mutateAsync({ roundId, targetObjectId, commentIds: ['c1'] })
+				.catch(() => undefined)
+		})
+	}
+
+	function apiError(status: number, code: string, retryAfterMs?: number) {
+		const err = new ApiError(status, 'raw server text')
+		err.code = code
+		err.retryAfterMs = retryAfterMs
+		return err
+	}
+
+	it.each([
+		[429, 'RATE_LIMITED', 12_400, "You're sending too quickly. Try again in 13 seconds."],
+		[429, 'RATE_LIMITED', undefined, "You're sending too quickly. Try again in 1 second."],
+		[
+			400,
+			'NO_ATTACHER',
+			undefined,
+			"This file isn't linked to anything yet, so there's nowhere to send it.",
+		],
+		[400, 'WRONG_TARGET', undefined, "That item isn't linked to this file. Pick another one."],
+		[409, 'TARGET_ARCHIVED', undefined, 'That item was archived. Pick another one to send to.'],
+		[
+			400,
+			'STALE_COMMENTS',
+			undefined,
+			'Some comments have changed. Reload the page and try again.',
+		],
+	])('shows a short message for %i %s', async (status, code, retryAfterMs, expected) => {
+		await sendAndFail(apiError(status, code, retryAfterMs))
+		expect(toast.error).toHaveBeenCalledTimes(1)
+		expect(toast.error).toHaveBeenCalledWith(expected)
+	})
+
+	it('never shows the raw server text', async () => {
+		await sendAndFail(apiError(500, 'INTERNAL_ERROR'))
+		expect(toast.error).toHaveBeenCalledWith("Couldn't send your comments. Please try again.")
+	})
+
+	it('falls back to the same line when the request itself failed', async () => {
+		await sendAndFail(new TypeError('Failed to fetch'))
+		expect(toast.error).toHaveBeenCalledWith("Couldn't send your comments. Please try again.")
 	})
 })

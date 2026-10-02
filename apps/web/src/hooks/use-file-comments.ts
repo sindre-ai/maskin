@@ -6,6 +6,7 @@ import {
 	trackFileViewerRoundSent,
 } from '../lib/analytics'
 import {
+	ApiError,
 	type CreateFileCommentInput,
 	type FileCommentDto,
 	type SendRoundInput,
@@ -85,9 +86,32 @@ export function useUpdateFileComment(workspaceId: string, fileId: string) {
 	})
 }
 
+// Plain-language message for each way sending a round can fail. Anything else
+// (network down, server error) gets the generic line.
+function sendRoundErrorMessage(err: unknown): string {
+	if (!(err instanceof ApiError)) return "Couldn't send your comments. Please try again."
+	switch (err.code) {
+		case 'RATE_LIMITED': {
+			const seconds = Math.max(1, Math.ceil((err.retryAfterMs ?? 0) / 1000))
+			return `You're sending too quickly. Try again in ${seconds} second${seconds === 1 ? '' : 's'}.`
+		}
+		case 'NO_ATTACHER':
+			return "This file isn't linked to anything yet, so there's nowhere to send it."
+		case 'WRONG_TARGET':
+			return "That item isn't linked to this file. Pick another one."
+		case 'TARGET_ARCHIVED':
+			return 'That item was archived. Pick another one to send to.'
+		case 'STALE_COMMENTS':
+			return 'Some comments have changed. Reload the page and try again.'
+		default:
+			return "Couldn't send your comments. Please try again."
+	}
+}
+
 export function useSendFileCommentsRound(workspaceId: string, fileId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
+		meta: { handlesOwnErrors: true },
 		// driverId is analytics-only (the server resolves the driver itself), so it
 		// is stripped before the request body is built.
 		mutationFn: ({
@@ -118,9 +142,7 @@ export function useSendFileCommentsRound(workspaceId: string, fileId: string) {
 			toast.success(`Round sent — ${result.count} comment${result.count === 1 ? '' : 's'}`)
 		},
 		onError: (err: unknown) => {
-			const message =
-				err instanceof Error ? err.message : 'Could not send the review round — please retry.'
-			toast.error(message)
+			toast.error(sendRoundErrorMessage(err))
 		},
 	})
 }

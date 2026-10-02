@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, fileComments, files, relationships } from '@maskin/db/schema'
+import { events, fileComments, files, relationships, workspaceMembers } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { and, eq } from 'drizzle-orm'
 import { vi } from 'vitest'
@@ -495,5 +495,267 @@ describe('File Comments Integration — no server-side cancel/undo path', () => 
 			jsonRequest('POST', `/api/files/${f.id}/comments/rounds/undo`, { roundId: randomUUID() }),
 		)
 		expect(undo.status).toBe(404)
+	})
+})
+
+describe('File Comments Integration — workspace authorization', () => {
+	let ownerId: string
+	let outsiderId: string
+	let workspaceId: string
+	let fileId: string
+	let targetObjectId: string
+	let draftId: string
+
+	beforeEach(async () => {
+		resetRoundLimiterForTests()
+		ownerId = getTestActorId()
+		const outsider = await insertActor(db)
+		outsiderId = outsider.id
+		const ws = await insertWorkspace(db, ownerId)
+		workspaceId = ws.id
+		const f = await insertFile(workspaceId, ownerId)
+		fileId = f.id
+		const obj = await insertObject(db, workspaceId, ownerId, { type: 'bet', driver: ownerId })
+		targetObjectId = obj.id
+		await attachFileToObject(fileId, targetObjectId, ownerId)
+		draftId = (await createDraft(createApp(ownerId), fileId, { body: 'private note' })).id
+	})
+
+	it('hides the comments of a file from an actor outside its workspace', async () => {
+		const res = await createApp(outsiderId).request(
+			new Request(`http://localhost/api/files/${fileId}/comments`),
+		)
+		expect(res.status).toBe(404)
+	})
+
+	it('refuses to create a comment for an actor outside the workspace', async () => {
+		const res = await createApp(outsiderId).request(
+			jsonRequest('POST', `/api/files/${fileId}/comments`, {
+				body: 'sneaky',
+				positionDoc: { x: 0.1, y: 0.1 },
+			}),
+		)
+		expect(res.status).toBe(404)
+		const rows = await db.select().from(fileComments).where(eq(fileComments.fileId, fileId))
+		expect(rows).toHaveLength(1)
+	})
+
+	it('refuses to update a comment for an actor outside the workspace', async () => {
+		const res = await createApp(outsiderId).request(
+			jsonRequest('PATCH', `/api/files/${fileId}/comments/${draftId}`, { resolved: true }),
+		)
+		expect(res.status).toBe(404)
+		const [row] = await db.select().from(fileComments).where(eq(fileComments.id, draftId))
+		expect(row?.resolvedAt).toBeNull()
+	})
+
+	it('refuses to send a round for an actor outside the workspace', async () => {
+		const res = await createApp(outsiderId).request(
+			jsonRequest('POST', `/api/files/${fileId}/comments/rounds`, {
+				roundId: randomUUID(),
+				targetObjectId,
+				commentIds: [draftId],
+			}),
+		)
+		expect(res.status).toBe(404)
+		const [row] = await db.select().from(fileComments).where(eq(fileComments.id, draftId))
+		expect(row?.roundId).toBeNull()
+		const rollups = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityId, targetObjectId), eq(events.action, 'commented')))
+		expect(rollups).toHaveLength(0)
+	})
+
+	it('returns 404 for a file that does not exist', async () => {
+		const res = await createApp(ownerId).request(
+			new Request(`http://localhost/api/files/${randomUUID()}/comments`),
+		)
+		expect(res.status).toBe(404)
+	})
+
+	it("does not let a comment be changed through another file's URL", async () => {
+		const otherFile = await insertFile(workspaceId, ownerId)
+		const res = await createApp(ownerId).request(
+			jsonRequest('PATCH', `/api/files/${otherFile.id}/comments/${draftId}`, { resolved: true }),
+		)
+		expect(res.status).toBe(404)
+		const [row] = await db.select().from(fileComments).where(eq(fileComments.id, draftId))
+		expect(row?.resolvedAt).toBeNull()
+	})
+})
+
+describe('File Comments Integration — editing a comment written by someone else', () => {
+	let authorId: string
+	let memberId: string
+	let fileId: string
+	let draftId: string
+
+	beforeEach(async () => {
+		resetRoundLimiterForTests()
+		authorId = getTestActorId()
+		const member = await insertActor(db)
+		memberId = member.id
+		const ws = await insertWorkspace(db, authorId)
+		await db.insert(workspaceMembers).values({
+			workspaceId: ws.id,
+			actorId: memberId,
+			role: 'member',
+		})
+		fileId = (await insertFile(ws.id, authorId)).id
+		draftId = (await createDraft(createApp(authorId), fileId, { body: 'original' })).id
+	})
+
+	it('lets another member resolve and reopen the comment', async () => {
+		const app = createApp(memberId)
+		const resolved = await app.request(
+			jsonRequest('PATCH', `/api/files/${fileId}/comments/${draftId}`, { resolved: true }),
+		)
+		expect(resolved.status).toBe(200)
+		const reopened = await app.request(
+			jsonRequest('PATCH', `/api/files/${fileId}/comments/${draftId}`, { resolved: false }),
+		)
+		expect(reopened.status).toBe(200)
+	})
+
+	it('refuses to let another member change what the comment says', async () => {
+		const res = await createApp(memberId).request(
+			jsonRequest('PATCH', `/api/files/${fileId}/comments/${draftId}`, { body: 'rewritten' }),
+		)
+		expect(res.status).toBe(403)
+		const [row] = await db.select().from(fileComments).where(eq(fileComments.id, draftId))
+		expect(row?.body).toBe('original')
+	})
+
+	it('refuses a combined edit-and-resolve from another member without applying either', async () => {
+		const res = await createApp(memberId).request(
+			jsonRequest('PATCH', `/api/files/${fileId}/comments/${draftId}`, {
+				body: 'rewritten',
+				resolved: true,
+			}),
+		)
+		expect(res.status).toBe(403)
+		const [row] = await db.select().from(fileComments).where(eq(fileComments.id, draftId))
+		expect(row?.body).toBe('original')
+		expect(row?.resolvedAt).toBeNull()
+	})
+
+	it('lets the author change what the comment says', async () => {
+		const res = await createApp(authorId).request(
+			jsonRequest('PATCH', `/api/files/${fileId}/comments/${draftId}`, { body: 'edited' }),
+		)
+		expect(res.status).toBe(200)
+		const [row] = await db.select().from(fileComments).where(eq(fileComments.id, draftId))
+		expect(row?.body).toBe('edited')
+	})
+})
+
+describe('File Comments Integration — overlapping sends', () => {
+	let actorId: string
+	let workspaceId: string
+	let fileId: string
+	let targetObjectId: string
+
+	beforeEach(async () => {
+		resetRoundLimiterForTests()
+		actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		workspaceId = ws.id
+		fileId = (await insertFile(workspaceId, actorId)).id
+		targetObjectId = (
+			await insertObject(db, workspaceId, actorId, { type: 'bet', driver: actorId })
+		).id
+		await attachFileToObject(fileId, targetObjectId, actorId)
+	})
+
+	function send(
+		app: ReturnType<typeof createApp>,
+		roundId: string,
+		commentIds: string[],
+		target = targetObjectId,
+	) {
+		return app.request(
+			jsonRequest('POST', `/api/files/${fileId}/comments/rounds`, {
+				roundId,
+				targetObjectId: target,
+				commentIds,
+			}),
+		)
+	}
+
+	async function rollupEventCount() {
+		const rows = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityId, targetObjectId), eq(events.action, 'commented')))
+		return rows.length
+	}
+
+	it('posts one rollup event when the same round is sent twice at once', async () => {
+		const app = createApp(actorId)
+		const draft = await createDraft(app, fileId, { body: 'x' })
+		const roundId = randomUUID()
+
+		const [a, b] = await Promise.all([
+			send(app, roundId, [draft.id]),
+			send(app, roundId, [draft.id]),
+		])
+
+		expect(a.status).toBe(200)
+		expect(b.status).toBe(200)
+		const aBody = (await a.json()) as { rollupEventId: number; count: number }
+		const bBody = (await b.json()) as { rollupEventId: number; count: number }
+		expect(aBody.rollupEventId).toBe(bBody.rollupEventId)
+		expect(aBody.rollupEventId).not.toBe(0)
+		expect(aBody.count).toBe(1)
+		expect(await rollupEventCount()).toBe(1)
+	})
+
+	it('lets only one of two different rounds claim the same comment', async () => {
+		const app = createApp(actorId)
+		const draft = await createDraft(app, fileId, { body: 'x' })
+
+		const results = await Promise.all([
+			send(app, randomUUID(), [draft.id]),
+			send(app, randomUUID(), [draft.id]),
+		])
+
+		expect(results.map((r) => r.status).sort()).toEqual([200, 400])
+		const loser = results.find((r) => r.status === 400)
+		expect(((await loser?.json()) as { code: string }).code).toBe('STALE_COMMENTS')
+		expect(await rollupEventCount()).toBe(1)
+	})
+
+	it('answers STALE_COMMENTS when a comment was already sent in an earlier round', async () => {
+		const app = createApp(actorId)
+		const draft = await createDraft(app, fileId, { body: 'x' })
+		const first = await send(app, randomUUID(), [draft.id])
+		expect(first.status).toBe(200)
+
+		const second = await send(app, randomUUID(), [draft.id])
+
+		expect(second.status).toBe(400)
+		expect(((await second.json()) as { code: string }).code).toBe('STALE_COMMENTS')
+		expect(await rollupEventCount()).toBe(1)
+	})
+
+	it('reports the original rollup event when a retry names a different target', async () => {
+		const app = createApp(actorId)
+		const draft = await createDraft(app, fileId, { body: 'x' })
+		const roundId = randomUUID()
+		const first = await send(app, roundId, [draft.id])
+		const firstBody = (await first.json()) as { rollupEventId: number }
+		const otherObject = await insertObject(db, workspaceId, actorId, {
+			type: 'bet',
+			driver: actorId,
+		})
+		await attachFileToObject(fileId, otherObject.id, actorId)
+
+		const retry = await send(app, roundId, [draft.id], otherObject.id)
+
+		expect(retry.status).toBe(200)
+		expect(((await retry.json()) as { rollupEventId: number }).rollupEventId).toBe(
+			firstBody.rollupEventId,
+		)
 	})
 })
