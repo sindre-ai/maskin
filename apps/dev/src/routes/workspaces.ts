@@ -1,4 +1,5 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
+import { evictMembership } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers, workspaceOnboardingPrompts, workspaces } from '@maskin/db/schema'
 import {
@@ -1223,6 +1224,9 @@ app.openapi(removeMemberRoute, (async (c) => {
 				409,
 			)
 		case 'removed':
+			// Takes effect on the member's next request, not when its cached auth
+			// lookup expires.
+			evictMembership(targetActorId, workspaceId)
 			return c.json({ removed: true as const }, 200)
 	}
 }) as RouteHandler<typeof removeMemberRoute, Env>)

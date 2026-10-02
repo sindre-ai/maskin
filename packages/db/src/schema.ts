@@ -504,6 +504,9 @@ export const sessions = pgTable(
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0044.
 		index('sessions_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
 		index('sessions_actor_idx').on(t.actorId),
+		// Reconciler self-heal window scan over a session's settled time. Built
+		// CONCURRENTLY in migration 0086.
+		index('sessions_settled_at_idx').on(sql`coalesce(${t.completedAt}, ${t.updatedAt})`),
 		// Period usage sum behind GET /api/billing/usage; maskin_plan sessions only.
 		// Built CONCURRENTLY in migration 0085.
 		index('sessions_ws_plan_usage_idx')
