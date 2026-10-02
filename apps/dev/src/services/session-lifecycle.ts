@@ -61,6 +61,12 @@ export interface StartSessionInput {
 	triggerType?: string
 	sourceCommentEventId?: number
 	parentSessionId?: string
+	/**
+	 * Handed-off strip anchors (bet/444b-handed-off-strip). Both optional; a
+	 * spawn without them persists NULL and renders no strip.
+	 */
+	spawnedByMessageId?: number
+	dependsOnSessionIds?: string[]
 	retryOf?: string
 	attemptNumber?: number
 	await?: AwaitMode
@@ -205,6 +211,8 @@ export async function startSession(
 		sourceSessionId: input.parentSessionId,
 		initiatedFromObjectId: input.initiatedFromObjectId,
 		initiatedFromObjectType: input.initiatedFromObjectType,
+		spawnedByMessageId: input.spawnedByMessageId,
+		dependsOnSessionIds: input.dependsOnSessionIds,
 	}
 
 	const session = await sessionManager.createSession(input.workspaceId, params)

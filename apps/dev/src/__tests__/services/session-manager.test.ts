@@ -2491,6 +2491,10 @@ describe('SessionManager', () => {
 						headers: expect.objectContaining({ Authorization: `Bearer ${server.secret}` }),
 					}),
 				)
+				// agent-server answers 400 when reason or source is missing, so the
+				// stop body must carry both.
+				const stopInit = fetchSpy.mock.calls[0]?.[1] as RequestInit
+				expect(JSON.parse(String(stopInit.body))).toEqual({ reason: 'stop', source: 'user-stop' })
 				// Local Docker must never be touched for a remotely-dispatched session.
 				expect(mockContainerManager.stop).not.toHaveBeenCalled()
 
