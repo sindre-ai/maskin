@@ -2,25 +2,35 @@ import type {
 	ActorListItem,
 	ActorResponse,
 	AgentState,
+	CreateFileCommentInput,
 	DisplaySettingsBody,
+	FileCommentDto,
 	ListLoopStepsResponse,
 	ListLoopsResponse,
 	LoopStep,
 	LoopSummary,
 	SafeMetadata,
+	SendRoundInput,
+	SendRoundResponse,
 	TriggerResponse,
+	UpdateFileCommentInput,
 } from '@maskin/shared'
 
 export type {
 	ActorListItem,
 	ActorResponse,
 	AgentState,
+	CreateFileCommentInput,
 	DisplaySettingsBody,
+	FileCommentDto,
 	ListLoopStepsResponse,
 	ListLoopsResponse,
 	LoopStep,
 	LoopSummary,
+	SendRoundInput,
+	SendRoundResponse,
 	TriggerResponse,
+	UpdateFileCommentInput,
 }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
@@ -39,6 +49,8 @@ export class ApiError extends Error {
 	code?: string
 	/** Populated when `code === 'PLAN_CAP_EXCEEDED'` — the plan/used/cap/reset context for a typed upgrade CTA. */
 	planCapContext?: PlanCapContext
+	/** Set on a flat `{ code, retryAfterMs }` body (the file-comments round route) — how long until a rate-limited call can be retried. */
+	retryAfterMs?: number
 
 	constructor(
 		public status: number,
@@ -112,8 +124,14 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		let message: string
 		let code: string | undefined
 		let planCapContext: PlanCapContext | undefined
+		let retryAfterMs: number | undefined
 
-		if (typeof data.error === 'object' && data.error?.code) {
+		if (typeof data.code === 'string' && typeof data.message === 'string') {
+			// Flat format used by the file-comments round route: { code, message, retryAfterMs? }
+			message = data.message
+			code = data.code
+			if (typeof data.retryAfterMs === 'number') retryAfterMs = data.retryAfterMs
+		} else if (typeof data.error === 'object' && data.error?.code) {
 			// Structured error format: { error: { code, message, details?, suggestion? } }
 			message = data.error.message
 			code = data.error.code
@@ -143,6 +161,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		const err = new ApiError(res.status, message, fieldErrors)
 		err.code = code
 		err.planCapContext = planCapContext
+		err.retryAfterMs = retryAfterMs
 		// This is the single chokepoint for every /api call the UI makes, so a
 		// non-2xx here is where a backend problem becomes visible to a user.
 		// Method, path (query stripped), status and the structured error code
@@ -994,6 +1013,36 @@ export const api = {
 			request<FileDetail>(`/files/${id}`, { method: 'PATCH', body: data, workspaceId }),
 		delete: (workspaceId: string, id: string) =>
 			request<{ deleted: boolean }>(`/files/${id}`, { method: 'DELETE', workspaceId }),
+	},
+
+	fileComments: {
+		list: (workspaceId: string, fileId: string, params?: { roundId?: string }) => {
+			const qs = params?.roundId ? `?roundId=${encodeURIComponent(params.roundId)}` : ''
+			return request<FileCommentDto[]>(`/files/${fileId}/comments${qs}`, { workspaceId })
+		},
+		create: (workspaceId: string, fileId: string, data: CreateFileCommentInput) =>
+			request<FileCommentDto>(`/files/${fileId}/comments`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		update: (
+			workspaceId: string,
+			fileId: string,
+			commentId: string,
+			data: UpdateFileCommentInput,
+		) =>
+			request<FileCommentDto>(`/files/${fileId}/comments/${commentId}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		sendRound: (workspaceId: string, fileId: string, data: SendRoundInput) =>
+			request<SendRoundResponse>(`/files/${fileId}/comments/rounds`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
 	},
 }
 

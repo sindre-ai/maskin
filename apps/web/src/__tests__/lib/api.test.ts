@@ -157,6 +157,26 @@ describe('request', () => {
 		}
 	})
 
+	it('throws ApiError with the flat { code, message, retryAfterMs } format', async () => {
+		const errorBody = {
+			code: 'RATE_LIMITED',
+			message: 'Too many rounds sent.',
+			retryAfterMs: 12_000,
+		}
+		fetchSpy.mockResolvedValue(new Response(JSON.stringify(errorBody), { status: 429 }))
+
+		try {
+			await api.objects.list('ws-1')
+			expect.unreachable('Should have thrown')
+		} catch (err) {
+			const apiErr = err as ApiError
+			expect(apiErr.status).toBe(429)
+			expect(apiErr.code).toBe('RATE_LIMITED')
+			expect(apiErr.message).toBe('Too many rounds sent.')
+			expect(apiErr.retryAfterMs).toBe(12_000)
+		}
+	})
+
 	it('throws ApiError with legacy string error format', async () => {
 		const errorBody = { error: 'Not found' }
 		fetchSpy.mockResolvedValue(new Response(JSON.stringify(errorBody), { status: 404 }))
