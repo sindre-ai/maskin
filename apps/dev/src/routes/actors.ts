@@ -1,5 +1,5 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { generateApiKey, hashPassword } from '@maskin/auth'
+import { evictActor, generateApiKey, hashPassword } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	events,
@@ -857,6 +857,9 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
+	// The old key must stop authenticating now, not when its cached lookup expires.
+	evictActor(id)
+
 	return c.json({ api_key: key })
 }) as RouteHandler<typeof regenerateApiKeyRoute, Env>)
 
@@ -1094,6 +1097,7 @@ app.openapi(deleteActorRoute, (async (c) => {
 		await tx.update(actors).set({ createdBy: null }).where(eq(actors.createdBy, id))
 		await tx.delete(actors).where(eq(actors.id, id))
 	})
+	evictActor(id)
 
 	await recordEvent(db, {
 		workspaceId,

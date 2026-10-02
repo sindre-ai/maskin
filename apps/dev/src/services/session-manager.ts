@@ -35,6 +35,7 @@ import {
 	count as countFn,
 	desc,
 	eq,
+	gte,
 	inArray,
 	isNotNull,
 	isNull,
@@ -365,6 +366,15 @@ export class SessionManager extends EventEmitter {
 	private static readonly LOG_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 	private static readonly LOG_PRUNE_INTERVAL_MS = 60 * 60 * 1000
 	private static readonly LOG_PRUNE_SESSIONS_PER_RUN = 200
+	// Once the backlog is drained, how far past the retention cutoff the sweep
+	// looks for sessions that still hold old logs. Steady state only finds
+	// sessions that crossed the cutoff since the last run, so this also covers a
+	// multi-week outage.
+	private static readonly LOG_PRUNE_LOOKBACK_MS = 14 * 24 * 60 * 60 * 1000
+	// False until a sweep finds less than a full batch. Until then the scan is
+	// unbounded so any backlog older than the window still drains; afterwards it
+	// is windowed so it stops walking every already-pruned session.
+	private logPruneBacklogDrained = false
 	private activeSessions: Map<
 		string,
 		{
@@ -5602,9 +5612,16 @@ export class SessionManager extends EventEmitter {
 		this.lastLogPruneAt = now
 
 		const cutoff = new Date(now - SessionManager.LOG_RETENTION_MS)
-		// The EXISTS probe keeps already-pruned sessions from being selected
-		// again forever — without it the same oldest sessions would be re-picked
-		// every hour and the sweep would never reach newer ones.
+		// Once the backlog is drained, only look at sessions that completed inside
+		// [cutoff - lookback, cutoff). Without a lower bound the scan starts at the
+		// oldest completed session and walks every already-pruned one (an EXISTS
+		// probe each) before it reaches any work — the whole table, every hour. The
+		// window keeps the range scan on sessions_prune_candidates_idx to the few
+		// days that can still hold logs. The first sweep after boot is unbounded so
+		// a backlog older than the window is never stranded.
+		const floor = new Date(cutoff.getTime() - SessionManager.LOG_PRUNE_LOOKBACK_MS)
+		// The EXISTS probe keeps already-pruned sessions inside the window from
+		// being selected again.
 		const candidates = await this.db
 			.select({ id: sessions.id })
 			.from(sessions)
@@ -5613,6 +5630,7 @@ export class SessionManager extends EventEmitter {
 					eq(sessions.interactive, false),
 					isNotNull(sessions.completedAt),
 					lt(sessions.completedAt, cutoff),
+					this.logPruneBacklogDrained ? gte(sessions.completedAt, floor) : undefined,
 					// Interpolate the ISO string, not the Date: inside a raw `sql`
 					// template there is no column to infer the type mapping from,
 					// so a Date object reaches the driver unmapped and throws.
@@ -5621,6 +5639,9 @@ export class SessionManager extends EventEmitter {
 			)
 			.limit(SessionManager.LOG_PRUNE_SESSIONS_PER_RUN)
 
+		if (candidates.length < SessionManager.LOG_PRUNE_SESSIONS_PER_RUN) {
+			this.logPruneBacklogDrained = true
+		}
 		if (candidates.length === 0) return
 
 		let deleted = 0
