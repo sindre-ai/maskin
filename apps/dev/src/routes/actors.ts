@@ -32,6 +32,7 @@ import {
 	updateActorSchema,
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { toActorWithKeyResponse } from '../lib/actor-response'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -265,20 +266,13 @@ app.openapi(createActorRoute, async (c) => {
 		else if (!atOwnershipCap) workspaceProvisioningFailed = true
 	}
 
-	// Return actor WITHOUT api_key, but WITH it in the expected response field.
-	// Field names must be snake_case to match actorResponseSchema so MCP read→update
-	// round trips don't get keys stripped.
-	const { apiKey: _, systemPrompt, llmProvider, llmConfig, ...actorWithoutKey } = actor
+	// Allowlisted via actorWithKeySchema (see toActorWithKeyResponse) — never
+	// spread the raw row here: it carries password_hash.
 	return c.json(
-		{
-			...serialize(actorWithoutKey),
-			system_prompt: systemPrompt,
-			llm_provider: llmProvider,
-			llm_config: llmConfig,
-			api_key: key,
+		toActorWithKeyResponse(actor, key, {
 			...(workspaceId && { workspace_id: workspaceId }),
-			...(workspaceProvisioningFailed && { workspace_provisioning_failed: true }),
-		} as z.infer<typeof actorWithKeySchema>,
+			...(workspaceProvisioningFailed && { workspace_provisioning_failed: true as const }),
+		}),
 		201,
 	)
 })

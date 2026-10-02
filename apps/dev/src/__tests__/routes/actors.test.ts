@@ -25,6 +25,24 @@ describe('Actors Routes', () => {
 			expect(body.type).toBe('human')
 		})
 
+		it('never returns passwordHash (or any undeclared column) on signup', async () => {
+			const actor = buildActor({ passwordHash: 'argon2id$secret-hash', metadata: { internal: 1 } })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.insert = [actor]
+
+			const res = await app.request(jsonRequest('POST', '/api/actors', buildCreateActorBody()))
+
+			expect(res.status).toBe(201)
+			const text = await res.text()
+			const body = JSON.parse(text)
+			expect(body.passwordHash).toBeUndefined()
+			expect(body.password_hash).toBeUndefined()
+			expect(body.apiKey).toBeUndefined()
+			expect(body.metadata).toBeUndefined()
+			expect(text).not.toContain('argon2id$secret-hash')
+			expect(body.api_key).toMatch(/^ank_/)
+		})
+
 		it('creates an agent actor and returns 201', async () => {
 			const actor = buildActor({ type: 'agent' })
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
