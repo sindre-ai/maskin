@@ -118,6 +118,8 @@ public enum ShareDestination: Sendable, Equatable, Hashable {
 	case object(type: String)
 	/// Just the files, with no object around them.
 	case filesOnly
+	/// A message in an existing conversation, with any files attached to it.
+	case chat(id: String)
 }
 
 /// What the user decided in the sheet.
@@ -157,6 +159,14 @@ public enum ShareComposer {
 			parts.append(quoteText ? quote(clipped) : clipped)
 		}
 		return parts.joined(separator: "\n\n")
+	}
+
+	/// The text of a chat message: the note, then the link, then the shared text. A share with only
+	/// files still needs words, so it falls back to the suggested title.
+	public static func chatMessage(note: String, content: ShareContent) -> String {
+		let body = objectContent(note: note, content: content)
+		if !body.isEmpty { return body }
+		return content.suggestedTitle
 	}
 
 	/// The title sent to the server: the user's, else the suggestion. Trimmed and capped.

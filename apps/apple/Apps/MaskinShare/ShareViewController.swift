@@ -22,7 +22,8 @@ final class ShareViewController: UIViewController {
 		let model = ShareSheetModel(
 			secretStore: KeychainSecretStore(),
 			loadContent: { await ShareExtractor().extract(from: sources, context: context) },
-			makeRemote: { ShareSession.remote(baseURL: baseURL, credentials: $0) })
+			makeRemote: { ShareSession.remote(baseURL: baseURL, credentials: $0) },
+			queue: ShareQueue.shared())
 		self.model = model
 
 		let host = UIHostingController(

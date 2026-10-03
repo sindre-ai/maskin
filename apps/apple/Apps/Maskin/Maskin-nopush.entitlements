@@ -9,5 +9,11 @@
 	<array>
 		<string>$(AppIdentifierPrefix)io.maskin.app</string>
 	</array>
+	<!-- Offline share queue: the share extension parks shares here, the app sends them. Needs the
+	     App Groups capability (group.io.maskin.app) on io.maskin.app and io.maskin.app.share. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.io.maskin.app</string>
+	</array>
 </dict>
 </plist>

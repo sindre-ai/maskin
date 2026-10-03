@@ -103,6 +103,7 @@ public final class AppRuntime {
 	/// observed, so the banner appears as soon as it exists.
 	public private(set) var syncCoordinator: SyncCoordinator?
 	@ObservationIgnored private var syncActorId: String?
+	@ObservationIgnored private var shareDrain: Task<Void, Never>?
 	/// `true` until the coordinator says otherwise (no banner before we know).
 	public var isOnline: Bool { syncCoordinator?.isOnline ?? true }
 
@@ -211,8 +212,21 @@ public final class AppRuntime {
 	/// outbox is driven by the coordinator itself).
 	public func scenePhaseChanged(_ phase: SyncScenePhase) {
 		syncCoordinator?.scenePhaseChanged(phase)
-		if phase == .active, environment.auth.session != nil {
+		if phase == .active, let session = environment.auth.session {
 			ChatsRuntime.shared(environment: environment).outbox.appDidBecomeActive()
+			drainShareQueue(apiKey: session.apiKey)
+		}
+	}
+
+	/// Sends what the share extension parked while offline. One drain at a time; the queue is
+	/// idempotent, so a drain interrupted by the app being suspended just resumes next time.
+	private func drainShareQueue(apiKey: String) {
+		guard shareDrain == nil, let queue = ShareQueue.shared(), !queue.pending().isEmpty else { return }
+		let baseURL = environment.baseURL
+		shareDrain = Task { [weak self] in
+			let drainer = ShareQueueDrainer(queue: queue) { ShareSession.remote(baseURL: baseURL, credentials: $0) }
+			_ = await drainer.drain(apiKey: apiKey)
+			self?.shareDrain = nil
 		}
 	}
 

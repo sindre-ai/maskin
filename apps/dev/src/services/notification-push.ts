@@ -2,7 +2,7 @@ import type { Database } from '@maskin/db'
 import { events, notifications } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { parseCommentDecision } from '@maskin/shared'
-import { and, desc, eq } from 'drizzle-orm'
+import { and, count, desc, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import type { ApnsSender, PushDecision } from './apns'
 
@@ -62,6 +62,8 @@ export class NotificationPushFanout {
 
 		const decision = await this.findDecision(n)
 
+		const badge = await this.pendingCount(n.targetActorId)
+
 		await this.sender.sendToActor(n.targetActorId, {
 			title: decision?.title ?? n.title,
 			body: decision?.ask ?? n.content,
@@ -70,7 +72,25 @@ export class NotificationPushFanout {
 			objectId: n.objectId,
 			conversationId,
 			decision: decision?.push ?? null,
+			// A decision, or anything else waiting on this person, should break through Focus.
+			interruption: decision || n.type === 'needs_input' ? 'time-sensitive' : 'active',
+			badge,
 		})
+	}
+
+	/** The app-icon badge: the actor's pending notifications. Best effort, `null` leaves it alone. */
+	private async pendingCount(actorId: string): Promise<number | null> {
+		try {
+			const [row] = await this.db
+				.select({ value: count() })
+				.from(notifications)
+				.where(and(eq(notifications.targetActorId, actorId), eq(notifications.status, 'pending')))
+			const value = Number(row?.value)
+			return Number.isSafeInteger(value) && value >= 0 ? value : null
+		} catch (err) {
+			logger.warn('Badge count for push failed', { actorId, error: String(err) })
+			return null
+		}
 	}
 
 	/**

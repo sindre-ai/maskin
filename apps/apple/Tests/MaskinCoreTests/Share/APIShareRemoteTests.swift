@@ -30,7 +30,7 @@ private final class WireTransport: ClientTransport, @unchecked Sendable {
 		let path = request.path ?? ""
 		let json: String
 		if status >= 400 {
-			json = "{\"error\":\"x\"}"
+			json = "{\"error\":{\"code\":\"x\",\"message\":\"x\"}}"
 		} else if path.hasPrefix("/api/files") {
 			json = Self.file
 		} else if path.hasPrefix("/api/relationships") {
@@ -75,8 +75,8 @@ struct APIShareRemoteTests {
 		#expect(id == "11111111-1111-1111-1111-111111111111")
 		let seen = try #require(transport.seen.first)
 		#expect(seen.method == "POST" && seen.path == "/api/objects")
-		#expect(seen.headers["X-Workspace-Id"] == "ws-1")
-		#expect(seen.headers["Idempotency-Key"] == "key-1")
+		#expect(seen.headers["x-workspace-id"] == "ws-1")
+		#expect(seen.headers["idempotency-key"] == "key-1")
 		let json = try #require(JSONSerialization.jsonObject(with: seen.body) as? [String: Any])
 		#expect(json["type"] as? String == "insight" && json["status"] as? String == "new")
 		#expect(json["title"] as? String == "T" && json["content"] as? String == "C")
