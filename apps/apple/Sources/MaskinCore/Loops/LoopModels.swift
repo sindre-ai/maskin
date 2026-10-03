@@ -209,3 +209,79 @@ public struct LoopInstall: Equatable, Sendable, Codable {
 		self.isForked = isForked
 	}
 }
+
+/// An object that belongs to a loop (an `in_loop` edge from the loop), as the loop page shows it.
+public struct LoopMember: Identifiable, Equatable, Sendable {
+	public var id: String
+	public var type: String
+	public var title: String
+	public var status: String
+
+	public init(id: String, type: String, title: String, status: String) {
+		self.id = id
+		self.type = type
+		self.title = title
+		self.status = status
+	}
+}
+
+/// Something an agent posted on the loop's timeline (a top-level comment on the loop object).
+public struct LoopPost: Identifiable, Equatable, Sendable {
+	public var id: Int
+	public var actorID: String?
+	public var text: String
+	public var date: Date?
+	public var replyCount: Int
+	/// The post asks the viewer to choose; it also surfaces in For You.
+	public var isDecision: Bool
+
+	public init(
+		id: Int, actorID: String?, text: String, date: Date? = nil, replyCount: Int = 0,
+		isDecision: Bool = false
+	) {
+		self.id = id
+		self.actorID = actorID
+		self.text = text
+		self.date = date
+		self.replyCount = replyCount
+		self.isDecision = isDecision
+	}
+}
+
+/// A file the loop (or one of its objects) produced: the `attached` edge to a `files` row.
+public struct LoopOutput: Identifiable, Equatable, Sendable {
+	public var id: String
+	public var name: String
+	/// The object it is attached to, when that is a member rather than the loop itself.
+	public var sourceTitle: String?
+
+	public init(id: String, name: String, sourceTitle: String? = nil) {
+		self.id = id
+		self.name = name
+		self.sourceTitle = sourceTitle
+	}
+
+	public var kind: FileContentKind { .classify(mimeType: "", name: name) }
+	public var isHTML: Bool { kind == .html }
+}
+
+/// What the loop page needs beyond the step spine: who is in the loop, what agents said, and what
+/// was produced. Assembled from the loop's object graph; every piece is best effort.
+public struct LoopOverview: Equatable, Sendable {
+	public var members: [LoopMember]
+	public var posts: [LoopPost]
+	public var outputs: [LoopOutput]
+	/// The workspace's configured statuses for the member type, in workflow order.
+	public var statusOrder: [String]
+
+	public static let empty = LoopOverview(members: [], posts: [], outputs: [], statusOrder: [])
+
+	public init(
+		members: [LoopMember], posts: [LoopPost], outputs: [LoopOutput], statusOrder: [String]
+	) {
+		self.members = members
+		self.posts = posts
+		self.outputs = outputs
+		self.statusOrder = statusOrder
+	}
+}

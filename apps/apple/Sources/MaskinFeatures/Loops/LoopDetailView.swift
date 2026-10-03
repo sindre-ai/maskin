@@ -75,6 +75,9 @@ struct LoopDetailContent: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s12) {
 			header
+			LoopOutputsSection(outputs: store.outputs)
+			LoopPostsSection(posts: store.posts, directory: store.directory, loopID: store.loop.id)
+			LoopFlowSection(store: store, onOpenTrigger: onOpenTrigger)
 			stats
 			pipeline
 			activity
@@ -91,6 +94,7 @@ struct LoopDetailContent: View {
 					.maskinText(.caption)
 					.foregroundStyle(MaskinColor.ink5)
 			}
+			Text(store.verdict).maskinText(.headline).foregroundStyle(MaskinColor.ink)
 			if let content = store.loop.content, !content.isEmpty {
 				Text(content).maskinText(.body).foregroundStyle(MaskinColor.ink2)
 			}
@@ -183,6 +187,14 @@ struct LoopDetailContent: View {
 		}
 	}
 
+	/// Latest first, so the newest run is on screen without scrolling. Undated entries go last.
+	private func newestFirst(_ entries: [LoopActivityEntry]) -> [LoopActivityEntry] {
+		entries.enumerated().sorted {
+			let a = $0.element.createdAt ?? .distantPast, b = $1.element.createdAt ?? .distantPast
+			return a != b ? a > b : $0.offset < $1.offset
+		}.map(\.element)
+	}
+
 	private var activity: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 			SectionHeader("Recent activity")
@@ -191,9 +203,10 @@ struct LoopDetailContent: View {
 					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 			} else {
 				VStack(spacing: 0) {
-					ForEach(Array(store.activity.prefix(20).enumerated()), id: \.element.id) { index, entry in
+					let recent = Array(newestFirst(store.activity).prefix(20))
+					ForEach(Array(recent.enumerated()), id: \.element.id) { index, entry in
 						LoopActivityRow(entry: entry, actorName: store.actorName(entry))
-						if index < min(store.activity.count, 20) - 1 {
+						if index < recent.count - 1 {
 							Divider().overlay(MaskinSurface.separator)
 						}
 					}

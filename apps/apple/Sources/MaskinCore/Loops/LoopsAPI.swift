@@ -18,4 +18,11 @@ public protocol LoopsAPI: Sendable {
 	func updateLoop(loopID: String, name: String?, content: String?, idempotencyKey: String)
 		async throws
 	func deleteLoop(loopID: String) async throws
+	/// Members, agent posts and produced files, from the loop's object graph. Best effort: a
+	/// source with no graph access returns `.empty`.
+	func overview(loopID: String) async throws -> LoopOverview
+}
+
+extension LoopsAPI {
+	public func overview(loopID: String) async throws -> LoopOverview { .empty }
 }

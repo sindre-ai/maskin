@@ -27,7 +27,30 @@ private actor FixtureLoopsAPI: LoopsAPI {
 	func createLoop(name: String, content: String, idempotencyKey: String) async throws -> String { "new" }
 	func updateLoop(loopID: String, name: String?, content: String?, idempotencyKey: String) async throws {}
 	func deleteLoop(loopID: String) async throws {}
+	func overview(loopID: String) async throws -> LoopOverview { fixtureOverview }
 }
+
+private let fixtureOverview = LoopOverview(
+	members: [
+		LoopMember(id: "m1", type: "insight", title: "Acme Corp asked about pricing", status: "new"),
+		LoopMember(id: "m2", type: "insight", title: "Globex, 40 seats, evaluating", status: "new"),
+		LoopMember(id: "m3", type: "insight", title: "Initech renewal at risk", status: "processing"),
+		LoopMember(id: "m4", type: "insight", title: "Umbrella booked a demo", status: "scored"),
+	],
+	posts: [
+		LoopPost(
+			id: 1, actorID: "agent-3",
+			text: "Three of this week's leads came from the same webinar. Worth a follow-up sequence.",
+			date: base.addingTimeInterval(-1800), replyCount: 2),
+		LoopPost(
+			id: 2, actorID: "agent-1", text: "Should I route enterprise leads to Alex instead of the shared inbox?",
+			date: base.addingTimeInterval(-7200), isDecision: true),
+	],
+	outputs: [
+		LoopOutput(id: "f1", name: "Weekly pipeline brief.html"),
+		LoopOutput(id: "f2", name: "Lead scoring notes.md", sourceTitle: "Initech renewal at risk"),
+	],
+	statusOrder: ["new", "processing", "clustered", "scored", "parked", "discarded"])
 
 private let fixtureLoop = LoopSummary(
 	id: "l1", name: "Inbound lead qualification",
@@ -108,6 +131,7 @@ struct LoopsSnapshotTests {
 		await store.start()
 		#expect(store.steps.count == 2)
 		#expect(store.activity.count == 3)
+		#expect(store.phases.count == 3)
 		for width in Self.widths {
 			try render(LoopDetailContent(store: store).padding(MaskinSpace.s9), width: width, dark: dark, name: "loop-detail")
 		}

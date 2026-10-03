@@ -195,7 +195,10 @@ private struct LoopDetailHost: View {
 	) {
 		let detail = LoopDetailStore(
 			loop: loop, directory: directory,
-			api: APILoopsSource(client: environment.client, workspaceID: workspaceID),
+			api: APILoopsSource(
+				client: environment.client, workspaceID: workspaceID,
+				objects: APIObjectsRemote(
+					client: environment.client, credentials: environment.auth.credentialsProvider)),
 			events: environment.events)
 		detail.onDeleted = { [list] id in list.didDelete(id) }
 		_store = State(initialValue: detail)

@@ -13,6 +13,9 @@ public final class LoopDetailStore {
 	public private(set) var loop: LoopSummary
 	public private(set) var steps: [LoopStep] = []
 	public private(set) var activity: [LoopActivityEntry] = []
+	public private(set) var overview: LoopOverview = .empty
+	/// The phase the viewer tapped; nil follows the busiest one.
+	public var selectedStatus: String?
 	public private(set) var phase: Phase = .idle
 	public private(set) var directory: ActorDirectory
 	public private(set) var isTogglingPause = false
@@ -51,6 +54,39 @@ public final class LoopDetailStore {
 		self.debouncer = RefreshDebouncer(delay: debounce, sleep: sleep)
 	}
 
+	public var posts: [LoopPost] { overview.posts }
+	public var outputs: [LoopOutput] { overview.outputs }
+
+	public var phases: [LoopPhase] {
+		LoopPhases.build(members: overview.members, steps: steps, statusOrder: overview.statusOrder)
+	}
+
+	/// The tapped phase, else the first with objects in it, else the first.
+	public var selectedPhase: LoopPhase? {
+		let all = phases
+		if let selectedStatus, let hit = all.first(where: { $0.status == selectedStatus }) { return hit }
+		return all.first(where: { $0.count > 0 }) ?? all.first
+	}
+
+	/// Steps no phase claims (cron and webhook triggers, or events with no `from_status`).
+	public var unphasedSteps: [LoopStep] {
+		let claimed = Set(phases.flatMap { $0.steps.map(\.triggerID) })
+		return steps.filter { !claimed.contains($0.triggerID) }
+	}
+
+	/// One line for the header: how the loop is doing right now.
+	public var verdict: String {
+		if loop.status == .draft { return "Not running yet" }
+		if loop.isPaused { return "Paused" }
+		let failed = activity.prefix(10).filter { $0.tone == .failure }.count
+		var parts: [String] = []
+		if loop.waitingCount > 0 { parts.append("\(loop.waitingCount) waiting on you") }
+		if failed > 0 { parts.append("\(failed) recent failure\(failed == 1 ? "" : "s")") }
+		if parts.isEmpty { parts.append("Healthy") }
+		parts.append("\(loop.inProgressCount) in progress")
+		return parts.joined(separator: " · ")
+	}
+
 	/// Who an activity entry belongs to, by name.
 	public func actorName(_ entry: LoopActivityEntry) -> String? { directory.name(entry.actorID) }
 
@@ -81,7 +117,7 @@ public final class LoopDetailStore {
 		debouncer.cancel()
 	}
 
-	/// A burst of events becomes one reload (each reload is three requests).
+	/// A burst of events becomes one reload (each reload is a handful of requests).
 	private func scheduleRefresh() {
 		debouncer.schedule { [weak self] in await self?.refresh() }
 	}
@@ -100,7 +136,9 @@ public final class LoopDetailStore {
 				async let summaries = api.loops()
 				async let stepRows = api.steps(loopID: loop.id)
 				async let feed = api.activity(loopID: loop.id)
+				async let extra = try? api.overview(loopID: loop.id)
 				let (all, newSteps, newFeed) = try await (summaries, stepRows, feed)
+				if let fresh = await extra { overview = fresh }
 				guard let fresh = all.first(where: { $0.id == loop.id }) else {
 					isGone = true
 					return

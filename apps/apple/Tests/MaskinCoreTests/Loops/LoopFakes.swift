@@ -16,6 +16,7 @@ actor FakeLoopsAPI: LoopsAPI {
 	var rows: [LoopSummary]
 	var stepRows: [LoopStep] = []
 	var feed: [LoopActivityEntry] = []
+	var overviewRow: LoopOverview = .empty
 	var installRows: [LoopInstall] = []
 	var failStatus = false
 	var failLoops = false
@@ -33,6 +34,7 @@ actor FakeLoopsAPI: LoopsAPI {
 
 	func set(_ rows: [LoopSummary]) { self.rows = rows }
 	func setSteps(_ steps: [LoopStep]) { stepRows = steps }
+	func setOverview(_ value: LoopOverview) { overviewRow = value }
 	func setFeed(_ entries: [LoopActivityEntry]) { feed = entries }
 	func setInstalls(_ rows: [LoopInstall]) { installRows = rows }
 	func setFailStatus(_ value: Bool) { failStatus = value }
@@ -46,6 +48,7 @@ actor FakeLoopsAPI: LoopsAPI {
 	}
 	func steps(loopID: String) async throws -> [LoopStep] { stepRows }
 	func activity(loopID: String) async throws -> [LoopActivityEntry] { feed }
+	func overview(loopID: String) async throws -> LoopOverview { overviewRow }
 	func actors() async throws -> [AutomationActor] { testActors }
 	func installs() async throws -> [LoopInstall] { installRows }
 

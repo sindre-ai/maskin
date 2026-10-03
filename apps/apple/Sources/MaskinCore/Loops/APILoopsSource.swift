@@ -7,10 +7,45 @@ import OpenAPIRuntime
 public struct APILoopsSource: LoopsAPI {
 	private let client: Client
 	private let workspaceID: String
+	private let objects: (any ObjectsRemote)?
 
-	public init(client: Client, workspaceID: String) {
+	/// `objects` supplies the loop's graph (members, posts, files); without it the loop page
+	/// shows the step spine and activity only.
+	public init(client: Client, workspaceID: String, objects: (any ObjectsRemote)? = nil) {
 		self.client = client
 		self.workspaceID = workspaceID
+		self.objects = objects
+	}
+
+	public func overview(loopID: String) async throws -> LoopOverview {
+		guard let objects else { return .empty }
+		let graph = try await objects.graph(objectId: loopID)
+		let members = LoopOverviewBuilder.members(from: graph)
+		let loopFiles = LoopOverviewBuilder.files(from: graph, sourceTitle: nil)
+		let sample = Array(members.prefix(LoopOverviewBuilder.memberFileLookups))
+		let memberFiles = await withTaskGroup(of: [LoopOutput].self) { group in
+			for member in sample {
+				group.addTask {
+					guard let g = try? await objects.graph(objectId: member.id) else { return [] }
+					return LoopOverviewBuilder.files(from: g, sourceTitle: member.title)
+				}
+			}
+			var all: [LoopOutput] = []
+			for await files in group { all += files }
+			return all
+		}
+		let order: [String]
+		if let type = LoopPhases.primaryType(of: members),
+			let schema = try? await objects.schema(workspaceId: workspaceID)
+		{
+			order = schema.statuses(for: type)
+		} else {
+			order = []
+		}
+		return LoopOverview(
+			members: members, posts: LoopOverviewBuilder.posts(from: graph.events),
+			outputs: LoopOverviewBuilder.outputs(loopFiles: loopFiles, memberFiles: memberFiles),
+			statusOrder: order)
 	}
 
 	public func loops() async throws -> [LoopSummary] {
