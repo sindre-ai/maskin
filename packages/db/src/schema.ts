@@ -190,9 +190,12 @@ export const objects = pgTable(
 			.where(sql`${t.activeSessionId} IS NOT NULL`),
 		// Voice-outreach dial queue (bet/5b8e-voice-outreach): the dialer tick reads
 		// contacts that are voice_queued and due, ordered by next_dial_at. Contacts
-		// are objects rows with type = 'contact'.
+		// are objects rows with type = 'contact'. Indexed as the raw text, not
+		// ::timestamptz (text -> timestamptz is not IMMUTABLE, Postgres refuses it in
+		// an index). The reducer only writes toISOString() UTC values, which sort
+		// chronologically as text.
 		index('objects_voice_queue_next_dial_idx')
-			.on(t.workspaceId, sql`((${t.metadata}->>'next_dial_at')::timestamptz)`)
+			.on(t.workspaceId, sql`((${t.metadata}->>'next_dial_at'))`)
 			.where(sql`${t.type} = 'contact' AND ${t.status} = 'voice_queued'`),
 	],
 )
