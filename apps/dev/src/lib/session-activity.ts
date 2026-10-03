@@ -35,9 +35,14 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 	return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
+/** Same cut as the web's `truncate`: no whitespace collapsing here. */
 function truncate(text: string, max: number): string {
-	const t = text.replace(/\s+/g, ' ').trim()
-	return t.length <= max ? t : `${t.slice(0, max - 1).trimEnd()}…`
+	return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`
+}
+
+/** Assistant text is collapsed to one line before cutting, as on the web. */
+function oneLine(text: string, max: number): string {
+	return truncate(text.replace(/\s+/g, ' ').trim(), max)
 }
 
 function iso(d: Date | null): string | null {
@@ -52,7 +57,7 @@ function toolDetail(input: unknown): string | undefined {
 	if (!isRecord(input)) return undefined
 	for (const key of DETAIL_KEYS) {
 		const v = input[key]
-		if (typeof v === 'string' && v.trim().length > 0) return truncate(v, MAX_DETAIL)
+		if (typeof v === 'string' && v.trim().length > 0) return oneLine(v, MAX_DETAIL)
 	}
 	return undefined
 }
@@ -144,8 +149,9 @@ export function buildSessionActivity(rows: ActivityLogRow[]): SessionActivityTur
 					if (!isRecord(block)) return
 					const id = `${row.id}-${index}`
 					if (block.type === 'tool_use') {
+						// The web parser drops tool_use blocks without a string id or name.
 						const name = typeof block.name === 'string' ? block.name : null
-						if (name === null) return
+						if (name === null || typeof block.id !== 'string') return
 						const reply = isReplyTool(name)
 						if (reply) open.turn.contains_reply = true
 						const detail = reply ? undefined : toolDetail(block.input)
@@ -176,7 +182,7 @@ export function buildSessionActivity(rows: ActivityLogRow[]): SessionActivityTur
 							status: 'completed',
 						})
 					} else if (block.type === 'text' && typeof block.text === 'string') {
-						const label = truncate(block.text, MAX_TEXT_LABEL)
+						const label = oneLine(block.text, MAX_TEXT_LABEL)
 						if (!label) return
 						// Wrap-up text right after the reply tool just restates it.
 						const prev = open.steps[open.steps.length - 1]
@@ -217,11 +223,11 @@ export function buildSessionActivity(rows: ActivityLogRow[]): SessionActivityTur
 						? env.message
 						: typeof env.error === 'string'
 							? env.error
-							: ''
+							: 'unknown error'
 				current?.steps.push({
 					id: `${row.id}-0`,
 					kind: 'error',
-					label: truncate(msg || 'Error', MAX_TEXT_LABEL),
+					label: truncate(msg, MAX_TEXT_LABEL),
 					started_at: at,
 					finished_at: at,
 					status: 'failed',
