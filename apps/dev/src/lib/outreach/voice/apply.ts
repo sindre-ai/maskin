@@ -21,6 +21,8 @@ export type ApplyVoiceEventResult =
 			staleCall: boolean
 			previousStatus: string
 			status: string
+			/** The contact's metadata after this event (unchanged when not applied). */
+			metadata: Record<string, unknown>
 			effects: VoiceEffect[]
 			effectContext: EffectContext
 	  }
@@ -85,6 +87,7 @@ export async function applyVoiceEvent(
 				staleCall: result.staleCall,
 				previousStatus: row.status,
 				status: row.status,
+				metadata: current ?? {},
 				effects: [],
 				effectContext,
 			} as const
@@ -116,6 +119,7 @@ export async function applyVoiceEvent(
 			staleCall: result.staleCall,
 			previousStatus: row.status,
 			status: result.status,
+			metadata,
 			effects: result.effects,
 			effectContext,
 		} as const
