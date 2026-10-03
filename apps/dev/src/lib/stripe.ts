@@ -134,9 +134,11 @@ export interface StripeEnv {
 	 * picks the number" credit top-up Price whose Product carries the tax_code
 	 * Stripe Tax classifies against. Environment-specific (test-mode and
 	 * live-mode Products are different Stripe objects with different ids), so
-	 * it must come from env rather than the codebase.
+	 * it must come from env rather than the codebase. Optional: null when unset,
+	 * which disables the credit top-up (`POST /billing/credits/checkout` → 404)
+	 * without affecting subscription checkout.
 	 */
-	priceCreditsCustom: string
+	priceCreditsCustom: string | null
 }
 
 interface CheckoutInputs {
@@ -178,7 +180,6 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 		'STRIPE_WEBHOOK_SECRET',
 		'STRIPE_PRICE_PRO',
 		'STRIPE_PRICE_TEAM',
-		'STRIPE_PRICE_CREDITS_CUSTOM',
 		'MASKIN_PRO_HARD_CAP_USD_CENTS',
 		'MASKIN_TEAM_HARD_CAP_USD_CENTS',
 	] as const
@@ -211,7 +212,7 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 		proHardCapUsdCents: parseCapCents('MASKIN_PRO_HARD_CAP_USD_CENTS'),
 		teamHardCapUsdCents: parseCapCents('MASKIN_TEAM_HARD_CAP_USD_CENTS'),
 		priceLinkedinIdentity: env.STRIPE_PRICE_LINKEDIN_IDENTITY || null,
-		priceCreditsCustom: env.STRIPE_PRICE_CREDITS_CUSTOM as string,
+		priceCreditsCustom: env.STRIPE_PRICE_CREDITS_CUSTOM || null,
 	}
 }
 
@@ -319,6 +320,9 @@ export async function createCreditCheckoutSession(
 	env: StripeEnv,
 ): Promise<Stripe.Checkout.Session> {
 	const currency: MaskinCreditsCurrency = inputs.currency ?? 'usd'
+	if (!env.priceCreditsCustom) {
+		throw new Error('STRIPE_PRICE_CREDITS_CUSTOM is not configured')
+	}
 
 	// Delta 1b: migrate off ad-hoc `price_data` onto the Stripe-managed
 	// `maskin_credits_custom` Price. Stripe Tax can only classify a Price

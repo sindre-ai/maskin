@@ -215,6 +215,66 @@ describe('POST /api/billing/checkout', () => {
 	})
 })
 
+describe('top-up price env (STRIPE_PRICE_CREDITS_CUSTOM) unset', () => {
+	beforeEach(() => {
+		// Empty string reads as unset (readStripeEnv uses a falsy check); the outer
+		// beforeEach re-runs setupEnv() so this doesn't leak into later tests.
+		process.env.STRIPE_PRICE_CREDITS_CUSTOM = ''
+	})
+
+	it('POST /api/billing/credits/checkout returns 404 and never calls Stripe', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				...OWNER_CALLER,
+				settings: { billing: { plan: 'pro', status: 'active' } },
+			},
+		]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/credits/checkout',
+				{
+					amount_usd_cents: 2_500,
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(404)
+		expect(createCreditCheckoutSession).not.toHaveBeenCalled()
+	})
+
+	it('POST /api/billing/checkout (subscription) still succeeds', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [{ id: workspaceId, ...OWNER_CALLER, settings: {} }]
+		vi.mocked(createCheckoutSession).mockResolvedValue({
+			id: 'cs_test_unset',
+			url: 'https://checkout.stripe.com/c/cs_test_unset',
+		} as Awaited<ReturnType<typeof createCheckoutSession>>)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/checkout',
+				{
+					plan: 'pro',
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(200)
+		expect(createCheckoutSession).toHaveBeenCalled()
+	})
+})
+
 describe('POST /api/billing/credits/checkout', () => {
 	it('lets a trial workspace top up — every maskin plan may buy credits', async () => {
 		// Was 400 ("not eligible"): the gate required pro/team, so the NO
