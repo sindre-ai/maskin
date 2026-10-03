@@ -78,6 +78,14 @@ async function statusOf(id: string) {
 	return row?.status
 }
 
+async function attemptsOf(id: string) {
+	const [row] = await db
+		.select({ metadata: objects.metadata })
+		.from(objects)
+		.where(eq(objects.id, id))
+	return (row?.metadata as { dial_attempt_n?: number } | null)?.dial_attempt_n
+}
+
 describe('voice dialer against real Postgres', () => {
 	describe('queue read', () => {
 		it('returns voice_queued (null or due) and due retry statuses, and nothing else', async () => {
@@ -182,6 +190,42 @@ describe('voice dialer against real Postgres', () => {
 				.where(eq(objects.id, retry?.id ?? ''))
 			expect(await store.claim(ws.id, read, getTestActorId(), NOW)).toBe(false)
 			expect(await statusOf(retry?.id ?? '')).toBe('voice_no_answer')
+		})
+	})
+
+	describe('dial attempt count', () => {
+		it('the claim writes dial_attempt_n = n + 1 and the later call.initiated leaves n + 1, not n + 2', async () => {
+			const ws = await freshWorkspace()
+			const c = await seedContact(ws.id, 'voice_no_answer', {
+				next_dial_at: DUE,
+				dial_attempt_n: 1,
+			})
+			const { d, createCall } = deps(ws.id)
+
+			await runDialerTick(ws.id, d)
+
+			const sent = createCall.mock.calls[0]?.[0] as unknown as {
+				clientState: { dial_attempt_n: number }
+			}
+			expect(sent.clientState.dial_attempt_n).toBe(2)
+			// Written at claim time, before any webhook: a lost call.initiated cannot hide this dial.
+			expect(await attemptsOf(c?.id ?? '')).toBe(2)
+
+			await applyVoiceEvent(db, {
+				workspaceId: ws.id,
+				contactId: c?.id ?? '',
+				event: { type: 'call_initiated', callId: 'call-n', dialAttemptN: 2, to: '+4520123456' },
+				now: NOW,
+			})
+			expect(await attemptsOf(c?.id ?? '')).toBe(2)
+		})
+
+		it('starts a first dial at 1 when the contact has no count yet', async () => {
+			const ws = await freshWorkspace()
+			const c = await seedContact(ws.id, 'voice_queued')
+			const { d } = deps(ws.id)
+			await runDialerTick(ws.id, d)
+			expect(await attemptsOf(c?.id ?? '')).toBe(1)
 		})
 	})
 

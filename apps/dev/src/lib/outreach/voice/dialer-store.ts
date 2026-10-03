@@ -3,7 +3,7 @@ import { events, objects } from '@maskin/db/schema'
 import { and, count, eq, gte, inArray, or, sql } from 'drizzle-orm'
 import { recordEvent } from '../../events/record-event'
 import { applyVoiceEvent, runAppliedEffects } from './apply'
-import { RETRY_STATUSES } from './dialer'
+import { RETRY_STATUSES, dialAttemptOf } from './dialer'
 import type { DialerStore, QueuedContact } from './dialer'
 import { type EffectRunner, createDefaultEffectRunner } from './effects'
 
@@ -72,7 +72,14 @@ export function createDrizzleDialerStore(
 			return db.transaction(async (tx) => {
 				const claimed = await tx
 					.update(objects)
-					.set({ status: 'voice_dialing', updatedAt: now })
+					// dial_attempt_n is written here, in the same update as the status, so the three-dial
+					// backstop counts a placed call even if call.initiated never arrives. client_state carries
+					// the same value and the reducer sets the absolute number from it, so nothing double counts.
+					.set({
+						status: 'voice_dialing',
+						updatedAt: now,
+						metadata: sql`coalesce(${objects.metadata}, '{}'::jsonb) || ${JSON.stringify({ dial_attempt_n: dialAttemptOf(contact) })}::jsonb`,
+					})
 					.where(
 						and(
 							eq(objects.id, contact.id),

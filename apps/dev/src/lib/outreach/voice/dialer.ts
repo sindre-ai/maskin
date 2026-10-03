@@ -114,7 +114,8 @@ export interface DialerTickResult {
 	ready_to_dial_count?: number
 }
 
-function dialAttemptOf(contact: QueuedContact): number {
+/** The attempt number this dial carries: what the contact has recorded, plus one. */
+export function dialAttemptOf(contact: QueuedContact): number {
 	const n = contact.metadata?.dial_attempt_n
 	return (typeof n === 'number' && Number.isFinite(n) ? n : 0) + 1
 }
