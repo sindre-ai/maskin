@@ -31,6 +31,12 @@ enforces the credential's scope grants and writes a hash-chained row to
 
 Develop on `KEYCHAIN_KMS=local-file`. CI never calls AWS; the KMS tests use a mocked client.
 
+**KEK fingerprint** (`local-file`, production). At boot the server logs `Keychain KEK (local-file)` with
+`kekFileExisted` and `kekFingerprint`: the first 8 hex characters of sha256 over the key bytes (the file's hex decoded)
+followed by the ASCII label `maskin-keychain-kek-fingerprint-v1`. To check an off-volume copy against the log, run
+`node -e "const c=require('crypto');console.log(c.createHash('sha256').update(Buffer.from(require('fs').readFileSync(0,'utf8').trim(),'hex')).update('maskin-keychain-kek-fingerprint-v1').digest('hex').slice(0,8))"`,
+paste the copy, press Enter, then Ctrl-D (stdin keeps the key out of shell history). It must match `kekFingerprint`.
+
 **Least-privilege policy for the runtime identity** (`aws-kms`). The first write for
 a workspace creates its key and the alias `alias/maskin-keychain-<KEYCHAIN_ENV>-<workspaceId>`, tagged `maskin-keychain=<KEYCHAIN_ENV>`, so the
 runtime needs `CreateKey` and `TagResource` as well as `CreateAlias`. IAM authorises

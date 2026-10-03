@@ -1,7 +1,15 @@
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
 	CreateAliasCommand,
 	CreateKeyCommand,
@@ -111,6 +119,17 @@ describe('LocalFileKmsProvider', () => {
 		expect(first.fingerprint).toMatch(/^[0-9a-f]{8}$/)
 		expect(second.fingerprint).toBe(first.fingerprint)
 		expect(readFileSync(kekPath, 'utf8')).not.toContain(first.fingerprint)
+	})
+
+	it('pins the fingerprint formula: first 8 hex of sha256 over the decoded key bytes, then the fixed label', async () => {
+		// The README tells a human how to check an off-volume KEK copy against the boot log.
+		// Changing the formula would break that check, so this value must not change.
+		mkdirSync(dirname(kekPath), { recursive: true })
+		writeFileSync(kekPath, '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff\n', {
+			mode: 0o600,
+		})
+		const { fingerprint } = await new LocalFileKmsProvider(kekPath).prepare()
+		expect(fingerprint).toBe('2b387596')
 	})
 
 	it('rejects a key file that is not 32 bytes of hex', async () => {
