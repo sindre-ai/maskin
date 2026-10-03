@@ -684,4 +684,169 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 			'wall_timeout',
 		)
 	})
+
+	// (f) A row that already reached a terminal status but whose session_state
+	// was never stamped done (settleSession skipped its transaction on the
+	// already-terminal path) is healed to done by the first reaper step. It must
+	// never reach settleSession: no event, no status change. The 'running' case
+	// is also past the wall-timeout, so without the heal and the status filter
+	// step 1 would settle it again.
+	it.each(['starting', 'queued', 'running'] as const)(
+		'a completed row stuck in session_state=%s is healed to done and never reaches settle',
+		async (staleState) => {
+			const longAgo = new Date(Date.now() - 3 * 60 * 60 * 1000)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'completed',
+				sessionState: staleState,
+				stateEnteredAt: longAgo,
+				startedAt: longAgo,
+				completedAt: longAgo,
+				timeoutAt: longAgo,
+			})
+
+			const manager = await tickReaper()
+			try {
+				// no-op
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('completed')
+			expect(row?.sessionState).toBe('done')
+			const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+			expect(eventRows).toEqual([])
+		},
+	)
+
+	// (g) The boot-stall read must never settle a row that turned running after
+	// the heal step. The race is forced deterministically: step 8 awaits a
+	// PostHog capture (a fetch) on the waiting-too-long row, and that fetch flips
+	// the starting row to status running, between the heal and the boot-stall
+	// read.
+	it('a row that turns running after the heal is not failed by boot-stall', async () => {
+		const sixMinAgo = new Date(Date.now() - 6 * 60 * 1000)
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'starting',
+			sessionState: 'starting',
+			stateEnteredAt: sixMinAgo,
+			startedAt: sixMinAgo,
+			timeoutAt: null,
+		})
+		await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'queued',
+			sessionState: 'waiting_for_machine',
+			stateEnteredAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
+			startedAt: null,
+			timeoutAt: null,
+		})
+
+		const originalKey = process.env.POSTHOG_API_KEY
+		process.env.POSTHOG_API_KEY = 'phc_test'
+		let captureCalls = 0
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+			captureCalls++
+			await db.update(sessions).set({ status: 'running' }).where(eq(sessions.id, session.id))
+			return new Response('{}', { status: 200 })
+		})
+
+		const manager = await tickReaper()
+		try {
+			// no-op
+		} finally {
+			fetchSpy.mockRestore()
+			if (originalKey === undefined) Reflect.deleteProperty(process.env, 'POSTHOG_API_KEY')
+			else process.env.POSTHOG_API_KEY = originalKey
+			await manager.stop()
+		}
+
+		// The hook fired, so the row really turned running mid-pass.
+		expect(captureCalls).toBe(1)
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('running')
+		expect(row?.completedAt).toBeNull()
+		const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+		expect(eventRows.some((e) => e.action === 'session_failed')).toBe(false)
+	})
+
+	// (h) One step throwing must not skip the steps after it. Step 1 throws on
+	// the wall-timed-out row; the boot-stalled row, handled by step 9, still
+	// settles.
+	it('a throw in one reaper step still lets later steps run', async () => {
+		const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000)
+		await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+			sessionState: 'running',
+			stateEnteredAt: threeHoursAgo,
+			startedAt: threeHoursAgo,
+			timeoutAt: threeHoursAgo,
+		})
+		const sixMinAgo = new Date(Date.now() - 6 * 60 * 1000)
+		const stalled = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'starting',
+			sessionState: 'starting',
+			stateEnteredAt: sixMinAgo,
+			startedAt: sixMinAgo,
+			timeoutAt: null,
+		})
+
+		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
+		vi.spyOn(
+			manager as unknown as { drainQueue: (id: string) => Promise<void> },
+			'drainQueue',
+		).mockResolvedValue(undefined)
+		vi.spyOn(
+			manager as unknown as { accumulateSessionUsage: (id: string) => Promise<unknown> },
+			'accumulateSessionUsage',
+		).mockRejectedValue(new Error('step 1 boom'))
+		try {
+			await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+		} finally {
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, stalled.id))
+		expect(row?.status).toBe('failed')
+		expect(row?.sessionState).toBe('done')
+	})
+
+	// (i) A tick that finds the previous pass still running is skipped.
+	it('a tick is skipped while the previous pass is still running', async () => {
+		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
+		vi.spyOn(
+			manager as unknown as { drainQueue: (id: string) => Promise<void> },
+			'drainQueue',
+		).mockResolvedValue(undefined)
+		let releasePrune: () => void = () => {}
+		const pruneSpy = vi
+			.spyOn(manager as unknown as { pruneSessionLogs: () => Promise<void> }, 'pruneSessionLogs')
+			.mockImplementation(
+				() =>
+					new Promise<void>((resolve) => {
+						releasePrune = resolve
+					}),
+			)
+		const tick = () => (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+
+		try {
+			const first = tick()
+			// Wait until the first pass is parked inside the prune step.
+			while (pruneSpy.mock.calls.length === 0) await new Promise((r) => setTimeout(r, 10))
+			await tick()
+			expect(pruneSpy).toHaveBeenCalledTimes(1)
+
+			releasePrune()
+			await first
+			// The flag is released once the pass ends, so the next tick runs.
+			const third = tick()
+			while (pruneSpy.mock.calls.length < 2) await new Promise((r) => setTimeout(r, 10))
+			releasePrune()
+			await third
+			expect(pruneSpy).toHaveBeenCalledTimes(2)
+		} finally {
+			await manager.stop()
+		}
+	})
 })
