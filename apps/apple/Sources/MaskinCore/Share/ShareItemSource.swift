@@ -18,8 +18,9 @@ public protocol ShareItemSource: Sendable {
 
 struct ShareItemUnreadable: Error {}
 
-// `NSItemProvider.suggestedName` doesn't exist on watchOS, and the share extension is iOS-only.
-#if !os(watchOS)
+// `NSItemProvider.suggestedName` doesn't exist on watchOS or tvOS, and the share extension is
+// iOS-only.
+#if !os(watchOS) && !os(tvOS)
 public struct NSItemProviderSource: ShareItemSource, @unchecked Sendable {
 	private let provider: NSItemProvider
 
