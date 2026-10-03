@@ -36,7 +36,11 @@ function serializeDevice(row: typeof deviceTokens.$inferSelect) {
 // workspace-scoped. Attribute the audit row to the caller's `X-Workspace-Id`
 // (membership already enforced by authMiddleware) or, when absent, to the
 // actor's first workspace. An actor in no workspace gets no audit row.
-async function resolveAuditWorkspace(db: Database, actorId: string, header: string | undefined) {
+export async function resolveAuditWorkspace(
+	db: Database,
+	actorId: string,
+	header: string | undefined,
+) {
 	if (header && UUID_RE.test(header)) return header
 	const [member] = await db
 		.select({ workspaceId: workspaceMembers.workspaceId })
