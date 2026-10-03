@@ -2314,6 +2314,17 @@ export class SessionManager extends EventEmitter {
 			// Defensive: some test fixtures stub getProvider to return null. Never
 			// happens in production (registry throws on unknown).
 			if (!resolved) continue
+			// Per-integration switch: the credential stays usable server-side, but
+			// agent sessions get neither the token env var nor the MCP server.
+			if ((integration.config as IntegrationConfig | null)?.expose_to_agent_sessions === false) {
+				logger.info('Integration not exposed to agent sessions; skipping injection', {
+					sessionId: session.id,
+					workspaceId: session.workspaceId,
+					integrationId: integration.id,
+					provider: integration.provider,
+				})
+				continue
+			}
 			const mcp = resolved.config.mcp
 			const autoInjectServer = mcp?.autoInject && mcp.server ? mcp.server : null
 			// True when the provider's declared MCP server template references its
