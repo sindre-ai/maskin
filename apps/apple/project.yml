@@ -51,6 +51,15 @@ targets:
         product: MaskinDesign
       - package: MaskinKit
         product: MaskinAPI
+      # The iOS share extension (intake from other apps), embedded in PlugIns/.
+      - target: MaskinShare
+        platformFilter: iOS
+      # Notification service extension: builds per-push action buttons for decision pushes.
+      - target: MaskinNotificationService
+        platformFilter: iOS
+      # Home- and lock-screen widgets (decisions that need you), embedded in PlugIns/.
+      - target: MaskinWidgets
+        platformFilter: iOS
     postCompileScripts:
       - name: Strip dev-only ATS exception
         basedOnDependencyAnalysis: false
@@ -137,6 +146,172 @@ targets:
           MASKIN_MACOS_ENTITLEMENTS: Apps/Maskin/Maskin-macOS.entitlements
           # ASSUMPTION: production serves API and web from this origin (maskin.io is what the
           # repo's deep-link/docs URLs use). Confirm before the first TestFlight build.
+          MASKIN_API_BASE_URL: https://maskin.io
+  # iOS share extension: share a link, text, image or PDF from another app into Maskin. A separate
+  # process (~120 MB budget), so it links only the UI-free core, API client and design tokens, never
+  # MaskinFeatures. It reads the app's session from the shared Keychain access group.
+  MaskinShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Apps/MaskinShare
+        excludes:
+          - Info.plist
+          - MaskinShare.entitlements
+      # Same fonts as the app, so the sheet uses the brand faces (folder reference, like the app).
+      - path: Apps/Maskin/Resources/Fonts
+        type: folder
+    dependencies:
+      - package: MaskinKit
+        product: MaskinCore
+      - package: MaskinKit
+        product: MaskinAPI
+      - package: MaskinKit
+        product: MaskinDesign
+      - package: MaskinKit
+        product: MaskinUI
+    postCompileScripts:
+      - name: Strip dev-only ATS exception
+        basedOnDependencyAnalysis: false
+        script: |
+          "$SRCROOT/scripts/strip-dev-ats.sh"
+    info:
+      path: Apps/MaskinShare/Info.plist
+      properties:
+        CFBundleDisplayName: Maskin
+        CFBundleName: Maskin
+        MaskinAPIBaseURL: $(MASKIN_API_BASE_URL)
+        UIAppFonts:
+          - Fonts/SchibstedGrotesk.ttf
+          - Fonts/JetBrainsMono.ttf
+        ITSAppUsesNonExemptEncryption: false
+        NSAppTransportSecurity:
+          NSExceptionDomains:
+            localhost:
+              NSExceptionAllowsInsecureHTTPLoads: true
+              NSIncludesSubdomains: false
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            # An explicit rule (never TRUEPREDICATE: App Review rejects it). One web address or
+            # some text, up to 5 images, up to 5 files (PDFs arrive as files).
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsImageWithMaxCount: 5
+              NSExtensionActivationSupportsFileWithMaxCount: 5
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app.share
+        PRODUCT_NAME: MaskinShare
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+        # Only extension-safe API (the app's UIApplication.shared etc. don't exist here).
+        APPLICATION_EXTENSION_API_ONLY: YES
+        CODE_SIGN_ENTITLEMENTS: Apps/MaskinShare/MaskinShare.entitlements
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        # DEVELOPMENT_TEAM comes from the optional gitignored Config/Local.xcconfig.
+        CODE_SIGN_STYLE: Automatic
+      configs:
+        Debug:
+          MASKIN_API_BASE_URL: http://localhost:3000
+        Release:
+          MASKIN_API_BASE_URL: https://maskin.io
+  # iOS notification service extension (mutable-content pushes): turns a decision push into one
+  # whose banner/lock-screen buttons are the agent's own options plus a Reply field. Foundation +
+  # UserNotifications only; PushDecision.swift is compiled in directly instead of linking
+  # MaskinCore, to stay far inside an extension's memory limit.
+  MaskinNotificationService:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Apps/MaskinNotificationService
+        excludes:
+          - Info.plist
+      - path: Sources/MaskinCore/Push/PushDecision.swift
+    info:
+      path: Apps/MaskinNotificationService/Info.plist
+      properties:
+        CFBundleDisplayName: Maskin
+        CFBundleName: Maskin
+        ITSAppUsesNonExemptEncryption: false
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app.notification-service
+        PRODUCT_NAME: MaskinNotificationService
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        CODE_SIGN_STYLE: Automatic
+  # iOS WidgetKit extension: home-screen (small/medium/large) and lock-screen (circular/rectangular/
+  # inline) widgets showing the decisions that need you. Separate process with tight memory/time
+  # limits, so it links only MaskinCore (UI-free), MaskinAPI, MaskinDesign and MaskinUI, never
+  # MaskinFeatures. Reads the app's session from the shared Keychain group and fetches directly;
+  # its last snapshot is cached in its own container (no App Group).
+  MaskinWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Apps/MaskinWidgets
+        excludes:
+          - Info.plist
+          - MaskinWidgets.entitlements
+      - path: Apps/Maskin/Resources/Fonts
+        type: folder
+    dependencies:
+      - package: MaskinKit
+        product: MaskinCore
+      - package: MaskinKit
+        product: MaskinAPI
+      - package: MaskinKit
+        product: MaskinDesign
+      - package: MaskinKit
+        product: MaskinUI
+    postCompileScripts:
+      - name: Strip dev-only ATS exception
+        basedOnDependencyAnalysis: false
+        script: |
+          "$SRCROOT/scripts/strip-dev-ats.sh"
+    info:
+      path: Apps/MaskinWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Maskin
+        CFBundleName: Maskin
+        MaskinAPIBaseURL: $(MASKIN_API_BASE_URL)
+        UIAppFonts:
+          - Fonts/SchibstedGrotesk.ttf
+          - Fonts/JetBrainsMono.ttf
+        ITSAppUsesNonExemptEncryption: false
+        NSAppTransportSecurity:
+          NSExceptionDomains:
+            localhost:
+              NSExceptionAllowsInsecureHTTPLoads: true
+              NSIncludesSubdomains: false
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app.widgets
+        PRODUCT_NAME: MaskinWidgets
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+        CODE_SIGN_ENTITLEMENTS: Apps/MaskinWidgets/MaskinWidgets.entitlements
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        # DEVELOPMENT_TEAM comes from the optional gitignored Config/Local.xcconfig.
+        CODE_SIGN_STYLE: Automatic
+      configs:
+        Debug:
+          MASKIN_API_BASE_URL: http://localhost:3000
+        Release:
           MASKIN_API_BASE_URL: https://maskin.io
   # Live end-to-end UI tests: drives the real app against a real API on localhost:3000.
   # Run: xcodebuild test -scheme Maskin (see Apps/MaskinUITests/README in the test file header).

@@ -78,3 +78,4 @@ filter:
     - /api/marketplace/items/{id}/install
     - /api/marketplace/items/{id}/uninstall
     - /api/conversations/{id}/participants/{actorId}
+    - /api/briefing/spoken

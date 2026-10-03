@@ -29,19 +29,47 @@ public struct APINotificationsSource: NotificationsSource {
 	private static let pageSize = 100
 	private static let maxPages = 10
 
+	/// How many pages are requested together once the first one comes back full. Pages are
+	/// independent queries, so a big inbox costs about `maxPages / waveSize` round trips, not
+	/// `maxPages`, while an inbox that fits one page is still a single request.
+	private static let waveSize = 4
+
 	public func list() async throws -> [AppNotification] {
 		let workspace = try await requireWorkspace()
-		var all: [AppNotification] = []
-		for page in 0..<Self.maxPages {
-			let output = try await client.get_sol_api_sol_notifications(
-				query: .init(limit: Self.pageSize, offset: page * Self.pageSize),
-				headers: .init(x_hyphen_workspace_hyphen_id: workspace))
-			guard case .ok(let ok) = output else { throw NotificationsError("Couldn't load notifications.") }
-			let rows = try ok.body.json
-			all += try rows.map(Self.convert)
-			if rows.count < Self.pageSize { break }
+		var all = try await page(0, workspace: workspace)
+		guard all.count == Self.pageSize else { return all }
+		var next = 1
+		while next < Self.maxPages {
+			let wave = Array(next..<min(next + Self.waveSize, Self.maxPages))
+			let results = try await withThrowingTaskGroup(of: (Int, [AppNotification]).self) { group in
+				for index in wave {
+					group.addTask { (index, try await self.page(index, workspace: workspace)) }
+				}
+				var byIndex: [Int: [AppNotification]] = [:]
+				for try await (index, rows) in group { byIndex[index] = rows }
+				return byIndex
+			}
+			var reachedEnd = false
+			for index in wave {  // in order, so the list stays ascending and gap-free
+				let rows = results[index] ?? []
+				all += rows
+				if rows.count < Self.pageSize {
+					reachedEnd = true
+					break
+				}
+			}
+			if reachedEnd { break }
+			next += wave.count
 		}
 		return all
+	}
+
+	private func page(_ index: Int, workspace: String) async throws -> [AppNotification] {
+		let output = try await client.get_sol_api_sol_notifications(
+			query: .init(limit: Self.pageSize, offset: index * Self.pageSize),
+			headers: .init(x_hyphen_workspace_hyphen_id: workspace))
+		guard case .ok(let ok) = output else { throw NotificationsError("Couldn't load notifications.") }
+		return try (try ok.body.json).map(Self.convert)
 	}
 
 	public func setStatus(id: String, status: AppNotification.Status) async throws -> AppNotification {

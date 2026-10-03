@@ -1,9 +1,10 @@
 import type { Database } from '@maskin/db'
-import { notifications } from '@maskin/db/schema'
+import { events, notifications } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
-import { eq } from 'drizzle-orm'
+import { parseCommentDecision } from '@maskin/shared'
+import { and, desc, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
-import type { ApnsSender } from './apns'
+import type { ApnsSender, PushDecision } from './apns'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -59,13 +60,62 @@ export class NotificationPushFanout {
 				? meta.conversation_id
 				: null
 
+		const decision = await this.findDecision(n)
+
 		await this.sender.sendToActor(n.targetActorId, {
-			title: n.title,
-			body: n.content,
+			title: decision?.title ?? n.title,
+			body: decision?.ask ?? n.content,
 			workspaceId: n.workspaceId,
 			notificationId: n.id,
 			objectId: n.objectId,
 			conversationId,
+			decision: decision?.push ?? null,
 		})
+	}
+
+	/**
+	 * A `needs_input` notification created by an @mention of the human on an agent's decision
+	 * comment carries no pointer to that comment (the row's metadata is empty), so find it: the
+	 * newest `commented` event on the same object by the same author whose text is the row's
+	 * content, that mentions this target and parses as a decision. Best effort — any failure
+	 * just means a plain push, never a lost one.
+	 */
+	private async findDecision(n: typeof notifications.$inferSelect) {
+		if (n.type !== 'needs_input' || !n.objectId || !n.targetActorId) return null
+		try {
+			const rows = await this.db
+				.select({ id: events.id, data: events.data })
+				.from(events)
+				.where(
+					and(
+						eq(events.entityType, 'object'),
+						eq(events.entityId, n.objectId),
+						eq(events.action, 'commented'),
+						eq(events.actorId, n.sourceActorId),
+					),
+				)
+				.orderBy(desc(events.id))
+				.limit(5)
+			for (const row of rows) {
+				const data = (row.data ?? {}) as Record<string, unknown>
+				if (data.content !== n.content) continue
+				if (!Array.isArray(data.mentions) || !data.mentions.includes(n.targetActorId)) continue
+				const decision = parseCommentDecision(data.decision)
+				if (!decision) continue
+				const parent = Number(data.parentEventId)
+				const idx = decision.options.findIndex((o) => o.recommended)
+				const push: PushDecision = {
+					eventId: row.id,
+					parentEventId: Number.isSafeInteger(parent) && parent > 0 ? parent : null,
+					objectId: n.objectId,
+					options: decision.options.map((o) => ({ label: o.label })),
+					recommended: idx >= 0 ? idx : null,
+				}
+				return { title: decision.title, ask: decision.ask, push }
+			}
+		} catch (err) {
+			logger.warn('Decision lookup for push failed', { notificationId: n.id, error: String(err) })
+		}
+		return null
 	}
 }

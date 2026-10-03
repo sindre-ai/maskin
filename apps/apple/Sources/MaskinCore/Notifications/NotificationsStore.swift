@@ -138,8 +138,18 @@ public final class NotificationsStore {
 				}
 			}
 		}
-		Task { await reload() }
+		// The inbox is not the first screen: let For You, which the user is looking at, have the
+		// network and CPU first. The bell shows the cached count meanwhile, and opening the inbox
+		// reloads it immediately.
+		let delay = initialLoadDelay
+		Task { [weak self] in
+			if delay > .zero { try? await Task.sleep(for: delay) }
+			await self?.reload()
+		}
 	}
+
+	/// How long `start` waits before the first network load. Tests set it to zero.
+	public var initialLoadDelay: Duration = .seconds(1.2)
 
 	public func stop() {
 		listener?.cancel()

@@ -24,9 +24,10 @@ const notif = (over: Record<string, unknown> = {}) => ({
 	...over,
 })
 
-function setup(rows: unknown[], enabled = true) {
+function setup(rows: unknown[], enabled = true, queue?: unknown[][]) {
 	const { db, mockResults } = createTestContext()
 	mockResults.select = rows
+	if (queue) mockResults.selectQueue = queue
 	const sender = { isEnabled: () => enabled, sendToActor: vi.fn() }
 	const bridge = new EventEmitter()
 	const fanout = new NotificationPushFanout(db, bridge as never, sender as unknown as ApnsSender)
@@ -65,5 +66,61 @@ describe('NotificationPushFanout', () => {
 		expect(sender.sendToActor).not.toHaveBeenCalled()
 		bridge.emit('event', event)
 		await vi.waitFor(() => expect(sender.sendToActor).toHaveBeenCalled())
+	})
+
+	describe('decision pushes', () => {
+		const decision = {
+			title: 'Is the onboarding bet worth running?',
+			summary: '3 of 5 signups stall on step 2.',
+			ask: 'This changes what every new customer sees first, so I will not ship it alone.',
+			options: [
+				{ label: 'Ship it', recommended: true, consequences: ['a', 'b'] },
+				{ label: 'Hold', consequences: ['c', 'd'] },
+			],
+		}
+		const comment = (over: Record<string, unknown> = {}) => ({
+			id: 99,
+			data: { content: 'World', mentions: ['human'], decision, parentEventId: 12, ...over },
+		})
+		const needsInput = notif({ type: 'needs_input' })
+
+		it('attaches the decision, using its title and ask as the alert', async () => {
+			const { fanout, sender } = setup([], true, [[needsInput], [comment()]])
+			await fanout.handleEvent(event)
+			expect(sender.sendToActor).toHaveBeenCalledWith(
+				'human',
+				expect.objectContaining({
+					title: decision.title,
+					body: decision.ask,
+					decision: {
+						eventId: 99,
+						parentEventId: 12,
+						objectId: 'obj',
+						options: [{ label: 'Ship it' }, { label: 'Hold' }],
+						recommended: 0,
+					},
+				}),
+			)
+		})
+
+		it('falls back to a plain push when the comment does not match the notification', async () => {
+			for (const over of [{ content: 'other' }, { mentions: ['someone-else'] }, { decision: {} }]) {
+				const { fanout, sender } = setup([], true, [[needsInput], [comment(over)]])
+				await fanout.handleEvent(event)
+				expect(sender.sendToActor).toHaveBeenCalledWith(
+					'human',
+					expect.objectContaining({ title: 'Hello', decision: null }),
+				)
+			}
+		})
+
+		it('does not look for a decision on other notification types', async () => {
+			const { fanout, sender } = setup([notif({ type: 'good_news' })])
+			await fanout.handleEvent(event)
+			expect(sender.sendToActor).toHaveBeenCalledWith(
+				'human',
+				expect.objectContaining({ decision: null }),
+			)
+		})
 	})
 })

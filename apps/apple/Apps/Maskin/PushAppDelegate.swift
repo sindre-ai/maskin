@@ -29,6 +29,8 @@ final class PushAppDelegate: NSObject, ObservableObject {
 	private var earlyToken: Data?
 	private var earlyFailure: (any Error)?
 	private var earlyLinks: [URL] = []
+	/// Answers a decision tapped on a notification button, in the background if need be.
+	nonisolated let actions = NotificationActionRunner.production()
 
 	func attach(registrar: PushRegistrar, router: DeepLinkRouter) {
 		self.registrar = registrar
@@ -78,6 +80,12 @@ extension PushAppDelegate: UNUserNotificationCenterDelegate {
 	nonisolated func userNotificationCenter(
 		_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse
 	) async {
+		// A decision button (or the Reply field) answers the agent without opening the app.
+		switch await actions.run(response) {
+		case .handled: return
+		case .open, .notHandled:
+			guard response.actionIdentifier != UNNotificationDismissActionIdentifier else { return }
+		}
 		// `userInfo` isn't Sendable; carry only the one string across the actor hop.
 		let link = response.notification.request.content.userInfo["deep_link"] as? String
 		await MainActor.run { receiveTap(deepLink: link) }
@@ -93,6 +101,7 @@ extension PushAppDelegate: UNUserNotificationCenterDelegate {
 			didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
 		) -> Bool {
 			UNUserNotificationCenter.current().delegate = self
+			NotificationActionRunner.registerFallbackCategory()
 			return true
 		}
 
@@ -112,6 +121,7 @@ extension PushAppDelegate: UNUserNotificationCenterDelegate {
 	extension PushAppDelegate: NSApplicationDelegate {
 		func applicationDidFinishLaunching(_ notification: Notification) {
 			UNUserNotificationCenter.current().delegate = self
+			NotificationActionRunner.registerFallbackCategory()
 		}
 
 		func application(

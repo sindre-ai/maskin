@@ -92,9 +92,50 @@ public enum AuthError: Error, Sendable, Equatable {
 	case network(String)
 }
 
-/// `POST /api/auth/login`. A protocol so `AuthSession` is testable without a server.
+/// What `POST /api/actors` returned for a new human. `login` is the session to persist;
+/// `workspaceProvisioningFailed` means the account exists (the key works) but the server could
+/// not set up the first workspace, so the workspace list is empty until a refresh succeeds.
+public struct SignUpResult: Sendable, Equatable {
+	public var login: LoginResult
+	public var workspaceProvisioningFailed: Bool
+
+	public init(login: LoginResult, workspaceProvisioningFailed: Bool = false) {
+		self.login = login
+		self.workspaceProvisioningFailed = workspaceProvisioningFailed
+	}
+}
+
+/// Why account creation failed. Separate from `AuthError`: sign-up has outcomes sign-in doesn't
+/// (a taken email, per-field validation), and no credential is ever carried in a case.
+public enum SignUpError: Error, Sendable, Equatable {
+	/// 409: an account with this email exists.
+	case emailTaken
+	/// 400: the server rejected these fields. Keys are the request's field names
+	/// (`name`, `email`, `password`); values are the server's own sentence.
+	case invalid(fields: [String: String])
+	/// 429.
+	case rateLimited
+	case server(status: Int)
+	case network(String)
+}
+
+/// Sign-in and sign-up. A protocol so `AuthSession` is testable without a server.
 public protocol Authenticating: Sendable {
+	/// `POST /api/auth/login`.
 	func login(email: String, password: String) async throws -> LoginResult
+	/// `POST /api/actors` (human signup). `idempotencyKey` is stamped on the request so a retry
+	/// after a lost response is recognised instead of 409ing on the account it just made.
+	func signUp(name: String, email: String, password: String, idempotencyKey: String) async throws
+		-> SignUpResult
+}
+
+extension Authenticating {
+	/// Conformers that only sign in (test doubles, the offline preview) needn't implement it.
+	public func signUp(name: String, email: String, password: String, idempotencyKey: String)
+		async throws -> SignUpResult
+	{
+		throw SignUpError.network("Sign-up isn't available here.")
+	}
 }
 
 @MainActor
@@ -108,6 +149,11 @@ public final class AuthSession {
 	public private(set) var state: State = .signedOut
 	public private(set) var isSigningIn = false
 	public private(set) var lastError: AuthError?
+	public private(set) var isSigningUp = false
+	public private(set) var lastSignUpError: SignUpError?
+	/// Set by a sign-up that created the account but not its first workspace. The account and key
+	/// are saved; the shell's workspace refresh is the retry. Cleared by the next sign-in/up.
+	public private(set) var workspaceProvisioningFailed = false
 	/// The server rejected the stored key (revoked or rotated) and the session was ended for it.
 	/// The login screen should say so; cleared by the next sign-in.
 	public private(set) var sessionExpired = false
@@ -123,14 +169,17 @@ public final class AuthSession {
 	@ObservationIgnored private let authenticator: any Authenticating
 	@ObservationIgnored private let store: any SecretStore
 	@ObservationIgnored private let signOutMarker: any SignOutMarker
+	@ObservationIgnored public let firstUse: any FirstUseStore
 
 	public init(
 		authenticator: any Authenticating, store: any SecretStore,
-		signOutMarker: any SignOutMarker = InMemorySignOutMarker()
+		signOutMarker: any SignOutMarker = InMemorySignOutMarker(),
+		firstUse: any FirstUseStore = UserDefaultsFirstUseStore()
 	) {
 		self.authenticator = authenticator
 		self.store = store
 		self.signOutMarker = signOutMarker
+		self.firstUse = firstUse
 	}
 
 	public var session: StoredSession? {
@@ -181,6 +230,8 @@ public final class AuthSession {
 		guard !isSigningIn else { return }
 		isSigningIn = true
 		lastError = nil
+		lastSignUpError = nil
+		workspaceProvisioningFailed = false
 		sessionExpired = false
 		defer { isSigningIn = false }
 		do {
@@ -195,6 +246,37 @@ public final class AuthSession {
 			lastError = error
 		} catch {
 			lastError = .network(error.localizedDescription)
+		}
+	}
+
+	/// Create a human account and sign in with it. The session is persisted through the same path
+	/// as `signIn`; on any failure nothing is stored. Marks the actor's first-use moment pending
+	/// BEFORE the session goes live, so the screen that follows can't be skipped by a quick quit.
+	/// A `workspaceProvisioningFailed` result is still a success: the account exists.
+	public func signUp(name: String, email: String, password: String) async {
+		guard !isSigningUp, !isSigningIn else { return }
+		isSigningUp = true
+		lastError = nil
+		lastSignUpError = nil
+		workspaceProvisioningFailed = false
+		sessionExpired = false
+		defer { isSigningUp = false }
+		do {
+			let result = try await authenticator.signUp(
+				name: name, email: email, password: password, idempotencyKey: IdempotencyKey.make())
+			let login = result.login
+			let stored = StoredSession(
+				apiKey: login.apiKey, actorId: login.actorId, name: login.name.isEmpty ? name : login.name,
+				email: login.email ?? email, workspaceId: login.workspaceId)
+			try persist(stored)
+			signOutMarker.set(false)
+			firstUse.markPending(actorId: stored.actorId)
+			workspaceProvisioningFailed = result.workspaceProvisioningFailed
+			state = .signedIn(stored)
+		} catch let error as SignUpError {
+			lastSignUpError = error
+		} catch {
+			lastSignUpError = .network(error.localizedDescription)
 		}
 	}
 

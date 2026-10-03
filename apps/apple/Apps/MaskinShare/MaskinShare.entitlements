@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The share extension reads the signed-in session the app keeps in the Keychain, so it needs
+	     the SAME access group as the app (Maskin.entitlements / Maskin-nopush.entitlements). It
+	     needs nothing else: no push, no associated domains. The App ID io.maskin.app.share must
+	     have the Keychain Sharing capability and the group `io.maskin.app`, like the app's. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)io.maskin.app</string>
+	</array>
+</dict>
+</plist>

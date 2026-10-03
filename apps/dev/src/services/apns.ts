@@ -19,6 +19,16 @@
  * delivery (e.g. two server replicas both fanning out one event) collapses on
  * the device.
  *
+ * Actionable decisions: a `PushMessage.decision` adds `aps.category = DECISION_CATEGORY`
+ * and a compact root `decision` object the app's notification service extension turns into
+ * per-notification action buttons (iOS only lets an app register fixed categories ahead of
+ * time, but option labels differ per notification):
+ *   decision: { eventId, parentEventId?, objectId?, options: [{ label }], recommended? }
+ * `eventId` is the agent's decision comment (what the reply threads under and the high-water
+ * mark for mark-read); `recommended` is the zero-based index into `options`. Labels are
+ * truncated, at most `DECISION_OPTIONS_MAX` options travel, and nothing secret is ever in it.
+ * The whole payload is held under APNs' 4 KB limit (see `buildApnsPayload`).
+ *
  * A 410 or a 400 BadDeviceToken / 410 Unregistered response deletes the token
  * row, so dead devices stop being targeted.
  */
@@ -52,6 +62,17 @@ export interface ApnsTransport {
 	send(req: ApnsRequest): Promise<ApnsResponse>
 }
 
+export interface PushDecision {
+	/** The agent's decision comment (events.id). */
+	eventId: number
+	/** The comment's own parent, when the decision was posted as a reply. */
+	parentEventId?: number | null
+	objectId?: string | null
+	options: { label: string }[]
+	/** Zero-based index into `options` of the recommended choice. */
+	recommended?: number | null
+}
+
 export interface PushMessage {
 	title: string
 	body?: string | null
@@ -59,6 +80,7 @@ export interface PushMessage {
 	notificationId: string
 	objectId?: string | null
 	conversationId?: string | null
+	decision?: PushDecision | null
 }
 
 export const APNS_HOSTS = {
@@ -70,6 +92,13 @@ const JWT_TTL_MS = 50 * 60 * 1000
 const BODY_MAX = 200
 const TITLE_MAX = 100
 const REQUEST_TIMEOUT_MS = 10_000
+/** APNs rejects alert payloads over 4096 bytes; keep headroom for header-ish overhead. */
+export const APNS_PAYLOAD_MAX_BYTES = 3800
+/** Static category registered by the app as a fallback; the extension swaps in a per-push one. */
+export const DECISION_CATEGORY = 'maskin.decision'
+/** One banner shows at most four actions; one slot is the Reply field. */
+export const DECISION_OPTIONS_MAX = 3
+export const DECISION_LABEL_MAX = 40
 
 export function loadApnsConfig(env: NodeJS.ProcessEnv = process.env): ApnsConfig | null {
 	const keyId = env.APNS_KEY_ID?.trim()
@@ -105,26 +134,60 @@ export function deepLinkFor(msg: PushMessage): string {
 	return `maskin://${msg.workspaceId}/notifications`
 }
 
+function compactDecision(decision: PushDecision): Record<string, unknown> | null {
+	const options = decision.options
+		.map((o) => ({ label: truncate(o.label.trim(), DECISION_LABEL_MAX) }))
+		.filter((o) => o.label.length > 0)
+		.slice(0, DECISION_OPTIONS_MAX)
+	// A decision with no choices is just a notification; the Reply field alone needs no payload.
+	if (options.length === 0 || !Number.isSafeInteger(decision.eventId)) return null
+	const recommended =
+		typeof decision.recommended === 'number' &&
+		decision.recommended >= 0 &&
+		decision.recommended < options.length
+			? decision.recommended
+			: undefined
+	return {
+		eventId: decision.eventId,
+		...(decision.parentEventId != null ? { parentEventId: decision.parentEventId } : {}),
+		...(decision.objectId ? { objectId: decision.objectId } : {}),
+		options,
+		...(recommended !== undefined ? { recommended } : {}),
+	}
+}
+
+const byteLength = (payload: unknown) => Buffer.byteLength(JSON.stringify(payload), 'utf8')
+
 export function buildApnsPayload(msg: PushMessage): Record<string, unknown> {
 	const threadId = msg.conversationId
 		? `chat:${msg.conversationId}`
 		: msg.objectId
 			? `object:${msg.objectId}`
 			: `workspace:${msg.workspaceId}`
-	return {
+	const decision = msg.decision ? compactDecision(msg.decision) : null
+	const build = (bodyMax: number, withDecision: boolean): Record<string, unknown> => ({
 		aps: {
 			alert: {
 				title: truncate(msg.title, TITLE_MAX),
-				...(msg.body ? { body: truncate(msg.body, BODY_MAX) } : {}),
+				...(msg.body ? { body: truncate(msg.body, bodyMax) } : {}),
 			},
 			'thread-id': threadId,
 			'mutable-content': 1,
 			sound: 'default',
+			...(withDecision && decision ? { category: DECISION_CATEGORY } : {}),
 		},
 		deep_link: deepLinkFor(msg),
 		notification_id: msg.notificationId,
 		workspace_id: msg.workspaceId,
+		...(withDecision && decision ? { decision } : {}),
+	})
+	// Multi-byte text can push even a capped payload over the limit: shrink the body, and as a
+	// last resort drop the decision (a plain, tappable notification beats a rejected push).
+	for (const bodyMax of [BODY_MAX, 100, 40, 0]) {
+		const payload = build(bodyMax, true)
+		if (byteLength(payload) <= APNS_PAYLOAD_MAX_BYTES) return payload
 	}
+	return build(BODY_MAX, false)
 }
 
 /** Real transport: one pooled HTTP/2 session per APNs host. */

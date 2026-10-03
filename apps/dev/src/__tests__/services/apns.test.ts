@@ -1,10 +1,12 @@
 import { generateKeyPairSync, verify } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import {
+	APNS_PAYLOAD_MAX_BYTES,
 	type ApnsConfig,
 	type ApnsRequest,
 	ApnsSender,
 	type ApnsTransport,
+	DECISION_CATEGORY,
 	buildApnsPayload,
 	deepLinkFor,
 	loadApnsConfig,
@@ -100,6 +102,67 @@ describe('buildApnsPayload', () => {
 			'thread-id': 'chat:c-1',
 		})
 		expect(deepLinkFor({ ...msg, objectId: null })).toBe('maskin://ws-1/notifications')
+	})
+})
+
+describe('buildApnsPayload decision', () => {
+	const decision = {
+		eventId: 42,
+		parentEventId: 7,
+		objectId: 'obj-1',
+		options: [{ label: '7-day window' }, { label: 'Hold' }],
+		recommended: 0,
+	}
+	const size = (p: unknown) => Buffer.byteLength(JSON.stringify(p), 'utf8')
+
+	it('adds the category hint and a compact decision object, keeping the deep link', () => {
+		const p = buildApnsPayload({ ...msg, decision })
+		expect(p).toMatchObject({
+			aps: { category: DECISION_CATEGORY, 'mutable-content': 1 },
+			deep_link: 'maskin://ws-1/objects/obj-1',
+			decision,
+		})
+	})
+
+	it('omits category and decision when there is none', () => {
+		const p = buildApnsPayload(msg)
+		expect(p).not.toHaveProperty('decision')
+		expect((p.aps as Record<string, unknown>).category).toBeUndefined()
+	})
+
+	it('caps options at three, truncates labels and drops an out-of-range recommended', () => {
+		const p = buildApnsPayload({
+			...msg,
+			decision: {
+				eventId: 1,
+				options: [{ label: 'x'.repeat(200) }, { label: 'b' }, { label: 'c' }, { label: 'd' }],
+				recommended: 3,
+			},
+		}) as { decision: { options: { label: string }[]; recommended?: number } }
+		expect(p.decision.options).toHaveLength(3)
+		expect(p.decision.options[0]?.label.length).toBeLessThanOrEqual(40)
+		expect(p.decision.recommended).toBeUndefined()
+	})
+
+	it('sends no decision when no option survives', () => {
+		const p = buildApnsPayload({ ...msg, decision: { eventId: 1, options: [{ label: '  ' }] } })
+		expect(p).not.toHaveProperty('decision')
+	})
+
+	it('stays under the APNs limit with huge multi-byte text, keeping the decision', () => {
+		const p = buildApnsPayload({
+			...msg,
+			title: '日本語'.repeat(200),
+			body: '😀'.repeat(500),
+			decision,
+		})
+		expect(size(p)).toBeLessThanOrEqual(APNS_PAYLOAD_MAX_BYTES)
+		expect(p).toHaveProperty('decision')
+	})
+
+	it('contains no credential-shaped fields', () => {
+		const text = JSON.stringify(buildApnsPayload({ ...msg, decision }))
+		expect(text).not.toMatch(/ank_|token|secret|password/i)
 	})
 })
 

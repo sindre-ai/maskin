@@ -94,11 +94,14 @@ public final class ObjectsStore {
 	/// First load (skipped once loaded; use `reload()` to force) plus the directory.
 	public func load() async {
 		hydrateIfNeeded()
-		await directory.load()
-		guard phase == .idle || hydratedFromCache || { if case .failed = phase { true } else { false } }()
-		else { return }
-		// With data on screen (from disk) revalidate quietly: no spinner, and a failure keeps it.
-		await fetchFirstPage(showSpinner: objects.isEmpty, keepOnFailure: !objects.isEmpty)
+		// The people/settings directory and the list are independent requests: run them together
+		// (they used to run back to back, doubling the time to first content).
+		async let directoryLoad: Void = directory.load()
+		if phase == .idle || hydratedFromCache || { if case .failed = phase { true } else { false } }() {
+			// With data on screen (from disk) revalidate quietly: no spinner, and a failure keeps it.
+			await fetchFirstPage(showSpinner: objects.isEmpty, keepOnFailure: !objects.isEmpty)
+		}
+		await directoryLoad
 	}
 
 	/// Forget everything (workspace switch); the next `load()` starts clean.
@@ -118,8 +121,9 @@ public final class ObjectsStore {
 
 	/// Pull to refresh.
 	public func reload() async {
-		await directory.load()
+		async let directoryLoad: Void = directory.load()
 		await refreshInPlace()
+		await directoryLoad
 	}
 
 	public func loadMore() async {
