@@ -180,6 +180,28 @@ describe('POST /api/integrations/chat-capture', () => {
 		expect(row?.scopeGrants).toEqual([{ kind: 'workspace' }])
 	})
 
+	it('treats an explicit empty grant list as unassigned, not as the default', async () => {
+		const s = await setup()
+		const res = await capture(
+			appFor(s.human),
+			s.ws.id,
+			validBody(s.session.id, { scopeGrants: [] }),
+		)
+		expect(res.status).toBe(201)
+		const { integrationId } = (await res.json()) as { integrationId: string }
+		const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId))
+		expect(row?.scopeGrants).toEqual([])
+		await expect(
+			getCredential(
+				db,
+				s.ws.id,
+				integrationId,
+				{ requestingActorId: s.agent.id, sessionId: s.session.id, requestId: 'r' },
+				{ kms },
+			),
+		).rejects.toThrow()
+	})
+
 	it('accepts an explicit actor grant for a workspace member', async () => {
 		const s = await setup()
 		const res = await capture(

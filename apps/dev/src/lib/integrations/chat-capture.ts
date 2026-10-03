@@ -113,7 +113,9 @@ export async function captureChatSecret(
 			)
 		}
 	}
-	const grants: ScopeGrant[] = requested.length
+	// Omitted means the default (the session driver). An explicit empty list is the
+	// user's "Save unassigned": fail closed, nobody can read it.
+	const grants: ScopeGrant[] = input.scopeGrants
 		? requested
 		: [{ kind: 'actor', actorId: session.actorId }]
 
