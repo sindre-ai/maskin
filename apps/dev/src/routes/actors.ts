@@ -32,6 +32,10 @@ import {
 	updateActorSchema,
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import {
+	redactActorLlmConfigForCaller,
+	restoreMaskedLlmApiKey,
+} from '../lib/actor-llm-config-redaction'
 import { redactActorToolsForCaller, restoreMaskedToolValues } from '../lib/actor-tools-redaction'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
@@ -730,7 +734,10 @@ app.openapi(getActorRoute, (async (c) => {
 
 	const role = workspaceId ? (membership?.role ?? null) : undefined
 	const tools = await redactActorToolsForCaller(db, c.get('actorId'), id, actor.tools)
-	return c.json(serialize({ ...actor, tools, skills, role }) as z.infer<typeof actorResponseSchema>)
+	const llm_config = await redactActorLlmConfigForCaller(db, c.get('actorId'), id, actor.llm_config)
+	return c.json(
+		serialize({ ...actor, tools, llm_config, skills, role }) as z.infer<typeof actorResponseSchema>,
+	)
 }) as RouteHandler<typeof getActorRoute, Env>)
 
 // PATCH /:id - Update actor
@@ -780,7 +787,12 @@ app.openapi(updateActorRoute, (async (c) => {
 	const body = c.req.valid('json')
 
 	const [existing] = await db
-		.select({ type: actors.type, tools: actors.tools })
+		.select({
+			type: actors.type,
+			tools: actors.tools,
+			llmConfig: actors.llmConfig,
+			llmProvider: actors.llmProvider,
+		})
 		.from(actors)
 		.where(eq(actors.id, id))
 		.limit(1)
@@ -852,6 +864,26 @@ app.openapi(updateActorRoute, (async (c) => {
 		tools = restored.tools as typeof tools
 	}
 
+	// Same for the api_key inside llm_config.
+	let llmConfig = body.llm_config
+	if (llmConfig !== undefined) {
+		const restored = restoreMaskedLlmApiKey(llmConfig, existing.llmConfig, {
+			incoming: body.llm_provider,
+			stored: existing.llmProvider,
+		})
+		if (restored.unresolved) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'Masked llm_config api_key has no stored value to keep; send the real value or leave the config unchanged',
+					[{ field: 'llm_config.api_key', message: 'Masked value cannot be saved' }],
+				),
+				400,
+			)
+		}
+		llmConfig = restored.llmConfig as typeof llmConfig
+	}
+
 	const [updated] = await db
 		.update(actors)
 		.set({
@@ -862,7 +894,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			...(tools !== undefined && { tools }),
 			...(body.memory !== undefined && { memory: body.memory }),
 			...(body.llm_provider !== undefined && { llmProvider: body.llm_provider }),
-			...(body.llm_config !== undefined && { llmConfig: body.llm_config }),
+			...(llmConfig !== undefined && { llmConfig }),
 			updatedAt: new Date(),
 		})
 		.where(eq(actors.id, id))
@@ -888,6 +920,7 @@ app.openapi(updateActorRoute, (async (c) => {
 	}
 
 	updated.tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
+	updated.llm_config = await redactActorLlmConfigForCaller(db, actorId, id, updated.llm_config)
 	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof updateActorRoute, Env>)
 
@@ -1321,7 +1354,8 @@ app.openapi(pauseAgentRoute, (async (c) => {
 	})
 
 	const tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
-	return c.json(serialize({ ...updated, tools }) as z.infer<typeof actorResponseSchema>)
+	const llm_config = await redactActorLlmConfigForCaller(db, actorId, id, updated.llm_config)
+	return c.json(serialize({ ...updated, tools, llm_config }) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof pauseAgentRoute, Env>)
 
 // POST /:id/run - Resume a paused agent OR start a fresh session
@@ -1472,7 +1506,8 @@ app.openapi(runAgentRoute, (async (c) => {
 	})
 
 	const tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
-	return c.json(serialize({ ...updated, tools }) as z.infer<typeof actorResponseSchema>)
+	const llm_config = await redactActorLlmConfigForCaller(db, actorId, id, updated.llm_config)
+	return c.json(serialize({ ...updated, tools, llm_config }) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof runAgentRoute, Env>)
 
 export default app
