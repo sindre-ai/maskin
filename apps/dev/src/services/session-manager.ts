@@ -365,8 +365,14 @@ export class SessionManager extends EventEmitter {
 	private containers: ContainerManager
 	private agentStorage: AgentStorageManager
 	private watchdogInterval: NodeJS.Timeout | null = null
-	/** True while a watchdog pass is running; a tick that finds it set is skipped. */
-	private watchdogInFlight = false
+	/** Start time of the watchdog pass in flight, null when idle. See runWatchdog(). */
+	private watchdogStartedAt: number | null = null
+	/** A pass older than this no longer blocks the next tick, so one hung await cannot stop the reaper. */
+	private static readonly WATCHDOG_STALE_MS = 5 * 60 * 1000
+	/** Set once the terminal-row heal (reaper step 0) has drained its backlog. */
+	private terminalHealDrained = false
+	/** Rows the terminal-row heal fixes per pass. */
+	private static readonly TERMINAL_HEAL_BATCH = 500
 	/** Log pruning runs hourly, not on every 60s watchdog tick. */
 	private lastLogPruneAt = 0
 	private static readonly LOG_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -4020,15 +4026,25 @@ export class SessionManager extends EventEmitter {
 	 * the same rows and process them twice.
 	 */
 	private async runWatchdog(): Promise<void> {
-		if (this.watchdogInFlight) {
-			logger.warn('Session watchdog: previous pass still running, skipping tick')
+		if (
+			this.watchdogStartedAt !== null &&
+			Date.now() - this.watchdogStartedAt < SessionManager.WATCHDOG_STALE_MS
+		) {
+			logger.warn('Session watchdog: previous pass still running, skipping tick', {
+				runningForMs: Date.now() - this.watchdogStartedAt,
+			})
 			return
 		}
-		this.watchdogInFlight = true
+		// A pass older than WATCHDOG_STALE_MS stops blocking: an await that never
+		// settles must not silence the reaper for good (known-pitfalls.md, "A
+		// Re-Entrancy Flag With No Timeout"). That pass is left to finish detached.
+		const startedAt = Date.now()
+		this.watchdogStartedAt = startedAt
 		try {
 			await this.runWatchdogPass()
 		} finally {
-			this.watchdogInFlight = false
+			// A stale pass that finishes late must not clear the flag of the pass that replaced it.
+			if (this.watchdogStartedAt === startedAt) this.watchdogStartedAt = null
 		}
 	}
 
@@ -4068,16 +4084,33 @@ export class SessionManager extends EventEmitter {
 			// stamped done. Runs first so every step below sees them as finished.
 			// Without it, steps 1, 7 and 9 select these rows by session_state alone
 			// and redo them every pass, re-emitting runtime_session_ended each time.
+			//
+			// Bounded: at most TERMINAL_HEAL_BATCH rows per pass, and it stops for
+			// good once a batch comes back short (settle now stamps done itself, so
+			// nothing new should land here). The predicate has no index, so it must
+			// not scan the table on every 60s tick.
+			if (this.terminalHealDrained) return
+			const batch = SessionManager.TERMINAL_HEAL_BATCH
 			const healed = await this.db
 				.update(sessions)
 				.set({
 					sessionState: 'done',
 					stateEnteredAt: sql`coalesce(${sessions.completedAt}, now())`,
 				})
+				// Literal SQL, not drizzle columns: unqualified columns inside a subquery
+				// bind to the wrong table (known-pitfalls.md).
 				.where(
-					and(inArray(sessions.status, [...TERMINAL_STATUSES]), ne(sessions.sessionState, 'done')),
+					sql`sessions.id IN (
+						SELECT s.id FROM sessions s
+						WHERE s.status IN (${sql.join(
+							TERMINAL_STATUSES.map((status) => sql`${status}`),
+							sql`, `,
+						)}) AND s.session_state <> 'done'
+						LIMIT ${batch}
+					)`,
 				)
 				.returning({ id: sessions.id })
+			if (healed.length < batch) this.terminalHealDrained = true
 			if (healed.length > 0) {
 				logger.warn('Session watchdog: healed terminal rows left with session_state not done', {
 					count: healed.length,
