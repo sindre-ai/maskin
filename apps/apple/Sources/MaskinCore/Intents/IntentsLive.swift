@@ -1,7 +1,7 @@
 import Foundation
 import MaskinAPI
 
-#if canImport(CoreSpotlight)
+#if canImport(CoreSpotlight) && !os(tvOS)
 	import CoreSpotlight
 #endif
 
@@ -162,7 +162,7 @@ public struct SpotlightAgentIndex: IntentsIndexing {
 	public init() {}
 
 	public func replaceAll(with agents: [IntentAgent], workspaceId: String) async {
-		#if canImport(CoreSpotlight)
+		#if canImport(CoreSpotlight) && !os(tvOS)
 			let index = CSSearchableIndex.default()
 			let items = agents.map { agent -> CSSearchableItem in
 				let attributes = CSSearchableItemAttributeSet(contentType: .item)
@@ -179,7 +179,7 @@ public struct SpotlightAgentIndex: IntentsIndexing {
 	}
 
 	public func removeAll() async {
-		#if canImport(CoreSpotlight)
+		#if canImport(CoreSpotlight) && !os(tvOS)
 			try? await CSSearchableIndex.default().deleteSearchableItems(withDomainIdentifiers: [Self.domain])
 		#endif
 	}
