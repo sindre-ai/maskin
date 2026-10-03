@@ -16,7 +16,6 @@ import { logger } from '../lib/logger'
 import {
 	type VoiceDb,
 	applyVoiceEvent,
-	recordToolInvocation,
 	runAppliedEffects,
 } from '../lib/outreach/voice/apply'
 import { type EffectRunner, createDefaultEffectRunner } from '../lib/outreach/voice/effects'
@@ -105,15 +104,8 @@ async function writeState(tx: VoiceDb, event: TelnyxEvent): Promise<AfterCommit>
 		return { kind: 'respond', body: { ok: true, skipped: 'no_client_state' } }
 	}
 
-	if (event.event_type === 'assistant.tool_invocation') {
-		await recordToolInvocation(tx, {
-			workspaceId: clientState.workspace_id,
-			contactId: clientState.contact_id,
-			callId: event.payload.call_control_id,
-			toolName: event.payload.tool_name,
-		})
-		return { kind: 'tool', event, clientState }
-	}
+	// The tool router owns the trace write: an entry means the tool succeeded.
+	if (event.event_type === 'assistant.tool_invocation') return { kind: 'tool', event, clientState }
 
 	const voiceEvent = toVoiceEvent(event)
 	if (!voiceEvent) {
@@ -143,10 +135,13 @@ async function afterCommit(db: Database, work: AfterCommit): Promise<unknown> {
 	if (work.kind === 'tool') {
 		// The tool's JSON result goes straight back in the 200 body.
 		return dispatchToolInvocation({
+			db,
 			callId: work.event.payload.call_control_id,
 			toolName: work.event.payload.tool_name,
 			toolInput: work.event.payload.tool_input,
 			clientState: work.clientState,
+			from: work.event.payload.from,
+			to: work.event.payload.to,
 		})
 	}
 

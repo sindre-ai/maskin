@@ -122,14 +122,44 @@ export async function applyVoiceEvent(
 	})
 }
 
-/** Appends a tool call to the trace the reducer reads when the call hangs up. Does not touch status. */
-export async function recordToolInvocation(
+export interface RecordToolCallParams {
+	workspaceId: string
+	contactId: string
+	callId: string
+	/** Appended to voice_tool_trace. null patches metadata only (a failed call leaves no trace). */
+	toolName: string | null
+	/** Merged into contact metadata in the same write (null deletes a key). */
+	metadataPatch?: Record<string, unknown>
+	/** Telnyx retries a tool invocation: do nothing when this tool is already in this call's trace. */
+	once?: boolean
+	/** Runs in the same transaction after the write (audit events), with the row as written. */
+	inTransaction?: (tx: VoiceDb, contact: RecordedContact) => Promise<void>
+}
+
+export interface RecordedContact {
+	id: string
+	title: string
+	metadata: Record<string, unknown>
+	actorId: string
+}
+
+export type RecordToolCallResult =
+	| { recorded: true; contact: RecordedContact }
+	| { recorded: false; reason: 'contact_not_found' | 'stale_call' | 'duplicate' }
+
+/**
+ * The one writer of a call's tool trace. Loads the contact under a row lock,
+ * appends the tool to voice_tool_trace (the trace the reducer and the follow-up
+ * email hook read), merges any metadata patch and runs the caller's audit write,
+ * all in one transaction. Does not touch status.
+ */
+export async function recordToolCall(
 	db: VoiceDb,
-	params: { workspaceId: string; contactId: string; callId: string; toolName: string },
-): Promise<void> {
-	await db.transaction(async (tx) => {
+	params: RecordToolCallParams,
+): Promise<RecordToolCallResult> {
+	return db.transaction(async (tx) => {
 		const [row] = await tx
-			.select({ id: objects.id, metadata: objects.metadata })
+			.select()
 			.from(objects)
 			.where(
 				and(
@@ -140,20 +170,33 @@ export async function recordToolInvocation(
 			)
 			.for('update')
 			.limit(1)
-		if (!row) return
-		const metadata = (row.metadata ?? {}) as Record<string, unknown>
+		if (!row) return { recorded: false, reason: 'contact_not_found' } as const
+		const current = (row.metadata ?? {}) as Record<string, unknown>
 		// A trace belongs to the call it was started on.
-		if (typeof metadata.last_call_id === 'string' && metadata.last_call_id !== params.callId) return
-		const trace = Array.isArray(metadata.voice_tool_trace) ? metadata.voice_tool_trace : []
-		await tx
-			.update(objects)
-			.set({
-				metadata: {
-					...metadata,
-					voice_tool_trace: [...trace, { tool_name: params.toolName }],
-				},
-			})
-			.where(eq(objects.id, row.id))
+		if (typeof current.last_call_id === 'string' && current.last_call_id !== params.callId) {
+			return { recorded: false, reason: 'stale_call' } as const
+		}
+		const trace = Array.isArray(current.voice_tool_trace) ? current.voice_tool_trace : []
+		if (
+			params.once &&
+			params.toolName !== null &&
+			trace.some((e) => (e as { tool_name?: unknown } | null)?.tool_name === params.toolName)
+		) {
+			return { recorded: false, reason: 'duplicate' } as const
+		}
+		const metadata = mergeMetadata(current, params.metadataPatch ?? {})
+		if (params.toolName !== null) {
+			metadata.voice_tool_trace = [...trace, { tool_name: params.toolName }]
+		}
+		await tx.update(objects).set({ metadata }).where(eq(objects.id, row.id))
+		const contact: RecordedContact = {
+			id: row.id,
+			title: row.title ?? '',
+			metadata,
+			actorId: row.driver ?? row.createdBy,
+		}
+		await params.inTransaction?.(tx, contact)
+		return { recorded: true, contact } as const
 	})
 }
 
