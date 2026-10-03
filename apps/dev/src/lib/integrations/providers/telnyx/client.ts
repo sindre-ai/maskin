@@ -101,6 +101,8 @@ export interface TelnyxClient {
 	createAssistant(payload: AssistantPayload): Promise<AssistantRecord>
 	/** PATCH /v2/ai/assistants/{id}. */
 	updateAssistant(id: string, payload: AssistantPayload): Promise<AssistantRecord>
+	/** GET /v2/ai/conversations/{id}/messages: what each side said, oldest first. UNVERIFIED shape. */
+	getConversationMessages(conversationId: string): Promise<Array<{ role: string; text: string }>>
 	/**
 	 * Replaces the contents of a knowledge bucket and re-embeds it: bucket create (exists is
 	 * fine), one object upload per document, then the embed call. Returns the retrieval tool id
@@ -145,6 +147,14 @@ const assistantResponseSchema = z.object({
 
 const knowledgeSyncResponseSchema = z.object({
 	data: z.object({ tool_id: z.string() }).passthrough(),
+})
+
+const conversationMessagesSchema = z.object({
+	data: z.array(
+		z
+			.object({ role: z.string().optional(), text: z.string().nullish(), content: z.string().nullish() })
+			.passthrough(),
+	),
 })
 
 function toAssistantRecord(raw: unknown): AssistantRecord {
@@ -243,6 +253,19 @@ export function createTelnyxClient(opts: TelnyxClientOptions): TelnyxClient {
 		async updateAssistant(id, payload) {
 			const res = await request('PATCH', `/v2/ai/assistants/${encodeURIComponent(id)}`, payload)
 			return toAssistantRecord(await res.json())
+		},
+
+		async getConversationMessages(conversationId) {
+			const res = await request(
+				'GET',
+				`/v2/ai/conversations/${encodeURIComponent(conversationId)}/messages`,
+				undefined,
+			)
+			const parsed = conversationMessagesSchema.parse(await res.json())
+			return parsed.data.flatMap((m) => {
+				const text = m.text ?? m.content
+				return typeof m.role === 'string' && typeof text === 'string' ? [{ role: m.role, text }] : []
+			})
 		},
 
 		async syncKnowledgeBucket(bucketName, documents) {

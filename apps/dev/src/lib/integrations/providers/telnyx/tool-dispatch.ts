@@ -8,9 +8,10 @@ export interface ToolInvocationContext {
 	toolInput: Record<string, unknown>
 	/** contact_id / workspace_id / dial_attempt_n stamped on the call. */
 	clientState: CallClientState
-	/** Call endpoints as Telnyx reports them on the invocation (outbound call: from is our number, to the prospect). */
+	/** Our number on the call, as Telnyx reports it on the invocation. */
 	from?: string
-	to?: string
+	/** The whole event payload, for fields the router reads that events.ts does not model. */
+	payload: Record<string, unknown>
 }
 
 /** Returns the JSON object Telnyx feeds back to the assistant in the 200 body. */

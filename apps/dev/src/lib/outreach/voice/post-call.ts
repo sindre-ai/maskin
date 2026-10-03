@@ -1,5 +1,6 @@
 import type { Database } from '@maskin/db'
 import { logger } from '../../logger'
+import { disclosureHook, interestPingHook } from './call-hooks'
 
 export interface PostCallContext {
 	db: Database
@@ -12,6 +13,10 @@ export interface PostCallContext {
 	durationS: number | null
 	recordingUrl: string | null
 	transcriptUrl: string | null
+	/** The prospect's number as Telnyx reports it on the hangup. */
+	prospectPhone: string | null
+	/** Transcript as carried on the hangup payload, when it carries one. Shape UNVERIFIED. */
+	transcript: unknown
 }
 
 export interface PostCallHook {
@@ -31,7 +36,7 @@ export interface PostCallHook {
  * registers after it. Each hook is isolated: one throwing is logged and the
  * rest still run.
  */
-export const postCallHooks: PostCallHook[] = []
+export const postCallHooks: PostCallHook[] = [disclosureHook, interestPingHook]
 
 export async function runPostCallHooks(
 	ctx: PostCallContext,

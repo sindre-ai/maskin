@@ -19,6 +19,7 @@ import {
 	runAppliedEffects,
 } from '../lib/outreach/voice/apply'
 import { type EffectRunner, createDefaultEffectRunner } from '../lib/outreach/voice/effects'
+import { defaultSalesNotifier } from '../lib/outreach/voice/notify-sales'
 import { runPostCallHooks } from '../lib/outreach/voice/post-call'
 import type { VoiceEvent } from '../lib/outreach/voice/state'
 
@@ -141,13 +142,34 @@ async function afterCommit(db: Database, work: AfterCommit): Promise<unknown> {
 			toolInput: work.event.payload.tool_input,
 			clientState: work.clientState,
 			from: work.event.payload.from,
-			to: work.event.payload.to,
+			payload: work.event.payload,
 		})
 	}
 
 	const { result, event, clientState } = work
 	if (result.applied) {
 		await runAppliedEffects(result, effectRunnerOverride ?? createDefaultEffectRunner(db))
+	}
+
+	// The transfer leg did not answer in time. The agent is already falling back to booking
+	// (prompt); #sales hears about it at Attention 3. Never fails the webhook.
+	if (event.event_type === 'call.transfer.failed' && !result.staleCall) {
+		try {
+			await defaultSalesNotifier.notify(db, {
+				workspaceId: clientState.workspace_id,
+				actorId: result.effectContext.actorId,
+				contactId: clientState.contact_id,
+				attention: 3,
+				action: 'voice_transfer_failed_ping',
+				text: 'The warm transfer did not connect. The agent is booking a slot instead.',
+				data: { call_id: event.payload.call_control_id, stage: 'no_answer' },
+			})
+		} catch (err) {
+			logger.error('voice transfer-failed ping failed', {
+				eventId: event.event_id,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
 	}
 
 	// Every hangup for this contact's current call opens the post-call seam, including one
@@ -163,6 +185,8 @@ async function afterCommit(db: Database, work: AfterCommit): Promise<unknown> {
 			durationS: event.payload.duration_s ?? null,
 			recordingUrl: event.payload.recording_url ?? null,
 			transcriptUrl: event.payload.transcript_url ?? null,
+			prospectPhone: event.payload.to ?? null,
+			transcript: event.payload.transcript,
 		})
 	}
 

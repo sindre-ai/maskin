@@ -2,21 +2,24 @@ import type { Database } from '@maskin/db'
 import { actors, objects } from '@maskin/db/schema'
 import { z } from '@hono/zod-openapi'
 import { and, eq } from 'drizzle-orm'
+import { recordEvent } from '../../../events/record-event'
 import { logger } from '../../../logger'
 import { type RecordedContact, recordToolCall } from '../../../outreach/voice/apply'
 import { type SalesNotifier, defaultSalesNotifier } from '../../../outreach/voice/notify-sales'
 import { type Slot, findSlots, searchRange } from '../../../outreach/voice/slots'
+import { lastAssistantTurn } from '../../../outreach/voice/transcript'
 import { copenhagenParts } from '../../../outreach/voice/workdays'
 import { type CalendarApi, resolveCalendarApi } from '../google-calendar/client'
+import { SCRIPT_VERSION } from './assistant'
 import { type TelnyxClient, createTelnyxClient } from './client'
 import { readTelnyxRuntimeConfig } from './config'
 import type { ToolHandler, ToolInvocationContext } from './tool-dispatch'
 
+/** The five tools the assistant declares. send_followup_sms is not one of them (CTO ruling). */
 export const TOOL_NAMES = [
 	'book_meeting_slot',
 	'confirm_meeting_slot',
 	'flag_interest',
-	'send_followup_sms',
 	'end_call_polite',
 	'request_followup_email',
 ] as const
@@ -51,21 +54,23 @@ export const flagInterestInput = z.object({
 	reason: text(500),
 })
 
-export const sendFollowupSmsInput = z.object({
-	message_body: text(320),
-	mode: z.enum(['booking_link', 'voicemail_followup', 'missed_call_nudge']),
-})
-
 export const endCallPoliteInput = z.object({
 	reason: text(300),
+})
+
+export const requestFollowupEmailInput = z.object({
+	/** The prospect's own words answering the confirmation turn. No recipient: the address comes from the contact. */
+	prospect_quote: text(280),
+	/** Fallback only: the agent's own last line, used when Telnyx supplies no record of it. */
+	agent_line: text(500).optional(),
 })
 
 export const toolInputSchemas = {
 	book_meeting_slot: bookMeetingSlotInput,
 	confirm_meeting_slot: confirmMeetingSlotInput,
 	flag_interest: flagInterestInput,
-	send_followup_sms: sendFollowupSmsInput,
 	end_call_polite: endCallPoliteInput,
+	request_followup_email: requestFollowupEmailInput,
 } as const
 
 // ---- Outputs ---------------------------------------------------------------
@@ -75,8 +80,8 @@ export const toolErrorOutput = z.object({
 		'invalid_input',
 		'calendar_unavailable',
 		'no_slots_offered',
-		'tool_not_callable',
-		'no_sms_endpoints',
+		'not_enabled',
+		'no_contact_email',
 		'contact_not_found',
 	]),
 	message: z.string(),
@@ -93,8 +98,8 @@ export const toolOutputSchemas = {
 		toolErrorOutput,
 	]),
 	flag_interest: z.union([acknowledged, toolErrorOutput]),
-	send_followup_sms: z.union([z.object({ message_id: z.string().nullable() }), toolErrorOutput]),
 	end_call_polite: z.union([acknowledged, toolErrorOutput]),
+	request_followup_email: z.union([acknowledged, toolErrorOutput]),
 } as const
 
 // ---- Dependencies ----------------------------------------------------------
@@ -105,6 +110,8 @@ export interface ToolRouterDeps {
 	calendar: (db: Database, workspaceId: string) => Promise<CalendarApi | null>
 	telnyx: () => TelnyxClient | null
 	notifier: SalesNotifier
+	/** Stamped on the consent record: the assistant content hash. */
+	scriptVersion: string
 	/** Runs work that must not hold up the tool answer (a transfer). Errors are logged by the caller. */
 	defer: (work: Promise<unknown>) => void
 }
@@ -119,6 +126,7 @@ export const defaultToolRouterDeps: ToolRouterDeps = {
 	calendar: resolveCalendarApi,
 	telnyx: () => runtimeTelnyxClient(),
 	notifier: defaultSalesNotifier,
+	scriptVersion: SCRIPT_VERSION,
 	defer: (work) => {
 		work.catch((err) =>
 			logger.error('voice deferred tool work failed', {
@@ -251,7 +259,7 @@ async function confirmMeetingSlot(
 	if (!contact) return fail('contact_not_found', 'This call is not tied to a contact.')
 
 	// Telnyx retries a slow tool call: a booking already made on this call is returned, not repeated.
-	const existing = contact.metadata.voice_booking as
+	const existing = contact.metadata.voice_meeting as
 		| { call_id?: string; event_id?: string; meet_link?: string | null }
 		| undefined
 	if (existing?.call_id === ctx.callId && existing.event_id) {
@@ -285,14 +293,9 @@ async function confirmMeetingSlot(
 	await record(ctx, 'confirm_meeting_slot', {
 		once: true,
 		metadataPatch: {
-			voice_booking: {
-				call_id: ctx.callId,
-				event_id: booked.eventId,
-				meet_link: booked.meetLink,
-				start_iso: slot.start_iso,
-			},
-			// A successful booking supersedes an earlier failure hint on this call.
-			followup_action: null,
+			// Read by the follow-up email task, which only uses the link when call_id matches
+			// the call being emailed. meet_link is null when Google returned none.
+			voice_meeting: { call_id: ctx.callId, event_id: booked.eventId, meet_link: booked.meetLink },
 		},
 	})
 	return { event_id: booked.eventId, meet_link: booked.meetLink }
@@ -326,17 +329,34 @@ async function attemptTransfer(
 	reason: string,
 ): Promise<'started' | 'skipped'> {
 	const targetId = contact.metadata.transfer_target_actor_id
-	if (typeof targetId !== 'string') return 'skipped'
-	const [target] = await ctx.db
-		.select({ metadata: actors.metadata, name: actors.name })
-		.from(actors)
-		.where(eq(actors.id, targetId))
-		.limit(1)
-	const targetMeta = (target?.metadata ?? {}) as Record<string, unknown>
-	const phone = targetMeta.transfer_phone_e164
-	if (typeof phone !== 'string' || !E164.test(phone)) return 'skipped'
+	let phone: unknown
+	let hoursRaw: unknown
+	if (typeof targetId === 'string') {
+		const [target] = await ctx.db
+			.select({ metadata: actors.metadata })
+			.from(actors)
+			.where(eq(actors.id, targetId))
+			.limit(1)
+		const targetMeta = (target?.metadata ?? {}) as Record<string, unknown>
+		phone = targetMeta.transfer_phone_e164
+		hoursRaw = targetMeta.transfer_hours
+	}
+	if (typeof phone !== 'string' || !E164.test(phone)) {
+		// No number to dial: say so loudly and let the agent fall back to booking.
+		await deps.notifier.notify(ctx.db, {
+			workspaceId: ctx.clientState.workspace_id,
+			actorId: contact.actorId,
+			contactId: contact.id,
+			contactTitle: contact.title,
+			attention: 3,
+			action: 'voice_transfer_failed_ping',
+			text: `Hot lead but there is no transfer number on the target actor, so no transfer was tried. The agent is booking a slot instead. Reason given: ${reason}`,
+			data: { call_id: ctx.callId, stage: 'no_number' },
+		})
+		return 'skipped'
+	}
 
-	const hours = parseTransferHours(targetMeta.transfer_hours)
+	const hours = parseTransferHours(hoursRaw)
 	const local = copenhagenParts(deps.now())
 	const minutes = local.hour * 60 + local.minute
 	if (minutes < hours.startMinutes || minutes >= hours.endMinutes) return 'skipped'
@@ -421,43 +441,6 @@ async function flagInterest(
 	return { acknowledged: true as const }
 }
 
-async function sendFollowupSms(
-	deps: ToolRouterDeps,
-	ctx: ToolInvocationContext,
-	input: z.infer<typeof sendFollowupSmsInput>,
-) {
-	if (input.mode !== 'booking_link') {
-		return fail(
-			'tool_not_callable',
-			'Only booking_link can be sent from a call. The other modes are sent by the system.',
-		)
-	}
-	const contact = await loadContact(ctx.db, ctx)
-	if (!contact) return fail('contact_not_found', 'This call is not tied to a contact.')
-
-	const sent = contact.metadata.voice_sms as { call_id?: string; message_id?: string | null } | undefined
-	if (sent?.call_id === ctx.callId) return { message_id: sent.message_id ?? null }
-
-	const client = deps.telnyx()
-	if (!client || !ctx.from || !ctx.to) {
-		return fail('no_sms_endpoints', 'The text could not be sent. Do not promise it to the prospect.')
-	}
-	const result = await client.sendMessage({
-		from: ctx.from,
-		to: ctx.to,
-		text: input.message_body,
-		idempotencyKey: `${contact.id}:${ctx.callId}:booking_link`,
-	})
-	await record(ctx, 'send_followup_sms', {
-		once: true,
-		metadataPatch: {
-			last_voice_sms_id: result.messageId,
-			voice_sms: { call_id: ctx.callId, message_id: result.messageId, mode: 'booking_link' },
-		},
-	})
-	return { message_id: result.messageId }
-}
-
 async function endCallPolite(
 	_deps: ToolRouterDeps,
 	ctx: ToolInvocationContext,
@@ -467,6 +450,98 @@ async function endCallPolite(
 		metadataPatch: { voice_end_reason: input.reason },
 	})
 	if (!recorded.recorded) return fail('contact_not_found', 'This call is not tied to a contact.')
+	return { acknowledged: true as const }
+}
+
+// ---- request_followup_email ------------------------------------------------
+
+export interface AgentTurn {
+	text: string | null
+	source: 'telnyx' | 'model'
+}
+
+/**
+ * The agent's confirmation turn, from Telnyx's own record when there is one. UNVERIFIED
+ * against live Telnyx, so three sources in order: a message list on the invocation payload,
+ * the conversation fetched by id through the client, then the model-supplied agent_line
+ * (source "model", weaker evidence; the call recording stays the backstop).
+ */
+async function resolveAgentTurn(
+	deps: ToolRouterDeps,
+	ctx: ToolInvocationContext,
+	agentLine: string | undefined,
+): Promise<AgentTurn> {
+	const fromPayload = lastAssistantTurn(
+		ctx.payload.messages ?? ctx.payload.transcript ?? ctx.payload.conversation,
+	)
+	if (fromPayload) return { text: fromPayload, source: 'telnyx' }
+
+	const conversationId = ctx.payload.conversation_id
+	if (typeof conversationId === 'string' && conversationId !== '') {
+		try {
+			const client = deps.telnyx()
+			const fetched = client ? lastAssistantTurn(await client.getConversationMessages(conversationId)) : null
+			if (fetched) return { text: fetched, source: 'telnyx' }
+		} catch (err) {
+			logger.warn('voice agent turn lookup failed, using the model-supplied line', {
+				callId: ctx.callId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
+	if (!agentLine) {
+		logger.warn('voice consent record has no agent turn: Telnyx gave none and the model sent none', {
+			callId: ctx.callId,
+		})
+	}
+	return { text: agentLine ?? null, source: 'model' }
+}
+
+async function requestFollowupEmail(
+	deps: ToolRouterDeps,
+	ctx: ToolInvocationContext,
+	input: z.infer<typeof requestFollowupEmailInput>,
+) {
+	const contact = await loadContact(ctx.db, ctx)
+	if (!contact) return fail('contact_not_found', 'This call is not tied to a contact.')
+
+	// The address read back and agreed to is the one on the contact, never one from the call.
+	const email = contact.metadata.email
+	const confirmedAddress = typeof email === 'string' && email.trim() !== '' ? email.trim() : null
+	if (!confirmedAddress) {
+		return fail(
+			'no_contact_email',
+			'There is no email address on file, so none could be confirmed. Say someone will follow up.',
+		)
+	}
+
+	const agentTurn = await resolveAgentTurn(deps, ctx, input.agent_line)
+	const requestedAt = deps.now().toISOString()
+
+	// One transaction: the trace entry (the consent gate the email hook reads) and the audit
+	// event commit together, and a replay for this call finds the entry and writes neither.
+	await record(ctx, 'request_followup_email', {
+		once: true,
+		inTransaction: async (tx, written) => {
+			await recordEvent(tx, {
+				workspaceId: ctx.clientState.workspace_id,
+				actorId: written.actorId,
+				action: 'voice_followup_email_requested',
+				entityType: 'object',
+				entityId: written.id,
+				data: {
+					call_id: ctx.callId,
+					requested_at: requestedAt,
+					prospect_quote: input.prospect_quote,
+					agent_turn: agentTurn.text,
+					script_version: deps.scriptVersion,
+					confirmed_address: confirmedAddress,
+					agent_turn_source: agentTurn.source,
+				},
+			})
+		},
+	})
 	return { acknowledged: true as const }
 }
 
@@ -489,8 +564,8 @@ const routes = [
 	entry('book_meeting_slot', bookMeetingSlot),
 	entry('confirm_meeting_slot', confirmMeetingSlot),
 	entry('flag_interest', flagInterest),
-	entry('send_followup_sms', sendFollowupSms),
 	entry('end_call_polite', endCallPolite),
+	entry('request_followup_email', requestFollowupEmail),
 ] as const
 
 /**
@@ -503,6 +578,10 @@ const routes = [
 export function createToolRouter(overrides: Partial<ToolRouterDeps> = {}): ToolHandler {
 	const deps: ToolRouterDeps = { ...defaultToolRouterDeps, ...overrides }
 	return async (ctx) => {
+		// Declared nowhere, built nowhere: a model that still calls it gets a flat no.
+		if (ctx.toolName === 'send_followup_sms') {
+			return fail('not_enabled', 'Texts are not enabled. Do not promise the prospect a text.')
+		}
 		const route = routes.find((r) => r.name === ctx.toolName)
 		if (!route) return { ok: true, handled: false }
 

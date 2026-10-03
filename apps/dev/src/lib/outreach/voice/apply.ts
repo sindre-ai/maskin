@@ -1,6 +1,6 @@
 import type { Database, Transaction } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { recordEvent } from '../../events/record-event'
 import { type EffectContext, type EffectRunner, runEffects } from './effects'
 import { type VoiceEffect, type VoiceEvent, advance } from './state'
@@ -147,11 +147,46 @@ export type RecordToolCallResult =
 	| { recorded: true; contact: RecordedContact }
 	| { recorded: false; reason: 'contact_not_found' | 'stale_call' | 'duplicate' }
 
+/** metadata = (metadata minus the null-valued keys) merged with the rest, as one atomic jsonb expression. */
+function metadataMergeSql(patch: Record<string, unknown>) {
+	const set: Record<string, unknown> = {}
+	const remove: string[] = []
+	for (const [k, v] of Object.entries(patch)) {
+		if (v === null) remove.push(k)
+		else set[k] = v
+	}
+	const removeKeys =
+		remove.length > 0
+			? sql`ARRAY[${sql.join(
+					remove.map((k) => sql`${k}`),
+					sql`, `,
+				)}]::text[]`
+			: sql`ARRAY[]::text[]`
+	return sql`(coalesce(${objects.metadata}, '{}'::jsonb) - ${removeKeys}) || ${JSON.stringify(set)}::jsonb`
+}
+
+/** Merges a patch into a contact's metadata (null deletes a key) without reading it first. */
+export async function mergeContactMetadata(
+	db: VoiceDb,
+	params: { workspaceId: string; contactId: string; patch: Record<string, unknown> },
+): Promise<void> {
+	await db
+		.update(objects)
+		.set({ metadata: metadataMergeSql(params.patch) })
+		.where(
+			and(
+				eq(objects.id, params.contactId),
+				eq(objects.workspaceId, params.workspaceId),
+				eq(objects.type, 'contact'),
+			),
+		)
+}
+
 /**
- * The one writer of a call's tool trace. Loads the contact under a row lock,
- * appends the tool to voice_tool_trace (the trace the reducer and the follow-up
- * email hook read), merges any metadata patch and runs the caller's audit write,
- * all in one transaction. Does not touch status.
+ * The one writer of a call's tool trace. Locks the contact row, checks the stale-call and
+ * duplicate guards against what is stored, then writes the trace entry and the metadata patch
+ * as one atomic jsonb merge (not a read-modify-write of the whole object), so another writer's
+ * keys survive. The caller's audit write runs in the same transaction. Does not touch status.
  */
 export async function recordToolCall(
 	db: VoiceDb,
@@ -184,15 +219,17 @@ export async function recordToolCall(
 		) {
 			return { recorded: false, reason: 'duplicate' } as const
 		}
-		const metadata = mergeMetadata(current, params.metadataPatch ?? {})
-		if (params.toolName !== null) {
-			metadata.voice_tool_trace = [...trace, { tool_name: params.toolName }]
-		}
-		await tx.update(objects).set({ metadata }).where(eq(objects.id, row.id))
+
+		let next = metadataMergeSql(params.metadataPatch ?? {})
+		const [written] = await tx
+			.update(objects)
+			.set({ metadata: next })
+			.where(eq(objects.id, row.id))
+			.returning({ metadata: objects.metadata })
 		const contact: RecordedContact = {
 			id: row.id,
 			title: row.title ?? '',
-			metadata,
+			metadata: (written?.metadata ?? {}) as Record<string, unknown>,
 			actorId: row.driver ?? row.createdBy,
 		}
 		await params.inTransaction?.(tx, contact)

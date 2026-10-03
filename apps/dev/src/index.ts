@@ -9,6 +9,7 @@ import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
+import { TelnyxKnowledgeExporterJob } from './jobs/telnyx-knowledge-exporter'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
@@ -17,6 +18,8 @@ import {
 	maybeBootstrapDev,
 	seedMarketplaceIfEmpty,
 } from './lib/dev-bootstrap'
+import { registerToolHandler } from './lib/integrations/providers/telnyx/tool-dispatch'
+import { createToolRouter } from './lib/integrations/providers/telnyx/tools'
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
 import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
@@ -217,6 +220,15 @@ const purgeIdempotencyJob = new PurgeIdempotencyJob(db)
 purgeIdempotencyJob.start()
 logger.info('Purge idempotency job started')
 
+// Telnyx voice: the tool router answers assistant.tool_invocation events on the webhook route,
+// and the knowledge exporter keeps the assistant and its customer_facing knowledge base in step
+// (nightly, on knowledge edits, and once now). Both are inert until TELNYX_* is configured.
+registerToolHandler(createToolRouter())
+const telnyxKnowledgeExporterJob = new TelnyxKnowledgeExporterJob(db, notifyBridge)
+telnyxKnowledgeExporterJob.start()
+void telnyxKnowledgeExporterJob.tick()
+logger.info('Telnyx knowledge exporter job started')
+
 // VIES-hold scheduler: 15-min cron running T+2h reminder + T+24h timeout
 // sweeps for the VAT-correct-checkout bet (a9e19ca4). Both sweeps early-return
 // when no rows are eligible, so this is a no-op until the webhook starts
@@ -347,6 +359,7 @@ const shutdown = async (signal: string) => {
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
+	telnyxKnowledgeExporterJob.stop()
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.

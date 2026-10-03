@@ -30,6 +30,9 @@ export const KNOWLEDGE_FIELDS: FieldDefinition[] = [
 		values: ['low', 'medium', 'high'],
 	},
 	{ name: 'tags', type: 'text' },
+	// Only knowledge flipped to true is exported to the Telnyx voice assistant's knowledge base.
+	// Absent reads as false. Review step, not self-service: see providers/telnyx/knowledge-exporter.ts.
+	{ name: 'customer_facing', type: 'boolean' },
 ]
 
 export const KNOWLEDGE_DEFAULT_SETTINGS: ModuleDefaultSettings = {
