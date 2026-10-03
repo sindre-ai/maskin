@@ -149,6 +149,13 @@ const LOCAL_RUNTIME_BUCKET = 'local-docker'
 const MAX_BUFFERED_MCP_HEALTH_BYTES = 256 * 1024
 
 /**
+ * Upper bound on the agent-server stop call made while settling a session.
+ * The reaper runs its steps in series, so a hung stop must not stall the pass;
+ * on timeout the stop is logged as skipped-error and the row still ends failed.
+ */
+const SETTLE_STOP_TIMEOUT_MS = 10_000
+
+/**
  * Mirrors the allowlist regex enforced on the API side by
  * `apps/dev/src/routes/integrations.ts` and
  * `apps/dev/src/lib/integrations/providers/github/auth.ts` (T4). Kept in sync so
@@ -1387,10 +1394,11 @@ export class SessionManager extends EventEmitter {
 					.limit(1)
 				if (!serverRow) return 'skipped-none-live'
 				const client = new AgentServerClient({ server: serverRow })
-				const resp = await client.stopSession(row.id, {
-					reason: outcome.kind,
-					source: outcome.source,
-				})
+				const resp = await client.stopSession(
+					row.id,
+					{ reason: outcome.kind, source: outcome.source },
+					{ timeoutMs: SETTLE_STOP_TIMEOUT_MS },
+				)
 				if (resp.stopped === 'sandbox-not-found' || resp.stopped === 'sandbox-already-gone') {
 					return 'skipped-none-live'
 				}
@@ -4485,8 +4493,11 @@ export class SessionManager extends EventEmitter {
 			// settleSession is the only writer of terminal sessions.status.
 			// classification='startup_stalled' — settleSession's push guard
 			// already skips pushAgentFiles for this classification (nothing
-			// was ever written to /agent), and skipStop is redundant here
-			// since the session never reached a live runtime.
+			// was ever written to /agent). The stop is NOT skipped: the agent
+			// server may have started a sandbox whose row never reached running
+			// (the container id is only written after startSession returns).
+			// settleStopSandbox stops by session id, so an unrecorded sandbox is
+			// still found; not-found is a no-op and a stop error is logged.
 			await settleSession(
 				session.id,
 				{
@@ -4497,7 +4508,7 @@ export class SessionManager extends EventEmitter {
 					exitCode: 0,
 					failureReason: stalledFailureReason,
 				},
-				this.buildSettleDeps({ skipStop: true, skipPush: true }),
+				this.buildSettleDeps({ skipPush: true }),
 			)
 
 			await this.insertSystemLog(session.id, stalledFailureReason.human_message).catch((err) =>

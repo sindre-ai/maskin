@@ -198,6 +198,32 @@ describe('AgentServerClient.stopSession', () => {
 			AgentServerHttpError,
 		)
 	})
+
+	it('sets no abort signal unless a timeout is requested', async () => {
+		const { fetchImpl, calls } = makeFetchSpy(
+			new Response(JSON.stringify({ ok: true }), {
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+			}),
+		)
+		const client = new AgentServerClient({ server: SERVER, fetchImpl })
+
+		await client.stopSession('s1', { reason: 'stop', source: 'user-stop' })
+
+		expect(calls[0]?.init?.signal).toBeUndefined()
+	})
+
+	it('rejects when the agent server never answers within timeoutMs', async () => {
+		const hangingFetch: typeof fetch = ((_input: RequestInfo | URL, init?: RequestInit) =>
+			new Promise((_resolve, reject) => {
+				init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+			})) as typeof fetch
+		const client = new AgentServerClient({ server: SERVER, fetchImpl: hangingFetch })
+
+		await expect(
+			client.stopSession('s1', { reason: 'fail', source: 'reaper' }, { timeoutMs: 20 }),
+		).rejects.toThrow()
+	})
 })
 
 describe('AgentServerClient.postJson', () => {

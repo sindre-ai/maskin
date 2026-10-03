@@ -118,8 +118,12 @@ export class AgentServerClient {
 	 * actually stopped, already gone, or never found — a non-error outcome
 	 * for both `agent-completed` and `sandbox-exit` sources.
 	 */
-	async stopSession(sessionId: string, req: StopSessionRequest): Promise<StopSessionResponse> {
-		return this.postJson<StopSessionResponse>(`/sessions/${sessionId}/stop`, req)
+	async stopSession(
+		sessionId: string,
+		req: StopSessionRequest,
+		opts?: { timeoutMs?: number },
+	): Promise<StopSessionResponse> {
+		return this.postJson<StopSessionResponse>(`/sessions/${sessionId}/stop`, req, opts)
 	}
 
 	/**
@@ -139,7 +143,9 @@ export class AgentServerClient {
 
 	// Public to let lifecycle-route callers (T3 stop/snapshot/restore) reuse the
 	// bearer + content-type plumbing without re-implementing it.
-	async postJson<T>(path: string, body: unknown): Promise<T> {
+	// timeoutMs is opt-in: dispatch can legitimately take ~70s, so only callers
+	// that sit in a serial loop (the settle-side stop) bound their call.
+	async postJson<T>(path: string, body: unknown, opts?: { timeoutMs?: number }): Promise<T> {
 		const url = joinUrl(this.deps.server.url, path)
 		const res = await this.fetchImpl(url, {
 			method: 'POST',
@@ -148,6 +154,7 @@ export class AgentServerClient {
 				'Content-Type': 'application/json',
 			},
 			body: JSON.stringify(body),
+			signal: opts?.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined,
 		})
 		if (res.status === 401) {
 			throw new AgentServerAuthError({ id: this.deps.server.id, url: this.deps.server.url })
