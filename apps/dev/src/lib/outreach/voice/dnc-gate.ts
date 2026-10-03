@@ -28,7 +28,7 @@ function holdReason(m: Record<string, unknown>): string | null {
 // metadata.protect == true, or metadata.tags containing protect, protected or
 // do-not-contact. The personal-do-not-contact and fundraising skills write
 // metadata.protected = true, so that is read too. Any one hit refuses.
-const PROTECT_TAGS: readonly string[] = ['protect', 'protected', 'do-not-contact']
+export const PROTECT_TAGS: readonly string[] = ['protect', 'protected', 'do-not-contact']
 
 function isTrue(v: unknown): boolean {
 	return v === true || (typeof v === 'string' && v.trim().toLowerCase() === 'true')
@@ -117,6 +117,12 @@ export type DncResult =
 			reason: string
 			/** Metadata the dialer writes onto the contact with the refusal. */
 			stamp?: Record<string, unknown>
+			/**
+			 * The normalized number the Robinson list matched. Set only on a confirmed match, never
+			 * on "list unavailable". The dialer stamps it so the queue read can tell this refusal is
+			 * permanent for this number.
+			 */
+			listedNumber?: string
 	  }
 
 export interface GateContact extends VoiceContact {
@@ -247,9 +253,12 @@ export async function runDncGate(contact: GateContact, deps: DncGateDeps): Promi
 		return refuse('robinson', 'Robinson list is unavailable, so the number cannot be scrubbed')
 	}
 	if (listed) {
-		return refuse('robinson', 'number is on the Robinson list', {
-			robinson_listed_at: deps.now.toISOString(),
-		})
+		return {
+			...refuse('robinson', 'number is on the Robinson list', {
+				robinson_listed_at: deps.now.toISOString(),
+			}),
+			listedNumber: number,
+		}
 	}
 
 	// 5. Time of day, Europe/Copenhagen workdays 09:00-16:00.
