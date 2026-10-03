@@ -9,6 +9,8 @@ struct LoopsListView: View {
 	@Binding var selection: String?
 	let search: String
 	var isLive = true
+	var onNew: () -> Void = {}
+	var onBrowse: () -> Void = {}
 
 	var body: some View {
 		let sections = store.sections(query: search)
@@ -69,7 +71,14 @@ struct LoopsListView: View {
 				if search.isEmpty {
 					EmptyState(
 						symbol: "arrow.triangle.2.circlepath", title: "No loops yet",
-						message: "Loops are pipelines of agents. Install one from the Maskin web app and it will show up here.")
+						message: "Loops are pipelines of agents. Start one from scratch or install one from the marketplace."
+					) {
+						VStack(spacing: MaskinSpace.s5) {
+							Button("New loop", action: onNew).buttonStyle(.primaryAction)
+							Button("Browse marketplace", action: onBrowse).buttonStyle(.secondaryAction)
+						}
+						.frame(maxWidth: 320)
+					}
 				} else {
 					ContentUnavailableView.search(text: search)
 				}

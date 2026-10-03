@@ -23,6 +23,11 @@ actor FakeLoopsAPI: LoopsAPI {
 	private(set) var statusCalls: [(String, LoopPill)] = []
 	private(set) var loopCalls = 0
 	private(set) var statusKeys: [String] = []
+	var failEdit = false
+	private(set) var createCalls: [(String, String, String)] = []
+	private(set) var updateCalls: [(String, String?, String?)] = []
+	private(set) var deleted: [String] = []
+	func setFailEdit(_ value: Bool) { failEdit = value }
 
 	init(_ rows: [LoopSummary]) { self.rows = rows }
 
@@ -50,6 +55,24 @@ actor FakeLoopsAPI: LoopsAPI {
 		if let statusDelay { try await Task.sleep(for: statusDelay) }
 		if failStatus { throw AutomationError("server said no") }
 		if let i = rows.firstIndex(where: { $0.id == loopID }) { rows[i] = rows[i].with(status: status) }
+	}
+}
+
+extension FakeLoopsAPI {
+	func createLoop(name: String, content: String, idempotencyKey: String) async throws -> String {
+		createCalls.append((name, content, idempotencyKey))
+		if failEdit { throw AutomationError("nope") }
+		let id = "new-\(createCalls.count)"
+		rows.insert(LoopSummary(id: id, name: name, content: content, status: .learning), at: 0)
+		return id
+	}
+	func updateLoop(loopID: String, name: String?, content: String?, idempotencyKey: String) async throws {
+		updateCalls.append((loopID, name, content))
+		if failEdit { throw AutomationError("nope") }
+	}
+	func deleteLoop(loopID: String) async throws {
+		if failEdit { throw AutomationError("nope") }
+		deleted.append(loopID)
 	}
 }
 

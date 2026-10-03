@@ -209,4 +209,38 @@ public final class LoopsStore {
 			notice = "Couldn't \(target == .paused ? "pause" : "resume") this loop. \(AutomationError.message(error))"
 		}
 	}
+
+	/// Creates a loop and puts it in the list straight away; returns its id for navigation.
+	/// A retry of the same name/description reuses the idempotency key, so a lost response
+	/// cannot create two loops.
+	@discardableResult
+	public func create(name: String, description: String) async -> String? {
+		let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+		let content = description.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !title.isEmpty else { return nil }
+		let intent = "create:\(title)\n\(content)"
+		do {
+			let id = try await api.createLoop(
+				name: title, content: content, idempotencyKey: intents.key(for: intent))
+			intents.succeeded(intent)
+			if !loops.contains(where: { $0.id == id }) {
+				loops.insert(
+					LoopSummary(
+						id: id, name: title, content: content.isEmpty ? nil : content, status: .learning),
+					at: 0)
+				phase = .loaded
+			}
+			await refresh()
+			return id
+		} catch {
+			notice = "Couldn't create this loop. \(AutomationError.message(error))"
+			return nil
+		}
+	}
+
+	/// Drops a loop locally after the detail screen deleted it on the server.
+	public func didDelete(_ id: String) {
+		loops.removeAll { $0.id == id }
+		persist()
+	}
 }

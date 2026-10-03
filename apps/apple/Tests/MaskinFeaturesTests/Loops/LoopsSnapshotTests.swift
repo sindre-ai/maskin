@@ -24,6 +24,9 @@ private actor FixtureLoopsAPI: LoopsAPI {
 	func actors() async throws -> [AutomationActor] { [relay, forge, scout] }
 	func installs() async throws -> [LoopInstall] { [] }
 	func setStatus(loopID: String, status: LoopPill, idempotencyKey: String) async throws {}
+	func createLoop(name: String, content: String, idempotencyKey: String) async throws -> String { "new" }
+	func updateLoop(loopID: String, name: String?, content: String?, idempotencyKey: String) async throws {}
+	func deleteLoop(loopID: String) async throws {}
 }
 
 private let fixtureLoop = LoopSummary(
