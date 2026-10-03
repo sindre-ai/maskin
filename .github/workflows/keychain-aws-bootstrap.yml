@@ -1,0 +1,219 @@
+# Keychain AWS bootstrap for ONE environment. Idempotent: safe to re-run.
+# Creates, in this order: smoke KMS key (tag at create, then alias), CloudTrail with its own log bucket,
+# the runtime IAM user (boundary required at create) and, for staging only, the Governance Object Lock
+# bucket plus the delete-refused lock test.
+# The production Object Lock bucket is NOT here. It is keychain-aws-production-bucket.yml, last, own approval.
+# Design and rules: ADR-010 and infra/keychain-aws/README.md. Run keychain-aws-preflight.yml first.
+name: Keychain AWS bootstrap
+
+run-name: Keychain AWS bootstrap (${{ inputs.target }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Which environment to bootstrap
+        type: choice
+        required: true
+        options:
+          - staging
+          - production
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: keychain-aws-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: keychain-aws-${{ inputs.target }}
+    env:
+      TARGET: ${{ inputs.target }}
+      AWS_PAGER: ''
+    steps:
+      - name: Check out the policy template only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          sparse-checkout: infra/keychain-aws
+          persist-credentials: false
+
+      - name: Assume the bootstrap role
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/maskin-keychain-bootstrap-${{ inputs.target }}
+          role-session-name: keychain-bootstrap-${{ github.run_id }}
+          role-duration-seconds: 3600
+          aws-region: eu-central-1
+          mask-aws-account-id: true
+
+      - name: KMS smoke key, tag at create then alias
+        shell: bash
+        run: |
+          set -euo pipefail
+          ALIAS="alias/maskin-keychain-smoke-$TARGET"
+          if out=$(aws kms describe-key --key-id "$ALIAS" 2>&1 >/dev/null); then
+            echo "smoke key already exists, skipping create"
+          elif grep -q NotFoundException <<<"$out"; then
+            # The tag goes in the create call itself. Never create untagged and tag afterwards:
+            # the tag condition on CreateAlias and the deny on TagResource would both refuse it.
+            if ! KEY_ID=$(aws kms create-key --description "maskin-keychain smoke key ($TARGET)" \
+                --tags TagKey=maskin-keychain,TagValue=true --query KeyMetadata.KeyId --output text 2>&1); then
+              echo "$KEY_ID"
+              echo "::error::SHAPE: tag-at-create REFUSED with the tagging deny in place. CTO decision needed, fallback is in the policy draft section 2."
+              exit 1
+            fi
+            echo "::add-mask::$KEY_ID"
+            aws kms create-alias --alias-name "$ALIAS" --target-key-id "$KEY_ID"
+            echo "SHAPE: tag-at-create plus CreateAlias both passed with the deny in place"
+            echo "- KMS shape that held: tag-at-create plus CreateAlias, deny in place" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "$out"
+            echo "::error::unexpected error reading the smoke key"
+            exit 1
+          fi
+          # Tag scope, negative checks. If either create succeeds the policy is wrong and a stray key now exists.
+          if aws kms create-key --description "must be refused (no tag)" >/dev/null 2>&1; then
+            echo "::error::CreateKey without the tag SUCCEEDED. The bootstrap policy is wrong. A stray untagged key now exists, tell the CTO."
+            exit 1
+          fi
+          if aws kms create-key --region eu-west-1 --description "must be refused (region)" \
+              --tags TagKey=maskin-keychain,TagValue=true >/dev/null 2>&1; then
+            echo "::error::CreateKey in eu-west-1 SUCCEEDED. The bootstrap policy is wrong. A stray key now exists, tell the CTO."
+            exit 1
+          fi
+          echo "CreateKey without the tag and CreateKey outside eu-central-1 are both refused"
+
+      - name: CloudTrail with a separate log bucket
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACCT=$(aws sts get-caller-identity --query Account --output text)
+          echo "::add-mask::$ACCT"
+          BUCKET="maskin-keychain-trail-$TARGET-$ACCT"
+          TRAIL="maskin-keychain-$TARGET"
+          TRAIL_ARN="arn:aws:cloudtrail:eu-central-1:$ACCT:trail/$TRAIL"
+          if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            aws s3api create-bucket --bucket "$BUCKET" --region eu-central-1 \
+              --create-bucket-configuration LocationConstraint=eu-central-1 >/dev/null
+          fi
+          aws s3api put-public-access-block --bucket "$BUCKET" --public-access-block-configuration \
+            BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+          aws s3api put-bucket-encryption --bucket "$BUCKET" --server-side-encryption-configuration \
+            '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+          aws s3api put-bucket-tagging --bucket "$BUCKET" --tagging 'TagSet=[{Key=maskin-keychain,Value=true}]'
+          jq -n --arg b "$BUCKET" --arg a "$ACCT" --arg t "$TRAIL_ARN" '{
+            Version: "2012-10-17",
+            Statement: [
+              {Sid: "CloudTrailAclCheck", Effect: "Allow", Principal: {Service: "cloudtrail.amazonaws.com"},
+               Action: "s3:GetBucketAcl", Resource: ("arn:aws:s3:::" + $b),
+               Condition: {StringEquals: {"aws:SourceArn": $t}}},
+              {Sid: "CloudTrailWrite", Effect: "Allow", Principal: {Service: "cloudtrail.amazonaws.com"},
+               Action: "s3:PutObject", Resource: ("arn:aws:s3:::" + $b + "/AWSLogs/" + $a + "/*"),
+               Condition: {StringEquals: {"s3:x-amz-acl": "bucket-owner-full-control", "aws:SourceArn": $t}}},
+              {Sid: "DenyInsecureTransport", Effect: "Deny", Principal: "*", Action: "s3:*",
+               Resource: [("arn:aws:s3:::" + $b), ("arn:aws:s3:::" + $b + "/*")],
+               Condition: {Bool: {"aws:SecureTransport": "false"}}}
+            ]}' > "$RUNNER_TEMP/trail-bucket-policy.json"
+          aws s3api put-bucket-policy --bucket "$BUCKET" --policy "file://$RUNNER_TEMP/trail-bucket-policy.json"
+          if ! aws cloudtrail describe-trails --trail-name-list "$TRAIL" --query 'trailList[0].Name' --output text 2>/dev/null | grep -qx "$TRAIL"; then
+            aws cloudtrail create-trail --name "$TRAIL" --s3-bucket-name "$BUCKET" \
+              --no-is-multi-region-trail --no-include-global-service-events --enable-log-file-validation \
+              --tags-list Key=maskin-keychain,Value=true >/dev/null
+          fi
+          # Management events cover KMS Encrypt, Decrypt and CreateKey.
+          aws cloudtrail put-event-selectors --trail-name "$TRAIL" \
+            --event-selectors '[{"ReadWriteType":"All","IncludeManagementEvents":true}]' >/dev/null
+          aws cloudtrail start-logging --name "$TRAIL"
+          test "$(aws cloudtrail get-trail-status --name "$TRAIL" --query IsLogging --output text)" = "True"
+          echo "CloudTrail is logging management events to its own bucket"
+          echo "- CloudTrail logging: yes" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Runtime IAM user, boundary required at create
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACCT=$(aws sts get-caller-identity --query Account --output text)
+          echo "::add-mask::$ACCT"
+          RUSER="maskin-keychain-runtime-$TARGET"
+          BOUNDARY="arn:aws:iam::$ACCT:policy/maskin-keychain-runtime-boundary-$TARGET"
+          WORM="maskin-keychain-worm-$TARGET-$ACCT"
+          if out=$(aws iam get-user --user-name "$RUSER" 2>&1 >/dev/null); then
+            echo "runtime user already exists, skipping create"
+          elif grep -q NoSuchEntity <<<"$out"; then
+            aws iam create-user --user-name "$RUSER" --path /maskin-keychain/ \
+              --permissions-boundary "$BOUNDARY" --tags Key=maskin-keychain,Value=true >/dev/null
+          else
+            echo "$out"
+            echo "::error::unexpected error reading the runtime user"
+            exit 1
+          fi
+          sed "s/__ACCOUNT_ID__/$ACCT/g; s/__WORM_BUCKET__/$WORM/g" infra/keychain-aws/runtime-user-policy.json.tpl > "$RUNNER_TEMP/runtime-policy.json"
+          jq empty "$RUNNER_TEMP/runtime-policy.json"
+          aws iam put-user-policy --user-name "$RUSER" --policy-name maskin-keychain-runtime \
+            --policy-document "file://$RUNNER_TEMP/runtime-policy.json"
+          GOT=$(aws iam get-user --user-name "$RUSER" --query 'User.PermissionsBoundary.PermissionsBoundaryArn' --output text)
+          test "$GOT" = "$BOUNDARY"
+          # CreateUser without the boundary must be refused. If it succeeds a stray user now exists.
+          if aws iam create-user --user-name maskin-keychain-runtime-$TARGET-probe --path /maskin-keychain/ >/dev/null 2>&1; then
+            echo "::error::CreateUser without the boundary SUCCEEDED. The bootstrap policy is wrong. A stray user now exists, tell the CTO."
+            exit 1
+          fi
+          echo "runtime user has the boundary, inline policy written, CreateUser without boundary refused"
+          echo "- Runtime user: boundary attached, CreateUser without boundary refused" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Staging only, Governance Object Lock bucket and the delete-refused test
+        if: inputs.target == 'staging'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACCT=$(aws sts get-caller-identity --query Account --output text)
+          echo "::add-mask::$ACCT"
+          WORM="maskin-keychain-worm-staging-$ACCT"
+          if ! aws s3api head-bucket --bucket "$WORM" 2>/dev/null; then
+            # Object Lock can only be switched on at creation. This also turns versioning on.
+            aws s3api create-bucket --bucket "$WORM" --region eu-central-1 \
+              --create-bucket-configuration LocationConstraint=eu-central-1 \
+              --object-lock-enabled-for-bucket >/dev/null
+          fi
+          aws s3api put-public-access-block --bucket "$WORM" --public-access-block-configuration \
+            BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+          aws s3api put-bucket-encryption --bucket "$WORM" --server-side-encryption-configuration \
+            '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+          aws s3api put-bucket-tagging --bucket "$WORM" --tagging 'TagSet=[{Key=maskin-keychain,Value=true}]'
+          aws s3api put-object-lock-configuration --bucket "$WORM" --object-lock-configuration \
+            '{"ObjectLockEnabled":"Enabled","Rule":{"DefaultRetention":{"Mode":"GOVERNANCE","Days":1}}}'
+          jq -n --arg b "$WORM" '{
+            Version: "2012-10-17",
+            Statement: [{Sid: "DenyInsecureTransport", Effect: "Deny", Principal: "*", Action: "s3:*",
+              Resource: [("arn:aws:s3:::" + $b), ("arn:aws:s3:::" + $b + "/*")],
+              Condition: {Bool: {"aws:SecureTransport": "false"}}}]}' > "$RUNNER_TEMP/worm-bucket-policy.json"
+          aws s3api put-bucket-policy --bucket "$WORM" --policy "file://$RUNNER_TEMP/worm-bucket-policy.json"
+          test "$(aws s3api get-bucket-versioning --bucket "$WORM" --query Status --output text)" = "Enabled"
+          test "$(aws s3api get-object-lock-configuration --bucket "$WORM" --query 'ObjectLockConfiguration.Rule.DefaultRetention.Mode' --output text)" = "GOVERNANCE"
+          test "$(aws s3api get-object-lock-configuration --bucket "$WORM" --query 'ObjectLockConfiguration.Rule.DefaultRetention.Days' --output text)" = "1"
+
+          # Lock test. This role is ALLOWED to delete under smoke/ (and denied BypassGovernanceRetention),
+          # so a refusal can only come from Object Lock. A plain permission error must not pass.
+          KEY="smoke/lock-test-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf "lock test" > "$RUNNER_TEMP/lock-test.txt"
+          VER=$(aws s3api put-object --bucket "$WORM" --key "$KEY" --body "$RUNNER_TEMP/lock-test.txt" --query VersionId --output text)
+          echo "::add-mask::$VER"
+          # Proof the identity can delete: a delete without a version id adds a delete marker and needs s3:DeleteObject.
+          aws s3api delete-object --bucket "$WORM" --key "$KEY" >/dev/null
+          echo "identity can call DeleteObject (delete marker written)"
+          if out=$(aws s3api delete-object --bucket "$WORM" --key "$KEY" --version-id "$VER" 2>&1); then
+            echo "::error::DeleteObject on a locked version SUCCEEDED. Object Lock is not working. Stop."
+            exit 1
+          fi
+          if ! grep -qi 'protected by object lock' <<<"$out"; then
+            echo "::error::delete was refused, but not with the Object Lock error. That is a permission problem, not proof of the lock."
+            exit 1
+          fi
+          test "$(aws s3api get-object-retention --bucket "$WORM" --key "$KEY" --version-id "$VER" --query Retention.Mode --output text)" = "GOVERNANCE"
+          echo "delete of the locked version refused with the Object Lock error"
+          echo "- Staging Object Lock: Governance, 1 day, delete refused with the Object Lock error (identity allowed to delete)" >> "$GITHUB_STEP_SUMMARY"
