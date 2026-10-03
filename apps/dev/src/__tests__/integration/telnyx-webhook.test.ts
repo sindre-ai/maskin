@@ -318,6 +318,20 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 		})
 	})
 
+	it('a request_followup_email in the trace and no booking resolves to follow_up_later, and stays there', async () => {
+		const c = await newContact()
+		await c.send('call.initiated', 'call-f', 1)
+		await c.send('call.answered', 'call-f', 1)
+		await c.send('assistant.tool_invocation', 'call-f', 1, {
+			tool_name: 'request_followup_email',
+			tool_input: { quote: 'just email me' },
+		})
+		await c.send('call.hangup', 'call-f', 1, { hangup_cause: 'normal_clearing' })
+		expect((await c.read()).status).toBe('follow_up_later')
+		await c.send('call.initiated', 'call-g', 1)
+		expect((await c.read()).status).toBe('follow_up_later')
+	})
+
 	it('a confirm_meeting_slot in the trace resolves to voice_meeting_booked', async () => {
 		const c = await newContact()
 		await c.send('call.initiated', 'call-b', 1)
