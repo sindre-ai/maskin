@@ -849,4 +849,86 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 			await manager.stop()
 		}
 	})
+
+	it('heals at most one batch per pass and stops once the backlog is drained', async () => {
+		const statics = SessionManager as unknown as { TERMINAL_HEAL_BATCH: number }
+		const original = statics.TERMINAL_HEAL_BATCH
+		statics.TERMINAL_HEAL_BATCH = 2
+		try {
+			const rows = await Promise.all(
+				[1, 2, 3].map(() =>
+					insertSession(db, workspaceId, actorId, actorId, {
+						status: 'completed',
+						sessionState: 'starting',
+						stateEnteredAt: new Date(),
+						timeoutAt: null,
+					}),
+				),
+			)
+			const countDone = async () => {
+				const found = await db
+					.select({ sessionState: sessions.sessionState })
+					.from(sessions)
+					.where(eq(sessions.workspaceId, workspaceId))
+				expect(found).toHaveLength(rows.length)
+				return found.filter((r) => r.sessionState === 'done').length
+			}
+
+			const manager = new SessionManager(db, stubStorage())
+			configureSessionLifecycle({ db, sessionManager: manager })
+			vi.spyOn(
+				manager as unknown as { drainQueue: (id: string) => Promise<void> },
+				'drainQueue',
+			).mockResolvedValue(undefined)
+			const tick = () => (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+
+			await tick()
+			expect(await countDone()).toBe(2)
+			await tick()
+			expect(await countDone()).toBe(3)
+
+			// Drained: the heal no longer runs, so it does not scan on every tick.
+			await sql`UPDATE sessions SET session_state = 'starting' WHERE id = ${rows[0].id}`
+			await tick()
+			expect(await countDone()).toBe(2)
+			await manager.stop()
+		} finally {
+			statics.TERMINAL_HEAL_BATCH = original
+		}
+	})
+
+	it('a pass that never settles stops blocking ticks once it is stale', async () => {
+		const manager = new SessionManager(db, stubStorage())
+		configureSessionLifecycle({ db, sessionManager: manager })
+		let release: () => void = () => {}
+		const passSpy = vi
+			.spyOn(manager as unknown as { runWatchdogPass: () => Promise<void> }, 'runWatchdogPass')
+			.mockImplementationOnce(
+				() =>
+					new Promise<void>((resolve) => {
+						release = resolve
+					}),
+			)
+			.mockResolvedValue(undefined)
+		const tick = () => (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+
+		const hung = tick()
+		await tick()
+		expect(passSpy).toHaveBeenCalledTimes(1)
+
+		// Pretend the hung pass started 10 minutes ago: the next tick must run.
+		;(manager as unknown as { watchdogStartedAt: number }).watchdogStartedAt =
+			Date.now() - 10 * 60 * 1000
+		await tick()
+		expect(passSpy).toHaveBeenCalledTimes(2)
+
+		// The hung pass finishing late must not clear a newer pass's flag.
+		;(manager as unknown as { watchdogStartedAt: number }).watchdogStartedAt = Date.now()
+		release()
+		await hung
+		expect(
+			(manager as unknown as { watchdogStartedAt: number | null }).watchdogStartedAt,
+		).not.toBeNull()
+		await manager.stop()
+	})
 })
