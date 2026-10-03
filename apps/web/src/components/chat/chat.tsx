@@ -5,6 +5,7 @@ import {
 	detectMentionTrigger,
 	reduceMentionPickerKey,
 } from '@/components/chat/mention-picker'
+import { SecretCaptureFlow } from '@/components/chat/secret-capture-flow'
 import { SelectionChips } from '@/components/chat/selection-chips'
 import {
 	type SlashKindId,
@@ -45,6 +46,8 @@ import { getStoredActor } from '@/lib/auth'
 import type { ChatSelection, ChatSelectionAction } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { readFileAsBase64 } from '@/lib/file-utils'
+import { hasHighConfidenceSecret, scanComposerText } from '@/lib/secret-scanner'
+import type { SecretMatch } from '@maskin/shared'
 import { ArrowUp, AtSign, Box, Hash, Mic, Paperclip, Plus, Sparkles, X } from 'lucide-react'
 import {
 	type ChangeEvent,
@@ -201,6 +204,12 @@ export interface ComposerProps {
 	 * survives that, and dies with the tab so an unsent prompt never outlives it.
 	 */
 	draftKey?: string
+	/**
+	 * Where a pasted provider secret can be vaulted: the live session of this
+	 * conversation and the agent running it. Omit on a composer with no session; the
+	 * guard still blocks the send and the card offers Cancel only.
+	 */
+	secretCapture?: { sessionId: string; agent: { id: string; name: string } } | null
 }
 
 const DRAFT_PREFIX = 'composer-draft:'
@@ -257,6 +266,7 @@ export function Composer({
 	value: controlledValue,
 	onValueChange,
 	draftKey,
+	secretCapture,
 }: ComposerProps) {
 	const [internalValue, setInternalValue] = useState(() =>
 		controlledValue === undefined && draftKey ? readDraft(draftKey) : '',
@@ -275,6 +285,15 @@ export function Composer({
 		},
 		[controlledValue, onValueChange],
 	)
+	// Keychain chat capture. One read of the flag for the whole guard.
+	const guardEnabled = useFeatureFlag('keychain-chat-capture')
+	const [secretFlow, setSecretFlow] = useState<{
+		content: string
+		matches: SecretMatch[]
+		/** True until the user decides. False keeps only the receipts on screen. */
+		blocking: boolean
+	} | null>(null)
+	const mutedPatternIds = useRef(new Set<string>())
 	// Mirror the draft into sessionStorage. The chat route swaps `draftKey`
 	// without remounting the composer, so on a key change load the incoming
 	// key's stored draft instead of writing the outgoing text under it.
@@ -286,8 +305,14 @@ export function Composer({
 			setValue(readDraft(draftKey))
 			return
 		}
+		// A pasted secret must never reach sessionStorage: not while the card is open,
+		// and not in the keystrokes before Send either.
+		if (secretFlow?.blocking || (guardEnabled && hasHighConfidenceSecret(value, workspaceId))) {
+			writeDraft(draftKey, '')
+			return
+		}
 		writeDraft(draftKey, value)
-	}, [draftKey, value, controlledValue, setValue])
+	}, [draftKey, value, controlledValue, setValue, secretFlow?.blocking, guardEnabled, workspaceId])
 	// Mobile soft keyboards have no Shift key, so the desktop `Shift+Enter`
 	// newline shortcut is unreachable on a phone — plain Enter sends instead.
 	// On touch viewports we let the browser insert a newline and rely on the
@@ -432,6 +457,20 @@ export function Composer({
 			e?.preventDefault()
 			if (!canSend) return
 			const content = value.trim()
+			if (guardEnabled) {
+				const matches = scanComposerText(content, {
+					workspaceId,
+					mutedPatternIds: mutedPatternIds.current,
+				})
+				if (matches.length > 0) {
+					// Before any network call. The text leaves the draft and the input and
+					// lives only in the card's state until the user decides.
+					if (draftKey !== undefined) writeDraft(draftKey, '')
+					setSecretFlow({ content, matches, blocking: true })
+					setValue('')
+					return
+				}
+			}
 			setSending(true)
 			setSendError(null)
 			onDismissExternalError?.()
@@ -449,7 +488,7 @@ export function Composer({
 			// without losing a carefully crafted prompt.
 			if (sent) setValue('')
 		},
-		[canSend, onDismissExternalError, onSend, setValue, value],
+		[canSend, draftKey, guardEnabled, onDismissExternalError, onSend, setValue, value, workspaceId],
 	)
 
 	// Commits the picker's highlighted row into a mention pill: strips the
@@ -1089,6 +1128,32 @@ export function Composer({
 				aria-hidden
 				tabIndex={-1}
 			/>
+			{secretFlow ? (
+				<SecretCaptureFlow
+					workspaceId={workspaceId}
+					content={secretFlow.content}
+					matches={secretFlow.matches}
+					capture={secretCapture ?? null}
+					agentName={secretCapture?.agent.name ?? 'the agent'}
+					onSend={onSend}
+					onCancel={() => {
+						setSecretFlow(null)
+						textareaRef.current?.focus()
+					}}
+					onEdit={() => {
+						const restored = secretFlow.content
+						setSecretFlow(null)
+						setValue(restored)
+						textareaRef.current?.focus()
+					}}
+					onDone={(keepReceipts) =>
+						setSecretFlow(keepReceipts ? (prev) => prev && { ...prev, blocking: false } : null)
+					}
+					onMute={(ids) => {
+						for (const id of ids) mutedPatternIds.current.add(id)
+					}}
+				/>
+			) : null}
 			<form onSubmit={handleSubmit}>
 				<Textarea
 					autoResize
@@ -1098,7 +1163,7 @@ export function Composer({
 					onKeyDown={handleKeyDown}
 					placeholder={placeholder}
 					className="max-h-40 min-h-[36px] w-full resize-none overflow-y-auto border-0 bg-transparent p-1 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
-					disabled={disabled}
+					disabled={disabled || secretFlow?.blocking === true}
 					rows={1}
 					aria-label={textareaLabel}
 					// Screen readers announce the picker's active row while focus
