@@ -99,7 +99,11 @@ struct LiveActivityView: View {
 			if let turn, !turn.steps.isEmpty {
 				let shown = Array(turn.steps.suffix(Self.visibleSteps))
 				VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-					if turn.steps.count > shown.count {
+					if turn.partial && turn.steps.count <= shown.count {
+						Text("Earlier steps not shown")
+							.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
+							.padding(.leading, MaskinSpace.s8 + MaskinSpace.s4)
+					} else if turn.steps.count > shown.count {
 						Text("\(turn.steps.count - shown.count) earlier")
 							.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
 							.padding(.leading, MaskinSpace.s8 + MaskinSpace.s4)
@@ -200,7 +204,7 @@ struct FinishedTraceView: View {
 			if expanded {
 				VStack(alignment: .leading, spacing: MaskinSpace.s2) {
 					ForEach(turn.steps) { ActivityStepRow(step: $0) }
-					if turn.stepsTruncated {
+					if turn.hasHiddenEarlierSteps {
 						Text("Earlier steps not shown").maskinText(.caption).foregroundStyle(MaskinColor.ink5)
 					}
 				}

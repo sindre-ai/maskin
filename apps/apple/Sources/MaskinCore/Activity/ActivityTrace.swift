@@ -57,13 +57,16 @@ public struct ActivityTurn: Identifiable, Equatable, Sendable, Codable {
 	public var result: ActivityResult?
 	public var steps: [ActivityStep]
 	public var stepsTruncated: Bool
+	/// The turn began before the server's scan window, so its earliest steps are unknown.
+	public var partial: Bool
 
 	public var id: String { "\(sessionID)#\(messageID)" }
 
 	public init(
 		sessionID: String, messageID: Int, startedAt: Date? = nil, finishedAt: Date? = nil,
 		status: ActivityStep.Status = .completed, containsReply: Bool = false,
-		result: ActivityResult? = nil, steps: [ActivityStep] = [], stepsTruncated: Bool = false
+		result: ActivityResult? = nil, steps: [ActivityStep] = [], stepsTruncated: Bool = false,
+		partial: Bool = false
 	) {
 		self.sessionID = sessionID
 		self.messageID = messageID
@@ -74,9 +77,12 @@ public struct ActivityTurn: Identifiable, Equatable, Sendable, Codable {
 		self.result = result
 		self.steps = steps
 		self.stepsTruncated = stepsTruncated
+		self.partial = partial
 	}
 
 	public var isRunning: Bool { status == .running }
+	/// True when earlier steps are missing, either capped or outside the scan window.
+	public var hasHiddenEarlierSteps: Bool { stepsTruncated || partial }
 	public var failed: Bool { status == .failed || result?.isError == true }
 
 	/// The step to emphasize while the turn runs: the one still going, else the newest.

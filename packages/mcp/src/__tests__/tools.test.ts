@@ -72,6 +72,7 @@ const ALL_TOOL_NAMES = [
 	'create_session',
 	'list_sessions',
 	'get_session',
+	'get_session_activity',
 	'get_session_logs',
 	'stop_session',
 	'pause_session',
