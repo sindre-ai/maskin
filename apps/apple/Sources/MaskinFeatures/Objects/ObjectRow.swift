@@ -3,61 +3,62 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// One object in the list. Pure values in, so it renders in previews and snapshots.
+/// One object in the list, on a single line (Linear-style): type glyph, title, then status,
+/// star, unread dot and age at the trailing edge. Pure values in, so it renders in previews and
+/// snapshots.
 struct ObjectRow: View {
 	let object: WorkObject
 	let typeName: String
+	/// The driver's resolved name; the avatar is omitted when it can't be resolved.
 	let ownerName: String?
+	var ownerIsAgent = false
 	var showsStatus = false
 
 	var body: some View {
-		HStack(alignment: .top, spacing: MaskinSpace.s7) {
-			TypeBadge(object.type, style: .tile)
-			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-				Text(object.displayTitle)
-					.maskinText(.headline)
-					.foregroundStyle(MaskinColor.ink)
-					.lineLimit(2)
-					.multilineTextAlignment(.leading)
-				HStack(spacing: MaskinSpace.s3) {
-					MonoLabel(typeName)
-					if let ownerName {
-						Text("·")
-						Text(ownerName).lineLimit(1)
-					}
-					if object.updatedAt != nil {
-						Text("·")
-						RelativeTime(object.updatedAt, style: .compact)
-					}
-				}
+		HStack(spacing: MaskinSpace.s5) {
+			TypeBadge(object.type, label: typeName, style: .dot)
+			Text(object.displayTitle)
+				.maskinText(.subhead)
+				.foregroundStyle(MaskinColor.ink)
+				.lineLimit(1)
+			if let activity = object.activeActivity, !activity.isEmpty {
+				Image(systemName: "sparkles")
+					.font(.caption2)
+					.foregroundStyle(MaskinColor.accentFgStrong)
+					.accessibilityLabel(activity)
+			}
+			Spacer(minLength: MaskinSpace.s3)
+			if showsStatus { StatusBadge(object.status, style: .dotWord) }
+			if object.isStarred {
+				Image(systemName: "star.fill")
+					.font(.caption2)
+					.foregroundStyle(MaskinColor.accent)
+					.accessibilityLabel("Starred")
+			}
+			if object.unreadCount > 0 {
+				Circle().fill(MaskinColor.accent)
+					.frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
+					.accessibilityLabel("\(object.unreadCount) unread")
+			}
+			if let ownerName {
+				ActorAvatar(
+					name: ownerName, kind: ownerIsAgent ? .agent : .human, size: MaskinSpace.s10,
+					working: object.activeActivity?.isEmpty == false)
+			}
+			RelativeTime(object.updatedAt, style: .compact)
 				.maskinText(.caption)
-				.foregroundStyle(MaskinColor.ink4)
-				if let activity = object.activeActivity, !activity.isEmpty {
-					Label(activity, systemImage: "sparkles")
-						.maskinText(.caption)
-						.foregroundStyle(MaskinColor.accentFgStrong)
-						.lineLimit(1)
-				}
-				if showsStatus { StatusBadge(object.status, style: .dotWord) }
-			}
-			Spacer(minLength: MaskinSpace.s2)
-			VStack(alignment: .trailing, spacing: MaskinSpace.s4) {
-				if object.isStarred {
-					Image(systemName: "star.fill")
-						.font(.system(size: MaskinFontSize.t13))
-						.foregroundStyle(MaskinColor.accent)
-						.accessibilityLabel("Starred")
-				}
-				if object.unreadCount > 0 {
-					Circle().fill(MaskinColor.accent)
-						.frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
-						.accessibilityLabel("\(object.unreadCount) unread")
-				}
-			}
+				.foregroundStyle(MaskinColor.ink5)
 		}
-		.padding(.vertical, MaskinSpace.s2)
+		.padding(.vertical, MaskinSpace.s3)
 		.contentShape(Rectangle())
 		.accessibilityElement(children: .combine)
+		.accessibilityLabel(accessibilityLabel)
+	}
+
+	private var accessibilityLabel: String {
+		var parts = [typeName, object.displayTitle]
+		if let ownerName { parts.append("Driver \(ownerName)") }
+		return parts.joined(separator: ", ")
 	}
 }
 

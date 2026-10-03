@@ -3,43 +3,37 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// One loop in the list: name, state, stats, the agents involved and when it last moved.
+/// One loop in the list, on a single line: name, then what's waiting, its state and its age.
+/// The stats line and the agents live on the loop's detail.
 struct LoopRow: View {
 	let loop: LoopSummary
 	let agentNames: [String]
 	var hasUpdate = false
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-			HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
-				Text(loop.displayName)
-					.maskinText(.headline)
-					.foregroundStyle(MaskinColor.ink)
-					.lineLimit(2)
-				Spacer(minLength: MaskinSpace.s3)
-				LoopPillView(pill: loop.pill)
+		HStack(spacing: MaskinSpace.s4) {
+			Text(loop.displayName)
+				.maskinText(.subhead)
+				.foregroundStyle(MaskinColor.ink)
+				.lineLimit(1)
+			Spacer(minLength: MaskinSpace.s3)
+			if hasUpdate {
+				Image(systemName: "arrow.up.circle.fill")
+					.font(.caption)
+					.foregroundStyle(MaskinColor.accentFgStrong)
+					.accessibilityLabel("Update available")
 			}
-			HStack(spacing: MaskinSpace.s4) {
-				Text(loop.statsLine)
-					.maskinText(.subhead)
-					.foregroundStyle(MaskinColor.ink4)
-					.lineLimit(2)
-				if loop.waitingCount > 0 {
-					Text("\(loop.waitingCount) waiting")
-						.maskinText(.subhead)
-						.foregroundStyle(MaskinColor.warningStrong)
-				}
-			}
-			HStack(spacing: MaskinSpace.s4) {
-				AgentStrip(names: agentNames, seeds: loop.agentIDs)
-				if hasUpdate { MonoLabel("Update available", color: MaskinColor.accentFgStrong) }
-				Spacer(minLength: 0)
-				RelativeTime(loop.updatedAt, style: .compact)
+			if loop.waitingCount > 0 {
+				Text("\(loop.waitingCount) waiting")
 					.maskinText(.caption)
-					.foregroundStyle(MaskinColor.ink5)
+					.foregroundStyle(MaskinColor.warningStrong)
 			}
+			LoopPillView(pill: loop.pill)
+			RelativeTime(loop.updatedAt, style: .compact)
+				.maskinText(.caption)
+				.foregroundStyle(MaskinColor.ink5)
 		}
-		.padding(.vertical, MaskinSpace.s2)
+		.padding(.vertical, MaskinSpace.s3)
 		.contentShape(Rectangle())
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel(accessibilityLabel)

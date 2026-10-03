@@ -34,7 +34,6 @@ struct AgentListView: View {
 		.overlay { overlay(isEmpty: groups.isEmpty) }
 		.refreshable { await store.refresh() }
 		.searchable(text: $search, prompt: "Search agents")
-		.navigationTitle("Agents")
 	}
 
 	@ViewBuilder
@@ -50,8 +49,8 @@ struct AgentListView: View {
 			if isEmpty {
 				if search.isEmpty {
 					EmptyState(
-						symbol: "person.2", title: "Nobody on this team yet",
-						message: "Agents own one outcome each and run on their own.")
+						symbol: "person.2", title: "No agents yet",
+						message: "Each agent takes one job and gets on with it.")
 				} else {
 					ContentUnavailableView.search(text: search)
 				}

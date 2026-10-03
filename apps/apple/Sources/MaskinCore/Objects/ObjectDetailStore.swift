@@ -72,6 +72,9 @@ public final class ObjectDetailStore {
 	public private(set) var timeline: [TimelineItem] = []
 	public private(set) var phase: Phase = .loading
 	public private(set) var isOffline = false
+	/// A fetch has succeeded in this session. Links come from the cache but the activity stream
+	/// does not, so before this an empty timeline means "not loaded yet", not "no activity".
+	public private(set) var hasFetched = false
 	/// The last failed write (edit, star, delete), cleared by the next successful one.
 	public private(set) var actionError: String?
 	public private(set) var didDelete = false
@@ -164,6 +167,7 @@ public final class ObjectDetailStore {
 				links = graph.links
 				mergeTimeline(graph.events)
 				phase = .loaded
+				hasFetched = true
 				isOffline = false
 				freshness.refreshed(at: cache?.now() ?? Date())
 				if let object { cache?.write(Snapshot(object: object, links: links), cacheName) }

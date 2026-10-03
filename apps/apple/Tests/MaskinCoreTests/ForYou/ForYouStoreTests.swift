@@ -157,6 +157,17 @@ struct ForYouStoreTests {
 		#expect(store.entries.last?.bucket == .done)
 	}
 
+	@Test func aCardKeepsItsPlaceWhileTheUndoWindowIsOpen() async {
+		let (store, source, _, _) = make(window: 5)
+		source.feed = .success([decisionCard("a"), decisionCard("b")])
+		await store.load()
+		let ids = store.entries.map(\.id)
+		let first = store.entries[0].card
+		store.choose(first.decision!.options[0], on: first)
+		#expect(store.entries.map(\.id) == ids)
+		#expect(store.entries[0].bucket == .done)
+	}
+
 	@Test func typedReplyMovesTheCardToWaiting() async {
 		let (store, source, _, _) = make()
 		source.feed = .success([decisionCard("a")])

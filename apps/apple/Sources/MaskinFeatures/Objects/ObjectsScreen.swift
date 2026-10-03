@@ -10,6 +10,7 @@ public struct ObjectsScreen: View {
 	private let services: ObjectsServices
 	@State private var store: ObjectsStore
 	@State private var path: [ObjectRoute] = []
+	@Namespace private var zoom
 	@State private var selection: String?
 	@State private var detailPath: [ObjectRoute] = []
 	@Environment(\.horizontalSizeClass) private var sizeClass
@@ -45,10 +46,11 @@ public struct ObjectsScreen: View {
 
 	private var stack: some View {
 		NavigationStack(path: $path) {
-			ObjectsListView(store: store, selection: nil) { path.append(ObjectRoute(id: $0.id)) }
-				.shellToolbar(environment: environment)
+			ObjectsListView(store: store, selection: nil, zoomNamespace: zoom)
+				.shellToolbar(environment: environment, title: "Objects")
 				.navigationDestination(for: ObjectRoute.self) { route in
 					detail(route, onOpen: { path.append(ObjectRoute(id: $0)) }, onClose: { path.removeLast() })
+					.zoomDestination(id: route.id, in: zoom)
 				}
 		}
 	}
@@ -57,8 +59,8 @@ public struct ObjectsScreen: View {
 
 	private var split: some View {
 		NavigationSplitView {
-			ObjectsListView(store: store, selection: $selection) { selection = $0.id }
-				.shellToolbar(environment: environment)
+			ObjectsListView(store: store, selection: $selection)
+				.shellToolbar(environment: environment, title: "Objects")
 				.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
 		} detail: {
 			NavigationStack(path: $detailPath) {

@@ -22,8 +22,7 @@ public struct LoopsScreen: View {
 		} else {
 			NavigationStack {
 				EmptyState(symbol: "arrow.triangle.2.circlepath", title: "Choose a workspace")
-					.navigationTitle("Loops")
-					.shellToolbar(environment: environment)
+					.shellToolbar(environment: environment, title: "Loops")
 			}
 		}
 	}
@@ -113,18 +112,26 @@ private struct LoopsContainer: View {
 					onNew: { showNewTrigger = true })
 			}
 		}
-		.safeAreaInset(edge: .top, spacing: 0) {
-			Picker("Show", selection: $mode) {
-				ForEach(AutomationMode.allCases) { Text($0.rawValue).tag($0) }
-			}
-			.pickerStyle(.segmented)
-			.padding(.horizontal, MaskinSpace.s9)
-			.padding(.vertical, MaskinSpace.s4)
-			.background(.bar)
-		}
 		.searchable(text: $search, prompt: mode == .loops ? "Search loops" : "Search triggers")
-		.navigationTitle(mode.rawValue)
+		.searchMinimized()
 		.toolbar {
+			// The title is the loops/triggers switch: tap it to flip between the two lists.
+			ToolbarItem(placement: .shellLeading) {
+				Menu {
+					Picker("Show", selection: $mode) {
+						ForEach(AutomationMode.allCases) { Text($0.rawValue).tag($0) }
+					}
+				} label: {
+					HStack(spacing: MaskinSpace.s2) {
+						ShellTitleText(text: mode.rawValue)
+						Image(systemName: "chevron.down")
+							.font(.caption.weight(.semibold))
+							.foregroundStyle(MaskinColor.ink4)
+					}
+				}
+				.accessibilityLabel("Showing \(mode.rawValue). Switch between loops and triggers")
+			}
+			.hidingSharedBackground()
 			if mode == .loops {
 				ToolbarItem(placement: .automatic) {
 					Menu {

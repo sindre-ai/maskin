@@ -21,8 +21,7 @@ public struct AgentsScreen: View {
 		} else {
 			NavigationStack {
 				EmptyState(symbol: "person.2", title: "Choose a workspace")
-					.navigationTitle("Agents")
-					.shellToolbar(environment: environment)
+					.shellToolbar(environment: environment, title: "Agents")
 			}
 		}
 	}
@@ -75,7 +74,7 @@ private struct AgentsContainer: View {
 						.accessibilityLabel("Build an agent in chat")
 				}
 			}
-			.shellToolbar(environment: environment)
+			.shellToolbar(environment: environment, title: "Agents")
 			.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
 		} detail: {
 			if let selection {

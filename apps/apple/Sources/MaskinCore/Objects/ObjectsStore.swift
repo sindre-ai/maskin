@@ -292,6 +292,25 @@ public final class ObjectsStore {
 		}
 	}
 
+	/// Optimistic status change with rollback.
+	public func setStatus(_ id: String, _ status: String) async {
+		guard let index = objects.firstIndex(where: { $0.id == id }), objects[index].status != status
+		else { return }
+		let previous = objects[index]
+		objects[index].status = status
+		do {
+			let saved = try await remote.update(
+				objectId: id, patch: ObjectPatch(status: status), idempotencyKey: IdempotencyKey.make())
+			var merged = saved
+			if let now = objects.first(where: { $0.id == id }) { merged.isStarred = now.isStarred }
+			apply(merged)
+			actionError = nil
+		} catch {
+			if let i = objects.firstIndex(where: { $0.id == id }) { objects[i] = previous }
+			actionError = Self.message(error)
+		}
+	}
+
 	/// Optimistic removal with rollback to the same position.
 	public func delete(_ id: String) async {
 		guard let index = objects.firstIndex(where: { $0.id == id }) else { return }

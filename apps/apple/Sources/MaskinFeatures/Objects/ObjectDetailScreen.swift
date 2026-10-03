@@ -19,12 +19,13 @@ public struct ObjectDetailScreen<Decision: View>: View {
 	private let decision: Decision
 
 	@Environment(\.dismiss) private var dismiss
+	@Environment(\.horizontalSizeClass) private var sizeClass
 	@State private var comment = ""
 	@State private var editing = false
 	@State private var confirmingDelete = false
 	/// Set when the reader sends a comment, so the timeline follows it to the bottom.
 	@State private var followNextItem = false
-	@State private var atBottom = false
+	@State private var atTop = true
 
 	public init(
 		environment: AppEnvironment, objectId: String, onOpenObject: ((String) -> Void)? = nil,
@@ -51,28 +52,29 @@ public struct ObjectDetailScreen<Decision: View>: View {
 	}
 
 	public var body: some View {
-		ScrollViewReader { proxy in
-			ScrollView {
-				ObjectDetailContent(store: store, onOpenObject: onOpenObject, onEdit: { editing = true }) {
-					decision
+		Group {
+			if store.object != nil {
+				VStack(spacing: 0) {
+					ObjectDetailContent(store: store, part: .header) { EmptyView() }
+						.padding(.horizontal, MaskinSpace.s9)
+						.padding(.top, MaskinSpace.s5)
+						.padding(.bottom, MaskinSpace.s5)
+					pageBar
+					pager
 				}
-				.padding(.horizontal, MaskinSpace.s9)
-				.padding(.top, MaskinSpace.s5)
-				.padding(.bottom, MaskinSpace.s12)
-			}
-			.scrollDismissesKeyboard(.interactively)
-			.trackingBottom($atBottom)
-			// Opening an object lands at the top (header + decision). Only follow the timeline after
-			// the reader posts, or when a live item arrives while they are already at the bottom.
-			.onChange(of: store.timeline.last?.id) { old, id in
-				guard let id, followNextItem || (old != nil && atBottom) else { return }
-				followNextItem = false
-				withAnimation(.easeOut(duration: MaskinDuration.slide)) { proxy.scrollTo(id, anchor: .bottom) }
+			} else {
+				ScrollView {
+					ObjectDetailContent(store: store, onEdit: { editing = true }) { EmptyView() }
+						.padding(.horizontal, MaskinSpace.s9)
+						.padding(.top, MaskinSpace.s5)
+				}
+				.refreshable { await store.refresh() }
 			}
 		}
 		.background(MaskinSurface.grouped)
 		.safeAreaInset(edge: .bottom) {
-			if store.object != nil {
+			// Commenting lives on the Activity page, where the thread is.
+			if store.object != nil, page == .activity {
 				GlassComposer(text: $comment, placeholder: "Comment") {
 					let text = comment
 					comment = ""
@@ -86,16 +88,20 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		.navigationTitle(store.object.map { store.directory.typeName($0.type) } ?? "Object")
 		#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
+			// The tab bar would sit on top of the composer, as in a chat. iPad keeps it.
+			.toolbar(sizeClass == .compact ? .hidden : .automatic, for: .tabBar)
 		#endif
 		.toolbar {
 			ToolbarItemGroup(placement: .primaryAction) {
 				if let object = store.object {
 					Button {
+						MaskinHaptics.play(.selection)
 						Task { await store.toggleStar() }
 					} label: {
 						Label(object.isStarred ? "Unstar" : "Star", systemImage: object.isStarred ? "star.fill" : "star")
 					}
 					Menu {
+						ShareLink(item: shareText(object)) { Label("Share", systemImage: "square.and.arrow.up") }
 						Button {
 							editing = true
 						} label: {
@@ -125,6 +131,100 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		.onChange(of: store.didDelete) { _, deleted in if deleted { close() } }
 		.task { await store.load() }
 		.task { await store.observe(environment.events.subscribe()) }
+	}
+
+	// MARK: Pages
+
+	@State private var page: ObjectDetailPart? = .overview
+
+	private var hasDecision: Bool { Decision.self != EmptyView.self }
+
+	private var pageBar: some View {
+		ScrollView(.horizontal, showsIndicators: false) {
+			HStack(spacing: MaskinSpace.s2) {
+				ForEach(pages, id: \.part) { item in
+					let selected = (page ?? .overview) == item.part
+					Button {
+						withAnimation(MaskinMotion.spring) { page = item.part }
+					} label: {
+						HStack(spacing: MaskinSpace.s3) {
+							Text(item.title)
+							if let count = item.count, count > 0 {
+								Text("\(count)").foregroundStyle(MaskinColor.ink5)
+							}
+							if item.needsYou {
+								Circle().fill(MaskinColor.accent)
+									.frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
+									.accessibilityLabel("Needs you")
+							}
+						}
+						.maskinText(.subhead)
+						.fontWeight(selected ? .semibold : .regular)
+						.foregroundStyle(selected ? MaskinColor.ink : MaskinColor.ink4)
+						.padding(.horizontal, MaskinSpace.s6)
+						.frame(minHeight: MaskinSpace.s14)
+						.background(selected ? MaskinSurface.fill : Color.clear, in: Capsule())
+						.contentShape(Capsule())
+					}
+					.buttonStyle(.plain)
+					.accessibilityAddTraits(selected ? .isSelected : [])
+				}
+			}
+			.padding(.horizontal, MaskinSpace.s9)
+		}
+	}
+
+	private var pages: [(part: ObjectDetailPart, title: String, count: Int?, needsYou: Bool)] {
+		[
+			(.overview, "Overview", nil, hasDecision),
+			(.related, "Related", store.links.count, false),
+			(.activity, "Activity", store.timeline.count, false),
+		]
+	}
+
+	/// Horizontal paging with a plain scroll view rather than a page-style `TabView`, which fights
+	/// the navigation stack's edge swipe back. Each page keeps its own vertical scroll position.
+	private var pager: some View {
+		ScrollView(.horizontal, showsIndicators: false) {
+			LazyHStack(spacing: 0) {
+				ForEach(pages, id: \.part) { item in
+					pageBody(item.part)
+						.containerRelativeFrame(.horizontal)
+						.id(item.part)
+				}
+			}
+			.scrollTargetLayout()
+		}
+		.scrollTargetBehavior(.paging)
+		.scrollPosition(id: $page)
+		.scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+	}
+
+	@ViewBuilder private func pageBody(_ part: ObjectDetailPart) -> some View {
+		ScrollViewReader { proxy in
+			ScrollView {
+				ObjectDetailContent(
+					store: store, part: part, onOpenObject: onOpenObject, onEdit: { editing = true }
+				) { decision }
+				.padding(.horizontal, MaskinSpace.s9)
+				.padding(.top, MaskinSpace.s3)
+				.padding(.bottom, MaskinSpace.s12)
+			}
+			.scrollDismissesKeyboard(.interactively)
+			.refreshable { await store.refresh() }
+			.trackingTop(part == .activity ? $atTop : .constant(true))
+			// The newest item is first. Only jump to it after the reader posts, or when a live item
+			// arrives while they are already at the top.
+			.onChange(of: store.timeline.last?.id) { old, id in
+				guard part == .activity, let id, followNextItem || (old != nil && atTop) else { return }
+				followNextItem = false
+				withAnimation(.easeOut(duration: MaskinDuration.slide)) { proxy.scrollTo(id, anchor: .top) }
+			}
+		}
+	}
+
+	private func shareText(_ object: WorkObject) -> String {
+		[object.displayTitle, object.content].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
 	}
 
 	private func close() {
@@ -193,14 +293,14 @@ struct EditObjectSheet: View {
 }
 
 extension View {
-	/// Reports whether a scroll view sits within a screenful of its end (iOS 18+; always false before).
-	fileprivate func trackingBottom(_ atBottom: Binding<Bool>) -> some View {
+	/// Reports whether a scroll view sits within a screenful of its start (iOS 18+; always true before).
+	fileprivate func trackingTop(_ atTop: Binding<Bool>) -> some View {
 		if #available(iOS 18, macOS 15, *) {
 			return AnyView(
 				onScrollGeometryChange(for: Bool.self) { geometry in
-					geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 80
+					geometry.contentOffset.y <= 80
 				} action: { _, new in
-					atBottom.wrappedValue = new
+					atTop.wrappedValue = new
 				})
 		}
 		return AnyView(self)

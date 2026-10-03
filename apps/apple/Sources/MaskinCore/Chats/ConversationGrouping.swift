@@ -2,7 +2,18 @@ import Foundation
 
 /// A labelled bucket of the Chats list.
 public struct ConversationGroup: Identifiable, Equatable, Sendable {
-	public enum Key: String, Sendable { case pinned, today, yesterday, week, earlier, results }
+	/// Stable bucket identity. Day, week and month buckets are minted per date, so this is an
+	/// open string rather than a closed enum.
+	public struct Key: Hashable, Sendable, RawRepresentable {
+		public var rawValue: String
+		public init(rawValue: String) { self.rawValue = rawValue }
+		public static let pinned = Key(rawValue: "pinned")
+		public static let today = Key(rawValue: "today")
+		public static let yesterday = Key(rawValue: "yesterday")
+		public static let lastWeek = Key(rawValue: "lastWeek")
+		public static let earlier = Key(rawValue: "earlier")
+		public static let results = Key(rawValue: "results")
+	}
 	public var key: Key
 	public var label: String
 	public var items: [ConversationSummary]
@@ -10,40 +21,53 @@ public struct ConversationGroup: Identifiable, Equatable, Sendable {
 }
 
 public enum ConversationGrouping {
-	/// Pinned first, then Today / Yesterday / This week / Earlier by `lastMessageAt ?? createdAt`
-	/// (the web's `groupConversations`). Empty buckets are dropped; rows with no usable date go to
-	/// Earlier rather than vanishing. Within a bucket, most recent first.
+	/// Pinned first, then by recency of `lastMessageAt ?? createdAt`: Today, Yesterday, a
+	/// weekday name for each of the days before that in the past week, Last week, then one
+	/// bucket per month (with the year once it isn't the current one). Rows with no usable date
+	/// go to Earlier rather than vanishing. Empty buckets never exist; within one, most recent
+	/// first.
 	public static func group(
 		_ conversations: [ConversationSummary], now: Date = Date(), calendar: Calendar = .current
 	) -> [ConversationGroup] {
-		var buckets: [ConversationGroup.Key: [ConversationSummary]] = [:]
 		let today = calendar.startOfDay(for: now)
-		for c in conversations {
-			if c.pinned {
-				buckets[.pinned, default: []].append(c)
-				continue
+		var groups: [ConversationGroup] = []
+		func append(_ c: ConversationSummary, key: ConversationGroup.Key, label: String) {
+			if let last = groups.indices.last, groups[last].key == key {
+				groups[last].items.append(c)
+			} else {
+				groups.append(ConversationGroup(key: key, label: label, items: [c]))
 			}
-			guard let date = c.activityDate else {
-				buckets[.earlier, default: []].append(c)
-				continue
-			}
+		}
+		let dated = conversations.filter { !$0.pinned && $0.activityDate != nil }
+			.sorted { ($0.activityDate ?? .distantPast) > ($1.activityDate ?? .distantPast) }
+		let pinned = conversations.filter(\.pinned)
+			.sorted { ($0.activityDate ?? .distantPast) > ($1.activityDate ?? .distantPast) }
+		for c in pinned { append(c, key: .pinned, label: "Pinned") }
+		for c in dated {
+			guard let date = c.activityDate else { continue }
 			let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: today).day ?? 0
-			let key: ConversationGroup.Key =
-				days <= 0 ? .today : days == 1 ? .yesterday : days <= 7 ? .week : .earlier
-			buckets[key, default: []].append(c)
+			switch days {
+			case ...0: append(c, key: .today, label: "Today")
+			case 1: append(c, key: .yesterday, label: "Yesterday")
+			case 2...6:
+				let weekday = calendar.component(.weekday, from: date)
+				append(
+					c, key: .init(rawValue: "day-\(days)"), label: calendar.weekdaySymbols[weekday - 1])
+			case 7...13: append(c, key: .lastWeek, label: "Last week")
+			default:
+				let parts = calendar.dateComponents([.year, .month], from: date)
+				let sameYear = parts.year == calendar.component(.year, from: now)
+				let month = calendar.monthSymbols[(parts.month ?? 1) - 1]
+				append(
+					c, key: .init(rawValue: "month-\(parts.year ?? 0)-\(parts.month ?? 0)"),
+					label: sameYear ? month : "\(month) \(parts.year ?? 0)")
+			}
 		}
-		let order: [(ConversationGroup.Key, String)] = [
-			(.pinned, "Pinned"), (.today, "Today"), (.yesterday, "Yesterday"), (.week, "This week"),
-			(.earlier, "Earlier"),
-		]
-		return order.compactMap { key, label in
-			guard let items = buckets[key], !items.isEmpty else { return nil }
-			return ConversationGroup(
-				key: key, label: label,
-				items: items.sorted {
-					($0.activityDate ?? .distantPast) > ($1.activityDate ?? .distantPast)
-				})
+		let undated = conversations.filter { !$0.pinned && $0.activityDate == nil }
+		if !undated.isEmpty {
+			groups.append(ConversationGroup(key: .earlier, label: "Earlier", items: undated))
 		}
+		return groups
 	}
 
 	/// Conversations an actor takes part in; nil keeps everything.

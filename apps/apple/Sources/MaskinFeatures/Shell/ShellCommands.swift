@@ -22,9 +22,6 @@ public struct ShellCommands: Commands {
 			Button("Search") { runtime?.focusSearch() }
 				.keyboardShortcut("k", modifiers: .command)
 				.disabled(runtime == nil)
-			Button("Notifications") { runtime?.showNotifications = true }
-				.keyboardShortcut("i", modifiers: [.command, .shift])
-				.disabled(runtime == nil)
 		}
 	}
 }

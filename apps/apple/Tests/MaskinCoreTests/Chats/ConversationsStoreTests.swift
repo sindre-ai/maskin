@@ -18,25 +18,40 @@ private func ago(days: Double, hours: Double = 0) -> Date {
 
 @Suite("ConversationGrouping")
 struct ConversationGroupingTests {
-	@Test("buckets pinned, today, yesterday, this week and earlier, dropping empty groups")
+	@Test("pinned, today, yesterday, weekday names, last week, then months; empty groups dropped")
 	func buckets() {
 		let items = [
-			chatConvo("old", last: ago(days: 30)),
+			chatConvo("old", last: ago(days: 40)),
 			chatConvo("today", last: ago(days: 0, hours: 2)),
 			chatConvo("pin", last: ago(days: 40), pinned: true),
 			chatConvo("yday", last: ago(days: 1)),
-			chatConvo("week", last: ago(days: 5)),
+			chatConvo("wk", last: ago(days: 5)),
+			chatConvo("last", last: ago(days: 9)),
 		]
 		let groups = ConversationGrouping.group(items, now: now, calendar: cal)
-		#expect(groups.map(\.label) == ["Pinned", "Today", "Yesterday", "This week", "Earlier"])
-		#expect(groups.map { $0.items.map(\.id) } == [["pin"], ["today"], ["yday"], ["week"], ["old"]])
+		let weekday = cal.weekdaySymbols[cal.component(.weekday, from: ago(days: 5)) - 1]
+		let month = cal.monthSymbols[cal.component(.month, from: ago(days: 40)) - 1]
+		#expect(groups.map(\.label) == ["Pinned", "Today", "Yesterday", weekday, "Last week", month])
+		#expect(
+			groups.map { $0.items.map(\.id) } == [["pin"], ["today"], ["yday"], ["wk"], ["last"], ["old"]])
 	}
 
-	@Test("the 7 day boundary stays in this week, 8 days is earlier")
+	@Test("each day inside the past week is its own group")
+	func separateDays() {
+		let groups = ConversationGrouping.group(
+			[chatConvo("a", last: ago(days: 3)), chatConvo("b", last: ago(days: 4))], now: now, calendar: cal)
+		#expect(groups.count == 2)
+	}
+
+	@Test("6 days back is still a weekday, 7 is last week, 14 falls into a month")
 	func boundary() {
 		let groups = ConversationGrouping.group(
-			[chatConvo("a", last: ago(days: 7)), chatConvo("b", last: ago(days: 8))], now: now, calendar: cal)
-		#expect(groups.map(\.label) == ["This week", "Earlier"])
+			[
+				chatConvo("a", last: ago(days: 6)), chatConvo("b", last: ago(days: 7)),
+				chatConvo("c", last: ago(days: 14)),
+			], now: now, calendar: cal)
+		#expect(groups.map { $0.items.map(\.id) } == [["a"], ["b"], ["c"]])
+		#expect(groups[1].label == "Last week")
 	}
 
 	@Test("most recent first inside a bucket, and undated rows land in Earlier")

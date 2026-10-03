@@ -27,7 +27,26 @@ struct ConversationListView: View {
 					ForEach(group.items) { conversation in
 						ConversationRow(conversation: conversation, currentActorID: currentActorID)
 							.tag(conversation.id)
+							.listRowSeparator(.hidden)
 							.contextMenu { menu(for: conversation) }
+							.swipeActions(edge: .leading, allowsFullSwipe: true) {
+								Button {
+									MaskinHaptics.play(.selection)
+									Task { await store.setPinned(conversation.id, !conversation.pinned) }
+								} label: {
+									Label(conversation.pinned ? "Unpin" : "Pin", systemImage: conversation.pinned ? "pin.slash" : "pin")
+								}
+								.tint(MaskinColor.accent)
+							}
+							.swipeActions(edge: .trailing, allowsFullSwipe: true) {
+								Button {
+									MaskinHaptics.play(.selection)
+									Task { await store.setArchived(conversation.id, !conversation.archived) }
+								} label: {
+									Label(conversation.archived ? "Unarchive" : "Archive", systemImage: "archivebox")
+								}
+								.tint(MaskinColor.ink3)
+							}
 							.onAppear {
 								if conversation.id == store.conversations.last?.id { Task { await store.loadMore() } }
 							}
@@ -47,9 +66,7 @@ struct ConversationListView: View {
 		.overlay { overlay(isEmpty: groups.isEmpty) }
 		.refreshable { await store.refresh() }
 		.searchable(text: $search, prompt: "Search chats")
-		.navigationTitle(store.scope == .archived ? "Archived" : "Chats")
 		.toolbar {
-			ToolbarItem(placement: .automatic) { AgentFilterMenu(store: store) }
 			ToolbarItem(placement: .automatic) {
 				Button(action: onNewChat) { Label("New chat", systemImage: "square.and.pencil") }
 					.keyboardShortcut("n", modifiers: .command)
@@ -71,8 +88,8 @@ struct ConversationListView: View {
 				if search.isEmpty {
 					EmptyState(
 						symbol: "bubble.left.and.bubble.right",
-						title: store.scope == .archived ? "Nothing archived" : "No conversations yet",
-						message: store.scope == .archived ? nil : "Start one with a teammate or an agent."
+						title: store.scope == .archived ? "Nothing archived" : "A quiet inbox",
+						message: store.scope == .archived ? nil : "Start a chat with a teammate or an agent."
 					) {
 						if store.scope == .active {
 							Button("New chat", action: onNewChat).buttonStyle(.primaryAction)
@@ -99,24 +116,44 @@ struct ConversationListView: View {
 	}
 }
 
-/// Narrows the list to conversations with one agent. Hidden until the list has agents in it.
-private struct AgentFilterMenu: View {
-	@Bindable var store: ConversationsStore
+extension View {
+	/// Search as a toolbar icon that expands into the field (iOS 26; a regular search field
+	/// below). Agents are filter tokens inside it, so there's no separate filter button: type
+	/// to narrow the list, or pick an agent from the suggestions to keep only its chats.
+	fileprivate func chatSearch(store: ConversationsStore, text: Binding<String>) -> some View {
+		modifier(ChatSearchModifier(store: store, text: text))
+	}
+}
 
-	var body: some View {
-		let agents = store.agentsInList
-		if !agents.isEmpty {
-			Menu {
-				Picker("Agent", selection: $store.agentFilterID) {
-					Text("All agents").tag(String?.none)
-					ForEach(agents) { agent in Text(agent.name).tag(String?.some(agent.id)) }
-				}
-			} label: {
-				Label(
-					"Filter by agent",
-					systemImage: store.agentFilterID == nil
-						? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+private struct ChatSearchModifier: ViewModifier {
+	@Bindable var store: ConversationsStore
+	@Binding var text: String
+
+	/// The one selected agent as a token (the store holds an id; the token needs the person).
+	private var tokens: Binding<[ChatParticipant]> {
+		Binding(
+			get: { store.agentsInList.filter { $0.id == store.agentFilterID } },
+			set: { store.agentFilterID = $0.last?.id })
+	}
+
+	func body(content: Content) -> some View {
+		content
+			.searchable(text: $text, tokens: tokens, prompt: "Search chats") { agent in
+				Label(agent.name, systemImage: ActorIdentity.agentSymbol(seed: agent.id))
 			}
-		}
+			.searchSuggestions {
+				if store.agentFilterID == nil {
+					ForEach(store.agentsInList.filter(matches)) { agent in
+						Label(agent.name, systemImage: ActorIdentity.agentSymbol(seed: agent.id))
+							.searchCompletion(agent)
+					}
+				}
+			}
+			.searchMinimized()
+	}
+
+	private func matches(_ agent: ChatParticipant) -> Bool {
+		text.trimmingCharacters(in: .whitespaces).isEmpty
+			|| agent.name.localizedCaseInsensitiveContains(text)
 	}
 }

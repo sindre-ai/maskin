@@ -34,6 +34,7 @@ struct TriggersListView: View {
 							onToggle: { on in Task { await store.setEnabled(trigger.id, on) } }
 						)
 						.tag(trigger.id)
+						.listRowSeparator(.hidden)
 						.swipeActions(edge: .trailing, allowsFullSwipe: false) {
 							Button(role: .destructive) {
 								pendingDelete = trigger
@@ -43,9 +44,9 @@ struct TriggersListView: View {
 						}
 					}
 				} header: {
-					SectionHeader(section.label) {
-						Text("\(section.items.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink4)
-					}
+					Text(section.label)
+						.maskinText(.subhead).fontWeight(.semibold)
+						.foregroundStyle(MaskinColor.ink3).textCase(nil)
 				}
 			}
 		}
@@ -79,7 +80,7 @@ struct TriggersListView: View {
 				if search.isEmpty {
 					EmptyState(
 						symbol: "bolt", title: "No triggers yet",
-						message: "Triggers wake an agent on a schedule or when something happens."
+						message: "A trigger wakes an agent on a schedule, or when something happens."
 					) {
 						Button("New schedule", action: onNew).buttonStyle(.primaryAction)
 					}

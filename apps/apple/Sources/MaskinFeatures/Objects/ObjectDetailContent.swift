@@ -3,31 +3,58 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The scrolling body of an object: header, the decision slot, description, properties,
-/// relationships and the activity timeline. Stateless apart from the store it reads, so it
-/// renders in snapshots; the screen adds the toolbar, composer and navigation around it.
+/// The pages of an object's detail screen.
+enum ObjectDetailPart: String, CaseIterable, Identifiable {
+	/// Everything in one column (snapshots, previews).
+	case all
+	/// The pinned header above the pager.
+	case header
+	case overview, related, activity
+	var id: String { rawValue }
+}
+
+/// The body of an object: header, the decision slot, description, properties, relationships and
+/// the activity timeline. `part` picks which of them to render, so the screen can pin the header
+/// and give each page its own scroll view. Stateless apart from the store it reads, so it renders
+/// in snapshots; the screen adds the toolbar, composer and navigation around it.
 struct ObjectDetailContent<Decision: View>: View {
 	let store: ObjectDetailStore
+	var part: ObjectDetailPart = .all
 	var onOpenObject: ((String) -> Void)?
 	var onEdit: () -> Void = {}
 	@ViewBuilder var decision: () -> Decision
+	@State private var showAllProperties = false
+	@State private var descriptionExpanded = false
+	@State private var expandedRuns: Set<String> = []
+
+	private static var propertyPreview: Int { 4 }
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s10) {
-			if let message = store.actionError {
-				FormError(message).onTapGesture { store.clearActionError() }
-			}
-			if store.isOffline { OfflineBanner() }
-			if let object = store.object {
-				header(object)
-				decision()
-				if let content = object.content, !content.isEmpty {
-					card { MarkdownContent(content) }
+			if part == .all || part == .header {
+				if let message = store.actionError {
+					FormError(message).onTapGesture { store.clearActionError() }
 				}
-				properties(object)
-				if !store.links.isEmpty { relationships }
-				timeline
-			} else {
+				if store.isOffline { OfflineBanner() }
+			}
+			if let object = store.object {
+				switch part {
+				case .all:
+					header(object)
+					decision()
+					description(object)
+					properties(object)
+					if !store.links.isEmpty { relationships }
+					timeline
+				case .header: header(object)
+				case .overview:
+					decision()
+					description(object)
+					properties(object)
+				case .related: relationships
+				case .activity: timeline
+				}
+			} else if part == .all {
 				switch store.phase {
 				case .gone:
 					EmptyState(
@@ -49,37 +76,29 @@ struct ObjectDetailContent<Decision: View>: View {
 
 	// MARK: Header
 
+	/// Title first, then the object's properties as large, tappable pills (a phone-sized hit area,
+	/// legible text) rather than the small badges a desktop row would use.
 	private func header(_ object: WorkObject) -> some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s6) {
-			HStack(spacing: MaskinSpace.s4) {
-				TypeBadge(object.type, label: store.directory.typeName(object.type))
-				statusMenu(object)
-				Spacer()
-			}
 			Text(object.displayTitle)
 				.maskinText(.title)
 				.foregroundStyle(MaskinColor.ink)
 				.frame(maxWidth: .infinity, alignment: .leading)
+				.lineLimit(part == .header ? 2 : nil)
 				.fixedSize(horizontal: false, vertical: true)
-			HStack(spacing: MaskinSpace.s4) {
-				if let owner = store.ownerName {
-					ActorAvatar(
-						name: owner, kind: store.directory.actor(for: object.driverId)?.isAgent == true ? .agent : .human,
-						size: MaskinSpace.s11)
-					Text(owner).foregroundStyle(MaskinColor.ink2)
-				} else {
-					Text("No owner").foregroundStyle(MaskinColor.ink5)
-				}
-				if object.updatedAt != nil {
-					Text("·").foregroundStyle(MaskinColor.ink5)
-					HStack(spacing: MaskinSpace.s2) {
-						Text("Updated")
-						RelativeTime(object.updatedAt)
-					}
-					.foregroundStyle(MaskinColor.ink4)
-				}
+			ChipFlow(spacing: MaskinSpace.s4) {
+				statusMenu(object)
+				ownerPill
+				typePill(object)
 			}
-			.maskinText(.subhead)
+			if object.updatedAt != nil {
+				HStack(spacing: MaskinSpace.s2) {
+					Text("Updated")
+					RelativeTime(object.updatedAt)
+				}
+				.maskinText(.caption)
+				.foregroundStyle(MaskinColor.ink4)
+			}
 			if let activity = object.activeActivity, !activity.isEmpty {
 				Label(activity, systemImage: "sparkles")
 					.maskinText(.subhead)
@@ -92,9 +111,11 @@ struct ObjectDetailContent<Decision: View>: View {
 	}
 
 	private func statusMenu(_ object: WorkObject) -> some View {
-		Menu {
+		let colors = MaskinStatus.colors(for: object.status)
+		return Menu {
 			ForEach(store.statusOptions, id: \.self) { status in
 				Button {
+					MaskinHaptics.play(.selection)
 					Task { await store.setStatus(status) }
 				} label: {
 					if status == object.status {
@@ -105,21 +126,87 @@ struct ObjectDetailContent<Decision: View>: View {
 				}
 			}
 		} label: {
-			HStack(spacing: MaskinSpace.s2) {
-				StatusBadge(object.status)
+			PropertyPill(fill: colors.bg) {
+				Circle().fill(colors.fg).frame(width: MaskinSpace.s4, height: MaskinSpace.s4)
+				Text(MaskinStatus.label(for: object.status)).foregroundStyle(colors.fg)
 				Image(systemName: "chevron.up.chevron.down")
-					.font(.system(size: MaskinFontSize.t11))
-					.foregroundStyle(MaskinColor.ink5)
+					.font(.system(size: MaskinFontSize.t11, weight: .semibold))
+					.foregroundStyle(colors.fg.opacity(0.7))
 			}
 		}
 		.accessibilityLabel("Status \(MaskinStatus.label(for: object.status)). Change status")
 	}
 
+	@ViewBuilder private var ownerPill: some View {
+		if let owner = store.ownerName {
+			let isAgent = store.directory.actor(for: store.object?.driverId)?.isAgent == true
+			PropertyPill {
+				ActorAvatar(name: owner, kind: isAgent ? .agent : .human, size: MaskinSpace.s12)
+				Text(owner).foregroundStyle(MaskinColor.ink)
+			}
+			.accessibilityElement(children: .combine)
+			.accessibilityLabel("Driver \(owner)")
+		}
+	}
+
+	private func typePill(_ object: WorkObject) -> some View {
+		let colors = MaskinObjectType.colors(for: object.type)
+		return PropertyPill(fill: colors.bg) {
+			if let symbol = MaskinObjectType.symbol(for: object.type) {
+				Image(systemName: symbol)
+					.font(.system(size: MaskinFontSize.t13, weight: .semibold))
+					.foregroundStyle(colors.fg)
+			}
+			Text(store.directory.typeName(object.type)).foregroundStyle(colors.fg)
+		}
+		.accessibilityElement(children: .combine)
+		.accessibilityLabel("Type \(store.directory.typeName(object.type))")
+	}
+
 	// MARK: Sections
 
+	/// Long descriptions fold so they don't push the decision and properties off screen.
+	@ViewBuilder private func description(_ object: WorkObject) -> some View {
+		if let content = object.content, !content.isEmpty {
+			let long = content.count > 480
+			card {
+				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
+					MarkdownContent(content)
+						.frame(maxHeight: long && !descriptionExpanded ? 220 : nil, alignment: .top)
+						.clipped()
+						.mask(alignment: .top) {
+							if long && !descriptionExpanded {
+								LinearGradient(
+									colors: [.black, .black, .clear], startPoint: .top, endPoint: .bottom)
+							} else {
+								Color.black
+							}
+						}
+					if long {
+						Button(descriptionExpanded ? "Show less" : "Show more") {
+							withAnimation(MaskinMotion.standard) { descriptionExpanded.toggle() }
+						}
+						.maskinText(.subhead)
+						.foregroundStyle(MaskinColor.accentFgStrong)
+					}
+				}
+			}
+		}
+	}
+
+	/// Internal keys (leading underscore, bookkeeping like `previous_status`) stay hidden, and an
+	/// actor id reads as the person's or agent's name, never the id.
+	private func visibleProperties(_ object: WorkObject) -> [(key: String, value: String)] {
+		object.metadata
+			.filter { !$0.key.hasPrefix("_") && $0.key != "previous_status" && !$0.value.isEmpty }
+			.sorted { $0.key < $1.key }
+			.map { ($0.key, store.directory.name(for: $0.value) ?? $0.value) }
+	}
+
 	@ViewBuilder private func properties(_ object: WorkObject) -> some View {
-		let rows = object.metadata.sorted { $0.key < $1.key }
-		if !rows.isEmpty {
+		let all = visibleProperties(object)
+		let rows = showAllProperties ? all : Array(all.prefix(Self.propertyPreview))
+		if !all.isEmpty {
 			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 				SectionHeader("Properties")
 				card {
@@ -133,38 +220,83 @@ struct ObjectDetailContent<Decision: View>: View {
 							}
 							.maskinText(.subhead)
 						}
+						if all.count > Self.propertyPreview {
+							Button(showAllProperties ? "Show fewer" : "Show all \(all.count)") {
+								withAnimation(MaskinMotion.standard) { showAllProperties.toggle() }
+							}
+							.maskinText(.subhead)
+							.foregroundStyle(MaskinColor.accentFgStrong)
+							.frame(maxWidth: .infinity, alignment: .leading)
+						}
 					}
 				}
 			}
 		}
 	}
 
-	private var relationships: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			SectionHeader("Related") {
-				Text("\(store.links.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink4)
-			}
-			VStack(spacing: 0) {
-				ForEach(Array(store.links.enumerated()), id: \.element.id) { index, link in
-					if index > 0 { Divider().overlay(MaskinSurface.separator) }
-					linkRow(link)
+	@ViewBuilder private var relationships: some View {
+		if store.links.isEmpty {
+			if part == .related {
+				if store.hasFetched {
+					EmptyState(
+						symbol: "link", title: "Nothing related yet",
+						message: "Objects this one blocks, informs or depends on show up here.")
+				} else {
+					LoadingSkeleton(rows: 2)
 				}
 			}
-			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+		} else {
+			relationshipList
+		}
+	}
+
+	/// Links grouped by what they mean ("Blocks", "Informs"…), in the order first seen.
+	private var linkGroups: [(phrase: String, links: [ObjectLink])] {
+		var order: [String] = []
+		var buckets: [String: [ObjectLink]] = [:]
+		for link in store.links {
+			if buckets[link.phrase] == nil { order.append(link.phrase) }
+			buckets[link.phrase, default: []].append(link)
+		}
+		return order.map { ($0, buckets[$0] ?? []) }
+	}
+
+	private var relationshipList: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s8) {
+			if part != .related {
+				SectionHeader("Related") {
+					Text("\(store.links.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink4)
+				}
+			}
+			ForEach(linkGroups, id: \.phrase) { group in
+				VStack(alignment: .leading, spacing: MaskinSpace.s4) {
+					HStack(spacing: MaskinSpace.s3) {
+						MonoLabel(group.phrase)
+						Text("\(group.links.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink5)
+					}
+					.accessibilityElement(children: .combine)
+					.accessibilityAddTraits(.isHeader)
+					VStack(spacing: 0) {
+						ForEach(Array(group.links.enumerated()), id: \.element.id) { index, link in
+							if index > 0 { Divider().overlay(MaskinSurface.separator) }
+							linkRow(link)
+						}
+					}
+					.background(
+						MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+				}
+			}
 		}
 	}
 
 	@ViewBuilder private func linkRow(_ link: ObjectLink) -> some View {
 		let label = HStack(spacing: MaskinSpace.s7) {
 			TypeBadge(link.otherType, style: .tile)
-			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-				MonoLabel(link.phrase)
-				Text(link.otherTitle)
-					.maskinText(.body)
-					.foregroundStyle(MaskinColor.ink)
-					.lineLimit(2)
-					.multilineTextAlignment(.leading)
-			}
+			Text(link.otherTitle)
+				.maskinText(.body)
+				.foregroundStyle(MaskinColor.ink)
+				.lineLimit(2)
+				.multilineTextAlignment(.leading)
 			Spacer(minLength: MaskinSpace.s4)
 			if let status = link.otherStatus { StatusBadge(status, style: .word) }
 			if onOpenObject != nil {
@@ -184,22 +316,68 @@ struct ObjectDetailContent<Decision: View>: View {
 
 	private var timeline: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
-			SectionHeader("Activity") {
-				Text("\(store.timeline.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink4)
+			if part != .activity {
+				SectionHeader("Activity") {
+					Text("\(store.timeline.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink4)
+				}
 			}
 			if store.timeline.isEmpty {
-				Text("No activity yet. Start the conversation below.")
-					.maskinText(.subhead)
-					.foregroundStyle(MaskinColor.ink4)
+				if store.hasFetched {
+					Text("No activity yet. Start the conversation below.")
+						.maskinText(.subhead)
+						.foregroundStyle(MaskinColor.ink4)
+				} else {
+					LoadingSkeleton(rows: 2)
+				}
 			}
-			ForEach(store.timeline) { item in
-				TimelineRow(
-					item: item, name: store.authorName(for: item), isAgent: store.isAgent(item),
-					retry: { Task { await store.retryComment(item.id) } },
-					discard: { store.discardComment(item.id) })
+			ForEach(TimelineGrouping.rows(store.timeline.reversed())) { row in
+				switch row {
+				case .day(_, let label):
+					Text(label)
+						.maskinText(.caption).fontWeight(.semibold)
+						.foregroundStyle(MaskinColor.ink4)
+						.padding(.top, MaskinSpace.s3)
+						.accessibilityAddTraits(.isHeader)
+				case .item(let item):
+					timelineRow(item)
+				case .updates(let id, let items):
+					updatesRow(id: id, items: items)
+				}
 			}
 		}
 		.accessibilityElement(children: .contain)
+	}
+
+	private func timelineRow(_ item: TimelineItem) -> some View {
+		TimelineRow(
+			item: item, name: store.authorName(for: item), isAgent: store.isAgent(item),
+			retry: { Task { await store.retryComment(item.id) } },
+			discard: { store.discardComment(item.id) })
+	}
+
+	/// A run of system events folded into one tappable line.
+	@ViewBuilder private func updatesRow(id: String, items: [TimelineItem]) -> some View {
+		let open = expandedRuns.contains(id)
+		Button {
+			withAnimation(MaskinMotion.standard) {
+				if open { expandedRuns.remove(id) } else { expandedRuns.insert(id) }
+			}
+		} label: {
+			HStack(spacing: MaskinSpace.s4) {
+				Image(systemName: open ? "chevron.down" : "chevron.right")
+					.font(.system(size: MaskinFontSize.t11, weight: .semibold))
+					.padding(.horizontal, MaskinSpace.s3)
+				Text("\(items.count) updates")
+				Spacer(minLength: 0)
+			}
+			.maskinText(.caption)
+			.foregroundStyle(MaskinColor.ink4)
+			.frame(minHeight: MaskinSpace.s14)
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.plain)
+		.accessibilityHint(open ? "Hides the updates" : "Shows the updates")
+		if open { ForEach(items) { timelineRow($0) } }
 	}
 
 	private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
@@ -274,5 +452,23 @@ struct TimelineRow: View {
 			.maskinText(.caption)
 			.buttonStyle(.borderless)
 		}
+	}
+}
+
+/// One property of an object as a roomy capsule: leading glyph or avatar, then the value.
+struct PropertyPill<Content: View>: View {
+	var fill: Color = MaskinSurface.fill
+	@ViewBuilder var content: () -> Content
+
+	var body: some View {
+		HStack(spacing: MaskinSpace.s4) { content() }
+			.maskinText(.subhead)
+			.fontWeight(.medium)
+			.lineLimit(1)
+			.padding(.horizontal, MaskinSpace.s7)
+			.padding(.vertical, MaskinSpace.s5)
+			.frame(minHeight: MaskinSpace.touchMin)
+			.background(fill, in: Capsule())
+			.contentShape(Capsule())
 	}
 }

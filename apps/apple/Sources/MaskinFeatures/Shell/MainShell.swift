@@ -26,7 +26,6 @@ public struct MainShell: View {
 					ForEach(ShellTab.visible) { tab in
 						ShellTabContent(tab: tab, environment: environment, runtime: runtime)
 							.tabItem { Label(tab.title, systemImage: tab.systemImage) }
-							.badge(tab == .forYou ? runtime.notifications.unreadCount : 0)
 							.tag(tab)
 					}
 				}
@@ -64,7 +63,6 @@ private struct AdaptiveTabs: View {
 				Tab(tab.title, systemImage: tab.systemImage, value: tab) {
 					ShellTabContent(tab: tab, environment: environment, runtime: runtime)
 				}
-				.badge(tab == .forYou ? runtime.notifications.unreadCount : 0)
 			}
 			// The system search role: a detached search button on iOS 26 (and a sidebar entry on the
 			// Mac). Below iOS 26 search is a toolbar button instead — see `ShellTab.searchIsTab`.
@@ -122,6 +120,7 @@ private struct ShellTabContent: View {
 		case .objects: ObjectsScreen(environment: environment)
 		case .loops: LoopsScreen(environment: environment)
 		case .agents: AgentsScreen(environment: environment)
+		case .more: MoreScreen(environment: environment, runtime: runtime)
 		case .search:
 			SearchScreen(environment: environment) { runtime.openSearchResult($0) }
 		}

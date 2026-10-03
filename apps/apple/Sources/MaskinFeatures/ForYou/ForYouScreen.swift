@@ -24,18 +24,14 @@ public struct ForYouScreen: View {
 	public var body: some View {
 		NavigationStack {
 			ForYouFeedView(
-				store: runtime.store, outbox: runtime.outbox, greetingName: firstName,
+				store: runtime.store, outbox: runtime.outbox,
 				openObject: openObject
 			)
-			.navigationTitle("For you")
-			.shellToolbar(environment: environment)
+			.shellToolbar(environment: environment, title: "For you")
 			.task(id: environment.workspaceId) { await runtime.store.load() }
 		}
 	}
 
-	private var firstName: String? {
-		environment.auth.session?.name.split(separator: " ").first.map(String.init)
-	}
 }
 
 /// The feed itself, driven by plain stores so previews and snapshots can host it without an
@@ -43,19 +39,20 @@ public struct ForYouScreen: View {
 struct ForYouFeedView: View {
 	@Bindable var store: ForYouStore
 	let outbox: Outbox
-	var greetingName: String?
 	var openObject: ((String) -> Void)?
 	/// Frozen "now" for snapshots; live screens pass nil.
 	var fixedNow: Date?
 
 	@Environment(\.scenePhase) private var scenePhase
 	@State private var openedAt = Date()
+	@State private var showFilters = false
 
 	private let readableWidth: CGFloat = 680
 
 	var body: some View {
 		let entries = store.entries
 		List {
+			if showFilters && !store.typeCounts.isEmpty { filterPills }
 			headerRows(entries: entries)
 			feedRows(entries: entries)
 		}
@@ -72,7 +69,7 @@ struct ForYouFeedView: View {
 			}
 		}
 		.toolbar {
-			if !store.typeCounts.isEmpty { ToolbarItem(placement: .secondaryAction) { typeFilterMenu } }
+			if !store.typeCounts.isEmpty { ToolbarItem(placement: .primaryAction) { filterToggle } }
 		}
 	}
 
@@ -81,10 +78,6 @@ struct ForYouFeedView: View {
 	@ViewBuilder
 	private func headerRows(entries: [FeedEntry]) -> some View {
 		Group {
-			Text(greeting)
-				.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
-				.frame(maxWidth: .infinity, alignment: .leading)
-				.accessibilityLabel(greeting)
 			if store.isRefreshing {
 				Label("Asking the agents what changed…", systemImage: "sparkles")
 					.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
@@ -102,31 +95,52 @@ struct ForYouFeedView: View {
 		.modifier(ReadableRow(width: readableWidth))
 	}
 
-	private var greeting: String {
-		let hour = Calendar.current.component(.hour, from: fixedNow ?? Date())
-		let part = hour < 12 ? "Good morning" : (hour < 18 ? "Good afternoon" : "Good evening")
-		return greetingName.map { "\(part), \($0)" } ?? part
-	}
-
 	private var offlineMessage: String {
 		let queued = outbox.pendingCount
 		guard queued > 0 else { return "You're offline. Changes will send when you reconnect." }
 		return "You're offline. \(queued) \(queued == 1 ? "change" : "changes") will send when you reconnect."
 	}
 
-	/// The only feed control: narrow to one kind of object.
-	private var typeFilterMenu: some View {
-		Menu {
-			Picker("Show", selection: $store.options.typeFilter) {
-				Text("Everything").tag(String?.none)
-				ForEach(store.typeCounts, id: \.type) { item in
-					Text("\(item.type.capitalized)s (\(item.count))").tag(String?.some(item.type))
+	/// Shows or hides the filter pills. Filled while a filter is narrowing the feed.
+	private var filterToggle: some View {
+		Button {
+			withAnimation(MaskinMotion.standard) { showFilters.toggle() }
+		} label: {
+			Label(
+				showFilters ? "Hide filters" : "Show filters",
+				systemImage: store.options.typeFilter != nil
+					? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease")
+		}
+		.accessibilityLabel(showFilters ? "Hide filters" : "Show filters")
+	}
+
+	/// One pill per kind of object in the queue, plus Everything. The selected one is on a fill.
+	private var filterPills: some View {
+		let selected = store.options.typeFilter
+		let items: [(type: String?, title: String)] =
+			[(nil, "Everything")]
+			+ store.typeCounts.map { ($0.type, "\($0.type.capitalized)s \($0.count)") }
+		return ScrollView(.horizontal, showsIndicators: false) {
+			HStack(spacing: MaskinSpace.s2) {
+				ForEach(items, id: \.title) { item in
+					let isSelected = item.type == selected
+					Button { store.options.typeFilter = item.type } label: {
+						Text(item.title)
+							.maskinText(.subhead)
+							.fontWeight(isSelected ? .semibold : .regular)
+							.foregroundStyle(isSelected ? MaskinColor.ink : MaskinColor.ink4)
+							.padding(.horizontal, MaskinSpace.s6)
+							.frame(minHeight: MaskinSpace.s14)
+							.background(isSelected ? MaskinSurface.fill : Color.clear, in: Capsule())
+							.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: isSelected ? 0 : 1))
+							.contentShape(Capsule())
+					}
+					.buttonStyle(.plain)
+					.accessibilityAddTraits(isSelected ? .isSelected : [])
 				}
 			}
-		} label: {
-			Label("Filter", systemImage: "line.3.horizontal.decrease")
 		}
-		.accessibilityLabel("Filter by type")
+		.modifier(ReadableRow(width: readableWidth))
 	}
 
 	// MARK: Rows
@@ -149,6 +163,21 @@ struct ForYouFeedView: View {
 				ForEach(entries) { entry in
 					card(entry)
 						.modifier(ReadableRow(width: readableWidth))
+						.swipeActions(edge: .leading, allowsFullSwipe: true) {
+							// Swipe right to take the agent's recommendation. Options that can't be undone
+							// are never one swipe away: they keep their confirmation on the card.
+							if entry.record == nil, let option = entry.card.decision?.recommended,
+								!option.destructive
+							{
+								Button {
+									DecisionCardView.Actions.live(store: store, entry: entry, openObject: openObject)
+										.choose(option)
+								} label: {
+									Label(option.label, systemImage: "checkmark")
+								}
+								.tint(MaskinColor.success)
+							}
+						}
 						.swipeActions(edge: .trailing, allowsFullSwipe: true) {
 							if entry.record == nil {
 								Button {

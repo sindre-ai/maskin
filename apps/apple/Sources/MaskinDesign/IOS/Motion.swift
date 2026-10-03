@@ -10,6 +10,8 @@ public enum MaskinMotion {
 	public static let standard = Animation.easeInOut(duration: MaskinDuration.d200)
 	/// Panel state changes.
 	public static let panel = Animation.easeInOut(duration: MaskinDuration.d250)
+	/// Things that move because a finger moved them (pager, chips): a touch of life, no wobble.
+	public static let spring = Animation.spring(response: 0.38, dampingFraction: 0.82)
 	/// Drawer / sheet-style slides.
 	public static let slide = Animation.easeInOut(duration: MaskinDuration.slide)
 }

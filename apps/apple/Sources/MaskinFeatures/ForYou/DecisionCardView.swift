@@ -89,15 +89,20 @@ struct DecisionCardView: View {
 			if let sender { attribution(sender) }
 
 			if let record, !isFailed(record) {
-				receipt(record)
+				receipt(record).transition(.opacity)
 			} else {
-				if let failure = failureMessage { failureBanner(failure) }
-				if let decision = card.decision {
-					optionRows(decision)
+				Group {
+					if let failure = failureMessage { failureBanner(failure) }
+					if let decision = card.decision {
+						optionRows(decision)
+					}
+					replyBar
 				}
-				replyBar
+				.transition(.opacity)
 			}
 		}
+		// The options fade into the receipt in place, and the card eases to its new height.
+		.animation(MaskinMotion.standard, value: record.map { "\($0.phase)" })
 		.padding(MaskinSpace.s9)
 	}
 

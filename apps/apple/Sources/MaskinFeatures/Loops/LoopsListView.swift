@@ -34,6 +34,7 @@ struct LoopsListView: View {
 							hasUpdate: store.installs[loop.id]?.hasUpdate == true
 						)
 						.tag(loop.id)
+						.listRowSeparator(.hidden)
 						.swipeActions(edge: .trailing, allowsFullSwipe: true) {
 							if loop.status != .draft {
 								Button {
@@ -46,9 +47,9 @@ struct LoopsListView: View {
 						}
 					}
 				} header: {
-					SectionHeader(section.label) {
-						Text("\(section.items.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink4)
-					}
+					Text(section.label)
+						.maskinText(.subhead).fontWeight(.semibold)
+						.foregroundStyle(MaskinColor.ink3).textCase(nil)
 				}
 			}
 		}
@@ -70,8 +71,8 @@ struct LoopsListView: View {
 			if isEmpty {
 				if search.isEmpty {
 					EmptyState(
-						symbol: "arrow.triangle.2.circlepath", title: "No loops yet",
-						message: "Loops are pipelines of agents. Describe one in chat or install one from the marketplace."
+						symbol: "arrow.triangle.2.circlepath", title: "No loops running",
+						message: "A loop is a few agents working together. Describe one in chat, or pick one from the marketplace."
 					) {
 						VStack(spacing: MaskinSpace.s5) {
 							Button("Build a loop in chat", action: onNew).buttonStyle(.primaryAction)

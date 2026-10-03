@@ -5,7 +5,7 @@ import Testing
 @Suite("ShellCommands")
 struct ShellCommandsTests {
 	@Test func numberShortcutsCoverEveryTabExceptSearchInOrder() {
-		#expect(ShellCommands.shortcutTabs == [.forYou, .chats, .objects, .loops, .agents])
+		#expect(ShellCommands.shortcutTabs == [.forYou, .chats, .objects, .loops, .agents, .more])
 	}
 
 	@Test func numberShortcutsStayWithinSingleDigits() {

@@ -41,8 +41,7 @@ public struct ChatsScreen: View {
 		} else {
 			NavigationStack {
 				EmptyState(symbol: "bubble.left.and.bubble.right", title: "Choose a workspace")
-					.navigationTitle("Chats")
-					.shellToolbar(environment: environment)
+					.shellToolbar(environment: environment, title: "Chats")
 			}
 		}
 	}
@@ -77,7 +76,8 @@ private struct ChatsContainer: View {
 				isLive: environment.events.connection != .failed,
 				onNewChat: { showNewChat = true }
 			)
-			.shellToolbar(environment: environment)
+			.shellToolbar(
+				environment: environment, title: store.scope == .archived ? "Archived" : "Chats")
 			.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
 		} detail: {
 			if let selection {

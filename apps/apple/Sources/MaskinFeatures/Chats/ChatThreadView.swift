@@ -12,6 +12,7 @@ struct ChatThreadView: View {
 	var onShowParticipants: () -> Void = {}
 
 	@Environment(\.scenePhase) private var scenePhase
+	@Environment(\.horizontalSizeClass) private var sizeClass
 	@State private var isAtBottom = true
 	@State private var hasUnseen = false
 	@State private var stopTarget: ChatAgentSession?
@@ -42,28 +43,29 @@ struct ChatThreadView: View {
 			.navigationTitle(store.title)
 			#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
+			// The tab bar would sit on top of the composer. iPad keeps it: the split view has room.
+			.toolbar(sizeClass == .compact ? .hidden : .automatic, for: .tabBar)
 			#endif
-			.toolbarTitleMenu {
-				Button(action: onShowParticipants) { Label("People", systemImage: "person.2") }
-				if let conversations, let row = conversations.conversation(id: store.conversationID) {
-					Button {
-						Task { await conversations.setPinned(row.id, !row.pinned) }
-					} label: {
-						Label(row.pinned ? "Unpin" : "Pin", systemImage: row.pinned ? "pin.slash" : "pin")
-					}
-				}
-			}
 			.toolbar {
-				ToolbarItem(placement: .automatic) {
-					Button {
-						searching.toggle()
-						if !searching { searchText = "" }
-					} label: {
-						Label("Search this chat", systemImage: "magnifyingglass")
-					}
-				}
-				ToolbarItem(placement: .automatic) {
+				ToolbarItem(placement: .principal) { header }
+				// One trailing button with a flat menu: a second toolbar item makes iOS fold both into
+				// a "More" overflow.
+				ToolbarItem(placement: .primaryAction) {
 					Menu {
+						Button {
+							searching.toggle()
+							if !searching { searchText = "" }
+						} label: {
+							Label("Search this chat", systemImage: "magnifyingglass")
+						}
+						Button(action: onShowParticipants) { Label("People", systemImage: "person.2") }
+						if let conversations, let row = conversations.conversation(id: store.conversationID) {
+							Button {
+								Task { await conversations.setPinned(row.id, !row.pinned) }
+							} label: {
+								Label(row.pinned ? "Unpin" : "Pin", systemImage: row.pinned ? "pin.slash" : "pin")
+							}
+						}
 						Button {
 							newTitle = store.title
 							renaming = true
@@ -81,7 +83,7 @@ struct ChatThreadView: View {
 							}
 						}
 					} label: {
-						Label("More", systemImage: "ellipsis")
+						Label("Chat options", systemImage: "ellipsis")
 					}
 				}
 			}
@@ -117,6 +119,30 @@ struct ChatThreadView: View {
 			} message: { _ in
 				Text("It will stop what it's doing. You can ask it to continue afterwards.")
 			}
+	}
+
+	/// The navigation bar's centre: the agent's icon, its name, and the conversation title under
+	/// it. Not a menu: People, Pin and the rest live in the ellipsis menu.
+	private var header: some View {
+		let others = store.participants.filter { $0.id != store.currentActorID }
+		let shown = others.isEmpty ? store.participants : others
+		let agents = shown.filter { $0.kind == .agent }
+		let names = (agents.isEmpty ? shown : agents).map(\.name).joined(separator: ", ")
+		return HStack(spacing: MaskinSpace.s5) {
+			ConversationAvatar(
+				participants: shown, size: MaskinSpace.s14, working: !store.workingAgents().isEmpty)
+			VStack(alignment: .leading, spacing: 0) {
+				Text(names.isEmpty ? store.title : names)
+					.maskinText(.subhead).fontWeight(.semibold)
+					.foregroundStyle(MaskinColor.ink).lineLimit(1)
+				if !names.isEmpty {
+					Text(store.title)
+						.maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+				}
+			}
+		}
+		.accessibilityElement(children: .combine)
+		.accessibilityAddTraits(.isHeader)
 	}
 
 	/// The thread plus the observers for search and hands-free speech (kept apart so `body`
@@ -367,7 +393,6 @@ struct ThreadTranscript: View {
 		case .message(let message, let showsAuthor):
 			if let id = message.serverID, let turn = anchors.aboveReply[id] {
 				FinishedTraceView(turn: turn)
-					.padding(.leading, MaskinSpace.s12 + MaskinSpace.s4 + MaskinSpace.s6)
 			}
 			MessageRow(
 				message: message, isOwn: message.actorID == store.currentActorID, showsAuthor: showsAuthor,
@@ -385,7 +410,6 @@ struct ThreadTranscript: View {
 				in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
 			if let id = message.serverID, let turn = anchors.afterTrigger[id] {
 				FinishedTraceView(turn: turn)
-					.padding(.leading, MaskinSpace.s12 + MaskinSpace.s4 + MaskinSpace.s6)
 			}
 		}
 	}

@@ -99,7 +99,6 @@ struct MessageRow: View {
 		Group {
 			if isOwn { own } else { other }
 		}
-		.contextMenu { actions }
 		.accessibilityActions {
 			if !message.content.isEmpty {
 				Button("Copy message") { Clipboard.copy(message.content) }
@@ -228,13 +227,6 @@ struct MessageRow: View {
 
 	private var other: some View {
 		HStack(alignment: .top, spacing: MaskinSpace.s6) {
-			if showsAuthor {
-				ActorAvatar(
-					name: message.actorName, kind: message.author == .agent ? .agent : .human,
-					size: MaskinSpace.s12 + MaskinSpace.s4, seed: message.actorID)
-			} else {
-				Color.clear.frame(width: MaskinSpace.s12 + MaskinSpace.s4, height: 1)
-			}
 			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
 				if showsAuthor {
 					HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
@@ -247,6 +239,10 @@ struct MessageRow: View {
 						RelativeTime(message.createdAt, style: .clock)
 							.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
 					}
+					// Long-press the name for message actions. The text itself is left alone so a
+					// long-press there selects a word instead of opening a menu.
+					.contentShape(Rectangle())
+					.contextMenu { actions }
 				}
 				content
 				if !message.questions.isEmpty {

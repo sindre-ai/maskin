@@ -2,7 +2,7 @@ import Foundation
 
 /// The top-level destinations. Search is the system search tab (a detached button on iOS 26).
 enum ShellTab: String, CaseIterable, Hashable, Identifiable {
-	case forYou, chats, objects, loops, agents, search
+	case forYou, chats, objects, loops, agents, more, search
 
 	var id: String { rawValue }
 
@@ -30,6 +30,7 @@ enum ShellTab: String, CaseIterable, Hashable, Identifiable {
 		case .objects: "Objects"
 		case .loops: "Loops"
 		case .agents: "Agents"
+		case .more: "More"
 		case .search: "Search"
 		}
 	}
@@ -41,6 +42,7 @@ enum ShellTab: String, CaseIterable, Hashable, Identifiable {
 		case .objects: "square.stack.3d.up"
 		case .loops: "arrow.triangle.2.circlepath"
 		case .agents: "person.2"
+		case .more: "ellipsis"
 		case .search: "magnifyingglass"
 		}
 	}

@@ -342,14 +342,21 @@ public final class ForYouStore {
 		ordered += sorted(Array(extra))
 
 		let filter = options.typeFilter
-		return ordered.compactMap { card -> FeedEntry? in
+		return ordered.compactMap { card -> (entry: FeedEntry, slot: FeedBucket)? in
 			if let filter, card.objectType != filter { return nil }
 			let record = decisions.record(for: card.id)
-			return FeedEntry(card: card, bucket: bucket(for: card, record: record), record: record)
+			let entry = FeedEntry(card: card, bucket: bucket(for: card, record: record), record: record)
+			// While the undo window is open the card keeps its place and only its options turn
+			// into the receipt. It drops to the receipt strip once the choice is committed, so
+			// the card under the reader's thumb never jumps away the moment they tap.
+			if let record, case .held = record.phase {
+				return (entry, card.kind == .decision ? .needs : .fyi)
+			}
+			return (entry, entry.bucket)
 		}
 		.enumerated()
-		.sorted { ($0.element.bucket, $0.offset) < ($1.element.bucket, $1.offset) }
-		.map(\.element)
+		.sorted { ($0.element.slot, $0.offset) < ($1.element.slot, $1.offset) }
+		.map(\.element.entry)
 	}
 
 	private func bucket(for card: ForYouCard, record: DecisionRecord?) -> FeedBucket {

@@ -94,7 +94,7 @@ struct SearchContentBody: View {
 		if sections.isEmpty {
 			EmptyState(
 				symbol: "magnifyingglass", title: "No matches",
-				message: "Nothing for “\(store.query)”\(store.scope == .all ? "" : " in \(store.scope.title)"). Try a different word or scope.")
+				message: "Nothing for “\(store.query)”\(store.scope == .all ? "" : " in \(store.scope.title)"). Try another word or scope.")
 		} else {
 			ForEach(sections) { section in
 				VStack(alignment: .leading, spacing: MaskinSpace.s4) {

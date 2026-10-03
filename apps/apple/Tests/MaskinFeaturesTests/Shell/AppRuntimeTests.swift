@@ -482,10 +482,10 @@ struct AppRuntimeSearchRoutingTests {
 		#expect(runtime.presentation == nil)
 	}
 
-	@Test("the tab bar has the five destinations plus search")
+	@Test("the tab bar has the five destinations, More and search")
 	func tabs() {
 		#expect(
-			ShellTab.allCases == [.forYou, .chats, .objects, .loops, .agents, .search])
+			ShellTab.allCases == [.forYou, .chats, .objects, .loops, .agents, .more, .search])
 	}
 }
 
