@@ -9,9 +9,14 @@ import { resolveWorkspaceResend } from './resolve-workspace-resend'
 export const VOICE_CONSENT_BASIS = 'gdpr_6_1_f_legitimate_interest_b2b_voice'
 export const VOICE_DISCLOSED_IDENTITY = 'Maskin ApS, Sebk / Magnus, on behalf of Maskin'
 
+// The address the opt-out line names and Reply-To points at. The sender
+// (noreply plus the receive subdomain) is not read: no trigger acts on inbound
+// resend.email events. Rune's inbox triage scans this mailbox.
+export const VOICE_OPT_OUT_ADDRESS = 'rune@maskin.io'
+
 export type SendFollowupParams = Omit<
 	SendVoiceFollowupEmailParams,
-	'resend' | 'from' | 'contact'
+	'resend' | 'from' | 'contact' | 'optOutAddress'
 > & {
 	workspaceId: string
 	contact: { id: string; metadata?: Record<string, unknown> | null }
@@ -42,7 +47,11 @@ export async function sendFollowup(db: Database, params: SendFollowupParams): Pr
 		})
 		return
 	}
-	const result = await sendVoiceFollowupEmail({ ...email, ...resolved })
+	const result = await sendVoiceFollowupEmail({
+		...email,
+		...resolved,
+		optOutAddress: VOICE_OPT_OUT_ADDRESS,
+	})
 	if (!result.sent) return
 
 	const patch = {

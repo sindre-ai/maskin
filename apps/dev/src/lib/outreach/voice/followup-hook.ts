@@ -72,9 +72,6 @@ async function runFollowupEmail(ctx: PostCallContext): Promise<void> {
 	const asked = trace.some(
 		(e) => (e as { tool_name?: unknown } | null)?.tool_name === FOLLOWUP_REQUEST_TOOL,
 	)
-	// Fails closed: no explicit request on this call, no email.
-	if (!asked) return
-
 	const skip = (reason: string) =>
 		logger.info('voice.email.send_skipped', {
 			workspaceId: ctx.workspaceId,
@@ -82,6 +79,9 @@ async function runFollowupEmail(ctx: PostCallContext): Promise<void> {
 			callId: ctx.callId,
 			reason,
 		})
+
+	// Fails closed: no explicit request on this call, no email.
+	if (!asked) return skip('no_followup_request')
 
 	// A retried hangup must not send twice: consent_call_id is stamped by sendFollowup after a send.
 	if (metadata.consent_call_id === ctx.callId) return skip('already_sent_for_call')

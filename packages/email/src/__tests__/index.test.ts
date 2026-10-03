@@ -72,6 +72,7 @@ describe('sendVoiceFollowupEmail', () => {
 	const base = {
 		resend,
 		from: 'noreply@agent.a.example',
+		optOutAddress: 'optout@maskin.example',
 		to: 'prospect@example.com',
 		prospectName: 'Pia <b>',
 		callSummary: 'We covered pricing & rollout.',
@@ -103,17 +104,27 @@ describe('sendVoiceFollowupEmail', () => {
 		expect(voiceSend.mock.calls[1][0].html).not.toContain('javascript:')
 	})
 
-	it('defaults to Danish with an opt-out line that names Maskin and the sender address', async () => {
+	it('defaults to Danish with an opt-out line that names Maskin and the monitored address', async () => {
 		voiceSend.mockResolvedValue({ data: { id: 'email-4' }, error: null })
 		await sendVoiceFollowupEmail(base)
 		const arg = voiceSend.mock.calls[0][0]
 		expect(arg.subject).toBe('Opfølgning på vores samtale')
 		expect(arg.text).toContain('Hej Pia <b>,')
 		expect(arg.text).toContain('Hvis du ikke ønsker flere e-mails fra Maskin')
-		expect(arg.text).toContain('skriv til noreply@agent.a.example')
+		expect(arg.text).toContain('skriv til optout@maskin.example')
 		expect(arg.text.trimEnd().endsWith('— Maskin')).toBe(true)
 		expect(arg.html).toContain('Hej Pia &lt;b&gt;,')
 		expect(arg.html).toContain('Hvis du ikke ønsker flere e-mails fra Maskin')
+	})
+
+	it('sets Reply-To to the opt-out address, not the unmonitored sender', async () => {
+		voiceSend.mockResolvedValue({ data: { id: 'email-7' }, error: null })
+		await sendVoiceFollowupEmail(base)
+		const arg = voiceSend.mock.calls[0][0]
+		expect(arg.replyTo).toBe('optout@maskin.example')
+		expect(arg.from).toBe('noreply@agent.a.example')
+		expect(arg.text).not.toContain('noreply@')
+		expect(arg.html).not.toContain('noreply@')
 	})
 
 	it('renders the English variant, opt-out line included, when language is en', async () => {
@@ -123,7 +134,7 @@ describe('sendVoiceFollowupEmail', () => {
 		expect(arg.subject).toBe('Following up on our call')
 		expect(arg.text).toContain('Hi Pia <b>,')
 		expect(arg.text).toContain('If you do not want further email from Maskin')
-		expect(arg.text).toContain('write to noreply@agent.a.example')
+		expect(arg.text).toContain('write to optout@maskin.example')
 		expect(arg.html).toContain('If you do not want further email from Maskin')
 		expect(arg.text).not.toContain('Hej')
 	})

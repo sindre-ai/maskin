@@ -2,8 +2,10 @@ import { integrations, objects } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
+import { logger } from '../../lib/logger'
 import { FOLLOWUP_REQUEST_TOOL } from '../../lib/outreach/voice/followup-hook'
 import { postCallHooks, runPostCallHooks } from '../../lib/outreach/voice/post-call'
+import { VOICE_OPT_OUT_ADDRESS } from '../../lib/outreach/voice/send-followup'
 import { insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
@@ -54,7 +56,10 @@ describe('post-call follow-up email hook', () => {
 		)
 		vi.stubGlobal('fetch', fetchMock)
 	})
-	afterEach(() => vi.unstubAllGlobals())
+	afterEach(() => {
+		vi.unstubAllGlobals()
+		vi.restoreAllMocks()
+	})
 
 	it('is registered in the default hook list', () => {
 		expect(postCallHooks.map((h) => h.name)).toContain('followup-email')
@@ -78,13 +83,18 @@ describe('post-call follow-up email hook', () => {
 		expect(meta.last_call_id).toBe('call-hook-1')
 	})
 
-	it('does not send when the prospect did not ask (no request tool in the trace)', async () => {
+	it('does not send when the prospect did not ask (no request tool in the trace), and logs the skip', async () => {
+		const info = vi.spyOn(logger, 'info')
 		const s = await setup({
 			email: 'pia@prospect.example',
 			voice_tool_trace: [{ tool_name: 'end_call_polite' }],
 		})
 		await runPostCallHooks(hangup(s))
 		expect(fetchMock).not.toHaveBeenCalled()
+		expect(info).toHaveBeenCalledWith(
+			'voice.email.send_skipped',
+			expect.objectContaining({ contactId: s.contactId, reason: 'no_followup_request' }),
+		)
 		expect((await metadataOf(s.contactId)).consent_call_id).toBeUndefined()
 	})
 
@@ -138,7 +148,9 @@ describe('post-call follow-up email hook', () => {
 		expect(body.text).toContain('Hej Pia Prospect,')
 		expect(body.text).toContain('Tak fordi du tog dig tid')
 		expect(body.text).toContain('Hvis du ikke ønsker flere e-mails fra Maskin')
-		expect(body.text).toContain('noreply@agent.hook.example')
+		expect(body.text).toContain(VOICE_OPT_OUT_ADDRESS)
+		expect(body.text).not.toContain('noreply@')
+		expect(body.reply_to).toBe(VOICE_OPT_OUT_ADDRESS)
 		expect(body.text).toContain('— Maskin')
 		expect(body.html).toContain('Hvis du ikke ønsker flere e-mails fra Maskin')
 	})

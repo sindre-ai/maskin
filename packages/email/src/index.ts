@@ -115,6 +115,9 @@ export interface SendVoiceFollowupEmailParams {
 	// Language of the call the prospect asked for the email on. Defaults to
 	// Danish: this bet calls Danish +45 numbers with a Danish agent.
 	language?: VoiceFollowupLanguage
+	// A mailbox someone reads. Named in the opt-out line and set as Reply-To,
+	// because the sender address is not monitored.
+	optOutAddress: string
 	// The voice contact the email is about. compliance_flag is read first and
 	// a disclosure_missing flag (stamped when the AI-disclosure opening was not
 	// heard on the call) means the prospect never validly consented to contact.
@@ -189,7 +192,7 @@ function buildFollowupPlaintext(params: SendVoiceFollowupEmailParams): string {
 		params.callSummary,
 		...(link ? ['', copy.linkLead, link] : []),
 		'',
-		copy.optOut(params.from),
+		copy.optOut(params.optOutAddress),
 		'',
 		copy.signature,
 	].join('\n')
@@ -209,7 +212,7 @@ function buildFollowupHtml(params: SendVoiceFollowupEmailParams): string {
 		...(safeLink
 			? [`<p>${escapeHtml(copy.linkLead)}<br><a href="${safeLink}">${safeLink}</a></p>`]
 			: []),
-		`<p style="color: #666; font-size: 13px;">${escapeHtml(copy.optOut(params.from))}</p>`,
+		`<p style="color: #666; font-size: 13px;">${escapeHtml(copy.optOut(params.optOutAddress))}</p>`,
 		`<p style="color: #666; font-size: 13px;">${escapeHtml(copy.signature)}</p>`,
 		'</body>',
 		'</html>',
@@ -229,6 +232,7 @@ export async function sendVoiceFollowupEmail(
 	const { error } = await params.resend.emails.send({
 		from: params.from,
 		to: params.to,
+		replyTo: params.optOutAddress,
 		subject: followupCopy(params).subject,
 		text: buildFollowupPlaintext(params),
 		html: buildFollowupHtml(params),
