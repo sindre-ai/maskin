@@ -11,3 +11,20 @@ export type {
 } from './renderer'
 export { MentionedText } from './mentioned-text'
 export type { MentionActor } from './mentioned-text'
+
+// Shared PostHog emit helper for the five editor events (spec §11). Zero
+// Tiptap deps — safe to import from a read-only route. See
+// `./telemetry.ts` for the full API surface.
+export { createEditorTelemetry } from './telemetry'
+export type {
+	EditorTelemetryCapture,
+	EditorTelemetryContext,
+	EditorTelemetryEmitters,
+	EditorVariant,
+	ParseErrorEmitInput,
+	SaveTrigger,
+	SavedEmitInput,
+	ShortcutEmitInput,
+	SlashCommandEmitInput,
+	ToolbarActionEmitInput,
+} from './telemetry'

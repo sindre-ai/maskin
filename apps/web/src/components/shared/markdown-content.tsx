@@ -2,13 +2,18 @@ import { CommentVisual, isVisualLanguage } from '@/components/activity/comment-v
 import { Textarea } from '@/components/ui/textarea'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import type { ActorListItem } from '@/lib/api'
-import { capture } from '@/lib/posthog'
+import { capture, getSessionId } from '@/lib/posthog'
 import {
 	MarkdownRenderer,
 	type MentionActor,
 	type RenderCodeBlockArgs,
+	createEditorTelemetry,
 } from '@maskin/markdown/react'
-import type { MarkdownParseErrorInfo } from '@maskin/markdown/react/editor'
+import type {
+	EditorSavedInfo,
+	MarkdownParseErrorInfo,
+	SlashCommandInfo,
+} from '@maskin/markdown/react/editor'
 import { Suspense, lazy, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 // Dynamic-imported so Tiptap never bundles into a read-only route — read paths
@@ -194,6 +199,11 @@ function TextareaAdapter({
 // editor itself (spec §9). While the chunk is fetching, render the raw
 // markdown so nothing flashes empty. `surface` / `objectId` are left
 // undefined here — Task 6 threads them through consumer call sites.
+//
+// PostHog telemetry goes through the shared emit helper in
+// `@maskin/markdown/react` so property extraction lives in one place. The
+// helper receives `capture` from `@/lib/posthog` (which handles pre-init
+// queueing) and `getSessionId` for the `editor_slash_command_used` payload.
 function EditorAdapter({
 	content,
 	onChange,
@@ -205,6 +215,20 @@ function EditorAdapter({
 	className?: string
 	disallowedElements?: string[]
 }) {
+	// `surface` / `objectId` are undefined here — Task 6 threads them through
+	// consumer call sites. Once wired, the helper picks them up automatically.
+	const telemetry = useMemo(
+		() =>
+			createEditorTelemetry({
+				capture,
+				variant: 'document',
+				surface: undefined,
+				objectId: undefined,
+				getSessionId,
+			}),
+		[],
+	)
+
 	const handleChange = useCallback(
 		(markdown: string) => {
 			onChange?.(markdown)
@@ -212,14 +236,29 @@ function EditorAdapter({
 		[onChange],
 	)
 
-	const handleParseError = useCallback((info: MarkdownParseErrorInfo) => {
-		capture('editor_markdown_parse_error', {
-			error_message: info.errorMessage,
-			variant: info.variant,
-			surface: info.surface,
-			object_id: info.objectId,
-		})
-	}, [])
+	const handleParseError = useCallback(
+		(info: MarkdownParseErrorInfo) => {
+			telemetry.emitParseError({ errorMessage: info.errorMessage })
+		},
+		[telemetry],
+	)
+
+	const handleSaved = useCallback(
+		(info: EditorSavedInfo) => {
+			telemetry.emitSaved({
+				contentLength: info.contentLength,
+				saveTrigger: info.saveTrigger,
+			})
+		},
+		[telemetry],
+	)
+
+	const handleSlashCommand = useCallback(
+		(info: SlashCommandInfo) => {
+			telemetry.emitSlashCommand({ commandId: info.commandId })
+		},
+		[telemetry],
+	)
 
 	const disallowedNodes = useMemo(() => {
 		if (!disallowedElements) return undefined
@@ -244,6 +283,8 @@ function EditorAdapter({
 				className={className}
 				disallowedNodes={disallowedNodes}
 				onParseError={handleParseError}
+				onSaved={handleSaved}
+				onSlashCommand={handleSlashCommand}
 			/>
 		</Suspense>
 	)

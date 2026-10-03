@@ -25,6 +25,21 @@ export function isPosthogReady(): boolean {
 	return initialized
 }
 
+// Returns posthog-js's current browser session id — the same value that
+// travels on every capture as `$session_id`. Editor telemetry (spec §11
+// `editor_slash_command_used`) reads it here rather than inventing its own
+// so the property matches the workspace's existing convention. Returns
+// `undefined` before `posthog.init` runs (there is no session yet); analytics
+// treats the field as missing rather than emitting a placeholder.
+export function getSessionId(): string | undefined {
+	if (!initialized) return undefined
+	try {
+		return posthog.get_session_id()
+	} catch {
+		return undefined
+	}
+}
+
 // Always attempt posthog.capture — do not gate on the module-local `initialized`
 // flag. posthog-js safely handles a capture() called before init (it queues the
 // event and flushes on init), and gating on our own flag has been the source of

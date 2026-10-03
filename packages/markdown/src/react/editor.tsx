@@ -21,12 +21,16 @@ import {
 	useState,
 } from 'react'
 import { Markdown } from 'tiptap-markdown'
+import type { SaveTrigger, EditorVariant as TelemetryEditorVariant } from './telemetry'
 
 // One lowlight instance across every editor mount — building the language
 // registry is not free and it never changes at runtime.
 const lowlight = createLowlight(common)
 
-export type EditorVariant = 'document' | 'comment' | 'notification'
+// Single source of truth for the variant literal lives in `./telemetry`; the
+// re-export here keeps `EditorVariant` importable from `@maskin/markdown/react/editor`
+// without pulling telemetry into every consumer's type imports.
+export type EditorVariant = TelemetryEditorVariant
 
 export type EditorDisallowedNode = 'heading' | 'table' | 'taskList' | 'codeBlock'
 
@@ -37,6 +41,32 @@ export interface MentionSuggestionItem {
 
 export interface MarkdownParseErrorInfo {
 	errorMessage: string
+	variant: EditorVariant
+	surface: string | undefined
+	objectId: string | undefined
+}
+
+/**
+ * Payload for `onSaved` (spec §11 `editor_saved`). Fires on blur for the
+ * document variant, and on the submit shortcut for the comment variant when
+ * that variant ships.
+ */
+export interface EditorSavedInfo {
+	markdown: string
+	contentLength: number
+	saveTrigger: SaveTrigger
+	variant: EditorVariant
+	surface: string | undefined
+	objectId: string | undefined
+}
+
+/**
+ * Payload for `onSlashCommand` (spec §11 `editor_slash_command_used`). Task 2
+ * fires this from the slash-menu extension after the user picks a command;
+ * `command_id` is the picked item's stable id (e.g. `heading_1`).
+ */
+export interface SlashCommandInfo {
+	commandId: string
 	variant: EditorVariant
 	surface: string | undefined
 	objectId: string | undefined
@@ -65,6 +95,23 @@ export interface MarkdownEditorProps {
 	 * itself renders the raw string as plain text so the editor never crashes.
 	 */
 	onParseError?: (info: MarkdownParseErrorInfo) => void
+	/**
+	 * Fires when the user finalizes an edit. On the `document` variant that is
+	 * the editor's blur. On the `comment` variant it will fire on the submit
+	 * shortcut (comment variant ships in a follow-up bet — the callback is
+	 * wired now so Task 5 delivers the full `editor_saved` end-state).
+	 */
+	onSaved?: (info: EditorSavedInfo) => void
+	/**
+	 * Slot for Task 2's slash-menu extension: called with the picked command's
+	 * id every time the user selects an item (spec §11 `editor_slash_command_used`).
+	 * The extension gets a hold of this callback via a Tiptap storage bag
+	 * exposed on the editor at `editor.storage.maskinSlashCommand.emit(id)` —
+	 * Task 2's slash extension will invoke that emitter after inserting the
+	 * block. Storing it on `editor.storage` keeps the emitter reachable from
+	 * inside Tiptap extensions (which don't get React context).
+	 */
+	onSlashCommand?: (info: SlashCommandInfo) => void
 	/** Free-text surface identifier passed to `onParseError` (spec §11). */
 	surface?: string
 	objectId?: string
@@ -173,11 +220,26 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			className,
 			extensions,
 			onParseError,
+			onSaved,
+			onSlashCommand,
 			surface,
 			objectId,
 		},
 		ref,
 	) {
+		// Hold the current `onSaved` / `onSlashCommand` in refs so the Tiptap
+		// callback closures don't need to be rebuilt every render. Rebuilding
+		// them would re-init the editor (via the `[tiptapExtensions]` dep),
+		// which drops undo history and reloads the doc — a regression against
+		// tech spec §9's autosave semantics.
+		const onSavedRef = useRef(onSaved)
+		const onSlashCommandRef = useRef(onSlashCommand)
+		useEffect(() => {
+			onSavedRef.current = onSaved
+		}, [onSaved])
+		useEffect(() => {
+			onSlashCommandRef.current = onSlashCommand
+		}, [onSlashCommand])
 		// Track parse failure across renders so the fallback surface stays
 		// mounted even after StrictMode double-renders and unmount cycles.
 		const [parseFailed, setParseFailed] = useState(false)
@@ -208,6 +270,19 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 					try {
 						const markdown = e.storage.markdown.getMarkdown() as string
 						onChange(markdown)
+						// `editor_saved` fires on blur (spec §11). Not gated on
+						// content change — a blur is the save trigger, whether or
+						// not the content mutated. `contentLength` reads the
+						// finalized markdown so the metric matches what got sent
+						// to `onChange`.
+						onSavedRef.current?.({
+							markdown,
+							contentLength: markdown.length,
+							saveTrigger: 'blur',
+							variant,
+							surface,
+							objectId,
+						})
 					} catch (err) {
 						console.error('[maskin] markdown editor onBlur getMarkdown failed', err)
 					}
@@ -233,6 +308,24 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 							typeof window !== 'undefined' &&
 							!window.matchMedia?.('(pointer: coarse)').matches
 						) {
+							try {
+								const markdown = _view.state.doc.textContent
+								// `editor_saved` also fires on the comment
+								// variant's submit shortcut — the comment
+								// variant itself ships in a follow-up bet but
+								// the wiring lands here so Task 5 delivers the
+								// full `editor_saved` end-state.
+								onSavedRef.current?.({
+									markdown,
+									contentLength: markdown.length,
+									saveTrigger: 'submit',
+									variant,
+									surface,
+									objectId,
+								})
+							} catch {
+								// Analytics must never break the submit path.
+							}
 							onSubmitShortcut()
 							return true
 						}
@@ -242,6 +335,26 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
 			},
 			[tiptapExtensions],
 		)
+
+		// Expose a bag on `editor.storage` that Task 2's slash-menu extension
+		// can reach from inside Tiptap (no React context available there).
+		// Reads the latest `onSlashCommand` via ref so the extension always
+		// sees the current callback.
+		useEffect(() => {
+			if (!editor) return
+			const storage = editor.storage as Record<string, unknown>
+			storage.maskinSlashCommand = {
+				emit: (commandId: string) => {
+					onSlashCommandRef.current?.({ commandId, variant, surface, objectId })
+				},
+			}
+			return () => {
+				// Clear the bag rather than `delete`ing the key (biome's noDelete
+				// rule): the emitter is unusable once the closure's editor is
+				// destroyed, and Task 2's extension can no-op on `undefined`.
+				storage.maskinSlashCommand = undefined
+			}
+		}, [editor, variant, surface, objectId])
 
 		// Malformed-Markdown fallback: `tiptap-markdown` swallows most invalid
 		// input silently rather than throwing, so an editor that mounts with
