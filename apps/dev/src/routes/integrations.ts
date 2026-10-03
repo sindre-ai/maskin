@@ -8,7 +8,7 @@ import { deregisterLinkedInMcpInstancesForIntegration } from '@maskin/mcp/linked
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { skjaldTranscriptionCompletedPayloadSchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, eq, isNotNull } from 'drizzle-orm'
+import { and, eq, isNotNull, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
 import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
@@ -41,6 +41,9 @@ import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/b
 import {
 	DomainAlreadyClaimedError,
 	DomainRegisterError,
+	type ResendDomainListPage,
+	adoptResendDomain,
+	findResendDomainByName,
 	registerResendDomain,
 } from '../lib/integrations/providers/resend/domain-register'
 import {
@@ -95,6 +98,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { IntegrationConfig } from '../lib/types'
+import { type ResendDomainGetResponse, mapTopStatus } from '../services/resend-domain-verifier'
 
 type Env = {
 	Variables: {
@@ -992,7 +996,7 @@ app.openapi(connectRoute, (async (c) => {
 		if (providerName === 'resend' && resendApiKey && resendSubdomain) {
 			// Step 1 — verify the API key against Resend by listing domains.
 			// 401 → INVALID_API_KEY (Step 1 error state).
-			const verifyRes = await fetch('https://api.resend.com/domains', {
+			const verifyRes = await fetch('https://api.resend.com/domains?limit=100', {
 				method: 'GET',
 				headers: { Authorization: `Bearer ${resendApiKey}` },
 			})
@@ -1026,10 +1030,33 @@ app.openapi(connectRoute, (async (c) => {
 				)
 			}
 
-			// Step 2 — register the subdomain on the customer's Resend account.
+			// Step 2 — adopt the subdomain if it already exists in the customer's
+			// Resend account, otherwise register it. Every Resend call runs before
+			// the row insert, so a failure here never leaves a resend_domain_id.
+			const domainList = (await verifyRes.json().catch(() => ({}))) as ResendDomainListPage
 			let registration: Awaited<ReturnType<typeof registerResendDomain>>
 			try {
-				registration = await registerResendDomain(resendApiKey, resendSubdomain)
+				const existingDomainId = await findResendDomainByName(
+					resendApiKey,
+					resendSubdomain,
+					domainList,
+				)
+				if (existingDomainId) {
+					const [claimedBy] = await db
+						.select({ id: integrations.id })
+						.from(integrations)
+						.where(
+							and(
+								eq(integrations.provider, 'resend'),
+								sql`${integrations.config}->'resend'->>'resend_domain_id' = ${existingDomainId}`,
+							),
+						)
+						.limit(1)
+					if (claimedBy) throw new DomainAlreadyClaimedError('domain_already_claimed')
+					registration = await adoptResendDomain(resendApiKey, existingDomainId)
+				} else {
+					registration = await registerResendDomain(resendApiKey, resendSubdomain)
+				}
 			} catch (err) {
 				if (err instanceof DomainAlreadyClaimedError) {
 					return c.json(
@@ -1062,13 +1089,18 @@ app.openapi(connectRoute, (async (c) => {
 				throw err
 			}
 
+			// An adopted domain may already be verified; seed the real status so the
+			// poller does not leave it sitting at pending.
+			const resendVerificationStatus = mapTopStatus(
+				registration.verificationStatus as ResendDomainGetResponse['status'],
+			)
 			const resendConfig: IntegrationConfig = {
 				system_actor_id: systemActor.id,
 				...(exposeToAgentSessions !== null && { expose_to_agent_sessions: exposeToAgentSessions }),
 				resend: {
 					receive_subdomain: resendSubdomain,
 					resend_domain_id: registration.resendDomainId,
-					verification_status: 'pending',
+					verification_status: resendVerificationStatus,
 					last_polled_at: null,
 					webhook_url: webhookUrl,
 					dns_records: registration.dnsRecords,
@@ -1116,7 +1148,7 @@ app.openapi(connectRoute, (async (c) => {
 				integration_id: resendRow.id,
 				webhook_url: webhookUrl,
 				dns_records: registration.dnsRecords,
-				verification_status: 'pending',
+				verification_status: resendVerificationStatus,
 			})
 		}
 
