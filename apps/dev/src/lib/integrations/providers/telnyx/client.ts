@@ -1,5 +1,10 @@
 import { z } from '@hono/zod-openapi'
-import { type DeadLetterHandler, type TelnyxFetchOptions, telnyxFetch } from './http'
+import {
+	type DeadLetterHandler,
+	type TelnyxFetchOptions,
+	TelnyxHttpError,
+	telnyxFetch,
+} from './http'
 
 const TELNYX_API_BASE = 'https://api.telnyx.com'
 
@@ -70,6 +75,13 @@ export interface TelnyxClient {
 	sendMessage(input: SendMessageInput): Promise<{ messageId: string | null }>
 	/** GET /v2/recordings?filter[call_control_id]=. Null when Telnyx has no recording for the call yet. */
 	findRecording(callControlId: string): Promise<CallRecording | null>
+	/** GET /v2/recordings?filter[call_control_id]=. Every recording Telnyx hosts for the call, empty when none. */
+	listRecordings(callControlId: string): Promise<CallRecording[]>
+	/**
+	 * DELETE /v2/recordings/{id}. A recording Telnyx reports as not found (404) is already gone,
+	 * so it resolves 'not_found' rather than throwing; any other failure throws.
+	 */
+	deleteRecording(recordingId: string): Promise<'deleted' | 'not_found'>
 }
 
 export interface TelnyxClientOptions {
@@ -130,6 +142,19 @@ export function createTelnyxClient(opts: TelnyxClientOptions): TelnyxClient {
 		})
 	}
 
+	async function listRecordings(callControlId: string): Promise<CallRecording[]> {
+		const res = await request(
+			'GET',
+			`/v2/recordings?filter[call_control_id]=${encodeURIComponent(callControlId)}`,
+			undefined,
+		)
+		return recordingsResponseSchema.parse(await res.json()).data.map((recording) => ({
+			recordingId: recording.id,
+			status: recording.status ?? 'unknown',
+			mp3Url: recording.download_urls?.mp3 ?? null,
+		}))
+	}
+
 	return {
 		async createCall(input) {
 			const res = await request(
@@ -169,17 +194,19 @@ export function createTelnyxClient(opts: TelnyxClientOptions): TelnyxClient {
 		},
 
 		async findRecording(callControlId) {
-			const res = await request(
-				'GET',
-				`/v2/recordings?filter[call_control_id]=${encodeURIComponent(callControlId)}`,
-				undefined,
-			)
-			const [first] = recordingsResponseSchema.parse(await res.json()).data
-			if (!first) return null
-			return {
-				recordingId: first.id,
-				status: first.status ?? 'unknown',
-				mp3Url: first.download_urls?.mp3 ?? null,
+			const [first] = await listRecordings(callControlId)
+			return first ?? null
+		},
+
+		listRecordings,
+
+		async deleteRecording(recordingId) {
+			try {
+				await request('DELETE', `/v2/recordings/${encodeURIComponent(recordingId)}`, undefined)
+				return 'deleted'
+			} catch (err) {
+				if (err instanceof TelnyxHttpError && err.status === 404) return 'not_found'
+				throw err
 			}
 		},
 	}
