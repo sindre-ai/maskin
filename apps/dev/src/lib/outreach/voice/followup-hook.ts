@@ -2,6 +2,7 @@ import { objects } from '@maskin/db/schema'
 import type { VoiceFollowupLanguage } from '@maskin/email'
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../../logger'
+import { checkEmailHookDenyList } from './dnc-gate'
 import type { PostCallContext, PostCallHook } from './post-call'
 import { sendFollowup } from './send-followup'
 
@@ -52,6 +53,7 @@ async function runFollowupEmail(ctx: PostCallContext): Promise<void> {
 		.select({
 			id: objects.id,
 			title: objects.title,
+			status: objects.status,
 			metadata: objects.metadata,
 			driver: objects.driver,
 			createdBy: objects.createdBy,
@@ -72,13 +74,24 @@ async function runFollowupEmail(ctx: PostCallContext): Promise<void> {
 	const asked = trace.some(
 		(e) => (e as { tool_name?: unknown } | null)?.tool_name === FOLLOWUP_REQUEST_TOOL,
 	)
-	const skip = (reason: string) =>
+	const skip = (reason: string, detail?: Record<string, unknown>) =>
 		logger.info('voice.email.send_skipped', {
 			workspaceId: ctx.workspaceId,
 			contactId: ctx.contactId,
 			callId: ctx.callId,
 			reason,
+			...detail,
 		})
+
+	// Suppression check, ahead of the trace gate. This is the shared EMAIL-HOOK deny
+	// list (hold, protect, deleted_by_request, rejected), NOT the dialer's generic
+	// suppressing set: a prospect who asked for the email ends the call on
+	// follow_up_later, which the deny list lets through. Only those four conditions
+	// are read, and the reducer never moves a contact into or out of
+	// deleted_by_request or rejected, so the post-reducer row is safe to pass.
+	const deny = checkEmailHookDenyList({ status: row.status, metadata })
+	if (deny.denied)
+		return skip('suppressed_by_deny_list', { check: deny.check, detail: deny.reason })
 
 	// Fails closed: no explicit request on this call, no email.
 	if (!asked) return skip('no_followup_request')
