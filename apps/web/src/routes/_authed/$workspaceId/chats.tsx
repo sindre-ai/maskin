@@ -3,6 +3,8 @@ import { ConversationList } from '@/components/chat/conversation-list'
 import { PageHeader } from '@/components/layout/page-header'
 import { useChatUnreadCount } from '@/hooks/use-chat-unread'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
+import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -13,6 +15,11 @@ interface ChatsSearch {
 	filter?: ChatsFilter
 	/** Desktop focus mode — hides the list pane and widens the thread gutter. */
 	wide?: boolean
+	/** S2 · Produced pane state (bet 34706e2f, task 5). Persisted in the URL
+	 *  so a reload keeps the pane open; the toggle in ThreadHeader flips it
+	 *  and the `P` shortcut on the conversation route does the same. Undefined
+	 *  when closed (never appears in the URL for the default state). */
+	produced?: boolean
 }
 
 const FILTER_VALUES: ChatsFilter[] = ['all', 'unread', 'pinned', 'archived']
@@ -27,6 +34,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/chats')({
 		return {
 			filter: filter && filter !== 'all' ? filter : undefined,
 			wide: search.wide === true || search.wide === 'true' ? true : undefined,
+			produced: search.produced === true || search.produced === 'true' ? true : undefined,
 		}
 	},
 })
@@ -37,6 +45,14 @@ const THREAD_ROUTE_IDS = new Set([
 	'/_authed/$workspaceId/chats/$conversationId',
 	'/_authed/$workspaceId/chats/new',
 ])
+
+// The list-only states never mount the index leaf route, so the list sets its
+// own title. Rendered only while no thread is open: a thread leaf sets the
+// conversation title itself, and this layout's effects would run after it.
+function ChatsListTitle() {
+	useDocumentTitle('Chats')
+	return null
+}
 
 function ChatsLayout() {
 	const { workspaceId } = useWorkspace()
@@ -49,6 +65,13 @@ function ChatsLayout() {
 	const isDraft = leafMatch?.routeId === '/_authed/$workspaceId/chats/new'
 
 	const { count: unreadCount } = useChatUnreadCount(workspaceId)
+	// Feature-flag boundary for the chats v4 polish bet (bet/bdda1c1e-chats-v4-polish).
+	// Read once at this route layout per the feature-flags rule
+	// (`.claude/rules/feature-flags.md`); the list delta is additionally gated by
+	// its `.list` sub-flag so it can be reverted without dropping the rest.
+	const chatsV4Enabled = useFeatureFlag('chats-v4-polish')
+	const listV4Enabled = useFeatureFlag('chats-v4-polish.list')
+	const listV4Polish = chatsV4Enabled && listV4Enabled
 	const { data } = useConversationsInfinite(workspaceId)
 	const total = data?.pages.flatMap((p) => p.conversations).length ?? 0
 	const subtitle =
@@ -98,12 +121,18 @@ function ChatsLayout() {
 		return (
 			<>
 				{header}
+				{hasThread ? null : <ChatsListTitle />}
 				{hasThread ? (
 					<div className="-m-4 flex min-h-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)]">
 						<Outlet />
 					</div>
 				) : (
-					<ConversationList workspaceId={workspaceId} filter={filter} className="-m-4" />
+					<ConversationList
+						workspaceId={workspaceId}
+						filter={filter}
+						className="-m-4"
+						v4Polish={listV4Polish}
+					/>
 				)}
 			</>
 		)
@@ -115,11 +144,13 @@ function ChatsLayout() {
 		return (
 			<>
 				{header}
+				<ChatsListTitle />
 				<ConversationList
 					workspaceId={workspaceId}
 					filter={filter}
 					expanded
 					className="-m-4 md:-m-8"
+					v4Polish={listV4Polish}
 				/>
 			</>
 		)
@@ -133,7 +164,7 @@ function ChatsLayout() {
 					// `bg-surface-sunken` is what makes the split read as index +
 					// document rather than two equal halves (mockup 273).
 					<div className="hidden w-[clamp(266px,25vw,326px)] shrink-0 flex-col border-r border-border bg-surface-sunken md:flex">
-						<ConversationList workspaceId={workspaceId} filter={filter} />
+						<ConversationList workspaceId={workspaceId} filter={filter} v4Polish={listV4Polish} />
 					</div>
 				)}
 				{/* One gutter variable for the whole thread pane — the header,

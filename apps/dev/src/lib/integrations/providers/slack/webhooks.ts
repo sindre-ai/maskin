@@ -479,8 +479,9 @@ export const _internal = {
 // are stable, and repeated invocations short-circuit once the stamp is fresh.
 //
 // Gated behind the `SLACK_AUTO_PAUSE_ON_KICK` env var (backend kill switch —
-// the repo's `FLAGS` registry is visual-layer only per `.claude/rules/feature-
-// flags.md`, so this uses the plain env-var mechanism instead). Flag OFF =
+// the repo's `FLAGS` registry gates per-actor behaviour and resolves against a
+// caller actor id, never a shared-state change, so a process-wide ops toggle
+// belongs on the plain env-var mechanism instead). Flag OFF =
 // event is normalized and dispatched, handler no-ops and returns immediately.
 
 export interface SlackMemberLeftEvent {

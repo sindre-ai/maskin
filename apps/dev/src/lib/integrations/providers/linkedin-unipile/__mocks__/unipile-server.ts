@@ -4,6 +4,14 @@ import {
 	createServer as createHttpServer,
 } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { tryHandlePostsCrud } from './handlers/posts-crud'
+export {
+	CANNED_EDIT_POST_RESPONSE,
+	CANNED_POST_NOT_FOUND_ERROR,
+	clearPostsCrudPending,
+	setNextPostsCrudError,
+} from './handlers/posts-crud'
+export type { PostsCrudErrorTrigger } from './handlers/posts-crud'
 
 /**
  * In-process LinkedIn mock server for tests, rebuilt against LinkedIn Hosted
@@ -21,6 +29,7 @@ import type { AddressInfo } from 'node:net'
  *   - POST /v2/:account_id/linkedin/search                  — people search
  *   - GET  /v2/:account_id/users/:identifier                — one profile
  *   - POST /v2/:account_id/users/me/relation-requests       — connect-request
+ *   - DELETE /v2/accounts/:account_id                       — P3-B account delete
  *
  * The v1 handlers (`/api/v1/hosted/accounts/link`, `/api/v1/messages`,
  * `/api/v1/chats*`) are gone. Signature verification is gone too — v2 uses a
@@ -44,7 +53,29 @@ export interface LinkedInMockServer {
 	inbox: () => Array<{ method: string; path: string; body: unknown }>
 	/** Reset the recorded inbox between test cases. */
 	resetInbox: () => void
+	/**
+	 * Plant a single-shot response override matched by a well-known trigger
+	 * name. Currently supports:
+	 *
+	 *   - `page-admin-revoked` — the next request to any page-scoped Unipile
+	 *     route (posts, comments, engagement, business-page publish) answers
+	 *     with the LinkedIn 403 + `error_code: 'page_admin_revoked'`
+	 *     envelope. Consumed once, then removed. Used by the R11-C 403
+	 *     safety-net tests to force the classifier + deregister-and-re-enum
+	 *     path without a live LinkedIn account.
+	 *
+	 * Named lookup rather than freeform override so a suite that adds a new
+	 * failure mode registers it here — the trigger names are the contract
+	 * with the classifier and body-marker discriminators.
+	 */
+	setNext: (trigger: MockNextTrigger) => void
 }
+
+/** Named single-shot response triggers. See `LinkedInMockServer.setNext`. */
+export type MockNextTrigger =
+	| 'page-admin-revoked'
+	| 'delete-account-already-gone'
+	| 'delete-account-unavailable'
 
 // Verified against the live api.unipile.com response on 2026-09-04:
 // `{"object":"HostedAuthLink","link":"https://auth.unipile.com/?token=..."}`.
@@ -209,6 +240,121 @@ const CANNED_POST_TOO_LONG_ERROR = () => ({
 	message: 'Post body exceeds the LinkedIn 3000-character maximum length',
 })
 
+/**
+ * Simulated LinkedIn page-admin-revoked envelope (403). Shape mirrors the
+ * live LinkedIn error body — `error_code: 'page_admin_revoked'` is the
+ * discriminator the classifier reads, so a test forcing this envelope
+ * exercises the real detection branch and not a mock-only path.
+ */
+const CANNED_PAGE_ADMIN_REVOKED_ERROR = () => ({
+	object: 'Error',
+	error_code: 'page_admin_revoked',
+	message: 'The connected LinkedIn account no longer has admin access to this page.',
+})
+
+/**
+ * Unipile v2 `DELETE /v2/accounts/{account_id}` success envelope. Verified
+ * against api.unipile.com/v2/docs/json 2026-09-12 — the wire body is
+ * `{ "object": "AccountDeleted" }` on 200.
+ */
+const CANNED_ACCOUNT_DELETED_RESPONSE = () => ({
+	object: 'AccountDeleted',
+})
+
+/**
+ * Unipile v2 `DELETE /v2/accounts/{account_id}` "already gone" envelope
+ * (404). Shape matches the reference-page documented response — every field
+ * beyond `status` / `type` is best-effort and the classifier is expected to
+ * treat any 404 on this route as "already deleted upstream, log-and-continue"
+ * per the symmetric-disconnect (P3-B) semantics.
+ */
+const CANNED_ACCOUNT_NOT_FOUND_RESPONSE = () => ({
+	status: 404,
+	type: 'errors/AccountNotFound',
+	title: 'Account not found',
+	detail: 'No Unipile account exists for this id — it may already have been deleted.',
+})
+
+/**
+ * Unipile v2 upstream 5xx on account delete. Shape matches the generic
+ * Problem+JSON envelope Unipile serves on internal errors, so a test forcing
+ * this exercises the "other 4xx/5xx → log the error and STILL proceed"
+ * branch of `preDisconnect`.
+ */
+const CANNED_ACCOUNT_DELETE_UNAVAILABLE = () => ({
+	status: 503,
+	type: 'errors/ServiceUnavailable',
+	title: 'Service temporarily unavailable',
+	detail: 'Unipile is temporarily unable to process account deletions.',
+})
+
+/**
+ * `GET /v2/{account_id}/users/me/company-pages` — the pages the connected
+ * account currently administers. Shape mirrors what the R11-A / R11-C
+ * consumers need: `provider_id` (for the identity URN), `public_identifier`
+ * (identity slug), `messaging_enabled` (§2 filter), `mailbox_id` (messaging
+ * routing). The test-side helpers below let a suite plant a specific page
+ * set for one call so webhook-diff coverage does not have to mutate module
+ * state.
+ */
+type MockManagedPage = {
+	id: string
+	provider_id: string
+	public_identifier: string
+	name: string
+	messaging_enabled: boolean
+	mailbox_id: string | null
+}
+
+const DEFAULT_MANAGED_PAGES: MockManagedPage[] = [
+	{
+		id: 'mock-page-1',
+		provider_id: '11111111',
+		public_identifier: 'maskinio',
+		name: 'Maskin',
+		messaging_enabled: true,
+		mailbox_id: 'mock-mailbox-1',
+	},
+]
+
+let nextManagedPagesResponse: MockManagedPage[] | null = null
+
+/**
+ * Plant the exact page list the NEXT `GET /users/me/company-pages` call
+ * returns. Consumed once. Test-only affordance for the webhook diff suites
+ * — page rename, admin revoke, new-page grant are all expressed as
+ * different values here. The runtime code sees a plain
+ * `{ object: 'ManagedCompanyPages', data: [...] }` envelope either way.
+ */
+export function planManagedPagesResponse(pages: MockManagedPage[]): void {
+	nextManagedPagesResponse = pages
+}
+
+export function resetManagedPagesResponse(): void {
+	nextManagedPagesResponse = null
+}
+
+const CANNED_MANAGED_PAGES_RESPONSE = () => ({
+	object: 'ManagedCompanyPages',
+	data: nextManagedPagesResponse ?? DEFAULT_MANAGED_PAGES,
+})
+
+/**
+ * `GET /v2/{account_id}/users/me` — the connected account's own profile,
+ * used at fan-out register time for the personal instance's identity slug
+ * (`public_identifier`) and identity URN (`urn:li:person:{provider_id}`).
+ */
+const CANNED_ME_PROFILE_RESPONSE = () => ({
+	object: 'UserProfile',
+	id: 'mock-user-me',
+	provider_id: 'mock-user-me-provider-id',
+	public_identifier: 'sebastianbille',
+	first_name: 'Sebastian',
+	last_name: 'Bille',
+	display_name: 'Sebastian Bille',
+	profile_url: 'https://www.linkedin.com/in/sebastianbille',
+})
+
 /** `POST /v2/:account_id/posts/:post_id/comments` — reference: "Comment on Post". */
 const CANNED_COMMENT_RESPONSE = () => ({
 	object: 'CommentCreated',
@@ -336,6 +482,66 @@ export function planPostTooLongResponse(): void {
 	})
 }
 
+/**
+ * Plant a single-shot 403 `page_admin_revoked` on the next page-scoped
+ * Unipile call. Matches any of the routes an agent hits when acting as a
+ * page — posts create, comments create, post reads, engagement reads, and
+ * their business-page variants. The 403 fires once, then the override
+ * removes itself.
+ *
+ * Deliberately does NOT match the enumeration routes (`GET /users/me` /
+ * `GET /users/me/company-pages`) — a revoked-page state should surface
+ * only on THAT page's routes, not on the enumeration call that comes
+ * after the deregister side-effect fires.
+ */
+export function planPageAdminRevokedResponse(): void {
+	responseOverrides.push({
+		match: (method, path) => {
+			// Runtime callers to page-scoped routes: publish, comment, reply, read
+			// post comments, engagement. Enumeration + own-profile calls are
+			// intentionally NOT matched (see the docstring above).
+			return (
+				(method === 'POST' && /^\/v2\/[^/]+\/posts$/.test(path)) ||
+				(method === 'POST' && /^\/v2\/[^/]+\/posts\/[^/]+\/comments$/.test(path)) ||
+				(method === 'POST' && /^\/v2\/[^/]+\/comments\/[^/]+\/replies$/.test(path)) ||
+				(method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+(\?.*)?$/.test(path)) ||
+				(method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+\/comments(\?.*)?$/.test(path)) ||
+				(method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+\/reactions(\?.*)?$/.test(path))
+			)
+		},
+		status: 403,
+		body: CANNED_PAGE_ADMIN_REVOKED_ERROR(),
+	})
+}
+
+/**
+ * Plant a single-shot 404 on the next `DELETE /v2/accounts/{account_id}`
+ * call. The P3-B disconnect handler treats this as "already deleted
+ * upstream — log-and-continue" and still flips local status. Consumed
+ * once, then removed.
+ */
+export function planAccountDeleteAlreadyGoneResponse(): void {
+	responseOverrides.push({
+		match: (method, path) => method === 'DELETE' && /^\/v2\/accounts\/[^/]+$/.test(path),
+		status: 404,
+		body: CANNED_ACCOUNT_NOT_FOUND_RESPONSE(),
+	})
+}
+
+/**
+ * Plant a single-shot 503 on the next `DELETE /v2/accounts/{account_id}`
+ * call. The P3-B disconnect handler treats this as "log the error, still
+ * proceed with local disconnect" — never blocks the user's disconnect on a
+ * Unipile-side transient. Consumed once, then removed.
+ */
+export function planAccountDeleteUnavailableResponse(): void {
+	responseOverrides.push({
+		match: (method, path) => method === 'DELETE' && /^\/v2\/accounts\/[^/]+$/.test(path),
+		status: 503,
+		body: CANNED_ACCOUNT_DELETE_UNAVAILABLE(),
+	})
+}
+
 export function planResponseOverride(override: ResponseOverride): void {
 	responseOverrides.push(override)
 }
@@ -375,11 +581,45 @@ export async function startLinkedInMock(): Promise<LinkedInMockServer> {
 			return send(override.status, override.body)
 		}
 
+		// P3-B: symmetric-disconnect account delete. Unipile-level route (not
+		// LinkedIn-scoped), so it must be matched at the top before any
+		// account-id-prefixed route. Happy path is 200 with the
+		// `AccountDeleted` envelope; the 404 (already-gone) and 5xx branches
+		// are exercised via `setNext('delete-account-already-gone' |
+		// 'delete-account-unavailable')` planted overrides.
+		if (method === 'DELETE' && /^\/v2\/accounts\/[^/]+$/.test(url)) {
+			return send(200, CANNED_ACCOUNT_DELETED_RESPONSE())
+		}
 		if (method === 'POST' && url === '/v2/auth/link') {
-			const state =
-				typeof parsed === 'object' && parsed !== null && 'state' in parsed
-					? String((parsed as { state?: unknown }).state ?? '')
-					: ''
+			// Unipile v2 discriminates fresh vs reconnect on which of
+			// `providers` / `account_id` the body carries — the two shapes are
+			// `anyOf` in the openapi schema. Sending both together is a
+			// validation error on the live API; the mock rejects that
+			// combination too so a caller that regresses the client's branch
+			// selection fails a test here rather than shipping a call that
+			// only breaks against production. Same envelope for both shapes:
+			// `{ object: 'HostedAuthLink', link }` on 200.
+			const bodyObj =
+				typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {}
+			const hasProviders = 'providers' in bodyObj
+			const hasAccountId = 'account_id' in bodyObj
+			if (hasProviders && hasAccountId) {
+				return send(400, {
+					status: 400,
+					type: 'errors/validation',
+					title: 'Invalid request',
+					detail: '`providers` and `account_id` are mutually exclusive.',
+				})
+			}
+			if (!hasProviders && !hasAccountId) {
+				return send(400, {
+					status: 400,
+					type: 'errors/validation',
+					title: 'Invalid request',
+					detail: 'One of `providers` or `account_id` is required.',
+				})
+			}
+			const state = 'state' in bodyObj ? String(bodyObj.state ?? '') : ''
 			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
 			return send(200, CANNED_AUTH_LINK(state, base))
 		}
@@ -411,6 +651,15 @@ export async function startLinkedInMock(): Promise<LinkedInMockServer> {
 		if (method === 'GET' && /^\/v2\/[^/]+\/users\/me\/relations(\?.*)?$/.test(url)) {
 			return send(200, CANNED_RELATIONS_RESPONSE())
 		}
+		// Enumeration routes — the connect callback (R11-A) and the
+		// account.reconnect webhook (R11-C) both call these. Must be
+		// checked BEFORE the generic `/users/:identifier` catch-all so
+		// `/users/me` is not resolved as a profile handle. The page list lives
+		// under `/v2/{acc}/linkedin/company/pages` (see the block below and
+		// `unipile-client.ts` — the R11-A canonical path).
+		if (method === 'GET' && /^\/v2\/[^/]+\/users\/me(\?.*)?$/.test(url)) {
+			return send(200, CANNED_ME_PROFILE_RESPONSE())
+		}
 		// Connect-request route must be checked BEFORE the generic
 		// `/users/:identifier` route below — the URL `/users/me/relation-requests`
 		// also matches `/users/:identifier` with identifier="me" as a prefix,
@@ -439,11 +688,27 @@ export async function startLinkedInMock(): Promise<LinkedInMockServer> {
 		if (method === 'POST' && /^\/v2\/[^/]+\/linkedin\/search(\?.*)?$/.test(url)) {
 			return send(200, CANNED_SEARCH_RESPONSE())
 		}
+		// R11-A enumeration route: pages the connected member admins. Must
+		// be tested BEFORE the generic /users/:identifier catch-all below, and
+		// BEFORE the generic /posts routes (the path doesn't overlap those but
+		// grouping the linkedin/ namespace here keeps the R11 additions together).
+		if (method === 'GET' && /^\/v2\/[^/]+\/linkedin\/company\/pages(\?.*)?$/.test(url)) {
+			return send(200, CANNED_MANAGED_PAGES_RESPONSE())
+		}
 		// ── Content / community routes (Task 7b) ──────────────────────────
 		// Order matters: nested paths must be tested before the /users/:identifier
 		// catch-all, otherwise "posts" would be resolved as a user handle.
 		if (method === 'POST' && /^\/v2\/[^/]+\/posts$/.test(url)) {
 			return send(200, CANNED_PUBLISH_POST_RESPONSE())
+		}
+		// R11-B destructive post CRUD (edit/delete). Delegated to the
+		// `posts-crud` handler so this main switch stays flat as more surfaces
+		// arrive (reactions CRUD in R11-C, message CRUD later). Runs BEFORE
+		// the retrieve-post / comments routes so `/posts/:id` on PATCH+DELETE
+		// dispatches here rather than falling through to the GET-only handlers.
+		{
+			const crud = tryHandlePostsCrud(method, url)
+			if (crud) return send(crud.status, crud.body)
 		}
 		if (method === 'POST' && /^\/v2\/[^/]+\/posts\/[^/]+\/comments$/.test(url)) {
 			return send(200, CANNED_COMMENT_RESPONSE())
@@ -459,6 +724,13 @@ export async function startLinkedInMock(): Promise<LinkedInMockServer> {
 		}
 		if (method === 'GET' && /^\/v2\/[^/]+\/posts\/[^/]+(\?.*)?$/.test(url)) {
 			return send(200, CANNED_RETRIEVE_POST_RESPONSE())
+		}
+		// `/users/me` returns the connected account's own profile — spec §1.4
+		// step 1 reads `public_identifier` off it as the account slug. Must
+		// resolve BEFORE the catch-all `/users/:identifier` route below so it
+		// isn't misread as a lookup of a user literally named "me".
+		if (method === 'GET' && /^\/v2\/[^/]+\/users\/me(\?.*)?$/.test(url)) {
+			return send(200, CANNED_ME_PROFILE_RESPONSE())
 		}
 		if (method === 'GET' && /^\/v2\/[^/]+\/users\/[^/]+(\?.*)?$/.test(url)) {
 			return send(200, CANNED_PROFILE_RESPONSE())
@@ -484,6 +756,24 @@ export async function startLinkedInMock(): Promise<LinkedInMockServer> {
 		inbox: () => recorded.slice(),
 		resetInbox: () => {
 			recorded.length = 0
+		},
+		setNext: (trigger) => {
+			if (trigger === 'page-admin-revoked') {
+				planPageAdminRevokedResponse()
+				return
+			}
+			if (trigger === 'delete-account-already-gone') {
+				planAccountDeleteAlreadyGoneResponse()
+				return
+			}
+			if (trigger === 'delete-account-unavailable') {
+				planAccountDeleteUnavailableResponse()
+				return
+			}
+			// Compile-time exhaustiveness — a new trigger added to the union
+			// but missing here fails the build rather than silently no-oping.
+			const _exhaustive: never = trigger
+			throw new Error(`Unknown mock trigger: ${_exhaustive as string}`)
 		},
 	}
 }

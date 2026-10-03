@@ -3,6 +3,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { LoopPlanCard, defaultLoopName } from '@/components/loops/loop-plan-card'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useCreateObject } from '@/hooks/use-objects'
 import { trackLoopCreatedViaLanguage } from '@/lib/analytics'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
@@ -62,6 +63,7 @@ interface ThreadItem {
 }
 
 function LoopBuilderPage() {
+	useDocumentTitle('New loop')
 	const { workspaceId, workspace } = useWorkspace()
 	const createObject = useCreateObject(workspaceId)
 

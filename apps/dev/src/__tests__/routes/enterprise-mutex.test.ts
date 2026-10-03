@@ -14,15 +14,22 @@ vi.mock('../../lib/stripe', async () => {
 		verifyStripeWebhook: vi.fn(),
 	}
 })
-vi.mock('../../lib/claude-oauth', () => ({
-	encryptOAuthTokens: vi.fn().mockReturnValue({
-		encryptedAccessToken: 'enc-access',
-		encryptedRefreshToken: 'enc-refresh',
-		expiresAt: 9_999_999_999,
-		subscriptionType: 'pro',
-	}),
-	getValidOAuthToken: vi.fn(),
-}))
+// Only what reaches outside the process is stubbed: encryption (no key in
+// unit tests) and the token refresh.
+vi.mock('../../lib/claude-oauth', async () => {
+	const actual =
+		await vi.importActual<typeof import('../../lib/claude-oauth')>('../../lib/claude-oauth')
+	return {
+		...actual,
+		encryptOAuthTokens: vi.fn().mockReturnValue({
+			encryptedAccessToken: 'enc-access',
+			encryptedRefreshToken: 'enc-refresh',
+			expiresAt: 9_999_999_999,
+			subscriptionType: 'pro',
+		}),
+		getValidOAuthToken: vi.fn(),
+	}
+})
 
 import type Stripe from 'stripe'
 import { verifyStripeWebhook } from '../../lib/stripe'
@@ -39,7 +46,8 @@ const STRIPE_ENV = {
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
-	MASKIN_PRO_HARD_CAP_USD_CENTS: '2000',
+	STRIPE_PRICE_CREDITS_CUSTOM: 'price_credits_custom_test',
+	MASKIN_PRO_HARD_CAP_USD_CENTS: '4900',
 	MASKIN_TEAM_HARD_CAP_USD_CENTS: '20000',
 }
 const setStripeEnv = () => {

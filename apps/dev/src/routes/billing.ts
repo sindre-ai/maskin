@@ -1,11 +1,13 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, workspaces } from '@maskin/db/schema'
+import { workspaces } from '@maskin/db/schema'
 import { CREDIT_TOPUP_MAX_USD, CREDIT_TOPUP_MIN_USD, workspaceSettingsSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
-import { isEnterprise } from '../lib/enterprise'
+import { cachedBillingUsage, evictBillingUsage } from '../lib/billing-usage-cache'
+import { isEnterprise, isEnterpriseWorkspace } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { FLAGS, getFeatureFlagConfig, resolveFlags } from '../lib/feature-flags'
 import {
 	getConnectedLinkedInIdentityCount,
@@ -20,6 +22,8 @@ import {
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import {
+	CREDIT_TOPUP_BOUNDS_MINOR,
+	type MaskinCreditsCurrency,
 	createCheckoutSession,
 	createCreditCheckoutSession,
 	getStripeClient,
@@ -149,10 +153,8 @@ const usageRoute = createRoute({
 	},
 })
 
-app.openapi(usageRoute, async (c) => {
-	const db = c.get('db')
-	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-
+// The uncached usage read. Returns null when the workspace does not exist.
+async function readBillingUsage(db: Database, workspaceId: string, actorId: string) {
 	const [workspace] = await db
 		.select({
 			id: workspaces.id,
@@ -164,9 +166,7 @@ app.openapi(usageRoute, async (c) => {
 		.where(eq(workspaces.id, workspaceId))
 		.limit(1)
 
-	if (!workspace) {
-		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
-	}
+	if (!workspace) return null
 
 	const parsed = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
 	const billing = parsed.success ? parsed.data.billing : undefined
@@ -242,7 +242,7 @@ app.openapi(usageRoute, async (c) => {
 	// disagreeing.
 	const linkedinExempt = isEnterprise(workspace)
 	const linkedinFlagOn =
-		resolveFlags(c.get('actorId'), getFeatureFlagConfig())[FLAGS.LINKEDIN_ADDON_VISIBLE] === true
+		resolveFlags(actorId, getFeatureFlagConfig())[FLAGS.LINKEDIN_ADDON_VISIBLE] === true
 	const linkedinConnectedCount =
 		linkedinFlagOn && !linkedinExempt ? await getConnectedLinkedInIdentityCount(db, workspaceId) : 0
 	const linkedinIdentityAddon = resolveLinkedInIdentityAddon({
@@ -261,21 +261,32 @@ app.openapi(usageRoute, async (c) => {
 		linkedinIdentityCount: linkedinIdentityAddon?.count ?? 0,
 	})
 
-	return c.json(
-		{
-			plan,
-			status,
-			usd_cents_used: usdCentsUsed,
-			hard_cap_usd_cents: hardCapCents,
-			period_start: periodStartSec,
-			period_resets_in_ms: plan === 'enterprise' ? null : resetsIn,
-			stripe_customer_id: billing?.stripe_customer_id ?? null,
-			stripe_subscription_id: billing?.stripe_subscription_id ?? null,
-			credit_balance_cents: creditBalanceCents,
-			linkedin_identity_addon: linkedinIdentityAddon,
-		},
-		200,
+	return {
+		plan,
+		status,
+		usd_cents_used: usdCentsUsed,
+		hard_cap_usd_cents: hardCapCents,
+		period_start: periodStartSec,
+		period_resets_in_ms: plan === 'enterprise' ? null : resetsIn,
+		stripe_customer_id: billing?.stripe_customer_id ?? null,
+		stripe_subscription_id: billing?.stripe_subscription_id ?? null,
+		credit_balance_cents: creditBalanceCents,
+		linkedin_identity_addon: linkedinIdentityAddon,
+	}
+}
+
+app.openapi(usageRoute, async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const usage = await cachedBillingUsage(actorId, workspaceId, () =>
+		readBillingUsage(db, workspaceId, actorId),
 	)
+	if (!usage) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+	return c.json(usage, 200)
 })
 
 app.openapi(checkoutRoute, async (c) => {
@@ -360,6 +371,14 @@ const buyCreditsBodySchema = z.object({
 		.max(CREDIT_TOPUP_MAX_USD * 100),
 	success_url: z.string().url(),
 	cancel_url: z.string().url(),
+	/**
+	 * Optional currency for the top-up (custom-amount top-up uses the
+	 * maskin_credits_custom Price). When set, the route re-validates the
+	 * amount against the per-currency bounds from CREDIT_TOPUP_BOUNDS_MINOR
+	 * (spec Delta 1b) so a EUR/DKK caller can't sneak in outside the
+	 * currency-specific min/max.
+	 */
+	currency: z.enum(['usd', 'eur', 'dkk']).optional(),
 })
 
 const buyCreditsRoute = createRoute({
@@ -401,7 +420,23 @@ const buyCreditsRoute = createRoute({
 app.openapi(buyCreditsRoute, async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { amount_usd_cents, success_url, cancel_url } = c.req.valid('json')
+	const { amount_usd_cents, success_url, cancel_url, currency } = c.req.valid('json')
+
+	// Delta 1b currency-scoped bounds. The USD bounds already ran in
+	// buyCreditsBodySchema above; this adds the stricter per-currency min/max
+	// for EUR/DKK callers.
+	if (currency && currency !== 'usd') {
+		const bounds = CREDIT_TOPUP_BOUNDS_MINOR[currency as MaskinCreditsCurrency]
+		if (amount_usd_cents < bounds.min || amount_usd_cents > bounds.max) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					`amount_usd_cents must be between ${bounds.min} and ${bounds.max} for currency=${currency}`,
+				),
+				400,
+			)
+		}
+	}
 
 	const [workspace] = await db
 		.select({ id: workspaces.id, settings: workspaces.settings })
@@ -425,13 +460,25 @@ app.openapi(buyCreditsRoute, async (c) => {
 	const billing = settingsParse.success ? settingsParse.data.billing : undefined
 
 	// Same eligibility as spending a balance (`canUseCreditBalance`), minus
-	// the balance>0 check since we're about to add to it: plan must be
-	// pro/team, subscription active, and a Stripe customer already on file
-	// (guaranteed once a paid checkout has completed).
-	const eligible =
-		(billing?.plan === 'pro' || billing?.plan === 'team') &&
-		billing.status === 'active' &&
-		Boolean(billing.stripe_customer_id)
+	// the balance>0 check since we're about to add to it. Any maskin-plan
+	// workspace may top up, trial included — a trial that hits its cap and
+	// wants to pay to keep running is the case this button exists for, and
+	// gating it to pro/team meant the NO CREDITS prompt led to a dead end.
+	//
+	// A Stripe customer is NOT required up front: a first-time buyer has none,
+	// and Stripe Checkout creates one when `customer` is undefined (the
+	// webhook then persists it, same as the subscription path). Requiring it
+	// here made the first purchase impossible, which is the only purchase a
+	// trial workspace can make.
+	//
+	// `past_due`/`canceled` still block, matching the spend gate: a workspace
+	// that can't be billed for its base plan shouldn't be taking on more.
+	const blockedStatus = billing?.status === 'past_due' || billing?.status === 'canceled'
+	// Enterprise workspaces fund their own LLM usage and never draw on a
+	// credit balance, so there is nothing for them to top up. Uses the
+	// db-reading helper because this route's workspace select carries only
+	// `id`/`settings`, not the enterprise-grant columns `isEnterprise` needs.
+	const eligible = !blockedStatus && !(await isEnterpriseWorkspace(db, workspaceId))
 	if (!eligible) {
 		return c.json(
 			createApiError('BAD_REQUEST', 'Workspace is not eligible to buy usage credits'),
@@ -451,13 +498,18 @@ app.openapi(buyCreditsRoute, async (c) => {
 
 	const stripe = getStripeClient(stripeEnv)
 	try {
-		const session = await createCreditCheckoutSession(stripe, {
-			workspaceId,
-			amountUsdCents: amount_usd_cents,
-			successUrl: success_url,
-			cancelUrl: cancel_url,
-			existingCustomerId: billing?.stripe_customer_id as string,
-		})
+		const session = await createCreditCheckoutSession(
+			stripe,
+			{
+				workspaceId,
+				amountUsdCents: amount_usd_cents,
+				successUrl: success_url,
+				cancelUrl: cancel_url,
+				existingCustomerId: billing?.stripe_customer_id ?? undefined,
+				currency: currency as MaskinCreditsCurrency | undefined,
+			},
+			stripeEnv,
+		)
 		if (!session.url) {
 			logger.error('Stripe credit top-up checkout session missing url', { sessionId: session.id })
 			return c.json(createApiError('INTERNAL_ERROR', 'Stripe returned no checkout url'), 500)
@@ -557,12 +609,15 @@ app.openapi(cancelRoute, async (c) => {
 			.update(workspaces)
 			.set({ settings: { ...settings, billing: downgraded }, updatedAt: new Date() })
 			.where(eq(workspaces.id, workspaceId))
+		// The web app refetches usage as soon as this returns; a read cached within
+		// the cache TTL would still show the paid plan.
+		evictBillingUsage(workspaceId)
 
 		// Audit + real-time, per the "events logged on every mutation" rule.
 		// A cancellation is the single most disputable billing action; without
 		// this row there is no record of who cancelled or when, and no SSE
 		// invalidation to refresh the billing UI off the stale plan.
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId,
 			actorId: callerId,
 			action: 'workspace_billing_canceled',

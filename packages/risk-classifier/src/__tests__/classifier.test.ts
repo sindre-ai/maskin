@@ -47,11 +47,11 @@ describe('classify', () => {
 			}),
 		)
 		expect(v.score).toBe(100)
-		expect(v.band).toBe('two_human_required')
+		expect(v.band).toBe('human_review_required')
 		expect(v.floors_applied.some((f) => f.kind === 'protected_path')).toBe(true)
 	})
 
-	it('regex floor lifts a low score to 60', () => {
+	it('regex floor lifts a low score to 80', () => {
 		const floors: RegexFloor[] = [
 			{
 				pattern: '^-.*require_admin\\(',
@@ -68,7 +68,7 @@ describe('classify', () => {
 				],
 			}),
 		)
-		expect(v.score).toBeGreaterThanOrEqual(60)
+		expect(v.score).toBeGreaterThanOrEqual(80)
 		expect(v.band).not.toBe('auto')
 		expect(v.floors_applied.some((f) => f.kind === 'regex_floor_hit')).toBe(true)
 	})
@@ -132,7 +132,7 @@ describe('classify', () => {
 				],
 			}),
 		)
-		expect(v.score).toBeGreaterThanOrEqual(60)
+		expect(v.score).toBeGreaterThanOrEqual(80)
 	})
 
 	it('flags secret-like patterns in added lines', () => {

@@ -1,5 +1,6 @@
-import { QueryClient } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query'
 import { act, renderHook } from '@testing-library/react'
+import { createElement } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 let mockController: AbortController
@@ -89,14 +90,87 @@ describe('useSSE', () => {
 				vi.advanceTimersByTime(1000)
 			}
 
-			expect(invalidateQueries).toHaveBeenCalledTimes(1)
+			// A resync is two invalidations: mark everything stale, then refetch the
+			// live queries.
+			expect(invalidateQueries).toHaveBeenCalledTimes(2)
 
 			// The collapsed reconnects still get reconciled, just once.
 			vi.advanceTimersByTime(10_000)
-			expect(invalidateQueries).toHaveBeenCalledTimes(2)
+			expect(invalidateQueries).toHaveBeenCalledTimes(4)
 		} finally {
 			vi.useRealTimers()
 		}
+	})
+
+	describe('reconnect resync against a real query client', () => {
+		function setup() {
+			const qc = new QueryClient()
+			const wrapper = ({ children }: { children: React.ReactNode }) =>
+				createElement(QueryClientProvider, { client: qc }, children)
+			// Counts requests that reach the server, one counter per query.
+			const mount = (queryKey: readonly unknown[]) => {
+				const requests = { n: 0 }
+				new QueryObserver(qc, {
+					queryKey,
+					queryFn: async () => {
+						requests.n++
+						return 'ok'
+					},
+					staleTime: 60_000,
+				}).subscribe(() => {})
+				return requests
+			}
+			return { qc, wrapper, mount }
+		}
+
+		const reconnect = () => {
+			const callbacks = mockConnectSSE.mock.calls[0]?.[1] as { onReconnect: () => void }
+			callbacks.onReconnect()
+		}
+
+		it('refetches the live queries once and leaves every other active query alone', async () => {
+			vi.useFakeTimers()
+			try {
+				const { wrapper, mount } = setup()
+				const live = {
+					transcript: mount(['conversations', 'ws-1', 'detail', 'conv-1']),
+					sessionsList: mount(['sessions', 'ws-1']),
+					sessionsByConversation: mount(['sessions', 'ws-1', 'conversation', 'conv-1']),
+				}
+				const other = Array.from({ length: 12 }, (_, i) => mount(['objects', 'ws-1', 'q', i]))
+				other.push(mount(['billing', 'ws-1', 'usage']), mount(['briefing', 'ws-1']))
+				renderHook(() => useSSE('ws-1'), { wrapper })
+				await vi.advanceTimersByTimeAsync(1)
+				for (const r of [...Object.values(live), ...other]) r.n = 0
+
+				await vi.advanceTimersByTimeAsync(11_000)
+				reconnect()
+				await vi.advanceTimersByTimeAsync(1_000)
+
+				expect(live.transcript.n).toBe(1)
+				expect(live.sessionsList.n).toBe(1)
+				expect(live.sessionsByConversation.n).toBe(1)
+				expect(other.reduce((sum, r) => sum + r.n, 0)).toBe(0)
+			} finally {
+				vi.useRealTimers()
+			}
+		})
+
+		it('marks the other queries stale so they refetch the next time they are used', async () => {
+			vi.useFakeTimers()
+			try {
+				const { qc, wrapper, mount } = setup()
+				mount(['objects', 'ws-1', 'list'])
+				renderHook(() => useSSE('ws-1'), { wrapper })
+				await vi.advanceTimersByTimeAsync(11_000)
+
+				reconnect()
+
+				expect(qc.getQueryState(['objects', 'ws-1', 'list'])?.isInvalidated).toBe(true)
+			} finally {
+				vi.useRealTimers()
+			}
+		})
 	})
 
 	it('does not connect when workspaceId is empty', () => {

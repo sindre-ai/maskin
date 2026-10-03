@@ -95,6 +95,30 @@ export default defineConfig(async () => ({
 		// for it (so the msb bridge/preview-port forwarding can reach this dev
 		// server) — ordinary `pnpm dev`/`pnpm dev:win` stays loopback-only.
 		host: process.env.MASKIN_DEV_EXTERNAL === '1' ? '0.0.0.0' : 'localhost',
+		// Vite 6 blocks any request whose Host header isn't in the allowlist
+		// (DNS-rebinding guard). Under MASKIN_DEV_EXTERNAL, the sandbox forwards
+		// requests through `host.microsandbox.internal`, so widen the allowlist
+		// to `true` (accept any host) — same posture as the manual `--host` flag.
+		...(process.env.MASKIN_DEV_EXTERNAL === '1' ? { allowedHosts: true as const } : {}),
+		proxy: {
+			'/api': {
+				target: 'http://localhost:3000',
+				changeOrigin: true,
+			},
+			'/mcp': {
+				target: 'http://localhost:3000',
+				changeOrigin: true,
+			},
+		},
+	},
+	// `vite preview` (serving the production build) does NOT inherit
+	// `server.proxy` — it has its own, separate proxy config. E2E's CI run
+	// uses preview instead of the dev server (see apps/e2e/playwright.config.ts)
+	// specifically to avoid on-demand module transforms slowing down
+	// `page.reload()`, so this needs to mirror `server.proxy` exactly or every
+	// `/api`/`/mcp` request 404s against the static file server.
+	preview: {
+		port: 5173,
 		proxy: {
 			'/api': {
 				target: 'http://localhost:3000',

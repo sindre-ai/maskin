@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, actors, agentSkills, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
+import { actors, agentSkills, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
 import { attachSkillSchema, attachSkillsBatchSchema } from '@maskin/shared'
 import { and, eq, inArray } from 'drizzle-orm'
 import {
@@ -8,6 +8,7 @@ import {
 	trackWorkspaceSkillAttached,
 } from '../lib/analytics/workspace-skill-events'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent, recordEvents } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
@@ -252,7 +253,7 @@ app.openapi(attachSkillRoute, (async (c) => {
 	// 500-ing the caller.
 	if (inserted.length > 0) {
 		try {
-			await db.insert(events).values({
+			await recordEvent(db, {
 				workspaceId: skill.workspaceId,
 				actorId: callerActorId,
 				action: 'attached',
@@ -420,7 +421,8 @@ app.openapi(attachSkillsBatchRoute, (async (c) => {
 			const newlyInsertedIds = new Set(inserted.map((row) => row.workspaceSkillId))
 			const newlyAttached = toAttach.filter((skill) => newlyInsertedIds.has(skill.id))
 			if (newlyAttached.length > 0) {
-				await tx.insert(events).values(
+				await recordEvents(
+					tx,
 					newlyAttached.map((skill) => ({
 						workspaceId: skill.workspaceId,
 						actorId: callerActorId,
@@ -573,7 +575,7 @@ app.openapi(detachSkillRoute, (async (c) => {
 	}
 
 	try {
-		await db.insert(events).values({
+		await recordEvent(db, {
 			workspaceId: skill.workspaceId,
 			actorId: callerActorId,
 			action: 'detached',

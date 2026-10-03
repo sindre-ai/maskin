@@ -61,6 +61,24 @@ vi.mock('@/components/layout/page-header', () => ({
 	),
 }))
 
+// The route reads workspace billing at its boundary to derive the NO CREDITS
+// pill overlay (D1). Stub both here so this route-level suite doesn't need a
+// QueryClientProvider or the billing API surface — the pill's own render logic
+// is asserted in `components/loops/loop-row.test.tsx`.
+const mockUseBillingUsage = vi.fn()
+vi.mock('@/hooks/use-billing', () => ({
+	useBillingUsage: () => mockUseBillingUsage(),
+}))
+
+const mockUseFeatureFlag = vi.fn()
+vi.mock('@/hooks/use-feature-flag', () => ({
+	useFeatureFlag: (id: string) => mockUseFeatureFlag(id),
+}))
+
+vi.mock('@/components/settings/buy-credits-dialog', () => ({
+	BuyCreditsDialog: () => null,
+}))
+
 vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
@@ -85,6 +103,8 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		agentIds: [],
 		triggerIds: [],
 		waitingOnViewer: false,
+		waitingCount: 0,
+		targets: null,
 		createdAt: null,
 		updatedAt: null,
 		...overrides,
@@ -170,6 +190,10 @@ beforeEach(() => {
 	mockUseConversations.mockReturnValue({
 		data: { pages: [{ conversations: [], has_more: false }] },
 	})
+	// Default posture: flag off + no billing data — the same production posture
+	// the bet branch reads until the umbrella flag is registered.
+	mockUseFeatureFlag.mockReturnValue(false)
+	mockUseBillingUsage.mockReturnValue({ data: undefined })
 })
 
 describe('LoopsPage', () => {

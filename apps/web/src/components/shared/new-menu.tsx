@@ -1,5 +1,10 @@
 import { ImportDialog } from '@/components/imports/import-dialog'
 import { type CreatableType, CreatePicker } from '@/components/shared/create-picker'
+import {
+	SplitButton,
+	SplitButtonChevron,
+	SplitButtonPrimary,
+} from '@/components/shared/split-button'
 import { Button } from '@/components/ui/button'
 import {
 	DropdownMenu,
@@ -16,11 +21,28 @@ import { useCommandPalette } from '@/lib/command-palette-context'
 import { defaultTypeColor, objectTypeDescriptions, typeColors } from '@/lib/constants'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Bot, ChevronDown, MessageSquare, Plus, RefreshCw, Search, Upload } from 'lucide-react'
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 
 interface CreateConfig {
 	type: CreatableType
 	subtype?: string
+}
+
+/**
+ * Contract that lets a page swap the label + click handler on the primary
+ * half of the split New button (D4 verb-swap). The chevron half is left
+ * alone so the shared new-menu contents stay identical in both states — the
+ * "still lets reader + New a related object" clause in the acceptance
+ * criteria hinges on that.
+ */
+export interface NewMenuPrimaryOverride {
+	label: string
+	title?: string
+	ariaLabel?: string
+	icon: ReactNode
+	onClick: () => void
+	/** Disables both halves at 60% opacity — D4's read-only rule. */
+	disabled?: boolean
 }
 
 interface NewMenuProps {
@@ -37,6 +59,14 @@ interface NewMenuProps {
 	// here so the copy lives with the menu it mirrors. Omit to keep the whole
 	// button as the menu trigger.
 	primaryKind?: PrimaryKind
+	// Live label/action swap on the primary half — driven by the object-detail
+	// pending-ask cache (D4). Overrides `primaryKind` while set; the chevron
+	// still opens the same menu, unchanged.
+	primaryOverride?: NewMenuPrimaryOverride
+	// D4 read-only rule — dims both halves at 60% opacity and blocks
+	// interaction. Set independently of `primaryOverride` so a read-only object
+	// with no pending ask still disables its default `+ New` button.
+	disabled?: boolean
 }
 
 export type PrimaryKind = 'chat' | 'object' | 'loop' | 'agent'
@@ -67,7 +97,13 @@ function ImportFlow({ onOpenChange }: { onOpenChange: (open: boolean) => void })
 
 // The single "+ New" control used everywhere (global header, For You page) so
 // the trigger and dropdown contents can never drift apart between pages.
-export function NewMenu({ onNewChat, hideObjectSection, primaryKind }: NewMenuProps) {
+export function NewMenu({
+	onNewChat,
+	hideObjectSection,
+	primaryKind,
+	primaryOverride,
+	disabled,
+}: NewMenuProps) {
 	const [createConfig, setCreateConfig] = useState<CreateConfig | null>(null)
 	const [importOpen, setImportOpen] = useState(false)
 	const { setOpen: setPaletteOpen } = useCommandPalette()
@@ -89,37 +125,62 @@ export function NewMenu({ onNewChat, hideObjectSection, primaryKind }: NewMenuPr
 		if (kind === 'agent') return setCreateConfig({ type: 'agent' })
 	}
 
+	// D4: the pending-ask override wins over `primaryKind` while it is set.
+	// The chevron menu contents stay the same in both states — that's why the
+	// override never touches the DropdownMenu below.
+	const hasPrimary = Boolean(primaryOverride) || Boolean(kind)
+	const primaryLabel = primaryOverride
+		? primaryOverride.label
+		: kind
+			? PRIMARY_LABEL[kind]
+			: undefined
+	const primaryTitle = primaryOverride?.title ?? (kind ? PRIMARY_TITLE[kind] : undefined)
+	const primaryAriaLabel = primaryOverride?.ariaLabel ?? primaryLabel
+	const primaryIcon = primaryOverride ? (
+		primaryOverride.icon
+	) : (
+		<Plus aria-hidden className="size-[14px]" />
+	)
+	const primaryOnClick = primaryOverride ? primaryOverride.onClick : runPrimary
+
+	// A caller can independently disable the whole control (D4 read-only) OR
+	// pass an override that itself carries a disabled bit — either dims both
+	// halves.
+	const isDisabled = disabled || primaryOverride?.disabled === true
+
 	return (
 		<>
-			<div className="inline-flex h-[30px] shrink-0 items-stretch">
-				{kind && (
-					<Button
-						size="sm"
-						onClick={runPrimary}
-						title={PRIMARY_TITLE[kind]}
-						aria-label={PRIMARY_LABEL[kind]}
-						className="h-[30px] gap-1.5 rounded-lg rounded-r-none px-2.5 text-xs font-semibold"
-					>
-						<Plus aria-hidden className="size-[14px]" />
-						<span className="hidden sm:inline">New</span>
-					</Button>
+			<SplitButton disabled={isDisabled}>
+				{hasPrimary && primaryLabel && (
+					<SplitButtonPrimary
+						label={primaryLabel}
+						title={primaryTitle}
+						ariaLabel={primaryAriaLabel}
+						icon={primaryIcon}
+						onClick={primaryOnClick}
+						disabled={isDisabled}
+					/>
 				)}
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
-						<Button
-							size="sm"
-							aria-label={kind ? 'More ways to start' : 'New'}
-							title={kind ? 'More ways to start' : undefined}
-							className={
-								kind
-									? 'h-[30px] w-6 rounded-lg rounded-l-none border-l border-l-muted-foreground px-0'
-									: 'h-[30px] gap-1.5 rounded-lg px-3 text-[11.5px] font-semibold'
-							}
-						>
-							{!kind && <Plus aria-hidden className="size-[13px]" />}
-							{!kind && <span className="hidden sm:inline">New</span>}
-							<ChevronDown aria-hidden className="size-3 opacity-70" />
-						</Button>
+						{hasPrimary ? (
+							<SplitButtonChevron
+								ariaLabel="More ways to start"
+								title="More ways to start"
+								disabled={isDisabled}
+							/>
+						) : (
+							<Button
+								size="sm"
+								aria-label="New"
+								disabled={isDisabled}
+								className={cn('h-[30px] gap-1.5 rounded-lg px-3 text-[11.5px] font-semibold')}
+							>
+								<Plus aria-hidden className="size-[13px]" />
+								<span className="hidden sm:inline">New</span>
+								<ChevronDown aria-hidden className="size-3 opacity-70" />
+							</Button>
+						)}
 					</DropdownMenuTrigger>
 					<DropdownMenuContent align="end" className="w-72">
 						<DropdownMenuItem onSelect={onNewChat} className="items-start gap-2.5 py-2">
@@ -193,7 +254,7 @@ export function NewMenu({ onNewChat, hideObjectSection, primaryKind }: NewMenuPr
 						</DropdownMenuItem>
 					</DropdownMenuContent>
 				</DropdownMenu>
-			</div>
+			</SplitButton>
 			{/* Mounted only while open: it owns the import toast subscription, which
 			    needs a QueryClient and a workspace. Keeping that behind the open flag
 			    means the New button itself carries no data dependency, so every

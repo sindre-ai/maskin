@@ -1,7 +1,16 @@
 import { randomUUID } from 'node:crypto'
-import { buildEvent } from '../factories'
+import { OpenAPIHono } from '@hono/zod-openapi'
+import type { Database } from '@maskin/db'
+import type { PgNotifyBridge } from '@maskin/realtime'
+import type { SessionManager } from '../../services/session-manager'
+import { buildEvent, buildSession } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { createSessionTestApp, createTestApp } from '../setup'
+import {
+	createMockSessionManager,
+	createSessionTestApp,
+	createTestApp,
+	createTestContext,
+} from '../setup'
 
 const { default: eventsRoutes } = await import('../../routes/events')
 
@@ -118,6 +127,140 @@ describe('Events Routes', () => {
 		})
 	})
 
+	describe('GET /api/events (session.state_changed emission)', () => {
+		const sessionId = randomUUID()
+		const conversationId = randomUUID()
+		const participantId = randomUUID()
+		const outsiderId = randomUUID()
+
+		type SseTestEnv = {
+			Variables: {
+				db: Database
+				actorId: string
+				actorType: string
+				notifyBridge: PgNotifyBridge
+				sessionManager: SessionManager
+			}
+		}
+
+		// The shared createTestApp injects notifyBridge as a bare {}, so the
+		// route's bridge.on('event', handler) throws once the replay loop has
+		// finished and the stream errors out before its frames can be read. This
+		// local app injects a no-op bridge so the replay path runs to completion
+		// (writeFrame -> loadSessionStateChangeFrame) and the stream stays open.
+		function createSseTestApp(actorId: string) {
+			const app = new OpenAPIHono<SseTestEnv>()
+			const { db, mockResults } = createTestContext()
+			app.use('*', async (c, next) => {
+				c.set('db', db)
+				c.set('actorId', actorId)
+				c.set('actorType', 'human')
+				c.set('notifyBridge', {
+					on: vi.fn(),
+					off: vi.fn(),
+					emit: vi.fn(),
+				} as unknown as PgNotifyBridge)
+				c.set('sessionManager', createMockSessionManager())
+				await next()
+			})
+			app.route('/api/events', eventsRoutes)
+			return { app, mockResults }
+		}
+
+		// The SSE route holds the connection open with a 15s heartbeat, so
+		// await res.text() never resolves. Read chunks until the stream goes quiet
+		// for idleMs, then cancel. Draining to idle (rather than stopping at the
+		// first frame) is what makes the negative assertion sound: it proves no
+		// session.state_changed frame arrived after the generic one.
+		async function readSseUntilIdle(
+			body: ReadableStream<Uint8Array>,
+			idleMs = 750,
+		): Promise<string> {
+			const reader = body.getReader()
+			const decoder = new TextDecoder()
+			let text = ''
+			try {
+				for (;;) {
+					let timer: ReturnType<typeof setTimeout> | undefined
+					const idle = new Promise<null>((resolve) => {
+						timer = setTimeout(() => resolve(null), idleMs)
+					})
+					const chunk = await Promise.race([reader.read(), idle])
+					if (timer) clearTimeout(timer)
+					if (chunk === null || chunk.done) break
+					text += decoder.decode(chunk.value, { stream: true })
+				}
+			} finally {
+				await reader.cancel().catch(() => {})
+			}
+			return text
+		}
+
+		function buildSessionEvent() {
+			return buildEvent({
+				workspaceId: wsId,
+				id: 5,
+				action: 'updated',
+				entityType: 'session',
+				entityId: sessionId,
+			})
+		}
+
+		// A sub-session carries both spawnedByMessageId and conversationId, which
+		// is what makes loadSessionStateChangeFrame consider it at all (neither is
+		// on the buildSession default).
+		function buildSubSessionRow() {
+			return buildSession({
+				id: sessionId,
+				workspaceId: wsId,
+				spawnedByMessageId: 4242,
+				conversationId,
+				status: 'running',
+				currentActivity: 'Writing the report',
+			})
+		}
+
+		it('emits a session.state_changed frame for a conversation participant', async () => {
+			const { app, mockResults } = createSseTestApp(participantId)
+			mockResults.selectQueue = [
+				[buildSessionEvent()], // replay loop: events since Last-Event-ID
+				[buildSubSessionRow()], // loadSessionStateChangeFrame: sessions row
+				[{ conversationId }], // isConversationParticipant: participant row
+			]
+
+			const res = await app.request(
+				jsonGet('/api/events', { 'X-Workspace-Id': wsId, 'Last-Event-ID': '4' }),
+			)
+			const text = await readSseUntilIdle(res.body as ReadableStream<Uint8Array>)
+
+			expect(res.status).toBe(200)
+			expect(text).toContain('event: updated')
+			expect(text).toContain('event: session.state_changed')
+			expect(text).toContain(sessionId)
+		})
+
+		it('emits no session.state_changed frame for a non-participant', async () => {
+			const { app, mockResults } = createSseTestApp(outsiderId)
+			mockResults.selectQueue = [
+				[buildSessionEvent()],
+				[buildSubSessionRow()],
+				[], // isConversationParticipant: no row -> not entitled
+			]
+
+			const res = await app.request(
+				jsonGet('/api/events', { 'X-Workspace-Id': wsId, 'Last-Event-ID': '4' }),
+			)
+			const text = await readSseUntilIdle(res.body as ReadableStream<Uint8Array>)
+
+			expect(res.status).toBe(200)
+			// The generic frame landing proves the emission path ran for this event,
+			// so the absent frame is a gate decision, not a no-op.
+			expect(text).toContain('event: updated')
+			expect(text).toContain(sessionId)
+			expect(text).not.toContain('session.state_changed')
+		})
+	})
+
 	describe('POST /api/events (create comment)', () => {
 		it('returns 201 when creating a comment', async () => {
 			const objectId = randomUUID()
@@ -181,10 +324,14 @@ describe('Events Routes', () => {
 			expect(res.status).toBe(404)
 		})
 
-		it('creates notifications and spawns a session for @mentioned agent actors', async () => {
+		it('records the comment but does NOT spawn a mention-session — CommentDispatcher owns that path', async () => {
+			// Case-1 mention dispatch moved out of this route into
+			// CommentDispatcher (services/trigger-runner.ts): the route commits
+			// the `commented` event and returns, and the subscriber picks it up
+			// off PgNotifyBridge. Any session that would have been spawned here
+			// is now covered by comment-dispatcher.test.ts.
 			const objectId = randomUUID()
 			const agentId = randomUUID()
-			const notificationId = randomUUID()
 			const commentEvent = buildEvent({
 				workspaceId: wsId,
 				action: 'commented',
@@ -192,25 +339,15 @@ describe('Events Routes', () => {
 				entityId: objectId,
 				data: { content: 'Hey @agent', mentions: [agentId] },
 			})
-			const notification = {
-				id: notificationId,
-				workspaceId: wsId,
-				type: 'needs_input',
-				title: '@mentioned by comment',
-				content: 'Hey @agent',
-				sourceActorId: 'test-actor-id',
-				targetActorId: agentId,
-				objectId,
-				status: 'pending',
-			}
 			const { app, mockResults, sessionManager } = createSessionTestApp(eventsRoutes, '/api/events')
-			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
-			// Object lookup, then inside transaction: insert comment, select mentioned actors, insert notifications, insert notification events
 			mockResults.selectQueue = [
+				// Object workspace lookup
 				[{ workspaceId: wsId }],
-				[{ id: agentId, type: 'agent', name: 'Bot' }],
+				// Mention resolution inside postComment (no notification insert
+				// happens here any more).
+				[{ id: agentId }],
 			]
-			mockResults.insert = [commentEvent, notification]
+			mockResults.insert = [commentEvent]
 
 			const res = await app.request(
 				jsonRequest(
@@ -222,21 +359,7 @@ describe('Events Routes', () => {
 			)
 
 			expect(res.status).toBe(201)
-			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
-			expect(sessionManager.createSession).toHaveBeenCalledWith(
-				wsId,
-				expect.objectContaining({
-					actorId: agentId,
-					actionPrompt: expect.stringContaining('Hey @agent'),
-					createdBy: 'test-actor-id',
-					config: expect.objectContaining({
-						mention: expect.objectContaining({
-							object_id: objectId,
-							notification_id: notificationId,
-						}),
-					}),
-				}),
-			)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
 		it('creates no notifications when mentions array is empty', async () => {
@@ -335,7 +458,7 @@ describe('Events Routes', () => {
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
-		it('creates batch notifications and spawns a session per mentioned agent', async () => {
+		it('records batched multi-mention comment but delegates session spawn to CommentDispatcher', async () => {
 			const objectId = randomUUID()
 			const agent1Id = randomUUID()
 			const agent2Id = randomUUID()
@@ -346,38 +469,13 @@ describe('Events Routes', () => {
 				entityId: objectId,
 				data: { content: 'Hey @bot1 @bot2', mentions: [agent1Id, agent2Id] },
 			})
-			const notification1 = {
-				id: randomUUID(),
-				workspaceId: wsId,
-				type: 'needs_input',
-				title: '@mentioned by comment',
-				content: 'Hey @bot1 @bot2',
-				sourceActorId: 'test-actor-id',
-				targetActorId: agent1Id,
-				objectId,
-				status: 'pending',
-			}
-			const notification2 = {
-				id: randomUUID(),
-				workspaceId: wsId,
-				type: 'needs_input',
-				title: '@mentioned by comment',
-				content: 'Hey @bot1 @bot2',
-				sourceActorId: 'test-actor-id',
-				targetActorId: agent2Id,
-				objectId,
-				status: 'pending',
-			}
 			const { app, mockResults, sessionManager } = createSessionTestApp(eventsRoutes, '/api/events')
-			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
 			mockResults.selectQueue = [
 				[{ workspaceId: wsId }],
-				[
-					{ id: agent1Id, type: 'agent', name: 'Bot1' },
-					{ id: agent2Id, type: 'agent', name: 'Bot2' },
-				],
+				// Mention resolution inside postComment.
+				[{ id: agent1Id }, { id: agent2Id }],
 			]
-			mockResults.insert = [commentEvent, notification1, notification2]
+			mockResults.insert = [commentEvent]
 
 			const res = await app.request(
 				jsonRequest(
@@ -389,12 +487,9 @@ describe('Events Routes', () => {
 			)
 
 			expect(res.status).toBe(201)
-			expect(sessionManager.createSession).toHaveBeenCalledTimes(2)
-			const calledActorIds = (
-				sessionManager.createSession as ReturnType<typeof vi.fn>
-			).mock.calls.map((call) => call[1].actorId)
-			expect(calledActorIds).toContain(agent1Id)
-			expect(calledActorIds).toContain(agent2Id)
+			// Route no longer spawns per-mention sessions — that lives on the
+			// PgNotify subscriber. See comment-dispatcher.test.ts.
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 
 		it('skips notifications and sessions when mentions only contain human actors', async () => {
@@ -854,6 +949,9 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk: root terminates
+					// Driver lookup for the fallback exclusion — no driver on this object,
+					// so the thread-reply spawn is unaffected.
+					[{ driver: null }],
 					// Thread comments query (desc by id): new comment + agent reply + root
 					[
 						{
@@ -912,6 +1010,80 @@ describe('Events Routes', () => {
 				)
 			})
 
+			it('does NOT spawn a thread-reply session for the driver the fallback ladder will dispatch', async () => {
+				// Regression: one mention-free reply must queue exactly one session.
+				// The driver is also a thread participant, so before the fix both the
+				// `comment_fallback` ladder (case 2) and the thread-reply auto-spawn
+				// dispatched them — doubling queue depth (the 8515a7d8 insight's
+				// 9 comments → 18 sessions).
+				const objectId = randomUUID()
+				const driverAgentId = randomUUID()
+				const rootCommentId = 720100
+				const driverReplyId = 720101
+				const newCommentId = 720200
+
+				const newComment = buildEvent({
+					id: newCommentId,
+					workspaceId: wsId,
+					actorId: 'test-actor-id',
+					action: 'commented',
+					entityType: 'object',
+					entityId: objectId,
+					data: { content: 'Follow up', parentEventId: rootCommentId },
+				})
+				const { app, mockResults, sessionManager } = createSessionTestApp(
+					eventsRoutes,
+					'/api/events',
+				)
+				;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
+				mockResults.selectQueue = [
+					[{ workspaceId: wsId }], // object lookup
+					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk: root terminates
+					// Driver lookup — the object has a driver, and they are a thread
+					// participant, so the fallback ladder (case 2) will handle them.
+					[{ driver: driverAgentId }],
+					// Thread comments query (desc by id): new comment + driver reply + root
+					[
+						{
+							id: newCommentId,
+							actorId: 'test-actor-id',
+							actorType: 'human',
+							data: { content: 'Follow up', parentEventId: rootCommentId },
+						},
+						{
+							id: driverReplyId,
+							actorId: driverAgentId,
+							actorType: 'agent',
+							data: { content: 'driver reply', parentEventId: rootCommentId },
+						},
+						{
+							id: rootCommentId,
+							actorId: randomUUID(),
+							actorType: 'human',
+							data: { content: 'Root' },
+						},
+					],
+				]
+				mockResults.insert = [newComment]
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/events',
+						{
+							entity_id: objectId,
+							content: 'Follow up',
+							parent_event_id: rootCommentId,
+						},
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(201)
+				await flushMicrotasks()
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
+			})
+
 			it('spawns a thread-reply session for an agent only @mentioned earlier in the thread', async () => {
 				const objectId = randomUUID()
 				const agentAId = randomUUID()
@@ -936,6 +1108,8 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
+					// Driver lookup for the fallback exclusion — no driver on this object.
+					[{ driver: null }],
 					// Thread comments query: only humans authored, but root @mentions agent A
 					[
 						{
@@ -1012,6 +1186,8 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
+					// Driver lookup for the fallback exclusion — no driver on this object.
+					[{ driver: null }],
 					// Thread comments: new + prior agent A reply + root. Both agent rows
 					// are by the current commenter so neither should be spawned.
 					[
@@ -1055,10 +1231,15 @@ describe('Events Routes', () => {
 				expect(sessionManager.createSession).not.toHaveBeenCalled()
 			})
 
-			it('dedupes against @mention spawns when the same agent is both @mentioned and a prior participant', async () => {
+			it('thread-reply auto-spawn excludes agents that will be handled by the mention subscriber', async () => {
+				// Case-1 mention dispatch now runs in CommentDispatcher — so the
+				// only session spawn the ROUTE ever fires is the thread-reply
+				// path, and its `excludedAgentIds` must still drop any agent
+				// the mention subscriber will claim. This asserts that: an
+				// agent that is both @mentioned AND was a prior participant in
+				// the thread produces zero sessions from this route.
 				const objectId = randomUUID()
 				const agentAId = randomUUID()
-				const notificationId = randomUUID()
 				const rootCommentId = 730100
 				const priorAgentReplyId = 730101
 				const newCommentId = 730200
@@ -1072,17 +1253,6 @@ describe('Events Routes', () => {
 					entityId: objectId,
 					data: { content: 'ping @agent', mentions: [agentAId], parentEventId: rootCommentId },
 				})
-				const notification = {
-					id: notificationId,
-					workspaceId: wsId,
-					type: 'needs_input',
-					title: '@mentioned by comment',
-					content: 'ping @agent',
-					sourceActorId: 'test-actor-id',
-					targetActorId: agentAId,
-					objectId,
-					status: 'pending',
-				}
 				const { app, mockResults, sessionManager } = createSessionTestApp(
 					eventsRoutes,
 					'/api/events',
@@ -1091,9 +1261,15 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }], // object lookup
 					[{ id: rootCommentId, data: { content: 'Root' } }], // parent walk
-					// Mentioned-actor lookup (inside transaction)
-					[{ id: agentAId, type: 'agent', name: 'Bot' }],
-					// Thread comments query (outside transaction)
+					// Mention resolution inside postComment
+					[{ id: agentAId }],
+					// resolveMentionedAgentIds — the excludedAgentIds source
+					[{ id: agentAId }],
+					// Driver lookup for the fallback exclusion. The comment carries a
+					// mention, so the ladder never reaches case 2 and this result is
+					// unused — the exclusion here is still the mention one.
+					[{ driver: null }],
+					// Thread comments query
 					[
 						{
 							id: newCommentId,
@@ -1115,7 +1291,7 @@ describe('Events Routes', () => {
 						},
 					],
 				]
-				mockResults.insert = [newComment, notification]
+				mockResults.insert = [newComment]
 
 				const res = await app.request(
 					jsonRequest(
@@ -1133,17 +1309,9 @@ describe('Events Routes', () => {
 
 				expect(res.status).toBe(201)
 				await flushMicrotasks()
-				// Exactly one session — the @mention path. Thread-reply path drops it.
-				expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
-				expect(sessionManager.createSession).toHaveBeenCalledWith(
-					wsId,
-					expect.objectContaining({
-						actorId: agentAId,
-						config: expect.objectContaining({
-							mention: expect.objectContaining({ notification_id: notificationId }),
-						}),
-					}),
-				)
+				// Thread-reply path drops agentA because it's on excludedAgentIds.
+				// CommentDispatcher handles the mention-session separately.
+				expect(sessionManager.createSession).not.toHaveBeenCalled()
 			})
 
 			it('does NOT run the thread-reply trigger when the new comment is a root comment', async () => {
@@ -1226,6 +1394,7 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }],
 					[{ id: rootCommentId, data: { content: 'Root' } }],
+					[{ driver: null }],
 					threadRows,
 				]
 				mockResults.insert = [newComment]
@@ -1269,6 +1438,7 @@ describe('Events Routes', () => {
 				mockResults.selectQueue = [
 					[{ workspaceId: wsId }],
 					[{ id: rootCommentId, data: { content: 'Root' } }],
+					[{ driver: null }],
 					// Both prior thread participants are humans → no agent spawn
 					[
 						{
@@ -1302,7 +1472,10 @@ describe('Events Routes', () => {
 			})
 		})
 
-		it('still returns 201 when agent session creation fails asynchronously', async () => {
+		it('still returns 201 regardless of downstream dispatch — route commits the event and returns', async () => {
+			// The mention→session dispatch is entirely on the PgNotify subscriber
+			// now, so a failure over there can't wedge this route. The relevant
+			// contract is: the comment row lands, the response is 201.
 			const objectId = randomUUID()
 			const agentId = randomUUID()
 			const commentEvent = buildEvent({
@@ -1312,26 +1485,9 @@ describe('Events Routes', () => {
 				entityId: objectId,
 				data: { content: 'Hey @agent', mentions: [agentId] },
 			})
-			const notification = {
-				id: randomUUID(),
-				workspaceId: wsId,
-				type: 'needs_input',
-				title: '@mentioned by comment',
-				content: 'Hey @agent',
-				sourceActorId: 'test-actor-id',
-				targetActorId: agentId,
-				objectId,
-				status: 'pending',
-			}
 			const { app, mockResults, sessionManager } = createSessionTestApp(eventsRoutes, '/api/events')
-			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockRejectedValue(
-				new Error('container build failed'),
-			)
-			mockResults.selectQueue = [
-				[{ workspaceId: wsId }],
-				[{ id: agentId, type: 'agent', name: 'Bot' }],
-			]
-			mockResults.insert = [commentEvent, notification]
+			mockResults.selectQueue = [[{ workspaceId: wsId }], [{ id: agentId }]]
+			mockResults.insert = [commentEvent]
 
 			const res = await app.request(
 				jsonRequest(
@@ -1343,7 +1499,7 @@ describe('Events Routes', () => {
 			)
 
 			expect(res.status).toBe(201)
-			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
 	})
 })

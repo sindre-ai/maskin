@@ -102,6 +102,37 @@ describe('createAuthLink', () => {
 			}),
 		).rejects.toBeInstanceOf(LinkedInUnavailableError)
 	})
+
+	// P3-H · reconnect variant. Unipile v2 uses the same POST /v2/auth/link
+	// endpoint discriminated by `account_id` (existing acc_… id) instead of
+	// `providers`. This test pins the wire body — a regression that sends
+	// `providers` alongside `account_id`, or omits `account_id`, would fail
+	// against the real Unipile API with a 400 (schema is `anyOf`).
+	it('reconnect: POSTs { account_id, expires_on, redirect_uri, state } with NO providers', async () => {
+		const expiresOn = new Date(Date.now() + 10 * 60_000).toISOString()
+		const res = await createAuthLink({
+			account_id: 'acc_01m2abxfsymmetric',
+			expires_on: expiresOn,
+			redirect_uri: 'http://localhost:3000/api/integrations/linkedin-unipile/callback',
+			state: 'integration-abc.nonce',
+		})
+		expect(res.link).toContain(mock.baseUrl)
+
+		const recorded = mock.inbox().find((c) => c.path === '/v2/auth/link')
+		expect(recorded).toBeDefined()
+		expect(recorded?.method).toBe('POST')
+		const body = recorded?.body as Record<string, unknown>
+		expect(body.account_id).toBe('acc_01m2abxfsymmetric')
+		expect(body.expires_on).toBe(expiresOn)
+		expect(body.redirect_uri).toBe(
+			'http://localhost:3000/api/integrations/linkedin-unipile/callback',
+		)
+		expect(body.state).toBe('integration-abc.nonce')
+		// Load-bearing: the two branches must not co-occur. The mock rejects
+		// a request that carries both, mirroring the live Unipile 400.
+		expect(body.providers).toBeUndefined()
+		expect('providers' in body).toBe(false)
+	})
 })
 
 /**

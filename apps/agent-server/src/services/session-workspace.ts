@@ -1,7 +1,7 @@
 import { execFile as execFileCb } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { StorageProvider } from '@maskin/storage'
 
@@ -110,6 +110,120 @@ export async function pullSessionWorkspace(
 	return { restored, archiveBytes }
 }
 
+export type SessionSkillManifestEntry = {
+	name: string
+	files: { relativePath: string; storageKey: string }[]
+}
+
+export type StageSessionSkillsResult = {
+	staged: number
+	failures: { name: string; error: string }[]
+}
+
+// Whitelist the same characters the SESSION_REQUEST_SCHEMA in ../index.ts
+// already enforces. Duplicated here so this function is safe to call even
+// from a caller that bypassed the schema (e.g. a future direct in-process
+// invocation) — path-traversal defence must not depend on validation
+// having happened upstream.
+const STAGE_SKILL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+const STAGE_SKILL_RELATIVE_PATH_RE =
+	/^(?!\.\.?(?:\/|$))(?!.*\/\.\.?(?:\/|$))[A-Za-z0-9._][A-Za-z0-9._/-]*$/
+
+/**
+ * Materialise the workspace-skill manifest at `<sessionDir>/skills/<name>/<relativePath>`.
+ *
+ * Called by `POST /sessions` **after** `pullSessionWorkspace()` (which restores
+ * the S3 snapshot and creates the four skeleton dirs, `skills/` included)
+ * and **before** `spawnSession()` mounts `sessionDir` as `/agent` inside the
+ * guest. That ordering matters — the mount only reaches the guest on entry,
+ * so anything written after `spawnSession` lands host-side and never enters
+ * the VM (see `buildMsbCreateArgs` in `microsandbox.ts`, which mounts
+ * exactly one path: `${sessionDir}:/agent`).
+ *
+ * Idempotent, all-or-nothing per skill:
+ * - Fetches every file for a skill into memory before touching disk, so a
+ *   partial S3 failure never leaves a half-written `<name>/` folder that
+ *   `folderExists()` would later mistake for a complete skill.
+ * - Overwrites unconditionally (`overwrite: true` semantics from `agent-storage.ts`).
+ *   `ensureSkeleton` created an empty `skills/` on a fresh session, and a
+ *   resumed session's snapshot may carry stale copies; either way the
+ *   dispatch manifest is the source of truth for what an agent boots with.
+ *
+ * Failure mode is **degraded-start, loud**: a per-skill fetch or write
+ * failure is recorded in `failures` and the caller (`POST /sessions`) reports
+ * it back to apps/dev so `session_skill_load_failed` fires — but the session
+ * still boots, so an S3 blip on one skill does not take down the whole
+ * agent. Never throws.
+ *
+ * The empty-manifest case (agent has no attached skills, or agent-server
+ * predates the field so `body.skills` defaulted to `[]`) is a no-op that
+ * returns `{ staged: 0, failures: [] }` without touching the disk beyond
+ * the skeleton `ensureSkeleton` already created.
+ */
+export async function stageSessionSkills(
+	storage: StorageProvider,
+	sessionDir: string,
+	manifest: readonly SessionSkillManifestEntry[],
+): Promise<StageSessionSkillsResult> {
+	if (manifest.length === 0) return { staged: 0, failures: [] }
+
+	const skillsRoot = join(sessionDir, 'skills')
+	await mkdir(skillsRoot, { recursive: true })
+
+	let staged = 0
+	const failures: { name: string; error: string }[] = []
+
+	for (const entry of manifest) {
+		if (!STAGE_SKILL_NAME_RE.test(entry.name)) {
+			failures.push({ name: entry.name, error: 'invalid_skill_name' })
+			continue
+		}
+		if (entry.files.length === 0) {
+			failures.push({ name: entry.name, error: 'empty_manifest_entry' })
+			continue
+		}
+
+		try {
+			// Fetch every file BEFORE touching disk — same all-or-nothing rule
+			// pullWorkspaceSkillsForAgent uses: a mid-fetch S3 failure must not
+			// leave a partial folder that reads as a complete skill on the
+			// next boot / resume.
+			const files: { relativePath: string; data: Buffer }[] = []
+			for (const { relativePath, storageKey } of entry.files) {
+				if (!STAGE_SKILL_RELATIVE_PATH_RE.test(relativePath)) {
+					throw new Error(`invalid_relative_path: ${relativePath}`)
+				}
+				const data = await storage.get(storageKey)
+				files.push({ relativePath, data })
+			}
+
+			const skillFolder = join(skillsRoot, entry.name)
+			// Overwrite semantics: a resumed session's snapshot may have staged
+			// a stale copy of this skill under the same name; the dispatch
+			// manifest is the source of truth.
+			await rm(skillFolder, { recursive: true, force: true })
+			try {
+				for (const { relativePath, data } of files) {
+					const destPath = join(skillFolder, relativePath)
+					await mkdir(dirname(destPath), { recursive: true })
+					await writeFile(destPath, data)
+				}
+			} catch (err) {
+				// A partial folder would satisfy folderExists() and read as a
+				// complete workspace skill on the next boot — remove it before
+				// reporting the failure.
+				await rm(skillFolder, { recursive: true, force: true }).catch(() => {})
+				throw err
+			}
+			staged++
+		} catch (err) {
+			failures.push({ name: entry.name, error: String(err) })
+		}
+	}
+
+	return { staged, failures }
+}
+
 /**
  * Delete the session's host-side workspace directory. Called after the workspace
  * has been pushed to S3 so the bind-mount dir doesn't accumulate on disk.
@@ -176,7 +290,15 @@ export async function pushSessionWorkspace(
 		// `-C sessionDir` + `.` packs entries relative to sessionDir with a leading
 		// `.` component (e.g. `./workspace/…`). pullSessionWorkspace uses
 		// --strip-components=1 which strips that `.`, landing files at newDir/*.
-		await execFile('tar', ['-C', sessionDir, '-czf', 'workspace.tar.gz', '.'], { cwd: stage })
+		//
+		// `./tmp` is excluded: agent-run.sh points TMPDIR (and the npm/pnpm/yarn
+		// caches) at /agent/tmp so temp files land on this virtiofs mount instead of
+		// the 512 MB RAM-backed /tmp. That scratch is per-run and can be many GB —
+		// snapshotting it would balloon every workspace tarball and restore a stale
+		// dependency cache into the next session.
+		await execFile('tar', ['-C', sessionDir, '--exclude=./tmp', '-czf', 'workspace.tar.gz', '.'], {
+			cwd: stage,
+		})
 		const buf = await readFile(archivePath)
 
 		let lastErr: unknown

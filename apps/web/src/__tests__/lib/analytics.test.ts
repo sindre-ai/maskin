@@ -4,6 +4,7 @@ import {
 	trackAgentCreated,
 	trackAgentSessionCompleted,
 	trackAgentSessionStarted,
+	trackAskBannerDecideClicked,
 	trackBetArchived,
 	trackBetCreated,
 	trackBetStatusChanged,
@@ -11,6 +12,11 @@ import {
 	trackChatSessionStarted,
 	trackCommentPosted,
 	trackEvent,
+	trackFileViewerCommentResolved,
+	trackFileViewerPageNavigated,
+	trackFileViewerPinPlaced,
+	trackFileViewerRoundSent,
+	trackFileViewerZoomUsed,
 	trackForyouCardAction,
 	trackForyouCardShown,
 	trackMiniAppFileViewed,
@@ -182,7 +188,36 @@ describe('v1 taxonomy helpers', () => {
 		)
 	})
 
-	it('chat_session_started carries the entry point + entry_agent_role for the CoS bet', () => {
+	it('agent_session_completed carries G2 trigger provenance and defaults it to null', () => {
+		const capture = captureSpy()
+
+		trackAgentSessionCompleted({
+			entity_id: 'sess-1',
+			entity_type: 'session',
+			outcome: 'completed',
+			flow_id: 'evt-1',
+			trigger_id: 'trig-1',
+			trigger_type: 'cron',
+		})
+		trackAgentSessionCompleted({
+			entity_id: 'sess-2',
+			entity_type: 'session',
+			outcome: 'completed',
+		})
+
+		expect(capture).toHaveBeenNthCalledWith(
+			1,
+			'agent_session_completed',
+			expect.objectContaining({ trigger_id: 'trig-1', trigger_type: 'cron' }),
+		)
+		expect(capture).toHaveBeenNthCalledWith(
+			2,
+			'agent_session_completed',
+			expect.objectContaining({ trigger_id: null, trigger_type: null }),
+		)
+	})
+
+	it('chat_session_started carries the entry point + entry_agent_role + participant_count', () => {
 		const capture = captureSpy()
 
 		trackChatSessionStarted({
@@ -190,18 +225,21 @@ describe('v1 taxonomy helpers', () => {
 			entity_type: 'session',
 			entry_point: 'sindre_session',
 			entry_agent_role: 'chief-of-staff',
+			participant_count: 1,
 		})
 		trackChatSessionStarted({
 			entity_id: 'sess-8',
 			entity_type: 'session',
 			entry_point: 'agent_one_shot',
 			entry_agent_role: 'workspace-coach',
+			participant_count: 3,
 		})
 		trackChatSessionStarted({
 			entity_id: 'sess-9',
 			entity_type: 'session',
 			entry_point: 'sindre_session',
 			entry_agent_role: null,
+			participant_count: 2,
 		})
 
 		expect(capture).toHaveBeenNthCalledWith(1, 'chat_session_started', {
@@ -211,6 +249,7 @@ describe('v1 taxonomy helpers', () => {
 			flow_id: null,
 			entry_point: 'sindre_session',
 			entry_agent_role: 'chief-of-staff',
+			participant_count: 1,
 		})
 		expect(capture).toHaveBeenNthCalledWith(2, 'chat_session_started', {
 			entity_id: 'sess-8',
@@ -219,6 +258,7 @@ describe('v1 taxonomy helpers', () => {
 			flow_id: null,
 			entry_point: 'agent_one_shot',
 			entry_agent_role: 'workspace-coach',
+			participant_count: 3,
 		})
 		expect(capture).toHaveBeenNthCalledWith(3, 'chat_session_started', {
 			entity_id: 'sess-9',
@@ -227,6 +267,7 @@ describe('v1 taxonomy helpers', () => {
 			flow_id: null,
 			entry_point: 'sindre_session',
 			entry_agent_role: null,
+			participant_count: 2,
 		})
 	})
 
@@ -245,13 +286,13 @@ describe('v1 taxonomy helpers', () => {
 
 		trackSindreMessageReceived({
 			session_id: 'sess-42',
-			model: 'claude-opus-4-7',
+			model: 'claude-sonnet-5-5',
 			tokens: 128,
 		})
 
 		expect(capture).toHaveBeenCalledWith('sindre_message_received', {
 			session_id: 'sess-42',
-			model: 'claude-opus-4-7',
+			model: 'claude-sonnet-5-5',
 			tokens: 128,
 		})
 	})
@@ -449,6 +490,17 @@ describe('v1 taxonomy helpers', () => {
 			'trigger_updated',
 			expect.objectContaining({ entity_id: 'trg-2', entity_type: 'trigger', source: 'web' }),
 		)
+	})
+
+	it('ask_banner_decide_clicked carries {loopId, pendingCount} for the loops-v4-polish falsification metric', () => {
+		const capture = captureSpy()
+
+		trackAskBannerDecideClicked({ loopId: 'loop-42', pendingCount: 3 })
+
+		expect(capture).toHaveBeenCalledWith('ask_banner_decide_clicked', {
+			loopId: 'loop-42',
+			pendingCount: 3,
+		})
 	})
 
 	it('object_attached_file carries file_id and parent entity type', () => {
@@ -747,6 +799,117 @@ describe('trackChatImageUpload', () => {
 		expect(capture).toHaveBeenCalledWith('chat_image_upload', {
 			platform: 'web',
 			outcome: 'success',
+		})
+	})
+})
+
+describe('file_viewer events', () => {
+	function captureSpy() {
+		__setInitializedForTesting(true)
+		return vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+	}
+
+	// The `source` enum on comment_posted was extended to include 'file_viewer'
+	// so the "≥40% comment-after-view within 24h" success criterion can attribute
+	// review-viewer comments correctly. Without this the source lands as `web`
+	// and the numerator on that funnel is unmeasurable.
+	it('comment_posted accepts source="file_viewer" (enum extension)', () => {
+		const capture = captureSpy()
+
+		trackCommentPosted({
+			entity_id: 'file-1',
+			entity_type: 'file',
+			is_reply: false,
+			attachment_count: 0,
+			content: 'centered logo drifts on scroll',
+			source: 'file_viewer',
+		})
+
+		expect(capture).toHaveBeenCalledWith(
+			'comment_posted',
+			expect.objectContaining({
+				entity_id: 'file-1',
+				entity_type: 'file',
+				source: 'file_viewer',
+			}),
+		)
+	})
+
+	it('file_viewer_zoom_used carries mode, zoom_level, file_id', () => {
+		const capture = captureSpy()
+
+		trackFileViewerZoomUsed({ file_id: 'file-1', mode: 'fit', zoom_level: 0.85 })
+
+		expect(capture).toHaveBeenCalledWith('file_viewer_zoom_used', {
+			file_id: 'file-1',
+			mode: 'fit',
+			zoom_level: 0.85,
+		})
+	})
+
+	it('file_viewer_page_navigated carries to_page, from_page, file_id, total_pages', () => {
+		const capture = captureSpy()
+
+		trackFileViewerPageNavigated({
+			file_id: 'file-1',
+			from_page: 3,
+			to_page: 4,
+			total_pages: 12,
+		})
+
+		expect(capture).toHaveBeenCalledWith('file_viewer_page_navigated', {
+			file_id: 'file-1',
+			from_page: 3,
+			to_page: 4,
+			total_pages: 12,
+		})
+	})
+
+	it('file_viewer_pin_placed carries file_id, page, variant', () => {
+		const capture = captureSpy()
+
+		trackFileViewerPinPlaced({ file_id: 'file-1', page: 2, variant: 'deck' })
+
+		expect(capture).toHaveBeenCalledWith('file_viewer_pin_placed', {
+			file_id: 'file-1',
+			page: 2,
+			variant: 'deck',
+		})
+	})
+
+	it('file_viewer_round_sent carries file_id, comment_count, attaching_object_id, driver_id, round_id', () => {
+		const capture = captureSpy()
+
+		trackFileViewerRoundSent({
+			file_id: 'file-1',
+			comment_count: 5,
+			attaching_object_id: 'bet-42',
+			driver_id: 'actor-99',
+			round_id: 'round-abc',
+		})
+
+		expect(capture).toHaveBeenCalledWith('file_viewer_round_sent', {
+			file_id: 'file-1',
+			comment_count: 5,
+			attaching_object_id: 'bet-42',
+			driver_id: 'actor-99',
+			round_id: 'round-abc',
+		})
+	})
+
+	it('file_viewer_comment_resolved carries file_id, comment_id, resolved_by', () => {
+		const capture = captureSpy()
+
+		trackFileViewerCommentResolved({
+			file_id: 'file-1',
+			comment_id: 'cmt-1',
+			resolved_by: 'actor-99',
+		})
+
+		expect(capture).toHaveBeenCalledWith('file_viewer_comment_resolved', {
+			file_id: 'file-1',
+			comment_id: 'cmt-1',
+			resolved_by: 'actor-99',
 		})
 	})
 })

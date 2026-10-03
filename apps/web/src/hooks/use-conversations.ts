@@ -102,6 +102,11 @@ export function useUpdateConversationMe(workspaceId: string) {
 			const snapshots = queryClient.getQueriesData<InfiniteData<ConversationListResponse>>({
 				queryKey: queryKeys.conversations.listInfinitePrefix(workspaceId),
 			})
+			// A `mark_unread` reset deliberately leaves the row's unread state
+			// alone — the count is server-computed, and forcing it to a guess would
+			// be wrong until the server re-reads it. Only a genuine read-marker
+			// advance (`last_read_message_id`) gets the optimistic `unread_count: 0`.
+			// `onSettled` reconciles the true count via invalidation either way.
 			for (const [key, cache] of snapshots) {
 				if (!cache) continue
 				queryClient.setQueryData<InfiniteData<ConversationListResponse>>(key, {

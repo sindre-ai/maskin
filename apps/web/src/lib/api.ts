@@ -2,21 +2,35 @@ import type {
 	ActorListItem,
 	ActorResponse,
 	AgentState,
+	CreateFileCommentInput,
 	DisplaySettingsBody,
+	FileCommentDto,
+	ListLoopStepsResponse,
 	ListLoopsResponse,
+	LoopStep,
 	LoopSummary,
 	SafeMetadata,
+	SendRoundInput,
+	SendRoundResponse,
 	TriggerResponse,
+	UpdateFileCommentInput,
 } from '@maskin/shared'
 
 export type {
 	ActorListItem,
 	ActorResponse,
 	AgentState,
+	CreateFileCommentInput,
 	DisplaySettingsBody,
+	FileCommentDto,
+	ListLoopStepsResponse,
 	ListLoopsResponse,
+	LoopStep,
 	LoopSummary,
+	SendRoundInput,
+	SendRoundResponse,
 	TriggerResponse,
+	UpdateFileCommentInput,
 }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
@@ -35,6 +49,8 @@ export class ApiError extends Error {
 	code?: string
 	/** Populated when `code === 'PLAN_CAP_EXCEEDED'` — the plan/used/cap/reset context for a typed upgrade CTA. */
 	planCapContext?: PlanCapContext
+	/** Set on a flat `{ code, retryAfterMs }` body (the file-comments round route) — how long until a rate-limited call can be retried. */
+	retryAfterMs?: number
 
 	constructor(
 		public status: number,
@@ -108,8 +124,14 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		let message: string
 		let code: string | undefined
 		let planCapContext: PlanCapContext | undefined
+		let retryAfterMs: number | undefined
 
-		if (typeof data.error === 'object' && data.error?.code) {
+		if (typeof data.code === 'string' && typeof data.message === 'string') {
+			// Flat format used by the file-comments round route: { code, message, retryAfterMs? }
+			message = data.message
+			code = data.code
+			if (typeof data.retryAfterMs === 'number') retryAfterMs = data.retryAfterMs
+		} else if (typeof data.error === 'object' && data.error?.code) {
 			// Structured error format: { error: { code, message, details?, suggestion? } }
 			message = data.error.message
 			code = data.error.code
@@ -139,6 +161,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		const err = new ApiError(res.status, message, fieldErrors)
 		err.code = code
 		err.planCapContext = planCapContext
+		err.retryAfterMs = retryAfterMs
 		// This is the single chokepoint for every /api call the UI makes, so a
 		// non-2xx here is where a backend problem becomes visible to a user.
 		// Method, path (query stripped), status and the structured error code
@@ -268,6 +291,13 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		// Server-persisted star toggles (D5). Idempotent on both sides, no body,
+		// actor derived from the API key. Response carries the resulting scalar
+		// so an optimistic update can drop stale state on mismatch.
+		star: (id: string, workspaceId: string) =>
+			request<StarToggleResponse>(`/objects/${id}/star`, { method: 'POST', workspaceId }),
+		unstar: (id: string, workspaceId: string) =>
+			request<StarToggleResponse>(`/objects/${id}/star`, { method: 'DELETE', workspaceId }),
 	},
 
 	auth: {
@@ -400,6 +430,8 @@ export const api = {
 		list: (workspaceId: string) => request<ListLoopsResponse>('/loops', { workspaceId }),
 		activity: (id: string, workspaceId: string) =>
 			request<{ events: EventResponse[] }>(`/loops/${id}/activity`, { workspaceId }),
+		steps: (id: string, workspaceId: string) =>
+			request<ListLoopStepsResponse>(`/loops/${id}/steps`, { workspaceId }),
 	},
 
 	triggers: {
@@ -424,17 +456,32 @@ export const api = {
 	integrations: {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
-		connect: (workspaceId: string, provider: string, body?: { api_key?: string }) =>
-			request<{ install_url?: string; webhook_url?: string; integration_id?: string }>(
-				`/integrations/${provider}/connect`,
-				{
-					method: 'POST',
-					body,
-					workspaceId,
-					// The response carries the Set-Cookie that binds this browser to the
-					// OAuth `state`; without `include` it is dropped and the callback 400s.
-					credentials: 'include',
-				},
+		connect: (
+			workspaceId: string,
+			provider: string,
+			body?: { api_key?: string; receive_subdomain?: string },
+		) =>
+			request<{
+				install_url?: string
+				webhook_url?: string
+				integration_id?: string
+				// Populated by Resend's two-call handshake (Task 2) — the domain-status
+				// records the customer must add to their DNS plus the initial pending
+				// verification state.
+				dns_records?: ResendDnsRecord[]
+				verification_status?: 'pending' | 'verified' | 'failed'
+			}>(`/integrations/${provider}/connect`, {
+				method: 'POST',
+				body,
+				workspaceId,
+				// The response carries the Set-Cookie that binds this browser to the
+				// OAuth `state`; without `include` it is dropped and the callback 400s.
+				credentials: 'include',
+			}),
+		resendDnsPrecheck: (workspaceId: string, domain: string) =>
+			request<{ existing_mx: string[]; is_subdomain: boolean; warn: boolean }>(
+				'/integrations/resend/dns-precheck',
+				{ method: 'POST', body: { domain }, workspaceId },
 			),
 		complete: (id: string, workspaceId: string, secret: string) =>
 			request<{ activated: boolean }>(`/integrations/${id}/complete`, {
@@ -477,6 +524,10 @@ export const api = {
 		},
 		slackUsers: (id: string, workspaceId: string) =>
 			request<SlackUser[]>(`/integrations/${id}/slack/users`, { workspaceId }),
+		linkedinIdentities: (workspaceId: string) =>
+			request<LinkedInIdentitySummary[]>('/integrations/linkedin-unipile/identities', {
+				workspaceId,
+			}),
 	},
 
 	notifications: {
@@ -554,6 +605,26 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<EventResponse[]>(`/events/history${qs}`, { workspaceId })
 		},
+		/**
+		 * Up to `maxEvents` history rows, fetched in pages of the server's maximum
+		 * page size. The endpoint rejects `limit` above 100 with a 400, so asking for
+		 * 500 in one call (as the chat's Produced pane did) never returned anything.
+		 */
+		historyUpTo: async (workspaceId: string, params: Record<string, string>, maxEvents: number) => {
+			const pageSize = 100
+			const all: EventResponse[] = []
+			for (let offset = 0; all.length < maxEvents; offset += pageSize) {
+				const qs = new URLSearchParams({
+					...params,
+					limit: String(Math.min(pageSize, maxEvents - all.length)),
+					offset: String(offset),
+				})
+				const page = await request<EventResponse[]>(`/events/history?${qs}`, { workspaceId })
+				all.push(...page)
+				if (page.length < pageSize) break
+			}
+			return all
+		},
 		create: (workspaceId: string, data: CreateCommentInput, idempotencyKey?: string) =>
 			request<EventResponse>('/events', {
 				method: 'POST',
@@ -610,12 +681,21 @@ export const api = {
 		status: (workspaceId: string) =>
 			request<ClaudeOAuthStatusResponse>('/claude-oauth/status', { workspaceId }),
 		disconnect: (workspaceId: string, slot?: ClaudeOAuthSlot) =>
-			request<{ success: boolean }>(slot ? `/claude-oauth?slot=${slot}` : '/claude-oauth', {
-				method: 'DELETE',
-				workspaceId,
-			}),
+			request<{ success: boolean }>(
+				slot ? `/claude-oauth?slot=${encodeURIComponent(slot)}` : '/claude-oauth',
+				{
+					method: 'DELETE',
+					workspaceId,
+				},
+			),
 		swap: (workspaceId: string) =>
 			request<{ success: boolean }>('/claude-oauth/swap', { method: 'POST', workspaceId }),
+		promote: (workspaceId: string, slot: ClaudeOAuthSlot) =>
+			request<{ success: boolean }>('/claude-oauth/promote', {
+				method: 'POST',
+				body: { slot },
+				workspaceId,
+			}),
 		rename: (workspaceId: string, slot: ClaudeOAuthSlot, nickname: string) =>
 			request<{ success: boolean }>('/claude-oauth/nickname', {
 				method: 'PATCH',
@@ -954,15 +1034,57 @@ export const api = {
 		delete: (workspaceId: string, id: string) =>
 			request<{ deleted: boolean }>(`/files/${id}`, { method: 'DELETE', workspaceId }),
 	},
+
+	fileComments: {
+		list: (workspaceId: string, fileId: string, params?: { roundId?: string }) => {
+			const qs = params?.roundId ? `?roundId=${encodeURIComponent(params.roundId)}` : ''
+			return request<FileCommentDto[]>(`/files/${fileId}/comments${qs}`, { workspaceId })
+		},
+		create: (workspaceId: string, fileId: string, data: CreateFileCommentInput) =>
+			request<FileCommentDto>(`/files/${fileId}/comments`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		update: (
+			workspaceId: string,
+			fileId: string,
+			commentId: string,
+			data: UpdateFileCommentInput,
+		) =>
+			request<FileCommentDto>(`/files/${fileId}/comments/${commentId}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		sendRound: (workspaceId: string, fileId: string, data: SendRoundInput) =>
+			request<SendRoundResponse>(`/files/${fileId}/comments/rounds`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+	},
 }
 
-export type ClaudeOAuthSlot = 'primary' | 'backup'
+/**
+ * A slot id — a position in the workspace's Claude failover chain. The first
+ * two keep their historical names (`primary`, `backup`); the rest are
+ * `slot_3` … `slot_10`. Iterate `ClaudeOAuthStatusResponse.chain` rather than
+ * assuming which ids exist.
+ */
+export type ClaudeOAuthSlot = string
 
 export interface ClaudeOAuthSlotInfo {
+	slot: ClaudeOAuthSlot
+	/** Position in the failover chain — 0 is the one sessions try first. */
+	position: number
 	subscription_type?: string
 	expires_at: number
 	fingerprint?: string
 	nickname?: string
+	/** When this subscription was last rejected, and the classified reason. */
+	failure_at?: number
+	failure_reason?: string
 }
 
 export interface ClaudeOAuthExchangeResponse {
@@ -978,10 +1100,11 @@ export interface ClaudeOAuthStatusResponse {
 	subscription_type?: string
 	expires_at?: number
 	valid: boolean
-	slots: {
-		primary?: ClaudeOAuthSlotInfo
-		backup?: ClaudeOAuthSlotInfo
-	}
+	/** Per-slot info keyed by slot id; `chain` gives the failover order. */
+	slots: Record<string, ClaudeOAuthSlotInfo | undefined>
+	chain: ClaudeOAuthSlot[]
+	/** How many more subscriptions this workspace can connect. */
+	slots_remaining: number
 	active_slot: ClaudeOAuthSlot
 	last_primary_failure_at?: number
 	last_classified_reason?: string
@@ -995,7 +1118,8 @@ export interface ClaudeOAuthImportInput {
 	expiresAt: number
 	subscriptionType?: string
 	scopes?: string[]
-	slot?: ClaudeOAuthSlot
+	/** A slot id to overwrite, or `new` to append to the chain. */
+	slot?: ClaudeOAuthSlot | 'new'
 	nickname?: string
 }
 
@@ -1057,6 +1181,14 @@ export interface ObjectResponse {
 	metadata: SafeMetadata | null
 	driver: string | null
 	activeSessionId: string | null
+	// D2 · Working-ring predicate. Lifecycle state of the session pointed at by
+	// `activeSessionId`, hydrated by a bounded batch lookup on list/detail so
+	// the row can gate the ring on 'running' only — `activeSessionId` stays
+	// non-null through pending/starting/paused, which would flicker the ring.
+	// `null` when there is no active session, `undefined` on legacy list
+	// surfaces (e.g. board) that don't hydrate it — clients read both as "no
+	// ring".
+	active_session_state?: string | null
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
@@ -1064,6 +1196,16 @@ export interface ObjectResponse {
 	is_subscribed?: boolean
 	unread_count?: number
 	subscriber_count?: number
+	// Per-viewer starred flag. The list handler + detail + graph hydrate it via
+	// a single secondary query (see `star-state` service on the backend). Other
+	// endpoints — create / update / verify / undo-write / bulk — omit it, so
+	// the field is optional here and every reader defaults to `false`.
+	is_starred_by_me?: boolean
+}
+
+export interface StarToggleResponse {
+	is_starred_by_me: boolean
+	starred_at: string | null
 }
 
 export interface BoardObjectColumn {
@@ -1302,6 +1444,11 @@ export interface RelationshipResponse {
 	targetId: string
 	targetTitle?: string | null
 	type: string
+	// S2 · edge-level context the writer hook persists at CREATE time.
+	// A `conversation → session` `spawned` edge carries `{ messageId }` so
+	// the Origin block can build a deep-link into the chat at the exact
+	// spawning message.
+	metadata?: Record<string, unknown> | null
 	createdBy: string
 	createdAt: string | null
 }
@@ -1311,6 +1458,24 @@ export interface ObjectGraphResponse {
 	relationships: RelationshipResponse[]
 	connected_objects: ObjectResponse[]
 	events: EventResponse[]
+	/** Files this object references — attached via a relationship endpoint
+	 *  OR referenced from a comment's `data.attachmentFileIds`. The FE builds
+	 *  its `fileMap` off this so file endpoints render as first-class rows in
+	 *  the Related tab without a follow-up round-trip. Optional for
+	 *  back-compat with older test fixtures; the server always emits it. */
+	files?: GraphFileSummary[]
+}
+
+/** Compact file summary carried on `ObjectGraphResponse.files`. Not the same
+ *  shape as `FileListItem`/`FileDetail` — this omits storageKey/description
+ *  and adds the pre-minted viewer `url`. Matches the backend's
+ *  `fileSummarySchema`. */
+export interface GraphFileSummary {
+	id: string
+	name: string
+	mimeType: string
+	sizeBytes: number
+	url: string
 }
 
 export interface KnowledgeReferencesResponse {
@@ -1341,6 +1506,22 @@ export interface UpdateTriggerInput {
 	action_prompt?: string
 	target_actor_id?: string
 	enabled?: boolean
+}
+
+/** One DNS record the customer must add to verify the sending / receiving
+ *  half of a Resend domain. Priority is only populated for MX. Status flips
+ *  from `pending` → `verified` (or `failed`) as the domain-verifier job (Task
+ *  5) polls Resend's per-record domain-status API. Mirrored into
+ *  `config.resend.dns_records` on the integration row by the connect handler,
+ *  which is what the resume affordance rehydrates from. */
+export interface ResendDnsRecord {
+	record: 'SPF' | 'DKIM' | 'MX'
+	type: string
+	name: string
+	value: string
+	priority?: number
+	status: 'pending' | 'verified' | 'failed'
+	ttl?: number
 }
 
 export interface IntegrationResponse {
@@ -1390,6 +1571,13 @@ export interface ProviderInfo {
 	authType: 'oauth2' | 'oauth2_custom' | 'api_key' | 'manual'
 	events: ProviderEventDefinition[]
 	externalIdDisplay?: 'email' | 'installation'
+	mcp?: {
+		envKey: string
+		autoInject: boolean
+		server?:
+			| { type: 'stdio'; command: string; args: string[]; env?: Record<string, string> }
+			| { type: 'http'; url: string; headers?: Record<string, string> }
+	}
 }
 
 export interface SlackConversation {
@@ -1407,6 +1595,22 @@ export interface SlackUser {
 	name: string
 	real_name: string
 	is_bot: boolean
+}
+
+/**
+ * One connected LinkedIn identity (personal profile OR admined company page)
+ * for a workspace. Rendered by the agent MCP panel as one Quick Add button
+ * per row — clicking writes an mcpServers entry keyed on `instanceSlug` that
+ * points at `/api/integrations/linkedin-unipile/mcp/${instanceSlug}`, so only
+ * this identity's tools land on the agent.
+ */
+export interface LinkedInIdentitySummary {
+	instanceSlug: string
+	displayName: string
+	identityType: 'personal' | 'company_page'
+	identitySlug: string
+	unipileAccSlug: string
+	integrationId: string
 }
 
 export interface NotificationResponse {
@@ -1587,6 +1791,12 @@ export interface ConversationDetailResponse {
 	pinned: boolean
 	archived: boolean
 	last_read_message_id: number | null
+	// The loop this conversation belongs to, when it was started inside a loop
+	// (Loop chip in the thread header links to it). Server-side field is not
+	// wired yet; the frontend treats `null`/`undefined` as "no loop" and renders
+	// no chip, so the payload can start emitting it without a client-side
+	// change.
+	loop_id?: string | null
 	participants: ConversationParticipantResponse[]
 }
 
@@ -1696,6 +1906,45 @@ export interface MessageResponse {
 	sessionId: string | null
 	createdAt: string | null
 	editedAt: string | null
+	/**
+	 * Sub-agent sessions spawned from this assistant message (bet/444b-handed-off-strip).
+	 * Present on list_conversation_messages responses; empty for non-agent messages
+	 * and for callers that are not participants of the conversation.
+	 */
+	spawned_sessions?: SpawnedSession[]
+}
+
+/**
+ * One entry on the message-level `spawned_sessions` embed served by
+ * `GET /conversations/:id/messages`. Casing matches the delegation-strip
+ * contract: camelCase except `depends_on_session_ids`.
+ */
+export interface SpawnedSession {
+	id: string
+	status: string
+	actorId: string
+	actorName: string
+	actionPrompt: string
+	startedAt: string | null
+	completedAt: string | null
+	durationMs: number | null
+	result: unknown
+	currentActivity: string | null
+	depends_on_session_ids: string[]
+}
+
+/**
+ * Payload of the `session.state_changed` SSE frame. Emitted alongside every
+ * generic session event for a sub-session the caller can see. `snake_case`
+ * matches the backend serialization; camelCase would break the parser.
+ */
+export interface SessionStateChangedPayload {
+	session_id: string
+	status: string
+	duration_ms: number | null
+	depends_on_session_ids: string[]
+	result: unknown
+	current_activity: string | null
 }
 
 export interface EditMessageInput {
@@ -1722,6 +1971,7 @@ export interface UpdateConversationParticipantStateInput {
 	pinned?: boolean
 	archived?: boolean
 	last_read_message_id?: number
+	mark_unread?: boolean
 }
 
 export interface PostMessageInput {
@@ -1852,6 +2102,10 @@ export interface ImportResponse {
 	totalRows: number | null
 	processedRows: number
 	successCount: number
+	/** Rows that matched an existing object and were left alone */
+	skippedCount: number
+	/** Rows that matched an existing object and were merged into it */
+	updatedCount: number
 	errorCount: number
 	mapping: ImportMappingInput | null
 	preview: ImportPreview | null
@@ -1889,6 +2143,8 @@ export interface TypeMappingInput {
 	objectType: string
 	columns: ColumnMappingInput[]
 	defaultStatus?: string
+	/** `title` or `metadata.<field>` — rows matching an existing object on this field aren't re-created */
+	matchOn?: string
 }
 
 export interface RelationshipMappingInput {
@@ -1901,6 +2157,8 @@ export interface ImportMappingInput {
 	typeMappings: TypeMappingInput[]
 	relationships?: RelationshipMappingInput[]
 	csvOptions?: CsvOptions
+	/** What happens to a row that matches an existing object. Absent means `skip`. */
+	onMatch?: 'skip' | 'update'
 }
 
 export type MarketplaceItemType = 'actor' | 'trigger' | 'skill' | 'integration'

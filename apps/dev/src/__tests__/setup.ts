@@ -3,7 +3,9 @@ import { OpenAPIHono as CreateOpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
+import { vi } from 'vitest'
 import type { AgentStorageManager } from '../services/agent-storage'
+import { configureSessionLifecycle } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 
 type Env = {
@@ -287,6 +289,11 @@ export function createSessionTestApp(
 	const app = new CreateOpenAPIHono<Env>()
 	const { db, mockResults, calls } = createTestContext()
 	const sessionManager = createMockSessionManager()
+
+	// Wire the session-lifecycle module to this test's mock deps so route
+	// code that routes through startSession() targets the same mock the test
+	// asserts against.
+	configureSessionLifecycle({ db, sessionManager })
 
 	app.use('*', async (c, next) => {
 		c.set('db', db)

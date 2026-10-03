@@ -34,17 +34,7 @@ function resolveConfig(overrides?: Partial<LinkedInClientConfig>): LinkedInClien
  * Navigator and Recruiter are LinkedIn products selected inside the wizard,
  * so v1 of this bet stays on the base `'linkedin'` provider only.
  */
-export const CreateAuthLinkRequestSchema = z.object({
-	providers: z
-		.union([
-			z.literal('*'),
-			z.array(
-				z.enum(['linkedin', 'whatsapp', 'instagram', 'telegram', 'gmail', 'outlook', 'imap']),
-			),
-		])
-		.describe(
-			'Providers allowed to be linked in this session. Pass ["linkedin"] for v1 of this bet.',
-		),
+const AuthLinkBaseSchema = z.object({
 	expires_on: z
 		.string()
 		.datetime()
@@ -58,7 +48,51 @@ export const CreateAuthLinkRequestSchema = z.object({
 			'Opaque round-trip identifier. We set this to the pending integrations.id so /callback can look up the row.',
 		),
 })
-export type CreateAuthLinkRequest = z.infer<typeof CreateAuthLinkRequestSchema>
+
+export const CreateAuthLinkFreshRequestSchema = AuthLinkBaseSchema.extend({
+	providers: z
+		.union([
+			z.literal('*'),
+			z.array(
+				z.enum(['linkedin', 'whatsapp', 'instagram', 'telegram', 'gmail', 'outlook', 'imap']),
+			),
+		])
+		.describe(
+			'Providers allowed to be linked in this session. Pass ["linkedin"] for v1 of this bet.',
+		),
+})
+
+/**
+ * P3-H reconnect variant. Unipile v2 uses the SAME `POST /v2/auth/link`
+ * endpoint for both fresh connects and reconnects, discriminated by the
+ * presence of `account_id` (pattern `^acc_.*$`) instead of `providers`.
+ * Confirmed against api.unipile.com/v2/docs/json on 2026-09-13 — the schema
+ * is `anyOf: [ link-new, re-authenticate-existing ]` and the reconnect
+ * request omits `providers` entirely ("Generate a link to re-authenticate or
+ * reconfigure an entire existing account").
+ *
+ * When the wizard completes for a reconnect Unipile normally returns the
+ * SAME `account_id` in the callback (this is the whole point — the row's
+ * external_id stays stable and the recurring per-account cost doesn't
+ * double). The callback handler still compares defensively and delegates
+ * orphan cleanup to `deleteUnipileAccountBestEffort` if Unipile happens to
+ * return a different id (e.g. the user picked a different LinkedIn identity
+ * in the wizard).
+ */
+export const CreateAuthLinkReconnectRequestSchema = AuthLinkBaseSchema.extend({
+	account_id: z
+		.string()
+		.min(1)
+		.describe('Existing Unipile account id (acc_...) to re-authenticate.'),
+})
+
+export const CreateAuthLinkRequestSchema = z.union([
+	CreateAuthLinkFreshRequestSchema,
+	CreateAuthLinkReconnectRequestSchema,
+])
+export type CreateAuthLinkFreshRequest = z.infer<typeof CreateAuthLinkFreshRequestSchema>
+export type CreateAuthLinkReconnectRequest = z.infer<typeof CreateAuthLinkReconnectRequestSchema>
+export type CreateAuthLinkRequest = CreateAuthLinkFreshRequest | CreateAuthLinkReconnectRequest
 
 export const CreateAuthLinkResponseSchema = z.object({
 	/**
@@ -77,15 +111,35 @@ export type CreateAuthLinkResponse = z.infer<typeof CreateAuthLinkResponseSchema
 /**
  * Create a LinkedIn v2 hosted-auth link. v1's `POST /api/v1/hosted/accounts/link`
  * with `{ api_url, notify_url, name }` is replaced by
- * `POST /v2/auth/link` with `{ providers, expires_on, redirect_uri, state }`
- * and the response returns the wizard URL as top-level `link` (v1 called the
- * same top-level field `url`).
+ * `POST /v2/auth/link`. The v2 body is `{ providers, expires_on, redirect_uri,
+ * state }` for a fresh connect and `{ account_id, expires_on, redirect_uri,
+ * state }` for a reconnect — same endpoint, discriminated by which of
+ * `providers` / `account_id` is present. The response returns the wizard URL
+ * as top-level `link` (v1 called the same top-level field `url`).
  */
 export async function createAuthLink(
 	req: CreateAuthLinkRequest,
 	overrides?: Partial<LinkedInClientConfig>,
 ): Promise<CreateAuthLinkResponse> {
 	const { baseUrl, apiKey } = resolveConfig(overrides)
+	// Reconnect branch discriminates on `account_id`. Explicitly omit
+	// `providers` from the reconnect body: Unipile v2's schema is `anyOf`
+	// between the two shapes, and sending both fields together is rejected
+	// with a 400 validation error rather than silently accepted.
+	const body: Record<string, unknown> =
+		'account_id' in req
+			? {
+					account_id: req.account_id,
+					expires_on: req.expires_on,
+					redirect_uri: req.redirect_uri,
+					state: req.state,
+				}
+			: {
+					providers: req.providers,
+					expires_on: req.expires_on,
+					redirect_uri: req.redirect_uri,
+					state: req.state,
+				}
 	let res: Response
 	try {
 		res = await fetch(`${baseUrl}/v2/auth/link`, {
@@ -95,12 +149,7 @@ export async function createAuthLink(
 				'X-API-KEY': apiKey,
 				Accept: 'application/json',
 			},
-			body: JSON.stringify({
-				providers: req.providers,
-				expires_on: req.expires_on,
-				redirect_uri: req.redirect_uri,
-				state: req.state,
-			}),
+			body: JSON.stringify(body),
 		})
 	} catch (err) {
 		throw new LinkedInUnavailableError(err)

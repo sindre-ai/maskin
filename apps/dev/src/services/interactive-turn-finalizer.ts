@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
-import { sessionLogs, sessions } from '@maskin/db/schema'
+import { messages, sessionLogs, sessions } from '@maskin/db/schema'
 import { MESSAGE_MAX_LENGTH, parseResultLine, scanTurnLine, splitLines } from '@maskin/shared'
-import { and, desc, eq, like, lte } from 'drizzle-orm'
+import { and, desc, eq, gte, isNull, like, lte, sql } from 'drizzle-orm'
+import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { logger } from '../lib/logger'
 import { detectPseudoToolCalls } from '../lib/pseudo-tool-call'
 import { classifyTurnError } from '../lib/turn-error-classifier'
@@ -168,6 +169,17 @@ const permanentErrorMessage = (detail: string): string =>
 	`I couldn't complete that turn — the model API returned an error:\n\n${detail}`
 
 /**
+ * The workspace's active subscription has moved onto the next slot AND this
+ * live session has been stopped, since it launched with the now-spent
+ * credentials and can't be resumed in place. Sending a new message in the
+ * same chat spawns a fresh session on the new credentials — the human doesn't
+ * have to start over anywhere. The error text is included so the human can
+ * see what happened, not to prompt any action.
+ */
+const subscriptionMovedMessage = (detail: string): string =>
+	`That Claude subscription is out of capacity, so I've switched this workspace to the next connected one and stopped this session. Send your next message here and I'll pick up on the new subscription.\n\nThe error was:\n\n${detail}`
+
+/**
  * A replayed turn we are waiting on, plus everything needed to report it if it
  * never comes back. Held rather than closed over so any of the three things
  * that can end the wait — the turn answering, the session going away, the
@@ -234,6 +246,23 @@ export type InteractiveTurnFinalizerOptions = {
 	delay?: (ms: number) => Promise<void>
 	/** Test seam: how long a replayed turn has to answer. */
 	replyTimeoutMs?: number
+	/**
+	 * Injected — this class runs on the log-ingest path and must not import
+	 * the session manager. Resolves to the slot moved to, or `null` if nothing
+	 * moved (no chain left, another session already moved, wired-off).
+	 */
+	onSubscriptionLimit?: (sessionId: string, reason: string) => Promise<string | null>
+	/**
+	 * Injected for the same reason as `onSubscriptionLimit` — no session-manager
+	 * import here. Called right after a live session's pointer has moved onto
+	 * the next Claude slot, to stop the still-running container. The current
+	 * container launched with the now-spent (or revoked) credentials and can't
+	 * be resumed in place; stopping it means the human's next message spawns a
+	 * fresh session that reads the workspace's new `active_slot` and lands on
+	 * the good credential. Best-effort by contract — a stop failure is logged
+	 * and swallowed so the human still sees the moved-subscription message.
+	 */
+	onStopSession?: (sessionId: string, reason: string) => Promise<void>
 }
 
 export class InteractiveTurnFinalizer {
@@ -260,12 +289,16 @@ export class InteractiveTurnFinalizer {
 	 */
 	private readonly pseudoToolCallNudges = new Map<string, number>()
 	private readonly retryTurn?: RetryTurnFn
+	private readonly onSubscriptionLimit?: InteractiveTurnFinalizerOptions['onSubscriptionLimit']
+	private readonly onStopSession?: InteractiveTurnFinalizerOptions['onStopSession']
 	private readonly delay: (ms: number) => Promise<void>
 	private readonly replyTimeoutMs: number
 
 	constructor(db: Database, options: InteractiveTurnFinalizerOptions = {}) {
 		this.db = db
 		this.retryTurn = options.retryTurn
+		this.onSubscriptionLimit = options.onSubscriptionLimit
+		this.onStopSession = options.onStopSession
 		this.delay =
 			options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
 		this.replyTimeoutMs = options.replyTimeoutMs ?? REPLAY_ANSWER_TIMEOUT_MS
@@ -628,12 +661,150 @@ export class InteractiveTurnFinalizer {
 
 		this.rememberKey(dedupeKey)
 
+		// Anchor the handed-off strip: every sub-agent spawned inside this turn
+		// carries source_session_id = primarySessionId but was inserted with
+		// spawned_by_message_id = NULL (the assistant message row it needs to
+		// point at did not exist yet — insertConversationMessage above is what
+		// created it). Backfill the anchor now.
+		//
+		// On the recovery-scan replay path (the finalizer re-processes an already-
+		// posted result line — the `!created` branch below), the previous pass
+		// usually completed the same backfill; the UPDATE's IS NULL guard makes
+		// it a no-op. If the previous pass crashed between insert and backfill,
+		// looking up the existing dedupe-matched message id lets the replay
+		// complete the anchor rather than leaving the strip permanently unanchored.
+		const anchorMessageId =
+			created?.id ?? (await this.findExistingFinalOutputMessageId(sessionId, dedupeKey))
+		if (anchorMessageId !== null) {
+			await this.backfillSpawnAnchor(sessionId, logId, anchorMessageId)
+		}
+
 		if (!created) {
 			// The unique index suppressed it — a replayed log line, not a new turn.
 			// Logged because a false positive here is a silently dropped reply.
 			logger.info(
 				`Skipped duplicate final output for session ${sessionId} (dedupe_key ${dedupeKey})`,
 			)
+		}
+	}
+
+	/**
+	 * Backfill sessions.spawned_by_message_id for every sub-agent spawned during
+	 * this turn, so the handed-off strip's per-row render can find its anchor
+	 * bubble.
+	 *
+	 * The WHERE is keyed on the session_logs row that opened this turn — the
+	 * user-turn envelope SessionManager.writeInput persists — rather than a
+	 * wall-clock turnStart timestamp. The finalizer has a recovery-scan replay
+	 * path bounded by RECOVERY_SCAN_LIMIT (a Docker log stream tails 'all' on
+	 * first connect after an apps/dev restart, re-ingesting every past chunk);
+	 * a wall-clock filter reads a different bound on each pass and would either
+	 * miss rows or over-scope on replay. Anchoring on already-persisted log-row
+	 * createdAt values gives the same window every time.
+	 *
+	 * The primary session's own createdAt is the fallback lower bound for a
+	 * seeded first turn that carries no user-turn envelope — a sub-agent cannot
+	 * be created before its parent session exists.
+	 *
+	 * Best-effort: any error here must not break log ingest (see onStdout's
+	 * per-line try/catch). Not awaited by callers that ingest lines — but this
+	 * one runs synchronously with insertConversationMessage so the anchor
+	 * arrives in the same DB round as the message it points at.
+	 */
+	private async backfillSpawnAnchor(
+		primarySessionId: string,
+		logId: number,
+		messageId: number,
+	): Promise<void> {
+		try {
+			const [currentLog] = await this.db
+				.select({ createdAt: sessionLogs.createdAt })
+				.from(sessionLogs)
+				.where(eq(sessionLogs.id, logId))
+				.limit(1)
+			if (!currentLog?.createdAt) return
+
+			const [turnStartLog] = await this.db
+				.select({ createdAt: sessionLogs.createdAt })
+				.from(sessionLogs)
+				.where(
+					and(
+						eq(sessionLogs.sessionId, primarySessionId),
+						lte(sessionLogs.id, logId),
+						eq(sessionLogs.stream, 'stdout'),
+						like(sessionLogs.content, '%maskin_message_id%'),
+					),
+				)
+				.orderBy(desc(sessionLogs.id))
+				.limit(1)
+
+			let lowerBound = turnStartLog?.createdAt ?? null
+			if (!lowerBound) {
+				const [session] = await this.db
+					.select({ createdAt: sessions.createdAt })
+					.from(sessions)
+					.where(eq(sessions.id, primarySessionId))
+					.limit(1)
+				lowerBound = session?.createdAt ?? null
+			}
+			if (!lowerBound) return
+
+			await this.db
+				.update(sessions)
+				.set({ spawnedByMessageId: messageId })
+				.where(
+					and(
+						eq(sessions.sourceSessionId, primarySessionId),
+						isNull(sessions.spawnedByMessageId),
+						gte(sessions.createdAt, lowerBound),
+						lte(sessions.createdAt, currentLog.createdAt),
+					),
+				)
+		} catch (err) {
+			logger.warn(
+				`Interactive session ${primarySessionId} could not backfill spawn anchor for message ${messageId}: ${describeError(err)}`,
+			)
+		}
+	}
+
+	/**
+	 * The existing final-output row for this (session, dedupe_key) — a hit
+	 * proves the previous pass already inserted the message, so the replay path
+	 * can still anchor sub-agents at it even though the insert conflicted.
+	 */
+	private async findExistingFinalOutputMessageId(
+		sessionId: string,
+		dedupeKey: string,
+	): Promise<number | null> {
+		const [row] = await this.db
+			.select({ id: messages.id })
+			.from(messages)
+			.where(
+				and(
+					eq(messages.sessionId, sessionId),
+					sql`(${messages.metadata}->'final_output'->>'dedupe_key') = ${dedupeKey}`,
+				),
+			)
+			.limit(1)
+		return row?.id ?? null
+	}
+
+	/** Move the workspace onto its next Claude subscription; `null` if nothing moved. */
+	private async failOverOnSubscriptionLimit(
+		sessionId: string,
+		detail: string,
+	): Promise<string | null> {
+		if (!this.onSubscriptionLimit) return null
+		// Reuse the session-exit classifier so both paths agree on "spent".
+		const failure = classifyCreditExhaustion(detail, { includeAmbiguousSignals: false })
+		if (!failure || failure.provider !== 'anthropic') return null
+		try {
+			return await this.onSubscriptionLimit(sessionId, failure.reason_code)
+		} catch (err) {
+			logger.warn(
+				`Interactive session ${sessionId} hit a subscription limit but the failover could not be recorded: ${err instanceof Error ? err.message : String(err)}`,
+			)
+			return null
 		}
 	}
 
@@ -668,17 +839,39 @@ export class InteractiveTurnFinalizer {
 			logger.warn(
 				`Interactive session ${sessionId} turn failed permanently (log ${logId}): ${detail}`,
 			)
+			// Session-exit failover never sees an interactive turn (see
+			// turn-error-classifier.ts), so route the same move from here.
+			const movedTo = await this.failOverOnSubscriptionLimit(sessionId, detail)
 			await this.postTurnMessage(
 				sessionId,
 				gate,
 				conversationId,
 				result,
 				logId,
-				permanentErrorMessage(detail),
+				movedTo ? subscriptionMovedMessage(detail) : permanentErrorMessage(detail),
 				{
 					error_kind: 'permanent',
+					...(movedTo ? { subscription_moved_to: movedTo } : {}),
 				},
 			)
+			// Stop the running container AFTER posting the moved-subscription
+			// notice so the human sees the reason even if the stop itself takes
+			// a moment (or fails). The current session launched with the spent
+			// credentials and cannot be resumed in place; stopping means the
+			// human's next message spawns a fresh session on the new active_slot.
+			// stopSession funnels back into markRemoteSessionComplete which
+			// re-classifies the same tail — that path's runtime failover is
+			// idempotent (CAS on active_slot in recordRuntimeClaudeOAuthFailover),
+			// so no double advance.
+			if (movedTo && this.onStopSession) {
+				try {
+					await this.onStopSession(sessionId, 'subscription_moved')
+				} catch (err) {
+					logger.warn(
+						`Interactive session ${sessionId} could not be stopped after subscription move: ${err instanceof Error ? err.message : String(err)}`,
+					)
+				}
+			}
 			return
 		}
 

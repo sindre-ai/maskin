@@ -1,6 +1,7 @@
 import type { Browser, Page } from '@playwright/test'
-import { expect, test } from '../fixtures/auth.fixture'
-import { type TestAPI, createTestActor } from '../helpers/api.helper'
+import { CHATS_V4_FLAGS, expect, test } from '../fixtures/auth.fixture'
+import { TestAPI, createTestActor } from '../helpers/api.helper'
+import { sendFromComposer } from '../helpers/composer.helper'
 import { grantPlanHeadroom } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
@@ -20,11 +21,16 @@ async function signInAsActor(
 	const context = await browser.newContext()
 	const page = await context.newPage()
 	await page.addInitScript(
-		(data: { apiKey: string; actor: typeof actor }) => {
+		(data: { apiKey: string; actor: typeof actor; flags: readonly string[] }) => {
 			localStorage.setItem('maskin-api-key', data.apiKey)
 			localStorage.setItem('maskin-actor', JSON.stringify(data.actor))
+			// This context bypasses the auth fixture, so it needs the Chats v4
+			// flag override too — the partner page asserts v4 header controls.
+			for (const flag of data.flags) {
+				localStorage.setItem(`ff:${flag}`, 'on')
+			}
 		},
-		{ apiKey, actor },
+		{ apiKey, actor, flags: CHATS_V4_FLAGS },
 	)
 	return page
 }
@@ -78,7 +84,7 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			const messageText = `Hello from the primary actor ${Date.now()}`
 			const composer = page.getByLabel('Message this conversation')
 			await composer.fill(messageText)
-			await composer.press('Enter')
+			await sendFromComposer(page, composer, vp.width)
 
 			// Sender sees its own optimistic send immediately. Scoped to the
 			// thread's message list (not a bare page-wide text search) — the
@@ -142,6 +148,68 @@ test.describe('Chats — full-screen multi-party chat', () => {
 		await partnerPage.goto(`/${account.workspaceId}/chats`)
 		const row = partnerPage.getByRole('link', { name: /E2E multi-party chat/ })
 		await expect(row.getByLabel(/unread/)).toBeVisible({ timeout: 10_000 })
+
+		await partnerPage.context().close()
+	})
+
+	test('mark as unread resets the read cursor server-side and the badge survives a reload', async ({
+		page,
+		account,
+		browser,
+	}) => {
+		const { conversation, secondHuman } = await setUpConversation(
+			account.api,
+			account.workspaceId,
+			account.apiKey,
+		)
+
+		// The primary actor posts while the partner is away, so the partner has
+		// something to read in the first place.
+		await account.api.postConversationMessage(conversation.id, account.workspaceId, {
+			content: 'Anything to report?',
+		})
+
+		const partnerApi = new TestAPI(secondHuman.api_key)
+		const partnerPage = await signInAsActor(browser, secondHuman.api_key, {
+			id: secondHuman.id,
+			name: secondHuman.name,
+			type: secondHuman.type,
+			email: secondHuman.email,
+		})
+		await partnerPage.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+		await expect(partnerPage.getByRole('heading', { name: 'E2E multi-party chat' })).toBeVisible({
+			timeout: 10_000,
+		})
+
+		// Opening the thread advances the partner's own cursor past zero.
+		await expect
+			.poll(
+				async () =>
+					(await partnerApi.getConversation(conversation.id, account.workspaceId))
+						.last_read_message_id,
+				{ timeout: 15_000 },
+			)
+			.toBeGreaterThan(0)
+
+		await partnerPage.getByRole('button', { name: 'Mark as unread' }).click()
+		await expect(partnerPage.getByText('Marked as unread')).toBeVisible({ timeout: 10_000 })
+
+		// The reset is persisted, not just optimistic client state: the cursor
+		// reads back as null for the partner. This is the assertion the old
+		// GREATEST-clamped write could never satisfy.
+		await expect
+			.poll(
+				async () =>
+					(await partnerApi.getConversation(conversation.id, account.workspaceId))
+						.last_read_message_id,
+				{ timeout: 15_000 },
+			)
+			.toBeNull()
+
+		await partnerPage.goto(`/${account.workspaceId}/chats`)
+		await expect(
+			partnerPage.getByRole('link', { name: /E2E multi-party chat/ }).getByLabel(/unread/),
+		).toBeVisible({ timeout: 10_000 })
 
 		await partnerPage.context().close()
 	})
@@ -224,7 +292,7 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 			const composer = page.getByLabel('Message this conversation')
 			await composer.fill('Original wording with a typo')
-			await composer.press('Enter')
+			await sendFromComposer(page, composer, vp.width)
 
 			const thread = page.getByTestId('thread-messages')
 			await expect(thread.getByText('Original wording with a typo')).toBeVisible({
@@ -272,7 +340,7 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 			const composer = page.getByLabel('Message this conversation')
 			await composer.fill('Anyone there? Please respond')
-			await composer.press('Enter')
+			await sendFromComposer(page, composer, vp.width)
 
 			const retryButton = page.getByRole('button', { name: 'Ask agents to respond again' })
 			await expect(retryButton).toBeVisible({ timeout: 10_000 })
@@ -300,7 +368,7 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			)
 			const composer = page.getByLabel('Message this conversation')
 			await composer.fill('The deploy pipeline keeps failing on the migrate step')
-			await composer.press('Enter')
+			await sendFromComposer(page, composer, vp.width)
 
 			await page.waitForURL(/\/chats\/[0-9a-f-]{36}/, { timeout: 15_000 })
 			const heading = page.getByRole('heading').first()

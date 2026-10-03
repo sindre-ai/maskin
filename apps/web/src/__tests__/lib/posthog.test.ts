@@ -6,6 +6,7 @@ import {
 	initPosthog,
 	isPosthogReady,
 	registerWorkspaceProperties,
+	resetPosthogIdentity,
 	setCapturingEnabled,
 } from '@/lib/posthog'
 import posthog from 'posthog-js'
@@ -147,6 +148,46 @@ describe('posthog helper', () => {
 		expect(idSpy).toHaveBeenCalledTimes(1)
 		expect(idSpy).toHaveBeenCalledWith(expected)
 		expect(idSpy).not.toHaveBeenCalledWith('actor-1')
+	})
+
+	it('identifyForWorkspace sends name and email as person properties when anonymise is off', async () => {
+		const idSpy = vi.spyOn(posthog, 'identify').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+
+		await identifyForWorkspace('actor-1', false, { name: 'Magnus Hansen', email: 'm@example.com' })
+
+		expect(idSpy).toHaveBeenCalledWith('actor-1', { name: 'Magnus Hansen', email: 'm@example.com' })
+	})
+
+	it('identifyForWorkspace skips missing person fields', async () => {
+		const idSpy = vi.spyOn(posthog, 'identify').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+
+		await identifyForWorkspace('actor-1', false, { name: 'Magnus Hansen', email: null })
+
+		expect(idSpy).toHaveBeenCalledWith('actor-1', { name: 'Magnus Hansen' })
+	})
+
+	it('identifyForWorkspace never sends name or email when anonymise is on', async () => {
+		const idSpy = vi.spyOn(posthog, 'identify').mockImplementation((() => {}) as never)
+		__setInitializedForTesting(true)
+
+		await identifyForWorkspace('actor-1', true, { name: 'Magnus Hansen', email: 'm@example.com' })
+		const expected = await hashDistinctId('actor-1')
+
+		expect(idSpy).toHaveBeenCalledTimes(1)
+		expect(idSpy).toHaveBeenCalledWith(expected)
+	})
+
+	it('resetPosthogIdentity is a no-op before init and resets after', () => {
+		const resetSpy = vi.spyOn(posthog, 'reset').mockImplementation((() => {}) as never)
+
+		resetPosthogIdentity()
+		expect(resetSpy).not.toHaveBeenCalled()
+
+		__setInitializedForTesting(true)
+		resetPosthogIdentity()
+		expect(resetSpy).toHaveBeenCalledTimes(1)
 	})
 
 	it('identifyForWorkspace swallows posthog errors', async () => {

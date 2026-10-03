@@ -13,6 +13,7 @@ vi.mock('../../lib/stripe', async () => {
 })
 
 import { TRIAL_HARD_CAP_DEFAULT_USD_CENTS } from '../../lib/billing-defaults'
+import { _resetBillingUsageCache } from '../../lib/billing-usage-cache'
 import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { createCheckoutSession, createCreditCheckoutSession } from '../../lib/stripe'
 import billingRoutes from '../../routes/billing'
@@ -26,7 +27,7 @@ import { createTestApp } from '../setup'
 const OWNER_CALLER = { role: 'owner', type: 'human' } as const
 
 // Sentinel cap values (USD cents) that are intentionally NOT the literal
-// defaults (2_000 / 20_000), AND chosen arithmetically far from them so that
+// defaults (4_900 / 20_000), AND chosen arithmetically far from them so that
 // a swapped or off-by-one test value couldn't accidentally satisfy a literal-
 // default assertion. Pi / Euler digits keep them memorable.
 const PRO_ENV_SENTINEL = '31415926'
@@ -37,6 +38,7 @@ const VALID_ENV = {
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
+	STRIPE_PRICE_CREDITS_CUSTOM: 'price_credits_custom_test',
 	MASKIN_PRO_HARD_CAP_USD_CENTS: PRO_ENV_SENTINEL,
 	MASKIN_TEAM_HARD_CAP_USD_CENTS: TEAM_ENV_SENTINEL,
 }
@@ -50,6 +52,7 @@ const clearEnv = () => {
 }
 
 beforeEach(() => {
+	_resetBillingUsageCache()
 	vi.mocked(createCheckoutSession).mockReset()
 	vi.mocked(createCreditCheckoutSession).mockReset()
 	clearEnv()
@@ -213,7 +216,11 @@ describe('POST /api/billing/checkout', () => {
 })
 
 describe('POST /api/billing/credits/checkout', () => {
-	it('returns 400 when the workspace plan is not pro/team', async () => {
+	it('lets a trial workspace top up — every maskin plan may buy credits', async () => {
+		// Was 400 ("not eligible"): the gate required pro/team, so the NO
+		// CREDITS prompt on a trial workspace led to a dead end — it offered a
+		// top-up the backend then refused. `canUseCreditBalance` was widened to
+		// match, so a trial can spend what it buys.
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.select = [
@@ -221,6 +228,78 @@ describe('POST /api/billing/credits/checkout', () => {
 				id: workspaceId,
 				...OWNER_CALLER,
 				settings: { billing: { plan: 'trial', status: 'active' } },
+			},
+		]
+		vi.mocked(createCreditCheckoutSession).mockResolvedValue({
+			id: 'cs_credit_trial',
+			url: 'https://checkout.stripe.com/c/cs_credit_trial',
+		} as Awaited<ReturnType<typeof createCreditCheckoutSession>>)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/credits/checkout',
+				{
+					amount_usd_cents: 2_500,
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(200)
+		expect(createCreditCheckoutSession).toHaveBeenCalled()
+	})
+
+	it('lets a first-time buyer through with no stripe_customer_id on file', async () => {
+		// Was 400. A workspace that has never paid has no customer id by
+		// definition, and Stripe Checkout mints one when `customer` is
+		// undefined — so requiring it up front made the first purchase (the
+		// only one a trial workspace can make) impossible.
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				...OWNER_CALLER,
+				settings: { billing: { plan: 'pro', status: 'active' } },
+			},
+		]
+		vi.mocked(createCreditCheckoutSession).mockResolvedValue({
+			id: 'cs_credit_first',
+			url: 'https://checkout.stripe.com/c/cs_credit_first',
+		} as Awaited<ReturnType<typeof createCreditCheckoutSession>>)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/credits/checkout',
+				{
+					amount_usd_cents: 2_500,
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(200)
+		expect(vi.mocked(createCreditCheckoutSession).mock.calls[0]?.[1]).toMatchObject({
+			existingCustomerId: undefined,
+		})
+	})
+
+	it('still returns 400 for a past_due workspace', async () => {
+		// Unchanged and deliberate: a workspace that cannot be billed for its
+		// base plan should not be taking on more spend. Matches the spend gate.
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				...OWNER_CALLER,
+				settings: {
+					billing: { plan: 'pro', status: 'past_due', stripe_customer_id: 'cus_x' },
+				},
 			},
 		]
 
@@ -238,32 +317,6 @@ describe('POST /api/billing/credits/checkout', () => {
 		)
 		expect(res.status).toBe(400)
 		expect(createCreditCheckoutSession).not.toHaveBeenCalled()
-	})
-
-	it('returns 400 when the workspace has no stripe_customer_id on file', async () => {
-		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
-		const workspaceId = randomUUID()
-		mockResults.select = [
-			{
-				id: workspaceId,
-				...OWNER_CALLER,
-				settings: { billing: { plan: 'pro', status: 'active' } },
-			},
-		]
-
-		const res = await app.request(
-			jsonRequest(
-				'POST',
-				'/api/billing/credits/checkout',
-				{
-					amount_usd_cents: 2_500,
-					success_url: 'https://app.test/success',
-					cancel_url: 'https://app.test/cancel',
-				},
-				{ 'X-Workspace-Id': workspaceId },
-			),
-		)
-		expect(res.status).toBe(400)
 	})
 
 	it('returns 400 when the amount is below the minimum', async () => {
@@ -364,6 +417,7 @@ describe('POST /api/billing/credits/checkout', () => {
 				amountUsdCents: 2_500,
 				existingCustomerId: 'cus_x',
 			}),
+			expect.objectContaining({ priceCreditsCustom: 'price_credits_custom_test' }),
 		)
 	})
 
@@ -424,7 +478,7 @@ describe('GET /api/billing/usage', () => {
 						billing: {
 							plan: 'pro',
 							status: 'active',
-							hard_cap_usd_cents: 2_000,
+							hard_cap_usd_cents: 4_900,
 							period_start: periodStart,
 							stripe_customer_id: 'cus_x',
 							stripe_subscription_id: 'sub_x',
@@ -449,7 +503,7 @@ describe('GET /api/billing/usage', () => {
 			plan: 'pro',
 			status: 'active',
 			usd_cents_used: 751,
-			hard_cap_usd_cents: 2_000,
+			hard_cap_usd_cents: 4_900,
 			period_start: periodStart,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
@@ -540,7 +594,7 @@ describe('GET /api/billing/usage', () => {
 		// `hard_cap_usd_cents: 1` as the boundary value of the `> 0` guard: a
 		// positive integer is honored verbatim, even at the smallest possible
 		// value, so callers can't accidentally tip into the fallback by saving 1.
-		// And with env unset, the Pro response must equal the literal $20.00
+		// And with env unset, the Pro response must equal the literal $49.00
 		// default — the env-driven test above only proves the false branch hits
 		// the sentinel, not the literal that fires in prod when the env is
 		// missing.
@@ -575,12 +629,12 @@ describe('GET /api/billing/usage', () => {
 
 		const zeroRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': zeroWs }))
 		expect(zeroRes.status).toBe(200)
-		// Env is unset, so the fallback path resolves to the literal $20.00
+		// Env is unset, so the fallback path resolves to the literal $49.00
 		// default — the actual prod failure mode (no env, stored 0). Proves the
 		// route took the `> 0` false branch all the way to the literal.
 		expect(await zeroRes.json()).toMatchObject({
 			plan: 'pro',
-			hard_cap_usd_cents: 2_000,
+			hard_cap_usd_cents: 4_900,
 		})
 
 		const negRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': negWs }))
@@ -615,7 +669,7 @@ describe('GET /api/billing/usage', () => {
 
 		const proRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': proWs }))
 		expect(proRes.status).toBe(200)
-		expect(await proRes.json()).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 2_000 })
+		expect(await proRes.json()).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 4_900 })
 
 		const teamRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': teamWs }))
 		expect(teamRes.status).toBe(200)
@@ -674,7 +728,7 @@ describe('GET /api/billing/usage', () => {
 						billing: {
 							plan: 'pro',
 							status: 'active',
-							hard_cap_usd_cents: 2_000,
+							hard_cap_usd_cents: 4_900,
 							period_start: periodStart,
 							period_end: periodEnd,
 						},
@@ -708,7 +762,7 @@ describe('GET /api/billing/usage', () => {
 						billing: {
 							plan: 'pro',
 							status: 'active',
-							hard_cap_usd_cents: 2_000,
+							hard_cap_usd_cents: 4_900,
 							period_start: -1.5,
 						},
 					},
@@ -721,7 +775,7 @@ describe('GET /api/billing/usage', () => {
 		expect(res.status).toBe(200)
 		const body = await res.json()
 		expect(body.period_start).toBeNull()
-		expect(body).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 2_000 })
+		expect(body).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 4_900 })
 	})
 
 	it('reports the prepaid credit balance for a pro workspace over cap', async () => {
@@ -736,7 +790,7 @@ describe('GET /api/billing/usage', () => {
 						billing: {
 							plan: 'pro',
 							status: 'active',
-							hard_cap_usd_cents: 2_000,
+							hard_cap_usd_cents: 4_900,
 							period_start: periodStart,
 							credit_balance_cents: 4_000,
 						},
@@ -837,7 +891,7 @@ describe('GET /api/billing/usage', () => {
 						billing: {
 							plan: 'pro',
 							status: 'active',
-							hard_cap_usd_cents: 2_000,
+							hard_cap_usd_cents: 4_900,
 							period_start: periodStart + 0.42,
 						},
 					},
@@ -849,6 +903,95 @@ describe('GET /api/billing/usage', () => {
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
 		expect(await res.json()).toMatchObject({ period_start: periodStart })
+	})
+
+	describe('short-lived cache', () => {
+		const usageGet = (workspaceId: string) =>
+			jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId })
+
+		it('answers a repeat read from the cache instead of reading the workspace again', async () => {
+			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+			const workspaceId = randomUUID()
+			// Only enough rows for ONE read. A second uncached read would find the
+			// queue empty, see no workspace and 404.
+			mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], []]
+
+			const first = await app.request(usageGet(workspaceId))
+			const second = await app.request(usageGet(workspaceId))
+
+			expect(first.status).toBe(200)
+			expect(second.status).toBe(200)
+			expect(await second.json()).toMatchObject({ plan: 'trial', usd_cents_used: 0 })
+		})
+
+		it("does not serve one actor's cached read to another actor in the same workspace", async () => {
+			const workspaceId = randomUUID()
+			process.env.FF_TESTER_ACTOR_IDS = 'tester-actor'
+			process.env.FF_TESTER_FEATURES = 'linkedin-addon-visible'
+			_resetFeatureFlagConfig()
+
+			const tester = createTestApp(billingRoutes, '/api/billing', 'tester-actor')
+			tester.mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], [], [{ n: 2 }]]
+			const testerRes = await tester.app.request(usageGet(workspaceId))
+			expect(await testerRes.json()).toMatchObject({
+				linkedin_identity_addon: { count: 2 },
+			})
+
+			const other = createTestApp(billingRoutes, '/api/billing', 'other-actor')
+			other.mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], []]
+			const otherRes = await other.app.request(usageGet(workspaceId))
+			expect(otherRes.status).toBe(200)
+			expect(await otherRes.json()).toMatchObject({ linkedin_identity_addon: null })
+
+			process.env.FF_TESTER_ACTOR_IDS = undefined
+			process.env.FF_TESTER_FEATURES = undefined
+			_resetFeatureFlagConfig()
+		})
+
+		it('reads again right after the subscription is cancelled', async () => {
+			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+			const workspaceId = randomUUID()
+			const paid = { plan: 'pro', status: 'active' }
+			// No stripe_subscription_id, so the cancel skips Stripe and only
+			// downgrades the row. Queue: usage read, cancel's workspace lookup,
+			// then the usage read after the cancel.
+			mockResults.selectQueue = [
+				[{ id: workspaceId, settings: { billing: paid } }],
+				[],
+				[{ id: workspaceId, settings: { billing: paid }, billingOwnerId: 'test-actor-id' }],
+				[{ id: workspaceId, settings: { billing: { plan: 'trial', status: 'canceled' } } }],
+				[],
+			]
+
+			const before = await app.request(usageGet(workspaceId))
+			const cancel = await app.request(
+				jsonRequest('POST', '/api/billing/cancel', undefined, { 'X-Workspace-Id': workspaceId }),
+			)
+			const after = await app.request(usageGet(workspaceId))
+
+			expect(await before.json()).toMatchObject({ plan: 'pro' })
+			expect(cancel.status).toBe(200)
+			// Inside the 2s TTL, so only the eviction makes this a fresh read.
+			expect(await after.json()).toMatchObject({ plan: 'trial' })
+		})
+
+		it("does not serve one workspace's cached read for another workspace", async () => {
+			const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+			const wsA = randomUUID()
+			const wsB = randomUUID()
+			mockResults.selectQueue = [
+				[{ id: wsA, settings: { billing: { plan: 'pro', status: 'active' } } }],
+				[],
+				[{ id: wsB, settings: {} }],
+				[],
+			]
+
+			const a = await app.request(usageGet(wsA))
+			const b = await app.request(usageGet(wsB))
+
+			expect(await a.json()).toMatchObject({ plan: 'pro' })
+			expect(await b.json()).toMatchObject({ plan: 'trial' })
+		})
 	})
 
 	describe('LinkedIn Identity add-on line', () => {
@@ -938,7 +1081,7 @@ describe('GET /api/billing/usage', () => {
 					{
 						id: workspaceId,
 						settings: {
-							billing: { plan: 'pro', status: 'active', hard_cap_usd_cents: 2_000 },
+							billing: { plan: 'pro', status: 'active', hard_cap_usd_cents: 4_900 },
 						},
 					},
 				],

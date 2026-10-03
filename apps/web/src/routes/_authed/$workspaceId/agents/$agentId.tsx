@@ -6,6 +6,7 @@ import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useActor, useAgent, useCreateActor, useUpdateActor } from '@/hooks/use-actors'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { ApiError, api } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -22,6 +23,7 @@ function AgentDetailPage() {
 	const { workspaceId } = useWorkspace()
 	// Use list-derived hook to check existence (returns undefined for new IDs, no 404)
 	const { data: agentListItem, isLoading } = useAgent(agentId, workspaceId)
+	useDocumentTitle(agentListItem?.name)
 	const createActor = useCreateActor(workspaceId)
 	const updateActor = useUpdateActor(workspaceId)
 	const isCreatedRef = useRef(false)

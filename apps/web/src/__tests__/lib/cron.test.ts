@@ -1,4 +1,4 @@
-import { describeCronExpression, parseCronExpression } from '@/lib/cron'
+import { describeCronExpression, nextCronFire, parseCronExpression } from '@/lib/cron'
 import { describe, expect, it } from 'vitest'
 
 describe('describeCronExpression', () => {
@@ -71,6 +71,47 @@ describe('describeCronExpression', () => {
 		expect(describeCronExpression('0 9 32 * *')).toBe('0 9 32 * *')
 		expect(describeCronExpression('0 9 0 * *')).toBe('0 9 0 * *')
 		expect(describeCronExpression('0 9 * * 8')).toBe('0 9 * * 8')
+	})
+})
+
+describe('nextCronFire', () => {
+	// Monday 2026-01-05 08:00:00 local — matches the fixed clock used by the
+	// loop-next-fire tests so the two suites reason about the same wall time.
+	const now = new Date(2026, 0, 5, 8, 0, 0)
+
+	it('returns null for a cron expression the parser rejects', () => {
+		expect(nextCronFire('*/15 * * * *', now)).toBeNull()
+	})
+
+	it('rolls an hourly cron to the next matching minute', () => {
+		expect(nextCronFire('15 * * * *', now)).toEqual(new Date(2026, 0, 5, 8, 15, 0))
+	})
+
+	it('rolls an hourly cron whose minute has already passed to the next hour', () => {
+		expect(nextCronFire('0 * * * *', now)).toEqual(new Date(2026, 0, 5, 9, 0, 0))
+	})
+
+	it('rolls a daily cron to today when its time is still ahead', () => {
+		expect(nextCronFire('0 17 * * *', now)).toEqual(new Date(2026, 0, 5, 17, 0, 0))
+	})
+
+	it('rolls a daily cron to tomorrow when its time has already passed', () => {
+		expect(nextCronFire('0 7 * * *', now)).toEqual(new Date(2026, 0, 6, 7, 0, 0))
+	})
+
+	it('rolls a weekly cron to the next matching day-of-week', () => {
+		// From Monday 08:00, next Sunday at 17:00 is 6 days out.
+		expect(nextCronFire('0 17 * * 0', now)).toEqual(new Date(2026, 0, 11, 17, 0, 0))
+	})
+
+	it('rolls a weekly cron that matches today but is already past to next week', () => {
+		// Monday 07:00 has passed at 08:00 — next fire is next Monday.
+		expect(nextCronFire('0 7 * * 1', now)).toEqual(new Date(2026, 0, 12, 7, 0, 0))
+	})
+
+	it('rolls a monthly cron to next month when this month has already passed', () => {
+		// Day 3 of January is behind now (2026-01-05 08:00) — next fire is Feb 3.
+		expect(nextCronFire('0 9 3 * *', now)).toEqual(new Date(2026, 1, 3, 9, 0, 0))
 	})
 })
 

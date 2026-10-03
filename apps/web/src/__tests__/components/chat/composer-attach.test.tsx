@@ -21,7 +21,23 @@ vi.mock('@/components/chat/slash-picker', () => ({
 vi.mock('@/lib/analytics', () => ({
 	deriveEntryAgentRole: () => 'coach',
 	trackSpecialistSummonedManually: () => {},
+	trackChatMentionInserted: () => {},
 }))
+
+// The composer's `@`-picker walks the workspace actors list + the conversations
+// cache to build sections; neither is under test here, so shortcut both.
+// CreatePicker (mounted inside the composer) still uses `useCreateActor` from
+// the same module, so preserve every export except the `useActors` we stub.
+vi.mock('@/hooks/use-actors', async () => {
+	const actual = await vi.importActual<typeof import('@/hooks/use-actors')>('@/hooks/use-actors')
+	return { ...actual, useActors: () => ({ data: [] }) }
+})
+vi.mock('@/hooks/use-conversations', async () => {
+	const actual = await vi.importActual<typeof import('@/hooks/use-conversations')>(
+		'@/hooks/use-conversations',
+	)
+	return { ...actual, useConversationsInfinite: () => ({ data: { pages: [] } }) }
+})
 
 function renderComposer(overrides: Partial<Parameters<typeof Composer>[0]> = {}) {
 	const props = {

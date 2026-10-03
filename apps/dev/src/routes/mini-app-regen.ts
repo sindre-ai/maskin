@@ -1,8 +1,9 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, files, triggers } from '@maskin/db/schema'
+import { files, triggers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { errorSchema, triggerResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
@@ -134,7 +135,7 @@ app.openapi(regenRoute, (async (c) => {
 				.where(eq(triggers.id, existing.id))
 				.returning()
 			if (!row) throw new Error('Failed to update regen trigger')
-			await tx.insert(events).values({
+			await recordEvent(tx, {
 				workspaceId,
 				actorId,
 				action: 'updated',
@@ -158,7 +159,7 @@ app.openapi(regenRoute, (async (c) => {
 			})
 			.returning()
 		if (!row) throw new Error('Failed to create regen trigger')
-		await tx.insert(events).values({
+		await recordEvent(tx, {
 			workspaceId,
 			actorId,
 			action: 'created',

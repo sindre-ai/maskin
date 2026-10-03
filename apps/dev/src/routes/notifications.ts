@@ -1,6 +1,6 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, actors, notifications, sessions } from '@maskin/db/schema'
+import { actors, notifications, sessions } from '@maskin/db/schema'
 import {
 	createNotificationSchema,
 	notificationQuerySchema,
@@ -10,6 +10,7 @@ import {
 import { and, eq, inArray } from 'drizzle-orm'
 import { trackCreateNotificationCalled } from '../lib/analytics/notification-events'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { recordEvent } from '../lib/events/record-event'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -19,6 +20,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 
 type Env = {
@@ -91,7 +93,7 @@ app.openapi(createNotificationRoute, async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create notification'), 500)
 	}
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'created',
@@ -262,7 +264,7 @@ app.openapi(updateNotificationRoute, (async (c) => {
 	if (!updated)
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to update notification'), 500)
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId: existing.workspaceId,
 		actorId,
 		action: 'updated',
@@ -354,7 +356,7 @@ app.openapi(respondNotificationRoute, (async (c) => {
 	if (!updated)
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to update notification'), 500)
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId,
 		actorId,
 		action: 'responded',
@@ -441,8 +443,10 @@ async function wakeSourceAgent(ctx: {
 		continuationOfSessionId = ctx.linkedSessionId
 	}
 
-	await ctx.sessionManager.createSession(ctx.workspaceId, {
+	await startSession({
+		workspaceId: ctx.workspaceId,
 		actorId: ctx.sourceActorId,
+		callerKind: 'trigger',
 		actionPrompt: buildResponsePrompt({
 			notificationId: ctx.notificationId,
 			title: ctx.title,
@@ -458,6 +462,12 @@ async function wakeSourceAgent(ctx: {
 			},
 		},
 		createdBy: ctx.createdBy,
+		// Notification-response spawns run on the notification's own thread: the
+		// linkage lives on notifications.object_id already; per spec §3.3 this
+		// site passes null/null.
+		initiatedFromObjectId: null,
+		initiatedFromObjectType: null,
+		await: 'none',
 	})
 }
 
@@ -523,7 +533,7 @@ app.openapi(deleteNotificationRoute, (async (c) => {
 
 	await db.delete(notifications).where(eq(notifications.id, id))
 
-	await db.insert(events).values({
+	await recordEvent(db, {
 		workspaceId: existing.workspaceId,
 		actorId,
 		action: 'deleted',

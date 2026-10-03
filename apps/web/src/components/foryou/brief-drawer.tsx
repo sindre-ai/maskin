@@ -136,7 +136,14 @@ export function BriefDrawer({ workspaceId, open, onOpenChange }: BriefDrawerProp
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [sendError, setSendError] = useState<string | null>(null)
 
-	const agent = selection.agent ?? defaultChatAgent
+	// First mentioned actor overrides the default target agent — the brief
+	// drawer starts a one-shot conversation and needs a single recipient. Later
+	// mentions still ride the initial message as participant seeds.
+	const firstMentionId = selection.agents[0] ?? null
+	const firstMentionAgent = firstMentionId
+		? { id: firstMentionId, name: selection.agentNames[firstMentionId] ?? '' }
+		: null
+	const agent = firstMentionAgent ?? defaultChatAgent
 	const markdown = data?.markdown ?? ''
 	const { headline, body } = splitBriefHeadline(markdown)
 
@@ -285,7 +292,7 @@ export function BriefDrawer({ workspaceId, open, onOpenChange }: BriefDrawerProp
 						textareaLabel="Ask about this brief"
 						selection={selection}
 						onDispatchSelection={dispatchSelection}
-						onRemoveAgent={() => dispatchSelection({ type: 'remove_agent' })}
+						onRemoveAgent={(id) => dispatchSelection({ type: 'remove_agent', id })}
 						onRemoveObject={(id) => dispatchSelection({ type: 'remove_object', id })}
 						onRemoveNotification={(id) => dispatchSelection({ type: 'remove_notification', id })}
 						onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}

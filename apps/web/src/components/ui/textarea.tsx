@@ -23,7 +23,19 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
 			const el = internalRef.current
 			if (!el || !autoResize) return
 			el.style.height = 'auto'
-			el.style.height = `${el.scrollHeight}px`
+			// Cap the inline height at the CSS-declared max-height so a paste that
+			// blows scrollHeight into the thousands (a huge markdown table) can't
+			// stamp a matching inline height onto the element. The CSS max-height
+			// alone visually clamps the rendered box, but the runaway inline height
+			// wrecks the textarea's own scroll thumb (thumb-to-track ratio collapses
+			// to a pixel) and forces the parent flex layout to reason about a
+			// multi-thousand-pixel child. Falling back to scrollHeight when no
+			// max-height is set preserves the "grow to fit" caller (agent-document).
+			const maxHeight = Number.parseFloat(window.getComputedStyle(el).maxHeight)
+			const nextHeight = Number.isFinite(maxHeight)
+				? Math.min(el.scrollHeight, maxHeight)
+				: el.scrollHeight
+			el.style.height = `${nextHeight}px`
 		}, [autoResize])
 
 		// biome-ignore lint/correctness/useExhaustiveDependencies: props.value triggers resize on programmatic changes

@@ -1,9 +1,11 @@
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
+import { startSession } from '../../services/session-lifecycle'
 import type { SessionManager } from '../../services/session-manager'
 import { postComment } from '../comments'
 import { logger } from '../logger'
+import { insertNotificationsWithEvents } from '../notifications'
 
 const CHIEF_OF_STAFF_NAME = 'Chief of Staff'
 const RESEARCHER_NAME = 'Researcher'
@@ -49,9 +51,16 @@ async function resolveAgentIdByName(
  * Fires right after a `signup_capture` knowledge object is created (see the
  * `POST /api/objects` handler in `routes/objects.ts`). Deterministically —
  * not by handing it to an agent's judgment — posts a Chief-of-Staff-authored
- * welcome comment on the object that @mentions Researcher, which auto-spawns
- * a Researcher session via the existing mention-session-spawn path
- * (`lib/comments.ts` + the mention loop in `routes/events.ts`).
+ * welcome comment on the object that @mentions the new user, then spawns a
+ * Researcher session with a bespoke onboarding prompt.
+ *
+ * The Researcher notification + session are wired directly here rather than
+ * via the standard `CommentDispatcher` (`services/trigger-runner.ts`) mention
+ * branch, because the onboarding prompt is domain-specific (a first-pass
+ * research brief keyed on the signup metadata). Researcher IS still a real
+ * @mention; the comment carries `metadata.suppress_dispatch_actor_ids` so the
+ * dispatcher skips only its generic session, leaving auto-subscribe and thread
+ * participation intact.
  *
  * This must fire every time a user signs up, so it deliberately bypasses the
  * "let the agent decide to do this" pattern that turned out to be
@@ -61,7 +70,7 @@ async function resolveAgentIdByName(
 export async function postSignupWelcomeComment(
 	input: PostSignupWelcomeCommentInput,
 ): Promise<void> {
-	const { db, sessionManager, workspaceId, knowledgeObjectId, humanActorId } = input
+	const { db, workspaceId, knowledgeObjectId, humanActorId } = input
 	const metadata = (input.metadata ?? {}) as SignupCaptureMetadata
 	const name = metadata.name?.trim()
 	const organization = metadata.organization?.trim()
@@ -88,26 +97,58 @@ export async function postSignupWelcomeComment(
 		return
 	}
 
-	// @-mention both Researcher (kicks off its session, below) and the human
-	// who just signed up. The human mention is what makes this comment surface
-	// on their For You page — `GET /api/subscriptions/unread` matches on
-	// `events.data.mentions` containing the viewer's actor id, and postComment
-	// auto-subscribes every mentioned actor regardless of type.
+	// @-mention both Researcher and the human who just signed up. The human
+	// mention is what makes this comment surface on their For You page — `GET
+	// /api/subscriptions/unread` matches on `events.data.mentions` containing
+	// the viewer's actor id, and postComment auto-subscribes every mentioned
+	// actor.
+	//
+	// Researcher stays a real mention because the mention is load-bearing
+	// beyond dispatch: `lib/comments.ts` auto-subscribes it to the object, and
+	// `routes/events.ts` reads prior `data.mentions` to decide who counts as a
+	// thread participant — which is what makes a human reply in this thread
+	// reach Researcher, exactly as the comment body promises. What we suppress
+	// is only the generic dispatch, via `suppress_dispatch_actor_ids` below,
+	// since the bespoke onboarding session is wired directly here.
 	const displayName = name || 'there'
 	const content = `Hi ${displayName} 👋 Welcome to Maskin — I'm Chief of Staff, I make sure the right agent picks up your work. @Researcher — please put together a first-pass brief on ${displayName}${organization ? ` and ${organization}` : ''} so the workspace has real context from day one. @${displayName} — if anything here looks off or you'd like to add more before Researcher gets started, just reply and I'll make sure it gets folded in.`
 
-	const { comment, agentMentions } = await postComment(db, {
+	const { comment } = await postComment(db, {
 		workspaceId,
 		actorId: chiefOfStaffId,
 		entityId: knowledgeObjectId,
 		content,
 		mentions: [researcherId, humanActorId],
+		metadata: { suppress_dispatch_actor_ids: [researcherId] },
 		attention: 3,
 	})
 
-	const researcherMention = agentMentions.find((m) => m.agentId === researcherId)
-	if (!researcherMention) {
-		logger.warn('Signup welcome comment posted but Researcher mention was not recorded', {
+	// Wire Researcher's needs_input notification directly rather than via the
+	// `CommentDispatcher` mention path, so the bespoke onboarding session below
+	// can reference the notification id in its prompt. Paired with
+	// `suppress_dispatch_actor_ids` above, this is the only notification +
+	// session Researcher gets for this comment.
+	const [researcherNotification] = await db.transaction((tx) =>
+		insertNotificationsWithEvents(tx, {
+			workspaceId,
+			actorId: chiefOfStaffId,
+			rows: [
+				{
+					workspaceId,
+					type: 'needs_input' as const,
+					title: '@mentioned by comment',
+					content,
+					sourceActorId: chiefOfStaffId,
+					targetActorId: researcherId,
+					objectId: knowledgeObjectId,
+					status: 'pending' as const,
+				},
+			],
+		}),
+	)
+
+	if (!researcherNotification) {
+		logger.warn('Signup welcome comment posted but Researcher notification not created', {
 			workspaceId,
 			knowledgeObjectId,
 			commentEventId: comment.id,
@@ -115,35 +156,41 @@ export async function postSignupWelcomeComment(
 		return
 	}
 
-	await sessionManager
-		.createSession(workspaceId, {
-			actorId: researcherId,
-			actionPrompt: buildSignupResearchPrompt({
-				knowledgeObjectId,
-				name,
-				email: human?.email ?? undefined,
-				organization,
-				role,
-				humanActorId,
-				notificationId: researcherMention.notificationId,
-			}),
-			config: {
-				mention: {
-					object_id: knowledgeObjectId,
-					commenter_actor_id: chiefOfStaffId,
-					notification_id: researcherMention.notificationId,
-					comment_event_id: comment.id,
-				},
+	await startSession({
+		workspaceId,
+		actorId: researcherId,
+		callerKind: 'internal',
+		actionPrompt: buildSignupResearchPrompt({
+			knowledgeObjectId,
+			name,
+			email: human?.email ?? undefined,
+			organization,
+			role,
+			humanActorId,
+			notificationId: researcherNotification.id,
+		}),
+		config: {
+			mention: {
+				object_id: knowledgeObjectId,
+				commenter_actor_id: chiefOfStaffId,
+				notification_id: researcherNotification.id,
+				comment_event_id: comment.id,
 			},
-			createdBy: chiefOfStaffId,
-		})
-		.catch((err) =>
-			logger.error('Failed to create Researcher session for signup welcome', {
-				workspaceId,
-				knowledgeObjectId,
-				error: String(err),
-			}),
-		)
+		},
+		createdBy: chiefOfStaffId,
+		// The Researcher spawn is targeted at the knowledge object we just
+		// created for the signup: pass it as the originating object so a failure
+		// links back to the knowledge row.
+		initiatedFromObjectId: knowledgeObjectId,
+		initiatedFromObjectType: 'knowledge',
+		await: 'none',
+	}).catch((err) =>
+		logger.error('Failed to create Researcher session for signup welcome', {
+			workspaceId,
+			knowledgeObjectId,
+			error: String(err),
+		}),
+	)
 }
 
 function buildSignupResearchPrompt(ctx: {

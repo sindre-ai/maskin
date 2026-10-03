@@ -355,6 +355,33 @@ describe('Actors Integration — signup workspace provisioning', () => {
 		expect(agentNames).toEqual(DEFAULT_AGENT_NAMES)
 	})
 
+	it('does not return the stored passwordHash in the signup response', async () => {
+		const app = createApp()
+		const email = `no-hash-${randomUUID()}@example.com`
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/actors', {
+				type: 'human',
+				name: 'No Hash Human',
+				email,
+				password: 'correct-horse-battery',
+			}),
+		)
+		expect(res.status).toBe(201)
+		const body = await res.json()
+		expect(body).not.toHaveProperty('passwordHash')
+		expect(JSON.stringify(body)).not.toContain('$2')
+
+		// Guard against a vacuous pass: the hash really was stored for this actor.
+		const [row] = await db
+			.select({ passwordHash: actors.passwordHash })
+			.from(actors)
+			.where(eq(actors.id, body.id))
+			.limit(1)
+		expect(row?.passwordHash).toBeTruthy()
+		expect(JSON.stringify(body)).not.toContain(row?.passwordHash as string)
+	})
+
 	it('pins Chief of Staff as the auto-created workspace default chat agent', async () => {
 		const app = createApp()
 

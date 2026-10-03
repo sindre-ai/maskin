@@ -79,16 +79,23 @@ export function MessageActivity({ workspaceId, turn, layout = 'block' }: Message
 					    mockup can show both because its steps are prose and its
 					    sources are object names — here both are the same tool calls. */}
 					<StepList turn={turn} className="mt-[7px]" />
-					<Button
-						type="button"
-						variant="ghost"
-						size="sm"
-						className="mt-2 h-6 px-0 text-[10.5px] font-bold text-muted-foreground hover:bg-transparent hover:text-foreground"
-						onClick={() => stopSession.mutate(turn.sessionId)}
-						disabled={stopSession.isPending}
-					>
-						Stop
-					</Button>
+					{/* While the session is still booting (pending/starting/queued)
+					    there is no container or agent-server to stop yet — POST
+					    /sessions/:id/stop would 400 on `no container` and the
+					    mutation would silently fail (see session-manager.ts's
+					    stopSession). Hide the control until the process is live. */}
+					{turn.starting ? null : (
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							className="mt-2 h-6 px-0 text-[10.5px] font-bold text-muted-foreground hover:bg-transparent hover:text-foreground"
+							onClick={() => stopSession.mutate(turn.sessionId)}
+							disabled={stopSession.isPending}
+						>
+							Stop
+						</Button>
+					)}
 				</div>
 			</div>
 		)
