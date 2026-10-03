@@ -1,3 +1,4 @@
+import { sessionLogs } from '@maskin/db/schema'
 import { SESSION_ACTIVITY_SCAN_ROWS, sessionActivityResponseSchema } from '@maskin/shared'
 import { insertActor, insertSession, insertSessionLog, insertWorkspace } from '../factories'
 import { jsonGet } from '../helpers'
@@ -106,5 +107,66 @@ describe('GET /api/sessions/:id/activity (Integration)', () => {
 			jsonGet(`/api/sessions/${sessionId}/activity`, { 'x-workspace-id': other.id }),
 		)
 		expect(res.status).toBe(404)
+	})
+	describe('scan window boundary', () => {
+		const bulk = async (rows: unknown[]) => {
+			// chunked to stay under the bind-parameter limit
+			for (let i = 0; i < rows.length; i += 500) {
+				await db.insert(sessionLogs).values(
+					rows.slice(i, i + 500).map((content) => ({
+						sessionId,
+						stream: 'stdout',
+						content: JSON.stringify(content),
+					})),
+				)
+			}
+		}
+		const tool = (n: number) => ({
+			type: 'assistant',
+			message: { content: [{ type: 'tool_use', id: `t${n}`, name: 'Read', input: {} }] },
+		})
+		const headers = () => ({ 'x-workspace-id': workspaceId })
+		const fetchActivity = async (q = '') =>
+			(await app.request(jsonGet(`/api/sessions/${sessionId}/activity${q}`, headers()))).json()
+
+		it('keeps a turn that straddles the window and flags it partial', async () => {
+			await bulk([
+				{ type: 'user', message: { content: 'a' }, maskin_message_id: 1 },
+				{ type: 'result', is_error: false, result: 'r1' },
+				{ type: 'user', message: { content: 'b' }, maskin_message_id: 2 },
+				// window starts inside turn 2
+				...Array.from({ length: SESSION_ACTIVITY_SCAN_ROWS + 5 }, (_, i) => tool(i)),
+				{ type: 'result', is_error: false, result: 'r2' },
+			])
+			const body = sessionActivityResponseSchema.parse(await fetchActivity('?limit_turns=20'))
+			expect(body.turns.map((t) => t.message_id)).toEqual([2])
+			expect(body.turns[0]).toMatchObject({ partial: true, status: 'completed' })
+			expect(body.turns[0]?.result?.text).toBe('r2')
+			expect(body.has_older).toBe(true)
+
+			// paging from oldest_log_id reaches turn 1 and does not repeat turn 2
+			const older = await fetchActivity(`?limit_turns=20&before_log_id=${body.oldest_log_id}`)
+			expect(older.turns.map((t: { message_id: number }) => t.message_id)).toEqual([1])
+			expect(older.turns[0].partial).toBe(false)
+		})
+
+		it('finds a turn by message_id even when it is outside the window', async () => {
+			await bulk([
+				{ type: 'user', message: { content: 'a' }, maskin_message_id: 7 },
+				{ type: 'result', is_error: false, result: 'r7' },
+				{ type: 'user', message: { content: 'b' }, maskin_message_id: 8 },
+				...Array.from({ length: SESSION_ACTIVITY_SCAN_ROWS + 5 }, (_, i) => tool(i)),
+				{ type: 'result', is_error: false, result: 'r8' },
+			])
+			const body = sessionActivityResponseSchema.parse(await fetchActivity('?message_id=7'))
+			expect(body.turns).toHaveLength(1)
+			expect(body.turns[0]).toMatchObject({ message_id: 7, result: { text: 'r7' }, partial: false })
+		})
+
+		it('drops rows that predate tagging when no tagged envelope exists', async () => {
+			await bulk(Array.from({ length: SESSION_ACTIVITY_SCAN_ROWS + 5 }, (_, i) => tool(i)))
+			const body = sessionActivityResponseSchema.parse(await fetchActivity())
+			expect(body.turns).toEqual([])
+		})
 	})
 })

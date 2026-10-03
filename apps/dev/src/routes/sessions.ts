@@ -15,7 +15,7 @@ import {
 	sessionUsageQuerySchema,
 	sessionUsageResponseSchema,
 } from '@maskin/shared'
-import { and, asc, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -27,7 +27,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
-import { buildSessionActivity } from '../lib/session-activity'
+import { loadSessionActivity } from '../lib/session-activity-query'
 import { insertConversationMessage } from '../services/conversation-messages'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
 
@@ -777,7 +777,7 @@ const getSessionActivityRoute = createRoute({
 	path: '/{id}/activity',
 	tags: ['Sessions'],
 	summary: 'Get the agent activity trace (steps) per conversation message',
-	description: `Server-side projection of the raw stream-json session logs into compact per-turn steps. Scans at most ${SESSION_ACTIVITY_SCAN_ROWS} of the newest log rows (below before_log_id). Read-only.`,
+	description: `Server-side projection of the raw stream-json session logs into compact per-turn steps. Scans at most ${SESSION_ACTIVITY_SCAN_ROWS} of the newest log rows (below before_log_id); a turn straddling the window is completed from its tagged envelope and flagged partial, and message_id looks a turn up even outside the window. Read-only.`,
 	request: {
 		headers: workspaceIdHeader,
 		params: sessionParamsSchema,
@@ -804,30 +804,17 @@ app.openapi(getSessionActivityRoute, (async (c) => {
 	const session = await loadSessionWithAuth(db, id, workspaceId)
 	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
 
-	const conditions = [
-		eq(sessionLogs.sessionId, id),
-		inArray(sessionLogs.stream, ['stdout', 'stderr']),
-	]
-	if (query.before_log_id) conditions.push(lt(sessionLogs.id, query.before_log_id))
-
-	const rows = (
-		await db
-			.select()
-			.from(sessionLogs)
-			.where(and(...conditions))
-			.orderBy(desc(sessionLogs.id))
-			.limit(SESSION_ACTIVITY_SCAN_ROWS)
-	).reverse()
-
-	let turns = buildSessionActivity(rows)
-	if (query.message_id !== undefined) turns = turns.filter((t) => t.message_id === query.message_id)
-	turns = turns.slice(-query.limit_turns)
+	const { turns, oldestLogId, hasOlder } = await loadSessionActivity(db, id, {
+		limitTurns: query.limit_turns,
+		messageId: query.message_id,
+		beforeLogId: query.before_log_id,
+	})
 
 	return c.json({
 		session_id: id,
 		turns,
-		oldest_log_id: rows[0]?.id ?? null,
-		has_older: rows.length === SESSION_ACTIVITY_SCAN_ROWS,
+		oldest_log_id: oldestLogId,
+		has_older: hasOlder,
 	} satisfies z.infer<typeof sessionActivityResponseSchema>)
 }) as RouteHandler<typeof getSessionActivityRoute, Env>)
 

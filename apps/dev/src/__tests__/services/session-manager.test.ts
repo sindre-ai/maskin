@@ -2863,6 +2863,20 @@ describe('SessionManager', () => {
 			])
 		})
 
+		it('emits a turn-started event once the user turn is written', async () => {
+			const session = buildSession({ interactive: true, status: 'running' })
+			mockResults.insert = [{ id: 7, sessionId: session.id, stream: 'stdout', content: '{}' }]
+			const turns: unknown[] = []
+			manager.on('turn', (e) => turns.push(e))
+
+			await manager.writeInput(session.id, {
+				type: 'user',
+				message: { role: 'user', content: 'hello' },
+			})
+
+			expect(turns).toEqual([{ sessionId: session.id, phase: 'started' }])
+		})
+
 		// AC-T2: the persisted `session_logs` envelope tacks a
 		// `maskin_attachments` field onto the JSON we write to stdin so
 		// reload-from-history (via /logs replay) can render attached file

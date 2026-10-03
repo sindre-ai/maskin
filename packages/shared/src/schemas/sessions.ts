@@ -231,7 +231,11 @@ export const SESSION_ACTIVITY_SCAN_ROWS = 2000
 export const sessionActivityQuerySchema = z.object({
 	/** Newest N turns to return (a turn = one conversation message the agent answered). */
 	limit_turns: z.coerce.number().int().min(1).max(20).default(5),
-	/** Return only the turn triggered by this conversation message id, if it is in the scanned window. */
+	/**
+	 * Return only the turn triggered by this conversation message id. If the turn
+	 * is outside the newest-rows window, the server anchors a scan at that turn's
+	 * tagged user envelope instead, so any tagged turn can be looked up directly.
+	 */
 	message_id: z.coerce.number().int().positive().optional(),
 	/**
 	 * Exclusive upper bound on `session_logs.id`; pass a previous response's
@@ -240,6 +244,12 @@ export const sessionActivityQuerySchema = z.object({
 	before_log_id: z.coerce.number().int().positive().optional(),
 })
 
+/**
+ * Turns are delimited by user envelopes tagged with `maskin_message_id`.
+ * Log rows written before that tagging existed (and any rows ahead of the
+ * first tagged envelope) belong to no turn and are intentionally dropped,
+ * mirroring the web transcript's `unassigned` bucket which the chat never shows.
+ */
 export const sessionActivityStepSchema = z.object({
 	/** Stable across polls: `<logId>-<blockIndex>` (`<logId>-stderr` for stderr). */
 	id: z.string(),
@@ -268,6 +278,13 @@ export const sessionActivityTurnSchema = z.object({
 	steps: z.array(sessionActivityStepSchema).max(100),
 	/** True when more than 100 steps happened and the oldest were dropped. */
 	steps_truncated: z.boolean(),
+	/**
+	 * True when the scan window began in the middle of this turn: the turn's
+	 * tagged user envelope was recovered with one extra lookup, but the log
+	 * rows between that envelope and the window were not loaded, so its earliest
+	 * steps are missing. Only ever set on the oldest returned turn.
+	 */
+	partial: z.boolean(),
 })
 
 export const sessionActivityResponseSchema = z.object({

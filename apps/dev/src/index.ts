@@ -159,7 +159,9 @@ const apnsSender = new ApnsSender(db)
 const notificationPush = new NotificationPushFanout(db, notifyBridge, apnsSender)
 notificationPush.start()
 
-const liveActivityPush = new LiveActivityFanout(db, notifyBridge, apnsSender)
+const liveActivityPush = new LiveActivityFanout(db, notifyBridge, apnsSender, {
+	turns: sessionManager,
+})
 liveActivityPush.start()
 
 const gmailWatchRenewer = new GmailWatchRenewer(db)

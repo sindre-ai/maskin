@@ -4,9 +4,11 @@ import type { Database } from '@maskin/db'
 import { events, actors, deviceTokens, liveActivityTokens, sessions } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { and, eq } from 'drizzle-orm'
+import { vi } from 'vitest'
 import { validationFailureHook } from '../../lib/errors'
 import { type ApnsRequest, ApnsSender, type ApnsTransport } from '../../services/apns'
 import { LiveActivityFanout } from '../../services/live-activity-push'
+import type { SessionTurnEvent } from '../../services/session-manager'
 import {
 	insertActor,
 	insertConversation,
@@ -276,7 +278,7 @@ describe('LiveActivityFanout lifecycle (real Postgres, fake APNs transport)', ()
 			await insertSession(db, workspaceId, agent, human, {
 				conversationId,
 				status: 'running',
-				interactive: true,
+				interactive: false,
 				currentActivity: 'Reading the brief',
 				startedAt: new Date(),
 			})
@@ -305,7 +307,7 @@ describe('LiveActivityFanout lifecycle (real Postgres, fake APNs transport)', ()
 		return device
 	}
 
-	it('start -> update -> needsYou -> end drives the right pushes and clears update tokens', async () => {
+	it('session-level start -> update -> needsYou -> end drives the right pushes and clears update tokens', async () => {
 		const device = await tokens()
 
 		await fanout.handleEvent(sessionEvent('session_started'))
@@ -390,5 +392,156 @@ describe('LiveActivityFanout lifecycle (real Postgres, fake APNs transport)', ()
 		expect(
 			await db.select().from(liveActivityTokens).where(eq(liveActivityTokens.actorId, human)),
 		).toHaveLength(0)
+	})
+})
+
+describe('LiveActivityFanout interactive turn lifecycle (real Postgres, fake APNs transport)', () => {
+	let human: string
+	let agent: string
+	let workspaceId: string
+	let sessionId: string
+	let requests: ApnsRequest[]
+	let fanout: LiveActivityFanout
+	let turns: EventEmitter
+
+	const bodies = () => requests.map((r) => JSON.parse(r.body).aps)
+	const sessionEvent = (action: string) => ({
+		workspace_id: workspaceId,
+		actor_id: agent,
+		action,
+		entity_type: 'session',
+		entity_id: sessionId,
+		event_id: '1',
+	})
+	const turn = (e: SessionTurnEvent) => fanout.handleTurn(e)
+
+	beforeEach(async () => {
+		requests = []
+		human = (await insertActor(db, { type: 'human' }))?.id as string
+		agent = (await insertActor(db, { type: 'agent', name: 'Chief of Staff' }))?.id as string
+		workspaceId = (await insertWorkspace(db, human)).id
+		const conversationId = (await insertConversation(db, workspaceId, human)).id
+		sessionId = (
+			await insertSession(db, workspaceId, agent, human, {
+				conversationId,
+				status: 'running',
+				interactive: true,
+				currentActivity: 'Reading the brief',
+				startedAt: new Date('2026-01-01T00:00:00Z'),
+			})
+		).id
+		const sender = new ApnsSender(db, {
+			config: { keyId: 'K', teamId: 'T', privateKey: 'unused', bundleId: 'io.maskin.app' },
+			transport: {
+				send: async (req) => {
+					requests.push(req)
+					return { status: 200, body: '' }
+				},
+			},
+		})
+		;(sender as unknown as { providerToken: () => string }).providerToken = () => 'jwt'
+		turns = new EventEmitter()
+		fanout = new LiveActivityFanout(db, new EventEmitter() as unknown as PgNotifyBridge, sender, {
+			throttleMs: 0,
+			turns,
+		})
+		const device = await registerDevice(human)
+		const app = appAs(human)
+		await app.request(
+			jsonRequest('POST', '/api/live-activities/tokens', {
+				kind: 'push_to_start',
+				device_id: device.id,
+				token: hex(100),
+			}),
+		)
+	})
+
+	async function registerUpdateToken() {
+		const [row] = await db
+			.select()
+			.from(liveActivityTokens)
+			.where(eq(liveActivityTokens.actorId, human))
+		await appAs(human).request(
+			jsonRequest('POST', '/api/live-activities/tokens', {
+				kind: 'update',
+				device_id: row?.deviceId,
+				session_id: sessionId,
+				token: hex(120),
+			}),
+		)
+	}
+
+	it('starts at turn start and ends at turn finish, not at session start/stop', async () => {
+		// The session itself starting/resuming is not a turn: nothing is shown.
+		await fanout.handleEvent(sessionEvent('session_started'))
+		await fanout.handleEvent(sessionEvent('session_resumed'))
+		expect(requests).toHaveLength(0)
+
+		await turn({ sessionId, phase: 'started' })
+		expect(bodies()).toHaveLength(1)
+		expect(bodies()[0]).toMatchObject({ event: 'start', 'content-state': { status: 'running' } })
+		await registerUpdateToken()
+
+		requests.length = 0
+		await turn({ sessionId, phase: 'finished', outcome: 'done' })
+		expect(bodies()[0]).toMatchObject({ event: 'end', 'content-state': { status: 'done' } })
+	})
+
+	it('ends failed when the turn failed', async () => {
+		await turn({ sessionId, phase: 'started' })
+		await registerUpdateToken()
+		requests.length = 0
+		await turn({ sessionId, phase: 'finished', outcome: 'failed' })
+		expect(bodies()[0]).toMatchObject({ event: 'end', 'content-state': { status: 'failed' } })
+	})
+
+	it('ignores step updates while the chat is idle between turns, forwards them mid-turn', async () => {
+		await turn({ sessionId, phase: 'started' })
+		await registerUpdateToken()
+
+		requests.length = 0
+		await fanout.handleEvent(sessionEvent('session_updated'))
+		expect(bodies()).toHaveLength(1)
+		expect(bodies()[0]).toMatchObject({ event: 'update' })
+
+		await turn({ sessionId, phase: 'finished', outcome: 'done' })
+		requests.length = 0
+		await fanout.handleEvent(sessionEvent('session_updated'))
+		expect(requests).toHaveLength(0)
+	})
+
+	it('measures elapsed time from the turn start, not the session start', async () => {
+		await turn({ sessionId, phase: 'started' })
+		// startedAt is encoded as seconds since 2001; the 2026-01-01 session start would be ~7.6e8.
+		const startedAt = bodies()[0]['content-state'].startedAt as number
+		expect(startedAt).toBeGreaterThan(Date.parse('2026-01-02T00:00:00Z') / 1000 - 978_307_200)
+	})
+
+	it('keeps session_failed as a safety net that ends a live turn', async () => {
+		await turn({ sessionId, phase: 'started' })
+		await registerUpdateToken()
+		requests.length = 0
+		await fanout.handleEvent(sessionEvent('session_failed'))
+		expect(bodies()[0]).toMatchObject({ event: 'end', 'content-state': { status: 'failed' } })
+	})
+
+	it('reacts to the SessionManager-style turn emitter once started', async () => {
+		fanout.start()
+		turns.emit('turn', { sessionId, phase: 'started' } satisfies SessionTurnEvent)
+		await vi.waitFor(() => expect(requests).toHaveLength(1))
+		fanout.stop()
+	})
+
+	it('does no lookups for an update when the session has no registered tokens', async () => {
+		await db.delete(liveActivityTokens).where(eq(liveActivityTokens.actorId, human))
+		await turn({ sessionId, phase: 'started' })
+		expect(requests).toHaveLength(0)
+		const spy = vi.spyOn(db, 'select')
+		await fanout.handleEvent(sessionEvent('session_updated')) // finds nothing, remembers it
+		const afterFirst = spy.mock.calls.length
+		await fanout.handleEvent(sessionEvent('session_updated'))
+		await fanout.handleEvent(sessionEvent('session_updated'))
+		expect(spy.mock.calls.length).toBe(afterFirst)
+		spy.mockRestore()
 	})
 })

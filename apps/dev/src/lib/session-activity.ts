@@ -8,7 +8,7 @@ import type { SessionActivityStep, SessionActivityTurn } from '@maskin/shared'
  *
  * Pure: no DB access. Rows must be in ascending id order. Steps logged before
  * the first tagged turn boundary (sessions predating `maskin_message_id`
- * tagging) are dropped.
+ * tagging) are dropped on purpose — the web never shows them in a turn either.
  */
 
 export interface ActivityLogRow {
@@ -20,6 +20,11 @@ export interface ActivityLogRow {
 
 export const MAX_STEPS_PER_TURN = 100
 const MAX_LABEL = 120
+// Labels mirror the web transcript's describeEvent/segmentActivityByMessage
+// (apps/web/src/components/agents/session-log-transcript.tsx) so iOS and web
+// show the same words: text and error messages cut at 80, stderr at 100.
+const MAX_TEXT_LABEL = 80
+const MAX_STDERR_LABEL = 100
 const MAX_DETAIL = 300
 const MAX_RESULT_TEXT = 8000
 const REPLY_LABEL = 'Replied to the conversation.'
@@ -69,7 +74,7 @@ export function buildSessionActivity(rows: ActivityLogRow[]): SessionActivityTur
 			current?.steps.push({
 				id: `${row.id}-stderr`,
 				kind: 'error',
-				label: truncate(row.content, MAX_LABEL),
+				label: truncate(row.content, MAX_STDERR_LABEL),
 				started_at: iso(row.createdAt),
 				finished_at: iso(row.createdAt),
 				status: 'failed',
@@ -110,6 +115,7 @@ export function buildSessionActivity(rows: ActivityLogRow[]): SessionActivityTur
 							result: null,
 							steps: [],
 							steps_truncated: false,
+							partial: false,
 						},
 						steps: [],
 					}
@@ -170,7 +176,7 @@ export function buildSessionActivity(rows: ActivityLogRow[]): SessionActivityTur
 							status: 'completed',
 						})
 					} else if (block.type === 'text' && typeof block.text === 'string') {
-						const label = truncate(block.text, 80)
+						const label = truncate(block.text, MAX_TEXT_LABEL)
 						if (!label) return
 						// Wrap-up text right after the reply tool just restates it.
 						const prev = open.steps[open.steps.length - 1]
@@ -215,7 +221,7 @@ export function buildSessionActivity(rows: ActivityLogRow[]): SessionActivityTur
 				current?.steps.push({
 					id: `${row.id}-0`,
 					kind: 'error',
-					label: truncate(msg || 'Error', MAX_LABEL),
+					label: truncate(msg || 'Error', MAX_TEXT_LABEL),
 					started_at: at,
 					finished_at: at,
 					status: 'failed',

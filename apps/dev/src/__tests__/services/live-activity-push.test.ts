@@ -7,7 +7,7 @@ import {
 	buildLiveActivityPayload,
 	toSwiftReferenceSeconds,
 } from '../../services/apns'
-import { LiveActivityFanout } from '../../services/live-activity-push'
+import { LIVE_ACTIVITY_MAX_TRACKED, LiveActivityFanout } from '../../services/live-activity-push'
 import { createTestContext } from '../setup'
 
 const startedAt = new Date('2026-10-03T10:00:00Z')
@@ -270,5 +270,29 @@ describe('LiveActivityFanout throttling', () => {
 		await fanout.handleEvent(ev('session_started'))
 		await fanout.handleEvent(ev('session_resumed'))
 		expect(pushSpy.mock.calls.map((c) => c[1])).toEqual(['start', 'start'])
+	})
+
+	it('clears throttle state on end and caps it for sessions that never end', async () => {
+		const { fanout, ev } = setup()
+		const pending = (fanout as unknown as { pending: Map<string, unknown> }).pending
+		await fanout.handleEvent(ev('session_updated'))
+		expect(pending.size).toBe(1)
+		await fanout.handleEvent(ev('session_completed'))
+		expect(pending.size).toBe(0)
+
+		for (let i = 0; i < LIVE_ACTIVITY_MAX_TRACKED + 50; i++) {
+			await fanout.handleEvent({ ...ev('session_updated'), entity_id: `s-${i}` })
+		}
+		expect(pending.size).toBeLessThanOrEqual(LIVE_ACTIVITY_MAX_TRACKED)
+	})
+
+	it('maps a finished turn to an end and a started turn to a start', async () => {
+		const { fanout, pushSpy } = setup()
+		await fanout.handleTurn({ sessionId: 's1', phase: 'started' })
+		await fanout.handleTurn({ sessionId: 's1', phase: 'finished', outcome: 'failed' })
+		expect(pushSpy.mock.calls.map((c) => [c[1], c[2]?.endStatus])).toEqual([
+			['start', undefined],
+			['end', 'failed'],
+		])
 	})
 })

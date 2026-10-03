@@ -110,4 +110,19 @@ describe('buildSessionActivity', () => {
 		expect(turn?.steps_truncated).toBe(true)
 		expect(turn?.steps.at(-1)?.id).toBe(`${rows.at(-1)?.id}-0`)
 	})
+
+	it('uses the web transcript label lengths and starts turns unflagged as partial', () => {
+		const long = 'x'.repeat(200)
+		const [turn] = buildSessionActivity([
+			userTurn(1),
+			assistant({ type: 'text', text: long }),
+			row('stderr', long),
+			row('stdout', { type: 'error', message: long }),
+		])
+		const [text, stderr, error] = turn?.steps ?? []
+		expect(text?.label.length).toBe(80)
+		expect(stderr?.label.length).toBe(100)
+		expect(error?.label.length).toBe(80)
+		expect(turn?.partial).toBe(false)
+	})
 })
