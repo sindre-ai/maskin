@@ -50,7 +50,9 @@ function install() {
 	if (!/server-github/.test(entry)) return
 	if (!process.env.GITHUB_PERSONAL_ACCESS_TOKEN) return
 	if (!owner || !apiUrl || !apiKey || !workspaceId) {
-		log('disabled: GITHUB_MCP_OWNER / MASKIN_API_URL / MASKIN_API_KEY / MASKIN_WORKSPACE_ID not all set')
+		log(
+			'disabled: GITHUB_MCP_OWNER / MASKIN_API_URL / MASKIN_API_KEY / MASKIN_WORKSPACE_ID not all set',
+		)
 		return
 	}
 	if (typeof globalThis.fetch !== 'function') {
@@ -80,7 +82,10 @@ function install() {
 			headers: headers(),
 			signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
 		})
-		if (!res.ok) throw new Error(`HTTP ${res.status} from ${new URL(url).pathname.replace(/[0-9a-f-]{36}/g, ':id')}`)
+		if (!res.ok)
+			throw new Error(
+				`HTTP ${res.status} from ${new URL(url).pathname.replace(/[0-9a-f-]{36}/g, ':id')}`,
+			)
 		return res.json()
 	}
 
@@ -92,7 +97,7 @@ function install() {
 				i &&
 				i.provider === 'github' &&
 				i.status === 'active' &&
-				String((i.config && i.config.owner_login) || '').toLowerCase() === owner,
+				String(i.config?.owner_login || '').toLowerCase() === owner,
 		)
 		if (!match) throw new Error(`no active github integration with owner_login=${owner}`)
 		integrationId = match.id
@@ -105,7 +110,8 @@ function install() {
 		const repo = process.env.GITHUB_REPO || ''
 		if (repo.split('/')[0].toLowerCase() === owner) query = `?repo=${encodeURIComponent(repo)}`
 		const body = await getJson(`${apiUrl}/api/integrations/${id}/github-token${query}`)
-		if (!body || typeof body.token !== 'string' || !body.token) throw new Error('mint response had no token')
+		if (!body || typeof body.token !== 'string' || !body.token)
+			throw new Error('mint response had no token')
 		return body.token
 	}
 
@@ -122,7 +128,7 @@ function install() {
 			})
 			.catch((err) => {
 				lastFailureAt = Date.now()
-				log(`refresh failed (${reason}, owner=${owner}): ${err && err.message ? err.message : err}`)
+				log(`refresh failed (${reason}, owner=${owner}): ${err?.message ? err.message : err}`)
 				return false
 			})
 			.finally(() => {
@@ -133,7 +139,7 @@ function install() {
 
 	function isGithubApi(input) {
 		try {
-			const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input && input.url
+			const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url
 			return new URL(url).hostname === API_HOST
 		} catch {
 			return false
@@ -149,10 +155,13 @@ function install() {
 			copy.set('Authorization', `Bearer ${token}`)
 			next.headers = copy
 		} else if (Array.isArray(h)) {
-			next.headers = h.filter(([k]) => String(k).toLowerCase() !== 'authorization').concat([['Authorization', `Bearer ${token}`]])
+			next.headers = h
+				.filter(([k]) => String(k).toLowerCase() !== 'authorization')
+				.concat([['Authorization', `Bearer ${token}`]])
 		} else {
 			const copy = {}
-			for (const [k, v] of Object.entries(h || {})) if (k.toLowerCase() !== 'authorization') copy[k] = v
+			for (const [k, v] of Object.entries(h || {}))
+				if (k.toLowerCase() !== 'authorization') copy[k] = v
 			copy.Authorization = `Bearer ${token}`
 			next.headers = copy
 		}
@@ -162,7 +171,11 @@ function install() {
 	globalThis.fetch = async function githubAwareFetch(input, init) {
 		// Requests carrying a Request object (no init) are not what server-github
 		// sends; leave anything unexpected untouched.
-		if (!isGithubApi(input) || typeof input !== 'string' || !process.env.GITHUB_PERSONAL_ACCESS_TOKEN) {
+		if (
+			!isGithubApi(input) ||
+			typeof input !== 'string' ||
+			!process.env.GITHUB_PERSONAL_ACCESS_TOKEN
+		) {
 			return realFetch(input, init)
 		}
 		if (Date.now() - mintedAt >= refreshAfterMs) await refresh('age')
@@ -170,7 +183,7 @@ function install() {
 		if (res.status !== 401) return res
 		// Token rejected (expired early, rotated, ...): one mint + one retry. Only
 		// string bodies are replayable; server-github always sends JSON strings.
-		const body = init && init.body
+		const body = init?.body
 		if (body !== undefined && typeof body !== 'string') return res
 		if (!(await refresh('401'))) return res
 		return realFetch(input, withAuth(init, process.env.GITHUB_PERSONAL_ACCESS_TOKEN))
@@ -182,5 +195,5 @@ function install() {
 try {
 	install()
 } catch (err) {
-	log(`disabled: ${err && err.message ? err.message : err}`)
+	log(`disabled: ${err?.message ? err.message : err}`)
 }
