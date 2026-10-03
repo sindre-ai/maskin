@@ -4,6 +4,7 @@ import { type SendVoiceFollowupEmailParams, sendVoiceFollowupEmail } from '@mask
 import { and, eq, sql } from 'drizzle-orm'
 import { recordEvent } from '../../events/record-event'
 import { logger } from '../../logger'
+import { capturePostCallEmailSent } from './posthog-events'
 import { resolveWorkspaceResend } from './resolve-workspace-resend'
 
 export const VOICE_CONSENT_BASIS = 'gdpr_6_1_f_legitimate_interest_b2b_voice'
@@ -106,6 +107,8 @@ export async function sendFollowup(db: Database, params: SendFollowupParams): Pr
 		await releaseClaim(db, workspaceId, email.contact.id, callId)
 		return
 	}
+	// Only here: every skip above returns first, so the event means an email actually went out.
+	capturePostCallEmailSent(email.contact.id)
 
 	const patch = {
 		consent_basis: VOICE_CONSENT_BASIS,
