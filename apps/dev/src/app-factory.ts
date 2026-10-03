@@ -44,6 +44,7 @@ import integrationsGoogleMeetMcpRoutes from './routes/integrations-google-meet-m
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
+import integrationsTelnyxWebhookRoutes from './routes/integrations-telnyx-webhook'
 import loopsRoutes from './routes/loops'
 import marketplaceLoopsRoutes from './routes/marketplace-loops'
 import mcpRoutes from './routes/mcp'
@@ -293,6 +294,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		// `unipile-signature` HMAC header, verified inside the handler
 		// against `UNIPILE_WEBHOOK_SECRET`.
 		if (path === '/api/integrations/linkedin-unipile/webhook' && method === 'POST') return next()
+		// Telnyx call-event webhook: posted from outside our network, so it cannot carry a
+		// Maskin API key. Authenticated by the Ed25519 signature check inside the handler.
+		if (path === '/api/integrations/telnyx/webhook' && method === 'POST') return next()
 		// The linkedin-unipile MCP endpoints are POST-only and answer every GET with
 		// a bare 405 (routes/integrations-linkedin-unipile-mcp.ts). MCP clients
 		// probe them with GET to open a server-to-client stream and retry, ~250k
@@ -385,6 +389,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
 	// mount the /mcp subtree BEFORE the generic /api/integrations catch-all.
 	app.route('/api/integrations/google-meet/mcp', integrationsGoogleMeetMcpRoutes)
+	// Telnyx webhook: more specific than the generic /api/integrations catch-all, so mounted first.
+	app.route('/api/integrations/telnyx/webhook', integrationsTelnyxWebhookRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations

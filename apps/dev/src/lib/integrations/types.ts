@@ -155,6 +155,8 @@ export interface ProviderConfig {
 	displayName: string
 	description?: string
 	logoUrl?: string
+	/** Coarse grouping for discovery, e.g. 'voice'. Informational; nothing branches on it. */
+	category?: string
 	auth: AuthConfig
 	webhook?: WebhookConfig | { type: 'custom' }
 	events?: {

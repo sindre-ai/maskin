@@ -188,6 +188,12 @@ export const objects = pgTable(
 		index('objects_active_session_idx')
 			.on(t.activeSessionId)
 			.where(sql`${t.activeSessionId} IS NOT NULL`),
+		// Voice-outreach dial queue (bet/5b8e-voice-outreach): the dialer tick reads
+		// contacts that are voice_queued and due, ordered by next_dial_at. Contacts
+		// are objects rows with type = 'contact'.
+		index('objects_voice_queue_next_dial_idx')
+			.on(t.workspaceId, sql`((${t.metadata}->>'next_dial_at')::timestamptz)`)
+			.where(sql`${t.type} = 'contact' AND ${t.status} = 'voice_queued'`),
 	],
 )
 
@@ -1101,6 +1107,16 @@ export const webhookDeliveries = pgTable(
 		index('webhook_deliveries_received_at_idx').on(t.receivedAt),
 	],
 )
+
+// ── Telnyx webhook idempotency ──────────────────────────────────────────────
+// One row per Telnyx event_id the webhook has claimed. A duplicate delivery
+// hits the primary key and returns 200 with no side effects
+// (routes/integrations-telnyx-webhook.ts). Voice-outreach bet.
+
+export const telnyxWebhookEvents = pgTable('telnyx_webhook_events', {
+	eventId: text('event_id').primaryKey(),
+	receivedAt: timestamp('received_at', { withTimezone: true }).defaultNow().notNull(),
+})
 
 // ── Workspace Overage Usage (retired) ───────────────────────────────────────
 // Idempotency ledger for the old Stripe-metered overage billing mechanism —
