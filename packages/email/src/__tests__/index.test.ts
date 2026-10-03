@@ -6,7 +6,13 @@ vi.mock('resend', () => ({
 	Resend: vi.fn().mockImplementation(() => ({ emails: { send } })),
 }))
 
-import { InviteEmailSendError, sendInviteEmail } from '../index'
+import {
+	InviteEmailSendError,
+	type Resend,
+	VoiceFollowupEmailSendError,
+	sendInviteEmail,
+	sendVoiceFollowupEmail,
+} from '../index'
 
 const params = {
 	to: 'invitee@example.com',
@@ -57,5 +63,63 @@ describe('sendInviteEmail', () => {
 		await expect(sendInviteEmail(params)).resolves.toBeUndefined()
 		expect(send).not.toHaveBeenCalled()
 		log.mockRestore()
+	})
+})
+
+describe('sendVoiceFollowupEmail', () => {
+	const voiceSend = vi.fn()
+	const resend = { emails: { send: voiceSend } } as unknown as Resend
+	const base = {
+		resend,
+		from: 'noreply@agent.a.example',
+		to: 'prospect@example.com',
+		prospectName: 'Pia <b>',
+		callSummary: 'We covered pricing & rollout.',
+		contact: { metadata: {} },
+	}
+
+	beforeEach(() => {
+		voiceSend.mockReset()
+	})
+
+	it('sends with the handed-in client and sender, and escapes html', async () => {
+		voiceSend.mockResolvedValue({ data: { id: 'email-2' }, error: null })
+		await expect(sendVoiceFollowupEmail(base)).resolves.toEqual({ sent: true })
+		expect(voiceSend).toHaveBeenCalledOnce()
+		const arg = voiceSend.mock.calls[0][0]
+		expect(arg.from).toBe('noreply@agent.a.example')
+		expect(arg.to).toBe('prospect@example.com')
+		expect(arg.html).toContain('Pia &lt;b&gt;')
+		expect(arg.html).toContain('pricing &amp; rollout')
+		expect(arg.text).toContain('We covered pricing & rollout.')
+	})
+
+	it('includes the calendar link only when it is https', async () => {
+		voiceSend.mockResolvedValue({ data: { id: 'email-3' }, error: null })
+		await sendVoiceFollowupEmail({ ...base, calendarLink: 'https://cal.example/pia' })
+		expect(voiceSend.mock.calls[0][0].text).toContain('https://cal.example/pia')
+		await sendVoiceFollowupEmail({ ...base, calendarLink: 'javascript:alert(1)' })
+		expect(voiceSend.mock.calls[1][0].text).not.toContain('javascript:')
+		expect(voiceSend.mock.calls[1][0].html).not.toContain('javascript:')
+	})
+
+	it('skips the send when compliance_flag is disclosure_missing', async () => {
+		const result = await sendVoiceFollowupEmail({
+			...base,
+			contact: { metadata: { compliance_flag: 'disclosure_missing' } },
+		})
+		expect(result).toEqual({ sent: false, reason: 'disclosure_missing' })
+		expect(voiceSend).not.toHaveBeenCalled()
+	})
+
+	it('rejects with VoiceFollowupEmailSendError when Resend resolves with an error', async () => {
+		voiceSend.mockResolvedValue({
+			data: null,
+			error: { name: 'validation_error', message: 'domain not verified' },
+		})
+		const err = await sendVoiceFollowupEmail(base).catch((e) => e)
+		expect(err).toBeInstanceOf(VoiceFollowupEmailSendError)
+		expect(err.providerErrorName).toBe('validation_error')
+		expect(err.message).not.toContain('domain not verified')
 	})
 })
