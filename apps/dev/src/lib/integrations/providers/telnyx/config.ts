@@ -44,6 +44,8 @@ export interface TelnyxRuntimeConfig {
 	publicKey: string | null
 	appId: string | null
 	assistantId: string | null
+	/** Telnyx REST origin. Overridable so E2E can point the client at a stub. */
+	apiBaseUrl: string
 	callRateLimitPerMinute: number
 	callDailyCap: number
 }
@@ -60,6 +62,7 @@ export function readTelnyxRuntimeConfig(env: NodeJS.ProcessEnv = process.env): T
 		publicKey: str(env.TELNYX_PUBLIC_KEY),
 		appId: str(env.TELNYX_APP_ID),
 		assistantId: str(env.TELNYX_ASSISTANT_ID),
+		apiBaseUrl: str(env.TELNYX_API_BASE_URL) ?? 'https://api.telnyx.com',
 		callRateLimitPerMinute: positiveInt(
 			env.CALL_RATE_LIMIT_PER_MINUTE,
 			DEFAULT_CALL_RATE_LIMIT_PER_MINUTE,

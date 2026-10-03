@@ -69,3 +69,11 @@ export async function postTelnyxWebhook(
 	const json = (await res.json().catch(() => null)) as Record<string, unknown> | null
 	return { status: res.status, json }
 }
+
+/**
+ * Port of the stub Telnyx REST server the effects spec runs. playwright.config.ts
+ * points the dev webServer's TELNYX_API_BASE_URL at it, so the reducer's SMS and
+ * forced-hangup calls land somewhere a spec can read them.
+ */
+export const E2E_TELNYX_STUB_PORT = 4599
+export const E2E_TELNYX_STUB_URL = `http://127.0.0.1:${E2E_TELNYX_STUB_PORT}`

@@ -46,10 +46,11 @@ export async function recordDeadLetter(
 
 export function createDefaultEffectRunner(db: Database): EffectRunner {
 	function client(ctx: EffectContext) {
-		const { apiKey } = readTelnyxRuntimeConfig()
+		const { apiKey, apiBaseUrl } = readTelnyxRuntimeConfig()
 		if (!apiKey) throw new Error('TELNYX_API_KEY is not configured')
 		return createTelnyxClient({
 			apiKey,
+			baseUrl: apiBaseUrl,
 			onDeadLetter: (letter) => recordDeadLetter(db, ctx, letter),
 		})
 	}
