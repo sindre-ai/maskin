@@ -114,4 +114,46 @@ describe('post-call follow-up email hook', () => {
 		expect(fetchMock).not.toHaveBeenCalled()
 		expect((await metadataOf(s.contactId)).consent_call_id).toBeUndefined()
 	})
+
+	describe('Meet link', () => {
+		const asked = [{ tool_name: FOLLOWUP_REQUEST_TOOL }]
+		const link = 'https://meet.google.com/abc-defg-hij'
+		const sentText = () => JSON.parse(fetchMock.mock.calls[0][1].body as string).text as string
+
+		it('includes the link when voice_meeting is from this call and meet_link is set', async () => {
+			const s = await setup({
+				email: 'pia@prospect.example',
+				voice_tool_trace: asked,
+				voice_meeting: { call_id: 'call-hook-1', meet_link: link },
+			})
+			await runPostCallHooks(hangup(s))
+			expect(sentText()).toContain(link)
+		})
+
+		it('passes no link when voice_meeting names an earlier call', async () => {
+			const s = await setup({
+				email: 'pia@prospect.example',
+				voice_tool_trace: asked,
+				voice_meeting: { call_id: 'call-earlier', meet_link: link },
+			})
+			await runPostCallHooks(hangup(s))
+			expect(fetchMock).toHaveBeenCalledTimes(1)
+			expect(sentText()).not.toContain(link)
+		})
+
+		it('passes no link when meet_link is null, or when there is no voice_meeting', async () => {
+			const nullLink = await setup({
+				email: 'pia@prospect.example',
+				voice_tool_trace: asked,
+				voice_meeting: { call_id: 'call-hook-1', meet_link: null },
+			})
+			await runPostCallHooks(hangup(nullLink))
+			const none = await setup({ email: 'pia@prospect.example', voice_tool_trace: asked })
+			await runPostCallHooks(hangup(none))
+			expect(fetchMock).toHaveBeenCalledTimes(2)
+			for (const [, init] of fetchMock.mock.calls) {
+				expect(JSON.parse(init.body as string).text).not.toContain('https://')
+			}
+		})
+	})
 })

@@ -21,6 +21,17 @@ function str(v: unknown): string | null {
 	return typeof v === 'string' && v.trim() !== '' ? v.trim() : null
 }
 
+// The Meet link goes out only when the booking was made on the call being emailed:
+// a voice_meeting left by an earlier call must never reach this email. The router
+// task writes voice_meeting; this hook only reads it.
+function meetLinkFor(metadata: Record<string, unknown>, callId: string): string | undefined {
+	const meeting = metadata.voice_meeting as
+		| { call_id?: unknown; meet_link?: unknown }
+		| null
+		| undefined
+	return meeting?.call_id === callId ? (str(meeting.meet_link) ?? undefined) : undefined
+}
+
 async function runFollowupEmail(ctx: PostCallContext): Promise<void> {
 	const [row] = await ctx.db
 		.select({
@@ -73,6 +84,7 @@ async function runFollowupEmail(ctx: PostCallContext): Promise<void> {
 		to,
 		prospectName,
 		callSummary: callSummaryFor(ctx.status),
+		calendarLink: meetLinkFor(metadata, ctx.callId),
 	})
 }
 
