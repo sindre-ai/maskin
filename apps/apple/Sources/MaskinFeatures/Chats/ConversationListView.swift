@@ -65,7 +65,7 @@ struct ConversationListView: View {
 		.listStyle(.plain)
 		.overlay { overlay(isEmpty: groups.isEmpty) }
 		.refreshable { await store.refresh() }
-		.searchable(text: $search, prompt: "Search chats")
+		.chatSearch(store: store, text: $search)
 		.toolbar {
 			ToolbarItem(placement: .automatic) {
 				Button(action: onNewChat) { Label("New chat", systemImage: "square.and.pencil") }

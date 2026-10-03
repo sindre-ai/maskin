@@ -3,11 +3,10 @@ import MaskinDesign
 import SwiftUI
 
 extension View {
-	/// Puts the screen's title at the top left, on the same line as the screen's own buttons.
+	/// Gives the screen its large, collapsing title.
 	/// Where search isn't a tab (below iOS 26) it also adds a search button. Account, workspace,
 	/// settings and sign-out live on the More tab, not here. Apply to a screen's root content,
-	/// inside its `NavigationStack`, and don't also set `.navigationTitle` on it: `title`
-	/// replaces it on iOS.
+	/// inside its `NavigationStack`, and don't also set `.navigationTitle` on it.
 	public func shellToolbar(environment: AppEnvironment, title: String? = nil) -> some View {
 		modifier(ShellToolbarModifier(title: title))
 	}
@@ -35,31 +34,17 @@ private struct ShellToolbarModifier: ViewModifier {
 }
 
 extension View {
-	/// The screen title as a leading toolbar item, so it shares a line with the screen's own
-	/// buttons instead of taking a navigation bar of its own. macOS keeps the system title.
+	/// The screen title as the system's large title: it sits above the content and collapses into
+	/// the bar as the person scrolls (Apple's pattern for a tab's root screen). macOS keeps the
+	/// system title.
 	fileprivate func shellTitle(_ title: String?) -> some View {
 		#if os(iOS)
 			return self
-				.navigationBarTitleDisplayMode(.inline)
-				.toolbarBackground(.hidden, for: .navigationBar)
-				.shellEdgeEffectHidden()
-				.toolbar {
-					if let title {
-						ToolbarItem(placement: .shellLeading) { ShellTitleText(text: title) }
-							.hidingSharedBackground()
-					}
-				}
+				.navigationTitle(title ?? "")
+				.navigationBarTitleDisplayMode(title == nil ? .inline : .large)
 		#else
 			return navigationTitle(title ?? "")
 		#endif
-	}
-
-	/// iOS 26 blurs content under the bar with a scroll edge effect; the shell's bar is bare.
-	fileprivate func shellEdgeEffectHidden() -> some View {
-		if #available(iOS 26, *) {
-			return AnyView(scrollEdgeEffectHidden(true, for: .top))
-		}
-		return AnyView(self)
 	}
 
 	/// iOS 26: search collapses to a toolbar icon that expands into the field when tapped.

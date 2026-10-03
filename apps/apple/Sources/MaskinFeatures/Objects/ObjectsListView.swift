@@ -11,8 +11,8 @@ struct ObjectsListView: View {
 	/// Set on iPhone, where a row pushes its detail with a zoom.
 	var zoomNamespace: Namespace.ID?
 
-	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var search = ""
+	@State private var searchPresented = false
 	@State private var pendingDelete: WorkObject?
 	@State private var statusTarget: WorkObject?
 
@@ -25,23 +25,14 @@ struct ObjectsListView: View {
 			content
 		}
 		.background(MaskinSurface.grouped)
-		.searchable(text: $search, prompt: "Search objects")
+		.searchable(text: $search, isPresented: $searchPresented, prompt: "Search objects")
 		.searchMinimized()
 		.task(id: search) {
 			if !search.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
 			if !Task.isCancelled { await store.setSearch(search) }
 		}
 		.toolbar {
-			ToolbarItemGroup(placement: .primaryAction) {
-				if let runtime {
-					Button {
-						runtime.showFiles = true
-					} label: {
-						Label("Files", systemImage: "doc.text")
-					}
-				}
-				filterMenu
-			}
+			ToolbarItem(placement: .primaryAction) { filterMenu }
 		}
 		.confirmationDialog(
 			"Change status", isPresented: Binding(
@@ -140,6 +131,7 @@ struct ObjectsListView: View {
 	@ViewBuilder private var content: some View {
 		if store.objects.isEmpty || (store.visibleObjects.isEmpty && !store.hasMore) {
 			emptyContent
+				.id("empty")
 		} else {
 			list
 		}

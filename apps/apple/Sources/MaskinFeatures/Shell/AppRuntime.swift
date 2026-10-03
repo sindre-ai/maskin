@@ -30,6 +30,7 @@ public final class AppRuntime {
 		case file(String)
 		case search
 		case files
+		case agents
 		case settings
 		case notifications
 
@@ -40,6 +41,7 @@ public final class AppRuntime {
 			case .file(let id): "file:\(id)"
 			case .search: "search"
 			case .files: "files"
+			case .agents: "agents"
 			case .settings: "settings"
 			case .notifications: "notifications"
 			}
@@ -78,6 +80,10 @@ public final class AppRuntime {
 		get { presentation == .notifications }
 		set { presentation = newValue ? .notifications : clearing(.notifications) }
 	}
+	public var showAgents: Bool {
+		get { presentation == .agents }
+		set { presentation = newValue ? .agents : clearing(.agents) }
+	}
 	public var showFiles: Bool {
 		get { presentation == .files }
 		set { presentation = newValue ? .files : clearing(.files) }
@@ -87,13 +93,13 @@ public final class AppRuntime {
 		set { presentation = newValue ? .search : clearing(.search) }
 	}
 
-	private enum Kind { case object, agent, file, files, settings, notifications, search }
+	private enum Kind { case object, agent, file, files, agents, settings, notifications, search }
 
 	/// Closing one kind of sheet must not close a DIFFERENT one that replaced it meanwhile.
 	private func clearing(_ kind: Kind) -> Presentation? {
 		switch (kind, presentation) {
 		case (.object, .object), (.agent, .agent), (.file, .file), (.settings, .settings),
-			(.notifications, .notifications), (.search, .search), (.files, .files):
+			(.notifications, .notifications), (.search, .search), (.files, .files), (.agents, .agents):
 			return nil
 		default:
 			return presentation

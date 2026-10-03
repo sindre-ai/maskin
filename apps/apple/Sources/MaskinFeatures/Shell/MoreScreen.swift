@@ -8,7 +8,9 @@ struct MoreScreen: View {
 	let environment: AppEnvironment
 	@Bindable var runtime: AppRuntime
 	@State private var showWorkspaces = false
+	@State private var showMarketplace = false
 	@State private var confirmSignOut = false
+	@Environment(\.horizontalSizeClass) private var sizeClass
 
 	var body: some View {
 		NavigationStack {
@@ -23,6 +25,18 @@ struct MoreScreen: View {
 						}
 						.accessibilityElement(children: .combine)
 						.listRowSeparator(.hidden)
+					}
+				}
+				Section {
+					row("Notifications", "bell", badge: runtime.notifications.unreadCount) {
+						runtime.showNotifications = true
+					}
+					if sizeClass == .compact {
+						row("Agents", "person.2") { runtime.showAgents = true }
+					}
+					row("Files", "doc.text") { runtime.showFiles = true }
+					if environment.workspaceId != nil {
+						row("Marketplace", "square.grid.2x2") { showMarketplace = true }
 					}
 				}
 				Section {
@@ -64,10 +78,35 @@ struct MoreScreen: View {
 			} message: {
 				Text("Anything still waiting to send will be discarded.")
 			}
+			.sheet(isPresented: $showMarketplace) {
+				if let workspaceID = environment.workspaceId {
+					MarketplaceSheet(
+						environment: environment, workspaceID: workspaceID,
+						onOpenLoop: { _ in
+							showMarketplace = false
+							runtime.selectedTab = .loops
+						})
+				}
+			}
 			.sheet(isPresented: $showWorkspaces) {
 				WorkspaceSwitcher(environment: environment)
 					.presentationDetents([.medium, .large])
 			}
 		}
+	}
+
+	private func row(
+		_ title: String, _ symbol: String, badge: Int = 0, action: @escaping () -> Void
+	) -> some View {
+		Button(action: action) {
+			LabeledContent {
+				if badge > 0 {
+					Text("\(badge)").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+				}
+			} label: {
+				Label(title, systemImage: symbol)
+			}
+		}
+		.listRowSeparator(.hidden)
 	}
 }

@@ -56,10 +56,13 @@ public struct MainShell: View {
 private struct AdaptiveTabs: View {
 	let environment: AppEnvironment
 	@Bindable var runtime: AppRuntime
+	@Environment(\.horizontalSizeClass) private var sizeClass
+	/// iPhone's tab bar holds five; Agents then lives in More rather than behind a system "More".
+	private var isCompact: Bool { sizeClass == .compact }
 
 	var body: some View {
 		TabView(selection: $runtime.selectedTab) {
-			ForEach(ShellTab.allCases.filter { $0 != .search }) { tab in
+			ForEach(ShellTab.allCases.filter { $0 != .search && ($0 != .agents || !isCompact) }) { tab in
 				Tab(tab.title, systemImage: tab.systemImage, value: tab) {
 					ShellTabContent(tab: tab, environment: environment, runtime: runtime)
 				}
@@ -95,6 +98,8 @@ private struct PresentationContent: View {
 			DetailSheet { SearchScreen(environment: environment) { runtime.openSearchResult($0) } }
 		case .files:
 			FilesListScreen(environment: environment, onDone: { runtime.showFiles = false })
+		case .agents:
+			AgentsScreen(environment: environment)
 		case .settings:
 			SettingsScreen(environment: environment)
 				.environment(runtime)

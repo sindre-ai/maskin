@@ -112,47 +112,24 @@ private struct LoopsContainer: View {
 					onNew: { showNewTrigger = true })
 			}
 		}
+		.safeAreaInset(edge: .top, spacing: 0) {
+			Picker("Show", selection: $mode) {
+				ForEach(AutomationMode.allCases) { Text($0.rawValue).tag($0) }
+			}
+			.pickerStyle(.segmented)
+			.padding(.horizontal, MaskinSpace.s9)
+			.padding(.vertical, MaskinSpace.s4)
+		}
 		.searchable(text: $search, prompt: mode == .loops ? "Search loops" : "Search triggers")
 		.searchMinimized()
 		.toolbar {
-			// The title is the loops/triggers switch: tap it to flip between the two lists.
-			ToolbarItem(placement: .shellLeading) {
-				Menu {
-					Picker("Show", selection: $mode) {
-						ForEach(AutomationMode.allCases) { Text($0.rawValue).tag($0) }
-					}
-				} label: {
-					HStack(spacing: MaskinSpace.s2) {
-						ShellTitleText(text: mode.rawValue)
-						Image(systemName: "chevron.down")
-							.font(.caption.weight(.semibold))
-							.foregroundStyle(MaskinColor.ink4)
-					}
-				}
-				.accessibilityLabel("Showing \(mode.rawValue). Switch between loops and triggers")
-			}
-			.hidingSharedBackground()
-			if mode == .loops {
-				ToolbarItem(placement: .automatic) {
-					Menu {
-						Button { buildLoopInChat() } label: {
-							Label("Build a loop in chat", systemImage: "bubble.left")
-						}
-						Button { showMarketplace = true } label: {
-							Label("Browse marketplace", systemImage: "square.grid.2x2")
-						}
-					} label: {
-						Label("Add loop", systemImage: "plus")
-					}
-				}
-			}
 			if mode == .triggers {
 				ToolbarItem(placement: .automatic) {
 					Button { showNewTrigger = true } label: { Label("New schedule", systemImage: "plus") }
 				}
 			}
 		}
-		.shellToolbar(environment: environment)
+		.shellToolbar(environment: environment, title: mode.rawValue)
 	}
 
 	@ViewBuilder
