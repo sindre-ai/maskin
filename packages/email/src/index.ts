@@ -161,7 +161,7 @@ const FOLLOWUP_COPY: Record<VoiceFollowupLanguage, FollowupCopy> = {
 		greeting: (name) => `Hi ${name},`,
 		intro:
 			'Thanks for taking the call. As you asked, here is a short recap of what we talked about:',
-		linkLead: 'You can pick a time that suits you here:',
+		linkLead: 'Here is the link to your meeting:',
 		optOut: (address) =>
 			`This is the only email we will send you about this call. If you do not want further email from Maskin, reply to this message or write to ${address} and we will stop.`,
 		signature: '— Maskin',
@@ -170,7 +170,7 @@ const FOLLOWUP_COPY: Record<VoiceFollowupLanguage, FollowupCopy> = {
 		subject: 'Opfølgning på vores samtale',
 		greeting: (name) => `Hej ${name},`,
 		intro: 'Tak for samtalen. Som du bad om, kommer her et kort resumé af, hvad vi talte om:',
-		linkLead: 'Her kan du vælge et tidspunkt, der passer dig:',
+		linkLead: 'Her er linket til dit møde:',
 		optOut: (address) =>
 			`Dette er den eneste e-mail, vi sender dig om samtalen. Hvis du ikke ønsker flere e-mails fra Maskin, så svar på denne mail eller skriv til ${address}, så stopper vi.`,
 		signature: '— Maskin',

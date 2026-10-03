@@ -143,7 +143,7 @@ describe('sendVoiceFollowupEmail', () => {
 		voiceSend.mockResolvedValue({ data: { id: 'email-6' }, error: null })
 		await sendVoiceFollowupEmail({ ...base, calendarLink: 'https://cal.example/pia' })
 		const arg = voiceSend.mock.calls[0][0]
-		expect(arg.text).toContain('Her kan du vælge et tidspunkt, der passer dig:')
+		expect(arg.text).toContain('Her er linket til dit møde:')
 		expect(arg.text).toContain('https://cal.example/pia')
 	})
 
