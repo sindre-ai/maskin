@@ -95,6 +95,8 @@ private struct PresentationContent: View {
 			DetailSheet { FileScreen(environment: environment, fileId: id) }
 		case .search:
 			DetailSheet { SearchScreen(environment: environment) { runtime.openSearchResult($0) } }
+		case .files:
+			FilesListScreen(environment: environment, onDone: { runtime.showFiles = false })
 		case .settings:
 			SettingsScreen(environment: environment)
 				.environment(runtime)
