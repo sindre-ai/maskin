@@ -346,3 +346,36 @@ export interface ResolveInstallationIdContext {
 	payload: unknown
 	headers: Record<string, string>
 }
+
+// ── Keychain: credentials returned by getCredential ────────────────────────
+
+export interface HeaderMintContext {
+	/** URL being called; an adapter may scope the headers it mints to it. */
+	outboundTarget: string
+	/** For adapter-side audit. */
+	requestId: string
+	/** An adapter may issue shorter-lived tokens. */
+	ttlHint?: number
+}
+
+/**
+ * Slot for Layer 1.6 external secret managers (1Password, Vault, AWS Secrets
+ * Manager). Nothing implements it yet. An adapter is selected per credential by
+ * integrations.metadata.adapterKind, so adding one changes no caller.
+ */
+export interface HeaderMintAdapter {
+	readonly kind: `external:${string}`
+	mint(integrationId: string, ctx: HeaderMintContext): Promise<Record<string, string>>
+}
+
+export interface DecryptedCredential {
+	id: string
+	workspaceId: string
+	provider: string
+	providerMode: 'registered' | 'byo_apikey' | 'byo_oauth'
+	source: 'admin_ui' | 'chat_capture' | 'oauth_callback' | 'registry_install'
+	/** The decrypted stored value. Env injection reads this; HTTP callers use getHeaders. */
+	value: string
+	credentialSource: 'vault' | `external:${string}`
+	getHeaders(ctx: HeaderMintContext): Promise<Record<string, string>>
+}
