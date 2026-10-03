@@ -58,8 +58,8 @@ Never send or offer a text message.`
 
 export interface AssistantPayloadInput {
 	locale: DisclosureLocale
-	/** https://<host>/api/integrations/telnyx/webhook */
-	toolWebhookUrl: string
+	/** https://<host>/api/integrations/telnyx/tools: each tool posts to <this>/<tool name>. */
+	toolsBaseUrl: string
 	/** Telnyx shared tool ids attached alongside the five (the knowledge RetrievalTool). */
 	toolIds?: readonly string[]
 }
@@ -83,7 +83,7 @@ export function buildAssistantPayload(input: AssistantPayloadInput): Record<stri
 			webhook: {
 				name: tool.name,
 				description: tool.description,
-				url: input.toolWebhookUrl,
+				url: `${input.toolsBaseUrl}/${tool.name}`,
 				method: 'POST',
 				body_parameters: tool.parameters,
 				// Supplied by the assistant configuration, never by the model.
@@ -152,7 +152,7 @@ export function currentScriptVersion(env: NodeJS.ProcessEnv = process.env): stri
 	return assistantContentHash(
 		buildAssistantPayload({
 			locale: readDisclosureLocale(env),
-			toolWebhookUrl: `${base}/api/integrations/telnyx/webhook`,
+			toolsBaseUrl: `${base}/api/integrations/telnyx/tools`,
 		}),
 	)
 }

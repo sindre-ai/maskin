@@ -15,7 +15,7 @@ import {
 
 const input = {
 	locale: 'da',
-	toolWebhookUrl: 'https://maskin.test/api/integrations/telnyx/webhook',
+	toolsBaseUrl: 'https://maskin.test/api/integrations/telnyx/tools',
 } as const
 
 describe('buildAssistantPayload', () => {

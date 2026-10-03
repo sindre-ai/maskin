@@ -118,7 +118,7 @@ export async function runExportPass(db: Database): Promise<void> {
 		assistantId: runtime.assistantId,
 		payload: buildAssistantPayload({
 			locale: readDisclosureLocale(),
-			toolWebhookUrl: `${base}/api/integrations/telnyx/webhook`,
+			toolsBaseUrl: `${base}/api/integrations/telnyx/tools`,
 			toolIds: [result.retrievalToolId],
 		}),
 	})
