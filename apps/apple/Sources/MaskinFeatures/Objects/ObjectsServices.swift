@@ -27,6 +27,7 @@ struct ObjectsServices {
 		ObjectDetailStore(
 			objectId: id, remote: remote, directory: directory,
 			currentActorId: environment.auth.session?.actorId, preload: preload,
-			cache: environment.snapshotCache)
+			cache: environment.snapshotCache,
+			files: APIFilesRemote(client: environment.client, credentials: environment.auth.credentialsProvider))
 	}
 }

@@ -82,6 +82,37 @@ struct ObjectDetailStoreTests {
 		#expect(remote.commentMentions == [["a1"], ["a1"]])
 	}
 
+	@Test("linked objects ride as metadata.refs and keep their title on the posted comment")
+	func commentRefs() async throws {
+		let (store, remote) = makeStore()
+		await store.load()
+		let ref = CommentReference(id: "t2", title: "Write migration for devices", type: "task")
+		await store.postComment("See this", refs: [ref])
+		#expect(remote.commentRefs == [["t2"]])
+		let last = try #require(store.timeline.last)
+		#expect(store.references(for: last) == [ref])
+	}
+
+	@Test("attached files ride as attachment_file_ids and show their name on the posted comment")
+	func commentAttachments() async throws {
+		let (store, remote) = makeStore()
+		await store.load()
+		let file = ChatAttachmentRef(fileID: "f1", name: "spec.pdf", mimeType: "application/pdf", sizeBytes: 1200)
+		await store.postComment("Spec attached", attachments: [file])
+		#expect(remote.commentFiles == [["f1"]])
+		let last = try #require(store.timeline.last)
+		#expect(store.attachments(for: last).map(\.name) == ["spec.pdf"])
+	}
+
+	@Test("the / picker finds objects by title and never offers the open one")
+	func searchObjects() async throws {
+		let (store, _) = makeStore()
+		await store.load()
+		let all = await store.searchObjects("")
+		#expect(!all.contains { $0.id == store.objectId })
+		#expect(await store.searchObjects("zzzz-no-match").isEmpty)
+	}
+
 	@Test("a failed comment stays, and retry reuses the same idempotency key")
 	func commentRetry() async throws {
 		let (store, remote) = makeStore()

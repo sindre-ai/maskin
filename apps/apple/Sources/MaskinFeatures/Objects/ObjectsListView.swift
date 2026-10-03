@@ -197,9 +197,8 @@ struct ObjectsListView: View {
 				.task(id: store.objects.count) { await store.loadMore() }
 			}
 		}
-		.scrollContentBackground(.hidden)
 		.listStyle(.plain)
-		.refreshable { await store.reload() }
+		.characterRefreshable { await store.reload() }
 	}
 
 	@ViewBuilder private func row(_ object: WorkObject) -> some View {
@@ -216,9 +215,7 @@ struct ObjectsListView: View {
 				.zoomSource(id: object.id, in: zoomNamespace)
 			}
 		}
-		.listRowBackground(Color.clear)
 		.listRowSeparator(.hidden)
-		.listRowInsets(EdgeInsets(top: 0, leading: MaskinSpace.s9, bottom: 0, trailing: MaskinSpace.s9))
 		.swipeActions(edge: .leading) {
 			Button {
 				MaskinHaptics.play(.selection)

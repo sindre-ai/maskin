@@ -19,12 +19,14 @@ public struct WorkObject: Identifiable, Sendable, Equatable, Hashable, Codable {
 	public var unreadCount: Int
 	/// What an agent session on this object is doing right now, when one is active.
 	public var activeActivity: String?
+	/// An agent session is running on this object, whether or not it has reported an activity.
+	public var hasActiveSession: Bool
 
 	public init(
 		id: String, type: String, title: String? = nil, content: String? = nil, status: String,
 		metadata: [String: String] = [:], driverId: String? = nil, createdBy: String? = nil,
 		createdAt: Date? = nil, updatedAt: Date? = nil, isStarred: Bool = false,
-		unreadCount: Int = 0, activeActivity: String? = nil
+		unreadCount: Int = 0, activeActivity: String? = nil, hasActiveSession: Bool = false
 	) {
 		self.id = id
 		self.type = type
@@ -39,6 +41,7 @@ public struct WorkObject: Identifiable, Sendable, Equatable, Hashable, Codable {
 		self.isStarred = isStarred
 		self.unreadCount = unreadCount
 		self.activeActivity = activeActivity
+		self.hasActiveSession = hasActiveSession || !(activeActivity ?? "").isEmpty
 	}
 
 	/// Never empty and never an id.

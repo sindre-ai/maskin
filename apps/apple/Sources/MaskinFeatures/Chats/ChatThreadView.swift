@@ -284,6 +284,8 @@ struct ChatThreadView: View {
 	/// arrive meanwhile are marked seen and not read the moment it is switched on.
 	private func speakNewReplies() {
 		let fresh = handsFreeTracker.newReplies(in: store.messages, currentActorID: store.currentActorID)
+		// A quiet tap when an agent's reply lands while you're looking at the thread.
+		if !fresh.isEmpty, scenePhase == .active { MaskinHaptics.play(.light) }
 		guard handsFree else { return }
 		for message in fresh { SpeechReader.shared.enqueue(markdown: message.content, id: message.id) }
 	}

@@ -10,6 +10,8 @@ struct AgentListView: View {
 	@Binding var selection: String?
 	@Binding var search: String
 	var isLive = true
+	/// Set on iPhone, where selecting a row pushes its detail with a zoom.
+	var zoomNamespace: Namespace.ID?
 
 	var body: some View {
 		let groups = store.groups(query: search)
@@ -23,7 +25,7 @@ struct AgentListView: View {
 			ForEach(groups) { group in
 				Section {
 					ForEach(group.items) { agent in
-						AgentRow(agent: agent).tag(agent.id)
+						AgentRow(agent: agent).tag(agent.id).zoomSource(id: agent.id, in: zoomNamespace)
 					}
 				} header: {
 					MonoLabel("\(group.label) · \(group.items.count)")
@@ -32,7 +34,7 @@ struct AgentListView: View {
 		}
 		.listStyle(.plain)
 		.overlay { overlay(isEmpty: groups.isEmpty) }
-		.refreshable { await store.refresh() }
+		.characterRefreshable { await store.refresh() }
 		.searchable(text: $search, prompt: "Search agents")
 	}
 
@@ -67,7 +69,7 @@ struct AgentRow: View {
 		HStack(alignment: .center, spacing: MaskinSpace.s7) {
 			ActorAvatar(
 				name: agent.name, kind: .agent, size: MaskinSpace.s14 + MaskinSpace.s4, seed: agent.id,
-				working: agent.status == .running)
+				mood: AgentMood(agent.status))
 			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
 					Text(agent.name)

@@ -66,7 +66,8 @@ private struct StubRemote: ObjectsRemote {
 	func delete(objectId: String) async throws {}
 	func setStarred(objectId: String, starred: Bool) async throws {}
 	func postComment(
-		objectId: String, content: String, mentions: [String], parentEventId: Int?, idempotencyKey: String
+		objectId: String, content: String, mentions: [String], refs: [String],
+		attachmentFileIds: [String], parentEventId: Int?, idempotencyKey: String
 	) async throws -> ObjectEvent {
 		ObjectEvent(id: 9, actorId: "me", action: "commented")
 	}

@@ -47,6 +47,11 @@ public struct MarkdownContent: View {
 	}
 }
 
+/// How a comment marks an `@mention` for the renderer: `[@Name](mention:<actor id>)`.
+public enum MarkdownMention {
+	public static let scheme = "mention"
+}
+
 /// What may happen when a link in untrusted markdown is tapped.
 enum MarkdownLinkPolicy {
 	enum Decision: Equatable { case open, confirm, reject }
@@ -176,7 +181,12 @@ enum MarkdownInline {
 				attr[run.range].font = font
 			}
 			if intent.contains(.strikethrough) { attr[run.range].strikethroughStyle = .single }
-			if let link = run.link, MarkdownLinkPolicy.decision(for: link) == .reject {
+			if run.link?.scheme == MarkdownMention.scheme {
+				// An @mention: emphasised, never tappable.
+				attr[run.range].link = nil
+				attr[run.range].foregroundColor = MaskinColor.accentStrong
+				attr[run.range].font = base.weight(.semibold)
+			} else if let link = run.link, MarkdownLinkPolicy.decision(for: link) == .reject {
 				// tel:, sms:, facetime:, maskin:// ...: shown as plain text, never tappable.
 				attr[run.range].link = nil
 			} else if run.link != nil {

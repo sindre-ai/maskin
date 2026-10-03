@@ -52,7 +52,7 @@ struct TriggersListView: View {
 		}
 		.listStyle(.plain)
 		.overlay { overlay(isEmpty: sections.isEmpty) }
-		.refreshable { await store.refresh() }
+		.characterRefreshable { await store.refresh() }
 		.confirmationDialog(
 			"Delete \(pendingDelete?.name ?? "trigger")?",
 			isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),

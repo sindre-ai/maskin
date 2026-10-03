@@ -25,7 +25,7 @@ public struct FileScreen: View {
 	public var body: some View {
 		FileScreenBody(store: store)
 			.background(MaskinSurface.grouped)
-			.navigationTitle(store.file?.name ?? "File")
+			.navigationTitle(store.file?.name ?? "")
 			#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
 			#endif

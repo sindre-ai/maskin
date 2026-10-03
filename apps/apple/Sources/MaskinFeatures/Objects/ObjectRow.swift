@@ -3,61 +3,83 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// One object in the list, on a single line (Linear-style): type glyph, title, then status,
-/// star, unread dot and age at the trailing edge. Pure values in, so it renders in previews and
-/// snapshots.
+/// One object in the list, laid out like a conversation row: a type glyph, the title over a
+/// quiet line of type, status and driver, then age, star and unread state at the trailing edge.
+/// Pure values in, so it renders in previews and snapshots.
 struct ObjectRow: View {
 	let object: WorkObject
 	let typeName: String
-	/// The driver's resolved name; the avatar is omitted when it can't be resolved.
+	/// The driver's resolved name; left out of the subtitle when it can't be resolved.
 	let ownerName: String?
 	var ownerIsAgent = false
 	var showsStatus = false
 
 	var body: some View {
-		HStack(spacing: MaskinSpace.s5) {
-			TypeBadge(object.type, label: typeName, style: .dot)
-			Text(object.displayTitle)
-				.maskinText(.subhead)
-				.foregroundStyle(MaskinColor.ink)
-				.lineLimit(1)
-			if let activity = object.activeActivity, !activity.isEmpty {
-				Image(systemName: "sparkles")
-					.font(.caption2)
-					.foregroundStyle(MaskinColor.accentFgStrong)
-					.accessibilityLabel(activity)
+		HStack(alignment: .center, spacing: MaskinSpace.s7) {
+			typeGlyph
+			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
+					Text(object.displayTitle)
+						.maskinText(.headline)
+						.fontWeight(object.unreadCount > 0 ? .bold : .semibold)
+						.foregroundStyle(MaskinColor.ink)
+						.lineLimit(1)
+					Spacer(minLength: MaskinSpace.s3)
+					RelativeTime(object.updatedAt, style: .compact)
+						.maskinText(.caption)
+						.foregroundStyle(object.unreadCount > 0 ? MaskinColor.accent : MaskinColor.ink4)
+				}
+				HStack(alignment: .center, spacing: MaskinSpace.s4) {
+					if let activity = object.activeActivity, !activity.isEmpty {
+						Label(activity, systemImage: "sparkles")
+							.maskinText(.subhead)
+							.foregroundStyle(MaskinColor.accentFgStrong)
+							.lineLimit(1)
+					} else {
+						Text(subtitle)
+							.maskinText(.subhead)
+							.foregroundStyle(MaskinColor.ink4)
+							.lineLimit(1)
+					}
+					Spacer(minLength: 0)
+					if object.unreadCount > 0 { UnreadBadge(count: object.unreadCount) }
+				}
 			}
-			Spacer(minLength: MaskinSpace.s3)
-			if showsStatus { StatusBadge(object.status, style: .dotWord) }
-			if object.isStarred {
-				Image(systemName: "star.fill")
-					.font(.caption2)
-					.foregroundStyle(MaskinColor.accent)
-					.accessibilityLabel("Starred")
-			}
-			if object.unreadCount > 0 {
-				Circle().fill(MaskinColor.accent)
-					.frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
-					.accessibilityLabel("\(object.unreadCount) unread")
-			}
-			if let ownerName {
-				ActorAvatar(
-					name: ownerName, kind: ownerIsAgent ? .agent : .human, size: MaskinSpace.s10,
-					working: object.activeActivity?.isEmpty == false)
-			}
-			RelativeTime(object.updatedAt, style: .compact)
-				.maskinText(.caption)
-				.foregroundStyle(MaskinColor.ink5)
 		}
-		.padding(.vertical, MaskinSpace.s3)
+		.padding(.vertical, MaskinSpace.s2)
 		.contentShape(Rectangle())
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel(accessibilityLabel)
 	}
 
+	/// The type's glyph on its tint, the size of a chat avatar so the lists line up. A starred
+	/// object shows a star in that slot instead, so the title doesn't need a star of its own.
+	private var typeGlyph: some View {
+		let colors = object.isStarred ? MaskinColorPair(bg: MaskinColor.accentTint2, fg: MaskinColor.accent) : MaskinObjectType.colors(for: object.type)
+		let size = MaskinSpace.s14 + MaskinSpace.s4
+		return Circle()
+			.fill(colors.bg)
+			.frame(width: size, height: size)
+			.overlay {
+				Image(systemName: object.isStarred ? "star.fill" : MaskinObjectType.symbol(for: object.type) ?? "circle.fill")
+					.font(.system(size: MaskinFontSize.t15, weight: .semibold))
+					.foregroundStyle(colors.fg)
+			}
+			.accessibilityHidden(true)
+	}
+
+	private var subtitle: String {
+		var parts = [typeName]
+		if showsStatus { parts.append(MaskinStatus.label(for: object.status)) }
+		if object.hasActiveSession { parts.append("Agents working") }
+		return parts.joined(separator: " · ")
+	}
+
 	private var accessibilityLabel: String {
 		var parts = [typeName, object.displayTitle]
-		if let ownerName { parts.append("Driver \(ownerName)") }
+		if object.isStarred { parts.append("Starred") }
+		if object.hasActiveSession { parts.append("Agents working") }
+		if object.unreadCount > 0 { parts.append("\(object.unreadCount) unread") }
 		return parts.joined(separator: ", ")
 	}
 }

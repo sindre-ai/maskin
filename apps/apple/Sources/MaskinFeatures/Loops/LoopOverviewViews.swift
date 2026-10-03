@@ -13,8 +13,10 @@ private extension View {
 }
 
 /// What the loop produced: the presentable files first (HTML pages open as a rendered view).
+/// Rows are the same ones the Outcomes feed uses.
 struct LoopOutputsSection: View {
 	let outputs: [LoopOutput]
+	let loop: LoopSummary
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	var body: some View {
@@ -28,40 +30,14 @@ struct LoopOutputsSection: View {
 					spacing: MaskinSpace.s5
 				) {
 					ForEach(outputs.prefix(6)) { output in
-						Button { runtime?.openFile(output.id) } label: { tile(output) }
-							.buttonStyle(.plain)
-							.accessibilityHint("Opens the file")
+						Button { runtime?.openFile(output.id) } label: {
+							OutcomeRow(outcome: Outcome(output: output, loop: loop))
+						}
+						.buttonStyle(.plain)
+						.accessibilityHint("Opens the file")
 					}
 				}
 			}
-		}
-	}
-
-	private func tile(_ output: LoopOutput) -> some View {
-		HStack(spacing: MaskinSpace.s6) {
-			Image(systemName: output.isHTML ? "rectangle.on.rectangle.angled" : "doc.text")
-				.font(.title3)
-				.foregroundStyle(output.isHTML ? MaskinColor.accent : MaskinColor.ink4)
-				.frame(width: MaskinSpace.s14)
-				.accessibilityHidden(true)
-			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
-				Text(output.name).maskinText(.headline).foregroundStyle(MaskinColor.ink).lineLimit(2)
-				Text(output.sourceTitle ?? FileContentKind.label(forMime: mime(output)))
-					.maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
-			}
-			Spacer(minLength: 0)
-		}
-		.loopCard()
-		.contentShape(Rectangle())
-	}
-
-	private func mime(_ output: LoopOutput) -> String {
-		switch output.kind {
-		case .html: "text/html"
-		case .markdown: "text/markdown"
-		case .pdf: "application/pdf"
-		case .image: "image/png"
-		default: "text/plain"
 		}
 	}
 }

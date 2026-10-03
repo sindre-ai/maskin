@@ -3,46 +3,50 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// Start a conversation: pick an agent, write the message, send. Titles and extra people come
-/// later, inside the chat.
+/// Start a conversation: the "To" field is focused on open, so you can type a name straight away;
+/// pick one or more agents (recent ones first), write the message, send. Titles come later.
 struct NewChatSheet: View {
 	let store: ConversationsStore
 	let currentActorID: String?
 	var prefill = ""
 	let onCreated: (ConversationSummary) -> Void
 
+	private enum Field { case to, message }
+
 	@Environment(\.dismiss) private var dismiss
-	@State private var agentID: String?
+	@State private var selection: Set<String> = []
 	@State private var message = ""
 	@State private var query = ""
 	@State private var isCreating = false
 	@State private var error: String?
-	@FocusState private var messageFocused: Bool
+	@FocusState private var focus: Field?
 
-	private var agents: [ChatActor] {
-		store.actors.filter {
-			$0.participant.kind == .agent && $0.id != currentActorID
-				&& (query.isEmpty || $0.participant.name.localizedCaseInsensitiveContains(query))
-		}
-		// The workspace's own agents (Chief of Staff) first, then the rest by name.
-		.sorted { ($0.isSystem ? 0 : 1, $0.participant.name) < ($1.isSystem ? 0 : 1, $1.participant.name) }
-	}
+	/// Chosen recipients in the order they were picked.
+	@State private var picked: [String] = []
 
-	private var selected: ChatActor? { store.actors.first { $0.id == agentID } }
+	private var recipients: [ChatActor] { picked.compactMap { id in store.actors.first { $0.id == id } } }
 
 	private var canSend: Bool {
-		selected != nil && !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+		!recipients.isEmpty && !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 			&& message.count <= ChatLimits.maxMessageLength && !isCreating
 	}
 
 	var body: some View {
 		NavigationStack {
-			Group {
-				if let selected {
-					compose(with: selected)
-				} else {
-					picker
+			VStack(spacing: 0) {
+				toField
+				Divider()
+				List {
+					if let error { Section { FormError(error) } }
+					ActorPickerList(
+						actors: store.actors,
+						excluding: Set([currentActorID].compactMap { $0 }),
+						selection: $selection, query: query,
+						recent: store.recentCollaboratorIDs, includeSystem: true, showsRecent: true)
 				}
+				.listStyle(.plain)
+				.scrollDismissesKeyboard(.interactively)
+				messageBar
 			}
 			.navigationTitle("New chat")
 			#if os(iOS)
@@ -50,95 +54,106 @@ struct NewChatSheet: View {
 			#endif
 			.toolbar {
 				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-				if selected != nil {
-					ToolbarItem(placement: .confirmationAction) {
-						Button("Send") { Task { await create() } }
-							.disabled(!canSend)
-							.keyboardShortcut(.return, modifiers: .command)
-					}
-				}
 			}
 			.overlay { if isCreating { ProgressView() } }
+			.onChange(of: selection) { old, new in
+				picked = picked.filter(new.contains) + new.subtracting(picked).sorted()
+				if new.count > old.count {
+					query = ""
+					focus = .message
+				}
+			}
 			.task {
+				focus = .to
 				await store.loadActors()
 				if message.isEmpty { message = prefill }
 			}
 		}
 	}
 
-	/// Step 1: who do you want to talk to?
-	private var picker: some View {
-		List {
-			if let error { Section { FormError(error) } }
-			if agents.isEmpty {
-				Text(query.isEmpty ? "No agents yet." : "No matches.").foregroundStyle(MaskinColor.ink4)
-			}
-			ForEach(agents) { agent in
-				Button {
-					agentID = agent.id
-					messageFocused = true
-					MaskinHaptics.play(.selection)
-				} label: {
-					HStack(spacing: MaskinSpace.s7) {
-						ActorAvatar(
-							name: agent.participant.name, kind: .agent,
-							size: MaskinSpace.s13 + MaskinSpace.s3, seed: agent.id,
-							working: agent.agentState == .running)
-						VStack(alignment: .leading, spacing: 0) {
-							Text(agent.participant.name).maskinText(.body).foregroundStyle(MaskinColor.ink)
-							if let summary = agent.summary, !summary.isEmpty {
-								Text(summary).maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(2)
-							}
+	/// "To:" row — chips for who is in, then the search field.
+	private var toField: some View {
+		ScrollView(.horizontal, showsIndicators: false) {
+			HStack(spacing: MaskinSpace.s4) {
+				Text("To").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+				ForEach(recipients) { actor in
+					Button {
+						selection.remove(actor.id)
+						MaskinHaptics.play(.selection)
+					} label: {
+						HStack(spacing: MaskinSpace.s3) {
+							Text(actor.participant.name).maskinText(.subhead)
+							Image(systemName: "xmark").font(.caption2).accessibilityHidden(true)
 						}
-						Spacer(minLength: 0)
+						.foregroundStyle(MaskinColor.accentFgStrong)
+						.padding(.horizontal, MaskinSpace.s5)
+						.padding(.vertical, MaskinSpace.s3)
+						.background(MaskinColor.accentTint2, in: Capsule())
 					}
-					.contentShape(Rectangle())
+					.buttonStyle(.plain)
+					.accessibilityLabel("Remove \(actor.participant.name)")
 				}
-				.buttonStyle(.plain)
+				TextField(recipients.isEmpty ? "Search agents" : "Add more", text: $query)
+					.focused($focus, equals: .to)
+					.maskinText(.body)
+					.frame(minWidth: 140)
+					.submitLabel(.next)
+					.onSubmit { pickFirstMatch() }
+					#if os(iOS)
+					.textInputAutocapitalization(.never)
+					.autocorrectionDisabled()
+					#endif
 			}
+			.padding(.horizontal, MaskinSpace.s8)
+			.padding(.vertical, MaskinSpace.s5)
 		}
-		.listStyle(.plain)
-		.searchable(text: $query, prompt: "Search agents")
 	}
 
-	/// Step 2: the agent chosen, write to it.
-	private func compose(with agent: ChatActor) -> some View {
-		VStack(spacing: 0) {
+	private var messageBar: some View {
+		HStack(alignment: .bottom, spacing: MaskinSpace.s5) {
+			TextField(
+				recipients.isEmpty ? "Message" : "Message \(recipients.map(\.participant.name).joined(separator: ", "))",
+				text: $message, axis: .vertical
+			)
+			.focused($focus, equals: .message)
+			.maskinText(.body)
+			.lineLimit(1...5)
+			.padding(.horizontal, MaskinSpace.s7)
+			.padding(.vertical, MaskinSpace.s5)
+			.background(MaskinColor.surfaceAlt, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl))
 			Button {
-				agentID = nil
+				Task { await create() }
 			} label: {
-				HStack(spacing: MaskinSpace.s5) {
-					ActorAvatar(
-						name: agent.participant.name, kind: .agent, size: MaskinSpace.s13, seed: agent.id)
-					Text(agent.participant.name).maskinText(.headline).foregroundStyle(MaskinColor.ink)
-					Spacer(minLength: 0)
-					Text("Change").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
-				}
-				.padding(MaskinSpace.s8)
-				.contentShape(Rectangle())
+				Image(systemName: "arrow.up.circle.fill").font(.title)
 			}
-			.buttonStyle(.plain)
-			.accessibilityLabel("Chatting with \(agent.participant.name). Change agent")
-			Divider()
-			if let error { FormError(error).padding(MaskinSpace.s8) }
-			TextField("Message \(agent.participant.name)", text: $message, axis: .vertical)
-				.focused($messageFocused)
-				.maskinText(.body)
-				.padding(MaskinSpace.s8)
-				.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+			.foregroundStyle(canSend ? MaskinColor.accent : MaskinColor.ink5)
+			.disabled(!canSend)
+			.keyboardShortcut(.return, modifiers: .command)
+			.accessibilityLabel("Send")
 		}
-		.onAppear { messageFocused = true }
+		.padding(MaskinSpace.s5)
+		.background(.bar)
+	}
+
+	/// Return in the search field takes the top match, like a mail client's "To" field.
+	private func pickFirstMatch() {
+		let match = store.actors.first {
+			$0.id != currentActorID && !selection.contains($0.id)
+				&& $0.participant.name.localizedCaseInsensitiveContains(query)
+		}
+		if let match, !query.isEmpty { selection.insert(match.id) } else { focus = .message }
 	}
 
 	private func create() async {
-		guard let agent = selected else { return }
+		let people = recipients
+		guard !people.isEmpty else { return }
 		isCreating = true
 		error = nil
 		defer { isCreating = false }
 		do {
 			let created = try await store.create(
-				title: ThreadLayout.defaultTitle(for: [agent.participant.name]),
-				participantIDs: [agent.id], firstMessage: message)
+				title: ThreadLayout.defaultTitle(for: people.map(\.participant.name)),
+				participantIDs: people.map(\.id), firstMessage: message)
 			MaskinHaptics.play(.success)
 			onCreated(created)
 			dismiss()

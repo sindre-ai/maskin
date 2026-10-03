@@ -50,6 +50,7 @@ private struct AgentsContainer: View {
 	@State private var store: AgentsStore
 	@State private var selection: String?
 	@State private var search = ""
+	@Namespace private var zoom
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	init(environment: AppEnvironment, workspaceID: String) {
@@ -64,7 +65,7 @@ private struct AgentsContainer: View {
 		NavigationSplitView {
 			AgentListView(
 				store: store, selection: $selection, search: $search,
-				isLive: environment.events.connection != .failed
+				isLive: environment.events.connection != .failed, zoomNamespace: zoom
 			)
 			.toolbar {
 				ToolbarItem(placement: .primaryAction) {
@@ -83,6 +84,7 @@ private struct AgentsContainer: View {
 					self.selection = nil
 				}
 				.id(selection)
+				.zoomDestination(id: selection, in: zoom)
 			} else {
 				EmptyState(
 					symbol: "person.2", title: "Select an agent",

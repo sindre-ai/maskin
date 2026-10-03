@@ -9,6 +9,7 @@ struct LoopsListView: View {
 	@Binding var selection: String?
 	let search: String
 	var isLive = true
+	var zoomNamespace: Namespace.ID?
 	var onNew: () -> Void = {}
 	var onBrowse: () -> Void = {}
 
@@ -34,6 +35,7 @@ struct LoopsListView: View {
 							hasUpdate: store.installs[loop.id]?.hasUpdate == true
 						)
 						.tag(loop.id)
+						.zoomSource(id: loop.id, in: zoomNamespace)
 						.listRowSeparator(.hidden)
 						.swipeActions(edge: .trailing, allowsFullSwipe: true) {
 							if loop.status != .draft {
@@ -55,7 +57,7 @@ struct LoopsListView: View {
 		}
 		.listStyle(.plain)
 		.overlay { overlay(isEmpty: sections.isEmpty) }
-		.refreshable { await store.refresh() }
+		.characterRefreshable { await store.refresh() }
 	}
 
 	@ViewBuilder

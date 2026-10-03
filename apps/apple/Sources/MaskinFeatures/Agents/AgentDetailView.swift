@@ -42,7 +42,7 @@ struct AgentDetailView: View {
 			.frame(maxWidth: .infinity)
 		}
 		.background(MaskinSurface.grouped)
-		.navigationTitle(store.profile?.name ?? "Agent")
+		.navigationTitle(store.profile?.name ?? "")
 		#if os(iOS)
 		.navigationBarTitleDisplayMode(.inline)
 		#endif
@@ -203,7 +203,7 @@ struct AgentDetailContent: View {
 		VStack(spacing: MaskinSpace.s9) {
 			ActorAvatar(
 				name: profile.name, kind: .agent, size: MaskinSpace.s14 * 3, seed: profile.id,
-				working: store.status == .running)
+				mood: AgentMood(store.status))
 			VStack(spacing: MaskinSpace.s2) {
 				Text(profile.name)
 					.maskinText(.title)

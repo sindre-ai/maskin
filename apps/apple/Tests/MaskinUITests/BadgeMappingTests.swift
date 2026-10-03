@@ -61,6 +61,23 @@ import Testing
 		#expect(ActorIdentity.initials(for: "x") == "X")
 	}
 
+	@Test("an agent keeps the same shape and colour on every call")
+	func agentLookIsStable() {
+		#expect(ActorIdentity.agentShape(seed: "relay-1") == ActorIdentity.agentShape(seed: "relay-1"))
+		#expect(
+			ActorIdentity.paletteIndex(seed: "relay-1", kind: .agent)
+				== ActorIdentity.paletteIndex(seed: "relay-1", kind: .agent))
+	}
+
+	@Test("seeds spread over every shape, and shape varies independently of colour")
+	func agentShapesSpread() {
+		let seeds = (0..<200).map { "agent-\($0)" }
+		let shapes = Set(seeds.map { ActorIdentity.agentShape(seed: $0) })
+		#expect(shapes.count == AgentShape.allCases.count)
+		let looks = Set(seeds.map { "\(ActorIdentity.paletteIndex(seed: $0, kind: .agent))-\(ActorIdentity.agentShape(seed: $0))" })
+		#expect(looks.count > AgentShape.allCases.count)
+	}
+
 	@Test func hashMatchesWebDjb2() {
 		// Computed with the web's hashString: ((h << 5) + h) ^ charCode, >>> 0, seed 5381.
 		#expect(ActorIdentity.bucketHash("a") == (5381 &* 33) ^ 97)

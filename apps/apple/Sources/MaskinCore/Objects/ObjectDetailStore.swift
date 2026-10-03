@@ -29,16 +29,22 @@ public struct TimelineItem: Identifiable, Sendable, Equatable {
 	var parentEventId: Int?
 	/// Actor ids tagged in an unsent comment, kept so a retry mentions the same people.
 	var mentions: [String] = []
+	/// Objects linked from the comment with `/`: ids, resolved to titles by the store.
+	public var refs: [String] = []
+	/// Files attached to the comment: ids, resolved to names by the store.
+	public var attachments: [String] = []
 
 	public var isLocal: Bool { eventId == nil }
 
 	public init(
 		id: String, kind: Kind, actorId: String? = nil, date: Date? = nil, delivery: Delivery = .sent,
-		eventId: Int? = nil
+		eventId: Int? = nil, refs: [String] = [], attachments: [String] = []
 	) {
 		self.init(
 			id: id, kind: kind, actorId: actorId, date: date, delivery: delivery, eventId: eventId,
 			idempotencyKey: nil, parentEventId: nil)
+		self.refs = refs
+		self.attachments = attachments
 	}
 
 	init(
@@ -109,8 +115,10 @@ public final class ObjectDetailStore {
 
 	public init(
 		objectId: String, remote: any ObjectsRemote, directory: ObjectsDirectory,
-		currentActorId: String?, preload: WorkObject? = nil, cache: SnapshotCache? = nil
+		currentActorId: String?, preload: WorkObject? = nil, cache: SnapshotCache? = nil,
+		files: (any FilesRemote)? = nil
 	) {
+		self.filesRemote = files
 		self.objectId = objectId
 		self.remote = remote
 		self.directory = directory
@@ -209,6 +217,67 @@ public final class ObjectDetailStore {
 			.compactMap(Self.item(from:))
 		// Keep local items the server doesn't know yet (sending or failed).
 		timeline = stored + timeline.filter { $0.isLocal }
+		resolveReferences()
+		resolveFiles()
+	}
+
+	// MARK: References
+
+	/// Objects linked from comments, by id. A linked object that can't be fetched (deleted, or not
+	/// visible) is simply absent: callers show nothing for it, never the id.
+	public private(set) var references: [String: CommentReference] = [:]
+	@ObservationIgnored private var resolving: Set<String> = []
+
+	public func references(for item: TimelineItem) -> [CommentReference] {
+		item.refs.compactMap { references[$0] }
+	}
+
+	/// Objects matching `query` for the `/` picker; the one on screen is never offered.
+	public func searchObjects(_ query: String) async -> [CommentReference] {
+		let found = (try? await remote.list(ObjectsQuery(search: query, limit: 8))) ?? []
+		return found.filter { $0.id != objectId }.map(CommentReference.init)
+	}
+
+	/// Files attached to comments, by id. One that can't be resolved (expired, or not visible to
+	/// this actor) is absent; the row says so instead of showing an id.
+	public private(set) var files: [String: FileSummary] = [:]
+	@ObservationIgnored private let filesRemote: (any FilesRemote)?
+	@ObservationIgnored private var resolvingFiles: Set<String> = []
+
+	public func attachments(for item: TimelineItem) -> [FileSummary] {
+		item.attachments.compactMap { files[$0] }
+	}
+
+	private func resolveFiles() {
+		guard let filesRemote else { return }
+		let missing = Set(timeline.flatMap(\.attachments)).subtracting(files.keys).subtracting(resolvingFiles)
+		guard !missing.isEmpty else { return }
+		resolvingFiles.formUnion(missing)
+		Task { [weak self] in
+			let found = (try? await filesRemote.summaries(ids: Array(missing))) ?? []
+			guard let self else { return }
+			for file in found { files[file.id] = file }
+			resolvingFiles.subtract(missing)
+		}
+	}
+
+	private func resolveReferences() {
+		let missing = Set(timeline.flatMap(\.refs)).subtracting(references.keys).subtracting(resolving)
+		for id in missing {
+			resolving.insert(id)
+			Task { [weak self] in
+				guard let self else { return }
+				if let graph = try? await remote.graph(objectId: id) {
+					references[id] = CommentReference(graph.object)
+				}
+				resolving.remove(id)
+			}
+		}
+	}
+
+	static func attachmentIDs(in data: JSONValue?) -> [String] {
+		guard case .array(let values)? = data?["attachmentFileIds"] else { return [] }
+		return values.compactMap(\.stringValue).filter { !$0.isEmpty }
 	}
 
 	static func item(from event: ObjectEvent) -> TimelineItem? {
@@ -217,7 +286,8 @@ public final class ObjectDetailStore {
 			guard !text.isEmpty else { return nil }
 			return TimelineItem(
 				id: "e-\(event.id)", kind: .comment(text), actorId: event.actorId, date: event.createdAt,
-				delivery: .sent, eventId: event.id)
+				delivery: .sent, eventId: event.id, refs: ReferenceTrigger.ids(in: event.data?["metadata"]),
+				attachments: Self.attachmentIDs(in: event.data))
 		}
 		let summary = (event.summary?.isEmpty == false ? event.summary : nil)
 			?? event.action.replacingOccurrences(of: "_", with: " ")
@@ -231,7 +301,8 @@ public final class ObjectDetailStore {
 	/// Appends the comment immediately, then sends it. A failure leaves it in the timeline marked
 	/// `.failed`; `retryComment` resends with the same key so the server never stores it twice.
 	public func postComment(
-		_ text: String, mentions: [String] = [], parentEventId: Int? = nil
+		_ text: String, mentions: [String] = [], refs: [CommentReference] = [],
+		attachments: [ChatAttachmentRef] = [], parentEventId: Int? = nil
 	) async {
 		let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !trimmed.isEmpty else { return }
@@ -240,6 +311,14 @@ public final class ObjectDetailStore {
 			date: Date(), delivery: .sending, eventId: nil, idempotencyKey: IdempotencyKey.make(),
 			parentEventId: parentEventId)
 		item.mentions = mentions
+		item.refs = refs.map(\.id)
+		for ref in refs { references[ref.id] = ref }
+		item.attachments = attachments.map(\.fileID)
+		for file in attachments {
+			files[file.fileID] = FileSummary(
+				id: file.fileID, name: file.name ?? "File", mimeType: file.mimeType ?? "application/octet-stream",
+				sizeBytes: file.sizeBytes ?? 0)
+		}
 		timeline.append(item)
 		await send(localId: item.id)
 	}
@@ -262,8 +341,8 @@ public final class ObjectDetailStore {
 		else { return }
 		do {
 			let stored = try await remote.postComment(
-				objectId: objectId, content: text, mentions: item.mentions,
-				parentEventId: item.parentEventId, idempotencyKey: key)
+				objectId: objectId, content: text, mentions: item.mentions, refs: item.refs,
+				attachmentFileIds: item.attachments, parentEventId: item.parentEventId, idempotencyKey: key)
 			guard let i = timeline.firstIndex(where: { $0.id == localId }) else { return }
 			// A refetch may already have brought the stored event in; don't show it twice.
 			if timeline.contains(where: { $0.eventId == stored.id }) {
@@ -271,7 +350,8 @@ public final class ObjectDetailStore {
 			} else {
 				timeline[i] = TimelineItem(
 					id: "e-\(stored.id)", kind: .comment(text), actorId: stored.actorId ?? item.actorId,
-					date: stored.createdAt ?? item.date, delivery: .sent, eventId: stored.id)
+					date: stored.createdAt ?? item.date, delivery: .sent, eventId: stored.id, refs: item.refs,
+					attachments: item.attachments)
 			}
 		} catch {
 			if let i = timeline.firstIndex(where: { $0.id == localId }) { timeline[i].delivery = .failed }

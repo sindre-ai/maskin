@@ -3,37 +3,53 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// One loop in the list, on a single line: name, then what's waiting, its state and its age.
-/// The stats line and the agents live on the loop's detail.
+/// One loop in the list, laid out like a conversation row: the agents working it, the name over
+/// its stats, then state and age at the trailing edge.
 struct LoopRow: View {
 	let loop: LoopSummary
 	let agentNames: [String]
 	var hasUpdate = false
 
 	var body: some View {
-		HStack(spacing: MaskinSpace.s4) {
-			Text(loop.displayName)
-				.maskinText(.subhead)
-				.foregroundStyle(MaskinColor.ink)
-				.lineLimit(1)
-			Spacer(minLength: MaskinSpace.s3)
-			if hasUpdate {
-				Image(systemName: "arrow.up.circle.fill")
-					.font(.caption)
-					.foregroundStyle(MaskinColor.accentFgStrong)
-					.accessibilityLabel("Update available")
+		HStack(alignment: .center, spacing: MaskinSpace.s7) {
+			ConversationAvatar(
+				participants: agentNames.prefix(2).map { ChatParticipant(id: $0, name: $0, kind: .agent) })
+			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
+					Text(loop.displayName)
+						.maskinText(.headline)
+						.fontWeight(.semibold)
+						.foregroundStyle(MaskinColor.ink)
+						.lineLimit(1)
+					if hasUpdate {
+						Image(systemName: "arrow.up.circle.fill")
+							.font(.caption)
+							.foregroundStyle(MaskinColor.accentFgStrong)
+							.accessibilityLabel("Update available")
+					}
+					Spacer(minLength: MaskinSpace.s3)
+					RelativeTime(loop.updatedAt, style: .compact)
+						.maskinText(.caption)
+						.foregroundStyle(MaskinColor.ink4)
+				}
+				HStack(alignment: .center, spacing: MaskinSpace.s4) {
+					if loop.waitingCount > 0 {
+						Text("\(loop.waitingCount) waiting on you")
+							.maskinText(.subhead)
+							.foregroundStyle(MaskinColor.warningStrong)
+							.lineLimit(1)
+					} else {
+						Text(loop.statsLine)
+							.maskinText(.subhead)
+							.foregroundStyle(MaskinColor.ink4)
+							.lineLimit(1)
+					}
+					Spacer(minLength: 0)
+					LoopPillView(pill: loop.pill)
+				}
 			}
-			if loop.waitingCount > 0 {
-				Text("\(loop.waitingCount) waiting")
-					.maskinText(.caption)
-					.foregroundStyle(MaskinColor.warningStrong)
-			}
-			LoopPillView(pill: loop.pill)
-			RelativeTime(loop.updatedAt, style: .compact)
-				.maskinText(.caption)
-				.foregroundStyle(MaskinColor.ink5)
 		}
-		.padding(.vertical, MaskinSpace.s3)
+		.padding(.vertical, MaskinSpace.s2)
 		.contentShape(Rectangle())
 		.accessibilityElement(children: .combine)
 		.accessibilityLabel(accessibilityLabel)

@@ -75,7 +75,7 @@ struct LoopDetailContent: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s12) {
 			header
-			LoopOutputsSection(outputs: store.outputs)
+			LoopOutputsSection(outputs: store.outputs, loop: store.loop)
 			LoopPostsSection(posts: store.posts, directory: store.directory, loopID: store.loop.id)
 			LoopFlowSection(store: store, onOpenTrigger: onOpenTrigger)
 			stats

@@ -64,7 +64,7 @@ struct ConversationListView: View {
 		}
 		.listStyle(.plain)
 		.overlay { overlay(isEmpty: groups.isEmpty) }
-		.refreshable { await store.refresh() }
+		.characterRefreshable { await store.refresh() }
 		.chatSearch(store: store, text: $search)
 		.toolbar {
 			ToolbarItem(placement: .automatic) {

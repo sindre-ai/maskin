@@ -1,7 +1,9 @@
 import MaskinCore
 import MaskinDesign
 import MaskinUI
+import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// One object, full screen: header, decision slot, description, relationships and the activity
 /// timeline with a glass composer. Push it from anywhere:
@@ -23,6 +25,17 @@ public struct ObjectDetailScreen<Decision: View>: View {
 	@State private var comment = ""
 	/// Actors tagged with `@` in the comment being written (kept only while their `@Name` is in it).
 	@State private var tagged: [ActorRef] = []
+	/// Objects linked with `/` in the comment being written, and what the picker is showing.
+	@State private var linked: [CommentReference] = []
+	@State private var referenceResults: [CommentReference] = []
+	@State private var searchingReferences = false
+	/// Files being attached to the comment: uploads, retries and limits live in the chat model.
+	@State private var attachments: ChatComposerModel
+	@State private var askingAttachment = false
+	@State private var showPhotos = false
+	@State private var showFiles = false
+	@State private var photoItems: [PhotosPickerItem] = []
+	@State private var dictating = false
 	@State private var editing = false
 	@State private var confirmingDelete = false
 	/// Set when the reader sends a comment, so the timeline follows it to the bottom.
@@ -47,21 +60,38 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		store.onObjectChanged = { [weak listStore] in listStore?.apply($0) }
 		store.onObjectDeleted = { [weak listStore] in listStore?.remove($0) }
 		_store = State(initialValue: store)
+		let env = services.environment
+		_attachments = State(
+			initialValue: ChatComposerModel(
+				uploader: APIChatsSource(client: env.client, workspaceID: env.workspaceId ?? ""),
+				selfActorID: env.auth.session?.actorId ?? ""))
 		environment = services.environment
 		self.onOpenObject = onOpenObject
 		self.onClose = onClose
 		self.decision = decision
 	}
 
+	/// Fills the `/` picker for what is typed after the slash, waiting a beat so a fast typist
+	/// doesn't fire a request per letter.
+	private func searchReferences() async {
+		guard let query = ReferenceTrigger.find(in: comment)?.query else {
+			referenceResults = []
+			return
+		}
+		searchingReferences = true
+		try? await Task.sleep(for: .milliseconds(200))
+		guard !Task.isCancelled else { return }
+		let found = await store.searchObjects(query)
+		guard !Task.isCancelled else { return }
+		referenceResults = found
+		searchingReferences = false
+	}
+
 	public var body: some View {
 		Group {
 			if store.object != nil {
 				VStack(spacing: 0) {
-					ObjectDetailContent(store: store, part: .header) { EmptyView() }
-						.padding(.horizontal, MaskinSpace.s9)
-						.padding(.top, MaskinSpace.s5)
-						.padding(.bottom, MaskinSpace.s5)
-					pageBar
+					pageBar.padding(.vertical, MaskinSpace.s3)
 					pager
 				}
 			} else {
@@ -92,21 +122,85 @@ public struct ObjectDetailScreen<Decision: View>: View {
 							})
 							.transition(.opacity.combined(with: .move(edge: .bottom)))
 					}
-					GlassComposer(text: $comment, placeholder: "Comment — @ to tag someone") {
-						let text = comment
-						let mentions = CommentMentions.active(tagged, in: text)
-						comment = ""
-						tagged = []
-						followNextItem = true
-						Task { await store.postComment(text, mentions: mentions) }
+					if ReferenceTrigger.find(in: comment) != nil {
+						ReferenceSuggestions(
+							results: referenceResults.filter { ref in !linked.contains { $0.id == ref.id } },
+							isSearching: searchingReferences,
+							onPick: { ref in
+								comment = ReferenceTrigger.removingTrigger(from: comment)
+								if linked.count < ReferenceTrigger.maxReferences { linked.append(ref) }
+							})
+							.transition(.opacity.combined(with: .move(edge: .bottom)))
 					}
+					if !linked.isEmpty {
+						ChipFlow {
+							ForEach(linked) { ref in
+								ReferenceChip(ref: ref, onRemove: { linked.removeAll { $0.id == ref.id } })
+							}
+						}
+						.frame(maxWidth: .infinity, alignment: .leading)
+						.padding(.horizontal, MaskinSpace.s5)
+					}
+					ComposerChips(model: attachments)
+					if let notice = attachments.notice {
+						Text(notice).maskinText(.caption).foregroundStyle(MaskinColor.danger)
+							.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
+							.onTapGesture { attachments.notice = nil }
+					}
+					GlassComposer(
+						text: $comment, placeholder: "Comment — @ to tag, / to link",
+						canSend: !comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+							&& !attachments.isUploading && !attachments.hasFailedAttachment,
+						onAttach: { askingAttachment = true },
+						onSend: {
+							let text = comment
+							let mentions = CommentMentions.active(tagged, in: text)
+							let refs = linked
+							let files = attachments.attachments.compactMap(\.ref)
+							comment = ""
+							tagged = []
+							linked = []
+							attachments.clear()
+							followNextItem = true
+							Task { await store.postComment(text, mentions: mentions, refs: refs, attachments: files) }
+						},
+						listening: $dictating, mic: { DictationButton(text: $comment, listening: $dictating) })
 				}
 				.animation(MaskinMotion.quick, value: MentionTrigger.find(in: comment) != nil)
+				.animation(MaskinMotion.quick, value: ReferenceTrigger.find(in: comment) != nil)
+				.task(id: ReferenceTrigger.find(in: comment)?.query) { await searchReferences() }
+				.confirmationDialog("Attach", isPresented: $askingAttachment) {
+					Button("Photo") { showPhotos = true }
+					Button("File") { showFiles = true }
+				}
+				.photosPicker(
+					isPresented: $showPhotos, selection: $photoItems,
+					maxSelectionCount: max(1, ChatLimits.maxAttachments - attachments.attachments.count),
+					matching: .images)
+				.fileImporter(isPresented: $showFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) {
+					result in
+					guard case .success(let urls) = result else { return }
+					for url in urls {
+						attachments.attach(
+							name: url.lastPathComponent, mimeType: AttachmentLoading.mimeType(for: url),
+							prepare: AttachmentLoading.file(at: url))
+					}
+				}
+				.onChange(of: photoItems) { _, items in
+					guard !items.isEmpty else { return }
+					for (index, item) in items.enumerated() {
+						let name = AttachmentLoading.photoName(index: index)
+						attachments.attach(
+							name: name, mimeType: "image/jpeg", prepare: AttachmentLoading.photo(item, name: name))
+					}
+					photoItems = []
+				}
 				.padding(.horizontal, MaskinSpace.s7)
 				.padding(.bottom, MaskinSpace.s3)
 			}
 		}
-		.navigationTitle(store.object.map { store.directory.typeName($0.type) } ?? "Object")
+		// The title scrolls away with the overview's header, so it lives in the bar for every page.
+		.navigationTitle(store.object?.displayTitle ?? "")
 		#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
 			// The tab bar would sit on top of the composer, as in a chat. iPad keeps it.
@@ -218,6 +312,7 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		}
 		.scrollTargetBehavior(.paging)
 		.scrollPosition(id: $page)
+		.onChange(of: page) { _, _ in MaskinHaptics.play(.selection) }
 		.scrollBounceBehavior(.basedOnSize, axes: .horizontal)
 	}
 
@@ -281,15 +376,15 @@ struct EditObjectSheet: View {
 
 	var body: some View {
 		NavigationStack {
-			Form {
-				Section("Title") {
-					TextField("Title", text: $title, axis: .vertical).lineLimit(1...3)
-				}
-				Section("Description") {
-					TextField("Description (markdown supported)", text: $content, axis: .vertical)
-						.lineLimit(5...16)
-				}
+			VStack(alignment: .leading, spacing: MaskinSpace.s6) {
+				TextField("Title", text: $title, axis: .vertical)
+					.lineLimit(1...3)
+					.maskinText(.title)
+				Divider()
+				MarkdownEditor(text: $content, placeholder: "Description")
 			}
+			.padding(.horizontal, MaskinSpace.s9)
+			.padding(.top, MaskinSpace.s5)
 			.navigationTitle("Edit")
 			#if os(iOS)
 				.navigationBarTitleDisplayMode(.inline)

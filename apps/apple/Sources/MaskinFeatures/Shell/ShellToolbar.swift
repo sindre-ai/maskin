@@ -68,28 +68,3 @@ extension ToolbarItemPlacement {
 		#endif
 	}
 }
-
-/// The screen title, in the style every tab shares.
-struct ShellTitleText: View {
-	let text: String
-
-	var body: some View {
-		Text(text)
-			.maskinText(.title)
-			.foregroundStyle(MaskinColor.ink)
-			.lineLimit(1)
-			// A title is never truncated to make room for the buttons beside it.
-			.fixedSize(horizontal: true, vertical: false)
-			.accessibilityAddTraits(.isHeader)
-	}
-}
-
-extension ToolbarContent {
-	/// iOS 26 wraps toolbar items in a glass capsule; a title shouldn't look like a button.
-	func hidingSharedBackground() -> some ToolbarContent {
-		if #available(iOS 26, macOS 26, *) {
-			return self.sharedBackgroundVisibility(.hidden)
-		}
-		return self
-	}
-}

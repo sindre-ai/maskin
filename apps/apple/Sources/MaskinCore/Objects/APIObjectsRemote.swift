@@ -142,9 +142,17 @@ public struct APIObjectsRemote: ObjectsRemote {
 		}
 	}
 
+	/// `{ "refs": [ids] }`, or nothing when no object is linked.
+	static func refsMetadata(
+		_ refs: [String]
+	) throws -> Operations.post_sol_api_sol_events.Input.Body.jsonPayload.metadataPayload? {
+		guard !refs.isEmpty else { return nil }
+		return .init(additionalProperties: ["refs": try .init(unvalidatedValue: refs)])
+	}
+
 	public func postComment(
-		objectId: String, content: String, mentions: [String], parentEventId: Int?,
-		idempotencyKey: String
+		objectId: String, content: String, mentions: [String], refs: [String],
+		attachmentFileIds: [String], parentEventId: Int?, idempotencyKey: String
 	) async throws -> ObjectEvent {
 		let workspace = await workspaceHeader()
 		do {
@@ -155,7 +163,9 @@ public struct APIObjectsRemote: ObjectsRemote {
 						body: .json(
 							.init(
 								entity_id: objectId, content: content,
-								mentions: mentions.isEmpty ? nil : mentions, parent_event_id: parentEventId))))
+								mentions: mentions.isEmpty ? nil : mentions, parent_event_id: parentEventId,
+								attachment_file_ids: attachmentFileIds.isEmpty ? nil : attachmentFileIds,
+								metadata: try Self.refsMetadata(refs)))))
 			}
 			guard case .created(let created) = output else { throw Self.failure(output) }
 			return try Self.convert(created.body.json, as: EventDTO.self).model
@@ -263,6 +273,7 @@ private struct ObjectDTO: Decodable {
 	var createdBy: String?
 	var createdAt: String?
 	var updatedAt: String?
+	var activeSessionId: String?
 	var activeSessionCurrentActivity: String?
 	var is_starred_by_me: Bool?
 	var unread_count: Double?
@@ -281,7 +292,8 @@ private struct ObjectDTO: Decodable {
 			id: id, type: type, title: title, content: content, status: status, metadata: scalars,
 			driverId: driver, createdBy: createdBy, createdAt: createdAt.flatMap(ISODate.parse),
 			updatedAt: updatedAt.flatMap(ISODate.parse), isStarred: is_starred_by_me ?? false,
-			unreadCount: Int(unread_count ?? 0), activeActivity: activeSessionCurrentActivity)
+			unreadCount: Int(unread_count ?? 0), activeActivity: activeSessionCurrentActivity,
+			hasActiveSession: !(activeSessionId ?? "").isEmpty)
 	}
 }
 

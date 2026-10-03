@@ -60,7 +60,7 @@ struct ForYouFeedView: View {
 		.listStyle(.plain)
 		.scrollContentBackground(.hidden)
 		.background(MaskinSurface.grouped)
-		.refreshable { await store.refresh() }
+		.characterRefreshable { await store.refresh() }
 		.animation(MaskinMotion.standard, value: entries.map { "\($0.id)-\($0.bucket.rawValue)" })
 		.onChange(of: scenePhase) { _, phase in
 			switch phase {

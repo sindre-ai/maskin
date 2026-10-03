@@ -28,6 +28,8 @@ struct ObjectDetailContent<Decision: View>: View {
 	@State private var expandedRuns: Set<String> = []
 
 	private static var propertyPreview: Int { 4 }
+	/// Moving an object into one of these means the agents take it from here: a bigger flourish.
+	private static var handsOffStatuses: Set<String> { ["active", "in_progress"] }
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s10) {
@@ -48,6 +50,7 @@ struct ObjectDetailContent<Decision: View>: View {
 					timeline
 				case .header: header(object)
 				case .overview:
+					header(object)
 					decision()
 					description(object)
 					properties(object)
@@ -84,8 +87,7 @@ struct ObjectDetailContent<Decision: View>: View {
 				.maskinText(.title)
 				.foregroundStyle(MaskinColor.ink)
 				.frame(maxWidth: .infinity, alignment: .leading)
-				.lineLimit(part == .header ? 2 : nil)
-				.fixedSize(horizontal: false, vertical: true)
+								.fixedSize(horizontal: false, vertical: true)
 			ChipFlow(spacing: MaskinSpace.s4) {
 				statusMenu(object)
 				ownerPill
@@ -133,6 +135,10 @@ struct ObjectDetailContent<Decision: View>: View {
 					.font(.system(size: MaskinFontSize.t11, weight: .semibold))
 					.foregroundStyle(colors.fg.opacity(0.7))
 			}
+			.background {
+				StatusBurst(
+					trigger: object.status, color: colors.fg, sparks: Self.handsOffStatuses.contains(object.status))
+			}
 		}
 		.accessibilityLabel("Status \(MaskinStatus.label(for: object.status)). Change status")
 	}
@@ -168,11 +174,11 @@ struct ObjectDetailContent<Decision: View>: View {
 	/// Long descriptions fold so they don't push the decision and properties off screen.
 	@ViewBuilder private func description(_ object: WorkObject) -> some View {
 		if let content = object.content, !content.isEmpty {
-			let long = content.count > 480
+			let long = content.count > 1600
 			card {
 				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
 					MarkdownContent(content)
-						.frame(maxHeight: long && !descriptionExpanded ? 220 : nil, alignment: .top)
+						.frame(maxHeight: long && !descriptionExpanded ? 560 : nil, alignment: .top)
 						.clipped()
 						.mask(alignment: .top) {
 							if long && !descriptionExpanded {
@@ -351,6 +357,9 @@ struct ObjectDetailContent<Decision: View>: View {
 	private func timelineRow(_ item: TimelineItem) -> some View {
 		TimelineRow(
 			item: item, name: store.authorName(for: item), isAgent: store.isAgent(item),
+			mentionable: Array(store.directory.actors.values), references: store.references(for: item),
+			files: store.attachments(for: item),
+			openObject: onOpenObject,
 			retry: { Task { await store.retryComment(item.id) } },
 			discard: { store.discardComment(item.id) })
 	}
@@ -401,6 +410,13 @@ struct TimelineRow: View {
 	let item: TimelineItem
 	let name: String
 	let isAgent: Bool
+	/// Who an `@Name` in a comment can refer to; those names render as mentions.
+	var mentionable: [ActorRef] = []
+	/// Objects linked from the comment (`/`), shown as chips under it.
+	var references: [CommentReference] = []
+	/// Files attached to the comment, as cards under it.
+	var files: [FileSummary] = []
+	var openObject: ((String) -> Void)?
 	var retry: () -> Void = {}
 	var discard: () -> Void = {}
 
@@ -416,13 +432,25 @@ struct TimelineRow: View {
 						RelativeTime(item.date, style: .compact)
 							.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
 					}
-					MarkdownContent(text)
+					MarkdownContent(CommentMentions.linked(text, actors: mentionable))
 						.padding(MaskinSpace.s7)
 						.background(
 							MaskinSurface.card,
 							in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous)
 						)
 						.opacity(item.delivery == .sending ? 0.55 : 1)
+					if !files.isEmpty {
+						ChipFlow {
+							ForEach(files) { AttachedFileChip(file: $0) }
+						}
+					}
+					if !references.isEmpty {
+						ChipFlow {
+							ForEach(references) { ref in
+								ReferenceChip(ref: ref, onOpen: openObject.map { open in { open(ref.id) } })
+							}
+						}
+					}
 					deliveryFooter
 				}
 			}
@@ -470,5 +498,47 @@ struct PropertyPill<Content: View>: View {
 			.frame(minHeight: MaskinSpace.touchMin)
 			.background(fill, in: Capsule())
 			.contentShape(Capsule())
+	}
+}
+
+/// A small flourish when an object's status changes: a ring swells off the pill and fades. When
+/// the new status hands the work to the agents it also throws a few sparks. Still under Reduce Motion.
+struct StatusBurst: View {
+	let trigger: String
+	let color: Color
+	let sparks: Bool
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+	/// 0 = just fired, 1 = finished (invisible). Rests at 1 so nothing shows on first appearance.
+	@State private var progress: CGFloat = 1
+
+	private let sparkCount = 8
+
+	var body: some View {
+		ZStack {
+			Capsule()
+				.strokeBorder(color.opacity(0.5 * (1 - progress)), lineWidth: MaskinSpace.s1)
+				.scaleEffect(1 + 0.35 * progress)
+			if sparks {
+				ForEach(0..<sparkCount, id: \.self) { i in
+					let angle = Double(i) / Double(sparkCount) * 2 * .pi
+					Circle()
+						.fill(color)
+						.frame(width: MaskinSpace.s3, height: MaskinSpace.s3)
+						.offset(x: cos(angle) * 34 * progress, y: sin(angle) * 22 * progress)
+						.opacity(1 - progress)
+				}
+			}
+		}
+		.allowsHitTesting(false)
+		.accessibilityHidden(true)
+		.onChange(of: trigger) { old, _ in
+			MaskinHaptics.play(sparks ? .success : .light)
+			guard !reduceMotion else { return }
+			progress = 0
+			Task { @MainActor in
+				try? await Task.sleep(for: .milliseconds(30))
+				withAnimation(.easeOut(duration: 0.75)) { progress = 1 }
+			}
+		}
 	}
 }

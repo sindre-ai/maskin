@@ -32,6 +32,32 @@ public struct APIFilesRemote: FilesRemote {
 		}
 	}
 
+	/// The server caps a page at `ServerLimits.maxPageSize`, so ids go in chunks that fit both that
+	/// and a sensible URL length.
+	public func summaries(ids: [String]) async throws -> [FileSummary] {
+		let unique = Array(NSOrderedSet(array: ids)) as? [String] ?? ids
+		guard !unique.isEmpty else { return [] }
+		let workspace = await credentials?()?.workspaceId ?? ""
+		let chunkSize = 40
+		var found: [FileSummary] = []
+		for start in stride(from: 0, to: unique.count, by: chunkSize) {
+			let chunk = unique[start..<min(start + chunkSize, unique.count)]
+			do {
+				let output = try await client.get_sol_api_sol_files(
+					.init(
+						query: .init(ids: chunk.joined(separator: ","), limit: chunk.count),
+						headers: .init(x_hyphen_workspace_hyphen_id: workspace)))
+				guard case .ok(let ok) = output else { throw FileError("The server couldn't list files.") }
+				found += try Self.convert(ok.body.json, as: [SummaryDTO].self).map(\.model)
+			} catch {
+				if let error = error as? FileError { throw error }
+				let d = RemoteFailure.describe(error)
+				throw FileError(d.message, isOffline: d.isOffline)
+			}
+		}
+		return found
+	}
+
 	public func saveAnnotations(
 		fileId: String, annotations: [FileAnnotation], idempotencyKey: String
 	) async throws -> [FileAnnotation] {

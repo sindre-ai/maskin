@@ -55,6 +55,9 @@ private struct FilesListContent: View {
 			FilesListView(store: store, search: search, onOpen: open)
 			.background(MaskinSurface.grouped)
 			.navigationTitle("Files")
+			#if os(iOS)
+			.navigationBarTitleDisplayMode(.large)
+			#endif
 			.toolbar {
 				if let onDone {
 					ToolbarItem(placement: .confirmationAction) { Button("Done", action: onDone) }

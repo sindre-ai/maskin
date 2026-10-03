@@ -35,7 +35,7 @@ struct MarketplaceLoopDetailView: View {
 		#if os(iOS)
 		.navigationBarTitleDisplayMode(.inline)
 		#endif
-		.navigationTitle(detail?.loop.name ?? "Loop")
+		.navigationTitle(detail?.loop.name ?? "")
 		.task { await load() }
 		.confirmationDialog("Remove this loop?", isPresented: $confirmRemove, titleVisibility: .visible) {
 			if let row = store.install(for: loopID) {

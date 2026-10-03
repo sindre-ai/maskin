@@ -79,23 +79,37 @@ public struct ActorAvatar: View {
 	private let kind: Kind
 	private let size: CGFloat
 	private let seed: String
-	private let working: Bool
+	private let mood: AgentMood
 
 	/// - Parameters:
 	///   - seed: stable id for colour selection (defaults to the name).
 	///   - working: show the violet "agent is running" ring.
 	public init(
 		name: String, kind: Kind = .human, size: CGFloat = MaskinSpace.s12 + MaskinSpace.s3 + MaskinSpace.s3,
-		seed: String? = nil, working: Bool = false
+		seed: String? = nil, working: Bool = false, mood: AgentMood? = nil
 	) {
 		self.name = name
 		self.kind = kind
 		self.size = size
 		self.seed = seed ?? name
-		self.working = working
+		self.mood = mood ?? (working ? .working : .idle)
+	}
+
+	private var accessibilityName: String {
+		switch mood {
+		case .idle: name
+		case .working: "\(name), working"
+		case .waiting: "\(name), waiting for you"
+		case .failed: "\(name), last run failed"
+		case .paused: "\(name), paused"
+		}
 	}
 
 	private var shape: AgentShape { kind == .agent ? ActorIdentity.agentShape(seed: seed) : .circle }
+	private var working: Bool { mood == .working }
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+	@State private var bobbing = false
+	@State private var swaying = false
 
 	public var body: some View {
 		let colors = ActorIdentity.colors(seed: seed, kind: kind)
@@ -105,12 +119,41 @@ public struct ActorAvatar: View {
 			.minimumScaleFactor(0.6)
 			.foregroundStyle(colors.fg)
 			.frame(width: size, height: size)
-			.background(colors.bg, in: shape)
+			.background {
+				// A touch of depth so a character reads as an object, not a flat chip.
+				shape.fill(colors.bg)
+					.overlay(
+						shape.fill(
+							LinearGradient(
+								colors: [Color.white.opacity(0.22), .clear], startPoint: .top, endPoint: .center))
+					)
+					.overlay(shape.strokeBorder(colors.fg.opacity(0.12), lineWidth: 1))
+			}
+			.opacity(mood == .paused ? 0.55 : 1)
 			.overlay {
 				if working { WorkingRing(shape: shape) }
 			}
+			.overlay(alignment: .topTrailing) {
+				if kind == .agent {
+					AgentMoodBadge(mood: mood, size: max(8, size * 0.26))
+						.offset(x: size * 0.04, y: -size * 0.04)
+				}
+			}
+			// A working agent is busy: it hops and sways a little, on two out-of-step rhythms so the
+			// motion never looks mechanical.
+			.offset(y: working && bobbing && !reduceMotion ? -size * 0.07 : 0)
+			.rotationEffect(.degrees(working && swaying && !reduceMotion ? 5 : (working && !reduceMotion ? -5 : 0)))
+			.onChange(of: working, initial: true) { _, isWorking in
+				guard isWorking, !reduceMotion else {
+					bobbing = false
+					swaying = false
+					return
+				}
+				withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) { bobbing = true }
+				withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { swaying = true }
+			}
 			.accessibilityElement(children: .ignore)
-			.accessibilityLabel(working ? "\(name), working" : name)
+			.accessibilityLabel(accessibilityName)
 	}
 }
 
@@ -128,6 +171,16 @@ private struct AvatarGallery: View {
 					ActorAvatar(name: $0, kind: .agent)
 				}
 				ActorAvatar(name: "Forge", kind: .agent, working: true)
+			}
+			HStack {
+				ForEach(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"], id: \.self) {
+					ActorAvatar(name: "Agent \($0)", kind: .agent, seed: $0)
+				}
+			}
+			HStack {
+				ActorAvatar(name: "Relay", kind: .agent, mood: .waiting)
+				ActorAvatar(name: "Compass", kind: .agent, mood: .failed)
+				ActorAvatar(name: "Forge", kind: .agent, mood: .paused)
 			}
 		}
 		.padding(MaskinSpace.s9)
