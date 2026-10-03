@@ -26,6 +26,9 @@ public final class ObjectsStore {
 
 	public private(set) var typeFilter: String?
 	public private(set) var statusFilter: String?
+	/// Only the actor's starred objects. The API has no star filter, so this narrows what is
+	/// loaded; while it is on the list keeps paging until the starred ones surface.
+	public var starredOnly = false
 	public private(set) var searchText = ""
 	public var grouping: ObjectsGrouping = .status
 
@@ -73,14 +76,19 @@ public final class ObjectsStore {
 
 	// MARK: Derived
 
+	/// `objects` narrowed by the starred filter.
+	public var visibleObjects: [WorkObject] {
+		starredOnly ? objects.filter(\.isStarred) : objects
+	}
+
 	public var groups: [ObjectGroup] {
-		ObjectsGrouper.group(objects, by: grouping, schema: directory.schema, type: typeFilter)
+		ObjectsGrouper.group(visibleObjects, by: grouping, schema: directory.schema, type: typeFilter)
 	}
 
 	/// Statuses offered by the status filter for the current type filter.
 	public var statusOptions: [String] { directory.schema.statuses(for: typeFilter) }
 
-	public var isFiltered: Bool { typeFilter != nil || statusFilter != nil || !searchText.isEmpty }
+	public var isFiltered: Bool { typeFilter != nil || statusFilter != nil || starredOnly || !searchText.isEmpty }
 
 	private var query: ObjectsQuery {
 		ObjectsQuery(
@@ -113,6 +121,7 @@ public final class ObjectsStore {
 		isOffline = false
 		typeFilter = nil
 		statusFilter = nil
+		starredOnly = false
 		searchText = ""
 		actionError = nil
 		hydratedFromCache = false
@@ -157,6 +166,13 @@ public final class ObjectsStore {
 		guard status != statusFilter else { return }
 		statusFilter = status
 		await fetchFirstPage(showSpinner: true)
+	}
+
+	public func setStarredOnly(_ on: Bool) async {
+		guard on != starredOnly else { return }
+		starredOnly = on
+		// The head is cached unfiltered; coming back off the filter needs no refetch.
+		if on { await loadMore() }
 	}
 
 	public func setSearch(_ text: String) async {

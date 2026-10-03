@@ -56,6 +56,22 @@ struct ObjectsStoreTests {
 		#expect(store.objects.count == 5)
 	}
 
+	@Test("starred-only narrows the list to starred objects and keeps paging for them")
+	func starredOnly() async {
+		var many = (0..<75).map {
+			WorkObject(id: "o\($0)", type: "task", title: "Task \($0)", status: "todo", updatedAt: Fixtures.date($0))
+		}
+		many[60].isStarred = true
+		let (store, _) = makeStore(FakeObjectsRemote(objects: many))
+		await store.load()
+		await store.setStarredOnly(true)
+		#expect(store.isFiltered)
+		#expect(store.visibleObjects.map(\.id) == ["o60"])
+		#expect(store.groups.flatMap(\.objects).map(\.id) == ["o60"])
+		await store.setStarredOnly(false)
+		#expect(store.visibleObjects.count == store.objects.count)
+	}
+
 	@Test("paginates: full page means more, loadMore appends without duplicates")
 	func pagination() async {
 		let many = (0..<75).map {
