@@ -1,4 +1,5 @@
 import Foundation
+import MaskinCore
 import Observation
 
 #if os(iOS)
@@ -38,6 +39,8 @@ final class Dictation {
 			state = .unavailable("Dictation isn't available for this language right now.")
 			return
 		}
+		// The speaker and the microphone never run together.
+		SpeechReader.shared.inputDidBegin()
 		do {
 			let session = AVAudioSession.sharedInstance()
 			try session.setCategory(.record, mode: .measurement, options: .duckOthers)
@@ -81,6 +84,7 @@ final class Dictation {
 		request = nil
 		try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
 		if state == .listening { state = .idle }
+		SpeechReader.shared.inputDidEnd()
 	}
 
 	func clearError() {

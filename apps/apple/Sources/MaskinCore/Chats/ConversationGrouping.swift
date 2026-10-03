@@ -46,6 +46,14 @@ public enum ConversationGrouping {
 		}
 	}
 
+	/// Conversations an actor takes part in; nil keeps everything.
+	public static func filter(_ conversations: [ConversationSummary], agentID: String?)
+		-> [ConversationSummary]
+	{
+		guard let agentID else { return conversations }
+		return conversations.filter { $0.participants.contains { $0.id == agentID } }
+	}
+
 	/// Case-insensitive match on title, snippet and participant names.
 	public static func filter(_ conversations: [ConversationSummary], query: String)
 		-> [ConversationSummary]
