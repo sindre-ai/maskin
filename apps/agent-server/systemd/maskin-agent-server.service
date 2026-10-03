@@ -1,6 +1,6 @@
 [Unit]
 Description=Maskin Agent Server (microsandbox runtime)
-Documentation=https://github.com/sindre-ai/maskin/blob/main/apps/agent-server/HOST_SETUP.md
+Documentation=https://github.com/vaerksted-ai/maskin/blob/main/apps/agent-server/HOST_SETUP.md
 After=network-online.target
 Wants=network-online.target
 Requires=network-online.target
