@@ -37,7 +37,7 @@ export async function createMcpSession(
 		}),
 	)
 
-	logger.info(`MCP session started with ${tools.length} tools from ${command} ${args.join(' ')}`)
+	logger.info(`MCP session started with ${tools.length} tools from ${command}`)
 
 	return {
 		tools,
