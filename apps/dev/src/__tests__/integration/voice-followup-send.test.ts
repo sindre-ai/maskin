@@ -2,7 +2,7 @@ import { events, integrations, objects } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
-import { sendFollowup } from '../../lib/outreach/voice/send-followup'
+import { VOICE_EMAIL_CLAIM_KEY, sendFollowup } from '../../lib/outreach/voice/send-followup'
 import { insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
@@ -158,5 +158,74 @@ describe('sendFollowup per-workspace Resend identity', () => {
 		const audit = await db.select().from(events).where(eq(events.entityId, contact.id))
 		expect(audit).toHaveLength(1)
 		expect(audit[0].action).toBe('updated')
+	})
+
+	describe('send claim', () => {
+		it('claims the contact before Resend is called and keeps the claim after the send', async () => {
+			const ws = await insertWorkspace(db, getTestActorId())
+			await connectResend(ws.id, { apiKey: 're_key_e', sendFrom: 'noreply@agent.e.example' })
+			const contact = await insertContact(ws.id)
+			let claimDuringSend: unknown
+			fetchMock.mockImplementation(async () => {
+				claimDuringSend = (await contactMetadata(contact.id))[VOICE_EMAIL_CLAIM_KEY]
+				return new Response(JSON.stringify({ id: 'email_1' }), { status: 200 })
+			})
+
+			await sendFollowup(db, { ...emailParams(), workspaceId: ws.id, contact })
+
+			expect(claimDuringSend).toBe('call-1')
+			expect((await contactMetadata(contact.id))[VOICE_EMAIL_CLAIM_KEY]).toBe('call-1')
+		})
+
+		it('sends nothing for a second call while the first call holds the claim', async () => {
+			const ws = await insertWorkspace(db, getTestActorId())
+			await connectResend(ws.id, { apiKey: 're_key_f', sendFrom: 'noreply@agent.f.example' })
+			const contact = await insertContact(ws.id, { [VOICE_EMAIL_CLAIM_KEY]: 'call-earlier' })
+
+			await sendFollowup(db, { ...emailParams(), workspaceId: ws.id, contact })
+
+			expect(fetchMock).not.toHaveBeenCalled()
+			const metadata = await contactMetadata(contact.id)
+			expect(metadata[VOICE_EMAIL_CLAIM_KEY]).toBe('call-earlier')
+			expect(metadata).not.toHaveProperty('consent_captured_at')
+		})
+
+		it('sends once when two sends for the same contact run at the same time', async () => {
+			const ws = await insertWorkspace(db, getTestActorId())
+			await connectResend(ws.id, { apiKey: 're_key_g', sendFrom: 'noreply@agent.g.example' })
+			const contact = await insertContact(ws.id)
+
+			await Promise.all([
+				sendFollowup(db, { ...emailParams(), workspaceId: ws.id, contact }),
+				sendFollowup(db, { ...emailParams(), workspaceId: ws.id, contact }),
+			])
+
+			expect(fetchMock).toHaveBeenCalledTimes(1)
+		})
+
+		it('releases the claim when Resend rejects, so a retry still sends the only email', async () => {
+			const ws = await insertWorkspace(db, getTestActorId())
+			await connectResend(ws.id, { apiKey: 're_key_h', sendFrom: 'noreply@agent.h.example' })
+			const contact = await insertContact(ws.id)
+			fetchMock.mockImplementationOnce(
+				async () =>
+					new Response(
+						JSON.stringify({ name: 'validation_error', message: 'rejected', statusCode: 422 }),
+						{ status: 422 },
+					),
+			)
+
+			await expect(
+				sendFollowup(db, { ...emailParams(), workspaceId: ws.id, contact }),
+			).rejects.toThrow('Voice follow-up email send failed')
+			const afterReject = await contactMetadata(contact.id)
+			expect(afterReject).not.toHaveProperty(VOICE_EMAIL_CLAIM_KEY)
+			expect(afterReject).not.toHaveProperty('consent_captured_at')
+
+			await sendFollowup(db, { ...emailParams(), workspaceId: ws.id, contact })
+
+			expect(fetchMock).toHaveBeenCalledTimes(2)
+			expect(typeof (await contactMetadata(contact.id)).consent_captured_at).toBe('string')
+		})
 	})
 })
