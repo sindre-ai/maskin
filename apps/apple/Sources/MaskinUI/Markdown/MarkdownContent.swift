@@ -1,6 +1,13 @@
 import MaskinDesign
 import SwiftUI
 
+extension EnvironmentValues {
+	/// Offered every tapped markdown link before the web policy applies. Return `true` when the
+	/// app took it (a Maskin object/chat link opens in the app instead of the browser). `MaskinUI`
+	/// can't know the app's link shapes, so the app root supplies this.
+	@Entry public var markdownInternalLinkHandler: (@MainActor (URL) -> Bool)? = nil
+}
+
 /// Renders markdown natively. Block structure comes from `MarkdownParser`; inline
 /// styling from `AttributedString(markdown:)`, restyled with design tokens.
 ///
@@ -9,6 +16,7 @@ import SwiftUI
 public struct MarkdownContent: View {
 	private let blocks: [MarkdownBlock]
 	@Environment(\.openURL) private var openURL
+	@Environment(\.markdownInternalLinkHandler) private var internalLinkHandler
 	@State private var pending: URL?
 
 	public init(_ markdown: String) {
@@ -20,6 +28,7 @@ public struct MarkdownContent: View {
 			.environment(
 				\.openURL,
 				OpenURLAction { url in
+					if internalLinkHandler?(url) == true { return .handled }
 					switch MarkdownLinkPolicy.decision(for: url) {
 					case .open: return .systemAction
 					case .confirm: pending = url; return .handled

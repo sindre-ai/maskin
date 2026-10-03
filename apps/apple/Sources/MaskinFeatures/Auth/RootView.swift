@@ -1,4 +1,5 @@
 import MaskinCore
+import MaskinUI
 import SwiftUI
 
 /// App root: login when signed out, the shell otherwise. Also drives the runtime: restores the
@@ -54,6 +55,7 @@ public struct RootView: View {
 			welcomeChatId = firstUseActorId == nil ? nil : await welcomeConversationId?()
 		}
 		.handlesDeepLinks(runtime.router) { runtime.present($0) }
+		.environment(\.markdownInternalLinkHandler, { @MainActor [runtime] url in runtime.open(url) })
 		.task { onRuntimeReady(runtime) }
 		.task(id: auth.session?.apiKey) { await environment.workspaces.refresh() }
 		.task(id: auth.credentials) { environment.syncEvents() }
