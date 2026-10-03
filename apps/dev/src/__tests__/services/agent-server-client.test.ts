@@ -10,6 +10,7 @@ import {
 	AgentServerClient,
 	AgentServerHttpError,
 	type AgentServerRow,
+	STOP_SESSION_TIMEOUT_MS,
 } from '../../services/agent-server-client'
 
 const SERVER: AgentServerRow = {
@@ -265,6 +266,55 @@ describe('RPC contract: POST /sessions/:id/stop (§2.2)', () => {
 		expect(calls[0]?.init?.body).toBe(JSON.stringify(req))
 		const headers = new Headers(calls[0]?.init?.headers)
 		expect(headers.get('authorization')).toBe(`Bearer ${SERVER.secret}`)
+	})
+
+	it('client.stopSession passes an abort signal; startSession does not', async () => {
+		const stopSpy = makeFetchSpy(
+			new Response(JSON.stringify({ stopped: 'sandbox-stopped' }), {
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+			}),
+		)
+		await new AgentServerClient({ server: SERVER, fetchImpl: stopSpy.fetchImpl }).stopSession(
+			'sess-stop',
+			{ reason: 'stop', source: 'user-stop' },
+		)
+		expect(stopSpy.calls[0]?.init?.signal).toBeInstanceOf(AbortSignal)
+
+		const startSpy = makeFetchSpy(
+			new Response(
+				JSON.stringify({
+					sessionId: 's1',
+					sandboxName: 's1',
+					connection: { host: 'agent-finland.maskin.test', port: 3001 },
+				}),
+				{ status: 201, headers: { 'content-type': 'application/json' } },
+			),
+		)
+		await new AgentServerClient({ server: SERVER, fetchImpl: startSpy.fetchImpl }).startSession({
+			sessionId: 's1',
+			image: 'alpine:3.20',
+		})
+		expect(startSpy.calls[0]?.init?.signal).toBeUndefined()
+	})
+
+	it('client.stopSession bounds the call with STOP_SESSION_TIMEOUT_MS', async () => {
+		const timeoutSpy = vi.spyOn(AbortSignal, 'timeout')
+		try {
+			const { fetchImpl } = makeFetchSpy(
+				new Response(JSON.stringify({ stopped: 'sandbox-stopped' }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				}),
+			)
+			await new AgentServerClient({ server: SERVER, fetchImpl }).stopSession('sess-stop', {
+				reason: 'fail',
+				source: 'reaper',
+			})
+			expect(timeoutSpy).toHaveBeenCalledWith(STOP_SESSION_TIMEOUT_MS)
+		} finally {
+			timeoutSpy.mockRestore()
+		}
 	})
 
 	it('client.stopSession returns { stopped: sandbox-stopped } on 200', async () => {

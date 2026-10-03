@@ -4442,7 +4442,13 @@ export class SessionManager extends EventEmitter {
 			.select()
 			.from(sessions)
 			.where(
-				and(eq(sessions.sessionState, 'starting'), lt(sessions.stateEnteredAt, bootStallCutoff)),
+				and(
+					eq(sessions.sessionState, 'starting'),
+					lt(sessions.stateEnteredAt, bootStallCutoff),
+					// A row can turn running between the 6b heal and this read; never
+					// fail (and now stop) a live session. The next pass heals it.
+					ne(sessions.status, 'running'),
+				),
 			)
 
 		for (const session of stuckStarting) {
@@ -4485,8 +4491,14 @@ export class SessionManager extends EventEmitter {
 			// settleSession is the only writer of terminal sessions.status.
 			// classification='startup_stalled' — settleSession's push guard
 			// already skips pushAgentFiles for this classification (nothing
-			// was ever written to /agent), and skipStop is redundant here
-			// since the session never reached a live runtime.
+			// was ever written to /agent). The stop is NOT skipped: the slot
+			// claim sets agent_server_id before any sandbox exists, and
+			// container_id is only written after startSession returns, so a
+			// sandbox can be live while the row has no container_id. The stop
+			// is by session id and idempotent (sandbox-not-found maps to
+			// skipped-none-live), so a stall that never made a sandbox is a
+			// no-op. Live rows never get here: step 6b heals status='running'
+			// rows first and the select above excludes them.
 			await settleSession(
 				session.id,
 				{
@@ -4497,7 +4509,7 @@ export class SessionManager extends EventEmitter {
 					exitCode: 0,
 					failureReason: stalledFailureReason,
 				},
-				this.buildSettleDeps({ skipStop: true, skipPush: true }),
+				this.buildSettleDeps({ skipPush: true }),
 			)
 
 			await this.insertSystemLog(session.id, stalledFailureReason.human_message).catch((err) =>
