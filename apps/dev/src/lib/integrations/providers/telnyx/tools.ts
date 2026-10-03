@@ -4,6 +4,7 @@ import { and, eq } from 'drizzle-orm'
 import type { ZodTypeAny, z } from 'zod'
 import { logger } from '../../../logger'
 import { patchContactMetadata, recordToolSuccess } from '../../../outreach/voice/apply'
+import { type FounderActors, parseFounderActors } from '../../../outreach/voice/dnc-gate'
 import { pingSales } from '../../../outreach/voice/sales-ping'
 import { proposeSlots, slotSearchRange } from '../../../outreach/voice/slots'
 import { copenhagenParts } from '../../../outreach/voice/workdays'
@@ -41,6 +42,8 @@ export interface ToolRouterDeps {
 	/** Null when the workspace has no usable Google Calendar connection. */
 	calendarFor: (db: Database, workspaceId: string) => Promise<CalendarClient | null>
 	telnyx: () => TelnyxClient | null
+	/** Owner slug to human actor id: the same VOICE_FOUNDER_ACTORS map the dialer uses. */
+	founders: () => FounderActors
 	/**
 	 * The agent's last turn before the prospect's yes, from Telnyx's own record of the call. None of
 	 * the Telnyx surfaces we have read (the tool_invocation event, the published OpenAPI spec)
@@ -63,6 +66,7 @@ export function defaultToolRouterDeps(): ToolRouterDeps {
 			const { apiKey, apiBaseUrl } = readTelnyxRuntimeConfig()
 			return apiKey ? createTelnyxClient({ apiKey, baseUrl: apiBaseUrl }) : null
 		},
+		founders: () => parseFounderActors(process.env.VOICE_FOUNDER_ACTORS),
 		agentTurnFor: async () => null,
 		scriptVersion: () => currentScriptVersion(),
 		defer: (work) => {
@@ -270,8 +274,13 @@ async function startTransfer(run: Run, reason: string): Promise<void> {
 			data: { call_id: ctx.callId },
 		})
 
-	const targetId = contact.metadata.transfer_target_actor_id
-	if (typeof targetId !== 'string') return fallback('transfer_skipped_no_target_actor')
+	// The target is the contact's owner: metadata.owner is a slug, VOICE_FOUNDER_ACTORS maps it to the actor.
+	const founders = deps.founders()
+	const owner =
+		typeof contact.metadata.owner === 'string' ? contact.metadata.owner.trim().toLowerCase() : ''
+	const targetId =
+		founders.ok && Object.hasOwn(founders.map, owner) ? founders.map[owner] : undefined
+	if (!targetId) return fallback('transfer_skipped_no_target_actor')
 	const [target] = await db
 		.select({ metadata: actors.metadata })
 		.from(actors)

@@ -140,11 +140,12 @@ describe('Telnyx tool router: end_call_polite and flag_interest', () => {
 		const target = actorMeta
 			? await insertActor(db, { type: 'human', name: 'Sebk', metadata: actorMeta })
 			: null
-		const t = await setup(target ? { transfer_target_actor_id: target.id } : {})
+		const t = await setup(target ? { owner: 'sebk' } : {})
 		const transferCall = vi.fn(async () => {})
 		const work: Promise<unknown>[] = []
 		const r = router({
 			now: () => now,
+			founders: () => ({ ok: true, map: target ? { sebk: target.id } : {} }),
 			telnyx: () => ({ transferCall }) as never,
 			defer: (p) => work.push(p),
 		})
@@ -170,6 +171,13 @@ describe('Telnyx tool router: end_call_polite and flag_interest', () => {
 			channel: '#sales',
 			reason: 'transfer_skipped_no_number',
 		})
+	})
+
+	it('hot with an owner that is not in VOICE_FOUNDER_ACTORS skips the transfer and pings #sales', async () => {
+		const { t, transferCall } = await hot(null)
+		expect(transferCall).not.toHaveBeenCalled()
+		const [ping] = await t.audit('voice_sales_ping')
+		expect(ping?.data).toMatchObject({ attention: 3, reason: 'transfer_skipped_no_target_actor' })
 	})
 
 	it('hot with a malformed number does not transfer', async () => {
@@ -202,9 +210,10 @@ describe('Telnyx tool router: end_call_polite and flag_interest', () => {
 			name: 'Sebk',
 			metadata: { transfer_phone_e164: '+4512345678' },
 		})
-		const t = await setup({ transfer_target_actor_id: target.id })
+		const t = await setup({ owner: 'sebk' })
 		const work: Promise<unknown>[] = []
 		const r = router({
+			founders: () => ({ ok: true, map: { sebk: target.id } }),
 			telnyx: () =>
 				({
 					transferCall: async () => {

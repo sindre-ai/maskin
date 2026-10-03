@@ -218,7 +218,10 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 			}),
 		)
 	})
-	afterAll(() => registerToolHandler(null))
+	afterAll(() => {
+		registerToolHandler(null)
+		setEffectRunnerForTests(null)
+	})
 
 	beforeEach(() => {
 		sms.length = 0
@@ -226,7 +229,6 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 		setEffectRunnerForTests(runner)
 		postCallHooks.length = 0
 	})
-	afterAll(() => setEffectRunnerForTests(null))
 
 	async function newContact(status = 'voice_queued', metadata: Record<string, unknown> = {}) {
 		const ws = await insertWorkspace(db, getTestActorId())
