@@ -21,7 +21,7 @@
 				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
 			</array>
 		</dict>
-		<!-- What the user chooses to share into their workspace: links, text, images, files. -->
+		<!-- Workspace content shown or fetched on the user's behalf. -->
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypeOtherUserContent</string>
@@ -35,19 +35,8 @@
 			</array>
 		</dict>
 	</array>
-	<!-- File timestamps: ShareExtractor.sweepStaleDirectories reads modification dates of the
-	     extension's own temp directories (C617.1). No UserDefaults, boot-time, disk-space or
-	     keyboard APIs are used by the extension; its Keychain use is not a required-reason API. -->
+	<!-- The widgets use no required-reason APIs: no UserDefaults, file timestamps, boot time or disk space. Their snapshot cache is read and written by path only; Keychain use is not a required-reason API. -->
 	<key>NSPrivacyAccessedAPITypes</key>
-	<array>
-		<dict>
-			<key>NSPrivacyAccessedAPIType</key>
-			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
-			<key>NSPrivacyAccessedAPITypeReasons</key>
-			<array>
-				<string>C617.1</string>
-			</array>
-		</dict>
-	</array>
+	<array/>
 </dict>
 </plist>

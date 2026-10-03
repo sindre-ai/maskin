@@ -17,6 +17,8 @@ public struct RootView: View {
 	@State private var firstUseActorId: String?
 	@State private var welcomeChatId: String?
 	@State private var isRetryingWorkspace = false
+	/// Reloads the home/lock-screen widgets on sign-in, sign-out, workspace switch and backgrounding.
+	@State private var widgetReloader = makeWidgetReloader()
 
 	/// `push` is the platform's registrar (built by the app target); `onRuntimeReady` hands the
 	/// app delegate the runtime's router so notification taps reach it.
@@ -58,7 +60,11 @@ public struct RootView: View {
 		.task(id: runtime.syncKey) { runtime.sync() }
 		.task(id: auth.session?.actorId) { await runtime.actorChanged(auth.session?.actorId) }
 		.onChange(of: runtime.notifications.unreadCount, initial: true) { runtime.updateBadge() }
+		.onChange(of: [auth.session?.actorId ?? "", auth.session?.workspaceId ?? ""]) {
+			widgetReloader.reload()
+		}
 		.onChange(of: scenePhase) { _, phase in
+			if phase == .background { widgetReloader.reload() }
 			switch phase {
 			case .active: runtime.scenePhaseChanged(.active)
 			case .inactive: runtime.scenePhaseChanged(.inactive)

@@ -12,6 +12,9 @@ struct MaskinApp: App {
 	#endif
 	@State private var environment: AppEnvironment
 	@State private var push: PushRegistrar
+	#if os(iOS)
+		@State private var watchBridge = WatchSessionBridge()
+	#endif
 
 	init() {
 		#if os(macOS)
@@ -53,6 +56,12 @@ struct MaskinApp: App {
 				else { return }
 				Task { await IntentDeepLinkRelay.openSpotlight(identifier: id) }
 			}
+			#if os(iOS)
+				// Hand the sign-in to the paired watch, and again whenever it changes.
+				.onChange(of: environment.auth.session, initial: true) { _, session in
+					watchBridge.publish(session)
+				}
+			#endif
 		}
 		.commands { ShellCommands() }
 	}

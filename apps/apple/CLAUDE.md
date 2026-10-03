@@ -5,7 +5,7 @@ One Swift package (`MaskinKit`) + thin app targets. Read `/Users/krumhausen/.cla
 ## Layers (dependencies point down only)
 `Apps/*` → `MaskinFeatures` → `MaskinCore`, `MaskinUI` → `MaskinAPI`, `MaskinDesign`
 - `MaskinDesign` — tokens. `Generated/Tokens.swift` is GENERATED (`node scripts/gen-tokens.mjs`); never hand-edit. Hand-written iOS additions live beside it, not in it.
-- `MaskinAPI` — generated OpenAPI client (`openapi.json`, regenerate via `pnpm --filter @maskin/dev exec tsx scripts/dump-openapi.ts`), `SSEClient`, `MaskinClient`. Generated operation names are ugly (`get_sol_api_sol_objects`); NEVER leak them above a store's private adapter.
+- `MaskinAPI` — generated OpenAPI client (`openapi.json`, regenerate the snapshot via `pnpm --filter @maskin/dev exec tsx scripts/dump-openapi.ts`, then the CHECKED-IN client in `Sources/MaskinAPI/Generated/` via `scripts/gen-api.sh`; CI fails on drift in either), `SSEClient`, `MaskinClient`. Generated operation names are ugly (`get_sol_api_sol_objects`); NEVER leak them above a store's private adapter.
 - `MaskinCore` — `@MainActor @Observable` stores, models, outbox, caches. No SwiftUI/UIKit imports (watch, tv, mac share it).
 - `MaskinUI` — stateless SwiftUI components taking plain values.
 - `MaskinFeatures` — screens. Adaptive (size classes / `NavigationSplitView`), never per-device forks. Platform differences only via `#if os()` in small files.

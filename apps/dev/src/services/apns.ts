@@ -23,10 +23,11 @@
  * and a compact root `decision` object the app's notification service extension turns into
  * per-notification action buttons (iOS only lets an app register fixed categories ahead of
  * time, but option labels differ per notification):
- *   decision: { eventId, parentEventId?, objectId?, options: [{ label }], recommended? }
+ *   decision: { eventId, parentEventId?, objectId?, options: [{ label, destructive? }], recommended? }
  * `eventId` is the agent's decision comment (what the reply threads under and the high-water
- * mark for mark-read); `recommended` is the zero-based index into `options`. Labels are
- * truncated, at most `DECISION_OPTIONS_MAX` options travel, and nothing secret is ever in it.
+ * mark for mark-read); `recommended` is the zero-based index into `options`. Labels travel
+ * whole (never truncated: the app posts the label verbatim as the answer, so a decision with an
+ * over-long label travels without actions), at most `DECISION_OPTIONS_MAX` options travel, and nothing secret is ever in it.
  * Rich pushes: `aps.interruption-level` (`time-sensitive` for decisions, `active` otherwise,
  * `passive` when asked), `aps.badge` (the actor's pending-notification count) and an optional
  * root `image_url` (https only) the extension downloads and attaches. `buildApnsPayload` is the
@@ -75,7 +76,7 @@ export interface PushDecision {
 	/** The comment's own parent, when the decision was posted as a reply. */
 	parentEventId?: number | null
 	objectId?: string | null
-	options: { label: string }[]
+	options: { label: string; destructive?: boolean }[]
 	/** Zero-based index into `options` of the recommended choice. */
 	recommended?: number | null
 }
@@ -114,7 +115,7 @@ export const APNS_PAYLOAD_MAX_BYTES = 3800
 export const DECISION_CATEGORY = 'maskin.decision'
 /** One banner shows at most four actions; one slot is the Reply field. */
 export const DECISION_OPTIONS_MAX = 3
-export const DECISION_LABEL_MAX = 40
+export const DECISION_LABEL_MAX = 120
 
 export function loadApnsConfig(env: NodeJS.ProcessEnv = process.env): ApnsConfig | null {
 	const keyId = env.APNS_KEY_ID?.trim()
@@ -150,19 +151,31 @@ export function deepLinkFor(msg: PushMessage): string {
 	return `maskin://${msg.workspaceId}/notifications`
 }
 
-function compactDecision(decision: PushDecision): Record<string, unknown> | null {
-	const options = decision.options
-		.map((o) => ({ label: truncate(o.label.trim(), DECISION_LABEL_MAX) }))
+export function compactDecision(decision: PushDecision): Record<string, unknown> | null {
+	// Index-preserving: `recommended` points into the ORIGINAL list, so remap it after blank
+	// labels are filtered out rather than reusing the raw index.
+	const kept = decision.options
+		.map((o, originalIndex) => ({
+			originalIndex,
+			label: o.label.trim(),
+			destructive: o.destructive,
+		}))
 		.filter((o) => o.label.length > 0)
 		.slice(0, DECISION_OPTIONS_MAX)
+	// The app posts the label as the user's answer. A truncated label would post text the agent
+	// never offered, so an over-long label makes the whole decision non-actionable instead.
+	if (kept.some((o) => o.label.length > DECISION_LABEL_MAX)) return null
 	// A decision with no choices is just a notification; the Reply field alone needs no payload.
-	if (options.length === 0 || !Number.isSafeInteger(decision.eventId)) return null
-	const recommended =
-		typeof decision.recommended === 'number' &&
-		decision.recommended >= 0 &&
-		decision.recommended < options.length
-			? decision.recommended
-			: undefined
+	if (kept.length === 0 || !Number.isSafeInteger(decision.eventId)) return null
+	const options = kept.map((o) => ({
+		label: o.label,
+		...(o.destructive === true ? { destructive: true } : {}),
+	}))
+	const recommendedIndex =
+		typeof decision.recommended === 'number'
+			? kept.findIndex((o) => o.originalIndex === decision.recommended)
+			: -1
+	const recommended = recommendedIndex >= 0 ? recommendedIndex : undefined
 	return {
 		eventId: decision.eventId,
 		...(decision.parentEventId != null ? { parentEventId: decision.parentEventId } : {}),

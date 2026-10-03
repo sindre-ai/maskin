@@ -22,14 +22,17 @@ private struct FakeBackend: DecisionBackend {
 	var commentError: (any Error)?
 	var readError: (any Error)?
 	var hang = false
+	var delay: Duration = .zero
 
 	func postComment(entityId: String, content: String, parentEventId: Int?) async throws {
 		if hang { try await Task.sleep(for: .seconds(30)) }
+		if delay > .zero { try await Task.sleep(for: delay) }
 		if let commentError { throw commentError }
 		await calls.comment(
 			.init(entityId: entityId, content: content, parent: parentEventId, key: IdempotencyKey.current))
 	}
 	func markRead(entityId: String, lastEventId: Int) async throws {
+		if delay > .zero { try await Task.sleep(for: delay) }
 		if let readError { throw readError }
 		await calls.read(entityId, lastEventId, IdempotencyKey.current)
 	}
@@ -125,6 +128,35 @@ struct NotificationActionHandlerTests {
 		#expect(write?.lastEventId == 42)
 		#expect(write?.workspaceId == "ws-1")
 		#expect(write?.entityId == "obj-1")
+	}
+
+	@Test func bothWritesShareOneDeadline() async {
+		// Each write alone fits in the 400 ms budget; together they do not.
+		let queue = FakeQueue()
+		let calls = Calls()
+		let outcome = await handler(
+			FakeBackend(calls: calls, delay: .milliseconds(250)), queue: queue, timeout: .milliseconds(400)
+		).perform(.option(label: "Ship it"), userText: nil, payload: payload)
+		#expect(outcome == .answered("Ship it"))
+		#expect(await calls.comments.count == 1)
+		#expect(await calls.reads.isEmpty)
+		// The mark-read that missed the deadline is owed to the outbox, with no second comment.
+		#expect(queue.writes.count == 1)
+		#expect(queue.writes.first?.content == nil)
+	}
+
+	@Test func postsTheFullOriginalLabelNeverAnEllipsis() async {
+		let long = "Ship to ten percent of new workspaces first and watch activation closely"
+		let p = PushDecisionPayload(
+			workspaceId: "ws-1", notificationId: "n-1", eventId: 42, objectId: "obj-1",
+			options: [PushDecisionOption(label: long), PushDecisionOption(label: "Hold")])
+		let calls = Calls()
+		let kind = NotificationActionPlan.choice(for: "maskin.option.0", in: p)
+		let outcome = await handler(FakeBackend(calls: calls)).perform(
+			try! #require(kind), userText: nil, payload: p)
+		#expect(outcome == .answered(long))
+		#expect(await calls.comments.first?.content == long)
+		#expect(await calls.comments.first?.content.contains("\u{2026}") == false)
 	}
 
 	@Test func timeoutIsTreatedAsTransientAndQueued() async {

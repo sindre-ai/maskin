@@ -55,6 +55,7 @@ private struct ChatsContainer: View {
 	@State private var search = ""
 	@State private var showNewChat = false
 	@State private var pendingText = ""
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@Binding var requestedConversationId: String?
 
 	init(
@@ -74,7 +75,7 @@ private struct ChatsContainer: View {
 				store: store, selection: $selection, search: $search,
 				currentActorID: environment.auth.session?.actorId,
 				isLive: environment.events.connection != .failed,
-				onStart: { text in Task { await start(with: text) } }
+				onNewChat: { showNewChat = true }
 			)
 			.shellToolbar(environment: environment)
 			.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
@@ -91,6 +92,12 @@ private struct ChatsContainer: View {
 		.onChange(of: requestedConversationId, initial: true) {
 			ChatsScreen.consume(request: &requestedConversationId, into: &selection)
 		}
+		.onChange(of: runtime?.chatDraft, initial: true) {
+			// A build request from Agents or Loops: agents and loops are set up by the Chief of Staff.
+			guard let draft = runtime?.chatDraft else { return }
+			runtime?.chatDraft = nil
+			Task { await startWithChiefOfStaff(text: draft.text) }
+		}
 		.task { await store.start() }
 		.onDisappear { store.stop() }
 		.sheet(isPresented: $showNewChat, onDismiss: { pendingText = "" }) {
@@ -104,24 +111,24 @@ private struct ChatsContainer: View {
 }
 
 extension ChatsContainer {
-	/// The bar's text starts a chat with the agent you talk to most recently, or the only agent
-	/// there is. With no obvious choice the new-chat sheet opens with the text filled in.
-	fileprivate func start(with text: String) async {
+	/// Agents and loops are never built through a form: the Chief of Staff scopes them with the
+	/// person and creates them. Opens a chat with it, or the new-chat sheet with the text filled in
+	/// when the workspace has no Chief of Staff (or the chat can't be created).
+	fileprivate func startWithChiefOfStaff(text: String) async {
 		await store.loadActors()
-		let agents = store.actors.filter { $0.participant.kind == .agent && !$0.isSystem }
-		let recent = store.recentCollaboratorIDs
-		let target =
-			recent.lazy.compactMap { id in agents.first { $0.id == id } }.first
-			?? (agents.count == 1 ? agents.first : nil)
-		guard let target else {
+		guard
+			let chief = store.actors.first(where: {
+				$0.isSystem && $0.participant.kind == .agent && $0.participant.name == "Chief of Staff"
+			})
+		else {
 			pendingText = text
 			showNewChat = true
 			return
 		}
 		do {
 			let created = try await store.create(
-				title: ThreadLayout.defaultTitle(for: [target.participant.name]),
-				participantIDs: [target.id], firstMessage: text)
+				title: ThreadLayout.defaultTitle(for: [chief.participant.name]),
+				participantIDs: [chief.id], firstMessage: text)
 			MaskinHaptics.play(.success)
 			selection = created.id
 		} catch {

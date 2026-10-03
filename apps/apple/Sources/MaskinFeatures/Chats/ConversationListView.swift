@@ -3,16 +3,15 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The sidebar column: grouped conversations with search, a bottom bar that starts a chat, and
-/// loading, empty and offline states. Pin, archive and unread live in the long-press menu.
+/// The sidebar column: grouped conversations with search, a New chat button, and loading,
+/// empty and offline states. Pin, archive and unread live in the long-press menu.
 struct ConversationListView: View {
 	let store: ConversationsStore
 	@Binding var selection: String?
 	@Binding var search: String
 	let currentActorID: String?
 	var isLive = true
-	/// Called with the text typed in the bottom bar; the host picks who the chat is with.
-	let onStart: (String) -> Void
+	let onNewChat: () -> Void
 
 	var body: some View {
 		let groups = store.groups(query: search)
@@ -37,19 +36,23 @@ struct ConversationListView: View {
 					MonoLabel(group.label)
 				}
 			}
+			if search.isEmpty, !store.conversations.isEmpty || store.scope == .archived {
+				Button(store.scope == .archived ? "Back to chats" : "Archived") {
+					store.scope = store.scope == .archived ? .active : .archived
+				}
+				.foregroundStyle(MaskinColor.ink4)
+			}
 		}
 		.listStyle(.plain)
 		.overlay { overlay(isEmpty: groups.isEmpty) }
 		.refreshable { await store.refresh() }
 		.searchable(text: $search, prompt: "Search chats")
 		.navigationTitle(store.scope == .archived ? "Archived" : "Chats")
-		.toolbar { ToolbarItem(placement: .automatic) { AgentFilterMenu(store: store) } }
-		.safeAreaInset(edge: .bottom, spacing: 0) {
-			if store.scope == .active {
-				NewChatBar(onSend: onStart)
-			} else {
-				Button("Back to chats") { store.scope = .active }
-					.buttonStyle(.secondaryAction).padding(MaskinSpace.s5)
+		.toolbar {
+			ToolbarItem(placement: .automatic) { AgentFilterMenu(store: store) }
+			ToolbarItem(placement: .automatic) {
+				Button(action: onNewChat) { Label("New chat", systemImage: "square.and.pencil") }
+					.keyboardShortcut("n", modifiers: .command)
 			}
 		}
 	}
@@ -69,7 +72,12 @@ struct ConversationListView: View {
 					EmptyState(
 						symbol: "bubble.left.and.bubble.right",
 						title: store.scope == .archived ? "Nothing archived" : "No conversations yet",
-						message: store.scope == .archived ? nil : "Ask anything below to start one.")
+						message: store.scope == .archived ? nil : "Start one with a teammate or an agent."
+					) {
+						if store.scope == .active {
+							Button("New chat", action: onNewChat).buttonStyle(.primaryAction)
+						}
+					}
 				} else {
 					ContentUnavailableView.search(text: search)
 				}
@@ -88,42 +96,6 @@ struct ConversationListView: View {
 		Button(conversation.archived ? "Unarchive" : "Archive", systemImage: "archivebox") {
 			Task { await store.setArchived(conversation.id, !conversation.archived) }
 		}
-	}
-}
-
-/// One field and a send arrow, pinned under the list. Typing here is how a chat starts.
-private struct NewChatBar: View {
-	let onSend: (String) -> Void
-	@State private var text = ""
-
-	private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
-
-	var body: some View {
-		HStack(alignment: .bottom, spacing: MaskinSpace.s4) {
-			TextField("Ask anything", text: $text, axis: .vertical)
-				.lineLimit(1...4)
-				.maskinText(.body)
-				.frame(minHeight: MaskinSpace.touchMin)
-				.padding(.leading, MaskinSpace.s4)
-			Button {
-				MaskinHaptics.play(.light)
-				onSend(trimmed)
-				text = ""
-			} label: {
-				Image(systemName: "arrow.up")
-					.font(.system(size: MaskinFontSize.t15, weight: .bold))
-					.foregroundStyle(MaskinSurface.onInverse)
-					.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
-					.background(MaskinSurface.inverse, in: Circle())
-					.opacity(trimmed.isEmpty ? 0.35 : 1)
-			}
-			.buttonStyle(.plain)
-			.disabled(trimmed.isEmpty)
-			.accessibilityLabel("Start chat")
-		}
-		.padding(MaskinSpace.s3)
-		.maskinGlass(in: RoundedRectangle(cornerRadius: MaskinRadius.hero + MaskinSpace.s4, style: .continuous))
-		.padding(.horizontal, MaskinSpace.s5).padding(.bottom, MaskinSpace.s3)
 	}
 }
 

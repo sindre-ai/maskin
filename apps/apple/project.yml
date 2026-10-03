@@ -66,6 +66,10 @@ targets:
       # Live Activity (Lock Screen + Dynamic Island) for a running agent turn.
       - target: MaskinLiveActivity
         platformFilter: iOS
+      # The watch app, embedded in Watch/ so it installs with the iPhone app.
+      - target: MaskinWatch
+        platformFilter: iOS
+        embed: true
     postCompileScripts:
       - name: Strip dev-only ATS exception
         basedOnDependencyAnalysis: false
@@ -80,6 +84,9 @@ targets:
         # Where web-only settings (integrations, billing) open. Empty = the API origin, right for
         # production; set MASKIN_WEB_BASE_URL in Local.xcconfig when the web app is on another port.
         MaskinWebBaseURL: $(MASKIN_WEB_BASE_URL)
+        # Guideline 5.1.1(v): in-app sign-up needs in-app account deletion, which the backend lacks
+        # for humans. Release hides "Create account" until it exists (docs/app-store-notes.md).
+        MaskinEnableSignUp: $(MASKIN_ENABLE_SIGNUP)
         # Dictation in the chat composer (SFSpeechRecognizer, on-device where supported).
         NSSpeechRecognitionUsageDescription: Maskin turns your speech into message text.
         NSMicrophoneUsageDescription: Maskin uses the microphone so you can dictate messages.
@@ -150,9 +157,11 @@ targets:
         Debug:
           MASKIN_API_BASE_URL: http://localhost:3000
           MASKIN_APS_ENVIRONMENT: development
+          MASKIN_ENABLE_SIGNUP: "YES"
           MASKIN_MACOS_ENTITLEMENTS: ""
         Release:
           MASKIN_APS_ENVIRONMENT: production
+          MASKIN_ENABLE_SIGNUP: "NO"
           MASKIN_MACOS_ENTITLEMENTS: Apps/Maskin/Maskin-macOS.entitlements
           # ASSUMPTION: production serves API and web from this origin (maskin.io is what the
           # repo's deep-link/docs URLs use). Confirm before the first TestFlight build.
@@ -204,13 +213,15 @@ targets:
           NSExtensionPointIdentifier: com.apple.share-services
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
           NSExtensionAttributes:
-            # An explicit rule (never TRUEPREDICATE: App Review rejects it). One web address or
-            # some text, up to 5 images, up to 5 files (PDFs arrive as files).
+            # An explicit rule (never TRUEPREDICATE: App Review rejects it). Up to two web
+            # addresses or some text, up to 10 images, up to 10 files (PDFs arrive as files). The
+            # counts exceed the in-code limit (ShareLimits.maxAttachments = 5) on purpose: a rule
+            # that fails hides Maskin from the sheet, while going over the limit just skips with a note.
             NSExtensionActivationRule:
-              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsWebURLWithMaxCount: 2
               NSExtensionActivationSupportsText: true
-              NSExtensionActivationSupportsImageWithMaxCount: 5
-              NSExtensionActivationSupportsFileWithMaxCount: 5
+              NSExtensionActivationSupportsImageWithMaxCount: 10
+              NSExtensionActivationSupportsFileWithMaxCount: 10
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app.share
@@ -410,7 +421,9 @@ targets:
         CFBundleDisplayName: Maskin
         CFBundleName: Maskin
         WKApplication: true
-        WKWatchOnly: true
+        # Companion of the iPhone app (embedded in it): iPhone pushes mirror here, and the
+        # sign-in is handed over by WatchSessionBridge.
+        WKCompanionAppBundleIdentifier: io.maskin.app
         MaskinAPIBaseURL: $(MASKIN_API_BASE_URL)
         NSAppTransportSecurity:
           NSExceptionDomains:

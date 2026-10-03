@@ -2,6 +2,7 @@ import MaskinCore
 import MaskinDesign
 import MaskinUI
 import SwiftUI
+import WidgetKit
 
 /// The three home-screen sizes. Our own enum (not `WidgetFamily`) so the views take their size as a
 /// plain value and render on any host in tests.
@@ -68,6 +69,7 @@ private struct HeaderLabel: View {
 			BrandGlyph(size: 16)
 			MonoLabel("Needs you")
 		}
+		.widgetAccentable()
 	}
 }
 
@@ -100,17 +102,26 @@ private struct DecisionTitle: View {
 private struct OptionChip: View {
 	let label: String
 	let recommended: Bool
+	@Environment(\.widgetRenderingMode) private var renderingMode
 
 	var body: some View {
+		let shape = RoundedRectangle(cornerRadius: MaskinRadius.btn, style: .continuous)
 		Text(label)
 			.font(.caption2.weight(.medium))
 			.lineLimit(1)
 			.foregroundStyle(recommended ? MaskinColor.accentFgStrong : MaskinColor.ink3)
 			.padding(.horizontal, MaskinSpace.s4)
 			.padding(.vertical, MaskinSpace.s1 + 1)
-			.background(
-				recommended ? MaskinColor.accentTint2 : MaskinSurface.fill,
-				in: RoundedRectangle(cornerRadius: MaskinRadius.btn, style: .continuous))
+			// Tinted modes (iOS 18) recolour accentable content with the user's tint: the custom
+			// fills would fight it, so the recommended chip becomes an accentable outline.
+			.background {
+				if renderingMode == .fullColor {
+					shape.fill(recommended ? MaskinColor.accentTint2 : MaskinSurface.fill)
+				} else if recommended {
+					shape.stroke(lineWidth: 1)
+				}
+			}
+			.widgetAccentable(recommended)
 			.privacySensitive()
 	}
 }
@@ -150,6 +161,7 @@ private struct SmallView: View {
 				Text("\(snapshot.needsCount)")
 					.font(.system(size: 40, weight: .bold, design: .rounded))
 					.foregroundStyle(MaskinColor.accent)
+					.widgetAccentable()
 					.contentTransition(.numericText())
 				Text(snapshot.needsCount == 1 ? "decision" : "decisions")
 					.font(.footnote)
@@ -184,62 +196,79 @@ private struct MediumView: View {
 	let snapshot: WidgetSnapshot
 	let now: Date
 	@Environment(\.redactionReasons) private var redaction
+	@Environment(\.dynamicTypeSize) private var typeSize
+
+	/// Two asks fit at normal sizes; at accessibility sizes one, so nothing is clipped.
+	private var asks: [WidgetSnapshot.Decision] {
+		Array(snapshot.decisions.prefix(typeSize.isAccessibilitySize ? 1 : 2))
+	}
 
 	var body: some View {
-		HStack(alignment: .top, spacing: MaskinSpace.s9) {
-			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-				HeaderLabel()
-				Text("\(snapshot.needsCount)")
-					.font(.system(size: 52, weight: .bold, design: .rounded))
-					.foregroundStyle(MaskinColor.accent)
-					.minimumScaleFactor(0.6)
-					.lineLimit(1)
-				Text(snapshot.needsCount == 1 ? "decision needs you" : "decisions need you")
-					.font(.caption)
-					.foregroundStyle(MaskinColor.ink4)
-					.lineLimit(2)
-				Spacer(minLength: 0)
-				if snapshot.unreadCount > 0 {
-					Label("\(snapshot.unreadLabel) unread", systemImage: "bell.badge")
-						.font(.caption2.weight(.medium))
-						.foregroundStyle(MaskinColor.ink3)
-						.lineLimit(1)
-				}
-			}
-			.frame(width: 118, alignment: .leading)
+		HStack(alignment: .top, spacing: MaskinSpace.s7) {
+			countColumn
+				// A share of the widget, not a fixed 118 pt: it follows the device's widget size.
+				.containerRelativeFrame(.horizontal) { width, _ in width * 0.3 }
 
 			Rectangle().fill(MaskinSurface.line).frame(width: 1)
 
-			if let top = snapshot.top {
-				VStack(alignment: .leading, spacing: MaskinSpace.s3) {
-					HStack(spacing: MaskinSpace.s3) {
-						if let agent = top.agentName {
-							ActorAvatar(name: agent, kind: .agent, size: 18)
-								.privacySensitive()
-						}
-						AgentLine(decision: top, now: now)
-					}
-					DecisionTitle(decision: top, lines: 3, font: .subheadline.weight(.semibold))
-					Spacer(minLength: 0)
-					HStack(spacing: MaskinSpace.s2) {
-						ForEach(Array(top.optionLabels.prefix(2).enumerated()), id: \.offset) { _, label in
-							OptionChip(label: label, recommended: label == top.recommendedLabel)
-						}
-					}
-					UpdatedNote(snapshot: snapshot, now: now)
+			VStack(alignment: .leading, spacing: MaskinSpace.s3) {
+				ForEach(Array(asks.enumerated()), id: \.element.id) { index, decision in
+					if index > 0 { Rectangle().fill(MaskinSurface.separator).frame(height: 1) }
+					Link(destination: snapshot.url(for: decision)) { ask(decision) }
 				}
-				.frame(maxWidth: .infinity, alignment: .leading)
+				Spacer(minLength: 0)
+				UpdatedNote(snapshot: snapshot, now: now)
 			}
+			.frame(maxWidth: .infinity, alignment: .leading)
 		}
 		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 		.accessibilityElement(children: .ignore)
 		.accessibilityLabel(summary)
 	}
 
+	private var countColumn: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s2) {
+			HeaderLabel()
+			Text("\(snapshot.needsCount)")
+				.font(.system(size: 44, weight: .bold, design: .rounded))
+				.foregroundStyle(MaskinColor.accent)
+				.widgetAccentable()
+				.minimumScaleFactor(0.5)
+				.lineLimit(1)
+			Text(snapshot.needsCount == 1 ? "decision needs you" : "decisions need you")
+				.font(.caption)
+				.foregroundStyle(MaskinColor.ink4)
+				.lineLimit(3)
+				.minimumScaleFactor(0.8)
+			Spacer(minLength: 0)
+			if snapshot.unreadCount > 0 {
+				Label("\(snapshot.unreadLabel) unread", systemImage: "bell.badge")
+					.font(.caption2.weight(.medium))
+					.foregroundStyle(MaskinColor.ink3)
+					.lineLimit(1)
+			}
+		}
+	}
+
+	private func ask(_ decision: WidgetSnapshot.Decision) -> some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s1) {
+			DecisionTitle(decision: decision, lines: 2, font: .footnote.weight(.semibold))
+			HStack(spacing: MaskinSpace.s3) {
+				AgentLine(decision: decision, now: now)
+				if let label = decision.recommendedLabel, !typeSize.isAccessibilitySize {
+					OptionChip(label: label, recommended: true)
+				}
+			}
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+
 	private var summary: String {
 		let count = "\(snapshot.needsCount) \(snapshot.needsCount == 1 ? "decision needs" : "decisions need") you."
-		guard let top = snapshot.top else { return count }
-		return count + " Most urgent: " + decisionAccessibilityLabel(top, redacted: redaction.contains(.privacy))
+		guard !asks.isEmpty else { return count }
+		let hidden = redaction.contains(.privacy)
+		return count + " Most urgent: "
+			+ asks.map { decisionAccessibilityLabel($0, redacted: hidden) }.joined(separator: ". ")
 	}
 }
 
@@ -249,6 +278,12 @@ private struct LargeView: View {
 	let snapshot: WidgetSnapshot
 	let now: Date
 	@Environment(\.redactionReasons) private var redaction
+	@Environment(\.dynamicTypeSize) private var typeSize
+
+	/// Accessibility sizes show fewer, simpler rows instead of clipping three crowded ones.
+	private var shown: [WidgetSnapshot.Decision] {
+		Array(snapshot.decisions.prefix(typeSize.isAccessibilitySize ? 2 : snapshot.decisions.count))
+	}
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
@@ -261,9 +296,10 @@ private struct LargeView: View {
 					.padding(.horizontal, MaskinSpace.s4)
 					.padding(.vertical, MaskinSpace.s1)
 					.background(MaskinColor.accentTint2, in: Capsule())
+					.widgetAccentable()
 			}
 			VStack(spacing: 0) {
-				ForEach(Array(snapshot.decisions.enumerated()), id: \.element.id) { index, decision in
+				ForEach(Array(shown.enumerated()), id: \.element.id) { index, decision in
 					if index > 0 { Rectangle().fill(MaskinSurface.separator).frame(height: 1) }
 					Link(destination: snapshot.url(for: decision)) {
 						row(decision)
@@ -271,8 +307,8 @@ private struct LargeView: View {
 					.accessibilityLabel(decisionAccessibilityLabel(decision, redacted: redaction.contains(.privacy)))
 				}
 			}
-			if snapshot.needsCount > snapshot.decisions.count {
-				Text("+\(snapshot.needsCount - snapshot.decisions.count) more in Maskin")
+			if snapshot.needsCount > shown.count {
+				Text("+\(snapshot.needsCount - shown.count) more in Maskin")
 					.font(.caption2)
 					.foregroundStyle(MaskinColor.ink4)
 			}
@@ -292,15 +328,17 @@ private struct LargeView: View {
 
 	private func row(_ decision: WidgetSnapshot.Decision) -> some View {
 		HStack(alignment: .top, spacing: MaskinSpace.s5) {
-			if let agent = decision.agentName {
-				ActorAvatar(name: agent, kind: .agent, size: 24).privacySensitive()
-			} else {
-				Circle().fill(MaskinSurface.fill).frame(width: 24, height: 24)
+			if !typeSize.isAccessibilitySize {
+				if let agent = decision.agentName {
+					ActorAvatar(name: agent, kind: .agent, size: 24).privacySensitive()
+				} else {
+					Circle().fill(MaskinSurface.fill).frame(width: 24, height: 24)
+				}
 			}
 			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 				DecisionTitle(decision: decision, lines: 2, font: .subheadline.weight(.semibold))
 				AgentLine(decision: decision, now: now)
-				if !decision.optionLabels.isEmpty {
+				if !decision.optionLabels.isEmpty && !typeSize.isAccessibilitySize {
 					HStack(spacing: MaskinSpace.s2) {
 						ForEach(Array(decision.optionLabels.prefix(2).enumerated()), id: \.offset) { _, label in
 							OptionChip(label: label, recommended: label == decision.recommendedLabel)

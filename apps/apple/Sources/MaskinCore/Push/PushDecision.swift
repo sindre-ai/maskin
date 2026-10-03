@@ -8,7 +8,10 @@ import Foundation
 // carries `aps.category = "maskin.decision"` plus a root object
 //
 //     "decision": { "eventId": 42, "parentEventId": 7?, "objectId": "<uuid>",
-//                   "options": [{ "label": "Ship it" }, ...], "recommended": 0? }
+//                   "options": [{ "label": "Ship it", "destructive": true? }, ...], "recommended": 0? }
+//
+// Labels arrive WHOLE (the server never truncates; it sends no actions for an over-long label),
+// because the label is posted verbatim as the user's answer.
 //
 // next to `workspace_id`, `notification_id` and `deep_link`.
 
@@ -16,8 +19,8 @@ import Foundation
 public struct PushDecisionOption: Sendable, Equatable {
 	public var label: String
 	public var recommended: Bool
-	/// Irreversible choices ask for the device to be unlocked first. The server does not send this
-	/// today (decision options have no such field); it is honoured if a future payload does.
+	/// Irreversible choices ask for the device to be unlocked first (`destructive` on the decision
+	/// option, forwarded by the server).
 	public var destructive: Bool
 
 	public init(label: String, recommended: Bool = false, destructive: Bool = false) {

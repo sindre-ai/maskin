@@ -27,10 +27,21 @@ public enum ShareSession {
 
 	/// The production remote for these credentials. No `onUnauthorized` hook: a 401 becomes
 	/// `ShareError.sessionExpired` and the app, not the extension, decides what to do about it.
+	/// Bounded waits: an extension has to be able to say "offline" in seconds, not minutes, and a
+	/// hung upload must not pin the sheet. Uploads (up to ~14 MB of base64) get a longer resource cap.
+	static func timeoutSession() -> URLSession {
+		let configuration = URLSessionConfiguration.default
+		configuration.timeoutIntervalForRequest = 20
+		configuration.timeoutIntervalForResource = 120
+		configuration.waitsForConnectivity = false
+		return URLSession(configuration: configuration)
+	}
+
 	public static func remote(baseURL: URL, credentials: ShareCredentials) -> APIShareRemote {
 		let client = MaskinClient.make(
 			serverURL: baseURL, clientSource: "ios",
-			credentials: { MaskinCredentials(apiKey: credentials.apiKey, workspaceId: credentials.workspaceId) })
+			credentials: { MaskinCredentials(apiKey: credentials.apiKey, workspaceId: credentials.workspaceId) },
+			session: timeoutSession())
 		return APIShareRemote(client: client, workspaceID: credentials.workspaceId)
 	}
 }

@@ -14,6 +14,7 @@ let package = Package(
 		.library(name: "MaskinFeatures", targets: ["MaskinFeatures"]),
 	],
 	dependencies: [
+		// Only the generator CLI (scripts/gen-api.sh runs it); no target uses its build plugin.
 		.package(url: "https://github.com/apple/swift-openapi-generator", from: "1.6.0"),
 		.package(url: "https://github.com/apple/swift-openapi-runtime", from: "1.8.0"),
 		.package(url: "https://github.com/apple/swift-openapi-urlsession", from: "1.1.0"),
@@ -25,16 +26,16 @@ let package = Package(
 
 		// Client generated from openapi.json (a snapshot of GET /api/openapi.json,
 		// see apps/dev/scripts/dump-openapi.ts) filtered to the paths in
-		// openapi-generator-config.yaml.
+		// openapi-generator-config.yaml. The output is CHECKED IN under Generated/ — regenerate with
+		// scripts/gen-api.sh — rather than built by the SwiftPM plugin: a build-tool plugin shared by
+		// the iOS app and its embedded watch app collides in Xcode's intermediates.
 		.target(
 			name: "MaskinAPI",
 			dependencies: [
 				.product(name: "OpenAPIRuntime", package: "swift-openapi-runtime"),
 				.product(name: "OpenAPIURLSession", package: "swift-openapi-urlsession"),
 			],
-			plugins: [
-				.plugin(name: "OpenAPIGenerator", package: "swift-openapi-generator")
-			]
+			exclude: ["openapi.json", "openapi-generator-config.yaml"]
 		),
 		.testTarget(name: "MaskinAPITests", dependencies: ["MaskinAPI"]),
 

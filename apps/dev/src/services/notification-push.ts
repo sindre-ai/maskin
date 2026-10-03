@@ -128,7 +128,7 @@ export class NotificationPushFanout {
 					eventId: row.id,
 					parentEventId: Number.isSafeInteger(parent) && parent > 0 ? parent : null,
 					objectId: n.objectId,
-					options: decision.options.map((o) => ({ label: o.label })),
+					options: decision.options.map((o) => ({ label: o.label, destructive: o.destructive })),
 					recommended: idx >= 0 ? idx : null,
 				}
 				return { title: decision.title, ask: decision.ask, push }

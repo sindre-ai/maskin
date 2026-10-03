@@ -100,7 +100,16 @@ jobs:
         run: |
           pnpm --filter @maskin/dev exec tsx scripts/dump-openapi.ts
           if ! git diff --exit-code -- apps/apple/openapi.json; then
-            echo "::error::apps/apple/openapi.json is stale. Run 'pnpm --filter @maskin/dev exec tsx scripts/dump-openapi.ts' and commit the result (then 'swift build' to regenerate the client)."
+            echo "::error::apps/apple/openapi.json is stale. Run 'pnpm --filter @maskin/dev exec tsx scripts/dump-openapi.ts' and commit the result (then run apps/apple/scripts/gen-api.sh and commit Sources/MaskinAPI/Generated)."
+            exit 1
+          fi
+
+      - name: Generated API client is up to date
+        working-directory: apps/apple
+        run: |
+          ./scripts/gen-api.sh
+          if ! git diff --exit-code -- Sources/MaskinAPI/Generated; then
+            echo "::error::Sources/MaskinAPI/Generated is stale. Run 'apps/apple/scripts/gen-api.sh' and commit the result."
             exit 1
           fi
 

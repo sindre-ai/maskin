@@ -69,7 +69,8 @@ public struct APIForYouBackend: ForYouSource, DecisionBackend {
 							options: d.options.map {
 								DecisionOption(
 									label: $0.label, consequences: $0.consequences,
-									recommended: $0.recommended ?? false)
+									recommended: $0.recommended ?? false,
+									destructive: $0.destructive ?? false)
 							})
 					})
 			}

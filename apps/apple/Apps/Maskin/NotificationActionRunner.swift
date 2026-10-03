@@ -53,6 +53,11 @@ struct NotificationActionRunner: Sendable {
 		let text = (response as? UNTextInputNotificationResponse)?.userText
 		let outcome = await handler.perform(kind, userText: text, payload: payload)
 		await present(outcome, original: request)
+		// The answer changes what the widgets list. Immediate, not debounced: this process may be
+		// suspended again within seconds of the action finishing.
+		#if os(iOS)
+			SystemWidgetReloader().reload()
+		#endif
 		return .handled
 	}
 
@@ -117,6 +122,10 @@ struct NotificationActionRunner: Sendable {
 			identifier: PushDecisionPayload.category, actions: [reply, open], intentIdentifiers: [],
 			options: [])
 		center.getNotificationCategories { existing in
+			// Already registered: do not write at all. `set` replaces the whole set, so every write
+			// is a chance to clobber a dynamic category the extension registered between our read
+			// and our write; skipping it narrows that race to the very first launch.
+			if existing.contains(where: { $0.identifier == fallback.identifier }) { return }
 			var merged = existing
 			merged.remove(fallback)
 			merged.insert(fallback)

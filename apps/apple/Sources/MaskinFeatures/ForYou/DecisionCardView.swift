@@ -28,6 +28,8 @@ struct DecisionCardView: View {
 
 	@State private var draft = ""
 	@FocusState private var replyFocused: Bool
+	/// A destructive option waiting for its "Are you sure?" answer.
+	@State private var pendingDestructive: DecisionOption?
 
 	private var card: ForYouCard { entry.card }
 	private var record: DecisionRecord? { entry.record }
@@ -167,7 +169,7 @@ struct DecisionCardView: View {
 		VStack(spacing: MaskinSpace.s4) {
 			ForEach(decision.options) { option in
 				Button {
-					actions.choose(option)
+					if option.destructive { pendingDestructive = option } else { actions.choose(option) }
 				} label: {
 					OptionLabel(option: option)
 				}
@@ -175,6 +177,16 @@ struct DecisionCardView: View {
 				.accessibilityLabel(option.recommended ? "\(option.label), recommended" : option.label)
 				.accessibilityHint(option.consequences.joined(separator: ". "))
 			}
+		}
+		.confirmationDialog(
+			"Are you sure?", isPresented: Binding(
+				get: { pendingDestructive != nil }, set: { if !$0 { pendingDestructive = nil } }),
+			titleVisibility: .visible, presenting: pendingDestructive
+		) { option in
+			Button("Yes, \(option.label)", role: .destructive) { actions.choose(option) }
+			Button("Cancel", role: .cancel) {}
+		} message: { option in
+			Text("\u{201C}\(option.label)\u{201D} can't be undone.")
 		}
 	}
 

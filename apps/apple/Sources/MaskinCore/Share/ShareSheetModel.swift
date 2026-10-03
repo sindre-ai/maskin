@@ -30,20 +30,28 @@ public final class ShareSheetModel {
 	public private(set) var workspaces: [ShareWorkspace] = []
 	/// Conversations of the chosen workspace, for the Chat destination. Empty until loaded.
 	public private(set) var conversations: [ShareConversation] = []
+	/// True while the chosen workspace's types and statuses are still loading. Sending waits for
+	/// it: the first status of a type the server doesn't know would be rejected.
+	public private(set) var isLoadingSchema = false
+	/// Set when a failed post had already created the object, so Retry only finishes the files.
+	public private(set) var createdObjectBeforeFailure = false
 
 	@ObservationIgnored private let loadContent: @Sendable () async -> ShareContent
 	@ObservationIgnored private let secretStore: any SecretStore
 	@ObservationIgnored private let makeRemote: @Sendable (ShareCredentials) -> any ShareRemote
 	@ObservationIgnored private let queue: ShareQueue?
+	@ObservationIgnored private let drafts: ShareDraftStore?
+	@ObservationIgnored private var postTask: Task<Void, Never>?
 	@ObservationIgnored private var poster: SharePoster?
 	@ObservationIgnored private var credentials: ShareCredentials?
 
 	public init(
 		secretStore: any SecretStore, loadContent: @escaping @Sendable () async -> ShareContent,
 		makeRemote: @escaping @Sendable (ShareCredentials) -> any ShareRemote,
-		queue: ShareQueue? = nil
+		queue: ShareQueue? = nil, drafts: ShareDraftStore? = nil
 	) {
 		self.queue = queue
+		self.drafts = drafts
 		self.secretStore = secretStore
 		self.loadContent = loadContent
 		self.makeRemote = makeRemote
@@ -77,9 +85,33 @@ public final class ShareSheetModel {
 	public var showsTitleField: Bool { destination != .filesOnly && !isChat }
 	public var canPost: Bool {
 		switch phase {
-		case .ready, .failed: true
+		case .ready, .failed: !isLoadingSchema
 		default: false
 		}
+	}
+
+	/// Whether dismissing now would throw away something the person typed.
+	public var hasUnsentText: Bool {
+		switch phase {
+		case .ready, .failed: break
+		default: return false
+		}
+		let typed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+		let edited = !typed.isEmpty && typed != content.suggestedTitle
+		return edited || !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+	}
+
+	/// Why nothing could be shared, when skipped items explain it (a file over the size limit).
+	public var blockedDetail: String? {
+		guard case .blocked(.nothingToShare) = phase else { return nil }
+		return content.skipped.first?.message
+	}
+
+	/// The words and link of this share as plain text, for Copy on a screen that can't send.
+	public var copyableText: String {
+		let own = title.trimmingCharacters(in: .whitespacesAndNewlines)
+		let body = ShareComposer.objectContent(note: note, content: content)
+		return [own.isEmpty ? nil : own, body.isEmpty ? nil : body].compactMap { $0 }.joined(separator: "\n\n")
 	}
 
 	/// `maskin://<workspace>/objects|chats/<id>`: where "Open in Maskin" goes. Files have no deep link.
@@ -109,7 +141,12 @@ public final class ShareSheetModel {
 			return
 		}
 		title = loaded.suggestedTitle
+		if let saved = drafts?.load(fingerprint: loaded.fingerprint) {
+			if !saved.title.isEmpty { title = saved.title }
+			note = saved.note
+		}
 		destination = Self.defaultDestination(in: schema, content: loaded)
+		isLoadingSchema = true
 		phase = .ready
 
 		await connect(credentials)
@@ -125,6 +162,8 @@ public final class ShareSheetModel {
 		poster = SharePoster(remote: remote)
 		workspace = nil
 		conversations = []
+		isLoadingSchema = true
+		defer { isLoadingSchema = false }
 		do {
 			let workspace = try await remote.workspace()
 			self.workspace = workspace
@@ -160,9 +199,29 @@ public final class ShareSheetModel {
 		return .filesOnly
 	}
 
+	// Known limit (review item 17): the post runs inside the extension's process, so swiping the
+	// sheet away mid-upload ends it and loses the files. "Create the object first, show Sent, then
+	// upload" would not fix that (the process still dies after `completeRequest`); real continuation
+	// needs a background URLSession with an app-group container and a relaunch handler, which the
+	// OpenAPI client doesn't support. What protects the person today: transient failures park the
+	// whole share in `ShareQueue` for the app to finish, and Cancel stops cleanly with the same
+	// idempotency keys. Don't show "Sent" before the files are up: it would be a lie on a swipe-away.
+
 	/// Post, or retry a failed post with the same draft and the same idempotency keys.
 	public func post() async {
-		guard canPost, let poster else { return }
+		guard canPost, postTask == nil else { return }
+		let task = Task { await self.perform() }
+		postTask = task
+		await task.value
+		postTask = nil
+	}
+
+	/// Stops a post in flight (Cancel while posting). The sheet returns to editable; a retry or
+	/// the next share resumes with the same idempotency keys, so nothing is duplicated.
+	public func cancelPosting() { postTask?.cancel() }
+
+	private func perform() async {
+		guard let poster else { return }
 		let status: String
 		switch destination {
 		case .object(let type): status = schema.statuses(for: type).first ?? "new"
@@ -178,14 +237,34 @@ public final class ShareSheetModel {
 				}
 			}
 			phase = .posted(outcome)
+			createdObjectBeforeFailure = false
+			drafts?.clear()
 			content.cleanUp()
 		} catch let error as ShareError {
+			if Task.isCancelled { phase = .ready; return }
 			if error.isTransient, await park(request) { return }
+			createdObjectBeforeFailure = await poster.progress.objectID != nil
 			phase = error.needsApp ? .blocked(error) : .failed(error)
 		} catch {
+			if Task.isCancelled { phase = .ready; return }
 			phase = .failed(.unknown)
 		}
 	}
+
+	// MARK: Draft
+
+	/// Keeps the title and note so a dismissed sheet doesn't lose them. Call as they change.
+	public func saveDraft() {
+		guard let drafts else { return }
+		if hasUnsentText {
+			drafts.save(fingerprint: content.fingerprint, title: title, note: note)
+		} else {
+			drafts.clear()
+		}
+	}
+
+	/// The person chose to throw the words away.
+	public func discardDraft() { drafts?.clear() }
 
 	/// Saves a share that couldn't go out for the app to send later. `false` when there is nowhere
 	/// to save it, in which case the sheet shows the failure and keeps the draft.
@@ -196,15 +275,11 @@ public final class ShareSheetModel {
 				request, workspaceId: workspaceId, idempotencyBase: poster.idempotencyBase)) != nil
 		else { return false }
 		phase = .queued
+		drafts?.clear()
 		content.cleanUp()
 		return true
 	}
 
 	/// The user dismissed the sheet (or it finished): remove the parked files.
 	public func finish() { content.cleanUp() }
-
-	/// Whether a failed post already created the object (the sheet says so on Retry).
-	public func createdObjectBeforeFailure() async -> Bool {
-		await poster?.progress.objectID != nil
-	}
 }

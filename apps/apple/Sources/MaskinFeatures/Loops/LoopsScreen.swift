@@ -45,7 +45,7 @@ private struct LoopsContainer: View {
 	@State private var triggerSelection: String?
 	@State private var search = ""
 	@State private var showNewTrigger = false
-	@State private var showNewLoop = false
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var showMarketplace = false
 
 	init(environment: AppEnvironment, workspaceID: String) {
@@ -80,12 +80,6 @@ private struct LoopsContainer: View {
 				triggerSelection = created.id
 			}
 		}
-		.sheet(isPresented: $showNewLoop) {
-			NewLoopSheet(store: loops) { id in
-				mode = .loops
-				loopSelection = id
-			}
-		}
 		.sheet(isPresented: $showMarketplace) {
 			MarketplaceSheet(
 				environment: environment, workspaceID: workspaceID,
@@ -98,6 +92,11 @@ private struct LoopsContainer: View {
 		}
 	}
 
+	/// Loops are built by describing them in chat, never through a form.
+	private func buildLoopInChat() {
+		runtime?.buildInChat("I'd like to build a new loop. ")
+	}
+
 	private var isLive: Bool { environment.events.connection != .failed }
 
 	@ViewBuilder
@@ -107,7 +106,7 @@ private struct LoopsContainer: View {
 			case .loops:
 				LoopsListView(
 					store: loops, selection: $loopSelection, search: search, isLive: isLive,
-					onNew: { showNewLoop = true }, onBrowse: { showMarketplace = true })
+					onNew: { buildLoopInChat() }, onBrowse: { showMarketplace = true })
 			case .triggers:
 				TriggersListView(
 					store: triggers, selection: $triggerSelection, search: search, isLive: isLive,
@@ -129,7 +128,9 @@ private struct LoopsContainer: View {
 			if mode == .loops {
 				ToolbarItem(placement: .automatic) {
 					Menu {
-						Button { showNewLoop = true } label: { Label("New loop", systemImage: "plus") }
+						Button { buildLoopInChat() } label: {
+							Label("Build a loop in chat", systemImage: "bubble.left")
+						}
 						Button { showMarketplace = true } label: {
 							Label("Browse marketplace", systemImage: "square.grid.2x2")
 						}

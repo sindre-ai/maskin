@@ -125,6 +125,26 @@ describe('NotificationPushFanout', () => {
 			)
 		})
 
+		it('forwards destructive options to the push decision', async () => {
+			const risky = {
+				...decision,
+				options: [
+					{ label: 'Send', recommended: true, destructive: true, consequences: ['a', 'b'] },
+					{ label: 'Hold', consequences: ['c', 'd'] },
+				],
+			}
+			const { fanout, sender } = setup([], true, [[needsInput], [comment({ decision: risky })]])
+			await fanout.handleEvent(event)
+			expect(sender.sendToActor).toHaveBeenCalledWith(
+				'human',
+				expect.objectContaining({
+					decision: expect.objectContaining({
+						options: [{ label: 'Send', destructive: true }, { label: 'Hold' }],
+					}),
+				}),
+			)
+		})
+
 		it('falls back to a plain push when the comment does not match the notification', async () => {
 			for (const over of [{ content: 'other' }, { mentions: ['someone-else'] }, { decision: {} }]) {
 				const { fanout, sender } = setup([], true, [[needsInput], [comment(over)]])

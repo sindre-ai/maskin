@@ -10,7 +10,7 @@ struct LoopDetailView: View {
 	var install: LoopInstall?
 	var onOpenTrigger: (String) -> Void = { _ in }
 
-	@State private var showEdit = false
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var confirmDelete = false
 
 	var body: some View {
@@ -41,7 +41,9 @@ struct LoopDetailView: View {
 			}
 			ToolbarItem(placement: .primaryAction) {
 				Menu {
-					Button { showEdit = true } label: { Label("Edit", systemImage: "pencil") }
+					Button {
+						runtime?.buildInChat("I'd like to change the loop \(store.loop.displayName). ")
+					} label: { Label("Change in chat", systemImage: "bubble.left") }
 					Button(role: .destructive) { confirmDelete = true } label: {
 						Label("Delete loop", systemImage: "trash")
 					}
@@ -50,7 +52,6 @@ struct LoopDetailView: View {
 				}
 			}
 		}
-		.sheet(isPresented: $showEdit) { EditLoopSheet(store: store) }
 		.confirmationDialog(
 			"Delete this loop?", isPresented: $confirmDelete, titleVisibility: .visible
 		) {
