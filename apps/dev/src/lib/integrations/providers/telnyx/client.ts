@@ -80,6 +80,14 @@ export interface TelnyxAssistant {
 	toolIds: string[]
 }
 
+export interface CallRecording {
+	recordingId: string
+	/** Telnyx recording status; only 'completed' has a downloadable file. */
+	status: string
+	/** Pre-signed MP3 URL, null until the recording is ready. */
+	mp3Url: string | null
+}
+
 export interface TelnyxClient {
 	/** POST /v2/calls with premium AMD. Idempotency-Key: contact_id:dial_attempt_n. */
 	createCall(input: CreateCallInput): Promise<CreateCallResult>
@@ -99,6 +107,8 @@ export interface TelnyxClient {
 	embedBucket(bucketName: string): Promise<void>
 	/** The id of the shared retrieval tool over a bucket, created on first use. */
 	ensureRetrievalTool(displayName: string, bucketName: string): Promise<string>
+	/** GET /v2/recordings?filter[call_control_id]=. Null when Telnyx has no recording for the call yet. */
+	findRecording(callControlId: string): Promise<CallRecording | null>
 }
 
 export interface TelnyxClientOptions {
@@ -141,6 +151,18 @@ function toAssistant(raw: unknown): TelnyxAssistant {
 	const parsed = assistantResponseSchema.parse(raw).data
 	return { id: parsed.id, description: parsed.description ?? null, toolIds: parsed.tool_ids ?? [] }
 }
+
+const recordingsResponseSchema = z.object({
+	data: z.array(
+		z
+			.object({
+				id: z.string(),
+				status: z.string().optional(),
+				download_urls: z.object({ mp3: z.string().nullish() }).passthrough().nullish(),
+			})
+			.passthrough(),
+	),
+})
 
 export function createTelnyxClient(opts: TelnyxClientOptions): TelnyxClient {
 	const base = opts.baseUrl ?? TELNYX_API_BASE
@@ -266,6 +288,21 @@ export function createTelnyxClient(opts: TelnyxClientOptions): TelnyxClient {
 
 		async embedBucket(bucketName) {
 			await request('POST', '/v2/ai/embeddings', { bucket_name: bucketName })
+		},
+
+		async findRecording(callControlId) {
+			const res = await request(
+				'GET',
+				`/v2/recordings?filter[call_control_id]=${encodeURIComponent(callControlId)}`,
+				undefined,
+			)
+			const [first] = recordingsResponseSchema.parse(await res.json()).data
+			if (!first) return null
+			return {
+				recordingId: first.id,
+				status: first.status ?? 'unknown',
+				mp3Url: first.download_urls?.mp3 ?? null,
+			}
 		},
 	}
 }
