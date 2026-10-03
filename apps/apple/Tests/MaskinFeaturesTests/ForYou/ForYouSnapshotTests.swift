@@ -42,6 +42,21 @@ private let threadCard = ForYouCard(
 		content:
 			"The tiers are live on staging. Can you check the copy before Thursday?\n\nI changed **Team** from $29 to $39 per seat."))
 
+private let irreversibleCard = ForYouCard(
+	id: "o3", objectTitle: "Spring campaign", objectType: "bet", status: "active",
+	latestEventId: 30, latestActivityAt: now.addingTimeInterval(-3600),
+	mention: ForYouMention(
+		eventId: 21, actorId: "forge", content: "ask",
+		decision: DecisionPrompt(
+			title: "Send the launch email to all customers?",
+			summary: "The copy is approved and the list is segmented.",
+			ask: "Once sent it reaches 4,200 people and can't be recalled.",
+			options: [
+				DecisionOption(
+					label: "Send now", consequences: ["Reaches 4,200 customers today"], destructive: true),
+				DecisionOption(label: "Send a test first", consequences: ["Goes to the team only"], recommended: true),
+			])))
+
 private func entry(
 	_ card: ForYouCard, bucket: FeedBucket = .needs, record: DecisionRecord? = nil
 ) -> FeedEntry {
@@ -95,6 +110,14 @@ struct ForYouSnapshotTests {
 				page {
 					cardView(entry(decisionCard))
 				}, width: width, dark: dark, name: "decision-open")
+		}
+	}
+
+	@Test("irreversible option renders marked", arguments: [false, true])
+	func irreversible(dark: Bool) throws {
+		for width in Self.widths {
+			try render(
+				page { cardView(entry(irreversibleCard)) }, width: width, dark: dark, name: "irreversible")
 		}
 	}
 

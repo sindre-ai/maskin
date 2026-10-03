@@ -43,6 +43,13 @@ public struct FeedEntry: Identifiable, Sendable, Equatable {
 	public var record: DecisionRecord?
 	public var id: String { card.id }
 
+	/// Where the card sits in the list. While its undo window is open a decided card keeps the slot
+	/// it had, so it is grouped with what it was, not with the receipts.
+	public var section: FeedBucket {
+		if let record, case .held = record.phase { return card.kind == .decision ? .needs : .fyi }
+		return bucket
+	}
+
 	public init(card: ForYouCard, bucket: FeedBucket, record: DecisionRecord? = nil) {
 		self.card = card
 		self.bucket = bucket

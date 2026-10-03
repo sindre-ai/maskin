@@ -46,6 +46,7 @@ struct ForYouFeedView: View {
 	@Environment(\.scenePhase) private var scenePhase
 	@State private var openedAt = Date()
 	@State private var showFilters = false
+	@AppStorage("forYou.swipeHintSeen") private var swipeHintSeen = false
 
 	private let readableWidth: CGFloat = 680
 
@@ -160,37 +161,80 @@ struct ForYouFeedView: View {
 				CaughtUp(filtered: store.options.typeFilter != nil)
 					.modifier(ReadableRow(width: readableWidth))
 			} else {
-				ForEach(entries) { entry in
-					card(entry)
-						.modifier(ReadableRow(width: readableWidth))
-						.swipeActions(edge: .leading, allowsFullSwipe: true) {
-							// Swipe right to take the agent's recommendation. Options that can't be undone
-							// are never one swipe away: they keep their confirmation on the card.
-							if entry.record == nil, let option = entry.card.decision?.recommended,
-								!option.destructive
-							{
-								Button {
-									DecisionCardView.Actions.live(store: store, entry: entry, openObject: openObject)
-										.choose(option)
-								} label: {
-									Label(option.label, systemImage: "checkmark")
-								}
-								.tint(MaskinColor.success)
-							}
-						}
-						.swipeActions(edge: .trailing, allowsFullSwipe: true) {
-							if entry.record == nil {
-								Button {
-									dismiss(entry)
-								} label: {
-									Label("Mark read", systemImage: "checkmark")
-								}
-								.tint(MaskinColor.success)
-							}
-						}
+				swipeHint
+				ForEach(groups(of: entries), id: \.bucket) { group in
+					SectionHeader(
+						title: title(for: group.bucket), count: group.entries.count,
+						action: group.bucket == .fyi ? ("Mark all read", { store.dismissAllFYIs() }) : nil
+					)
+					.modifier(ReadableRow(width: readableWidth))
+					ForEach(group.entries) { entry in feedRow(entry) }
 				}
 			}
 		}
+	}
+
+	private func groups(of entries: [FeedEntry]) -> [(bucket: FeedBucket, entries: [FeedEntry])] {
+		FeedBucket.allCases.compactMap { bucket in
+			let inBucket = entries.filter { $0.section == bucket }
+			return inBucket.isEmpty ? nil : (bucket, inBucket)
+		}
+	}
+
+	private func title(for bucket: FeedBucket) -> String {
+		switch bucket {
+		case .needs: "Needs your decision"
+		case .waiting: "Waiting on an agent"
+		case .fyi: "Updates for you"
+		case .done: "Done just now"
+		}
+	}
+
+	/// One-time explanation of the two swipes, which nothing else on the card hints at.
+	@ViewBuilder private var swipeHint: some View {
+		if !swipeHintSeen {
+			HStack(alignment: .top, spacing: MaskinSpace.s4) {
+				Image(systemName: "hand.draw").accessibilityHidden(true)
+				Text("Swipe right to accept the recommended option, left to mark read.")
+					.maskinText(.subhead)
+				Spacer(minLength: 0)
+				Button("Got it") { withAnimation(MaskinMotion.standard) { swipeHintSeen = true } }
+					.maskinText(.subhead).fontWeight(.semibold)
+					.frame(minHeight: MaskinSpace.touchMin)
+			}
+			.foregroundStyle(MaskinColor.ink4)
+			.modifier(ReadableRow(width: readableWidth))
+		}
+	}
+
+	private func feedRow(_ entry: FeedEntry) -> some View {
+		card(entry)
+			.modifier(ReadableRow(width: readableWidth))
+			.swipeActions(edge: .leading, allowsFullSwipe: true) {
+				// Swipe right to take the agent's recommendation. Options that can't be undone
+				// are never one swipe away: they keep their confirmation on the card.
+				if entry.record == nil, let option = entry.card.decision?.recommended,
+					!option.destructive
+				{
+					Button {
+						DecisionCardView.Actions.live(store: store, entry: entry, openObject: openObject)
+							.choose(option)
+					} label: {
+						Label(option.label, systemImage: "checkmark")
+					}
+					.tint(MaskinColor.success)
+				}
+			}
+			.swipeActions(edge: .trailing, allowsFullSwipe: true) {
+				if entry.record == nil {
+					Button {
+						dismiss(entry)
+					} label: {
+						Label("Mark read", systemImage: "checkmark")
+					}
+					.tint(MaskinColor.success)
+				}
+			}
 	}
 
 	private func card(_ entry: FeedEntry) -> some View {
@@ -207,6 +251,28 @@ struct ForYouFeedView: View {
 }
 
 // MARK: - Pieces
+
+/// A quiet label above each group of cards, with its count and an optional bulk action.
+private struct SectionHeader: View {
+	let title: String
+	let count: Int
+	var action: (title: String, run: () -> Void)?
+
+	var body: some View {
+		HStack(spacing: MaskinSpace.s3) {
+			Text(title).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
+			Text("\(count)").maskinText(.subhead).foregroundStyle(MaskinColor.ink5)
+			Spacer(minLength: MaskinSpace.s3)
+			if let action {
+				Button(action.title, action: action.run)
+					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+					.frame(minHeight: MaskinSpace.touchMin)
+			}
+		}
+		.accessibilityElement(children: .combine)
+		.accessibilityAddTraits(.isHeader)
+	}
+}
 
 private struct ReadableRow: ViewModifier {
 	let width: CGFloat
