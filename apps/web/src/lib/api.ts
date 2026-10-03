@@ -39,6 +39,8 @@ export class ApiError extends Error {
 	code?: string
 	/** Populated when `code === 'PLAN_CAP_EXCEEDED'` — the plan/used/cap/reset context for a typed upgrade CTA. */
 	planCapContext?: PlanCapContext
+	/** Populated on a 429 whose body carries `retry_after_seconds` (voice session mint). */
+	retryAfterSeconds?: number
 
 	constructor(
 		public status: number,
@@ -143,6 +145,9 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		const err = new ApiError(res.status, message, fieldErrors)
 		err.code = code
 		err.planCapContext = planCapContext
+		if (res.status === 429 && typeof data.retry_after_seconds === 'number') {
+			err.retryAfterSeconds = data.retry_after_seconds
+		}
 		// This is the single chokepoint for every /api call the UI makes, so a
 		// non-2xx here is where a backend problem becomes visible to a user.
 		// Method, path (query stripped), status and the structured error code
@@ -805,6 +810,28 @@ export const api = {
 				expires_at: string
 				ws_url: string
 			}>('/voice-sessions', { method: 'POST', body, workspaceId }),
+		// Ends the call server-side: row status, ended_at, cost, voice_session_ended.
+		// Idempotent, so a double hangup (End button then dialog close) is harmless.
+		// Audio seconds are what this client measured; the server clamps them to
+		// the call length.
+		hangup: (
+			workspaceId: string,
+			voiceSessionId: string,
+			body: {
+				reason: 'user_hangup' | 'network_error'
+				input_audio_seconds?: number
+				output_audio_seconds?: number
+			},
+		) =>
+			request<{
+				voice_session_id: string
+				status: string
+				ended_reason: string | null
+				ended_at: string | null
+				duration_ms: number
+				total_cost_usd: number | null
+				conversation_id: string | null
+			}>(`/voice-sessions/${voiceSessionId}/hangup`, { method: 'POST', body, workspaceId }),
 	},
 
 	userDisplaySettings: {

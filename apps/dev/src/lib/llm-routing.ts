@@ -914,3 +914,20 @@ export function resolveChatCredentials(params: {
 		model: fallback.smallModel ?? fallback.model ?? DEFAULT_CHAT_MODEL.openai,
 	}
 }
+
+/**
+ * OpenAI Realtime (gpt-realtime) audio rates for Voice v1, in USD per second of
+ * audio. Anchors from the tech spec §Cost pipeline: $0.06/min in, $0.24/min
+ * out. Voice is billed to the operator's MASKIN_VOICE_OPENAI_API_KEY, not to a
+ * workspace route, so these sit beside the model pricing rather than in it.
+ */
+export const VOICE_REALTIME_INPUT_USD_PER_AUDIO_SECOND = 0.001
+export const VOICE_REALTIME_OUTPUT_USD_PER_AUDIO_SECOND = 0.004
+
+/** Dollar cost of one voice call, rounded to the 6 decimals voice_sessions.total_cost_usd stores. */
+export function computeVoiceCostUsd(inputAudioSeconds: number, outputAudioSeconds: number): number {
+	const usd =
+		inputAudioSeconds * VOICE_REALTIME_INPUT_USD_PER_AUDIO_SECOND +
+		outputAudioSeconds * VOICE_REALTIME_OUTPUT_USD_PER_AUDIO_SECOND
+	return Math.round(usd * 1e6) / 1e6
+}

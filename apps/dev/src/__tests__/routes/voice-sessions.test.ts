@@ -123,6 +123,7 @@ describe('POST /api/voice-sessions', () => {
 		mockResults.selectQueue = [
 			[membershipRow()],
 			[agentRow()],
+			[{ seconds: '0' }], // daily minutes used
 			[], // agentSkills
 		]
 		// The route inserts voice_sessions first; the partial unique index on
@@ -148,6 +149,7 @@ describe('POST /api/voice-sessions', () => {
 		mockResults.selectQueue = [
 			[membershipRow()],
 			[agentRow()],
+			[{ seconds: '0' }], // daily minutes used
 			[], // agentSkills
 		]
 		mockResults.insert = [{ id: '9f8e7d6c-5b4a-4a3b-2c1d-0e9f8a7b6c5d' }]
@@ -164,6 +166,38 @@ describe('POST /api/voice-sessions', () => {
 		expect(body.retry_after_seconds).toBe(42)
 	})
 
+	it('429s with retry_after_seconds when the workspace has used its 60 daily voice minutes', async () => {
+		enableFlagFor(HUMAN)
+		stubMint({ kind: 'ok' })
+		const mint = vi.fn()
+		setRealtimeMintFn(mint)
+		const { app, mockResults, calls } = createTestApp(
+			voiceSessionsRoutes,
+			'/api/voice-sessions',
+			HUMAN,
+		)
+		mockResults.selectQueue = [
+			[membershipRow()],
+			[agentRow()],
+			[{ seconds: String(60 * 60) }], // daily seconds used: exactly the cap
+		]
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/voice-sessions', { agent_actor_id: AGENT }),
+		)
+		expect(res.status).toBe(429)
+		const body = (await res.json()) as {
+			error: { code: string }
+			retry_after_seconds: number
+		}
+		expect(body.error.code).toBe('RATE_LIMITED')
+		expect(body.retry_after_seconds).toBeGreaterThanOrEqual(1)
+		expect(body.retry_after_seconds).toBeLessThanOrEqual(24 * 60 * 60)
+		// Nothing written and the vendor never called for a capped workspace.
+		expect(calls.inserts).toHaveLength(0)
+		expect(mint).not.toHaveBeenCalled()
+	})
+
 	it('returns 201 with the ephemeral session on the happy path', async () => {
 		enableFlagFor(HUMAN)
 		stubMint({ kind: 'ok' })
@@ -172,6 +206,7 @@ describe('POST /api/voice-sessions', () => {
 		mockResults.selectQueue = [
 			[membershipRow()],
 			[agentRow()],
+			[{ seconds: '0' }], // daily minutes used
 			[], // agentSkills
 		]
 		mockResults.insert = [{ id: insertedId }]
@@ -211,7 +246,7 @@ describe('POST /api/voice-sessions', () => {
 		vi.stubGlobal('fetch', fetchMock)
 		try {
 			const { app, mockResults } = createTestApp(voiceSessionsRoutes, '/api/voice-sessions', HUMAN)
-			mockResults.selectQueue = [[membershipRow()], [agentRow()], []]
+			mockResults.selectQueue = [[membershipRow()], [agentRow()], [{ seconds: '0' }], []]
 			mockResults.insert = [{ id: '11111111-1111-4111-8111-111111111111' }]
 
 			const res = await app.request(

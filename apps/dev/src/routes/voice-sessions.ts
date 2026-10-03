@@ -18,6 +18,13 @@ import { createApiError, validationFailureHook } from '../lib/errors'
 import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
+import { captureVoiceException } from '../lib/sentry-voice'
+import {
+	VOICE_DAILY_MINUTE_CAP,
+	endVoiceSession,
+	getVoiceMinutesUsedToday,
+	secondsUntilVoiceCapResets,
+} from '../services/voice-session-lifecycle'
 
 type Env = {
 	Variables: {
@@ -216,7 +223,8 @@ const postVoiceSessionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		429: {
-			description: 'Rate limited by the vendor; retry after `retry_after_seconds`',
+			description:
+				'Rate limited by the vendor, or the workspace has used its daily voice minutes (60 min/workspace/day crash floor); retry after `retry_after_seconds`',
 			content: { 'application/json': { schema: rateLimitedResponse } },
 		},
 		500: {
@@ -311,6 +319,28 @@ app.openapi(postVoiceSessionRoute, async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Target agent is not voice-enabled'), 400)
 	}
 
+	// Per-workspace daily minute cap (tech spec §Error handling). A crash floor,
+	// not the packaging number: Pricing Strategist owns that. Checked before any
+	// row is written or vendor call is made, so a capped workspace costs nothing.
+	const minutesUsed = await getVoiceMinutesUsedToday(db, workspaceId)
+	if (minutesUsed >= VOICE_DAILY_MINUTE_CAP) {
+		await captureVoiceSessionDenied(humanActorId, {
+			agent_id: agentActorId,
+			workspace_id: workspaceId,
+			reason: 'rate_limited',
+		})
+		return c.json(
+			{
+				error: {
+					code: 'RATE_LIMITED' as const,
+					message: 'This workspace has used its voice minutes for today',
+				},
+				retry_after_seconds: secondsUntilVoiceCapResets(),
+			},
+			429,
+		)
+	}
+
 	// Compose the vendor `instructions` from the agent's system prompt + every
 	// attached workspace skill's rendered content. Same substrate the chat
 	// side already binds — so a voice caller and a text caller see the same
@@ -368,6 +398,7 @@ app.openapi(postVoiceSessionRoute, async (c) => {
 	}
 
 	if (!inserted) {
+		logger.error('Voice session insert returned no row', { workspace_id: workspaceId })
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to insert voice_sessions row'), 500)
 	}
 
@@ -410,6 +441,10 @@ app.openapi(postVoiceSessionRoute, async (c) => {
 			vendor_status: outcome.status,
 			vendor_body: outcome.body.slice(0, 500),
 		})
+		captureVoiceException(
+			inserted.id,
+			new Error(`Voice vendor session mint failed (status ${outcome.status})`),
+		)
 		return c.json(
 			createApiError('INTERNAL_ERROR', `Vendor session mint failed (status ${outcome.status})`),
 			500,
@@ -442,6 +477,120 @@ app.openapi(postVoiceSessionRoute, async (c) => {
 		},
 		201,
 	)
+})
+
+// ── Hangup ───────────────────────────────────────────────────────────
+
+const hangupBody = z
+	.object({
+		reason: z.enum(['user_hangup', 'network_error']).openapi({
+			description:
+				'Why the browser is ending the call. user_hangup for End call / Esc / close; network_error when the one ICE restart did not recover the connection.',
+		}),
+		input_audio_seconds: z
+			.number()
+			.int()
+			.min(0)
+			.max(24 * 60 * 60)
+			.optional()
+			.openapi({
+				description: 'Seconds of microphone audio the client sent. Clamped to the call length.',
+			}),
+		output_audio_seconds: z
+			.number()
+			.int()
+			.min(0)
+			.max(24 * 60 * 60)
+			.optional()
+			.openapi({
+				description: 'Seconds of agent audio the client received. Clamped to the call length.',
+			}),
+	})
+	.openapi('HangupVoiceSessionBody')
+
+const hangupResponse = z
+	.object({
+		voice_session_id: z.string().uuid(),
+		status: z.string(),
+		ended_reason: z.string().nullable(),
+		ended_at: z.string().nullable(),
+		duration_ms: z.number(),
+		total_cost_usd: z.number().nullable(),
+		conversation_id: z.string().uuid().nullable(),
+	})
+	.openapi('HangupVoiceSessionResponse')
+
+const hangupVoiceSessionRoute = createRoute({
+	method: 'post',
+	path: '/{id}/hangup',
+	tags: ['Voice'],
+	summary: 'End a voice call',
+	description:
+		"Gated by the **voice-mode-v1** feature flag. Marks the caller's voice_sessions row ended, stamps ended_at and ended_reason, finalises audio seconds and total_cost_usd, and fires voice_session_ended. Idempotent: hanging up a call that already ended returns its stored terminal state and fires nothing.",
+	request: {
+		params: z.object({ id: z.string().uuid() }),
+		body: { content: { 'application/json': { schema: hangupBody } }, required: true },
+	},
+	responses: {
+		200: {
+			description: 'Call ended (or already ended)',
+			content: { 'application/json': { schema: hangupResponse } },
+		},
+		404: {
+			description: 'Flag off, or no such voice session for the caller',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(hangupVoiceSessionRoute, async (c) => {
+	const humanActorId = c.get('actorId')
+	const db = c.get('db')
+
+	// Same 404 shape as the mint route; a session that is not the caller's is a
+	// 404 too, so ids are not probeable.
+	if (!isFlagEnabled(humanActorId, FLAGS.VOICE_MODE_V1)) {
+		return c.json(createApiError('NOT_FOUND', 'Not found'), 404)
+	}
+	const { id } = c.req.valid('param')
+	const body = c.req.valid('json')
+
+	const [session] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, id)).limit(1)
+	if (!session || session.humanActorId !== humanActorId) {
+		return c.json(createApiError('NOT_FOUND', 'Not found'), 404)
+	}
+
+	try {
+		const isLive = session.status === 'pending' || session.status === 'active'
+		const final = isLive
+			? ((await endVoiceSession(db, {
+					id,
+					reason: body.reason,
+					reportedInputAudioSeconds: body.input_audio_seconds,
+					reportedOutputAudioSeconds: body.output_audio_seconds,
+				})) ??
+				// Lost the race to another terminal path between the read and the write.
+				(await db.select().from(voiceSessions).where(eq(voiceSessions.id, id)).limit(1))[0] ??
+				session)
+			: session
+
+		const endedAt = final.endedAt ?? null
+		return c.json(
+			{
+				voice_session_id: final.id,
+				status: final.status,
+				ended_reason: final.endedReason,
+				ended_at: endedAt?.toISOString() ?? null,
+				duration_ms: (endedAt ?? new Date()).getTime() - final.startedAt.getTime(),
+				total_cost_usd: final.totalCostUsd === null ? null : Number(final.totalCostUsd),
+				conversation_id: final.conversationId,
+			},
+			200,
+		)
+	} catch (err) {
+		captureVoiceException(id, err)
+		throw err
+	}
 })
 
 export default app

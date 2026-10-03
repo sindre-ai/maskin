@@ -10,7 +10,9 @@ import { z } from 'zod'
 import { createApiError } from '../lib/errors'
 import { FLAGS, isFlagEnabled } from '../lib/feature-flags'
 import { logger } from '../lib/logger'
+import { captureVoiceException } from '../lib/sentry-voice'
 import { createVoiceChannel } from '../services/voice-session-channel'
+import { cancelVoiceWsGrace, startVoiceWsGrace } from '../services/voice-session-lifecycle'
 import type { VoiceSessionRow } from '../services/voice-transcript'
 
 type Env = {
@@ -109,6 +111,7 @@ export function createVoiceSessionEventsRoutes(
 					voice_session_id: session.id,
 					agent_actor_id: session.agentActorId,
 				})
+				captureVoiceException(session.id, new Error('Voice session agent has no API key'))
 				return c.json(createApiError('INTERNAL_ERROR', 'Voice session cannot proxy tools'), 500)
 			}
 
@@ -125,6 +128,8 @@ export function createVoiceSessionEventsRoutes(
 			}
 			return {
 				onOpen(_event, ws) {
+					// A reconnect inside the 20s grace resumes the same call.
+					cancelVoiceWsGrace(session.id)
 					channel.current = createVoiceChannel({
 						db,
 						session,
@@ -141,6 +146,12 @@ export function createVoiceSessionEventsRoutes(
 							error: String(err),
 						}),
 					)
+				},
+				onClose() {
+					// The channel going away does not end the call by itself (the audio
+					// path is browser <-> OpenAI). Give the browser the grace window to
+					// come back; otherwise the call is ended as network_error.
+					startVoiceWsGrace(db, session.id)
 				},
 				onMessage(event) {
 					// A rejection here must not take the socket (or the process) down.

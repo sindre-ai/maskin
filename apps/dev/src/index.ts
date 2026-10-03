@@ -35,6 +35,10 @@ import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionDispatcher } from './services/session-dispatcher'
 import { SessionManager } from './services/session-manager'
 import { CommentDispatcher, TriggerRunner } from './services/trigger-runner'
+import {
+	VoiceSessionTimeoutSweeper,
+	endAllLiveVoiceSessions,
+} from './services/voice-session-timeout-sweeper'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
 
@@ -222,6 +226,13 @@ const orphanThreadDetector = new OrphanThreadDetector(db)
 orphanThreadDetector.start()
 logger.info('Orphan thread detector started')
 
+// Voice v1: ends calls whose timeout_at has passed (tab closed with no
+// hangup). A no-op until a voice_sessions row exists, so it is safe for every
+// deployment whether or not voice-mode-v1 is enabled.
+const voiceSessionTimeoutSweeper = new VoiceSessionTimeoutSweeper(db)
+voiceSessionTimeoutSweeper.start()
+logger.info('Voice session timeout sweeper started')
+
 // Session dispatch queue absorbs backpressure when no agent-server has
 // capacity and retries failed dispatches. In production the SessionDispatcher
 // is wired as the queue's DispatchFn and SessionManager routes session-start
@@ -329,6 +340,13 @@ const shutdown = async (signal: string) => {
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
+	voiceSessionTimeoutSweeper.stop()
+	// Rows would otherwise stay live until the sweeper finds them after restart.
+	await endAllLiveVoiceSessions(db).catch((err) =>
+		logger.error(
+			`Failed to end live voice sessions on shutdown: ${err instanceof Error ? err.message : String(err)}`,
+		),
+	)
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.

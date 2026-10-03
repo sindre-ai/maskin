@@ -18,7 +18,8 @@ export function VoiceEnabledBadge({ className }: { className?: string }) {
 			title="Voice-enabled — a workspace member can hold a live voice call with this agent"
 		>
 			<Phone size={9} strokeWidth={2.5} aria-hidden="true" />
-			Voice
+			{/* Icon-only below sm: the row's own Call button needs the width on a phone, and the aria-label above still names the badge. */}
+			<span className="hidden sm:inline">Voice</span>
 		</span>
 	)
 }
