@@ -128,7 +128,7 @@ function isStaleCall(contact: VoiceContact, callId: string): boolean {
 }
 
 function terminal(
-	status: VoiceStatus,
+	status: VoiceStatus | 'follow_up_later',
 	extra: Record<string, unknown> = {},
 	effects: VoiceEffect[] = [],
 ): Outcome {
@@ -269,8 +269,16 @@ function advanceFrom(contact: VoiceContact, event: VoiceEvent, now: Date): Outco
 					) {
 						return noop(contact)
 					}
-					const booked = toolTrace(contact).some((e) => e.tool_name === 'confirm_meeting_slot')
-					return terminal(booked ? 'voice_meeting_booked' : 'voice_declined')
+					const trace = toolTrace(contact)
+					if (trace.some((e) => e.tool_name === 'confirm_meeting_slot')) {
+						return terminal('voice_meeting_booked')
+					}
+					// The prospect asked for the email: not a decline. follow_up_later is
+					// an existing CRM status (extensions/crm/shared.ts), not a voice_ one.
+					if (trace.some((e) => e.tool_name === 'request_followup_email')) {
+						return terminal('follow_up_later')
+					}
+					return terminal('voice_declined')
 				}
 
 				case 'no_answer': {

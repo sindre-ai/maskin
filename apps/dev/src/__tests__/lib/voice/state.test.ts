@@ -291,6 +291,37 @@ describe('call_hangup: connected call (normal_clearing)', () => {
 		expect(advance(c, hangup('normal_clearing'), NOW).status).toBe('voice_declined')
 	})
 
+	it('resolves to follow_up_later when the prospect asked for the email and nothing was booked', () => {
+		const c = contact('voice_answered', {
+			last_call_id: 'call-1',
+			next_dial_at: '2026-10-02T09:00:00.000Z',
+			voice_tool_trace: [{ tool_name: 'request_followup_email' }, { tool_name: 'end_call_polite' }],
+		})
+		const r = advance(c, hangup('normal_clearing'), NOW)
+		expect(r.status).toBe('follow_up_later')
+		expect(r.applied).toBe(true)
+		expect(r.metadata.next_dial_at).toBeNull()
+	})
+
+	it('a booking wins over an email request', () => {
+		const c = contact('voice_answered', {
+			last_call_id: 'call-1',
+			voice_tool_trace: [
+				{ tool_name: 'request_followup_email' },
+				{ tool_name: 'confirm_meeting_slot' },
+			],
+		})
+		expect(advance(c, hangup('normal_clearing'), NOW).status).toBe('voice_meeting_booked')
+	})
+
+	it('leaves a warm transfer alone even when an email was requested', () => {
+		const c = contact('voice_warm_transferred', {
+			last_call_id: 'call-1',
+			voice_tool_trace: [{ tool_name: 'request_followup_email' }],
+		})
+		expect(advance(c, hangup('normal_clearing'), NOW).applied).toBe(false)
+	})
+
 	it('leaves a warm transfer alone', () => {
 		const c = contact('voice_warm_transferred', { last_call_id: 'call-1' })
 		expect(advance(c, hangup('normal_clearing'), NOW).applied).toBe(false)
