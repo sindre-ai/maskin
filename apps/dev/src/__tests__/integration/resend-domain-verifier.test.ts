@@ -352,6 +352,32 @@ describe('ResendDomainVerifier — cadence + status transitions (real Postgres)'
 		expect(entries.find((e) => e.msg === 'resend.domain.poll.timeout')).toBeDefined()
 	})
 
+	it('marks the row failed with domain_not_found on a 404 and stops polling', async () => {
+		const { row, domainId } = await seedResendRow({
+			workspaceId,
+			createdAtMinutesAgo: 2,
+			lastPolledAt: null,
+		})
+		const poll: PollFn = vi.fn(async () => ({ kind: 'not_found' }))
+		const { entries, logger } = buildLoggerCapture()
+		const verifier = new ResendDomainVerifier(db, { poll, logger })
+
+		await verifier.tick()
+
+		expect(poll).toHaveBeenCalledTimes(1)
+		const cfg = await readConfig(row.id)
+		expect(cfg.resend?.verification_status).toBe('failed')
+		expect(cfg.resend?.verification_error).toBe('domain_not_found')
+		expect(cfg.resend?.last_polled_at).toBeTruthy()
+		const logged = entries.filter((e) => e.msg === 'resend.domain.poll.not_found')
+		expect(logged).toHaveLength(1)
+		expect((logged[0].ctx as { resend_domain_id: string }).resend_domain_id).toBe(domainId)
+
+		// Terminal: the WHERE-pending filter no longer picks the row up.
+		await verifier.tick()
+		expect(poll).toHaveBeenCalledTimes(1)
+	})
+
 	it('writes per-record statuses + capabilities on partial verify and top-level verified on full verify', async () => {
 		const { row, domainId } = await seedResendRow({
 			workspaceId,
