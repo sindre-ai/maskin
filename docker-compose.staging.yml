@@ -1,0 +1,106 @@
+# Staging stack for the bet branch (bet/5b8e-voice-outreach), run as its own
+# Coolify app on the shared Coolify host. Separate file so docker-compose.prod.yml
+# is untouched. Differences from prod, all deliberate:
+#   - No docker.sock mount, no group_add: the app does not need them to boot, and
+#     on the shared host the socket is root on the prod box. Agent dispatch is off
+#     (no AGENT_SERVERS set).
+#   - No seaweedfs 127.0.0.1:9327 publish and no -metricsPort: prod's Alloy scrapes
+#     that port, and a second copy would fail to bind it.
+#   - No agent-base service: building agent-base:latest would retag the image prod uses.
+#   - S3 keys come from env, not the hardcoded admin/admin.
+#   - cpus and mem_limit on all three containers. Defaults are conservative; tune
+#     them with the STAGING_*_CPUS / STAGING_*_MEM env vars after the host
+#     headroom reading, no commit needed. Limits apply to running containers only,
+#     not to the image build.
+#   - Only voice-bet env is passed through. No Stripe, Unipile, Gmail or Linear.
+services:
+  postgres:
+    image: postgres:16-alpine
+    cpus: ${STAGING_PG_CPUS:-0.5}
+    mem_limit: ${STAGING_PG_MEM:-512m}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-maskin}
+    command: ["postgres", "-c", "max_connections=50", "-c", "shared_buffers=128MB"]
+    volumes:
+      - staging_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  seaweedfs:
+    image: chrislusf/seaweedfs
+    cpus: ${STAGING_S3_CPUS:-0.5}
+    mem_limit: ${STAGING_S3_MEM:-512m}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cat > /tmp/s3.json <<CONF
+        {"identities":[{"name":"admin","credentials":[{"accessKey":"${S3_ACCESS_KEY}","secretKey":"${S3_SECRET_KEY}"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
+        CONF
+        exec weed server -s3 -s3.config=/tmp/s3.json -dir=/data -master.volumeSizeLimitMB=1024 -volume.max=5
+    volumes:
+      - staging_seaweed_data:/data
+
+  app:
+    build:
+      context: .
+      dockerfile: apps/dev/Dockerfile
+      args:
+        VITE_MASKIN_COMMIT_SHA: ${SOURCE_COMMIT:-}
+    cpus: ${STAGING_APP_CPUS:-1}
+    mem_limit: ${STAGING_APP_MEM:-1g}
+    # No host port publish: Coolify's Traefik routes the domain over the internal
+    # network (ports_exposes=3000).
+    command: ["sh", "-c", "node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-marketplace.ts && node apps/dev/dist/index.js"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 40s
+      retries: 6
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-maskin}
+      PORT: "3000"
+      NODE_ENV: production
+      STATIC_DIR: /app/apps/web/dist
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://seaweedfs:8333}
+      S3_BUCKET: ${S3_BUCKET:-agent-files}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY}
+      WEBHOOK_BASE_URL: ${WEBHOOK_BASE_URL:-}
+      APP_URL: ${APP_URL:-}
+      FRONTEND_URL: ${FRONTEND_URL:-}
+      MASKIN_PUBLIC_URL: ${MASKIN_PUBLIC_URL:-}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      # Voice outreach (bet 5b8e). TELNYX_API_KEY is NOT here: it is connected to the
+      # workspace as the telnyx integration, encrypted at rest.
+      TELNYX_PUBLIC_KEY: ${TELNYX_PUBLIC_KEY:-}
+      TELNYX_APP_ID: ${TELNYX_APP_ID:-}
+      TELNYX_ASSISTANT_ID: ${TELNYX_ASSISTANT_ID:-}
+      CALL_DAILY_CAP: ${CALL_DAILY_CAP:-200}
+      CALL_RATE_LIMIT_PER_MINUTE: ${CALL_RATE_LIMIT_PER_MINUTE:-5}
+      VOICE_SMS_MISSED_CALL_NUDGE: ${VOICE_SMS_MISSED_CALL_NUDGE:-}
+      VOICE_SMS_VOICEMAIL_FOLLOWUP: ${VOICE_SMS_VOICEMAIL_FOLLOWUP:-}
+      TELNYX_FROM_NUMBER: ${TELNYX_FROM_NUMBER:-}
+      VOICE_SALES_REP_ACTOR_ID: ${VOICE_SALES_REP_ACTOR_ID:-}
+      VOICE_FOUNDER_ACTORS: ${VOICE_FOUNDER_ACTORS:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  staging_pgdata:
+  staging_seaweed_data:
