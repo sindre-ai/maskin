@@ -34,11 +34,8 @@
   var intervalSec = Number.isFinite(requested) && requested > 0 ? requested : 1800
   var intervalMs = Math.min(Math.max(intervalSec, 60), 3000) * 1000
   var retryMs = 60 * 1000
-  var url =
-    String(apiUrl).replace(/\/+$/, '') +
-    '/api/integrations/' +
-    encodeURIComponent(integrationId) +
-    '/github-token'
+  var base = String(apiUrl).replace(/\/+$/, '')
+  var url = `${base}/api/integrations/${encodeURIComponent(integrationId)}/github-token`
 
   function schedule(ms) {
     var timer = setTimeout(refresh, ms)
@@ -47,11 +44,11 @@
 
   function refresh() {
     fetch(url, {
-      headers: { Authorization: 'Bearer ' + apiKey, 'X-Workspace-Id': workspaceId },
+      headers: { Authorization: `Bearer ${apiKey}`, 'X-Workspace-Id': workspaceId },
       signal: AbortSignal.timeout(10000),
     })
       .then(function (res) {
-        if (!res.ok) throw new Error('HTTP ' + res.status)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
         return res.json()
       })
       .then(function (body) {
@@ -61,7 +58,7 @@
       })
       .catch(function (err) {
         process.stderr.write(
-          '[github-token-refresh] mint failed (' + (err && err.message) + '), keeping old token\n',
+          `[github-token-refresh] mint failed (${err && err.message}), keeping old token\n`,
         )
         schedule(retryMs)
       })
