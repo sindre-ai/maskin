@@ -66,6 +66,7 @@ private struct AgentsContainer: View {
 				isLive: environment.events.connection != .failed
 			)
 			.shellToolbar(environment: environment)
+			.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
 		} detail: {
 			if let selection {
 				AgentDetailHost(environment: environment, agentID: selection)

@@ -62,6 +62,7 @@ private struct LoopsContainer: View {
 	var body: some View {
 		NavigationSplitView {
 			sidebar
+				.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
 		} detail: {
 			detail
 		}

@@ -38,6 +38,7 @@ struct MaskinApp: App {
 				pushDelegate.attach(registrar: push, router: runtime.router)
 			}
 		}
+		.commands { ShellCommands() }
 	}
 
 	/// `MASKIN_API_BASE_URL` build setting, surfaced through Info.plist (see project.yml).

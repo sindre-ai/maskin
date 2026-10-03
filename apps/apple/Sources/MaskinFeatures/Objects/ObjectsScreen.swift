@@ -59,6 +59,7 @@ public struct ObjectsScreen: View {
 		NavigationSplitView {
 			ObjectsListView(store: store, selection: $selection) { selection = $0.id }
 				.shellToolbar(environment: environment)
+				.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
 		} detail: {
 			NavigationStack(path: $detailPath) {
 				if let selection {

@@ -34,6 +34,7 @@ public struct MainShell: View {
 		}
 		.environment(runtime)
 		.environment(runtime.router)
+		.focusedSceneValue(\.appRuntime, runtime)
 		.syncOfflineBanner(isOnline: runtime.isOnline)
 		.sheet(item: $runtime.presentation) { presentation in
 			PresentationContent(
