@@ -13,11 +13,7 @@ import {
 import { verifyTelnyxSignature } from '../lib/integrations/providers/telnyx/signature'
 import { dispatchToolInvocation } from '../lib/integrations/providers/telnyx/tool-dispatch'
 import { logger } from '../lib/logger'
-import {
-	type VoiceDb,
-	applyVoiceEvent,
-	runAppliedEffects,
-} from '../lib/outreach/voice/apply'
+import { type VoiceDb, applyVoiceEvent, runAppliedEffects } from '../lib/outreach/voice/apply'
 import { type EffectRunner, createDefaultEffectRunner } from '../lib/outreach/voice/effects'
 import { runPostCallHooks } from '../lib/outreach/voice/post-call'
 import type { VoiceEvent } from '../lib/outreach/voice/state'
@@ -104,8 +100,11 @@ async function writeState(tx: VoiceDb, event: TelnyxEvent): Promise<AfterCommit>
 		return { kind: 'respond', body: { ok: true, skipped: 'no_client_state' } }
 	}
 
-	// The tool router owns the trace write: an entry means the tool succeeded.
-	if (event.event_type === 'assistant.tool_invocation') return { kind: 'tool', event, clientState }
+	if (event.event_type === 'assistant.tool_invocation') {
+		// The trace entry is written by the tool router once the tool succeeded (recordToolSuccess),
+		// not here: a failed tool must leave no entry for the reducer to read.
+		return { kind: 'tool', event, clientState }
+	}
 
 	const voiceEvent = toVoiceEvent(event)
 	if (!voiceEvent) {
@@ -140,8 +139,6 @@ async function afterCommit(db: Database, work: AfterCommit): Promise<unknown> {
 			toolName: work.event.payload.tool_name,
 			toolInput: work.event.payload.tool_input,
 			clientState: work.clientState,
-			from: work.event.payload.from,
-			to: work.event.payload.to,
 		})
 	}
 
@@ -163,6 +160,7 @@ async function afterCommit(db: Database, work: AfterCommit): Promise<unknown> {
 			durationS: event.payload.duration_s ?? null,
 			recordingUrl: event.payload.recording_url ?? null,
 			transcriptUrl: event.payload.transcript_url ?? null,
+			transcript: event.payload.transcript,
 		})
 	}
 

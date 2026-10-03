@@ -4,6 +4,8 @@ import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as recordEventModule from '../../lib/events/record-event'
 import { encodeClientState } from '../../lib/integrations/providers/telnyx/client'
+import { registerToolHandler } from '../../lib/integrations/providers/telnyx/tool-dispatch'
+import { createToolRouter } from '../../lib/integrations/providers/telnyx/tools'
 import * as applyModule from '../../lib/outreach/voice/apply'
 import type { EffectRunner } from '../../lib/outreach/voice/effects'
 import { postCallHooks } from '../../lib/outreach/voice/post-call'
@@ -202,6 +204,22 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 		deadLetter: async () => {},
 	}
 
+	// The real router, with the calendar stubbed: the trace entries the reducer reads are written by it.
+	beforeAll(() => {
+		registerToolHandler(
+			createToolRouter({
+				calendarFor: async () => ({
+					freeBusy: async () => [],
+					insertEvent: async (i) => ({
+						eventId: i.eventId,
+						meetLink: 'https://meet.google.com/abc-defg-hij',
+					}),
+				}),
+			}),
+		)
+	})
+	afterAll(() => registerToolHandler(null))
+
 	beforeEach(() => {
 		sms.length = 0
 		hangups.length = 0
@@ -319,12 +337,15 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 	})
 
 	it('a request_followup_email in the trace and no booking resolves to follow_up_later, and stays there', async () => {
-		const c = await newContact()
+		const c = await newContact('voice_queued', { email: 'anna@example.dk' })
 		await c.send('call.initiated', 'call-f', 1)
 		await c.send('call.answered', 'call-f', 1)
 		await c.send('assistant.tool_invocation', 'call-f', 1, {
 			tool_name: 'request_followup_email',
-			tool_input: { quote: 'just email me' },
+			tool_input: {
+				prospect_quote: 'yes, email me',
+				agent_line: 'One email from Maskin, you can opt out any time. Okay?',
+			},
 		})
 		await c.send('call.hangup', 'call-f', 1, { hangup_cause: 'normal_clearing' })
 		expect((await c.read()).status).toBe('follow_up_later')
@@ -336,9 +357,14 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 		const c = await newContact()
 		await c.send('call.initiated', 'call-b', 1)
 		await c.send('call.answered', 'call-b', 1)
+		const who = { prospect_email: 'anna@example.dk', prospect_name: 'Anna' }
+		await c.send('assistant.tool_invocation', 'call-b', 1, {
+			tool_name: 'book_meeting_slot',
+			tool_input: who,
+		})
 		await c.send('assistant.tool_invocation', 'call-b', 1, {
 			tool_name: 'confirm_meeting_slot',
-			tool_input: {},
+			tool_input: { slot_index: 1, ...who },
 		})
 		await c.send('call.hangup', 'call-b', 1, { hangup_cause: 'normal_clearing' })
 		expect((await c.read()).status).toBe('voice_meeting_booked')

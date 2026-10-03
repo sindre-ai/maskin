@@ -11,8 +11,10 @@ import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
 import { CLIENT_SOURCE_HEADER } from './lib/analytics/knowledge-events'
 import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } from './lib/errors'
+import { registerTelnyxToolRouter } from './lib/integrations/providers/telnyx/tools'
 import { PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
+import { registerVoiceCallHooks } from './lib/outreach/voice/call-hooks'
 import { Sentry, resolveClientSourceTag } from './lib/sentry'
 import {
 	OwnershipCapExceededError,
@@ -389,6 +391,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// google-meet MCP surface — same trie-ordering constraint as linkedin's:
 	// mount the /mcp subtree BEFORE the generic /api/integrations catch-all.
 	app.route('/api/integrations/google-meet/mcp', integrationsGoogleMeetMcpRoutes)
+	registerTelnyxToolRouter()
+	registerVoiceCallHooks()
 	// Telnyx webhook: more specific than the generic /api/integrations catch-all, so mounted first.
 	app.route('/api/integrations/telnyx/webhook', integrationsTelnyxWebhookRoutes)
 	app.route('/api/integrations', integrationsRoutes)

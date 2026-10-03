@@ -9,6 +9,7 @@ import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
+import { TelnyxKnowledgeExporterJob } from './jobs/telnyx-knowledge-exporter'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
@@ -170,6 +171,9 @@ triggerRunner
 
 const commentDispatcher = new CommentDispatcher(db, notifyBridge, sessionManager)
 commentDispatcher.start()
+
+const telnyxKnowledgeExporter = new TelnyxKnowledgeExporterJob(db, notifyBridge)
+telnyxKnowledgeExporter.start()
 
 const gmailWatchRenewer = new GmailWatchRenewer(db)
 gmailWatchRenewer.start()
@@ -347,6 +351,7 @@ const shutdown = async (signal: string) => {
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
+	telnyxKnowledgeExporter.stop()
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.

@@ -1,8 +1,8 @@
 import { z } from '@hono/zod-openapi'
 import {
 	type DeadLetterHandler,
-	TelnyxHttpError,
 	type TelnyxFetchOptions,
+	TelnyxHttpError,
 	telnyxFetch,
 } from './http'
 
@@ -59,31 +59,21 @@ export interface SendMessageInput {
 }
 
 export interface TransferCallInput {
+	callControlId: string
 	to: string
-	/** Caller id for the transfer leg; defaults to the original call's number. */
-	from?: string
-	/** Seconds the transfer leg may ring before Telnyx raises call.transfer.failed. */
+	/** SIP INVITE headers; carries the transcript summary to the person who picks up. */
+	customHeaders?: Array<{ name: string; value: string }>
+	/** Seconds Telnyx waits for the destination to answer before giving up. */
 	timeoutSecs: number
-	/** SIP INVITE headers: carries the transcript summary the founder hears first. */
-	customHeaders: Array<{ name: string; value: string }>
 }
 
-/**
- * Body for POST /v2/ai/assistants and PATCH /v2/ai/assistants/{id}. The shape follows
- * the tech spec (section 2b.2, 2b.6, 7a); it has not been checked against live Telnyx.
- */
+/** Telnyx AI assistant body (POST /v2/ai/assistants). Shape: Telnyx OpenAPI CreateAssistantRequest. */
 export type AssistantPayload = Record<string, unknown>
 
-export interface AssistantRecord {
+export interface TelnyxAssistant {
 	id: string
 	description: string | null
 	toolIds: string[]
-}
-
-export interface KnowledgeDocument {
-	/** File name inside the bucket, e.g. <knowledge object id>.md */
-	name: string
-	markdown: string
 }
 
 export interface TelnyxClient {
@@ -93,23 +83,18 @@ export interface TelnyxClient {
 	hangupCall(callControlId: string): Promise<void>
 	/** POST /v2/messages. */
 	sendMessage(input: SendMessageInput): Promise<{ messageId: string | null }>
-	/** POST /v2/calls/{call_id}/actions/transfer with warm: true. Used on a hot flag_interest. */
-	transferCall(callControlId: string, input: TransferCallInput): Promise<void>
-	/** GET /v2/ai/assistants/{id}; null when Telnyx answers 404. */
-	getAssistant(id: string): Promise<AssistantRecord | null>
+	/** POST /v2/calls/{call_id}/actions/transfer. */
+	transferCall(input: TransferCallInput): Promise<void>
+	/** GET /v2/ai/assistants/{id}. Null when it does not exist. */
+	getAssistant(assistantId: string): Promise<TelnyxAssistant | null>
 	/** POST /v2/ai/assistants. */
-	createAssistant(payload: AssistantPayload): Promise<AssistantRecord>
-	/** PATCH /v2/ai/assistants/{id}. */
-	updateAssistant(id: string, payload: AssistantPayload): Promise<AssistantRecord>
-	/**
-	 * Replaces the contents of a knowledge bucket and re-embeds it: bucket create (exists is
-	 * fine), one object upload per document, then the embed call. Returns the retrieval tool id
-	 * to attach to the assistant. Endpoints are UNVERIFIED against live Telnyx.
-	 */
-	syncKnowledgeBucket(
-		bucketName: string,
-		documents: readonly KnowledgeDocument[],
-	): Promise<{ retrievalToolId: string }>
+	createAssistant(payload: AssistantPayload): Promise<TelnyxAssistant>
+	/** POST /v2/ai/assistants/{id} (Telnyx updates with POST, not PATCH). */
+	updateAssistant(assistantId: string, payload: AssistantPayload): Promise<TelnyxAssistant>
+	/** POST /v2/ai/embeddings: embed the documents in a Telnyx Storage bucket. */
+	embedBucket(bucketName: string): Promise<void>
+	/** The id of the shared retrieval tool over a bucket, created on first use. */
+	ensureRetrievalTool(displayName: string, bucketName: string): Promise<string>
 }
 
 export interface TelnyxClientOptions {
@@ -138,18 +123,19 @@ const assistantResponseSchema = z.object({
 		.object({
 			id: z.string(),
 			description: z.string().nullish(),
-			tool_ids: z.array(z.string()).optional(),
+			tool_ids: z.array(z.string()).nullish(),
 		})
 		.passthrough(),
 })
 
-const knowledgeSyncResponseSchema = z.object({
-	data: z.object({ tool_id: z.string() }).passthrough(),
-})
+const sharedToolSchema = z
+	.object({ id: z.string(), display_name: z.string().nullish() })
+	.passthrough()
+const sharedToolListSchema = z.object({ data: z.array(sharedToolSchema) })
 
-function toAssistantRecord(raw: unknown): AssistantRecord {
-	const { data } = assistantResponseSchema.parse(raw)
-	return { id: data.id, description: data.description ?? null, toolIds: data.tool_ids ?? [] }
+function toAssistant(raw: unknown): TelnyxAssistant {
+	const parsed = assistantResponseSchema.parse(raw).data
+	return { id: parsed.id, description: parsed.description ?? null, toolIds: parsed.tool_ids ?? [] }
 }
 
 export function createTelnyxClient(opts: TelnyxClientOptions): TelnyxClient {
@@ -215,20 +201,26 @@ export function createTelnyxClient(opts: TelnyxClientOptions): TelnyxClient {
 			return { messageId: parsed.data.id ?? null }
 		},
 
-		async transferCall(callControlId, input) {
-			await request('POST', `/v2/calls/${encodeURIComponent(callControlId)}/actions/transfer`, {
-				to: input.to,
-				from: input.from,
-				warm: true,
-				timeout_secs: input.timeoutSecs,
-				custom_headers: input.customHeaders,
-			})
+		async transferCall(input) {
+			await request(
+				'POST',
+				`/v2/calls/${encodeURIComponent(input.callControlId)}/actions/transfer`,
+				{
+					to: input.to,
+					timeout_secs: input.timeoutSecs,
+					...(input.customHeaders ? { custom_headers: input.customHeaders } : {}),
+				},
+			)
 		},
 
-		async getAssistant(id) {
+		async getAssistant(assistantId) {
 			try {
-				const res = await request('GET', `/v2/ai/assistants/${encodeURIComponent(id)}`, undefined)
-				return toAssistantRecord(await res.json())
+				const res = await request(
+					'GET',
+					`/v2/ai/assistants/${encodeURIComponent(assistantId)}`,
+					undefined,
+				)
+				return toAssistant(await res.json())
 			} catch (err) {
 				if (err instanceof TelnyxHttpError && err.status === 404) return null
 				throw err
@@ -237,31 +229,38 @@ export function createTelnyxClient(opts: TelnyxClientOptions): TelnyxClient {
 
 		async createAssistant(payload) {
 			const res = await request('POST', '/v2/ai/assistants', payload)
-			return toAssistantRecord(await res.json())
+			return toAssistant(await res.json())
 		},
 
-		async updateAssistant(id, payload) {
-			const res = await request('PATCH', `/v2/ai/assistants/${encodeURIComponent(id)}`, payload)
-			return toAssistantRecord(await res.json())
+		async updateAssistant(assistantId, payload) {
+			const res = await request(
+				'POST',
+				`/v2/ai/assistants/${encodeURIComponent(assistantId)}`,
+				payload,
+			)
+			return toAssistant(await res.json())
 		},
 
-		async syncKnowledgeBucket(bucketName, documents) {
-			const bucket = encodeURIComponent(bucketName)
-			try {
-				await request('POST', '/v2/ai/embeddings/buckets', { name: bucketName })
-			} catch (err) {
-				// 409 or 422 on a bucket that already exists is the normal nightly case.
-				if (!(err instanceof TelnyxHttpError && (err.status === 409 || err.status === 422))) throw err
-			}
-			for (const doc of documents) {
-				await request(
-					'PUT',
-					`/v2/ai/embeddings/buckets/${bucket}/objects/${encodeURIComponent(doc.name)}`,
-					{ content: doc.markdown, content_type: 'text/markdown' },
-				)
-			}
-			const res = await request('POST', '/v2/ai/embeddings', { bucket_name: bucketName })
-			return { retrievalToolId: knowledgeSyncResponseSchema.parse(await res.json()).data.tool_id }
+		async ensureRetrievalTool(displayName, bucketName) {
+			const list = await request(
+				'GET',
+				`/v2/ai/tools?filter[name]=${encodeURIComponent(displayName)}&filter[type]=retrieval`,
+				undefined,
+			)
+			const found = sharedToolListSchema
+				.parse(await list.json())
+				.data.find((t) => t.display_name === displayName)
+			if (found) return found.id
+			const created = await request('POST', '/v2/ai/tools', {
+				type: 'retrieval',
+				display_name: displayName,
+				retrieval: { bucket_ids: [bucketName] },
+			})
+			return z.object({ data: sharedToolSchema }).parse(await created.json()).data.id
+		},
+
+		async embedBucket(bucketName) {
+			await request('POST', '/v2/ai/embeddings', { bucket_name: bucketName })
 		},
 	}
 }
