@@ -87,6 +87,13 @@ export type AgentServerClientDeps = {
 	fetchImpl?: typeof fetch
 }
 
+// Upper bound on the /stop RPC. The reaper settles boot-stalled rows in series
+// on a 60s tick, so a hung agent server must not stall the pass. Sits above the
+// agent server's own worst case (sandbox list 10s + msb stop 20s) so a slow but
+// working stop is not cut short, and under the tick. Not applied to dispatch:
+// POST /sessions can legitimately run ~70s.
+export const STOP_SESSION_TIMEOUT_MS = 40_000
+
 // Single dispatch surface for apps/dev → apps/agent-server. Always sets the
 // shared bearer token and Content-Type so no caller can dispatch without auth.
 // Surfaces 401 as a typed error so the dispatcher (T6) can distinguish a
@@ -119,7 +126,9 @@ export class AgentServerClient {
 	 * for both `agent-completed` and `sandbox-exit` sources.
 	 */
 	async stopSession(sessionId: string, req: StopSessionRequest): Promise<StopSessionResponse> {
-		return this.postJson<StopSessionResponse>(`/sessions/${sessionId}/stop`, req)
+		return this.postJson<StopSessionResponse>(`/sessions/${sessionId}/stop`, req, {
+			timeoutMs: STOP_SESSION_TIMEOUT_MS,
+		})
 	}
 
 	/**
@@ -139,7 +148,7 @@ export class AgentServerClient {
 
 	// Public to let lifecycle-route callers (T3 stop/snapshot/restore) reuse the
 	// bearer + content-type plumbing without re-implementing it.
-	async postJson<T>(path: string, body: unknown): Promise<T> {
+	async postJson<T>(path: string, body: unknown, opts: { timeoutMs?: number } = {}): Promise<T> {
 		const url = joinUrl(this.deps.server.url, path)
 		const res = await this.fetchImpl(url, {
 			method: 'POST',
@@ -148,6 +157,7 @@ export class AgentServerClient {
 				'Content-Type': 'application/json',
 			},
 			body: JSON.stringify(body),
+			...(opts.timeoutMs ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
 		})
 		if (res.status === 401) {
 			throw new AgentServerAuthError({ id: this.deps.server.id, url: this.deps.server.url })

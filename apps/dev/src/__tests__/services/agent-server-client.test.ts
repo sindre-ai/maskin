@@ -10,6 +10,7 @@ import {
 	AgentServerClient,
 	AgentServerHttpError,
 	type AgentServerRow,
+	STOP_SESSION_TIMEOUT_MS,
 } from '../../services/agent-server-client'
 
 const SERVER: AgentServerRow = {
@@ -197,6 +198,50 @@ describe('AgentServerClient.stopSession', () => {
 		await expect(client.stopSession('s1', { reason: 'stop', source: 'user-stop' })).rejects.toThrow(
 			AgentServerHttpError,
 		)
+	})
+
+	// The reaper settles boot-stalled rows in series, so a hung agent server
+	// must not stall the pass: stop carries an abort signal, dispatch does not
+	// (POST /sessions can legitimately run ~70s).
+	it('sends an abort signal bounded by STOP_SESSION_TIMEOUT_MS', async () => {
+		const timeoutSpy = vi.spyOn(AbortSignal, 'timeout')
+		const { fetchImpl, calls } = makeFetchSpy(
+			new Response(JSON.stringify({ stopped: 'sandbox-stopped' }), { status: 200 }),
+		)
+		const client = new AgentServerClient({ server: SERVER, fetchImpl })
+
+		await client.stopSession('s1', { reason: 'fail', source: 'reaper' })
+
+		expect(calls[0]?.init?.signal).toBeInstanceOf(AbortSignal)
+		expect(timeoutSpy).toHaveBeenCalledWith(STOP_SESSION_TIMEOUT_MS)
+		timeoutSpy.mockRestore()
+		// Above the agent server's own worst case (list 10s + msb stop 20s),
+		// under the 60s reaper tick.
+		expect(STOP_SESSION_TIMEOUT_MS).toBeGreaterThan(30_000)
+		expect(STOP_SESSION_TIMEOUT_MS).toBeLessThan(60_000)
+	})
+
+	it('rejects instead of hanging when the abort signal fires', async () => {
+		const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+			if (init?.signal?.aborted) throw new Error('aborted')
+			return new Response('{}', { status: 200 })
+		}) as typeof fetch
+		const client = new AgentServerClient({ server: SERVER, fetchImpl })
+		const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(AbortSignal.abort())
+
+		await expect(client.stopSession('s1', { reason: 'fail', source: 'reaper' })).rejects.toThrow(
+			'aborted',
+		)
+		timeoutSpy.mockRestore()
+	})
+
+	it('startSession carries no abort signal', async () => {
+		const { fetchImpl, calls } = makeFetchSpy(new Response(JSON.stringify({}), { status: 200 }))
+		const client = new AgentServerClient({ server: SERVER, fetchImpl })
+
+		await client.startSession({ sessionId: 's1' } as never)
+
+		expect(calls[0]?.init?.signal).toBeUndefined()
 	})
 })
 
