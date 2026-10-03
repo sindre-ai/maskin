@@ -974,7 +974,8 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		expect(passSpy).toHaveBeenCalledTimes(2)
 
 		// The hung pass finishing late must not clear a newer pass's flag.
-		;(manager as unknown as { watchdogStartedAt: number }).watchdogStartedAt = Date.now()
+		// +1 so the newer pass can never share a millisecond with the hung one.
+		;(manager as unknown as { watchdogStartedAt: number }).watchdogStartedAt = Date.now() + 1
 		release()
 		await hung
 		expect(
