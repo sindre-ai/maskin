@@ -370,6 +370,24 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 		expect((await c.read()).status).toBe('voice_meeting_booked')
 	})
 
+	it('a failed transfer pings #sales at Attention 3 and leaves the call to fall back to booking', async () => {
+		const c = await newContact()
+		await c.send('call.initiated', 'call-tf', 1)
+		await c.send('call.answered', 'call-tf', 1)
+		await c.send('call.transfer.failed', 'call-tf', 1, { target: '+4533333333' })
+		expect((await c.read()).status).toBe('voice_answered')
+		const pings = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityId, c.contact.id), eq(events.action, 'voice_sales_ping')))
+		expect(pings).toHaveLength(1)
+		expect(pings[0]?.data).toMatchObject({
+			attention: 3,
+			channel: '#sales',
+			reason: 'transfer_failed',
+		})
+	})
+
 	it('transfer completed resolves to voice_warm_transferred and survives the hangup', async () => {
 		const c = await newContact()
 		await c.send('call.initiated', 'call-t', 1)

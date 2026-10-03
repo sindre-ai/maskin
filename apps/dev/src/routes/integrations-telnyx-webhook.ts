@@ -16,6 +16,7 @@ import { logger } from '../lib/logger'
 import { type VoiceDb, applyVoiceEvent, runAppliedEffects } from '../lib/outreach/voice/apply'
 import { type EffectRunner, createDefaultEffectRunner } from '../lib/outreach/voice/effects'
 import { runPostCallHooks } from '../lib/outreach/voice/post-call'
+import { pingSales } from '../lib/outreach/voice/sales-ping'
 import type { VoiceEvent } from '../lib/outreach/voice/state'
 
 type Env = {
@@ -143,6 +144,24 @@ async function afterCommit(db: Database, work: AfterCommit): Promise<unknown> {
 	}
 
 	const { result, event, clientState } = work
+
+	// The transfer leg did not answer in time: the agent falls back to booking, #sales hears about it.
+	if (event.event_type === 'call.transfer.failed') {
+		await pingSales(db, {
+			workspaceId: clientState.workspace_id,
+			contactId: clientState.contact_id,
+			actorId: result.effectContext.actorId,
+			attention: 3,
+			reason: 'transfer_failed',
+			data: { call_id: event.payload.call_control_id },
+		}).catch((err) =>
+			logger.error('voice transfer-failed ping failed', {
+				contactId: clientState.contact_id,
+				error: err instanceof Error ? err.message : String(err),
+			}),
+		)
+	}
+
 	if (result.applied) {
 		await runAppliedEffects(result, effectRunnerOverride ?? createDefaultEffectRunner(db))
 	}

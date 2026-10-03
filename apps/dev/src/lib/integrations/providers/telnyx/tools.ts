@@ -8,7 +8,6 @@ import { pingSales } from '../../../outreach/voice/sales-ping'
 import { proposeSlots, slotSearchRange } from '../../../outreach/voice/slots'
 import { copenhagenParts } from '../../../outreach/voice/workdays'
 import {
-	CALENDAR_SEND_UPDATES,
 	type CalendarClient,
 	calendarEventId,
 	createCalendarClient,
@@ -36,9 +35,6 @@ import {
 /** Telnyx waits this long for the transfer target to answer; past it the transfer has failed. */
 export const TRANSFER_TIMEOUT_SECS = 15
 export const DEFAULT_TRANSFER_HOURS = '10:00-15:00'
-
-// Keep the Calendar constant referenced from the router so a reader of the router sees the rule.
-void CALENDAR_SEND_UPDATES
 
 export interface ToolRouterDeps {
 	now: () => Date
@@ -156,25 +152,26 @@ async function bookMeetingSlot(run: Run, raw: unknown): Promise<Outcome> {
 		return { body: { error: 'calendar_unavailable' } satisfies ToolError }
 	}
 
+	let slots: ReturnType<typeof proposeSlots>
 	try {
 		const calendar = await deps.calendarFor(db, ctx.clientState.workspace_id)
 		if (!calendar) return await calendarFailed('no_calendar_connection')
 		const now = deps.now()
 		const range = slotSearchRange(now)
 		const busy = await calendar.freeBusy(range.from, range.to)
-		const slots = proposeSlots(busy, now, input.data.preferred_window)
-		await recordToolSuccess(db, {
-			workspaceId: ctx.clientState.workspace_id,
-			contactId: contact.id,
-			callId: ctx.callId,
-			toolName: 'book_meeting_slot',
-			// Kept for confirm_meeting_slot, which names an option by index.
-			metadata: { voice_offered_slots: { call_id: ctx.callId, slots } },
-		})
-		return { body: bookMeetingSlotOutput.parse({ slots }) }
+		slots = proposeSlots(busy, now, input.data.preferred_window)
 	} catch (err) {
 		return calendarFailed(err instanceof Error ? err.message : String(err))
 	}
+	await recordToolSuccess(db, {
+		workspaceId: ctx.clientState.workspace_id,
+		contactId: contact.id,
+		callId: ctx.callId,
+		toolName: 'book_meeting_slot',
+		// Kept for confirm_meeting_slot, which names an option by index.
+		metadata: { voice_offered_slots: { call_id: ctx.callId, slots } },
+	})
+	return { body: bookMeetingSlotOutput.parse({ slots }) }
 }
 
 async function confirmMeetingSlot(run: Run, raw: unknown): Promise<Outcome> {
@@ -203,10 +200,11 @@ async function confirmMeetingSlot(run: Run, raw: unknown): Promise<Outcome> {
 		offered?.call_id === ctx.callId ? offered.slots?.[input.data.slot_index - 1] : undefined
 	if (!slot) return { body: { error: 'unknown_slot' } satisfies ToolError }
 
+	let event: Awaited<ReturnType<CalendarClient['insertEvent']>>
 	try {
 		const calendar = await deps.calendarFor(db, workspaceId)
 		if (!calendar) throw new Error('no_calendar_connection')
-		const event = await calendar.insertEvent({
+		event = await calendar.insertEvent({
 			eventId: calendarEventId(ctx.callId, slot.start_iso),
 			summary: `Maskin intro call with ${input.data.prospect_name}`,
 			start: new Date(slot.start_iso),
@@ -214,21 +212,6 @@ async function confirmMeetingSlot(run: Run, raw: unknown): Promise<Outcome> {
 			attendeeEmail: input.data.prospect_email,
 			attendeeName: input.data.prospect_name,
 		})
-		// Success only: this entry is what resolves the call to voice_meeting_booked at hangup.
-		await recordToolSuccess(db, {
-			workspaceId,
-			contactId: contact.id,
-			callId: ctx.callId,
-			toolName: 'confirm_meeting_slot',
-			metadata: {
-				voice_meeting: { call_id: ctx.callId, event_id: event.eventId, meet_link: event.meetLink },
-				// A failure earlier in this call is superseded by the booking that went through.
-				followup_action: null,
-			},
-		})
-		return {
-			body: confirmMeetingSlotOutput.parse({ event_id: event.eventId, meet_link: event.meetLink }),
-		}
 	} catch (err) {
 		logger.warn('voice calendar failure', {
 			contactId: contact.id,
@@ -243,6 +226,24 @@ async function confirmMeetingSlot(run: Run, raw: unknown): Promise<Outcome> {
 			patch: { followup_action: 'email_calendar_link' },
 		})
 		return { body: { error: 'calendar_unavailable' } satisfies ToolError }
+	}
+
+	// Success only: this entry is what resolves the call to voice_meeting_booked at hangup. A
+	// failure here is ours, not Google's: it propagates, Telnyx retries, and the deterministic
+	// event id makes the retry come back as the same booking.
+	await recordToolSuccess(db, {
+		workspaceId,
+		contactId: contact.id,
+		callId: ctx.callId,
+		toolName: 'confirm_meeting_slot',
+		metadata: {
+			voice_meeting: { call_id: ctx.callId, event_id: event.eventId, meet_link: event.meetLink },
+			// A failure earlier in this call is superseded by the booking that went through.
+			followup_action: null,
+		},
+	})
+	return {
+		body: confirmMeetingSlotOutput.parse({ event_id: event.eventId, meet_link: event.meetLink }),
 	}
 }
 

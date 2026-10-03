@@ -1,9 +1,7 @@
 import type { Database } from '@maskin/db'
-import { objects } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { Cron } from 'croner'
-import { eq } from 'drizzle-orm'
 import {
 	buildAssistantPayload,
 	ensureAssistant,
@@ -33,13 +31,15 @@ export class TelnyxKnowledgeExporterJob {
 	private running = false
 	private rerun = false
 	private timer: ReturnType<typeof setTimeout> | null = null
-	private readonly onEvent = (event: { entity_type: string; entity_id: string }) => {
-		if (event.entity_type !== 'object') return
-		void this.maybeSchedule(event.entity_id)
+	/** Events carry the object's own type as entity_type, so a knowledge change arrives as 'knowledge'. */
+	private readonly onEvent = (event: { entity_type: string; workspace_id: string }) => {
+		if (event.entity_type !== 'knowledge') return
+		if (event.workspace_id !== readKnowledgeExporterConfig()?.workspaceId) return
+		this.schedule()
 	}
 
 	constructor(
-		private db: Database,
+		db: Database,
 		private bridge: Pick<PgNotifyBridge, 'on' | 'off'> | null = null,
 		private pass: () => Promise<unknown> = () => runExportPass(db),
 		private debounceMs: number = DEBOUNCE_MS,
@@ -64,25 +64,6 @@ export class TelnyxKnowledgeExporterJob {
 		this.bridge?.off('event', this.onEvent)
 		if (this.timer) clearTimeout(this.timer)
 		this.timer = null
-	}
-
-	/** A knowledge object in the exported workspace changed: schedule a debounced pass. */
-	private async maybeSchedule(objectId: string): Promise<void> {
-		const config = readKnowledgeExporterConfig()
-		if (!config) return
-		try {
-			const [row] = await this.db
-				.select({ type: objects.type, workspaceId: objects.workspaceId })
-				.from(objects)
-				.where(eq(objects.id, objectId))
-				.limit(1)
-			if (row?.type !== 'knowledge' || row.workspaceId !== config.workspaceId) return
-			this.schedule()
-		} catch (err) {
-			logger.warn('Telnyx knowledge exporter could not read the changed object', {
-				error: err instanceof Error ? err.message : String(err),
-			})
-		}
 	}
 
 	schedule(): void {

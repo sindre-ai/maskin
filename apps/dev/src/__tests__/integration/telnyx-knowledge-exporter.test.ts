@@ -145,3 +145,75 @@ describe('knowledge exporter helpers', () => {
 		}
 	})
 })
+
+describe('knowledge exporter job: flip to customer_facing reaches the bucket', () => {
+	it('a PATCH that flips customer_facing fires a pass through NOTIFY and the bucket receives the markdown', async () => {
+		const { createIntegrationApp } = await import('./global-setup')
+		const { jsonRequest } = await import('../helpers')
+		const { PgNotifyBridge } = await import('@maskin/realtime')
+		const { TelnyxKnowledgeExporterJob } = await import('../../jobs/telnyx-knowledge-exporter')
+		const { default: objectsRoutes } = await import('../../routes/objects')
+
+		const ws = await insertWorkspace(db, getTestActorId(), {
+			settings: {
+				enabled_modules: ['work', 'knowledge'],
+				statuses: { knowledge: ['draft', 'validated', 'deprecated'] },
+				field_definitions: {
+					knowledge: [
+						{ name: 'summary', type: 'text' },
+						{ name: 'customer_facing', type: 'boolean' },
+					],
+				},
+			},
+		})
+		const doc = await insertObject(db, ws.id, getTestActorId(), {
+			type: 'knowledge',
+			title: 'How meetings work',
+			content: 'A meeting is 30 minutes.',
+			metadata: { summary: 'Meetings' },
+		})
+
+		const saved = { ...process.env }
+		process.env.TELNYX_KB_WORKSPACE_ID = ws.id
+		process.env.TELNYX_KB_BUCKET = 'kb-bucket'
+		process.env.TELNYX_API_KEY = 'k'
+		const { files, bucket } = fakeBucket()
+		const bridge = new PgNotifyBridge(process.env.DATABASE_URL as string)
+		await bridge.start()
+		const job = new TelnyxKnowledgeExporterJob(
+			db,
+			bridge,
+			() => exportKnowledge(db, { config: config(ws.id), bucket, telnyx: fakeTelnyx() }),
+			200,
+		)
+		try {
+			job.start()
+			// The start pass finds nothing customer facing.
+			await vi.waitFor(() => expect(files.size).toBe(0))
+
+			const app = createIntegrationApp({ path: '/api/objects', module: objectsRoutes })
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/objects/${doc.id}`,
+					{ metadata: { summary: 'Meetings', customer_facing: true } },
+					{ 'x-workspace-id': ws.id },
+				),
+			)
+			expect(res.status).toBe(200)
+
+			// Well inside the 60 second bar: debounce is 200ms here, 5s in production.
+			await vi.waitFor(() => expect([...files.keys()]).toEqual([bucketKey(doc.id)]), {
+				timeout: 20_000,
+				interval: 250,
+			})
+			expect(files.get(bucketKey(doc.id))).toBe(
+				'# How meetings work\n\nMeetings\n\nA meeting is 30 minutes.\n',
+			)
+		} finally {
+			job.stop()
+			await bridge.stop()
+			process.env = saved
+		}
+	})
+})
