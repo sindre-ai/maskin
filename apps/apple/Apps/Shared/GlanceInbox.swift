@@ -83,17 +83,16 @@ struct GlanceDetail: View {
 	private func send(_ response: JSONValue, for n: AppNotification) {
 		Task {
 			await store.respond(to: n.id, with: response)
-			if store.actionError == nil { dismiss() }
+			if GlanceAnswer.shouldDismiss(actionError: store.actionError) { dismiss() }
 		}
 	}
 
 	@ViewBuilder
 	private func answerButton(_ action: AppNotification.Action, for n: AppNotification) -> some View {
 		let button = Button(action.label) {
-			if action.style == .destructive {
-				pendingDestructive = action
-			} else {
-				send(action.response, for: n)
+			switch GlanceAnswer.step(for: action) {
+			case .send(let response): send(response, for: n)
+			case .confirm(let action): pendingDestructive = action
 			}
 		}
 		switch action.style {
@@ -102,8 +101,6 @@ struct GlanceDetail: View {
 		case .destructive: button.buttonStyle(SecondaryActionButtonStyle()).tint(MaskinColor.danger)
 		}
 	}
-
-	private func trimmedReply() -> String { reply.trimmingCharacters(in: .whitespacesAndNewlines) }
 
 	var body: some View {
 		if let n = store.notifications.first(where: { $0.id == id }) {
@@ -121,10 +118,12 @@ struct GlanceDetail: View {
 							// Dictation, scribble or keyboard, whichever the watch offers.
 							TextField(n.placeholder ?? "Reply", text: $reply)
 								.submitLabel(.send)
-								.onSubmit { if !trimmedReply().isEmpty { send(.string(trimmedReply()), for: n) } }
-							Button("Send reply") { send(.string(trimmedReply()), for: n) }
-								.buttonStyle(PrimaryActionButtonStyle())
-								.disabled(trimmedReply().isEmpty)
+								.onSubmit { if let response = GlanceAnswer.reply(from: reply) { send(response, for: n) } }
+							Button("Send reply") {
+								if let response = GlanceAnswer.reply(from: reply) { send(response, for: n) }
+							}
+							.buttonStyle(PrimaryActionButtonStyle())
+							.disabled(GlanceAnswer.reply(from: reply) == nil)
 						}
 					}
 					if let error = store.actionError {
