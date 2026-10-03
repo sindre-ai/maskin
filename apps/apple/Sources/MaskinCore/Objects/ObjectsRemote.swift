@@ -15,9 +15,11 @@ public protocol ObjectsRemote: Sendable {
 	func delete(objectId: String) async throws
 	/// `POST` / `DELETE /api/objects/{id}/star`.
 	func setStarred(objectId: String, starred: Bool) async throws
-	/// `POST /api/events`: a comment on an object. Returns the stored event.
+	/// `POST /api/events`: a comment on an object. `mentions` are the actor ids tagged with `@`;
+	/// the server notifies them (and starts a session for an agent). Returns the stored event.
 	func postComment(
-		objectId: String, content: String, parentEventId: Int?, idempotencyKey: String
+		objectId: String, content: String, mentions: [String], parentEventId: Int?,
+		idempotencyKey: String
 	) async throws -> ObjectEvent
 	/// `GET /api/actors`.
 	func actors() async throws -> [ActorRef]

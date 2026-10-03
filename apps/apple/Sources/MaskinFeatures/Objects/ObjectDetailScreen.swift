@@ -21,6 +21,8 @@ public struct ObjectDetailScreen<Decision: View>: View {
 	@Environment(\.dismiss) private var dismiss
 	@Environment(\.horizontalSizeClass) private var sizeClass
 	@State private var comment = ""
+	/// Actors tagged with `@` in the comment being written (kept only while their `@Name` is in it).
+	@State private var tagged: [ActorRef] = []
 	@State private var editing = false
 	@State private var confirmingDelete = false
 	/// Set when the reader sends a comment, so the timeline follows it to the bottom.
@@ -75,12 +77,31 @@ public struct ObjectDetailScreen<Decision: View>: View {
 		.safeAreaInset(edge: .bottom) {
 			// Commenting lives on the Activity page, where the thread is.
 			if store.object != nil, page == .activity {
-				GlassComposer(text: $comment, placeholder: "Comment") {
-					let text = comment
-					comment = ""
-					followNextItem = true
-					Task { await store.postComment(text) }
+				VStack(spacing: MaskinSpace.s4) {
+					if let match = MentionTrigger.find(in: comment) {
+						MentionSuggestions(
+							candidates: CommentMentions.candidates(
+								query: match.query, actors: Array(store.directory.actors.values),
+								selfID: store.currentActorId, excluding: Set(tagged.map(\.id))
+							).map { ChatParticipant(id: $0.id, name: $0.name, kind: $0.isAgent ? .agent : .human) },
+							inConversation: [],
+							onPick: { person in
+								guard let actor = store.directory.actor(for: person.id) else { return }
+								comment = CommentMentions.inserting(actor, into: comment)
+								tagged.append(actor)
+							})
+							.transition(.opacity.combined(with: .move(edge: .bottom)))
+					}
+					GlassComposer(text: $comment, placeholder: "Comment — @ to tag someone") {
+						let text = comment
+						let mentions = CommentMentions.active(tagged, in: text)
+						comment = ""
+						tagged = []
+						followNextItem = true
+						Task { await store.postComment(text, mentions: mentions) }
+					}
 				}
+				.animation(MaskinMotion.quick, value: MentionTrigger.find(in: comment) != nil)
 				.padding(.horizontal, MaskinSpace.s7)
 				.padding(.bottom, MaskinSpace.s3)
 			}

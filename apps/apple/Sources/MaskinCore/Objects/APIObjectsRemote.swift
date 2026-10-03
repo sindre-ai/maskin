@@ -143,7 +143,8 @@ public struct APIObjectsRemote: ObjectsRemote {
 	}
 
 	public func postComment(
-		objectId: String, content: String, parentEventId: Int?, idempotencyKey: String
+		objectId: String, content: String, mentions: [String], parentEventId: Int?,
+		idempotencyKey: String
 	) async throws -> ObjectEvent {
 		let workspace = await workspaceHeader()
 		do {
@@ -152,7 +153,9 @@ public struct APIObjectsRemote: ObjectsRemote {
 					.init(
 						headers: .init(x_hyphen_workspace_hyphen_id: workspace),
 						body: .json(
-							.init(entity_id: objectId, content: content, parent_event_id: parentEventId))))
+							.init(
+								entity_id: objectId, content: content,
+								mentions: mentions.isEmpty ? nil : mentions, parent_event_id: parentEventId))))
 			}
 			guard case .created(let created) = output else { throw Self.failure(output) }
 			return try Self.convert(created.body.json, as: EventDTO.self).model

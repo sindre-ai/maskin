@@ -65,7 +65,9 @@ private struct StubRemote: ObjectsRemote {
 	func update(objectId: String, patch: ObjectPatch, idempotencyKey: String) async throws -> WorkObject { detailObject }
 	func delete(objectId: String) async throws {}
 	func setStarred(objectId: String, starred: Bool) async throws {}
-	func postComment(objectId: String, content: String, parentEventId: Int?, idempotencyKey: String) async throws -> ObjectEvent {
+	func postComment(
+		objectId: String, content: String, mentions: [String], parentEventId: Int?, idempotencyKey: String
+	) async throws -> ObjectEvent {
 		ObjectEvent(id: 9, actorId: "me", action: "commented")
 	}
 	func actors() async throws -> [ActorRef] { sampleActors }

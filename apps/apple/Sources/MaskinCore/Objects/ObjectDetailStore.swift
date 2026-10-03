@@ -27,6 +27,8 @@ public struct TimelineItem: Identifiable, Sendable, Equatable {
 	/// Only for local, unsent comments.
 	var idempotencyKey: String?
 	var parentEventId: Int?
+	/// Actor ids tagged in an unsent comment, kept so a retry mentions the same people.
+	var mentions: [String] = []
 
 	public var isLocal: Bool { eventId == nil }
 
@@ -228,13 +230,16 @@ public final class ObjectDetailStore {
 
 	/// Appends the comment immediately, then sends it. A failure leaves it in the timeline marked
 	/// `.failed`; `retryComment` resends with the same key so the server never stores it twice.
-	public func postComment(_ text: String, parentEventId: Int? = nil) async {
+	public func postComment(
+		_ text: String, mentions: [String] = [], parentEventId: Int? = nil
+	) async {
 		let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !trimmed.isEmpty else { return }
-		let item = TimelineItem(
+		var item = TimelineItem(
 			id: "local-\(UUID().uuidString)", kind: .comment(trimmed), actorId: currentActorId,
 			date: Date(), delivery: .sending, eventId: nil, idempotencyKey: IdempotencyKey.make(),
 			parentEventId: parentEventId)
+		item.mentions = mentions
 		timeline.append(item)
 		await send(localId: item.id)
 	}
@@ -257,7 +262,8 @@ public final class ObjectDetailStore {
 		else { return }
 		do {
 			let stored = try await remote.postComment(
-				objectId: objectId, content: text, parentEventId: item.parentEventId, idempotencyKey: key)
+				objectId: objectId, content: text, mentions: item.mentions,
+				parentEventId: item.parentEventId, idempotencyKey: key)
 			guard let i = timeline.firstIndex(where: { $0.id == localId }) else { return }
 			// A refetch may already have brought the stored event in; don't show it twice.
 			if timeline.contains(where: { $0.eventId == stored.id }) {

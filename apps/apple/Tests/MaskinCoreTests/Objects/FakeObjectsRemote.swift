@@ -10,6 +10,7 @@ final class FakeObjectsRemote: ObjectsRemote, @unchecked Sendable {
 	private var _failures: Set<String> = []
 	private var _listQueries: [ObjectsQuery] = []
 	private var _commentKeys: [String] = []
+	private var _commentMentions: [[String]] = []
 	private var _updateKeys: [String] = []
 	private var _commentCalls = 0
 	private var _nextEventId = 900
@@ -32,6 +33,7 @@ final class FakeObjectsRemote: ObjectsRemote, @unchecked Sendable {
 
 	var listQueries: [ObjectsQuery] { lock.withLock { _listQueries } }
 	var commentKeys: [String] { lock.withLock { _commentKeys } }
+	var commentMentions: [[String]] { lock.withLock { _commentMentions } }
 	var updateKeys: [String] { lock.withLock { _updateKeys } }
 
 	private func check(_ op: String) throws {
@@ -88,9 +90,11 @@ final class FakeObjectsRemote: ObjectsRemote, @unchecked Sendable {
 	func setStarred(objectId: String, starred: Bool) async throws { try check("star") }
 
 	func postComment(
-		objectId: String, content: String, parentEventId: Int?, idempotencyKey: String
+		objectId: String, content: String, mentions: [String], parentEventId: Int?,
+		idempotencyKey: String
 	) async throws -> ObjectEvent {
 		lock.withLock {
+			_commentMentions.append(mentions)
 			_commentKeys.append(idempotencyKey)
 			_commentCalls += 1
 		}

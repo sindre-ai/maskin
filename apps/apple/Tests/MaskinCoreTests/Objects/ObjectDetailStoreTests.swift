@@ -70,6 +70,18 @@ struct ObjectDetailStoreTests {
 		#expect(remote.commentKeys.count == 1)
 	}
 
+	@Test("tagged actors ride the comment, and a retry tags the same people")
+	func commentMentions() async throws {
+		let (store, remote) = makeStore()
+		await store.load()
+		remote.fail("comment")
+		await store.postComment("Look @Forge", mentions: ["a1"])
+		remote.heal()
+		let failed = try #require(store.timeline.last)
+		await store.retryComment(failed.id)
+		#expect(remote.commentMentions == [["a1"], ["a1"]])
+	}
+
 	@Test("a failed comment stays, and retry reuses the same idempotency key")
 	func commentRetry() async throws {
 		let (store, remote) = makeStore()
