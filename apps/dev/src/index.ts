@@ -10,6 +10,7 @@ import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
+import { VoiceRetentionSweepJob, resolveSweepCron } from './jobs/voice-retention-sweep'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import {
@@ -19,6 +20,7 @@ import {
 } from './lib/dev-bootstrap'
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
 import { logger } from './lib/logger'
+import { configureVoiceArtifactStorage } from './lib/outreach/voice/recordings-hook'
 import { getStripeClient } from './lib/stripe'
 import { AgentStorageManager } from './services/agent-storage'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
@@ -225,6 +227,17 @@ const viesSchedulerJob = new ViesSchedulerJob(db)
 viesSchedulerJob.start()
 logger.info('VIES scheduler job started')
 
+// Voice call recordings: daily blob expiry (24 months from last touch) and
+// deleted_by_request erasure. The mirror hook writes through the same provider.
+configureVoiceArtifactStorage(storageProvider)
+const voiceRetentionSweepJob = new VoiceRetentionSweepJob(
+	db,
+	storageProvider,
+	resolveSweepCron(process.env.VOICE_RETENTION_SWEEP_CRON),
+)
+voiceRetentionSweepJob.start()
+logger.info('Voice retention sweep job started')
+
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
@@ -347,6 +360,7 @@ const shutdown = async (signal: string) => {
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
+	voiceRetentionSweepJob.stop()
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.
