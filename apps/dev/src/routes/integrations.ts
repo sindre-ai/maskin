@@ -1191,7 +1191,6 @@ app.openapi(connectRoute, (async (c) => {
 			logger.info(`Re-used pending integration nonce for ${providerName}`, {
 				workspaceId,
 				actorId,
-				nonce,
 			})
 		} else {
 			throw err
