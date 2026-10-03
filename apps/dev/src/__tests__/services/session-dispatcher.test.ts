@@ -19,6 +19,7 @@ type SessionStub = {
 	agentServerId: string | null
 	containerId: string | null
 	startedAt: Date | null
+	sessionState?: string
 }
 
 function fakeDb(servers: ServerStub[], sessionsRows: SessionStub[]) {
@@ -89,6 +90,7 @@ function fakeDb(servers: ServerStub[], sessionsRows: SessionStub[]) {
 								(row.status === 'pending' || row.status === 'queued' || row.status === 'starting')
 							) {
 								row.status = 'running'
+								row.sessionState = patch.sessionState as string | undefined
 								row.containerId = (patch.containerId as string) ?? row.containerId
 								row.startedAt = new Date()
 								updated.push({ id: row.id })
@@ -338,6 +340,9 @@ describe('SessionDispatcher.dispatch', () => {
 		expect(client.startSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's-1' }))
 		expect(sess.agentServerId).toBe(SERVER.id)
 		expect(sess.status).toBe('running')
+		// Regression guard: the reaper reads session_state, not status. A row
+		// that goes running without it is later failed as startup_stalled.
+		expect(sess.sessionState).toBe('running')
 		expect(sess.containerId).toBe('sb-s-1')
 		// Regression guard: without this event, live-activity surfaces (e.g.
 		// the chat typing indicator) never learn the session left 'pending'.
