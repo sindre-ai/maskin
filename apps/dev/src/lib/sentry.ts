@@ -20,6 +20,9 @@ if (dsn && enabled) {
 			dsn,
 			environment: process.env.NODE_ENV ?? 'development',
 			tracesSampleRate: 0.1,
+			// @sentry/node 10.70.0 (resolved in the lockfile) does not enable logs by default;
+			// logger.info/warn rely on it. Logs are on by default from 10.71.0.
+			enableLogs: true,
 			sendDefaultPii: false,
 		})
 	} catch (err) {

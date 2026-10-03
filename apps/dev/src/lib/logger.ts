@@ -39,6 +39,15 @@ function log(level: LogLevel, msg: string, context?: Record<string, unknown>, op
 		}
 	} else {
 		console.log(output)
+		if (level === 'info' || level === 'warn') {
+			// Searchable in Sentry Logs (needs enableLogs in Sentry.init). Same guard as
+			// above: an SDK failure must never throw into the caller.
+			try {
+				Sentry.logger[level](msg, context)
+			} catch (sentryErr) {
+				console.error('[sentry] logger failed', sentryErr)
+			}
+		}
 		if (level === 'warn') {
 			try {
 				Sentry.addBreadcrumb({ category: 'log', level: 'warning', message: msg, data: context })
