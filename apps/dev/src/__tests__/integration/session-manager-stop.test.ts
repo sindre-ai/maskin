@@ -542,6 +542,108 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		).toBe(true)
 	})
 
+	// (c1) Boot-stall no longer skips the sandbox stop: the agent server may
+	// have created a sandbox whose row never reached running, and failing the
+	// row alone would orphan it. Stop is keyed by session id; every outcome
+	// of the RPC still ends with the row failed.
+	describe('boot-stall stops the remote sandbox', () => {
+		async function insertStalledRemoteRow() {
+			await sql`TRUNCATE agent_servers CASCADE`
+			const server = await insertAgentServer()
+			const sixMinAgo = new Date(Date.now() - 6 * 60 * 1000)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'starting',
+				sessionState: 'starting',
+				stateEnteredAt: sixMinAgo,
+				startedAt: sixMinAgo,
+				agentServerId: server.id,
+				containerId: null,
+				timeoutAt: null,
+			})
+			return { server, session }
+		}
+
+		async function tickWithFetch(impl: (url: string) => Promise<Response>) {
+			const stopCalls: string[] = []
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+				const url = String(input)
+				if (url.endsWith('/stop')) stopCalls.push(url)
+				return impl(url)
+			})
+			const manager = await tickReaper()
+			fetchSpy.mockRestore()
+			await manager.stop()
+			return stopCalls
+		}
+
+		const json = (body: unknown) =>
+			new Response(JSON.stringify(body), {
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+			})
+
+		it('calls stop once and settles the row failed/startup_stalled', async () => {
+			const { server, session } = await insertStalledRemoteRow()
+
+			const stopCalls = await tickWithFetch(async () => json({ stopped: 'sandbox-stopped' }))
+
+			expect(stopCalls).toEqual([`${server.url}/sessions/${session.id}/stop`])
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('failed')
+			expect(
+				(row?.result as { failure_reason?: { reason_code?: string } } | null)?.failure_reason
+					?.reason_code,
+			).toBe('startup_stalled')
+		})
+
+		it('still ends failed when the server reports sandbox-not-found', async () => {
+			const { session } = await insertStalledRemoteRow()
+
+			const stopCalls = await tickWithFetch(async () => json({ stopped: 'sandbox-not-found' }))
+
+			expect(stopCalls).toHaveLength(1)
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('failed')
+			expect(row?.completedAt).not.toBeNull()
+		})
+
+		it('still ends failed when the stop call errors', async () => {
+			const { session } = await insertStalledRemoteRow()
+
+			const stopCalls = await tickWithFetch(async () => {
+				throw new Error('agent server unreachable')
+			})
+
+			expect(stopCalls).toHaveLength(1)
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('failed')
+			expect(row?.completedAt).not.toBeNull()
+		})
+
+		it('never stops a running row whose session_state lagged: it is healed, not failed', async () => {
+			await sql`TRUNCATE agent_servers CASCADE`
+			const server = await insertAgentServer()
+			const sevenMinAgo = new Date(Date.now() - 7 * 60 * 1000)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				sessionState: 'starting',
+				stateEnteredAt: sevenMinAgo,
+				startedAt: sevenMinAgo,
+				agentServerId: server.id,
+				containerId: 'sandbox-live',
+				timeoutAt: null,
+			})
+
+			const stopCalls = await tickWithFetch(async () => json({ stopped: 'sandbox-stopped' }))
+
+			expect(stopCalls).toEqual([])
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('running')
+			expect(row?.sessionState).toBe('running')
+			expect(row?.completedAt).toBeNull()
+		})
+	})
+
 	// (c2) A session whose status is already 'running' but whose session_state
 	// never advanced is alive, not boot-stalled. Regression for sessions failed
 	// as startup_stalled (~415s in 'starting') while their heartbeats still

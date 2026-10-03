@@ -4442,7 +4442,14 @@ export class SessionManager extends EventEmitter {
 			.select()
 			.from(sessions)
 			.where(
-				and(eq(sessions.sessionState, 'starting'), lt(sessions.stateEnteredAt, bootStallCutoff)),
+				and(
+					eq(sessions.sessionState, 'starting'),
+					lt(sessions.stateEnteredAt, bootStallCutoff),
+					// A row can turn running between the heal (6b) and this read, with
+					// minutes of lag when earlier steps are slow. Settling it now would
+					// stop a live sandbox; the next tick's heal fixes its state instead.
+					ne(sessions.status, 'running'),
+				),
 			)
 
 		for (const session of stuckStarting) {
@@ -4485,8 +4492,11 @@ export class SessionManager extends EventEmitter {
 			// settleSession is the only writer of terminal sessions.status.
 			// classification='startup_stalled' — settleSession's push guard
 			// already skips pushAgentFiles for this classification (nothing
-			// was ever written to /agent), and skipStop is redundant here
-			// since the session never reached a live runtime.
+			// was ever written to /agent). The stop is NOT skipped: the agent
+			// server may have created a sandbox whose row never reached running
+			// (markDispatched missed, or containerId is only written after
+			// startSession returns), and failing the row would orphan it. The
+			// stop is keyed by session id; sandbox-not-found is a non-event.
 			await settleSession(
 				session.id,
 				{
@@ -4497,7 +4507,7 @@ export class SessionManager extends EventEmitter {
 					exitCode: 0,
 					failureReason: stalledFailureReason,
 				},
-				this.buildSettleDeps({ skipStop: true, skipPush: true }),
+				this.buildSettleDeps({ skipPush: true }),
 			)
 
 			await this.insertSystemLog(session.id, stalledFailureReason.human_message).catch((err) =>
