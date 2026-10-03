@@ -137,7 +137,9 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 
 	// Never expose credentials
 	const safe = results.map((r) => {
-		const { credentials, ...rest } = r
+		// dekCiphertext is the KMS-wrapped data key: ciphertext, but it has no
+		// business leaving the server.
+		const { credentials, dekCiphertext: _dekCiphertext, ...rest } = r
 
 		// Flag installs whose token predates a scope the provider now requires.
 		// Only the scope NAMES leave this function — the decrypted blob does not.
