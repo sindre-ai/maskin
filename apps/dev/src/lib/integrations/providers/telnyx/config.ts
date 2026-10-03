@@ -17,6 +17,7 @@ export const config: ProviderConfig = {
 	displayName: 'Telnyx',
 	description: 'Outbound AI voice calls, SMS and call events for cold-outreach campaigns',
 	category: 'voice',
+	scope: 'workspace',
 
 	auth: {
 		type: 'api_key',

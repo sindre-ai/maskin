@@ -157,6 +157,8 @@ export interface ProviderConfig {
 	logoUrl?: string
 	/** Coarse grouping for discovery, e.g. 'voice'. Informational; nothing branches on it. */
 	category?: string
+	/** Whether one connection serves the whole workspace or one per actor. Informational, set by providers that state it. */
+	scope?: 'workspace' | 'actor'
 	auth: AuthConfig
 	webhook?: WebhookConfig | { type: 'custom' }
 	events?: {

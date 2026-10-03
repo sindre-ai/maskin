@@ -28,6 +28,10 @@ export const CONTACT_STATUSES = [
 	'voice_meeting_booked',
 	'voice_warm_transferred',
 	'voice_failed',
+	// Read by the voice dialer DNC gate and the recordings erasure check; this
+	// extension is the single owner of the strings.
+	'rejected',
+	'deleted_by_request',
 ]
 
 export const COMPANY_STATUSES = [
