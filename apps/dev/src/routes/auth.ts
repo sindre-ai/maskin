@@ -1,12 +1,12 @@
-import { OpenAPIHono, createRoute, type z } from '@hono/zod-openapi'
+import { OpenAPIHono, createRoute } from '@hono/zod-openapi'
 import { verifyPassword } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors } from '@maskin/db/schema'
 import { loginSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
+import { toActorWithKeyResponse } from '../lib/actor-response'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { actorWithKeySchema, errorSchema } from '../lib/openapi-schemas'
-import { serialize } from '../lib/serialize'
 
 type Env = {
 	Variables: {
@@ -60,18 +60,7 @@ app.openapi(loginRoute, async (c) => {
 		return c.json(createApiError('UNAUTHORIZED', 'Invalid credentials'), 401)
 	}
 
-	const { apiKey, passwordHash, systemPrompt, llmProvider, llmConfig, ...actorWithoutSecrets } =
-		actor
-	return c.json(
-		{
-			...serialize(actorWithoutSecrets),
-			system_prompt: systemPrompt,
-			llm_provider: llmProvider,
-			llm_config: llmConfig,
-			api_key: actor.apiKey ?? '',
-		} as z.infer<typeof actorWithKeySchema>,
-		200,
-	)
+	return c.json(toActorWithKeyResponse(actor, actor.apiKey ?? ''), 200)
 })
 
 export default app

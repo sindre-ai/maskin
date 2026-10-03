@@ -90,6 +90,12 @@ export const decisionOptionSchema = z.object({
 		.describe(
 			'Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing.',
 		),
+	destructive: z
+		.boolean()
+		.optional()
+		.describe(
+			'Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices.',
+		),
 })
 
 export const commentDecisionSchema = z

@@ -21,12 +21,15 @@ import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/provider
 import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
 import { AgentStorageManager } from './services/agent-storage'
+import { ApnsSender } from './services/apns'
 import { BriefCacheCleaner } from './services/brief-cache-cleaner'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
+import { LiveActivityFanout } from './services/live-activity-push'
 import { LoopEscalationReconciler } from './services/loop-escalation-reconciler'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { MeetTranscriptReconciler } from './services/meet-transcript-reconciler'
 import { MeetWatchRenewer } from './services/meet-watch-renewer'
+import { NotificationPushFanout } from './services/notification-push'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
 import { ResendDomainVerifier } from './services/resend-domain-verifier'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
@@ -170,6 +173,15 @@ triggerRunner
 
 const commentDispatcher = new CommentDispatcher(db, notifyBridge, sessionManager)
 commentDispatcher.start()
+
+const apnsSender = new ApnsSender(db)
+const notificationPush = new NotificationPushFanout(db, notifyBridge, apnsSender)
+notificationPush.start()
+
+const liveActivityPush = new LiveActivityFanout(db, notifyBridge, apnsSender, {
+	turns: sessionManager,
+})
+liveActivityPush.start()
 
 const gmailWatchRenewer = new GmailWatchRenewer(db)
 gmailWatchRenewer.start()
@@ -347,6 +359,8 @@ const shutdown = async (signal: string) => {
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
+	notificationPush.stop()
+	liveActivityPush.stop()
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.
