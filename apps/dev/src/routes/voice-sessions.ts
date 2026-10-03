@@ -117,6 +117,9 @@ async function defaultRealtimeMint(input: {
 		voice: input.voice,
 		instructions: input.instructions,
 		turn_detection: { type: 'server_vad' as const },
+		// Without this the Realtime session never emits user-turn transcripts, so
+		// the browser has nothing to persist for the user's side of the call.
+		input_audio_transcription: { model: 'whisper-1' },
 		// The v1 whitelist, pinned at mint (tech spec §Auth flow step 3). The WS
 		// tool-proxy (routes/voice-session-events.ts) re-enforces it per call, so
 		// this list and the proxy's gate share one source: @maskin/mcp.

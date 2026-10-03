@@ -32,7 +32,7 @@ export function VoiceCallDialog({
 	onOpenChange: (open: boolean) => void
 }) {
 	const isMobile = useIsMobile()
-	const call = useVoiceCall(agent.id, open)
+	const call = useVoiceCall(agent.id, agent.name, open)
 
 	// Keyboard shortcuts inside the dialog: M toggles mute, T toggles the
 	// transcript pane. Esc ends the call (handled natively by Radix' close on
@@ -122,7 +122,8 @@ function VoiceCallDialogBody({
 	onClose: () => void
 	variant: 'mobile' | 'desktop'
 }) {
-	const { state, notice, transcriptOpen, start, toggleMute, toggleTranscript, end } = call
+	const { state, notice, transcriptOpen, transcriptLines, start, toggleMute, toggleTranscript } =
+		call
 	const isLive = state.startsWith('live-') || state === 'reconnecting'
 	const isMuted = state === 'live-muted'
 	const isDesktop = variant === 'desktop'
@@ -197,7 +198,7 @@ function VoiceCallDialogBody({
 						<p className="max-w-md text-center text-sm text-muted-foreground">
 							{COPY.reconnectingBody}
 						</p>
-						<Button type="button" variant="outline" onClick={end} className="min-h-[44px]">
+						<Button type="button" variant="outline" onClick={onClose} className="min-h-[44px]">
 							Hang up
 						</Button>
 					</>
@@ -226,7 +227,7 @@ function VoiceCallDialogBody({
 						</CallControl>
 						<CallControl
 							ariaLabel="End call"
-							onClick={end}
+							onClick={onClose}
 							variant="danger"
 							size={variant === 'mobile' ? 'xl' : 'lg'}
 						>
@@ -248,10 +249,22 @@ function VoiceCallDialogBody({
 							aria-atomic="false"
 							className="max-h-48 overflow-y-auto border-t border-border bg-muted/30 px-6 py-4 text-sm text-muted-foreground"
 						>
-							{/* Task 3 wires the live transcript. Placeholder line keeps the
-							    pane self-explaining and gives screen readers something to
-							    announce when it opens. */}
-							Transcript will appear here as you talk. Persistence lands in Task 3.
+							{transcriptLines.length === 0
+								? 'Transcript will appear here as you talk.'
+								: transcriptLines.map((line) =>
+										line.kind === 'tool' ? (
+											<p key={line.id} className="font-mono text-xs">
+												{line.text}
+											</p>
+										) : (
+											<p key={line.id}>
+												<span className="font-medium text-foreground">
+													{line.kind === 'user' ? 'You' : agent.name}:
+												</span>{' '}
+												{line.text}
+											</p>
+										),
+									)}
 						</div>
 					)}
 				</>

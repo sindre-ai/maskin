@@ -99,6 +99,7 @@ export async function captureVoiceTurnCompleted(
 	props: VoiceTurnCompletedProps,
 ): Promise<void> {
 	await capturePosthogEvent(VOICE_TURN_COMPLETED_EVENT, humanActorId, props)
+}
 
 // PostHog event helpers for the [Voice v1 bet]
 // (https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/16bd0042-ff3d-4056-839c-410b0cd6f06e).
