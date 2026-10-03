@@ -24,6 +24,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
 	AwsKmsProvider,
 	KmsAccessError,
+	KmsBackupNotConfirmedError,
 	KmsConfigError,
 	KmsDecryptError,
 	KmsKekMissingError,
@@ -345,5 +346,61 @@ describe('KEYCHAIN_KMS selection', () => {
 		expect(resolveKeychainKmsKind({})).toBe('local-file')
 		expect(resolveKeychainKmsKind({ NODE_ENV: 'test' })).toBe('local-file')
 		expect(() => resolveKeychainKmsKind({ NODE_ENV: 'production' })).toThrow(KmsConfigError)
+	})
+})
+
+describe('local-file backup-confirmed gate', () => {
+	let dir: string
+	let kekPath: string
+	// No integration row is wrapped yet, so a missing KEK file may be created.
+	const db = {
+		select: () => ({ from: () => ({ where: () => ({ limit: async () => [] }) }) }),
+	} as unknown as Database
+	const prod = (confirmed?: string) => ({
+		KEYCHAIN_KMS: 'local-file',
+		NODE_ENV: 'production',
+		KEYCHAIN_LOCAL_KEK_FILE: kekPath,
+		...(confirmed === undefined ? {} : { KEYCHAIN_KEK_BACKUP_CONFIRMED: confirmed }),
+	})
+
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), 'keychain-kek-gate-'))
+		kekPath = join(dir, 'kek')
+	})
+	afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+	it('refuses to wrap in production when the marker is unset, and writes no KEK file', async () => {
+		const kms = createKmsProvider(db, prod())
+		const err = await kms.encrypt(WS_A, fakeDek()).catch((e) => e)
+		expect(err).toBeInstanceOf(KmsBackupNotConfirmedError)
+		expect(err.message).toMatch(/^KEK_BACKUP_UNCONFIRMED:/)
+		expect(err.code).toBe('KEK_BACKUP_UNCONFIRMED')
+		expect(existsSync(kekPath)).toBe(false)
+	})
+
+	it.each(['false', '', '1', 'yes', 'TRUE'])('treats %j as not confirmed', async (value) => {
+		const kms = createKmsProvider(db, prod(value))
+		await expect(kms.encrypt(WS_A, fakeDek())).rejects.toBeInstanceOf(KmsBackupNotConfirmedError)
+	})
+
+	it('wraps and unwraps in production once the marker is true', async () => {
+		const kms = createKmsProvider(db, prod('true'))
+		const wrapped = await kms.encrypt(WS_A, fakeDek())
+		expect((await kms.decrypt(WS_A, wrapped)).equals(fakeDek())).toBe(true)
+	})
+
+	it('does not gate decrypt or the boot-time prepare', async () => {
+		const wrapped = await createKmsProvider(db, prod('true')).encrypt(WS_A, fakeDek())
+		const closed = createKmsProvider(db, prod()) as LocalFileKmsProvider
+		expect((await closed.decrypt(WS_A, wrapped)).equals(fakeDek())).toBe(true)
+		await expect(closed.prepare()).resolves.toMatchObject({ existed: true })
+	})
+
+	it('is not applied outside production', async () => {
+		const kms = createKmsProvider(db, {
+			KEYCHAIN_KMS: 'local-file',
+			KEYCHAIN_LOCAL_KEK_FILE: kekPath,
+		})
+		await expect(kms.encrypt(WS_A, fakeDek())).resolves.toEqual(expect.any(String))
 	})
 })

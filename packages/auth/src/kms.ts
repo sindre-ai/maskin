@@ -64,6 +64,20 @@ export class KmsKekMissingError extends Error {
 	}
 }
 
+/**
+ * Production under local-file refuses to wrap a credential until the off-volume
+ * KEK copy is confirmed. The code is stable so callers and logs can match on it.
+ */
+export class KmsBackupNotConfirmedError extends Error {
+	readonly code = 'KEK_BACKUP_UNCONFIRMED'
+	constructor() {
+		super(
+			'KEK_BACKUP_UNCONFIRMED: refusing to wrap a credential under the local-file KEK until its off-volume backup is confirmed (set KEYCHAIN_KEK_BACKUP_CONFIRMED=true after the copy is confirmed).',
+		)
+		this.name = 'KmsBackupNotConfirmedError'
+	}
+}
+
 const ALGORITHM = 'aes-256-gcm'
 const IV_LENGTH = 12
 const AUTH_TAG_LENGTH = 16
@@ -86,10 +100,14 @@ export class LocalFileKmsProvider implements KmsProvider {
 	 * hasWrappedKeys answers whether any stored credential is already wrapped
 	 * under this provider's KEK. When it says yes and the file is missing, the
 	 * provider throws instead of generating a new KEK.
+	 *
+	 * backupConfirmed, when given, gates encrypt: it must return true or no
+	 * credential is wrapped. Omitted means no gate (dev, self-host).
 	 */
 	constructor(
 		private readonly path: string = DEFAULT_KEK_FILE,
 		private readonly hasWrappedKeys?: () => Promise<boolean>,
+		private readonly backupConfirmed?: () => boolean,
 	) {}
 
 	private loadKek(): Promise<{ kek: Buffer; existed: boolean }> {
@@ -139,6 +157,7 @@ export class LocalFileKmsProvider implements KmsProvider {
 	}
 
 	async encrypt(workspaceId: string, plaintext: Buffer): Promise<string> {
+		if (this.backupConfirmed && !this.backupConfirmed()) throw new KmsBackupNotConfirmedError()
 		const { kek } = await this.loadKek()
 		const iv = randomBytes(IV_LENGTH)
 		const cipher = createCipheriv(ALGORITHM, kek, iv, { authTagLength: AUTH_TAG_LENGTH })
@@ -396,5 +415,9 @@ export function createKmsProvider(
 				.limit(1)
 			return row !== undefined
 		},
+		// Fail closed: only the literal "true" opens the gate, and only in production.
+		env.NODE_ENV === 'production'
+			? () => env.KEYCHAIN_KEK_BACKUP_CONFIRMED?.trim() === 'true'
+			: undefined,
 	)
 }

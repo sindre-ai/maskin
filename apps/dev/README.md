@@ -26,6 +26,7 @@ enforces the credential's scope grants and writes a hash-chained row to
 |----------|---------|
 | `KEYCHAIN_KMS` | `local-file` or `aws-kms`. Read once at start; any other value stops the server. Unset means `local-file` outside production and an error on first use in production. |
 | `KEYCHAIN_LOCAL_KEK_FILE` | `local-file` only. Default `.data/keychain-kek`. Created with 600 permissions on first use. Lose it and every credential wrapped under it is unrecoverable. `.data/` is gitignored. |
+| `KEYCHAIN_KEK_BACKUP_CONFIRMED` | `local-file` in production only. Wrapping a credential is refused with `KEK_BACKUP_UNCONFIRMED` until this is `true`; unset or anything else means refused. Set it only after the off-volume copy of the KEK is confirmed. `aws-kms` and non-production are not affected. |
 | `KEYCHAIN_ENV` | `aws-kms` only. `staging` or `production`. Becomes the alias segment and the value of the `maskin-keychain` key tag. Required with `aws-kms`: the server stops at start if it is unset or anything else. |
 | `AWS_REGION` | `aws-kms` only. `eu-central-1` in production. Credentials come from the standard AWS provider chain. |
 

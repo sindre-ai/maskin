@@ -116,6 +116,9 @@ services:
       # Flip to aws-kms here (or in Coolify) once the AWS substrate exists.
       KEYCHAIN_KMS: ${KEYCHAIN_KMS:-local-file}
       KEYCHAIN_LOCAL_KEK_FILE: /data/keychain/kek
+      # Gate: production under local-file wraps no credential until this is "true". Infra
+      # sets it in Coolify only after the off-volume KEK copy is confirmed.
+      KEYCHAIN_KEK_BACKUP_CONFIRMED: ${KEYCHAIN_KEK_BACKUP_CONFIRMED:-false}
     depends_on:
       postgres:
         condition: service_healthy
