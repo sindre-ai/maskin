@@ -147,6 +147,11 @@ import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace
  */
 const LOCAL_RUNTIME_BUCKET = 'local-docker'
 
+/** Failure reasons for a session whose container is gone / was never assigned. */
+const CONTAINER_LOST_MESSAGE = 'Container disappeared before pause could complete'
+const NO_CONTAINER_ASSIGNED_MESSAGE =
+	'No container was ever assigned to this session — it was marked running but never started'
+
 /**
  * Guards the MCP health check's partial-line buffer against a stdout stream
  * that never emits a newline. Matches InteractiveTurnFinalizer's cap.
@@ -1611,7 +1616,11 @@ export class SessionManager extends EventEmitter {
 	 * is dead, so the row stops blocking `sessions_conversation_actor_active_uniq`
 	 * for a fresh session.
 	 */
-	async markSessionFailedAfterContainerLoss(sessionId: string, workspaceId: string): Promise<void> {
+	async markSessionFailedAfterContainerLoss(
+		sessionId: string,
+		workspaceId: string,
+		reason = CONTAINER_LOST_MESSAGE,
+	): Promise<void> {
 		const [existing] = await this.db
 			.select({
 				startedAt: sessions.startedAt,
@@ -1637,7 +1646,7 @@ export class SessionManager extends EventEmitter {
 				kind: 'fail',
 				classification: 'sandbox_crash',
 				source: 'reaper',
-				reason: 'Container disappeared before pause could complete',
+				reason,
 				exitCode: 0,
 			},
 			this.buildSettleDeps({ skipStop: true, skipPush: true }),
@@ -1651,10 +1660,7 @@ export class SessionManager extends EventEmitter {
 			.set({ containerId: null, updatedAt: new Date() })
 			.where(eq(sessions.id, sessionId))
 
-		await this.insertSystemLog(
-			sessionId,
-			'Container disappeared before pause could complete — session marked failed',
-		).catch((err) =>
+		await this.insertSystemLog(sessionId, `${reason} — session marked failed`).catch((err) =>
 			logger.warn('Failed to insert system log for container-loss cleanup', {
 				sessionId,
 				error: String(err),
@@ -4334,12 +4340,15 @@ export class SessionManager extends EventEmitter {
 					logger.warn('Marking session failed: running with no containerId', {
 						sessionId: session.id,
 					})
-					await this.markSessionFailedAfterContainerLoss(session.id, session.workspaceId).catch(
-						(err) =>
-							logger.error('Failed to mark session failed after container loss', {
-								sessionId: session.id,
-								error: String(err),
-							}),
+					await this.markSessionFailedAfterContainerLoss(
+						session.id,
+						session.workspaceId,
+						NO_CONTAINER_ASSIGNED_MESSAGE,
+					).catch((err) =>
+						logger.error('Failed to mark session failed after container loss', {
+							sessionId: session.id,
+							error: String(err),
+						}),
 					)
 					continue
 				}
