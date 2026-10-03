@@ -576,6 +576,121 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		},
 	)
 
+	// (c3) Boot-stall now stops the sandbox. The slot claim sets agent_server_id
+	// before any sandbox exists and container_id is written only after the
+	// launch returns, so a stalled remote row is stopped by session id even
+	// with no container_id. A row healed to running (c2) must never be stopped.
+	describe('boot-stall sandbox stop', () => {
+		async function insertStalledRemoteRow(status: 'starting' | 'running') {
+			await sql`TRUNCATE agent_servers CASCADE`
+			const server = await insertAgentServer()
+			const sevenMinAgo = new Date(Date.now() - 7 * 60 * 1000)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status,
+				sessionState: 'starting',
+				stateEnteredAt: sevenMinAgo,
+				startedAt: sevenMinAgo,
+				agentServerId: server.id,
+				timeoutAt: null,
+			})
+			return { server, session }
+		}
+
+		async function tickWithStopResponse(respond: () => Response | Promise<Response>) {
+			const stopCalls: string[] = []
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+				const url = String(input)
+				if (url.endsWith('/stop')) {
+					stopCalls.push(url)
+					return respond()
+				}
+				return new Response('{}', { status: 200 })
+			})
+			const manager = await tickReaper()
+			try {
+				// no-op
+			} finally {
+				fetchSpy.mockRestore()
+				await manager.stop()
+			}
+			return stopCalls
+		}
+
+		const jsonResponse = (body: unknown, status = 200) =>
+			new Response(JSON.stringify(body), {
+				status,
+				headers: { 'content-type': 'application/json' },
+			})
+
+		it('a boot-stalled remote row calls the stop RPC once and ends failed/startup_stalled', async () => {
+			const { server, session } = await insertStalledRemoteRow('starting')
+
+			const stopCalls = await tickWithStopResponse(() =>
+				jsonResponse({ stopped: 'sandbox-stopped' }),
+			)
+
+			expect(stopCalls).toEqual([`${server.url}/sessions/${session.id}/stop`])
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('failed')
+			expect(row?.sessionState).toBe('done')
+			expect(
+				(row?.result as { failure_reason?: { reason_code?: string } } | null)?.failure_reason
+					?.reason_code,
+			).toBe('startup_stalled')
+		})
+
+		it('sandbox-not-found still ends failed with no throw', async () => {
+			const { session } = await insertStalledRemoteRow('starting')
+
+			const stopCalls = await tickWithStopResponse(() =>
+				jsonResponse({ stopped: 'sandbox-not-found' }),
+			)
+
+			expect(stopCalls).toHaveLength(1)
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('failed')
+			expect(row?.sessionState).toBe('done')
+		})
+
+		it('a stop error (HTTP 500) still ends failed', async () => {
+			const { session } = await insertStalledRemoteRow('starting')
+
+			const stopCalls = await tickWithStopResponse(() => jsonResponse({ error: 'boom' }, 500))
+
+			expect(stopCalls).toHaveLength(1)
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('failed')
+			expect(row?.sessionState).toBe('done')
+		})
+
+		it('a stop that times out (abort) still ends failed', async () => {
+			const { session } = await insertStalledRemoteRow('starting')
+
+			const stopCalls = await tickWithStopResponse(() => {
+				throw new DOMException('The operation timed out.', 'TimeoutError')
+			})
+
+			expect(stopCalls).toHaveLength(1)
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('failed')
+			expect(row?.sessionState).toBe('done')
+		})
+
+		it('a running row stuck in starting is healed and its sandbox is never stopped', async () => {
+			const { session } = await insertStalledRemoteRow('running')
+
+			const stopCalls = await tickWithStopResponse(() =>
+				jsonResponse({ stopped: 'sandbox-stopped' }),
+			)
+
+			expect(stopCalls).toHaveLength(0)
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('running')
+			expect(row?.sessionState).toBe('running')
+			expect(row?.completedAt).toBeNull()
+		})
+	})
+
 	// (d) A row in session_state='queued' past 2 minutes with a stale (or
 	// null) driver_heartbeat_at is re-fired via _driveToRunning() — proof
 	// that the reaper distinguishes a dead-driver rescue from a rightfully-
