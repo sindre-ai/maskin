@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { OpenAPIHono } from '@hono/zod-openapi'
 import {
 	events,
 	actors,
@@ -33,6 +34,7 @@ import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
 const { default: actorsRoutes } = await import('../../routes/actors')
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
+const { default: eventsRoutes } = await import('../../routes/events')
 
 function createApp() {
 	return createIntegrationApp({ path: '/api/actors', module: actorsRoutes })
@@ -275,6 +277,46 @@ describe('Actors Integration — DELETE', () => {
 			is_system: false,
 		})
 		expect(JSON.stringify(rows)).not.toMatch(/fake-/)
+
+		// The events read routes return the stored row as is, so check what
+		// they actually serve: history, and the SSE replay path.
+		const historyRes = await createIntegrationApp({
+			path: '/api/events',
+			module: eventsRoutes,
+		}).request(
+			jsonGet(`/api/events/history?entity_id=${agentId}`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(historyRes.status).toBe(200)
+		const historyText = await historyRes.text()
+		expect(historyText).toContain('Delete Me')
+		expect(historyText).not.toMatch(/fake-/)
+
+		const sseApp = new OpenAPIHono()
+		sseApp.use('*', async (c, next) => {
+			c.set('db' as never, db as never)
+			c.set('actorId' as never, getTestActorId() as never)
+			c.set('notifyBridge' as never, { on() {}, off() {} } as never)
+			await next()
+		})
+		sseApp.route('/api/events', eventsRoutes as never)
+		const abort = new AbortController()
+		const sseRes = await sseApp.request('/api/events', {
+			headers: { 'x-workspace-id': workspaceId, 'last-event-id': '0' },
+			signal: abort.signal,
+		})
+		expect(sseRes.status).toBe(200)
+		const reader = (sseRes.body as ReadableStream<Uint8Array>).getReader()
+		const decoder = new TextDecoder()
+		let sseText = ''
+		while (!sseText.includes('Delete Me')) {
+			const { value, done } = await reader.read()
+			if (done) break
+			sseText += decoder.decode(value)
+		}
+		abort.abort()
+		await reader.cancel().catch(() => {})
+		expect(sseText).toContain('Delete Me')
+		expect(sseText).not.toMatch(/fake-/)
 	})
 })
 
