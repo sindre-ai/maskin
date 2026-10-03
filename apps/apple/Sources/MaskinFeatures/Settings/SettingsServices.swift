@@ -2,7 +2,7 @@ import MaskinCore
 import SwiftUI
 
 enum SettingsRoute: Hashable {
-	case profile, workspace, members, integrations, apiKey, skills
+	case profile, workspace, members, integrations, apiKey, skills, billing, objectTypes, mcp
 }
 
 /// The Settings slice's dependencies, built once per screen from `AppEnvironment`.
@@ -87,6 +87,13 @@ struct SettingsServices {
 			willRotate: { auth.beginKeyRotation() }, didFailRotation: { auth.cancelKeyRotation() })
 	}
 
+	func billingStore() -> BillingStore { BillingStore(api: source ?? NoSettingsSource()) }
+
+	func schemaStore() -> SchemaStore { SchemaStore(api: source ?? NoSettingsSource(), currentRole: role) }
+
+	/// The MCP endpoint lives on the API origin.
+	var mcpURL: URL { environment.baseURL.appendingPathComponent("mcp") }
+
 	func skillsStore() -> SkillsStore {
 		SkillsStore(api: source ?? NoSettingsSource(), workspaceId: workspaceId ?? "")
 	}
@@ -94,7 +101,7 @@ struct SettingsServices {
 
 /// Stands in when no workspace is selected, so views still render and every call fails plainly.
 struct NoSettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, IntegrationsAPI, APIKeysAPI,
-	SkillsAPI
+	SkillsAPI, BillingAPI, SchemaAPI
 {
 	private var failure: SettingsError { SettingsError("Pick a workspace first.") }
 	func rename(actorId: String, name: String, idempotencyKey: String) async throws -> ProfileInfo {
@@ -116,4 +123,20 @@ struct NoSettingsSource: ProfileAPI, WorkspaceAdminAPI, MembersAPI, Integrations
 		throw failure
 	}
 	func list(workspaceId: String) async throws -> [WorkspaceSkill] { throw failure }
+	func add(workspaceId: String, actorId: String, role: MemberRole, idempotencyKey: String)
+		async throws
+	{ throw failure }
+	func content(workspaceId: String, name: String) async throws -> String { throw failure }
+	func create(workspaceId: String, name: String, content: String, idempotencyKey: String)
+		async throws
+	{ throw failure }
+	func update(workspaceId: String, name: String, content: String, idempotencyKey: String)
+		async throws
+	{ throw failure }
+	func delete(workspaceId: String, name: String, idempotencyKey: String) async throws { throw failure }
+	func usage() async throws -> BillingUsage { throw failure }
+	func load() async throws -> WorkspaceSchema { throw failure }
+	func save(_ schema: WorkspaceSchema, keys: Set<WorkspaceSchema.Key>, idempotencyKey: String)
+		async throws
+	{ throw failure }
 }

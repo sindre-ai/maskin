@@ -117,5 +117,37 @@ public final class MembersStore {
 		}
 	}
 
+	/// A person is added by the id they copy from their own Profile (the same flow as the web).
+	public static func isValidActorId(_ text: String) -> Bool {
+		UUID(uuidString: text.trimmingCharacters(in: .whitespacesAndNewlines)) != nil
+	}
+
+	public var canAdd: Bool { currentRole.canManage }
+	public private(set) var isAdding = false
+
+	/// Adds an existing actor, then reloads so the new row carries its real name. Never offers
+	/// owner: ownership moves through its own server flow.
+	@discardableResult
+	public func add(actorId: String, role: MemberRole) async -> Bool {
+		let id = actorId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+		guard canAdd, role != .owner, Self.isValidActorId(id), !isAdding else { return false }
+		if members.contains(where: { $0.actorId.lowercased() == id }) {
+			actionError = "That person is already in this workspace."
+			return false
+		}
+		isAdding = true
+		actionError = nil
+		defer { isAdding = false }
+		do {
+			try await api.add(
+				workspaceId: workspaceId, actorId: id, role: role, idempotencyKey: UUID().uuidString)
+			await load()
+			return true
+		} catch {
+			actionError = (error as? SettingsError)?.message ?? "Couldn't add that person."
+			return false
+		}
+	}
+
 	public func dismissError() { actionError = nil }
 }

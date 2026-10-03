@@ -6,6 +6,7 @@ import SwiftUI
 struct MembersView: View {
 	@State private var store: MembersStore
 	@State private var pendingRemoval: WorkspaceMember?
+	@State private var showAdd = false
 
 	init(store: MembersStore) { _store = State(initialValue: store) }
 
@@ -20,13 +21,22 @@ struct MembersView: View {
 			if let error = store.actionError {
 				Section { FormError(error) }
 			}
-			if store.currentRole.canManage {
+			if store.canAdd {
 				Section {
 				} footer: {
-					Text("To add someone, invite them from Maskin on the web.")
+					Text("To add someone, ask them for the ID on their Profile screen.")
 				}
 			}
 		}
+		.settingsListStyle()
+		.toolbar {
+			if store.canAdd {
+				ToolbarItem(placement: .primaryAction) {
+					Button("Add member", systemImage: "person.badge.plus") { showAdd = true }
+				}
+			}
+		}
+		.sheet(isPresented: $showAdd) { AddMemberSheet(store: store) }
 		.overlay {
 			switch store.phase {
 			case .loading where store.members.isEmpty: ProgressView()

@@ -23,6 +23,8 @@ struct IntegrationsView: View {
 						IntegrationRow(
 							name: store.displayName(for: integration), status: status(integration)
 						)
+						.contentShape(Rectangle())
+						.onTapGesture { if needsWeb(integration) { openSetup() } }
 						.contextMenu { menu(integration) }
 						.swipeActions(edge: .trailing) {
 							if store.canManage {
@@ -35,7 +37,16 @@ struct IntegrationsView: View {
 			if !store.available.isEmpty {
 				Section("Available") {
 					ForEach(store.available) { provider in
-						IntegrationRow(name: provider.displayName, status: .available)
+						Button { openSetup() } label: {
+							HStack {
+								IntegrationRow(name: provider.displayName, status: .available)
+								Image(systemName: "arrow.up.right").font(.footnote)
+									.foregroundStyle(MaskinColor.ink4).accessibilityHidden(true)
+							}
+						}
+						.buttonStyle(.plain)
+						.disabled(webSetupURL == nil || !store.canManage)
+						.accessibilityHint("Opens in your browser")
 					}
 				}
 			}
@@ -55,6 +66,7 @@ struct IntegrationsView: View {
 				)
 			}
 		}
+		.settingsListStyle()
 		.overlay {
 			switch store.phase {
 			case .loading: ProgressView()
@@ -87,8 +99,22 @@ struct IntegrationsView: View {
 		}
 	}
 
+	private func openSetup() { if let webSetupURL { openURL(webSetupURL) } }
+
+	/// Rows whose fix is a trip to the browser: an expired or under-scoped connection.
+	private func needsWeb(_ integration: ConnectedIntegration) -> Bool {
+		guard store.canManage else { return false }
+		switch integration.state {
+		case .needsReconnect, .incomplete, .disconnected: return true
+		case .connected: return false
+		}
+	}
+
 	@ViewBuilder
 	private func menu(_ integration: ConnectedIntegration) -> some View {
+		if needsWeb(integration) {
+			Button("Reconnect in browser", systemImage: "arrow.triangle.2.circlepath") { openSetup() }
+		}
 		if store.canManage {
 			Button("Disconnect", systemImage: "link.badge.minus", role: .destructive) {
 				pendingDisconnect = integration

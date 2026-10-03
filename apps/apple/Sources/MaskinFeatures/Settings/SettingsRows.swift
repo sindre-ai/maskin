@@ -45,6 +45,21 @@ enum SecretPasteboard {
 	}
 }
 
+extension View {
+	/// The Settings look: dark-first grouped surface, big rounded card rows, generous spacing.
+	func settingsListStyle() -> some View {
+		let styled = self
+			.scrollContentBackground(.hidden)
+			.background(MaskinSurface.grouped)
+			.listRowBackground(MaskinSurface.card)
+		#if os(iOS)
+			return styled.listSectionSpacing(.custom(MaskinSpace.s12))
+		#else
+			return styled
+		#endif
+	}
+}
+
 /// A hub row: tinted symbol, title, optional value, chevron added by `NavigationLink`.
 struct SettingsRow: View {
 	let symbol: String
@@ -54,7 +69,7 @@ struct SettingsRow: View {
 	var body: some View {
 		HStack(spacing: MaskinSpace.s8) {
 			Image(systemName: symbol)
-				.foregroundStyle(MaskinColor.accent)
+				.foregroundStyle(MaskinColor.ink)
 				.frame(width: MaskinSpace.s12)
 				.accessibilityHidden(true)
 			Text(title).foregroundStyle(MaskinColor.ink)

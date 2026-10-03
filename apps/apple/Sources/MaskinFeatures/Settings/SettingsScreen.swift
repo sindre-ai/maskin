@@ -6,8 +6,10 @@ import SwiftUI
 /// Settings, presented by the shell as a sheet or destination. Owns its `NavigationStack` and a
 /// Done button.
 ///
-/// In scope: profile, workspace, members, integrations (status, disconnect; connecting happens in
-/// the browser), the actor API key, skills (read-only), sign out. Billing opens on the web.
+/// In scope: profile, workspace, members (add, roles, remove), integrations (status, disconnect;
+/// connecting happens in the browser), the actor API key, skills (create, edit, delete), object
+/// types and properties, plan and usage (read-only; changes open the web), MCP connection
+/// commands, sign out. Extensions open on the web.
 public struct SettingsScreen: View {
 	@Environment(\.dismiss) private var dismiss
 	@Environment(\.openURL) private var openURL
@@ -53,13 +55,21 @@ public struct SettingsScreen: View {
 						NavigationLink(value: SettingsRoute.skills) {
 							SettingsRow(symbol: "wand.and.stars", title: "Skills")
 						}
+						NavigationLink(value: SettingsRoute.objectTypes) {
+							SettingsRow(symbol: "square.stack.3d.up", title: "Object types")
+						}
 					}
 					Section {
+						NavigationLink(value: SettingsRoute.billing) {
+							SettingsRow(symbol: "creditcard", title: "Plan and billing")
+						}
+						NavigationLink(value: SettingsRoute.mcp) {
+							SettingsRow(symbol: "point.3.connected.trianglepath.dotted", title: "Connect Claude")
+						}
 						Button {
-							if let url = services.webURL("billing") { openURL(url) }
+							if let url = services.webURL("extensions") { openURL(url) }
 						} label: {
-							SettingsRow(
-								symbol: "creditcard", title: "Plan and billing", detail: "Opens in browser")
+							SettingsRow(symbol: "puzzlepiece.extension", title: "Extensions", detail: "Opens in browser")
 						}
 					}
 				}
@@ -69,6 +79,7 @@ public struct SettingsScreen: View {
 						.frame(minHeight: MaskinSpace.touchMin, alignment: .leading)
 				}
 			}
+			.settingsListStyle()
 			.navigationTitle("Settings")
 			#if os(iOS)
 				.navigationBarTitleDisplayMode(.inline)
@@ -89,6 +100,14 @@ public struct SettingsScreen: View {
 						store: services.integrationsStore(), webSetupURL: services.webURL("integrations"))
 				case .apiKey: APIKeyView(store: services.apiKeyStore())
 				case .skills: SkillsView(store: services.skillsStore())
+				case .objectTypes: ObjectTypesView(store: services.schemaStore())
+				case .billing: BillingView(store: services.billingStore(), webURL: services.webURL("billing"))
+				case .mcp:
+					MCPConnectView(
+						serverURL: services.mcpURL, workspaceId: services.workspaceId ?? "",
+						apiKey: { [environment] in
+							environment.auth.session.map { SecretValue($0.apiKey) }
+						})
 				}
 			}
 			.confirmationDialog("Sign out of Maskin?", isPresented: $confirmSignOut, titleVisibility: .visible) {
