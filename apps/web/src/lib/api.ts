@@ -455,6 +455,17 @@ export const api = {
 
 	integrations: {
 		list: (workspaceId: string) => request<IntegrationResponse[]>('/integrations', { workspaceId }),
+		chatCapture: (workspaceId: string, body: ChatCaptureInput) =>
+			request<ChatCaptureResponse>('/integrations/chat-capture', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		undo: (id: string, workspaceId: string) =>
+			request<{ id: string; status: 'undone' }>(`/integrations/${id}/undo`, {
+				method: 'POST',
+				workspaceId,
+			}),
 		providers: () => request<ProviderInfo[]>('/integrations/providers'),
 		connect: (
 			workspaceId: string,
@@ -1541,6 +1552,29 @@ export interface IntegrationResponse {
 	missingScopes?: string[]
 	/** True when `missingScopes` is non-empty — reconnecting re-consents and fixes it. */
 	needsReconnect?: boolean
+	/** Keychain: where the credential came from. Never the value. */
+	source?: string
+	/** Keychain: for source chat_capture, the session the key was pasted into. */
+	originSessionId?: string | null
+}
+
+export type ChatCaptureProvider = 'cloudflare' | 'github' | 'stripe' | 'slack' | 'openai-style'
+
+export interface ChatCaptureInput {
+	sessionId: string
+	providerMode: 'byo_apikey'
+	detectedProvider: ChatCaptureProvider
+	displayName: string
+	rawSecret: string
+	/** Omit for the default (the session's agent). [] means unassigned. */
+	scopeGrants?: Array<{ kind: 'actor'; actorId: string } | { kind: 'workspace' }>
+}
+
+export interface ChatCaptureResponse {
+	integrationId: string
+	undoExpiresAt: string
+	undoUrl: string
+	relaunch: 'stopped'
 }
 
 /** A GitHub App installation the current actor can bind to this workspace,
