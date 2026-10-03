@@ -56,9 +56,27 @@ export interface DialerEvent {
 	data: Record<string, unknown>
 }
 
+/** What the queue read needs from the gate's process-level inputs to recognise a permanent refusal. */
+export interface QueueExclusion {
+	/**
+	 * Lowercased slugs of VOICE_FOUNDER_ACTORS. Null when the map is unusable, in which case no
+	 * owner is treated as unmapped (the gate refuses everyone for that, which is not per contact).
+	 */
+	founderSlugs: readonly string[] | null
+}
+
 export interface DialerStore {
-	/** The widened queue: voice_queued (next_dial_at null or due) plus due retry statuses. */
-	readQueue(workspaceId: string, now: Date, limit: number): Promise<QueuedContact[]>
+	/**
+	 * The widened queue: voice_queued (next_dial_at null or due) plus due retry statuses, minus
+	 * contacts that carry a stamped dnc_refusal whose permanent cause still holds. The limit is
+	 * applied after that exclusion, so refused contacts never use up the window.
+	 */
+	readQueue(
+		workspaceId: string,
+		now: Date,
+		limit: number,
+		exclusion: QueueExclusion,
+	): Promise<QueuedContact[]>
 	/**
 	 * Status-conditional claim: one update that moves the contact to voice_dialing
 	 * where id, status and next_dial_at still match what the tick read. False when
@@ -146,11 +164,21 @@ async function refuse(
 	refusal: Extract<DncResult, { pass: false }>,
 	now: Date,
 ) {
-	// A permanently refused contact stays on the queue and is re-read every tick.
+	// A refused contact stays on its status. The queue read skips it once its stamp is written and
+	// the permanent cause still holds (dialer-store.ts); a transient refusal is re-read every tick.
 	// Write the event and the stamp once per distinct reason, not every ten seconds.
 	// Time of day is not a property of the contact, so it is never stamped.
-	const previous = contact.metadata?.dnc_refusal as { reason?: unknown } | undefined
-	if (refusal.check !== 'time_of_day' && previous?.reason === refusal.reason) return
+	const previous = contact.metadata?.dnc_refusal as
+		| { reason?: unknown; phone?: unknown }
+		| undefined
+	// A Robinson match is for one number: a changed number is a new refusal, so it is stamped again.
+	if (
+		refusal.check !== 'time_of_day' &&
+		previous?.reason === refusal.reason &&
+		previous?.phone === refusal.listedNumber
+	) {
+		return
+	}
 	await deps.store.recordEvent({
 		workspaceId,
 		actorId,
@@ -162,7 +190,12 @@ async function refuse(
 	if (refusal.check === 'time_of_day') return
 	await deps.store.stampMetadata(workspaceId, contact.id, {
 		...(refusal.stamp ?? {}),
-		dnc_refusal: { check: refusal.check, reason: refusal.reason, at: now.toISOString() },
+		dnc_refusal: {
+			check: refusal.check,
+			reason: refusal.reason,
+			at: now.toISOString(),
+			...(refusal.listedNumber ? { phone: refusal.listedNumber } : {}),
+		},
 	})
 }
 
@@ -214,6 +247,7 @@ export async function runDialerTick(
 		workspaceId,
 		now,
 		Math.min(slots * LOOKAHEAD_FACTOR, MAX_QUEUE_READ),
+		{ founderSlugs: deps.gate.founders.ok ? Object.keys(deps.gate.founders.map) : null },
 	)
 
 	if (!deps.autosendEnabled) {

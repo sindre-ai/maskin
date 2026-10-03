@@ -1,7 +1,7 @@
 import { type Server, createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { events, objects } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
 	createTelnyxClient,
@@ -14,7 +14,7 @@ import {
 	createDrizzleDialerStore,
 	findWorkspacesWithDueContacts,
 } from '../../lib/outreach/voice/dialer-store'
-import { parseFounderActors } from '../../lib/outreach/voice/dnc-gate'
+import { parseFounderActors, runDncGate } from '../../lib/outreach/voice/dnc-gate'
 import type { EffectRunner } from '../../lib/outreach/voice/effects'
 import { insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
@@ -23,6 +23,8 @@ import { db, getTestActorId } from './global-setup'
 const NOW = new Date('2026-10-01T09:00:00Z')
 const DUE = '2026-10-01T08:00:00.000Z'
 const LATER = '2026-10-02T09:00:00.000Z'
+
+const EXCLUSION = { founderSlugs: ['sebk'] }
 
 const CONFIG: DialerConfig = {
 	rateLimitPerMinute: 50,
@@ -107,7 +109,7 @@ describe('voice dialer against real Postgres', () => {
 			const otherWorkspace = await seedContact(other.id, 'voice_queued')
 
 			const { store } = deps(ws.id)
-			const queue = await store.readQueue(ws.id, NOW, 50)
+			const queue = await store.readQueue(ws.id, NOW, 50, EXCLUSION)
 			const ids = queue.map((c) => c.id)
 
 			expect(ids).toEqual(
@@ -141,11 +143,11 @@ describe('voice dialer against real Postgres', () => {
 				next_dial_at: '2026-10-01T07:00:00.000Z',
 			})
 			const { store } = deps(ws.id)
-			expect((await store.readQueue(ws.id, NOW, 50)).map((c) => c.id)).toEqual([
+			expect((await store.readQueue(ws.id, NOW, 50, EXCLUSION)).map((c) => c.id)).toEqual([
 				earlier?.id,
 				later?.id,
 			])
-			expect(await store.readQueue(ws.id, NOW, 1)).toHaveLength(1)
+			expect(await store.readQueue(ws.id, NOW, 1, EXCLUSION)).toHaveLength(1)
 		})
 
 		it('finds only workspaces that have due contacts', async () => {
@@ -159,12 +161,301 @@ describe('voice dialer against real Postgres', () => {
 		})
 	})
 
+	describe('permanently refused contacts and the queue read', () => {
+		// What the dialer stamps with a refusal. Only its presence matters to the read.
+		const STAMP = {
+			dnc_refusal: { check: 'hold', reason: 'stamped by an earlier tick', at: DUE },
+		}
+		const OK = { owner: 'sebk', phone: '+4520123456' }
+
+		async function readIds(workspaceId: string, exclusion = EXCLUSION) {
+			const { store } = deps(workspaceId)
+			return (await store.readQueue(workspaceId, NOW, 50, exclusion)).map((c) => c.id)
+		}
+
+		// One row per permanent cause the read mirrors, then the values the gate accepts that a
+		// naive SQL port would reject. For every row the read must agree with the real gate.
+		const CASES: [string, Record<string, unknown>][] = [
+			['approval_hold set', { ...OK, approval_hold: true }],
+			['held_reason set', { ...OK, held_reason: 'legal' }],
+			['approval_hold false', { ...OK, approval_hold: false }],
+			['held_reason empty', { ...OK, held_reason: '' }],
+			['protect true', { ...OK, protect: true }],
+			['protected as the string " TRUE "', { ...OK, protected: ' TRUE ' }],
+			['protected false', { ...OK, protected: false }],
+			['tags array with Protected', { ...OK, tags: ['sales', ' Protected '] }],
+			['tags string with do-not-contact', { ...OK, tags: 'sales, DO-NOT-CONTACT' }],
+			['tags array without a protect tag', { ...OK, tags: ['sales', 'protector'] }],
+			['role investor', { ...OK, role: 'investor' }],
+			['lead_source investor_pipeline', { ...OK, lead_source: 'investor_pipeline' }],
+			['role something else', { ...OK, role: 'founder' }],
+			['3 dials made', { ...OK, dial_attempt_n: 3 }],
+			['2 dials made', { ...OK, dial_attempt_n: 2 }],
+			['no phone', { owner: 'sebk' }],
+			['phone that is not a number', { ...OK, phone: 'call me' }],
+			['phone stored as a JSON number', { ...OK, phone: 4520123456 }],
+			['phone with a non-Danish prefix', { ...OK, phone: '+4670123456' }],
+			['phone as 8 digits', { ...OK, phone: '20123456' }],
+			['phone with 0045 and spaces', { ...OK, phone: '0045 20 12 34 56' }],
+			['phone with a no-break space', { ...OK, phone: '+45 20 12 34 56' }],
+			['phone with brackets and dashes', { ...OK, phone: '(+45) 20-12-34-56' }],
+			['no owner', { phone: '+4520123456' }],
+			['owner not a string', { ...OK, owner: 7 }],
+			['owner not a founder', { ...OK, owner: 'rune' }],
+			['owner in another case with padding', { ...OK, owner: '\tSebk\n' }],
+		]
+
+		it.each(CASES)(
+			'agrees with the gate when the contact is stamped and has %s',
+			async (_n, metadata) => {
+				const ws = await freshWorkspace()
+				const c = await insertObject(db, ws.id, getTestActorId(), {
+					type: 'contact',
+					status: 'voice_queued',
+					metadata: { ...metadata, ...STAMP },
+				})
+				const { d } = deps(ws.id)
+				const verdict = await runDncGate(
+					{ id: c?.id ?? '', status: 'voice_queued', metadata },
+					{ ...d.gate, now: NOW },
+				)
+				expect(verdict.pass === false && verdict.check).not.toBe('time_of_day')
+				expect((await readIds(ws.id)).includes(c?.id ?? '')).toBe(verdict.pass)
+			},
+		)
+
+		it('reads a contact with a permanent cause but no stamp, so the first tick records the refusal', async () => {
+			const ws = await freshWorkspace()
+			const c = await seedContact(ws.id, 'voice_queued', { approval_hold: true })
+			expect(await readIds(ws.id)).toEqual([c?.id])
+			const { d } = deps(ws.id)
+			await runDialerTick(ws.id, d)
+			expect(await readIds(ws.id)).toEqual([])
+		})
+
+		describe('Robinson-listed', () => {
+			const listed = (phone: string) => ({
+				dnc_refusal: {
+					check: 'robinson',
+					reason: 'number is on the Robinson list',
+					at: DUE,
+					phone,
+				},
+			})
+
+			it('excludes a contact while the stamped number still equals its phone, in any format', async () => {
+				const ws = await freshWorkspace()
+				await seedContact(ws.id, 'voice_queued', listed('+4520123456'))
+				await seedContact(ws.id, 'voice_queued', {
+					phone: '0045 20-12-34-56',
+					...listed('+4520123456'),
+				})
+				await seedContact(ws.id, 'voice_queued', { phone: '20 12 34 56', ...listed('+4520123456') })
+				expect(await readIds(ws.id)).toEqual([])
+			})
+
+			it('reads the contact again once its phone is edited to another number', async () => {
+				const ws = await freshWorkspace()
+				const c = await seedContact(ws.id, 'voice_queued', {
+					phone: '+4520999999',
+					...listed('+4520123456'),
+				})
+				expect(await readIds(ws.id)).toEqual([c?.id])
+			})
+
+			it('reads the contact again once dnc_refusal is cleared', async () => {
+				const ws = await freshWorkspace()
+				const c = await seedContact(ws.id, 'voice_queued', listed('+4520123456'))
+				expect(await readIds(ws.id)).toEqual([])
+				await db
+					.update(objects)
+					.set({ metadata: sql`${objects.metadata} - 'dnc_refusal'` })
+					.where(eq(objects.id, c?.id ?? ''))
+				expect(await readIds(ws.id)).toEqual([c?.id])
+			})
+
+			it('is stamped by the tick, skipped afterwards, and stamped again for a new listed number', async () => {
+				const ws = await freshWorkspace()
+				const c = await seedContact(ws.id, 'voice_queued')
+				const { d, createCall } = deps(ws.id)
+				d.gate.robinson = { has: () => true }
+
+				await runDialerTick(ws.id, d)
+				const [stamped] = await db
+					.select({ metadata: objects.metadata })
+					.from(objects)
+					.where(eq(objects.id, c?.id ?? ''))
+				expect(stamped?.metadata).toMatchObject({
+					dnc_refusal: { check: 'robinson', phone: '+4520123456' },
+				})
+				expect(await readIds(ws.id)).toEqual([])
+
+				await db
+					.update(objects)
+					.set({ metadata: sql`${objects.metadata} || '{"phone":"+4520777777"}'::jsonb` })
+					.where(eq(objects.id, c?.id ?? ''))
+				expect(await readIds(ws.id)).toEqual([c?.id])
+				await runDialerTick(ws.id, d)
+				const [restamped] = await db
+					.select({ metadata: objects.metadata })
+					.from(objects)
+					.where(eq(objects.id, c?.id ?? ''))
+				expect(restamped?.metadata).toMatchObject({ dnc_refusal: { phone: '+4520777777' } })
+				expect(await readIds(ws.id)).toEqual([])
+				expect(createCall).not.toHaveBeenCalled()
+			})
+		})
+
+		it('reads a stamped contact whose refusal was transient, such as an unavailable Robinson list', async () => {
+			const ws = await freshWorkspace()
+			const c = await seedContact(ws.id, 'voice_queued', {
+				dnc_refusal: { check: 'robinson', reason: 'Robinson list is unavailable', at: DUE },
+			})
+			expect(await readIds(ws.id)).toEqual([c?.id])
+		})
+
+		it('treats an owner as unmapped only while the founder map is usable', async () => {
+			const ws = await freshWorkspace()
+			const c = await seedContact(ws.id, 'voice_queued', { owner: 'rune', ...STAMP })
+			expect(await readIds(ws.id)).toEqual([])
+			expect(await readIds(ws.id, { founderSlugs: null })).toEqual([c?.id])
+			expect(await readIds(ws.id, { founderSlugs: ['sebk', 'rune'] })).toEqual([c?.id])
+		})
+
+		it('dials the one dialable contact behind 60 stamped, permanently refused ones', async () => {
+			const ws = await freshWorkspace()
+			const causes: Record<string, unknown>[] = [
+				{ approval_hold: true },
+				{ phone: undefined },
+				{ owner: 'rune' },
+				{ protect: true },
+				{ role: 'investor' },
+				{ dial_attempt_n: 3 },
+				{
+					dnc_refusal: {
+						check: 'robinson',
+						reason: 'number is on the Robinson list',
+						at: DUE,
+						phone: '+4520123456',
+					},
+				},
+			]
+			for (let i = 0; i < 60; i++) {
+				const at = new Date(Date.parse('2026-10-01T06:00:00Z') + i * 1000).toISOString()
+				await seedContact(ws.id, 'voice_queued', {
+					...STAMP,
+					...causes[i % causes.length],
+					next_dial_at: at,
+				})
+			}
+			const dialable = await seedContact(ws.id, 'voice_queued', { next_dial_at: DUE })
+			const { d, createCall } = deps(ws.id)
+
+			const result = await runDialerTick(ws.id, d)
+
+			expect(result).toMatchObject({ dialed_count: 1, refused_count: 0 })
+			const sent = createCall.mock.calls[0]?.[0] as unknown as {
+				clientState: { contact_id: string }
+			}
+			expect(sent.clientState.contact_id).toBe(dialable?.id)
+			expect(await statusOf(dialable?.id ?? '')).toBe('voice_dialing')
+		})
+
+		it('works through a head of unstamped refused contacts over a few ticks, then dials', async () => {
+			const ws = await freshWorkspace()
+			for (let i = 0; i < 60; i++) {
+				const at = new Date(Date.parse('2026-10-01T06:00:00Z') + i * 1000).toISOString()
+				await seedContact(ws.id, 'voice_queued', { approval_hold: true, next_dial_at: at })
+			}
+			const dialable = await seedContact(ws.id, 'voice_queued', { next_dial_at: DUE })
+			const { d, createCall } = deps(ws.id)
+
+			await runDialerTick(ws.id, d)
+			expect(createCall).not.toHaveBeenCalled()
+			await runDialerTick(ws.id, d)
+
+			expect(createCall).toHaveBeenCalledTimes(1)
+			expect(await statusOf(dialable?.id ?? '')).toBe('voice_dialing')
+		})
+
+		it('never treats time of day as permanent: a contact met outside the window is dialed in the next tick', async () => {
+			const ws = await freshWorkspace()
+			const c = await seedContact(ws.id, 'voice_queued')
+			const outside = deps(ws.id, { now: () => new Date('2026-10-01T15:30:00Z') })
+			const early = await runDialerTick(ws.id, outside.d)
+			expect(early.skipped_reason).toBe('outside_dial_window')
+			expect(outside.createCall).not.toHaveBeenCalled()
+			const [row] = await db
+				.select({ metadata: objects.metadata })
+				.from(objects)
+				.where(eq(objects.id, c?.id ?? ''))
+			expect(row?.metadata).not.toHaveProperty('dnc_refusal')
+
+			const inside = deps(ws.id)
+			const result = await runDialerTick(ws.id, inside.d)
+			expect(result.dialed_count).toBe(1)
+			expect(await statusOf(c?.id ?? '')).toBe('voice_dialing')
+		})
+
+		it('does not exclude a contact stamped with a time_of_day refusal', async () => {
+			const ws = await freshWorkspace()
+			const c = await seedContact(ws.id, 'voice_queued', {
+				dnc_refusal: { check: 'time_of_day', reason: 'outside the window', at: DUE },
+			})
+			expect(await readIds(ws.id)).toEqual([c?.id])
+		})
+
+		it.each([
+			['a valid +45 number is added', { phone: '+4520123456' }],
+			['the hold is cleared', { approval_hold: false }],
+			['the owner is mapped to a founder', { owner: 'sebk' }],
+		])('dials a stamped contact once %s', async (_n, fix) => {
+			const ws = await freshWorkspace()
+			const base =
+				_n === 'a valid +45 number is added'
+					? { phone: undefined }
+					: _n === 'the hold is cleared'
+						? { approval_hold: true }
+						: { owner: 'rune' }
+			const c = await seedContact(ws.id, 'voice_queued', { ...base, ...STAMP })
+			const { d, createCall } = deps(ws.id)
+
+			await runDialerTick(ws.id, d)
+			expect(createCall).not.toHaveBeenCalled()
+
+			await db
+				.update(objects)
+				.set({ metadata: sql`${objects.metadata} || ${JSON.stringify(fix)}::jsonb` })
+				.where(eq(objects.id, c?.id ?? ''))
+			const result = await runDialerTick(ws.id, d)
+
+			expect(result.dialed_count).toBe(1)
+			expect(await statusOf(c?.id ?? '')).toBe('voice_dialing')
+		})
+
+		it('leaves an excluded contact on its status with no new status change or refusal event', async () => {
+			const ws = await freshWorkspace()
+			const c = await seedContact(ws.id, 'voice_queued', { approval_hold: true })
+			const { d } = deps(ws.id)
+			await runDialerTick(ws.id, d)
+			await runDialerTick(ws.id, d)
+			await runDialerTick(ws.id, d)
+
+			expect(await statusOf(c?.id ?? '')).toBe('voice_queued')
+			const own = await db
+				.select()
+				.from(events)
+				.where(eq(events.entityId, c?.id ?? ''))
+			expect(own.map((e) => e.action)).toEqual(['dnc_refused'])
+		})
+	})
+
 	describe('claim', () => {
 		it('moves the contact to voice_dialing once and writes an audit event', async () => {
 			const ws = await freshWorkspace()
 			const c = await seedContact(ws.id, 'voice_queued')
 			const { store } = deps(ws.id)
-			const [read] = await store.readQueue(ws.id, NOW, 5)
+			const [read] = await store.readQueue(ws.id, NOW, 5, EXCLUSION)
 			if (!read) throw new Error('queue empty')
 
 			expect(await store.claim(ws.id, read, getTestActorId(), NOW)).toBe(true)
@@ -181,7 +472,7 @@ describe('voice dialer against real Postgres', () => {
 			const ws = await freshWorkspace()
 			const retry = await seedContact(ws.id, 'voice_no_answer', { next_dial_at: DUE })
 			const { store } = deps(ws.id)
-			const [read] = await store.readQueue(ws.id, NOW, 5)
+			const [read] = await store.readQueue(ws.id, NOW, 5, EXCLUSION)
 			if (!read) throw new Error('queue empty')
 			// Another writer reschedules the contact between the read and the claim.
 			await db

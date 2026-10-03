@@ -300,8 +300,39 @@ describe('runDialerTick', () => {
 			expect(createCall).not.toHaveBeenCalled()
 			expect(store.stamps[0]?.patch).toMatchObject({
 				robinson_listed_at: NOW.toISOString(),
-				dnc_refusal: { check: 'robinson' },
+				dnc_refusal: { check: 'robinson', phone: '+4520123401' },
 			})
+		})
+
+		it('stamps no phone when the Robinson list is unavailable, so that refusal is never read as permanent', async () => {
+			const store = fakeStore([contact(1)])
+			const { deps } = setup(store)
+			deps.gate.robinson = {
+				has: () => {
+					throw new Error('no file')
+				},
+			}
+			await runDialerTick(WS, deps)
+			const stamp = store.stamps[0]?.patch.dnc_refusal as Record<string, unknown>
+			expect(stamp).toMatchObject({ check: 'robinson' })
+			expect(stamp).not.toHaveProperty('phone')
+		})
+
+		it('stamps a listed contact again when its number changed and the new number is listed too', async () => {
+			const store = fakeStore([contact(1)])
+			const { deps } = setup(store)
+			deps.gate.robinson = { has: () => true }
+			await runDialerTick(WS, deps)
+			await runDialerTick(WS, deps)
+			expect(store.stamps).toHaveLength(1)
+
+			const row = store.rows.get(contact(1).id)
+			if (row) row.metadata = { ...row.metadata, phone: '+4520999999' }
+			await runDialerTick(WS, deps)
+
+			expect(store.stamps).toHaveLength(2)
+			expect(store.stamps[1]?.patch.dnc_refusal).toMatchObject({ phone: '+4520999999' })
+			expect(actions(store).filter((a) => a === 'dnc_refused')).toHaveLength(2)
 		})
 
 		it('does not repeat the event for a contact refused for the same reason on the previous tick', async () => {
@@ -324,6 +355,25 @@ describe('runDialerTick', () => {
 			const result = await runDialerTick(WS, deps)
 			expect(result.dialed_count).toBe(2)
 			expect(createCall).toHaveBeenCalledTimes(2)
+		})
+	})
+
+	describe('queue read exclusion inputs', () => {
+		it('hands the queue read the founder slugs from VOICE_FOUNDER_ACTORS', async () => {
+			const store = fakeStore([contact(1)])
+			const readQueue = vi.spyOn(store, 'readQueue')
+			const { deps } = setup(store)
+			await runDialerTick(WS, deps)
+			expect(readQueue).toHaveBeenCalledWith(WS, NOW, 25, { founderSlugs: ['sebk'] })
+		})
+
+		it('hands it null when the founder map cannot be used, so no owner counts as unmapped', async () => {
+			const store = fakeStore([contact(1)])
+			const readQueue = vi.spyOn(store, 'readQueue')
+			const { deps } = setup(store)
+			deps.gate.founders = parseFounderActors(undefined)
+			await runDialerTick(WS, deps)
+			expect(readQueue).toHaveBeenCalledWith(WS, NOW, 25, { founderSlugs: null })
 		})
 	})
 
