@@ -930,6 +930,28 @@ describe('BoardView', () => {
 	})
 
 	describe('draggable cards', () => {
+		// Anchors are `draggable` by default, so pressing on a BoardCard
+		// (which is a `<Link>` / `<a>`) fires the browser's native HTML5
+		// dragstart alongside dnd-kit's PointerSensor — that paints a second
+		// ghost image and, if the native drag ends off-viewport, leaves the
+		// DragOverlay stranded. The wrapper must cancel the native dragstart.
+		it("cancels the browser's native HTML5 dragstart so it doesn't race dnd-kit", () => {
+			render(
+				<BoardView
+					objectType="task"
+					workspaceId="ws-1"
+					statusesByType={{ task: ['todo'] }}
+					objects={[
+						buildObjectResponse({ id: 'task-1', type: 'task', status: 'todo', title: 'Task 1' }),
+					]}
+				/>,
+			)
+			const card = screen.getByTestId('board-card-draggable')
+			const dragStart = new Event('dragstart', { bubbles: true, cancelable: true })
+			fireEvent(card, dragStart)
+			expect(dragStart.defaultPrevented).toBe(true)
+		})
+
 		it('renders bet cards with the draggable wrapper', () => {
 			render(
 				<BoardView
