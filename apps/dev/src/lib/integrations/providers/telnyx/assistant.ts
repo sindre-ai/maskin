@@ -142,16 +142,16 @@ export function assistantContentHash(payload: Record<string, unknown>): string {
 	return createHash('sha256').update(canonical(rest)).digest('hex').slice(0, 16)
 }
 
-export function readDisclosureLocale(env: NodeJS.ProcessEnv = process.env): DisclosureLocale {
-	return env.VOICE_DISCLOSURE_LOCALE?.trim().toLowerCase() === 'en' ? 'en' : 'da'
-}
+// Every call in this bet is Danish (+45 numbers), so the disclosure is Danish. Same rule as
+// FOLLOWUP_LANGUAGE in the post-call email hook; no per-contact detection until a second market exists.
+export const DISCLOSURE_LOCALE: DisclosureLocale = 'da'
 
 /** The hash of the assistant this deploy would create, from env. Used as script_version at tool time. */
 export function currentScriptVersion(env: NodeJS.ProcessEnv = process.env): string {
 	const base = env.MASKIN_PUBLIC_URL?.trim().replace(/\/+$/, '') ?? ''
 	return assistantContentHash(
 		buildAssistantPayload({
-			locale: readDisclosureLocale(env),
+			locale: DISCLOSURE_LOCALE,
 			toolsBaseUrl: `${base}/api/integrations/telnyx/tools`,
 		}),
 	)

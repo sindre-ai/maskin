@@ -3,9 +3,9 @@ import type { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { Cron } from 'croner'
 import {
+	DISCLOSURE_LOCALE,
 	buildAssistantPayload,
 	ensureAssistant,
-	readDisclosureLocale,
 } from '../lib/integrations/providers/telnyx/assistant'
 import { createTelnyxClient } from '../lib/integrations/providers/telnyx/client'
 import { readTelnyxRuntimeConfig } from '../lib/integrations/providers/telnyx/config'
@@ -117,7 +117,7 @@ export async function runExportPass(db: Database): Promise<void> {
 	const assistant = await ensureAssistant(telnyx, {
 		assistantId: runtime.assistantId,
 		payload: buildAssistantPayload({
-			locale: readDisclosureLocale(),
+			locale: DISCLOSURE_LOCALE,
 			toolsBaseUrl: `${base}/api/integrations/telnyx/tools`,
 			toolIds: [result.retrievalToolId],
 		}),
