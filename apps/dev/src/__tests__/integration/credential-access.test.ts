@@ -7,7 +7,7 @@ import {
 	KmsDecryptError,
 	type KmsProvider,
 	LocalFileKmsProvider,
-} from '@maskin/auth'
+} from '@maskin/auth/kms'
 import { events, type Integration, type ScopeGrant, integrations } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'

@@ -38,12 +38,18 @@ ALTER TABLE "integrations"
 	DROP COLUMN IF EXISTS "display_name",
 	DROP COLUMN IF EXISTS "provider_mode";
 --> statement-breakpoint
--- The role is cluster-wide; DROP OWNED revokes its grants in this database first.
+-- The role is cluster-wide; DROP OWNED revokes its grants in this database
+-- first. If another database in the cluster still grants it privileges (a second
+-- Maskin database on the same server), the role stays and the rollback goes on.
 DO $$
 BEGIN
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'maskin_keychain_app') THEN
 		DROP OWNED BY maskin_keychain_app;
-		DROP ROLE maskin_keychain_app;
+		BEGIN
+			DROP ROLE maskin_keychain_app;
+		EXCEPTION WHEN dependent_objects_still_exist THEN
+			RAISE NOTICE 'role maskin_keychain_app kept: still used in another database';
+		END;
 	END IF;
 END
 $$;

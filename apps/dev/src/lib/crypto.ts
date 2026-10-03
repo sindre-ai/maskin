@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
-import { KmsDecryptError, type KmsProvider } from '@maskin/auth'
+import { KmsDecryptError, type KmsProvider } from '@maskin/auth/kms'
 
 const ALGORITHM = 'aes-256-gcm'
 export const IV_LENGTH = 12

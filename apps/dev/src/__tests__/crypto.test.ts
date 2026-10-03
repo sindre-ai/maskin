@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { KmsDecryptError, type KmsProvider, LocalFileKmsProvider } from '@maskin/auth'
+import { KmsDecryptError, type KmsProvider, LocalFileKmsProvider } from '@maskin/auth/kms'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 const TEST_KEY = 'a'.repeat(64) // 32 bytes in hex

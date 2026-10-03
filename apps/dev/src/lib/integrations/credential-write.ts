@@ -1,4 +1,4 @@
-import type { KmsProvider } from '@maskin/auth'
+import type { KmsProvider } from '@maskin/auth/kms'
 import type { Database } from '@maskin/db'
 import { integrations } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'

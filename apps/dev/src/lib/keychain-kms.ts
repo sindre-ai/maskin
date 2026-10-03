@@ -1,4 +1,4 @@
-import { type KmsProvider, createKmsProvider, resolveKeychainKmsKind } from '@maskin/auth'
+import { type KmsProvider, createKmsProvider, resolveKeychainKmsKind } from '@maskin/auth/kms'
 import type { Database } from '@maskin/db'
 import { logger } from './logger'
 

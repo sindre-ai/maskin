@@ -1,4 +1,4 @@
-import type { KmsProvider } from '@maskin/auth'
+import type { KmsProvider } from '@maskin/auth/kms'
 import type { Database } from '@maskin/db'
 import {
 	INTEGRATION_STATUS_ACTIVE,
