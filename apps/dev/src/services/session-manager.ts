@@ -4450,7 +4450,13 @@ export class SessionManager extends EventEmitter {
 			.select()
 			.from(sessions)
 			.where(
-				and(eq(sessions.sessionState, 'starting'), lt(sessions.stateEnteredAt, bootStallCutoff)),
+				and(
+					eq(sessions.sessionState, 'starting'),
+					lt(sessions.stateEnteredAt, bootStallCutoff),
+					// A row that turned running after the 6b heal is live: settling it
+					// would now also stop its sandbox.
+					ne(sessions.status, 'running'),
+				),
 			)
 
 		for (const session of stuckStarting) {
