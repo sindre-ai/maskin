@@ -109,6 +109,7 @@ services:
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
       WEBHOOK_BASE_URL: ${WEBHOOK_BASE_URL:-}
+      MASKIN_PUBLIC_URL: ${MASKIN_PUBLIC_URL:-}
     depends_on:
       postgres:
         condition: service_healthy
