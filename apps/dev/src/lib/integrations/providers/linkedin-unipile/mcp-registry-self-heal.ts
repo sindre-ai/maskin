@@ -23,9 +23,17 @@ import { enumerateLinkedInIdentitiesAndRegister } from './enumeration'
  *     subsequent `tools/list` into another Unipile round-trip. The
  *     credential id lives in the negative cache for a short window
  *     (~60s) after a failure; a successful enumeration clears it.
+ *
+ * The outcome is returned (not swallowed) so the route can answer with an
+ * explicit retryable error instead of an empty tool list when an active
+ * credential could not be enumerated. One immediate retry runs before the
+ * failure is recorded; a negative-cache hit reports `unavailable` without
+ * calling Unipile.
  */
 
 export const SELF_HEAL_NEGATIVE_CACHE_TTL_MS = 60_000
+
+export type SelfHealOutcome = 'ready' | 'unavailable'
 
 export type SelfHealCredentialRow = {
 	id: string
@@ -36,56 +44,59 @@ export type SelfHealCredentialRow = {
 	status: string
 }
 
-const IN_FLIGHT = new Map<string, Promise<void>>()
+const IN_FLIGHT = new Map<string, Promise<SelfHealOutcome>>()
 const NEGATIVE_CACHE = new Map<string, number>()
 
-export async function selfHealLinkedInMcpCredential(row: SelfHealCredentialRow): Promise<void> {
-	if (row.status !== INTEGRATION_STATUS_ACTIVE || !row.externalId) return
-	if (getLinkedInMcpInstancesForIntegration(row.id).length > 0) return
+export async function selfHealLinkedInMcpCredential(
+	row: SelfHealCredentialRow,
+): Promise<SelfHealOutcome> {
+	if (row.status !== INTEGRATION_STATUS_ACTIVE || !row.externalId) return 'ready'
+	if (getLinkedInMcpInstancesForIntegration(row.id).length > 0) return 'ready'
 
 	const negativeCachedAt = NEGATIVE_CACHE.get(row.id)
 	if (
 		negativeCachedAt !== undefined &&
 		Date.now() - negativeCachedAt < SELF_HEAL_NEGATIVE_CACHE_TTL_MS
 	) {
-		return
+		return 'unavailable'
 	}
 
 	const existing = IN_FLIGHT.get(row.id)
-	if (existing) {
-		await existing
-		return
-	}
+	if (existing) return existing
 
 	const unipileAccountId = row.externalId
 	const actorId = row.actorId ?? row.createdBy
-	const promise = (async () => {
+	const enumerate = () =>
+		enumerateLinkedInIdentitiesAndRegister({
+			unipileAccountId,
+			workspaceId: row.workspaceId,
+			actorId,
+			integrationId: row.id,
+		})
+	const promise = (async (): Promise<SelfHealOutcome> => {
 		try {
-			const result = await enumerateLinkedInIdentitiesAndRegister({
-				unipileAccountId,
-				workspaceId: row.workspaceId,
-				actorId,
-				integrationId: row.id,
-			})
+			const result = await enumerate().catch(() => enumerate())
 			logger.info('linkedin-unipile MCP route: self-healed empty registry entry', {
 				integrationId: row.id,
 				unipileAccSlug: result.unipileAccSlug,
 				instanceSlugs: result.instances.map((c) => instanceSlug(c)),
 			})
 			NEGATIVE_CACHE.delete(row.id)
+			return 'ready'
 		} catch (err) {
 			logger.warn('linkedin-unipile MCP route: self-heal enumeration failed', {
 				integrationId: row.id,
 				error: err instanceof Error ? err.message : String(err),
 			})
 			NEGATIVE_CACHE.set(row.id, Date.now())
+			return 'unavailable'
 		} finally {
 			IN_FLIGHT.delete(row.id)
 		}
 	})()
 
 	IN_FLIGHT.set(row.id, promise)
-	await promise
+	return promise
 }
 
 /**
