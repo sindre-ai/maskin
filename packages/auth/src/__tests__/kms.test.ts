@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -18,6 +18,7 @@ import {
 	KmsAccessError,
 	KmsConfigError,
 	KmsDecryptError,
+	KmsKekMissingError,
 	LocalFileKmsProvider,
 	createKmsProvider,
 	resolveKeychainEnv,
@@ -78,6 +79,38 @@ describe('LocalFileKmsProvider', () => {
 		const blob = Buffer.from(await kms.encrypt(WS_A, fakeDek()), 'base64')
 		blob[blob.length - 1] ^= 0x01
 		await expect(kms.decrypt(WS_A, blob.toString('base64'))).rejects.toBeInstanceOf(KmsDecryptError)
+	})
+
+	it('refuses to create a new KEK when wrapped credentials already exist', async () => {
+		const kms = new LocalFileKmsProvider(kekPath, async () => true)
+		await expect(kms.encrypt(WS_A, fakeDek())).rejects.toBeInstanceOf(KmsKekMissingError)
+		await expect(kms.prepare()).rejects.toBeInstanceOf(KmsKekMissingError)
+		expect(existsSync(kekPath)).toBe(false)
+	})
+
+	it('still reads an existing KEK when wrapped credentials exist', async () => {
+		const wrapped = await new LocalFileKmsProvider(kekPath).encrypt(WS_A, fakeDek())
+		const kms = new LocalFileKmsProvider(kekPath, async () => true)
+		expect((await kms.decrypt(WS_A, wrapped)).equals(fakeDek())).toBe(true)
+	})
+
+	it('creates the KEK when no credential is wrapped yet, and recovers after a refusal once the file is back', async () => {
+		let wrapped = true
+		const kms = new LocalFileKmsProvider(kekPath, async () => wrapped)
+		await expect(kms.prepare()).rejects.toBeInstanceOf(KmsKekMissingError)
+		wrapped = false
+		await expect(kms.prepare()).resolves.toMatchObject({ existed: false })
+		expect(statSync(kekPath).mode & 0o777).toBe(0o600)
+	})
+
+	it('prepare reports whether the file existed, and a stable 8-hex fingerprint that is not the key', async () => {
+		const first = await new LocalFileKmsProvider(kekPath).prepare()
+		const second = await new LocalFileKmsProvider(kekPath).prepare()
+		expect(first.existed).toBe(false)
+		expect(second.existed).toBe(true)
+		expect(first.fingerprint).toMatch(/^[0-9a-f]{8}$/)
+		expect(second.fingerprint).toBe(first.fingerprint)
+		expect(readFileSync(kekPath, 'utf8')).not.toContain(first.fingerprint)
 	})
 
 	it('rejects a key file that is not 32 bytes of hex', async () => {

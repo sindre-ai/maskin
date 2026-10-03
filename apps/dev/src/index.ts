@@ -18,7 +18,7 @@ import {
 	seedMarketplaceIfEmpty,
 } from './lib/dev-bootstrap'
 import { repopulateLinkedInMcpRegistryOnBoot } from './lib/integrations/providers/linkedin-unipile/boot-repopulation'
-import { assertKeychainKmsConfig } from './lib/keychain-kms'
+import { assertKeychainKmsConfig, prepareLocalKek } from './lib/keychain-kms'
 import { logger } from './lib/logger'
 import { getStripeClient } from './lib/stripe'
 import { AgentStorageManager } from './services/agent-storage'
@@ -51,6 +51,7 @@ const db = createDb(databaseUrl)
 // An unknown KEYCHAIN_KMS value must stop the process here, not surface on the
 // first credential read.
 assertKeychainKmsConfig()
+await prepareLocalKek(db)
 
 // Sync agent-server pool from env on every startup.
 // Set AGENT_SERVERS=url1|secret1,url2|secret2 to register boxes.

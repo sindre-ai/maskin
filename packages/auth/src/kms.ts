@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import {
@@ -10,8 +10,8 @@ import {
 	KMSClient,
 } from '@aws-sdk/client-kms'
 import type { Database } from '@maskin/db'
-import { workspaceKmsAliases } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
+import { integrations, workspaceKmsAliases } from '@maskin/db/schema'
+import { eq, isNotNull } from 'drizzle-orm'
 
 /**
  * Wraps and unwraps the per-credential data keys (DEKs) of envelope encryption.
@@ -50,11 +50,26 @@ export class KmsConfigError extends Error {
 	}
 }
 
+/**
+ * The local KEK file is missing but wrapped credentials already exist. Creating
+ * a fresh KEK here would make every one of them undecryptable, so the provider
+ * refuses and the volume has to be restored instead.
+ */
+export class KmsKekMissingError extends Error {
+	constructor(path: string) {
+		super(
+			`KEK file ${path} is missing but credentials are already wrapped under it; refusing to create a new one. Restore the file or its volume.`,
+		)
+		this.name = 'KmsKekMissingError'
+	}
+}
+
 const ALGORITHM = 'aes-256-gcm'
 const IV_LENGTH = 12
 const AUTH_TAG_LENGTH = 16
 const KEK_LENGTH = 32
 const DEFAULT_KEK_FILE = '.data/keychain-kek'
+const KEK_FINGERPRINT_LABEL = 'maskin-keychain-kek-fingerprint-v1'
 
 // ── Local file ──────────────────────────────────────────────────────────────
 
@@ -65,22 +80,50 @@ const DEFAULT_KEK_FILE = '.data/keychain-kek'
  * lose it and every credential wrapped under it is unrecoverable.
  */
 export class LocalFileKmsProvider implements KmsProvider {
-	private kek: Promise<Buffer> | undefined
+	private kek: Promise<{ kek: Buffer; existed: boolean }> | undefined
 
-	constructor(private readonly path: string = DEFAULT_KEK_FILE) {}
+	/**
+	 * hasWrappedKeys answers whether any stored credential is already wrapped
+	 * under this provider's KEK. When it says yes and the file is missing, the
+	 * provider throws instead of generating a new KEK.
+	 */
+	constructor(
+		private readonly path: string = DEFAULT_KEK_FILE,
+		private readonly hasWrappedKeys?: () => Promise<boolean>,
+	) {}
 
-	private loadKek(): Promise<Buffer> {
+	private loadKek(): Promise<{ kek: Buffer; existed: boolean }> {
 		// Cache the promise, not the value, so concurrent first calls share one load.
-		this.kek ??= this.readOrCreateKek()
+		// A failed load is not cached, so a restored file works without a restart.
+		this.kek ??= this.readOrCreateKek().catch((err) => {
+			this.kek = undefined
+			throw err
+		})
 		return this.kek
 	}
 
-	private async readOrCreateKek(): Promise<Buffer> {
+	/**
+	 * Loads (creating if absent and safe) the KEK file. Returns whether the file
+	 * existed before this process touched it, and an 8-hex fingerprint of the KEK
+	 * that is safe to log: sha256 over the key and a fixed label, never the key.
+	 */
+	async prepare(): Promise<{ existed: boolean; fingerprint: string }> {
+		const { kek, existed } = await this.loadKek()
+		const fingerprint = createHash('sha256')
+			.update(kek)
+			.update(KEK_FINGERPRINT_LABEL)
+			.digest('hex')
+			.slice(0, 8)
+		return { existed, fingerprint }
+	}
+
+	private async readOrCreateKek(): Promise<{ kek: Buffer; existed: boolean }> {
 		try {
-			return parseKek(await readFile(this.path, 'utf8'), this.path)
+			return { kek: parseKek(await readFile(this.path, 'utf8'), this.path), existed: true }
 		} catch (err) {
 			if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
 		}
+		if (await this.hasWrappedKeys?.()) throw new KmsKekMissingError(this.path)
 		await mkdir(dirname(this.path), { recursive: true })
 		try {
 			// 'wx' fails if another process created the file first; we then read theirs.
@@ -92,11 +135,11 @@ export class LocalFileKmsProvider implements KmsProvider {
 			if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
 		}
 		await chmod(this.path, 0o600)
-		return parseKek(await readFile(this.path, 'utf8'), this.path)
+		return { kek: parseKek(await readFile(this.path, 'utf8'), this.path), existed: false }
 	}
 
 	async encrypt(workspaceId: string, plaintext: Buffer): Promise<string> {
-		const kek = await this.loadKek()
+		const { kek } = await this.loadKek()
 		const iv = randomBytes(IV_LENGTH)
 		const cipher = createCipheriv(ALGORITHM, kek, iv, { authTagLength: AUTH_TAG_LENGTH })
 		cipher.setAAD(Buffer.from(workspaceId, 'utf8'))
@@ -105,7 +148,7 @@ export class LocalFileKmsProvider implements KmsProvider {
 	}
 
 	async decrypt(workspaceId: string, ciphertext: string): Promise<Buffer> {
-		const kek = await this.loadKek()
+		const { kek } = await this.loadKek()
 		try {
 			const blob = Buffer.from(ciphertext, 'base64')
 			if (blob.length <= IV_LENGTH + AUTH_TAG_LENGTH) throw new Error('wrapped key too short')
@@ -343,5 +386,15 @@ export function createKmsProvider(
 			environment: resolveKeychainEnv(env),
 		})
 	}
-	return new LocalFileKmsProvider(env.KEYCHAIN_LOCAL_KEK_FILE?.trim() || DEFAULT_KEK_FILE)
+	return new LocalFileKmsProvider(
+		env.KEYCHAIN_LOCAL_KEK_FILE?.trim() || DEFAULT_KEK_FILE,
+		async () => {
+			const [row] = await db
+				.select({ id: integrations.id })
+				.from(integrations)
+				.where(isNotNull(integrations.dekCiphertext))
+				.limit(1)
+			return row !== undefined
+		},
+	)
 }
