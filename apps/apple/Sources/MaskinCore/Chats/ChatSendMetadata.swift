@@ -149,8 +149,10 @@ extension ChatMessage {
 				guard let raw = option["label"]?.stringValue else { return nil }
 				// The answer sent back is the plain label, never the "(Recommended)" decoration.
 				let label = ChatQuestionItem.Option.strippingRecommended(raw)
+				// ask-user-question.sh always emits `description` (empty when the agent gave none).
+				let detail = option["description"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
 				return .init(
-					label: label, detail: option["description"]?.stringValue,
+					label: label, detail: detail,
 					recommended: option["recommended"]?.boolValue == true || label != raw)
 			}
 			guard !options.isEmpty else { return nil }
