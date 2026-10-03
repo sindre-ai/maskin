@@ -28,6 +28,9 @@ public final class PushRegistrar {
 	public private(set) var permission: PushPermission = .notDetermined
 	public private(set) var registration: Registration = .idle
 	public private(set) var token: String?
+	/// Told the server's device id whenever it becomes known (or `nil` on sign-out), so features
+	/// that attach to the device (Live Activity tokens) can register against it.
+	@ObservationIgnored public var onDeviceChanged: (@MainActor (String?) -> Void)?
 
 	@ObservationIgnored private let system: any PushSystem
 	@ObservationIgnored private let devices: any DeviceRegistering
@@ -113,6 +116,7 @@ public final class PushRegistrar {
 			}
 		}
 		uploaded = nil
+		onDeviceChanged?(nil)
 		actorId = nil
 		registration = .idle
 		signOut()
@@ -132,6 +136,7 @@ public final class PushRegistrar {
 				token: token, environment: environment, platform: platform, appVersion: appVersion)
 			guard mine == generation else { return }
 			uploaded = (token, actorId, deviceId)
+			onDeviceChanged?(deviceId)
 			// The upsert just re-owned this token's row; deleting it now would undo that.
 			if pendingStore.load()?.token == token { pendingStore.save(nil) }
 			registration = .registered
