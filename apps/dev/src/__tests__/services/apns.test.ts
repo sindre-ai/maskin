@@ -105,6 +105,37 @@ describe('buildApnsPayload', () => {
 	})
 })
 
+describe('buildApnsPayload rich fields', () => {
+	const aps = (m: Record<string, unknown>) =>
+		buildApnsPayload({ ...msg, ...m }).aps as Record<string, unknown>
+
+	it('defaults to active, and to time-sensitive for a decision', () => {
+		expect(aps({})['interruption-level']).toBe('active')
+		const decision = { eventId: 1, options: [{ label: 'Ship' }] }
+		expect(aps({ decision })['interruption-level']).toBe('time-sensitive')
+		expect(aps({ decision, interruption: 'active' })['interruption-level']).toBe('active')
+	})
+	it('drops the sound for a passive push', () => {
+		expect(aps({ interruption: 'passive' }).sound).toBeUndefined()
+		expect(aps({})).toMatchObject({ sound: 'default' })
+	})
+	it('sends a valid badge, including zero, and ignores a bad one', () => {
+		expect(aps({ badge: 3 }).badge).toBe(3)
+		expect(aps({ badge: 0 }).badge).toBe(0)
+		expect(aps({ badge: -1 })).not.toHaveProperty('badge')
+		expect(aps({ badge: null })).not.toHaveProperty('badge')
+	})
+	it('carries only https image urls', () => {
+		expect(buildApnsPayload({ ...msg, imageUrl: 'https://x.test/a.png' }).image_url).toBe(
+			'https://x.test/a.png',
+		)
+		expect(buildApnsPayload({ ...msg, imageUrl: 'http://x.test/a.png' })).not.toHaveProperty(
+			'image_url',
+		)
+		expect(buildApnsPayload({ ...msg, imageUrl: 'nope' })).not.toHaveProperty('image_url')
+	})
+})
+
 describe('buildApnsPayload decision', () => {
 	const decision = {
 		eventId: 42,

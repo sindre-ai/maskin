@@ -27,6 +27,10 @@
  * `eventId` is the agent's decision comment (what the reply threads under and the high-water
  * mark for mark-read); `recommended` is the zero-based index into `options`. Labels are
  * truncated, at most `DECISION_OPTIONS_MAX` options travel, and nothing secret is ever in it.
+ * Rich pushes: `aps.interruption-level` (`time-sensitive` for decisions, `active` otherwise,
+ * `passive` when asked), `aps.badge` (the actor's pending-notification count) and an optional
+ * root `image_url` (https only) the extension downloads and attaches. `buildApnsPayload` is the
+ * single place that writes these keys; the extension reads exactly them.
  * The whole payload is held under APNs' 4 KB limit (see `buildApnsPayload`).
  *
  * A 410 or a 400 BadDeviceToken / 410 Unregistered response deletes the token
@@ -81,7 +85,15 @@ export interface PushMessage {
 	objectId?: string | null
 	conversationId?: string | null
 	decision?: PushDecision | null
+	/** Banner behaviour: `time-sensitive` breaks through Focus (decisions), `passive` is silent. */
+	interruption?: PushInterruption
+	/** App-icon badge to show (the actor's pending notifications); omitted leaves it untouched. */
+	badge?: number | null
+	/** https image the notification service extension downloads and attaches to the banner. */
+	imageUrl?: string | null
 }
+
+export type PushInterruption = 'time-sensitive' | 'active' | 'passive'
 
 export const APNS_HOSTS = {
 	production: 'api.push.apple.com',
@@ -89,6 +101,7 @@ export const APNS_HOSTS = {
 } as const
 
 const JWT_TTL_MS = 50 * 60 * 1000
+const IMAGE_URL_MAX = 500
 const BODY_MAX = 200
 const TITLE_MAX = 100
 const REQUEST_TIMEOUT_MS = 10_000
@@ -156,6 +169,16 @@ function compactDecision(decision: PushDecision): Record<string, unknown> | null
 	}
 }
 
+/** Only https URLs of sane length travel; the extension refuses anything else anyway. */
+function safeImageUrl(url: string | null | undefined): string | null {
+	if (!url || url.length > IMAGE_URL_MAX) return null
+	try {
+		return new URL(url).protocol === 'https:' ? url : null
+	} catch {
+		return null
+	}
+}
+
 const byteLength = (payload: unknown) => Buffer.byteLength(JSON.stringify(payload), 'utf8')
 
 export function buildApnsPayload(msg: PushMessage): Record<string, unknown> {
@@ -165,6 +188,12 @@ export function buildApnsPayload(msg: PushMessage): Record<string, unknown> {
 			? `object:${msg.objectId}`
 			: `workspace:${msg.workspaceId}`
 	const decision = msg.decision ? compactDecision(msg.decision) : null
+	const interruption = msg.interruption ?? (decision ? 'time-sensitive' : 'active')
+	const badge =
+		typeof msg.badge === 'number' && Number.isSafeInteger(msg.badge) && msg.badge >= 0
+			? msg.badge
+			: undefined
+	const imageUrl = safeImageUrl(msg.imageUrl)
 	const build = (bodyMax: number, withDecision: boolean): Record<string, unknown> => ({
 		aps: {
 			alert: {
@@ -173,12 +202,15 @@ export function buildApnsPayload(msg: PushMessage): Record<string, unknown> {
 			},
 			'thread-id': threadId,
 			'mutable-content': 1,
-			sound: 'default',
+			...(interruption === 'passive' ? {} : { sound: 'default' }),
+			'interruption-level': interruption,
+			...(badge !== undefined ? { badge } : {}),
 			...(withDecision && decision ? { category: DECISION_CATEGORY } : {}),
 		},
 		deep_link: deepLinkFor(msg),
 		notification_id: msg.notificationId,
 		workspace_id: msg.workspaceId,
+		...(imageUrl ? { image_url: imageUrl } : {}),
 		...(withDecision && decision ? { decision } : {}),
 	})
 	// Multi-byte text can push even a capped payload over the limit: shrink the body, and as a
@@ -311,7 +343,7 @@ export class ApnsSender {
 								authorization,
 								'apns-topic': config.bundleId,
 								'apns-push-type': 'alert',
-								'apns-priority': '10',
+								'apns-priority': msg.interruption === 'passive' ? '5' : '10',
 								'apns-collapse-id': msg.notificationId.slice(0, 64),
 								'content-type': 'application/json',
 							},

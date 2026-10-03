@@ -44,6 +44,28 @@ describe('NotificationPushFanout', () => {
 		)
 	})
 
+	it('marks a needs_input push time-sensitive and carries the pending count as badge', async () => {
+		const { fanout, sender } = setup([], true, [
+			[notif({ type: 'needs_input' })],
+			[],
+			[{ value: 4 }],
+		])
+		await fanout.handleEvent(event)
+		expect(sender.sendToActor).toHaveBeenCalledWith(
+			'human',
+			expect.objectContaining({ interruption: 'time-sensitive', badge: 4 }),
+		)
+	})
+
+	it('sends an active push with no badge when the count is unavailable', async () => {
+		const { fanout, sender } = setup([], true, [[notif()], []])
+		await fanout.handleEvent(event)
+		expect(sender.sendToActor).toHaveBeenCalledWith(
+			'human',
+			expect.objectContaining({ interruption: 'active', badge: null }),
+		)
+	})
+
 	it('skips untargeted and self-targeted notifications', async () => {
 		for (const over of [{ targetActorId: null }, { targetActorId: 'agent' }]) {
 			const { fanout, sender } = setup([notif(over)])

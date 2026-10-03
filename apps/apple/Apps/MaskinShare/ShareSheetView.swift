@@ -17,7 +17,6 @@ struct ShareSheetView: View {
 	var body: some View {
 		VStack(spacing: 0) {
 			header
-			Divider().overlay(MaskinSurface.separator)
 			switch model.phase {
 			case .loading:
 				ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -25,6 +24,8 @@ struct ShareSheetView: View {
 				blocked(error)
 			case .posted:
 				posted
+			case .queued:
+				queued
 			case .ready, .posting, .failed:
 				form
 			}
@@ -32,160 +33,194 @@ struct ShareSheetView: View {
 		.background(MaskinSurface.grouped.ignoresSafeArea())
 		.task { await model.start() }
 		.onChange(of: model.phase) { _, phase in
-			if case .posted = phase { MaskinHaptics.play(.success) }
-			if case .failed = phase { MaskinHaptics.play(.error) }
+			switch phase {
+			case .posted, .queued: MaskinHaptics.play(.success)
+			case .failed: MaskinHaptics.play(.error)
+			default: break
+			}
 		}
 	}
 
 	// MARK: Header
 
+	/// Just the way out: the sheet is a composer, not a form, so there is no title bar to read.
 	private var header: some View {
-		HStack(spacing: MaskinSpace.s5) {
-			Text("M")
-				.font(MaskinTypeface.sans(MaskinFontSize.t13, weight: .bold))
-				.foregroundStyle(MaskinSurface.onInverse)
-				.frame(width: 30, height: 30)
-				.background(MaskinSurface.inverse, in: RoundedRectangle(cornerRadius: MaskinRadius.cardLg, style: .continuous))
-				.accessibilityHidden(true)
-			Text("Send to Maskin")
+		HStack {
+			Button(isDone ? "Done" : "Cancel", action: onClose)
 				.maskinText(.headline)
-				.foregroundStyle(MaskinColor.ink)
-				.accessibilityAddTraits(.isHeader)
-			Spacer(minLength: MaskinSpace.s4)
-			Button(isPosted ? "Done" : "Cancel", action: onClose)
-				.maskinText(.headline)
-				.foregroundStyle(MaskinColor.accent)
+				.foregroundStyle(MaskinColor.ink3)
 				.frame(minHeight: MaskinSpace.touchMin)
 				.disabled(isPosting)
+			Spacer(minLength: MaskinSpace.s4)
 		}
 		.padding(.horizontal, MaskinSpace.s10)
-		.padding(.top, MaskinSpace.s4)
+		.padding(.top, MaskinSpace.s2)
 	}
 
 	private var isPosting: Bool { if case .posting = model.phase { true } else { false } }
-	private var isPosted: Bool { if case .posted = model.phase { true } else { false } }
+	private var isDone: Bool {
+		switch model.phase {
+		case .posted, .queued: true
+		default: false
+		}
+	}
 
-	// MARK: Form
+	// MARK: Composer
 
 	private var form: some View {
-		VStack(spacing: 0) {
+		VStack(spacing: MaskinSpace.s6) {
 			ScrollView {
-				VStack(alignment: .leading, spacing: MaskinSpace.s8) {
-					SharePreviewCard(content: model.content)
-					if model.showsTitleField { titleField }
-					destinationPicker
-					workspaceRow
-					noteField
+				VStack(alignment: .leading, spacing: MaskinSpace.s6) {
+					composer
 					ForEach(model.content.skipped.indices, id: \.self) { index in
 						Label(model.content.skipped[index].message, systemImage: "exclamationmark.circle")
 							.maskinText(.caption)
 							.foregroundStyle(MaskinColor.ink4)
+							.padding(.horizontal, MaskinSpace.s4)
+					}
+					if case .failed(let error) = model.phase {
+						FormError(error.message).frame(maxWidth: .infinity, alignment: .leading)
 					}
 				}
-				.padding(MaskinSpace.s10)
+				.padding(.horizontal, MaskinSpace.s10)
 			}
 			.scrollDismissesKeyboard(.interactively)
-			footer
+		}
+		.padding(.bottom, MaskinSpace.s6)
+	}
+
+	/// One big rounded surface holding everything: what is shared, the note, and a toolbar row
+	/// with where it goes and the send button.
+	private var composer: some View {
+		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
+			SharePreviewCard(content: model.content)
+			if model.showsTitleField {
+				TextField("Title", text: $model.title, axis: .vertical)
+					.lineLimit(1...3)
+					.maskinText(.headline)
+					.foregroundStyle(MaskinColor.ink)
+					.accessibilityLabel("Title")
+					.disabled(isPosting)
+			}
+			TextField(model.isChat ? "Add a message" : "Add a note: what you want done with this", text: $model.note, axis: .vertical)
+				.lineLimit(3...8)
+				.focused($noteFocused)
+				.maskinText(.body)
+				.foregroundStyle(MaskinColor.ink)
+				.frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
+				.accessibilityLabel(model.isChat ? "Message" : "Note")
+				.disabled(isPosting)
+			toolbar
+		}
+		.padding(MaskinSpace.s9)
+		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+		.overlay(
+			RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous)
+				.strokeBorder(MaskinSurface.line, lineWidth: 1))
+	}
+
+	private var toolbar: some View {
+		HStack(spacing: MaskinSpace.s4) {
+			destinationMenu
+			workspaceMenu
+			Spacer(minLength: MaskinSpace.s4)
+			sendButton
 		}
 	}
 
-	private var titleField: some View {
-		TextField("Title", text: $model.title, axis: .vertical)
-			.lineLimit(1...3)
-			.maskinText(.body)
-			.foregroundStyle(MaskinColor.ink)
-			.padding(MaskinSpace.s9)
-			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
-			.accessibilityLabel("Title")
-			.disabled(isPosting)
+	private func pill(_ title: String, systemImage: String) -> some View {
+		HStack(spacing: MaskinSpace.s2) {
+			Image(systemName: systemImage).imageScale(.small)
+			Text(title).lineLimit(1)
+			Image(systemName: "chevron.up.chevron.down").imageScale(.small).foregroundStyle(MaskinColor.ink4)
+		}
+		.maskinText(.subhead)
+		.fontWeight(.semibold)
+		.foregroundStyle(MaskinColor.ink2)
+		.padding(.horizontal, MaskinSpace.s7)
+		.frame(minHeight: MaskinSpace.touchMin)
+		.background(MaskinSurface.cardInset2, in: Capsule())
+		.contentShape(Capsule())
 	}
 
-	private var destinationPicker: some View {
-		VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-			MonoLabel("Save as")
-			ScrollView(.horizontal, showsIndicators: false) {
-				HStack(spacing: MaskinSpace.s4) {
-					ForEach(model.typeOptions, id: \.self) { option in
-						let selected = option == model.destination
-						Button {
-							model.destination = option
-							MaskinHaptics.play(.selection)
-						} label: {
-							Text(model.label(for: option))
-								.maskinText(.subhead)
-								.fontWeight(.semibold)
-								.foregroundStyle(selected ? MaskinSurface.onInverse : MaskinColor.ink)
-								.padding(.horizontal, MaskinSpace.s9)
-								.frame(minHeight: MaskinSpace.touchMin)
-								.background(
-									selected ? MaskinSurface.inverse : MaskinSurface.card,
-									in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
-						}
-						.buttonStyle(.plain)
-						.accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
-						.disabled(isPosting)
+	private var destinationMenu: some View {
+		Menu {
+			Section("Save as") {
+				ForEach(model.typeOptions.filter { !isChat($0) }, id: \.self) { option in
+					Button(model.label(for: option)) { select(option) }
+				}
+			}
+			if !model.conversations.isEmpty {
+				Section("Send to chat") {
+					ForEach(model.conversations) { conversation in
+						Button(conversation.title) { select(.chat(id: conversation.id)) }
 					}
 				}
 			}
-			.scrollClipDisabled()
+		} label: {
+			pill(model.label(for: model.destination), systemImage: model.isChat ? "bubble.left" : "square.and.pencil")
 		}
+		.disabled(isPosting)
+		.accessibilityLabel("Destination: \(model.label(for: model.destination))")
 	}
 
-	@ViewBuilder private var workspaceRow: some View {
-		if let name = model.workspace?.name {
-			HStack {
-				Text("Workspace").maskinText(.body).foregroundStyle(MaskinColor.ink)
-				Spacer(minLength: MaskinSpace.s4)
-				Text(name).maskinText(.body).foregroundStyle(MaskinColor.ink4).lineLimit(1)
-			}
-			.padding(.horizontal, MaskinSpace.s9)
-			.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s3)
-			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
-			.accessibilityElement(children: .combine)
-		}
-	}
-
-	private var noteField: some View {
-		TextField("Add a note: what you want done with this", text: $model.note, axis: .vertical)
-			.lineLimit(3...6)
-			.focused($noteFocused)
-			.maskinText(.body)
-			.foregroundStyle(MaskinColor.ink)
-			.padding(MaskinSpace.s9)
-			.frame(maxWidth: .infinity, minHeight: 88, alignment: .topLeading)
-			.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
-			.accessibilityLabel("Note")
-			.disabled(isPosting)
-	}
-
-	// MARK: Footer
-
-	private var footer: some View {
-		VStack(spacing: MaskinSpace.s5) {
-			if case .failed(let error) = model.phase {
-				FormError(error.message)
-					.frame(maxWidth: .infinity, alignment: .leading)
-			}
-			Button {
-				noteFocused = false
-				Task { await model.post() }
+	@ViewBuilder private var workspaceMenu: some View {
+		if model.workspaces.count > 1, let name = model.workspace?.name {
+			Menu {
+				ForEach(model.workspaces, id: \.id) { workspace in
+					Button {
+						Task { await model.selectWorkspace(workspace.id) }
+					} label: {
+						if workspace.id == model.activeWorkspaceId {
+							Label(workspace.name, systemImage: "checkmark")
+						} else {
+							Text(workspace.name)
+						}
+					}
+				}
 			} label: {
-				HStack(spacing: MaskinSpace.s4) {
-					if isPosting { ProgressView().tint(MaskinSurface.onInverse) }
-					Text(actionTitle)
+				pill(name, systemImage: "square.grid.2x2")
+			}
+			.disabled(isPosting)
+			.accessibilityLabel("Workspace: \(name)")
+		} else if let name = model.workspace?.name {
+			Text(name)
+				.maskinText(.subhead)
+				.foregroundStyle(MaskinColor.ink4)
+				.lineLimit(1)
+		}
+	}
+
+	/// The round send arrow. Disabled and spinner-bearing while a post is in flight; the failed
+	/// state keeps it enabled so it doubles as Try again.
+	private var sendButton: some View {
+		Button {
+			noteFocused = false
+			Task { await model.post() }
+		} label: {
+			ZStack {
+				if isPosting {
+					ProgressView().tint(MaskinSurface.onInverse)
+				} else {
+					Image(systemName: failedRetry ? "arrow.clockwise" : "arrow.up")
+						.font(.system(size: 17, weight: .bold))
+						.foregroundStyle(MaskinSurface.onInverse)
 				}
 			}
-			.buttonStyle(.primaryAction)
-			.disabled(!model.canPost)
-			.accessibilityHint(isPosting ? "Sending" : "")
+			.frame(width: 44, height: 44)
+			.background(MaskinSurface.inverse, in: Circle())
+			.opacity(model.canPost || isPosting ? 1 : 0.4)
 		}
-		.padding(.horizontal, MaskinSpace.s10)
-		.padding(.top, MaskinSpace.s5)
-		.padding(.bottom, MaskinSpace.s9)
-		.background(MaskinSurface.grouped)
+		.buttonStyle(.plain)
+		.disabled(!model.canPost)
+		.accessibilityLabel(sendLabel)
 	}
 
-	private var actionTitle: String {
+	private var failedRetry: Bool {
+		if case .failed(let error) = model.phase { error.isRetryable } else { false }
+	}
+
+	private var sendLabel: String {
 		switch model.phase {
 		case .posting(let step):
 			if case .uploading(let index, let total)? = step, total > 1 { return "Uploading \(index) of \(total)" }
@@ -193,6 +228,15 @@ struct ShareSheetView: View {
 		case .failed(let error): return error.isRetryable ? "Try again" : "Send to Maskin"
 		default: return "Send to Maskin"
 		}
+	}
+
+	private func isChat(_ destination: ShareDestination) -> Bool {
+		if case .chat = destination { true } else { false }
+	}
+
+	private func select(_ destination: ShareDestination) {
+		model.destination = destination
+		MaskinHaptics.play(.selection)
 	}
 
 	// MARK: Terminal states
@@ -222,6 +266,28 @@ struct ShareSheetView: View {
 			.padding(.bottom, MaskinSpace.s9)
 		}
 		.accessibilityElement(children: .contain)
+	}
+
+	private var queued: some View {
+		VStack(spacing: MaskinSpace.s11) {
+			Spacer()
+			Image(systemName: "clock.arrow.circlepath")
+				.font(.system(size: 56))
+				.foregroundStyle(MaskinColor.ink3)
+				.accessibilityHidden(true)
+			VStack(spacing: MaskinSpace.s3) {
+				Text("Saved for later").maskinText(.title).foregroundStyle(MaskinColor.ink)
+				Text("Maskin will send it next time you open the app with a connection.")
+					.maskinText(.body).foregroundStyle(MaskinColor.ink4)
+			}
+			.multilineTextAlignment(.center)
+			.padding(.horizontal, MaskinSpace.s12)
+			Spacer()
+			Button("Done", action: onClose)
+				.buttonStyle(.primaryAction)
+				.padding(.horizontal, MaskinSpace.s10)
+				.padding(.bottom, MaskinSpace.s9)
+		}
 	}
 
 	private func blocked(_ error: ShareError) -> some View {
@@ -258,7 +324,7 @@ struct SharePreviewCard: View {
 	var body: some View {
 		HStack(alignment: .top, spacing: MaskinSpace.s8) {
 			if let image = content.attachments.first(where: { $0.kind == .image }) {
-				ShareThumbnail(url: image.fileURL).frame(width: 64, height: 64)
+				ShareThumbnail(url: image.fileURL).frame(width: 52, height: 52)
 			}
 			VStack(alignment: .leading, spacing: MaskinSpace.s3) {
 				MonoLabel(kindLabel)
@@ -275,12 +341,9 @@ struct SharePreviewCard: View {
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
 		}
-		.padding(MaskinSpace.s9)
-		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
-		.overlay(
-			RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous)
-				.strokeBorder(MaskinSurface.line, lineWidth: 1)
-		)
+		.padding(MaskinSpace.s7)
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.background(MaskinSurface.cardInset2, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
 		.accessibilityElement(children: .combine)
 	}
 

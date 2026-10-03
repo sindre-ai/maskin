@@ -77,6 +77,14 @@ struct ShareFakeSource: ShareItemSource {
 	}
 }
 
+/// Lets tests write `.link("…")` where a `[any ShareItemSource]` is expected.
+extension ShareItemSource where Self == ShareFakeSource {
+	static func link(_ string: String) -> ShareFakeSource { ShareFakeSource.link(string) }
+	static func text(_ string: String) -> ShareFakeSource { ShareFakeSource.text(string) }
+	static func image(_ file: URL, name: String? = nil) -> ShareFakeSource { ShareFakeSource.image(file, name: name) }
+	static func pdf(_ file: URL, name: String? = nil) -> ShareFakeSource { ShareFakeSource.pdf(file, name: name) }
+}
+
 /// Records calls; failures are scripted per operation and consumed once.
 final class FakeShareRemote: ShareRemote, @unchecked Sendable {
 	enum Call: Equatable {
@@ -84,6 +92,7 @@ final class FakeShareRemote: ShareRemote, @unchecked Sendable {
 		case createObject(type: String, title: String, content: String, status: String, key: String)
 		case upload(name: String, mime: String, key: String)
 		case attach(file: String, object: String, objectType: String, key: String)
+		case chat(conversation: String, content: String, files: [String], key: String)
 	}
 
 	private let lock = NSLock()
@@ -91,6 +100,11 @@ final class FakeShareRemote: ShareRemote, @unchecked Sendable {
 	var calls: [Call] { lock.withLock { _calls } }
 	var workspaceResult: Result<ShareWorkspace, ShareError> = .success(
 		ShareWorkspace(id: "ws-1", name: "Mesh Firm", schema: .fallback))
+	var workspacesResult: [ShareWorkspace] = [
+		ShareWorkspace(id: "ws-1", name: "Mesh Firm", schema: .fallback),
+		ShareWorkspace(id: "ws-2", name: "Side Project", schema: .fallback),
+	]
+	var conversationsResult: [ShareConversation] = [ShareConversation(id: "c-1", title: "Launch plan")]
 	/// Errors thrown by the next N calls of each kind.
 	private var failures: [String: [ShareError]] = [:]
 	private var counter = 0
@@ -120,6 +134,16 @@ final class FakeShareRemote: ShareRemote, @unchecked Sendable {
 	func workspace() async throws -> ShareWorkspace {
 		try record(.workspace, op: "workspace")
 		return try workspaceResult.get()
+	}
+
+	func workspaces() async throws -> [ShareWorkspace] { workspacesResult }
+	func conversations() async throws -> [ShareConversation] { conversationsResult }
+	func sendChatMessage(
+		conversationID: String, content: String, attachments: [ChatAttachmentRef], idempotencyKey: String
+	) async throws {
+		try record(
+			.chat(conversation: conversationID, content: content, files: attachments.map(\.fileID), key: idempotencyKey),
+			op: "chat")
 	}
 
 	func createObject(

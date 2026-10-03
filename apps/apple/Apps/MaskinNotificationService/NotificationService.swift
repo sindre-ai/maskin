@@ -1,6 +1,6 @@
 import UserNotifications
 
-/// Turns a decision push into one the user can answer from the banner or lock screen.
+/// Makes a push richer than the one APNs delivered: decision buttons and an image.
 ///
 /// iOS only lets an app register notification categories (the action button sets) AHEAD of time,
 /// but a decision's buttons are the agent's own option labels and differ per notification. So the
@@ -9,34 +9,96 @@ import UserNotifications
 /// notification at it before iOS shows anything. The app handles the tap
 /// (`PushAppDelegate`, which hands it to `NotificationActionHandler`).
 ///
-/// Anything that is not an actionable decision passes through untouched, and every failure path
-/// still delivers the original notification: this extension must never swallow a push.
+/// It also attaches the push's `image_url` (https, size-capped, short timeout) so a banner can
+/// show a picture. Grouping (`thread-id`), Focus behaviour (`interruption-level`) and the badge
+/// come straight from `aps`; iOS applies them, nothing here needs to.
 ///
-/// `PushDecision.swift` is compiled into this target directly (project.yml), which keeps the
-/// extension to Foundation + UserNotifications and well inside its memory limit.
+/// A push with neither a decision nor an image passes through untouched, and every failure path
+/// (bad payload, failed download, the ~30 s budget running out) still delivers the notification
+/// with whatever was ready: this extension must never swallow a push.
+///
+/// `PushDecision.swift` and `PushRichContent.swift` are compiled into this target directly
+/// (project.yml), which keeps the extension to Foundation + UserNotifications and well inside its
+/// memory limit.
 final class NotificationService: UNNotificationServiceExtension, @unchecked Sendable {
+	private let lock = NSLock()
 	private var contentHandler: ((UNNotificationContent) -> Void)?
-	private var original: UNNotificationContent?
+	/// What gets delivered if time runs out: the original, improved step by step.
+	private var bestAttempt: UNNotificationContent?
+	private var session: URLSession?
 
 	override func didReceive(
 		_ request: UNNotificationRequest,
 		withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
 	) {
-		self.contentHandler = contentHandler
-		original = request.content
-		guard let content = request.content.mutableCopy() as? UNMutableNotificationContent,
-			let payload = PushDecisionPayload(userInfo: content.userInfo)
-		else {
-			contentHandler(request.content)
+		lock.withLock {
+			self.contentHandler = contentHandler
+			bestAttempt = request.content
+		}
+		guard let content = request.content.mutableCopy() as? UNMutableNotificationContent else {
+			finish(request.content)
+			return
+		}
+		let userInfo = content.userInfo
+		let plan = PushDecisionPayload(userInfo: userInfo).map(NotificationActionPlan.init)
+		let imageURL = PushImage.url(from: userInfo)
+		guard plan != nil || imageURL != nil else {
+			finish(request.content)
 			return
 		}
 
-		let plan = NotificationActionPlan(payload)
-		let category = Self.category(for: plan)
-		content.categoryIdentifier = plan.categoryIdentifier
+		// The category is set synchronously, so a timeout still delivers the buttons' category
+		// even if the image is late.
+		if let plan { content.categoryIdentifier = plan.categoryIdentifier }
+		lock.withLock { bestAttempt = content }
 
+		// The closures below run on other queues but never overlap on `content`: the image
+		// callback writes it before leaving the group, `finish` reads it after the group is empty.
+		nonisolated(unsafe) let shared = content
+
+		// Work that can overlap: registering the buttons and downloading the picture.
+		let group = DispatchGroup()
+		if let plan {
+			group.enter()
+			registerCategory(for: plan) { group.leave() }
+		}
+		if let imageURL {
+			group.enter()
+			downloadAttachment(imageURL) { attachment in
+				if let attachment {
+					shared.attachments = [attachment]
+				}
+				group.leave()
+			}
+		}
+		// Whatever finished is delivered; a step that failed just contributes nothing.
+		group.notify(queue: .global()) { [weak self] in self?.finish(shared) }
+	}
+
+	/// About to be killed: deliver the best notification built so far (the buttons' category is
+	/// already set; a half-downloaded image is simply left out) rather than lose the push.
+	override func serviceExtensionTimeWillExpire() {
+		let (content, session) = lock.withLock { (bestAttempt, self.session) }
+		session?.invalidateAndCancel()
+		if let content { finish(content) }
+	}
+
+	/// Delivers once; a later call (a timeout racing normal completion) is ignored.
+	private func finish(_ content: UNNotificationContent) {
+		let handler = lock.withLock {
+			let handler = contentHandler
+			contentHandler = nil
+			return handler
+		}
+		handler?(content)
+	}
+
+	private func registerCategory(
+		for plan: NotificationActionPlan, done: @escaping @Sendable () -> Void
+	) {
+		let category = Self.category(for: plan)
 		let center = UNUserNotificationCenter.current()
-		center.getDeliveredNotifications { [weak self] delivered in
+		center.getDeliveredNotifications { delivered in
 			center.getNotificationCategories { existing in
 				// `setNotificationCategories` REPLACES the whole set, so merge: keep every fixed
 				// category the app registered, and only the dynamic ones whose notification is
@@ -50,22 +112,39 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
 				center.setNotificationCategories(merged)
 				// Read the set back: that round trip is what guarantees the registration landed
 				// before iOS renders the notification and looks its category up.
-				center.getNotificationCategories { _ in
-					self?.finish(content)
-				}
+				center.getNotificationCategories { _ in done() }
 			}
 		}
 	}
 
-	/// About to be killed: deliver as it arrived, with the static fallback category from the
-	/// payload's `aps.category` (a Reply field), rather than lose the notification.
-	override func serviceExtensionTimeWillExpire() {
-		if let original { finish(original) }
-	}
-
-	private func finish(_ content: UNNotificationContent) {
-		contentHandler?(content)
-		contentHandler = nil
+	/// Downloads the image to a temp file iOS can take ownership of. Every failure is `nil`.
+	private func downloadAttachment(
+		_ url: URL, completion: @escaping @Sendable (UNNotificationAttachment?) -> Void
+	) {
+		let configuration = URLSessionConfiguration.ephemeral
+		configuration.timeoutIntervalForRequest = PushImage.timeout
+		configuration.timeoutIntervalForResource = PushImage.timeout * 2
+		let session = URLSession(configuration: configuration)
+		lock.withLock { self.session = session }
+		session.downloadTask(with: url) { location, response, _ in
+			defer { session.finishTasksAndInvalidate() }
+			guard let location, let http = response as? HTTPURLResponse, http.statusCode == 200,
+				let ext = PushImage.fileExtension(
+					forMIMEType: http.value(forHTTPHeaderField: "Content-Type")),
+				let size = (try? FileManager.default.attributesOfItem(atPath: location.path))?[.size]
+					as? Int64,
+				PushImage.isWithinBudget(size)
+			else { return completion(nil) }
+			// The system moves an attachment's file, and it must carry the right extension.
+			let target = FileManager.default.temporaryDirectory
+				.appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)
+			do {
+				try FileManager.default.moveItem(at: location, to: target)
+				completion(try UNNotificationAttachment(identifier: "image", url: target))
+			} catch {
+				completion(nil)
+			}
+		}.resume()
 	}
 
 	static func category(for plan: NotificationActionPlan) -> UNNotificationCategory {

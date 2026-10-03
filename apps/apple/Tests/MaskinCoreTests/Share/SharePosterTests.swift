@@ -29,6 +29,7 @@ struct SharePosterTests {
 			case .upload: "upload"
 			case .attach: "attach"
 			case .workspace: "workspace"
+			case .chat: "chat"
 			}
 		}
 		#expect(kinds == ["object", "upload", "attach", "upload", "attach"])
@@ -48,7 +49,7 @@ struct SharePosterTests {
 		for call in remote.calls {
 			switch call {
 			case .createObject(_, _, _, _, let k), .upload(_, _, let k), .attach(_, _, _, let k): keys.append(k)
-			case .workspace: break
+			case .workspace, .chat: break
 			}
 		}
 		#expect(keys == ["base-object", "base-file-\(a.id.uuidString)", "base-attach-\(a.id.uuidString)"])

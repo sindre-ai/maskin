@@ -18,6 +18,10 @@ public enum ShareError: Error, Equatable, Sendable {
 	case rejected
 	case fileRejected(name: String)
 	case server
+	/// The offline queue holds as many shares as it may.
+	case queueFull
+	/// The offline queue can't be written (no App Group, disk full).
+	case queueUnavailable
 	case unknown
 
 	public var message: String {
@@ -31,6 +35,8 @@ public enum ShareError: Error, Equatable, Sendable {
 		case .rejected: "Maskin couldn't accept this. Check the title and try again."
 		case .fileRejected(let name): "Maskin couldn't accept \(name)."
 		case .server: "Maskin had a problem on its side. Try again in a moment."
+		case .queueFull: "Too many shares are waiting to send. Open Maskin while online, then share again."
+		case .queueUnavailable: "You're offline and this share couldn't be saved for later."
 		case .unknown: "Something went wrong. Try again."
 		}
 	}
@@ -38,8 +44,19 @@ public enum ShareError: Error, Equatable, Sendable {
 	/// Whether Retry can help. Signed-out and nothing-to-share need the user to act elsewhere.
 	public var isRetryable: Bool {
 		switch self {
-		case .offline, .server, .unknown, .rejected, .fileRejected, .sessionUnreadable: true
-		case .signedOut, .noWorkspace, .sessionExpired, .nothingToShare: false
+		case .offline, .server, .unknown, .rejected, .fileRejected, .sessionUnreadable,
+			.queueUnavailable:
+			true
+		case .signedOut, .noWorkspace, .sessionExpired, .nothingToShare, .queueFull: false
+		}
+	}
+
+	/// A failure a later try (the queue draining) can get past: connectivity or the server, as
+	/// opposed to a refusal of the content itself.
+	public var isTransient: Bool {
+		switch self {
+		case .offline, .server, .sessionUnreadable: true
+		default: false
 		}
 	}
 

@@ -231,6 +231,7 @@ targets:
         excludes:
           - Info.plist
       - path: Sources/MaskinCore/Push/PushDecision.swift
+      - path: Sources/MaskinCore/Push/PushRichContent.swift
     info:
       path: Apps/MaskinNotificationService/Info.plist
       properties:

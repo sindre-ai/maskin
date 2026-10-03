@@ -10,21 +10,37 @@ public actor SharePoster {
 		public var objectID: String?
 		public var fileIDs: [UUID: String] = [:]
 		public var attached: Set<UUID> = []
+		public var messageSent = false
 	}
 
 	public enum Step: Sendable, Equatable {
 		case creatingObject
+		case sendingMessage
 		case uploading(index: Int, of: Int)
 	}
 
 	public struct Outcome: Sendable, Equatable {
 		public var objectID: String?
 		public var objectType: String?
+		public var conversationID: String?
 		public var fileIDs: [String]
+
+		public init(
+			objectID: String? = nil, objectType: String? = nil, conversationID: String? = nil,
+			fileIDs: [String] = []
+		) {
+			self.objectID = objectID
+			self.objectType = objectType
+			self.conversationID = conversationID
+			self.fileIDs = fileIDs
+		}
 	}
 
 	private let remote: any ShareRemote
 	private let base: String
+	/// The stable base of every Idempotency-Key this share sends. A queued share keeps it, so
+	/// the app finishing the job later can never duplicate what the extension already created.
+	public nonisolated var idempotencyBase: String { base }
 	public private(set) var progress = Progress()
 
 	public init(remote: any ShareRemote, idempotencyBase: String = IdempotencyKey.make()) {
@@ -56,13 +72,32 @@ public actor SharePoster {
 				}
 			}
 			return Outcome(objectID: objectID, objectType: type, fileIDs: attachments.compactMap { progress.fileIDs[$0.id] })
+		case .chat(let conversationID):
+			var refs: [ChatAttachmentRef] = []
+			for (index, attachment) in attachments.enumerated() {
+				onStep(.uploading(index: index + 1, of: attachments.count))
+				let fileID = try await upload(attachment)
+				refs.append(
+					ChatAttachmentRef(
+						fileID: fileID, name: attachment.name, mimeType: attachment.mimeType,
+						sizeBytes: attachment.sizeBytes))
+			}
+			if !progress.messageSent {
+				onStep(.sendingMessage)
+				try await remote.sendChatMessage(
+					conversationID: conversationID,
+					content: ShareComposer.chatMessage(note: request.note, content: request.content),
+					attachments: refs, idempotencyKey: "\(base)-message")
+				progress.messageSent = true
+			}
+			return Outcome(conversationID: conversationID, fileIDs: refs.map(\.fileID))
 		case .filesOnly:
 			guard !attachments.isEmpty else { throw ShareError.nothingToShare }
 			for (index, attachment) in attachments.enumerated() {
 				onStep(.uploading(index: index + 1, of: attachments.count))
 				_ = try await upload(attachment)
 			}
-			return Outcome(objectID: nil, objectType: nil, fileIDs: attachments.compactMap { progress.fileIDs[$0.id] })
+			return Outcome(fileIDs: attachments.compactMap { progress.fileIDs[$0.id] })
 		}
 	}
 

@@ -15,11 +15,30 @@ public struct ShareWorkspace: Sendable, Equatable {
 	}
 }
 
+/// A conversation the share can be sent into.
+public struct ShareConversation: Sendable, Equatable, Identifiable {
+	public var id: String
+	public var title: String
+	public init(id: String, title: String) {
+		self.id = id
+		self.title = title
+	}
+}
+
 /// What the share needs from the server. A protocol so posting is tested without one; the
 /// production implementation wraps the generated client.
 public protocol ShareRemote: Sendable {
 	/// `GET /api/workspaces`, narrowed to the signed-in workspace.
 	func workspace() async throws -> ShareWorkspace
+	/// `GET /api/workspaces`: every workspace the person is in (for the picker). Schemas are not
+	/// loaded here; `workspace()` fetches the chosen one's.
+	func workspaces() async throws -> [ShareWorkspace]
+	/// Recent, unarchived conversations of the workspace, newest first.
+	func conversations() async throws -> [ShareConversation]
+	/// `POST /api/conversations/{id}/messages`.
+	func sendChatMessage(
+		conversationID: String, content: String, attachments: [ChatAttachmentRef], idempotencyKey: String
+	) async throws
 	/// `POST /api/objects`; returns the new object's id.
 	func createObject(
 		type: String, title: String, content: String, status: String, idempotencyKey: String
@@ -28,6 +47,14 @@ public protocol ShareRemote: Sendable {
 	func uploadFile(name: String, mimeType: String, fileURL: URL, idempotencyKey: String) async throws -> String
 	/// `POST /api/relationships`: the `attached` edge the web app writes for an object's files.
 	func attach(fileID: String, toObject objectID: String, objectType: String, idempotencyKey: String) async throws
+}
+
+extension ShareRemote {
+	public func workspaces() async throws -> [ShareWorkspace] { try await [workspace()] }
+	public func conversations() async throws -> [ShareConversation] { [] }
+	public func sendChatMessage(
+		conversationID: String, content: String, attachments: [ChatAttachmentRef], idempotencyKey: String
+	) async throws { throw ShareError.rejected }
 }
 
 /// Production `ShareRemote`. Nothing it throws carries a body, a token or shared content.
@@ -54,6 +81,38 @@ public struct APIShareRemote: ShareRemote {
 				return ShareWorkspace(id: row.id, name: row.name, schema: schema)
 			case .undocumented(let status, _): throw Self.failure(status: status)
 			}
+		} catch { throw Self.map(error) }
+	}
+
+	public func workspaces() async throws -> [ShareWorkspace] {
+		do {
+			let output = try await client.get_sol_api_sol_workspaces()
+			switch output {
+			case .ok(let ok):
+				let rows = try APIObjectsRemote.convert(ok.body.json, as: [ShareWorkspaceDTO].self)
+				return rows.map { ShareWorkspace(id: $0.id, name: $0.name, schema: .fallback) }
+			case .undocumented(let status, _): throw Self.failure(status: status)
+			}
+		} catch { throw Self.map(error) }
+	}
+
+	public func conversations() async throws -> [ShareConversation] {
+		do {
+			let page = try await APIChatsSource(client: client, workspaceID: workspaceID)
+				.list(archived: false, limit: 25, offset: 0)
+			return page.conversations.map { ShareConversation(id: $0.id, title: $0.title) }
+		} catch { throw Self.map(error) }
+	}
+
+	public func sendChatMessage(
+		conversationID: String, content: String, attachments: [ChatAttachmentRef], idempotencyKey: String
+	) async throws {
+		do {
+			_ = try await APIChatsSource(client: client, workspaceID: workspaceID).send(
+				conversationID: conversationID, content: content,
+				metadata: ChatSendMetadata(attachments: attachments), idempotencyKey: idempotencyKey)
+		} catch let error as ChatsHTTPError {
+			throw Self.failure(status: error.status)
 		} catch { throw Self.map(error) }
 	}
 

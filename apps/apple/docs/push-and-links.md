@@ -23,6 +23,25 @@ watchOS and tvOS have no push/URL entitlements here: the backend's single APNs t
 3. Create an APNs auth key (.p8) and give the backend its key id, team id, topic (`io.maskin.app`) and key (see `apps/dev/src/services/apns.ts` env vars).
 4. Host the AASA file below. Personal (free) teams cannot use Push or Associated Domains, so a device build with a personal team will fail to sign.
 
+## Rich pushes (notification service extension)
+`apps/dev/src/services/apns.ts` (`buildApnsPayload`) is the one place that writes the payload; `Apps/MaskinNotificationService` reads exactly these keys.
+
+| Key | Meaning | Who acts on it |
+|---|---|---|
+| `aps.mutable-content: 1` | every push passes through the extension | iOS |
+| `aps.thread-id` | `chat:<id>` / `object:<id>` / `workspace:<id>` grouping | iOS |
+| `aps.interruption-level` | `time-sensitive` for decisions and `needs_input`, `active` otherwise, `passive` (no sound, apns-priority 5) when asked | iOS |
+| `aps.badge` | the actor's pending notifications (the app overwrites it with its own unread count when it runs) | iOS |
+| `aps.category` + root `decision` | decision buttons (the agent's option labels) plus Reply | extension builds a per-notification category |
+| root `image_url` | https image (<= 5 MB, 12 s timeout) attached to the banner. No producer yet: `PushMessage.imageUrl` exists, nothing sets it | extension |
+
+Failure behaviour: a bad payload, a failed or slow download, or the ~30 s budget expiring all still deliver the notification with whatever was ready (the decision category is set synchronously, the image is best effort).
+Time-sensitive delivery needs the `com.apple.developer.usernotifications.time-sensitive` entitlement on the app (enable the capability on the App ID); without it iOS silently treats those pushes as `active`. It is not in `Maskin.entitlements` yet because it needs the portal change first.
+
+## Share extension and the offline queue
+`Apps/MaskinShare` sends a link, text, image or file into Maskin as a new object, files only, or a chat message, in a workspace of the user's choosing. When the network is down it parks the share in the App Group container (`ShareQueue`, `group.io.maskin.app`, at most 20 shares / 14 days) and the app sends it on the next foreground (`AppRuntime.scenePhaseChanged`, `ShareQueueDrainer`). Each share keeps its Idempotency-Key base, so a retry never duplicates anything the extension already created.
+Portal: enable **App Groups** with `group.io.maskin.app` on `io.maskin.app` and `io.maskin.app.share`, plus **Keychain Sharing** on the share App ID. Without the group the extension still works online and reports "couldn't be saved for later" offline.
+
 ## Apple App Site Association
 Serve at `https://maskin.io/.well-known/apple-app-site-association`: HTTPS, **no redirect**,
 `Content-Type: application/json`, no file extension. The web host's SPA catch-all must not shadow it.

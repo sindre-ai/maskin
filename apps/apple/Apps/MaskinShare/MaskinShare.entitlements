@@ -4,11 +4,17 @@
 <dict>
 	<!-- The share extension reads the signed-in session the app keeps in the Keychain, so it needs
 	     the SAME access group as the app (Maskin.entitlements / Maskin-nopush.entitlements). It
-	     needs nothing else: no push, no associated domains. The App ID io.maskin.app.share must
+	     also needs the App Group below (offline queue), nothing else: no push, no associated domains. The App ID io.maskin.app.share must
 	     have the Keychain Sharing capability and the group `io.maskin.app`, like the app's. -->
 	<key>keychain-access-groups</key>
 	<array>
 		<string>$(AppIdentifierPrefix)io.maskin.app</string>
+	</array>
+	<!-- Offline share queue: the share extension parks shares here, the app sends them. Needs the
+	     App Groups capability (group.io.maskin.app) on io.maskin.app and io.maskin.app.share. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.io.maskin.app</string>
 	</array>
 </dict>
 </plist>
