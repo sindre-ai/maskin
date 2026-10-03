@@ -508,6 +508,25 @@ describe('voice mirror post-call hook', () => {
 		}
 	})
 
+	it('mirrors a follow_up_later call and starts its retention clock', async () => {
+		const s = await setup()
+		const { storage } = fx()
+		configureVoiceArtifactStorage(storage.provider)
+		vi.stubGlobal('fetch', okFetch())
+		try {
+			voiceMirrorHook.run(hangup(s, 'follow_up_later'))
+			await vi.waitFor(() => expect(storage.blobs.size).toBe(2))
+			await vi.waitFor(async () => {
+				const { metadata } = await rowOf(s.contactId)
+				expect(metadata.voice_last_touch_at).toBe('2026-10-03T12:00:00.000Z')
+				expect(metadata.retention_expires_at).toBeTruthy()
+			})
+		} finally {
+			vi.unstubAllGlobals()
+			configureVoiceArtifactStorage(null)
+		}
+	})
+
 	it('does nothing for statuses without a completed leg', async () => {
 		const s = await setup()
 		const { storage } = fx()
@@ -516,7 +535,6 @@ describe('voice mirror post-call hook', () => {
 		vi.stubGlobal('fetch', fetchSpy)
 		try {
 			voiceMirrorHook.run(hangup(s, 'voice_no_answer'))
-			voiceMirrorHook.run(hangup(s, 'follow_up_later'))
 			await new Promise((r) => setTimeout(r, 50))
 			expect(fetchSpy).not.toHaveBeenCalled()
 			expect(storage.blobs.size).toBe(0)

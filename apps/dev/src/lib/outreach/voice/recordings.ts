@@ -7,11 +7,16 @@ import { recordEvent } from '../../events/record-event'
 import type { CallRecording } from '../../integrations/providers/telnyx/client'
 import { logger } from '../../logger'
 
-/** Statuses whose hangup has a completed leg worth keeping (spec section 5). */
+/**
+ * Statuses whose hangup has a completed leg worth keeping (spec section 5).
+ * follow_up_later is the status a real call plus a yes to the email ends on; without
+ * a mirror it never gets voice_last_touch_at and its retention clock never starts.
+ */
 export const MIRROR_STATUSES: ReadonlySet<string> = new Set([
 	'voice_meeting_booked',
 	'voice_warm_transferred',
 	'voice_declined',
+	'follow_up_later',
 ])
 
 /** Set by the erasure request. Read from the stored status; this module never writes it. */
