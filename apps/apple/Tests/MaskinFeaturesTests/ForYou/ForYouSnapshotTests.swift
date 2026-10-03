@@ -93,8 +93,6 @@ struct ForYouSnapshotTests {
 		for width in Self.widths {
 			try render(
 				page {
-					BriefPill {}
-					MonoLabel("Decision needed · 1")
 					cardView(entry(decisionCard))
 				}, width: width, dark: dark, name: "decision-open")
 		}
@@ -167,17 +165,6 @@ struct ForYouSnapshotTests {
 					OfflineBanner(message: "You're offline. 2 changes will send when you reconnect.")
 					CaughtUp()
 				}, width: width, dark: dark, name: "empty-offline")
-		}
-	}
-
-	@Test("brief sheet renders loaded and failed", arguments: [false, true])
-	func brief(dark: Bool) throws {
-		for width in Self.widths {
-			try render(
-				BriefSheet(
-					state: .loaded(ForYouBrief(markdown: "# Today\n\n- **2 bets** need a call\n- Forge shipped the importer fix\n\nNothing is blocked.")),
-					reload: {}, done: {}
-				).frame(height: 420), width: width, dark: dark, name: "brief")
 		}
 	}
 }

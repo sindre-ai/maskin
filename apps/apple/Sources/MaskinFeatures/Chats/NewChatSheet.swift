@@ -8,6 +8,7 @@ import SwiftUI
 struct NewChatSheet: View {
 	let store: ConversationsStore
 	let currentActorID: String?
+	var prefill = ""
 	let onCreated: (ConversationSummary) -> Void
 
 	@Environment(\.dismiss) private var dismiss
@@ -53,7 +54,10 @@ struct NewChatSheet: View {
 				}
 			}
 			.overlay { if isCreating { ProgressView() } }
-			.task { await store.loadActors() }
+			.task {
+				await store.loadActors()
+				if firstMessage.isEmpty { firstMessage = prefill }
+			}
 		}
 	}
 

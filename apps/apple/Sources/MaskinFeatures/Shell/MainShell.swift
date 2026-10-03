@@ -6,8 +6,8 @@ import SwiftUI
 ///
 /// CONTRACT FOR SCREENS. Each tab hosts a screen taking `AppEnvironment`:
 /// `ForYouScreen`, `ChatsScreen`, `ObjectsScreen`, `LoopsScreen`, `AgentsScreen`, `SearchScreen`. A screen OWNS its `NavigationStack` (or split
-/// view) and applies `.shellToolbar(environment:)` to its root content so the profile menu
-/// (workspace switcher, sign out) and the notifications bell appear on every tab.
+/// view) and applies `.shellToolbar(environment:)` to its root content so the account menu
+/// (notifications, workspace switcher, sign out) appears on every tab.
 public struct MainShell: View {
 	private let environment: AppEnvironment
 	@Bindable private var runtime: AppRuntime
@@ -26,6 +26,7 @@ public struct MainShell: View {
 					ForEach(ShellTab.visible) { tab in
 						ShellTabContent(tab: tab, environment: environment, runtime: runtime)
 							.tabItem { Label(tab.title, systemImage: tab.systemImage) }
+							.badge(tab == .forYou ? runtime.notifications.unreadCount : 0)
 							.tag(tab)
 					}
 				}
@@ -62,6 +63,7 @@ private struct AdaptiveTabs: View {
 				Tab(tab.title, systemImage: tab.systemImage, value: tab) {
 					ShellTabContent(tab: tab, environment: environment, runtime: runtime)
 				}
+				.badge(tab == .forYou ? runtime.notifications.unreadCount : 0)
 			}
 			// The system search role: a detached search button on iOS 26 (and a sidebar entry on the
 			// Mac). Below iOS 26 search is a toolbar button instead — see `ShellTab.searchIsTab`.

@@ -6,7 +6,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// The thread's composer: chips (attachments, mentions) above a glass bar with a + menu (photos,
-/// files, mention), the text field, dictation (iOS) and send. The `@` picker opens above it.
+/// files), the text field, and send, which dictation (iOS) replaces while the field is empty.
+/// Typing `@` opens the mention picker above it.
 struct ChatComposer: View {
 	@Bindable var model: ChatComposerModel
 	let placeholder: String
@@ -82,11 +83,6 @@ struct ChatComposer: View {
 			Menu {
 				Button { showPhotos = true } label: { Label("Photo", systemImage: "photo") }
 				Button { showFiles = true } label: { Label("File", systemImage: "doc") }
-				Button {
-					if !model.text.isEmpty, model.text.last?.isWhitespace == false { model.text += " " }
-					model.text += "@"
-					focused = true
-				} label: { Label("Mention", systemImage: "at") }
 			} label: {
 				Image(systemName: "plus")
 					.font(.system(size: MaskinFontSize.t15, weight: .semibold))
@@ -94,7 +90,7 @@ struct ChatComposer: View {
 					.frame(width: Self.control, height: Self.control)
 					.background(MaskinSurface.fill, in: Circle())
 			}
-			.accessibilityLabel("Add photo, file or mention")
+			.accessibilityLabel("Add photo or file")
 			TextField(placeholder, text: $model.text, axis: .vertical)
 				.lineLimit(1...5)
 				.accessibilityLabel("Message")
@@ -104,15 +100,22 @@ struct ChatComposer: View {
 				.focused($focused)
 				.submitLabel(.return)
 			#if os(iOS)
-			micButton
-			#endif
+			if showsMic { micButton } else { sendButton }
+			#else
 			sendButton
+			#endif
 		}
 		.padding(MaskinSpace.s3)
 		.maskinGlass(in: RoundedRectangle(cornerRadius: MaskinRadius.hero + MaskinSpace.s4, style: .continuous))
 	}
 
 	#if os(iOS)
+	/// The mic takes the send button's place while there is nothing to send.
+	private var showsMic: Bool {
+		dictation.isListening
+			|| (model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.attachments.isEmpty)
+	}
+
 	private var micButton: some View {
 		Button {
 			MaskinHaptics.play(.selection)

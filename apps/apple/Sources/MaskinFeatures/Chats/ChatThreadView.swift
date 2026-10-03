@@ -29,32 +29,35 @@ struct ChatThreadView: View {
 			#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
 			#endif
+			.toolbarTitleMenu {
+				Button(action: onShowParticipants) { Label("People", systemImage: "person.2") }
+				if let conversations, let row = conversations.conversation(id: store.conversationID) {
+					Button {
+						Task { await conversations.setPinned(row.id, !row.pinned) }
+					} label: {
+						Label(row.pinned ? "Unpin" : "Pin", systemImage: row.pinned ? "pin.slash" : "pin")
+					}
+				}
+			}
 			.toolbar {
 				ToolbarItem(placement: .automatic) {
 					Menu {
-						Button(action: onShowParticipants) { Label("People", systemImage: "person.2") }
-						if let conversations, let row = conversations.conversation(id: store.conversationID) {
-							Button {
-								Task { await conversations.setPinned(row.id, !row.pinned) }
-							} label: {
-								Label(row.pinned ? "Unpin" : "Pin", systemImage: row.pinned ? "pin.slash" : "pin")
-							}
-							Button {
-								Task { await conversations.setArchived(row.id, !row.archived) }
-							} label: {
-								Label(row.archived ? "Unarchive" : "Archive", systemImage: "archivebox")
-							}
-						}
 						Button {
 							newTitle = store.title
 							renaming = true
 						} label: {
 							Label("Rename", systemImage: "pencil")
 						}
+						if let conversations, let row = conversations.conversation(id: store.conversationID) {
+							Button {
+								Task { await conversations.setArchived(row.id, !row.archived) }
+							} label: {
+								Label(row.archived ? "Unarchive" : "Archive", systemImage: "archivebox")
+							}
+						}
 					} label: {
-						Label("Conversation", systemImage: "ellipsis.circle")
+						Label("More", systemImage: "ellipsis")
 					}
-					.accessibilityHint("People, pin, archive and rename")
 				}
 			}
 			.task {

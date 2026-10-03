@@ -21,7 +21,4 @@ enum ForYouPalette {
 
 	static let heldNote = Color(light: RGBA(0xB45309), dark: RGBA(0xFBBF24))
 
-	/// The "Today's brief" pill stays dark in both modes, as in the mockup.
-	static let briefPill = Color(light: RGBA(0x3F3F46), dark: RGBA(0x2A2A31))
-	static let briefPillForeground = Color(light: RGBA(0xFAFAFA), dark: RGBA(0xFAFAFA))
 }

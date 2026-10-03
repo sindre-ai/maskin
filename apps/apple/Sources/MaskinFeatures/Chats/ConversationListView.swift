@@ -3,15 +3,16 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// The sidebar column: grouped conversations with search, swipe actions, and loading, empty and
-/// offline states.
+/// The sidebar column: grouped conversations with search, a bottom bar that starts a chat, and
+/// loading, empty and offline states. Pin, archive and unread live in the long-press menu.
 struct ConversationListView: View {
 	let store: ConversationsStore
 	@Binding var selection: String?
 	@Binding var search: String
 	let currentActorID: String?
 	var isLive = true
-	let onNewChat: () -> Void
+	/// Called with the text typed in the bottom bar; the host picks who the chat is with.
+	let onStart: (String) -> Void
 
 	var body: some View {
 		let groups = store.groups(query: search)
@@ -27,33 +28,6 @@ struct ConversationListView: View {
 					ForEach(group.items) { conversation in
 						ConversationRow(conversation: conversation, currentActorID: currentActorID)
 							.tag(conversation.id)
-							.swipeActions(edge: .trailing, allowsFullSwipe: true) {
-								Button {
-									Task { await store.setArchived(conversation.id, !conversation.archived) }
-								} label: {
-									Label(conversation.archived ? "Unarchive" : "Archive", systemImage: "archivebox")
-								}
-								.tint(MaskinColor.ink4)
-							}
-							.swipeActions(edge: .leading) {
-								Button {
-									Task { await store.setPinned(conversation.id, !conversation.pinned) }
-								} label: {
-									Label(conversation.pinned ? "Unpin" : "Pin", systemImage: conversation.pinned ? "pin.slash" : "pin")
-								}
-								.tint(MaskinColor.accent)
-								Button {
-									Task {
-										if conversation.isUnread {
-											await store.markRead(conversation.id, upTo: nil, serverAlreadyKnows: false)
-										} else {
-											await store.markUnread(conversation.id)
-										}
-									}
-								} label: {
-									Label(conversation.isUnread ? "Read" : "Unread", systemImage: conversation.isUnread ? "envelope.open" : "envelope.badge")
-								}
-							}
 							.contextMenu { menu(for: conversation) }
 							.onAppear {
 								if conversation.id == store.conversations.last?.id { Task { await store.loadMore() } }
@@ -68,31 +42,13 @@ struct ConversationListView: View {
 		.overlay { overlay(isEmpty: groups.isEmpty) }
 		.refreshable { await store.refresh() }
 		.searchable(text: $search, prompt: "Search chats")
-		.navigationTitle(store.scope == .archived ? "Archived" : (store.filter == .unread ? "Unread" : (store.filter == .pinned ? "Pinned" : "Chats")))
-		.toolbar {
-			ToolbarItem(placement: .automatic) {
-				Menu {
-					Picker(
-						"Show",
-						selection: Binding(get: { store.filter }, set: { store.filter = $0 })
-					) {
-						Text("All").tag(ConversationsStore.Filter.all)
-						Text("Unread").tag(ConversationsStore.Filter.unread)
-						Text("Pinned").tag(ConversationsStore.Filter.pinned)
-					}
-					.disabled(store.scope == .archived)
-					Toggle(
-						"Archived",
-						isOn: Binding(
-							get: { store.scope == .archived },
-							set: { store.scope = $0 ? .archived : .active }))
-				} label: {
-					Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
-				}
-			}
-			ToolbarItem(placement: .automatic) {
-				Button(action: onNewChat) { Label("New chat", systemImage: "square.and.pencil") }
-					.keyboardShortcut("n", modifiers: .command)
+		.navigationTitle(store.scope == .archived ? "Archived" : "Chats")
+		.safeAreaInset(edge: .bottom, spacing: 0) {
+			if store.scope == .active {
+				NewChatBar(onSend: onStart)
+			} else {
+				Button("Back to chats") { store.scope = .active }
+					.buttonStyle(.secondaryAction).padding(MaskinSpace.s5)
 			}
 		}
 	}
@@ -111,27 +67,12 @@ struct ConversationListView: View {
 				if search.isEmpty {
 					EmptyState(
 						symbol: "bubble.left.and.bubble.right",
-						title: emptyTitle,
-						message: store.scope == .archived || store.filter != .all
-							? nil : "Start one with a teammate or an agent."
-					) {
-						if store.scope == .active, store.filter == .all {
-							Button("New chat", action: onNewChat).buttonStyle(.primaryAction)
-						}
-					}
+						title: store.scope == .archived ? "Nothing archived" : "No conversations yet",
+						message: store.scope == .archived ? nil : "Ask anything below to start one.")
 				} else {
 					ContentUnavailableView.search(text: search)
 				}
 			}
-		}
-	}
-
-	private var emptyTitle: String {
-		if store.scope == .archived { return "Nothing archived" }
-		switch store.filter {
-		case .all: return "No conversations yet"
-		case .unread: return "You're all caught up"
-		case .pinned: return "Nothing pinned"
 		}
 	}
 
@@ -146,5 +87,41 @@ struct ConversationListView: View {
 		Button(conversation.archived ? "Unarchive" : "Archive", systemImage: "archivebox") {
 			Task { await store.setArchived(conversation.id, !conversation.archived) }
 		}
+	}
+}
+
+/// One field and a send arrow, pinned under the list. Typing here is how a chat starts.
+private struct NewChatBar: View {
+	let onSend: (String) -> Void
+	@State private var text = ""
+
+	private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+	var body: some View {
+		HStack(alignment: .bottom, spacing: MaskinSpace.s4) {
+			TextField("Ask anything", text: $text, axis: .vertical)
+				.lineLimit(1...4)
+				.maskinText(.body)
+				.frame(minHeight: MaskinSpace.touchMin)
+				.padding(.leading, MaskinSpace.s4)
+			Button {
+				MaskinHaptics.play(.light)
+				onSend(trimmed)
+				text = ""
+			} label: {
+				Image(systemName: "arrow.up")
+					.font(.system(size: MaskinFontSize.t15, weight: .bold))
+					.foregroundStyle(MaskinSurface.onInverse)
+					.frame(width: MaskinSpace.touchMin, height: MaskinSpace.touchMin)
+					.background(MaskinSurface.inverse, in: Circle())
+					.opacity(trimmed.isEmpty ? 0.35 : 1)
+			}
+			.buttonStyle(.plain)
+			.disabled(trimmed.isEmpty)
+			.accessibilityLabel("Start chat")
+		}
+		.padding(MaskinSpace.s3)
+		.maskinGlass(in: RoundedRectangle(cornerRadius: MaskinRadius.hero + MaskinSpace.s4, style: .continuous))
+		.padding(.horizontal, MaskinSpace.s5).padding(.bottom, MaskinSpace.s3)
 	}
 }

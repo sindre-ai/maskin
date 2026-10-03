@@ -49,8 +49,6 @@ struct ForYouFeedView: View {
 	var fixedNow: Date?
 
 	@Environment(\.scenePhase) private var scenePhase
-	@State private var openIds: Set<String> = []
-	@State private var showBrief = false
 	@State private var openedAt = Date()
 
 	private let readableWidth: CGFloat = 680
@@ -66,13 +64,6 @@ struct ForYouFeedView: View {
 		.background(MaskinSurface.grouped)
 		.refreshable { await store.refresh() }
 		.animation(MaskinMotion.standard, value: entries.map { "\($0.id)-\($0.bucket.rawValue)" })
-		.sheet(isPresented: $showBrief) {
-			BriefSheet(
-				state: store.brief, reload: { Task { await store.loadBrief() } },
-				done: { showBrief = false }
-			)
-			.task { if store.brief == .idle { await store.loadBrief() } }
-		}
 		.onChange(of: scenePhase) { _, phase in
 			switch phase {
 			case .active: outbox.appDidBecomeActive()
@@ -80,7 +71,9 @@ struct ForYouFeedView: View {
 			default: break
 			}
 		}
-		.toolbar { ToolbarItem(placement: .secondaryAction) { displayMenu } }
+		.toolbar {
+			if !store.typeCounts.isEmpty { ToolbarItem(placement: .secondaryAction) { typeFilterMenu } }
+		}
 	}
 
 	// MARK: Header
@@ -105,10 +98,6 @@ struct ForYouFeedView: View {
 					outbox.dismissFailure(failure.id)
 				}
 			}
-			BriefPill { showBrief = true }
-			if store.phase == .loaded, !entries.isEmpty {
-				sectionLabel(entries: entries)
-			}
 		}
 		.modifier(ReadableRow(width: readableWidth))
 	}
@@ -125,48 +114,19 @@ struct ForYouFeedView: View {
 		return "You're offline. \(queued) \(queued == 1 ? "change" : "changes") will send when you reconnect."
 	}
 
-	private func sectionLabel(entries: [FeedEntry]) -> some View {
-		let needs = entries.filter { $0.bucket == .needs }.count
-		return HStack {
-			MonoLabel(needs > 0 ? "Decision needed · \(needs)" : "Catching up")
-			Spacer()
-		}
-		.padding(.top, MaskinSpace.s3)
-		.accessibilityAddTraits(.isHeader)
-	}
-
-	private var displayMenu: some View {
+	/// The only feed control: narrow to one kind of object.
+	private var typeFilterMenu: some View {
 		Menu {
-			Picker("View", selection: $store.options.mode) {
-				Label("Cards", systemImage: "rectangle.grid.1x2").tag(ForYouDisplayOptions.Mode.cards)
-				Label("List", systemImage: "list.bullet").tag(ForYouDisplayOptions.Mode.list)
-			}
-			Picker("Sort", selection: $store.options.sort) {
-				Text("Most important").tag(ForYouDisplayOptions.Sort.attention)
-				Text("Latest").tag(ForYouDisplayOptions.Sort.latest)
-			}
-			if !store.typeCounts.isEmpty {
-				Picker("Show", selection: $store.options.typeFilter) {
-					Text("Everything").tag(String?.none)
-					ForEach(store.typeCounts, id: \.type) { item in
-						Text("\(item.type.capitalized)s (\(item.count))").tag(String?.some(item.type))
-					}
-				}
-			}
-			Section {
-				Button("Dismiss all FYIs", systemImage: "checkmark") {
-					withAnimation(MaskinMotion.standard) { store.dismissAllFYIs() }
-					MaskinHaptics.play(.success)
-				}
-				Button("Take every suggested option", systemImage: "sparkles") {
-					withAnimation(MaskinMotion.standard) { store.takeSuggestedOptions() }
-					MaskinHaptics.play(.success)
+			Picker("Show", selection: $store.options.typeFilter) {
+				Text("Everything").tag(String?.none)
+				ForEach(store.typeCounts, id: \.type) { item in
+					Text("\(item.type.capitalized)s (\(item.count))").tag(String?.some(item.type))
 				}
 			}
 		} label: {
-			Label("Display", systemImage: "line.3.horizontal.decrease")
+			Label("Filter", systemImage: "line.3.horizontal.decrease")
 		}
-		.accessibilityLabel("Display options")
+		.accessibilityLabel("Filter by type")
 	}
 
 	// MARK: Rows
@@ -199,33 +159,16 @@ struct ForYouFeedView: View {
 								.tint(MaskinColor.success)
 							}
 						}
-						.contextMenu {
-							if let open = openObject {
-								Button("Open", systemImage: "arrow.up.right") { open(entry.id) }
-							}
-							if entry.record == nil {
-								Button("Mark as read", systemImage: "checkmark") { dismiss(entry) }
-							}
-						}
 				}
 			}
 		}
 	}
 
 	private func card(_ entry: FeedEntry) -> some View {
-		let id = entry.id
-		let isCards = store.options.mode == .cards
-		var actions = DecisionCardView.Actions.live(store: store, entry: entry, openObject: openObject)
-		if !isCards {
-			actions.toggleExpanded = {
-				withAnimation(MaskinMotion.standard) {
-					if openIds.contains(id) { openIds.remove(id) } else { openIds.insert(id) }
-				}
-			}
-		}
-		return DecisionCardView(
-			entry: entry, sender: store.senderName(of: entry.card),
-			expanded: isCards || openIds.contains(id), now: fixedNow ?? Date(), actions: actions)
+		DecisionCardView(
+			entry: entry, sender: store.senderName(of: entry.card), expanded: true,
+			now: fixedNow ?? Date(),
+			actions: .live(store: store, entry: entry, openObject: openObject))
 	}
 
 	private func dismiss(_ entry: FeedEntry) {

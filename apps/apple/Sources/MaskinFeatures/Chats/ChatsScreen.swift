@@ -54,6 +54,7 @@ private struct ChatsContainer: View {
 	@State private var selection: String?
 	@State private var search = ""
 	@State private var showNewChat = false
+	@State private var pendingText = ""
 	@Binding var requestedConversationId: String?
 
 	init(
@@ -73,7 +74,7 @@ private struct ChatsContainer: View {
 				store: store, selection: $selection, search: $search,
 				currentActorID: environment.auth.session?.actorId,
 				isLive: environment.events.connection != .failed,
-				onNewChat: { showNewChat = true }
+				onStart: { text in Task { await start(with: text) } }
 			)
 			.shellToolbar(environment: environment)
 			.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
@@ -92,10 +93,40 @@ private struct ChatsContainer: View {
 		}
 		.task { await store.start() }
 		.onDisappear { store.stop() }
-		.sheet(isPresented: $showNewChat) {
-			NewChatSheet(store: store, currentActorID: environment.auth.session?.actorId) { created in
+		.sheet(isPresented: $showNewChat, onDismiss: { pendingText = "" }) {
+			NewChatSheet(
+				store: store, currentActorID: environment.auth.session?.actorId, prefill: pendingText
+			) { created in
 				selection = created.id
 			}
+		}
+	}
+}
+
+extension ChatsContainer {
+	/// The bar's text starts a chat with the agent you talk to most recently, or the only agent
+	/// there is. With no obvious choice the new-chat sheet opens with the text filled in.
+	fileprivate func start(with text: String) async {
+		await store.loadActors()
+		let agents = store.actors.filter { $0.participant.kind == .agent && !$0.isSystem }
+		let recent = store.recentCollaboratorIDs
+		let target =
+			recent.lazy.compactMap { id in agents.first { $0.id == id } }.first
+			?? (agents.count == 1 ? agents.first : nil)
+		guard let target else {
+			pendingText = text
+			showNewChat = true
+			return
+		}
+		do {
+			let created = try await store.create(
+				title: ThreadLayout.defaultTitle(for: [target.participant.name]),
+				participantIDs: [target.id], firstMessage: text)
+			MaskinHaptics.play(.success)
+			selection = created.id
+		} catch {
+			pendingText = text
+			showNewChat = true
 		}
 	}
 }

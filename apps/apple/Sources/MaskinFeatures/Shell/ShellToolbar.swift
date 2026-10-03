@@ -2,10 +2,11 @@ import MaskinCore
 import SwiftUI
 
 extension View {
-	/// Adds the shell's trailing toolbar: notifications bell and the profile menu (workspace
-	/// switcher, sign out). Apply to a screen's root content, inside its `NavigationStack`.
-	/// Inside the signed-in shell the bell shows the unread count and opens the shared inbox
-	/// (`AppRuntime` owns that sheet); standalone (previews) the modifier owns its own.
+	/// Adds the shell's single trailing control: the account menu (notifications, search,
+	/// workspace switcher, settings, sign out). Unread notifications show as a badge on the
+	/// For you tab, not here. Apply to a screen's root content, inside its `NavigationStack`.
+	/// Inside the signed-in shell the inbox is the shared sheet `AppRuntime` owns; standalone
+	/// (previews) the modifier owns its own.
 	public func shellToolbar(environment: AppEnvironment) -> some View {
 		modifier(ShellToolbarModifier(environment: environment))
 	}
@@ -20,18 +21,10 @@ private struct ShellToolbarModifier: ViewModifier {
 	func body(content: Content) -> some View {
 		content
 			.toolbar {
-				ToolbarItemGroup(placement: .primaryAction) {
-					if let runtime, !ShellTab.searchIsTab {
-						Button {
-							runtime.showSearch = true
-						} label: {
-							Label("Search", systemImage: "magnifyingglass")
-						}
-					}
-					NotificationsBell(unread: runtime?.notifications.unreadCount ?? 0) {
+				ToolbarItem(placement: .primaryAction) {
+					ProfileMenu(environment: environment, runtime: runtime, showNotifications: {
 						if let runtime { runtime.showNotifications = true } else { showNotifications = true }
-					}
-					ProfileMenu(environment: environment, runtime: runtime) { showWorkspaces = true }
+					}) { showWorkspaces = true }
 				}
 			}
 			.sheet(isPresented: $showNotifications) {
@@ -44,23 +37,11 @@ private struct ShellToolbarModifier: ViewModifier {
 	}
 }
 
-/// The bell, with a dot-and-count badge while anything is unread.
-struct NotificationsBell: View {
-	let unread: Int
-	let action: () -> Void
-
-	var body: some View {
-		Button(action: action) {
-			Label("Notifications", systemImage: unread > 0 ? "bell.badge" : "bell")
-		}
-		.accessibilityLabel(unread > 0 ? "Notifications, \(unread) unread" : "Notifications")
-	}
-}
-
 /// Account menu: who is signed in, which workspace, switch, sign out.
 struct ProfileMenu: View {
 	let environment: AppEnvironment
 	var runtime: AppRuntime?
+	let showNotifications: () -> Void
 	let switchWorkspace: () -> Void
 	@State private var confirmSignOut = false
 
@@ -71,6 +52,19 @@ struct ProfileMenu: View {
 				Section {
 					Text(session.name)
 					if let email = session.email { Text(email) }
+				}
+			}
+			Button(action: showNotifications) {
+				let unread = runtime?.notifications.unreadCount ?? 0
+				Label(
+					unread > 0 ? "Notifications (\(unread))" : "Notifications",
+					systemImage: unread > 0 ? "bell.badge" : "bell")
+			}
+			if let runtime, !ShellTab.searchIsTab {
+				Button {
+					runtime.showSearch = true
+				} label: {
+					Label("Search", systemImage: "magnifyingglass")
 				}
 			}
 			Button(action: switchWorkspace) {
