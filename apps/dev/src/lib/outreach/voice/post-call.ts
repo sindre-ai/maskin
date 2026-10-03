@@ -1,5 +1,6 @@
 import type { Database } from '@maskin/db'
 import { logger } from '../../logger'
+import { voiceMirrorHook } from './recordings-hook'
 
 export interface PostCallContext {
 	db: Database
@@ -10,6 +11,8 @@ export interface PostCallContext {
 	status: string
 	hangupCause: string | null
 	durationS: number | null
+	/** Hangup end_time (ISO) when Telnyx sent one. */
+	endedAt?: string | null
 	recordingUrl: string | null
 	transcriptUrl: string | null
 }
@@ -31,7 +34,7 @@ export interface PostCallHook {
  * registers after it. Each hook is isolated: one throwing is logged and the
  * rest still run.
  */
-export const postCallHooks: PostCallHook[] = []
+export const postCallHooks: PostCallHook[] = [voiceMirrorHook]
 
 export async function runPostCallHooks(
 	ctx: PostCallContext,
