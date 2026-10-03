@@ -18,6 +18,7 @@ import { type VoiceDb, applyVoiceEvent, runAppliedEffects } from '../lib/outreac
 import { type EffectRunner, createDefaultEffectRunner } from '../lib/outreach/voice/effects'
 import { runPostCallHooks } from '../lib/outreach/voice/post-call'
 import { pingSales } from '../lib/outreach/voice/sales-ping'
+import { captureVoiceEvents } from '../lib/outreach/voice/posthog-events'
 import type { VoiceEvent } from '../lib/outreach/voice/state'
 
 type Env = {
@@ -188,6 +189,15 @@ async function afterCommit(db: Database, work: AfterCommit): Promise<unknown> {
 	if (result.applied) {
 		await runAppliedEffects(result, effectRunnerOverride ?? createDefaultEffectRunner(db))
 	}
+
+	// PostHog fanout. After the claim commit, so a replayed event_id never reaches it, and
+	// before the hooks so call_completed precedes post_call_email_sent. Never throws.
+	captureVoiceEvents({
+		eventType: event.event_type,
+		contactId: clientState.contact_id,
+		durationS: event.event_type === 'call.hangup' ? event.payload.duration_s : undefined,
+		result,
+	})
 
 	// Every hangup for this contact's current call opens the post-call seam, including one
 	// the reducer absorbed (a transferred call still has a recording to mirror).
