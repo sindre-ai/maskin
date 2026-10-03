@@ -221,6 +221,9 @@ export async function recordToolCall(
 		}
 
 		let next = metadataMergeSql(params.metadataPatch ?? {})
+		if (params.toolName !== null) {
+			next = sql`jsonb_set(${next}, '{voice_tool_trace}', coalesce(${objects.metadata} -> 'voice_tool_trace', '[]'::jsonb) || ${JSON.stringify([{ tool_name: params.toolName }])}::jsonb)`
+		}
 		const [written] = await tx
 			.update(objects)
 			.set({ metadata: next })

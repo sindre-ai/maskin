@@ -107,7 +107,10 @@ export async function runKnowledgeExport(
 		const docs = await loadCustomerFacingKnowledge(db, workspaceId)
 		// No customer_facing knowledge means no bucket and no retrieval tool for this workspace.
 		if (docs.length === 0) continue
-		const { retrievalToolId } = await deps.client.syncKnowledgeBucket(bucketNameFor(workspaceId), docs)
+		const { retrievalToolId } = await deps.client.syncKnowledgeBucket(
+			bucketNameFor(workspaceId),
+			docs,
+		)
 		toolIds.push(retrievalToolId)
 		documents += docs.length
 	}

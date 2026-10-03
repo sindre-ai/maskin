@@ -1,8 +1,8 @@
 import { z } from '@hono/zod-openapi'
 import {
 	type DeadLetterHandler,
-	TelnyxHttpError,
 	type TelnyxFetchOptions,
+	TelnyxHttpError,
 	telnyxFetch,
 } from './http'
 
@@ -152,7 +152,11 @@ const knowledgeSyncResponseSchema = z.object({
 const conversationMessagesSchema = z.object({
 	data: z.array(
 		z
-			.object({ role: z.string().optional(), text: z.string().nullish(), content: z.string().nullish() })
+			.object({
+				role: z.string().optional(),
+				text: z.string().nullish(),
+				content: z.string().nullish(),
+			})
 			.passthrough(),
 	),
 })
@@ -264,7 +268,9 @@ export function createTelnyxClient(opts: TelnyxClientOptions): TelnyxClient {
 			const parsed = conversationMessagesSchema.parse(await res.json())
 			return parsed.data.flatMap((m) => {
 				const text = m.text ?? m.content
-				return typeof m.role === 'string' && typeof text === 'string' ? [{ role: m.role, text }] : []
+				return typeof m.role === 'string' && typeof text === 'string'
+					? [{ role: m.role, text }]
+					: []
 			})
 		},
 
@@ -274,7 +280,8 @@ export function createTelnyxClient(opts: TelnyxClientOptions): TelnyxClient {
 				await request('POST', '/v2/ai/embeddings/buckets', { name: bucketName })
 			} catch (err) {
 				// 409 or 422 on a bucket that already exists is the normal nightly case.
-				if (!(err instanceof TelnyxHttpError && (err.status === 409 || err.status === 422))) throw err
+				if (!(err instanceof TelnyxHttpError && (err.status === 409 || err.status === 422)))
+					throw err
 			}
 			for (const doc of documents) {
 				await request(

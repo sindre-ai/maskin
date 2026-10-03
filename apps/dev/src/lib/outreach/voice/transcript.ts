@@ -15,7 +15,8 @@ export function assistantTurns(messages: unknown): string[] {
 		const role = typeof m.role === 'string' ? m.role.toLowerCase() : ''
 		if (!ASSISTANT_ROLES.has(role)) continue
 		const said = m.text ?? m.content ?? m.transcript
-		if (typeof said === 'string' && said.trim() !== '') turns.push(said.trim().slice(0, MAX_TURN_CHARS))
+		if (typeof said === 'string' && said.trim() !== '')
+			turns.push(said.trim().slice(0, MAX_TURN_CHARS))
 	}
 	return turns
 }

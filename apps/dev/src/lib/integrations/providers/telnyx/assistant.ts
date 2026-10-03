@@ -76,7 +76,12 @@ export const DECLARED_TOOLS: readonly DeclaredTool[] = [
 		parameters: {
 			type: 'object',
 			properties: {
-				slot_index: { type: 'integer', minimum: 1, maximum: 3, description: 'Option number, 1 to 3.' },
+				slot_index: {
+					type: 'integer',
+					minimum: 1,
+					maximum: 3,
+					description: 'Option number, 1 to 3.',
+				},
 				prospect_email: str('The prospect email address.'),
 				prospect_name: str('The prospect full name.'),
 			},
@@ -113,9 +118,12 @@ export const DECLARED_TOOLS: readonly DeclaredTool[] = [
 		parameters: {
 			type: 'object',
 			properties: {
-				prospect_quote: str('The prospect own words answering your confirmation, not a paraphrase.', {
-					maxLength: 280,
-				}),
+				prospect_quote: str(
+					'The prospect own words answering your confirmation, not a paraphrase.',
+					{
+						maxLength: 280,
+					},
+				),
 				agent_line: str('Your own last line before their yes, word for word.', { maxLength: 500 }),
 			},
 			required: ['prospect_quote'],

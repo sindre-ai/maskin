@@ -4,6 +4,12 @@ import { TokenManager } from '../../oauth/token-manager'
 import { getProvider } from '../../registry'
 
 const CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3'
+/**
+ * Whether Google emails the attendee when the event is created. none: the prospect is on the event
+ * but gets no email from this call, because they have not agreed to receive one (CTO ruling,
+ * errata section 8). Flipping this to all is one line, once the consent flow is signed off.
+ */
+export const SEND_UPDATES = 'none'
 // A live call is waiting on the answer: fail fast and let the agent fall back verbally.
 const REQUEST_TIMEOUT_MS = 8_000
 
@@ -105,9 +111,8 @@ export function createCalendarApi(
 				fetchImpl,
 				accessToken,
 				'POST',
-				// sendUpdates=none: the attendee is on the event, but Google sends the prospect no
-				// email from this call. Whether a booking invite may go out is open (task comment).
-				'/calendars/primary/events?conferenceDataVersion=1&sendUpdates=none',
+				// conferenceDataVersion=1 is what makes Google honour conferenceData.createRequest.
+				`/calendars/primary/events?conferenceDataVersion=1&sendUpdates=${SEND_UPDATES}`,
 				{
 					summary: input.summary,
 					start: { dateTime: input.startIso, timeZone: input.timeZone },

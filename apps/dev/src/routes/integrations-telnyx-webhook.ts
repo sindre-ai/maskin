@@ -13,11 +13,7 @@ import {
 import { verifyTelnyxSignature } from '../lib/integrations/providers/telnyx/signature'
 import { dispatchToolInvocation } from '../lib/integrations/providers/telnyx/tool-dispatch'
 import { logger } from '../lib/logger'
-import {
-	type VoiceDb,
-	applyVoiceEvent,
-	runAppliedEffects,
-} from '../lib/outreach/voice/apply'
+import { type VoiceDb, applyVoiceEvent, runAppliedEffects } from '../lib/outreach/voice/apply'
 import { type EffectRunner, createDefaultEffectRunner } from '../lib/outreach/voice/effects'
 import { defaultSalesNotifier } from '../lib/outreach/voice/notify-sales'
 import { runPostCallHooks } from '../lib/outreach/voice/post-call'

@@ -1,6 +1,6 @@
+import { z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { actors, objects } from '@maskin/db/schema'
-import { z } from '@hono/zod-openapi'
 import { and, eq } from 'drizzle-orm'
 import { recordEvent } from '../../../events/record-event'
 import { logger } from '../../../logger'
@@ -92,7 +92,10 @@ const slotSchema = z.object({ start_iso: z.string(), end_iso: z.string() })
 const acknowledged = z.object({ acknowledged: z.literal(true) })
 
 export const toolOutputSchemas = {
-	book_meeting_slot: z.union([z.object({ slots: z.array(slotSchema).min(1).max(3) }), toolErrorOutput]),
+	book_meeting_slot: z.union([
+		z.object({ slots: z.array(slotSchema).min(1).max(3) }),
+		toolErrorOutput,
+	]),
 	confirm_meeting_slot: z.union([
 		z.object({ event_id: z.string(), meet_link: z.string().nullable() }),
 		toolErrorOutput,
@@ -226,7 +229,10 @@ async function bookMeetingSlot(
 		if (!calendar) throw new Error('no active google-calendar integration')
 		const now = deps.now()
 		const range = searchRange(now)
-		slots = findSlots(await calendar.freeBusy(range.timeMin.toISOString(), range.timeMax.toISOString()), now)
+		slots = findSlots(
+			await calendar.freeBusy(range.timeMin.toISOString(), range.timeMax.toISOString()),
+			now,
+		)
 		if (slots.length === 0) throw new Error('no free slot in the search window')
 	} catch (err) {
 		return calendarFailure(ctx, err)
@@ -268,7 +274,10 @@ async function confirmMeetingSlot(
 
 	const slot = offeredSlots(contact, ctx.callId)[input.slot_index - 1]
 	if (!slot) {
-		return fail('no_slots_offered', 'Call book_meeting_slot first, then confirm one of its options.')
+		return fail(
+			'no_slots_offered',
+			'Call book_meeting_slot first, then confirm one of its options.',
+		)
 	}
 	if (!isEmail(input.prospect_email)) {
 		return calendarFailure(ctx, new Error('prospect email is malformed'))
@@ -302,7 +311,8 @@ async function confirmMeetingSlot(
 }
 
 function parseTransferHours(raw: unknown): { startMinutes: number; endMinutes: number } {
-	const match = typeof raw === 'string' ? /^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/.exec(raw.trim()) : null
+	const match =
+		typeof raw === 'string' ? /^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/.exec(raw.trim()) : null
 	if (!match) return DEFAULT_TRANSFER_HOURS
 	const startMinutes = Number(match[1]) * 60 + Number(match[2])
 	const endMinutes = Number(match[3]) * 60 + Number(match[4])
@@ -313,7 +323,11 @@ function parseTransferHours(raw: unknown): { startMinutes: number; endMinutes: n
 
 function sipHeaderValue(value: string): string {
 	// SIP header values are one line of printable ASCII.
-	return value.replace(/[^\x20-\x7e]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
+	return value
+		.replace(/[^\x20-\x7e]/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.slice(0, 200)
 }
 
 /**
@@ -480,7 +494,9 @@ async function resolveAgentTurn(
 	if (typeof conversationId === 'string' && conversationId !== '') {
 		try {
 			const client = deps.telnyx()
-			const fetched = client ? lastAssistantTurn(await client.getConversationMessages(conversationId)) : null
+			const fetched = client
+				? lastAssistantTurn(await client.getConversationMessages(conversationId))
+				: null
 			if (fetched) return { text: fetched, source: 'telnyx' }
 		} catch (err) {
 			logger.warn('voice agent turn lookup failed, using the model-supplied line', {
@@ -491,9 +507,12 @@ async function resolveAgentTurn(
 	}
 
 	if (!agentLine) {
-		logger.warn('voice consent record has no agent turn: Telnyx gave none and the model sent none', {
-			callId: ctx.callId,
-		})
+		logger.warn(
+			'voice consent record has no agent turn: Telnyx gave none and the model sent none',
+			{
+				callId: ctx.callId,
+			},
+		)
 	}
 	return { text: agentLine ?? null, source: 'model' }
 }

@@ -4,7 +4,10 @@ import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as recordEventModule from '../../lib/events/record-event'
 import { encodeClientState } from '../../lib/integrations/providers/telnyx/client'
+import { registerToolHandler } from '../../lib/integrations/providers/telnyx/tool-dispatch'
+import { createToolRouter } from '../../lib/integrations/providers/telnyx/tools'
 import * as applyModule from '../../lib/outreach/voice/apply'
+import { disclosureHook } from '../../lib/outreach/voice/call-hooks'
 import type { EffectRunner } from '../../lib/outreach/voice/effects'
 import { postCallHooks } from '../../lib/outreach/voice/post-call'
 import telnyxWebhookRoutes, {
@@ -202,13 +205,24 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 		deadLetter: async () => {},
 	}
 
+	// The real router, with the Calendar call stubbed: the trace is written by the router, on
+	// success only, so these tests drive tools with valid input.
+	const calendar = {
+		freeBusy: async () => [],
+		insertEvent: async () => ({ eventId: 'event-1', meetLink: 'https://meet.example/abc' }),
+	}
+
 	beforeEach(() => {
 		sms.length = 0
 		hangups.length = 0
 		setEffectRunnerForTests(runner)
 		postCallHooks.length = 0
+		registerToolHandler(createToolRouter({ calendar: async () => calendar }))
 	})
-	afterAll(() => setEffectRunnerForTests(null))
+	afterAll(() => {
+		setEffectRunnerForTests(null)
+		registerToolHandler(null)
+	})
 
 	async function newContact(status = 'voice_queued', metadata: Record<string, unknown> = {}) {
 		const ws = await insertWorkspace(db, getTestActorId())
@@ -319,12 +333,12 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 	})
 
 	it('a request_followup_email in the trace and no booking resolves to follow_up_later, and stays there', async () => {
-		const c = await newContact()
+		const c = await newContact('voice_queued', { email: 'prospect@example.com' })
 		await c.send('call.initiated', 'call-f', 1)
 		await c.send('call.answered', 'call-f', 1)
 		await c.send('assistant.tool_invocation', 'call-f', 1, {
 			tool_name: 'request_followup_email',
-			tool_input: { quote: 'just email me' },
+			tool_input: { prospect_quote: 'yes, that is fine' },
 		})
 		await c.send('call.hangup', 'call-f', 1, { hangup_cause: 'normal_clearing' })
 		expect((await c.read()).status).toBe('follow_up_later')
@@ -336,9 +350,14 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 		const c = await newContact()
 		await c.send('call.initiated', 'call-b', 1)
 		await c.send('call.answered', 'call-b', 1)
+		const prospect = { prospect_email: 'prospect@example.com', prospect_name: 'Pia Prospect' }
+		await c.send('assistant.tool_invocation', 'call-b', 1, {
+			tool_name: 'book_meeting_slot',
+			tool_input: prospect,
+		})
 		await c.send('assistant.tool_invocation', 'call-b', 1, {
 			tool_name: 'confirm_meeting_slot',
-			tool_input: {},
+			tool_input: { slot_index: 1, ...prospect },
 		})
 		await c.send('call.hangup', 'call-b', 1, { hangup_cause: 'normal_clearing' })
 		expect((await c.read()).status).toBe('voice_meeting_booked')
@@ -367,6 +386,58 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 			callId: 'call-wt',
 			status: 'voice_warm_transferred',
 		})
+	})
+
+	it('a hangup whose first agent utterance omits the AI-assistant phrase stamps disclosure_missing, through the route', async () => {
+		postCallHooks.push(disclosureHook)
+		const c = await newContact()
+		await c.send('call.initiated', 'call-dm', 1)
+		await c.send('call.answered', 'call-dm', 1)
+		await c.send('call.hangup', 'call-dm', 1, {
+			hangup_cause: 'normal_clearing',
+			duration_s: 30,
+			transcript: [{ role: 'assistant', text: 'Hi, this is Sebastian from Maskin' }],
+		})
+		expect((await c.read()).meta.compliance_flag).toBe('disclosure_missing')
+		const pings = await db
+			.select()
+			.from(events)
+			.where(
+				and(eq(events.entityId, c.contact.id), eq(events.action, 'voice_disclosure_missing_ping')),
+			)
+		expect(pings).toHaveLength(1)
+		expect(pings[0]?.data).toMatchObject({ attention: 5 })
+	})
+
+	it('a hangup that opens with the AI-assistant phrase is not flagged', async () => {
+		postCallHooks.push(disclosureHook)
+		const c = await newContact()
+		await c.send('call.initiated', 'call-ok', 1)
+		await c.send('call.answered', 'call-ok', 1)
+		await c.send('call.hangup', 'call-ok', 1, {
+			hangup_cause: 'normal_clearing',
+			duration_s: 30,
+			transcript: [
+				{ role: 'assistant', text: 'Hi Pia, this is an AI assistant calling on behalf of Maskin' },
+			],
+		})
+		expect((await c.read()).meta.compliance_flag).toBeUndefined()
+	})
+
+	it('call.transfer.failed pings #sales at Attention 3 and leaves the status to the hangup', async () => {
+		const c = await newContact()
+		await c.send('call.initiated', 'call-tf', 1)
+		await c.send('call.answered', 'call-tf', 1)
+		await c.send('call.transfer.failed', 'call-tf', 1, { target: '+4533333333' })
+		const pings = await db
+			.select()
+			.from(events)
+			.where(
+				and(eq(events.entityId, c.contact.id), eq(events.action, 'voice_transfer_failed_ping')),
+			)
+		expect(pings).toHaveLength(1)
+		expect(pings[0]?.data).toMatchObject({ attention: 3, channel: '#sales' })
+		expect((await c.read()).status).toBe('voice_answered')
 	})
 
 	it('a hangup for an older call does not open the post-call seam', async () => {
