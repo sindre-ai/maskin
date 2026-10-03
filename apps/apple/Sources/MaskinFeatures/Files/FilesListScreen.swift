@@ -15,15 +15,20 @@ private struct FileRoute: Hashable { var id: String }
 public struct FilesListScreen: View {
 	private let environment: AppEnvironment
 	private let open: ((String) -> Void)?
+	private let onDone: (() -> Void)?
 
-	public init(environment: AppEnvironment, open: ((String) -> Void)? = nil) {
+	/// `onDone` adds a Done button for when the screen is shown in a sheet.
+	public init(
+		environment: AppEnvironment, open: ((String) -> Void)? = nil, onDone: (() -> Void)? = nil
+	) {
 		self.environment = environment
 		self.open = open
+		self.onDone = onDone
 	}
 
 	public var body: some View {
 		// Keyed on person and workspace so a switch rebuilds the store.
-		FilesListContent(environment: environment, open: open)
+		FilesListContent(environment: environment, open: open, onDone: onDone)
 			.id("\(environment.auth.session?.actorId ?? "")/\(environment.workspaceId ?? "")")
 	}
 }
@@ -33,10 +38,12 @@ private struct FilesListContent: View {
 	@State private var search = ""
 	private let environment: AppEnvironment
 	private let open: ((String) -> Void)?
+	private let onDone: (() -> Void)?
 
-	init(environment: AppEnvironment, open: ((String) -> Void)?) {
+	init(environment: AppEnvironment, open: ((String) -> Void)?, onDone: (() -> Void)?) {
 		self.environment = environment
 		self.open = open
+		self.onDone = onDone
 		_store = State(
 			initialValue: FilesListStore(
 				remote: APIFilesRemote(
@@ -48,6 +55,11 @@ private struct FilesListContent: View {
 			FilesListView(store: store, search: search, onOpen: open)
 			.background(MaskinSurface.grouped)
 			.navigationTitle("Files")
+			.toolbar {
+				if let onDone {
+					ToolbarItem(placement: .confirmationAction) { Button("Done", action: onDone) }
+				}
+			}
 			.searchable(text: $search, prompt: "Search files")
 			.navigationDestination(for: FileRoute.self) { FileScreen(environment: environment, fileId: $0.id) }
 			.task { await store.load() }

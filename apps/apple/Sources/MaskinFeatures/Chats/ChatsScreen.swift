@@ -156,8 +156,21 @@ private struct ChatThreadHost: View {
 			currentActorName: session?.name ?? "You", api: source,
 			queue: ChatsRuntime.shared(environment: environment).queue, events: environment.events,
 			cache: environment.snapshotCache)
+		chat.trace = ActivityStore(
+			source: HTTPSessionActivitySource(environment: environment), cache: environment.snapshotCache)
 		chat.onMarkedRead = { [conversations] id, _ in
 			Task { await conversations.markRead(id, serverAlreadyKnows: true) }
+		}
+		chat.onSessionsRefreshed = { [weak chat, weak environment] sessions in
+			// Foreground fallback for the Live Activity; background updates come from APNs.
+			guard let coordinator = TurnActivityCoordinator.shared, let chat,
+				let workspaceId = environment?.workspaceId
+			else { return }
+			let turns = LiveTurn.turns(
+				from: sessions, workspaceId: workspaceId, conversationId: conversationID,
+				agentName: { id in chat.workspaceActors.first { $0.id == id }?.participant.name },
+				now: Date())
+			Task { await coordinator.reconcile(turns) }
 		}
 		_chat = State(initialValue: chat)
 		let composer = ChatComposerModel(uploader: source, selfActorID: session?.actorId ?? "")

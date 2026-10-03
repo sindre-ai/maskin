@@ -45,6 +45,7 @@ import integrationsGoogleMeetMcpRoutes from './routes/integrations-google-meet-m
 import integrationsLinkedinRoutes from './routes/integrations-linkedin-unipile'
 import integrationsLinkedinMcpRoutes from './routes/integrations-linkedin-unipile-mcp'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
+import liveActivitiesRoutes from './routes/live-activities'
 import loopsRoutes from './routes/loops'
 import marketplaceLoopsRoutes from './routes/marketplace-loops'
 import mcpRoutes from './routes/mcp'
@@ -392,6 +393,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/sessions', sessionsRoutes)
 	app.route('/api/notifications', notificationsRoutes)
 	app.route('/api/devices', devicesRoutes)
+	app.route('/api/live-activities', liveActivitiesRoutes)
 	app.route('/api/subscriptions', subscriptionsRoutes)
 	app.route('/api/graph', graphRoutes)
 	app.route('/api/imports', importsRoutes)

@@ -67,6 +67,13 @@ struct ProfileMenu: View {
 					Label("Search", systemImage: "magnifyingglass")
 				}
 			}
+			if let runtime {
+				Button {
+					runtime.showFiles = true
+				} label: {
+					Label("Files", systemImage: "doc.text")
+				}
+			}
 			Button(action: switchWorkspace) {
 				Label(
 					environment.workspaces.selected?.name ?? "Choose workspace",

@@ -169,6 +169,21 @@ struct AuthSessionTests {
 		#expect(try store.read() == nil)
 	}
 
+	@Test("session-end handlers run with the ending session, before it is cleared, on sign-out and 401")
+	func sessionEndHandlers() async {
+		let auth = AuthSession(
+			authenticator: FakeAuthenticator(result: .success(alice)), store: InMemorySecretStore())
+		var seen: [(String, Bool)] = []
+		auth.onSessionEnded { [auth] ending in seen.append((ending.apiKey, auth.session != nil)) }
+		await auth.signIn(email: "a", password: "b")
+		auth.signOut()
+		await auth.signIn(email: "a", password: "b")
+		auth.sessionRejected(apiKey: "ank_secret")
+		auth.signOut()  // already signed out: nothing to end
+		#expect(seen.count == 2)
+		#expect(seen.allSatisfy { $0.0 == "ank_secret" && $0.1 })
+	}
+
 	@Test("a late 401 for an old key does not sign out the new session")
 	func staleRejection() async {
 		let auth = AuthSession(

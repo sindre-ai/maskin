@@ -17,12 +17,26 @@ struct ChatThreadView: View {
 	@State private var stopTarget: ChatAgentSession?
 	@State private var renaming = false
 	@State private var newTitle = ""
+	@State private var searching = false
+	@State private var searchText = ""
+	@State private var matchIndex: Int?
+	@AppStorage("chat.handsFree") private var handsFree = false
+
+	/// Recomputed only when the query or the message list changes (see `refreshMatches`), never
+	/// per render: a search is a scan over every loaded message.
+	@State private var matchIDs: [String] = []
+	@State private var matchSet: Set<String> = []
+	@State private var handsFreeTracker = HandsFreeTracker()
+	private var currentMatchID: String? {
+		guard searching, let matchIndex, matchIDs.indices.contains(matchIndex) else { return nil }
+		return matchIDs[matchIndex]
+	}
 
 	private static let bottomID = "thread-bottom"
 	private static let maxReadableWidth: CGFloat = 760
 
 	var body: some View {
-		content
+		observedContent
 			.background(MaskinSurface.grouped)
 			.safeAreaInset(edge: .bottom, spacing: 0) { composerBar }
 			.navigationTitle(store.title)
@@ -41,12 +55,23 @@ struct ChatThreadView: View {
 			}
 			.toolbar {
 				ToolbarItem(placement: .automatic) {
+					Button {
+						searching.toggle()
+						if !searching { searchText = "" }
+					} label: {
+						Label("Search this chat", systemImage: "magnifyingglass")
+					}
+				}
+				ToolbarItem(placement: .automatic) {
 					Menu {
 						Button {
 							newTitle = store.title
 							renaming = true
 						} label: {
 							Label("Rename", systemImage: "pencil")
+						}
+						Toggle(isOn: $handsFree) {
+							Label("Read replies aloud", systemImage: "speaker.wave.2")
 						}
 						if let conversations, let row = conversations.conversation(id: store.conversationID) {
 							Button {
@@ -63,9 +88,11 @@ struct ChatThreadView: View {
 			.task {
 				store.isActive = scenePhase == .active
 				await store.start()
+				primeHandsFree()
 			}
 			.onDisappear {
 				store.isActive = false
+				SpeechReader.shared.stop()
 				store.stop()
 			}
 			.onChange(of: scenePhase) { _, phase in store.isActive = phase == .active }
@@ -90,6 +117,25 @@ struct ChatThreadView: View {
 			} message: { _ in
 				Text("It will stop what it's doing. You can ask it to continue afterwards.")
 			}
+	}
+
+	/// The thread plus the observers for search and hands-free speech (kept apart so `body`
+	/// type-checks quickly).
+	private var observedContent: some View {
+		content
+			.onChange(of: searchText) { _, _ in
+				refreshMatches()
+				matchIndex = matchIDs.isEmpty ? nil : matchIDs.count - 1
+			}
+			.onChange(of: store.messages.count) { _, _ in
+				if searching { refreshMatches() }
+				speakNewReplies()
+			}
+			.onChange(of: store.messages.last?.id) { _, _ in speakNewReplies() }
+			.onChange(of: store.phase) { _, _ in primeHandsFree() }
+			.onChange(of: handsFree) { _, on in if !on { SpeechReader.shared.stop() } }
+			// Typing means the reader is done listening.
+			.onChange(of: composer.text) { _, text in if !text.isEmpty { SpeechReader.shared.stop() } }
 	}
 
 	@ViewBuilder
@@ -121,7 +167,9 @@ struct ChatThreadView: View {
 							.frame(maxWidth: .infinity)
 							.onAppear { loadEarlier(proxy) }
 					}
-					ThreadTranscript(store: store, onStop: { stopTarget = $0 })
+					ThreadTranscript(
+						store: store, onStop: { stopTarget = $0 }, matchIDs: matchSet,
+						currentMatchID: currentMatchID)
 					Color.clear.frame(height: 1).id(Self.bottomID)
 						.onAppear {
 							isAtBottom = true
@@ -166,10 +214,55 @@ struct ChatThreadView: View {
 				}
 			}
 			.animation(MaskinMotion.standard, value: isAtBottom)
+			.onChange(of: currentMatchID) { _, id in
+				guard let id else { return }
+				withAnimation(MaskinMotion.standard) { proxy.scrollTo(id, anchor: .center) }
+			}
 		}
 	}
 
 	private var composerBar: some View {
+		VStack(spacing: MaskinSpace.s2) {
+			if searching {
+				ThreadSearchBar(
+					text: $searchText, matchCount: matchIDs.count, index: matchIndex,
+					onStep: { matchIndex = ThreadSearch.step(from: matchIndex, by: $0, count: matchIDs.count) },
+					onClose: {
+						searching = false
+						searchText = ""
+					})
+			}
+			composerField
+		}
+		.frame(maxWidth: Self.maxReadableWidth)
+		.padding(.horizontal, MaskinSpace.s7)
+		.padding(.bottom, MaskinSpace.s3)
+		.frame(maxWidth: .infinity)
+	}
+
+	private func refreshMatches() {
+		matchIDs = ThreadSearch.matches(in: store.messages, query: searchText)
+		matchSet = Set(matchIDs)
+		if let matchIndex, !matchIDs.indices.contains(matchIndex) {
+			self.matchIndex = matchIDs.isEmpty ? nil : matchIDs.count - 1
+		}
+	}
+
+	/// History present when the thread opens is never read; only what arrives afterwards.
+	private func primeHandsFree() {
+		guard !handsFreeTracker.isPrimed, store.phase == .loaded else { return }
+		handsFreeTracker.prime(with: store.messages)
+	}
+
+	/// Reads every new agent reply, in order. Runs with hands-free off too, so the replies that
+	/// arrive meanwhile are marked seen and not read the moment it is switched on.
+	private func speakNewReplies() {
+		let fresh = handsFreeTracker.newReplies(in: store.messages, currentActorID: store.currentActorID)
+		guard handsFree else { return }
+		for message in fresh { SpeechReader.shared.enqueue(markdown: message.content, id: message.id) }
+	}
+
+	private var composerField: some View {
 		ChatComposer(
 			model: composer, placeholder: "Message \(store.title)",
 			suggestions: { query in
@@ -179,10 +272,6 @@ struct ChatThreadView: View {
 			},
 			inConversation: Set(store.participants.map(\.id)), onSend: send
 		)
-		.frame(maxWidth: Self.maxReadableWidth)
-		.padding(.horizontal, MaskinSpace.s7)
-		.padding(.bottom, MaskinSpace.s3)
-		.frame(maxWidth: .infinity)
 	}
 
 	private func send() {
@@ -216,6 +305,8 @@ struct ThreadTranscript: View {
 	var lazy = true
 	var now = Date()
 	var onStop: (ChatAgentSession) -> Void = { _ in }
+	var matchIDs: Set<String> = []
+	var currentMatchID: String?
 
 	var body: some View {
 		if lazy {
@@ -228,8 +319,11 @@ struct ThreadTranscript: View {
 	@ViewBuilder
 	private var rows: some View {
 		let answers = store.questionAnswerIndex
-		ForEach(ThreadLayout.items(for: store.messages)) { item in
-			row(item, answers: answers)
+		let messages = store.messages
+		let anchors =
+			store.trace?.anchors(messages: messages, sessions: store.agentSessions) ?? ActivityAnchors()
+		ForEach(ThreadLayout.items(for: messages)) { item in
+			row(item, answers: answers, anchors: anchors)
 		}
 		TimelineView(.periodic(from: now, by: 15)) { context in
 			activity(at: context.date)
@@ -250,8 +344,9 @@ struct ThreadTranscript: View {
 			}
 		} else {
 			ForEach(live) { session in
-				WorkingIndicator(
-					agent: store.participant(for: session.actorID), activity: session.currentActivity,
+				LiveActivityView(
+					agent: store.participant(for: session.actorID), fallbackActivity: session.currentActivity,
+					turn: store.trace?.liveTurn(sessionID: session.id), startedAt: session.startedAt,
 					// A run that has not started its container yet can't be stopped (the server 400s).
 					onStop: session.status == .running ? { onStop(session) } : nil
 				)
@@ -261,13 +356,19 @@ struct ThreadTranscript: View {
 	}
 
 	@ViewBuilder
-	private func row(_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]]) -> some View {
+	private func row(
+		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors
+	) -> some View {
 		switch item {
 		case .daySeparator(let day):
 			ThreadDivider(label: ThreadLayout.dayLabel(day, now: now))
 		case .system(let message):
 			ThreadDivider(label: message.content)
 		case .message(let message, let showsAuthor):
+			if let id = message.serverID, let turn = anchors.aboveReply[id] {
+				FinishedTraceView(turn: turn)
+					.padding(.leading, MaskinSpace.s12 + MaskinSpace.s4 + MaskinSpace.s6)
+			}
 			MessageRow(
 				message: message, isOwn: message.actorID == store.currentActorID, showsAuthor: showsAuthor,
 				mentionNames: message.mentionIDs.compactMap { store.displayName(for: $0) },
@@ -278,6 +379,14 @@ struct ThreadTranscript: View {
 				onAnswer: { picks in _ = store.answer(question: message, picks: picks) }
 			)
 			.padding(.top, showsAuthor ? MaskinSpace.s4 : 0)
+			.background(
+				matchIDs.contains(message.id)
+					? (message.id == currentMatchID ? MaskinColor.accentTint : MaskinColor.accentTint2) : Color.clear,
+				in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
+			if let id = message.serverID, let turn = anchors.afterTrigger[id] {
+				FinishedTraceView(turn: turn)
+					.padding(.leading, MaskinSpace.s12 + MaskinSpace.s4 + MaskinSpace.s6)
+			}
 		}
 	}
 }

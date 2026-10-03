@@ -28306,6 +28306,285 @@
 				}
 			}
 		},
+		"/api/sessions/{id}/activity": {
+			"get": {
+				"tags": [
+					"Sessions"
+				],
+				"summary": "Get the agent activity trace (steps) per conversation message",
+				"description": "Server-side projection of the raw stream-json session logs into compact per-turn steps. Scans at most 2000 of the newest log rows (below before_log_id); a turn straddling the window is completed from its tagged envelope and flagged partial, and message_id looks a turn up even outside the window. Read-only.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 20,
+							"default": 5
+						},
+						"required": false,
+						"name": "limit_turns",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0
+						},
+						"required": false,
+						"name": "message_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0
+						},
+						"required": false,
+						"name": "before_log_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Activity turns, oldest to newest",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"session_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"turns": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"message_id": {
+														"type": "integer"
+													},
+													"started_at": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"finished_at": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"status": {
+														"type": "string",
+														"enum": [
+															"running",
+															"completed",
+															"failed"
+														]
+													},
+													"contains_reply": {
+														"type": "boolean"
+													},
+													"result": {
+														"type": [
+															"object",
+															"null"
+														],
+														"properties": {
+															"text": {
+																"type": "string",
+																"maxLength": 8000
+															},
+															"is_error": {
+																"type": "boolean"
+															},
+															"log_id": {
+																"type": "integer"
+															}
+														},
+														"required": [
+															"text",
+															"is_error",
+															"log_id"
+														]
+													},
+													"steps": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"id": {
+																	"type": "string"
+																},
+																"kind": {
+																	"type": "string",
+																	"enum": [
+																		"tool_use",
+																		"thinking",
+																		"text",
+																		"error"
+																	]
+																},
+																"label": {
+																	"type": "string",
+																	"maxLength": 120
+																},
+																"detail": {
+																	"type": "string",
+																	"maxLength": 300
+																},
+																"started_at": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																},
+																"finished_at": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																},
+																"status": {
+																	"type": "string",
+																	"enum": [
+																		"running",
+																		"completed",
+																		"failed"
+																	]
+																}
+															},
+															"required": [
+																"id",
+																"kind",
+																"label",
+																"started_at",
+																"finished_at",
+																"status"
+															]
+														},
+														"maxItems": 100
+													},
+													"steps_truncated": {
+														"type": "boolean"
+													},
+													"partial": {
+														"type": "boolean"
+													}
+												},
+												"required": [
+													"message_id",
+													"started_at",
+													"finished_at",
+													"status",
+													"contains_reply",
+													"result",
+													"steps",
+													"steps_truncated",
+													"partial"
+												]
+											}
+										},
+										"oldest_log_id": {
+											"type": [
+												"integer",
+												"null"
+											]
+										},
+										"has_older": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"session_id",
+										"turns",
+										"oldest_log_id",
+										"has_older"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Session not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/notifications": {
 			"post": {
 				"tags": [
@@ -29978,6 +30257,308 @@
 					},
 					"404": {
 						"description": "Device not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/live-activities/tokens": {
+			"post": {
+				"tags": [
+					"Devices"
+				],
+				"summary": "Register an ActivityKit push token (push-to-start or per-activity update)",
+				"description": "`push_to_start` is one per device and rotates (upserted on device). `update` belongs to one running activity and is tied to a session (upserted on device + session). The device must be one of the caller’s registered devices.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"kind": {
+										"type": "string",
+										"enum": [
+											"push_to_start",
+											"update"
+										]
+									},
+									"device_id": {
+										"type": "string",
+										"format": "uuid"
+									},
+									"token": {
+										"type": "string",
+										"minLength": 16,
+										"maxLength": 512,
+										"pattern": "^[0-9a-fA-F]+$"
+									},
+									"session_id": {
+										"type": "string",
+										"format": "uuid"
+									}
+								},
+								"required": [
+									"kind",
+									"device_id",
+									"token"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Token registered",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"kind": {
+											"type": "string",
+											"enum": [
+												"push_to_start",
+												"update"
+											]
+										},
+										"device_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"session_id": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"updated_at": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"id",
+										"kind",
+										"device_id",
+										"session_id",
+										"updated_at"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Device or session not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/live-activities/tokens/{id}": {
+			"delete": {
+				"tags": [
+					"Devices"
+				],
+				"summary": "Unregister one of the caller’s ActivityKit tokens (e.g. the activity ended on-device)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Token removed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"deleted": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"deleted"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Not found",
 						"content": {
 							"application/json": {
 								"schema": {

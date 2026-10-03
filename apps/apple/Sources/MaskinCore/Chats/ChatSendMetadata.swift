@@ -86,6 +86,23 @@ public struct ChatQuestionItem: Sendable, Equatable, Identifiable {
 	public struct Option: Sendable, Equatable, Hashable {
 		public var label: String
 		public var detail: String?
+		/// The agent's suggested choice: `recommended: true` on the option, or the
+		/// "(Recommended)" suffix Claude's question tool conventionally appends to a label.
+		public var recommended = false
+
+		public init(label: String, detail: String? = nil, recommended: Bool = false) {
+			self.label = label
+			self.detail = detail
+			self.recommended = recommended
+		}
+
+		/// `label` without a trailing "(Recommended)" / "[recommended]" decoration.
+		static func strippingRecommended(_ label: String) -> String {
+			let pattern = #"\s*[\(\[]\s*recommended\s*[\)\]]\s*$"#
+			let stripped = label.replacingOccurrences(
+				of: pattern, with: "", options: [.regularExpression, .caseInsensitive])
+			return stripped.isEmpty ? label : stripped
+		}
 	}
 
 	public var index: Int
@@ -95,6 +112,14 @@ public struct ChatQuestionItem: Sendable, Equatable, Identifiable {
 	public var options: [Option]
 
 	public var id: Int { index }
+
+	public init(index: Int, header: String, question: String, multiSelect: Bool, options: [Option]) {
+		self.index = index
+		self.header = header
+		self.question = question
+		self.multiSelect = multiSelect
+		self.options = options
+	}
 }
 
 extension ChatMessage {
@@ -121,8 +146,12 @@ extension ChatMessage {
 				case .array(let rawOptions)? = item["options"]
 			else { return nil }
 			let options = rawOptions.compactMap { option -> ChatQuestionItem.Option? in
-				guard let label = option["label"]?.stringValue else { return nil }
-				return .init(label: label, detail: option["description"]?.stringValue)
+				guard let raw = option["label"]?.stringValue else { return nil }
+				// The answer sent back is the plain label, never the "(Recommended)" decoration.
+				let label = ChatQuestionItem.Option.strippingRecommended(raw)
+				return .init(
+					label: label, detail: option["description"]?.stringValue,
+					recommended: option["recommended"]?.boolValue == true || label != raw)
 			}
 			guard !options.isEmpty else { return nil }
 			return ChatQuestionItem(

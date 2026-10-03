@@ -305,6 +305,16 @@ export interface SessionLogEvent extends LogChunk {
 	logId: number
 }
 
+/**
+ * In-process turn boundary for interactive sessions, emitted as `'turn'`.
+ * `started`: a user turn was written to the CLI's stdin (a human message, a
+ * seed turn, or a replay). `finished`: the turn's closing message was posted.
+ * Consumed by the Live Activity fan-out; never persisted.
+ */
+export type SessionTurnEvent =
+	| { sessionId: string; phase: 'started' }
+	| { sessionId: string; phase: 'finished'; outcome: 'done' | 'failed' }
+
 export class SessionManager extends EventEmitter {
 	private containers: ContainerManager
 	private agentStorage: AgentStorageManager
@@ -443,6 +453,8 @@ export class SessionManager extends EventEmitter {
 			// signature so a future stop-reason column can pick it up without
 			// re-plumbing the finalizer.
 			onStopSession: (sessionId, _reason) => this.stopSession(sessionId),
+			onTurnFinished: (sessionId, outcome) =>
+				this.emit('turn', { sessionId, phase: 'finished', outcome } satisfies SessionTurnEvent),
 		})
 	}
 
@@ -1127,6 +1139,7 @@ export class SessionManager extends EventEmitter {
 				data: log.content,
 			} satisfies SessionLogEvent)
 		}
+		this.emit('turn', { sessionId, phase: 'started' } satisfies SessionTurnEvent)
 	}
 
 	async stopSession(sessionId: string): Promise<void> {

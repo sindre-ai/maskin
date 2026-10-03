@@ -15,7 +15,7 @@ private struct FakeSource: WidgetDataSource {
 	func feed(workspaceId: String) async throws -> [ForYouCard] {
 		if delay > 0 { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
 		do { return try cards.get() } catch {
-			// Only a 401 raises the flag (the middleware's hook); other failures are plain offline.
+			// Only a 401 raises the flag; any other failure (offline, 5xx) must fall back to the cache.
 			if error is Unauthorized { onUnauthorized?() }
 			throw error
 		}
@@ -351,7 +351,7 @@ struct WidgetSnapshotLoaderTests {
 		let state = await loader(
 			secret: sessionData(), cache: cache, source: FakeSource(cards: .failure(Unauthorized()))
 		).load()
-		// The fake raises the flag for an `Unauthorized` failure, standing in for the middleware's 401 hook.
+		// The fake raises the flag on a feed failure, standing in for the middleware's 401 hook.
 		#expect(state == .signedOut)
 		#expect(cache.load() == nil)
 	}

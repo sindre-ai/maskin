@@ -512,6 +512,19 @@ struct AppRuntimePresentationTests {
 		#expect(runtime.presentation == .object("obj-1"))
 	}
 
+	@Test("the file browser is a sheet that a late close of another sheet does not dismiss")
+	func filesSheet() async {
+		let (runtime, _) = await makeRuntime()
+		runtime.showFiles = true
+		#expect(runtime.presentation == .files)
+
+		runtime.showSettings = false  // a stale dismissal of a sheet that is no longer showing
+		#expect(runtime.showFiles)
+
+		runtime.showFiles = false
+		#expect(runtime.presentation == nil)
+	}
+
 	@Test("switching workspace drops sheets and a pending thread that belong to the old one")
 	func workspaceSwitchDropsStale() async {
 		let (runtime, environment) = await makeRuntime()

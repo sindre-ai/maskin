@@ -27,6 +27,8 @@ public final class ConversationsStore {
 	public var scope: Scope = .active {
 		didSet { if scope != oldValue { Task { await refresh() } } }
 	}
+	/// Narrows the loaded list to conversations an agent takes part in (client-side).
+	public var agentFilterID: String?
 	public var filter: Filter = .all {
 		didSet {
 			guard filter != oldValue else { return }
@@ -73,7 +75,8 @@ public final class ConversationsStore {
 	public var totalUnread: Int { conversations.reduce(0) { $0 + $1.unreadCount } }
 
 	public func groups(query: String = "", now: Date = Date()) -> [ConversationGroup] {
-		let filtered = ConversationGrouping.filter(conversations, query: query)
+		let filtered = ConversationGrouping.filter(
+			ConversationGrouping.filter(conversations, agentID: agentFilterID), query: query)
 		if scope == .archived {
 			return filtered.isEmpty
 				? [] : [ConversationGroup(key: .earlier, label: "Archived", items: filtered)]
@@ -84,6 +87,21 @@ public final class ConversationsStore {
 			return [ConversationGroup(key: .results, label: label, items: filtered)]
 		}
 		return ConversationGrouping.group(filtered, now: now)
+	}
+
+	/// The filter menu only lists agents in the current list, so a filter on an agent that is no
+	/// longer there (archived away, other scope, left the chats) would leave an empty list with no
+	/// way to turn it off. Drop it. Only called once a list has actually loaded: an empty list
+	/// mid-reload says nothing about the agent.
+	private func reconcileAgentFilter() {
+		if let id = agentFilterID, !agentsInList.contains(where: { $0.id == id }) { agentFilterID = nil }
+	}
+
+	/// Agents that appear in the loaded conversations, for the filter menu.
+	public var agentsInList: [ChatParticipant] {
+		var seen: Set<String> = []
+		return conversations.flatMap(\.participants).filter { $0.kind == .agent && seen.insert($0.id).inserted }
+			.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 	}
 
 	/// Actor ids in order of how recently you talked with them (newest conversation first).
@@ -150,6 +168,7 @@ public final class ConversationsStore {
 				conversations = ServerLimits.mergeHead(head: page.conversations, previous: conversations)
 				hasMore = keptTail ? hasMore || page.hasMore : page.hasMore
 				phase = .loaded
+				reconcileAgentFilter()
 				freshness.refreshed(at: cache?.now() ?? Date())
 				writeCache()
 			} catch {
@@ -211,6 +230,7 @@ public final class ConversationsStore {
 	public func setArchived(_ id: String, _ archived: Bool) async {
 		let before = conversations
 		conversations.removeAll { $0.id == id }
+		reconcileAgentFilter()
 		do {
 			try await api.updateState(
 				conversationID: id, pinned: nil, archived: archived, lastReadMessageID: nil, markUnread: false)

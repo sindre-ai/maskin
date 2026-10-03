@@ -49,6 +49,7 @@ struct ConversationListView: View {
 		.searchable(text: $search, prompt: "Search chats")
 		.navigationTitle(store.scope == .archived ? "Archived" : "Chats")
 		.toolbar {
+			ToolbarItem(placement: .automatic) { AgentFilterMenu(store: store) }
 			ToolbarItem(placement: .automatic) {
 				Button(action: onNewChat) { Label("New chat", systemImage: "square.and.pencil") }
 					.keyboardShortcut("n", modifiers: .command)
@@ -94,6 +95,28 @@ struct ConversationListView: View {
 		}
 		Button(conversation.archived ? "Unarchive" : "Archive", systemImage: "archivebox") {
 			Task { await store.setArchived(conversation.id, !conversation.archived) }
+		}
+	}
+}
+
+/// Narrows the list to conversations with one agent. Hidden until the list has agents in it.
+private struct AgentFilterMenu: View {
+	@Bindable var store: ConversationsStore
+
+	var body: some View {
+		let agents = store.agentsInList
+		if !agents.isEmpty {
+			Menu {
+				Picker("Agent", selection: $store.agentFilterID) {
+					Text("All agents").tag(String?.none)
+					ForEach(agents) { agent in Text(agent.name).tag(String?.some(agent.id)) }
+				}
+			} label: {
+				Label(
+					"Filter by agent",
+					systemImage: store.agentFilterID == nil
+						? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+			}
 		}
 	}
 }
