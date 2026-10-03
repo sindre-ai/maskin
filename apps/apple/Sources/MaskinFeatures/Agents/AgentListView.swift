@@ -34,7 +34,7 @@ struct AgentListView: View {
 		}
 		.listStyle(.plain)
 		.overlay { overlay(isEmpty: groups.isEmpty) }
-		.characterRefreshable { await store.refresh() }
+		.refreshable { await store.refresh() }
 		.searchable(text: $search, prompt: "Search agents")
 	}
 

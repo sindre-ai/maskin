@@ -107,6 +107,10 @@ targets:
         # Silent/background pushes. Ignored by macOS, which has no UIBackgroundModes.
         UIBackgroundModes:
           - remote-notification
+          - fetch
+        # Best-effort For You top-up while the app is closed (BackgroundRefresh.swift).
+        BGTaskSchedulerPermittedIdentifiers:
+          - io.maskin.app.refresh
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: true
         UISupportedInterfaceOrientations:

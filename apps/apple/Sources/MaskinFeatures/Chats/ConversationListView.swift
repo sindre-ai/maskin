@@ -64,7 +64,7 @@ struct ConversationListView: View {
 		}
 		.listStyle(.plain)
 		.overlay { overlay(isEmpty: groups.isEmpty) }
-		.characterRefreshable { await store.refresh() }
+		.refreshable { await store.refresh() }
 		.chatSearch(store: store, text: $search)
 		.toolbar {
 			ToolbarItem(placement: .automatic) {
@@ -128,6 +128,7 @@ extension View {
 private struct ChatSearchModifier: ViewModifier {
 	@Bindable var store: ConversationsStore
 	@Binding var text: String
+	@State private var presented = false
 
 	/// The one selected agent as a token (the store holds an id; the token needs the person).
 	private var tokens: Binding<[ChatParticipant]> {
@@ -138,7 +139,8 @@ private struct ChatSearchModifier: ViewModifier {
 
 	func body(content: Content) -> some View {
 		content
-			.searchable(text: $text, tokens: tokens, prompt: "Search chats") { agent in
+			.searchable(text: $text, tokens: tokens, isPresented: $presented, prompt: "Search chats") {
+				agent in
 				Label(agent.name, systemImage: ActorIdentity.agentSymbol(seed: agent.id))
 			}
 			.searchSuggestions {
@@ -150,6 +152,13 @@ private struct ChatSearchModifier: ViewModifier {
 				}
 			}
 			.searchMinimized()
+			// Closing the field collapses it back to the icon; a leftover agent token or query
+			// would otherwise keep it open.
+			.onChange(of: presented) {
+				guard !presented else { return }
+				text = ""
+				store.agentFilterID = nil
+			}
 	}
 
 	private func matches(_ agent: ChatParticipant) -> Bool {

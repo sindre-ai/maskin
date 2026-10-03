@@ -57,7 +57,7 @@ struct LoopsListView: View {
 		}
 		.listStyle(.plain)
 		.overlay { overlay(isEmpty: sections.isEmpty) }
-		.characterRefreshable { await store.refresh() }
+		.refreshable { await store.refresh() }
 	}
 
 	@ViewBuilder

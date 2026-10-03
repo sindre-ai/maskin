@@ -43,6 +43,7 @@ private struct LoopsContainer: View {
 	@State private var loopSelection: String?
 	@State private var triggerSelection: String?
 	@State private var search = ""
+	@State private var searchPresented = false
 	@Namespace private var zoom
 	@State private var showNewTrigger = false
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
@@ -121,8 +122,13 @@ private struct LoopsContainer: View {
 			.padding(.horizontal, MaskinSpace.s9)
 			.padding(.vertical, MaskinSpace.s4)
 		}
-		.searchable(text: $search, prompt: mode == .triggers ? "Search triggers" : "Search loops")
+		.searchable(
+			text: $search, isPresented: $searchPresented,
+			prompt: mode == .triggers ? "Search triggers" : "Search loops"
+		)
 		.searchMinimized()
+		// Closing the field collapses it back to the icon, so it can't keep a stale query.
+		.onChange(of: searchPresented) { if !searchPresented { search = "" } }
 		.toolbar {
 			if mode == .triggers {
 				ToolbarItem(placement: .automatic) {

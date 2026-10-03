@@ -79,6 +79,9 @@ public final class ForYouStore {
 	public private(set) var phase: Phase = .idle
 	/// A pull-to-refresh is in flight (the list stays on screen).
 	public private(set) var isRefreshing = false
+	/// A server fetch is in flight. The list uses it to apply what comes back without animating,
+	/// so a reorder from fresh data doesn't look like the reader's own action.
+	public private(set) var isFetching = false
 	/// Cards as the server lists them, before the reader's decisions are overlaid.
 	public private(set) var cards: [ForYouCard] = []
 	public private(set) var actors: [String: ForYouActor] = [:]
@@ -240,6 +243,8 @@ public final class ForYouStore {
 	private func fetch(workspace ws: String) async {
 		generation += 1
 		let mine = generation
+		isFetching = true
+		defer { if mine == generation { isFetching = false } }
 		let started = ContinuousClock.now
 		async let actorsResult = try? source.fetchActors(workspaceId: ws)
 		var succeeded = false

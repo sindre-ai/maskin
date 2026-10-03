@@ -27,6 +27,8 @@ struct ObjectsListView: View {
 		.background(MaskinSurface.grouped)
 		.searchable(text: $search, isPresented: $searchPresented, prompt: "Search objects")
 		.searchMinimized()
+		// Closing the field collapses it back to the icon, so it can't keep a stale query.
+		.onChange(of: searchPresented) { if !searchPresented { search = "" } }
 		.task(id: search) {
 			if !search.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
 			if !Task.isCancelled { await store.setSearch(search) }
@@ -198,7 +200,7 @@ struct ObjectsListView: View {
 			}
 		}
 		.listStyle(.plain)
-		.characterRefreshable { await store.reload() }
+		.refreshable { await store.reload() }
 	}
 
 	@ViewBuilder private func row(_ object: WorkObject) -> some View {

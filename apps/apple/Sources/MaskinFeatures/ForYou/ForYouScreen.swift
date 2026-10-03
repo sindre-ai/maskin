@@ -60,8 +60,8 @@ struct ForYouFeedView: View {
 		.listStyle(.plain)
 		.scrollContentBackground(.hidden)
 		.background(MaskinSurface.grouped)
-		.characterRefreshable { await store.refresh() }
-		.animation(MaskinMotion.standard, value: entries.map { "\($0.id)-\($0.bucket.rawValue)" })
+		.refreshable { await store.refresh() }
+		.animation(store.isFetching ? nil : MaskinMotion.standard, value: entries.map { "\($0.id)-\($0.bucket.rawValue)" })
 		.onChange(of: scenePhase) { _, phase in
 			switch phase {
 			case .active: outbox.appDidBecomeActive()
@@ -79,10 +79,6 @@ struct ForYouFeedView: View {
 	@ViewBuilder
 	private func headerRows(entries: [FeedEntry]) -> some View {
 		Group {
-			if store.isRefreshing {
-				Label("Asking the agents what changed…", systemImage: "sparkles")
-					.maskinText(.caption).foregroundStyle(MaskinColor.ink4)
-			}
 			if !outbox.isOnline {
 				OfflineBanner(
 					message: offlineMessage)

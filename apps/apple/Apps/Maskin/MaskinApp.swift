@@ -12,6 +12,7 @@ struct MaskinApp: App {
 	#endif
 	@State private var environment: AppEnvironment
 	@State private var push: PushRegistrar
+	@Environment(\.scenePhase) private var scenePhase
 	#if os(iOS)
 		@State private var watchBridge = WatchSessionBridge()
 	#endif
@@ -39,6 +40,7 @@ struct MaskinApp: App {
 		)
 		#if os(iOS)
 			Self.setUpLiveActivity(environment: environment, registrar: registrar)
+			BackgroundRefresh.register(environment: environment)
 		#endif
 		_push = State(initialValue: registrar)
 	}
@@ -63,6 +65,11 @@ struct MaskinApp: App {
 				}
 			#endif
 		}
+		#if os(iOS)
+			.onChange(of: scenePhase) { _, phase in
+				if phase == .background { BackgroundRefresh.schedule() }
+			}
+		#endif
 		.commands { ShellCommands() }
 	}
 
