@@ -13,7 +13,7 @@ import { db, getTestActorId } from './global-setup'
 // the Resend SDK is stubbed, so the assertions are on what leaves the process.
 const fetchMock = vi.fn()
 
-async function setup(metadata: Record<string, unknown>) {
+async function setup(metadata: Record<string, unknown>, status?: string) {
 	const ws = await insertWorkspace(db, getTestActorId())
 	await db.insert(integrations).values({
 		workspaceId: ws.id,
@@ -27,6 +27,7 @@ async function setup(metadata: Record<string, unknown>) {
 		type: 'contact',
 		title: 'Pia Prospect',
 		metadata,
+		...(status ? { status } : {}),
 	})
 	return { workspaceId: ws.id, contactId: contact.id }
 }
@@ -226,6 +227,71 @@ describe('post-call follow-up email hook', () => {
 		await runPostCallHooks(hangup(s))
 		expect(fetchMock).toHaveBeenCalledTimes(2)
 		expect((await metadataOf(s.contactId)).consent_call_id).toBe('call-hook-1')
+	})
+
+	describe('shared email-hook deny list (checkEmailHookDenyList)', () => {
+		const asked = [{ tool_name: FOLLOWUP_REQUEST_TOOL }]
+
+		it('still sends to a contact that ended the call on follow_up_later with a request trace and a quote on record', async () => {
+			const s = await setup(
+				{
+					email: 'pia@prospect.example',
+					voice_tool_trace: asked,
+					consent_quote: 'ja tak, send mig en mail',
+				},
+				'follow_up_later',
+			)
+			await runPostCallHooks({ ...hangup(s), status: 'follow_up_later' })
+			expect(fetchMock).toHaveBeenCalledTimes(1)
+			expect((await metadataOf(s.contactId)).consent_call_id).toBe('call-hook-1')
+		})
+
+		const denied: Array<{
+			name: string
+			metadata: Record<string, unknown>
+			status?: string
+			check: string
+		}> = [
+			{ name: 'approval_hold', metadata: { approval_hold: { by: 'sebk' } }, check: 'hold' },
+			{ name: 'held_reason', metadata: { held_reason: 'legal review' }, check: 'hold' },
+			{ name: 'protected', metadata: { protected: true }, check: 'protect' },
+			{ name: 'deleted_by_request', metadata: {}, status: 'deleted_by_request', check: 'status' },
+			{ name: 'rejected', metadata: {}, status: 'rejected', check: 'status' },
+		]
+
+		it.each(denied)(
+			'skips a $name contact with a logged reason and sends nothing',
+			async ({ metadata, status, check }) => {
+				const info = vi.spyOn(logger, 'info')
+				const s = await setup(
+					{ email: 'pia@prospect.example', voice_tool_trace: asked, ...metadata },
+					status,
+				)
+				await runPostCallHooks({ ...hangup(s), status: status ?? 'follow_up_later' })
+				expect(fetchMock).not.toHaveBeenCalled()
+				expect(info).toHaveBeenCalledWith(
+					'voice.email.send_skipped',
+					expect.objectContaining({
+						contactId: s.contactId,
+						reason: 'suppressed_by_deny_list',
+						check,
+						detail: expect.any(String),
+					}),
+				)
+				expect((await metadataOf(s.contactId)).consent_call_id).toBeUndefined()
+			},
+		)
+
+		it('checks suppression before the trace gate (a held contact with no request is logged as suppressed)', async () => {
+			const info = vi.spyOn(logger, 'info')
+			const s = await setup({ email: 'pia@prospect.example', approval_hold: true })
+			await runPostCallHooks(hangup(s))
+			expect(fetchMock).not.toHaveBeenCalled()
+			expect(info).toHaveBeenCalledWith(
+				'voice.email.send_skipped',
+				expect.objectContaining({ reason: 'suppressed_by_deny_list' }),
+			)
+		})
 	})
 
 	describe('Meet link', () => {
