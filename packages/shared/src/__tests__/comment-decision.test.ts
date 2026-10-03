@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
 	type CommentDecision,
+	type CommentDecisionOption,
 	commentDecisionSchema,
 	validateDecisionProse,
 } from '../schemas/comment-decision'
@@ -33,6 +34,23 @@ function violate(decision: CommentDecision) {
 }
 
 describe('commentDecisionSchema', () => {
+	it('accepts an optional destructive flag on an option and rejects a non-boolean', () => {
+		const [first, second] = buildDecision().options
+		const withFlag = buildDecision({
+			options: [
+				{ ...(first as CommentDecisionOption), destructive: true },
+				second as CommentDecisionOption,
+			],
+		})
+		const parsed = commentDecisionSchema.safeParse(withFlag)
+		expect(parsed.success && parsed.data.options[0]?.destructive).toBe(true)
+		const bad = {
+			...withFlag,
+			options: [{ ...withFlag.options[0], destructive: 'yes' }, second],
+		}
+		expect(commentDecisionSchema.safeParse(bad).success).toBe(false)
+	})
+
 	it('accepts a well-formed decision', () => {
 		expect(commentDecisionSchema.safeParse(buildDecision()).success).toBe(true)
 		expect(validateDecisionProse(buildDecision())).toEqual([])
