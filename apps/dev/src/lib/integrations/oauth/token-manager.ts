@@ -4,6 +4,7 @@ import { and, eq } from 'drizzle-orm'
 import { decrypt, encrypt } from '../../crypto'
 import { recordEvent } from '../../events/record-event'
 import { logger } from '../../logger'
+import { requireCredentials } from '../credential-column'
 import { IntegrationAuthRevokedError } from '../errors'
 import type { ResolvedProvider, StoredCredentials } from '../types'
 import { OAuth2Handler, TokenRequestError } from './handler'
@@ -60,7 +61,7 @@ export class TokenManager {
 			throw new IntegrationAuthRevokedError(integrationId)
 		}
 
-		const credentials: StoredCredentials = JSON.parse(decrypt(integration.credentials))
+		const credentials: StoredCredentials = JSON.parse(decrypt(requireCredentials(integration)))
 
 		// Custom auth providers handle their own token generation. Shares the same
 		// in-flight dedup as the standard path: a handler may perform a *stateful*

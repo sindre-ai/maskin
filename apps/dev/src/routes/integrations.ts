@@ -16,6 +16,7 @@ import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { requireCredentials } from '../lib/integrations/credential-column'
 import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
@@ -485,7 +486,7 @@ app.openapi(linkInstallationRoute, (async (c) => {
 
 	// Re-encrypt rather than copying the source ciphertext, so the rows stay
 	// independent if credential storage ever becomes per-row keyed.
-	const credentials: StoredCredentials = JSON.parse(decrypt(source.credentials))
+	const credentials: StoredCredentials = JSON.parse(decrypt(requireCredentials(source)))
 	const ownerLogin = (source.config as IntegrationConfig)?.owner_login
 
 	const row = await bindGithubInstallation({
@@ -1738,7 +1739,7 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	try {
 		const resolved = getProvider(existing.provider)
 		if (resolved.preDisconnect && existing.status !== 'pending') {
-			const credentials: StoredCredentials = JSON.parse(decrypt(existing.credentials))
+			const credentials: StoredCredentials = JSON.parse(decrypt(requireCredentials(existing)))
 			await resolved.preDisconnect({
 				db,
 				integrationId: existing.id,
@@ -2100,7 +2101,7 @@ app.openapi(githubTokenRoute, (async (c) => {
 
 	if (recoveryRepo) {
 		try {
-			const credentials: StoredCredentials = JSON.parse(decrypt(integration.credentials))
+			const credentials: StoredCredentials = JSON.parse(decrypt(requireCredentials(integration)))
 			const result = await mintInstallationTokenWithRecovery(credentials, { repo: recoveryRepo })
 			if (result.recovered) {
 				const oldInstallationId = credentials.installation_id as string | undefined
@@ -2754,7 +2755,7 @@ webhookApp.post('/skjald/:token', async (c) => {
 		if (typeof value === 'string') headers[key.toLowerCase()] = value
 	}
 
-	const secret = decrypt(integration.credentials)
+	const secret = decrypt(requireCredentials(integration))
 	const verified = verifyTimestampSignature(body, headers, secret, {
 		signatureHeader: 'x-skjald-signature',
 		timestampHeader: 'x-skjald-timestamp',
@@ -2936,7 +2937,7 @@ webhookApp.post('/resend/:token', async (c) => {
 	// it so `session-manager` can inject `RESEND_API_KEY` on the send path.
 	let stored: { accessToken: string; webhookSecret: string }
 	try {
-		stored = JSON.parse(decrypt(integration.credentials)) as {
+		stored = JSON.parse(decrypt(requireCredentials(integration))) as {
 			accessToken: string
 			webhookSecret: string
 		}

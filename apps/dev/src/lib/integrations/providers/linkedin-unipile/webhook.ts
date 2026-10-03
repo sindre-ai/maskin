@@ -24,6 +24,7 @@ import { integrations } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { decrypt } from '../../../crypto'
 import { logger } from '../../../logger'
+import { requireCredentials } from '../../credential-column'
 import { LinkedInIntegrationError } from './errors'
 import { type FanOutDiff, reEnumerateAndSyncLinkedInInstances } from './fan-out'
 import type { LinkedInClient } from './unipile-client'
@@ -119,7 +120,7 @@ export async function handleUnipileAccountReconnect(
 	for (const row of rows) {
 		let credentials: { account_id?: string } = {}
 		try {
-			credentials = JSON.parse(decrypt(row.credentials)) as { account_id?: string }
+			credentials = JSON.parse(decrypt(requireCredentials(row))) as { account_id?: string }
 		} catch (err) {
 			logger.warn('linkedin-unipile account.reconnect: failed to decrypt credentials', {
 				integrationId: row.id,

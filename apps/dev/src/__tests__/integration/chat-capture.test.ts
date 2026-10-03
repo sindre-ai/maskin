@@ -351,3 +351,123 @@ describe('GET /api/integrations/:id/audit-log', () => {
 		expect(audit.status).toBe(404)
 	})
 })
+
+describe('POST /api/integrations/:id/undo', () => {
+	async function captured() {
+		const s = await setup()
+		const res = await capture(appFor(s.human), s.ws.id, validBody(s.session.id))
+		const { integrationId } = (await res.json()) as { integrationId: string }
+		return { s, integrationId }
+	}
+
+	const undo = (app: ReturnType<typeof appFor>, workspaceId: string, id: string) =>
+		app.request(`/api/integrations/${id}/undo`, {
+			method: 'POST',
+			headers: { 'x-workspace-id': workspaceId },
+		})
+
+	const auditRows = (integrationId: string) =>
+		db
+			.select({ action: credentialAccessLog.action })
+			.from(credentialAccessLog)
+			.where(eq(credentialAccessLog.integrationId, integrationId))
+			.orderBy(credentialAccessLog.id)
+
+	it('zeroises the secret inside the window, keeps the row, logs undone and fires the event', async () => {
+		const { s, integrationId } = await captured()
+		const res = await undo(appFor(s.human), s.ws.id, integrationId)
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ id: integrationId, status: 'undone' })
+
+		const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId))
+		expect(row).toMatchObject({
+			status: 'undone',
+			credentials: null,
+			dekCiphertext: null,
+			undoExpiresAt: null,
+		})
+		expect((await auditRows(integrationId)).map((r) => r.action)).toEqual(['create', 'undone'])
+		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({ ok: true, rows: 2 })
+		expect(captureMock).toHaveBeenCalledWith(
+			'keychain_credential_undone',
+			s.human,
+			expect.objectContaining({
+				integration_id: integrationId,
+				seconds_since_create: expect.any(Number),
+			}),
+		)
+
+		// Nothing can read it any more.
+		await expect(
+			getCredential(
+				db,
+				s.ws.id,
+				integrationId,
+				{ requestingActorId: s.agent.id, sessionId: s.session.id, requestId: 'r' },
+				{ kms },
+			),
+		).rejects.toThrow(/undone/)
+	})
+
+	it('a second undo is a 409 and logs nothing more', async () => {
+		const { s, integrationId } = await captured()
+		expect((await undo(appFor(s.human), s.ws.id, integrationId)).status).toBe(200)
+		expect((await undo(appFor(s.human), s.ws.id, integrationId)).status).toBe(409)
+		expect((await auditRows(integrationId)).map((r) => r.action)).toEqual(['create', 'undone'])
+	})
+
+	it('409s after the window and leaves the credential intact', async () => {
+		const { s, integrationId } = await captured()
+		await db
+			.update(integrations)
+			.set({ undoExpiresAt: new Date(Date.now() - 1000) })
+			.where(eq(integrations.id, integrationId))
+		const res = await undo(appFor(s.human), s.ws.id, integrationId)
+		expect(res.status).toBe(409)
+		const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId))
+		expect(row?.status).toBe('pending_undo')
+		expect(row?.credentials).toBeTruthy()
+		expect((await auditRows(integrationId)).map((r) => r.action)).toEqual(['create'])
+	})
+
+	it('409s on a row that is not pending undo', async () => {
+		const { s, integrationId } = await captured()
+		await db
+			.update(integrations)
+			.set({ status: 'active' })
+			.where(eq(integrations.id, integrationId))
+		expect((await undo(appFor(s.human), s.ws.id, integrationId)).status).toBe(409)
+		expect((await auditRows(integrationId)).map((r) => r.action)).toEqual(['create'])
+	})
+
+	it('403s a caller in another workspace and one who did not capture it', async () => {
+		const { s, integrationId } = await captured()
+		const other = await setup()
+		expect((await undo(appFor(s.human), other.ws.id, integrationId)).status).toBe(403)
+
+		const teammate = await insertActor(db)
+		await db
+			.insert(workspaceMembers)
+			.values({ workspaceId: s.ws.id, actorId: teammate.id, role: 'member' })
+		expect((await undo(appFor(teammate.id), s.ws.id, integrationId)).status).toBe(403)
+
+		const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId))
+		expect(row?.status).toBe('pending_undo')
+	})
+
+	it('404s an unknown integration', async () => {
+		const s = await setup()
+		expect((await undo(appFor(s.human), s.ws.id, crypto.randomUUID())).status).toBe(404)
+	})
+
+	it('concurrent undos have exactly one winner and one audit row', async () => {
+		const { s, integrationId } = await captured()
+		const results = await Promise.all(
+			Array.from({ length: 6 }, () => undo(appFor(s.human), s.ws.id, integrationId)),
+		)
+		const statuses = results.map((r) => r.status).sort()
+		expect(statuses).toEqual([200, 409, 409, 409, 409, 409])
+		expect((await auditRows(integrationId)).map((r) => r.action)).toEqual(['create', 'undone'])
+		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({ ok: true })
+	})
+})
