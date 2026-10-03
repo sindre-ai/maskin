@@ -27,11 +27,17 @@ export type VoiceStatus = (typeof VOICE_STATUSES)[number]
 // (DNC gate check 2), so a late call.initiated must never revive it. voice_failed
 // is terminal for the retry machine but not absorbing: a human can requeue it.
 // follow_up_later (the prospect asked for the email) must not be redialled either.
-const ABSORBING: ReadonlySet<string> = new Set<VoiceStatus | 'follow_up_later'>([
+// deleted_by_request (erasure guard) and rejected must stay put: a late call event
+// would otherwise move an erased contact back to a voice status.
+const ABSORBING: ReadonlySet<string> = new Set<
+	VoiceStatus | 'follow_up_later' | 'deleted_by_request' | 'rejected'
+>([
 	'voice_declined',
 	'voice_meeting_booked',
 	'voice_warm_transferred',
 	'follow_up_later',
+	'deleted_by_request',
+	'rejected',
 ])
 
 export const MAX_NO_ANSWER_ATTEMPTS = 3
