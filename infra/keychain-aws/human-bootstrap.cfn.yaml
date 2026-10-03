@@ -1,0 +1,260 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Maskin Agent Keychain AWS bootstrap, human-only part (ADR-010). One stack per environment.
+  Creates the permissions boundaries and the bootstrap role the GitHub Actions workflows assume through OIDC.
+  Deploy twice in the dedicated Keychain AWS account, region eu-central-1: Target=staging with
+  CreateOidcProvider=true first, then Target=production with CreateOidcProvider=false.
+  Needs CAPABILITY_NAMED_IAM. DRAFT: written from the Architect's policy draft v2, never run against AWS.
+  The first staging preflight and bootstrap runs are the test. Nothing here is applied until a human deploys it.
+
+Parameters:
+  Target:
+    Type: String
+    AllowedValues: [staging, production]
+    Description: Which environment this stack is for.
+  CreateOidcProvider:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'false'
+    Description: 'true for the first stack only. An account holds one provider for this URL.'
+
+Conditions:
+  MakeProvider: !Equals [!Ref CreateOidcProvider, 'true']
+  IsStaging: !Equals [!Ref Target, staging]
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: MakeProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+
+  # Runtime user boundary. The bootstrap role writes the runtime user's inline policy, so this is the real control:
+  # effective runtime permission is the intersection of that inline policy and this boundary.
+  # Keep identical to runtime-user-policy.json.tpl (same statements, bucket name filled in).
+  RuntimeBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub maskin-keychain-runtime-boundary-${Target}
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: KmsUseOnKeychainKeys
+            Effect: Allow
+            Action: [kms:Encrypt, kms:Decrypt, kms:DescribeKey, kms:TagResource]
+            Resource: !Sub arn:aws:kms:eu-central-1:${AWS::AccountId}:key/*
+            Condition:
+              ForAnyValue:StringLike:
+                kms:ResourceAliases: alias/maskin-keychain-*
+          - Sid: KmsCreateTaggedKeysInRegion
+            Effect: Allow
+            Action: [kms:CreateKey, kms:TagResource]
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:RequestTag/maskin-keychain: 'true'
+                aws:RequestedRegion: eu-central-1
+          - Sid: KmsAliasNamesUnderPrefix
+            Effect: Allow
+            Action: kms:CreateAlias
+            Resource: !Sub arn:aws:kms:eu-central-1:${AWS::AccountId}:alias/maskin-keychain-*
+          - Sid: KmsAliasOnTaggedKeysOnly
+            Effect: Allow
+            Action: kms:CreateAlias
+            Resource: !Sub arn:aws:kms:eu-central-1:${AWS::AccountId}:key/*
+            Condition:
+              StringEquals:
+                aws:ResourceTag/maskin-keychain: 'true'
+          - Sid: WormWrite
+            Effect: Allow
+            Action: s3:PutObject
+            Resource: !Sub arn:aws:s3:::maskin-keychain-worm-${Target}-${AWS::AccountId}/*
+          - Sid: SnapshotRead
+            Effect: Allow
+            Action: s3:GetObject
+            Resource: !Sub arn:aws:s3:::maskin-keychain-worm-${Target}-${AWS::AccountId}/snapshots/*
+          - Sid: ListSameBucket
+            Effect: Allow
+            Action: s3:ListBucket
+            Resource: !Sub arn:aws:s3:::maskin-keychain-worm-${Target}-${AWS::AccountId}
+          - Sid: NoTaggingOfKeysThatAreNotAlreadyInScope
+            Effect: Deny
+            Action: [kms:TagResource, kms:UntagResource]
+            Resource: !Sub arn:aws:kms:eu-central-1:${AWS::AccountId}:key/*
+            Condition:
+              'Null':
+                aws:ResourceTag/maskin-keychain: 'true'
+          - Sid: ExplicitDenies
+            Effect: Deny
+            Action:
+              - kms:ScheduleKeyDeletion
+              - kms:DisableKey
+              - kms:PutKeyPolicy
+              - kms:CreateGrant
+              - s3:DeleteObject
+              - s3:DeleteObjectVersion
+              - s3:BypassGovernanceRetention
+              - s3:PutObjectRetention
+              - s3:PutObjectLegalHold
+              - s3:PutBucketObjectLockConfiguration
+              - iam:*
+            Resource: '*'
+
+  # One managed policy used twice on the bootstrap role: as its permissions and as its permissions boundary.
+  # Narrowed against draft v2: S3, CloudTrail and IAM resources carry the environment name, so the
+  # staging role cannot touch production buckets, the production trail or the production runtime user.
+  BootstrapPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub maskin-keychain-bootstrap-${Target}
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: KmsCreateTaggedKeysInRegion
+            Effect: Allow
+            Action: [kms:CreateKey, kms:TagResource]
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:RequestTag/maskin-keychain: 'true'
+                aws:RequestedRegion: eu-central-1
+          - Sid: KmsAliasNamesUnderPrefix
+            Effect: Allow
+            Action: kms:CreateAlias
+            Resource: !Sub arn:aws:kms:eu-central-1:${AWS::AccountId}:alias/maskin-keychain-*
+          - Sid: KmsKeyOpsOnTaggedKeysOnly
+            Effect: Allow
+            Action: [kms:CreateAlias, kms:PutKeyPolicy, kms:DescribeKey]
+            Resource: !Sub arn:aws:kms:eu-central-1:${AWS::AccountId}:key/*
+            Condition:
+              StringEquals:
+                aws:ResourceTag/maskin-keychain: 'true'
+          - Sid: S3CreateAndLockBuckets
+            Effect: Allow
+            Action:
+              - s3:CreateBucket
+              - s3:PutBucketVersioning
+              - s3:PutBucketObjectLockConfiguration
+              - s3:GetBucketObjectLockConfiguration
+              - s3:PutBucketPolicy
+              - s3:GetBucketPolicy
+              - s3:PutBucketPublicAccessBlock
+              - s3:PutEncryptionConfiguration
+              - s3:PutBucketTagging
+              - s3:ListBucket
+              - s3:GetBucketVersioning
+            Resource:
+              - !Sub arn:aws:s3:::maskin-keychain-worm-${Target}-${AWS::AccountId}
+              - !Sub arn:aws:s3:::maskin-keychain-trail-${Target}-${AWS::AccountId}
+          - !If
+            - IsStaging
+            - Sid: StagingSmokeObjectsAndLockTest
+              Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+                - s3:GetObjectRetention
+                - s3:DeleteObject
+                - s3:DeleteObjectVersion
+              Resource: !Sub arn:aws:s3:::maskin-keychain-worm-staging-${AWS::AccountId}/smoke/*
+            - !Ref AWS::NoValue
+          - Sid: CloudTrailForThisEnvironment
+            Effect: Allow
+            Action:
+              - cloudtrail:CreateTrail
+              - cloudtrail:UpdateTrail
+              - cloudtrail:StartLogging
+              - cloudtrail:PutEventSelectors
+              - cloudtrail:AddTags
+              - cloudtrail:DescribeTrails
+              - cloudtrail:GetTrailStatus
+            Resource: !Sub arn:aws:cloudtrail:eu-central-1:${AWS::AccountId}:trail/maskin-keychain-${Target}
+          - Sid: RuntimeUserCreateWithBoundaryRequired
+            Effect: Allow
+            Action: iam:CreateUser
+            Resource: !Sub arn:aws:iam::${AWS::AccountId}:user/maskin-keychain/maskin-keychain-runtime-${Target}*
+            Condition:
+              StringEquals:
+                iam:PermissionsBoundary: !Sub arn:aws:iam::${AWS::AccountId}:policy/maskin-keychain-runtime-boundary-${Target}
+          - Sid: RuntimeUserManage
+            Effect: Allow
+            Action:
+              - iam:GetUser
+              - iam:TagUser
+              - iam:PutUserPolicy
+              - iam:GetUserPolicy
+              - iam:CreateAccessKey
+              - iam:ListAccessKeys
+              - iam:UpdateAccessKey
+              - iam:DeleteAccessKey
+            Resource: !Sub arn:aws:iam::${AWS::AccountId}:user/maskin-keychain/maskin-keychain-runtime-${Target}
+          - Sid: Whoami
+            Effect: Allow
+            Action: sts:GetCallerIdentity
+            Resource: '*'
+          - Sid: NoTaggingOfKeysThatAreNotAlreadyInScope
+            Effect: Deny
+            Action: [kms:TagResource, kms:UntagResource]
+            Resource: !Sub arn:aws:kms:eu-central-1:${AWS::AccountId}:key/*
+            Condition:
+              'Null':
+                aws:ResourceTag/maskin-keychain: 'true'
+          - Sid: NeverTouchBoundariesRolesOrLocks
+            Effect: Deny
+            Action:
+              - iam:PutUserPermissionsBoundary
+              - iam:DeleteUserPermissionsBoundary
+              - iam:CreatePolicy
+              - iam:CreatePolicyVersion
+              - iam:SetDefaultPolicyVersion
+              - iam:DeletePolicy
+              - iam:DeletePolicyVersion
+              - iam:AttachUserPolicy
+              - iam:CreateRole
+              - iam:PutRolePolicy
+              - iam:AttachRolePolicy
+              - iam:UpdateAssumeRolePolicy
+              - iam:DeleteRolePermissionsBoundary
+              - s3:BypassGovernanceRetention
+              - s3:PutObjectRetention
+              - s3:PutObjectLegalHold
+              - kms:ScheduleKeyDeletion
+              - kms:DisableKey
+              - cloudtrail:DeleteTrail
+              - cloudtrail:StopLogging
+            Resource: '*'
+          - Sid: IamOnlyOnThisEnvironmentsRuntimeUser
+            Effect: Deny
+            Action: iam:*
+            NotResource:
+              - !Sub arn:aws:iam::${AWS::AccountId}:user/maskin-keychain/maskin-keychain-runtime-${Target}*
+              - !Sub arn:aws:iam::${AWS::AccountId}:policy/maskin-keychain-runtime-boundary-${Target}
+
+  BootstrapRole:
+    Type: AWS::IAM::Role
+    DependsOn: GitHubOidcProvider
+    Properties:
+      RoleName: !Sub maskin-keychain-bootstrap-${Target}
+      MaxSessionDuration: 3600
+      PermissionsBoundary: !Ref BootstrapPolicy
+      ManagedPolicyArns:
+        - !Ref BootstrapPolicy
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:sindre-ai/maskin:environment:keychain-aws-${Target}
+
+Outputs:
+  BootstrapRoleName:
+    Value: !Ref BootstrapRole
+  RuntimeBoundaryName:
+    Value: !Ref RuntimeBoundary
