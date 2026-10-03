@@ -8,7 +8,7 @@ import { deregisterLinkedInMcpInstancesForIntegration } from '@maskin/mcp/linked
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { skjaldTranscriptionCompletedPayloadSchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, eq, isNotNull } from 'drizzle-orm'
+import { and, eq, isNotNull, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
 import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
@@ -41,6 +41,8 @@ import { fetchResendBodyWithRetry } from '../lib/integrations/providers/resend/b
 import {
 	DomainAlreadyClaimedError,
 	DomainRegisterError,
+	adoptResendDomain,
+	findResendDomainByName,
 	registerResendDomain,
 } from '../lib/integrations/providers/resend/domain-register'
 import {
@@ -95,6 +97,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import type { IntegrationConfig } from '../lib/types'
+import { mapTopStatus } from '../services/resend-domain-verifier'
 
 type Env = {
 	Variables: {
@@ -1020,19 +1023,50 @@ app.openapi(connectRoute, (async (c) => {
 				)
 			}
 
-			// Step 2 — register the subdomain on the customer's Resend account.
+			// Step 2 — adopt the subdomain if it already exists in the customer's
+			// Resend account (same account, so it is theirs to reuse), otherwise
+			// register it. Resend allows same-account duplicates, so without the
+			// lookup a second copy would be created. The list response we just
+			// fetched is the first page of the lookup.
+			const alreadyClaimed = (resendCode: string) =>
+				c.json(
+					createApiError('BAD_REQUEST', 'Resend reports this domain is already claimed', [
+						{ field: 'code', message: 'DOMAIN_ALREADY_CLAIMED' },
+						{ field: 'resend_error', message: resendCode },
+					]),
+					400,
+				)
 			let registration: Awaited<ReturnType<typeof registerResendDomain>>
 			try {
-				registration = await registerResendDomain(resendApiKey, resendSubdomain)
+				const verifyPage = await verifyRes.json().catch(() => null)
+				const existingDomainId = await findResendDomainByName(
+					resendApiKey,
+					resendSubdomain,
+					verifyPage,
+				)
+				if (existingDomainId) {
+					// Only another Maskin integration row holding this domain id blocks
+					// the adopt; the row of any workspace counts, this one included.
+					const [claimedBy] = await db
+						.select({ id: integrations.id })
+						.from(integrations)
+						.where(
+							and(
+								eq(integrations.provider, 'resend'),
+								sql`${integrations.config}->'resend'->>'resend_domain_id' = ${existingDomainId}`,
+							),
+						)
+						.limit(1)
+					if (claimedBy) {
+						return alreadyClaimed('domain_already_claimed')
+					}
+					registration = await adoptResendDomain(resendApiKey, existingDomainId)
+				} else {
+					registration = await registerResendDomain(resendApiKey, resendSubdomain)
+				}
 			} catch (err) {
 				if (err instanceof DomainAlreadyClaimedError) {
-					return c.json(
-						createApiError('BAD_REQUEST', 'Resend reports this domain is already claimed', [
-							{ field: 'code', message: 'DOMAIN_ALREADY_CLAIMED' },
-							{ field: 'resend_error', message: err.resendCode ?? 'domain_already_claimed' },
-						]),
-						400,
-					)
+					return alreadyClaimed(err.resendCode ?? 'domain_already_claimed')
 				}
 				if (err instanceof DomainRegisterError) {
 					logger.warn('resend.connect.domain_register_failed', {
@@ -1056,12 +1090,15 @@ app.openapi(connectRoute, (async (c) => {
 				throw err
 			}
 
+			const verificationStatus = mapTopStatus(
+				registration.verificationStatus as Parameters<typeof mapTopStatus>[0],
+			)
 			const resendConfig: IntegrationConfig = {
 				system_actor_id: systemActor.id,
 				resend: {
 					receive_subdomain: resendSubdomain,
 					resend_domain_id: registration.resendDomainId,
-					verification_status: 'pending',
+					verification_status: verificationStatus,
 					last_polled_at: null,
 					webhook_url: webhookUrl,
 					dns_records: registration.dnsRecords,
@@ -1109,7 +1146,7 @@ app.openapi(connectRoute, (async (c) => {
 				integration_id: resendRow.id,
 				webhook_url: webhookUrl,
 				dns_records: registration.dnsRecords,
-				verification_status: 'pending',
+				verification_status: verificationStatus,
 			})
 		}
 

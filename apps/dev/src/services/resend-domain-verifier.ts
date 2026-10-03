@@ -65,6 +65,7 @@ export interface ResendIntegrationConfig extends IntegrationConfig {
 type PollOutcome =
 	| { kind: 'ok'; body: ResendDomainGetResponse }
 	| { kind: 'auth_failed' }
+	| { kind: 'not_found' }
 	| { kind: 'retry'; statusOrErr: string }
 
 type Logger = typeof defaultLogger
@@ -166,6 +167,22 @@ export function buildTimeoutFieldUpdate(
 	}
 }
 
+/** Build the config blob when Resend no longer knows the domain id (404). */
+export function buildNotFoundFieldUpdate(
+	stored: ResendIntegrationConfig,
+	now: Date,
+): ResendIntegrationConfig {
+	return {
+		...stored,
+		resend: {
+			...(stored.resend ?? {}),
+			verification_status: 'failed',
+			verification_error: 'domain_not_found',
+			last_polled_at: now.toISOString(),
+		},
+	}
+}
+
 /** Default poll implementation — real Resend HTTP call. Override in tests. */
 export const defaultPoll: PollFn = async (resendDomainId, accessToken) => {
 	let response: Response
@@ -179,6 +196,9 @@ export const defaultPoll: PollFn = async (resendDomainId, accessToken) => {
 	}
 	if (response.status === 401 || response.status === 403) {
 		return { kind: 'auth_failed' }
+	}
+	if (response.status === 404) {
+		return { kind: 'not_found' }
 	}
 	if (response.status === 429 || response.status >= 500) {
 		return { kind: 'retry', statusOrErr: String(response.status) }
@@ -331,6 +351,10 @@ export class ResendDomainVerifier {
 			})
 			return
 		}
+		if (outcome.kind === 'not_found') {
+			await this.applyNotFound(row, config, now, resendDomainId)
+			return
+		}
 		if (outcome.kind === 'retry') {
 			this.logger.warn('resend.domain.poll.retry', {
 				workspace_id: row.workspaceId,
@@ -399,6 +423,30 @@ export class ResendDomainVerifier {
 			workspace_id: row.workspaceId,
 			resend_domain_id: config.resend?.resend_domain_id ?? null,
 			elapsed_ms: ageMs,
+		})
+	}
+
+	private async applyNotFound(
+		row: EligibleRow,
+		config: ResendIntegrationConfig,
+		now: Date,
+		resendDomainId: string,
+	): Promise<void> {
+		const updated = await this.db
+			.update(integrations)
+			.set({ config: buildNotFoundFieldUpdate(config, now), updatedAt: now })
+			.where(
+				and(
+					eq(integrations.id, row.id),
+					sql`${integrations.config}->'resend'->>'verification_status' = 'pending'`,
+				),
+			)
+			.returning({ id: integrations.id })
+		if (updated.length === 0) return
+		this.logger.warn('resend.domain.poll.not_found', {
+			workspace_id: row.workspaceId,
+			integration_id: row.id,
+			resend_domain_id: resendDomainId,
 		})
 	}
 
