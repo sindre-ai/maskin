@@ -1,34 +1,56 @@
-import { describe, expect, it, vi } from 'vitest'
-import type { LLMAdapter } from '../../lib/llm/adapter'
-import { RawSecretRefusedError, withSecretGuard } from '../../lib/llm/secret-guard'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { AnthropicAdapter } from '../../lib/llm/anthropic'
+import { OpenAIAdapter } from '../../lib/llm/openai'
+import { RawSecretRefusedError, assertNoRawSecrets } from '../../lib/llm/secret-guard'
 
 // Obviously fake, assembled at runtime.
 const fakeKey = `sk_live_${'z'.repeat(24)}`
 
-function inner() {
-	const chat = vi.fn(async () => ({
-		content: 'ok',
-		tool_calls: [],
-		finish_reason: 'stop' as const,
-	}))
-	return { adapter: { chat } satisfies LLMAdapter, chat }
+afterEach(() => vi.unstubAllGlobals())
+
+function stubFetch() {
+	const fetchMock = vi.fn(async () => {
+		throw new Error('the provider must not be called')
+	})
+	vi.stubGlobal('fetch', fetchMock)
+	return fetchMock
 }
 
-describe('withSecretGuard', () => {
-	it('forwards messages with no secret', async () => {
-		const { adapter, chat } = inner()
-		await withSecretGuard(adapter).chat({
-			model: 'm',
-			messages: [{ role: 'user', content: 'hello' }],
-		})
-		expect(chat).toHaveBeenCalledOnce()
+describe('assertNoRawSecrets', () => {
+	it('passes ordinary messages and the redaction marker', () => {
+		expect(() =>
+			assertNoRawSecrets([
+				{ content: 'hello' },
+				{ content: 'sk_live_[REDACTED · vaulted as NAME]' },
+			]),
+		).not.toThrow()
 	})
 
-	it('refuses a high-confidence match in any role and never calls the provider', async () => {
-		for (const role of ['system', 'user', 'assistant', 'tool'] as const) {
-			const { adapter, chat } = inner()
+	it('names the pattern, never the matched text', () => {
+		const err = (() => {
+			try {
+				assertNoRawSecrets([{ content: fakeKey }])
+			} catch (e) {
+				return e as Error
+			}
+		})()
+		expect(err).toBeInstanceOf(RawSecretRefusedError)
+		expect(err?.message).toContain('stripe')
+		expect(err?.message).not.toContain(fakeKey)
+	})
+})
+
+describe.each([
+	['AnthropicAdapter', () => new AnthropicAdapter('key')],
+	['OpenAIAdapter', () => new OpenAIAdapter('key')],
+])('%s refuses a raw secret', (_name, make) => {
+	it.each(['system', 'user', 'assistant', 'tool'] as const)(
+		'in a %s message, as a rejected promise, without calling the provider',
+		async (role) => {
+			const fetchMock = stubFetch()
+			const adapter = make()
 			await expect(
-				withSecretGuard(adapter).chat({
+				adapter.chat({
 					model: 'm',
 					messages: [
 						{ role: 'user', content: 'fine' },
@@ -36,25 +58,15 @@ describe('withSecretGuard', () => {
 					],
 				}),
 			).rejects.toBeInstanceOf(RawSecretRefusedError)
-			expect(chat).not.toHaveBeenCalled()
-		}
-	})
+			expect(fetchMock).not.toHaveBeenCalled()
+		},
+	)
 
-	it('names the pattern, never the matched text', async () => {
-		const { adapter } = inner()
-		const err = await withSecretGuard(adapter)
-			.chat({ model: 'm', messages: [{ role: 'user', content: fakeKey }] })
-			.catch((e: Error) => e)
-		expect((err as Error).message).toContain('stripe')
-		expect((err as Error).message).not.toContain(fakeKey)
-	})
-
-	it('lets the redaction marker through', async () => {
-		const { adapter, chat } = inner()
-		await withSecretGuard(adapter).chat({
-			model: 'm',
-			messages: [{ role: 'user', content: 'sk_live_[REDACTED · vaulted as NAME]' }],
-		})
-		expect(chat).toHaveBeenCalledOnce()
+	it('still forwards a clean message', async () => {
+		const fetchMock = stubFetch()
+		await expect(
+			make().chat({ model: 'm', messages: [{ role: 'user', content: 'hello' }] }),
+		).rejects.toThrow('the provider must not be called')
+		expect(fetchMock).toHaveBeenCalledOnce()
 	})
 })

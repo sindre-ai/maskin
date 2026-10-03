@@ -1,5 +1,4 @@
 import { findHighConfidenceSecret } from '@maskin/shared'
-import type { LLMAdapter } from './adapter'
 
 export class RawSecretRefusedError extends Error {
 	constructor(readonly patternId: string) {
@@ -9,18 +8,15 @@ export class RawSecretRefusedError extends Error {
 }
 
 /**
- * Belt and braces behind the composer guard and the POST /messages backstop: no
- * adapter forwards a message that matches a high-confidence secret pattern. The
- * error names the pattern only, never the matched text.
+ * Belt and braces behind the composer guard and the POST /messages backstop: every
+ * adapter calls this before it builds a request, so no message that matches a
+ * high-confidence secret pattern is forwarded to a provider. The error names the
+ * pattern only, never the matched text. It throws synchronously, so call it inside
+ * an async chat() and it surfaces as a rejected promise like any other failure.
  */
-export function withSecretGuard(adapter: LLMAdapter): LLMAdapter {
-	return {
-		async chat(options) {
-			for (const message of options.messages) {
-				const hit = findHighConfidenceSecret(message.content)
-				if (hit) throw new RawSecretRefusedError(hit.patternId)
-			}
-			return adapter.chat(options)
-		},
+export function assertNoRawSecrets(messages: readonly { content: string }[]): void {
+	for (const message of messages) {
+		const hit = findHighConfidenceSecret(message.content)
+		if (hit) throw new RawSecretRefusedError(hit.patternId)
 	}
 }
