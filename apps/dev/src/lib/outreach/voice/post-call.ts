@@ -1,5 +1,6 @@
 import type { Database } from '@maskin/db'
 import { logger } from '../../logger'
+import { followupEmailHook } from './followup-hook'
 
 export interface PostCallContext {
 	db: Database
@@ -33,7 +34,7 @@ export interface PostCallHook {
  * registers after it. Each hook is isolated: one throwing is logged and the
  * rest still run.
  */
-export const postCallHooks: PostCallHook[] = []
+export const postCallHooks: PostCallHook[] = [followupEmailHook]
 
 export async function runPostCallHooks(
 	ctx: PostCallContext,
