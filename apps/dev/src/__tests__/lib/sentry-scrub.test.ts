@@ -91,6 +91,18 @@ describe('scrubDeep', () => {
 		expectNoValues(out)
 	})
 
+	it('redacts params on an already-normalized Error object (query plus params array)', () => {
+		const normalized = { message: SCRUBBED, query: SQL, params: [FAKE_HASH, FAKE_TOKEN] }
+		const out = scrubDeep({ err: normalized }) as { err: typeof normalized }
+		expect(out.err).toEqual({ message: SCRUBBED, query: SQL, params: '[redacted]' })
+		expectNoValues(out)
+	})
+
+	it('leaves an unrelated params array alone', () => {
+		const input = { params: ['a', 'b'] }
+		expect(scrubDeep(input)).toEqual(input)
+	})
+
 	it('replaces containers nested past the depth cap instead of passing them through', () => {
 		let deep: unknown = { leaf: FAKE_TOKEN }
 		for (let i = 0; i < 8; i++) deep = { next: deep }
@@ -162,6 +174,16 @@ describe('scrubBreadcrumbHook (beforeBreadcrumb)', () => {
 		})
 	})
 
+	it('drops console breadcrumbs, which hold the raw stdout line', () => {
+		const line = JSON.stringify({ level: 'warn', msg: 'x', error: failedQuery() })
+		const crumb: Breadcrumb = {
+			category: 'console',
+			message: line,
+			data: { arguments: [line], logger: 'console' },
+		}
+		expect(scrubBreadcrumbHook(crumb)).toBeNull()
+	})
+
 	it('drops the breadcrumb when the scrub throws', () => {
 		const data = {}
 		Object.defineProperty(data, 'boom', {
@@ -198,6 +220,17 @@ describe('scrubEvent (beforeSend)', () => {
 			message: SCRUBBED,
 			data: { error: SCRUBBED },
 		})
+		expectNoValues(out)
+	})
+
+	it('removes console breadcrumbs and keeps the others', () => {
+		const event = makeEvent()
+		event.breadcrumbs = [
+			{ category: 'console', message: JSON.stringify({ error: failedQuery() }) },
+			{ category: 'log', message: 'kept' },
+		]
+		const out = scrubEvent(event)
+		expect(out?.breadcrumbs).toEqual([{ category: 'log', message: 'kept', data: undefined }])
 		expectNoValues(out)
 	})
 

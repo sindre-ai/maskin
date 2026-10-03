@@ -11,6 +11,8 @@ const MAX_DEPTH = 5
 const REDACTED = '[redacted]'
 const DRIZZLE_QUERY_MARKER = 'Failed query:'
 const DRIZZLE_PARAMS_MARKER = '\nparams:'
+// Sentry's console integration records every console line as a breadcrumb with this category.
+const CONSOLE_CATEGORY = 'console'
 
 // Postgres detail text, e.g. Key (email)=(a@b.c) already exists. The value can
 // itself contain ")", so anchor on the known endings first and fall back to the
@@ -68,6 +70,9 @@ export function scrubDeep(value: unknown, depth = 0): unknown {
 	if (!isPlainObject(value)) return value
 	const out: Record<string, unknown> = {}
 	for (const [key, item] of Object.entries(value)) out[key] = scrubDeep(item, depth + 1)
+	// An Error that Sentry already normalized into a plain object (event.extra) keeps
+	// drizzle's raw bound values in params, and those strings carry no marker to match.
+	if (typeof out.query === 'string' && Array.isArray(out.params)) out.params = REDACTED
 	return out
 }
 
@@ -96,8 +101,14 @@ export function scrubLog(log: Log): Log | null {
 	}
 }
 
+// Console breadcrumbs are dropped, not scrubbed: they hold the logger's JSON stdout
+// line (and the raw arguments), where the newline before params is an escaped
+// backslash-n and an Error context is serialized with its raw params array, so
+// no string rule matches reliably. logger.warn adds its own scrubbed breadcrumb,
+// and Sentry Logs carry info and warn, so nothing the team reads is lost.
 export function scrubBreadcrumbHook(crumb: Breadcrumb): Breadcrumb | null {
 	try {
+		if (crumb.category === CONSOLE_CATEGORY) return null
 		return scrubBreadcrumb(crumb)
 	} catch {
 		return null
@@ -118,7 +129,9 @@ export function scrubEvent(event: ErrorEvent): ErrorEvent | null {
 					value: entry.value === undefined ? undefined : scrubString(entry.value),
 				})),
 			},
-			breadcrumbs: event.breadcrumbs?.map(scrubBreadcrumb),
+			breadcrumbs: event.breadcrumbs
+				?.filter((crumb) => crumb.category !== CONSOLE_CATEGORY)
+				.map(scrubBreadcrumb),
 		}
 	} catch {
 		// Never fall back to the unscrubbed event: send it without any free text.
