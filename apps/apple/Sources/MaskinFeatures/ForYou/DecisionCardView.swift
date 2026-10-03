@@ -83,10 +83,10 @@ struct DecisionCardView: View {
 
 	private var fullCard: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s7) {
-			metaRow
+			kindRow
+			contextRow
 			headline
 			bodyText
-			if let sender { attribution(sender) }
 
 			if let record, !isFailed(record) {
 				receipt(record).transition(.opacity)
@@ -95,6 +95,8 @@ struct DecisionCardView: View {
 					if let failure = failureMessage { failureBanner(failure) }
 					if let decision = card.decision {
 						optionRows(decision)
+					} else {
+						noDecisionRow
 					}
 					replyBar
 				}
@@ -119,19 +121,17 @@ struct DecisionCardView: View {
 		}
 	}
 
-	private var metaRow: some View {
-		HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s4) {
-			HStack(spacing: MaskinSpace.s3) {
-				if let type = card.objectType { TypeBadge(type, style: .mono) }
-				if let title = card.contextTitle {
-					Button {
-						actions.open?()
-					} label: {
-						Text(title).maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
-					}
-					.buttonStyle(.plain)
-					.disabled(actions.open == nil)
-				}
+	/// Who is asking and what kind of ask this is, before anything else on the card.
+	private var kindRow: some View {
+		HStack(alignment: .center, spacing: MaskinSpace.s3) {
+			if let sender {
+				ActorAvatar(name: sender, kind: .agent, size: MaskinSpace.s12 - MaskinSpace.s2)
+				Text(sender).maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
+					.lineLimit(1)
+				Text(kindVerb).maskinText(.subhead).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+			} else {
+				Text(kindVerb.prefix(1).uppercased() + kindVerb.dropFirst())
+					.maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 			}
 			Spacer(minLength: MaskinSpace.s3)
 			if isWaiting {
@@ -146,13 +146,59 @@ struct DecisionCardView: View {
 			RelativeTime(card.latestActivityAt, style: .compact, compactDayLimit: 7)
 				.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
 		}
+		.accessibilityElement(children: .combine)
+	}
+
+	private var asksQuestion: Bool {
+		card.mention?.content.contains("?") == true
+	}
+
+	/// What the agent is asking for, in a verb phrase that follows its name.
+	private var kindVerb: String {
+		if card.decision != nil { return "needs a decision" }
+		if asksQuestion { return "asked you a question" }
+		return "mentioned you"
+	}
+
+	/// The object the card is about, as a tappable "on <name>" line with its type.
+	@ViewBuilder private var contextRow: some View {
+		if card.objectType != nil || card.contextTitle != nil {
+			HStack(spacing: MaskinSpace.s3) {
+				if let type = card.objectType { TypeBadge(type, style: .mono) }
+				if let title = card.contextTitle {
+					Button {
+						actions.open?()
+					} label: {
+						HStack(spacing: MaskinSpace.s2) {
+							Text("on \(title)").maskinText(.caption).lineLimit(1)
+							if actions.open != nil {
+								Image(systemName: "chevron.right").font(.caption2.weight(.semibold))
+									.accessibilityHidden(true)
+							}
+						}
+						.foregroundStyle(MaskinColor.ink4)
+					}
+					.buttonStyle(.plain)
+					.disabled(actions.open == nil)
+					.accessibilityHint(actions.open == nil ? "" : "Opens \(title)")
+				}
+			}
+		}
 	}
 
 	@ViewBuilder private var bodyText: some View {
 		if let decision = card.decision {
 			VStack(alignment: .leading, spacing: MaskinSpace.s4) {
-				Text(decision.summary).maskinText(.body).foregroundStyle(MaskinColor.ink3)
-				Text(decision.ask).maskinText(.body).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
+				Text(decision.summary).maskinText(.body).foregroundStyle(MaskinColor.ink4)
+				HStack(alignment: .top, spacing: MaskinSpace.s5) {
+					RoundedRectangle(cornerRadius: MaskinSpace.s1)
+						.fill(MaskinColor.accent)
+						.frame(width: MaskinSpace.s1)
+						.accessibilityHidden(true)
+					Text(decision.ask).maskinText(.headline).foregroundStyle(MaskinColor.ink)
+						.frame(maxWidth: .infinity, alignment: .leading)
+				}
+				.padding(.top, MaskinSpace.s2)
 			}
 			.fixedSize(horizontal: false, vertical: true)
 		} else if !card.body.isEmpty {
@@ -160,12 +206,15 @@ struct DecisionCardView: View {
 		}
 	}
 
-	private func attribution(_ name: String) -> some View {
-		HStack(spacing: MaskinSpace.s3) {
-			ActorAvatar(name: name, kind: .agent, size: MaskinSpace.s12 - MaskinSpace.s2)
-			Text("from \(name)").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
+	/// A plain mention has no options: say so, and make "I've seen it" one tap.
+	private var noDecisionRow: some View {
+		HStack(spacing: MaskinSpace.s4) {
+			Text(asksQuestion ? "Needs your answer" : "Just a heads-up").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+			Spacer(minLength: MaskinSpace.s3)
+			Button("Mark read", action: actions.dismiss)
+				.maskinText(.subhead).fontWeight(.semibold).foregroundStyle(MaskinColor.ink)
+				.frame(minHeight: MaskinSpace.touchMin)
 		}
-		.accessibilityElement(children: .combine)
 	}
 
 	// MARK: Options
@@ -178,7 +227,7 @@ struct DecisionCardView: View {
 				} label: {
 					OptionLabel(option: option)
 				}
-				.buttonStyle(OptionButtonStyle(recommended: option.recommended))
+				.buttonStyle(OptionButtonStyle(recommended: option.recommended, destructive: option.destructive))
 				.accessibilityLabel(option.recommended ? "\(option.label), recommended" : option.label)
 				.accessibilityHint(option.consequences.joined(separator: ". "))
 			}
@@ -191,7 +240,9 @@ struct DecisionCardView: View {
 			Button("Yes, \(option.label)", role: .destructive) { actions.choose(option) }
 			Button("Cancel", role: .cancel) {}
 		} message: { option in
-			Text("\u{201C}\(option.label)\u{201D} can't be undone.")
+			Text(
+				(["\u{201C}\(option.label)\u{201D} can't be undone."] + option.consequences)
+					.joined(separator: "\n"))
 		}
 	}
 
@@ -199,7 +250,7 @@ struct DecisionCardView: View {
 
 	private var replyBar: some View {
 		HStack(spacing: MaskinSpace.s4) {
-			TextField(sender.map { "Reply to \($0)" } ?? "Reply", text: $draft, axis: .vertical)
+			TextField(replyPrompt, text: $draft, axis: .vertical)
 				.lineLimit(1...4)
 				.maskinText(.body)
 				.focused($replyFocused)
@@ -221,6 +272,11 @@ struct DecisionCardView: View {
 		}
 		.padding(MaskinSpace.s2)
 		.overlay(Capsule().strokeBorder(MaskinSurface.line, lineWidth: 1))
+	}
+
+	private var replyPrompt: String {
+		let who = sender.map { "reply to \($0)" } ?? "reply"
+		return card.decision == nil ? who.prefix(1).uppercased() + who.dropFirst() : "Or \(who)"
 	}
 
 	private var canSend: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -384,7 +440,10 @@ private struct OptionLabel: View {
 			HStack(spacing: MaskinSpace.s4) {
 				Text(option.label).maskinText(.headline).multilineTextAlignment(.leading)
 				Spacer(minLength: MaskinSpace.s3)
-				if option.recommended {
+				if option.destructive {
+					Label("Can't be undone", systemImage: "exclamationmark.triangle.fill")
+						.maskinText(.microLabel).opacity(0.85)
+				} else if option.recommended {
 					Text("RECOMMENDED").maskinText(.microLabel).opacity(0.7)
 				}
 			}
@@ -399,6 +458,7 @@ private struct OptionLabel: View {
 /// The recommended option is the filled inverse bar; the others are outlined.
 private struct OptionButtonStyle: ButtonStyle {
 	let recommended: Bool
+	var destructive = false
 	@Environment(\.isEnabled) private var isEnabled
 
 	func makeBody(configuration: Configuration) -> some View {
@@ -409,7 +469,10 @@ private struct OptionButtonStyle: ButtonStyle {
 			.padding(.vertical, MaskinSpace.s7)
 			.frame(minHeight: MaskinSpace.touchMin + MaskinSpace.s3)
 			.background(recommended ? MaskinSurface.inverse : MaskinSurface.card, in: shape)
-			.overlay(shape.strokeBorder(recommended ? Color.clear : MaskinSurface.line, lineWidth: 1))
+			.overlay(
+				shape.strokeBorder(
+					recommended ? Color.clear : (destructive ? ForYouPalette.failureBorder : MaskinSurface.line),
+					lineWidth: 1))
 			.opacity(isEnabled ? 1 : 0.4)
 			.scaleEffect(configuration.isPressed ? 0.985 : 1)
 			.animation(MaskinMotion.quick, value: configuration.isPressed)

@@ -204,13 +204,13 @@ extension String {
 // MARK: - Formatting
 
 public enum ForYouFormat {
-	/// The amber "held 3 days" note: how long a card that still needs a person has sat in the
+	/// The amber "Waiting 3 days" note: how long a card that still needs a person has sat in the
 	/// feed. Nothing is said until it has waited a full day.
 	public static func heldNote(since date: Date?, now: Date = Date()) -> String? {
 		guard let date else { return nil }
 		let days = Int(now.timeIntervalSince(date) / 86_400)
 		if days < 1 { return nil }
-		if days >= 7 { return "held over a week" }
-		return "held \(days) \(days == 1 ? "day" : "days")"
+		if days >= 7 { return "Waiting over a week" }
+		return "Waiting \(days) \(days == 1 ? "day" : "days")"
 	}
 }
