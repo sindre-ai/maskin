@@ -32,6 +32,7 @@ import {
 	updateActorSchema,
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { redactActorToolsForCaller, restoreMaskedToolValues } from '../lib/actor-tools-redaction'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
@@ -709,7 +710,8 @@ app.openapi(getActorRoute, (async (c) => {
 	}
 
 	const role = workspaceId ? (membership?.role ?? null) : undefined
-	return c.json(serialize({ ...actor, skills, role }) as z.infer<typeof actorResponseSchema>)
+	const tools = await redactActorToolsForCaller(db, c.get('actorId'), id, actor.tools)
+	return c.json(serialize({ ...actor, tools, skills, role }) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof getActorRoute, Env>)
 
 // PATCH /:id - Update actor
@@ -736,6 +738,10 @@ const updateActorRoute = createRoute({
 			content: { 'application/json': { schema: actorResponseSchema } },
 			description: 'Actor updated',
 		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Masked tool config value with no stored value to keep',
+		},
 		404: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Actor not found',
@@ -751,7 +757,7 @@ app.openapi(updateActorRoute, (async (c) => {
 	const body = c.req.valid('json')
 
 	const [existing] = await db
-		.select({ type: actors.type })
+		.select({ type: actors.type, tools: actors.tools })
 		.from(actors)
 		.where(eq(actors.id, id))
 		.limit(1)
@@ -782,6 +788,26 @@ app.openapi(updateActorRoute, (async (c) => {
 		}
 	}
 
+	// A config read back masked must not overwrite the stored secrets with the mask.
+	let tools = body.tools
+	if (tools !== undefined) {
+		const restored = restoreMaskedToolValues(tools, existing.tools)
+		if (restored.unresolved.length > 0) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					'Masked tool config values have no stored value to keep; send the real value or leave the entry unchanged',
+					restored.unresolved.map((field) => ({
+						field: `tools.mcpServers.${field}`,
+						message: 'Masked value cannot be saved',
+					})),
+				),
+				400,
+			)
+		}
+		tools = restored.tools as typeof tools
+	}
+
 	const [updated] = await db
 		.update(actors)
 		.set({
@@ -789,7 +815,7 @@ app.openapi(updateActorRoute, (async (c) => {
 			...(body.email && { email: body.email }),
 			...(body.description !== undefined && { description: body.description }),
 			...(body.system_prompt !== undefined && { systemPrompt: body.system_prompt }),
-			...(body.tools !== undefined && { tools: body.tools }),
+			...(tools !== undefined && { tools }),
 			...(body.memory !== undefined && { memory: body.memory }),
 			...(body.llm_provider !== undefined && { llmProvider: body.llm_provider }),
 			...(body.llm_config !== undefined && { llmConfig: body.llm_config }),
@@ -817,6 +843,7 @@ app.openapi(updateActorRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
+	updated.tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
 	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof updateActorRoute, Env>)
 
@@ -1242,7 +1269,8 @@ app.openapi(pauseAgentRoute, (async (c) => {
 		},
 	})
 
-	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
+	const tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
+	return c.json(serialize({ ...updated, tools }) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof pauseAgentRoute, Env>)
 
 // POST /:id/run - Resume a paused agent OR start a fresh session
@@ -1392,7 +1420,8 @@ app.openapi(runAgentRoute, (async (c) => {
 		data: {},
 	})
 
-	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
+	const tools = await redactActorToolsForCaller(db, actorId, id, updated.tools)
+	return c.json(serialize({ ...updated, tools }) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof runAgentRoute, Env>)
 
 export default app
