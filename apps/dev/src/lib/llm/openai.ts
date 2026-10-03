@@ -1,4 +1,5 @@
 import type { LLMAdapter, LLMMessage, LLMResponse, LLMTool } from './adapter'
+import { assertNoRawSecrets } from './secret-guard'
 
 export class OpenAIAdapter implements LLMAdapter {
 	private apiKey: string
@@ -16,6 +17,8 @@ export class OpenAIAdapter implements LLMAdapter {
 		temperature?: number
 		max_tokens?: number
 	}): Promise<LLMResponse> {
+		assertNoRawSecrets(options.messages)
+
 		const body: Record<string, unknown> = {
 			model: options.model || 'gpt-4o',
 			messages: options.messages.map((m) => ({

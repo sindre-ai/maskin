@@ -207,6 +207,17 @@ export const FLAGS = {
 	 * are on for every workspace.
 	 */
 	TRIGGER_ENGINE_V2: 'trigger_engine_v2',
+	/**
+	 * Keychain chat capture (visual layer only): the composer guard that stops a
+	 * pasted provider secret, the SecretDetectedCard / InlineScopePicker flow, and
+	 * the vaulted and undo cards. Off means the composer behaves as before. The
+	 * server backstop on POST /conversations/:id/messages, the chat-capture and
+	 * audit-log endpoints are NOT behind this flag: they are API changes that are
+	 * safe for every user on their own, and the backstop refuses a raw secret
+	 * whatever the client does. Read once, in the shared Composer. Retire once the
+	 * guard is on for every workspace.
+	 */
+	KEYCHAIN_CHAT_CAPTURE: 'keychain-chat-capture',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]

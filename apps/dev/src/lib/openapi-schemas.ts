@@ -241,6 +241,10 @@ export const integrationResponseSchema = z.object({
 	// and reconnecting is what fixes it. Scope names only — never the token.
 	missingScopes: z.array(z.string()).optional(),
 	needsReconnect: z.boolean().optional(),
+	// Keychain. Where the credential came from, and for source chat_capture the
+	// session the key was pasted into. Never the value or the wrapped data key.
+	source: z.string().optional(),
+	originSessionId: z.string().uuid().nullable().optional(),
 })
 
 export const providerEventSchema = z.object({

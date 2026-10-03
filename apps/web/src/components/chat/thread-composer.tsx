@@ -1,6 +1,8 @@
 import { Composer } from '@/components/chat/chat'
 import { useConversation, useSendMessage } from '@/hooks/use-conversation'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
+import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
+import { ACTIVE_STATUSES } from '@/lib/agent-status'
 import type { MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
@@ -30,6 +32,18 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 
 	const self = getStoredActor()
+	// Where a pasted provider secret gets vaulted: the live session of this chat and
+	// the agent running it. No live session, no vaulting (the guard still blocks).
+	const { data: sessions } = useActiveSessionsForConversation(workspaceId, conversationId)
+	const secretCapture = useMemo(() => {
+		const live = sessions?.find((s) => ACTIVE_STATUSES.has(s.status))
+		if (!live) return null
+		const agent = conversation?.participants.find((p) => p.actorId === live.actorId)
+		return {
+			sessionId: live.id,
+			agent: { id: live.actorId, name: agent?.actorName ?? 'the agent' },
+		}
+	}, [sessions, conversation?.participants])
 	const participantIds = useMemo(
 		() => conversation?.participants.map((p) => p.actorId) ?? [],
 		[conversation?.participants],
@@ -124,6 +138,7 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 			// would make the same control a different control to a screen reader.
 			textareaLabel="Message this conversation"
 			draftKey={conversationId}
+			secretCapture={secretCapture}
 		/>
 	)
 }

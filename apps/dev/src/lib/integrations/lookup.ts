@@ -251,6 +251,9 @@ export async function getCredential(
 		encrypt: (ws, dek) => getKmsProvider(db).encrypt(ws, dek),
 		decrypt: (ws, wrapped) => getKmsProvider(db).decrypt(ws, wrapped),
 	}
+	// Undone rows are refused above; a NULL on any other status is a broken row, and
+	// the migration's CHECK keeps that from existing. Refuse rather than decrypt(null).
+	if (row.credentials === null) throw new CredentialUndoneError(integrationId)
 	const value = await decryptStoredCredential(kms, {
 		workspaceId,
 		credentials: row.credentials,
