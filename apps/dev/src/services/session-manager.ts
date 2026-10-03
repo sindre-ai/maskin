@@ -1016,6 +1016,8 @@ export class SessionManager extends EventEmitter {
 				.update(sessions)
 				.set({
 					status: 'running',
+					sessionState: 'running',
+					stateEnteredAt: startedAt,
 					containerId,
 					startedAt,
 					timeoutAt: this.computeTimeout(session),
@@ -4347,6 +4349,19 @@ export class SessionManager extends EventEmitter {
 
 		// 6. Prune old session logs
 		await this.pruneSessionLogs()
+
+		// 6b. Heal rows already running at the status level whose session_state
+		// never advanced (rows dispatched before the writers set both, or a
+		// lost write). Without this, queued-rescue below re-fires the driver on
+		// a live session, startSession() throws on its running status, the row
+		// is left in 'starting', and boot-stall (9) fails it as startup_stalled
+		// while it is still working.
+		await this.db
+			.update(sessions)
+			.set({ sessionState: 'running', stateEnteredAt: sql`coalesce(${sessions.startedAt}, now())` })
+			.where(
+				and(eq(sessions.status, 'running'), inArray(sessions.sessionState, ['queued', 'starting'])),
+			)
 
 		// 7. Queued-rescue — re-fire _driveToRunning() on rows whose previous
 		// driver died mid-drive. A row still in session_state='queued' past 2min
