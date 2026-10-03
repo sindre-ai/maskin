@@ -257,6 +257,32 @@ describe('POST /api/integrations/resend/connect — two-call handshake', () => {
 		expect(rows).toHaveLength(0)
 	})
 
+	it('sends capabilities sending + receiving enabled when it registers a fresh domain', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		let postBody: unknown
+		fetchSpy.mockImplementation(async (_url: RequestInfo | URL, init?: RequestInit) => {
+			if (init?.method === 'POST') {
+				postBody = JSON.parse(String(init.body))
+				return new Response(JSON.stringify(RESEND_DOMAIN_RESPONSE), { status: 200 })
+			}
+			return new Response(JSON.stringify({ data: [], has_more: false }), { status: 200 })
+		})
+
+		const res = await buildApp().request(
+			jsonPost(
+				'/api/integrations/resend/connect',
+				{ api_key: 're_test_valid_key', receive_subdomain: 'mail.example.com' },
+				{ 'x-workspace-id': ws.id },
+			),
+		)
+
+		expect(res.status).toBe(200)
+		expect(postBody).toEqual({
+			name: 'mail.example.com',
+			capabilities: { sending: 'enabled', receiving: 'enabled' },
+		})
+	})
+
 	it('falls through to Skjald behaviour verbatim when the resend body is absent (non-resend provider)', async () => {
 		vi.mocked(getProvider).mockImplementation((name: string) => {
 			if (name === 'skjald') {
@@ -297,6 +323,231 @@ describe('POST /api/integrations/resend/connect — two-call handshake', () => {
 		const cfg = row.config as { resend?: unknown; system_actor_id?: string }
 		expect(cfg.resend).toBeUndefined()
 		expect(typeof cfg.system_actor_id).toBe('string')
+	})
+})
+
+describe('POST /api/integrations/resend/connect — adopt an existing same-account domain', () => {
+	const EXISTING = {
+		...RESEND_DOMAIN_RESPONSE,
+		id: 'd_existing_777',
+		name: 'Mail.Example.com',
+		status: 'verified',
+		capabilities: { sending: 'enabled', receiving: 'enabled' },
+		records: RESEND_DOMAIN_RESPONSE.records.map((r) => ({ ...r, status: 'verified' })),
+	}
+
+	function connect(workspaceId: string) {
+		return buildApp().request(
+			jsonPost(
+				'/api/integrations/resend/connect',
+				{ api_key: 're_test_valid_key', receive_subdomain: 'mail.example.com' },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+	}
+
+	async function resendRows(workspaceId: string) {
+		return db
+			.select()
+			.from(integrations)
+			.where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.provider, 'resend')))
+	}
+
+	type Call = { method: string; url: string; body?: unknown }
+
+	/** Routes the fake Resend API by method + path and records every call. */
+	function mockResend(handlers: {
+		list: (url: string) => unknown
+		get?: () => Response
+		patch?: () => Response
+	}): Call[] {
+		const calls: Call[] = []
+		fetchSpy.mockImplementation(async (url: RequestInfo | URL, init?: RequestInit) => {
+			const method = init?.method ?? 'GET'
+			const u = String(url)
+			calls.push({ method, url: u, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+			if (method === 'GET' && u.includes('/domains/')) {
+				return handlers.get?.() ?? new Response(JSON.stringify(EXISTING), { status: 200 })
+			}
+			if (method === 'GET') {
+				return new Response(JSON.stringify(handlers.list(u)), { status: 200 })
+			}
+			if (method === 'PATCH') {
+				return (
+					handlers.patch?.() ?? new Response(JSON.stringify({ id: EXISTING.id }), { status: 200 })
+				)
+			}
+			return new Response('unexpected', { status: 500 })
+		})
+		return calls
+	}
+
+	it('adopts the domain (name match ignores case), seeds id, records and the real status, and creates nothing', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const calls = mockResend({
+			list: () => ({
+				data: [{ id: EXISTING.id, name: EXISTING.name, status: 'verified' }],
+				has_more: false,
+			}),
+		})
+
+		const res = await connect(ws.id)
+
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as {
+			integration_id: string
+			verification_status: string
+			dns_records: unknown[]
+		}
+		expect(body.verification_status).toBe('verified')
+		expect(body.dns_records).toHaveLength(3)
+		expect(calls.some((c) => c.method === 'POST')).toBe(false)
+		expect(calls.some((c) => c.method === 'PATCH')).toBe(false)
+
+		const [row] = await resendRows(ws.id)
+		const cfg = row.config as {
+			resend?: {
+				resend_domain_id: string
+				verification_status: string
+				capabilities: unknown
+				dns_records: unknown[]
+			}
+		}
+		expect(cfg.resend?.resend_domain_id).toBe('d_existing_777')
+		expect(cfg.resend?.verification_status).toBe('verified')
+		expect(cfg.resend?.capabilities).toEqual({ sending: 'enabled', receiving: 'enabled' })
+		expect(cfg.resend?.dns_records).toHaveLength(3)
+	})
+
+	it('follows has_more with limit=100 and after=<last id> to find the domain', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const calls = mockResend({
+			list: (url) =>
+				url.includes('after=d_other_2')
+					? { data: [{ id: EXISTING.id, name: EXISTING.name }], has_more: false }
+					: {
+							data: [
+								{ id: 'd_other_1', name: 'one.example.com' },
+								{ id: 'd_other_2', name: 'two.example.com' },
+							],
+							has_more: true,
+						},
+		})
+
+		const res = await connect(ws.id)
+
+		expect(res.status).toBe(200)
+		expect(calls.map((c) => c.url)).toContain(
+			'https://api.resend.com/domains?limit=100&after=d_other_2',
+		)
+		const [row] = await resendRows(ws.id)
+		expect((row.config as { resend?: { resend_domain_id: string } }).resend?.resend_domain_id).toBe(
+			'd_existing_777',
+		)
+	})
+
+	it('turns receiving on when the adopted domain has it off, then re-reads for the new MX record', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		const receivingOff = {
+			...EXISTING,
+			capabilities: { sending: 'enabled', receiving: 'disabled' },
+			records: EXISTING.records.filter((r) => r.record !== 'MX'),
+		}
+		let patched = false
+		const calls = mockResend({
+			list: () => ({ data: [{ id: EXISTING.id, name: EXISTING.name }], has_more: false }),
+			get: () => new Response(JSON.stringify(patched ? EXISTING : receivingOff), { status: 200 }),
+			patch: () => {
+				patched = true
+				return new Response(JSON.stringify({ id: EXISTING.id }), { status: 200 })
+			},
+		})
+
+		const res = await connect(ws.id)
+
+		expect(res.status).toBe(200)
+		const patchCalls = calls.filter((c) => c.method === 'PATCH')
+		expect(patchCalls).toHaveLength(1)
+		expect(patchCalls[0].url).toBe('https://api.resend.com/domains/d_existing_777')
+		expect(patchCalls[0].body).toEqual({ capabilities: { receiving: 'enabled' } })
+		const [row] = await resendRows(ws.id)
+		const cfg = row.config as { resend?: { dns_records: Array<{ record: string }> } }
+		expect(cfg.resend?.dns_records.map((r) => r.record)).toContain('MX')
+	})
+
+	it('returns an error and inserts no row when enabling receiving fails', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		mockResend({
+			list: () => ({ data: [{ id: EXISTING.id, name: EXISTING.name }], has_more: false }),
+			get: () =>
+				new Response(
+					JSON.stringify({
+						...EXISTING,
+						capabilities: { sending: 'enabled', receiving: 'disabled' },
+					}),
+					{ status: 200 },
+				),
+			patch: () => new Response(JSON.stringify({ name: 'validation_error' }), { status: 422 }),
+		})
+
+		const res = await connect(ws.id)
+
+		expect(res.status).toBe(400)
+		const body = (await res.json()) as { error: { details?: Array<{ message: string }> } }
+		expect(body.error.details).toEqual(
+			expect.arrayContaining([expect.objectContaining({ message: 'DOMAIN_REGISTER_FAILED' })]),
+		)
+		expect(await resendRows(ws.id)).toHaveLength(0)
+	})
+
+	it('returns DOMAIN_ALREADY_CLAIMED when a row in another workspace holds the domain id', async () => {
+		const actorId = getTestActorId()
+		const other = await insertWorkspace(db, actorId)
+		await db.insert(integrations).values({
+			workspaceId: other.id,
+			provider: 'resend',
+			status: 'active',
+			externalId: randomBytes(24).toString('hex'),
+			credentials: '',
+			config: { resend: { resend_domain_id: EXISTING.id } },
+			createdBy: actorId,
+		})
+		const ws = await insertWorkspace(db, actorId)
+		const calls = mockResend({
+			list: () => ({ data: [{ id: EXISTING.id, name: EXISTING.name }], has_more: false }),
+		})
+
+		const res = await connect(ws.id)
+
+		expect(res.status).toBe(400)
+		const body = (await res.json()) as { error: { details?: Array<{ message: string }> } }
+		expect(body.error.details).toEqual(
+			expect.arrayContaining([expect.objectContaining({ message: 'DOMAIN_ALREADY_CLAIMED' })]),
+		)
+		expect(calls.some((c) => c.method !== 'GET')).toBe(false)
+		expect(await resendRows(ws.id)).toHaveLength(0)
+	})
+
+	it('returns DOMAIN_ALREADY_CLAIMED when a row in the same workspace already holds the domain id', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		await db.insert(integrations).values({
+			workspaceId: ws.id,
+			provider: 'resend',
+			status: 'awaiting_secret',
+			externalId: randomBytes(24).toString('hex'),
+			credentials: '',
+			config: { resend: { resend_domain_id: EXISTING.id } },
+			createdBy: actorId,
+		})
+		mockResend({
+			list: () => ({ data: [{ id: EXISTING.id, name: EXISTING.name }], has_more: false }),
+		})
+
+		const res = await connect(ws.id)
+
+		expect(res.status).toBe(400)
+		expect(await resendRows(ws.id)).toHaveLength(1)
 	})
 })
 

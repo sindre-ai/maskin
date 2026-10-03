@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
 	CADENCE_MID_MS,
 	CADENCE_SLOW_MS,
@@ -7,8 +7,10 @@ import {
 	type ResendDnsRecordConfig,
 	type ResendDomainGetResponse,
 	type ResendIntegrationConfig,
+	buildNotFoundFieldUpdate,
 	buildPollFieldUpdate,
 	buildTimeoutFieldUpdate,
+	defaultPoll,
 	isTimedOut,
 	mapTopStatus,
 	mergeDnsRecords,
@@ -236,6 +238,47 @@ describe('resend-domain-verifier — pure functions', () => {
 			// Preserves other fields.
 			expect(next.resend?.resend_domain_id).toBe('dom_x')
 			expect(next.resend?.receive_subdomain).toBe('send.example.com')
+		})
+	})
+
+	describe('buildNotFoundFieldUpdate', () => {
+		it("writes 'failed' + verification_error: 'domain_not_found' + last_polled_at", () => {
+			const stored: ResendIntegrationConfig = {
+				resend: {
+					resend_domain_id: 'dom_x',
+					verification_status: 'pending',
+					verification_error: null,
+					last_polled_at: null,
+					receive_subdomain: 'send.example.com',
+				},
+			}
+			const now = new Date('2026-09-27T12:00:00.000Z')
+			const next = buildNotFoundFieldUpdate(stored, now)
+			expect(next.resend?.verification_status).toBe('failed')
+			expect(next.resend?.verification_error).toBe('domain_not_found')
+			expect(next.resend?.last_polled_at).toBe(now.toISOString())
+			expect(next.resend?.resend_domain_id).toBe('dom_x')
+		})
+	})
+
+	describe('defaultPoll', () => {
+		afterEach(() => {
+			vi.restoreAllMocks()
+		})
+
+		it("maps a 404 from Resend to 'not_found' rather than retry", async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+				new Response(JSON.stringify({ name: 'not_found' }), { status: 404 }),
+			)
+			await expect(defaultPoll('dom_gone', 're_key')).resolves.toEqual({ kind: 'not_found' })
+		})
+
+		it("still maps other non-ok statuses to 'retry'", async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 422 }))
+			await expect(defaultPoll('dom_x', 're_key')).resolves.toEqual({
+				kind: 'retry',
+				statusOrErr: '422',
+			})
 		})
 	})
 })
