@@ -1,7 +1,11 @@
 import { defineConfig, devices } from '@playwright/test'
 import { E2E_AGENT_SERVER_SECRET } from './src/helpers/api.helper'
 import { isArgosEnabled } from './src/helpers/argos.helper'
-import { E2E_TELNYX_PUBLIC_KEY, E2E_TELNYX_STUB_URL } from './src/helpers/telnyx.helper'
+import {
+	E2E_POSTHOG_STUB_URL,
+	E2E_TELNYX_PUBLIC_KEY,
+	E2E_TELNYX_STUB_URL,
+} from './src/helpers/telnyx.helper'
 
 // Without ARGOS_TOKEN, every upload attempt fails (quota, auth, or a
 // missing-token error) — SafeArgosReporter already keeps that from failing
@@ -61,6 +65,8 @@ export default defineConfig({
 			// it the route rejects every request with 401. The remaining TELNYX_* and
 			// VOICE_SMS_* values point the reducer's outbound calls at the stub REST
 			// server that telnyx-voice-effects.spec.ts runs, and give it SMS copy to send.
+			// POSTHOG_HOST points the server's backend capture at the stub that
+			// voice-posthog-events.spec.ts runs; the key is a throwaway, without it nothing is captured.
 			env: {
 				AGENT_SERVER_SECRET: E2E_AGENT_SERVER_SECRET,
 				TELNYX_PUBLIC_KEY: E2E_TELNYX_PUBLIC_KEY,
@@ -68,6 +74,8 @@ export default defineConfig({
 				TELNYX_API_BASE_URL: E2E_TELNYX_STUB_URL,
 				VOICE_SMS_MISSED_CALL_NUDGE: 'e2e missed call nudge',
 				VOICE_SMS_VOICEMAIL_FOLLOWUP: 'e2e voicemail followup',
+				POSTHOG_API_KEY: 'e2e-posthog-key',
+				POSTHOG_HOST: E2E_POSTHOG_STUB_URL,
 			},
 		},
 		{
