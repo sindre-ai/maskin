@@ -9,15 +9,18 @@ import SwiftUI
 /// with a Loops | Triggers switch above the list. Owns its navigation and applies the shell toolbar.
 public struct LoopsScreen: View {
 	private let environment: AppEnvironment
+	@Binding private var requestedRoutine: RoutineTarget?
 
-	public init(environment: AppEnvironment) {
+	public init(environment: AppEnvironment, requestedRoutine: Binding<RoutineTarget?> = .constant(nil)) {
 		self.environment = environment
+		_requestedRoutine = requestedRoutine
 	}
 
 	public var body: some View {
 		if let workspaceID = environment.workspaceId {
 			// Rebuilt per workspace so nothing from the previous one lingers.
-			LoopsContainer(environment: environment, workspaceID: workspaceID)
+			LoopsContainer(
+				environment: environment, workspaceID: workspaceID, requestedRoutine: $requestedRoutine)
 				.id(workspaceID)
 		} else {
 			NavigationStack {
@@ -48,9 +51,11 @@ private struct LoopsContainer: View {
 	@State private var showNewTrigger = false
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var showMarketplace = false
+	@Binding var requestedRoutine: RoutineTarget?
 
-	init(environment: AppEnvironment, workspaceID: String) {
+	init(environment: AppEnvironment, workspaceID: String, requestedRoutine: Binding<RoutineTarget?>) {
 		self.environment = environment
+		_requestedRoutine = requestedRoutine
 		self.workspaceID = workspaceID
 		_loops = State(
 			initialValue: LoopsStore(
@@ -71,6 +76,19 @@ private struct LoopsContainer: View {
 		}
 		.task { await loops.start() }
 		.task { await triggers.start() }
+		.onChange(of: requestedRoutine, initial: true) {
+			// A deep jump from a chat thread: show the loop or trigger, then clear the request.
+			guard let target = requestedRoutine else { return }
+			requestedRoutine = nil
+			switch target {
+			case .loop(let id):
+				mode = .loops
+				loopSelection = id
+			case .trigger(let id):
+				mode = .triggers
+				triggerSelection = id
+			}
+		}
 		.onDisappear {
 			loops.stop()
 			triggers.stop()

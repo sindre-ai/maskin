@@ -145,6 +145,8 @@ private struct ChatThreadHost: View {
 	@State private var chat: ChatStore
 	@State private var composer: ChatComposerModel
 	@State private var showParticipants = false
+	@State private var routines: AgentRoutinesLoader
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	init(environment: AppEnvironment, conversations: ConversationsStore, conversationID: String) {
 		self.environment = environment
@@ -173,13 +175,27 @@ private struct ChatThreadHost: View {
 			Task { await coordinator.reconcile(turns) }
 		}
 		_chat = State(initialValue: chat)
+		let workspaceID = environment.workspaceId ?? ""
+		_routines = State(
+			initialValue: AgentRoutinesLoader(
+				loopsAPI: APILoopsSource(client: environment.client, workspaceID: workspaceID),
+				triggersAPI: APITriggersSource(client: environment.client, workspaceID: workspaceID)))
 		let composer = ChatComposerModel(uploader: source, selfActorID: session?.actorId ?? "")
 		composer.text = ChatDraftStore.text(for: conversationID)
 		_composer = State(initialValue: composer)
 	}
 
+	private var agentIDs: Set<String> {
+		Set(chat.participants.filter { $0.kind == .agent && $0.id != chat.currentActorID }.map(\.id))
+	}
+
 	var body: some View {
-		ChatThreadView(store: chat, composer: composer, conversations: conversations, onShowParticipants: { showParticipants = true })
+		ChatThreadView(
+			store: chat, composer: composer, conversations: conversations,
+			onShowParticipants: { showParticipants = true }, routines: routines.routines,
+			onOpenRoutine: { runtime?.openRoutine($0) }
+		)
+			.task(id: agentIDs) { await routines.load(agentIDs: agentIDs) }
 			.onDisappear { ChatDraftStore.set(composer.text, for: chat.conversationID) }
 			.sheet(isPresented: $showParticipants) {
 				ParticipantsSheet(chat: chat, conversations: conversations)
