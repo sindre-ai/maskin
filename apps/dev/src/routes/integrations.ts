@@ -3006,6 +3006,28 @@ webhookApp.post('/resend/:token', async (c) => {
 			})
 			.returning({ id: webhookDeliveries.id })
 		if (rows.length === 0) {
+			// Only ack a retry once the original has finished. If the claim is still
+			// unprocessed the first body-fetch is in flight and may yet fail and
+			// release it — a 2xx here would tell Resend the email was delivered and
+			// nothing would ever retry it. A non-2xx makes Resend retry again.
+			const [existing] = await db
+				.select({ processedAt: webhookDeliveries.processedAt })
+				.from(webhookDeliveries)
+				.where(
+					and(
+						eq(webhookDeliveries.provider, 'resend'),
+						eq(webhookDeliveries.externalId, emailId),
+						eq(webhookDeliveries.workspaceId, integration.workspaceId),
+					),
+				)
+				.limit(1)
+			if (!existing?.processedAt) {
+				logger.info('resend.dedupe.in_flight', {
+					email_id: emailId,
+					workspace_id: integration.workspaceId,
+				})
+				return c.json(createApiError('CONFLICT', 'Delivery still in flight — will retry'), 409)
+			}
 			logger.info('resend.dedupe.hit', {
 				email_id: emailId,
 				workspace_id: integration.workspaceId,
