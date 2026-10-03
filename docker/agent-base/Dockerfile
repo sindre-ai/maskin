@@ -31,6 +31,7 @@ WORKDIR /agent/workspace
 COPY entrypoint.sh /entrypoint.sh
 COPY agent-run.sh /agent-run.sh
 COPY github-credential-helper.sh /agent-github-credential-helper.sh
+COPY github-token-refresh.cjs /agent-github-token-refresh.cjs
 COPY cdp-retry-proxy.js /cdp-retry-proxy.js
 COPY preview-port-watcher.js /preview-port-watcher.js
 COPY input-stream.js /input-stream.js
