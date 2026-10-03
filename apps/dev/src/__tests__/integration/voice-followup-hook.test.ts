@@ -1,5 +1,5 @@
 import { integrations, objects } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
 import { logger } from '../../lib/logger'
@@ -172,6 +172,62 @@ describe('post-call follow-up email hook', () => {
 		expect((await metadataOf(s.contactId)).consent_call_id).toBeUndefined()
 	})
 
+	it('sends once when the consent write fails after Resend accepted and the same hangup is replayed', async () => {
+		const s = await setup({
+			email: 'pia@prospect.example',
+			voice_tool_trace: [{ tool_name: FOLLOWUP_REQUEST_TOOL }],
+		})
+		// A real database failure on the consent_* write for this contact only. The
+		// claim write before the send carries no consent_captured_at, so it passes.
+		await db.execute(
+			sql.raw(
+				`CREATE OR REPLACE FUNCTION voice_test_fail_consent_write() RETURNS trigger LANGUAGE plpgsql AS $fn$ BEGIN RAISE EXCEPTION 'simulated consent write failure'; END; $fn$`,
+			),
+		)
+		await db.execute(
+			sql.raw(
+				`CREATE TRIGGER voice_test_fail_consent_write BEFORE UPDATE ON objects FOR EACH ROW WHEN (OLD.id = '${s.contactId}' AND jsonb_exists(NEW.metadata, 'consent_captured_at')) EXECUTE FUNCTION voice_test_fail_consent_write()`,
+			),
+		)
+		try {
+			const error = vi.spyOn(logger, 'error')
+			await runPostCallHooks(hangup(s))
+			expect(fetchMock).toHaveBeenCalledTimes(1)
+			expect(error).toHaveBeenCalledWith(
+				'voice post-call hook failed',
+				expect.objectContaining({ hook: 'followup-email', callId: 'call-hook-1' }),
+			)
+			const afterFailure = await metadataOf(s.contactId)
+			expect(afterFailure).not.toHaveProperty('consent_captured_at')
+
+			await runPostCallHooks(hangup(s))
+			expect(fetchMock).toHaveBeenCalledTimes(1)
+		} finally {
+			await db.execute(sql.raw('DROP TRIGGER IF EXISTS voice_test_fail_consent_write ON objects'))
+			await db.execute(sql.raw('DROP FUNCTION IF EXISTS voice_test_fail_consent_write()'))
+		}
+	})
+
+	it('still sends the email on a retried hangup when Resend rejected the first attempt', async () => {
+		const s = await setup({
+			email: 'pia@prospect.example',
+			voice_tool_trace: [{ tool_name: FOLLOWUP_REQUEST_TOOL }],
+		})
+		fetchMock.mockImplementationOnce(
+			async () =>
+				new Response(JSON.stringify({ name: 'validation_error', message: 'x', statusCode: 422 }), {
+					status: 422,
+				}),
+		)
+		await runPostCallHooks(hangup(s))
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+		expect((await metadataOf(s.contactId)).consent_captured_at).toBeUndefined()
+
+		await runPostCallHooks(hangup(s))
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+		expect((await metadataOf(s.contactId)).consent_call_id).toBe('call-hook-1')
+	})
+
 	describe('Meet link', () => {
 		const asked = [{ tool_name: FOLLOWUP_REQUEST_TOOL }]
 		const link = 'https://meet.google.com/abc-defg-hij'
@@ -185,6 +241,8 @@ describe('post-call follow-up email hook', () => {
 			})
 			await runPostCallHooks(hangup(s))
 			expect(sentText()).toContain(link)
+			expect(sentText()).toContain('Du kan deltage i mødet her:')
+			expect(sentText()).not.toContain('vælge et tidspunkt')
 		})
 
 		it('passes no link when voice_meeting names an earlier call', async () => {
