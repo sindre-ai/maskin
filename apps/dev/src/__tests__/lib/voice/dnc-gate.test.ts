@@ -73,6 +73,16 @@ describe('checkEmailHookDenyList (shared email-hook deny list)', () => {
 		expect(v).toMatchObject({ denied: true, check: 'protect' })
 	})
 
+	it('refuses metadata.protect and protect tags too, so the shared list matches the skill', () => {
+		expect(checkEmailHookDenyList(contact('follow_up_later', { protect: true }))).toMatchObject({
+			denied: true,
+			check: 'protect',
+		})
+		expect(
+			checkEmailHookDenyList(contact('follow_up_later', { tags: ['do-not-contact'] })),
+		).toMatchObject({ denied: true, check: 'protect' })
+	})
+
 	it.each(['deleted_by_request', 'rejected'])('refuses a %s contact', (status) => {
 		const v = checkEmailHookDenyList(contact(status))
 		expect(v).toMatchObject({ denied: true, check: 'status' })
@@ -131,6 +141,24 @@ describe('runDncGate', () => {
 	describe('skill-rule mirror', () => {
 		it('refuses a protected contact', async () => {
 			expect(await refusal(clean({ protected: true }))).toMatchObject({ check: 'protect' })
+		})
+		it('refuses metadata.protect true, the flag the sebastian-do-not-contact skill sets', async () => {
+			const r = await refusal(clean({ protect: true }))
+			expect(r).toMatchObject({ check: 'protect' })
+			expect(r.reason).toContain('metadata.protect')
+		})
+		it.each(['protect', 'protected', 'do-not-contact', 'Do-Not-Contact'])(
+			'refuses a contact tagged %s',
+			async (tag) => {
+				const r = await refusal(clean({ tags: ['vip', tag] }))
+				expect(r).toMatchObject({ check: 'protect' })
+				expect(r.reason).toContain('metadata.tags')
+			},
+		)
+		it('does not refuse unrelated tags or protect set to false', async () => {
+			expect(await runDncGate(clean({ tags: ['vip', 'nordic'], protect: false }), deps())).toEqual({
+				pass: true,
+			})
 		})
 		it('refuses role investor', async () => {
 			expect(await refusal(clean({ role: 'investor' }))).toMatchObject({ check: 'investor' })

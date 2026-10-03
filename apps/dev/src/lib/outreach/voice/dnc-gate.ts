@@ -24,12 +24,24 @@ function holdReason(m: Record<string, unknown>): string | null {
 	return null
 }
 
-// The personal-do-not-contact and fundraising skills write metadata.protected = true.
-// Neither skill defines a "protect tags" field, so there is nothing to read for it.
+// Protect, as the workspace skill sebastian-do-not-contact (rule 4) defines it:
+// metadata.protect == true, or metadata.tags containing protect, protected or
+// do-not-contact. The personal-do-not-contact and fundraising skills write
+// metadata.protected = true, so that is read too. Any one hit refuses.
+const PROTECT_TAGS: readonly string[] = ['protect', 'protected', 'do-not-contact']
+
+function isTrue(v: unknown): boolean {
+	return v === true || (typeof v === 'string' && v.trim().toLowerCase() === 'true')
+}
+
 function protectReason(m: Record<string, unknown>): string | null {
-	if (m.protected === true || m.protected === 'true') {
-		return 'contact is protected (metadata.protected is set)'
-	}
+	if (isTrue(m.protect)) return 'contact is protected (metadata.protect is set)'
+	if (isTrue(m.protected)) return 'contact is protected (metadata.protected is set)'
+	const tags = Array.isArray(m.tags) ? m.tags : typeof m.tags === 'string' ? m.tags.split(',') : []
+	const hit = tags.find(
+		(t) => typeof t === 'string' && PROTECT_TAGS.includes(t.trim().toLowerCase()),
+	)
+	if (hit) return `contact is protected (metadata.tags contains "${hit.trim()}")`
 	return null
 }
 
@@ -48,7 +60,8 @@ export type EmailHookDenyVerdict =
  * THE EMAIL-HOOK DENY LIST. Not the generic suppressing set.
  *
  * Contract: refuses a contact only when it is on hold (metadata.approval_hold or
- * metadata.held_reason), protected (metadata.protected), or its status is
+ * metadata.held_reason), protected (metadata.protect, metadata.protected or a
+ * protect tag in metadata.tags), or its status is
  * deleted_by_request or rejected. Nothing else refuses.
  *
  * It must never be reused for the dialer's own check 2. A prospect who asked for
