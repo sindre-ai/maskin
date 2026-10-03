@@ -1102,6 +1102,16 @@ export const webhookDeliveries = pgTable(
 	],
 )
 
+// ── Telnyx webhook idempotency ──────────────────────────────────────────────
+// One row per Telnyx event_id the webhook has claimed. A duplicate delivery
+// hits the primary key and returns 200 with no side effects
+// (routes/integrations-telnyx-webhook.ts). Voice-outreach bet.
+
+export const telnyxWebhookEvents = pgTable('telnyx_webhook_events', {
+	eventId: text('event_id').primaryKey(),
+	receivedAt: timestamp('received_at', { withTimezone: true }).defaultNow().notNull(),
+})
+
 // ── Workspace Overage Usage (retired) ───────────────────────────────────────
 // Idempotency ledger for the old Stripe-metered overage billing mechanism —
 // once a pro/team workspace exceeded its hard cap, each new block of usage

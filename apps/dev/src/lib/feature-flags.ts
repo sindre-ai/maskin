@@ -207,6 +207,15 @@ export const FLAGS = {
 	 * are on for every workspace.
 	 */
 	TRIGGER_ENGINE_V2: 'trigger_engine_v2',
+	/**
+	 * Voice-outreach autosend: whether the Sales Rep (Voice) dialer actually
+	 * places calls. Off (default) builds the queue and stops short of dialing.
+	 * Gates ONLY the outbound dial action: the Telnyx provider, the voice_*
+	 * contact statuses and the webhook register unconditionally. Per-actor, so
+	 * one tester enables it after the first staging dial-through. Parent bet:
+	 * bet/5b8e-voice-outreach.
+	 */
+	VOICE_OUTREACH_AUTOSEND: 'voice-outreach-autosend',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
