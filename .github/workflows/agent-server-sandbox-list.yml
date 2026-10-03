@@ -1,0 +1,73 @@
+name: Agent-server sandbox list (read-only)
+
+# Manual, read-only diagnostic. SSHes to the agent-server host and prints what
+# `msb` thinks is alive, so a session that ended startup_stalled can be checked
+# against reality: does a sandbox named after the session id still exist, and
+# in what state?
+#
+# Deliberately inflexible:
+#   - no workflow_dispatch inputs, so nothing a caller types reaches the shell
+#   - the remote script is a fixed list of read-only commands
+#   - output is projected to sandbox name + status; the raw `msb list` JSON is
+#     never printed, and no env file, unit file or key is read
+#   - no `set -x`, so nothing is echoed back from the environment
+#
+# It uses the same AGENT_SERVER_* SSH secrets as agent-server-deploy.yml. Those
+# credentials are not restricted to this command; "read-only" is enforced by the
+# script below, so changes to it need review (CODEOWNERS / Code Reviewer).
+
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: agent-server-sandbox-list
+  cancel-in-progress: false
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: List sandboxes on agent-server host (read-only)
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.AGENT_SERVER_HOST }}
+          username: ${{ secrets.AGENT_SERVER_USER }}
+          key: ${{ secrets.AGENT_SERVER_SSH_KEY }}
+          command_timeout: 2m
+          script: |
+            set -euo pipefail
+            MSB=/root/.microsandbox/bin/msb
+
+            echo "== host =="
+            date -u +%Y-%m-%dT%H:%M:%SZ
+            hostname
+
+            echo "== maskin-agent-server =="
+            systemctl is-active maskin-agent-server || true
+            curl -s -o /dev/null -w 'health http=%{http_code}\n' --max-time 5 http://localhost:3001/health || true
+
+            echo "== msb version =="
+            timeout 10 "$MSB" --version || true
+
+            echo "== sandboxes (name status) =="
+            # Same call agent-server itself makes (listSandboxNames in
+            # src/services/microsandbox.ts). Printed as name + status only.
+            timeout 15 "$MSB" list --format json | node -e '
+              let s = ""
+              process.stdin.on("data", (d) => (s += d)).on("end", () => {
+                const rows = JSON.parse(s)
+                const counts = {}
+                for (const r of rows) {
+                  const k = String(r.status).toLowerCase()
+                  counts[k] = (counts[k] || 0) + 1
+                }
+                console.log("total", rows.length, JSON.stringify(counts))
+                rows
+                  .map((r) => r.name + " " + r.status)
+                  .sort()
+                  .forEach((l) => console.log(l))
+              })
+            '
