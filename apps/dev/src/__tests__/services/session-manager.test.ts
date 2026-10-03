@@ -2017,6 +2017,73 @@ describe('SessionManager', () => {
 			})
 		})
 
+		describe('expose_to_agent_sessions switch (Resend-shaped auto-inject provider)', () => {
+			const resendProviderConfig = {
+				config: {
+					name: 'resend',
+					mcp: {
+						envKey: 'RESEND_API_KEY',
+						autoInject: true,
+						server: {
+							type: 'http' as const,
+							url: 'https://mcp.resend.com/mcp',
+							headers: { Authorization: 'Bearer ${RESEND_API_KEY}' },
+						},
+					},
+				},
+			}
+
+			const mcpKeysOf = (env: Record<string, string>) =>
+				env.MCP_SERVERS_JSON
+					? Object.keys((JSON.parse(env.MCP_SERVERS_JSON) as { mcpServers: object }).mcpServers)
+					: []
+
+			it('injects neither RESEND_API_KEY nor the Resend MCP server when the switch is false', async () => {
+				const integration = buildIntegration({
+					provider: 'resend',
+					config: { expose_to_agent_sessions: false },
+				})
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(resendProviderConfig as never)
+				mockGetValidToken.mockResolvedValue('re_live_key')
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				expect(createArgs.env.RESEND_API_KEY).toBeUndefined()
+				expect(mcpKeysOf(createArgs.env)).not.toContain('integration-resend')
+				// The credential is never even read for the session
+				expect(mockGetValidToken).not.toHaveBeenCalled()
+			})
+
+			it.each([
+				['absent', {}],
+				['true', { expose_to_agent_sessions: true }],
+			])(
+				'still injects both when the switch is %s (existing behaviour)',
+				async (_label, config) => {
+					const integration = buildIntegration({ provider: 'resend', config })
+					const fixtures = buildLaunchFixtures([integration])
+
+					vi.mocked(getProvider).mockReturnValue(resendProviderConfig as never)
+					mockGetValidToken.mockResolvedValueOnce('re_live_key')
+
+					setupLaunchMocks(fixtures)
+					await manager.startSession(fixtures.session.id)
+
+					const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+						env: Record<string, string>
+					}
+					expect(createArgs.env.RESEND_API_KEY).toBe('re_live_key')
+					expect(mcpKeysOf(createArgs.env)).toContain('integration-resend')
+				},
+			)
+		})
+
 		it('passes AGENT_MCP_JSON and GITHUB_TOKEN_* together so envsubst can resolve the token reference', async () => {
 			const integration = buildIntegration({
 				provider: 'github',
