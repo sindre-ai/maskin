@@ -207,6 +207,9 @@ private let createdJSON = """
 	"updatedAt":"2026-10-02T00:00:00Z","api_key":"ank_new","workspace_id":"ws-9"}
 	"""
 
+// The documented 500 body is the error envelope; the generated client rejects anything else.
+private let serverErrorJSON = #"{"error":{"code":"INTERNAL_ERROR","message":"Internal server error"}}"#
+
 @Suite("APIAuthenticator sign-up")
 struct APISignUpTests {
 	@Test("201 maps to a session and sends a human, the Idempotency-Key and the credentials once")
@@ -221,8 +224,12 @@ struct APISignUpTests {
 		let sent = try #require(transport.seen.first)
 		#expect(sent.path == "/api/actors")
 		#expect(sent.headers[IdempotencyMiddleware.header] == "key-1")
-		#expect(sent.body.contains("\"type\":\"human\""))
-		#expect(sent.body.contains("\"email\":\"sam@example.com\""))
+		// The generated client pretty-prints its JSON, so compare parsed fields, not substrings.
+		let sentJSON = try #require(
+			try JSONSerialization.jsonObject(with: Data(sent.body.utf8)) as? [String: Any])
+		#expect(sentJSON["type"] as? String == "human")
+		#expect(sentJSON["email"] as? String == "sam@example.com")
+		#expect(sentJSON["password"] as? String == secret)
 	}
 
 	@Test("workspace_provisioning_failed is carried through")
@@ -268,7 +275,7 @@ struct APISignUpTests {
 				name: "S", email: "s@e.co", password: secret, idempotencyKey: "k")
 		}
 		await #expect(throws: SignUpError.server(status: 500)) {
-			try await authenticator(ScriptedTransport(status: 500, json: "{}")).signUp(
+			try await authenticator(ScriptedTransport(status: 500, json: serverErrorJSON)).signUp(
 				name: "S", email: "s@e.co", password: secret, idempotencyKey: "k")
 		}
 	}
