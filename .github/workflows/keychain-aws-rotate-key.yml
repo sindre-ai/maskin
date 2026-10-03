@@ -38,7 +38,7 @@ jobs:
       AWS_PAGER: ''
       COOLIFY_URL: https://cool.sindre.ai
       # Coolify application that consumes the key. Production is the single "Maskin v2" application.
-      # Staging has no Coolify application today, so a staging run stops before it creates anything.
+      # Staging has no Coolify application by design, so a staging run exits 0 with a notice before it creates anything.
       COOLIFY_APP_UUID_PRODUCTION: poa9z4x2sir81oldyup1zw1f
       COOLIFY_APP_UUID_STAGING: ''
     steps:
@@ -65,7 +65,15 @@ jobs:
             staging) APP="$COOLIFY_APP_UUID_STAGING" ;;
             *) echo "bad target"; exit 1 ;;
           esac
-          test -n "$APP" || { echo "::error::No Coolify application is defined for $TARGET. Nothing was created."; exit 1; }
+          if [ -z "$APP" ]; then
+            if [ "$TARGET" = staging ]; then
+              # By design (CTO, 2026-10-03): staging has no Coolify application and gets none. Not a failure.
+              echo "::notice::Staging has no Coolify application, so there is nothing to rotate. Nothing was created."
+              echo "- Rotation (staging): skipped by design, no Coolify application. Nothing was created." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::error::No Coolify application is defined for $TARGET. Nothing was created."; exit 1
+          fi
           test -n "${COOLIFY_TOKEN:-}" || { echo "::error::Environment secret COOLIFY_TOKEN is missing. Nothing was created."; exit 1; }
           test -n "${HEALTH_URL:-}" || { echo "::error::Environment variable HEALTH_URL is missing. Nothing was created."; exit 1; }
 
@@ -74,7 +82,7 @@ jobs:
           coolify() {
             local body=()
             if [ "${3:-}" = "body" ]; then body=(--data-binary @-); fi
-            curl -sS -X "$1" "$COOLIFY_URL/api/v1$2" \
+            curl -sS --max-time 60 -X "$1" "$COOLIFY_URL/api/v1$2" \
               -H @<(printf 'Authorization: Bearer %s' "$COOLIFY_TOKEN") \
               -H 'Accept: application/json' -H 'Content-Type: application/json' "${body[@]}"
           }
@@ -82,7 +90,7 @@ jobs:
           coolify_code() {
             local body=()
             if [ "${3:-}" = "body" ]; then body=(--data-binary @-); fi
-            curl -sS -o /dev/null -w '%{http_code}' -X "$1" "$COOLIFY_URL/api/v1$2" \
+            curl -sS --max-time 60 -o /dev/null -w '%{http_code}' -X "$1" "$COOLIFY_URL/api/v1$2" \
               -H @<(printf 'Authorization: Bearer %s' "$COOLIFY_TOKEN") \
               -H 'Accept: application/json' -H 'Content-Type: application/json' "${body[@]}"
           }
@@ -93,14 +101,14 @@ jobs:
           ACCT=$(aws sts get-caller-identity --query Account --output text)
           echo "::add-mask::$ACCT"
           RUSER="maskin-keychain-runtime-$TARGET"
-          SMOKE_ALIAS="alias/maskin-keychain-smoke-$TARGET"
+          SMOKE_ALIAS="alias/maskin-keychain-$TARGET-smoke"
 
           # ---- 1. A user holds at most 2 keys. Fail closed if a stale second key exists. ----
           KEYS=$(aws iam list-access-keys --user-name "$RUSER" --query 'AccessKeyMetadata[].AccessKeyId' --output text)
           for k in $KEYS; do echo "::add-mask::$k"; done
           COUNT=$(wc -w <<<"$KEYS")
           if [ "$COUNT" -ge 2 ]; then
-            echo "::error::The runtime user already has 2 access keys. A previous rotation did not finish. Resolve by hand, see the runbook."
+            echo "::error::The runtime user already has 2 access keys. A previous rotation did not finish. Resolve by hand, see the runbook section \"Stale second access key\"."
             exit 1
           fi
           OLD_AK="${KEYS:-}"
@@ -155,13 +163,26 @@ jobs:
           echo "verified: KMS encrypt and decrypt round trip passed, IAM calls are denied"
 
           # ---- 4. Write to Coolify. Body built by jq from env on stdin. Bulk PATCH upserts and always sends the value. ----
+          # WROTE=1 goes up BEFORE the request. The exit trap then keeps the new key on any failure, unless the
+          # reply is a definite 4xx (below), because after a timeout Coolify may already hold the new key.
+          WROTE=1
           code=$(NEW_AK="$NEW_AK" NEW_SK="$NEW_SK" jq -n '{data: [
               {key: "AWS_ACCESS_KEY_ID", value: env.NEW_AK, is_preview: false, is_literal: true, is_shown_once: true},
               {key: "AWS_SECRET_ACCESS_KEY", value: env.NEW_SK, is_preview: false, is_literal: true, is_shown_once: true}
-            ]}' | coolify_code PATCH "/applications/$APP/envs/bulk" body)
-          test "$code" = "201" || { echo "::error::Coolify env write failed (HTTP $code). The new key is removed again."; exit 1; }
-          WROTE=1
-          echo "written to Coolify (HTTP $code)"
+            ]}' | coolify_code PATCH "/applications/$APP/envs/bulk" body) || code=${code:-000}
+          echo "env write answered HTTP $code"
+          case "$code" in
+            20?) ;;
+            4??)
+              # A definite refusal: Coolify did not take the write, so nothing consumes the new key.
+              WROTE=0
+              echo "::error::Coolify refused the env write (HTTP $code). The new key is removed again."; exit 1 ;;
+            *)
+              # Timeout, 5xx or anything else: Coolify may have applied the write. Keep the new key, because the
+              # app needs it at the next redeploy. Do not delete either key.
+              echo "::error::Coolify env write is ambiguous (HTTP $code). It may have been applied, so BOTH keys stay and nothing is deleted. The next rotation fails closed until a human removes the stale key, see the runbook section \"Stale second access key\"."; exit 1 ;;
+          esac
+          echo "written to Coolify"
 
           # ---- 5. Redeploy and wait until it is healthy. ----
           DEPLOY_UUID=$(coolify POST "/deploy?uuid=$APP&force=false" | jq -r '.deployments[0].deployment_uuid // empty')

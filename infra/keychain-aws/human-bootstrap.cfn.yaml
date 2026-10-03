@@ -4,7 +4,7 @@ Description: >-
   Creates the permissions boundaries and the bootstrap role the GitHub Actions workflows assume through OIDC.
   Deploy twice in the dedicated Keychain AWS account, region eu-central-1: Target=staging with
   CreateOidcProvider=true first, then Target=production with CreateOidcProvider=false.
-  Needs CAPABILITY_NAMED_IAM. DRAFT: written from the Architect's policy draft v2, never run against AWS.
+  Needs CAPABILITY_NAMED_IAM. DRAFT: written from the Architect's policy draft v3 (environment segment in the alias, environment-valued tag), never run against AWS.
   The first staging preflight and bootstrap runs are the test. Nothing here is applied until a human deploys it.
 
 Parameters:
@@ -47,26 +47,26 @@ Resources:
             Resource: !Sub arn:aws:kms:eu-central-1:${AWS::AccountId}:key/*
             Condition:
               ForAnyValue:StringLike:
-                kms:ResourceAliases: alias/maskin-keychain-*
+                kms:ResourceAliases: !Sub alias/maskin-keychain-${Target}-*
           - Sid: KmsCreateTaggedKeysInRegion
             Effect: Allow
             Action: [kms:CreateKey, kms:TagResource]
             Resource: '*'
             Condition:
               StringEquals:
-                aws:RequestTag/maskin-keychain: 'true'
+                aws:RequestTag/maskin-keychain: !Ref Target
                 aws:RequestedRegion: eu-central-1
           - Sid: KmsAliasNamesUnderPrefix
             Effect: Allow
             Action: kms:CreateAlias
-            Resource: !Sub arn:aws:kms:eu-central-1:${AWS::AccountId}:alias/maskin-keychain-*
+            Resource: !Sub arn:aws:kms:eu-central-1:${AWS::AccountId}:alias/maskin-keychain-${Target}-*
           - Sid: KmsAliasOnTaggedKeysOnly
             Effect: Allow
             Action: kms:CreateAlias
             Resource: !Sub arn:aws:kms:eu-central-1:${AWS::AccountId}:key/*
             Condition:
               StringEquals:
-                aws:ResourceTag/maskin-keychain: 'true'
+                aws:ResourceTag/maskin-keychain: !Ref Target
           - Sid: WormWrite
             Effect: Allow
             Action: s3:PutObject
@@ -84,8 +84,8 @@ Resources:
             Action: [kms:TagResource, kms:UntagResource]
             Resource: !Sub arn:aws:kms:eu-central-1:${AWS::AccountId}:key/*
             Condition:
-              'Null':
-                aws:ResourceTag/maskin-keychain: 'true'
+              StringNotEquals:
+                aws:ResourceTag/maskin-keychain: !Ref Target
           - Sid: ExplicitDenies
             Effect: Deny
             Action:
@@ -118,19 +118,19 @@ Resources:
             Resource: '*'
             Condition:
               StringEquals:
-                aws:RequestTag/maskin-keychain: 'true'
+                aws:RequestTag/maskin-keychain: !Ref Target
                 aws:RequestedRegion: eu-central-1
           - Sid: KmsAliasNamesUnderPrefix
             Effect: Allow
             Action: kms:CreateAlias
-            Resource: !Sub arn:aws:kms:eu-central-1:${AWS::AccountId}:alias/maskin-keychain-*
+            Resource: !Sub arn:aws:kms:eu-central-1:${AWS::AccountId}:alias/maskin-keychain-${Target}-*
           - Sid: KmsKeyOpsOnTaggedKeysOnly
             Effect: Allow
             Action: [kms:CreateAlias, kms:PutKeyPolicy, kms:DescribeKey]
             Resource: !Sub arn:aws:kms:eu-central-1:${AWS::AccountId}:key/*
             Condition:
               StringEquals:
-                aws:ResourceTag/maskin-keychain: 'true'
+                aws:ResourceTag/maskin-keychain: !Ref Target
           - Sid: S3CreateAndLockBuckets
             Effect: Allow
             Action:
@@ -199,8 +199,8 @@ Resources:
             Action: [kms:TagResource, kms:UntagResource]
             Resource: !Sub arn:aws:kms:eu-central-1:${AWS::AccountId}:key/*
             Condition:
-              'Null':
-                aws:ResourceTag/maskin-keychain: 'true'
+              StringNotEquals:
+                aws:ResourceTag/maskin-keychain: !Ref Target
           - Sid: NeverTouchBoundariesRolesOrLocks
             Effect: Deny
             Action:

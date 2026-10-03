@@ -31,7 +31,7 @@ No workflow takes free-form input. Targets are a fixed choice. Bucket names are 
 
 1. `keychain-aws-preflight` staging. Expect: sub matches, role assumed, production role refuses. If the sub differs, fix the trust policy to the printed value.
 2. `keychain-aws-bootstrap` staging. This is the first real test, see the unknowns below.
-3. `keychain-aws-rotate-key` staging: **stops by design** until a Coolify target exists for staging (open question). Use it only after that is answered.
+3. `keychain-aws-rotate-key` staging: **exits 0 with a notice by design.** Staging has no Coolify application and gets none (CTO, 2026-10-03). It creates nothing. Production stays red if its target is missing.
 4. `keychain-aws-preflight` production, then `keychain-aws-bootstrap` production.
 5. `keychain-aws-rotate-key` production: creates the first runtime key, writes it, redeploys, verifies.
 6. Last: `keychain-aws-production-bucket`. Only after the CTO confirmed the bucket name and region. Cannot be undone, even by root.
@@ -40,14 +40,14 @@ Also run once from a non-main branch: it must be refused before any secret or to
 
 ## What the first staging run settles (unverified on paper)
 
-- Whether `kms:CreateKey` with the tag in the create call passes with the deny on `TagResource` in place, then `CreateAlias`. The run summary says which shape held. If refused, the fallback in the Architect's policy draft section 2 needs a CTO decision, not an edit by me.
+- Whether `kms:CreateKey` with the tag in the create call passes with the `StringNotEquals` deny on `TagResource` in place, then `CreateAlias`. The tag value is the environment (`staging` or `production`), the alias is `alias/maskin-keychain-<env>-<name>`. The run summary says which shape held. If refused, the fallback in the Architect's policy draft section 2 needs a CTO decision, not an edit by me.
 - Whether `iam:CreateUser` with a permissions boundary also needs `iam:PutUserPermissionsBoundary` (the policy denies it today).
 - The `sub` claim format for this repository.
 - Whether CloudTrail accepts the bucket policy as written and `create-trail` needs nothing beyond the listed actions.
 
 ## What each run proves
 
-- Bootstrap: CreateKey without the tag is refused, CreateKey in eu-west-1 is refused, CreateUser without the boundary is refused. If any of these succeed the run fails loudly, and a stray key or user exists. The role cannot delete either, so the break-glass admin cleans up.
+- Bootstrap: CreateKey without the tag is refused, CreateKey with the other environment's tag value is refused, CreateKey in eu-west-1 is refused, CreateUser without the boundary is refused. If any of these succeed the run fails loudly, and a stray key or user exists. The role cannot delete either, so the break-glass admin cleans up.
 - Staging lock test: the role can call DeleteObject (a delete marker is written, proving delete permission), and deleting the locked version is refused with the text "protected by object lock". A plain permission error fails the test.
 - Rotate: the new key, used as the runtime identity, does a KMS encrypt and decrypt round trip on the smoke key and is denied `iam:ListUsers` (boundary holds).
 
@@ -60,9 +60,20 @@ Every 90 days, per environment. Order is fixed: create, verify, write to Coolify
 - Fails closed if the user already holds 2 keys.
 - Fails before creating anything if the Coolify target, token or `HEALTH_URL` is missing.
 - Failure before the Coolify write: the new key is removed, nothing changed.
-- Failure after the Coolify write (deploy failed or not healthy): **both keys stay and the old key is not deleted.** Next run refuses (2 keys). A human fixes the deploy, then deletes whichever key the app does not use, by hand, in IAM.
+- Coolify env write: `WROTE` is set before the request. A definite 4xx removes the new key again. A timeout, 5xx or any other code is ambiguous (Coolify may hold the new key), so **both keys stay** and nothing is deleted.
+- Failure after the Coolify write (ambiguous write, deploy failed or not healthy): **both keys stay and the old key is not deleted.** Next run refuses (2 keys). Follow "Stale second access key" below.
 - It writes only `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. `AWS_REGION=eu-central-1` and `KEYCHAIN_KMS=aws-kms` are set deliberately by a person when PR #1 is ready, never by a rotation.
 - Coolify variables are written with is_shown_once (value hidden in UI and API). Coolify's API cannot set "runtime only", so the two variables are also available at build time like the other variables on that application. Untick Available at Buildtime in the Coolify dashboard once.
+
+## Stale second access key
+
+An IAM user holds 2 access keys at most, and a secret is shown only at creation, so nobody can re-send an orphan key to Coolify. After an ambiguous write or a failed deploy the next rotation refuses until one key is gone.
+
+1. Find out which key the app uses. Read the `AWS_ACCESS_KEY_ID` value on the Coolify application (a human with the dashboard, or a token with read:sensitive) and compare it with the two key IDs in IAM (`aws iam list-access-keys --user-name maskin-keychain-runtime-<env>`). Do not paste either into a comment or log.
+2. Delete the key Coolify does **not** hold, through the break-glass role (the bootstrap role cannot be used for this by hand, and the runtime role has no IAM rights). If neither key matches, keep both and escalate to the CTO.
+3. Re-run `keychain-aws-rotate-key`.
+
+Follow-up task, after the first staging run: let the rotation job, which has the Environment-held token, do steps 1 and 2 itself in the stale-key case and compare without printing either value. Until then this is a human step.
 
 ## Secrets handling in the workflows
 
@@ -71,10 +82,10 @@ The repo is public, so run logs are public. Values are masked on the first line 
 ## Residual risks and open points
 
 - The bootstrap role's CreateUser, PutUserPolicy and CreateAccessKey rights are an escalation path. The runtime boundary is what contains them, and the human reviewer reading the workflow diff at approval time is the control that matters.
-- One account holds staging and production. S3, CloudTrail and IAM are separated by name per environment. **KMS is not:** both runtime users may use any key aliased `alias/maskin-keychain-*`. Separating KMS needs an environment segment in the alias that PR #1's KmsProvider would have to use. Decision for the Architect and CTO.
+- One account holds staging and production. S3, CloudTrail, IAM and KMS are separated per environment: the alias carries the environment (`alias/maskin-keychain-<env>-*`) and the key tag value is the environment, so a role cannot alias, tag or use the other environment's keys. PR #1's KmsProvider reads the environment from `KEYCHAIN_ENV` and fails startup under `aws-kms` if it is unset.
 - `PutKeyPolicy` stays in the bootstrap policy as drafted, but no workflow uses it. Dropping it is a free tightening.
 - Compliance retention is set as the bucket default. The production bucket policy denies `s3:PutBucketObjectLockConfiguration` to everyone, so only root or the break-glass admin editing the policy first can change it, and Compliance protects existing object versions regardless.
 - Cost: each key $1 a month plus requests, CloudTrail management events for the first trail per region are free, S3 storage for 24 months of snapshots is small. The staging smoke objects expire after 1 day. The staging Governance bucket and the trail buckets keep small objects.
-- Open: which Coolify resource consumes the staging runtime key. Until answered, staging rotation stops before creating a key.
+- Decided: no staging Coolify application. Staging rotation exits 0 with a notice.
 - Action pins: `aws-actions/configure-aws-credentials` at v5.1.1 and `actions/checkout` v4, both by full commit SHA. Not checked against newer releases.
 - Coolify API shape (bulk env PATCH, POST /deploy, deployment status) was read from Coolify's published OpenAPI, not tested against our version. Also unverified: whether a variable written with is_shown_once can be overwritten by the next rotation. If not, the run fails closed and removes the new key.
