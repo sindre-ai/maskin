@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { OpenAPIHono } from '@hono/zod-openapi'
 import {
+	events,
 	actors,
 	agentFiles,
 	agentSkills,
@@ -32,6 +34,7 @@ import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
 const { default: actorsRoutes } = await import('../../routes/actors')
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
+const { default: eventsRoutes } = await import('../../routes/events')
 
 function createApp() {
 	return createIntegrationApp({ path: '/api/actors', module: actorsRoutes })
@@ -242,6 +245,78 @@ describe('Actors Integration — DELETE', () => {
 		expect(fileAfter.createdBy).toBe(humanId)
 		const [importAfter] = await db.select().from(imports).where(eq(imports.id, importRow.id))
 		expect(importAfter.createdBy).toBe(humanId)
+	})
+
+	it('stores only identity fields in the deleted event, no tools, llm_config or credentials', async () => {
+		const app = createApp()
+		await db
+			.update(actors)
+			.set({
+				apiKey: 'fake-api-key-for-test',
+				systemPrompt: 'fake system prompt for test',
+				tools: { mcpServers: { fake: { env: { FAKE_TOKEN: 'fake-env-secret-for-test' } } } },
+				llmConfig: { api_key: 'fake-llm-key-for-test' },
+				memory: { notes: 'fake memory for test' },
+			})
+			.where(eq(actors.id, agentId))
+
+		const res = await app.request(
+			jsonRequest('DELETE', `/api/actors/${agentId}`, undefined, {
+				'x-workspace-id': workspaceId,
+			}),
+		)
+		expect(res.status).toBe(200)
+
+		const rows = await db.select().from(events).where(eq(events.entityId, agentId))
+		const deleted = rows.filter((r) => r.action === 'deleted')
+		expect(deleted).toHaveLength(1)
+		expect(deleted[0].data).toEqual({
+			id: agentId,
+			type: 'agent',
+			name: 'Delete Me',
+			is_system: false,
+		})
+		expect(JSON.stringify(rows)).not.toMatch(/fake-/)
+
+		// The events read routes return the stored row as is, so check what
+		// they actually serve: history, and the SSE replay path.
+		const historyRes = await createIntegrationApp({
+			path: '/api/events',
+			module: eventsRoutes,
+		}).request(
+			jsonGet(`/api/events/history?entity_id=${agentId}`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(historyRes.status).toBe(200)
+		const historyText = await historyRes.text()
+		expect(historyText).toContain('Delete Me')
+		expect(historyText).not.toMatch(/fake-/)
+
+		const sseApp = new OpenAPIHono()
+		sseApp.use('*', async (c, next) => {
+			c.set('db' as never, db as never)
+			c.set('actorId' as never, getTestActorId() as never)
+			c.set('notifyBridge' as never, { on() {}, off() {} } as never)
+			await next()
+		})
+		sseApp.route('/api/events', eventsRoutes as never)
+		const abort = new AbortController()
+		const sseRes = await sseApp.request('/api/events', {
+			headers: { 'x-workspace-id': workspaceId, 'last-event-id': '0' },
+			signal: abort.signal,
+		})
+		expect(sseRes.status).toBe(200)
+		const reader = (sseRes.body as ReadableStream<Uint8Array>).getReader()
+		const decoder = new TextDecoder()
+		let sseText = ''
+		while (!sseText.includes('Delete Me')) {
+			const { value, done } = await reader.read()
+			if (done) break
+			sseText += decoder.decode(value)
+		}
+		abort.abort()
+		await reader.cancel().catch(() => {})
+		expect(sseText).toContain('Delete Me')
+		expect(sseText).not.toMatch(/fake-/)
 	})
 })
 
