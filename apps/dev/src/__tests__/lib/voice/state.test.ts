@@ -222,7 +222,12 @@ describe('machine_detection (AMD)', () => {
 })
 
 describe('absorbing statuses', () => {
-	const absorbing = ['voice_declined', 'voice_meeting_booked', 'voice_warm_transferred']
+	const absorbing = [
+		'voice_declined',
+		'voice_meeting_booked',
+		'voice_warm_transferred',
+		'follow_up_later',
+	]
 
 	it.each(absorbing)('%s is not revived by a late call.initiated', (status) => {
 		const r = advance(contact(status, { last_call_id: 'call-1' }), initiated('call-2'), NOW)
