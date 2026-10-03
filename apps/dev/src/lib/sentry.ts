@@ -23,7 +23,7 @@ if (dsn && enabled) {
 			sendDefaultPii: false,
 			// Logs are only on by default from @sentry/node 10.71.0; the lockfile
 			// resolves 10.70.0, so opt in explicitly (logger.info/warn send to Sentry Logs).
-			enableLogs: true,
+			enableLogs: false,
 		})
 	} catch (err) {
 		console.error('[sentry] init failed — error reporting is disabled', err)
