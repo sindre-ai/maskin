@@ -1,8 +1,9 @@
-import { integrations } from '@maskin/db/schema'
+import { events, integrations, objects } from '@maskin/db/schema'
+import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encrypt } from '../../lib/crypto'
 import { sendFollowup } from '../../lib/outreach/voice/send-followup'
-import { insertWorkspace } from '../factories'
+import { insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 // Per-workspace send resolution against real Postgres and real encryption. Only
@@ -27,11 +28,23 @@ async function connectResend(
 	})
 }
 
-const email = {
+// A function: the test actor only exists once global-setup has run.
+const emailParams = () => ({
 	to: 'prospect@example.com',
 	prospectName: 'Pia',
 	callSummary: 'We covered rollout.',
-	contact: { metadata: {} },
+	callId: 'call-1',
+	actorId: getTestActorId(),
+})
+
+async function insertContact(workspaceId: string, metadata: Record<string, unknown> = {}) {
+	const row = await insertObject(db, workspaceId, getTestActorId(), { type: 'contact', metadata })
+	return { id: row.id, metadata }
+}
+
+async function contactMetadata(id: string) {
+	const [row] = await db.select().from(objects).where(eq(objects.id, id))
+	return row.metadata as Record<string, unknown>
 }
 
 function sentRequest(i: number) {
@@ -62,8 +75,16 @@ describe('sendFollowup per-workspace Resend identity', () => {
 		await connectResend(a.id, { apiKey: 're_key_a', sendFrom: 'noreply@agent.a.example' })
 		await connectResend(b.id, { apiKey: 're_key_b', sendFrom: 'noreply@agent.b.example' })
 
-		await sendFollowup(db, { ...email, workspaceId: a.id })
-		await sendFollowup(db, { ...email, workspaceId: b.id })
+		await sendFollowup(db, {
+			...emailParams(),
+			workspaceId: a.id,
+			contact: await insertContact(a.id),
+		})
+		await sendFollowup(db, {
+			...emailParams(),
+			workspaceId: b.id,
+			contact: await insertContact(b.id),
+		})
 
 		expect(fetchMock).toHaveBeenCalledTimes(2)
 		const first = sentRequest(0)
@@ -78,9 +99,14 @@ describe('sendFollowup per-workspace Resend identity', () => {
 	it('skips without sending or throwing when the workspace has no resend integration', async () => {
 		const ws = await insertWorkspace(db, getTestActorId())
 
-		await expect(sendFollowup(db, { ...email, workspaceId: ws.id })).resolves.toBeUndefined()
+		const contact = await insertContact(ws.id)
+
+		await expect(
+			sendFollowup(db, { ...emailParams(), workspaceId: ws.id, contact }),
+		).resolves.toBeUndefined()
 
 		expect(fetchMock).not.toHaveBeenCalled()
+		expect(await contactMetadata(contact.id)).toEqual({})
 	})
 
 	it('skips when the resend integration is not active', async () => {
@@ -91,7 +117,11 @@ describe('sendFollowup per-workspace Resend identity', () => {
 			status: 'pending',
 		})
 
-		await expect(sendFollowup(db, { ...email, workspaceId: ws.id })).resolves.toBeUndefined()
+		const contact = await insertContact(ws.id)
+
+		await expect(
+			sendFollowup(db, { ...emailParams(), workspaceId: ws.id, contact }),
+		).resolves.toBeUndefined()
 
 		expect(fetchMock).not.toHaveBeenCalled()
 	})
@@ -100,12 +130,33 @@ describe('sendFollowup per-workspace Resend identity', () => {
 		const ws = await insertWorkspace(db, getTestActorId())
 		await connectResend(ws.id, { apiKey: 're_key_c', sendFrom: 'noreply@agent.c.example' })
 
-		await sendFollowup(db, {
-			...email,
-			workspaceId: ws.id,
-			contact: { metadata: { compliance_flag: 'disclosure_missing' } },
-		})
+		const contact = await insertContact(ws.id, { compliance_flag: 'disclosure_missing' })
+
+		await sendFollowup(db, { ...emailParams(), workspaceId: ws.id, contact })
 
 		expect(fetchMock).not.toHaveBeenCalled()
+		expect(await contactMetadata(contact.id)).toEqual({ compliance_flag: 'disclosure_missing' })
+	})
+
+	it('merges consent_* into the contact after a send and keeps sibling keys', async () => {
+		const ws = await insertWorkspace(db, getTestActorId())
+		await connectResend(ws.id, { apiKey: 're_key_d', sendFrom: 'noreply@agent.d.example' })
+		const contact = await insertContact(ws.id, { voice_first_touch_at: '2026-10-03T10:00:00.000Z' })
+
+		await sendFollowup(db, { ...emailParams(), workspaceId: ws.id, contact })
+
+		const metadata = await contactMetadata(contact.id)
+		expect(metadata).toMatchObject({
+			voice_first_touch_at: '2026-10-03T10:00:00.000Z',
+			consent_basis: 'gdpr_6_1_f_legitimate_interest_b2b_voice',
+			consent_call_id: 'call-1',
+			consent_disclosed_identity: 'Maskin ApS, Sebk / Magnus, on behalf of Maskin',
+		})
+		expect(typeof metadata.consent_captured_at).toBe('string')
+		expect(metadata).not.toHaveProperty('voice_last_touch_at')
+		expect(metadata).not.toHaveProperty('retention_expires_at')
+		const audit = await db.select().from(events).where(eq(events.entityId, contact.id))
+		expect(audit).toHaveLength(1)
+		expect(audit[0].action).toBe('updated')
 	})
 })
