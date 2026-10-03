@@ -1,5 +1,5 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
-import { generateApiKey, hashPassword } from '@maskin/auth'
+import { evictActor, generateApiKey, hashPassword } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	events,
@@ -33,6 +33,7 @@ import {
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { toActorWithKeyResponse } from '../lib/actor-response'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -51,6 +52,7 @@ import { isWorkspaceMember } from '../lib/workspace-auth'
 import { OwnershipCapExceededError } from '../lib/workspace-capacity'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { stopSessionsForActors } from '../services/session-cleanup'
+import { startSession } from '../services/session-lifecycle'
 import type { SessionManager } from '../services/session-manager'
 import { SeedAgentError, provisionWorkspace } from '../services/workspace-bootstrap'
 
@@ -264,6 +266,15 @@ app.openapi(createActorRoute, async (c) => {
 
 		if (created) workspaceId = created.id
 		else if (!atOwnershipCap) workspaceProvisioningFailed = true
+	}
+
+	// Baseline for the invite conversion metric: a human who signs up and lands
+	// in their own workspace is a workspace_member_joined with from_invite:false.
+	if (workspaceId && actor.type === 'human') {
+		void capturePosthogEvent('workspace_member_joined', actor.id, {
+			from_invite: false,
+			workspace_id: workspaceId,
+		})
 	}
 
 	// Allowlisted via actorWithKeySchema (see toActorWithKeyResponse) — never
@@ -833,6 +844,9 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
+	// The old key must stop authenticating now, not when its cached lookup expires.
+	evictActor(id)
+
 	return c.json({ api_key: key })
 }) as RouteHandler<typeof regenerateApiKeyRoute, Env>)
 
@@ -1070,6 +1084,7 @@ app.openapi(deleteActorRoute, (async (c) => {
 		await tx.update(actors).set({ createdBy: null }).where(eq(actors.createdBy, id))
 		await tx.delete(actors).where(eq(actors.id, id))
 	})
+	evictActor(id)
 
 	await recordEvent(db, {
 		workspaceId,
@@ -1317,10 +1332,16 @@ app.openapi(runAgentRoute, (async (c) => {
 			if (pausedSession) {
 				await sessionManager.resumeSession(pausedSession.id)
 			} else {
-				await sessionManager.createSession(workspaceId, {
+				await startSession({
+					workspaceId,
 					actorId: id,
+					callerKind: 'rest',
 					actionPrompt: body.action_prompt ?? DEFAULT_RUN_ACTION_PROMPT,
 					createdBy: actorId,
+					// Ad-hoc actor run: no originating object.
+					initiatedFromObjectId: null,
+					initiatedFromObjectType: null,
+					await: 'none',
 				})
 			}
 		} catch (err) {

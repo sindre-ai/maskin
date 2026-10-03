@@ -122,6 +122,13 @@ export const queryKeys = {
 		all: (workspaceId: string) => ['files', workspaceId] as const,
 		detail: (workspaceId: string, id: string) => ['files', workspaceId, 'detail', id] as const,
 	},
+	fileComments: {
+		all: (workspaceId: string, fileId: string) => ['file-comments', workspaceId, fileId] as const,
+	},
+	attachingObjects: {
+		byFile: (workspaceId: string, fileId: string) =>
+			['attaching-objects', workspaceId, fileId] as const,
+	},
 	claudeOauth: {
 		status: (workspaceId: string) => ['claude-oauth', workspaceId, 'status'] as const,
 	},

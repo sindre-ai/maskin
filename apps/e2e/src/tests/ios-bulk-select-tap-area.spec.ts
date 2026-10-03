@@ -3,9 +3,11 @@ import { expect, test } from '../fixtures/auth.fixture'
 import type { TestAPI } from '../helpers/api.helper'
 import { VIEWPORTS } from '../helpers/viewports'
 
-// AC-T6 / AC-U1: at viewports ≤1024 CSS px, the rendered row-select checkbox
-// hit area must be ≥44×44 CSS px, centered on the visible checkbox, and a
-// synthetic touch up to 21px off-center must still toggle selection.
+// AC-T6 / AC-U1 (revised): at viewports ≤1024 CSS px the list row's visible
+// checkbox is a 16px box with the star beside it. Its tap area is still 44×44
+// CSS px (a pseudo-element, so the box itself measures 16px). Rows sit ~40px
+// apart, so neighbouring tap areas split the gap: a synthetic touch up to 15px
+// off-center must still toggle this row's selection.
 
 const TOUCH_VIEWPORTS = [VIEWPORTS.mobile, VIEWPORTS.tabletPortrait, VIEWPORTS.tabletLandscape]
 
@@ -36,18 +38,7 @@ async function requireBox(locator: Locator, label: string) {
 
 test.describe('iOS bulk-select checkbox tap area (T1)', () => {
 	for (const viewport of TOUCH_VIEWPORTS) {
-		test(`row-select checkbox is ≥44×44 CSS px at ${viewport.label}`, async ({ page, account }) => {
-			await page.setViewportSize({ width: viewport.width, height: viewport.height })
-			await seedTwoObjects(account)
-			await page.goto(`/${account.workspaceId}/objects`)
-
-			const cb = await firstRowCheckbox(page)
-			const box = await requireBox(cb, `row checkbox at ${viewport.label}`)
-			expect(box.width, `width ≥44 at ${viewport.label}`).toBeGreaterThanOrEqual(44)
-			expect(box.height, `height ≥44 at ${viewport.label}`).toBeGreaterThanOrEqual(44)
-		})
-
-		test(`tap 21px off-center on the row-select checkbox toggles selection at ${viewport.label}`, async ({
+		test(`row-select checkbox is a 16px box with the star beside it at ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -57,8 +48,28 @@ test.describe('iOS bulk-select checkbox tap area (T1)', () => {
 
 			const cb = await firstRowCheckbox(page)
 			const box = await requireBox(cb, `row checkbox at ${viewport.label}`)
-			// Tap 21px off-center along x; must still land inside the 44px hit area.
-			await page.mouse.click(box.x + box.width / 2 + 21, box.y + box.height / 2)
+			expect(box.width, `width 16 at ${viewport.label}`).toBeLessThan(20)
+			expect(box.height, `height 16 at ${viewport.label}`).toBeLessThan(20)
+
+			const star = page.getByRole('button', { name: 'Star this object' }).first()
+			await expect(star).toBeVisible()
+			const starBox = await requireBox(star, `row star at ${viewport.label}`)
+			expect(starBox.x, 'star sits to the right of the checkbox').toBeGreaterThan(box.x + box.width)
+		})
+
+		test(`tap 15px off-center on the row-select checkbox toggles selection at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await seedTwoObjects(account)
+			await page.goto(`/${account.workspaceId}/objects`)
+
+			const cb = await firstRowCheckbox(page)
+			const box = await requireBox(cb, `row checkbox at ${viewport.label}`)
+			// Tap 15px off-center along y; must still land inside the 44px hit area
+			// even though the box itself is 16px.
+			await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2 - 15)
 			await expect(cb).toHaveAttribute('aria-checked', 'true')
 		})
 	}

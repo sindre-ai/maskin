@@ -399,7 +399,7 @@ public protocol APIProtocol: Sendable {
     /// - Remark: HTTP `PATCH /api/conversations/{id}/me`.
     /// - Remark: Generated from `#/paths//api/conversations/{id}/me/patch`.
     func patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_me(_ input: Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_me.Input) async throws -> Operations.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_me.Output
-    /// List sessions
+    /// List sessions (lean by default; pass verbose=true for the full shape)
     ///
     /// - Remark: HTTP `GET /api/sessions`.
     /// - Remark: Generated from `#/paths//api/sessions/get`.
@@ -1570,7 +1570,7 @@ extension APIProtocol {
             body: body
         ))
     }
-    /// List sessions
+    /// List sessions (lean by default; pass verbose=true for the full shape)
     ///
     /// - Remark: HTTP `GET /api/sessions`.
     /// - Remark: Generated from `#/paths//api/sessions/get`.
@@ -1602,10 +1602,12 @@ extension APIProtocol {
     /// - Remark: Generated from `#/paths//api/sessions/{id}/get`.
     public func get_sol_api_sol_sessions_sol__lcub_id_rcub_(
         path: Operations.get_sol_api_sol_sessions_sol__lcub_id_rcub_.Input.Path,
+        query: Operations.get_sol_api_sol_sessions_sol__lcub_id_rcub_.Input.Query = .init(),
         headers: Operations.get_sol_api_sol_sessions_sol__lcub_id_rcub_.Input.Headers
     ) async throws -> Operations.get_sol_api_sol_sessions_sol__lcub_id_rcub_.Output {
         try await get_sol_api_sol_sessions_sol__lcub_id_rcub_(Operations.get_sol_api_sol_sessions_sol__lcub_id_rcub_.Input(
             path: path,
+            query: query,
             headers: headers
         ))
     }

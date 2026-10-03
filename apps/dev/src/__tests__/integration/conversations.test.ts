@@ -12,6 +12,8 @@ import { and, eq } from 'drizzle-orm'
 import { vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { evaluateAndRespond } from '../../services/conversation-responder'
+import { configureSessionLifecycle } from '../../services/session-lifecycle'
+import type { SessionManager } from '../../services/session-manager'
 import { insertActor, insertSession, insertWorkspace } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
@@ -51,12 +53,13 @@ function createConversationsApp(actorId: string, actorType: 'human' | 'agent' = 
 	})
 
 	const sessionManager = {
-		createSession: vi.fn().mockResolvedValue({ id: 'fake-session-id' }),
+		createSession: vi.fn().mockResolvedValue({ id: crypto.randomUUID() }),
 		findActiveConversationSession: vi.fn().mockResolvedValue(null),
 		findConversationSessionAnyActive: vi.fn().mockResolvedValue(null),
 		drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 		writeInput: vi.fn().mockResolvedValue(undefined),
 	}
+	configureSessionLifecycle({ db, sessionManager: sessionManager as unknown as SessionManager })
 
 	app.use('*', async (c, next) => {
 		c.set('db', db)
@@ -1164,12 +1167,13 @@ describe('Conversations Integration', () => {
 			if (!triggering) throw new Error('failed to insert triggering message')
 
 			const sessionManager = {
-				createSession: vi.fn().mockResolvedValue({ id: 'new-session-id' }),
+				createSession: vi.fn().mockResolvedValue({ id: crypto.randomUUID() }),
 				findActiveConversationSession: vi.fn().mockResolvedValue(null),
 				findConversationSessionAnyActive: vi.fn().mockResolvedValue(null),
 				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				writeInput: vi.fn().mockResolvedValue(undefined),
 			}
+			configureSessionLifecycle({ db, sessionManager: sessionManager as unknown as SessionManager })
 			await evaluateAndRespond({
 				db,
 				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
@@ -1216,12 +1220,13 @@ describe('Conversations Integration', () => {
 			if (!triggering) throw new Error('failed to insert triggering message')
 
 			const sessionManager = {
-				createSession: vi.fn().mockResolvedValue({ id: 'x' }),
+				createSession: vi.fn().mockResolvedValue({ id: crypto.randomUUID() }),
 				findActiveConversationSession: vi.fn().mockResolvedValue(null),
 				findConversationSessionAnyActive: vi.fn().mockResolvedValue(null),
 				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				writeInput: vi.fn().mockResolvedValue(undefined),
 			}
+			configureSessionLifecycle({ db, sessionManager: sessionManager as unknown as SessionManager })
 			await evaluateAndRespond({
 				db,
 				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
@@ -1278,12 +1283,13 @@ describe('Conversations Integration', () => {
 			if (!triggering) throw new Error('failed to insert triggering message')
 
 			const sessionManager = {
-				createSession: vi.fn().mockResolvedValue({ id: 'x' }),
+				createSession: vi.fn().mockResolvedValue({ id: crypto.randomUUID() }),
 				findActiveConversationSession: vi.fn().mockResolvedValue(null),
 				findConversationSessionAnyActive: vi.fn().mockResolvedValue(null),
 				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				writeInput: vi.fn().mockResolvedValue(undefined),
 			}
+			configureSessionLifecycle({ db, sessionManager: sessionManager as unknown as SessionManager })
 			await evaluateAndRespond({
 				db,
 				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
@@ -1329,6 +1335,7 @@ describe('Conversations Integration', () => {
 				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				writeInput: vi.fn().mockResolvedValue(undefined),
 			}
+			configureSessionLifecycle({ db, sessionManager: sessionManager as unknown as SessionManager })
 			await evaluateAndRespond({
 				db,
 				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
@@ -1383,12 +1390,13 @@ describe('Conversations Integration', () => {
 			if (!triggering) throw new Error('failed to insert triggering message')
 
 			const sessionManager = {
-				createSession: vi.fn().mockResolvedValue({ id: 'new-session-id' }),
+				createSession: vi.fn().mockResolvedValue({ id: crypto.randomUUID() }),
 				findActiveConversationSession: vi.fn().mockResolvedValue(null),
 				findConversationSessionAnyActive: vi.fn().mockResolvedValue(null),
 				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				writeInput: vi.fn().mockResolvedValue(undefined),
 			}
+			configureSessionLifecycle({ db, sessionManager: sessionManager as unknown as SessionManager })
 			await evaluateAndRespond({
 				db,
 				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
@@ -1445,12 +1453,13 @@ describe('Conversations Integration', () => {
 			if (!triggering) throw new Error('failed to insert triggering message')
 
 			const sessionManager = {
-				createSession: vi.fn().mockResolvedValue({ id: 'new-session-id' }),
+				createSession: vi.fn().mockResolvedValue({ id: crypto.randomUUID() }),
 				findActiveConversationSession: vi.fn().mockResolvedValue(null),
 				findConversationSessionAnyActive: vi.fn().mockResolvedValue(null),
 				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				writeInput: vi.fn().mockResolvedValue(undefined),
 			}
+			configureSessionLifecycle({ db, sessionManager: sessionManager as unknown as SessionManager })
 			await evaluateAndRespond({
 				db,
 				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
@@ -1495,7 +1504,7 @@ describe('Conversations Integration', () => {
 			if (!triggering) throw new Error('failed to insert triggering message')
 
 			const sessionManager = {
-				createSession: vi.fn().mockResolvedValue({ id: 'new-session-id' }),
+				createSession: vi.fn().mockResolvedValue({ id: crypto.randomUUID() }),
 				findActiveConversationSession: vi.fn().mockResolvedValue(null),
 				findConversationSessionAnyActive: vi
 					.fn()
@@ -1504,6 +1513,7 @@ describe('Conversations Integration', () => {
 				writeInput: vi.fn().mockRejectedValue(new Error('container gone')),
 				markSessionFailedAfterContainerLoss: vi.fn().mockResolvedValue(undefined),
 			}
+			configureSessionLifecycle({ db, sessionManager: sessionManager as unknown as SessionManager })
 			await evaluateAndRespond({
 				db,
 				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
@@ -1575,6 +1585,7 @@ describe('Conversations Integration', () => {
 				writeInput: vi.fn().mockRejectedValue(new Error('container gone')),
 				markSessionFailedAfterContainerLoss: vi.fn().mockResolvedValue(undefined),
 			}
+			configureSessionLifecycle({ db, sessionManager: sessionManager as unknown as SessionManager })
 			await evaluateAndRespond({
 				db,
 				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
@@ -1624,6 +1635,7 @@ describe('Conversations Integration', () => {
 				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				writeInput: vi.fn().mockResolvedValue(undefined),
 			}
+			configureSessionLifecycle({ db, sessionManager: sessionManager as unknown as SessionManager })
 			await evaluateAndRespond({
 				db,
 				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
@@ -1675,6 +1687,7 @@ describe('Conversations Integration', () => {
 				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				writeInput: vi.fn().mockResolvedValue(undefined),
 			}
+			configureSessionLifecycle({ db, sessionManager: sessionManager as unknown as SessionManager })
 			await evaluateAndRespond({
 				db,
 				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
@@ -1690,6 +1703,7 @@ describe('Conversations Integration', () => {
 				.update(messages)
 				.set({ content: 'deploy to staging' })
 				.where(eq(messages.id, triggering.id))
+			configureSessionLifecycle({ db, sessionManager: sessionManager as unknown as SessionManager })
 			await evaluateAndRespond({
 				db,
 				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
@@ -1744,6 +1758,7 @@ describe('Conversations Integration', () => {
 				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				writeInput: vi.fn().mockResolvedValue(undefined),
 			}
+			configureSessionLifecycle({ db, sessionManager: sessionManager as unknown as SessionManager })
 			await evaluateAndRespond({
 				db,
 				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
@@ -1789,6 +1804,7 @@ describe('Conversations Integration', () => {
 				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				writeInput: vi.fn().mockResolvedValue(undefined),
 			}
+			configureSessionLifecycle({ db, sessionManager: sessionManager as unknown as SessionManager })
 			await evaluateAndRespond({
 				db,
 				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
@@ -1839,12 +1855,13 @@ describe('Conversations Integration', () => {
 			if (!triggering) throw new Error('failed to insert triggering message')
 
 			const sessionManager = {
-				createSession: vi.fn().mockResolvedValue({ id: 'new-session-id' }),
+				createSession: vi.fn().mockResolvedValue({ id: crypto.randomUUID() }),
 				findActiveConversationSession: vi.fn().mockResolvedValue(null),
 				findConversationSessionAnyActive: vi.fn().mockResolvedValue(null),
 				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				writeInput: vi.fn().mockResolvedValue(undefined),
 			}
+			configureSessionLifecycle({ db, sessionManager: sessionManager as unknown as SessionManager })
 			await evaluateAndRespond({
 				db,
 				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts

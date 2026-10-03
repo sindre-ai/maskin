@@ -1146,6 +1146,9 @@ describe('Actors Routes', () => {
 				[], // no paused session
 			]
 			mockResults.update = [updated]
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'session-1',
+			})
 
 			const res = await app.request(
 				jsonRequest(
@@ -1182,6 +1185,9 @@ describe('Actors Routes', () => {
 				[],
 			]
 			mockResults.update = [updated]
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+				id: 'session-1',
+			})
 
 			const res = await app.request(
 				jsonRequest('POST', `/api/actors/${agent.id}/run`, {}, { 'x-workspace-id': wsId }),

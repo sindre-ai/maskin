@@ -203,10 +203,11 @@ public struct APIAgentsSource: AgentsAPI, AgentDetailAPI {
 	private func sessionRows(agentID: String?, limit: Int) async throws -> [AgentSession] {
 		let output = try await client.get_sol_api_sol_sessions(
 			.init(
-				query: .init(actor_id: agentID, limit: limit),
+				query: .init(actor_id: agentID, verbose: true, limit: limit),
 				headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
 		guard case .ok(let ok) = output else { throw AgentsError("Couldn't load sessions.") }
-		return try ok.body.json.map { row in
+		// verbose=true asks for the full rows (the default is the lean list shape).
+		return (try ok.body.json.value1 ?? []).map { row in
 			AgentSession(
 				id: row.id, actorID: row.actorId, status: row.status, prompt: row.actionPrompt,
 				currentActivity: row.currentActivity, interactive: row.interactive,

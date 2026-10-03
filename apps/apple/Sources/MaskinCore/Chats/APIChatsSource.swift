@@ -245,10 +245,11 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 	public func sessions(conversationID: String) async throws -> [ChatAgentSession] {
 		let output = try await client.get_sol_api_sol_sessions(
 			.init(
-				query: .init(conversation_id: conversationID, limit: 50),
+				query: .init(conversation_id: conversationID, verbose: true, limit: 50),
 				headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
 		guard case .ok(let ok) = output else { throw ChatsError("Couldn't check on the agents.") }
-		return try ok.body.json.map { row in
+		// verbose=true asks for the full rows (the default is the lean list shape).
+		return (try ok.body.json.value1 ?? []).map { row in
 			let config = Self.json(row.config)
 			return ChatAgentSession(
 				id: row.id, actorID: row.actorId, status: .init(row.status),

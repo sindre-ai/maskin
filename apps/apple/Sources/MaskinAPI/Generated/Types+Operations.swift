@@ -28354,25 +28354,57 @@ public enum Operations {
                         public var webhook_url: Swift.String?
                         /// - Remark: Generated from `#/paths/api/integrations/{provider}/connect/POST/responses/200/content/json/integration_id`.
                         public var integration_id: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/integrations/{provider}/connect/POST/responses/200/content/json/dns_recordsPayload`.
+                        public struct dns_recordsPayloadPayload: Codable, Hashable, Sendable {
+                            /// A container of undocumented properties.
+                            public var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
+                            /// Creates a new `dns_recordsPayloadPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - additionalProperties: A container of undocumented properties.
+                            public init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
+                                self.additionalProperties = additionalProperties
+                            }
+                            public init(from decoder: any Swift.Decoder) throws {
+                                additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                            }
+                            public func encode(to encoder: any Swift.Encoder) throws {
+                                try encoder.encodeAdditionalProperties(additionalProperties)
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/integrations/{provider}/connect/POST/responses/200/content/json/dns_records`.
+                        public typealias dns_recordsPayload = [Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Output.Ok.Body.jsonPayload.dns_recordsPayloadPayload]
+                        /// - Remark: Generated from `#/paths/api/integrations/{provider}/connect/POST/responses/200/content/json/dns_records`.
+                        public var dns_records: Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Output.Ok.Body.jsonPayload.dns_recordsPayload?
+                        /// - Remark: Generated from `#/paths/api/integrations/{provider}/connect/POST/responses/200/content/json/verification_status`.
+                        public var verification_status: Swift.String?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
                         ///   - install_url:
                         ///   - webhook_url:
                         ///   - integration_id:
+                        ///   - dns_records:
+                        ///   - verification_status:
                         public init(
                             install_url: Swift.String? = nil,
                             webhook_url: Swift.String? = nil,
-                            integration_id: Swift.String? = nil
+                            integration_id: Swift.String? = nil,
+                            dns_records: Operations.post_sol_api_sol_integrations_sol__lcub_provider_rcub__sol_connect.Output.Ok.Body.jsonPayload.dns_recordsPayload? = nil,
+                            verification_status: Swift.String? = nil
                         ) {
                             self.install_url = install_url
                             self.webhook_url = webhook_url
                             self.integration_id = integration_id
+                            self.dns_records = dns_records
+                            self.verification_status = verification_status
                         }
                         public enum CodingKeys: String, CodingKey {
                             case install_url
                             case webhook_url
                             case integration_id
+                            case dns_records
+                            case verification_status
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/integrations/{provider}/connect/POST/responses/200/content/application\/json`.
@@ -36597,6 +36629,105 @@ public enum Operations {
                             public var createdAt: Swift.String?
                             /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/editedAt`.
                             public var editedAt: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload`.
+                            public struct spawned_sessionsPayloadPayload: Codable, Hashable, Sendable {
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/id`.
+                                public var id: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/status`.
+                                public var status: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/actorId`.
+                                public var actorId: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/actorName`.
+                                public var actorName: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/actionPrompt`.
+                                public var actionPrompt: Swift.String
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/startedAt`.
+                                public var startedAt: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/completedAt`.
+                                public var completedAt: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/durationMs`.
+                                public var durationMs: Swift.Double?
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/result`.
+                                public struct resultPayload: Codable, Hashable, Sendable {
+                                    /// A container of undocumented properties.
+                                    public var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
+                                    /// Creates a new `resultPayload`.
+                                    ///
+                                    /// - Parameters:
+                                    ///   - additionalProperties: A container of undocumented properties.
+                                    public init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
+                                        self.additionalProperties = additionalProperties
+                                    }
+                                    public init(from decoder: any Swift.Decoder) throws {
+                                        additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                                    }
+                                    public func encode(to encoder: any Swift.Encoder) throws {
+                                        try encoder.encodeAdditionalProperties(additionalProperties)
+                                    }
+                                }
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/result`.
+                                public var result: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.spawned_sessionsPayloadPayload.resultPayload?
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/currentActivity`.
+                                public var currentActivity: Swift.String?
+                                /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessionsPayload/depends_on_session_ids`.
+                                public var depends_on_session_ids: [Swift.String]
+                                /// Creates a new `spawned_sessionsPayloadPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - id:
+                                ///   - status:
+                                ///   - actorId:
+                                ///   - actorName:
+                                ///   - actionPrompt:
+                                ///   - startedAt:
+                                ///   - completedAt:
+                                ///   - durationMs:
+                                ///   - result:
+                                ///   - currentActivity:
+                                ///   - depends_on_session_ids:
+                                public init(
+                                    id: Swift.String,
+                                    status: Swift.String,
+                                    actorId: Swift.String,
+                                    actorName: Swift.String,
+                                    actionPrompt: Swift.String,
+                                    startedAt: Swift.String? = nil,
+                                    completedAt: Swift.String? = nil,
+                                    durationMs: Swift.Double? = nil,
+                                    result: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.spawned_sessionsPayloadPayload.resultPayload? = nil,
+                                    currentActivity: Swift.String? = nil,
+                                    depends_on_session_ids: [Swift.String]
+                                ) {
+                                    self.id = id
+                                    self.status = status
+                                    self.actorId = actorId
+                                    self.actorName = actorName
+                                    self.actionPrompt = actionPrompt
+                                    self.startedAt = startedAt
+                                    self.completedAt = completedAt
+                                    self.durationMs = durationMs
+                                    self.result = result
+                                    self.currentActivity = currentActivity
+                                    self.depends_on_session_ids = depends_on_session_ids
+                                }
+                                public enum CodingKeys: String, CodingKey {
+                                    case id
+                                    case status
+                                    case actorId
+                                    case actorName
+                                    case actionPrompt
+                                    case startedAt
+                                    case completedAt
+                                    case durationMs
+                                    case result
+                                    case currentActivity
+                                    case depends_on_session_ids
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessions`.
+                            public typealias spawned_sessionsPayload = [Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.spawned_sessionsPayloadPayload]
+                            /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messagesPayload/spawned_sessions`.
+                            public var spawned_sessions: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.spawned_sessionsPayload
                             /// Creates a new `messagesPayloadPayload`.
                             ///
                             /// - Parameters:
@@ -36611,6 +36742,7 @@ public enum Operations {
                             ///   - sessionId:
                             ///   - createdAt:
                             ///   - editedAt:
+                            ///   - spawned_sessions:
                             public init(
                                 id: Swift.Double,
                                 conversationId: Swift.String,
@@ -36622,7 +36754,8 @@ public enum Operations {
                                 metadata: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.metadataPayload? = nil,
                                 sessionId: Swift.String? = nil,
                                 createdAt: Swift.String? = nil,
-                                editedAt: Swift.String? = nil
+                                editedAt: Swift.String? = nil,
+                                spawned_sessions: Operations.get_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages.Output.Ok.Body.jsonPayload.messagesPayloadPayload.spawned_sessionsPayload
                             ) {
                                 self.id = id
                                 self.conversationId = conversationId
@@ -36635,6 +36768,7 @@ public enum Operations {
                                 self.sessionId = sessionId
                                 self.createdAt = createdAt
                                 self.editedAt = editedAt
+                                self.spawned_sessions = spawned_sessions
                             }
                             public enum CodingKeys: String, CodingKey {
                                 case id
@@ -36648,6 +36782,7 @@ public enum Operations {
                                 case sessionId
                                 case createdAt
                                 case editedAt
+                                case spawned_sessions
                             }
                         }
                         /// - Remark: Generated from `#/paths/api/conversations/{id}/messages/GET/responses/200/content/json/messages`.
@@ -38890,7 +39025,7 @@ public enum Operations {
             }
         }
     }
-    /// List sessions
+    /// List sessions (lean by default; pass verbose=true for the full shape)
     ///
     /// - Remark: HTTP `GET /api/sessions`.
     /// - Remark: Generated from `#/paths//api/sessions/get`.
@@ -38916,6 +39051,8 @@ public enum Operations {
                 public var status: Operations.get_sol_api_sol_sessions.Input.Query.statusPayload?
                 /// - Remark: Generated from `#/paths/api/sessions/GET/query/actor_id`.
                 public var actor_id: Swift.String?
+                /// - Remark: Generated from `#/paths/api/sessions/GET/query/trigger_id`.
+                public var trigger_id: Swift.String?
                 /// - Remark: Generated from `#/paths/api/sessions/GET/query/mention_object_id`.
                 public var mention_object_id: Swift.String?
                 /// - Remark: Generated from `#/paths/api/sessions/GET/query/conversation_id`.
@@ -38924,6 +39061,10 @@ public enum Operations {
                 public var updated_before: Foundation.Date?
                 /// - Remark: Generated from `#/paths/api/sessions/GET/query/updated_after`.
                 public var updated_after: Foundation.Date?
+                /// - Remark: Generated from `#/paths/api/sessions/GET/query/before`.
+                public var before: Foundation.Date?
+                /// - Remark: Generated from `#/paths/api/sessions/GET/query/verbose`.
+                public var verbose: Swift.Bool?
                 /// - Remark: Generated from `#/paths/api/sessions/GET/query/limit`.
                 public var limit: Swift.Int?
                 /// - Remark: Generated from `#/paths/api/sessions/GET/query/offset`.
@@ -38933,28 +39074,37 @@ public enum Operations {
                 /// - Parameters:
                 ///   - status:
                 ///   - actor_id:
+                ///   - trigger_id:
                 ///   - mention_object_id:
                 ///   - conversation_id:
                 ///   - updated_before:
                 ///   - updated_after:
+                ///   - before:
+                ///   - verbose:
                 ///   - limit:
                 ///   - offset:
                 public init(
                     status: Operations.get_sol_api_sol_sessions.Input.Query.statusPayload? = nil,
                     actor_id: Swift.String? = nil,
+                    trigger_id: Swift.String? = nil,
                     mention_object_id: Swift.String? = nil,
                     conversation_id: Swift.String? = nil,
                     updated_before: Foundation.Date? = nil,
                     updated_after: Foundation.Date? = nil,
+                    before: Foundation.Date? = nil,
+                    verbose: Swift.Bool? = nil,
                     limit: Swift.Int? = nil,
                     offset: Swift.Int? = nil
                 ) {
                     self.status = status
                     self.actor_id = actor_id
+                    self.trigger_id = trigger_id
                     self.mention_object_id = mention_object_id
                     self.conversation_id = conversation_id
                     self.updated_before = updated_before
                     self.updated_after = updated_after
+                    self.before = before
+                    self.verbose = verbose
                     self.limit = limit
                     self.offset = offset
                 }
@@ -38996,163 +39146,260 @@ public enum Operations {
             public struct Ok: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content`.
                 @frozen public enum Body: Sendable, Hashable {
-                    /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload`.
-                    public struct jsonPayloadPayload: Codable, Hashable, Sendable {
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/id`.
-                        public var id: Swift.String
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/workspaceId`.
-                        public var workspaceId: Swift.String
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/actorId`.
-                        public var actorId: Swift.String
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/triggerId`.
-                        public var triggerId: Swift.String?
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/status`.
-                        public var status: Swift.String
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/containerId`.
-                        public var containerId: Swift.String?
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/actionPrompt`.
-                        public var actionPrompt: Swift.String
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/config`.
-                        public struct configPayload: Codable, Hashable, Sendable {
-                            /// A container of undocumented properties.
-                            public var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
-                            /// Creates a new `configPayload`.
+                    /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json`.
+                    public struct jsonPayload: Codable, Hashable, Sendable {
+                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload`.
+                        public struct Value1PayloadPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/workspaceId`.
+                            public var workspaceId: Swift.String
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/actorId`.
+                            public var actorId: Swift.String
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/triggerId`.
+                            public var triggerId: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/status`.
+                            public var status: Swift.String
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/containerId`.
+                            public var containerId: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/actionPrompt`.
+                            public var actionPrompt: Swift.String
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/config`.
+                            public struct configPayload: Codable, Hashable, Sendable {
+                                /// A container of undocumented properties.
+                                public var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
+                                /// Creates a new `configPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - additionalProperties: A container of undocumented properties.
+                                public init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
+                                    self.additionalProperties = additionalProperties
+                                }
+                                public init(from decoder: any Swift.Decoder) throws {
+                                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                                }
+                                public func encode(to encoder: any Swift.Encoder) throws {
+                                    try encoder.encodeAdditionalProperties(additionalProperties)
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/config`.
+                            public var config: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value1PayloadPayload.configPayload?
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/interactive`.
+                            public var interactive: Swift.Bool
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/result`.
+                            public struct resultPayload: Codable, Hashable, Sendable {
+                                /// A container of undocumented properties.
+                                public var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
+                                /// Creates a new `resultPayload`.
+                                ///
+                                /// - Parameters:
+                                ///   - additionalProperties: A container of undocumented properties.
+                                public init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
+                                    self.additionalProperties = additionalProperties
+                                }
+                                public init(from decoder: any Swift.Decoder) throws {
+                                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                                }
+                                public func encode(to encoder: any Swift.Encoder) throws {
+                                    try encoder.encodeAdditionalProperties(additionalProperties)
+                                }
+                            }
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/result`.
+                            public var result: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value1PayloadPayload.resultPayload?
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/snapshotPath`.
+                            public var snapshotPath: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/currentActivity`.
+                            public var currentActivity: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/startedAt`.
+                            public var startedAt: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/completedAt`.
+                            public var completedAt: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/timeoutAt`.
+                            public var timeoutAt: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/createdBy`.
+                            public var createdBy: Swift.String
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/createdAt`.
+                            public var createdAt: Swift.String?
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value1Payload/updatedAt`.
+                            public var updatedAt: Swift.String?
+                            /// Creates a new `Value1PayloadPayload`.
                             ///
                             /// - Parameters:
-                            ///   - additionalProperties: A container of undocumented properties.
-                            public init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
-                                self.additionalProperties = additionalProperties
+                            ///   - id:
+                            ///   - workspaceId:
+                            ///   - actorId:
+                            ///   - triggerId:
+                            ///   - status:
+                            ///   - containerId:
+                            ///   - actionPrompt:
+                            ///   - config:
+                            ///   - interactive:
+                            ///   - result:
+                            ///   - snapshotPath:
+                            ///   - currentActivity:
+                            ///   - startedAt:
+                            ///   - completedAt:
+                            ///   - timeoutAt:
+                            ///   - createdBy:
+                            ///   - createdAt:
+                            ///   - updatedAt:
+                            public init(
+                                id: Swift.String,
+                                workspaceId: Swift.String,
+                                actorId: Swift.String,
+                                triggerId: Swift.String? = nil,
+                                status: Swift.String,
+                                containerId: Swift.String? = nil,
+                                actionPrompt: Swift.String,
+                                config: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value1PayloadPayload.configPayload? = nil,
+                                interactive: Swift.Bool,
+                                result: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value1PayloadPayload.resultPayload? = nil,
+                                snapshotPath: Swift.String? = nil,
+                                currentActivity: Swift.String? = nil,
+                                startedAt: Swift.String? = nil,
+                                completedAt: Swift.String? = nil,
+                                timeoutAt: Swift.String? = nil,
+                                createdBy: Swift.String,
+                                createdAt: Swift.String? = nil,
+                                updatedAt: Swift.String? = nil
+                            ) {
+                                self.id = id
+                                self.workspaceId = workspaceId
+                                self.actorId = actorId
+                                self.triggerId = triggerId
+                                self.status = status
+                                self.containerId = containerId
+                                self.actionPrompt = actionPrompt
+                                self.config = config
+                                self.interactive = interactive
+                                self.result = result
+                                self.snapshotPath = snapshotPath
+                                self.currentActivity = currentActivity
+                                self.startedAt = startedAt
+                                self.completedAt = completedAt
+                                self.timeoutAt = timeoutAt
+                                self.createdBy = createdBy
+                                self.createdAt = createdAt
+                                self.updatedAt = updatedAt
                             }
-                            public init(from decoder: any Swift.Decoder) throws {
-                                additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
-                            }
-                            public func encode(to encoder: any Swift.Encoder) throws {
-                                try encoder.encodeAdditionalProperties(additionalProperties)
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case workspaceId
+                                case actorId
+                                case triggerId
+                                case status
+                                case containerId
+                                case actionPrompt
+                                case config
+                                case interactive
+                                case result
+                                case snapshotPath
+                                case currentActivity
+                                case startedAt
+                                case completedAt
+                                case timeoutAt
+                                case createdBy
+                                case createdAt
+                                case updatedAt
                             }
                         }
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/config`.
-                        public var config: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayloadPayload.configPayload?
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/interactive`.
-                        public var interactive: Swift.Bool
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/result`.
-                        public struct resultPayload: Codable, Hashable, Sendable {
-                            /// A container of undocumented properties.
-                            public var additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer]
-                            /// Creates a new `resultPayload`.
+                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/value1`.
+                        public typealias Value1Payload = [Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value1PayloadPayload]
+                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/value1`.
+                        public var value1: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value1Payload?
+                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value2Payload`.
+                        public struct Value2PayloadPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value2Payload/id`.
+                            public var id: Swift.String
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value2Payload/title`.
+                            public var title: Swift.String
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value2Payload/status`.
+                            @frozen public enum statusPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                                case pending = "pending"
+                                case queued = "queued"
+                                case starting = "starting"
+                                case running = "running"
+                                case snapshotting = "snapshotting"
+                                case paused = "paused"
+                                case waiting_for_input = "waiting_for_input"
+                                case completed = "completed"
+                                case failed = "failed"
+                                case timeout = "timeout"
+                            }
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value2Payload/status`.
+                            public var status: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value2PayloadPayload.statusPayload
+                            /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/Value2Payload/updated_at`.
+                            public var updated_at: Foundation.Date?
+                            /// Creates a new `Value2PayloadPayload`.
                             ///
                             /// - Parameters:
-                            ///   - additionalProperties: A container of undocumented properties.
-                            public init(additionalProperties: [String: OpenAPIRuntime.OpenAPIValueContainer] = .init()) {
-                                self.additionalProperties = additionalProperties
+                            ///   - id:
+                            ///   - title:
+                            ///   - status:
+                            ///   - updated_at:
+                            public init(
+                                id: Swift.String,
+                                title: Swift.String,
+                                status: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value2PayloadPayload.statusPayload,
+                                updated_at: Foundation.Date? = nil
+                            ) {
+                                self.id = id
+                                self.title = title
+                                self.status = status
+                                self.updated_at = updated_at
                             }
-                            public init(from decoder: any Swift.Decoder) throws {
-                                additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
-                            }
-                            public func encode(to encoder: any Swift.Encoder) throws {
-                                try encoder.encodeAdditionalProperties(additionalProperties)
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case title
+                                case status
+                                case updated_at
                             }
                         }
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/result`.
-                        public var result: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayloadPayload.resultPayload?
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/snapshotPath`.
-                        public var snapshotPath: Swift.String?
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/currentActivity`.
-                        public var currentActivity: Swift.String?
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/startedAt`.
-                        public var startedAt: Swift.String?
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/completedAt`.
-                        public var completedAt: Swift.String?
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/timeoutAt`.
-                        public var timeoutAt: Swift.String?
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/createdBy`.
-                        public var createdBy: Swift.String
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/createdAt`.
-                        public var createdAt: Swift.String?
-                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/jsonPayload/updatedAt`.
-                        public var updatedAt: Swift.String?
-                        /// Creates a new `jsonPayloadPayload`.
+                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/value2`.
+                        public typealias Value2Payload = [Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value2PayloadPayload]
+                        /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json/value2`.
+                        public var value2: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value2Payload?
+                        /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
-                        ///   - id:
-                        ///   - workspaceId:
-                        ///   - actorId:
-                        ///   - triggerId:
-                        ///   - status:
-                        ///   - containerId:
-                        ///   - actionPrompt:
-                        ///   - config:
-                        ///   - interactive:
-                        ///   - result:
-                        ///   - snapshotPath:
-                        ///   - currentActivity:
-                        ///   - startedAt:
-                        ///   - completedAt:
-                        ///   - timeoutAt:
-                        ///   - createdBy:
-                        ///   - createdAt:
-                        ///   - updatedAt:
+                        ///   - value1:
+                        ///   - value2:
                         public init(
-                            id: Swift.String,
-                            workspaceId: Swift.String,
-                            actorId: Swift.String,
-                            triggerId: Swift.String? = nil,
-                            status: Swift.String,
-                            containerId: Swift.String? = nil,
-                            actionPrompt: Swift.String,
-                            config: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayloadPayload.configPayload? = nil,
-                            interactive: Swift.Bool,
-                            result: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayloadPayload.resultPayload? = nil,
-                            snapshotPath: Swift.String? = nil,
-                            currentActivity: Swift.String? = nil,
-                            startedAt: Swift.String? = nil,
-                            completedAt: Swift.String? = nil,
-                            timeoutAt: Swift.String? = nil,
-                            createdBy: Swift.String,
-                            createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            value1: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value1Payload? = nil,
+                            value2: Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload.Value2Payload? = nil
                         ) {
-                            self.id = id
-                            self.workspaceId = workspaceId
-                            self.actorId = actorId
-                            self.triggerId = triggerId
-                            self.status = status
-                            self.containerId = containerId
-                            self.actionPrompt = actionPrompt
-                            self.config = config
-                            self.interactive = interactive
-                            self.result = result
-                            self.snapshotPath = snapshotPath
-                            self.currentActivity = currentActivity
-                            self.startedAt = startedAt
-                            self.completedAt = completedAt
-                            self.timeoutAt = timeoutAt
-                            self.createdBy = createdBy
-                            self.createdAt = createdAt
-                            self.updatedAt = updatedAt
+                            self.value1 = value1
+                            self.value2 = value2
                         }
-                        public enum CodingKeys: String, CodingKey {
-                            case id
-                            case workspaceId
-                            case actorId
-                            case triggerId
-                            case status
-                            case containerId
-                            case actionPrompt
-                            case config
-                            case interactive
-                            case result
-                            case snapshotPath
-                            case currentActivity
-                            case startedAt
-                            case completedAt
-                            case timeoutAt
-                            case createdBy
-                            case createdAt
-                            case updatedAt
+                        public init(from decoder: any Swift.Decoder) throws {
+                            var errors: [any Swift.Error] = []
+                            do {
+                                self.value1 = try decoder.decodeFromSingleValueContainer()
+                            } catch {
+                                errors.append(error)
+                            }
+                            do {
+                                self.value2 = try decoder.decodeFromSingleValueContainer()
+                            } catch {
+                                errors.append(error)
+                            }
+                            try Swift.DecodingError.verifyAtLeastOneSchemaIsNotNil(
+                                [
+                                    self.value1,
+                                    self.value2
+                                ],
+                                type: Self.self,
+                                codingPath: decoder.codingPath,
+                                errors: errors
+                            )
+                        }
+                        public func encode(to encoder: any Swift.Encoder) throws {
+                            try encoder.encodeFirstNonNilValueToSingleValueContainer([
+                                self.value1,
+                                self.value2
+                            ])
                         }
                     }
-                    /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/json`.
-                    public typealias jsonPayload = [Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayloadPayload]
                     /// - Remark: Generated from `#/paths/api/sessions/GET/responses/200/content/application\/json`.
                     case json(Operations.get_sol_api_sol_sessions.Output.Ok.Body.jsonPayload)
                     /// The associated value of the enum case if `self` is `.json`.
@@ -39178,7 +39425,7 @@ public enum Operations {
                     self.body = body
                 }
             }
-            /// List of sessions
+            /// List of sessions. Lean rows { id, title, status, updated_at } by default; full session rows when verbose=true.
             ///
             /// - Remark: Generated from `#/paths//api/sessions/get/responses/200`.
             ///
@@ -39672,6 +39919,14 @@ public enum Operations {
                     public var source_session_id: Swift.String?
                     /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/entry_agent_role`.
                     public var entry_agent_role: Swift.String?
+                    /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/initiated_from_object_id`.
+                    public var initiated_from_object_id: Swift.String?
+                    /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/initiated_from_object_type`.
+                    public var initiated_from_object_type: Swift.String?
+                    /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/spawned_by_message_id`.
+                    public var spawned_by_message_id: Swift.Int?
+                    /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/json/depends_on_session_ids`.
+                    public var depends_on_session_ids: [Swift.String]?
                     /// Creates a new `jsonPayload`.
                     ///
                     /// - Parameters:
@@ -39682,6 +39937,10 @@ public enum Operations {
                     ///   - auto_start:
                     ///   - source_session_id:
                     ///   - entry_agent_role:
+                    ///   - initiated_from_object_id:
+                    ///   - initiated_from_object_type:
+                    ///   - spawned_by_message_id:
+                    ///   - depends_on_session_ids:
                     public init(
                         actor_id: Swift.String,
                         action_prompt: Swift.String,
@@ -39689,7 +39948,11 @@ public enum Operations {
                         trigger_id: Swift.String? = nil,
                         auto_start: Swift.Bool? = nil,
                         source_session_id: Swift.String? = nil,
-                        entry_agent_role: Swift.String? = nil
+                        entry_agent_role: Swift.String? = nil,
+                        initiated_from_object_id: Swift.String? = nil,
+                        initiated_from_object_type: Swift.String? = nil,
+                        spawned_by_message_id: Swift.Int? = nil,
+                        depends_on_session_ids: [Swift.String]? = nil
                     ) {
                         self.actor_id = actor_id
                         self.action_prompt = action_prompt
@@ -39698,6 +39961,10 @@ public enum Operations {
                         self.auto_start = auto_start
                         self.source_session_id = source_session_id
                         self.entry_agent_role = entry_agent_role
+                        self.initiated_from_object_id = initiated_from_object_id
+                        self.initiated_from_object_type = initiated_from_object_type
+                        self.spawned_by_message_id = spawned_by_message_id
+                        self.depends_on_session_ids = depends_on_session_ids
                     }
                     public enum CodingKeys: String, CodingKey {
                         case actor_id
@@ -39707,6 +39974,10 @@ public enum Operations {
                         case auto_start
                         case source_session_id
                         case entry_agent_role
+                        case initiated_from_object_id
+                        case initiated_from_object_type
+                        case spawned_by_message_id
+                        case depends_on_session_ids
                     }
                 }
                 /// - Remark: Generated from `#/paths/api/sessions/POST/requestBody/content/application\/json`.
@@ -40122,6 +40393,26 @@ public enum Operations {
                 }
             }
             public var path: Operations.get_sol_api_sol_sessions_sol__lcub_id_rcub_.Input.Path
+            /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/query`.
+            public struct Query: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/query/include_logs`.
+                public var include_logs: Swift.Bool?
+                /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/query/log_limit`.
+                public var log_limit: Swift.Int?
+                /// Creates a new `Query`.
+                ///
+                /// - Parameters:
+                ///   - include_logs:
+                ///   - log_limit:
+                public init(
+                    include_logs: Swift.Bool? = nil,
+                    log_limit: Swift.Int? = nil
+                ) {
+                    self.include_logs = include_logs
+                    self.log_limit = log_limit
+                }
+            }
+            public var query: Operations.get_sol_api_sol_sessions_sol__lcub_id_rcub_.Input.Query
             /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/header`.
             public struct Headers: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/header/x-workspace-id`.
@@ -40145,12 +40436,15 @@ public enum Operations {
             ///
             /// - Parameters:
             ///   - path:
+            ///   - query:
             ///   - headers:
             public init(
                 path: Operations.get_sol_api_sol_sessions_sol__lcub_id_rcub_.Input.Path,
+                query: Operations.get_sol_api_sol_sessions_sol__lcub_id_rcub_.Input.Query = .init(),
                 headers: Operations.get_sol_api_sol_sessions_sol__lcub_id_rcub_.Input.Headers
             ) {
                 self.path = path
+                self.query = query
                 self.headers = headers
             }
         }
@@ -40232,6 +40526,51 @@ public enum Operations {
                         public var createdAt: Swift.String?
                         /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/updatedAt`.
                         public var updatedAt: Swift.String?
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/logsPayload`.
+                        public struct logsPayloadPayload: Codable, Hashable, Sendable {
+                            /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/logsPayload/id`.
+                            public var id: Swift.Double
+                            /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/logsPayload/sessionId`.
+                            public var sessionId: Swift.String
+                            /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/logsPayload/stream`.
+                            public var stream: Swift.String
+                            /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/logsPayload/content`.
+                            public var content: Swift.String
+                            /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/logsPayload/createdAt`.
+                            public var createdAt: Swift.String?
+                            /// Creates a new `logsPayloadPayload`.
+                            ///
+                            /// - Parameters:
+                            ///   - id:
+                            ///   - sessionId:
+                            ///   - stream:
+                            ///   - content:
+                            ///   - createdAt:
+                            public init(
+                                id: Swift.Double,
+                                sessionId: Swift.String,
+                                stream: Swift.String,
+                                content: Swift.String,
+                                createdAt: Swift.String? = nil
+                            ) {
+                                self.id = id
+                                self.sessionId = sessionId
+                                self.stream = stream
+                                self.content = content
+                                self.createdAt = createdAt
+                            }
+                            public enum CodingKeys: String, CodingKey {
+                                case id
+                                case sessionId
+                                case stream
+                                case content
+                                case createdAt
+                            }
+                        }
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/logs`.
+                        public typealias logsPayload = [Operations.get_sol_api_sol_sessions_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.logsPayloadPayload]
+                        /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/json/logs`.
+                        public var logs: Operations.get_sol_api_sol_sessions_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.logsPayload?
                         /// Creates a new `jsonPayload`.
                         ///
                         /// - Parameters:
@@ -40253,6 +40592,7 @@ public enum Operations {
                         ///   - createdBy:
                         ///   - createdAt:
                         ///   - updatedAt:
+                        ///   - logs:
                         public init(
                             id: Swift.String,
                             workspaceId: Swift.String,
@@ -40271,7 +40611,8 @@ public enum Operations {
                             timeoutAt: Swift.String? = nil,
                             createdBy: Swift.String,
                             createdAt: Swift.String? = nil,
-                            updatedAt: Swift.String? = nil
+                            updatedAt: Swift.String? = nil,
+                            logs: Operations.get_sol_api_sol_sessions_sol__lcub_id_rcub_.Output.Ok.Body.jsonPayload.logsPayload? = nil
                         ) {
                             self.id = id
                             self.workspaceId = workspaceId
@@ -40291,6 +40632,7 @@ public enum Operations {
                             self.createdBy = createdBy
                             self.createdAt = createdAt
                             self.updatedAt = updatedAt
+                            self.logs = logs
                         }
                         public enum CodingKeys: String, CodingKey {
                             case id
@@ -40311,6 +40653,7 @@ public enum Operations {
                             case createdBy
                             case createdAt
                             case updatedAt
+                            case logs
                         }
                     }
                     /// - Remark: Generated from `#/paths/api/sessions/{id}/GET/responses/200/content/application\/json`.

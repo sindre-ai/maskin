@@ -9007,7 +9007,7 @@
 												"type": "integer",
 												"minimum": 1,
 												"maximum": 50,
-												"default": 3
+												"default": 10
 											},
 											"max_concurrent_chat_sessions": {
 												"type": "integer",
@@ -9966,7 +9966,7 @@
 												"type": "integer",
 												"minimum": 1,
 												"maximum": 50,
-												"default": 3
+												"default": 10
 											},
 											"max_concurrent_chat_sessions": {
 												"type": "integer",
@@ -13950,6 +13950,1254 @@
 				}
 			}
 		},
+		"/api/invites/preview": {
+			"get": {
+				"tags": [
+					"workspace-invitations"
+				],
+				"summary": "Preview an invite by token (unauthenticated, IP-rate-limited)",
+				"description": "Unauthenticated preview so the /invite accept page can render workspace + inviter context before the invitee has an account. IP-rate-limited (token-bucket). Response omits workspace metadata on 404/410 to prevent token-space enumeration.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"minLength": 1
+						},
+						"required": true,
+						"name": "token",
+						"in": "query"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Valid pending invite",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"status": {
+											"type": "string",
+											"enum": [
+												"pending"
+											]
+										},
+										"workspaceId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"workspaceName": {
+											"type": "string"
+										},
+										"inviterName": {
+											"type": "string"
+										},
+										"inviteEmail": {
+											"type": "string"
+										},
+										"expiresAt": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"status",
+										"workspaceId",
+										"workspaceName",
+										"inviterName",
+										"inviteEmail",
+										"expiresAt"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No invite matches this token (status-only body)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"status": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"status"
+									]
+								}
+							}
+						}
+					},
+					"410": {
+						"description": "Invite is no longer valid (status-only body)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"status": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"status"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "IP rate limit exceeded",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/invites": {
+			"post": {
+				"tags": [
+					"workspace-invitations"
+				],
+				"summary": "Invite someone to a workspace by email",
+				"description": "If the email belongs to an existing actor who is not yet a member, that actor is added directly (status \"linked\"). Otherwise a pending invite is created and emailed (status \"pending\"). Re-inviting an email with a live pending invite returns that invite unchanged.",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"workspaceId": {
+										"type": "string",
+										"format": "uuid"
+									},
+									"email": {
+										"type": "string",
+										"maxLength": 320,
+										"format": "email"
+									},
+									"role": {
+										"type": "string",
+										"enum": [
+											"member",
+											"viewer"
+										]
+									}
+								},
+								"required": [
+									"workspaceId",
+									"email",
+									"role"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "A live pending invite for this email already exists (returned unchanged)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"status": {
+											"type": "string",
+											"enum": [
+												"pending"
+											]
+										},
+										"invite": {
+											"type": "object",
+											"properties": {
+												"id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"email": {
+													"type": "string"
+												},
+												"role": {
+													"type": "string"
+												},
+												"expiresAt": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"id",
+												"email",
+												"role",
+												"expiresAt"
+											]
+										}
+									},
+									"required": [
+										"status",
+										"invite"
+									]
+								}
+							}
+						}
+					},
+					"201": {
+						"description": "Actor linked directly, or a new pending invite created and emailed",
+						"content": {
+							"application/json": {
+								"schema": {
+									"anyOf": [
+										{
+											"type": "object",
+											"properties": {
+												"status": {
+													"type": "string",
+													"enum": [
+														"linked"
+													]
+												},
+												"member": {
+													"type": "object",
+													"properties": {
+														"workspaceId": {
+															"type": "string",
+															"format": "uuid"
+														},
+														"actorId": {
+															"type": "string",
+															"format": "uuid"
+														},
+														"role": {
+															"type": "string"
+														}
+													},
+													"required": [
+														"workspaceId",
+														"actorId",
+														"role"
+													]
+												}
+											},
+											"required": [
+												"status",
+												"member"
+											]
+										},
+										{
+											"type": "object",
+											"properties": {
+												"status": {
+													"type": "string",
+													"enum": [
+														"pending"
+													]
+												},
+												"invite": {
+													"type": "object",
+													"properties": {
+														"id": {
+															"type": "string",
+															"format": "uuid"
+														},
+														"email": {
+															"type": "string"
+														},
+														"role": {
+															"type": "string"
+														},
+														"expiresAt": {
+															"type": "string"
+														}
+													},
+													"required": [
+														"id",
+														"email",
+														"role",
+														"expiresAt"
+													]
+												}
+											},
+											"required": [
+												"status",
+												"invite"
+											]
+										}
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is not a human owner/admin of the workspace, or the seat cap is reached",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Workspace not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "That email already belongs to a member of this workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "This workspace already sent 20 invites in the last 24 hours",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"502": {
+						"description": "The invite email could not be sent; the invite was not created",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"get": {
+				"tags": [
+					"workspace-invitations"
+				],
+				"summary": "List pending invites for a workspace",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "workspaceId",
+						"in": "query"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Pending, unexpired invites, newest first",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"id": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"email": {
+												"type": "string"
+											},
+											"role": {
+												"type": "string"
+											},
+											"expiresAt": {
+												"type": "string"
+											},
+											"invitedByActorId": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"invitedByName": {
+												"type": "string"
+											},
+											"createdAt": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"id",
+											"email",
+											"role",
+											"expiresAt",
+											"invitedByActorId",
+											"invitedByName",
+											"createdAt"
+										]
+									}
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is not a member of the workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/invites/{id}/resend": {
+			"post": {
+				"tags": [
+					"workspace-invitations"
+				],
+				"summary": "Resend a pending invite with a fresh token and expiry",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Token rotated, expiry reset to 7 days, email sent again",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"status": {
+											"type": "string",
+											"enum": [
+												"pending"
+											]
+										},
+										"invite": {
+											"type": "object",
+											"properties": {
+												"id": {
+													"type": "string",
+													"format": "uuid"
+												},
+												"email": {
+													"type": "string"
+												},
+												"role": {
+													"type": "string"
+												},
+												"expiresAt": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"id",
+												"email",
+												"role",
+												"expiresAt"
+											]
+										}
+									},
+									"required": [
+										"status",
+										"invite"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is not a human owner/admin of the invite workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Invite not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Invite is no longer pending (accepted or revoked)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"502": {
+						"description": "The email could not be sent; the previous token and expiry are restored",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/invites/{id}": {
+			"delete": {
+				"tags": [
+					"workspace-invitations"
+				],
+				"summary": "Revoke a pending invite",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Invite revoked; its link no longer works",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"revoked": {
+											"type": "boolean",
+											"enum": [
+												true
+											]
+										}
+									},
+									"required": [
+										"revoked"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Caller is not a human owner/admin of the invite workspace",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Invite not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Invite is no longer pending (accepted or already revoked)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
 		"/api/relationships": {
 			"post": {
 				"tags": [
@@ -17363,6 +18611,16 @@
 										},
 										"integration_id": {
 											"type": "string"
+										},
+										"dns_records": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"additionalProperties": {}
+											}
+										},
+										"verification_status": {
+											"type": "string"
 										}
 									}
 								}
@@ -17832,6 +19090,131 @@
 					},
 					"404": {
 						"description": "Integration not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/integrations/resend/dns-precheck": {
+			"post": {
+				"tags": [
+					"integrations"
+				],
+				"summary": "Server-side MX pre-check for the resend connect dialog",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"domain": {
+										"type": "string",
+										"minLength": 1
+									}
+								},
+								"required": [
+									"domain"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "MX pre-check result",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"existing_mx": {
+											"type": "array",
+											"items": {
+												"type": "string"
+											}
+										},
+										"is_subdomain": {
+											"type": "boolean"
+										},
+										"warn": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"existing_mx",
+										"is_subdomain",
+										"warn"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Missing or malformed domain",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -24240,6 +25623,82 @@
 															"string",
 															"null"
 														]
+													},
+													"spawned_sessions": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"id": {
+																	"type": "string",
+																	"format": "uuid"
+																},
+																"status": {
+																	"type": "string"
+																},
+																"actorId": {
+																	"type": "string",
+																	"format": "uuid"
+																},
+																"actorName": {
+																	"type": "string"
+																},
+																"actionPrompt": {
+																	"type": "string"
+																},
+																"startedAt": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																},
+																"completedAt": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																},
+																"durationMs": {
+																	"type": [
+																		"number",
+																		"null"
+																	]
+																},
+																"result": {
+																	"type": [
+																		"object",
+																		"null"
+																	],
+																	"additionalProperties": {}
+																},
+																"currentActivity": {
+																	"type": [
+																		"string",
+																		"null"
+																	]
+																},
+																"depends_on_session_ids": {
+																	"type": "array",
+																	"items": {
+																		"type": "string",
+																		"format": "uuid"
+																	}
+																}
+															},
+															"required": [
+																"id",
+																"status",
+																"actorId",
+																"actorName",
+																"actionPrompt",
+																"startedAt",
+																"completedAt",
+																"durationMs",
+																"result",
+																"currentActivity",
+																"depends_on_session_ids"
+															]
+														}
 													}
 												},
 												"required": [
@@ -24253,7 +25712,8 @@
 													"metadata",
 													"sessionId",
 													"createdAt",
-													"editedAt"
+													"editedAt",
+													"spawned_sessions"
 												]
 											}
 										},
@@ -25552,6 +27012,25 @@
 									"entry_agent_role": {
 										"type": "string",
 										"maxLength": 64
+									},
+									"initiated_from_object_id": {
+										"type": "string",
+										"format": "uuid"
+									},
+									"initiated_from_object_type": {
+										"type": "string",
+										"maxLength": 64
+									},
+									"spawned_by_message_id": {
+										"type": "integer",
+										"exclusiveMinimum": 0
+									},
+									"depends_on_session_ids": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"format": "uuid"
+										}
 									}
 								},
 								"required": [
@@ -25752,7 +27231,7 @@
 				"tags": [
 					"Sessions"
 				],
-				"summary": "List sessions",
+				"summary": "List sessions (lean by default; pass verbose=true for the full shape)",
 				"parameters": [
 					{
 						"schema": {
@@ -25781,6 +27260,15 @@
 						},
 						"required": false,
 						"name": "actor_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": false,
+						"name": "trigger_id",
 						"in": "query"
 					},
 					{
@@ -25821,10 +27309,28 @@
 					},
 					{
 						"schema": {
+							"type": "string",
+							"format": "date-time"
+						},
+						"required": false,
+						"name": "before",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "boolean",
+							"default": false
+						},
+						"required": false,
+						"name": "verbose",
+						"in": "query"
+					},
+					{
+						"schema": {
 							"type": "integer",
 							"minimum": 1,
-							"maximum": 100,
-							"default": 20
+							"maximum": 200,
+							"default": 50
 						},
 						"required": false,
 						"name": "limit",
@@ -25855,130 +27361,177 @@
 				],
 				"responses": {
 					"200": {
-						"description": "List of sessions",
+						"description": "List of sessions. Lean rows { id, title, status, updated_at } by default; full session rows when verbose=true.",
 						"content": {
 							"application/json": {
 								"schema": {
-									"type": "array",
-									"items": {
-										"type": "object",
-										"properties": {
-											"id": {
-												"type": "string",
-												"format": "uuid"
-											},
-											"workspaceId": {
-												"type": "string",
-												"format": "uuid"
-											},
-											"actorId": {
-												"type": "string",
-												"format": "uuid"
-											},
-											"triggerId": {
-												"type": [
-													"string",
-													"null"
-												],
-												"format": "uuid"
-											},
-											"status": {
-												"type": "string"
-											},
-											"containerId": {
-												"type": [
-													"string",
-													"null"
-												]
-											},
-											"actionPrompt": {
-												"type": "string"
-											},
-											"config": {
-												"type": [
-													"object",
-													"null"
-												],
-												"additionalProperties": {}
-											},
-											"interactive": {
-												"type": "boolean"
-											},
-											"result": {
-												"type": [
-													"object",
-													"null"
-												],
-												"additionalProperties": {}
-											},
-											"snapshotPath": {
-												"type": [
-													"string",
-													"null"
-												]
-											},
-											"currentActivity": {
-												"type": [
-													"string",
-													"null"
-												]
-											},
-											"startedAt": {
-												"type": [
-													"string",
-													"null"
-												]
-											},
-											"completedAt": {
-												"type": [
-													"string",
-													"null"
-												]
-											},
-											"timeoutAt": {
-												"type": [
-													"string",
-													"null"
-												]
-											},
-											"createdBy": {
-												"type": "string",
-												"format": "uuid"
-											},
-											"createdAt": {
-												"type": [
-													"string",
-													"null"
-												]
-											},
-											"updatedAt": {
-												"type": [
-													"string",
-													"null"
+									"anyOf": [
+										{
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"workspaceId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"actorId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"triggerId": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "uuid"
+													},
+													"status": {
+														"type": "string"
+													},
+													"containerId": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"actionPrompt": {
+														"type": "string"
+													},
+													"config": {
+														"type": [
+															"object",
+															"null"
+														],
+														"additionalProperties": {}
+													},
+													"interactive": {
+														"type": "boolean"
+													},
+													"result": {
+														"type": [
+															"object",
+															"null"
+														],
+														"additionalProperties": {}
+													},
+													"snapshotPath": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"currentActivity": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"startedAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"completedAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"timeoutAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"createdBy": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"createdAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"updatedAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"workspaceId",
+													"actorId",
+													"triggerId",
+													"status",
+													"containerId",
+													"actionPrompt",
+													"config",
+													"interactive",
+													"result",
+													"snapshotPath",
+													"currentActivity",
+													"startedAt",
+													"completedAt",
+													"timeoutAt",
+													"createdBy",
+													"createdAt",
+													"updatedAt"
 												]
 											}
 										},
-										"required": [
-											"id",
-											"workspaceId",
-											"actorId",
-											"triggerId",
-											"status",
-											"containerId",
-											"actionPrompt",
-											"config",
-											"interactive",
-											"result",
-											"snapshotPath",
-											"currentActivity",
-											"startedAt",
-											"completedAt",
-											"timeoutAt",
-											"createdBy",
-											"createdAt",
-											"updatedAt"
-										]
-									}
+										{
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"title": {
+														"type": "string"
+													},
+													"status": {
+														"type": "string",
+														"enum": [
+															"pending",
+															"queued",
+															"starting",
+															"running",
+															"snapshotting",
+															"paused",
+															"waiting_for_input",
+															"completed",
+															"failed",
+															"timeout"
+														]
+													},
+													"updated_at": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "date-time"
+													}
+												},
+												"required": [
+													"id",
+													"title",
+													"status",
+													"updated_at"
+												]
+											}
+										}
+									]
 								}
 							}
 						}
@@ -26207,6 +27760,26 @@
 					},
 					{
 						"schema": {
+							"type": "boolean",
+							"default": false
+						},
+						"required": false,
+						"name": "include_logs",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 500,
+							"default": 100
+						},
+						"required": false,
+						"name": "log_limit",
+						"in": "query"
+					},
+					{
+						"schema": {
 							"type": "string",
 							"format": "uuid"
 						},
@@ -26316,6 +27889,40 @@
 												"string",
 												"null"
 											]
+										},
+										"logs": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "number"
+													},
+													"sessionId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"stream": {
+														"type": "string"
+													},
+													"content": {
+														"type": "string"
+													},
+													"createdAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"sessionId",
+													"stream",
+													"content",
+													"createdAt"
+												]
+											}
 										}
 									},
 									"required": [
@@ -28521,6 +30128,189 @@
 										"oldest_log_id",
 										"has_older"
 									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Session not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/sessions/{id}/logs/deep": {
+			"get": {
+				"tags": [
+					"Sessions"
+				],
+				"summary": "Deep-read session logs with cursor pagination (newest-first by default)",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"newest_first",
+								"oldest_first"
+							],
+							"default": "newest_first"
+						},
+						"required": false,
+						"name": "direction",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0
+						},
+						"required": false,
+						"name": "before_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0
+						},
+						"required": false,
+						"name": "after_id",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"enum": [
+								"stdout",
+								"stderr",
+								"system"
+							]
+						},
+						"required": false,
+						"name": "stream",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 500,
+							"default": 100
+						},
+						"required": false,
+						"name": "limit",
+						"in": "query"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "x-workspace-id",
+						"in": "header"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Session logs in the requested direction",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"id": {
+												"type": "number"
+											},
+											"sessionId": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"stream": {
+												"type": "string"
+											},
+											"content": {
+												"type": "string"
+											},
+											"createdAt": {
+												"type": [
+													"string",
+													"null"
+												]
+											}
+										},
+										"required": [
+											"id",
+											"sessionId",
+											"stream",
+											"content",
+											"createdAt"
+										]
+									}
 								}
 							}
 						}
@@ -36042,6 +37832,1241 @@
 					},
 					"404": {
 						"description": "File not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/{id}/comments": {
+			"get": {
+				"tags": [
+					"Files"
+				],
+				"summary": "List all comments on a file. Ports legacy annotations on first read.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": false,
+						"name": "roundId",
+						"in": "query"
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Comments on the file",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"properties": {
+											"id": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"fileId": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"page": {
+												"type": [
+													"integer",
+													"null"
+												]
+											},
+											"positionDoc": {
+												"type": "object",
+												"properties": {
+													"x": {
+														"type": "number",
+														"minimum": 0,
+														"maximum": 1
+													},
+													"y": {
+														"type": "number",
+														"minimum": 0,
+														"maximum": 1
+													}
+												},
+												"required": [
+													"x",
+													"y"
+												]
+											},
+											"selector": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"authorId": {
+												"type": "string",
+												"format": "uuid"
+											},
+											"body": {
+												"type": "string"
+											},
+											"parentId": {
+												"type": [
+													"string",
+													"null"
+												],
+												"format": "uuid"
+											},
+											"roundId": {
+												"type": [
+													"string",
+													"null"
+												],
+												"format": "uuid"
+											},
+											"resolvedAt": {
+												"type": [
+													"string",
+													"null"
+												]
+											},
+											"resolvedBy": {
+												"type": [
+													"string",
+													"null"
+												],
+												"format": "uuid"
+											},
+											"createdAt": {
+												"type": "string"
+											},
+											"updatedAt": {
+												"type": "string"
+											}
+										},
+										"required": [
+											"id",
+											"fileId",
+											"page",
+											"positionDoc",
+											"selector",
+											"authorId",
+											"body",
+											"parentId",
+											"roundId",
+											"resolvedAt",
+											"resolvedBy",
+											"createdAt",
+											"updatedAt"
+										]
+									}
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "File not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"post": {
+				"tags": [
+					"Files"
+				],
+				"summary": "Create a draft comment on a file (no roundId until sent).",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"body": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 4000
+									},
+									"page": {
+										"type": [
+											"integer",
+											"null"
+										],
+										"minimum": 0
+									},
+									"positionDoc": {
+										"type": "object",
+										"properties": {
+											"x": {
+												"type": "number",
+												"minimum": 0,
+												"maximum": 1
+											},
+											"y": {
+												"type": "number",
+												"minimum": 0,
+												"maximum": 1
+											}
+										},
+										"required": [
+											"x",
+											"y"
+										]
+									},
+									"selector": {
+										"type": [
+											"string",
+											"null"
+										],
+										"maxLength": 1000
+									},
+									"parentId": {
+										"type": [
+											"string",
+											"null"
+										],
+										"format": "uuid"
+									}
+								},
+								"required": [
+									"body",
+									"positionDoc"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Draft comment created",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"fileId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"page": {
+											"type": [
+												"integer",
+												"null"
+											]
+										},
+										"positionDoc": {
+											"type": "object",
+											"properties": {
+												"x": {
+													"type": "number",
+													"minimum": 0,
+													"maximum": 1
+												},
+												"y": {
+													"type": "number",
+													"minimum": 0,
+													"maximum": 1
+												}
+											},
+											"required": [
+												"x",
+												"y"
+											]
+										},
+										"selector": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"authorId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"body": {
+											"type": "string"
+										},
+										"parentId": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"roundId": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"resolvedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"resolvedBy": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": "string"
+										},
+										"updatedAt": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"id",
+										"fileId",
+										"page",
+										"positionDoc",
+										"selector",
+										"authorId",
+										"body",
+										"parentId",
+										"roundId",
+										"resolvedAt",
+										"resolvedBy",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "File not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/{id}/comments/{cid}": {
+			"patch": {
+				"tags": [
+					"Files"
+				],
+				"summary": "Update a comment body, or resolve / reopen it.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					},
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "cid",
+						"in": "path"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"body": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 4000
+									},
+									"resolved": {
+										"type": "boolean"
+									}
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Comment updated",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"fileId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"page": {
+											"type": [
+												"integer",
+												"null"
+											]
+										},
+										"positionDoc": {
+											"type": "object",
+											"properties": {
+												"x": {
+													"type": "number",
+													"minimum": 0,
+													"maximum": 1
+												},
+												"y": {
+													"type": "number",
+													"minimum": 0,
+													"maximum": 1
+												}
+											},
+											"required": [
+												"x",
+												"y"
+											]
+										},
+										"selector": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"authorId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"body": {
+											"type": "string"
+										},
+										"parentId": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"roundId": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"resolvedAt": {
+											"type": [
+												"string",
+												"null"
+											]
+										},
+										"resolvedBy": {
+											"type": [
+												"string",
+												"null"
+											],
+											"format": "uuid"
+										},
+										"createdAt": {
+											"type": "string"
+										},
+										"updatedAt": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"id",
+										"fileId",
+										"page",
+										"positionDoc",
+										"selector",
+										"authorId",
+										"body",
+										"parentId",
+										"roundId",
+										"resolvedAt",
+										"resolvedBy",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"403": {
+						"description": "Only the author can edit a comment's text",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Comment not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"/api/files/{id}/comments/rounds": {
+			"post": {
+				"tags": [
+					"Files"
+				],
+				"summary": "Send a batched review round to the attaching object driver.",
+				"parameters": [
+					{
+						"schema": {
+							"type": "string",
+							"format": "uuid"
+						},
+						"required": true,
+						"name": "id",
+						"in": "path"
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"roundId": {
+										"type": "string",
+										"format": "uuid"
+									},
+									"targetObjectId": {
+										"type": "string",
+										"format": "uuid"
+									},
+									"commentIds": {
+										"type": "array",
+										"items": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"minItems": 1,
+										"maxItems": 200
+									}
+								},
+								"required": [
+									"roundId",
+									"targetObjectId",
+									"commentIds"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Round sent (or idempotent replay).",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"roundId": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"count": {
+											"type": "integer",
+											"minimum": 0
+										},
+										"rollupEventId": {
+											"type": "integer",
+											"minimum": 0
+										},
+										"comments": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"fileId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"page": {
+														"type": [
+															"integer",
+															"null"
+														]
+													},
+													"positionDoc": {
+														"type": "object",
+														"properties": {
+															"x": {
+																"type": "number",
+																"minimum": 0,
+																"maximum": 1
+															},
+															"y": {
+																"type": "number",
+																"minimum": 0,
+																"maximum": 1
+															}
+														},
+														"required": [
+															"x",
+															"y"
+														]
+													},
+													"selector": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"authorId": {
+														"type": "string",
+														"format": "uuid"
+													},
+													"body": {
+														"type": "string"
+													},
+													"parentId": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "uuid"
+													},
+													"roundId": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "uuid"
+													},
+													"resolvedAt": {
+														"type": [
+															"string",
+															"null"
+														]
+													},
+													"resolvedBy": {
+														"type": [
+															"string",
+															"null"
+														],
+														"format": "uuid"
+													},
+													"createdAt": {
+														"type": "string"
+													},
+													"updatedAt": {
+														"type": "string"
+													}
+												},
+												"required": [
+													"id",
+													"fileId",
+													"page",
+													"positionDoc",
+													"selector",
+													"authorId",
+													"body",
+													"parentId",
+													"roundId",
+													"resolvedAt",
+													"resolvedBy",
+													"createdAt",
+													"updatedAt"
+												]
+											}
+										}
+									},
+									"required": [
+										"roundId",
+										"count",
+										"rollupEventId",
+										"comments"
+									]
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request or attaching-object mismatch",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "File not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "Target archived between validate and write",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"error": {
+											"type": "object",
+											"properties": {
+												"code": {
+													"type": "string"
+												},
+												"message": {
+													"type": "string"
+												},
+												"details": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"field": {
+																"type": "string"
+															},
+															"message": {
+																"type": "string"
+															},
+															"expected": {
+																"type": "string"
+															},
+															"received": {
+																"type": "string"
+															}
+														},
+														"required": [
+															"field",
+															"message"
+														]
+													}
+												},
+												"suggestion": {
+													"type": "string"
+												}
+											},
+											"required": [
+												"code",
+												"message"
+											]
+										}
+									},
+									"required": [
+										"error"
+									]
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Rate limit exceeded",
 						"content": {
 							"application/json": {
 								"schema": {

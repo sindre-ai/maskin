@@ -8,6 +8,13 @@ interface AgentSessionStartedWithPromptProps {
 	agentName: string
 	systemPrompt: string
 	/**
+	 * `sessions.sourceSessionId` — non-null when the session was spawned by
+	 * another session (sub-agent delegation). Ridden onto every emission as
+	 * `source_session_id` so PostHog can isolate spawn events from top-level
+	 * starts with `WHERE source_session_id IS NOT NULL`.
+	 */
+	sourceSessionId?: string | null
+	/**
 	 * Names the dispatch path that spawned this session. Present for sessions
 	 * spawned by the comment-fallback resolver (`'comment_fallback'`) so
 	 * PostHog queries can attribute a session to comment→dispatch vs. cron,
@@ -88,6 +95,7 @@ export async function trackAgentSessionStartedWithPrompt(
 			agent_name: p.agentName,
 			system_prompt_chars: chars,
 			system_prompt_tokens: tokens,
+			source_session_id: p.sourceSessionId ?? null,
 			trigger_source: p.triggerSource,
 			source_comment_event_id: p.sourceCommentEventId,
 			skills_attached: p.skillsAttached,

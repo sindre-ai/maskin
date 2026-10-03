@@ -154,6 +154,7 @@ describe('Integrations Routes', () => {
 				'linear',
 				'linkedin-unipile',
 				'posthog',
+				'resend',
 				'slack',
 				'ubersuggest',
 			])

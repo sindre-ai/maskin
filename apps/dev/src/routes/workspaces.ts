@@ -1,4 +1,5 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
+import { evictMembership } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors, workspaceMembers, workspaceOnboardingPrompts, workspaces } from '@maskin/db/schema'
 import {
@@ -11,6 +12,7 @@ import {
 	updateWorkspaceSchema,
 } from '@maskin/shared'
 import { and, count, eq, inArray } from 'drizzle-orm'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { isEnterprise, isEnterpriseActor } from '../lib/enterprise'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -604,6 +606,10 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 					actionPrompt:
 						'A workspace has been enabled for onboarding (onboarding_enabled flipped to true). Run the workspace-observer-onboarding skill.\n\nBefore starting: check whether this workspace already has an onboarding_session object. If one exists, exit silently.\n\nIf none exists, follow the workspace-observer-onboarding skill to:\n1. Create the onboarding_session object.\n2. Subscribe the workspace owner.\n3. Post the five context prompts in sequence, waiting for each reply before the next.\n4. For each reply, call create_objects ONCE with both the knowledge node and the `about` edge in the same batch — owner-targeted prompts (product_vision, icp, first_bet_hypothesis, customer_evidence) edge to the workspace owner\'s actor id; the north_star_metric prompt edges to the workspace id. Populate metadata.source = "workspace_onboarding", subject_kind, subject_id, claim, confidence, valid_from, valid_to per the skill. Do NOT write to the actor\'s memory field.\n5. Close the session when all prompts are answered (or after 24h).',
 					createdBy: actorId,
+					// Onboarding kickoff — spawned on workspace flip, not on
+					// any originating object. Explicit null/null.
+					initiatedFromObjectId: null,
+					initiatedFromObjectType: null,
 				})
 				.catch((err) =>
 					logger.error('Failed to create onboarding session', { workspaceId: id, err }),
@@ -745,6 +751,17 @@ app.openapi(addMemberRoute, (async (c) => {
 			cap: outcome.cap,
 		})
 		return c.json(seatCapErrorBody(err), 403)
+	}
+
+	// Telemetry for the retirement-observation window: counts residual actor-ID
+	// adds so we can see whether this endpoint's usage goes to zero. Only a real
+	// insert counts; the idempotent already-a-member no-op is not an invite.
+	if (outcome.kind === 'added') {
+		void capturePosthogEvent('workspace_member_invited', callerId, {
+			invite_method: 'actor_id',
+			workspace_id: workspaceId,
+			role: role || 'member',
+		})
 	}
 
 	return c.json({ added: outcome.kind === 'added' }, 201)
@@ -1207,6 +1224,9 @@ app.openapi(removeMemberRoute, (async (c) => {
 				409,
 			)
 		case 'removed':
+			// Takes effect on the member's next request, not when its cached auth
+			// lookup expires.
+			evictMembership(targetActorId, workspaceId)
 			return c.json({ removed: true as const }, 200)
 	}
 }) as RouteHandler<typeof removeMemberRoute, Env>)

@@ -157,6 +157,26 @@ describe('request', () => {
 		}
 	})
 
+	it('throws ApiError with the flat { code, message, retryAfterMs } format', async () => {
+		const errorBody = {
+			code: 'RATE_LIMITED',
+			message: 'Too many rounds sent.',
+			retryAfterMs: 12_000,
+		}
+		fetchSpy.mockResolvedValue(new Response(JSON.stringify(errorBody), { status: 429 }))
+
+		try {
+			await api.objects.list('ws-1')
+			expect.unreachable('Should have thrown')
+		} catch (err) {
+			const apiErr = err as ApiError
+			expect(apiErr.status).toBe(429)
+			expect(apiErr.code).toBe('RATE_LIMITED')
+			expect(apiErr.message).toBe('Too many rounds sent.')
+			expect(apiErr.retryAfterMs).toBe(12_000)
+		}
+	})
+
 	it('throws ApiError with legacy string error format', async () => {
 		const errorBody = { error: 'Not found' }
 		fetchSpy.mockResolvedValue(new Response(JSON.stringify(errorBody), { status: 404 }))
@@ -237,5 +257,45 @@ describe('sessions.input', () => {
 			status: 409,
 			message: 'Session is not interactive',
 		})
+	})
+})
+
+describe('events.historyUpTo', () => {
+	const page = (n: number, from = 0) => Array.from({ length: n }, (_, i) => ({ id: from + i + 1 }))
+	const ok = (rows: unknown[]) => new Response(JSON.stringify(rows), { status: 200 })
+	const urls = () => fetchSpy.mock.calls.map((call: unknown[]) => String(call[0]))
+
+	it('never asks the server for more than its 100-row page limit', async () => {
+		fetchSpy
+			.mockResolvedValueOnce(ok(page(100)))
+			.mockResolvedValueOnce(ok(page(100, 100)))
+			.mockResolvedValueOnce(ok(page(40, 200)))
+
+		const rows = await api.events.historyUpTo('ws-1', { after: '2026-09-22T09:00:00Z' }, 500)
+
+		expect(rows).toHaveLength(240)
+		for (const url of urls())
+			expect(Number(new URL(url, 'http://x').searchParams.get('limit'))).toBeLessThanOrEqual(100)
+	})
+
+	it('pages forward with offset and stops at a short page', async () => {
+		fetchSpy.mockResolvedValueOnce(ok(page(100))).mockResolvedValueOnce(ok(page(7, 100)))
+
+		await api.events.historyUpTo('ws-1', { after: '2026-09-22T09:00:00Z' }, 500)
+
+		expect(fetchSpy).toHaveBeenCalledTimes(2)
+		const second = new URL(urls()[1], 'http://x').searchParams
+		expect(second.get('offset')).toBe('100')
+		expect(second.get('after')).toBe('2026-09-22T09:00:00Z')
+	})
+
+	it('stops at maxEvents and trims the last page request to what is left', async () => {
+		fetchSpy.mockResolvedValueOnce(ok(page(100))).mockResolvedValueOnce(ok(page(50, 100)))
+
+		const rows = await api.events.historyUpTo('ws-1', {}, 150)
+
+		expect(rows).toHaveLength(150)
+		expect(fetchSpy).toHaveBeenCalledTimes(2)
+		expect(new URL(urls()[1], 'http://x').searchParams.get('limit')).toBe('50')
 	})
 })

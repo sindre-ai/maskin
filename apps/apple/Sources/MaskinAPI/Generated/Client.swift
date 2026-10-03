@@ -8292,7 +8292,7 @@ public struct Client: APIProtocol {
             }
         )
     }
-    /// List sessions
+    /// List sessions (lean by default; pass verbose=true for the full shape)
     ///
     /// - Remark: HTTP `GET /api/sessions`.
     /// - Remark: Generated from `#/paths//api/sessions/get`.
@@ -8328,6 +8328,13 @@ public struct Client: APIProtocol {
                     in: &request,
                     style: .form,
                     explode: true,
+                    name: "trigger_id",
+                    value: input.query.trigger_id
+                )
+                try converter.setQueryItemAsURI(
+                    in: &request,
+                    style: .form,
+                    explode: true,
                     name: "mention_object_id",
                     value: input.query.mention_object_id
                 )
@@ -8351,6 +8358,20 @@ public struct Client: APIProtocol {
                     explode: true,
                     name: "updated_after",
                     value: input.query.updated_after
+                )
+                try converter.setQueryItemAsURI(
+                    in: &request,
+                    style: .form,
+                    explode: true,
+                    name: "before",
+                    value: input.query.before
+                )
+                try converter.setQueryItemAsURI(
+                    in: &request,
+                    style: .form,
+                    explode: true,
+                    name: "verbose",
+                    value: input.query.verbose
                 )
                 try converter.setQueryItemAsURI(
                     in: &request,
@@ -8531,6 +8552,20 @@ public struct Client: APIProtocol {
                     method: .get
                 )
                 suppressMutabilityWarning(&request)
+                try converter.setQueryItemAsURI(
+                    in: &request,
+                    style: .form,
+                    explode: true,
+                    name: "include_logs",
+                    value: input.query.include_logs
+                )
+                try converter.setQueryItemAsURI(
+                    in: &request,
+                    style: .form,
+                    explode: true,
+                    name: "log_limit",
+                    value: input.query.log_limit
+                )
                 try converter.setHeaderFieldAsURI(
                     in: &request.headerFields,
                     name: "x-workspace-id",
