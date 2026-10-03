@@ -1,4 +1,4 @@
-import type { Database } from '@maskin/db'
+import type { Database, Transaction } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { recordEvent } from '../../events/record-event'
@@ -17,6 +17,8 @@ export type ApplyVoiceEventResult =
 	| {
 			found: true
 			applied: boolean
+			/** The event named a call other than the contact's current one. */
+			staleCall: boolean
 			previousStatus: string
 			status: string
 			effects: VoiceEffect[]
@@ -41,8 +43,11 @@ function mergeMetadata(
  * status. Side effects are returned, not run, so the caller can run them after
  * the transaction commits.
  */
+/** A top-level connection or an open transaction (then this nests as a savepoint). */
+export type VoiceDb = Database | Transaction
+
 export async function applyVoiceEvent(
-	db: Database,
+	db: VoiceDb,
 	params: ApplyVoiceEventParams,
 ): Promise<ApplyVoiceEventResult> {
 	return db.transaction(async (tx) => {
@@ -77,6 +82,7 @@ export async function applyVoiceEvent(
 			return {
 				found: true,
 				applied: false,
+				staleCall: result.staleCall,
 				previousStatus: row.status,
 				status: row.status,
 				effects: [],
@@ -107,6 +113,7 @@ export async function applyVoiceEvent(
 		return {
 			found: true,
 			applied: true,
+			staleCall: result.staleCall,
 			previousStatus: row.status,
 			status: result.status,
 			effects: result.effects,
@@ -117,7 +124,7 @@ export async function applyVoiceEvent(
 
 /** Appends a tool call to the trace the reducer reads when the call hangs up. Does not touch status. */
 export async function recordToolInvocation(
-	db: Database,
+	db: VoiceDb,
 	params: { workspaceId: string; contactId: string; callId: string; toolName: string },
 ): Promise<void> {
 	await db.transaction(async (tx) => {

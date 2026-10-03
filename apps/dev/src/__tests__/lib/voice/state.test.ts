@@ -194,6 +194,17 @@ describe('machine_detection (AMD)', () => {
 		expect(advance(c, machine(), NOW).applied).toBe(false)
 	})
 
+	it.each(['human_residence', 'human_business', 'HUMAN_RESIDENCE'])(
+		'treats premium result %s as human',
+		(result) => {
+			const c = contact('voice_answered', { last_call_id: 'call-1' })
+			const r = advance(c, { type: 'machine_detection', callId: 'call-1', result }, NOW)
+			expect(r.status).toBe('voice_answered')
+			expect(r.metadata).toEqual({ amd_result: 'human' })
+			expect(r.effects).toEqual([])
+		},
+	)
+
 	it('ignores inconclusive results and stale calls', () => {
 		const c = contact('voice_answered', { last_call_id: 'call-1' })
 		expect(
@@ -207,6 +218,53 @@ describe('machine_detection (AMD)', () => {
 		expect(c.status).toBe('voice_voicemail')
 		const r = advance(c, hangup('normal_clearing'), NOW)
 		expect(r.applied).toBe(false)
+	})
+})
+
+describe('absorbing statuses', () => {
+	const absorbing = ['voice_declined', 'voice_meeting_booked', 'voice_warm_transferred']
+
+	it.each(absorbing)('%s is not revived by a late call.initiated', (status) => {
+		const r = advance(contact(status, { last_call_id: 'call-1' }), initiated('call-2'), NOW)
+		expect(r.applied).toBe(false)
+		expect(r.status).toBe(status)
+		expect(r.metadata).toEqual({})
+	})
+
+	it.each(absorbing)('%s ignores every other event too', (status) => {
+		const c = contact(status, { last_call_id: 'call-1' })
+		const events: VoiceEvent[] = [
+			answered(),
+			hangup('no_answer'),
+			hangup('busy'),
+			machine(),
+			{ type: 'transfer_completed', callId: 'call-1' },
+			{ type: 'rest_failure', reason: 'x' },
+		]
+		for (const e of events) expect(advance(c, e, NOW).applied).toBe(false)
+	})
+
+	it('voice_failed is terminal for retries but a human can requeue and dial again', () => {
+		const r = advance(contact('voice_failed', { last_call_id: 'old' }), initiated('call-9'), NOW)
+		expect(r.status).toBe('voice_dialing')
+	})
+})
+
+describe('staleCall flag', () => {
+	it('is set for an event naming an older call, and not for the current one', () => {
+		const c = contact('voice_dialing', { last_call_id: 'call-2' })
+		expect(advance(c, hangup('no_answer', 'call-1'), NOW).staleCall).toBe(true)
+		expect(advance(c, hangup('no_answer', 'call-2'), NOW).staleCall).toBe(false)
+	})
+
+	it('is false for a hangup the reducer absorbed on the current call', () => {
+		const r = advance(
+			contact('voice_warm_transferred', { last_call_id: 'call-1' }),
+			hangup('normal_clearing'),
+			NOW,
+		)
+		expect(r.applied).toBe(false)
+		expect(r.staleCall).toBe(false)
 	})
 })
 

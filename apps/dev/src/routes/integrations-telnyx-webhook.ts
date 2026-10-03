@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import { telnyxWebhookEvents } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import type { CallClientState } from '../lib/integrations/providers/telnyx/client'
 import { readTelnyxRuntimeConfig } from '../lib/integrations/providers/telnyx/config'
 import {
 	type TelnyxEvent,
@@ -13,6 +14,7 @@ import { verifyTelnyxSignature } from '../lib/integrations/providers/telnyx/sign
 import { dispatchToolInvocation } from '../lib/integrations/providers/telnyx/tool-dispatch'
 import { logger } from '../lib/logger'
 import {
+	type VoiceDb,
 	applyVoiceEvent,
 	recordToolInvocation,
 	runAppliedEffects,
@@ -72,7 +74,27 @@ function toVoiceEvent(event: TelnyxEvent): VoiceEvent | null {
 	}
 }
 
-async function handleEvent(db: Database, event: TelnyxEvent): Promise<unknown> {
+/**
+ * What has to happen after the claim + state write commit. Side effects (SMS,
+ * forced hangup), the post-call seam and the tool router's answer all reach out
+ * to other systems, so none of them run inside the transaction.
+ */
+type AfterCommit =
+	| { kind: 'respond'; body: Record<string, unknown> }
+	| {
+			kind: 'applied'
+			result: Extract<Awaited<ReturnType<typeof applyVoiceEvent>>, { found: true }>
+			event: TelnyxEvent
+			clientState: CallClientState
+	  }
+	| {
+			kind: 'tool'
+			event: Extract<TelnyxEvent, { event_type: 'assistant.tool_invocation' }>
+			clientState: CallClientState
+	  }
+
+/** Runs inside the claim transaction: the state write commits or rolls back together with the claim. */
+async function writeState(tx: VoiceDb, event: TelnyxEvent): Promise<AfterCommit> {
 	const clientState = clientStateOf(event)
 	if (!clientState) {
 		// Not a call this system placed (or the dialer did not stamp it): nothing to drive.
@@ -80,33 +102,27 @@ async function handleEvent(db: Database, event: TelnyxEvent): Promise<unknown> {
 			eventId: event.event_id,
 			eventType: event.event_type,
 		})
-		return { ok: true, skipped: 'no_client_state' }
+		return { kind: 'respond', body: { ok: true, skipped: 'no_client_state' } }
 	}
 
 	if (event.event_type === 'assistant.tool_invocation') {
-		await recordToolInvocation(db, {
+		await recordToolInvocation(tx, {
 			workspaceId: clientState.workspace_id,
 			contactId: clientState.contact_id,
 			callId: event.payload.call_control_id,
 			toolName: event.payload.tool_name,
 		})
-		// The tool's JSON result goes straight back in the 200 body.
-		return dispatchToolInvocation({
-			callId: event.payload.call_control_id,
-			toolName: event.payload.tool_name,
-			toolInput: event.payload.tool_input,
-			clientState,
-		})
+		return { kind: 'tool', event, clientState }
 	}
 
 	const voiceEvent = toVoiceEvent(event)
 	if (!voiceEvent) {
 		// transcription.final: buffered by the post-call slices, nothing for the reducer.
 		logger.debug('telnyx webhook event not routed to reducer', { eventType: event.event_type })
-		return { ok: true }
+		return { kind: 'respond', body: { ok: true } }
 	}
 
-	const result = await applyVoiceEvent(db, {
+	const result = await applyVoiceEvent(tx, {
 		workspaceId: clientState.workspace_id,
 		contactId: clientState.contact_id,
 		event: voiceEvent,
@@ -116,15 +132,32 @@ async function handleEvent(db: Database, event: TelnyxEvent): Promise<unknown> {
 			eventId: event.event_id,
 			contactId: clientState.contact_id,
 		})
-		return { ok: true, skipped: 'contact_not_found' }
+		return { kind: 'respond', body: { ok: true, skipped: 'contact_not_found' } }
+	}
+	return { kind: 'applied', result, event, clientState }
+}
+
+async function afterCommit(db: Database, work: AfterCommit): Promise<unknown> {
+	if (work.kind === 'respond') return work.body
+
+	if (work.kind === 'tool') {
+		// The tool's JSON result goes straight back in the 200 body.
+		return dispatchToolInvocation({
+			callId: work.event.payload.call_control_id,
+			toolName: work.event.payload.tool_name,
+			toolInput: work.event.payload.tool_input,
+			clientState: work.clientState,
+		})
 	}
 
+	const { result, event, clientState } = work
 	if (result.applied) {
 		await runAppliedEffects(result, effectRunnerOverride ?? createDefaultEffectRunner(db))
 	}
 
-	// Every hangup that belongs to this contact's current call opens the post-call seam.
-	if (event.event_type === 'call.hangup' && result.applied) {
+	// Every hangup for this contact's current call opens the post-call seam, including one
+	// the reducer absorbed (a transferred call still has a recording to mirror).
+	if (event.event_type === 'call.hangup' && !result.staleCall) {
 		await runPostCallHooks({
 			db,
 			workspaceId: clientState.workspace_id,
@@ -182,25 +215,39 @@ app.post('/', async (c) => {
 
 	const { event } = parsed
 
-	// Claim before doing any work, so Telnyx's retries (and replays) are no-ops.
-	const claimed = await db
-		.insert(telnyxWebhookEvents)
-		.values({ eventId: event.event_id })
-		.onConflictDoNothing({ target: telnyxWebhookEvents.eventId })
-		.returning({ eventId: telnyxWebhookEvents.eventId })
-	if (claimed.length === 0) {
-		return c.json({ ok: true, duplicate: true })
+	// Claim and state write share one transaction: a crash or failure between them rolls
+	// both back, so Telnyx's retry is processed instead of being deduplicated away.
+	let work: AfterCommit | null
+	try {
+		work = await db.transaction(async (tx) => {
+			const claimed = await tx
+				.insert(telnyxWebhookEvents)
+				.values({ eventId: event.event_id })
+				.onConflictDoNothing({ target: telnyxWebhookEvents.eventId })
+				.returning({ eventId: telnyxWebhookEvents.eventId })
+			if (claimed.length === 0) return null
+			return writeState(tx, event)
+		})
+	} catch (err) {
+		logger.error('telnyx webhook handler failed', {
+			eventId: event.event_id,
+			eventType: event.event_type,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Webhook handler failed'), 500)
 	}
+	if (work === null) return c.json({ ok: true, duplicate: true })
 
 	try {
-		return c.json(await handleEvent(db, event))
+		return c.json(await afterCommit(db, work))
 	} catch (err) {
-		// Release the claim so Telnyx's retry reprocesses the event.
+		// Only the tool router can throw here (effects and hooks are isolated). Release the
+		// claim so Telnyx's retry reaches the router again.
 		await db
 			.delete(telnyxWebhookEvents)
 			.where(eq(telnyxWebhookEvents.eventId, event.event_id))
 			.catch(() => undefined)
-		logger.error('telnyx webhook handler failed', {
+		logger.error('telnyx webhook post-commit step failed', {
 			eventId: event.event_id,
 			eventType: event.event_type,
 			error: err instanceof Error ? err.message : String(err),

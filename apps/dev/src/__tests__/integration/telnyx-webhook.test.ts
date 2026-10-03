@@ -2,6 +2,7 @@ import { generateKeyPairSync, sign } from 'node:crypto'
 import { events, objects, telnyxWebhookEvents } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as recordEventModule from '../../lib/events/record-event'
 import { encodeClientState } from '../../lib/integrations/providers/telnyx/client'
 import * as applyModule from '../../lib/outreach/voice/apply'
 import type { EffectRunner } from '../../lib/outreach/voice/effects'
@@ -336,6 +337,86 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 		await c.send('call.transfer.completed', 'call-t', 1, { target: '+4533333333' })
 		await c.send('call.hangup', 'call-t', 1, { hangup_cause: 'normal_clearing' })
 		expect((await c.read()).status).toBe('voice_warm_transferred')
+	})
+
+	it('a hangup after a warm transfer still opens the post-call seam, without touching the status', async () => {
+		const hook = vi.fn()
+		postCallHooks.push({ name: 'test', run: hook })
+		const c = await newContact()
+		await c.send('call.initiated', 'call-wt', 1)
+		await c.send('call.answered', 'call-wt', 1)
+		await c.send('call.transfer.completed', 'call-wt', 1, { target: '+4533333333' })
+		await c.send('call.hangup', 'call-wt', 1, { hangup_cause: 'normal_clearing', duration_s: 90 })
+		expect((await c.read()).status).toBe('voice_warm_transferred')
+		expect(hook).toHaveBeenCalledTimes(1)
+		expect(hook.mock.calls[0]?.[0]).toMatchObject({
+			callId: 'call-wt',
+			status: 'voice_warm_transferred',
+		})
+	})
+
+	it('a hangup for an older call does not open the post-call seam', async () => {
+		const hook = vi.fn()
+		postCallHooks.push({ name: 'test', run: hook })
+		const c = await newContact()
+		await c.send('call.initiated', 'call-new', 1)
+		await c.send('call.hangup', 'call-old', 1, { hangup_cause: 'no_answer' })
+		expect(hook).not.toHaveBeenCalled()
+		expect((await c.read()).status).toBe('voice_dialing')
+	})
+
+	it('a late call.initiated does not revive a declined contact', async () => {
+		const c = await newContact()
+		await c.send('call.initiated', 'call-1', 1)
+		await c.send('call.answered', 'call-1', 1)
+		await c.send('call.hangup', 'call-1', 1, { hangup_cause: 'normal_clearing' })
+		expect((await c.read()).status).toBe('voice_declined')
+		await c.send('call.initiated', 'call-2', 2)
+		expect((await c.read()).status).toBe('voice_declined')
+	})
+
+	it('premium human_residence stamps amd_result human', async () => {
+		const c = await newContact()
+		await c.send('call.initiated', 'call-hr', 1)
+		await c.send('call.answered', 'call-hr', 1)
+		await c.send('call.machine.premium.detection.ended', 'call-hr', 1, {
+			result: 'human_residence',
+		})
+		const after = await c.read()
+		expect(after.status).toBe('voice_answered')
+		expect(after.meta.amd_result).toBe('human')
+	})
+
+	it('rolls the state write back with the claim when the transaction fails mid-way', async () => {
+		const c = await newContact()
+		const eventId = `evt-atomic-${Date.now()}`
+		const body = envelope(
+			'call.initiated',
+			{
+				call_control_id: 'call-atomic',
+				client_state: encodeClientState({
+					contact_id: c.contact.id,
+					workspace_id: c.ws.id,
+					dial_attempt_n: 1,
+				}),
+			},
+			eventId,
+		)
+		// Fail AFTER the reducer wrote: the audit event insert is the last write in the transaction.
+		const spy = vi
+			.spyOn(recordEventModule, 'recordEvent')
+			.mockRejectedValueOnce(new Error('events down'))
+		try {
+			expect((await post(body)).status).toBe(500)
+		} finally {
+			spy.mockRestore()
+		}
+		expect((await c.read()).status).toBe('voice_queued')
+		expect(
+			await db.select().from(telnyxWebhookEvents).where(eq(telnyxWebhookEvents.eventId, eventId)),
+		).toHaveLength(0)
+		expect((await post(body)).status).toBe(200)
+		expect((await c.read()).status).toBe('voice_dialing')
 	})
 
 	it('writes an audit event for each status change', async () => {

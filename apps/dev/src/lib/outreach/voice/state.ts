@@ -23,11 +23,13 @@ export const VOICE_STATUSES = [
 ] as const
 export type VoiceStatus = (typeof VOICE_STATUSES)[number]
 
-const TERMINAL: ReadonlySet<string> = new Set<VoiceStatus>([
+// Absorbing: no event moves a contact out of these. voice_declined is DNC-listed
+// (DNC gate check 2), so a late call.initiated must never revive it. voice_failed
+// is terminal for the retry machine but not absorbing: a human can requeue it.
+const ABSORBING: ReadonlySet<string> = new Set<VoiceStatus>([
 	'voice_declined',
 	'voice_meeting_booked',
 	'voice_warm_transferred',
-	'voice_failed',
 ])
 
 export const MAX_NO_ANSWER_ATTEMPTS = 3
@@ -81,6 +83,8 @@ export type VoiceEffect =
 	| { type: 'hangup_call'; callId: string }
 	| { type: 'dead_letter'; reason: string }
 
+type Outcome = Omit<AdvanceResult, 'staleCall'>
+
 export interface AdvanceResult {
 	status: string
 	/** Merge into contact.metadata. null values delete the key. */
@@ -88,6 +92,8 @@ export interface AdvanceResult {
 	effects: VoiceEffect[]
 	/** False when the event was stale, a duplicate or otherwise a no-op. */
 	applied: boolean
+	/** True when the event names a call other than the contact's current one. */
+	staleCall: boolean
 }
 
 export interface ToolTraceEntry {
@@ -102,7 +108,7 @@ function num(v: unknown): number {
 	return typeof v === 'number' && Number.isFinite(v) ? v : 0
 }
 
-function noop(contact: VoiceContact): AdvanceResult {
+function noop(contact: VoiceContact): Outcome {
 	return { status: contact.status, metadata: {}, effects: [], applied: false }
 }
 
@@ -125,7 +131,7 @@ function terminal(
 	status: VoiceStatus,
 	extra: Record<string, unknown> = {},
 	effects: VoiceEffect[] = [],
-): AdvanceResult {
+): Outcome {
 	return { status, metadata: { next_dial_at: null, ...extra }, effects, applied: true }
 }
 
@@ -136,7 +142,7 @@ function voicemailOutcome(
 	from: string | undefined,
 	extra: Record<string, unknown>,
 	leadingEffects: VoiceEffect[] = [],
-): AdvanceResult {
+): Outcome {
 	const seen = num(meta(contact).voicemail_n)
 	const effects: VoiceEffect[] = [
 		...leadingEffects,
@@ -167,6 +173,13 @@ export function advance(
 	event: VoiceEvent,
 	now: Date = new Date(),
 ): AdvanceResult {
+	const staleCall =
+		'callId' in event && event.type !== 'call_initiated' && isStaleCall(contact, event.callId)
+	const outcome = ABSORBING.has(contact.status) ? noop(contact) : advanceFrom(contact, event, now)
+	return { ...outcome, staleCall }
+}
+
+function advanceFrom(contact: VoiceContact, event: VoiceEvent, now: Date): Outcome {
 	const m = meta(contact)
 
 	switch (event.type) {
@@ -207,7 +220,7 @@ export function advance(
 		case 'machine_detection': {
 			if (isStaleCall(contact, event.callId)) return noop(contact)
 			const result = event.result.toLowerCase()
-			if (result === 'human') {
+			if (result === 'human' || result.startsWith('human_')) {
 				return {
 					status: contact.status,
 					metadata: { amd_result: 'human' },
@@ -302,8 +315,4 @@ export function advance(
 			}
 		}
 	}
-}
-
-export function isTerminalVoiceStatus(status: string): boolean {
-	return TERMINAL.has(status)
 }
