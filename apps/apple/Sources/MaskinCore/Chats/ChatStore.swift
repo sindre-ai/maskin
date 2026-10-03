@@ -54,6 +54,9 @@ public final class ChatStore {
 	}
 	/// Told after the server accepted a read cursor, so the list's unread badge clears too.
 	@ObservationIgnored public var onMarkedRead: (@MainActor (String, Int) -> Void)?
+	/// The agents' step-by-step trace (live and per finished turn). Nil: threads show only the
+	/// one-line status. Set by the screen that builds the store.
+	@ObservationIgnored public var trace: ActivityStore?
 
 	@ObservationIgnored let api: any ChatAPI
 	@ObservationIgnored let queue: ChatSendQueue
@@ -263,6 +266,7 @@ public final class ChatStore {
 		queueListener = nil
 		poller?.cancel()
 		poller = nil
+		trace?.stop()
 	}
 
 	/// Only poll sessions while something could change: an agent is running or a reply is due.
@@ -396,6 +400,8 @@ public final class ChatStore {
 		agentSessions = sessions.sorted {
 			($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast)
 		}
+		// Not awaited: fetching a finished turn's history must never delay the thread itself.
+		Task { [trace, sessions = agentSessions] in await trace?.update(sessions: sessions) }
 	}
 
 	// MARK: - Send
