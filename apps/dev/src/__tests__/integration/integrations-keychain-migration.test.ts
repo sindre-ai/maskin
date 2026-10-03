@@ -348,3 +348,52 @@ describe('0087 up and down', () => {
 		expect(await indexNames('credential_access_log')).toContain('cal_action_idx')
 	})
 })
+
+const UP_0088 = '0088_integrations_credentials_nullable.sql'
+const DOWN_0088 = 'down/0088_integrations_credentials_nullable_down.sql'
+
+describe('integrations.credentials nullable (0088)', () => {
+	it('relaxes NOT NULL on credentials', async () => {
+		expect((await columns('integrations')).get('credentials')?.is_nullable).toBe('YES')
+	})
+
+	it('CHECK: NULL credentials is legal only on an undone row', async () => {
+		const { row } = await newIntegration()
+		await expect(
+			sql`INSERT INTO integrations ${sql({ ...row, credentials: null })}`,
+		).rejects.toThrow(/integrations_credentials_null_only_when_undone/)
+		await expect(
+			sql`INSERT INTO integrations ${sql({ ...row, status: 'pending_undo', credentials: null })}`,
+		).rejects.toThrow(/integrations_credentials_null_only_when_undone/)
+		await sql`INSERT INTO integrations ${sql({ ...row, status: 'undone', credentials: null })}`
+	})
+
+	it('rejects zeroising credentials on a row that is not being undone', async () => {
+		const { row } = await newIntegration()
+		const [out] = await sql<{ id: string }[]>`INSERT INTO integrations ${sql(row)} RETURNING id`
+		await expect(
+			sql`UPDATE integrations SET credentials = NULL WHERE id = ${out?.id as string}`,
+		).rejects.toThrow(/integrations_credentials_null_only_when_undone/)
+		await sql`UPDATE integrations SET credentials = NULL, status = 'undone' WHERE id = ${out?.id as string}`
+	})
+
+	it('reverses cleanly (blanking undone rows) and re-applies', async () => {
+		const { row } = await newIntegration()
+		const [undone] = await sql<{ id: string }[]>`
+			INSERT INTO integrations ${sql({ ...row, status: 'undone', credentials: null })} RETURNING id
+		`
+		await runSqlFile(DOWN_0088)
+		expect((await columns('integrations')).get('credentials')?.is_nullable).toBe('NO')
+		const [blanked] = await sql<{ credentials: string }[]>`
+			SELECT credentials FROM integrations WHERE id = ${undone?.id as string}
+		`
+		expect(blanked?.credentials).toBe('')
+
+		await runSqlFile(UP_0088)
+		expect((await columns('integrations')).get('credentials')?.is_nullable).toBe('YES')
+		// And again: down on an already-reverted schema must not fail.
+		await runSqlFile(DOWN_0088)
+		await runSqlFile(DOWN_0088)
+		await runSqlFile(UP_0088)
+	})
+})
