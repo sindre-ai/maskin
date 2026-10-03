@@ -1,5 +1,6 @@
 import type { Database } from '@maskin/db'
 import { recordEvent } from '../../events/record-event'
+import { slackApiCall } from '../../integrations/providers/slack/slack-api'
 import { createTelnyxClient } from '../../integrations/providers/telnyx/client'
 import { readTelnyxRuntimeConfig } from '../../integrations/providers/telnyx/config'
 import type { DeadLetter } from '../../integrations/providers/telnyx/http'
@@ -24,14 +25,48 @@ const SMS_TEMPLATE_ENV: Record<SmsMode, string> = {
 	voicemail_followup: 'VOICE_SMS_VOICEMAIL_FOLLOWUP',
 }
 
+const SALES_CHANNEL = '#sales'
+
+export type SalesPoster = (text: string) => Promise<void>
+
 /**
- * Dead letter: an audit row at Attention 5 addressed to #sales. Delivery to
- * Slack itself is not wired here (no in-app Slack poster exists on main).
+ * Posts to #sales with the workspace bot token, the same transport and env var
+ * as notifySebkOnSlack (lib/vat-notifications.ts). Never throws: a Slack outage
+ * must not turn a recorded dead letter into a failed effect.
+ */
+export const postToSales: SalesPoster = async (text) => {
+	const token = process.env.SLACK_BOT_TOKEN?.trim()
+	if (!token) {
+		logger.warn('voice dead letter not posted to #sales: SLACK_BOT_TOKEN unset')
+		return
+	}
+	try {
+		await slackApiCall(token, 'chat.postMessage', {
+			channel: SALES_CHANNEL,
+			text,
+			unfurl_links: false,
+		})
+	} catch (err) {
+		logger.warn('voice dead letter post to #sales failed', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
+}
+
+function deadLetterText(ctx: EffectContext, payload: DeadLetter | { reason: string }): string {
+	const reason = 'reason' in payload ? payload.reason : payload.error
+	return `Voice dead letter: contact ${ctx.contactId}, dial attempt ${ctx.dialAttemptN}, reason: ${reason}`
+}
+
+/**
+ * Dead letter: an audit row at Attention 5 addressed to #sales, plus one
+ * message to #sales through the existing Slack path.
  */
 export async function recordDeadLetter(
 	db: Database,
 	ctx: EffectContext,
 	payload: DeadLetter | { reason: string },
+	post: SalesPoster = postToSales,
 ): Promise<void> {
 	logger.error('voice dead letter', { contactId: ctx.contactId, ...payload })
 	await recordEvent(db, {
@@ -40,18 +75,22 @@ export async function recordDeadLetter(
 		action: 'voice_dead_letter',
 		entityType: 'object',
 		entityId: ctx.contactId,
-		data: { attention: 5, channel: '#sales', ...payload },
+		data: { attention: 5, channel: SALES_CHANNEL, ...payload },
 	})
+	await post(deadLetterText(ctx, payload))
 }
 
-export function createDefaultEffectRunner(db: Database): EffectRunner {
+export function createDefaultEffectRunner(
+	db: Database,
+	post: SalesPoster = postToSales,
+): EffectRunner {
 	function client(ctx: EffectContext) {
 		const { apiKey, apiBaseUrl } = readTelnyxRuntimeConfig()
 		if (!apiKey) throw new Error('TELNYX_API_KEY is not configured')
 		return createTelnyxClient({
 			apiKey,
 			baseUrl: apiBaseUrl,
-			onDeadLetter: (letter) => recordDeadLetter(db, ctx, letter),
+			onDeadLetter: (letter) => recordDeadLetter(db, ctx, letter, post),
 		})
 	}
 
@@ -79,7 +118,7 @@ export function createDefaultEffectRunner(db: Database): EffectRunner {
 			await client(ctx).hangupCall(callId)
 		},
 		async deadLetter(reason, ctx) {
-			await recordDeadLetter(db, ctx, { reason })
+			await recordDeadLetter(db, ctx, { reason }, post)
 		},
 	}
 }
