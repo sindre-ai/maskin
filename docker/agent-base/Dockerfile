@@ -37,6 +37,14 @@ COPY input-stream.js /input-stream.js
 COPY output-stream.js /output-stream.js
 RUN chmod +x /entrypoint.sh /agent-run.sh /agent-github-credential-helper.sh
 
+# Token-refresh preload for the GitHub MCP server. Only ever loaded through
+# NODE_OPTIONS=--require=/agent-github-mcp-token-refresh.cjs on the
+# github-<owner> MCP entries (never container-wide) — see the file header for
+# the GITHUB_MCP_REFRESH_* env it reads. It must exist in the image before any
+# entry references it, or the GitHub MCP server fails at boot.
+COPY github-mcp-token-refresh.cjs /agent-github-mcp-token-refresh.cjs
+RUN chmod 644 /agent-github-mcp-token-refresh.cjs
+
 # PostToolUse hook that surfaces a newly-relayed dev-server preview port to
 # Claude automatically — see preview-port-watcher.js (writes the mappings
 # file this hook reads) and hooks/preview-ports-changed.sh (the hook
