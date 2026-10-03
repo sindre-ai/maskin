@@ -375,7 +375,7 @@ export async function _driveToRunning(sessionId: string): Promise<void> {
 	await db
 		.update(sessions)
 		.set({ sessionState: 'starting', stateEnteredAt: new Date(), driverHeartbeatAt: new Date() })
-		.where(eq(sessions.id, sessionId))
+		.where(and(eq(sessions.id, sessionId), notInArray(sessions.status, TRULY_TERMINAL_STATUSES)))
 		.catch((err) => {
 			logger.warn('_driveToRunning failed to enter starting state', {
 				sessionId,
@@ -404,7 +404,7 @@ export async function _driveToRunning(sessionId: string): Promise<void> {
 		await db
 			.update(sessions)
 			.set({ sessionState: 'running', stateEnteredAt: new Date(), driverHeartbeatAt: null })
-			.where(eq(sessions.id, sessionId))
+			.where(and(eq(sessions.id, sessionId), notInArray(sessions.status, TRULY_TERMINAL_STATUSES)))
 			.catch((err) => {
 				logger.warn('_driveToRunning failed to enter running state', {
 					sessionId,
@@ -593,12 +593,8 @@ const TERMINAL_STATUS_BY_KIND: Record<TerminalOutcomeKind, FinalStatus> = {
  * still eligible to be archived to `completed` (see session-manager.ts's
  * 7-day archival pass), and the CAS below already lists exactly these four.
  */
-const TRULY_TERMINAL_STATUS_SET: ReadonlySet<string> = new Set([
-	'completed',
-	'failed',
-	'timeout',
-	'user_stopped',
-])
+export const TRULY_TERMINAL_STATUSES: string[] = ['completed', 'failed', 'timeout', 'user_stopped']
+const TRULY_TERMINAL_STATUS_SET: ReadonlySet<string> = new Set(TRULY_TERMINAL_STATUSES)
 
 /**
  * Domain-visible `events.action` written by settle for each kind. Matches
@@ -818,6 +814,7 @@ export async function settleSession(
 			workspaceId: sessions.workspaceId,
 			actorId: sessions.actorId,
 			status: sessions.status,
+			sessionState: sessions.sessionState,
 			containerId: sessions.containerId,
 			agentServerId: sessions.agentServerId,
 			result: sessions.result,
@@ -989,6 +986,23 @@ export async function settleSession(
 				})
 			})
 		})
+	}
+
+	// A row that was already terminal skipped the transaction above, so nothing
+	// stamped session_state='done'. Left at queued / starting / running, the
+	// reaper's cutoffs keep matching it every pass. Best-effort: the sandbox
+	// side-effects below must still run if this write fails.
+	if (wasAlreadyTerminal && existing.sessionState !== 'done') {
+		await deps.db
+			.update(sessions)
+			.set({ sessionState: 'done', stateEnteredAt: new Date() })
+			.where(eq(sessions.id, sessionId))
+			.catch((err) =>
+				logger.warn('settleSession: failed to stamp session_state done on terminal row', {
+					sessionId,
+					error: String(err),
+				}),
+			)
 	}
 
 	// The eviction inside `recordEvent` runs before the settle transaction
