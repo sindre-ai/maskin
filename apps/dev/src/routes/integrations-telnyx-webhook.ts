@@ -192,9 +192,11 @@ async function afterCommit(db: Database, work: AfterCommit): Promise<unknown> {
 
 	// PostHog fanout. After the claim commit, so a replayed event_id never reaches it, and
 	// before the hooks so call_completed precedes post_call_email_sent. Never throws.
-	captureVoiceEvents({
+	await captureVoiceEvents(db, {
 		eventType: event.event_type,
+		workspaceId: clientState.workspace_id,
 		contactId: clientState.contact_id,
+		callId: event.payload.call_control_id,
 		durationS: event.event_type === 'call.hangup' ? event.payload.duration_s : undefined,
 		result,
 	})
