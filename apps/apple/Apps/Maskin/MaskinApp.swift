@@ -1,4 +1,5 @@
 import MaskinCore
+import CoreSpotlight
 import MaskinFeatures
 import SwiftUI
 
@@ -23,6 +24,8 @@ struct MaskinApp: App {
 		let environment = AppEnvironment(
 			baseURL: Self.apiBaseURL, clientSource: source, secretStore: KeychainSecretStore())
 		environment.auth.restore()
+		MaskinIntentsContext.configure(baseURL: Self.apiBaseURL, clientSource: source)
+		IntentsHost.attach(environment: environment)
 		_environment = State(initialValue: environment)
 		_push = State(
 			initialValue: PushRegistrar(
@@ -36,6 +39,14 @@ struct MaskinApp: App {
 		WindowGroup {
 			RootView(environment: environment, push: push) { runtime in
 				pushDelegate.attach(registrar: push, router: runtime.router)
+				// Siri / Shortcuts / Spotlight open threads through the same deep-link router.
+				IntentDeepLinkRelay.attach { runtime.router.open($0) }
+			}
+			.onContinueUserActivity(CSSearchableItemActionType) { activity in
+				guard
+					let id = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String
+				else { return }
+				Task { await IntentDeepLinkRelay.openSpotlight(identifier: id) }
 			}
 		}
 		.commands { ShellCommands() }
