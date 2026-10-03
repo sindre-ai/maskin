@@ -1,20 +1,35 @@
 import { objects } from '@maskin/db/schema'
+import type { VoiceFollowupLanguage } from '@maskin/email'
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../../logger'
 import type { PostCallContext, PostCallHook } from './post-call'
 import { sendFollowup } from './send-followup'
 
 // The call tool the assistant calls only when the prospect explicitly asks for
-// the email on the call (Markedsforingsloven section 10(5) carve-out). The tool
-// router slice emits it; until it does this hook never sends.
+// the email on the call (Markedsforingsloven section 10(1), prior consent). The
+// tool router slice emits it; until it does this hook never sends.
 export const FOLLOWUP_REQUEST_TOOL = 'request_followup_email'
+
+// Every call in this bet is Danish (+45 numbers, Danish agent), so the email goes
+// out in Danish. No per-contact detection until a second market exists.
+const FOLLOWUP_LANGUAGE: VoiceFollowupLanguage = 'da'
 
 // Fixed copy keyed on the outcome status, no LLM: it may only state what the
 // status proves.
-function callSummaryFor(status: string): string {
-	return status === 'voice_meeting_booked'
-		? 'Thanks for the call, your meeting is booked.'
-		: 'Thanks for taking the time to talk with us today.'
+const CALL_SUMMARY: Record<VoiceFollowupLanguage, { booked: string; other: string }> = {
+	da: {
+		booked: 'Tak for samtalen, dit møde er booket.',
+		other: 'Tak fordi du tog dig tid til at tale med os i dag.',
+	},
+	en: {
+		booked: 'Thanks for the call, your meeting is booked.',
+		other: 'Thanks for taking the time to talk with us today.',
+	},
+}
+
+function callSummaryFor(status: string, language: VoiceFollowupLanguage): string {
+	const copy = CALL_SUMMARY[language]
+	return status === 'voice_meeting_booked' ? copy.booked : copy.other
 }
 
 function str(v: unknown): string | null {
@@ -71,6 +86,9 @@ async function runFollowupEmail(ctx: PostCallContext): Promise<void> {
 	// A retried hangup must not send twice: consent_call_id is stamped by sendFollowup after a send.
 	if (metadata.consent_call_id === ctx.callId) return skip('already_sent_for_call')
 
+	// One email per contact from this path, no sequence: an earlier send left consent_captured_at.
+	if (str(metadata.consent_captured_at)) return skip('already_emailed')
+
 	// Only the address on the contact, never one the model heard on the call.
 	const to = str(metadata.email)
 	const prospectName = str(metadata.name) ?? str(row.title)
@@ -83,7 +101,8 @@ async function runFollowupEmail(ctx: PostCallContext): Promise<void> {
 		actorId: row.driver ?? row.createdBy,
 		to,
 		prospectName,
-		callSummary: callSummaryFor(ctx.status),
+		callSummary: callSummaryFor(ctx.status, FOLLOWUP_LANGUAGE),
+		language: FOLLOWUP_LANGUAGE,
 		calendarLink: meetLinkFor(metadata, ctx.callId),
 	})
 }

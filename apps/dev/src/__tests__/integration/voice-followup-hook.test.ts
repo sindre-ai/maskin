@@ -98,6 +98,51 @@ describe('post-call follow-up email hook', () => {
 		expect(fetchMock).toHaveBeenCalledTimes(1)
 	})
 
+	it('sends nothing on a second call to a contact that already got the email', async () => {
+		const s = await setup({
+			email: 'pia@prospect.example',
+			voice_tool_trace: [{ tool_name: FOLLOWUP_REQUEST_TOOL }],
+		})
+		await runPostCallHooks(hangup(s, 'call-hook-1'))
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+		const firstStamp = (await metadataOf(s.contactId)).consent_captured_at
+		expect(firstStamp).toBeTruthy()
+
+		await runPostCallHooks(hangup(s, 'call-hook-2'))
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+		const meta = await metadataOf(s.contactId)
+		expect(meta.consent_call_id).toBe('call-hook-1')
+		expect(meta.consent_captured_at).toBe(firstStamp)
+	})
+
+	it('skips with already_emailed when consent_captured_at is set, even for a different call id', async () => {
+		const s = await setup({
+			email: 'pia@prospect.example',
+			consent_captured_at: '2026-09-30T10:00:00.000Z',
+			consent_call_id: 'call-earlier',
+			voice_tool_trace: [{ tool_name: FOLLOWUP_REQUEST_TOOL }],
+		})
+		await runPostCallHooks(hangup(s, 'call-hook-2'))
+		expect(fetchMock).not.toHaveBeenCalled()
+		expect((await metadataOf(s.contactId)).consent_call_id).toBe('call-earlier')
+	})
+
+	it('sends a Danish body with the opt-out line and Maskin as sender', async () => {
+		const s = await setup({
+			email: 'pia@prospect.example',
+			voice_tool_trace: [{ tool_name: FOLLOWUP_REQUEST_TOOL }],
+		})
+		await runPostCallHooks(hangup(s))
+		const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+		expect(body.subject).toBe('Opfølgning på vores samtale')
+		expect(body.text).toContain('Hej Pia Prospect,')
+		expect(body.text).toContain('Tak fordi du tog dig tid')
+		expect(body.text).toContain('Hvis du ikke ønsker flere e-mails fra Maskin')
+		expect(body.text).toContain('noreply@agent.hook.example')
+		expect(body.text).toContain('— Maskin')
+		expect(body.html).toContain('Hvis du ikke ønsker flere e-mails fra Maskin')
+	})
+
 	it('skips without sending when the contact has no email on file', async () => {
 		const s = await setup({ voice_tool_trace: [{ tool_name: FOLLOWUP_REQUEST_TOOL }] })
 		await runPostCallHooks(hangup(s))
