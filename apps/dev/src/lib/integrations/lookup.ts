@@ -199,12 +199,13 @@ function isScopeGranted(grants: unknown, ctx: CredentialReadContext): boolean {
 /**
  * Every read of a stored credential goes through here. In order: load the row,
  * accept only active or pending_undo, enforce scope_grants against the
- * requesting actor or loop, unwrap the DEK and decrypt, then write the audit row
- * in the same transaction. A denied scope check writes an events row and no
- * audit row (nothing was read). Failure is always a typed error, never null.
+ * requesting actor or loop, unwrap the DEK and decrypt, then write the audit row.
+ * The value is returned only after the audit row has committed, so a read with
+ * no log row cannot reach a caller. A denied scope check writes an events row
+ * and no audit row (nothing was read). Failure is always a typed error, never null.
  *
- * The audit insert comes after the decrypt and takes a per-workspace lock until
- * commit, so no KMS call happens while that lock is held.
+ * The audit insert comes after the decrypt, in its own short transaction that
+ * holds a per-workspace lock until commit, so no KMS call happens under the lock.
  */
 export async function getCredential(
 	db: Database,
