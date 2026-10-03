@@ -41,7 +41,7 @@ extension View {
 		#if os(iOS)
 			return self
 				.navigationTitle(title ?? "")
-				.navigationBarTitleDisplayMode(title == nil ? .inline : .large)
+				.toolbarTitleDisplayMode(title == nil ? .inline : .inlineLarge)
 		#else
 			return navigationTitle(title ?? "")
 		#endif

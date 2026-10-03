@@ -51,7 +51,7 @@ struct MarketplaceContent: View {
 				.background(MaskinSurface.grouped)
 				.navigationTitle("Marketplace")
 				#if os(iOS)
-				.navigationBarTitleDisplayMode(.large)
+				.toolbarTitleDisplayMode(.inlineLarge)
 				#endif
 				.searchable(text: $search, prompt: "Search loops")
 				.toolbar {
