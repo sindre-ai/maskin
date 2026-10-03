@@ -46,7 +46,10 @@ export function assertKeychainKmsConfig(
  * and everything else still work. The next envelope use throws the same error.
  */
 export async function prepareLocalKek(db: Database): Promise<void> {
-	if (process.env.NODE_ENV !== 'production' || resolveKeychainKmsKind() !== 'local-file') return
+	// KEYCHAIN_KMS unset is the warn-only case handled by assertKeychainKmsConfig;
+	// resolving it here would throw in production and stop the boot.
+	if (process.env.NODE_ENV !== 'production' || !process.env.KEYCHAIN_KMS?.trim()) return
+	if (resolveKeychainKmsKind() !== 'local-file') return
 	const kms = getKmsProvider(db)
 	if (!(kms instanceof LocalFileKmsProvider)) return
 	try {
