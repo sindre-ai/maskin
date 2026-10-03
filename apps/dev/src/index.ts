@@ -11,6 +11,7 @@ import { createApp } from './app-factory'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { VoiceDialerJob } from './jobs/voice-dialer'
+import { VoiceStaleClaimSweepJob } from './jobs/voice-stale-claim-sweep'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import {
@@ -232,6 +233,12 @@ const voiceDialerJob = new VoiceDialerJob(db, storageProvider)
 voiceDialerJob.start()
 logger.info('Voice dialer job started')
 
+// Voice stale-claim sweep: once a minute, all day. Ends a voice_dialing contact whose claim
+// was never confirmed by a call.initiated webhook in voice_failed; it never redials.
+const voiceStaleClaimSweepJob = new VoiceStaleClaimSweepJob(db)
+voiceStaleClaimSweepJob.start()
+logger.info('Voice stale-claim sweep job started')
+
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
@@ -355,6 +362,7 @@ const shutdown = async (signal: string) => {
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
 	voiceDialerJob.stop()
+	voiceStaleClaimSweepJob.stop()
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.
