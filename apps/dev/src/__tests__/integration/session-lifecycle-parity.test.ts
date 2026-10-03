@@ -254,4 +254,28 @@ describe('§5.2 parity matrix — DB-semantic cells against real Postgres', () =
 		})
 		expect(order).toEqual(['stop', 'push'])
 	})
+
+	// A settle that lands on an already-terminal row skips the transaction, but
+	// must still stamp session_state='done' so the reaper's session_state cutoffs
+	// stop re-selecting the row. The status, event log and result are untouched.
+	it.each(['starting', 'queued', 'running'] as const)(
+		'stamps session_state=done on an already-completed row left in %s',
+		async (staleState) => {
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'completed',
+				sessionState: staleState,
+				containerId: null,
+				agentServerId: null,
+			})
+
+			const result = await settleSession(session.id, outcomeFor('fail'), makeDeps('local'))
+
+			expect(result.alreadySettled).toBe(true)
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('completed')
+			expect(row?.sessionState).toBe('done')
+			const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+			expect(eventRows).toEqual([])
+		},
+	)
 })
