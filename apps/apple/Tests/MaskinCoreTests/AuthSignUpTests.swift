@@ -208,7 +208,6 @@ private let createdJSON = """
 	"""
 
 // The documented 500 body is the error envelope; the generated client rejects anything else.
-private let serverErrorJSON = #"{"error":{"code":"INTERNAL_ERROR","message":"Internal server error"}}"#
 
 @Suite("APIAuthenticator sign-up")
 struct APISignUpTests {
@@ -275,7 +274,7 @@ struct APISignUpTests {
 				name: "S", email: "s@e.co", password: secret, idempotencyKey: "k")
 		}
 		await #expect(throws: SignUpError.server(status: 500)) {
-			try await authenticator(ScriptedTransport(status: 500, json: serverErrorJSON)).signUp(
+			try await authenticator(ScriptedTransport(status: 500, json: #"{"error":{"code":"INTERNAL_ERROR","message":"Internal error"}}"#)).signUp(
 				name: "S", email: "s@e.co", password: secret, idempotencyKey: "k")
 		}
 	}

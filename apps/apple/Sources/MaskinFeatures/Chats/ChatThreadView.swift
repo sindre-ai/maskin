@@ -10,6 +10,9 @@ struct ChatThreadView: View {
 	let composer: ChatComposerModel
 	var conversations: ConversationsStore?
 	var onShowParticipants: () -> Void = {}
+	/// Loops and triggers that run this thread's agents; empty hides the menu entry.
+	var routines = AgentRoutines()
+	var onOpenRoutine: (RoutineTarget) -> Void = { _ in }
 
 	@Environment(\.scenePhase) private var scenePhase
 	@Environment(\.horizontalSizeClass) private var sizeClass
@@ -75,6 +78,7 @@ struct ChatThreadView: View {
 						Toggle(isOn: $handsFree) {
 							Label("Read replies aloud", systemImage: "speaker.wave.2")
 						}
+						if !routines.isEmpty { routinesMenu }
 						if let conversations, let row = conversations.conversation(id: store.conversationID) {
 							Button {
 								Task { await conversations.setArchived(row.id, !row.archived) }
@@ -144,6 +148,26 @@ struct ChatThreadView: View {
 		.accessibilityElement(children: .combine)
 		.accessibilityAddTraits(.isHeader)
 	}
+
+	/// "Routines": the loops and triggers behind this thread's agents, each a jump into the Loops tab.
+	private var routinesMenu: some View {
+		Menu {
+			ForEach(routines.loops.prefix(Self.maxRoutines)) { loop in
+				Button { onOpenRoutine(.loop(loop.id)) } label: {
+					Label(loop.displayName, systemImage: "arrow.triangle.2.circlepath")
+				}
+			}
+			ForEach(routines.triggers.prefix(Self.maxRoutines)) { trigger in
+				Button { onOpenRoutine(.trigger(trigger.id)) } label: {
+					Label(trigger.name, systemImage: trigger.kind.symbol)
+				}
+			}
+		} label: {
+			Label("Routines", systemImage: "arrow.triangle.2.circlepath")
+		}
+	}
+
+	private static let maxRoutines = 8
 
 	/// The thread plus the observers for search and hands-free speech (kept apart so `body`
 	/// type-checks quickly).
