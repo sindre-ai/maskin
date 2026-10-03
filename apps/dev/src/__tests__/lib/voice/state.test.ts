@@ -227,6 +227,8 @@ describe('absorbing statuses', () => {
 		'voice_meeting_booked',
 		'voice_warm_transferred',
 		'follow_up_later',
+		'deleted_by_request',
+		'rejected',
 	]
 
 	it.each(absorbing)('%s is not revived by a late call.initiated', (status) => {
