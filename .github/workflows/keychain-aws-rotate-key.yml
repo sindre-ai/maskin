@@ -1,0 +1,192 @@
+# Keychain AWS runtime access key rotation (also creates the very first key). One environment per run.
+# Order, fixed: create new key, verify it as the runtime identity, write it to Coolify, redeploy and wait healthy,
+# only then delete the old key. Deleting earlier would cut off the running app.
+# Secrets rules: values are masked the moment they are read, never echoed, never a step output or artifact,
+# never a command argument. The Coolify reply echoes env values, so it goes to /dev/null and only the HTTP code prints.
+# Writes only AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY. AWS_REGION and KEYCHAIN_KMS are set by a person, not here.
+# Design and rules: ADR-010 and infra/keychain-aws/README.md.
+name: Keychain AWS rotate runtime key
+
+run-name: Keychain AWS rotate runtime key (${{ inputs.target }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Which environment to rotate
+        type: choice
+        required: true
+        options:
+          - staging
+          - production
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: keychain-aws-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  rotate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    environment: keychain-aws-${{ inputs.target }}
+    env:
+      TARGET: ${{ inputs.target }}
+      AWS_PAGER: ''
+      COOLIFY_URL: https://cool.sindre.ai
+      # Coolify application that consumes the key. Production is the single "Maskin v2" application.
+      # Staging has no Coolify application today, so a staging run stops before it creates anything.
+      COOLIFY_APP_UUID_PRODUCTION: poa9z4x2sir81oldyup1zw1f
+      COOLIFY_APP_UUID_STAGING: ''
+    steps:
+      - name: Assume the bootstrap role
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/maskin-keychain-bootstrap-${{ inputs.target }}
+          role-session-name: keychain-rotate-${{ github.run_id }}
+          role-duration-seconds: 3600
+          aws-region: eu-central-1
+          mask-aws-account-id: true
+
+      - name: Rotate
+        shell: bash
+        env:
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          HEALTH_URL: ${{ vars.HEALTH_URL }}
+        run: |
+          set -euo pipefail
+
+          # ---- 0. Preconditions. Fail before anything is created. ----
+          case "$TARGET" in
+            production) APP="$COOLIFY_APP_UUID_PRODUCTION" ;;
+            staging) APP="$COOLIFY_APP_UUID_STAGING" ;;
+            *) echo "bad target"; exit 1 ;;
+          esac
+          test -n "$APP" || { echo "::error::No Coolify application is defined for $TARGET. Nothing was created."; exit 1; }
+          test -n "${COOLIFY_TOKEN:-}" || { echo "::error::Environment secret COOLIFY_TOKEN is missing. Nothing was created."; exit 1; }
+          test -n "${HEALTH_URL:-}" || { echo "::error::Environment variable HEALTH_URL is missing. Nothing was created."; exit 1; }
+
+          # Token goes to curl through a header file (process substitution), never on the command line.
+          # $1 method, $2 path, $3 "body" to send stdin as the JSON body. Response body goes to stdout.
+          coolify() {
+            local body=()
+            if [ "${3:-}" = "body" ]; then body=(--data-binary @-); fi
+            curl -sS -X "$1" "$COOLIFY_URL/api/v1$2" \
+              -H @<(printf 'Authorization: Bearer %s' "$COOLIFY_TOKEN") \
+              -H 'Accept: application/json' -H 'Content-Type: application/json' "${body[@]}"
+          }
+          # Same, but discards the response body (it can echo env values) and prints only the HTTP code.
+          coolify_code() {
+            local body=()
+            if [ "${3:-}" = "body" ]; then body=(--data-binary @-); fi
+            curl -sS -o /dev/null -w '%{http_code}' -X "$1" "$COOLIFY_URL/api/v1$2" \
+              -H @<(printf 'Authorization: Bearer %s' "$COOLIFY_TOKEN") \
+              -H 'Accept: application/json' -H 'Content-Type: application/json' "${body[@]}"
+          }
+
+          code=$(coolify_code GET "/applications/$APP")
+          test "$code" = "200" || { echo "::error::Coolify rejected the token or application (HTTP $code). Nothing was created."; exit 1; }
+
+          ACCT=$(aws sts get-caller-identity --query Account --output text)
+          echo "::add-mask::$ACCT"
+          RUSER="maskin-keychain-runtime-$TARGET"
+          SMOKE_ALIAS="alias/maskin-keychain-smoke-$TARGET"
+
+          # ---- 1. A user holds at most 2 keys. Fail closed if a stale second key exists. ----
+          KEYS=$(aws iam list-access-keys --user-name "$RUSER" --query 'AccessKeyMetadata[].AccessKeyId' --output text)
+          for k in $KEYS; do echo "::add-mask::$k"; done
+          COUNT=$(wc -w <<<"$KEYS")
+          if [ "$COUNT" -ge 2 ]; then
+            echo "::error::The runtime user already has 2 access keys. A previous rotation did not finish. Resolve by hand, see the runbook."
+            exit 1
+          fi
+          OLD_AK="${KEYS:-}"
+
+          # ---- 2. Create the new key. Mask the instant it is read. ----
+          WROTE=0
+          NEW_AK=""
+          on_exit() {
+            rc=$?
+            if [ "$rc" -ne 0 ] && [ -n "$NEW_AK" ] && [ "$WROTE" -eq 0 ]; then
+              # Nothing consumed the new key yet, so remove it. The old key is untouched.
+              aws iam delete-access-key --user-name "$RUSER" --access-key-id "$NEW_AK" >/dev/null 2>&1 \
+                && echo "removed the unused new key after the failure" || echo "::warning::could not remove the unused new key, remove it by hand"
+            fi
+          }
+          trap on_exit EXIT
+          CREATED=$(aws iam create-access-key --user-name "$RUSER" \
+            --query '[AccessKey.AccessKeyId,AccessKey.SecretAccessKey]' --output text)
+          NEW_AK="${CREATED%%$'\t'*}"
+          NEW_SK="${CREATED##*$'\t'}"
+          echo "::add-mask::$NEW_AK"
+          echo "::add-mask::$NEW_SK"
+          unset CREATED
+          echo "new key created"
+
+          # ---- 3. Verify the new key AS the runtime identity. New keys take a few seconds to propagate. ----
+          # errexit is ignored inside a function that runs in an if, so every line fails explicitly.
+          verify() (
+            unset AWS_SESSION_TOKEN AWS_PROFILE
+            export AWS_ACCESS_KEY_ID="$NEW_AK" AWS_SECRET_ACCESS_KEY="$NEW_SK"
+            ARN=$(aws sts get-caller-identity --query Arn --output text) || exit 1
+            case "$ARN" in *":user/maskin-keychain/$RUSER") ;; *) echo "caller is not the runtime user"; exit 1 ;; esac
+            PT=$(head -c 32 /dev/urandom | base64 -w0) || exit 1
+            CT=$(aws kms encrypt --key-id "$SMOKE_ALIAS" --plaintext "$PT" --query CiphertextBlob --output text) || exit 1
+            BACK=$(aws kms decrypt --ciphertext-blob "$CT" --query Plaintext --output text) || exit 1
+            test "$BACK" = "$PT" || { echo "decrypt returned different bytes"; exit 1; }
+            # The boundary must hold: IAM calls are denied for the runtime identity.
+            if aws iam list-users >/dev/null 2>&1; then echo "iam:ListUsers worked for the runtime user"; exit 9; fi
+            exit 0
+          )
+          ok=0
+          out=""
+          for i in $(seq 1 12); do
+            if out=$(verify 2>&1); then ok=1; break; fi
+            sleep 5
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "$out"
+            echo "::error::The new key failed verification (KMS encrypt and decrypt on the smoke key, IAM denied). Not written anywhere."
+            exit 1
+          fi
+          echo "verified: KMS encrypt and decrypt round trip passed, IAM calls are denied"
+
+          # ---- 4. Write to Coolify. Body built by jq from env on stdin. Bulk PATCH upserts and always sends the value. ----
+          code=$(NEW_AK="$NEW_AK" NEW_SK="$NEW_SK" jq -n '{data: [
+              {key: "AWS_ACCESS_KEY_ID", value: env.NEW_AK, is_preview: false, is_literal: true, is_shown_once: true},
+              {key: "AWS_SECRET_ACCESS_KEY", value: env.NEW_SK, is_preview: false, is_literal: true, is_shown_once: true}
+            ]}' | coolify_code PATCH "/applications/$APP/envs/bulk" body)
+          test "$code" = "201" || { echo "::error::Coolify env write failed (HTTP $code). The new key is removed again."; exit 1; }
+          WROTE=1
+          echo "written to Coolify (HTTP $code)"
+
+          # ---- 5. Redeploy and wait until it is healthy. ----
+          DEPLOY_UUID=$(coolify POST "/deploy?uuid=$APP&force=false" | jq -r '.deployments[0].deployment_uuid // empty')
+          test -n "$DEPLOY_UUID" || { echo "::error::Coolify did not start a deployment. Both keys stay. Old key NOT deleted."; exit 1; }
+          echo "::add-mask::$DEPLOY_UUID"
+          status=""
+          for i in $(seq 1 60); do
+            status=$(coolify GET "/deployments/$DEPLOY_UUID" | jq -r '.status // "unknown"')
+            case "$status" in finished|failed|cancelled-by-user) break ;; esac
+            sleep 10
+          done
+          test "$status" = "finished" || { echo "::error::Deployment ended as '$status'. Both keys stay, old key NOT deleted."; exit 1; }
+          healthy=0
+          for i in $(seq 1 30); do
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$HEALTH_URL")" = "200" ]; then healthy=1; break; fi
+            sleep 10
+          done
+          test "$healthy" -eq 1 || { echo "::error::App not healthy after the redeploy. Both keys stay, old key NOT deleted."; exit 1; }
+          echo "redeploy finished and the app answers 200"
+
+          # ---- 6. Only now delete the old key. ----
+          if [ -n "$OLD_AK" ]; then
+            aws iam delete-access-key --user-name "$RUSER" --access-key-id "$OLD_AK"
+            echo "old key deleted"
+          else
+            echo "no previous key existed, nothing to delete"
+          fi
+          echo "- Rotation ($TARGET): new key verified, written to Coolify, redeploy healthy, old key deleted (none printed)" >> "$GITHUB_STEP_SUMMARY"
