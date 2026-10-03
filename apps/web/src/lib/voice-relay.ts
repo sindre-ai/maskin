@@ -33,6 +33,8 @@ export interface VoiceRelayOptions {
 	channel: ChannelLike
 	openSocket?: (url: string) => SocketLike
 	now?: () => number
+	/** How long the socket may stay connecting before the relay gives up on it. */
+	connectTimeoutMs?: number
 	onConversation?: (conversationId: string) => void
 	onReady?: (info: { persistTranscripts: boolean; conversationId: string | null }) => void
 	onLine?: (line: VoiceTranscriptLine) => void
@@ -54,6 +56,7 @@ export interface RealtimeEvent {
 }
 
 const WS_OPEN = 1
+const DEFAULT_CONNECT_TIMEOUT_MS = 5000
 
 /** The https? URL of the API → the ws(s) URL of a session's control channel. */
 export function buildVoiceEventsUrl(
@@ -139,7 +142,20 @@ export function createVoiceRelay(options: VoiceRelayOptions): VoiceRelay {
 		unanswered.clear()
 	}
 
+	// A socket stuck connecting never fires close or error, so without this the
+	// model would wait forever on a tool call nobody answers.
+	const connectTimer = setTimeout(() => {
+		if (socket.readyState === WS_OPEN || socketFailed) return
+		try {
+			socket.close()
+		} catch {
+			// Already closed.
+		}
+		onSocketDead()
+	}, options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS)
+
 	socket.onopen = () => {
+		clearTimeout(connectTimer)
 		for (const raw of pendingFrames.splice(0)) socket.send(raw)
 	}
 	socket.onmessage = (ev) => {
@@ -170,7 +186,8 @@ export function createVoiceRelay(options: VoiceRelayOptions): VoiceRelay {
 			onConversation?.(msg.conversation_id)
 		}
 	}
-	const onSocketDead = () => {
+	function onSocketDead() {
+		clearTimeout(connectTimer)
 		socketFailed = true
 		pendingFrames.length = 0
 		failUnanswered()
@@ -250,6 +267,7 @@ export function createVoiceRelay(options: VoiceRelayOptions): VoiceRelay {
 			}
 		},
 		close() {
+			clearTimeout(connectTimer)
 			try {
 				socket.close()
 			} catch {

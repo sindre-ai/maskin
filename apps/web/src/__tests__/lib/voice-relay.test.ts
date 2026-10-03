@@ -148,6 +148,56 @@ describe('voice relay: tool round-trip', () => {
 		expect(create).toEqual({ type: 'response.create' })
 	})
 
+	it('fails in-flight and later calls when the socket never finishes connecting', () => {
+		vi.useFakeTimers()
+		try {
+			const h = setup({ socketOpen: false })
+			h.relay.handleRealtimeEvent({
+				type: 'response.function_call_arguments.done',
+				call_id: 'c1',
+				name: 'get_objects',
+				arguments: '{}',
+			})
+			expect(h.toModel()).toHaveLength(0)
+			vi.advanceTimersByTime(5000)
+			expect(h.socket.close).toHaveBeenCalled()
+			const [item, create] = h.toModel()
+			expect(item.item.call_id).toBe('c1')
+			expect(JSON.parse(item.item.output).error_code).toBe('voice_channel_unavailable')
+			expect(create).toEqual({ type: 'response.create' })
+			h.relay.handleRealtimeEvent({
+				type: 'response.function_call_arguments.done',
+				call_id: 'c2',
+				name: 'get_objects',
+				arguments: '{}',
+			})
+			expect(h.toModel()[2].item.call_id).toBe('c2')
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('does not time out a socket that opened in time', () => {
+		vi.useFakeTimers()
+		try {
+			const h = setup({ socketOpen: false })
+			h.socket.readyState = 1
+			h.socket.onopen?.({})
+			h.relay.handleRealtimeEvent({
+				type: 'response.function_call_arguments.done',
+				call_id: 'c1',
+				name: 'get_objects',
+				arguments: '{}',
+			})
+			vi.advanceTimersByTime(60_000)
+			expect(h.socket.close).not.toHaveBeenCalled()
+			expect(h.toModel()).toHaveLength(0)
+			expect(h.frames()).toHaveLength(1)
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
 	it('answers a new call immediately once the socket has failed', () => {
 		const h = setup()
 		h.socket.onerror?.({})
