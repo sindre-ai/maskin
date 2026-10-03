@@ -496,6 +496,12 @@ app.openapi(buyCreditsRoute, async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
 	}
 
+	// The top-up Price is optional config: without it there is nothing to
+	// charge against, so the endpoint is unavailable rather than misconfigured.
+	if (!stripeEnv.priceCreditsCustom) {
+		return c.json(createApiError('NOT_FOUND', 'Credit top-up is not available'), 404)
+	}
+
 	const stripe = getStripeClient(stripeEnv)
 	try {
 		const session = await createCreditCheckoutSession(
