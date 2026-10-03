@@ -1,11 +1,13 @@
 import { generateKeyPairSync, sign } from 'node:crypto'
-import { integrations } from '@maskin/db/schema'
+import { integrations, objects } from '@maskin/db/schema'
+import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { capturePosthogEvent } from '../../lib/analytics/posthog'
 import { encrypt } from '../../lib/crypto'
 import { encodeClientState } from '../../lib/integrations/providers/telnyx/client'
 import { logger } from '../../lib/logger'
 import type { EffectRunner } from '../../lib/outreach/voice/effects'
+import { VOICE_CALL_COMPLETED_KEY } from '../../lib/outreach/voice/posthog-events'
 import telnyxWebhookRoutes, {
 	setEffectRunnerForTests,
 } from '../../routes/integrations-telnyx-webhook'
@@ -304,7 +306,7 @@ describe('voice PostHog events: negative cases', () => {
 		expect(names()).not.toContain('meeting_booked')
 	})
 
-	it('meeting_booked fires once even if the contact is already booked when a second hangup arrives', async () => {
+	it('meeting_booked and call_completed fire once when a second hangup arrives under a new event_id', async () => {
 		const c = await newCall()
 		await c.send('call.initiated')
 		await c.send('call.answered')
@@ -312,6 +314,28 @@ describe('voice PostHog events: negative cases', () => {
 		await c.send('call.hangup', { hangup_cause: 'normal_clearing', duration_s: 80 })
 		await c.send('call.hangup', { hangup_cause: 'normal_clearing', duration_s: 80 })
 		expect(names().filter((e) => e === 'meeting_booked')).toHaveLength(1)
+		expect(names().filter((e) => e === 'call_completed')).toHaveLength(1)
+	})
+
+	it('two concurrent hangups for one call fire call_completed once', async () => {
+		const c = await newCall()
+		await c.send('call.initiated')
+		await c.send('call.answered')
+		const hangup = { hangup_cause: 'normal_clearing', duration_s: 55 }
+		const [a, b] = await Promise.all([c.send('call.hangup', hangup), c.send('call.hangup', hangup)])
+		expect([a.status, b.status]).toEqual([200, 200])
+		expect(names().filter((e) => e === 'call_completed')).toHaveLength(1)
+	})
+
+	it('stamps the completed call id on the contact, so a later call id would fire again', async () => {
+		const c = await newCall({ callId: 'call-ph-stamp' })
+		await c.send('call.initiated')
+		await c.send('call.answered')
+		await c.send('call.hangup', { hangup_cause: 'normal_clearing', duration_s: 12 })
+		const [row] = await db.select().from(objects).where(eq(objects.id, c.contactId))
+		expect((row.metadata as Record<string, unknown>)[VOICE_CALL_COMPLETED_KEY]).toBe(
+			'call-ph-stamp',
+		)
 	})
 
 	it('a hangup for a different call than the contact is on fires no call_completed', async () => {

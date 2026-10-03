@@ -1,3 +1,6 @@
+import type { Database } from '@maskin/db'
+import { objects } from '@maskin/db/schema'
+import { and, eq, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../../analytics/posthog'
 import { logger } from '../../logger'
 import type { ApplyVoiceEventResult } from './apply'
@@ -67,10 +70,58 @@ function capture(event: string, distinctId: string, properties: Record<string, s
 	}
 }
 
+// The id of the call whose call_completed was captured, stamped on the contact. The
+// pilot verdict counts call_completed, and a second hangup for one call can arrive
+// under a new event_id (a Telnyx retry reuses the id, a replay may not), so the
+// event_id claim alone cannot keep the count honest.
+export const VOICE_CALL_COMPLETED_KEY = 'voice_call_completed_call_id'
+
+/**
+ * True for exactly one caller per call id. A conditional jsonb merge (the row is
+ * only touched while the stamp differs from this call id), not read-then-check, so
+ * two concurrent hangups cannot both pass. Fails closed: if the write throws, the
+ * event is skipped and logged rather than risk counting the call twice.
+ */
+async function claimCallCompleted(
+	db: Database,
+	workspaceId: string,
+	contactId: string,
+	callId: string,
+): Promise<boolean> {
+	try {
+		const claimed = await db
+			.update(objects)
+			.set({
+				metadata: sql`COALESCE(${objects.metadata}, '{}'::jsonb) || ${JSON.stringify({ [VOICE_CALL_COMPLETED_KEY]: callId })}::jsonb`,
+				updatedAt: new Date(),
+			})
+			.where(
+				and(
+					eq(objects.id, contactId),
+					eq(objects.workspaceId, workspaceId),
+					eq(objects.type, 'contact'),
+					sql`COALESCE(${objects.metadata}, '{}'::jsonb)->>${VOICE_CALL_COMPLETED_KEY}::text IS DISTINCT FROM ${callId}`,
+				),
+			)
+			.returning({ id: objects.id })
+		return claimed.length > 0
+	} catch (err) {
+		logger.warn('voice posthog call_completed claim failed', {
+			contactId,
+			callId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return false
+	}
+}
+
 export interface VoiceCaptureInput {
 	/** The Telnyx event type that was just applied. */
 	eventType: string
+	workspaceId: string
 	contactId: string
+	/** The Telnyx call the event belongs to (call_control_id). */
+	callId: string
 	/** call.hangup duration_s. */
 	durationS?: number | null
 	result: Extract<ApplyVoiceEventResult, { found: true }>
@@ -81,8 +132,8 @@ export interface VoiceCaptureInput {
  * call_completed and meeting_booked. Distinct id is the contact id. Properties
  * are exactly the spec's and nothing else.
  */
-export function captureVoiceEvents(input: VoiceCaptureInput): void {
-	const { eventType, contactId, durationS, result } = input
+export async function captureVoiceEvents(db: Database, input: VoiceCaptureInput): Promise<void> {
+	const { eventType, workspaceId, contactId, callId, durationS, result } = input
 
 	if (eventType === 'call.initiated' && result.applied) {
 		capture('call_initiated', contactId, {})
@@ -94,8 +145,12 @@ export function captureVoiceEvents(input: VoiceCaptureInput): void {
 
 	// A hangup absorbed by the reducer still ends a connected call (a warm transfer),
 	// so the applied flag is not checked here. A hangup for another call is not this
-	// contact's current call.
-	if (eventType === 'call.hangup' && !result.staleCall) {
+	// contact's current call. Once per call id, whatever the event_id.
+	if (
+		eventType === 'call.hangup' &&
+		!result.staleCall &&
+		(await claimCallCompleted(db, workspaceId, contactId, callId))
+	) {
 		const outcome = callOutcome(result.status, result.metadata)
 		capture('call_completed', contactId, {
 			outcome,
