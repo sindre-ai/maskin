@@ -20,13 +20,7 @@ struct ChatComposer: View {
 	@State private var showPhotos = false
 	@State private var showFiles = false
 	@State private var photoItems: [PhotosPickerItem] = []
-	#if os(iOS)
-	@State private var dictation = Dictation()
-	@State private var dictationBase = ""
-	#endif
-
-	private static let control = MaskinSpace.touchMin
-
+	@State private var listening = false
 	var body: some View {
 		VStack(spacing: MaskinSpace.s4) {
 			if let match = MentionTrigger.find(in: model.text) {
@@ -45,13 +39,6 @@ struct ChatComposer: View {
 					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
 					.onTapGesture { model.notice = nil }
 			}
-			#if os(iOS)
-			if case .unavailable(let message) = dictation.state {
-				Text(message).maskinText(.caption).foregroundStyle(MaskinColor.danger)
-					.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, MaskinSpace.s5)
-					.onTapGesture { dictation.clearError() }
-			}
-			#endif
 		}
 		.animation(MaskinMotion.quick, value: MentionTrigger.find(in: model.text) != nil)
 		.photosPicker(
@@ -79,86 +66,24 @@ struct ChatComposer: View {
 	}
 
 	private var bar: some View {
-		HStack(alignment: .bottom, spacing: MaskinSpace.s4) {
-			Menu {
-				Button { showPhotos = true } label: { Label("Photo", systemImage: "photo") }
-				Button { showFiles = true } label: { Label("File", systemImage: "doc") }
-			} label: {
-				Image(systemName: "plus")
-					.font(.system(size: MaskinFontSize.t15, weight: .semibold))
-					.foregroundStyle(MaskinColor.ink3)
-					.frame(width: Self.control, height: Self.control)
-					.background(MaskinSurface.fill, in: Circle())
-			}
-			.accessibilityLabel("Add photo or file")
-			TextField(placeholder, text: $model.text, axis: .vertical)
-				.lineLimit(1...5)
-				.accessibilityLabel("Message")
-				.maskinText(.body)
-				.foregroundStyle(MaskinColor.ink)
-				.frame(minHeight: Self.control)
-				.focused($focused)
-				.submitLabel(.return)
-			#if os(iOS)
-			if showsMic { micButton } else { sendButton }
-			#else
-			sendButton
-			#endif
-		}
-		.padding(MaskinSpace.s3)
-		.maskinGlass(in: RoundedRectangle(cornerRadius: MaskinRadius.hero + MaskinSpace.s4, style: .continuous))
-	}
-
-	#if os(iOS)
-	/// The mic takes the send button's place while there is nothing to send.
-	private var showsMic: Bool {
-		dictation.isListening
-			|| (model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.attachments.isEmpty)
-	}
-
-	private var micButton: some View {
-		Button {
-			MaskinHaptics.play(.selection)
-			if dictation.isListening {
-				dictation.stop()
-			} else {
-				dictationBase = model.text
-				Task {
-					await dictation.start { transcript in
-						model.text = DictationText.merge(base: dictationBase, transcript: transcript)
-					}
+		ComposerSurface(
+			canSend: model.canSend, showsMic: listening || !model.canSend, onSend: onSend,
+			leading: {
+				Menu {
+					Button { showPhotos = true } label: { Label("Photo", systemImage: "photo") }
+					Button { showFiles = true } label: { Label("File", systemImage: "doc") }
+				} label: {
+					ComposerCircleLabel("plus")
 				}
-			}
-		} label: {
-			Image(systemName: dictation.isListening ? "waveform" : "mic")
-				.symbolEffect(.pulse, isActive: dictation.isListening)
-				.frame(width: Self.control, height: Self.control)
-				.foregroundStyle(dictation.isListening ? MaskinColor.dangerMic : MaskinColor.ink3)
-		}
-		.buttonStyle(.plain)
-		.accessibilityLabel(dictation.isListening ? "Stop dictation" : "Start dictation")
-	}
-	#endif
-
-	private var sendButton: some View {
-		Button {
-			#if os(iOS)
-			if dictation.isListening { dictation.stop() }
-			#endif
-			MaskinHaptics.play(.light)
-			onSend()
-		} label: {
-			Image(systemName: "arrow.up")
-				.font(.system(size: MaskinFontSize.t15, weight: .bold))
-				.foregroundStyle(MaskinSurface.onInverse)
-				.frame(width: Self.control, height: Self.control)
-				.background(MaskinSurface.inverse, in: Circle())
-				.opacity(model.canSend ? 1 : 0.35)
-		}
-		.buttonStyle(.plain)
-		.disabled(!model.canSend)
-		.keyboardShortcut(.return, modifiers: .command)
-		.accessibilityLabel("Send")
-		.accessibilityHint(model.sendBlocker ?? "")
+				.accessibilityLabel("Add photo or file")
+			},
+			field: {
+				TextField(placeholder, text: $model.text, axis: .vertical)
+					.lineLimit(1...6)
+					.accessibilityLabel("Message")
+					.focused($focused)
+					.submitLabel(.return)
+			},
+			mic: { DictationButton(text: $model.text, listening: $listening) })
 	}
 }
