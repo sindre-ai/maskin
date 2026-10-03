@@ -108,6 +108,8 @@ services:
       GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET:-}
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
+      # Empty reads as unset: the Unipile redirect base and the dialer webhook URL both fall back.
+      MASKIN_PUBLIC_URL: ${MASKIN_PUBLIC_URL:-}
       WEBHOOK_BASE_URL: ${WEBHOOK_BASE_URL:-}
     depends_on:
       postgres:

@@ -168,6 +168,43 @@ describe('POST /api/integrations/linkedin-unipile/connect', () => {
 		)
 	})
 
+	it.each([
+		['unset', undefined, 'http://localhost:3000'],
+		['empty', '', 'http://localhost:3000'],
+		['set with a trailing slash', 'https://api.example.com/', 'https://api.example.com'],
+	])(
+		'builds the redirect_uri from MASKIN_PUBLIC_URL when it is %s',
+		async (_label, value, base) => {
+			if (value === undefined) {
+				// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+				delete process.env.MASKIN_PUBLIC_URL
+			} else {
+				process.env.MASKIN_PUBLIC_URL = value
+			}
+			const routes = await importRoutes()
+			const { app, mockResults } = createTestApp(
+				routes,
+				'/api/integrations/linkedin-unipile',
+				ACTOR_ID,
+			)
+			mockResults.selectQueue = [[]]
+			mockResults.insert = [{ id: INTEGRATION_ID }]
+
+			const res = await app.request(
+				jsonPost(
+					'/api/integrations/linkedin-unipile/connect',
+					{},
+					{ 'x-workspace-id': WORKSPACE_ID },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const linkCall = mock.inbox().find((c) => c.path === '/v2/auth/link')
+			const linkBody = linkCall?.body as Record<string, unknown>
+			expect(linkBody.redirect_uri).toBe(`${base}/api/integrations/linkedin-unipile/callback`)
+		},
+	)
+
 	it('reuses an existing non-connected row instead of inserting a duplicate', async () => {
 		const routes = await importRoutes()
 		const { app, mockResults, calls } = createTestApp(
