@@ -542,6 +542,40 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		).toBe(true)
 	})
 
+	// (c2) A session whose status is already 'running' but whose session_state
+	// never advanced is alive, not boot-stalled. Regression for sessions failed
+	// as startup_stalled (~415s in 'starting') while their heartbeats still
+	// arrived: the reaper heals the state instead of settling the row.
+	it.each(['starting', 'queued'] as const)(
+		'a running row stuck in session_state=%s past BOOT_STALL_MS is healed to running, not failed',
+		async (staleState) => {
+			const sevenMinAgo = new Date(Date.now() - 7 * 60 * 1000)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				sessionState: staleState,
+				stateEnteredAt: sevenMinAgo,
+				startedAt: sevenMinAgo,
+				containerId: 'sandbox-live',
+				timeoutAt: null,
+			})
+
+			const manager = await tickReaper()
+			try {
+				// no-op
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('running')
+			expect(row?.sessionState).toBe('running')
+			expect(row?.completedAt).toBeNull()
+
+			const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+			expect(eventRows.some((e) => e.action === 'session_failed')).toBe(false)
+		},
+	)
+
 	// (d) A row in session_state='queued' past 2 minutes with a stale (or
 	// null) driver_heartbeat_at is re-fired via _driveToRunning() — proof
 	// that the reaper distinguishes a dead-driver rescue from a rightfully-
