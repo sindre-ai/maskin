@@ -139,12 +139,42 @@ describe('sendVoiceFollowupEmail', () => {
 		expect(arg.text).not.toContain('Hej')
 	})
 
-	it('renders the Danish link lead-in when a calendar link is passed', async () => {
+	it('renders the Danish join lead-in, not a pick-a-time line, when a link is passed', async () => {
 		voiceSend.mockResolvedValue({ data: { id: 'email-6' }, error: null })
 		await sendVoiceFollowupEmail({ ...base, calendarLink: 'https://cal.example/pia' })
 		const arg = voiceSend.mock.calls[0][0]
-		expect(arg.text).toContain('Her kan du vælge et tidspunkt, der passer dig:')
+		expect(arg.text).toContain('Du kan deltage i mødet her:')
+		expect(arg.html).toContain('Du kan deltage i mødet her:')
 		expect(arg.text).toContain('https://cal.example/pia')
+		expect(arg.text).not.toContain('vælge et tidspunkt')
+		expect(arg.html).not.toContain('vælge et tidspunkt')
+	})
+
+	it('renders the English join lead-in, not a pick-a-time line, when a link is passed', async () => {
+		voiceSend.mockResolvedValue({ data: { id: 'email-8' }, error: null })
+		await sendVoiceFollowupEmail({
+			...base,
+			language: 'en',
+			calendarLink: 'https://cal.example/pia',
+		})
+		const arg = voiceSend.mock.calls[0][0]
+		expect(arg.text).toContain('You can join the meeting here:')
+		expect(arg.html).toContain('You can join the meeting here:')
+		expect(arg.text).toContain('https://cal.example/pia')
+		expect(arg.text).not.toContain('pick a time')
+		expect(arg.html).not.toContain('pick a time')
+	})
+
+	it('renders no link lead-in in either language when no link is passed', async () => {
+		voiceSend.mockResolvedValue({ data: { id: 'email-9' }, error: null })
+		await sendVoiceFollowupEmail(base)
+		await sendVoiceFollowupEmail({ ...base, language: 'en' })
+		for (const [arg] of voiceSend.mock.calls) {
+			expect(arg.text).not.toContain('deltage i mødet')
+			expect(arg.text).not.toContain('join the meeting')
+			expect(arg.html).not.toContain('deltage i mødet')
+			expect(arg.html).not.toContain('join the meeting')
+		}
 	})
 
 	it('skips the send when compliance_flag is disclosure_missing', async () => {
