@@ -15,7 +15,7 @@
  * no-session-start-outside-lifecycle.guard.test.ts. A second guard test
  * (session-lifecycle.guard.test.ts) pins the terminal-status invariant.
  */
-import { and, eq, notInArray, sql } from 'drizzle-orm'
+import { and, eq, ne, notInArray, sql } from 'drizzle-orm'
 
 import type { Database } from '@maskin/db'
 import { objects, sessions } from '@maskin/db'
@@ -372,10 +372,15 @@ export async function _driveToRunning(sessionId: string): Promise<void> {
 	// (§16.2) measures state_entered_at from this write. A driver crash after
 	// this point leaves state_entered_at pointing at a real starting instant
 	// that the reaper can compare against BOOT_STALL_MS.
+	// A row that went terminal while this driver was queued must not be pulled
+	// back to 'starting': nothing would ever settle it again, so the reaper would
+	// redo it every tick.
 	await db
 		.update(sessions)
 		.set({ sessionState: 'starting', stateEnteredAt: new Date(), driverHeartbeatAt: new Date() })
-		.where(eq(sessions.id, sessionId))
+		.where(
+			and(eq(sessions.id, sessionId), notInArray(sessions.status, [...TRULY_TERMINAL_STATUSES])),
+		)
 		.catch((err) => {
 			logger.warn('_driveToRunning failed to enter starting state', {
 				sessionId,
@@ -404,7 +409,9 @@ export async function _driveToRunning(sessionId: string): Promise<void> {
 		await db
 			.update(sessions)
 			.set({ sessionState: 'running', stateEnteredAt: new Date(), driverHeartbeatAt: null })
-			.where(eq(sessions.id, sessionId))
+			.where(
+				and(eq(sessions.id, sessionId), notInArray(sessions.status, [...TRULY_TERMINAL_STATUSES])),
+			)
 			.catch((err) => {
 				logger.warn('_driveToRunning failed to enter running state', {
 					sessionId,
@@ -593,12 +600,9 @@ const TERMINAL_STATUS_BY_KIND: Record<TerminalOutcomeKind, FinalStatus> = {
  * still eligible to be archived to `completed` (see session-manager.ts's
  * 7-day archival pass), and the CAS below already lists exactly these four.
  */
-const TRULY_TERMINAL_STATUS_SET: ReadonlySet<string> = new Set([
-	'completed',
-	'failed',
-	'timeout',
-	'user_stopped',
-])
+export const TRULY_TERMINAL_STATUSES = ['completed', 'failed', 'timeout', 'user_stopped'] as const
+
+const TRULY_TERMINAL_STATUS_SET: ReadonlySet<string> = new Set(TRULY_TERMINAL_STATUSES)
 
 /**
  * Domain-visible `events.action` written by settle for each kind. Matches
@@ -989,6 +993,22 @@ export async function settleSession(
 				})
 			})
 		})
+	} else {
+		// Already terminal, so the transaction above is skipped — but the row may
+		// still carry a stale session_state (a writer that predates the stamp, or
+		// a lost write). Left as is, the reaper keeps selecting it every tick.
+		// Best-effort: the terminal status is already correct, so a failure here
+		// must not turn this settle into a throw.
+		await deps.db
+			.update(sessions)
+			.set({ sessionState: 'done', stateEnteredAt: new Date() })
+			.where(and(eq(sessions.id, sessionId), ne(sessions.sessionState, 'done')))
+			.catch((err) => {
+				logger.warn('settleSession: failed to stamp session_state on already-terminal row', {
+					sessionId,
+					error: String(err),
+				})
+			})
 	}
 
 	// The eviction inside `recordEvent` runs before the settle transaction
