@@ -458,6 +458,9 @@ targets:
       - path: Apps/MaskinWatch
         excludes: [Info.plist]
       - path: Apps/Shared
+      # The iPhone app's notification-action runner, shared so a decision tapped on a watch alert
+      # is carried out by the same code.
+      - path: Apps/Maskin/NotificationActionRunner.swift
     dependencies:
       - package: MaskinKit
         product: MaskinCore
