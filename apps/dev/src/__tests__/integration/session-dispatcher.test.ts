@@ -209,4 +209,61 @@ describe('SessionDispatcher.dispatch — sticky retry Integration', () => {
 		expect(updated.agentServerId).toBe(fresh.id)
 		expect(updated.status).toBe('running')
 	})
+
+	/**
+	 * markDispatched used to guard on status NOT IN ('completed','failed'), so a
+	 * row that was paused (or timed out) while startSession was in flight was
+	 * resurrected to running, and a terminal row was left as-is while the
+	 * sandbox startSession had just created kept running with no owner.
+	 */
+	async function dispatchWhileStatusChanges(newStatus: string) {
+		await insertServer({ url: 'http://srv:3001', max: 10 })
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'starting',
+			agentServerId: null,
+		})
+		const stopSession = vi.fn(async () => ({ stopped: 'sandbox-stopped' as const }))
+		const startSession = vi.fn(async (req: StartSessionRequest) => {
+			await db.update(sessions).set({ status: newStatus }).where(eq(sessions.id, session.id))
+			return {
+				sessionId: req.sessionId,
+				sandboxName: `sb-${req.sessionId}`,
+				connection: { host: 'agent.test', port: 3001 },
+			}
+		})
+		const client = { startSession, stopSession, postJson: vi.fn() } as unknown as AgentServerClient
+		const dispatcher = new SessionDispatcher({
+			db,
+			buildStartRequest: async (sessionId) => ({
+				sessionId,
+				image: 'agent-base:latest',
+				env: { SESSION_ID: sessionId },
+			}),
+			clientFactory: () => client,
+		})
+		const result = await dispatcher.dispatch(session.id, `dispatch:${session.id}`)
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		return { result, row, stopSession, sessionId: session.id }
+	}
+
+	it('does not resurrect a paused session to running and does not stop its sandbox', async () => {
+		const { result, row, stopSession, sessionId } = await dispatchWhileStatusChanges('paused')
+
+		expect(result.kind).toBe('permanent_failure')
+		expect(row.status).toBe('paused')
+		expect(row.containerId).not.toBe(`sb-${sessionId}`)
+		expect(stopSession).not.toHaveBeenCalled()
+	})
+
+	it('stops the orphaned sandbox when the session was already completed', async () => {
+		const { result, row, stopSession, sessionId } = await dispatchWhileStatusChanges('completed')
+
+		expect(result.kind).toBe('permanent_failure')
+		expect(row.status).toBe('completed')
+		expect(row.containerId).not.toBe(`sb-${sessionId}`)
+		expect(stopSession).toHaveBeenCalledWith(sessionId, {
+			reason: 'stop',
+			source: 'dispatch-queue',
+		})
+	})
 })
