@@ -54,6 +54,8 @@ public final class ChatStore {
 	}
 	/// Told after the server accepted a read cursor, so the list's unread badge clears too.
 	@ObservationIgnored public var onMarkedRead: (@MainActor (String, Int) -> Void)?
+	/// Told after every successful session refresh (feeds the Live Activity).
+	@ObservationIgnored public var onSessionsRefreshed: (@MainActor ([ChatAgentSession]) -> Void)?
 
 	@ObservationIgnored let api: any ChatAPI
 	@ObservationIgnored let queue: ChatSendQueue
@@ -396,6 +398,7 @@ public final class ChatStore {
 		agentSessions = sessions.sorted {
 			($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast)
 		}
+		onSessionsRefreshed?(agentSessions)
 	}
 
 	// MARK: - Send
