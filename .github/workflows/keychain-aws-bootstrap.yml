@@ -55,14 +55,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ALIAS="alias/maskin-keychain-smoke-$TARGET"
+          ALIAS="alias/maskin-keychain-$TARGET-smoke"
           if out=$(aws kms describe-key --key-id "$ALIAS" 2>&1 >/dev/null); then
             echo "smoke key already exists, skipping create"
           elif grep -q NotFoundException <<<"$out"; then
             # The tag goes in the create call itself. Never create untagged and tag afterwards:
             # the tag condition on CreateAlias and the deny on TagResource would both refuse it.
             if ! KEY_ID=$(aws kms create-key --description "maskin-keychain smoke key ($TARGET)" \
-                --tags TagKey=maskin-keychain,TagValue=true --query KeyMetadata.KeyId --output text 2>&1); then
+                --tags TagKey=maskin-keychain,TagValue="$TARGET" --query KeyMetadata.KeyId --output text 2>&1); then
               echo "$KEY_ID"
               echo "::error::SHAPE: tag-at-create REFUSED with the tagging deny in place. CTO decision needed, fallback is in the policy draft section 2."
               exit 1
@@ -82,11 +82,18 @@ jobs:
             exit 1
           fi
           if aws kms create-key --region eu-west-1 --description "must be refused (region)" \
-              --tags TagKey=maskin-keychain,TagValue=true >/dev/null 2>&1; then
+              --tags TagKey=maskin-keychain,TagValue="$TARGET" >/dev/null 2>&1; then
             echo "::error::CreateKey in eu-west-1 SUCCEEDED. The bootstrap policy is wrong. A stray key now exists, tell the CTO."
             exit 1
           fi
-          echo "CreateKey without the tag and CreateKey outside eu-central-1 are both refused"
+          # The tag value is the environment. A key tagged for the other environment must be refused too.
+          if [ "$TARGET" = staging ]; then OTHER=production; else OTHER=staging; fi
+          if aws kms create-key --description "must be refused (other environment tag)" \
+              --tags TagKey=maskin-keychain,TagValue="$OTHER" >/dev/null 2>&1; then
+            echo "::error::CreateKey with the $OTHER tag SUCCEEDED. The bootstrap policy is wrong. A stray key now exists, tell the CTO."
+            exit 1
+          fi
+          echo "CreateKey without the tag, with the other environment's tag value, and outside eu-central-1 are all refused"
 
       - name: CloudTrail with a separate log bucket
         shell: bash
@@ -152,7 +159,7 @@ jobs:
             echo "::error::unexpected error reading the runtime user"
             exit 1
           fi
-          sed "s/__ACCOUNT_ID__/$ACCT/g; s/__WORM_BUCKET__/$WORM/g" infra/keychain-aws/runtime-user-policy.json.tpl > "$RUNNER_TEMP/runtime-policy.json"
+          sed "s/__ACCOUNT_ID__/$ACCT/g; s/__WORM_BUCKET__/$WORM/g; s/__TARGET__/$TARGET/g" infra/keychain-aws/runtime-user-policy.json.tpl > "$RUNNER_TEMP/runtime-policy.json"
           jq empty "$RUNNER_TEMP/runtime-policy.json"
           aws iam put-user-policy --user-name "$RUSER" --policy-name maskin-keychain-runtime \
             --policy-document "file://$RUNNER_TEMP/runtime-policy.json"
