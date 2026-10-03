@@ -8,7 +8,7 @@
       "Resource": "arn:aws:kms:eu-central-1:__ACCOUNT_ID__:key/*",
       "Condition": {
         "ForAnyValue:StringLike": {
-          "kms:ResourceAliases": "alias/maskin-keychain-*"
+          "kms:ResourceAliases": "alias/maskin-keychain-__TARGET__-*"
         }
       }
     },
@@ -19,7 +19,7 @@
       "Resource": "*",
       "Condition": {
         "StringEquals": {
-          "aws:RequestTag/maskin-keychain": "true",
+          "aws:RequestTag/maskin-keychain": "__TARGET__",
           "aws:RequestedRegion": "eu-central-1"
         }
       }
@@ -28,7 +28,7 @@
       "Sid": "KmsAliasNamesUnderPrefix",
       "Effect": "Allow",
       "Action": "kms:CreateAlias",
-      "Resource": "arn:aws:kms:eu-central-1:__ACCOUNT_ID__:alias/maskin-keychain-*"
+      "Resource": "arn:aws:kms:eu-central-1:__ACCOUNT_ID__:alias/maskin-keychain-__TARGET__-*"
     },
     {
       "Sid": "KmsAliasOnTaggedKeysOnly",
@@ -37,7 +37,7 @@
       "Resource": "arn:aws:kms:eu-central-1:__ACCOUNT_ID__:key/*",
       "Condition": {
         "StringEquals": {
-          "aws:ResourceTag/maskin-keychain": "true"
+          "aws:ResourceTag/maskin-keychain": "__TARGET__"
         }
       }
     },
@@ -65,8 +65,8 @@
       "Action": ["kms:TagResource", "kms:UntagResource"],
       "Resource": "arn:aws:kms:eu-central-1:__ACCOUNT_ID__:key/*",
       "Condition": {
-        "Null": {
-          "aws:ResourceTag/maskin-keychain": "true"
+        "StringNotEquals": {
+          "aws:ResourceTag/maskin-keychain": "__TARGET__"
         }
       }
     },
