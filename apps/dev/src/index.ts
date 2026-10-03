@@ -10,6 +10,7 @@ import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
+import { VoiceDialerJob } from './jobs/voice-dialer'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import {
@@ -225,6 +226,12 @@ const viesSchedulerJob = new ViesSchedulerJob(db)
 viesSchedulerJob.start()
 logger.info('VIES scheduler job started')
 
+// Voice dialer (bet/5b8e-voice-outreach): ~10s tick inside the Copenhagen workday
+// window. Registers unconditionally; the dial itself is behind voice-outreach-autosend.
+const voiceDialerJob = new VoiceDialerJob(db, storageProvider)
+voiceDialerJob.start()
+logger.info('Voice dialer job started')
+
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
@@ -347,6 +354,7 @@ const shutdown = async (signal: string) => {
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
+	voiceDialerJob.stop()
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.

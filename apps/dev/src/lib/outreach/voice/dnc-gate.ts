@@ -176,7 +176,7 @@ function refuse(
 	return stamp ? { pass: false, check, reason, stamp } : { pass: false, check, reason }
 }
 
-function inDialWindow(now: Date): boolean {
+export function inDialWindow(now: Date): boolean {
 	const p = copenhagenParts(now)
 	const dow = new Date(Date.UTC(p.year, p.month - 1, p.day)).getUTCDay()
 	if (dow === 0 || dow === 6) return false
