@@ -79,3 +79,4 @@ filter:
     - /api/marketplace/items/{id}/uninstall
     - /api/conversations/{id}/participants/{actorId}
     - /api/briefing/spoken
+    - /api/billing/usage

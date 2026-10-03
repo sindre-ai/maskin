@@ -30,6 +30,9 @@ public protocol MembersAPI: Sendable {
 	func setRole(workspaceId: String, actorId: String, role: MemberRole, idempotencyKey: String)
 		async throws
 	func remove(workspaceId: String, actorId: String, idempotencyKey: String) async throws
+	/// `POST …/members`: adds an existing actor by id.
+	func add(workspaceId: String, actorId: String, role: MemberRole, idempotencyKey: String)
+		async throws
 }
 
 public protocol IntegrationsAPI: Sendable {
@@ -46,4 +49,28 @@ public protocol APIKeysAPI: Sendable {
 
 public protocol SkillsAPI: Sendable {
 	func list(workspaceId: String) async throws -> [WorkspaceSkill]
+	/// `GET …/skills/{name}`: the skill's markdown body.
+	func content(workspaceId: String, name: String) async throws -> String
+	/// `POST …/skills`.
+	func create(workspaceId: String, name: String, content: String, idempotencyKey: String)
+		async throws
+	/// `PUT …/skills/{name}`.
+	func update(workspaceId: String, name: String, content: String, idempotencyKey: String)
+		async throws
+	/// `DELETE …/skills/{name}`.
+	func delete(workspaceId: String, name: String, idempotencyKey: String) async throws
+}
+
+public protocol BillingAPI: Sendable {
+	/// `GET /api/billing/usage`.
+	func usage() async throws -> BillingUsage
+}
+
+public protocol SchemaAPI: Sendable {
+	/// The selected workspace's schema settings, from `GET /api/workspaces`.
+	func load() async throws -> WorkspaceSchema
+	/// `PATCH /api/workspaces/{id}` with only the schema keys that changed. The server merges
+	/// settings per top-level key, so each key sent here replaces that key whole.
+	func save(_ schema: WorkspaceSchema, keys: Set<WorkspaceSchema.Key>, idempotencyKey: String)
+		async throws
 }

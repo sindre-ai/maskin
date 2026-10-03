@@ -6,6 +6,7 @@ import SwiftUI
 struct ProfileView: View {
 	@State private var store: ProfileStore
 	@State private var name: String
+	@State private var copiedId = false
 
 	init(store: ProfileStore) {
 		_store = State(initialValue: store)
@@ -28,10 +29,24 @@ struct ProfileView: View {
 					Text(email).foregroundStyle(MaskinColor.ink3)
 				}
 			}
+			Section {
+				Button {
+					SecretPasteboard.copy(store.profile.actorId)
+					copiedId = true
+				} label: {
+					SettingsRow(
+						symbol: "doc.on.doc", title: copiedId ? "Copied" : "Copy my ID")
+				}
+			} header: {
+				Text("Share")
+			} footer: {
+				Text("Send this ID to a workspace admin so they can add you as a member.")
+			}
 			if let error = store.error {
 				Section { FormError(error) }
 			}
 		}
+		.settingsListStyle()
 		.navigationTitle("Profile")
 		#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
