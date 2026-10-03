@@ -167,6 +167,17 @@ struct ActivityParserTests {
 		#expect(turn.result?.text.count == ActivityParser.maxResultText)
 	}
 
+	@Test("partial is read when present and false when absent")
+	func partialFlag() throws {
+		let json =
+			#"{"session_id":"s","turns":[{"message_id":1,"partial":true,"steps":[]},{"message_id":2,"steps":[]}]}"#
+		let turns = try parse(json).turns
+		#expect(turns[0].partial)
+		#expect(turns[0].hasHiddenEarlierSteps)
+		#expect(!turns[1].partial)
+		#expect(!turns[1].hasHiddenEarlierSteps)
+	}
+
 	@Test("summary pluralizes and shows duration")
 	func summary() {
 		let start = Date(timeIntervalSince1970: 1000)
