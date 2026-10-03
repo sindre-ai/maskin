@@ -1,13 +1,8 @@
 import type { LLMAdapter } from './adapter'
 import { AnthropicAdapter } from './anthropic'
 import { OpenAIAdapter } from './openai'
-import { withSecretGuard } from './secret-guard'
 
 export function createLLMAdapter(provider: string, config: Record<string, unknown>): LLMAdapter {
-	return withSecretGuard(createRawAdapter(provider, config))
-}
-
-function createRawAdapter(provider: string, config: Record<string, unknown>): LLMAdapter {
 	switch (provider) {
 		case 'anthropic':
 			return new AnthropicAdapter(config.api_key as string, config.base_url as string | undefined)
