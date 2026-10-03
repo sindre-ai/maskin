@@ -41,6 +41,12 @@ private let doneTurn = ActivityTurn(
 		return step
 	})
 
+private let partialTurn: ActivityTurn = {
+	var turn = doneTurn
+	turn.partial = true
+	return turn
+}()
+
 private let questions = [
 	ChatQuestionItem(
 		index: 0, header: "Rollout", question: "How should the onboarding change ship?", multiSelect: false,
@@ -77,7 +83,7 @@ private func render<V: View>(_ view: V, width: CGFloat, dark: Bool, name: String
 @Suite("Activity trace snapshots")
 @MainActor
 struct ActivityTraceSnapshotTests {
-	private static let widths: [CGFloat] = [375, 768]
+	private static let widths: [CGFloat] = [375, 768, 1024]
 
 	@Test("live trace, finished summary, expanded trace and failed turn render in both schemes")
 	func traces() throws {
@@ -96,6 +102,9 @@ struct ActivityTraceSnapshotTests {
 				try render(
 					FinishedTraceView(turn: failedTurn, expanded: true), width: width, dark: dark,
 					name: "failed")
+				try render(
+					FinishedTraceView(turn: partialTurn, expanded: true), width: width, dark: dark,
+					name: "partial-expanded")
 			}
 		}
 	}
@@ -112,6 +121,22 @@ struct ActivityTraceSnapshotTests {
 					QuestionOptionsView(questions: questions, answers: nil, onSubmit: { _ in }),
 					width: width, dark: dark, name: "decision-open")
 			}
+		}
+	}
+
+	@Test("the More-menu rows render at phone width without clipping")
+	func menuRows() throws {
+		// The toolbar Menu popup and the glass composer bar are system-drawn and come out blank or
+		// as placeholders under ImageRenderer, so this renders the same rows as plain labels.
+		for dark in [false, true] {
+			try render(
+				VStack(alignment: .leading, spacing: MaskinSpace.s6) {
+					Label("Rename", systemImage: "pencil")
+					Label("Read replies aloud", systemImage: "speaker.wave.2")
+					Label("Routines", systemImage: "arrow.triangle.2.circlepath")
+					Label("Archive", systemImage: "archivebox")
+				},
+				width: 375, dark: dark, name: "more-menu-rows")
 		}
 	}
 
