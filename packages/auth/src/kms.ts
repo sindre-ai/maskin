@@ -135,11 +135,14 @@ function parseKek(contents: string, path: string): Buffer {
 export interface AwsKmsProviderOptions {
 	db: Database
 	region?: string
+	/** Segment of the alias and value of the maskin-keychain tag. */
+	environment: KeychainEnv
 	/** Injected in tests; defaults to a real client for `region`. */
 	client?: KMSClient
 }
 
-const aliasFor = (workspaceId: string) => `alias/maskin-keychain-${workspaceId}`
+const aliasFor = (environment: KeychainEnv, workspaceId: string) =>
+	`alias/maskin-keychain-${environment}-${workspaceId}`
 
 function awsErrorName(err: unknown): string {
 	return err instanceof Error ? err.name : ''
@@ -147,18 +150,22 @@ function awsErrorName(err: unknown): string {
 
 /**
  * Production provider. One KMS key per workspace behind the alias
- * alias/maskin-keychain-<workspaceId>, provisioned on the workspace's first
- * write. The workspace id travels as KMS encryption context on every call, so a
+ * alias/maskin-keychain-<environment>-<workspaceId>, provisioned on the
+ * workspace's first write. The key is created with the tag maskin-keychain set
+ * to the environment (staging or production), which the runtime IAM boundary
+ * of that environment checks. The workspace id travels as KMS encryption context on every call, so a
  * wrapped DEK only unwraps for its own workspace and CloudTrail records which
  * workspace each Decrypt was for.
  */
 export class AwsKmsProvider implements KmsProvider {
 	private readonly client: KMSClient
 	private readonly db: Database
+	private readonly environment: KeychainEnv
 	private readonly provisioning = new Map<string, Promise<string>>()
 
 	constructor(opts: AwsKmsProviderOptions) {
 		this.db = opts.db
+		this.environment = opts.environment
 		this.client = opts.client ?? new KMSClient({ region: opts.region })
 	}
 
@@ -239,7 +246,7 @@ export class AwsKmsProvider implements KmsProvider {
 		const existing = await this.lookupAlias(workspaceId)
 		if (existing) return existing
 
-		const alias = aliasFor(workspaceId)
+		const alias = aliasFor(this.environment, workspaceId)
 		try {
 			await this.client.send(new DescribeKeyCommand({ KeyId: alias }))
 		} catch (err) {
@@ -248,7 +255,10 @@ export class AwsKmsProvider implements KmsProvider {
 				.send(
 					new CreateKeyCommand({
 						Description: `Maskin Keychain KEK for workspace ${workspaceId}`,
-						Tags: [{ TagKey: 'maskin-workspace-id', TagValue: workspaceId }],
+						Tags: [
+							{ TagKey: 'maskin-keychain', TagValue: this.environment },
+							{ TagKey: 'maskin-workspace-id', TagValue: workspaceId },
+						],
 					}),
 				)
 				.catch((e) => {
@@ -276,6 +286,26 @@ export class AwsKmsProvider implements KmsProvider {
 
 export const KEYCHAIN_KMS_VALUES = ['aws-kms', 'local-file'] as const
 export type KeychainKmsKind = (typeof KEYCHAIN_KMS_VALUES)[number]
+
+export const KEYCHAIN_ENV_VALUES = ['staging', 'production'] as const
+export type KeychainEnv = (typeof KEYCHAIN_ENV_VALUES)[number]
+
+/**
+ * Parses KEYCHAIN_ENV, the environment that scopes KMS aliases and key tags.
+ * Needed only under aws-kms; unset or unknown throws, so startup fails instead
+ * of creating keys the environment's IAM boundary would refuse.
+ */
+export function resolveKeychainEnv(
+	env: Record<string, string | undefined> = process.env,
+): KeychainEnv {
+	const raw = env.KEYCHAIN_ENV?.trim()
+	if (raw && (KEYCHAIN_ENV_VALUES as readonly string[]).includes(raw)) return raw as KeychainEnv
+	throw new KmsConfigError(
+		raw
+			? `Unknown KEYCHAIN_ENV value "${raw}" (expected one of: ${KEYCHAIN_ENV_VALUES.join(', ')})`
+			: `KEYCHAIN_ENV must be set when KEYCHAIN_KMS=aws-kms (one of: ${KEYCHAIN_ENV_VALUES.join(', ')})`,
+	)
+}
 
 /**
  * Parses KEYCHAIN_KMS. An unknown value throws, which is how the process fails
@@ -306,6 +336,12 @@ export function createKmsProvider(
 	env: Record<string, string | undefined> = process.env,
 ): KmsProvider {
 	const kind = resolveKeychainKmsKind(env)
-	if (kind === 'aws-kms') return new AwsKmsProvider({ db, region: env.AWS_REGION })
+	if (kind === 'aws-kms') {
+		return new AwsKmsProvider({
+			db,
+			region: env.AWS_REGION,
+			environment: resolveKeychainEnv(env),
+		})
+	}
 	return new LocalFileKmsProvider(env.KEYCHAIN_LOCAL_KEK_FILE?.trim() || DEFAULT_KEK_FILE)
 }

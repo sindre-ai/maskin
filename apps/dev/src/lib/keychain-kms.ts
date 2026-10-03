@@ -1,4 +1,9 @@
-import { type KmsProvider, createKmsProvider, resolveKeychainKmsKind } from '@maskin/auth/kms'
+import {
+	type KmsProvider,
+	createKmsProvider,
+	resolveKeychainEnv,
+	resolveKeychainKmsKind,
+} from '@maskin/auth/kms'
 import type { Database } from '@maskin/db'
 import { logger } from './logger'
 
@@ -12,7 +17,7 @@ export function getKmsProvider(db: Database): KmsProvider {
 
 /**
  * Called once at boot. An unknown KEYCHAIN_KMS value throws, so the process
- * fails to start. Unset is allowed here (nothing reads KMS until the first
+ * fails to start, and so does aws-kms with KEYCHAIN_ENV unset or unknown. Unset is allowed here (nothing reads KMS until the first
  * envelope write), and warned about in production, where reading it later
  * would throw.
  */
@@ -27,7 +32,7 @@ export function assertKeychainKmsConfig(
 		}
 		return
 	}
-	resolveKeychainKmsKind(env)
+	if (resolveKeychainKmsKind(env) === 'aws-kms') resolveKeychainEnv(env)
 }
 
 /** For tests. */

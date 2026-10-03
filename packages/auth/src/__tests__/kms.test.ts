@@ -20,6 +20,7 @@ import {
 	KmsDecryptError,
 	LocalFileKmsProvider,
 	createKmsProvider,
+	resolveKeychainEnv,
 	resolveKeychainKmsKind,
 } from '../kms'
 
@@ -130,6 +131,7 @@ describe('AwsKmsProvider (mocked KMS client)', () => {
 		const kms = new AwsKmsProvider({
 			db: store.db,
 			client: new KMSClient({ region: 'eu-central-1' }),
+			environment: 'staging',
 		})
 		return { kms, ...store }
 	}
@@ -144,10 +146,16 @@ describe('AwsKmsProvider (mocked KMS client)', () => {
 		const { kms, rows } = provider()
 		const wrapped = await kms.encrypt(WS_A, fakeDek())
 		expect(Buffer.from(wrapped, 'base64').toString()).toBe('wrapped-by-kms')
-		expect(rows.get(WS_A)?.kekAlias).toBe(`alias/maskin-keychain-${WS_A}`)
+		expect(rows.get(WS_A)?.kekAlias).toBe(`alias/maskin-keychain-staging-${WS_A}`)
 		expect(kmsMock.commandCalls(CreateAliasCommand)[0].args[0].input).toMatchObject({
-			AliasName: `alias/maskin-keychain-${WS_A}`,
+			AliasName: `alias/maskin-keychain-staging-${WS_A}`,
 			TargetKeyId: 'key-1',
+		})
+
+		// The key is tagged with the environment value the IAM boundary checks.
+		expect(kmsMock.commandCalls(CreateKeyCommand)[0].args[0].input.Tags).toContainEqual({
+			TagKey: 'maskin-keychain',
+			TagValue: 'staging',
 		})
 
 		expect((await kms.decrypt(WS_A, wrapped)).equals(fakeDek())).toBe(true)
@@ -251,7 +259,11 @@ describe('KEYCHAIN_KMS selection', () => {
 		expect(resolveKeychainKmsKind({ KEYCHAIN_KMS: 'aws-kms' })).toBe('aws-kms')
 		expect(resolveKeychainKmsKind({ KEYCHAIN_KMS: 'local-file' })).toBe('local-file')
 		expect(
-			createKmsProvider(db, { KEYCHAIN_KMS: 'aws-kms', AWS_REGION: 'eu-central-1' }),
+			createKmsProvider(db, {
+				KEYCHAIN_KMS: 'aws-kms',
+				KEYCHAIN_ENV: 'staging',
+				AWS_REGION: 'eu-central-1',
+			}),
 		).toBeInstanceOf(AwsKmsProvider)
 		expect(createKmsProvider(db, { KEYCHAIN_KMS: 'local-file' })).toBeInstanceOf(
 			LocalFileKmsProvider,
@@ -261,6 +273,20 @@ describe('KEYCHAIN_KMS selection', () => {
 	it('fails on an unknown value', () => {
 		expect(() => resolveKeychainKmsKind({ KEYCHAIN_KMS: 'none' })).toThrow(KmsConfigError)
 		expect(() => createKmsProvider(db, { KEYCHAIN_KMS: 'gcp-kms' })).toThrow(/Unknown KEYCHAIN_KMS/)
+	})
+
+	it('aws-kms needs KEYCHAIN_ENV set to staging or production', () => {
+		expect(resolveKeychainEnv({ KEYCHAIN_ENV: 'production' })).toBe('production')
+		expect(() => createKmsProvider(db, { KEYCHAIN_KMS: 'aws-kms' })).toThrow(
+			/KEYCHAIN_ENV must be set/,
+		)
+		expect(() => createKmsProvider(db, { KEYCHAIN_KMS: 'aws-kms', KEYCHAIN_ENV: 'prod' })).toThrow(
+			/Unknown KEYCHAIN_ENV/,
+		)
+		// local-file never reads it.
+		expect(createKmsProvider(db, { KEYCHAIN_KMS: 'local-file' })).toBeInstanceOf(
+			LocalFileKmsProvider,
+		)
 	})
 
 	it('defaults to local-file outside production, and refuses to default in production', () => {

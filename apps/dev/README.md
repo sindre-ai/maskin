@@ -26,15 +26,16 @@ enforces the credential's scope grants and writes a hash-chained row to
 |----------|---------|
 | `KEYCHAIN_KMS` | `local-file` or `aws-kms`. Read once at start; any other value stops the server. Unset means `local-file` outside production and an error on first use in production. |
 | `KEYCHAIN_LOCAL_KEK_FILE` | `local-file` only. Default `.data/keychain-kek`. Created with 600 permissions on first use. Lose it and every credential wrapped under it is unrecoverable. `.data/` is gitignored. |
+| `KEYCHAIN_ENV` | `aws-kms` only. `staging` or `production`. Becomes the alias segment and the value of the `maskin-keychain` key tag. Required with `aws-kms`: the server stops at start if it is unset or anything else. |
 | `AWS_REGION` | `aws-kms` only. `eu-central-1` in production. Credentials come from the standard AWS provider chain. |
 
 Develop on `KEYCHAIN_KMS=local-file`. CI never calls AWS; the KMS tests use a mocked client.
 
 **Least-privilege policy for the runtime identity** (`aws-kms`). The first write for
-a workspace creates its key and the alias `alias/maskin-keychain-<workspaceId>`, so the
+a workspace creates its key and the alias `alias/maskin-keychain-<KEYCHAIN_ENV>-<workspaceId>`, tagged `maskin-keychain=<KEYCHAIN_ENV>`, so the
 runtime needs `CreateKey` and `TagResource` as well as `CreateAlias`. IAM authorises
 key operations against the key, not its alias, so use of the keys is limited by the
-`kms:ResourceAliases` condition. Replace `ACCOUNT_ID`. This sample has not been run
+`kms:ResourceAliases` condition. Replace `ACCOUNT_ID` and `ENVIRONMENT` (`staging` or `production`). This sample has not been run
 against a live account: Infra validates it in staging before production.
 
 ```json
@@ -52,7 +53,7 @@ against a live account: Infra validates it in staging before production.
       "Effect": "Allow",
       "Action": "kms:CreateAlias",
       "Resource": [
-        "arn:aws:kms:eu-central-1:ACCOUNT_ID:alias/maskin-keychain-*",
+        "arn:aws:kms:eu-central-1:ACCOUNT_ID:alias/maskin-keychain-ENVIRONMENT-*",
         "arn:aws:kms:eu-central-1:ACCOUNT_ID:key/*"
       ]
     },
@@ -62,7 +63,7 @@ against a live account: Infra validates it in staging before production.
       "Action": ["kms:Encrypt", "kms:Decrypt", "kms:DescribeKey"],
       "Resource": "arn:aws:kms:eu-central-1:ACCOUNT_ID:key/*",
       "Condition": {
-        "ForAnyValue:StringLike": { "kms:ResourceAliases": "alias/maskin-keychain-*" }
+        "ForAnyValue:StringLike": { "kms:ResourceAliases": "alias/maskin-keychain-ENVIRONMENT-*" }
       }
     },
     {
