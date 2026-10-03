@@ -4,21 +4,33 @@ import type { StorageProvider } from '@maskin/storage'
 import { Cron } from 'croner'
 import { and, eq, ne, sql } from 'drizzle-orm'
 import { recordEvent } from '../lib/events/record-event'
+import { createTelnyxClient } from '../lib/integrations/providers/telnyx/client'
+import { readTelnyxRuntimeConfig } from '../lib/integrations/providers/telnyx/config'
 import { logger } from '../lib/logger'
 import {
 	DELETED_BY_REQUEST,
 	RETENTION_MONTHS,
+	type TelnyxRecordingClientFactory,
+	collectCallIds,
+	deleteTelnyxRecordings,
 	deleteVoiceBlobs,
 } from '../lib/outreach/voice/recordings'
 
 /**
- * Daily sweep for call recordings and transcripts (voice-outreach/<contact_id>/ in S3).
+ * Daily sweep for call recordings and transcripts (voice-outreach/<contact_id>/ in S3, and the
+ * original recording Telnyx hosts).
  *
  *   1. Expiry: a contact whose retention_expires_at (default: voice_last_touch_at plus
- *      24 months) has passed loses its blobs, and last_call_recording_id and
- *      last_call_transcript_id are cleared.
- *   2. Erasure: a contact whose stored status is deleted_by_request loses its blobs, its
- *      content, and every metadata key except consent_*; erased_at marks it done.
+ *      24 months) has passed loses its Telnyx-hosted recordings and its blobs, and
+ *      last_call_recording_id and last_call_transcript_id are cleared.
+ *   2. Erasure: a contact whose stored status is deleted_by_request loses its Telnyx-hosted
+ *      recordings, its blobs, its content, and every metadata key except consent_*;
+ *      erased_at marks it done.
+ *
+ * Telnyx goes first on both paths. The call ids to delete come from the blob keys,
+ * last_call_id and the contact's events, which the later steps remove or clear, so a
+ * failed Telnyx delete throws before anything is touched: the row keeps its ids, has no
+ * erased_at, and the next daily tick is the retry. No separate marker key.
  *
  * Consent evidence is not on this clock. Nothing here reads or writes the events table
  * except to add an audit row, and consent_* fields are never removed on expiry. Erasure
@@ -50,6 +62,13 @@ export function resolveSweepCron(raw: string | undefined): string {
 
 const KEPT_ON_ERASURE = /^consent_/
 
+/** The Telnyx key is read when a contact has a call to look up, not at startup. */
+export const telnyxClientFromEnv: TelnyxRecordingClientFactory = () => {
+	const { apiKey, apiBaseUrl } = readTelnyxRuntimeConfig()
+	if (!apiKey) throw new Error('TELNYX_API_KEY is not configured')
+	return createTelnyxClient({ apiKey, baseUrl: apiBaseUrl })
+}
+
 export class VoiceRetentionSweepJob {
 	private job: Cron | null = null
 	private running = false
@@ -58,6 +77,7 @@ export class VoiceRetentionSweepJob {
 		private db: Database,
 		private storage: StorageProvider,
 		private cronExpression: string = CRON_EXPRESSION,
+		private telnyx: TelnyxRecordingClientFactory = telnyxClientFromEnv,
 	) {}
 
 	start(): void {
@@ -78,7 +98,7 @@ export class VoiceRetentionSweepJob {
 		if (this.running) return
 		this.running = true
 		try {
-			await processVoiceRetentionSweep(this.db, this.storage)
+			await processVoiceRetentionSweep(this.db, this.storage, this.telnyx)
 		} finally {
 			this.running = false
 		}
@@ -93,18 +113,19 @@ export interface VoiceRetentionSweepResult {
 export async function processVoiceRetentionSweep(
 	db: Database,
 	storage: StorageProvider,
+	telnyx: TelnyxRecordingClientFactory,
 	now: Date = new Date(),
 ): Promise<VoiceRetentionSweepResult> {
 	const result = { expired: 0, erased: 0 }
 	try {
-		result.erased = await sweepErased(db, storage)
+		result.erased = await sweepErased(db, storage, telnyx)
 	} catch (err) {
 		logger.error('voice retention sweepErased failed', {
 			error: err instanceof Error ? err.message : String(err),
 		})
 	}
 	try {
-		result.expired = await sweepExpired(db, storage, now)
+		result.expired = await sweepExpired(db, storage, telnyx, now)
 	} catch (err) {
 		logger.error('voice retention sweepExpired failed', {
 			error: err instanceof Error ? err.message : String(err),
@@ -117,6 +138,7 @@ export async function processVoiceRetentionSweep(
 export async function sweepExpired(
 	db: Database,
 	storage: StorageProvider,
+	telnyx: TelnyxRecordingClientFactory,
 	now: Date,
 ): Promise<number> {
 	const due = await db
@@ -125,6 +147,7 @@ export async function sweepExpired(
 			workspaceId: objects.workspaceId,
 			driver: objects.driver,
 			createdBy: objects.createdBy,
+			metadata: objects.metadata,
 		})
 		.from(objects)
 		.where(
@@ -143,6 +166,11 @@ export async function sweepExpired(
 	let expired = 0
 	for (const row of due) {
 		try {
+			// Telnyx first: its call ids come from the blob keys and metadata cleared below.
+			const telnyxDeleted = await deleteTelnyxRecordings(
+				telnyx,
+				await collectCallIds(db, storage, row),
+			)
 			const deleted = await deleteVoiceBlobs(storage, row.id)
 			await db
 				.update(objects)
@@ -161,6 +189,7 @@ export async function sweepExpired(
 					source: 'voice_retention_sweep',
 					reason: 'retention_expired',
 					blobs_deleted: deleted,
+					telnyx_recordings_deleted: telnyxDeleted,
 				},
 			})
 			expired++
@@ -174,7 +203,11 @@ export async function sweepExpired(
 	return expired
 }
 
-export async function sweepErased(db: Database, storage: StorageProvider): Promise<number> {
+export async function sweepErased(
+	db: Database,
+	storage: StorageProvider,
+	telnyx: TelnyxRecordingClientFactory,
+): Promise<number> {
 	const pending = await db
 		.select({
 			id: objects.id,
@@ -195,7 +228,13 @@ export async function sweepErased(db: Database, storage: StorageProvider): Promi
 	let erased = 0
 	for (const row of pending) {
 		try {
-			// Blobs first: if S3 fails the row keeps its marker-free state and the next tick retries.
+			// Telnyx first, then blobs, then the strip. The call ids live in the blob keys, last_call_id
+			// and events; if either delete fails the row is left untouched (ids kept, no erased_at)
+			// and the next tick retries.
+			const telnyxDeleted = await deleteTelnyxRecordings(
+				telnyx,
+				await collectCallIds(db, storage, row),
+			)
 			const deleted = await deleteVoiceBlobs(storage, row.id)
 			const kept = Object.fromEntries(
 				Object.entries((row.metadata ?? {}) as Record<string, unknown>).filter(([key]) =>
@@ -218,7 +257,12 @@ export async function sweepErased(db: Database, storage: StorageProvider): Promi
 				action: 'updated',
 				entityType: 'object',
 				entityId: row.id,
-				data: { source: 'voice_retention_sweep', reason: 'erasure', blobs_deleted: deleted },
+				data: {
+					source: 'voice_retention_sweep',
+					reason: 'erasure',
+					blobs_deleted: deleted,
+					telnyx_recordings_deleted: telnyxDeleted,
+				},
 			})
 			erased++
 		} catch (err) {
