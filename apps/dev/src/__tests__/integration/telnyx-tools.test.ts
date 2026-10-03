@@ -162,6 +162,17 @@ describe('Telnyx tool router: end_call_polite and flag_interest', () => {
 		)
 	})
 
+	it('the transfer command carries a client_state that names the contact and Leg A', async () => {
+		const { t, transferCall } = await hot({ transfer_phone_e164: '+4512345678' })
+		const [input] = transferCall.mock.calls[0] as unknown as [{ clientState: unknown }]
+		expect(input.clientState).toEqual({
+			contact_id: t.contact.id,
+			workspace_id: t.ws.id,
+			dial_attempt_n: 1,
+			transfer_of: CALL,
+		})
+	})
+
 	it('hot with no number on the target actor skips the transfer and pings #sales at Attention 3', async () => {
 		const { t, transferCall } = await hot({})
 		expect(transferCall).not.toHaveBeenCalled()

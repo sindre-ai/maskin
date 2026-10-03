@@ -249,9 +249,20 @@ function advanceFrom(contact: VoiceContact, event: VoiceEvent, now: Date): Outco
 			return terminal('voice_warm_transferred')
 		}
 
-		case 'transfer_failed':
-			// Falls back to the on-call booking flow; the hangup resolves the status.
-			return noop(contact)
+		case 'transfer_failed': {
+			// Leg B hung up with no answer or bridge before it (Leg B answered would have made this
+			// contact voice_warm_transferred). Leg A stays live and falls back to booking, so the
+			// status is left to Leg A's own hangup. The stamp is what limits the ping to once per call.
+			if (isStaleCall(contact, event.callId)) return noop(contact)
+			if (contact.status === 'voice_warm_transferred') return noop(contact)
+			if (m.voice_transfer_failed_call_id === event.callId) return noop(contact)
+			return {
+				status: contact.status,
+				metadata: { voice_transfer_failed_call_id: event.callId },
+				effects: [],
+				applied: true,
+			}
+		}
 
 		case 'rest_failure':
 			return terminal('voice_failed', { voice_end_reason: 'telnyx_rest_failure' }, [

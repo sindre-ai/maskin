@@ -261,7 +261,28 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 					...extra,
 				}),
 			)
-		return { ws, contact, read, send }
+		// An event on a transfer's Leg B: its own call id, client_state naming Leg A (transfer_of).
+		const sendLegB = (
+			type: string,
+			legB: string,
+			legA: string,
+			extra: Record<string, unknown> = {},
+		) =>
+			post(
+				envelope(type, {
+					call_control_id: legB,
+					client_state: encodeClientState({
+						contact_id: contact.id,
+						workspace_id: ws.id,
+						dial_attempt_n: 1,
+						transfer_of: legA,
+					}),
+					to: '+4533333333',
+					from: '+4522222222',
+					...extra,
+				}),
+			)
+		return { ws, contact, read, send, sendLegB }
 	}
 
 	it('no_answer: voice_no_answer, SMS fired, next_dial_at set, then retry-cap to voice_failed', async () => {
@@ -372,30 +393,85 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 		expect((await c.read()).status).toBe('voice_meeting_booked')
 	})
 
-	it('a failed transfer pings #sales at Attention 3 and leaves the call to fall back to booking', async () => {
+	const salesPings = (contactId: string) =>
+		db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityId, contactId), eq(events.action, 'voice_sales_ping')))
+
+	it('a Leg B hangup with no earlier answer or bridge pings #sales at Attention 3, once', async () => {
 		const c = await newContact()
 		await c.send('call.initiated', 'call-tf', 1)
 		await c.send('call.answered', 'call-tf', 1)
-		await c.send('call.transfer.failed', 'call-tf', 1, { target: '+4533333333' })
+		await c.sendLegB('call.initiated', 'leg-b-tf', 'call-tf')
+		await c.sendLegB('call.hangup', 'leg-b-tf', 'call-tf', { hangup_cause: 'timeout' })
+		// Leg A is still live and falls back to booking: the contact stays on the call.
 		expect((await c.read()).status).toBe('voice_answered')
-		const pings = await db
-			.select()
-			.from(events)
-			.where(and(eq(events.entityId, c.contact.id), eq(events.action, 'voice_sales_ping')))
+		const pings = await salesPings(c.contact.id)
 		expect(pings).toHaveLength(1)
 		expect(pings[0]?.data).toMatchObject({
 			attention: 3,
 			channel: '#sales',
 			reason: 'transfer_failed',
+			call_id: 'call-tf',
+			transfer_leg_call_id: 'leg-b-tf',
+			hangup_cause: 'timeout',
 		})
 	})
 
-	it('transfer completed resolves to voice_warm_transferred and survives the hangup', async () => {
+	it('a second Leg B hangup for the same call does not ping again', async () => {
+		const c = await newContact()
+		await c.send('call.initiated', 'call-tf2', 1)
+		await c.send('call.answered', 'call-tf2', 1)
+		await c.sendLegB('call.hangup', 'leg-b-1', 'call-tf2', { hangup_cause: 'timeout' })
+		await c.sendLegB('call.hangup', 'leg-b-2', 'call-tf2', { hangup_cause: 'timeout' })
+		expect(await salesPings(c.contact.id)).toHaveLength(1)
+	})
+
+	it('a Leg B hangup must not reach the reducer as the contact own call ending', async () => {
+		const hook = vi.fn()
+		postCallHooks.push({ name: 'test', run: hook })
+		const spy = vi.spyOn(applyModule, 'applyVoiceEvent')
+		const c = await newContact()
+		await c.send('call.initiated', 'call-lb', 1)
+		await c.send('call.answered', 'call-lb', 1)
+		const before = await c.read()
+		spy.mockClear()
+		// A declined, busy or unanswered target: each would be voice_declined / voice_busy / voice_no_answer
+		// (and a redial or an SMS) if it were read as the contact's own hangup.
+		for (const cause of ['normal_clearing', 'user_busy', 'no_answer']) {
+			await c.sendLegB('call.hangup', `leg-b-${cause}`, 'call-lb', { hangup_cause: cause })
+		}
+		const reducerEvents = spy.mock.calls.map(([, params]) => params.event.type)
+		expect(reducerEvents).not.toContain('call_hangup')
+		expect(reducerEvents).not.toContain('call_answered')
+		const after = await c.read()
+		expect(after.status).toBe('voice_answered')
+		expect(after.meta.next_dial_at ?? null).toBeNull()
+		expect(after.meta.last_call_id).toBe(before.meta.last_call_id)
+		expect(sms).toHaveLength(0)
+		expect(hook).not.toHaveBeenCalled()
+		spy.mockRestore()
+	})
+
+	it('Leg B answered resolves to voice_warm_transferred and its later hangup does not ping', async () => {
 		const c = await newContact()
 		await c.send('call.initiated', 'call-t', 1)
 		await c.send('call.answered', 'call-t', 1)
-		await c.send('call.transfer.completed', 'call-t', 1, { target: '+4533333333' })
+		await c.sendLegB('call.answered', 'leg-b-t', 'call-t')
+		expect((await c.read()).status).toBe('voice_warm_transferred')
+		await c.sendLegB('call.bridged', 'leg-b-t', 'call-t')
+		await c.sendLegB('call.hangup', 'leg-b-t', 'call-t', { hangup_cause: 'normal_clearing' })
 		await c.send('call.hangup', 'call-t', 1, { hangup_cause: 'normal_clearing' })
+		expect((await c.read()).status).toBe('voice_warm_transferred')
+		expect(await salesPings(c.contact.id)).toHaveLength(0)
+	})
+
+	it('Leg B bridged alone also resolves the transfer', async () => {
+		const c = await newContact()
+		await c.send('call.initiated', 'call-br', 1)
+		await c.send('call.answered', 'call-br', 1)
+		await c.sendLegB('call.bridged', 'leg-b-br', 'call-br')
 		expect((await c.read()).status).toBe('voice_warm_transferred')
 	})
 
@@ -405,7 +481,8 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 		const c = await newContact()
 		await c.send('call.initiated', 'call-wt', 1)
 		await c.send('call.answered', 'call-wt', 1)
-		await c.send('call.transfer.completed', 'call-wt', 1, { target: '+4533333333' })
+		await c.sendLegB('call.answered', 'leg-b-wt', 'call-wt')
+		await c.sendLegB('call.hangup', 'leg-b-wt', 'call-wt', { hangup_cause: 'normal_clearing' })
 		await c.send('call.hangup', 'call-wt', 1, { hangup_cause: 'normal_clearing', duration_s: 90 })
 		expect((await c.read()).status).toBe('voice_warm_transferred')
 		expect(hook).toHaveBeenCalledTimes(1)

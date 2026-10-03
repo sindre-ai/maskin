@@ -4,6 +4,7 @@ import {
 	classifyHangup,
 	clientStateOf,
 	parseTelnyxWebhook,
+	transferLegOf,
 } from '../../../lib/integrations/providers/telnyx/events'
 
 const clientState = {
@@ -29,8 +30,7 @@ describe('parseTelnyxWebhook', () => {
 			'assistant.tool_invocation',
 			{ tool_name: 'book_meeting_slot', tool_input: { prospect_email: 'a@b.dk' } },
 		],
-		['call.transfer.completed', { target: '+4512345678' }],
-		['call.transfer.failed', { target: '+4512345678' }],
+		['call.bridged', {}],
 	])('parses %s', (type, extra) => {
 		const out = parseTelnyxWebhook(envelope(type, { ...common, ...extra }))
 		expect(out.kind).toBe('known')
@@ -72,6 +72,33 @@ describe('parseTelnyxWebhook', () => {
 		if (absent.kind !== 'known' || junk.kind !== 'known') throw new Error('expected known')
 		expect(clientStateOf(absent.event)).toBeNull()
 		expect(clientStateOf(junk.event)).toBeNull()
+	})
+})
+
+describe('transferLegOf', () => {
+	const legAState = { ...clientState, transfer_of: 'cc_a' }
+	const parse = (callId: string, state: Record<string, unknown> | null) => {
+		const out = parseTelnyxWebhook(
+			envelope('call.hangup', {
+				call_control_id: callId,
+				...(state ? { client_state: encodeClientState(state as never) } : {}),
+			}),
+		)
+		if (out.kind !== 'known') throw new Error('expected known')
+		return out.event
+	}
+
+	it('names Leg A when the event is on another call than the one the transfer started from', () => {
+		expect(transferLegOf(parse('cc_b', legAState))).toBe('cc_a')
+	})
+
+	it('is null on Leg A itself, even when the transfer client_state is echoed there', () => {
+		expect(transferLegOf(parse('cc_a', legAState))).toBeNull()
+	})
+
+	it('is null for an ordinary dialer call', () => {
+		expect(transferLegOf(parse('cc_a', clientState))).toBeNull()
+		expect(transferLegOf(parse('cc_b', null))).toBeNull()
 	})
 })
 

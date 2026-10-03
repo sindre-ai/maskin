@@ -17,6 +17,8 @@ export const callClientStateSchema = z.object({
 	contact_id: z.string().uuid(),
 	workspace_id: z.string().uuid(),
 	dial_attempt_n: z.number().int().positive(),
+	/** Set only by the transfer command: the Leg A call_control_id the transfer started from. */
+	transfer_of: z.string().min(1).optional(),
 })
 export type CallClientState = z.infer<typeof callClientStateSchema>
 
@@ -65,6 +67,8 @@ export interface TransferCallInput {
 	customHeaders?: Array<{ name: string; value: string }>
 	/** Seconds Telnyx waits for the destination to answer before giving up. */
 	timeoutSecs: number
+	/** Echoed on Leg B's events, so they find their way back to the contact and to Leg A. */
+	clientState: CallClientState
 }
 
 /** Telnyx AI assistant body (POST /v2/ai/assistants). Shape: Telnyx OpenAPI CreateAssistantRequest. */
@@ -208,6 +212,7 @@ export function createTelnyxClient(opts: TelnyxClientOptions): TelnyxClient {
 				{
 					to: input.to,
 					timeout_secs: input.timeoutSecs,
+					client_state: encodeClientState(input.clientState),
 					...(input.customHeaders ? { custom_headers: input.customHeaders } : {}),
 				},
 			)

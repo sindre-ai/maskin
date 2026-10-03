@@ -345,8 +345,28 @@ describe('transfers', () => {
 		expect(r.status).toBe('voice_warm_transferred')
 	})
 
-	it('transfer_failed changes nothing; the hangup resolves the contact', () => {
+	it('transfer_failed keeps the status and stamps the call once, so the ping fires once', () => {
 		const c = contact('voice_answered', { last_call_id: 'call-1' })
+		const r = advance(c, { type: 'transfer_failed', callId: 'call-1' }, NOW)
+		expect(r).toMatchObject({
+			applied: true,
+			status: 'voice_answered',
+			metadata: { voice_transfer_failed_call_id: 'call-1' },
+		})
+		const again = contact('voice_answered', {
+			last_call_id: 'call-1',
+			voice_transfer_failed_call_id: 'call-1',
+		})
+		expect(advance(again, { type: 'transfer_failed', callId: 'call-1' }, NOW).applied).toBe(false)
+	})
+
+	it('transfer_failed after the transfer completed is a no-op', () => {
+		const c = contact('voice_warm_transferred', { last_call_id: 'call-1' })
+		expect(advance(c, { type: 'transfer_failed', callId: 'call-1' }, NOW).applied).toBe(false)
+	})
+
+	it('transfer_failed for a call that is no longer current is a no-op', () => {
+		const c = contact('voice_answered', { last_call_id: 'call-2' })
 		expect(advance(c, { type: 'transfer_failed', callId: 'call-1' }, NOW).applied).toBe(false)
 	})
 })

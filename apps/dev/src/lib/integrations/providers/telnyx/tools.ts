@@ -307,6 +307,13 @@ async function startTransfer(run: Run, reason: string): Promise<void> {
 			callControlId: ctx.callId,
 			to: number,
 			timeoutSecs: TRANSFER_TIMEOUT_SECS,
+			// Echoed on Leg B's events: without it the webhook cannot tell whose transfer it is.
+			clientState: {
+				contact_id: contact.id,
+				workspace_id: workspaceId,
+				dial_attempt_n: Number(contact.metadata.dial_attempt_n) || 1,
+				transfer_of: ctx.callId,
+			},
 			// The summary the person who picks up hears about, as SIP headers.
 			customHeaders: [
 				{ name: 'X-Maskin-Summary', value: reason.replace(/[\r\n]+/g, ' ').slice(0, 200) },
