@@ -1,8 +1,6 @@
 import type { Database } from '@maskin/db'
-import { objects } from '@maskin/db/schema'
 import type { PgEvent } from '@maskin/realtime'
 import { Cron } from 'croner'
-import { eq } from 'drizzle-orm'
 import {
 	type KnowledgeExportDeps,
 	defaultKnowledgeExportDeps,
@@ -12,6 +10,8 @@ import { logger } from '../lib/logger'
 
 /** Baseline refresh, off the round hour like the other nightly jobs. */
 const CRON_EXPRESSION = '41 3 * * *'
+/** Events on a knowledge object (entity_type is the object's type) that can change what is exported. */
+const REFRESH_ACTIONS = new Set(['created', 'updated', 'deleted'])
 /** Collapses a burst of knowledge edits into one export, well inside the 60s refresh target. */
 const DEBOUNCE_MS = 5_000
 
@@ -25,9 +25,6 @@ interface EventSource {
  * plus a debounced pass whenever a knowledge object is created or updated (PG NOTIFY). Does
  * nothing at all when TELNYX_API_KEY is unset. Mirrors PurgeIdempotencyJob: a swallowed-error
  * tick that logs but never throws, guarded against overlapping runs.
- *
- * A deleted knowledge object is not seen by the NOTIFY path (the row is gone, so its type
- * cannot be read); the nightly pass removes it from the bucket.
  */
 export class TelnyxKnowledgeExporterJob {
 	private job: Cron | null = null
@@ -49,9 +46,7 @@ export class TelnyxKnowledgeExporterJob {
 		this.job = new Cron(this.cronExpression, { timezone: 'UTC' }, async () => {
 			await this.tick()
 		})
-		this.listener = (event) => {
-			void this.onEvent(event)
-		}
+		this.listener = (event) => this.onEvent(event)
 		this.source.on('event', this.listener)
 	}
 
@@ -64,22 +59,8 @@ export class TelnyxKnowledgeExporterJob {
 		this.listener = null
 	}
 
-	private async onEvent(event: PgEvent): Promise<void> {
-		if (event.entity_type !== 'object') return
-		if (event.action !== 'created' && event.action !== 'updated') return
-		try {
-			const [row] = await this.db
-				.select({ type: objects.type })
-				.from(objects)
-				.where(eq(objects.id, event.entity_id))
-				.limit(1)
-			if (row?.type !== 'knowledge') return
-		} catch (err) {
-			logger.error('Telnyx knowledge exporter event lookup failed', {
-				error: err instanceof Error ? err.message : String(err),
-			})
-			return
-		}
+	private onEvent(event: PgEvent): void {
+		if (event.entity_type !== 'knowledge' || !REFRESH_ACTIONS.has(event.action)) return
 		this.schedule()
 	}
 

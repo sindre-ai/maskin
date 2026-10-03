@@ -55,6 +55,8 @@ test.beforeEach(() => {
 
 test.describe('Telnyx knowledge export: end to end', () => {
 	test('a knowledge object flipped to customer_facing reaches the bucket within 60s, an unflagged one never does', async () => {
+		// The export is allowed 60s after the flip; the test needs headroom beyond that.
+		test.setTimeout(100_000)
 		const actor = await createTestActor({ name: `E2E Voice knowledge ${Date.now()}` })
 		const api = new TestAPI(actor.api_key)
 		const workspace = (await api.listWorkspaces())[0]

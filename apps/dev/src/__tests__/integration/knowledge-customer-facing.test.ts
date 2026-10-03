@@ -138,6 +138,7 @@ describe('customer_facing knowledge export', () => {
 			provider: 'telnyx',
 			status: status as 'active',
 			credentials: 'x',
+			createdBy: getTestActorId(),
 			config: {},
 		})
 	}
@@ -204,7 +205,7 @@ describe('TelnyxKnowledgeExporterJob', () => {
 		}
 	}
 
-	async function until(check: () => boolean, ms = 3000) {
+	async function until(check: () => boolean, ms = 8000) {
 		const start = Date.now()
 		while (!check()) {
 			if (Date.now() - start > ms) throw new Error('timed out waiting')
@@ -212,17 +213,17 @@ describe('TelnyxKnowledgeExporterJob', () => {
 		}
 	}
 
-	it('exports once, shortly after a knowledge object is updated, and not for other objects', async () => {
+	it('exports once, shortly after a burst of knowledge edits, ignores other events, and runs again on a delete', async () => {
 		const { ws, add } = await knowledgeWorkspace()
 		await db.insert(integrations).values({
 			workspaceId: ws.id,
 			provider: 'telnyx',
 			status: 'active',
 			credentials: 'x',
+			createdBy: getTestActorId(),
 			config: {},
 		})
-		const doc = await add('Security', 'Data stays in the EU.', true)
-		const task = await insertObject(db, ws.id, getTestActorId(), { type: 'task', title: 'noise' })
+		await add('Security', 'Data stays in the EU.', true)
 
 		const syncKnowledgeBucket = vi.fn(async () => ({ retrievalToolId: 'tool-1' }))
 		const client = {
@@ -238,31 +239,36 @@ describe('TelnyxKnowledgeExporterJob', () => {
 			db,
 			src,
 			() => ({ client, assistantId: 'asst-1', webhookUrl: 'https://x/y' }),
-			20,
+			300,
 			'0 0 1 1 *',
 		)
 		job.start()
 		try {
-			const ev = (entity_id: string, action = 'updated') => ({
+			const ev = (entity_type: string, action: string) => ({
 				workspace_id: ws.id,
 				actor_id: getTestActorId(),
 				action,
-				entity_type: 'object',
-				entity_id,
+				entity_type,
+				entity_id: ws.id,
 				event_id: '1',
 			})
-			src.emit(ev(task.id))
-			src.emit(ev(doc.id, 'deleted'))
-			await new Promise((r) => setTimeout(r, 150))
+			src.emit(ev('task', 'updated'))
+			src.emit(ev('knowledge', 'status_changed'))
+			src.emit(ev('session', 'created'))
+			await new Promise((r) => setTimeout(r, 700))
 			expect(syncKnowledgeBucket).not.toHaveBeenCalled()
 
 			// A burst of edits collapses into one export.
-			src.emit(ev(doc.id))
-			src.emit(ev(doc.id))
-			src.emit(ev(doc.id))
+			src.emit(ev('knowledge', 'updated'))
+			src.emit(ev('knowledge', 'updated'))
+			src.emit(ev('knowledge', 'created'))
 			await until(() => syncKnowledgeBucket.mock.calls.length > 0)
-			await new Promise((r) => setTimeout(r, 150))
+			await new Promise((r) => setTimeout(r, 700))
 			expect(syncKnowledgeBucket).toHaveBeenCalledTimes(1)
+
+			// A deleted object has to leave the bucket too.
+			src.emit(ev('knowledge', 'deleted'))
+			await until(() => syncKnowledgeBucket.mock.calls.length > 1)
 		} finally {
 			job.stop()
 		}
