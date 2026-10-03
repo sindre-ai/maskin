@@ -281,9 +281,27 @@ export type IntegrationStatus =
 	 * is the intent — it must never be mistaken for a live connection.
 	 */
 	| 'inactive'
+	/**
+	 * Keychain chat capture (see credentials.source = 'chat_capture'): vaulted and
+	 * readable through getCredential during the undo window, before the sweeper
+	 * flips it to 'active'. Written by the capture endpoint (a later Keychain PR).
+	 */
+	| 'pending_undo'
+	/** Keychain undo: the row survives for FK integrity and audit; credentials and dek_ciphertext are zeroised. */
+	| 'undone'
 
 /** The one status meaning "connected and usable". See `IntegrationStatus`. */
 export const INTEGRATION_STATUS_ACTIVE = 'active' satisfies IntegrationStatus
+
+export type IntegrationProviderMode = 'registered' | 'byo_apikey' | 'byo_oauth'
+
+export type IntegrationSource = 'admin_ui' | 'chat_capture' | 'oauth_callback' | 'registry_install'
+
+/** Who may read a credential through getCredential. Stored inline in integrations.scope_grants. */
+export type ScopeGrant =
+	| { kind: 'actor'; actorId: string }
+	| { kind: 'loop'; loopId: string }
+	| { kind: 'workspace' }
 
 export const integrations = pgTable(
 	'integrations',
@@ -311,6 +329,21 @@ export const integrations = pgTable(
 		// Phase 1 rows that predate R11 carry NULL until the next
 		// `account.reconnect` webhook or the admin refresh-identities call fills it.
 		unipileAccSlug: text('unipile_acc_slug'),
+		// Keychain columns. providerMode: 'registered' | 'byo_apikey' | 'byo_oauth'.
+		providerMode: text('provider_mode')
+			.$type<IntegrationProviderMode>()
+			.notNull()
+			.default('registered'),
+		// Required (CHECK) when providerMode != 'registered'; NULL for registered providers.
+		displayName: text('display_name'),
+		// JSONB array of ScopeGrant. Fail-closed: the empty default grants nobody.
+		scopeGrants: jsonb('scope_grants').$type<ScopeGrant[]>().notNull().default(sql`'[]'::jsonb`),
+		// KMS-wrapped per-credential DEK. NULL = legacy row, decrypted under
+		// INTEGRATION_ENCRYPTION_KEY and upgraded to envelope on its next write.
+		dekCiphertext: text('dek_ciphertext'),
+		source: text('source').$type<IntegrationSource>().notNull().default('admin_ui'),
+		originSessionId: uuid('origin_session_id').references((): AnyPgColumn => sessions.id),
+		undoExpiresAt: timestamp('undo_expires_at', { withTimezone: true }),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -325,12 +358,80 @@ export const integrations = pgTable(
 			.on(t.workspaceId, t.actorId, t.provider)
 			.where(sql`${t.externalId} IS NULL`),
 		index('integrations_ws_provider_idx').on(t.workspaceId, t.provider),
+		index('integrations_ws_mode_idx').on(t.workspaceId, t.providerMode),
+		index('integrations_undo_sweeper_idx')
+			.on(t.status, t.undoExpiresAt)
+			.where(sql`${t.status} = 'pending_undo'`),
+		check(
+			'integrations_byo_needs_display_name',
+			sql`${t.providerMode} = 'registered' OR ${t.displayName} IS NOT NULL`,
+		),
+		check('integrations_scope_grants_is_array', sql`jsonb_typeof(${t.scopeGrants}) = 'array'`),
+		check(
+			'integrations_source_enum',
+			sql`${t.source} IN ('admin_ui', 'chat_capture', 'oauth_callback', 'registry_install')`,
+		),
+		check(
+			'integrations_chat_capture_has_session',
+			sql`${t.source} <> 'chat_capture' OR ${t.originSessionId} IS NOT NULL`,
+		),
 		index('integrations_unipile_acc_slug_idx')
 			.on(t.unipileAccSlug)
 			.where(sql`${t.unipileAccSlug} IS NOT NULL`),
 	],
 )
 export type Integration = typeof integrations.$inferSelect
+
+// ── Keychain ────────────────────────────────────────────────────────────────
+
+/** workspace -> KMS key alias (AwsKmsProvider provisions the alias on a workspace's first write). */
+export const workspaceKmsAliases = pgTable('workspace_kms_aliases', {
+	workspaceId: uuid('workspace_id')
+		.primaryKey()
+		.references(() => workspaces.id),
+	kekAlias: text('kek_alias').notNull(),
+	provider: text('provider').notNull().default('aws-kms'),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export type CredentialAccessAction = 'read' | 'create' | 'undone' | 'rotated' | 'sweeper_activated'
+
+/**
+ * Hash-chained audit log of credential use. Insert-only: the app role has no
+ * UPDATE or DELETE. prev_row_hash, row_hash, read_at and id are all assigned by
+ * the credential_access_log_insert() BEFORE INSERT trigger under a per-workspace
+ * lock, so a caller cannot set them (see migration 0087).
+ */
+export const credentialAccessLog = pgTable(
+	'credential_access_log',
+	{
+		id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		integrationId: uuid('integration_id')
+			.references(() => integrations.id)
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		sessionId: uuid('session_id'),
+		loopId: uuid('loop_id'),
+		outboundTarget: text('outbound_target'),
+		action: text('action').$type<CredentialAccessAction>().notNull().default('read'),
+		source: text('source').notNull().default('unknown'),
+		requestId: text('request_id').notNull(),
+		readAt: timestamp('read_at', { withTimezone: true }).notNull().defaultNow(),
+		prevRowHash: text('prev_row_hash').notNull().default(''),
+		rowHash: text('row_hash').notNull().default(''),
+	},
+	(t) => [
+		index('cal_ws_read_at_idx').on(t.workspaceId, t.readAt),
+		index('cal_integration_read_at_idx').on(t.integrationId, t.readAt),
+		index('cal_actor_read_at_idx').on(t.actorId, t.readAt),
+		index('cal_action_idx').on(t.workspaceId, t.action),
+	],
+)
 export type NewIntegration = typeof integrations.$inferInsert
 
 // ── Slack User Links ───────────────────────────────────────────────────────
