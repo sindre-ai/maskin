@@ -109,6 +109,21 @@ struct MessageRow: View {
 				Button("Delete message", action: onDiscard)
 			}
 			if message.isErrorReply { Button("Try again", action: onRetryAgent) }
+			if canReadAloud { Button(readAloudTitle, action: toggleReadAloud) }
+		}
+	}
+
+	// MARK: Read aloud
+
+	private var canReadAloud: Bool { !message.content.isEmpty && !message.isFailed }
+	private var isReading: Bool { SpeechReader.shared.isSpeaking(message.id) }
+	private var readAloudTitle: String { isReading ? "Stop reading" : "Read aloud" }
+
+	private func toggleReadAloud() {
+		if isReading {
+			SpeechReader.shared.stop()
+		} else {
+			SpeechReader.shared.speak(markdown: message.content, id: message.id)
 		}
 	}
 
@@ -119,6 +134,11 @@ struct MessageRow: View {
 		if !message.content.isEmpty {
 			Button { Clipboard.copy(message.content) } label: { Label("Copy", systemImage: "doc.on.doc") }
 			ShareLink(item: message.content) { Label("Share", systemImage: "square.and.arrow.up") }
+			if canReadAloud {
+				Button(action: toggleReadAloud) {
+					Label(readAloudTitle, systemImage: isReading ? "speaker.slash" : "speaker.wave.2")
+				}
+			}
 		}
 		if message.isFailed {
 			Button(action: onRetrySend) { Label("Retry", systemImage: "arrow.clockwise") }

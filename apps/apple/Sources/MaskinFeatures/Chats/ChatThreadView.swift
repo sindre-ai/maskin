@@ -17,12 +17,22 @@ struct ChatThreadView: View {
 	@State private var stopTarget: ChatAgentSession?
 	@State private var renaming = false
 	@State private var newTitle = ""
+	@State private var searching = false
+	@State private var searchText = ""
+	@State private var matchIndex: Int?
+	@AppStorage("chat.handsFree") private var handsFree = false
+
+	private var matchIDs: [String] { ThreadSearch.matches(in: store.messages, query: searchText) }
+	private var currentMatchID: String? {
+		guard searching, let matchIndex, matchIDs.indices.contains(matchIndex) else { return nil }
+		return matchIDs[matchIndex]
+	}
 
 	private static let bottomID = "thread-bottom"
 	private static let maxReadableWidth: CGFloat = 760
 
 	var body: some View {
-		content
+		observedContent
 			.background(MaskinSurface.grouped)
 			.safeAreaInset(edge: .bottom, spacing: 0) { composerBar }
 			.navigationTitle(store.title)
@@ -40,6 +50,14 @@ struct ChatThreadView: View {
 				}
 			}
 			.toolbar {
+				ToolbarItem(placement: .automatic) {
+					Button {
+						searching.toggle()
+						if !searching { searchText = "" }
+					} label: {
+						Label("Search this chat", systemImage: "magnifyingglass")
+					}
+				}
 				ToolbarItem(placement: .automatic) {
 					Menu {
 						Button {
@@ -66,6 +84,7 @@ struct ChatThreadView: View {
 			}
 			.onDisappear {
 				store.isActive = false
+				SpeechReader.shared.stop()
 				store.stop()
 			}
 			.onChange(of: scenePhase) { _, phase in store.isActive = phase == .active }
@@ -90,6 +109,16 @@ struct ChatThreadView: View {
 			} message: { _ in
 				Text("It will stop what it's doing. You can ask it to continue afterwards.")
 			}
+	}
+
+	/// The thread plus the observers for search and hands-free speech (kept apart so `body`
+	/// type-checks quickly).
+	private var observedContent: some View {
+		content
+			.onChange(of: searchText) { _, _ in matchIndex = matchIDs.isEmpty ? nil : matchIDs.count - 1 }
+			.onChange(of: store.messages.last?.id) { _, _ in autoSpeakLatest() }
+			// Typing means the reader is done listening.
+			.onChange(of: composer.text) { _, text in if !text.isEmpty { SpeechReader.shared.stop() } }
 	}
 
 	@ViewBuilder
@@ -121,7 +150,9 @@ struct ChatThreadView: View {
 							.frame(maxWidth: .infinity)
 							.onAppear { loadEarlier(proxy) }
 					}
-					ThreadTranscript(store: store, onStop: { stopTarget = $0 })
+					ThreadTranscript(
+						store: store, onStop: { stopTarget = $0 }, matchIDs: Set(matchIDs),
+						currentMatchID: currentMatchID)
 					Color.clear.frame(height: 1).id(Self.bottomID)
 						.onAppear {
 							isAtBottom = true
@@ -166,10 +197,42 @@ struct ChatThreadView: View {
 				}
 			}
 			.animation(MaskinMotion.standard, value: isAtBottom)
+			.onChange(of: currentMatchID) { _, id in
+				guard let id else { return }
+				withAnimation(MaskinMotion.standard) { proxy.scrollTo(id, anchor: .center) }
+			}
 		}
 	}
 
 	private var composerBar: some View {
+		VStack(spacing: MaskinSpace.s2) {
+			if searching {
+				ThreadSearchBar(
+					text: $searchText, matchCount: matchIDs.count, index: matchIndex,
+					onStep: { matchIndex = ThreadSearch.step(from: matchIndex, by: $0, count: matchIDs.count) },
+					onClose: {
+						searching = false
+						searchText = ""
+					})
+			} else {
+				HandsFreeToggle(isOn: $handsFree).frame(maxWidth: .infinity, alignment: .trailing)
+			}
+			composerField
+		}
+		.frame(maxWidth: Self.maxReadableWidth)
+		.padding(.horizontal, MaskinSpace.s7)
+		.padding(.bottom, MaskinSpace.s3)
+		.frame(maxWidth: .infinity)
+	}
+
+	private func autoSpeakLatest() {
+		guard handsFree, let last = store.messages.last,
+			SpeechPolicy.shouldAutoSpeak(last, currentActorID: store.currentActorID)
+		else { return }
+		SpeechReader.shared.speak(markdown: last.content, id: last.id)
+	}
+
+	private var composerField: some View {
 		ChatComposer(
 			model: composer, placeholder: "Message \(store.title)",
 			suggestions: { query in
@@ -179,10 +242,6 @@ struct ChatThreadView: View {
 			},
 			inConversation: Set(store.participants.map(\.id)), onSend: send
 		)
-		.frame(maxWidth: Self.maxReadableWidth)
-		.padding(.horizontal, MaskinSpace.s7)
-		.padding(.bottom, MaskinSpace.s3)
-		.frame(maxWidth: .infinity)
 	}
 
 	private func send() {
@@ -216,6 +275,8 @@ struct ThreadTranscript: View {
 	var lazy = true
 	var now = Date()
 	var onStop: (ChatAgentSession) -> Void = { _ in }
+	var matchIDs: Set<String> = []
+	var currentMatchID: String?
 
 	var body: some View {
 		if lazy {
@@ -278,6 +339,10 @@ struct ThreadTranscript: View {
 				onAnswer: { picks in _ = store.answer(question: message, picks: picks) }
 			)
 			.padding(.top, showsAuthor ? MaskinSpace.s4 : 0)
+			.background(
+				matchIDs.contains(message.id)
+					? (message.id == currentMatchID ? MaskinColor.accentTint : MaskinColor.accentTint2) : Color.clear,
+				in: RoundedRectangle(cornerRadius: MaskinRadius.btnLg, style: .continuous))
 		}
 	}
 }

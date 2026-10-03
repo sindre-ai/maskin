@@ -43,6 +43,7 @@ struct ConversationListView: View {
 		.refreshable { await store.refresh() }
 		.searchable(text: $search, prompt: "Search chats")
 		.navigationTitle(store.scope == .archived ? "Archived" : "Chats")
+		.toolbar { ToolbarItem(placement: .automatic) { AgentFilterMenu(store: store) } }
 		.safeAreaInset(edge: .bottom, spacing: 0) {
 			if store.scope == .active {
 				NewChatBar(onSend: onStart)
@@ -123,5 +124,27 @@ private struct NewChatBar: View {
 		.padding(MaskinSpace.s3)
 		.maskinGlass(in: RoundedRectangle(cornerRadius: MaskinRadius.hero + MaskinSpace.s4, style: .continuous))
 		.padding(.horizontal, MaskinSpace.s5).padding(.bottom, MaskinSpace.s3)
+	}
+}
+
+/// Narrows the list to conversations with one agent. Hidden until the list has agents in it.
+private struct AgentFilterMenu: View {
+	@Bindable var store: ConversationsStore
+
+	var body: some View {
+		let agents = store.agentsInList
+		if !agents.isEmpty {
+			Menu {
+				Picker("Agent", selection: $store.agentFilterID) {
+					Text("All agents").tag(String?.none)
+					ForEach(agents) { agent in Text(agent.name).tag(String?.some(agent.id)) }
+				}
+			} label: {
+				Label(
+					"Filter by agent",
+					systemImage: store.agentFilterID == nil
+						? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+			}
+		}
 	}
 }
