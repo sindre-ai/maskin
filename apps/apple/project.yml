@@ -78,8 +78,6 @@ targets:
         # Where web-only settings (integrations, billing) open. Empty = the API origin, right for
         # production; set MASKIN_WEB_BASE_URL in Local.xcconfig when the web app is on another port.
         MaskinWebBaseURL: $(MASKIN_WEB_BASE_URL)
-        # Live Activity / Dynamic Island for a running agent (the widget extension draws it).
-        NSSupportsLiveActivities: true
         # Guideline 5.1.1(v): in-app sign-up needs in-app account deletion, which the backend lacks
         # for humans. Release hides "Create account" until it exists (docs/app-store-notes.md).
         MaskinEnableSignUp: $(MASKIN_ENABLE_SIGNUP)

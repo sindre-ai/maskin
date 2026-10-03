@@ -8,7 +8,6 @@ struct MaskinWidgetBundle: WidgetBundle {
 	var body: some Widget {
 		NeedsYouWidget()
 		LockScreenWidget()
-		SessionLiveActivity()
 	}
 }
 
