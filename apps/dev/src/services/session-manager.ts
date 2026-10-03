@@ -4353,13 +4353,16 @@ export class SessionManager extends EventEmitter {
 		// with a stale (or absent) driver_heartbeat_at is one nobody is actively
 		// driving anymore. Re-fire is safe because _driveToRunning enters
 		// 'starting' before dispatch, so a healthy in-flight drive keeps its
-		// heartbeat fresh and never matches this cutoff.
+		// heartbeat fresh and never matches this cutoff. Rows whose status is
+		// already truly terminal are excluded: startSession() only accepts
+		// pending/queued, so re-firing the driver on them can only throw.
 		const queuedRescueCandidates = await this.db
 			.select()
 			.from(sessions)
 			.where(
 				and(
 					eq(sessions.sessionState, 'queued'),
+					notInArray(sessions.status, ['completed', 'failed', 'timeout', 'user_stopped']),
 					lt(sessions.stateEnteredAt, queuedRescueCutoff),
 					or(
 						isNull(sessions.driverHeartbeatAt),
