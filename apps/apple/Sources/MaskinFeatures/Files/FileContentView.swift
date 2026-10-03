@@ -22,7 +22,7 @@ struct FileContentView: View {
 			if showsSource { FileSourceText(text: fileText, revision: revision) } else {
 				WindowedText(text: fileText, revision: revision) { MarkdownContent($0).textSelection(.enabled) }
 			}
-		case .text, .source:
+		case .text, .source, .html:
 			FileSourceText(text: fileText, revision: revision)
 		case .image:
 			FileImageView(data: file.data, name: file.name, revision: revision)
@@ -144,29 +144,45 @@ private struct FilePDFView: NSViewRepresentable {
 }
 #endif
 
-/// Read-only review comments pinned to a file. Creating and placing pins stays on the web.
+/// Review comments pinned to a file, as a list. Tapping one opens it for editing.
 struct FileReviewComments: View {
 	let annotations: [FileAnnotation]
+	var onSelect: ((FileAnnotation) -> Void)?
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			MonoLabel("Review comments")
-			ForEach(annotations) { annotation in
-				HStack(alignment: .top, spacing: MaskinSpace.s5) {
-					Text(annotation.pinNumber.map(String.init) ?? "•")
-						.maskinText(.caption)
-						.foregroundStyle(MaskinColor.accentDeep)
-						.frame(minWidth: MaskinSpace.s9, minHeight: MaskinSpace.s9)
-						.background(MaskinColor.accentTint, in: Circle())
-						.accessibilityLabel(annotation.pinNumber.map { "Pin \($0)" } ?? "Comment")
-					Text(annotation.comment)
-						.maskinText(.body)
-						.foregroundStyle(MaskinColor.ink)
-						.frame(maxWidth: .infinity, alignment: .leading)
+			SectionHeader("Review comments") {
+				ShareLink(item: FileAnnotationRules.exportJSON(annotations)) {
+					Label("Export", systemImage: "square.and.arrow.up").labelStyle(.iconOnly)
 				}
+				.foregroundStyle(MaskinColor.ink4)
+				.accessibilityLabel("Export comments as JSON")
+			}
+			ForEach(annotations) { annotation in
+				Button { onSelect?(annotation) } label: { row(annotation) }
+					.buttonStyle(.plain)
+					.disabled(onSelect == nil)
 			}
 		}
 		.padding(MaskinSpace.s7)
 		.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+	}
+
+	private func row(_ annotation: FileAnnotation) -> some View {
+		HStack(alignment: .top, spacing: MaskinSpace.s5) {
+			Text(annotation.pinNumber.map(String.init) ?? "•")
+				.maskinText(.caption)
+				.foregroundStyle(MaskinColor.accentDeep)
+				.frame(minWidth: MaskinSpace.s9, minHeight: MaskinSpace.s9)
+				.background(MaskinColor.accentTint, in: Circle())
+				.accessibilityLabel(annotation.pinNumber.map { "Pin \($0)" } ?? "Comment")
+			Text(annotation.comment)
+				.maskinText(.body)
+				.foregroundStyle(MaskinColor.ink)
+				.multilineTextAlignment(.leading)
+				.frame(maxWidth: .infinity, alignment: .leading)
+		}
+		.frame(minHeight: MaskinSpace.touchMin)
+		.contentShape(Rectangle())
 	}
 }
