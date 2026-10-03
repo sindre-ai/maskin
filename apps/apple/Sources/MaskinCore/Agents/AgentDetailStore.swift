@@ -20,7 +20,9 @@ public final class AgentDetailStore {
 	/// Last action failure, surfaced by the screen as a transient notice.
 	public var notice: String?
 
-	public enum Action: Equatable, Sendable { case run, pause, reset, stop(String) }
+	public enum Action: Equatable, Sendable { case run, pause, reset, stop(String), save, delete }
+	/// Set once the server confirmed the delete; the screen pops itself.
+	public private(set) var isDeleted = false
 
 	@ObservationIgnored private let api: any AgentDetailAPI
 	@ObservationIgnored private let events: EventHub?
@@ -157,6 +159,65 @@ public final class AgentDetailStore {
 			return true
 		} catch {
 			sessions = before
+			notice = AgentsStore.message(error)
+			return false
+		}
+	}
+
+	// MARK: - Editing
+
+	/// Save changed fields. The profile updates at once; if the server refuses, it goes back and
+	/// `notice` says why. A refetch that was already in flight can't overwrite the edit.
+	@discardableResult
+	public func save(_ edit: AgentEdit) async -> Bool {
+		guard !edit.isEmpty, let before = profile, busy == nil else { return false }
+		mutationEpoch += 1
+		busy = .save
+		profile = edit.applied(to: before)
+		defer { busy = nil }
+		let intent = "save:\(String(describing: edit))"
+		do {
+			let saved = try await api.update(
+				agentID: agentID, edit: edit, idempotencyKey: intents.key(for: intent))
+			intents.succeeded(intent)
+			mutationEpoch += 1
+			profile = saved
+			return true
+		} catch {
+			profile = before
+			notice = AgentsStore.message(error)
+			return false
+		}
+	}
+
+	/// Add one MCP server (a no-op when the name is taken).
+	@discardableResult
+	public func addTool(_ tool: AgentTool) async -> Bool {
+		guard let profile, !profile.tools.contains(where: { $0.name == tool.name }) else { return false }
+		return await save(AgentEdit(tools: profile.tools + [tool]))
+	}
+
+	@discardableResult
+	public func removeTool(named name: String) async -> Bool {
+		guard let profile, profile.tools.contains(where: { $0.name == name }) else { return false }
+		return await save(AgentEdit(tools: profile.tools.filter { $0.name != name }))
+	}
+
+	public var canDelete: Bool { !(profile?.isSystem ?? true) && busy == nil && !isDeleted }
+
+	/// Delete the agent for good. `isDeleted` flips only once the server agrees, so the screen
+	/// can leave without a flash of an agent that is still there.
+	@discardableResult
+	public func delete() async -> Bool {
+		guard canDelete else { return false }
+		busy = .delete
+		defer { busy = nil }
+		do {
+			try await api.delete(agentID: agentID, idempotencyKey: intents.key(for: "delete"))
+			intents.succeeded("delete")
+			isDeleted = true
+			return true
+		} catch {
 			notice = AgentsStore.message(error)
 			return false
 		}

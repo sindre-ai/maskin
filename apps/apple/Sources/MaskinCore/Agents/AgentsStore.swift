@@ -83,6 +83,41 @@ public final class AgentsStore {
 		}
 	}
 
+	// MARK: - Creating
+
+	/// Last create failure, shown by the sheet that asked.
+	public var notice: String?
+	public private(set) var isCreating = false
+	@ObservationIgnored private var createKeys = IntentKeys()
+
+	/// Create an agent and put it in the list at once. Returns its id, or nil (with `notice`)
+	/// when the server refused. A retry of the same draft reuses its idempotency key, so a lost
+	/// response can't make two agents.
+	public func create(_ draft: AgentDraft) async -> String? {
+		guard draft.isValid, !isCreating else { return nil }
+		isCreating = true
+		notice = nil
+		defer { isCreating = false }
+		let intent = "create:\(draft.trimmedName):\(draft.trimmedDescription):\(draft.systemPrompt)"
+		do {
+			let row = try await api.create(draft: draft, idempotencyKey: createKeys.key(for: intent))
+			createKeys.succeeded(intent)
+			if !agents.contains(where: { $0.id == row.id }) { agents.append(row) }
+			cache?.write(agents, Self.cacheName)
+			Task { await refresh() }
+			return row.id
+		} catch {
+			notice = Self.message(error)
+			return nil
+		}
+	}
+
+	/// Drop an agent the detail screen just deleted, without waiting for the refetch.
+	public func remove(id: String) {
+		agents.removeAll { $0.id == id }
+		cache?.write(agents, Self.cacheName)
+	}
+
 	// MARK: - Loading
 
 	/// Initial load plus the live subscription. Safe to call repeatedly.

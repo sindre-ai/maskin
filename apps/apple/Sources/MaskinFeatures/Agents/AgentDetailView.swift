@@ -3,25 +3,32 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// One agent: who it is, what it's doing, how to run it, and its recent sessions. Editing the
-/// instructions or tools happens on the web for now; everything here is read-only except the
-/// run/pause/reset/stop actions.
+/// One agent: a hero with its identity and a one-tap run, then instructions, tools, setup and
+/// recent sessions. Name, role, instructions and tools are editable here; everything saves
+/// optimistically and rolls back with a notice if the server refuses.
 struct AgentDetailView: View {
 	let store: AgentDetailStore
+	/// Called once the agent is deleted so the host can leave the screen.
+	var onDeleted: () -> Void = {}
 	@State private var showRun = false
+	@State private var showEdit = false
+	@State private var showTools = false
 	@State private var confirmReset = false
+	@State private var confirmDelete = false
 	@State private var sessionToStop: AgentSession?
 
 	var body: some View {
 		ScrollView {
-			VStack(alignment: .leading, spacing: MaskinSpace.s11) {
+			VStack(alignment: .leading, spacing: MaskinSpace.s12) {
 				if let profile = store.profile {
 					AgentDetailContent(
 						profile: profile, store: store,
 						onRun: { runTapped() },
 						onPause: { Task { await store.pause() } },
 						onReset: { confirmReset = true },
-						onStop: { sessionToStop = $0 })
+						onStop: { sessionToStop = $0 },
+						onEdit: { showEdit = true },
+						onManageTools: { showTools = true })
 				} else {
 					placeholder
 				}
@@ -35,12 +42,52 @@ struct AgentDetailView: View {
 		#if os(iOS)
 		.navigationBarTitleDisplayMode(.inline)
 		#endif
+		.toolbar {
+			if store.profile != nil {
+				ToolbarItem(placement: .primaryAction) {
+					Menu {
+						Button { showEdit = true } label: { Label("Edit", systemImage: "pencil") }
+						Button { showTools = true } label: { Label("Tools", systemImage: "wrench.and.screwdriver") }
+						if store.canReset {
+							Button { confirmReset = true } label: { Label("Reset to defaults", systemImage: "arrow.counterclockwise") }
+						}
+						if store.canDelete {
+							Divider()
+							Button(role: .destructive) { confirmDelete = true } label: {
+								Label("Delete agent", systemImage: "trash")
+							}
+						}
+					} label: {
+						Image(systemName: "ellipsis")
+					}
+					.accessibilityLabel("Agent actions")
+				}
+			}
+		}
 		.refreshable { await store.refresh() }
 		.sheet(isPresented: $showRun) {
 			RunAgentSheet(agentName: store.profile?.name ?? "this agent") { prompt in
 				await store.run(prompt: prompt)
 			}
 			.presentationDetents([.medium, .large])
+			.presentationCornerRadius(MaskinRadius.hero + MaskinSpace.s4)
+		}
+		.sheet(isPresented: $showEdit, onDismiss: { store.notice = nil }) {
+			if let profile = store.profile {
+				AgentFormSheet(
+					mode: .edit, initial: AgentDraft(profile: profile), errorMessage: nil
+				) { draft in
+					guard let edit = draft.edit(against: profile) else { return true }
+					return await store.save(edit)
+				}
+				.presentationDetents([.large])
+				.presentationCornerRadius(MaskinRadius.hero + MaskinSpace.s4)
+			}
+		}
+		.sheet(isPresented: $showTools) {
+			AgentToolsSheet(store: store)
+				.presentationDetents([.medium, .large])
+				.presentationCornerRadius(MaskinRadius.hero + MaskinSpace.s4)
 		}
 		.confirmationDialog(
 			"Reset \(store.profile?.name ?? "agent") to factory defaults?", isPresented: $confirmReset,
@@ -51,6 +98,16 @@ struct AgentDetailView: View {
 			Text("Instructions, tools and skills go back to their built-in defaults. This can't be undone.")
 		}
 		.confirmationDialog(
+			"Delete \(store.profile?.name ?? "this agent")?", isPresented: $confirmDelete,
+			titleVisibility: .visible
+		) {
+			Button("Delete agent", role: .destructive) {
+				Task { if await store.delete() { onDeleted() } }
+			}
+		} message: {
+			Text("Its past sessions stay in history, but it can't run again. This can't be undone.")
+		}
+		.confirmationDialog(
 			"Stop this session?", isPresented: Binding(get: { sessionToStop != nil }, set: { if !$0 { sessionToStop = nil } }),
 			titleVisibility: .visible, presenting: sessionToStop
 		) { session in
@@ -59,7 +116,7 @@ struct AgentDetailView: View {
 			Text("The agent stops what it's doing now. Work in progress may be lost.")
 		}
 		.alert(
-			"Something went wrong", isPresented: Binding(get: { store.notice != nil }, set: { if !$0 { store.notice = nil } })
+			"Something went wrong", isPresented: Binding(get: { store.notice != nil && !showEdit }, set: { if !$0 { store.notice = nil } })
 		) {
 			Button("OK", role: .cancel) {}
 		} message: {
@@ -97,31 +154,48 @@ struct AgentDetailContent: View {
 	var onPause: () -> Void = {}
 	var onReset: () -> Void = {}
 	var onStop: (AgentSession) -> Void = { _ in }
+	var onEdit: () -> Void = {}
+	var onManageTools: () -> Void = {}
 
 	var body: some View {
-		header
-		actions
+		hero
 		if let live = store.liveSession {
 			card("Now") { LiveSessionRow(session: live) { onStop(live) } }
 		}
-		if let prompt = profile.systemPrompt, !prompt.isEmpty {
-			card("Instructions") {
+		card("Instructions", action: ("Edit", "pencil", onEdit)) {
+			if let prompt = profile.systemPrompt, !prompt.isEmpty {
+				Text(prompt)
+					.maskinText(.subhead)
+					.foregroundStyle(MaskinColor.ink2)
+					.lineLimit(10)
+					.frame(maxWidth: .infinity, alignment: .leading)
+			} else {
+				Text("No instructions yet. Tell this agent what its job is.")
+					.maskinText(.subhead)
+					.foregroundStyle(MaskinColor.ink4)
+			}
+		}
+		card("Tools", action: ("Manage", "slider.horizontal.3", onManageTools)) {
+			if profile.tools.isEmpty {
+				Text("No tools connected.").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
+			} else {
 				VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-					Text(prompt)
-						.maskinText(.subhead)
-						.foregroundStyle(MaskinColor.ink2)
-						.lineLimit(12)
-						.frame(maxWidth: .infinity, alignment: .leading)
-					Text("Edit instructions on the web.")
-						.maskinText(.caption)
-						.foregroundStyle(MaskinColor.ink5)
+					ForEach(profile.tools) { tool in
+						HStack(spacing: MaskinSpace.s5) {
+							Image(systemName: "wrench.and.screwdriver")
+								.foregroundStyle(MaskinColor.ink4)
+								.accessibilityHidden(true)
+							Text(tool.name).maskinText(.subhead).foregroundStyle(MaskinColor.ink2)
+							Spacer(minLength: 0)
+							if let kind = tool.kind { MonoLabel(kind) }
+						}
+					}
 				}
 			}
 		}
 		card("Setup") {
 			VStack(alignment: .leading, spacing: MaskinSpace.s7) {
 				fact("Model", profile.llmProvider ?? "Workspace default")
-				fact("Tools", profile.tools.isEmpty ? "None connected" : profile.tools.map(\.name).joined(separator: ", "))
 				fact("Skills", profile.skills.isEmpty ? "None" : profile.skills.joined(separator: ", "))
 			}
 		}
@@ -139,19 +213,29 @@ struct AgentDetailContent: View {
 		}
 	}
 
-	private var header: some View {
-		HStack(spacing: MaskinSpace.s9) {
+	/// Centered identity, then the one prominent action.
+	private var hero: some View {
+		VStack(spacing: MaskinSpace.s9) {
 			ActorAvatar(
-				name: profile.name, kind: .agent, size: MaskinSpace.s14 * 2, seed: profile.id,
+				name: profile.name, kind: .agent, size: MaskinSpace.s14 * 3, seed: profile.id,
 				working: store.status == .running)
-			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
-				Text(profile.name).maskinText(.title).foregroundStyle(MaskinColor.ink)
-				Text(profile.role).maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
-				AgentStatusLabel(status: store.status)
+			VStack(spacing: MaskinSpace.s2) {
+				Text(profile.name)
+					.maskinText(.title)
+					.foregroundStyle(MaskinColor.ink)
+					.multilineTextAlignment(.center)
+				Text(profile.role)
+					.maskinText(.subhead)
+					.foregroundStyle(MaskinColor.ink4)
+					.multilineTextAlignment(.center)
+					.lineLimit(2)
+				AgentStatusLabel(status: store.status).padding(.top, MaskinSpace.s2)
 			}
-			Spacer(minLength: 0)
+			.accessibilityElement(children: .combine)
+			actions
 		}
-		.accessibilityElement(children: .combine)
+		.frame(maxWidth: .infinity)
+		.padding(.vertical, MaskinSpace.s9)
 	}
 
 	private var actions: some View {
@@ -159,13 +243,14 @@ struct AgentDetailContent: View {
 			HStack(spacing: MaskinSpace.s5) { actionButtons }
 			VStack(spacing: MaskinSpace.s5) { actionButtons }
 		}
+		.frame(maxWidth: 420)
 	}
 
 	@ViewBuilder
 	private var actionButtons: some View {
 		if AgentActions.canPause(store.status) {
-			Button(action: onPause) { Label(store.busy == .pause ? "Pausing…" : "Pause", systemImage: "pause.circle") }
-				.buttonStyle(.secondaryAction)
+			Button(action: onPause) { Label(store.busy == .pause ? "Pausing…" : "Pause", systemImage: "pause.fill") }
+				.buttonStyle(.primaryAction)
 				.disabled(!store.canPause)
 		} else {
 			Button(action: onRun) {
@@ -176,21 +261,29 @@ struct AgentDetailContent: View {
 			.buttonStyle(.primaryAction)
 			.disabled(!store.canRun)
 		}
-		if AgentActions.canReset(isSystem: profile.isSystem) {
-			Button(action: onReset) { Label("Reset", systemImage: "arrow.counterclockwise") }
-				.buttonStyle(.secondaryAction)
-				.disabled(!store.canReset)
-		}
 	}
 
-	private func card<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+	private func card<Content: View>(
+		_ title: String, action: (title: String, symbol: String, run: () -> Void)? = nil,
+		@ViewBuilder content: () -> Content
+	) -> some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-			SectionHeader(title)
+			HStack(alignment: .firstTextBaseline) {
+				SectionHeader(title)
+				if let action {
+					Spacer(minLength: 0)
+					Button(action: action.run) {
+						Label(action.title, systemImage: action.symbol).labelStyle(.titleOnly)
+					}
+					.maskinText(.caption)
+					.foregroundStyle(MaskinColor.ink3)
+					.accessibilityLabel("\(action.title) \(title.lowercased())")
+				}
+			}
 			content()
-				.padding(MaskinSpace.s9)
+				.padding(MaskinSpace.s10)
 				.frame(maxWidth: .infinity, alignment: .leading)
-				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card))
-				.overlay(RoundedRectangle(cornerRadius: MaskinRadius.card).strokeBorder(MaskinSurface.line))
+				.agentSurface()
 		}
 	}
 

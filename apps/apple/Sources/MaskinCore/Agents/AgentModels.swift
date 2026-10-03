@@ -133,14 +133,41 @@ public enum AgentStatusResolver {
 	}
 }
 
-/// One external capability an agent is wired to. MVP shows names only; editing stays on the web.
+/// One external capability an agent is wired to: an MCP server entry of `tools.mcpServers`.
+/// `spec` keeps the full server definition so editing other fields (or other servers) never
+/// drops a command, url, header or env var this screen doesn't show.
 public struct AgentTool: Identifiable, Hashable, Sendable {
 	public var name: String
 	public var kind: String?
+	public var spec: JSONValue?
 	public var id: String { name }
-	public init(name: String, kind: String? = nil) {
+	public init(name: String, kind: String? = nil, spec: JSONValue? = nil) {
 		self.name = name
 		self.kind = kind
+		self.spec = spec
+	}
+
+	public func hash(into hasher: inout Hasher) {
+		hasher.combine(name)
+		hasher.combine(kind)
+	}
+
+	/// Where the server lives, for the row subtitle: the URL, or the command line. Headers and
+	/// env are deliberately never shown: they hold tokens.
+	public var location: String? {
+		guard case .object(let spec)? = spec else { return nil }
+		if case .string(let url)? = spec["url"] { return url }
+		guard case .string(let command)? = spec["command"] else { return nil }
+		var parts = [command]
+		if case .array(let args)? = spec["args"] { parts += args.compactMap(\.stringValue) }
+		return parts.joined(separator: " ")
+	}
+
+	/// The `tools` value to send back: `{ "mcpServers": { name: spec } }`.
+	public static func toolsJSON(_ tools: [AgentTool]) -> JSONValue {
+		var servers: [String: JSONValue] = [:]
+		for tool in tools { servers[tool.name] = tool.spec ?? .object([:]) }
+		return .object(["mcpServers": .object(servers)])
 	}
 
 	/// Reads `tools.mcpServers` (object keyed by server name, each optionally with a `type`).
@@ -155,7 +182,7 @@ public struct AgentTool: Identifiable, Hashable, Sendable {
 			} else if case .object(let spec) = servers[key], spec["command"] != nil {
 				kind = "stdio"
 			}
-			return AgentTool(name: key, kind: kind)
+			return AgentTool(name: key, kind: kind, spec: servers[key])
 		}
 	}
 }
