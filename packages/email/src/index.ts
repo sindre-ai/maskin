@@ -101,6 +101,8 @@ export async function sendInviteEmail(params: SendInviteEmailParams): Promise<vo
 // its own direct dependency on the SDK.
 export { Resend }
 
+export type VoiceFollowupLanguage = 'da' | 'en'
+
 export interface SendVoiceFollowupEmailParams {
 	// Pre-resolved by the caller (apps/dev) from the workspace's own Resend
 	// integration. This package never resolves credentials for this helper.
@@ -110,6 +112,9 @@ export interface SendVoiceFollowupEmailParams {
 	prospectName: string
 	callSummary: string
 	calendarLink?: string
+	// Language of the call the prospect asked for the email on. Defaults to
+	// Danish: this bet calls Danish +45 numbers with a Danish agent.
+	language?: VoiceFollowupLanguage
 	// The voice contact the email is about. compliance_flag is read first and
 	// a disclosure_missing flag (stamped when the AI-disclosure opening was not
 	// heard on the call) means the prospect never validly consented to contact.
@@ -136,41 +141,83 @@ function safeCalendarLink(link: string | undefined): string | undefined {
 	return link && /^https:\/\//i.test(link) ? link : undefined
 }
 
+interface FollowupCopy {
+	subject: string
+	greeting: (name: string) => string
+	intro: string
+	linkLead: string
+	optOut: (address: string) => string
+	signature: string
+}
+
+// The Danish copy mirrors the English text, opt-out wording included. It needs
+// a native read before go-live.
+const FOLLOWUP_COPY: Record<VoiceFollowupLanguage, FollowupCopy> = {
+	en: {
+		subject: 'Following up on our call',
+		greeting: (name) => `Hi ${name},`,
+		intro:
+			'Thanks for taking the call. As you asked, here is a short recap of what we talked about:',
+		linkLead: 'You can pick a time that suits you here:',
+		optOut: (address) =>
+			`This is the only email we will send you about this call. If you do not want further email from Maskin, reply to this message or write to ${address} and we will stop.`,
+		signature: '— Maskin',
+	},
+	da: {
+		subject: 'Opfølgning på vores samtale',
+		greeting: (name) => `Hej ${name},`,
+		intro: 'Tak for samtalen. Som du bad om, kommer her et kort resumé af, hvad vi talte om:',
+		linkLead: 'Her kan du vælge et tidspunkt, der passer dig:',
+		optOut: (address) =>
+			`Dette er den eneste e-mail, vi sender dig om samtalen. Hvis du ikke ønsker flere e-mails fra Maskin, så svar på denne mail eller skriv til ${address}, så stopper vi.`,
+		signature: '— Maskin',
+	},
+}
+
+function followupCopy(params: SendVoiceFollowupEmailParams): FollowupCopy {
+	return FOLLOWUP_COPY[params.language ?? 'da']
+}
+
 function buildFollowupPlaintext(params: SendVoiceFollowupEmailParams): string {
+	const copy = followupCopy(params)
 	const link = safeCalendarLink(params.calendarLink)
 	return [
-		`Hi ${params.prospectName},`,
+		copy.greeting(params.prospectName),
 		'',
-		'Thanks for taking the call. As you asked, here is a short recap of what we talked about:',
+		copy.intro,
 		'',
 		params.callSummary,
-		...(link ? ['', 'You can pick a time that suits you here:', link] : []),
+		...(link ? ['', copy.linkLead, link] : []),
 		'',
-		'— Maskin',
+		copy.optOut(params.from),
+		'',
+		copy.signature,
 	].join('\n')
 }
 
 function buildFollowupHtml(params: SendVoiceFollowupEmailParams): string {
+	const copy = followupCopy(params)
 	const link = safeCalendarLink(params.calendarLink)
 	const safeLink = link ? escapeHtml(link) : undefined
 	return [
 		'<!doctype html>',
 		'<html>',
 		'<body style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; color: #111; max-width: 560px; margin: 0 auto; padding: 24px;">',
-		`<p>Hi ${escapeHtml(params.prospectName)},</p>`,
-		'<p>Thanks for taking the call. As you asked, here is a short recap of what we talked about:</p>',
+		`<p>${escapeHtml(copy.greeting(params.prospectName))}</p>`,
+		`<p>${escapeHtml(copy.intro)}</p>`,
 		`<p style="white-space: pre-line;">${escapeHtml(params.callSummary)}</p>`,
 		...(safeLink
-			? [`<p>You can pick a time that suits you here:<br><a href="${safeLink}">${safeLink}</a></p>`]
+			? [`<p>${escapeHtml(copy.linkLead)}<br><a href="${safeLink}">${safeLink}</a></p>`]
 			: []),
-		'<p style="color: #666; font-size: 13px;">— Maskin</p>',
+		`<p style="color: #666; font-size: 13px;">${escapeHtml(copy.optOut(params.from))}</p>`,
+		`<p style="color: #666; font-size: 13px;">${escapeHtml(copy.signature)}</p>`,
 		'</body>',
 		'</html>',
 	].join('\n')
 }
 
 // Post-call recap, sent only when the prospect asked for it on the call
-// (Markedsføringsloven §10(5) carve-out; the caller decides that). Transport
+// (Markedsføringsloven §10(1) prior consent; the caller decides that). Transport
 // only: the caller hands in a ready Resend client and sender.
 export async function sendVoiceFollowupEmail(
 	params: SendVoiceFollowupEmailParams,
@@ -182,7 +229,7 @@ export async function sendVoiceFollowupEmail(
 	const { error } = await params.resend.emails.send({
 		from: params.from,
 		to: params.to,
-		subject: 'Following up on our call',
+		subject: followupCopy(params).subject,
 		text: buildFollowupPlaintext(params),
 		html: buildFollowupHtml(params),
 	})

@@ -103,6 +103,39 @@ describe('sendVoiceFollowupEmail', () => {
 		expect(voiceSend.mock.calls[1][0].html).not.toContain('javascript:')
 	})
 
+	it('defaults to Danish with an opt-out line that names Maskin and the sender address', async () => {
+		voiceSend.mockResolvedValue({ data: { id: 'email-4' }, error: null })
+		await sendVoiceFollowupEmail(base)
+		const arg = voiceSend.mock.calls[0][0]
+		expect(arg.subject).toBe('Opfølgning på vores samtale')
+		expect(arg.text).toContain('Hej Pia <b>,')
+		expect(arg.text).toContain('Hvis du ikke ønsker flere e-mails fra Maskin')
+		expect(arg.text).toContain('skriv til noreply@agent.a.example')
+		expect(arg.text.trimEnd().endsWith('— Maskin')).toBe(true)
+		expect(arg.html).toContain('Hej Pia &lt;b&gt;,')
+		expect(arg.html).toContain('Hvis du ikke ønsker flere e-mails fra Maskin')
+	})
+
+	it('renders the English variant, opt-out line included, when language is en', async () => {
+		voiceSend.mockResolvedValue({ data: { id: 'email-5' }, error: null })
+		await sendVoiceFollowupEmail({ ...base, language: 'en' })
+		const arg = voiceSend.mock.calls[0][0]
+		expect(arg.subject).toBe('Following up on our call')
+		expect(arg.text).toContain('Hi Pia <b>,')
+		expect(arg.text).toContain('If you do not want further email from Maskin')
+		expect(arg.text).toContain('write to noreply@agent.a.example')
+		expect(arg.html).toContain('If you do not want further email from Maskin')
+		expect(arg.text).not.toContain('Hej')
+	})
+
+	it('renders the Danish link lead-in when a calendar link is passed', async () => {
+		voiceSend.mockResolvedValue({ data: { id: 'email-6' }, error: null })
+		await sendVoiceFollowupEmail({ ...base, calendarLink: 'https://cal.example/pia' })
+		const arg = voiceSend.mock.calls[0][0]
+		expect(arg.text).toContain('Her kan du vælge et tidspunkt, der passer dig:')
+		expect(arg.text).toContain('https://cal.example/pia')
+	})
+
 	it('skips the send when compliance_flag is disclosure_missing', async () => {
 		const result = await sendVoiceFollowupEmail({
 			...base,
