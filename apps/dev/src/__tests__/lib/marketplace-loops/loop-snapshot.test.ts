@@ -60,6 +60,71 @@ describe('actorSnapshot', () => {
 	})
 })
 
+describe('actorSnapshot llmConfig', () => {
+	it('drops apiKey so a provider credential never reaches the snapshot', () => {
+		const out = actorSnapshot({
+			...baseRow,
+			tools: null,
+			llmConfig: { provider: 'anthropic', model: 'fake-model', apiKey: 'fake-key-not-real' },
+		})
+		expect(JSON.stringify(out)).not.toContain('fake-key-not-real')
+		expect(out.llmConfig).not.toHaveProperty('apiKey')
+	})
+
+	it('drops snake_case and nested credential keys too', () => {
+		const out = actorSnapshot({
+			...baseRow,
+			tools: null,
+			llmConfig: {
+				provider: 'custom',
+				api_key: 'fake-snake-key',
+				headers: { Authorization: 'Bearer fake-bearer' },
+			},
+		})
+		expect(JSON.stringify(out)).not.toContain('fake-snake-key')
+		expect(JSON.stringify(out)).not.toContain('fake-bearer')
+	})
+
+	it('drops unknown keys, endpoints and headers by default', () => {
+		const out = actorSnapshot({
+			...baseRow,
+			tools: null,
+			llmConfig: {
+				provider: 'custom',
+				model: 'fake-model',
+				baseUrl: 'https://fake-gateway.invalid',
+				someFutureSetting: 'x',
+			},
+		})
+		expect(out.llmConfig).toEqual({ provider: 'custom', model: 'fake-model' })
+	})
+
+	it('keeps provider and model unchanged', () => {
+		const out = actorSnapshot({
+			...baseRow,
+			tools: null,
+			llmConfig: { provider: 'anthropic', model: 'fake-model' },
+		})
+		expect(out.llmConfig).toEqual({ provider: 'anthropic', model: 'fake-model' })
+	})
+
+	it('keeps only the model when the config has no provider', () => {
+		const out = actorSnapshot({ ...baseRow, tools: null, llmConfig: { model: 'fake-model' } })
+		expect(out.llmConfig).toEqual({ model: 'fake-model' })
+	})
+
+	it('does not throw on a null, missing or non-object llmConfig', () => {
+		expect(actorSnapshot({ ...baseRow, tools: null, llmConfig: null }).llmConfig).toBeNull()
+		expect(actorSnapshot({ ...baseRow, tools: null, llmConfig: undefined }).llmConfig).toBeNull()
+		expect(actorSnapshot({ ...baseRow, tools: null, llmConfig: 'fake-key' }).llmConfig).toBeNull()
+		expect(actorSnapshot({ ...baseRow, tools: null, llmConfig: ['fake-key'] }).llmConfig).toBeNull()
+	})
+
+	it('keeps an empty llmConfig empty', () => {
+		expect(actorSnapshot({ ...baseRow, tools: null, llmConfig: {} }).llmConfig).toEqual({})
+	})
+})
+
 describe('expandBrowserCapability', () => {
 	it('turns the browser flag back into a real MCP entry the sidecar check matches', () => {
 		const out = expandBrowserCapability({ browser: true }) as Record<string, unknown>
