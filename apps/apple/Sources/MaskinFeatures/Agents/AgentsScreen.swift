@@ -33,6 +33,7 @@ public struct AgentsScreen: View {
 public struct AgentDetailScreen: View {
 	private let environment: AppEnvironment
 	private let agentId: String
+	@Environment(\.dismiss) private var dismiss
 
 	public init(environment: AppEnvironment, agentId: String) {
 		self.environment = environment
@@ -40,7 +41,7 @@ public struct AgentDetailScreen: View {
 	}
 
 	public var body: some View {
-		AgentDetailHost(environment: environment, agentID: agentId)
+		AgentDetailHost(environment: environment, agentID: agentId) { dismiss() }
 			.id("\(environment.workspaceId ?? "")/\(agentId)")
 	}
 }
@@ -50,6 +51,7 @@ private struct AgentsContainer: View {
 	@State private var store: AgentsStore
 	@State private var selection: String?
 	@State private var search = ""
+	@State private var showCreate = false
 
 	init(environment: AppEnvironment, workspaceID: String) {
 		self.environment = environment
@@ -65,16 +67,34 @@ private struct AgentsContainer: View {
 				store: store, selection: $selection, search: $search,
 				isLive: environment.events.connection != .failed
 			)
+			.toolbar {
+				ToolbarItem(placement: .primaryAction) {
+					Button { showCreate = true } label: { Image(systemName: "plus") }
+						.accessibilityLabel("New agent")
+				}
+			}
 			.shellToolbar(environment: environment)
 		} detail: {
 			if let selection {
-				AgentDetailHost(environment: environment, agentID: selection)
-					.id(selection)
+				AgentDetailHost(environment: environment, agentID: selection) {
+					store.remove(id: selection)
+					self.selection = nil
+				}
+				.id(selection)
 			} else {
 				EmptyState(
 					symbol: "person.2", title: "Select an agent",
 					message: "See what each agent is doing and run it on demand.")
 			}
+		}
+		.sheet(isPresented: $showCreate, onDismiss: { store.notice = nil }) {
+			AgentFormSheet(mode: .create, errorMessage: store.notice) { draft in
+				guard let id = await store.create(draft) else { return false }
+				selection = id
+				return true
+			}
+			.presentationDetents([.large])
+			.presentationCornerRadius(MaskinRadius.hero + MaskinSpace.s4)
 		}
 		.task { await store.start() }
 		.onDisappear { store.stop() }
@@ -84,10 +104,12 @@ private struct AgentsContainer: View {
 /// Builds the `AgentDetailStore` for one agent and starts it.
 private struct AgentDetailHost: View {
 	let environment: AppEnvironment
+	var onDeleted: () -> Void = {}
 	@State private var store: AgentDetailStore
 
-	init(environment: AppEnvironment, agentID: String) {
+	init(environment: AppEnvironment, agentID: String, onDeleted: @escaping () -> Void = {}) {
 		self.environment = environment
+		self.onDeleted = onDeleted
 		_store = State(
 			initialValue: AgentDetailStore(
 				agentID: agentID,
@@ -96,7 +118,7 @@ private struct AgentDetailHost: View {
 	}
 
 	var body: some View {
-		AgentDetailView(store: store)
+		AgentDetailView(store: store, onDeleted: onDeleted)
 			.task { await store.start() }
 			.onDisappear { store.stop() }
 	}

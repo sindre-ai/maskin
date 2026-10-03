@@ -46,6 +46,20 @@ actor FakeAgentsAPI: AgentsAPI {
 		return latest[agentID]
 	}
 
+	var created: [AgentDraft] = []
+	var createKeys: [String] = []
+
+	func create(draft: AgentDraft, idempotencyKey: String) async throws -> AgentSummary {
+		if failing { throw AgentsError("offline") }
+		created.append(draft)
+		createKeys.append(idempotencyKey)
+		let row = AgentSummary(
+			id: "new-\(created.count)", name: draft.trimmedName,
+			description: draft.trimmedDescription.isEmpty ? nil : draft.trimmedDescription)
+		rows.append(row)
+		return row
+	}
+
 	func agents() async throws -> [AgentSummary] {
 		calls += 1
 		if failing { throw AgentsError("offline") }
@@ -126,6 +140,25 @@ actor FakeAgentDetailAPI: AgentDetailAPI {
 		resetCalls += 1
 		profileValue.storedState = .idle
 		return .idle
+	}
+
+	var edits: [AgentEdit] = []
+	var deleted: [String] = []
+
+	func update(agentID: String, edit: AgentEdit, idempotencyKey: String) async throws -> AgentProfile {
+		if let delay { try await Task.sleep(for: delay) }
+		try check()
+		keys.append(idempotencyKey)
+		edits.append(edit)
+		profileValue = edit.applied(to: profileValue)
+		try lose()
+		return profileValue
+	}
+
+	func delete(agentID: String, idempotencyKey: String) async throws {
+		try check()
+		keys.append(idempotencyKey)
+		deleted.append(agentID)
 	}
 
 	func stop(sessionID: String, idempotencyKey: String) async throws {

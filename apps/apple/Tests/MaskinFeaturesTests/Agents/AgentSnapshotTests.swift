@@ -163,4 +163,34 @@ struct AgentSnapshotTests {
 				dark: dark, name: "run-sheet")
 		}
 	}
+
+	@Test("create and edit sheets render", arguments: [false, true])
+	func formSheets(dark: Bool) throws {
+		for width in Self.widths {
+			try render(
+				AgentFormSheet(mode: .create) { _ in true }.frame(height: 640), width: width,
+				dark: dark, name: "create-sheet")
+			try render(
+				AgentFormSheet(
+					mode: .edit,
+					initial: AgentDraft(
+						name: "Forge", description: "Ships fixes and keeps CI green",
+						systemPrompt: "You are Forge. Pick up failing builds."),
+					errorMessage: "Couldn't save your changes."
+				) { _ in true }.frame(height: 640),
+				width: width, dark: dark, name: "edit-sheet")
+		}
+	}
+
+	@Test("tools sheet renders with connected and available servers", arguments: [false, true])
+	func toolsSheet(dark: Bool) async throws {
+		let store = await detailStore(running: false)
+		for width in Self.widths {
+			try render(
+				AgentToolsSheet(store: store).frame(height: 720), width: width, dark: dark,
+				name: "tools-sheet")
+		}
+		let addable = MCPPreset.available(excluding: store.profile?.tools ?? [])
+		#expect(addable.count > 0)
+	}
 }

@@ -136,7 +136,9 @@ struct AgentToolTests {
 				"github": .object(["command": .string("npx")]),
 			])
 		])
-		#expect(AgentTool.summarize(tools) == [AgentTool(name: "github", kind: "stdio"), AgentTool(name: "slack", kind: "http")])
+		let found = AgentTool.summarize(tools)
+		#expect(found.map(\.name) == ["github", "slack"])
+		#expect(found.map(\.kind) == ["stdio", "http"])
 		#expect(AgentTool.summarize(nil).isEmpty)
 		#expect(AgentTool.summarize(.object([:])).isEmpty)
 	}

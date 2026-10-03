@@ -121,7 +121,84 @@ public struct APIAgentsSource: AgentsAPI, AgentDetailAPI {
 		guard case .ok = output else { throw AgentsError("Couldn't stop the session.") }
 	}
 
+	public func update(agentID: String, edit: AgentEdit, idempotencyKey: String) async throws
+		-> AgentProfile
+	{
+		var fields: [String: JSONValue] = [:]
+		if let name = edit.name { fields["name"] = .string(name) }
+		if let description = edit.description { fields["description"] = .string(description) }
+		if let prompt = edit.systemPrompt { fields["system_prompt"] = .string(prompt) }
+		if let tools = edit.tools { fields["tools"] = AgentTool.toolsJSON(tools) }
+		let payload = try Self.wire(
+			fields, as: Operations.patch_sol_api_sol_actors_sol__lcub_id_rcub_.Input.Body.jsonPayload.self)
+		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+			try await client.patch_sol_api_sol_actors_sol__lcub_id_rcub_(
+				.init(
+					path: .init(id: agentID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
+					body: .json(payload)))
+		}
+		switch output {
+		case .ok: return try await profile(agentID: agentID)
+		case .notFound: throw AgentsError("This agent no longer exists.")
+		default: throw AgentsError("Couldn't save your changes.")
+		}
+	}
+
+	public func delete(agentID: String, idempotencyKey: String) async throws {
+		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+			try await client.delete_sol_api_sol_actors_sol__lcub_id_rcub_(
+				.init(path: .init(id: agentID), headers: .init(x_hyphen_workspace_hyphen_id: workspaceID)))
+		}
+		switch output {
+		case .ok: return
+		case .forbidden: throw AgentsError("This agent can't be deleted.")
+		default: throw AgentsError("Couldn't delete the agent.")
+		}
+	}
+
+	public func create(draft: AgentDraft, idempotencyKey: String) async throws -> AgentSummary {
+		var fields: [String: JSONValue] = [
+			"type": .string("agent"), "name": .string(draft.trimmedName),
+		]
+		if !draft.trimmedDescription.isEmpty { fields["description"] = .string(draft.trimmedDescription) }
+		if !draft.systemPrompt.isEmpty { fields["system_prompt"] = .string(draft.systemPrompt) }
+		let payload = try Self.wire(
+			fields, as: Operations.post_sol_api_sol_actors.Input.Body.jsonPayload.self)
+		let created = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+			try await client.post_sol_api_sol_actors(.init(body: .json(payload)))
+		}
+		let id: String
+		switch created {
+		case .created(let ok): id = try ok.body.json.id
+		case .badRequest: throw AgentsError("That name or description isn't valid.")
+		case .conflict: throw AgentsError("An agent with those details already exists.")
+		default: throw AgentsError("Couldn't create the agent.")
+		}
+		// A new agent is only visible here once it is a workspace member. A conflict means it
+		// already is.
+		let added = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+			try await client.post_sol_api_sol_workspaces_sol__lcub_id_rcub__sol_members(
+				.init(
+					path: .init(id: workspaceID), body: .json(.init(actor_id: id, role: "member"))))
+		}
+		switch added {
+		case .created: break
+		default: throw AgentsError("The agent was created, but couldn't be added to this workspace.")
+		}
+		return AgentSummary(
+			id: id, name: draft.trimmedName,
+			description: draft.trimmedDescription.isEmpty ? nil : draft.trimmedDescription,
+			createdAt: Date())
+	}
+
 	// MARK: - Mapping
+
+	/// Builds a generated request payload from plain JSON, so the deeply nested `tools` types
+	/// never leak out of this file.
+	private static func wire<T: Decodable>(_ fields: [String: JSONValue], as type: T.Type) throws -> T {
+		let data = try JSONEncoder().encode(JSONValue.object(fields))
+		return try JSONDecoder().decode(type, from: data)
+	}
 
 	private func sessionRows(agentID: String?, limit: Int) async throws -> [AgentSession] {
 		let output = try await client.get_sol_api_sol_sessions(
