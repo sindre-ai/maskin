@@ -14,7 +14,7 @@ name: Agent-server sandbox list (read-only)
 #
 # It uses the same AGENT_SERVER_* SSH secrets as agent-server-deploy.yml. Those
 # credentials are not restricted to this command; "read-only" is enforced by the
-# script below, so changes to it need review (CODEOWNERS / Code Reviewer).
+# script below, so any change to it needs review.
 
 on:
   workflow_dispatch: {}
