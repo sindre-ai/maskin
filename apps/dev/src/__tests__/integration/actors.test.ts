@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import {
+	events,
 	actors,
 	agentFiles,
 	agentSkills,
@@ -242,6 +243,38 @@ describe('Actors Integration — DELETE', () => {
 		expect(fileAfter.createdBy).toBe(humanId)
 		const [importAfter] = await db.select().from(imports).where(eq(imports.id, importRow.id))
 		expect(importAfter.createdBy).toBe(humanId)
+	})
+
+	it('stores only identity fields in the deleted event, no tools, llm_config or credentials', async () => {
+		const app = createApp()
+		await db
+			.update(actors)
+			.set({
+				apiKey: 'fake-api-key-for-test',
+				systemPrompt: 'fake system prompt for test',
+				tools: { mcpServers: { fake: { env: { FAKE_TOKEN: 'fake-env-secret-for-test' } } } },
+				llmConfig: { api_key: 'fake-llm-key-for-test' },
+				memory: { notes: 'fake memory for test' },
+			})
+			.where(eq(actors.id, agentId))
+
+		const res = await app.request(
+			jsonRequest('DELETE', `/api/actors/${agentId}`, undefined, {
+				'x-workspace-id': workspaceId,
+			}),
+		)
+		expect(res.status).toBe(200)
+
+		const rows = await db.select().from(events).where(eq(events.entityId, agentId))
+		const deleted = rows.filter((r) => r.action === 'deleted')
+		expect(deleted).toHaveLength(1)
+		expect(deleted[0].data).toEqual({
+			id: agentId,
+			type: 'agent',
+			name: 'Delete Me',
+			is_system: false,
+		})
+		expect(JSON.stringify(rows)).not.toMatch(/fake-/)
 	})
 })
 
