@@ -6,11 +6,17 @@ struct MaskinWatchApp: App {
 	@State private var environment = GlanceConfig.makeEnvironment(clientSource: "watchos")
 	@State private var bridge = WatchSessionBridge()
 	private let marker = UserDefaultsHandoffMarker()
+	private let widgets = makeWidgetReloader()
+
+	init() { WatchNotifications.install() }
 
 	var body: some Scene {
 		WindowGroup {
-			GlanceRoot(environment: environment)
+			GlanceRoot(environment: environment) { WatchChatsSection(environment: environment) }
 				.task { listenForPhone() }
+				// Complications fetch with this session, so any change (handoff, sign-in on the watch,
+				// sign-out) should refresh them rather than wait for the next scheduled reload.
+				.onChange(of: environment.auth.session?.apiKey) { widgets.reload() }
 		}
 	}
 

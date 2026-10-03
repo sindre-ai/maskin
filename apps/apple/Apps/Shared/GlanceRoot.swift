@@ -3,12 +3,15 @@ import SwiftUI
 
 /// Root of the watchOS and tvOS apps: sign in, then a glanceable list of what needs the user.
 /// Uses only MaskinCore stores (`NotificationsStore`, `WorkspaceStore`) plus MaskinDesign/MaskinUI.
-struct GlanceRoot: View {
+struct GlanceRoot<Extra: View>: View {
 	private let environment: AppEnvironment
+	private let extra: Extra
 	@State private var store: NotificationsStore
 
-	init(environment: AppEnvironment) {
+	/// `extra` is an optional section shown under the inbox (the watch adds Chats there).
+	init(environment: AppEnvironment, @ViewBuilder extra: () -> Extra) {
 		self.environment = environment
+		self.extra = extra()
 		_store = State(initialValue: NotificationsStore(environment: environment))
 	}
 
@@ -16,7 +19,7 @@ struct GlanceRoot: View {
 		let auth = environment.auth
 		Group {
 			if auth.session != nil {
-				GlanceInbox(environment: environment, store: store)
+				GlanceInbox(environment: environment, store: store) { extra }
 			} else {
 				GlanceLogin(auth: auth)
 			}
@@ -27,4 +30,8 @@ struct GlanceRoot: View {
 			store.activate(workspaceId: environment.workspaceId, events: environment.events)
 		}
 	}
+}
+
+extension GlanceRoot where Extra == EmptyView {
+	init(environment: AppEnvironment) { self.init(environment: environment) { EmptyView() } }
 }

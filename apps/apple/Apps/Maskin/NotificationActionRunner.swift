@@ -3,6 +3,8 @@ import UserNotifications
 
 #if os(iOS)
 	import UIKit
+#elseif os(watchOS)
+	import WatchKit
 #endif
 
 /// Carries out a tap on one of a decision notification's action buttons, then updates what the
@@ -35,6 +37,8 @@ struct NotificationActionRunner: Sendable {
 		let baseURL = raw.flatMap(URL.init(string:)) ?? URL(string: "https://maskin.io")!
 		#if os(macOS)
 			let source = "macos"
+		#elseif os(watchOS)
+			let source = "watchos"
 		#else
 			let source = "ios"
 		#endif
@@ -55,7 +59,7 @@ struct NotificationActionRunner: Sendable {
 		await present(outcome, original: request)
 		// The answer changes what the widgets list. Immediate, not debounced: this process may be
 		// suspended again within seconds of the action finishing.
-		#if os(iOS)
+		#if os(iOS) || os(watchOS)
 			SystemWidgetReloader().reload()
 		#endif
 		return .handled
@@ -99,6 +103,8 @@ struct NotificationActionRunner: Sendable {
 		#if os(iOS)
 			guard UIApplication.shared.applicationState == .active else { return }
 			UINotificationFeedbackGenerator().notificationOccurred(success ? .success : .error)
+		#elseif os(watchOS)
+			WKInterfaceDevice.current().play(success ? .success : .failure)
 		#endif
 	}
 

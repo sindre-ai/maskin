@@ -4,9 +4,10 @@ import MaskinUI
 import SwiftUI
 
 /// What needs the user right now: unread notifications and open decisions, newest first.
-struct GlanceInbox: View {
+struct GlanceInbox<Extra: View>: View {
 	let environment: AppEnvironment
 	let store: NotificationsStore
+	@ViewBuilder let extra: () -> Extra
 
 	private var items: [AppNotification] {
 		store.notifications.filter { $0.isUnread || $0.canRespond }
@@ -28,6 +29,7 @@ struct GlanceInbox: View {
 						NavigationLink(value: n.id) { GlanceRow(notification: n) }
 					}
 				}
+				extra()
 				Section(environment.workspaces.selected?.name ?? "Account") {
 					Button("Sign out", role: .destructive) { environment.signOut() }
 				}
@@ -65,25 +67,38 @@ struct GlanceRow: View {
 	}
 }
 
-/// One notification: its text and, for a decision, a button per option. Answering is the same
-/// optimistic `NotificationsStore.respond` the phone uses.
+/// One notification: its text and, for a decision, a button per option and (when the agent asked
+/// for words) a text reply. Answering is the same optimistic `NotificationsStore.respond` the phone
+/// uses. A destructive option asks first, as on the phone: one stray tap on a wrist must not send
+/// something that can't be undone.
 struct GlanceDetail: View {
 	let store: NotificationsStore
 	let id: String
 	@Environment(\.dismiss) private var dismiss
+	@State private var pendingDestructive: AppNotification.Action?
+	@State private var reply = ""
+
+	/// Sends `response` and leaves, but only when it went through: a refusal reverts the row and
+	/// leaves `actionError`, which this screen must still be showing.
+	private func send(_ response: JSONValue, for n: AppNotification) {
+		Task {
+			await store.respond(to: n.id, with: response)
+			if GlanceAnswer.shouldDismiss(actionError: store.actionError) { dismiss() }
+		}
+	}
 
 	@ViewBuilder
 	private func answerButton(_ action: AppNotification.Action, for n: AppNotification) -> some View {
 		let button = Button(action.label) {
-			Task {
-				await store.respond(to: n.id, with: action.response)
-				dismiss()
+			switch GlanceAnswer.step(for: action) {
+			case .send(let response): send(response, for: n)
+			case .confirm(let action): pendingDestructive = action
 			}
 		}
-		if action.style == .primary {
-			button.buttonStyle(PrimaryActionButtonStyle())
-		} else {
-			button.buttonStyle(SecondaryActionButtonStyle())
+		switch action.style {
+		case .primary: button.buttonStyle(PrimaryActionButtonStyle())
+		case .secondary: button.buttonStyle(SecondaryActionButtonStyle())
+		case .destructive: button.buttonStyle(SecondaryActionButtonStyle()).tint(MaskinColor.danger)
 		}
 	}
 
@@ -99,8 +114,16 @@ struct GlanceDetail: View {
 						ForEach(n.actions) { action in
 							answerButton(action, for: n)
 						}
-						if n.wantsText && n.actions.isEmpty {
-							Text("Reply on your iPhone.").font(.footnote).foregroundStyle(MaskinColor.ink4)
+						if n.wantsText {
+							// Dictation, scribble or keyboard, whichever the watch offers.
+							TextField(n.placeholder ?? "Reply", text: $reply)
+								.submitLabel(.send)
+								.onSubmit { if let response = GlanceAnswer.reply(from: reply) { send(response, for: n) } }
+							Button("Send reply") {
+								if let response = GlanceAnswer.reply(from: reply) { send(response, for: n) }
+							}
+							.buttonStyle(PrimaryActionButtonStyle())
+							.disabled(GlanceAnswer.reply(from: reply) == nil)
 						}
 					}
 					if let error = store.actionError {
@@ -110,6 +133,15 @@ struct GlanceDetail: View {
 				.frame(maxWidth: .infinity, alignment: .leading)
 			}
 			.task { await store.markRead(id) }
+			.confirmationDialog(
+				"Are you sure?",
+				isPresented: Binding(
+					get: { pendingDestructive != nil }, set: { if !$0 { pendingDestructive = nil } }),
+				titleVisibility: .visible, presenting: pendingDestructive
+			) { action in
+				Button("Yes, \(action.label)", role: .destructive) { send(action.response, for: n) }
+				Button("Cancel", role: .cancel) {}
+			}
 		} else {
 			EmptyState(symbol: "checkmark.circle", title: "Done")
 		}
