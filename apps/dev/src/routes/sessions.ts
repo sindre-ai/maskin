@@ -2,8 +2,11 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { sessionLogs, sessions } from '@maskin/db/schema'
 import {
+	SESSION_ACTIVITY_SCAN_ROWS,
 	createSessionSchema,
 	formatQuestionsAsMarkdown,
+	sessionActivityQuerySchema,
+	sessionActivityResponseSchema,
 	sessionAskSchema,
 	sessionInputSchema,
 	sessionLogQuerySchema,
@@ -12,7 +15,7 @@ import {
 	sessionUsageQuerySchema,
 	sessionUsageResponseSchema,
 } from '@maskin/shared'
-import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
@@ -24,6 +27,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { buildSessionActivity } from '../lib/session-activity'
 import { insertConversationMessage } from '../services/conversation-messages'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
 
@@ -766,6 +770,66 @@ app.openapi(getSessionLogsRoute, (async (c) => {
 
 	return c.json(serializeArray(results) as z.infer<typeof sessionLogResponseSchema>[])
 }) as RouteHandler<typeof getSessionLogsRoute, Env>)
+
+// GET /:id/activity - Normalized per-message agent activity trace
+const getSessionActivityRoute = createRoute({
+	method: 'get',
+	path: '/{id}/activity',
+	tags: ['Sessions'],
+	summary: 'Get the agent activity trace (steps) per conversation message',
+	description: `Server-side projection of the raw stream-json session logs into compact per-turn steps. Scans at most ${SESSION_ACTIVITY_SCAN_ROWS} of the newest log rows (below before_log_id). Read-only.`,
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		query: sessionActivityQuerySchema,
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: sessionActivityResponseSchema } },
+			description: 'Activity turns, oldest to newest',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+	},
+})
+
+app.openapi(getSessionActivityRoute, (async (c) => {
+	const db = c.get('db')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const query = c.req.valid('query')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	const conditions = [
+		eq(sessionLogs.sessionId, id),
+		inArray(sessionLogs.stream, ['stdout', 'stderr']),
+	]
+	if (query.before_log_id) conditions.push(lt(sessionLogs.id, query.before_log_id))
+
+	const rows = (
+		await db
+			.select()
+			.from(sessionLogs)
+			.where(and(...conditions))
+			.orderBy(desc(sessionLogs.id))
+			.limit(SESSION_ACTIVITY_SCAN_ROWS)
+	).reverse()
+
+	let turns = buildSessionActivity(rows)
+	if (query.message_id !== undefined) turns = turns.filter((t) => t.message_id === query.message_id)
+	turns = turns.slice(-query.limit_turns)
+
+	return c.json({
+		session_id: id,
+		turns,
+		oldest_log_id: rows[0]?.id ?? null,
+		has_older: rows.length === SESSION_ACTIVITY_SCAN_ROWS,
+	} satisfies z.infer<typeof sessionActivityResponseSchema>)
+}) as RouteHandler<typeof getSessionActivityRoute, Env>)
 
 // GET /:id/logs/stream - SSE stream of live logs
 app.get('/:id/logs/stream', async (c) => {
