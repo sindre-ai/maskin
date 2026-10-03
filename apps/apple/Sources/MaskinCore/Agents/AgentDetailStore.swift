@@ -100,6 +100,9 @@ public final class AgentDetailStore {
 				if epoch == mutationEpoch {
 					profile = fresh
 					sessions = runs
+					SessionActivityController.shared.sync(
+						agentID: agentID, isLive: runs.contains { $0.isStoppable },
+						isPaused: runs.contains { $0.isPaused } && !runs.contains { $0.isActive })
 				} else {
 					refreshQueued = true
 				}
@@ -118,9 +121,14 @@ public final class AgentDetailStore {
 		guard canRun else { return false }
 		let trimmed = prompt?.trimmingCharacters(in: .whitespacesAndNewlines)
 		let text = (trimmed?.isEmpty ?? true) ? nil : trimmed
-		return await perform(.run, intent: "run:\(text ?? "")", to: .running) { key in
+		let started = await perform(.run, intent: "run:\(text ?? "")", to: .running) { key in
 			try await self.api.run(agentID: self.agentID, prompt: text, idempotencyKey: key)
 		}
+		if started {
+			SessionActivityController.shared.start(
+				agentID: agentID, agentName: profile?.name ?? "Agent", task: text ?? "Running")
+		}
+		return started
 	}
 
 	@discardableResult

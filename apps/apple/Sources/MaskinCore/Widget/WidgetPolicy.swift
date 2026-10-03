@@ -4,7 +4,7 @@ import Foundation
 public enum WidgetPolicy {
 	/// How often a healthy widget asks for a fresh snapshot. WidgetKit budgets reloads and may
 	/// stretch this; the app also reloads on demand (`WidgetReloader`).
-	public static let refreshInterval: TimeInterval = 15 * 60
+	public static let refreshInterval: TimeInterval = 30 * 60
 	/// After a failed fetch: sooner, so a blip on a train doesn't leave the widget stale for 15 min.
 	public static let retryInterval: TimeInterval = 5 * 60
 	/// Signed out: nothing to poll for. The app reloads the widget the moment someone signs in.
@@ -54,12 +54,12 @@ public enum WidgetPolicy {
 			// failed fetch: retry soon, and add entries where it turns stale and where it expires so
 			// the widget changes by itself even if no reload ever succeeds.
 			let fresh = age(of: snapshot, at: now) < justFetched
+			// The stale and expiry entries are always scheduled, fresh or not: if the next reload
+			// never succeeds the widget still ages and degrades by itself.
 			var entries = [now]
-			if !fresh {
-				for threshold in [staleAfter, expireAfter] {
-					let at = snapshot.updatedAt.addingTimeInterval(threshold)
-					if at > now { entries.append(at) }
-				}
+			for threshold in [staleAfter, expireAfter] {
+				let at = snapshot.updatedAt.addingTimeInterval(threshold)
+				if at > now { entries.append(at) }
 			}
 			return Plan(
 				entries: entries,

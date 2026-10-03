@@ -4,15 +4,29 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
+#if canImport(UIKit)
+	import UIKit
+#elseif canImport(AppKit)
+	import AppKit
+#endif
+
 /// The share sheet. Pure SwiftUI over `ShareSheetModel`; the view controller supplies the host
 /// integration (closing, opening the app) as closures, so this file renders in previews and
 /// snapshot tests without an extension context.
 struct ShareSheetView: View {
 	@Bindable var model: ShareSheetModel
+	/// Finished (Done): the share is complete or saved.
 	var onClose: () -> Void
+	/// Backed out (Cancel): the host app is told the user cancelled.
+	var onCancel: () -> Void = {}
 	var onOpen: (URL) -> Void
 
 	@FocusState private var noteFocused: Bool
+	@State private var confirmingDiscard = false
+	@ScaledMetric(relativeTo: .title) private var heroIconSize: CGFloat = 56
+	@ScaledMetric(relativeTo: .title) private var blockedIconSize: CGFloat = 44
+	@ScaledMetric(relativeTo: .body) private var sendButtonSize: CGFloat = 44
+	@ScaledMetric(relativeTo: .body) private var sendGlyphSize: CGFloat = 17
 
 	var body: some View {
 		VStack(spacing: 0) {
@@ -34,10 +48,29 @@ struct ShareSheetView: View {
 		.task { await model.start() }
 		.onChange(of: model.phase) { _, phase in
 			switch phase {
-			case .posted, .queued: MaskinHaptics.play(.success)
-			case .failed: MaskinHaptics.play(.error)
+			case .posted:
+				MaskinHaptics.play(.success)
+				AccessibilityNotification.Announcement("Sent to Maskin").post()
+			case .queued:
+				MaskinHaptics.play(.success)
+				AccessibilityNotification.Announcement("Saved for later. Maskin will send it from the app.").post()
+			case .failed(let error):
+				MaskinHaptics.play(.error)
+				AccessibilityNotification.Announcement("Couldn't send. \(error.message)").post()
 			default: break
 			}
+		}
+		.onChange(of: model.title) { _, _ in model.saveDraft() }
+		.onChange(of: model.note) { _, _ in model.saveDraft() }
+		.confirmationDialog("Close without sending?", isPresented: $confirmingDiscard, titleVisibility: .visible) {
+			Button("Keep draft and close") { onCancel() }
+			Button("Discard", role: .destructive) {
+				model.discardDraft()
+				onCancel()
+			}
+			Button("Keep editing", role: .cancel) {}
+		} message: {
+			Text("Your note is saved, so it will be here if you share this again.")
 		}
 	}
 
@@ -46,15 +79,37 @@ struct ShareSheetView: View {
 	/// Just the way out: the sheet is a composer, not a form, so there is no title bar to read.
 	private var header: some View {
 		HStack {
-			Button(isDone ? "Done" : "Cancel", action: onClose)
+			Button(isDone ? "Done" : "Cancel", action: headerAction)
 				.maskinText(.headline)
 				.foregroundStyle(MaskinColor.ink3)
 				.frame(minHeight: MaskinSpace.touchMin)
-				.disabled(isPosting)
 			Spacer(minLength: MaskinSpace.s4)
 		}
 		.padding(.horizontal, MaskinSpace.s10)
 		.padding(.top, MaskinSpace.s2)
+	}
+
+	private func copyToPasteboard(_ text: String) {
+		#if canImport(UIKit)
+			UIPasteboard.general.string = text
+		#elseif canImport(AppKit)
+			NSPasteboard.general.clearContents()
+			NSPasteboard.general.setString(text, forType: .string)
+		#endif
+	}
+
+	private func headerAction() {
+		if isDone {
+			onClose()
+		} else if isPosting {
+			// Stop the upload, then leave: the parked files are removed with the sheet.
+			model.cancelPosting()
+			onCancel()
+		} else if model.hasUnsentText {
+			confirmingDiscard = true
+		} else {
+			onCancel()
+		}
 	}
 
 	private var isPosting: Bool { if case .posting = model.phase { true } else { false } }
@@ -80,6 +135,12 @@ struct ShareSheetView: View {
 					}
 					if case .failed(let error) = model.phase {
 						FormError(error.message).frame(maxWidth: .infinity, alignment: .leading)
+						if model.createdObjectBeforeFailure, error.isRetryable {
+							Text("Your item was already created. Trying again only finishes what's missing.")
+								.maskinText(.caption)
+								.foregroundStyle(MaskinColor.ink4)
+								.padding(.horizontal, MaskinSpace.s4)
+						}
 					}
 				}
 				.padding(.horizontal, MaskinSpace.s10)
@@ -203,11 +264,11 @@ struct ShareSheetView: View {
 					ProgressView().tint(MaskinSurface.onInverse)
 				} else {
 					Image(systemName: failedRetry ? "arrow.clockwise" : "arrow.up")
-						.font(.system(size: 17, weight: .bold))
+						.font(.system(size: sendGlyphSize, weight: .bold))
 						.foregroundStyle(MaskinSurface.onInverse)
 				}
 			}
-			.frame(width: 44, height: 44)
+			.frame(width: sendButtonSize, height: sendButtonSize)
 			.background(MaskinSurface.inverse, in: Circle())
 			.opacity(model.canPost || isPosting ? 1 : 0.4)
 		}
@@ -221,6 +282,7 @@ struct ShareSheetView: View {
 	}
 
 	private var sendLabel: String {
+		if model.isLoadingSchema { return "Loading workspace" }
 		switch model.phase {
 		case .posting(let step):
 			if case .uploading(let index, let total)? = step, total > 1 { return "Uploading \(index) of \(total)" }
@@ -245,7 +307,7 @@ struct ShareSheetView: View {
 		VStack(spacing: MaskinSpace.s11) {
 			Spacer()
 			Image(systemName: "checkmark.circle.fill")
-				.font(.system(size: 56))
+				.font(.system(size: heroIconSize))
 				.foregroundStyle(MaskinColor.success)
 				.accessibilityHidden(true)
 			VStack(spacing: MaskinSpace.s3) {
@@ -272,7 +334,7 @@ struct ShareSheetView: View {
 		VStack(spacing: MaskinSpace.s11) {
 			Spacer()
 			Image(systemName: "clock.arrow.circlepath")
-				.font(.system(size: 56))
+				.font(.system(size: heroIconSize))
 				.foregroundStyle(MaskinColor.ink3)
 				.accessibilityHidden(true)
 			VStack(spacing: MaskinSpace.s3) {
@@ -294,7 +356,7 @@ struct ShareSheetView: View {
 		VStack(spacing: MaskinSpace.s11) {
 			Spacer()
 			Image(systemName: error.needsApp ? "person.crop.circle.badge.exclamationmark" : "tray")
-				.font(.system(size: 44))
+				.font(.system(size: blockedIconSize))
 				.foregroundStyle(MaskinColor.ink4)
 				.accessibilityHidden(true)
 			Text(error.message)
@@ -302,12 +364,23 @@ struct ShareSheetView: View {
 				.foregroundStyle(MaskinColor.ink2)
 				.multilineTextAlignment(.center)
 				.padding(.horizontal, MaskinSpace.s12)
+			if let detail = model.blockedDetail {
+				Text(detail)
+					.maskinText(.subhead)
+					.foregroundStyle(MaskinColor.ink4)
+					.multilineTextAlignment(.center)
+					.padding(.horizontal, MaskinSpace.s12)
+			}
 			Spacer()
 			VStack(spacing: MaskinSpace.s5) {
+				if !model.copyableText.isEmpty {
+					Button("Copy your text") { copyToPasteboard(model.copyableText) }
+						.buttonStyle(.secondaryAction)
+				}
 				if error.needsApp, let url = URL(string: "maskin://open") {
 					Button("Open Maskin") { onOpen(url) }.buttonStyle(.primaryAction)
 				}
-				Button("Close", action: onClose).buttonStyle(.secondaryAction)
+				Button("Close", action: onCancel).buttonStyle(.secondaryAction)
 			}
 			.padding(.horizontal, MaskinSpace.s10)
 			.padding(.bottom, MaskinSpace.s9)

@@ -42,6 +42,16 @@ struct PushDecisionPayloadTests {
 		}
 	}
 
+	@Test func readsDestructiveAndKeepsALongLabelWhole() throws {
+		let long = String(repeating: "word ", count: 20).trimmingCharacters(in: .whitespaces)
+		let p = try #require(
+			PushDecisionPayload(
+				userInfo: userInfo(options: [["label": long, "destructive": true], ["label": "Hold"]])))
+		#expect(p.options[0].label == long)
+		#expect(p.options[0].destructive)
+		#expect(!p.options[1].destructive)
+	}
+
 	@Test func skipsBlankLabelsButKeepsTheRest() throws {
 		let p = try #require(PushDecisionPayload(userInfo: userInfo(options: [["label": ""], ["label": "Hold"]])))
 		#expect(p.options.map(\.label) == ["Hold"])
@@ -75,6 +85,13 @@ struct NotificationActionPlanTests {
 		let plan = NotificationActionPlan(p)
 		#expect(plan.actions[0].requiresAuthentication && plan.actions[0].isDestructive)
 		#expect(!plan.actions[1].requiresAuthentication)
+	}
+
+	@Test func categoryIdentifierIsPerNotificationAndStable() {
+		let a = NotificationActionPlan(payload(["Ship", "Hold"]))
+		let b = NotificationActionPlan(payload(["Ship", "Hold"]))
+		#expect(a == b)
+		#expect(a.categoryIdentifier.hasPrefix(PushDecisionPayload.categoryPrefix))
 	}
 
 	@Test func choiceMapsIdentifiersBackToWhatWasTapped() {

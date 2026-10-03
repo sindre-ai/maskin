@@ -11,11 +11,16 @@ struct AgentDetailView: View {
 	/// Called once the agent is deleted so the host can leave the screen.
 	var onDeleted: () -> Void = {}
 	@State private var showRun = false
-	@State private var showEdit = false
-	@State private var showTools = false
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 	@State private var confirmReset = false
 	@State private var confirmDelete = false
 	@State private var sessionToStop: AgentSession?
+
+	/// Agents are changed by talking to someone, not through a form.
+	private func changeInChat() {
+		guard let name = store.profile?.name else { return }
+		runtime?.buildInChat("I'd like to change the agent \(name). ")
+	}
 
 	var body: some View {
 		ScrollView {
@@ -27,8 +32,7 @@ struct AgentDetailView: View {
 						onPause: { Task { await store.pause() } },
 						onReset: { confirmReset = true },
 						onStop: { sessionToStop = $0 },
-						onEdit: { showEdit = true },
-						onManageTools: { showTools = true })
+						onChangeInChat: { changeInChat() })
 				} else {
 					placeholder
 				}
@@ -46,8 +50,7 @@ struct AgentDetailView: View {
 			if store.profile != nil {
 				ToolbarItem(placement: .primaryAction) {
 					Menu {
-						Button { showEdit = true } label: { Label("Edit", systemImage: "pencil") }
-						Button { showTools = true } label: { Label("Tools", systemImage: "wrench.and.screwdriver") }
+						Button { changeInChat() } label: { Label("Change in chat", systemImage: "bubble.left") }
 						if store.canReset {
 							Button { confirmReset = true } label: { Label("Reset to defaults", systemImage: "arrow.counterclockwise") }
 						}
@@ -71,23 +74,6 @@ struct AgentDetailView: View {
 			}
 			.presentationDetents([.medium, .large])
 			.presentationCornerRadius(MaskinRadius.hero + MaskinSpace.s4)
-		}
-		.sheet(isPresented: $showEdit, onDismiss: { store.notice = nil }) {
-			if let profile = store.profile {
-				AgentFormSheet(
-					mode: .edit, initial: AgentDraft(profile: profile), errorMessage: nil
-				) { draft in
-					guard let edit = draft.edit(against: profile) else { return true }
-					return await store.save(edit)
-				}
-				.presentationDetents([.large])
-				.presentationCornerRadius(MaskinRadius.hero + MaskinSpace.s4)
-			}
-		}
-		.sheet(isPresented: $showTools) {
-			AgentToolsSheet(store: store)
-				.presentationDetents([.medium, .large])
-				.presentationCornerRadius(MaskinRadius.hero + MaskinSpace.s4)
 		}
 		.confirmationDialog(
 			"Reset \(store.profile?.name ?? "agent") to factory defaults?", isPresented: $confirmReset,
@@ -116,7 +102,7 @@ struct AgentDetailView: View {
 			Text("The agent stops what it's doing now. Work in progress may be lost.")
 		}
 		.alert(
-			"Something went wrong", isPresented: Binding(get: { store.notice != nil && !showEdit }, set: { if !$0 { store.notice = nil } })
+			"Something went wrong", isPresented: Binding(get: { store.notice != nil }, set: { if !$0 { store.notice = nil } })
 		) {
 			Button("OK", role: .cancel) {}
 		} message: {
@@ -154,15 +140,14 @@ struct AgentDetailContent: View {
 	var onPause: () -> Void = {}
 	var onReset: () -> Void = {}
 	var onStop: (AgentSession) -> Void = { _ in }
-	var onEdit: () -> Void = {}
-	var onManageTools: () -> Void = {}
+	var onChangeInChat: () -> Void = {}
 
 	var body: some View {
 		hero
 		if let live = store.liveSession {
 			card("Now") { LiveSessionRow(session: live) { onStop(live) } }
 		}
-		card("Instructions", action: ("Edit", "pencil", onEdit)) {
+		card("Instructions", action: ("Change in chat", "bubble.left", onChangeInChat)) {
 			if let prompt = profile.systemPrompt, !prompt.isEmpty {
 				Text(prompt)
 					.maskinText(.subhead)
@@ -175,7 +160,7 @@ struct AgentDetailContent: View {
 					.foregroundStyle(MaskinColor.ink4)
 			}
 		}
-		card("Tools", action: ("Manage", "slider.horizontal.3", onManageTools)) {
+		card("Tools") {
 			if profile.tools.isEmpty {
 				Text("No tools connected.").maskinText(.subhead).foregroundStyle(MaskinColor.ink4)
 			} else {
@@ -349,5 +334,17 @@ enum SessionDuration {
 		if total < 60 { return "\(total)s" }
 		if total < 3600 { return "\(total / 60)m" }
 		return "\(total / 3600)h \((total % 3600) / 60)m"
+	}
+}
+
+extension View {
+	/// The large rounded card surface used across the Agents screens.
+	func agentSurface() -> some View {
+		background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
+			.overlay(
+				RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous)
+					.strokeBorder(MaskinSurface.line)
+			)
+			.clipShape(RoundedRectangle(cornerRadius: MaskinRadius.hero, style: .continuous))
 	}
 }

@@ -61,7 +61,7 @@ public struct SettingsScreen: View {
 					}
 					Section {
 						NavigationLink(value: SettingsRoute.billing) {
-							SettingsRow(symbol: "creditcard", title: "Plan and billing")
+							SettingsRow(symbol: "creditcard", title: "Plan and usage")
 						}
 						NavigationLink(value: SettingsRoute.mcp) {
 							SettingsRow(symbol: "point.3.connected.trianglepath.dotted", title: "Connect Claude")
@@ -101,7 +101,7 @@ public struct SettingsScreen: View {
 				case .apiKey: APIKeyView(store: services.apiKeyStore())
 				case .skills: SkillsView(store: services.skillsStore())
 				case .objectTypes: ObjectTypesView(store: services.schemaStore())
-				case .billing: BillingView(store: services.billingStore(), webURL: services.webURL("billing"))
+				case .billing: BillingView(store: services.billingStore())
 				case .mcp:
 					MCPConnectView(
 						serverURL: services.mcpURL, workspaceId: services.workspaceId ?? "",

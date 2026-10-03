@@ -161,17 +161,66 @@ describe('buildApnsPayload decision', () => {
 		expect((p.aps as Record<string, unknown>).category).toBeUndefined()
 	})
 
-	it('caps options at three, truncates labels and drops an out-of-range recommended', () => {
+	it('caps options at three and drops an out-of-range recommended', () => {
 		const p = buildApnsPayload({
 			...msg,
 			decision: {
 				eventId: 1,
-				options: [{ label: 'x'.repeat(200) }, { label: 'b' }, { label: 'c' }, { label: 'd' }],
+				options: [{ label: 'a' }, { label: 'b' }, { label: 'c' }, { label: 'd' }],
 				recommended: 3,
 			},
 		}) as { decision: { options: { label: string }[]; recommended?: number } }
 		expect(p.decision.options).toHaveLength(3)
-		expect(p.decision.options[0]?.label.length).toBeLessThanOrEqual(40)
+		expect(p.decision.recommended).toBeUndefined()
+	})
+
+	it('never truncates a label: an over-long one makes the decision non-actionable', () => {
+		const p = buildApnsPayload({
+			...msg,
+			decision: { eventId: 1, options: [{ label: 'x'.repeat(200) }, { label: 'Hold' }] },
+		})
+		expect(p).not.toHaveProperty('decision')
+		const ok = buildApnsPayload({
+			...msg,
+			decision: { eventId: 1, options: [{ label: 'x'.repeat(100) }, { label: 'Hold' }] },
+		}) as { decision: { options: { label: string }[] } }
+		expect(ok.decision.options[0]?.label).toBe('x'.repeat(100))
+		expect(JSON.stringify(ok.decision)).not.toContain('\u2026')
+	})
+
+	it('passes destructive through only when true', () => {
+		const p = buildApnsPayload({
+			...msg,
+			decision: {
+				eventId: 1,
+				options: [
+					{ label: 'Send', destructive: true },
+					{ label: 'Hold', destructive: false },
+				],
+			},
+		}) as { decision: { options: Record<string, unknown>[] } }
+		expect(p.decision.options[0]).toEqual({ label: 'Send', destructive: true })
+		expect(p.decision.options[1]).toEqual({ label: 'Hold' })
+	})
+
+	it('remaps recommended after blank labels are filtered', () => {
+		const p = buildApnsPayload({
+			...msg,
+			decision: {
+				eventId: 1,
+				options: [{ label: ' ' }, { label: 'Ship' }, { label: 'Hold' }],
+				recommended: 2,
+			},
+		}) as { decision: { options: { label: string }[]; recommended?: number } }
+		expect(p.decision.options.map((o) => o.label)).toEqual(['Ship', 'Hold'])
+		expect(p.decision.recommended).toBe(1)
+	})
+
+	it('drops recommended when it points at a filtered-out blank', () => {
+		const p = buildApnsPayload({
+			...msg,
+			decision: { eventId: 1, options: [{ label: ' ' }, { label: 'Ship' }], recommended: 0 },
+		}) as { decision: { recommended?: number } }
 		expect(p.decision.recommended).toBeUndefined()
 	})
 

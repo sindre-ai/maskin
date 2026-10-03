@@ -11,6 +11,9 @@ struct MaskinApp: App {
 	#endif
 	@State private var environment: AppEnvironment
 	@State private var push: PushRegistrar
+	#if os(iOS)
+		@State private var watchBridge = WatchSessionBridge()
+	#endif
 
 	init() {
 		#if os(macOS)
@@ -37,6 +40,12 @@ struct MaskinApp: App {
 			RootView(environment: environment, push: push) { runtime in
 				pushDelegate.attach(registrar: push, router: runtime.router)
 			}
+			#if os(iOS)
+				// Hand the sign-in to the paired watch, and again whenever it changes.
+				.onChange(of: environment.auth.session, initial: true) { _, session in
+					watchBridge.publish(session)
+				}
+			#endif
 		}
 		.commands { ShellCommands() }
 	}

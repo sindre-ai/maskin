@@ -280,6 +280,16 @@ public final class AuthSession {
 		}
 	}
 
+	/// Take a session another device of the same person already holds (the iPhone handing its
+	/// sign-in to the paired watch). Persists before it changes state, like `signIn`.
+	public func adopt(_ stored: StoredSession) throws {
+		try persist(stored)
+		signOutMarker.set(false)
+		lastError = nil
+		sessionExpired = false
+		state = .signedIn(stored)
+	}
+
 	public func selectWorkspace(_ id: String) {
 		guard var s = session, s.workspaceId != id else { return }
 		s.workspaceId = id

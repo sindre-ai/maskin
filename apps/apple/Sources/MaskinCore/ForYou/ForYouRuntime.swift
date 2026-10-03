@@ -78,6 +78,7 @@ public final class ForYouRuntime {
 		let store = ForYouStore(
 			source: backend, decisions: decisions, workspaceId: { environment.workspaceId },
 			cache: environment.snapshotCache)
+		if start { store.widgetReloader = makeWidgetReloader() }
 		if start {
 			outbox.start(events: environment.events)
 			store.start(events: environment.events)

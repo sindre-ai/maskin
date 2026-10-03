@@ -73,6 +73,16 @@
 				<string>CA92.1</string>
 			</array>
 		</dict>
+		<!-- File timestamps: DiskCache reads and sets modification dates on its own cache files
+		     inside the app container to evict the oldest (C617.1). -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
 	</array>
 </dict>
 </plist>

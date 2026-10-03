@@ -71,10 +71,10 @@ struct LoopsListView: View {
 				if search.isEmpty {
 					EmptyState(
 						symbol: "arrow.triangle.2.circlepath", title: "No loops yet",
-						message: "Loops are pipelines of agents. Start one from scratch or install one from the marketplace."
+						message: "Loops are pipelines of agents. Describe one in chat or install one from the marketplace."
 					) {
 						VStack(spacing: MaskinSpace.s5) {
-							Button("New loop", action: onNew).buttonStyle(.primaryAction)
+							Button("Build a loop in chat", action: onNew).buttonStyle(.primaryAction)
 							Button("Browse marketplace", action: onBrowse).buttonStyle(.secondaryAction)
 						}
 						.frame(maxWidth: 320)

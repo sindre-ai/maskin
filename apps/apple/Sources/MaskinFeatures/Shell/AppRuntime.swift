@@ -96,6 +96,22 @@ public final class AppRuntime {
 
 	/// Set by a chat link; `ChatsScreen` takes it and resets it to nil.
 	public var requestedConversationId: String?
+
+	/// Agents and loops are built by talking, never by filling in a form. Screens that used to offer
+	/// a builder form call `buildInChat(_:)`; `ChatsScreen` takes the draft and opens a new chat
+	/// with it filled in, so the person picks who to build with. Reset to nil once taken.
+	public struct ChatDraft: Equatable, Identifiable, Sendable {
+		public let id = UUID()
+		public let text: String
+	}
+	public var chatDraft: ChatDraft?
+
+	public func buildInChat(_ text: String) {
+		presentation = nil
+		selectedTab = .chats
+		chatDraft = ChatDraft(text: text)
+	}
+
 	public private(set) var isSigningOut = false
 
 	/// Keeps data current: refetch on returning to the app, connectivity (for the global offline

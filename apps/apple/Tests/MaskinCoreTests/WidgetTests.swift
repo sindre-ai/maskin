@@ -15,7 +15,8 @@ private struct FakeSource: WidgetDataSource {
 	func feed(workspaceId: String) async throws -> [ForYouCard] {
 		if delay > 0 { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
 		do { return try cards.get() } catch {
-			onUnauthorized?()
+			// Only a 401 raises the flag (the middleware's hook); other failures are plain offline.
+			if error is Unauthorized { onUnauthorized?() }
 			throw error
 		}
 	}
@@ -24,6 +25,7 @@ private struct FakeSource: WidgetDataSource {
 }
 
 private struct Boom: Error {}
+private struct Unauthorized: Error {}
 
 private let t0 = Date(timeIntervalSince1970: 1_800_000_000)
 
@@ -186,11 +188,15 @@ struct WidgetPolicyTests {
 		#expect(WidgetPolicy.relevance(of: .signedOut) == 0)
 	}
 
-	@Test("a fresh load reloads in 15 minutes")
+	@Test("a fresh load reloads in 30 minutes and still schedules stale and expiry entries")
 	func freshPlan() {
 		let plan = WidgetPolicy.plan(for: .content(snapshot(at: t0)), now: t0.addingTimeInterval(3))
-		#expect(plan.reloadAfter == t0.addingTimeInterval(3 + 15 * 60))
-		#expect(plan.entries.count == 1)
+		#expect(plan.reloadAfter == t0.addingTimeInterval(3 + 30 * 60))
+		#expect(
+			plan.entries == [
+				t0.addingTimeInterval(3), t0.addingTimeInterval(30 * 60),
+				t0.addingTimeInterval(12 * 3600),
+			])
 	}
 
 	@Test("a cached fallback retries sooner and schedules its own stale and expiry entries")
@@ -343,9 +349,9 @@ struct WidgetSnapshotLoaderTests {
 	func unauthorized() async {
 		let cache = InMemoryWidgetSnapshotCache(snapshot())
 		let state = await loader(
-			secret: sessionData(), cache: cache, source: FakeSource(cards: .failure(Boom()))
+			secret: sessionData(), cache: cache, source: FakeSource(cards: .failure(Unauthorized()))
 		).load()
-		// The fake raises the flag on a feed failure, standing in for the middleware's 401 hook.
+		// The fake raises the flag for an `Unauthorized` failure, standing in for the middleware's 401 hook.
 		#expect(state == .signedOut)
 		#expect(cache.load() == nil)
 	}

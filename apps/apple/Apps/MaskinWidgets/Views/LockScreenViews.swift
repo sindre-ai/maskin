@@ -2,9 +2,9 @@ import MaskinCore
 import MaskinDesign
 import SwiftUI
 
-/// Lock-screen widgets. Count-only by design: a lock screen is glanceable by anyone holding the
-/// phone, so no decision title, sender or notification text appears here. (The home-screen widget
-/// shows details and marks them `.privacySensitive()`.)
+/// Lock-screen widgets. The circular and inline ones are count-only. The rectangular one shows the
+/// top ask and what the agent suggests, both marked `.privacySensitive()` so the system redacts
+/// them while the device is locked (or always, per the user's lock-screen privacy setting).
 enum LockKind: Sendable {
 	case circular, rectangular, inline
 }
@@ -24,6 +24,11 @@ struct LockScreenView: View {
 
 private func decisionPhrase(_ n: Int) -> String {
 	n == 1 ? "1 decision needs you" : "\(n) decisions need you"
+}
+
+/// "Forge suggests Ship it", or "Suggested: Ship it" when the sender could not be resolved.
+private func suggestionLine(agent: String?, label: String) -> String {
+	agent.map { "\($0) suggests \(label)" } ?? "Suggested: \(label)"
 }
 
 private struct CircularView: View {
@@ -74,8 +79,14 @@ private struct RectangularView: View {
 			.widgetAccentable()
 			switch state {
 			case .content(let s) where !s.isEmpty:
-				Text(decisionPhrase(s.needsCount)).font(.headline).lineLimit(2).minimumScaleFactor(0.8)
-				if s.unreadCount > 0 {
+				Text(decisionPhrase(s.needsCount)).font(.headline).lineLimit(1).minimumScaleFactor(0.8)
+				if let top = s.top {
+					Text(top.title).font(.caption).lineLimit(1).privacySensitive()
+					if let suggestion = top.recommendedLabel {
+						Text(suggestionLine(agent: top.agentName, label: suggestion))
+							.font(.caption2).lineLimit(1).privacySensitive()
+					}
+				} else if s.unreadCount > 0 {
 					Text("\(s.unreadLabel) unread").font(.caption)
 				}
 			case .content(let s):

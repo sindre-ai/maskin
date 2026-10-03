@@ -98,6 +98,9 @@ public final class ForYouStore {
 	@ObservationIgnored private var debounce: Task<Void, Never>?
 	@ObservationIgnored private let eventDebounce: Duration
 	@ObservationIgnored private let cache: SnapshotCache?
+	/// Tells the home/lock-screen widgets the feed or a decision changed. No-op unless the runtime
+	/// installs the real (debounced) one.
+	@ObservationIgnored public var widgetReloader: any WidgetReloader = NoopWidgetReloader()
 	private static let optionsKey = "foryou.displayOptions.v1"
 
 	public init(
@@ -247,6 +250,7 @@ public final class ForYouStore {
 			freshness.revalidateFailed()
 		}
 		SyncLog.revalidated(Self.cacheName, ok: succeeded, since: started)
+		if succeeded, mine == generation { widgetReloader.reload() }
 		if let list = await actorsResult, mine == generation, workspaceId() == ws {
 			actors = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
 		}
@@ -278,21 +282,28 @@ public final class ForYouStore {
 	public func choose(_ option: DecisionOption, on card: ForYouCard) {
 		retain(card)
 		decisions.choose(option.label, on: DecisionTarget(card))
+		widgetReloader.reload()
 	}
 
 	public func reply(_ text: String, on card: ForYouCard) {
 		retain(card)
 		decisions.reply(text, on: DecisionTarget(card))
+		widgetReloader.reload()
 	}
 
 	public func dismiss(_ card: ForYouCard) {
 		retain(card)
 		decisions.markRead(DecisionTarget(card))
+		widgetReloader.reload()
 	}
 
 	/// Take back the last action on a card (inside the Undo window, or a sent dismissal).
 	@discardableResult
-	public func undo(_ card: ForYouCard) -> Bool { decisions.undo(card.id) }
+	public func undo(_ card: ForYouCard) -> Bool {
+		let undone = decisions.undo(card.id)
+		if undone { widgetReloader.reload() }
+		return undone
+	}
 
 	/// Dismiss every FYI at once; each is individually undoable.
 	public func dismissAllFYIs() {

@@ -7,7 +7,9 @@ public enum ShareLimits {
 	public static let maxFileBytes = 10 * 1024 * 1024
 	/// Long edge of a shared image after downsampling (ImageIO decodes straight to this size).
 	public static let maxImagePixels = 2048
-	/// Items taken from one share. Matches the `NSExtensionActivationRule` max counts.
+	/// Items taken from one share. The Info.plist activation counts are deliberately higher (10):
+	/// an activation rule that fails hides Maskin from the sheet entirely, whereas going over this
+	/// limit just keeps the first items and says so.
 	public static let maxAttachments = 5
 	/// Characters of shared text kept as the object body.
 	public static let maxTextCharacters = 20_000
@@ -40,7 +42,7 @@ public struct ShareAttachment: Identifiable, Sendable, Equatable {
 
 /// Something in the share that was left out, with a reason a person can read.
 public struct ShareSkip: Sendable, Equatable {
-	public enum Reason: Sendable, Equatable { case tooLarge, unreadable, unsupported, overLimit }
+	public enum Reason: Sendable, Equatable { case tooLarge, unreadable, unsupported, overLimit, truncatedText }
 	public var name: String
 	public var reason: Reason
 
@@ -55,6 +57,7 @@ public struct ShareSkip: Sendable, Equatable {
 		case .unreadable: "\(name) couldn't be read, so it wasn't added."
 		case .unsupported: "\(name) isn't something Maskin can take."
 		case .overLimit: "Only the first \(ShareLimits.maxAttachments) items were added."
+		case .truncatedText: "The text was longer than \(ShareLimits.maxTextCharacters) characters, so it was cut."
 		}
 	}
 }
@@ -106,9 +109,24 @@ public struct ShareContent: Sendable, Equatable {
 		return stem.isEmpty ? name : stem
 	}
 
-	/// Removes the temp files. Call when the share is done, whatever the outcome.
+	/// Removes the temp files, and the `maskin-share-*` directory they were staged in. Call when
+	/// the share is done, whatever the outcome.
 	public func cleanUp() {
-		for attachment in attachments { try? FileManager.default.removeItem(at: attachment.fileURL) }
+		for attachment in attachments {
+			try? FileManager.default.removeItem(at: attachment.fileURL)
+			let directory = attachment.fileURL.deletingLastPathComponent()
+			if directory.lastPathComponent.hasPrefix(ShareExtractor.workDirectoryPrefix) {
+				try? FileManager.default.removeItem(at: directory)
+			}
+		}
+	}
+
+	/// A stable identity for "the same share", so a saved draft only comes back for the content it
+	/// was written for.
+	public var fingerprint: String {
+		var parts = [link?.absoluteString ?? "", String((text ?? "").prefix(200)), String((text ?? "").count)]
+		parts.append(contentsOf: attachments.map(\.name))
+		return parts.joined(separator: "|")
 	}
 }
 

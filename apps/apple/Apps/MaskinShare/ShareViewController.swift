@@ -10,6 +10,8 @@ final class ShareViewController: UIViewController {
 
 	override func viewDidLoad() {
 		super.viewDidLoad()
+		// Leftovers of an earlier share the system killed before it could clean up.
+		ShareExtractor.sweepStaleDirectories()
 		let items = (extensionContext?.inputItems as? [NSExtensionItem]) ?? []
 		let sources = items.flatMap { $0.attachments ?? [] }.map(NSItemProviderSource.init)
 		// Safari offers the page title as the item's title or content text.
@@ -23,12 +25,13 @@ final class ShareViewController: UIViewController {
 			secretStore: KeychainSecretStore(),
 			loadContent: { await ShareExtractor().extract(from: sources, context: context) },
 			makeRemote: { ShareSession.remote(baseURL: baseURL, credentials: $0) },
-			queue: ShareQueue.shared())
+			queue: ShareQueue.shared(), drafts: ShareDraftStore())
 		self.model = model
 
 		let host = UIHostingController(
 			rootView: ShareSheetView(
 				model: model, onClose: { [weak self] in self?.close() },
+				onCancel: { [weak self] in self?.cancel() },
 				onOpen: { [weak self] url in self?.open(url) }))
 		addChild(host)
 		host.view.translatesAutoresizingMaskIntoConstraints = false
@@ -42,6 +45,12 @@ final class ShareViewController: UIViewController {
 		host.didMove(toParent: self)
 	}
 
+	override func viewDidDisappear(_ animated: Bool) {
+		super.viewDidDisappear(animated)
+		// Swipe-dismissed or closed: the staged files must not outlive the sheet.
+		model?.finish()
+	}
+
 	private static var apiBaseURL: URL {
 		let raw = Bundle.main.object(forInfoDictionaryKey: "MaskinAPIBaseURL") as? String
 		return raw.flatMap(URL.init(string:)) ?? URL(string: "https://maskin.io")!
@@ -50,6 +59,13 @@ final class ShareViewController: UIViewController {
 	private func close() {
 		model?.finish()
 		extensionContext?.completeRequest(returningItems: nil)
+	}
+
+	/// The user backed out: tell the host app so it doesn't treat the share as completed.
+	private func cancel() {
+		model?.cancelPosting()
+		model?.finish()
+		extensionContext?.cancelRequest(withError: CocoaError(.userCancelled))
 	}
 
 	/// An extension can't call `UIApplication.shared`, but the application sits on the responder

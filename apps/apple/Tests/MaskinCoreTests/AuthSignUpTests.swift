@@ -221,8 +221,10 @@ struct APISignUpTests {
 		let sent = try #require(transport.seen.first)
 		#expect(sent.path == "/api/actors")
 		#expect(sent.headers[IdempotencyMiddleware.header] == "key-1")
-		#expect(sent.body.contains("\"type\":\"human\""))
-		#expect(sent.body.contains("\"email\":\"sam@example.com\""))
+		let body = try #require(
+			JSONSerialization.jsonObject(with: Data(sent.body.utf8)) as? [String: Any])
+		#expect(body["type"] as? String == "human")
+		#expect(body["email"] as? String == "sam@example.com")
 	}
 
 	@Test("workspace_provisioning_failed is carried through")
@@ -268,7 +270,7 @@ struct APISignUpTests {
 				name: "S", email: "s@e.co", password: secret, idempotencyKey: "k")
 		}
 		await #expect(throws: SignUpError.server(status: 500)) {
-			try await authenticator(ScriptedTransport(status: 500, json: "{}")).signUp(
+			try await authenticator(ScriptedTransport(status: 500, json: #"{"error":{"code":"INTERNAL_ERROR","message":"Internal error"}}"#)).signUp(
 				name: "S", email: "s@e.co", password: secret, idempotencyKey: "k")
 		}
 	}

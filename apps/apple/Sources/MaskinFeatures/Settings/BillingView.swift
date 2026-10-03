@@ -3,15 +3,12 @@ import MaskinDesign
 import MaskinUI
 import SwiftUI
 
-/// Plan and usage, read natively. Changing plan or buying credits opens the web.
+/// Plan and usage, read-only. No purchase or link-out: App Review 3.1.1 forbids pointing to
+/// external purchasing, so plan changes and credits are handled on the web, outside the app.
 struct BillingView: View {
-	@Environment(\.openURL) private var openURL
 	@State private var store: BillingStore
-	let webURL: URL?
-
-	init(store: BillingStore, webURL: URL?) {
+	init(store: BillingStore) {
 		_store = State(initialValue: store)
-		self.webURL = webURL
 	}
 
 	var body: some View {
@@ -58,15 +55,6 @@ struct BillingView: View {
 					}
 				}
 			}
-			Section {
-				Button {
-					if let webURL { openURL(webURL) }
-				} label: {
-					SettingsRow(
-						symbol: "safari", title: "Manage plan and credits", detail: "Opens in browser")
-				}
-				.disabled(webURL == nil)
-			}
 		}
 		.settingsListStyle()
 		.overlay {
@@ -79,7 +67,7 @@ struct BillingView: View {
 			default: EmptyView()
 			}
 		}
-		.navigationTitle("Plan and billing")
+		.navigationTitle("Plan and usage")
 		#if os(iOS)
 			.navigationBarTitleDisplayMode(.inline)
 		#endif

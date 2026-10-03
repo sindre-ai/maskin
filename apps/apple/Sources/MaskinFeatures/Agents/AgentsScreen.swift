@@ -51,7 +51,7 @@ private struct AgentsContainer: View {
 	@State private var store: AgentsStore
 	@State private var selection: String?
 	@State private var search = ""
-	@State private var showCreate = false
+	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
 	init(environment: AppEnvironment, workspaceID: String) {
 		self.environment = environment
@@ -69,8 +69,10 @@ private struct AgentsContainer: View {
 			)
 			.toolbar {
 				ToolbarItem(placement: .primaryAction) {
-					Button { showCreate = true } label: { Image(systemName: "plus") }
-						.accessibilityLabel("New agent")
+					Button {
+						runtime?.buildInChat("I'd like to build a new agent. ")
+					} label: { Image(systemName: "plus.bubble") }
+						.accessibilityLabel("Build an agent in chat")
 				}
 			}
 			.shellToolbar(environment: environment)
@@ -87,15 +89,6 @@ private struct AgentsContainer: View {
 					symbol: "person.2", title: "Select an agent",
 					message: "See what each agent is doing and run it on demand.")
 			}
-		}
-		.sheet(isPresented: $showCreate, onDismiss: { store.notice = nil }) {
-			AgentFormSheet(mode: .create, errorMessage: store.notice) { draft in
-				guard let id = await store.create(draft) else { return false }
-				selection = id
-				return true
-			}
-			.presentationDetents([.large])
-			.presentationCornerRadius(MaskinRadius.hero + MaskinSpace.s4)
 		}
 		.task { await store.start() }
 		.onDisappear { store.stop() }

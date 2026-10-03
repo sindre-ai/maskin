@@ -11,18 +11,36 @@ public struct ShareContext: Sendable, Equatable {
 /// Turns the extension's items into one `ShareContent`. UI-free; reads one item at a time and
 /// parks files on disk, so memory stays flat however much is shared.
 public struct ShareExtractor: Sendable {
+	/// Every staging directory starts with this; `sweepStaleDirectories` and `cleanUp` rely on it.
+	public static let workDirectoryPrefix = "maskin-share-"
+
 	private let workDirectory: URL
 	private let maxAttachments: Int
 	private let maxFileBytes: Int
 
 	public init(
 		workDirectory: URL = FileManager.default.temporaryDirectory
-			.appendingPathComponent("maskin-share-\(UUID().uuidString)", isDirectory: true),
+			.appendingPathComponent("\(ShareExtractor.workDirectoryPrefix)\(UUID().uuidString)", isDirectory: true),
 		maxAttachments: Int = ShareLimits.maxAttachments, maxFileBytes: Int = ShareLimits.maxFileBytes
 	) {
 		self.workDirectory = workDirectory
 		self.maxAttachments = maxAttachments
 		self.maxFileBytes = maxFileBytes
+	}
+
+	/// Removes `maskin-share-*` directories older than `age` seconds: leftovers of an extension
+	/// the system killed before it could clean up. The age keeps a concurrently running share safe.
+	public static func sweepStaleDirectories(
+		in root: URL = FileManager.default.temporaryDirectory, olderThan age: TimeInterval = 3600,
+		now: Date = Date()
+	) {
+		let keys: [URLResourceKey] = [.contentModificationDateKey]
+		guard let entries = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: keys)
+		else { return }
+		for entry in entries where entry.lastPathComponent.hasPrefix(workDirectoryPrefix) {
+			let modified = (try? entry.resourceValues(forKeys: Set(keys)))?.contentModificationDate ?? .distantPast
+			if now.timeIntervalSince(modified) > age { try? FileManager.default.removeItem(at: entry) }
+		}
 	}
 
 	public func extract(from sources: [any ShareItemSource], context: ShareContext = .init()) async -> ShareContent {
@@ -31,6 +49,12 @@ public struct ShareExtractor: Sendable {
 		for source in sources {
 			if source.conforms(to: .image) {
 				await addAttachment(from: source, kind: .image, to: &content)
+				// An image shared from the web can carry its page's address too; keep it as the link.
+				if content.link == nil, source.conforms(to: .url), let url = try? await source.loadURL(),
+					Self.isWebURL(url)
+				{
+					content.link = url
+				}
 			} else if source.conforms(to: .pdf) {
 				await addAttachment(from: source, kind: .pdf, to: &content)
 			} else if source.conforms(to: .url) {
@@ -76,6 +100,11 @@ public struct ShareExtractor: Sendable {
 		if content.link == nil, !text.contains(where: \.isWhitespace), let url = URL(string: text), Self.isWebURL(url) {
 			content.link = url
 			return
+		}
+		if text.count > ShareLimits.maxTextCharacters,
+			!content.skipped.contains(where: { $0.reason == .truncatedText })
+		{
+			content.skipped.append(ShareSkip(name: "Text", reason: .truncatedText))
 		}
 		texts.append(String(text.prefix(ShareLimits.maxTextCharacters)))
 	}

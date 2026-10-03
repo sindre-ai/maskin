@@ -58,6 +58,8 @@ public struct NotificationActionHandler: Sendable {
 	private let secrets: any SecretStore
 	private let backend: BackendFactory
 	private let queue: any DecisionQueueing
+	/// ONE budget for the whole tap (comment + mark-read), not per write: two sequential 20 s
+	/// attempts could outlast the ~30 s background window.
 	private let attemptTimeout: Duration
 
 	public init(
@@ -91,10 +93,11 @@ public struct NotificationActionHandler: Sendable {
 
 		let backend = backend(session, payload.workspaceId)
 		let key = Self.idempotencyKey(payload: payload, content: content)
+		let deadline = ContinuousClock.now.advanced(by: attemptTimeout)
 
 		// 1. The answer. 2. Mark the thread read, which is what clears it from the feed.
 		do {
-			try await attempt { [payload] in
+			try await attempt(until: deadline) { [payload] in
 				try await IdempotencyKey.$current.withValue(key + "-comment") {
 					try await backend.postComment(
 						entityId: payload.objectId, content: content, parentEventId: payload.eventId)
@@ -105,7 +108,7 @@ public struct NotificationActionHandler: Sendable {
 				error, label: content, session: session, payload: payload, content: content)
 		}
 		do {
-			try await attempt { [payload] in
+			try await attempt(until: deadline) { [payload] in
 				try await IdempotencyKey.$current.withValue(key + "-read") {
 					try await backend.markRead(entityId: payload.objectId, lastEventId: payload.eventId)
 				}
@@ -148,13 +151,15 @@ public struct NotificationActionHandler: Sendable {
 		}
 	}
 
-	/// Run one write, giving up (as a transient failure) after `attemptTimeout` so the OS's
+	/// Run one write, giving up (as a transient failure) at the shared `deadline` so the OS's
 	/// background budget is never what ends us mid-request.
-	private func attempt(_ work: @escaping @Sendable () async throws -> Void) async throws {
+	private func attempt(
+		until deadline: ContinuousClock.Instant, _ work: @escaping @Sendable () async throws -> Void
+	) async throws {
 		try await withThrowingTaskGroup(of: Void.self) { group in
 			group.addTask { try await work() }
 			group.addTask {
-				try await Task.sleep(for: attemptTimeout)
+				try await Task.sleep(until: deadline, clock: .continuous)
 				throw URLError(.timedOut)
 			}
 			defer { group.cancelAll() }

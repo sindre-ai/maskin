@@ -22535,6 +22535,10 @@
 														"recommended": {
 															"type": "boolean",
 															"description": "Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing."
+														},
+														"destructive": {
+															"type": "boolean",
+															"description": "Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices."
 														}
 													},
 													"required": [
@@ -23204,10 +23208,7 @@
 				"parameters": [
 					{
 						"schema": {
-							"type": [
-								"boolean",
-								"null"
-							]
+							"type": "boolean"
 						},
 						"required": false,
 						"name": "pinned",
@@ -23215,10 +23216,7 @@
 					},
 					{
 						"schema": {
-							"type": [
-								"boolean",
-								"null"
-							],
+							"type": "boolean",
 							"default": false
 						},
 						"required": false,
@@ -23227,10 +23225,7 @@
 					},
 					{
 						"schema": {
-							"type": [
-								"boolean",
-								"null"
-							]
+							"type": "boolean"
 						},
 						"required": false,
 						"name": "unread_only",
@@ -30876,6 +30871,10 @@
 																				"recommended": {
 																					"type": "boolean",
 																					"description": "Set true on exactly one option, the one you would take. Recommending nothing pushes the whole call back onto the human; recommending everything says nothing."
+																				},
+																				"destructive": {
+																					"type": "boolean",
+																					"description": "Set true on an option that cannot be undone or that reaches real people (sends, deletes, spends, ships). The human is asked to confirm it before it goes out, and it never fires from a lock-screen button alone. Leave it off for reversible choices."
 																				}
 																			},
 																			"required": [

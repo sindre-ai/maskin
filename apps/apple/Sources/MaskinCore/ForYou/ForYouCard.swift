@@ -6,12 +6,27 @@ public struct DecisionOption: Sendable, Equatable, Identifiable, Codable {
 	public var label: String
 	public var consequences: [String]
 	public var recommended: Bool
+	/// Cannot be undone or reaches real people: the UI asks for a confirmation before sending it.
+	public var destructive: Bool
 	public var id: String { label }
 
-	public init(label: String, consequences: [String] = [], recommended: Bool = false) {
+	public init(
+		label: String, consequences: [String] = [], recommended: Bool = false,
+		destructive: Bool = false
+	) {
 		self.label = label
 		self.consequences = consequences
 		self.recommended = recommended
+		self.destructive = destructive
+	}
+
+	// Hand-written so caches written before `destructive` existed still decode.
+	public init(from decoder: any Decoder) throws {
+		let c = try decoder.container(keyedBy: CodingKeys.self)
+		label = try c.decode(String.self, forKey: .label)
+		consequences = try c.decode([String].self, forKey: .consequences)
+		recommended = try c.decode(Bool.self, forKey: .recommended)
+		destructive = try c.decodeIfPresent(Bool.self, forKey: .destructive) ?? false
 	}
 }
 

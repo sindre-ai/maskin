@@ -18,6 +18,8 @@ public protocol ShareItemSource: Sendable {
 
 struct ShareItemUnreadable: Error {}
 
+// `NSItemProvider.suggestedName` doesn't exist on watchOS, and the share extension is iOS-only.
+#if !os(watchOS)
 public struct NSItemProviderSource: ShareItemSource, @unchecked Sendable {
 	private let provider: NSItemProvider
 
@@ -59,6 +61,7 @@ public struct NSItemProviderSource: ShareItemSource, @unchecked Sendable {
 		}
 	}
 }
+#endif
 
 extension ShareItemSource {
 	func conforms(to type: UTType) -> Bool {

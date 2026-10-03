@@ -35,9 +35,19 @@
 			</array>
 		</dict>
 	</array>
-	<!-- No UserDefaults, file-timestamp, boot-time, disk-space or keyboard APIs are used by the
-	     extension; its Keychain use is not a required-reason API. -->
+	<!-- File timestamps: ShareExtractor.sweepStaleDirectories reads modification dates of the
+	     extension's own temp directories (C617.1). No UserDefaults, boot-time, disk-space or
+	     keyboard APIs are used by the extension; its Keychain use is not a required-reason API. -->
 	<key>NSPrivacyAccessedAPITypes</key>
-	<array/>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>
