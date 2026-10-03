@@ -228,8 +228,11 @@ struct ThreadTranscript: View {
 	@ViewBuilder
 	private var rows: some View {
 		let answers = store.questionAnswerIndex
-		ForEach(ThreadLayout.items(for: store.messages)) { item in
-			row(item, answers: answers)
+		let messages = store.messages
+		let anchors =
+			store.trace?.anchors(messages: messages, sessions: store.agentSessions) ?? ActivityAnchors()
+		ForEach(ThreadLayout.items(for: messages)) { item in
+			row(item, answers: answers, anchors: anchors)
 		}
 		TimelineView(.periodic(from: now, by: 15)) { context in
 			activity(at: context.date)
@@ -250,8 +253,9 @@ struct ThreadTranscript: View {
 			}
 		} else {
 			ForEach(live) { session in
-				WorkingIndicator(
-					agent: store.participant(for: session.actorID), activity: session.currentActivity,
+				LiveActivityView(
+					agent: store.participant(for: session.actorID), fallbackActivity: session.currentActivity,
+					turn: store.trace?.liveTurn(sessionID: session.id), startedAt: session.startedAt,
 					// A run that has not started its container yet can't be stopped (the server 400s).
 					onStop: session.status == .running ? { onStop(session) } : nil
 				)
@@ -261,13 +265,19 @@ struct ThreadTranscript: View {
 	}
 
 	@ViewBuilder
-	private func row(_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]]) -> some View {
+	private func row(
+		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors
+	) -> some View {
 		switch item {
 		case .daySeparator(let day):
 			ThreadDivider(label: ThreadLayout.dayLabel(day, now: now))
 		case .system(let message):
 			ThreadDivider(label: message.content)
 		case .message(let message, let showsAuthor):
+			if let id = message.serverID, let turn = anchors.aboveReply[id] {
+				FinishedTraceView(turn: turn)
+					.padding(.leading, MaskinSpace.s12 + MaskinSpace.s4 + MaskinSpace.s6)
+			}
 			MessageRow(
 				message: message, isOwn: message.actorID == store.currentActorID, showsAuthor: showsAuthor,
 				mentionNames: message.mentionIDs.compactMap { store.displayName(for: $0) },
@@ -278,6 +288,10 @@ struct ThreadTranscript: View {
 				onAnswer: { picks in _ = store.answer(question: message, picks: picks) }
 			)
 			.padding(.top, showsAuthor ? MaskinSpace.s4 : 0)
+			if let id = message.serverID, let turn = anchors.afterTrigger[id] {
+				FinishedTraceView(turn: turn)
+					.padding(.leading, MaskinSpace.s12 + MaskinSpace.s4 + MaskinSpace.s6)
+			}
 		}
 	}
 }
