@@ -45,6 +45,8 @@ private struct LoopsContainer: View {
 	@State private var triggerSelection: String?
 	@State private var search = ""
 	@State private var showNewTrigger = false
+	@State private var showNewLoop = false
+	@State private var showMarketplace = false
 
 	init(environment: AppEnvironment, workspaceID: String) {
 		self.environment = environment
@@ -78,6 +80,22 @@ private struct LoopsContainer: View {
 				triggerSelection = created.id
 			}
 		}
+		.sheet(isPresented: $showNewLoop) {
+			NewLoopSheet(store: loops) { id in
+				mode = .loops
+				loopSelection = id
+			}
+		}
+		.sheet(isPresented: $showMarketplace) {
+			MarketplaceSheet(
+				environment: environment, workspaceID: workspaceID,
+				onInstalled: { Task { await loops.refresh() } },
+				onOpenLoop: { id in
+					mode = .loops
+					loopSelection = id
+					Task { await loops.refresh() }
+				})
+		}
 	}
 
 	private var isLive: Bool { environment.events.connection != .failed }
@@ -87,7 +105,9 @@ private struct LoopsContainer: View {
 		Group {
 			switch mode {
 			case .loops:
-				LoopsListView(store: loops, selection: $loopSelection, search: search, isLive: isLive)
+				LoopsListView(
+					store: loops, selection: $loopSelection, search: search, isLive: isLive,
+					onNew: { showNewLoop = true }, onBrowse: { showMarketplace = true })
 			case .triggers:
 				TriggersListView(
 					store: triggers, selection: $triggerSelection, search: search, isLive: isLive,
@@ -106,6 +126,18 @@ private struct LoopsContainer: View {
 		.searchable(text: $search, prompt: mode == .loops ? "Search loops" : "Search triggers")
 		.navigationTitle(mode.rawValue)
 		.toolbar {
+			if mode == .loops {
+				ToolbarItem(placement: .automatic) {
+					Menu {
+						Button { showNewLoop = true } label: { Label("New loop", systemImage: "plus") }
+						Button { showMarketplace = true } label: {
+							Label("Browse marketplace", systemImage: "square.grid.2x2")
+						}
+					} label: {
+						Label("Add loop", systemImage: "plus")
+					}
+				}
+			}
 			if mode == .triggers {
 				ToolbarItem(placement: .automatic) {
 					Button { showNewTrigger = true } label: { Label("New schedule", systemImage: "plus") }
@@ -122,7 +154,7 @@ private struct LoopsContainer: View {
 			if let id = loopSelection, let loop = loops.loop(id: id) {
 				LoopDetailHost(
 					environment: environment, workspaceID: workspaceID, loop: loop,
-					directory: loops.directory,
+					directory: loops.directory, list: loops, install: loops.installs[id],
 					onOpenTrigger: { triggerID in
 						mode = .triggers
 						triggerSelection = triggerID
@@ -152,17 +184,21 @@ private struct LoopsContainer: View {
 
 private struct LoopDetailHost: View {
 	@State private var store: LoopDetailStore
+	let install: LoopInstall?
 	let onOpenTrigger: (String) -> Void
 
 	init(
 		environment: AppEnvironment, workspaceID: String, loop: LoopSummary,
-		directory: ActorDirectory, onOpenTrigger: @escaping (String) -> Void
+		directory: ActorDirectory, list: LoopsStore, install: LoopInstall?,
+		onOpenTrigger: @escaping (String) -> Void
 	) {
-		_store = State(
-			initialValue: LoopDetailStore(
-				loop: loop, directory: directory,
-				api: APILoopsSource(client: environment.client, workspaceID: workspaceID),
-				events: environment.events))
+		let detail = LoopDetailStore(
+			loop: loop, directory: directory,
+			api: APILoopsSource(client: environment.client, workspaceID: workspaceID),
+			events: environment.events)
+		detail.onDeleted = { [list] id in list.didDelete(id) }
+		_store = State(initialValue: detail)
+		self.install = install
 		self.onOpenTrigger = onOpenTrigger
 	}
 
@@ -170,7 +206,7 @@ private struct LoopDetailHost: View {
 		if store.isGone {
 			EmptyState(symbol: "tray", title: "This loop is gone", message: "It was removed elsewhere.")
 		} else {
-			LoopDetailView(store: store, onOpenTrigger: onOpenTrigger)
+			LoopDetailView(store: store, install: install, onOpenTrigger: onOpenTrigger)
 		}
 	}
 }

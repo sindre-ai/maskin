@@ -12,4 +12,10 @@ public protocol LoopsAPI: Sendable {
 	func installs() async throws -> [LoopInstall]
 	/// Sets the loop's lifecycle status (pause / resume).
 	func setStatus(loopID: String, status: LoopPill, idempotencyKey: String) async throws
+	/// Creates a loop object (web parity: starts on the first live rung) and returns its id.
+	func createLoop(name: String, content: String, idempotencyKey: String) async throws -> String
+	/// Renames and/or rewrites the loop's description. `nil` leaves a field alone.
+	func updateLoop(loopID: String, name: String?, content: String?, idempotencyKey: String)
+		async throws
+	func deleteLoop(loopID: String) async throws
 }

@@ -131,4 +131,48 @@ public final class LoopDetailStore {
 			notice = "Couldn't \(target == .paused ? "pause" : "resume") this loop. \(AutomationError.message(error))"
 		}
 	}
+
+	/// Called after the server confirmed a delete, so the list can drop the row.
+	@ObservationIgnored public var onDeleted: ((String) -> Void)?
+
+	/// Saves a new name and/or description (optimistic, rolled back if the server refuses).
+	@discardableResult
+	public func save(name: String, content: String) async -> Bool {
+		let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+		let body = content.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !title.isEmpty else {
+			notice = "A loop needs a name."
+			return false
+		}
+		let newName: String? = title == loop.name ? nil : title
+		let newContent: String? = body == (loop.content ?? "") ? nil : body
+		guard newName != nil || newContent != nil else { return true }
+		let before = loop
+		loop.name = title
+		loop.content = body.isEmpty ? nil : body
+		let intent = "edit:\(loop.id):\(title)\n\(body)"
+		do {
+			try await api.updateLoop(
+				loopID: loop.id, name: newName, content: newContent,
+				idempotencyKey: intents.key(for: intent))
+			intents.succeeded(intent)
+			return true
+		} catch {
+			loop.name = before.name
+			loop.content = before.content
+			notice = "Couldn't save your changes. \(AutomationError.message(error))"
+			return false
+		}
+	}
+
+	/// Deletes the loop; on success `isGone` flips so the screen leaves.
+	public func delete() async {
+		do {
+			try await api.deleteLoop(loopID: loop.id)
+			isGone = true
+			onDeleted?(loop.id)
+		} catch {
+			notice = "Couldn't delete this loop. \(AutomationError.message(error))"
+		}
+	}
 }

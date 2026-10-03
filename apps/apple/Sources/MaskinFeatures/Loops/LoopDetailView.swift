@@ -7,11 +7,15 @@ import SwiftUI
 /// recent agent activity.
 struct LoopDetailView: View {
 	let store: LoopDetailStore
+	var install: LoopInstall?
 	var onOpenTrigger: (String) -> Void = { _ in }
+
+	@State private var showEdit = false
+	@State private var confirmDelete = false
 
 	var body: some View {
 		ScrollView {
-			LoopDetailContent(store: store, onOpenTrigger: onOpenTrigger)
+			LoopDetailContent(store: store, install: install, onOpenTrigger: onOpenTrigger)
 				.padding(MaskinSpace.s9)
 				.frame(maxWidth: 720, alignment: .leading)
 				.frame(maxWidth: .infinity)
@@ -35,6 +39,25 @@ struct LoopDetailView: View {
 					.disabled(store.isTogglingPause)
 				}
 			}
+			ToolbarItem(placement: .primaryAction) {
+				Menu {
+					Button { showEdit = true } label: { Label("Edit", systemImage: "pencil") }
+					Button(role: .destructive) { confirmDelete = true } label: {
+						Label("Delete loop", systemImage: "trash")
+					}
+				} label: {
+					Label("More", systemImage: "ellipsis.circle")
+				}
+			}
+		}
+		.sheet(isPresented: $showEdit) { EditLoopSheet(store: store) }
+		.confirmationDialog(
+			"Delete this loop?", isPresented: $confirmDelete, titleVisibility: .visible
+		) {
+			Button("Delete loop", role: .destructive) { Task { await store.delete() } }
+			Button("Cancel", role: .cancel) {}
+		} message: {
+			Text("Its agents and triggers stay. This can't be undone.")
 		}
 		.task { await store.start() }
 		.onDisappear { store.stop() }
@@ -45,6 +68,7 @@ struct LoopDetailView: View {
 /// The loop detail body without its scroll view (so it can be rendered offscreen in tests).
 struct LoopDetailContent: View {
 	let store: LoopDetailStore
+	var install: LoopInstall?
 	var onOpenTrigger: (String) -> Void = { _ in }
 
 	var body: some View {
@@ -71,6 +95,18 @@ struct LoopDetailContent: View {
 			}
 			if let notice = store.notice {
 				FormError(notice).onTapGesture { store.notice = nil }
+			}
+			if let install, install.hasUpdate {
+				Text(
+					install.isForked
+						? "v\(install.availableVersion) of the source is available. Your fork keeps its own version."
+						: "Update to v\(install.availableVersion) available. Open the marketplace to review it."
+				)
+				.maskinText(.subhead)
+				.foregroundStyle(MaskinColor.warningStrong)
+				.padding(MaskinSpace.s8)
+				.frame(maxWidth: .infinity, alignment: .leading)
+				.background(MaskinSurface.card, in: RoundedRectangle(cornerRadius: MaskinRadius.card, style: .continuous))
 			}
 			conditions
 		}

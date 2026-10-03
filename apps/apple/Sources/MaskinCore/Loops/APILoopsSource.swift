@@ -67,6 +67,48 @@ public struct APILoopsSource: LoopsAPI {
 		}
 	}
 
+	public func createLoop(name: String, content: String, idempotencyKey: String) async throws
+		-> String
+	{
+		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+			try await client.post_sol_api_sol_objects(
+				.init(
+					headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
+					body: .json(
+						.init(
+							_type: "loop", title: name, content: content.isEmpty ? nil : content,
+							status: LoopPill.learning.rawValue))))
+		}
+		guard case .created(let created) = output else {
+			throw AutomationError("Couldn't create the loop.")
+		}
+		return try created.body.json.id
+	}
+
+	public func updateLoop(loopID: String, name: String?, content: String?, idempotencyKey: String)
+		async throws
+	{
+		let output = try await IdempotencyKey.$current.withValue(idempotencyKey) {
+			try await client.patch_sol_api_sol_objects_sol__lcub_id_rcub_(
+				.init(path: .init(id: loopID), body: .json(.init(title: name, content: content))))
+		}
+		switch output {
+		case .ok: return
+		case .notFound: throw AutomationError("This loop no longer exists.")
+		default: throw AutomationError("The server refused the change.")
+		}
+	}
+
+	public func deleteLoop(loopID: String) async throws {
+		let output = try await client.delete_sol_api_sol_objects_sol__lcub_id_rcub_(
+			.init(path: .init(id: loopID)))
+		switch output {
+		case .ok: return
+		case .notFound: throw AutomationError("This loop no longer exists.")
+		default: throw AutomationError("Couldn't delete the loop.")
+		}
+	}
+
 	// MARK: Wire
 
 	private struct LoopsWire: Decodable { var loops: [LoopWire] }
