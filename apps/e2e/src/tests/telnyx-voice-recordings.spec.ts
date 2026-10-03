@@ -9,17 +9,24 @@ import {
 	telnyxEvent,
 } from '../helpers/telnyx.helper'
 
-// Call recording mirror, then erasure (bet 5b8e). A signed hangup webhook starts the
+// Call recording mirror, then erasure including the Telnyx-hosted copy (bet 5b8e). A signed hangup webhook starts the
 // mirror; Telnyx's REST API and the pre-signed file host are one stub server. The dev
 // server runs the retention sweep every 2s (playwright.config.ts), so setting a
 // contact to deleted_by_request is observed within a few seconds.
 
 let stub: Server
 const lookups: string[] = []
+const deletes: string[] = []
 
 test.beforeAll(async () => {
 	stub = createServer((req, res) => {
 		const url = req.url ?? ''
+		if (req.method === 'DELETE' && url.startsWith('/v2/recordings/')) {
+			deletes.push(url)
+			res.setHeader('Content-Type', 'application/json')
+			res.end(JSON.stringify({ data: { id: url.split('/').pop(), status: 'deleted' } }))
+			return
+		}
 		if (url.startsWith('/v2/recordings')) {
 			lookups.push(url)
 			res.setHeader('Content-Type', 'application/json')
@@ -128,6 +135,8 @@ test.describe('Voice recordings: mirror then erasure', () => {
 		expect(erased.metadata.email).toBeUndefined()
 		expect(erased.metadata.last_call_recording_id).toBeUndefined()
 		expect(erased.metadata.voice_last_touch_at).toBeUndefined()
+		// The Telnyx-hosted copy is deleted before the row is stripped (Telnyx's stub: not a live check).
+		expect(deletes).toEqual(['/v2/recordings/rec-e2e-1'])
 		// Consent evidence is not on the erasure clock.
 		expect(erased.metadata).toMatchObject({
 			consent_call_id: 'rec-call-1',
