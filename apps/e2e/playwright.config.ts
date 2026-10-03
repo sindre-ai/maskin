@@ -68,6 +68,8 @@ export default defineConfig({
 				TELNYX_API_BASE_URL: E2E_TELNYX_STUB_URL,
 				VOICE_SMS_MISSED_CALL_NUDGE: 'e2e missed call nudge',
 				VOICE_SMS_VOICEMAIL_FOLLOWUP: 'e2e voicemail followup',
+				// Runs the recordings retention sweep every 2s so the erasure spec sees it.
+				VOICE_RETENTION_SWEEP_CRON: '*/2 * * * * *',
 			},
 		},
 		{

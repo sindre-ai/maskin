@@ -53,6 +53,14 @@ export interface SendMessageInput {
 	idempotencyKey?: string
 }
 
+export interface CallRecording {
+	recordingId: string
+	/** Telnyx recording status; only 'completed' has a downloadable file. */
+	status: string
+	/** Pre-signed MP3 URL, null until the recording is ready. */
+	mp3Url: string | null
+}
+
 export interface TelnyxClient {
 	/** POST /v2/calls with premium AMD. Idempotency-Key: contact_id:dial_attempt_n. */
 	createCall(input: CreateCallInput): Promise<CreateCallResult>
@@ -60,6 +68,8 @@ export interface TelnyxClient {
 	hangupCall(callControlId: string): Promise<void>
 	/** POST /v2/messages. */
 	sendMessage(input: SendMessageInput): Promise<{ messageId: string | null }>
+	/** GET /v2/recordings?filter[call_control_id]=. Null when Telnyx has no recording for the call yet. */
+	findRecording(callControlId: string): Promise<CallRecording | null>
 }
 
 export interface TelnyxClientOptions {
@@ -81,6 +91,18 @@ const createCallResponseSchema = z.object({
 
 const sendMessageResponseSchema = z.object({
 	data: z.object({ id: z.string().optional() }).passthrough(),
+})
+
+const recordingsResponseSchema = z.object({
+	data: z.array(
+		z
+			.object({
+				id: z.string(),
+				status: z.string().optional(),
+				download_urls: z.object({ mp3: z.string().nullish() }).passthrough().nullish(),
+			})
+			.passthrough(),
+	),
 })
 
 export function createTelnyxClient(opts: TelnyxClientOptions): TelnyxClient {
@@ -144,6 +166,21 @@ export function createTelnyxClient(opts: TelnyxClientOptions): TelnyxClient {
 			)
 			const parsed = sendMessageResponseSchema.parse(await res.json())
 			return { messageId: parsed.data.id ?? null }
+		},
+
+		async findRecording(callControlId) {
+			const res = await request(
+				'GET',
+				`/v2/recordings?filter[call_control_id]=${encodeURIComponent(callControlId)}`,
+				undefined,
+			)
+			const [first] = recordingsResponseSchema.parse(await res.json()).data
+			if (!first) return null
+			return {
+				recordingId: first.id,
+				status: first.status ?? 'unknown',
+				mp3Url: first.download_urls?.mp3 ?? null,
+			}
 		},
 	}
 }
