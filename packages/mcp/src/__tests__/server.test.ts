@@ -777,6 +777,42 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('get_session_activity handler', () => {
+		const sid = '11111111-1111-4111-8111-111111111111'
+		const payload = {
+			session_id: sid,
+			turns: [{ message_id: 7, steps: [{ id: '1-0', kind: 'tool_use', label: 'Using Read' }] }],
+			oldest_log_id: 1,
+			has_older: false,
+		}
+
+		it('forwards paging params and returns the same full payload on both channels', async () => {
+			mockFetchSuccess(payload)
+			const handler = getHandler('get_session_activity')
+			const result = (await handler({
+				id: sid,
+				limit_turns: 3,
+				message_id: 7,
+				before_log_id: 99,
+			})) as { content: Array<{ text: string }>; structuredContent: unknown }
+
+			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
+			expect(calledUrl).toContain(`/api/sessions/${sid}/activity?`)
+			expect(calledUrl).toContain('limit_turns=3')
+			expect(calledUrl).toContain('message_id=7')
+			expect(calledUrl).toContain('before_log_id=99')
+			expect(result.structuredContent).toEqual(payload)
+			expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent)
+		})
+
+		it('states it is read-only and names its write counterparts', async () => {
+			const { tools } = await import('../tools')
+			const d = tools.get_session_activity.description
+			expect(d).toContain('read-only')
+			expect(d).toContain('stop_session')
+		})
+	})
+
 	describe('update_objects handler — file attachments', () => {
 		it('attaches files via `attach_file_ids` as `attached` relationships', async () => {
 			// PATCH the object, GET (per file, returns empty → not yet attached),
