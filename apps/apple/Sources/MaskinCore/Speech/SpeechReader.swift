@@ -16,6 +16,10 @@ public final class SpeechReader: NSObject {
 	public private(set) var isInputActive = false
 
 	@ObservationIgnored private let synthesizer = AVSpeechSynthesizer()
+	/// The utterance whose end we are waiting for. Delegate callbacks for any other (a replaced or
+	/// stopped one finishing late) are stale and must not touch state.
+	@ObservationIgnored private var current: AVSpeechUtterance?
+	@ObservationIgnored private var pending: [(id: String, text: String)] = []
 
 	override public init() {
 		super.init()
@@ -29,17 +33,51 @@ public final class SpeechReader: NSObject {
 		let text = SpeakableText.from(markdown: markdown)
 		guard !text.isEmpty, !isInputActive else { return }
 		stop()
+		begin(text: text, id: id)
+	}
+
+	/// Reads `markdown` after whatever is being read now (hands-free: every new reply, in order).
+	public func enqueue(markdown: String, id: String) {
+		let text = SpeakableText.from(markdown: markdown)
+		guard !text.isEmpty, !isInputActive else { return }
+		if current == nil { begin(text: text, id: id) } else { pending.append((id, text)) }
+	}
+
+	private func begin(text: String, id: String) {
 		activateSession()
 		let utterance = AVSpeechUtterance(string: text)
 		utterance.voice = AVSpeechSynthesisVoice(language: Locale.current.identifier.replacingOccurrences(of: "_", with: "-"))
 			?? AVSpeechSynthesisVoice(language: AVSpeechSynthesisVoice.currentLanguageCode())
-		speakingID = id
+		adopt(utterance, id: id)
 		synthesizer.speak(utterance)
 	}
 
+	/// Makes `utterance` the one whose callbacks count. Split from `begin` so the stale-callback
+	/// rule is testable without producing sound.
+	func adopt(_ utterance: AVSpeechUtterance, id: String) {
+		current = utterance
+		speakingID = id
+	}
+
 	public func stop() {
+		pending = []
+		// Forget the utterance first: stopping makes the synthesizer call back for it, and that
+		// callback must be ignored.
+		current = nil
 		if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
 		finish()
+	}
+
+	/// An utterance ended (finished or cancelled). Ignored unless it is the current one.
+	func utteranceDidEnd(_ key: ObjectIdentifier) {
+		guard let current, ObjectIdentifier(current) == key else { return }
+		self.current = nil
+		if pending.isEmpty {
+			finish()
+		} else {
+			let next = pending.removeFirst()
+			begin(text: next.text, id: next.id)
+		}
 	}
 
 	/// Dictation (or any other input) is starting: go quiet and stay quiet.
@@ -74,12 +112,12 @@ public final class SpeechReader: NSObject {
 
 extension SpeechReader: AVSpeechSynthesizerDelegate {
 	nonisolated public func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-		Task { @MainActor in self.finish() }
+		let key = ObjectIdentifier(utterance)
+		Task { @MainActor in self.utteranceDidEnd(key) }
 	}
 
 	nonisolated public func speechSynthesizer(_ s: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-		Task { @MainActor in
-			if !self.synthesizer.isSpeaking { self.finish() }
-		}
+		let key = ObjectIdentifier(utterance)
+		Task { @MainActor in self.utteranceDidEnd(key) }
 	}
 }

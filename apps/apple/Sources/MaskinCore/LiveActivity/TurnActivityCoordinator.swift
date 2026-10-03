@@ -10,6 +10,8 @@ public protocol TurnActivityHosting: AnyObject {
 	func update(sessionId: String, state: TurnActivityState) async
 	/// `dismissAfter` is how long the finished card lingers on the Lock Screen.
 	func end(sessionId: String, state: TurnActivityState, dismissAfter: TimeInterval) async
+	/// Ends every activity at once, with no lingering card (sign-out).
+	func endAll() async
 }
 
 public enum LiveActivityTokenKind: String, Codable, Sendable {
@@ -21,7 +23,9 @@ public enum LiveActivityTokenKind: String, Codable, Sendable {
 public protocol LiveActivityTokenRegistering: Sendable {
 	func register(kind: LiveActivityTokenKind, deviceId: String, sessionId: String?, token: String)
 		async throws -> String
-	func unregister(tokenId: String) async throws
+	/// `credentials` overrides the live session's, for the sign-out teardown where the live
+	/// session is already gone.
+	func unregister(tokenId: String, credentials: APILiveActivityTokens.Credentials?) async throws
 }
 
 /// Starts, updates and ends the Live Activity for agent turns while the app is in the foreground
@@ -106,6 +110,22 @@ public final class TurnActivityCoordinator {
 		await dropUpdateToken(for: sessionId)
 	}
 
+	/// The account signed out: end every card and delete every registered update token so pushes
+	/// for this account stop reaching the device. `credentials` are the ending session's, because
+	/// the live session is already cleared by the time the DELETEs go out. The push-to-start token
+	/// is kept (it belongs to the device) and is re-registered under the next account's session.
+	public func signedOut(credentials: APILiveActivityTokens.Credentials?) async {
+		await host.endAll()
+		let entries = registered
+		registered = [:]
+		updateTokens = [:]
+		lastState = [:]
+		ended = []
+		for entry in entries.values {
+			try? await tokens.unregister(tokenId: entry.id, credentials: credentials)
+		}
+	}
+
 	private func needsRegistration(_ key: String, token: String, device: String) -> Bool {
 		guard let entry = registered[key] else { return true }
 		return entry.token != token || entry.device != device
@@ -132,7 +152,7 @@ public final class TurnActivityCoordinator {
 	private func dropUpdateToken(for sessionId: String) async {
 		updateTokens[sessionId] = nil
 		if let entry = registered.removeValue(forKey: sessionId) {
-			try? await tokens.unregister(tokenId: entry.id)
+			try? await tokens.unregister(tokenId: entry.id, credentials: nil)
 		}
 	}
 }

@@ -120,6 +120,25 @@ struct ConversationsStoreTests {
 		#expect(store.notice == "nope")
 	}
 
+	@Test("an agent filter clears when that agent is no longer in the list")
+	func agentFilterClears() async {
+		let scribe = ChatParticipant(id: "scribe", name: "Scribe", kind: .agent)
+		let api = FakeListAPI([
+			chatConvo("a"), chatConvo("b", participants: [chatMe, scribe]),
+		])
+		let store = ConversationsStore(api: api, events: nil)
+		await store.refresh()
+		store.agentFilterID = "scribe"
+		await store.refresh()
+		#expect(store.agentFilterID == "scribe")  // still present: kept
+		await store.setArchived("b", true)  // its only conversation leaves the list
+		#expect(store.agentFilterID == nil)
+		store.agentFilterID = "relay"
+		await api.set([chatConvo("z", participants: [chatMe])])  // relay no longer in any chat
+		await store.refresh()
+		#expect(store.agentFilterID == nil)
+	}
+
 	@Test("archiving removes the row, and restores it if the request fails")
 	func archive() async {
 		let api = FakeListAPI([chatConvo("a"), chatConvo("b")])

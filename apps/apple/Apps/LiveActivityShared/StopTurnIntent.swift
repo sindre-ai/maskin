@@ -6,7 +6,8 @@
 	/// The Stop button on the Live Activity. Compiled into BOTH the app and the Live Activity
 	/// extension: the extension needs the type to render `Button(intent:)`, and the system runs
 	/// `perform()` in the APP process (that is what `LiveActivityIntent` means), so the app's
-	/// Keychain session is available and the extension needs no credentials of its own.
+	/// Keychain session is the one used. The extension binary still contains the network and
+	/// Keychain code this references (it links MaskinCore); it just never runs it.
 	struct StopTurnIntent: LiveActivityIntent {
 		static let title: LocalizedStringResource = "Stop agent"
 		static let description = IntentDescription("Stops the agent turn that is running.")

@@ -55,17 +55,21 @@ public struct APILiveActivityTokens: LiveActivityTokenRegistering {
 		return try JSONDecoder().decode(Response.self, from: data).id
 	}
 
-	public func unregister(tokenId: String) async throws {
+	public func unregister(tokenId: String, credentials override: Credentials? = nil) async throws {
 		// The id is server-issued; refuse anything that could alter the path.
 		guard DeepLink.isSafeID(tokenId) else { return }
-		let request = try await makeRequest("api/live-activities/tokens/\(tokenId)", method: "DELETE")
+		let request = try await makeRequest(
+			"api/live-activities/tokens/\(tokenId)", method: "DELETE", credentials: override)
 		let (_, response) = try await session.data(for: request)
 		if (response as? HTTPURLResponse)?.statusCode == 404 { return }  // already gone
 		try Self.check(response)
 	}
 
-	private func makeRequest(_ path: String, method: String) async throws -> URLRequest {
-		guard let creds = await credentials() else { throw URLError(.userAuthenticationRequired) }
+	private func makeRequest(_ path: String, method: String, credentials override: Credentials? = nil)
+		async throws -> URLRequest
+	{
+		let live = await credentials()
+		guard let creds = override ?? live else { throw URLError(.userAuthenticationRequired) }
 		var request = URLRequest(url: baseURL.appendingPathComponent(path))
 		request.httpMethod = method
 		request.setValue("Bearer \(creds.apiKey)", forHTTPHeaderField: "Authorization")

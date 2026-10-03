@@ -91,6 +91,12 @@
 			}
 		}
 
+		func endAll() async {
+			for activity in Activity<MaskinTurnAttributes>.activities {
+				await activity.end(nil, dismissalPolicy: .immediate)
+			}
+		}
+
 		func end(sessionId: String, state: TurnActivityState, dismissAfter: TimeInterval) async {
 			guard let activity = activity(for: sessionId) else { return }
 			await activity.end(

@@ -170,6 +170,7 @@ public final class AuthSession {
 	@ObservationIgnored private let store: any SecretStore
 	@ObservationIgnored private let signOutMarker: any SignOutMarker
 	@ObservationIgnored public let firstUse: any FirstUseStore
+	@ObservationIgnored private var sessionEndHandlers: [@MainActor (StoredSession) -> Void] = []
 
 	public init(
 		authenticator: any Authenticating, store: any SecretStore,
@@ -292,6 +293,7 @@ public final class AuthSession {
 	/// `restore()`, so the session can't resurrect at launch.
 	public func signOut() {
 		isRotatingKey = false
+		notifySessionEnded()
 		clearStored()
 		state = .signedOut
 	}
@@ -329,9 +331,22 @@ public final class AuthSession {
 	/// the live one: a late 401 from before a re-login must not sign the new session out.
 	public func sessionRejected(apiKey: String) {
 		guard session?.apiKey == apiKey, !isRotatingKey else { return }
+		notifySessionEnded()
 		clearStored()
 		state = .signedOut
 		sessionExpired = true
+	}
+
+	/// Runs `handler` with the session that is ending, just BEFORE it is cleared (sign-out or a
+	/// rejected key), so per-account state elsewhere (Live Activities, Spotlight, intents memory)
+	/// can be torn down with the credentials still in hand.
+	public func onSessionEnded(_ handler: @escaping @MainActor (StoredSession) -> Void) {
+		sessionEndHandlers.append(handler)
+	}
+
+	private func notifySessionEnded() {
+		guard let ending = session else { return }
+		for handler in sessionEndHandlers { handler(ending) }
 	}
 
 	private func clearStored() {

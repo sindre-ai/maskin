@@ -27,7 +27,10 @@ public struct TurnStopper: Sendable {
 	public func stop(sessionId: String, workspaceId: String) async -> Bool {
 		guard DeepLink.isSafeID(sessionId), DeepLink.isSafeID(workspaceId),
 			let data = try? secrets.read(),
-			let session = try? JSONDecoder().decode(StoredSession.self, from: data)
+			let session = try? JSONDecoder().decode(StoredSession.self, from: data),
+			// The card may belong to another workspace than the one now signed in (switched or
+			// re-signed-in since it started): never stop a turn with the wrong identity.
+			session.workspaceId == workspaceId
 		else { return false }
 		do {
 			try await makeAPI(session, workspaceId).stopSession(sessionID: sessionId)

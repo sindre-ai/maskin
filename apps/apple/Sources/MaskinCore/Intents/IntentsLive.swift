@@ -25,10 +25,10 @@ public struct APIIntentsBackend: IntentsBackend {
 		try await agentsSource.agents().map { IntentAgent(id: $0.id, name: $0.name, role: $0.role) }
 	}
 
-	public func conversations() async throws -> [ConversationSummary] {
+	public func conversations(offset: Int) async throws -> [ConversationSummary] {
 		try await chatsSource.list(
 			archived: false, pinnedOnly: false, unreadOnly: false,
-			limit: ChatLimits.maxConversationsPage, offset: 0
+			limit: ChatLimits.maxConversationsPage, offset: offset
 		).conversations
 	}
 

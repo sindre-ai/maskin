@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Testing
 
@@ -60,5 +61,65 @@ struct SpeechPolicyTests {
 		let now2 = chatT0.addingTimeInterval(5)
 		#expect(!SpeechPolicy.shouldAutoSpeak(agentMsg(1), currentActorID: "relay", now: now2))
 		#expect(!SpeechPolicy.shouldAutoSpeak(chatMsg(2, by: "sam"), currentActorID: "me", now: now2))
+	}
+}
+
+@Suite("HandsFreeTracker")
+struct HandsFreeTrackerTests {
+	private func agentMsg(_ id: Int) -> ChatMessage { chatMsg(id, by: "relay", agent: true, "hello \(id)", at: 0) }
+	private let now = chatT0.addingTimeInterval(10)
+
+	@Test("never speaks the history that was loaded when the thread opened")
+	func skipsInitialHistory() {
+		var tracker = HandsFreeTracker()
+		let history = [agentMsg(1), agentMsg(2)]
+		#expect(tracker.newReplies(in: history, currentActorID: "me", now: now).isEmpty)  // not primed
+		tracker.prime(with: history)
+		#expect(tracker.newReplies(in: history, currentActorID: "me", now: now).isEmpty)
+	}
+
+	@Test("speaks every new reply, in order, not just the last")
+	func speaksAllNewReplies() {
+		var tracker = HandsFreeTracker()
+		tracker.prime(with: [agentMsg(1)])
+		let burst = [agentMsg(1), agentMsg(2), agentMsg(3)]
+		#expect(tracker.newReplies(in: burst, currentActorID: "me", now: now).map(\.serverID) == [2, 3])
+		#expect(tracker.newReplies(in: burst, currentActorID: "me", now: now).isEmpty)  // once only
+	}
+
+	@Test("skips own and human messages but still marks them seen")
+	func skipsOthers() {
+		var tracker = HandsFreeTracker()
+		tracker.prime(with: [])
+		let msgs = [chatMsg(1, by: "sam"), agentMsg(2)]
+		#expect(tracker.newReplies(in: msgs, currentActorID: "me", now: now).map(\.serverID) == [2])
+	}
+}
+
+@MainActor
+@Suite("SpeechReader")
+struct SpeechReaderStaleCallbackTests {
+	@Test("a late callback for a replaced utterance does not end the current one")
+	func staleCallbackIgnored() {
+		let reader = SpeechReader()
+		let first = AVSpeechUtterance(string: "one")
+		let second = AVSpeechUtterance(string: "two")
+		reader.adopt(first, id: "m1")
+		reader.adopt(second, id: "m2")
+		reader.utteranceDidEnd(ObjectIdentifier(first))
+		#expect(reader.speakingID == "m2")
+		reader.utteranceDidEnd(ObjectIdentifier(second))
+		#expect(reader.speakingID == nil)
+	}
+
+	@Test("stop forgets the utterance, so its cancel callback is ignored")
+	func stopThenLateCancel() {
+		let reader = SpeechReader()
+		let utterance = AVSpeechUtterance(string: "one")
+		reader.adopt(utterance, id: "m1")
+		reader.stop()
+		reader.adopt(AVSpeechUtterance(string: "two"), id: "m2")
+		reader.utteranceDidEnd(ObjectIdentifier(utterance))
+		#expect(reader.speakingID == "m2")
 	}
 }

@@ -53,8 +53,9 @@ public protocol IntentsMemoryStoring: Sendable {
 /// What the intents need from the network.
 public protocol IntentsBackend: Sendable {
 	func agents() async throws -> [IntentAgent]
-	/// The first page of the caller's active conversations.
-	func conversations() async throws -> [ConversationSummary]
+	/// One page (`ChatLimits.maxConversationsPage` rows) of the caller's active conversations,
+	/// newest first, starting at `offset`.
+	func conversations(offset: Int) async throws -> [ConversationSummary]
 	/// Creates a conversation with one agent and sends `message` as its first turn.
 	func startConversation(
 		agentID: String, title: String, message: String, idempotencyKey: String
@@ -144,6 +145,13 @@ public struct IntentsService: Sendable {
 		NeedsMeSummary(state: await needs().resolved(at: Date()))
 	}
 
+	/// Forget everything cached for any account: the agent list, thread links and the Spotlight
+	/// index. Called at sign-out, before the session is gone, so it never depends on one.
+	public func wipe() async {
+		memory.clear()
+		await index.removeAll()
+	}
+
 	// MARK: Agents
 
 	/// Cached agents first (instant, works offline); the network refreshes the cache and the
@@ -200,11 +208,20 @@ public struct IntentsService: Sendable {
 			throw IntentsError.unknownAgent
 		}
 
-		if stored.threads[agentID] == nil,
-			let found = try? await directThread(with: agent, session: session)
-		{
-			stored.threads[agentID] = found
-			memory.save(stored, for: scope)
+		if stored.threads[agentID] == nil {
+			// A lookup that FAILED is not "no thread": falling through to create one would
+			// duplicate a conversation that exists but could not be listed.
+			do {
+				if let found = try await directThread(with: agent, session: session) {
+					stored.threads[agentID] = found
+					memory.save(stored, for: scope)
+				}
+			} catch {
+				throw Self.classify(
+					error,
+					offline: "You're offline. Finding your conversation with \(agent.name) needs a connection.",
+					fallback: "Couldn't look up your conversation with \(agent.name).")
+			}
 		}
 		if let thread = stored.threads[agentID] {
 			do {
@@ -232,16 +249,23 @@ public struct IntentsService: Sendable {
 	}
 
 	/// Where "open this agent's thread" goes: the `maskin://<ws>/chats/<id>` link, or `nil` when
-	/// there is no direct thread yet.
-	public func threadLink(agentID: String) async -> DeepLink? {
+	/// there is genuinely no direct thread yet. Throws when the lookup itself failed, so a caller
+	/// never reports "you haven't talked to them" because of a network error.
+	public func threadLink(agentID: String) async throws -> DeepLink? {
 		guard let session = signedIn(), let workspace = session.workspaceId else { return nil }
 		let scope = scope(of: session)
 		var stored = memory.load(scope)
-		if stored.threads[agentID] == nil, let agent = stored.agents.first(where: { $0.id == agentID }),
-			let found = try? await directThread(with: agent, session: session)
-		{
-			stored.threads[agentID] = found
-			memory.save(stored, for: scope)
+		if stored.threads[agentID] == nil, let agent = stored.agents.first(where: { $0.id == agentID }) {
+			do {
+				if let found = try await directThread(with: agent, session: session) {
+					stored.threads[agentID] = found
+					memory.save(stored, for: scope)
+				}
+			} catch {
+				throw Self.classify(
+					error, offline: "You're offline. Finding your conversation with \(agent.name) needs a connection.",
+					fallback: "Couldn't look up your conversation with \(agent.name).")
+			}
 		}
 		return stored.threads[agentID].map { DeepLink.chat(workspaceId: workspace, id: $0) }
 	}
@@ -280,10 +304,21 @@ public struct IntentsService: Sendable {
 		IntentScope(actorId: session.actorId, workspaceId: session.workspaceId ?? "")
 	}
 
-	/// The conversation that is exactly "me and this agent". Newest first, as the list returns it.
+	/// Pages scanned for a direct thread before giving up (100 conversations each).
+	static let maxConversationPages = 10
+
+	/// The conversation that is exactly "me and this agent". Newest first, as the list returns it;
+	/// pages on past the first until a short page says the list is exhausted.
 	private func directThread(with agent: IntentAgent, session: StoredSession) async throws -> String? {
-		let rows = try await backend(session).conversations()
-		return Self.directThread(in: rows, agentID: agent.id, me: session.actorId)
+		let backend = backend(session)
+		for page in 0..<Self.maxConversationPages {
+			let rows = try await backend.conversations(offset: page * ChatLimits.maxConversationsPage)
+			if let found = Self.directThread(in: rows, agentID: agent.id, me: session.actorId) {
+				return found
+			}
+			if rows.count < ChatLimits.maxConversationsPage { return nil }
+		}
+		return nil
 	}
 
 	static func directThread(in rows: [ConversationSummary], agentID: String, me: String) -> String? {

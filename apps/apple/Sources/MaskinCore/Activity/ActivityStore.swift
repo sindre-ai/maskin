@@ -27,12 +27,19 @@ public final class ActivityStore {
 	static let historySessions = 4
 
 	public private(set) var turnsBySession: [String: [ActivityTurn]] = [:]
+	/// Bumped on every change to `turnsBySession`. `anchors` reads it, so a view calling `anchors`
+	/// is invalidated by trace changes even when the answer comes from the memo.
+	private var turnsRevision = 0
+
+	@ObservationIgnored private var anchorMemo: (key: Int, anchors: ActivityAnchors)?
 
 	@ObservationIgnored private let source: any SessionActivitySource
 	@ObservationIgnored private let cache: SnapshotCache?
 	@ObservationIgnored private let activeInterval: Duration
 	@ObservationIgnored private let idleInterval: Duration
 	@ObservationIgnored private var liveIDs: Set<String> = []
+	/// Sessions whose status is terminal (not merely not-live: a paused one may still be mid-turn).
+	@ObservationIgnored private var endedIDs: Set<String> = []
 	@ObservationIgnored private var everLive: Set<String> = []
 	@ObservationIgnored private var settled: Set<String> = []
 	@ObservationIgnored private var inFlight: Set<String> = []
@@ -64,7 +71,30 @@ public final class ActivityStore {
 
 	/// Places every finished turn in the thread. A turn with no steps and no failure is left out
 	/// (nothing to show); a reply claimed by one turn is never shown a second trace.
+	///
+	/// Called from a view body on every render, and the placement is O(sessions x turns x
+	/// messages), so the result is memoized on the inputs that decide it: the trace revision and
+	/// the identity fields of the messages and sessions.
 	public func anchors(messages: [ChatMessage], sessions: [ChatAgentSession]) -> ActivityAnchors {
+		var hasher = Hasher()
+		hasher.combine(turnsRevision)
+		for message in messages {
+			hasher.combine(message.serverID)
+			hasher.combine(message.actorID)
+			hasher.combine(message.author)
+		}
+		for session in sessions {
+			hasher.combine(session.id)
+			hasher.combine(session.actorID)
+		}
+		let key = hasher.finalize()
+		if let memo = anchorMemo, memo.key == key { return memo.anchors }
+		let computed = placeAnchors(messages: messages, sessions: sessions)
+		anchorMemo = (key, computed)
+		return computed
+	}
+
+	private func placeAnchors(messages: [ChatMessage], sessions: [ChatAgentSession]) -> ActivityAnchors {
 		var out = ActivityAnchors()
 		var claimed: Set<Int> = []
 		for session in sessions {
@@ -93,6 +123,8 @@ public final class ActivityStore {
 	/// Called whenever the conversation's sessions change (newest first, as `ChatStore` keeps them).
 	public func update(sessions: [ChatAgentSession]) async {
 		let live = Set(sessions.filter { $0.status.isLive }.map(\.id))
+		endedIDs = Set(
+			sessions.filter { [.completed, .failed, .timeout].contains($0.status) }.map(\.id))
 		// A session that just stopped needs one last read to pick up its closing turn.
 		let justEnded = liveIDs.subtracting(live)
 		liveIDs = live
@@ -144,7 +176,25 @@ public final class ActivityStore {
 		var byMessage = Dictionary(
 			(turnsBySession[sessionID] ?? []).map { ($0.messageID, $0) }, uniquingKeysWith: { $1 })
 		for turn in incoming { byMessage[turn.messageID] = turn }
-		turnsBySession[sessionID] = byMessage.values.sorted { $0.messageID < $1.messageID }
+		var merged = byMessage.values.sorted { $0.messageID < $1.messageID }
+		// A turn still "running" on a session that is no longer live will never finish: the run
+		// was cut off. Show it as failed (and cache it) rather than leave it blank and refetch it
+		// on every open.
+		if endedIDs.contains(sessionID) { merged = merged.map(Self.interrupted) }
+		turnsBySession[sessionID] = merged
+		turnsRevision += 1
+	}
+
+	static func interrupted(_ turn: ActivityTurn) -> ActivityTurn {
+		guard turn.isRunning else { return turn }
+		var done = turn
+		done.status = .failed
+		done.steps = turn.steps.map { step in
+			var step = step
+			if step.isRunning { step.status = .failed }
+			return step
+		}
+		return done
 	}
 
 	// MARK: - Disk (finished sessions only; running turns would go stale)
@@ -157,6 +207,7 @@ public final class ActivityStore {
 				[ActivityTurn].self, cacheName(sessionID), version: Self.cacheVersion)
 		else { return false }
 		turnsBySession[sessionID] = entry.value
+		turnsRevision += 1
 		return true
 	}
 

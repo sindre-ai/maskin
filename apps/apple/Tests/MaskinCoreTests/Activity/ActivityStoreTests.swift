@@ -147,4 +147,41 @@ struct ActivityStoreTests {
 		#expect(anchors.aboveReply[3]?.messageID == 2)
 		#expect(anchors.afterTrigger[1]?.messageID == 1)
 	}
+
+	@Test("a turn stuck running on a finished session is shown as interrupted and cached")
+	func interruptedTurn() async throws {
+		let dir = FileManager.default.temporaryDirectory.appendingPathComponent("act-\(UUID().uuidString)")
+		let cache = SnapshotCache(
+			disk: DiskCache(directory: dir), actorId: { "a" }, workspaceId: { "w" })
+		let source = FakeActivitySource()
+		await source.set(
+			SessionActivity(sessionID: "s1", turns: [turn("s1", 5, status: .running, reply: false, steps: 1)]))
+		let store = ActivityStore(source: source, cache: cache)
+		await store.update(sessions: [session("s1", .failed)])
+		#expect(store.liveTurn(sessionID: "s1") == nil)
+		#expect(store.turnsBySession["s1"]?.first?.status == .failed)
+		let anchors = store.anchors(messages: [chatMsg(5, by: "me", "go")], sessions: [session("s1", .failed)])
+		#expect(anchors.afterTrigger[5]?.failed == true)
+		// Cached: reopening costs no request.
+		let reopened = ActivityStore(source: source, cache: cache)
+		await reopened.update(sessions: [session("s1", .failed)])
+		#expect(await source.requestCount() == 1)
+		#expect(reopened.turnsBySession["s1"]?.first?.status == .failed)
+	}
+
+	@Test("anchors are memoized until the trace or the thread changes")
+	func anchorsMemoized() async {
+		let source = FakeActivitySource()
+		await source.set(SessionActivity(sessionID: "s1", turns: [turn("s1", 1)]))
+		let store = ActivityStore(source: source)
+		await store.update(sessions: [session("s1", .completed)])
+		let sessions = [session("s1", .completed)]
+		let messages = [chatMsg(1, by: "me", "a"), chatMsg(2, by: "relay", agent: true, "r")]
+		let first = store.anchors(messages: messages, sessions: sessions)
+		#expect(store.anchors(messages: messages, sessions: sessions) == first)
+		#expect(first.aboveReply[2]?.messageID == 1)
+		// A new reply changes the answer (the memo must not serve the old one).
+		let more = messages + [chatMsg(3, by: "me", "b"), chatMsg(4, by: "relay", agent: true, "r2")]
+		#expect(store.anchors(messages: more, sessions: sessions).aboveReply[2]?.messageID == 1)
+	}
 }

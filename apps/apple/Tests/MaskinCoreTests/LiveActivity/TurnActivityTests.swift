@@ -98,6 +98,10 @@ private final class FakeHost: TurnActivityHosting {
 	func update(sessionId: String, state: TurnActivityState) async {
 		log.append("update:\(sessionId):\(state.status.rawValue)")
 	}
+	func endAll() async {
+		active = []
+		log.append("endAll")
+	}
 	func end(sessionId: String, state: TurnActivityState, dismissAfter: TimeInterval) async {
 		active.remove(sessionId)
 		log.append("end:\(sessionId):\(state.status.rawValue):\(Int(dismissAfter))")
@@ -115,7 +119,9 @@ private actor FakeTokens: LiveActivityTokenRegistering {
 		calls.append("register:\(kind.rawValue):\(deviceId):\(sessionId ?? "-"):\(token)")
 		return "tok-\(calls.count)"
 	}
-	func unregister(tokenId: String) async throws { calls.append("unregister:\(tokenId)") }
+	func unregister(tokenId: String, credentials: APILiveActivityTokens.Credentials?) async throws {
+		calls.append("unregister:\(tokenId):\(credentials?.apiKey ?? "live")")
+	}
 }
 
 @MainActor
@@ -202,7 +208,41 @@ struct TurnActivityCoordinatorTests {
 		await coordinator.reconcile([turn("s1", .running)])
 		await coordinator.updateTokenChanged(sessionId: "s1", token: "bb")
 		await coordinator.reconcile([turn("s1", .done)])
-		#expect(await tokens.calls.last == "unregister:tok-1")
+		#expect(await tokens.calls.last == "unregister:tok-1:live")
+	}
+
+	@Test func signOutEndsEveryCardAndDeletesEveryRegisteredToken() async {
+		let host = FakeHost()
+		let tokens = FakeTokens()
+		let coordinator = TurnActivityCoordinator(host: host, tokens: tokens)
+		await coordinator.deviceChanged("dev-1")
+		await coordinator.pushToStartTokenChanged("aa")
+		await coordinator.reconcile([turn("s1", .running), turn("s2", .running)])
+		await coordinator.updateTokenChanged(sessionId: "s1", token: "b1")
+		await coordinator.updateTokenChanged(sessionId: "s2", token: "b2")
+		let creds = APILiveActivityTokens.Credentials(apiKey: "ank_old", workspaceId: "ws")
+		await coordinator.signedOut(credentials: creds)
+		#expect(host.log.last == "endAll")
+		#expect(host.active.isEmpty)
+		let unregisters = await tokens.calls.filter { $0.hasPrefix("unregister:") }
+		#expect(unregisters.count == 3)
+		#expect(unregisters.allSatisfy { $0.hasSuffix(":ank_old") })
+	}
+
+	@Test func afterSignOutNothingStaleIsReRegisteredOrKeptRunning() async {
+		let host = FakeHost()
+		let tokens = FakeTokens()
+		let coordinator = TurnActivityCoordinator(host: host, tokens: tokens)
+		await coordinator.deviceChanged("dev-1")
+		await coordinator.reconcile([turn("s1", .running)])
+		await coordinator.updateTokenChanged(sessionId: "s1", token: "b1")
+		await coordinator.signedOut(credentials: nil)
+		let before = await tokens.calls.count
+		await coordinator.deviceChanged("dev-1")  // would re-flush a leftover update token
+		#expect(await tokens.calls.count == before)
+		// The same session is tracked afresh, not treated as still running.
+		await coordinator.reconcile([turn("s1", .running)])
+		#expect(host.log.suffix(1) == ["start:s1:running"])
 	}
 
 	@Test func tokenRequestBodyMatchesTheContract() throws {
@@ -216,5 +256,30 @@ struct TurnActivityCoordinatorTests {
 		let startJSON = try #require(
 			JSONSerialization.jsonObject(with: JSONEncoder().encode(start)) as? [String: Any])
 		#expect(startJSON["session_id"] == nil)
+	}
+}
+
+@Suite("TurnStopper")
+struct TurnStopperTests {
+	private func stopper(signedInWorkspace: String?, api: FakeChatAPI) throws -> TurnStopper {
+		let store = InMemorySecretStore()
+		let stored = StoredSession(apiKey: "ank_x", actorId: "me", name: "Me", workspaceId: signedInWorkspace)
+		try store.write(JSONEncoder().encode(stored))
+		return TurnStopper(secrets: store) { _, _ in api }
+	}
+
+	@Test func stopsATurnOfTheSignedInWorkspace() async throws {
+		let api = FakeChatAPI()
+		let ok = await (try stopper(signedInWorkspace: "ws", api: api)).stop(sessionId: "s1", workspaceId: "ws")
+		#expect(ok)
+		#expect(await api.stopped == ["s1"])
+	}
+
+	@Test func refusesACardFromAnotherWorkspace() async throws {
+		let api = FakeChatAPI()
+		let ok = await (try stopper(signedInWorkspace: "other", api: api)).stop(
+			sessionId: "s1", workspaceId: "ws")
+		#expect(!ok)
+		#expect(await api.stopped.isEmpty)
 	}
 }

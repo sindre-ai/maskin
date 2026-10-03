@@ -22,7 +22,11 @@ struct ChatThreadView: View {
 	@State private var matchIndex: Int?
 	@AppStorage("chat.handsFree") private var handsFree = false
 
-	private var matchIDs: [String] { ThreadSearch.matches(in: store.messages, query: searchText) }
+	/// Recomputed only when the query or the message list changes (see `refreshMatches`), never
+	/// per render: a search is a scan over every loaded message.
+	@State private var matchIDs: [String] = []
+	@State private var matchSet: Set<String> = []
+	@State private var handsFreeTracker = HandsFreeTracker()
 	private var currentMatchID: String? {
 		guard searching, let matchIndex, matchIDs.indices.contains(matchIndex) else { return nil }
 		return matchIDs[matchIndex]
@@ -66,6 +70,9 @@ struct ChatThreadView: View {
 						} label: {
 							Label("Rename", systemImage: "pencil")
 						}
+						Toggle(isOn: $handsFree) {
+							Label("Read replies aloud", systemImage: "speaker.wave.2")
+						}
 						if let conversations, let row = conversations.conversation(id: store.conversationID) {
 							Button {
 								Task { await conversations.setArchived(row.id, !row.archived) }
@@ -81,6 +88,7 @@ struct ChatThreadView: View {
 			.task {
 				store.isActive = scenePhase == .active
 				await store.start()
+				primeHandsFree()
 			}
 			.onDisappear {
 				store.isActive = false
@@ -115,8 +123,17 @@ struct ChatThreadView: View {
 	/// type-checks quickly).
 	private var observedContent: some View {
 		content
-			.onChange(of: searchText) { _, _ in matchIndex = matchIDs.isEmpty ? nil : matchIDs.count - 1 }
-			.onChange(of: store.messages.last?.id) { _, _ in autoSpeakLatest() }
+			.onChange(of: searchText) { _, _ in
+				refreshMatches()
+				matchIndex = matchIDs.isEmpty ? nil : matchIDs.count - 1
+			}
+			.onChange(of: store.messages.count) { _, _ in
+				if searching { refreshMatches() }
+				speakNewReplies()
+			}
+			.onChange(of: store.messages.last?.id) { _, _ in speakNewReplies() }
+			.onChange(of: store.phase) { _, _ in primeHandsFree() }
+			.onChange(of: handsFree) { _, on in if !on { SpeechReader.shared.stop() } }
 			// Typing means the reader is done listening.
 			.onChange(of: composer.text) { _, text in if !text.isEmpty { SpeechReader.shared.stop() } }
 	}
@@ -151,7 +168,7 @@ struct ChatThreadView: View {
 							.onAppear { loadEarlier(proxy) }
 					}
 					ThreadTranscript(
-						store: store, onStop: { stopTarget = $0 }, matchIDs: Set(matchIDs),
+						store: store, onStop: { stopTarget = $0 }, matchIDs: matchSet,
 						currentMatchID: currentMatchID)
 					Color.clear.frame(height: 1).id(Self.bottomID)
 						.onAppear {
@@ -214,8 +231,6 @@ struct ChatThreadView: View {
 						searching = false
 						searchText = ""
 					})
-			} else {
-				HandsFreeToggle(isOn: $handsFree).frame(maxWidth: .infinity, alignment: .trailing)
 			}
 			composerField
 		}
@@ -225,11 +240,26 @@ struct ChatThreadView: View {
 		.frame(maxWidth: .infinity)
 	}
 
-	private func autoSpeakLatest() {
-		guard handsFree, let last = store.messages.last,
-			SpeechPolicy.shouldAutoSpeak(last, currentActorID: store.currentActorID)
-		else { return }
-		SpeechReader.shared.speak(markdown: last.content, id: last.id)
+	private func refreshMatches() {
+		matchIDs = ThreadSearch.matches(in: store.messages, query: searchText)
+		matchSet = Set(matchIDs)
+		if let matchIndex, !matchIDs.indices.contains(matchIndex) {
+			self.matchIndex = matchIDs.isEmpty ? nil : matchIDs.count - 1
+		}
+	}
+
+	/// History present when the thread opens is never read; only what arrives afterwards.
+	private func primeHandsFree() {
+		guard !handsFreeTracker.isPrimed, store.phase == .loaded else { return }
+		handsFreeTracker.prime(with: store.messages)
+	}
+
+	/// Reads every new agent reply, in order. Runs with hands-free off too, so the replies that
+	/// arrive meanwhile are marked seen and not read the moment it is switched on.
+	private func speakNewReplies() {
+		let fresh = handsFreeTracker.newReplies(in: store.messages, currentActorID: store.currentActorID)
+		guard handsFree else { return }
+		for message in fresh { SpeechReader.shared.enqueue(markdown: message.content, id: message.id) }
 	}
 
 	private var composerField: some View {

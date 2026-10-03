@@ -89,6 +89,14 @@ public final class ConversationsStore {
 		return ConversationGrouping.group(filtered, now: now)
 	}
 
+	/// The filter menu only lists agents in the current list, so a filter on an agent that is no
+	/// longer there (archived away, other scope, left the chats) would leave an empty list with no
+	/// way to turn it off. Drop it. Only called once a list has actually loaded: an empty list
+	/// mid-reload says nothing about the agent.
+	private func reconcileAgentFilter() {
+		if let id = agentFilterID, !agentsInList.contains(where: { $0.id == id }) { agentFilterID = nil }
+	}
+
 	/// Agents that appear in the loaded conversations, for the filter menu.
 	public var agentsInList: [ChatParticipant] {
 		var seen: Set<String> = []
@@ -160,6 +168,7 @@ public final class ConversationsStore {
 				conversations = ServerLimits.mergeHead(head: page.conversations, previous: conversations)
 				hasMore = keptTail ? hasMore || page.hasMore : page.hasMore
 				phase = .loaded
+				reconcileAgentFilter()
 				freshness.refreshed(at: cache?.now() ?? Date())
 				writeCache()
 			} catch {
@@ -221,6 +230,7 @@ public final class ConversationsStore {
 	public func setArchived(_ id: String, _ archived: Bool) async {
 		let before = conversations
 		conversations.removeAll { $0.id == id }
+		reconcileAgentFilter()
 		do {
 			try await api.updateState(
 				conversationID: id, pinned: nil, archived: archived, lastReadMessageID: nil, markUnread: false)

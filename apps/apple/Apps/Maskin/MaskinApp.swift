@@ -1,5 +1,5 @@
-import MaskinCore
 import CoreSpotlight
+import MaskinCore
 import MaskinFeatures
 import SwiftUI
 
@@ -26,6 +26,8 @@ struct MaskinApp: App {
 		environment.auth.restore()
 		MaskinIntentsContext.configure(baseURL: Self.apiBaseURL, clientSource: source)
 		IntentsHost.attach(environment: environment)
+		// Agent names, thread links and Spotlight entries belong to the account that is leaving.
+		environment.auth.onSessionEnded { _ in Task { await MaskinIntentsContext.wipe() } }
 		_environment = State(initialValue: environment)
 		let registrar = PushRegistrar(
 			system: SystemPushSystem(), devices: APIDeviceRegistrar(client: environment.client),
@@ -43,7 +45,7 @@ struct MaskinApp: App {
 			RootView(environment: environment, push: push) { runtime in
 				pushDelegate.attach(registrar: push, router: runtime.router)
 				// Siri / Shortcuts / Spotlight open threads through the same deep-link router.
-				IntentDeepLinkRelay.attach { runtime.router.open($0) }
+				IntentDeepLinkRelay.attach(openAgent: { runtime.openAgent($0) }) { runtime.router.open($0) }
 			}
 			.onContinueUserActivity(CSSearchableItemActionType) { activity in
 				guard
@@ -73,6 +75,11 @@ struct MaskinApp: App {
 					}))
 			TurnActivityCoordinator.shared = coordinator
 			host.attach(coordinator)
+			environment.auth.onSessionEnded { ending in
+				let creds = APILiveActivityTokens.Credentials(
+					apiKey: ending.apiKey, workspaceId: ending.workspaceId)
+				Task { await coordinator.signedOut(credentials: creds) }
+			}
 			registrar.onDeviceChanged = { id in Task { await coordinator.deviceChanged(id) } }
 		}
 	#endif

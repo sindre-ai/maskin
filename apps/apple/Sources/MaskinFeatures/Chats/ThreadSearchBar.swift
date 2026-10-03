@@ -51,27 +51,3 @@ struct ThreadSearchBar: View {
 		.accessibilityLabel(label)
 	}
 }
-
-/// Hands-free: read each new agent reply aloud as it arrives.
-struct HandsFreeToggle: View {
-	@Binding var isOn: Bool
-
-	var body: some View {
-		Button {
-			isOn.toggle()
-			MaskinHaptics.play(.selection)
-			if !isOn { SpeechReader.shared.stop() }
-		} label: {
-			Label(isOn ? "Reading replies" : "Read replies", systemImage: isOn ? "speaker.wave.2.fill" : "speaker.wave.2")
-				.maskinText(.caption)
-				.foregroundStyle(isOn ? MaskinColor.accentFgStrong : MaskinColor.ink3)
-				.padding(.horizontal, MaskinSpace.s5)
-				.frame(minHeight: MaskinSpace.touchMin)
-				.contentShape(Rectangle())
-		}
-		.buttonStyle(.plain)
-		.accessibilityLabel("Read agent replies aloud")
-		.accessibilityValue(isOn ? "On" : "Off")
-		.accessibilityAddTraits(.isToggle)
-	}
-}

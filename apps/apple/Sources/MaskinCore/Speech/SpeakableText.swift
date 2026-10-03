@@ -72,3 +72,34 @@ public enum SpeechPolicy {
 		return now.timeIntervalSince(created) <= freshness
 	}
 }
+
+/// Decides which messages hands-free mode reads. Messages already in the thread when it opened
+/// (history) are marked seen by `prime(with:)` and never spoken; every message that ARRIVES after
+/// that and passes `SpeechPolicy` is returned once, in order, so a burst of replies is read in
+/// full rather than just the last one.
+public struct HandsFreeTracker: Sendable {
+	private var seen: Set<String> = []
+	public private(set) var isPrimed = false
+
+	public init() {}
+
+	public mutating func prime(with messages: [ChatMessage]) {
+		seen = Set(messages.map(\.id))
+		isPrimed = true
+	}
+
+	/// Always call as messages change, even with hands-free off, so turning it on later does not
+	/// read what arrived in the meantime.
+	public mutating func newReplies(
+		in messages: [ChatMessage], currentActorID: String?, now: Date = Date()
+	) -> [ChatMessage] {
+		guard isPrimed else { return [] }
+		var fresh: [ChatMessage] = []
+		for message in messages where seen.insert(message.id).inserted {
+			if SpeechPolicy.shouldAutoSpeak(message, currentActorID: currentActorID, now: now) {
+				fresh.append(message)
+			}
+		}
+		return fresh
+	}
+}

@@ -10,6 +10,8 @@ final class StubIntentsBackend: IntentsBackend, @unchecked Sendable {
 	var agentRows: [IntentAgent] = []
 	var conversationRows: [ConversationSummary] = []
 	var error: (any Error)?
+	/// Fails only the conversation listing, so a test can prove nothing falls back to creating.
+	var listError: (any Error)?
 	var started: [(agent: String, title: String, message: String, key: String)] = []
 	var runs: [(agent: String, prompt: String?)] = []
 
@@ -19,10 +21,11 @@ final class StubIntentsBackend: IntentsBackend, @unchecked Sendable {
 			return agentRows
 		}
 	}
-	func conversations() async throws -> [ConversationSummary] {
+	func conversations(offset: Int) async throws -> [ConversationSummary] {
 		try lock.withLock {
 			if let error { throw error }
-			return conversationRows
+			if let listError { throw listError }
+			return Array(conversationRows.dropFirst(offset).prefix(ChatLimits.maxConversationsPage))
 		}
 	}
 	func startConversation(agentID: String, title: String, message: String, idempotencyKey: String)
@@ -250,6 +253,27 @@ private func direct(_ id: String, with agent: String, archived: Bool = false) ->
 		#expect(rig.memory.load(scope).threads["relay"] == "c9")
 	}
 
+	@Test func pagesPastTheFirstPageToFindTheThread() async throws {
+		let rig = Rig()
+		rig.memory.save(IntentsMemory(agents: [relay]), for: scope)
+		let filler = (0..<ChatLimits.maxConversationsPage).map { direct("f\($0)", with: "other\($0)") }
+		rig.backend.conversationRows = filler + [direct("deep", with: "relay")]
+		let outcome = try await rig.service().ask(agentID: "relay", message: "hi")
+		#expect(outcome == .queued(conversationID: "deep"))
+		#expect(rig.backend.started.isEmpty)
+	}
+
+	@Test func aFailedThreadLookupNeverCreatesADuplicateConversation() async {
+		let rig = Rig()
+		rig.memory.save(IntentsMemory(agents: [relay]), for: scope)
+		rig.backend.listError = URLError(.timedOut)
+		await #expect(throws: IntentsError.self) {
+			try await rig.service().ask(agentID: "relay", message: "hello")
+		}
+		#expect(rig.backend.started.isEmpty)
+		#expect(rig.queue.sent.isEmpty)
+	}
+
 	@Test func startsAConversationWhenThereIsNoThread() async throws {
 		let rig = Rig()
 		rig.memory.save(IntentsMemory(agents: [relay]), for: scope)
@@ -312,10 +336,27 @@ private func direct(_ id: String, with agent: String, archived: Bool = false) ->
 	@Test func threadLinkIsTheChatDeepLink() async {
 		let rig = Rig()
 		rig.memory.save(IntentsMemory(agents: [relay], threads: ["relay": "c1"]), for: scope)
-		let link = await rig.service().threadLink(agentID: "relay")
+		let link = try? await rig.service().threadLink(agentID: "relay")
 		#expect(link?.url.absoluteString == "maskin://ws1/chats/c1")
-		let none = await rig.service().threadLink(agentID: "scribe")
-		#expect(none == nil)
+		let none = try? await rig.service().threadLink(agentID: "scribe")
+		#expect(none == .some(nil))
+	}
+
+	@Test func threadLinkSurfacesALookupFailureInsteadOfSayingThereIsNoThread() async {
+		let rig = Rig()
+		rig.memory.save(IntentsMemory(agents: [relay]), for: scope)
+		rig.backend.listError = URLError(.notConnectedToInternet)
+		await #expect(throws: IntentsError.self) {
+			_ = try await rig.service().threadLink(agentID: "relay")
+		}
+	}
+
+	@Test func wipeClearsTheCacheAndTheIndexWithoutASession() async {
+		var rig = Rig()
+		rig.session = nil
+		await rig.service().wipe()
+		#expect(rig.memory.cleared == 1)
+		#expect(rig.index.removed == 1)
 	}
 }
 

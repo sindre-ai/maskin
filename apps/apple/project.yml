@@ -325,9 +325,11 @@ targets:
         Release:
           MASKIN_API_BASE_URL: https://maskin.io
   # iOS Live Activity extension: Lock Screen + Dynamic Island for a running agent turn. Renders
-  # only what the app or a Live Activity push hands it (ContentState), so it links just the
-  # UI-free core (for MaskinTurnAttributes) and design tokens, no network client and no
-  # Keychain: the Stop button's intent runs in the app process.
+  # only what the app or a Live Activity push hands it (ContentState). It links MaskinCore (for
+  # MaskinTurnAttributes) and design tokens. MaskinCore carries the network client and the
+  # Keychain store, and StopTurnIntent (compiled into this target so Button(intent:) can render)
+  # references both, so that code IS in this binary. It is never executed here: the system runs
+  # the intent's perform() in the app process, which holds the Keychain session.
   MaskinLiveActivity:
     type: app-extension
     platform: iOS

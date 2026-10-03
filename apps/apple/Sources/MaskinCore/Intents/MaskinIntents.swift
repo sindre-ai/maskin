@@ -17,6 +17,9 @@ import Foundation
 		private static let lock = NSLock()
 		nonisolated(unsafe) private static var service: IntentsService?
 
+		/// Sign-out: drop the cached agents, thread links and Spotlight entries.
+		public static func wipe() async { await current.wipe() }
+
 		public static func configure(baseURL: URL, clientSource: String = "ios") {
 			lock.withLock { service = .live(baseURL: baseURL, clientSource: clientSource) }
 		}
@@ -80,9 +83,14 @@ import Foundation
 	public enum IntentDeepLinkRelay {
 		public private(set) static var pending: URL?
 		private static var handler: ((URL) -> Void)?
+		private static var agentHandler: ((String) -> Void)?
 
-		public static func attach(_ handler: @escaping (URL) -> Void) {
+		/// `openAgent` is where a tapped agent with no direct thread lands (its detail).
+		public static func attach(
+			openAgent: @escaping (String) -> Void = { _ in }, _ handler: @escaping (URL) -> Void
+		) {
 			self.handler = handler
+			self.agentHandler = openAgent
 			if let url = pending {
 				pending = nil
 				handler(url)
@@ -95,10 +103,13 @@ import Foundation
 
 		/// A tapped Spotlight result for an agent. Resolves the agent's direct thread, then opens it.
 		public static func openSpotlight(identifier: String) async {
-			guard let agentID = SpotlightAgentLink.agentID(fromIdentifier: identifier),
-				let link = await MaskinIntentsContext.current.threadLink(agentID: agentID)
-			else { return }
-			open(link.url)
+			guard let agentID = SpotlightAgentLink.agentID(fromIdentifier: identifier) else { return }
+			// No direct thread yet (or the lookup failed): show the agent rather than do nothing.
+			if let link = try? await MaskinIntentsContext.current.threadLink(agentID: agentID) {
+				open(link.url)
+			} else {
+				agentHandler?(agentID)
+			}
 		}
 	}
 
@@ -109,6 +120,8 @@ import Foundation
 		public static let description = IntentDescription(
 			"Tells you how many decisions your agents are waiting on, and the most urgent one.",
 			categoryName: "For you")
+		/// Decision titles are private: don't read them out on a locked device.
+		public static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
 
 		public init() {}
 
@@ -146,7 +159,7 @@ import Foundation
 				let outcome = try await MaskinIntentsContext.current.ask(agentID: agent.id, message: message)
 				let line =
 					switch outcome {
-					case .queued: "Sent to \(agent.name)."
+					case .queued: "Queued your message for \(agent.name). It sends as soon as you're online."
 					case .started: "Started a conversation with \(agent.name)."
 					}
 				return .result(dialog: IntentDialog(stringLiteral: line))
@@ -207,7 +220,13 @@ import Foundation
 
 		@MainActor
 		public func perform() async throws -> some IntentResult {
-			guard let link = await MaskinIntentsContext.current.threadLink(agentID: agent.id) else {
+			let link: DeepLink?
+			do {
+				link = try await MaskinIntentsContext.current.threadLink(agentID: agent.id)
+			} catch let error as IntentsError {
+				throw AgentIntentError(error.message)
+			}
+			guard let link else {
 				throw AgentIntentError("You haven't talked to \(agent.name) yet. Ask them something first.")
 			}
 			IntentDeepLinkRelay.open(link.url)
