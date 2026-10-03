@@ -1,9 +1,12 @@
 import type { Database } from '@maskin/db'
 import { recordEvent } from '../../events/record-event'
+import { getIntegrationCredential } from '../../integrations/lookup'
+import { TokenManager } from '../../integrations/oauth/token-manager'
 import { slackApiCall } from '../../integrations/providers/slack/slack-api'
 import { createTelnyxClient } from '../../integrations/providers/telnyx/client'
 import { readTelnyxRuntimeConfig } from '../../integrations/providers/telnyx/config'
 import type { DeadLetter } from '../../integrations/providers/telnyx/http'
+import { getProvider } from '../../integrations/registry'
 import { logger } from '../../logger'
 import type { SmsMode, VoiceEffect } from './state'
 
@@ -27,20 +30,26 @@ const SMS_TEMPLATE_ENV: Record<SmsMode, string> = {
 
 const SALES_CHANNEL = '#sales'
 
-export type SalesPoster = (text: string) => Promise<void>
+export type SalesPoster = (db: Database, workspaceId: string, text: string) => Promise<void>
 
 /**
- * Posts to #sales with the workspace bot token, the same transport and env var
- * as notifySebkOnSlack (lib/vat-notifications.ts). Never throws: a Slack outage
- * must not turn a recorded dead letter into a failed effect.
+ * Posts to #sales as the workspace's own Slack integration bot, resolving the
+ * token through TokenManager like the rest of providers/slack. Never throws: a
+ * missing or inactive integration, or a Slack outage, must not turn a recorded
+ * dead letter into a failed effect.
  */
-export const postToSales: SalesPoster = async (text) => {
-	const token = process.env.SLACK_BOT_TOKEN?.trim()
-	if (!token) {
-		logger.warn('voice dead letter not posted to #sales: SLACK_BOT_TOKEN unset')
-		return
-	}
+export const postToSales: SalesPoster = async (db, workspaceId, text) => {
 	try {
+		// getIntegrationCredential only returns status = 'active' rows, so "no
+		// integration" and "not active" are the same miss.
+		const integration = await getIntegrationCredential(db, workspaceId, 'slack', null)
+		if (!integration) {
+			logger.warn('voice dead letter not posted to #sales: no active Slack integration', {
+				workspaceId,
+			})
+			return
+		}
+		const token = await new TokenManager().getValidToken(db, integration.id, getProvider('slack'))
 		await slackApiCall(token, 'chat.postMessage', {
 			channel: SALES_CHANNEL,
 			text,
@@ -77,7 +86,7 @@ export async function recordDeadLetter(
 		entityId: ctx.contactId,
 		data: { attention: 5, channel: SALES_CHANNEL, ...payload },
 	})
-	await post(deadLetterText(ctx, payload))
+	await post(db, ctx.workspaceId, deadLetterText(ctx, payload))
 }
 
 export function createDefaultEffectRunner(
