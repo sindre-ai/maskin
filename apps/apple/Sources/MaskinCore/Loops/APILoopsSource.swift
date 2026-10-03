@@ -8,13 +8,19 @@ public struct APILoopsSource: LoopsAPI {
 	private let client: Client
 	private let workspaceID: String
 	private let objects: (any ObjectsRemote)?
+	private let files: (any FilesRemote)?
 
 	/// `objects` supplies the loop's graph (members, posts, files); without it the loop page
 	/// shows the step spine and activity only.
-	public init(client: Client, workspaceID: String, objects: (any ObjectsRemote)? = nil) {
+	/// `files` looks up what the loop produced, so only real outcomes (pages, PDFs) are listed.
+	public init(
+		client: Client, workspaceID: String, objects: (any ObjectsRemote)? = nil,
+		files: (any FilesRemote)? = nil
+	) {
 		self.client = client
 		self.workspaceID = workspaceID
 		self.objects = objects
+		self.files = files
 	}
 
 	public func overview(loopID: String) async throws -> LoopOverview {
@@ -42,9 +48,12 @@ public struct APILoopsSource: LoopsAPI {
 		} else {
 			order = []
 		}
+		let produced = LoopOverviewBuilder.outputs(loopFiles: loopFiles, memberFiles: memberFiles)
+		let rows = produced.isEmpty ? [] : try? await files?.summaries(ids: produced.map(\.id))
+		let metadata = rows.map { Dictionary($0.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }) }
 		return LoopOverview(
 			members: members, posts: LoopOverviewBuilder.posts(from: graph.events),
-			outputs: LoopOverviewBuilder.outputs(loopFiles: loopFiles, memberFiles: memberFiles),
+			outputs: LoopOverviewBuilder.outcomes(from: produced, files: metadata),
 			statusOrder: order)
 	}
 

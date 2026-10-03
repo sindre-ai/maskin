@@ -30,7 +30,6 @@ public struct LoopsScreen: View {
 
 enum AutomationMode: String, CaseIterable, Identifiable {
 	case loops = "Loops"
-	case outcomes = "Outcomes"
 	case triggers = "Triggers"
 	var id: String { rawValue }
 }
@@ -40,7 +39,6 @@ private struct LoopsContainer: View {
 	let workspaceID: String
 	@State private var loops: LoopsStore
 	@State private var triggers: TriggersStore
-	@State private var outcomes: OutcomesStore
 	@State private var mode: AutomationMode = .loops
 	@State private var loopSelection: String?
 	@State private var triggerSelection: String?
@@ -61,15 +59,6 @@ private struct LoopsContainer: View {
 			initialValue: TriggersStore(
 				api: APITriggersSource(client: environment.client, workspaceID: workspaceID),
 				events: environment.events, cache: environment.snapshotCache))
-		_outcomes = State(
-			initialValue: OutcomesStore(
-				loops: APILoopsSource(
-					client: environment.client, workspaceID: workspaceID,
-					objects: APIObjectsRemote(
-						client: environment.client, credentials: environment.auth.credentialsProvider)),
-				files: APIFilesRemote(
-					client: environment.client, credentials: environment.auth.credentialsProvider),
-				events: environment.events))
 	}
 
 	var body: some View {
@@ -81,13 +70,9 @@ private struct LoopsContainer: View {
 		}
 		.task { await loops.start() }
 		.task { await triggers.start() }
-		.task(id: mode == .outcomes) {
-			if mode == .outcomes { await outcomes.start() } else { outcomes.stop() }
-		}
 		.onDisappear {
 			loops.stop()
 			triggers.stop()
-			outcomes.stop()
 		}
 		.sheet(isPresented: $showNewTrigger) {
 			NewTriggerSheet(store: triggers) { created in
@@ -122,13 +107,6 @@ private struct LoopsContainer: View {
 				LoopsListView(
 					store: loops, selection: $loopSelection, search: search, isLive: isLive, zoomNamespace: zoom,
 					onNew: { buildLoopInChat() }, onBrowse: { showMarketplace = true })
-			case .outcomes:
-				OutcomesView(
-					store: outcomes, environment: environment, isLive: isLive,
-					onOpenLoop: { id in
-						mode = .loops
-						loopSelection = id
-					})
 			case .triggers:
 				TriggersListView(
 					store: triggers, selection: $triggerSelection, search: search, isLive: isLive,
@@ -175,10 +153,6 @@ private struct LoopsContainer: View {
 					symbol: "arrow.triangle.2.circlepath", title: "Select a loop",
 					message: "See its steps, what the agents did, and pause or resume it.")
 			}
-		case .outcomes:
-			EmptyState(
-				symbol: "rectangle.on.rectangle.angled", title: "Pick an outcome",
-				message: "Open a page or document a loop produced, then ask for changes in chat.")
 		case .triggers:
 			if let id = triggerSelection, let trigger = triggers.trigger(id: id) {
 				TriggerDetailHost(
@@ -210,6 +184,8 @@ private struct LoopDetailHost: View {
 			api: APILoopsSource(
 				client: environment.client, workspaceID: workspaceID,
 				objects: APIObjectsRemote(
+					client: environment.client, credentials: environment.auth.credentialsProvider),
+				files: APIFilesRemote(
 					client: environment.client, credentials: environment.auth.credentialsProvider)),
 			events: environment.events)
 		detail.onDeleted = { [list] id in list.didDelete(id) }

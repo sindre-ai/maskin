@@ -50,6 +50,30 @@ public enum LoopOverviewBuilder {
 		return all.filter(\.isHTML) + all.filter { !$0.isHTML }
 	}
 
+	/// What counts as an outcome: a page or a PDF a person can present. Screenshots, notes and
+	/// scratch files agents attach along the way are not.
+	public static func isOutcome(_ kind: FileContentKind) -> Bool { kind == .html || kind == .pdf }
+
+	/// Keeps only the outcomes among a loop's produced files, pages first and the newest first.
+	/// `files` is the metadata looked up for them: a file with no row (deleted, no access) is
+	/// dropped. Without it (the lookup failed) the names decide.
+	public static func outcomes(from outputs: [LoopOutput], files: [String: FileSummary]?) -> [LoopOutput] {
+		let known: [LoopOutput] = outputs.compactMap { output in
+			guard let files else { return output }
+			guard let file = files[output.id] else { return nil }
+			var enriched = output
+			enriched.name = file.name
+			enriched.mimeType = file.mimeType
+			enriched.updatedAt = file.updatedAt
+			return enriched
+		}
+		let kept = known.filter { isOutcome($0.kind) }
+		return kept.sorted { a, b in
+			if a.isHTML != b.isHTML { return a.isHTML }
+			return (a.updatedAt ?? .distantPast) > (b.updatedAt ?? .distantPast)
+		}
+	}
+
 	private static func parentID(of event: ObjectEvent) -> Int? {
 		guard case .number(let n)? = event.data?["parentEventId"] else { return nil }
 		return Int(n)

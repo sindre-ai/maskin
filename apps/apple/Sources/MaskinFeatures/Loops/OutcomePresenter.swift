@@ -6,16 +6,18 @@ import SwiftUI
 /// An outcome shown full screen: a page fills the sheet edge to edge and runs, anything else uses
 /// the file viewer's content. "Change it" hands the request to chat, where an agent edits the file.
 struct OutcomePresenter: View {
-	let outcome: Outcome
+	let output: LoopOutput
+	let sourceName: String
 	@State private var store: FileStore
 	@Environment(\.dismiss) private var dismiss
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
 
-	init(environment: AppEnvironment, outcome: Outcome) {
-		self.outcome = outcome
+	init(environment: AppEnvironment, output: LoopOutput, sourceName: String) {
+		self.output = output
+		self.sourceName = sourceName
 		_store = State(
 			initialValue: FileStore(
-				fileId: outcome.fileID,
+				fileId: output.id,
 				remote: APIFilesRemote(
 					client: environment.client, credentials: environment.auth.credentialsProvider)))
 	}
@@ -24,7 +26,7 @@ struct OutcomePresenter: View {
 		NavigationStack {
 			content
 				.background(MaskinSurface.grouped)
-				.navigationTitle(outcome.name)
+				.navigationTitle(output.name)
 				#if os(iOS)
 				.navigationBarTitleDisplayMode(.inline)
 				#endif
@@ -80,7 +82,7 @@ struct OutcomePresenter: View {
 	}
 
 	private func changeIt() {
-		let text = "Change \"\(outcome.name)\" from the loop \"\(outcome.loopName)\": "
+		let text = "Change \"\(output.name)\" (from \"\(sourceName)\"): "
 		dismiss()
 		runtime?.buildInChat(text)
 	}

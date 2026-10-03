@@ -45,6 +45,7 @@ struct ObjectDetailContent<Decision: View>: View {
 					header(object)
 					decision()
 					description(object)
+					OutcomesSection(outputs: store.outcomes, sourceName: object.displayTitle)
 					properties(object)
 					if !store.links.isEmpty { relationships }
 					timeline
@@ -53,6 +54,7 @@ struct ObjectDetailContent<Decision: View>: View {
 					header(object)
 					decision()
 					description(object)
+					OutcomesSection(outputs: store.outcomes, sourceName: object.displayTitle)
 					properties(object)
 				case .related: relationships
 				case .activity: timeline
@@ -260,21 +262,31 @@ struct ObjectDetailContent<Decision: View>: View {
 	private var linkGroups: [(phrase: String, links: [ObjectLink])] {
 		var order: [String] = []
 		var buckets: [String: [ObjectLink]] = [:]
-		for link in store.links {
+		// Pages and PDFs already have their own section above.
+		let presented = Set(store.outcomes.map(\.id))
+		for link in store.links where !presented.contains(link.otherId) {
 			if buckets[link.phrase] == nil { order.append(link.phrase) }
 			buckets[link.phrase, default: []].append(link)
 		}
 		return order.map { ($0, buckets[$0] ?? []) }
 	}
 
-	private var relationshipList: some View {
+	@ViewBuilder private var relationshipList: some View {
+		let groups = linkGroups
+		if !groups.isEmpty {
+			relationshipGroups(groups)
+		}
+	}
+
+	private func relationshipGroups(_ groups: [(phrase: String, links: [ObjectLink])]) -> some View {
 		VStack(alignment: .leading, spacing: MaskinSpace.s8) {
 			if part != .related {
 				SectionHeader("Related") {
-					Text("\(store.links.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink4)
+					Text("\(groups.reduce(0) { $0 + $1.links.count })")
+						.maskinText(.mono).foregroundStyle(MaskinColor.ink4)
 				}
 			}
-			ForEach(linkGroups, id: \.phrase) { group in
+			ForEach(groups, id: \.phrase) { group in
 				VStack(alignment: .leading, spacing: MaskinSpace.s4) {
 					HStack(spacing: MaskinSpace.s3) {
 						MonoLabel(group.phrase)

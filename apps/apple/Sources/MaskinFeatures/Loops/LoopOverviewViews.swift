@@ -12,31 +12,37 @@ private extension View {
 	}
 }
 
-/// What the loop produced: the presentable files first (HTML pages open as a rendered view).
-/// Rows are the same ones the Outcomes feed uses.
-struct LoopOutputsSection: View {
+/// What a loop or an object produced that is worth presenting: the latest page rendered in
+/// place, and any other pages or PDFs as rows. Everything opens full screen.
+struct OutcomesSection: View {
 	let outputs: [LoopOutput]
-	let loop: LoopSummary
+	/// Who they came from, named when asking for changes ("from the loop…", "from the task…").
+	let sourceName: String
 	@Environment(AppRuntime.self) private var runtime: AppRuntime?
+	@Environment(\.horizontalSizeClass) private var sizeClass
+	@State private var presented: LoopOutput?
 
 	var body: some View {
-		if !outputs.isEmpty {
+		if !outputs.isEmpty, let environment = runtime?.environment {
 			VStack(alignment: .leading, spacing: MaskinSpace.s5) {
-				SectionHeader("Produced") {
+				SectionHeader("Outcomes") {
 					Text("\(outputs.count)").maskinText(.mono).foregroundStyle(MaskinColor.ink4)
 				}
-				LazyVGrid(
-					columns: [GridItem(.adaptive(minimum: 240), spacing: MaskinSpace.s5)],
-					spacing: MaskinSpace.s5
-				) {
-					ForEach(outputs.prefix(6)) { output in
-						Button { runtime?.openFile(output.id) } label: {
-							OutcomeRow(outcome: Outcome(output: output, loop: loop))
+				ForEach(Array(outputs.prefix(6).enumerated()), id: \.element.id) { index, output in
+					Button { presented = output } label: {
+						if index == 0 && output.isHTML {
+							OutcomeFeatureCard(
+								environment: environment, output: output, height: sizeClass == .regular ? 340 : 220)
+						} else {
+							OutcomeRow(output: output)
 						}
-						.buttonStyle(.plain)
-						.accessibilityHint("Opens the file")
 					}
+					.buttonStyle(.plain)
+					.accessibilityHint("Opens it full screen")
 				}
+			}
+			.sheet(item: $presented) { output in
+				OutcomePresenter(environment: environment, output: output, sourceName: sourceName)
 			}
 		}
 	}

@@ -254,14 +254,22 @@ public struct LoopOutput: Identifiable, Equatable, Sendable {
 	public var name: String
 	/// The object it is attached to, when that is a member rather than the loop itself.
 	public var sourceTitle: String?
+	/// From the file's row; the graph edge carries neither, so these are nil until it is looked up.
+	public var mimeType: String?
+	public var updatedAt: Date?
 
-	public init(id: String, name: String, sourceTitle: String? = nil) {
+	public init(
+		id: String, name: String, sourceTitle: String? = nil, mimeType: String? = nil,
+		updatedAt: Date? = nil
+	) {
 		self.id = id
 		self.name = name
 		self.sourceTitle = sourceTitle
+		self.mimeType = mimeType
+		self.updatedAt = updatedAt
 	}
 
-	public var kind: FileContentKind { .classify(mimeType: "", name: name) }
+	public var kind: FileContentKind { .classify(mimeType: mimeType ?? "", name: name) }
 	public var isHTML: Bool { kind == .html }
 }
 

@@ -175,6 +175,7 @@ public final class ObjectDetailStore {
 				// data; its own completion refetches.
 				if before == editCount { object = graph.object }
 				links = graph.links
+				resolveFiles()
 				mergeTimeline(graph.events)
 				phase = .loaded
 				hasFetched = true
@@ -244,13 +245,28 @@ public final class ObjectDetailStore {
 	@ObservationIgnored private let filesRemote: (any FilesRemote)?
 	@ObservationIgnored private var resolvingFiles: Set<String> = []
 
+	/// Ids of files attached to this object itself (an `attached` edge to a `files` row).
+	private var attachedFileIDs: [String] {
+		links.filter { $0.relation == "attached" && $0.isOutgoing && $0.otherType == "file" }.map(\.otherId)
+	}
+
+	/// The pages and PDFs attached to this object, ready to present: pages first, newest first.
+	/// Files that haven't resolved yet (or can't be seen) are left out rather than shown as ids.
+	public var outcomes: [LoopOutput] {
+		let attached = links.filter {
+			$0.relation == "attached" && $0.isOutgoing && $0.otherType == "file"
+		}.map { LoopOutput(id: $0.otherId, name: $0.otherTitle) }
+		return LoopOverviewBuilder.outcomes(from: attached, files: files)
+	}
+
 	public func attachments(for item: TimelineItem) -> [FileSummary] {
 		item.attachments.compactMap { files[$0] }
 	}
 
 	private func resolveFiles() {
 		guard let filesRemote else { return }
-		let missing = Set(timeline.flatMap(\.attachments)).subtracting(files.keys).subtracting(resolvingFiles)
+		let missing = Set(timeline.flatMap(\.attachments) + attachedFileIDs)
+			.subtracting(files.keys).subtracting(resolvingFiles)
 		guard !missing.isEmpty else { return }
 		resolvingFiles.formUnion(missing)
 		Task { [weak self] in
