@@ -96,7 +96,9 @@ export function createIdempotencyMiddleware(db: Database) {
 
 		try {
 			const cloned = c.res.clone()
-			const body = (await cloned.json()) as unknown
+			const text = await cloned.text()
+			if (text.includes('"api_key"')) return
+			const body = JSON.parse(text) as unknown
 
 			await db
 				.insert(idempotencyRecords)

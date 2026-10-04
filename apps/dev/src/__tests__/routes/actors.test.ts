@@ -552,27 +552,31 @@ describe('Actors Routes', () => {
 	})
 
 	describe('POST /api/actors/:id/api-keys', () => {
-		it('returns 200 with new API key', async () => {
-			const actor = buildActor()
-			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
-			mockResults.update = [{ id: actor.id }]
+		const selfId = '00000000-0000-0000-0000-000000000001'
+		const otherId = '00000000-0000-0000-0000-000000000002'
 
-			const res = await app.request(jsonRequest('POST', `/api/actors/${actor.id}/api-keys`))
+		it('returns 200 with a new API key when the caller rotates its own key', async () => {
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', selfId)
+			mockResults.update = [{ id: selfId }]
+
+			const res = await app.request(jsonRequest('POST', `/api/actors/${selfId}/api-keys`))
 
 			expect(res.status).toBe(200)
 			const body = await res.json()
-			expect(body.api_key).toBeDefined()
 			expect(body.api_key).toMatch(/^ank_/)
+			expect(calls.updates).toHaveLength(1)
 		})
 
-		it('returns 404 when actor not found', async () => {
-			const { app } = createTestApp(actorsRoutes, '/api/actors')
+		it('returns 403 with no key and writes nothing when the id is another actor', async () => {
+			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors', selfId)
+			mockResults.update = [{ id: otherId }]
 
-			const res = await app.request(
-				jsonRequest('POST', '/api/actors/00000000-0000-0000-0000-000000000099/api-keys'),
-			)
+			const res = await app.request(jsonRequest('POST', `/api/actors/${otherId}/api-keys`))
 
-			expect(res.status).toBe(404)
+			expect(res.status).toBe(403)
+			const body = await res.json()
+			expect(body.api_key).toBeUndefined()
+			expect(calls.updates).toHaveLength(0)
 		})
 	})
 
