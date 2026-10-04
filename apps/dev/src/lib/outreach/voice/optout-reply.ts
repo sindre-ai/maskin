@@ -42,6 +42,7 @@ export interface OptOutReply {
 	to?: string[]
 	subject?: string
 	text?: string
+	html?: string
 }
 
 // Letters and digits in any script, so Danish å, æ and ø count as word characters.
@@ -66,6 +67,44 @@ export function stripQuotedText(text: string): string {
 	const lines = text.split(/\r?\n/)
 	const cut = lines.findIndex((line) => QUOTE_MARKERS.some((marker) => marker.test(line)))
 	return (cut === -1 ? lines : lines.slice(0, cut)).join('\n')
+}
+
+const HTML_ENTITIES: Record<string, string> = {
+	nbsp: ' ',
+	amp: '&',
+	lt: '<',
+	gt: '>',
+	quot: '"',
+	apos: "'",
+}
+
+/**
+ * Plain text from an HTML-only mail, for the same quoted-text stripping and stop-word
+ * matching as a text part. Block-level tags become line breaks so a quote marker still
+ * starts its own line, and a blockquote opens with ">" so the quoted original is cut.
+ */
+export function htmlToPlainText(html: string): string {
+	return html
+		.replace(/<(head|style|script)\b[\s\S]*?<\/\1\s*>/gi, '')
+		.replace(/<blockquote\b[^>]*>/gi, '\n> ')
+		.replace(/<br\b[^>]*>|<\/(p|div|li|tr|h[1-6]|blockquote)\s*>/gi, '\n')
+		.replace(/<[^>]*>/g, '')
+		.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (entity, name: string) => {
+			if (name[0] !== '#') return HTML_ENTITIES[name.toLowerCase()] ?? entity
+			const code =
+				name.charAt(1).toLowerCase() === 'x'
+					? Number.parseInt(name.slice(2), 16)
+					: Number(name.slice(1))
+			return Number.isInteger(code) && code > 0 && code <= 0x10ffff
+				? String.fromCodePoint(code)
+				: entity
+		})
+}
+
+/** The text part when it has content, otherwise the HTML part as plain text. */
+export function replyBody(text: string | undefined, html: string | undefined): string {
+	if (text?.trim()) return text
+	return html ? htmlToPlainText(html) : ''
 }
 
 export function containsStopWord(subject: string | undefined, text: string | undefined): boolean {
@@ -117,7 +156,8 @@ export async function applyOptOutReply(db: Database, reply: OptOutReply): Promis
 	)
 	if (!addressedToOptOut) return noop('not_for_opt_out_address')
 
-	if (!containsStopWord(reply.subject, reply.text)) return noop('no_stop_word')
+	if (!containsStopWord(reply.subject, replyBody(reply.text, reply.html)))
+		return noop('no_stop_word')
 
 	const sender = normalizeAddress(reply.from)
 	if (!sender) return noop('no_matching_contact', { detail: 'unparseable_sender' })
