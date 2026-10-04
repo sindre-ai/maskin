@@ -305,6 +305,21 @@ describe('getCredential: audit chain', () => {
 		expect((event.data as { session_id: unknown }).session_id).toBeNull()
 	})
 
+	it('verifies a chain whose ids cross from one digit to two', async () => {
+		// The verifier must order by the numeric id. Ordered as text, 10 and 11
+		// sort before 8 and 9 and a sound chain reads as tampered.
+		await sql`SELECT setval(pg_get_serial_sequence('credential_access_log', 'id'), 5)`
+		const s = await setup()
+		const row = await insertIntegration(s, { grants: [{ kind: 'workspace' }] })
+		for (let i = 0; i < 4; i++)
+			await getCredential(db, s.ws.id, row.id, ctxFor(s.actorA.id), { kms })
+		const ids = (await logRows(s.ws.id)).map((l) => Number(l.id)).sort((a, b) => a - b)
+		// The trigger and the column default each draw from the sequence, so ids step by two.
+		expect(ids[0]).toBeLessThan(10)
+		expect(ids[ids.length - 1]).toBeGreaterThanOrEqual(10)
+		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({ ok: true, rows: 4 })
+	})
+
 	it('concurrent reads get distinct sequential ids and a consistent chain', async () => {
 		const s = await setup()
 		const row = await insertIntegration(s, { grants: [{ kind: 'workspace' }] })
