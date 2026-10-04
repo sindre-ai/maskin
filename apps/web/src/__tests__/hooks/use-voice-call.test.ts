@@ -205,9 +205,12 @@ describe('useVoiceCall — session lifecycle', () => {
 		stubMediaDevices({ getUserMedia: vi.fn().mockResolvedValue(fakeStream) })
 		mockCreate.mockResolvedValue(mintOk)
 		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: async () => 'answer-sdp' }))
-		const { result, rerender } = renderHook(({ open }) => useVoiceCall(AGENT_ID, AGENT_NAME, open), {
-			initialProps: { open: true },
-		})
+		const { result, rerender } = renderHook(
+			({ open }) => useVoiceCall(AGENT_ID, AGENT_NAME, open),
+			{
+				initialProps: { open: true },
+			},
+		)
 		await act(() => result.current.start())
 		expect(mockHangup).not.toHaveBeenCalled()
 
