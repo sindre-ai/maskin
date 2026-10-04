@@ -437,6 +437,8 @@ describe('Workspaces Routes', () => {
 			expect(res.status).toBe(403)
 			const body = await res.json()
 			expect(body.error.code).toBe('FORBIDDEN')
+			// The MCP create_actor / update_actor tools surface this text verbatim.
+			expect(body.error.message).toBe('Only a human admin or owner can add workspace members')
 			expect(calls.inserts).toHaveLength(0)
 		})
 

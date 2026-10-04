@@ -684,7 +684,7 @@ app.openapi(addMemberRoute, (async (c) => {
 	}
 	if (!(await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId))) {
 		return c.json(
-			createApiError('FORBIDDEN', 'Only workspace admins and owners can add members'),
+			createApiError('FORBIDDEN', 'Only a human admin or owner can add workspace members'),
 			403,
 		)
 	}
