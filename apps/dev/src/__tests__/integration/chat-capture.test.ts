@@ -503,8 +503,21 @@ describe('several keys for one provider', () => {
 		expect(again.status).toBe(201)
 	})
 
-	it('a provider-name lookup still finds the registered connection, not a captured key', async () => {
+	it('a provider-name lookup still finds the registered connection, not an active captured key', async () => {
 		const s = await setup()
+		// The captured key goes in first and is active, as it will be once the sweeper
+		// has flipped it: it is the row a bare provider lookup would otherwise return.
+		const res = await capture(
+			appFor(s.human),
+			s.ws.id,
+			validBody(s.session.id, { detectedProvider: 'github' }),
+		)
+		expect(res.status).toBe(201)
+		const { integrationId } = (await res.json()) as { integrationId: string }
+		await db
+			.update(integrations)
+			.set({ status: 'active' })
+			.where(eq(integrations.id, integrationId))
 		const [registered] = await db
 			.insert(integrations)
 			.values({
@@ -515,13 +528,8 @@ describe('several keys for one provider', () => {
 				createdBy: s.human,
 			})
 			.returning()
-		const res = await capture(
-			appFor(s.human),
-			s.ws.id,
-			validBody(s.session.id, { detectedProvider: 'github' }),
-		)
-		expect(res.status).toBe(201)
 		const found = await getIntegrationCredential(db, s.ws.id, 'github', null)
 		expect(found?.id).toBe(registered?.id)
+		expect(found?.id).not.toBe(integrationId)
 	})
 })
