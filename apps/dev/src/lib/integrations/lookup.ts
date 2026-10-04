@@ -109,7 +109,13 @@ export async function getIntegrationCredential(
 	return row ? getCredential(db, workspaceId, row.id, options.ctx) : null
 }
 
-async function findIntegrationRow(
+/**
+ * Resolves which row a (workspace, provider, actor) lookup means, without
+ * reading it: the row comes back with its credentials still sealed. A caller
+ * that needs the row first (to gate on status or whose connection it is) and
+ * then the value calls this, then getCredential. Never decrypt the row yourself.
+ */
+export async function findIntegrationRow(
 	db: Database,
 	workspaceId: string,
 	provider: string,

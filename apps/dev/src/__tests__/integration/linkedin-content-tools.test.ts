@@ -56,6 +56,8 @@ async function insertConnectedLinkedInCredential(workspaceId: string, actorId: s
 		provider: 'linkedin-unipile',
 		status: INTEGRATION_STATUS_ACTIVE,
 		credentials: credentialsBlob,
+		// The grant migration 0088 writes to a connected row.
+		scopeGrants: [{ kind: 'workspace' }],
 		actorId,
 		createdBy: actorId,
 	})

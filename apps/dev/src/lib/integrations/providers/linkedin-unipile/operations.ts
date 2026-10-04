@@ -1,4 +1,10 @@
 import { createHash } from 'node:crypto'
+import {
+	KmsAccessError,
+	KmsConfigError,
+	KmsDecryptError,
+	KmsKekMissingError,
+} from '@maskin/auth/kms'
 import type { Database } from '@maskin/db'
 import {
 	INTEGRATION_STATUS_ACTIVE,
@@ -10,11 +16,18 @@ import type { LinkedInMcpInstanceConfig } from '@maskin/mcp/linkedin'
 import { deregisterLinkedInMcpInstance } from '@maskin/mcp/linkedin'
 import { and, eq, lt } from 'drizzle-orm'
 import { z } from 'zod'
-import { decrypt } from '../../../crypto'
 import { recordEvent } from '../../../events/record-event'
 import { logger } from '../../../logger'
 import { isWorkspaceMember } from '../../../workspace-auth'
-import { getIntegrationCredential } from '../../lookup'
+import {
+	CredentialNotFoundError,
+	CredentialPendingError,
+	CredentialUnavailableError,
+	CredentialUndoneError,
+	ScopeDeniedError,
+} from '../../errors'
+import { findIntegrationRow, getCredential } from '../../lookup'
+import { readContextFor } from '../../read-context'
 import { deleteUnipileAccountBestEffort } from './disconnect'
 import {
 	LinkedInIntegrationError,
@@ -115,6 +128,35 @@ export function __setLinkedInClientForTests(builder: ClientOverride['build'] | n
  * actor-scoped fallback so a Sales Rep loop that never received a fan-out MCP
  * row still resolves the workspace's connected identity.
  */
+/**
+ * Failures of the Keychain read that must reach the caller as themselves: a
+ * denied scope, an undone or pending credential, a KMS problem. Anything else
+ * thrown by the read is the stored blob failing to decrypt (a key rotation) and
+ * keeps its CREDENTIAL_REVOKED shape.
+ */
+function isKeychainReadError(err: unknown): boolean {
+	return (
+		err instanceof ScopeDeniedError ||
+		err instanceof CredentialNotFoundError ||
+		err instanceof CredentialUndoneError ||
+		err instanceof CredentialPendingError ||
+		err instanceof CredentialUnavailableError ||
+		err instanceof KmsDecryptError ||
+		err instanceof KmsAccessError ||
+		err instanceof KmsConfigError ||
+		err instanceof KmsKekMissingError
+	)
+}
+
+/** Host the Unipile client calls, for the audit row. Undefined when unconfigured. */
+function unipileHost(): string | undefined {
+	try {
+		return new URL(process.env.UNIPILE_BASE_URL ?? '').host
+	} catch {
+		return undefined
+	}
+}
+
 type Preamble =
 	| { ok: true; workspaceId: string; actorId: string; credentials: StoredLinkedInCredentials }
 	| { ok: false; error: LinkedInIntegrationError }
@@ -134,7 +176,7 @@ async function preamble(
 			),
 		}
 	}
-	let row: Awaited<ReturnType<typeof getIntegrationCredential>> = null
+	let row: Awaited<ReturnType<typeof findIntegrationRow>> = null
 	if (options.identity) {
 		// P3-C · Per-call gate: load the identity's own row UNFILTERED by status
 		// (P3-G filtered on active), so a row present-but-revoked lands here and
@@ -160,7 +202,7 @@ async function preamble(
 		// actor-scoped read makes the credential unreachable from the MCP tools
 		// that exist to use it. A human connects; every agent in the workspace can
 		// send, exactly as they can with Gmail or Slack.
-		row = await getIntegrationCredential(db, workspaceId, PROVIDER, actorId, {
+		row = await findIntegrationRow(db, workspaceId, PROVIDER, actorId, {
 			fallbackToAnyActor: true,
 		})
 	}
@@ -199,8 +241,19 @@ async function preamble(
 	}
 	let parsed: StoredLinkedInCredentials
 	try {
-		parsed = JSON.parse(decrypt(row.credentials as string)) as StoredLinkedInCredentials
+		// The only place the value is read. Scope-checked and written to
+		// credential_access_log by getCredential; the caller is the real,
+		// membership-checked actor. These routes carry no session header, so the
+		// session is null.
+		const credential = await getCredential(
+			db,
+			workspaceId,
+			row.id,
+			readContextFor(actorId, unipileHost()),
+		)
+		parsed = JSON.parse(credential.value) as StoredLinkedInCredentials
 	} catch (err) {
+		if (isKeychainReadError(err)) throw err
 		return {
 			ok: false,
 			error: new LinkedInIntegrationError(
