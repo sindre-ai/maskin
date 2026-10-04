@@ -405,6 +405,18 @@ export async function _driveToRunning(sessionId: string): Promise<void> {
 
 	try {
 		await sessionManager.startSession(sessionId)
+		// startSession returns normally when the workspace has no capacity: it
+		// only parks the row at status='queued'. Nothing was dispatched, so the
+		// row must not be advanced to 'running' — the reaper would later read a
+		// containerless "running" row and fail it. Put it back to 'queued'; the
+		// dispatch writers stamp 'running' once drainQueue really starts it.
+		const [requeued] = await db
+			.update(sessions)
+			.set({ sessionState: 'queued', stateEnteredAt: new Date(), driverHeartbeatAt: null })
+			.where(and(eq(sessions.id, sessionId), eq(sessions.status, 'queued')))
+			.returning({ id: sessions.id })
+		if (requeued) return
+
 		// Reached 'running' successfully — clear heartbeat so the reaper's
 		// stale-heartbeat check no longer applies to this row, and stamp the
 		// transition so the wall-timeout cutoff measures 2h from here.

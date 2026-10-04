@@ -76,6 +76,7 @@ import { isAuthRevokedError } from '../lib/integrations/errors'
 import { serverSpecReferencesEnvKey } from '../lib/integrations/mcp-server-spec-refs'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
+import { GITHUB_MCP_SERVER_SPEC } from '../lib/integrations/providers/github/config'
 import {
 	type SessionGithubInstall,
 	sessionGithubLogClassifier,
@@ -133,7 +134,7 @@ import {
 	type SessionUsage,
 	extractSessionUsage,
 	parseUsageFromLogChunks,
-	readSessionStdoutTail,
+	readSessionStdoutChunks,
 	resolveSessionCostUsd,
 	sumRunningSessionUsage,
 } from './usage-parser'
@@ -146,6 +147,11 @@ import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace
  * stable group-by key from day one.
  */
 const LOCAL_RUNTIME_BUCKET = 'local-docker'
+
+/** Failure reasons for a session whose container is gone / was never assigned. */
+const CONTAINER_LOST_MESSAGE = 'Container disappeared before pause could complete'
+const NO_CONTAINER_ASSIGNED_MESSAGE =
+	'No container was ever assigned to this session — it was marked running but never started'
 
 /**
  * Guards the MCP health check's partial-line buffer against a stdout stream
@@ -299,6 +305,44 @@ function claudeRuntimeFailoverReason(
 	if (stdoutTail.includes('"rateLimitType":"five_hour"')) return 'quota_exhausted_5h'
 	if (failureReason.reason_code === 'weekly_limit') return 'quota_exhausted_weekly'
 	return 'quota_exhausted'
+}
+
+/**
+ * Only names matching this pattern may be copied from the API process env into
+ * a session via an actor's tools.envFrom. The prefix keeps envFrom from becoming
+ * a way to read DATABASE_URL and friends; the full-match shape keeps the name
+ * safe to use as an env key (see known-pitfalls: shell injection).
+ */
+const ACTOR_SECRET_ENV_NAME_RE = /^AGENT_SECRET_[A-Za-z0-9_]+$/
+
+/**
+ * Resolves an actor's tools.envFrom into env entries for the session. Pure so
+ * the allowlist and unset handling are unit-testable. The skipped cases are
+ * returned as names only, so callers can log them without ever touching a value.
+ */
+export function resolveActorSecretEnv(
+	envFrom: unknown,
+	processEnv: NodeJS.ProcessEnv,
+): { env: Record<string, string>; ignored: string[]; unset: string[] } {
+	const result = {
+		env: {} as Record<string, string>,
+		ignored: [] as string[],
+		unset: [] as string[],
+	}
+	if (!Array.isArray(envFrom)) return result
+	for (const name of envFrom) {
+		if (typeof name !== 'string' || !ACTOR_SECRET_ENV_NAME_RE.test(name)) {
+			result.ignored.push(String(name))
+			continue
+		}
+		const value = processEnv[name]
+		if (value === undefined || value === '') {
+			result.unset.push(name)
+			continue
+		}
+		result.env[name] = value
+	}
+	return result
 }
 
 /**
@@ -1611,7 +1655,11 @@ export class SessionManager extends EventEmitter {
 	 * is dead, so the row stops blocking `sessions_conversation_actor_active_uniq`
 	 * for a fresh session.
 	 */
-	async markSessionFailedAfterContainerLoss(sessionId: string, workspaceId: string): Promise<void> {
+	async markSessionFailedAfterContainerLoss(
+		sessionId: string,
+		workspaceId: string,
+		reason = CONTAINER_LOST_MESSAGE,
+	): Promise<void> {
 		const [existing] = await this.db
 			.select({
 				startedAt: sessions.startedAt,
@@ -1637,7 +1685,7 @@ export class SessionManager extends EventEmitter {
 				kind: 'fail',
 				classification: 'sandbox_crash',
 				source: 'reaper',
-				reason: 'Container disappeared before pause could complete',
+				reason,
 				exitCode: 0,
 			},
 			this.buildSettleDeps({ skipStop: true, skipPush: true }),
@@ -1651,10 +1699,7 @@ export class SessionManager extends EventEmitter {
 			.set({ containerId: null, updatedAt: new Date() })
 			.where(eq(sessions.id, sessionId))
 
-		await this.insertSystemLog(
-			sessionId,
-			'Container disappeared before pause could complete — session marked failed',
-		).catch((err) =>
+		await this.insertSystemLog(sessionId, `${reason} — session marked failed`).catch((err) =>
 			logger.warn('Failed to insert system log for container-loss cleanup', {
 				sessionId,
 				error: String(err),
@@ -2314,6 +2359,17 @@ export class SessionManager extends EventEmitter {
 			// Defensive: some test fixtures stub getProvider to return null. Never
 			// happens in production (registry throws on unknown).
 			if (!resolved) continue
+			// Per-integration switch: the credential stays usable server-side, but
+			// agent sessions get neither the token env var nor the MCP server.
+			if ((integration.config as IntegrationConfig | null)?.expose_to_agent_sessions === false) {
+				logger.info('Integration not exposed to agent sessions; skipping injection', {
+					sessionId: session.id,
+					workspaceId: session.workspaceId,
+					integrationId: integration.id,
+					provider: integration.provider,
+				})
+				continue
+			}
 			const mcp = resolved.config.mcp
 			const autoInjectServer = mcp?.autoInject && mcp.server ? mcp.server : null
 			// True when the provider's declared MCP server template references its
@@ -2441,11 +2497,17 @@ export class SessionManager extends EventEmitter {
 		// multi-org workspaces can target specific orgs via mcp__github-<owner>__* tools.
 		// We also set bare GITHUB_TOKEN so existing agent configs using ${GITHUB_TOKEN}
 		// continue to work after envsubst expansion.
+		// MASKIN_GITHUB_MCP is the kill-switch between the deprecated npx server and
+		// the official binary. Anything but "official" resolves to legacy.
+		const githubMcpSpec =
+			process.env.MASKIN_GITHUB_MCP === 'official'
+				? GITHUB_MCP_SERVER_SPEC
+				: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'] }
 		for (const { ownerLogin, token } of resolvedGithubInstalls) {
 			autoInjectedMcpServers[`github-${ownerLogin.toLowerCase()}`] = {
 				type: 'stdio',
-				command: 'npx',
-				args: ['-y', '@modelcontextprotocol/server-github'],
+				command: githubMcpSpec.command,
+				args: githubMcpSpec.args,
 				env: { GITHUB_PERSONAL_ACCESS_TOKEN: token },
 			}
 		}
@@ -2540,6 +2602,25 @@ export class SessionManager extends EventEmitter {
 					sessionId: session.id,
 				})
 			}
+		}
+
+		// Actor-level secrets: copy the AGENT_SECRET_* names listed in tools.envFrom
+		// from the API process env, so headers can use ${AGENT_SECRET_X} (expanded by
+		// envsubst in agent-run.sh). Values go into the launch env only: never into
+		// the session row or config, never into a log line.
+		const actorSecrets = resolveActorSecretEnv(agentTools?.envFrom, process.env)
+		Object.assign(envVars, actorSecrets.env)
+		if (actorSecrets.ignored.length > 0) {
+			logger.warn('Ignoring envFrom names without the AGENT_SECRET_ prefix', {
+				sessionId: session.id,
+				names: actorSecrets.ignored,
+			})
+		}
+		if (actorSecrets.unset.length > 0) {
+			logger.warn('envFrom names are unset on the API service; skipped', {
+				sessionId: session.id,
+				names: actorSecrets.unset,
+			})
 		}
 
 		// Session-level MCP config (convert array → { mcpServers: { ... } } format), merged
@@ -4323,12 +4404,15 @@ export class SessionManager extends EventEmitter {
 					logger.warn('Marking session failed: running with no containerId', {
 						sessionId: session.id,
 					})
-					await this.markSessionFailedAfterContainerLoss(session.id, session.workspaceId).catch(
-						(err) =>
-							logger.error('Failed to mark session failed after container loss', {
-								sessionId: session.id,
-								error: String(err),
-							}),
+					await this.markSessionFailedAfterContainerLoss(
+						session.id,
+						session.workspaceId,
+						NO_CONTAINER_ASSIGNED_MESSAGE,
+					).catch((err) =>
+						logger.error('Failed to mark session failed after container loss', {
+							sessionId: session.id,
+							error: String(err),
+						}),
 					)
 					continue
 				}
@@ -5307,11 +5391,16 @@ export class SessionManager extends EventEmitter {
 		// source available here. Parser/DB failures must never block the status
 		// update, so this is wrapped in its own try/catch — same pattern as the
 		// local completion path in handleCompletion().
+		// One read serves both the usage parse and (below) the failure
+		// classification: they used to issue the identical 50-row query back to
+		// back, doubling the bytes pulled from Postgres on every completion.
 		let usage: SessionUsage | null = null
+		let stdoutChunks: string[] = []
 		try {
-			usage = await extractSessionUsage(this.db, sessionId)
+			stdoutChunks = await readSessionStdoutChunks(this.db, sessionId)
+			usage = parseUsageFromLogChunks(stdoutChunks)
 		} catch (err) {
-			logger.warn('Failed to parse usage from remote session logs', {
+			logger.warn('Failed to read or parse usage from remote session logs', {
 				sessionId,
 				error: String(err),
 			})
@@ -5341,17 +5430,7 @@ export class SessionManager extends EventEmitter {
 		// known-pitfalls.md "The Remote Completion Path Skipped Classification").
 		// Tail read is best-effort: stopSession() calls this after the sandbox is
 		// already dead, so a throw would surface as a spurious "stop failed" 400.
-		let stdoutTail = ''
-		if (!stoppedByUser) {
-			try {
-				stdoutTail = await readSessionStdoutTail(this.db, sessionId)
-			} catch (err) {
-				logger.warn('Failed to read stdout tail for remote session classification', {
-					sessionId,
-					error: String(err),
-				})
-			}
-		}
+		const stdoutTail = stoppedByUser ? '' : stdoutChunks.join('')
 		const failureReason: SessionResultFailureReason | null =
 			!stoppedByUser && exitCode !== null
 				? classifyCreditExhaustion(stdoutTail, { includeAmbiguousSignals: exitCode !== 0 })
