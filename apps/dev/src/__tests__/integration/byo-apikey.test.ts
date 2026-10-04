@@ -115,6 +115,21 @@ describe('POST /api/integrations/byo-apikey', () => {
 		expect(JSON.stringify(captureMock.mock.calls)).not.toContain(CANARY)
 	})
 
+	it('lets the same member paste several keys under the same provider', async () => {
+		const human = getTestActorId()
+		const ws = await insertWorkspace(db, human)
+		const app = appFor(human)
+		const first = await paste(app, ws.id, validBody({ displayName: 'Linear · one' }))
+		const second = await paste(app, ws.id, validBody({ displayName: 'Linear · two' }))
+		expect(first.status).toBe(201)
+		expect(second.status).toBe(201)
+		const rows = await db.select().from(integrations).where(eq(integrations.workspaceId, ws.id))
+		expect(rows.map((r) => r.displayName).sort()).toEqual(['Linear · one', 'Linear · two'])
+		expect(new Set(rows.map((r) => r.provider))).toEqual(new Set(['custom']))
+		const third = await paste(app, ws.id, validBody({ displayName: 'Linear · three' }))
+		expect(third.status).toBe(201)
+	})
+
 	it('is readable through getCredential by the member it is scoped to, and by nobody else', async () => {
 		const human = getTestActorId()
 		const ws = await insertWorkspace(db, human)
