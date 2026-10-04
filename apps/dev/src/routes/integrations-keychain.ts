@@ -16,12 +16,15 @@ import { insertCredentialAccessLog } from '../lib/integrations/credential-audit'
 import { getKmsProvider } from '../lib/keychain-kms'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { endSessionHoldingKey, relaunchChatSession } from '../services/chat-relaunch'
+import type { SessionManager } from '../services/session-manager'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
 		actorType: string
+		sessionManager: SessionManager
 	}
 }
 
@@ -79,8 +82,9 @@ const chatCaptureResponseSchema = z.object({
 	integrationId: z.string().uuid(),
 	undoExpiresAt: z.string(),
 	undoUrl: z.string(),
-	// Stub: PR #4 replaces it with the real stop-and-respawn relaunch.
-	relaunch: z.literal('stopped'),
+	// stopped: the old session is gone, the client's marker message respawns it.
+	// failed: the key is saved and the old session may still be running without it.
+	relaunch: z.enum(['stopped', 'failed']),
 })
 
 // No `request.body` on purpose. The request validator would parse the body into
@@ -139,12 +143,26 @@ app.openapi(chatCaptureRoute, (async (c) => {
 			source: 'chat_capture',
 		})
 
+		// After the vault transaction has committed: the row is the source of truth
+		// before anything is stopped. A failed stop never fails the vault.
+		const relaunch = await relaunchChatSession(
+			{ db, sessionManager: c.get('sessionManager') },
+			{ workspaceId, originSessionId: body.sessionId },
+		).catch((err: unknown) => {
+			logger.error('Relaunch after chat capture threw', {
+				workspaceId,
+				sessionId: body.sessionId,
+				error: err instanceof Error ? err.name : 'unknown',
+			})
+			return 'failed' as const
+		})
+
 		return c.json(
 			{
 				integrationId: result.integrationId,
 				undoExpiresAt: result.undoExpiresAt.toISOString(),
 				undoUrl: `/api/integrations/${result.integrationId}/undo`,
-				relaunch: 'stopped' as const,
+				relaunch,
 			},
 			201,
 		)
@@ -242,7 +260,13 @@ const undoRoute = createRoute({
 			description: 'Undone: the secret is zeroised, the row is kept for the audit chain',
 			content: {
 				'application/json': {
-					schema: z.object({ id: z.string().uuid(), status: z.literal('undone') }),
+					schema: z.object({
+						id: z.string().uuid(),
+						status: z.literal('undone'),
+						// False when the session holding the key could not be stopped; the key is
+						// already destroyed, the session just still has it in its env.
+						sessionEnded: z.boolean(),
+					}),
 				},
 			},
 		},
@@ -344,8 +368,102 @@ app.openapi(undoRoute, (async (c) => {
 			? Math.max(0, Math.round((Date.now() - row.createdAt.getTime()) / 1000))
 			: null,
 	})
-	return c.json({ id, status: 'undone' as const }, 200)
+
+	// The key is gone from the vault. End the session that holds it in its env; it is
+	// not respawned, so the next message starts one without the key. A relaunch in
+	// flight finishes first.
+	const sessionEnded = row.originSessionId
+		? await endSessionHoldingKey(
+				{ db, sessionManager: c.get('sessionManager') },
+				{ workspaceId, originSessionId: row.originSessionId },
+			).catch((err: unknown) => {
+				logger.error('Ending the session after undo threw', {
+					workspaceId,
+					integrationId: id,
+					error: err instanceof Error ? err.name : 'unknown',
+				})
+				return false
+			})
+		: true
+	if (!sessionEnded) {
+		logger.error('Undo: the session holding the undone key is still running', {
+			workspaceId,
+			integrationId: id,
+			sessionId: row.originSessionId,
+		})
+	}
+	return c.json({ id, status: 'undone' as const, sessionEnded }, 200)
 }) as RouteHandler<typeof undoRoute, Env>)
+
+// ── POST /api/integrations/:id/relaunch ──────────────────────────────────
+
+const relaunchRoute = createRoute({
+	method: 'post',
+	path: '/{id}/relaunch',
+	tags: ['integrations'],
+	summary: 'Retry stopping the session after a chat capture whose relaunch failed',
+	request: { headers: workspaceIdHeader, params: idParamSchema },
+	responses: {
+		200: {
+			description: 'stopped: the client may now post its next message. failed: try again.',
+			content: {
+				'application/json': { schema: z.object({ relaunch: z.enum(['stopped', 'failed']) }) },
+			},
+		},
+		403: {
+			description: 'Not the person who captured it, or another workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: { description: 'Not found', content: { 'application/json': { schema: errorSchema } } },
+		409: {
+			description: 'The key is no longer in the vault (undone)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(relaunchRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id } = c.req.valid('param')
+
+	const [row] = await db
+		.select({
+			workspaceId: integrations.workspaceId,
+			createdBy: integrations.createdBy,
+			status: integrations.status,
+			originSessionId: integrations.originSessionId,
+		})
+		.from(integrations)
+		.where(eq(integrations.id, id))
+		.limit(1)
+	if (!row) return c.json(createApiError('NOT_FOUND', 'Integration not found'), 404)
+	if (row.workspaceId !== workspaceId || row.createdBy !== callerId) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only the person who captured this key can relaunch for it'),
+			403,
+		)
+	}
+	// Nothing to relaunch for a key that is gone, and a retry must never start a session
+	// that is waiting on a credential that no longer exists.
+	if (!row.originSessionId || !['pending_undo', 'active'].includes(row.status)) {
+		return c.json(createApiError('CONFLICT', 'This key is no longer in the vault'), 409)
+	}
+
+	const relaunch = await relaunchChatSession(
+		{ db, sessionManager: c.get('sessionManager') },
+		{ workspaceId, originSessionId: row.originSessionId },
+	).catch((err: unknown) => {
+		logger.error('Relaunch retry threw', {
+			workspaceId,
+			integrationId: id,
+			error: err instanceof Error ? err.name : 'unknown',
+		})
+		return 'failed' as const
+	})
+	return c.json({ relaunch }, 200)
+}) as RouteHandler<typeof relaunchRoute, Env>)
 
 // ── GET /api/integrations/:id/audit-log ──────────────────────────────────
 

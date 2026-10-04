@@ -27,8 +27,10 @@ import { setKmsProviderForTests } from '../../lib/keychain-kms'
 import { logger } from '../../lib/logger'
 import { scrubEvent } from '../../lib/sentry-scrub'
 import integrationsKeychainRoutes from '../../routes/integrations-keychain'
+import type { SessionManager } from '../../services/session-manager'
 import { insertActor, insertConversation, insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
+import { fakeSessionControl } from './session-control-fake'
 
 // Obviously fake, built at runtime so no token-shaped literal sits in the repo.
 const CANARY = `cfut_${'CANARY0123'.repeat(5)}`
@@ -47,14 +49,24 @@ afterAll(() => {
 })
 beforeEach(() => captureMock.mockClear())
 
-function appFor(actorId: string, actorType: 'human' | 'agent' = 'human') {
+function appFor(
+	actorId: string,
+	actorType: 'human' | 'agent' = 'human',
+	sessionManager = fakeSessionControl(),
+) {
 	const app = new OpenAPIHono<{
-		Variables: { db: typeof db; actorId: string; actorType: string }
+		Variables: {
+			db: typeof db
+			actorId: string
+			actorType: string
+			sessionManager: SessionManager
+		}
 	}>()
 	app.use('*', async (c, next) => {
 		c.set('db', db)
 		c.set('actorId', actorId)
 		c.set('actorType', actorType)
+		c.set('sessionManager', sessionManager as unknown as SessionManager)
 		await next()
 	})
 	app.onError((err, c) =>
@@ -381,7 +393,7 @@ describe('POST /api/integrations/:id/undo', () => {
 		const { s, integrationId } = await captured()
 		const res = await undo(appFor(s.human), s.ws.id, integrationId)
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ id: integrationId, status: 'undone' })
+		expect(await res.json()).toEqual({ id: integrationId, status: 'undone', sessionEnded: true })
 
 		const [row] = await db.select().from(integrations).where(eq(integrations.id, integrationId))
 		expect(row).toMatchObject({
