@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
 	OPT_OUT_STOP_WORDS,
 	containsStopWord,
+	htmlToText,
 	normalizeAddress,
+	replyBody,
 	stripQuotedText,
 } from '../../../lib/outreach/voice/optout-reply'
 
@@ -93,5 +95,53 @@ describe('normalizeAddress', () => {
 		expect(normalizeAddress(undefined)).toBeNull()
 		expect(normalizeAddress('')).toBeNull()
 		expect(normalizeAddress('not an address')).toBeNull()
+	})
+})
+
+describe('html-only replies', () => {
+	const englishOriginal =
+		'If you do not want further email from Maskin, reply to this message or write to rune@maskin.io and we will stop.'
+
+	it('htmlToText turns block tags into lines and decodes entities', () => {
+		expect(htmlToText('<div>Hej</div><div>ikke&nbsp;kontakt&nbsp;mig<br>tak</div>')).toBe(
+			'\nHej\n\nikke kontakt mig\ntak\n',
+		)
+		expect(htmlToText('<p>Fjern&#32;mig &amp; afmeld &#xE6;&oslash;</p>')).toBe(
+			'\nFjern mig & afmeld æø\n',
+		)
+	})
+
+	it('htmlToText drops head, style and script content and leaves unknown entities alone', () => {
+		expect(
+			htmlToText(
+				'<html><head><title>stop</title><style>.stop{}</style></head><body><script>stop()</script>Hi &bogus; &#0;</body></html>',
+			),
+		).toBe('Hi &bogus; &#0;')
+	})
+
+	it('matches a stop word in the HTML part', () => {
+		expect(
+			containsStopWord(undefined, replyBody({ html: '<div dir="ltr">Afmeld mig</div>' })),
+		).toBe(true)
+	})
+
+	it('ignores our opt-out line inside a Gmail-style blockquote', () => {
+		const html = `<div dir="ltr">Tak, vi vender tilbage.</div><br><div class="gmail_quote"><div>On Fri, 2 Oct 2026 at 10:00 Maskin &lt;noreply@x.example&gt; wrote:<br></div><blockquote class="gmail_quote"><div>${englishOriginal}</div></blockquote></div>`
+		expect(containsStopWord('Re: Your call', replyBody({ html }))).toBe(false)
+	})
+
+	it('ignores our opt-out line inside nested blockquotes and an Outlook From: block', () => {
+		const nested = `<div>Fint.</div><blockquote><div>earlier</div><blockquote>${englishOriginal}</blockquote></blockquote>`
+		expect(containsStopWord(undefined, replyBody({ html: nested }))).toBe(false)
+		const outlook = `<div>Fint.</div><hr><div><b>From:</b> Maskin</div><div>${englishOriginal}</div>`
+		expect(containsStopWord(undefined, replyBody({ html: outlook }))).toBe(false)
+	})
+
+	it('prefers the text part when it has content, and falls back to HTML when it is blank', () => {
+		expect(replyBody({ text: 'Tak', html: '<div>stop</div>' })).toBe('Tak')
+		expect(replyBody({ text: '  \n', html: '<div>stop</div>' })).toBe('\nstop\n')
+		expect(replyBody({ html: '<div>stop</div>' })).toBe('\nstop\n')
+		expect(replyBody({ text: 'Tak' })).toBe('Tak')
+		expect(replyBody({})).toBeUndefined()
 	})
 })
