@@ -90,6 +90,12 @@ export async function getIntegrationCredential(
 	actorId: string | null,
 	options: IntegrationCredentialOptions & { ctx: CredentialReadContext },
 ): Promise<DecryptedCredential | null>
+/**
+ * @deprecated The no-ctx form returns the raw row with the credential sealed and
+ * writes no audit row. Pass options.ctx instead. credential-readers.guard.test.ts
+ * fails if any shipped code calls this form; it stays only for the lookup
+ * semantics tests.
+ */
 export async function getIntegrationCredential(
 	db: Database,
 	workspaceId: string,
