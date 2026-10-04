@@ -50,10 +50,13 @@ export function InlineScopePicker({
 }: InlineScopePickerProps) {
 	const nameId = useId()
 	const nameRef = useRef<HTMLInputElement>(null)
-	// The step replaces the button that was focused, so focus moves into the card.
+	// The step replaces the button that was focused, so focus moves into the card. It
+	// comes back whenever the controls free up again: disabling the focused input while
+	// a vault is in flight drops focus to the page, and without this a failed vault
+	// leaves Esc (handled on the card) with nothing to listen to.
 	useEffect(() => {
-		nameRef.current?.focus()
-	}, [])
+		if (!busy) nameRef.current?.focus()
+	}, [busy])
 	const count = selectedIds.size
 	const canVault = credentialName.trim().length > 0 && !busy
 
@@ -73,13 +76,6 @@ export function InlineScopePicker({
 						maxLength={80}
 						disabled={busy}
 						onChange={(e) => onCredentialNameChange(e.target.value)}
-						onKeyDown={(e) => {
-							// Enter submits the scope only from here, never from the composer.
-							if (e.key === 'Enter' && canVault) {
-								e.preventDefault()
-								onVault()
-							}
-						}}
 					/>
 				</div>
 				<div className="flex flex-col gap-1.5">

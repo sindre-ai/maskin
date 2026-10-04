@@ -49,9 +49,11 @@ export function SecretDetectedCard({
 	const primaryRef = useRef<HTMLButtonElement>(null)
 	const high = variant === 'high'
 
+	// Focus the primary button on open, and again when a busy state ends: the buttons
+	// are disabled while busy, which drops focus to the page and silences Esc.
 	useEffect(() => {
-		primaryRef.current?.focus()
-	}, [])
+		if (!busy) primaryRef.current?.focus()
+	}, [busy])
 
 	return (
 		// biome-ignore lint/a11y/useSemanticElements: role=dialog on a non-modal inline card is deliberate, see the SPEC accessibility notes

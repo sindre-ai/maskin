@@ -144,16 +144,19 @@ describe('Composer secret guard', () => {
 		expect(screen.getByRole('textbox')).toHaveValue('')
 	})
 
-	it('Enter never vaults: it only presses the focused button, which opens the scope step', async () => {
+	it('Enter never vaults, not from the card button and not from the name input', async () => {
 		const props = renderComposer()
 		const user = await typeAndSend(FAKE_CF)
 		await screen.findByText('Maskin detected a secret in your message.')
 		await user.keyboard('{Enter}')
 		expect(await screen.findByText(/Assign scope for/)).toBeInTheDocument()
-		// Enter inside the name input is the only other Enter that does anything, and
-		// the spec has it submit the scope; typing in it alone vaults nothing.
+		// Focus is now in the credential name input. Only the primary button vaults, so
+		// Enter there does nothing (the task body overrides the SPEC line that says otherwise).
+		expect(screen.getByLabelText('Credential name')).toHaveFocus()
+		await user.keyboard('{Enter}')
 		expect(chatCaptureMock).not.toHaveBeenCalled()
 		expect(props.onSend).not.toHaveBeenCalled()
+		expect(screen.getByText(/Assign scope for/)).toBeInTheDocument()
 		await user.keyboard('{Escape}')
 		await waitFor(() => expect(screen.queryByText(/Assign scope for/)).not.toBeInTheDocument())
 		expect(chatCaptureMock).not.toHaveBeenCalled()
@@ -235,6 +238,20 @@ describe('Composer secret guard', () => {
 		await user.click(await screen.findByRole('button', { name: /Vault \+ assign scope/ }))
 		await user.click(await screen.findByRole('button', { name: /Vault \+ continue chat/ }))
 		expect(await screen.findByRole('alert')).toHaveTextContent(/Couldn't vault/)
+		expect(props.onSend).not.toHaveBeenCalled()
+	})
+
+	it('Esc still cancels after a vault fails, because focus comes back into the card', async () => {
+		chatCaptureMock.mockRejectedValue(new Error('kms down'))
+		const props = renderComposer()
+		const user = await typeAndSend(FAKE_CF)
+		await user.click(await screen.findByRole('button', { name: /Vault \+ assign scope/ }))
+		await user.click(await screen.findByRole('button', { name: /Vault \+ continue chat/ }))
+		expect(await screen.findByRole('alert')).toHaveTextContent(/Couldn't vault/)
+		await waitFor(() => expect(screen.getByLabelText('Credential name')).toHaveFocus())
+
+		await user.keyboard('{Escape}')
+		await waitFor(() => expect(screen.queryByText(/Assign scope for/)).not.toBeInTheDocument())
 		expect(props.onSend).not.toHaveBeenCalled()
 	})
 
