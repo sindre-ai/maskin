@@ -42,6 +42,7 @@ export interface OptOutReply {
 	to?: string[]
 	subject?: string
 	text?: string
+	html?: string
 }
 
 // Letters and digits in any script, so Danish å, æ and ø count as word characters.
@@ -66,6 +67,51 @@ export function stripQuotedText(text: string): string {
 	const lines = text.split(/\r?\n/)
 	const cut = lines.findIndex((line) => QUOTE_MARKERS.some((marker) => marker.test(line)))
 	return (cut === -1 ? lines : lines.slice(0, cut)).join('\n')
+}
+
+const NAMED_ENTITIES: Record<string, string> = {
+	nbsp: ' ',
+	amp: '&',
+	lt: '<',
+	gt: '>',
+	quot: '"',
+	apos: "'",
+	aelig: 'æ',
+	oslash: 'ø',
+	aring: 'å',
+	AElig: 'Æ',
+	Oslash: 'Ø',
+	Aring: 'Å',
+}
+
+/**
+ * Plain text of an HTML-only reply, shaped so stripQuotedText works on it. A
+ * blockquote (how mail clients wrap the original) becomes a ">" line, which is
+ * already a quote marker, and block-level tags become line breaks so the
+ * "On ... wrote:" and "From:" markers sit on their own line.
+ */
+export function htmlToText(html: string): string {
+	return html
+		.replace(/<(head|style|script)\b[\s\S]*?<\/\1\s*>/gi, '')
+		.replace(/<blockquote\b[^>]*>/gi, '\n> ')
+		.replace(/<br\b[^>]*>|<\/?(p|div|li|tr|h[1-6]|ul|ol|table|pre)\b[^>]*>/gi, '\n')
+		.replace(/<[^>]*>/g, '')
+		.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (entity, name: string) => {
+			if (name.startsWith('#')) {
+				const hex = name[1] === 'x' || name[1] === 'X'
+				const code = hex ? Number.parseInt(name.slice(2), 16) : Number(name.slice(1))
+				return Number.isInteger(code) && code > 0 && code <= 0x10ffff
+					? String.fromCodePoint(code)
+					: entity
+			}
+			return NAMED_ENTITIES[name] ?? entity
+		})
+}
+
+/** The text part when it has content, else the HTML part as plain text. */
+export function replyBody(reply: Pick<OptOutReply, 'text' | 'html'>): string | undefined {
+	if (reply.text?.trim()) return reply.text
+	return reply.html ? htmlToText(reply.html) : reply.text
 }
 
 export function containsStopWord(subject: string | undefined, text: string | undefined): boolean {
@@ -117,7 +163,7 @@ export async function applyOptOutReply(db: Database, reply: OptOutReply): Promis
 	)
 	if (!addressedToOptOut) return noop('not_for_opt_out_address')
 
-	if (!containsStopWord(reply.subject, reply.text)) return noop('no_stop_word')
+	if (!containsStopWord(reply.subject, replyBody(reply))) return noop('no_stop_word')
 
 	const sender = normalizeAddress(reply.from)
 	if (!sender) return noop('no_matching_contact', { detail: 'unparseable_sender' })

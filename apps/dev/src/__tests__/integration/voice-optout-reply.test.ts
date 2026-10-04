@@ -73,6 +73,59 @@ describe('applyOptOutReply', () => {
 		expect((await row(c.id)).status).toBe('rejected')
 	})
 
+	it('sets the one matching contact to rejected on an HTML-only Danish stop reply, metadata intact', async () => {
+		const ws = await workspace()
+		const meta = {
+			consent_basis: 'gdpr_6_1_f_legitimate_interest_b2b_voice',
+			consent_captured_at: '2026-10-03T10:00:00.000Z',
+			voice_first_touch_at: '2026-10-03T09:00:00.000Z',
+		}
+		const c = await contact(ws, 'pia@prospect.example', 'voice_declined', meta)
+		const other = await contact(ws, 'other@prospect.example')
+		const result = await applyOptOutReply(
+			db,
+			reply(ws, {
+				subject: 'Re: Din samtale',
+				text: undefined,
+				html: '<div dir="ltr">Afmeld mig venligst, tak.</div>',
+			}),
+		)
+		expect(result).toEqual({ changed: true, contactId: c.id, previousStatus: 'voice_declined' })
+		const after = await row(c.id)
+		expect(after.status).toBe('rejected')
+		expect(after.metadata).toEqual({
+			email: 'pia@prospect.example',
+			consent_call_id: 'call-1',
+			...meta,
+		})
+		expect((await row(other.id)).status).toBe('follow_up_later')
+	})
+
+	it('changes nothing for an HTML-only reply that only quotes our opt-out line', async () => {
+		const ws = await workspace()
+		const c = await contact(ws, 'pia@prospect.example')
+		const result = await applyOptOutReply(
+			db,
+			reply(ws, {
+				text: undefined,
+				html: '<div dir="ltr">Tak, vi vender tilbage.</div><div class="gmail_quote"><div>On Fri, 2 Oct 2026 Maskin &lt;noreply@x.example&gt; wrote:</div><blockquote class="gmail_quote"><div>If you do not want further email from Maskin, reply to this message or write to rune@maskin.io and we will stop.</div></blockquote></div>',
+			}),
+		)
+		expect(result).toEqual({ changed: false, reason: 'no_stop_word' })
+		expect((await row(c.id)).status).toBe('follow_up_later')
+	})
+
+	it('still prefers the text part when a mail has both parts', async () => {
+		const ws = await workspace()
+		const c = await contact(ws, 'pia@prospect.example')
+		const result = await applyOptOutReply(
+			db,
+			reply(ws, { text: 'Tak, vi vender tilbage.', html: '<div>STOP</div>' }),
+		)
+		expect(result).toEqual({ changed: false, reason: 'no_stop_word' })
+		expect((await row(c.id)).status).toBe('follow_up_later')
+	})
+
 	it('leaves consent_* and voice_* metadata untouched', async () => {
 		const ws = await workspace()
 		const meta = {
@@ -215,6 +268,35 @@ describe('VoiceOptOutListener', () => {
 				to: [VOICE_OPT_OUT_ADDRESS],
 				subject: 'Re: Tak for samtalen',
 				text: 'afmeld',
+			},
+		})
+		const listener = new VoiceOptOutListener(db, {} as never)
+		await listener.handleEvent({
+			workspace_id: ws,
+			actor_id: getTestActorId(),
+			action: 'received',
+			entity_type: 'resend.email',
+			entity_id: ws,
+			event_id: String(ev.id),
+		} satisfies PgEvent)
+		expect((await row(c.id)).status).toBe('rejected')
+	})
+
+	it('flips the contact from a stored event that has an html field and no text', async () => {
+		const ws = await workspace()
+		const c = await contact(ws, 'pia@prospect.example')
+		const ev = await recordEventReturning(db, {
+			workspaceId: ws,
+			actorId: getTestActorId(),
+			action: 'received',
+			entityType: 'resend.email',
+			entityId: ws,
+			data: {
+				email_id: 'em_2',
+				from: 'Pia <pia@prospect.example>',
+				to: [VOICE_OPT_OUT_ADDRESS],
+				subject: 'Re: Tak for samtalen',
+				html: '<div dir="ltr">afmeld</div>',
 			},
 		})
 		const listener = new VoiceOptOutListener(db, {} as never)
