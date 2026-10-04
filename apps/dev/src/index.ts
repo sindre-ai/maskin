@@ -13,6 +13,7 @@ import { TelnyxKnowledgeExporterJob } from './jobs/telnyx-knowledge-exporter'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { VoiceDialerJob } from './jobs/voice-dialer'
 import { VoiceRetentionSweepJob, resolveSweepCron } from './jobs/voice-retention-sweep'
+import { VoiceStaleClaimSweepJob } from './jobs/voice-stale-claim-sweep'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import { verifyVolumeBonusThresholds } from './lib/credit-billing'
 import {
@@ -252,6 +253,12 @@ const voiceRetentionSweepJob = new VoiceRetentionSweepJob(
 voiceRetentionSweepJob.start()
 logger.info('Voice retention sweep job started')
 
+// Voice stale-claim sweep: once a minute, all day. Ends a voice_dialing contact whose claim
+// was never confirmed by a call.initiated webhook in voice_failed; it never redials.
+const voiceStaleClaimSweepJob = new VoiceStaleClaimSweepJob(db)
+voiceStaleClaimSweepJob.start()
+logger.info('Voice stale-claim sweep job started')
+
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
@@ -377,6 +384,7 @@ const shutdown = async (signal: string) => {
 	telnyxKnowledgeExporter.stop()
 	voiceDialerJob.stop()
 	voiceRetentionSweepJob.stop()
+	voiceStaleClaimSweepJob.stop()
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.
