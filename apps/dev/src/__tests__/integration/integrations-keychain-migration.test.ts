@@ -197,14 +197,16 @@ describe('credential_access_log (0087)', () => {
 			requestId?: string
 			readAt?: string
 			sessionId?: string | null
+			loopId?: string | null
 			prevRowHash?: string
 			rowHash?: string
 		} = {},
 	) => sql<{ id: string; prev_row_hash: string; row_hash: string }[]>`
 		INSERT INTO credential_access_log
-			(workspace_id, integration_id, actor_id, request_id, session_id, read_at, prev_row_hash, row_hash)
+			(workspace_id, integration_id, actor_id, request_id, session_id, loop_id, read_at, prev_row_hash, row_hash)
 		VALUES (${s.ws.id}, ${s.integrationId}, ${s.actorId}, ${extra.requestId ?? 'req-1'},
-			${extra.sessionId ?? null}, coalesce(${extra.readAt ?? null}::text::timestamptz, now()),
+			${extra.sessionId ?? null}, ${extra.loopId ?? null},
+			coalesce(${extra.readAt ?? null}::text::timestamptz, now()),
 			${extra.prevRowHash ?? ''}, ${extra.rowHash ?? ''})
 		RETURNING id::text, prev_row_hash, row_hash
 	`
@@ -248,6 +250,7 @@ describe('credential_access_log (0087)', () => {
 			integrationId: s.integrationId,
 			actorId: s.actorId,
 			sessionId: null,
+			loopId: null,
 			outboundTarget: null,
 			action: 'read',
 			source: 'unknown',
@@ -270,6 +273,71 @@ describe('credential_access_log (0087)', () => {
 		await sql`UPDATE credential_access_log SET actor_id = ${(await insertActor(db)).id} WHERE id = ${b.id}`
 		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({
 			ok: false,
+			brokenAtId: b.id,
+			reason: 'row_hash does not match contents',
+		})
+	})
+
+	it('TS computeRowHash equals the trigger hash, with loop_id set and with loop_id NULL', async () => {
+		const s = await seedLog()
+		const loopId = '0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d'
+		let prev = CREDENTIAL_LOG_GENESIS_HASH
+		for (const withLoop of [loopId, null]) {
+			const [row] = await insertRow(s, {
+				loopId: withLoop,
+				readAt: '2026-10-03 12:00:00.123456+00',
+			})
+			const [text] = await sql<{ t: string }[]>`
+				SELECT credential_access_log_ts_text(read_at) AS t FROM credential_access_log WHERE id = ${row.id}
+			`
+			expect(row.prev_row_hash).toBe(prev)
+			expect(
+				computeRowHash({
+					prevRowHash: prev,
+					workspaceId: s.ws.id,
+					integrationId: s.integrationId,
+					actorId: s.actorId,
+					sessionId: null,
+					loopId: withLoop,
+					outboundTarget: null,
+					action: 'read',
+					source: 'unknown',
+					requestId: 'req-1',
+					readAtText: text.t,
+				}),
+			).toBe(row.row_hash)
+			prev = row.row_hash
+		}
+		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({ ok: true, rows: 2 })
+	})
+
+	it('changing loop_id on a row breaks the chain at that row', async () => {
+		const s = await seedLog()
+		const loopA = '0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d'
+		const loopB = '1c2d3e4f-5061-4b7c-9d8e-0f1a2b3c4d5e'
+		await insertRow(s, { loopId: loopA })
+		const [b] = await insertRow(s, { loopId: loopA })
+		await insertRow(s)
+		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({ ok: true, rows: 3 })
+		// Tamper as the table owner (the app role could not).
+		await sql`UPDATE credential_access_log SET loop_id = ${loopB} WHERE id = ${b.id}`
+		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({
+			ok: false,
+			rows: 1,
+			brokenAtId: b.id,
+			reason: 'row_hash does not match contents',
+		})
+	})
+
+	it('filling in a NULL loop_id on a row breaks the chain at that row', async () => {
+		const s = await seedLog()
+		await insertRow(s)
+		const [b] = await insertRow(s)
+		await insertRow(s)
+		await sql`UPDATE credential_access_log SET loop_id = ${'0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d'} WHERE id = ${b.id}`
+		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({
+			ok: false,
+			rows: 1,
 			brokenAtId: b.id,
 			reason: 'row_hash does not match contents',
 		})
