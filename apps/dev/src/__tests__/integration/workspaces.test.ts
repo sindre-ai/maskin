@@ -105,7 +105,11 @@ const DEFAULT_AGENT_NAMES = [
 	'Knowledge Curator',
 ]
 
-function createApp(agentStorage = new AgentStorageManager(createMemoryStorage(), db)) {
+function createApp(
+	agentStorage = new AgentStorageManager(createMemoryStorage(), db),
+	callerId = getTestActorId(),
+	callerType = 'human',
+) {
 	const app = new OpenAPIHono<Env>({
 		defaultHook: (result, c) => {
 			if (!result.success) {
@@ -124,8 +128,8 @@ function createApp(agentStorage = new AgentStorageManager(createMemoryStorage(),
 
 	app.use('*', async (c, next) => {
 		c.set('db', db)
-		c.set('actorId', getTestActorId())
-		c.set('actorType', 'human')
+		c.set('actorId', callerId)
+		c.set('actorType', callerType)
 		c.set('notifyBridge', {} as PgNotifyBridge)
 		c.set('sessionManager', { createSession: vi.fn().mockResolvedValue({}) })
 		c.set('agentStorage', agentStorage)
@@ -389,6 +393,184 @@ describe('Workspaces Integration', () => {
 			)
 			const afterDelete = await third.json()
 			expect(afterDelete.settings.llm_keys).toEqual({ openai: 'sk-oai-BBB' })
+		})
+	})
+
+	// Caller check on by-id routes. authMiddleware only checks membership against
+	// the X-Workspace-Id header, and MCP update_workspace sends none, so these
+	// run as callers who are NOT the workspace owner and assert on the stored row.
+	describe('caller check on PATCH /api/workspaces/:id and GET /api/workspaces/:id/members', () => {
+		async function readRow(workspaceId: string) {
+			const [row] = await db
+				.select()
+				.from(workspacesTable)
+				.where(eq(workspacesTable.id, workspaceId))
+				.limit(1)
+			return row
+		}
+
+		/** An enterprise-granted workspace owned by the test actor, holding one stored LLM key. */
+		async function victimWorkspace() {
+			const ownerApp = createApp()
+			const createRes = await ownerApp.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Victim' }),
+			)
+			const ws = await createRes.json()
+			expect((await grantEnterpriseAsOps(ownerApp, ws.id)).status).toBe(200)
+			const seed = await ownerApp.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: 'sk-ant-VICTIM' } },
+				}),
+			)
+			expect(seed.status).toBe(200)
+			return { ownerApp, ws, before: await readRow(ws.id) }
+		}
+
+		async function addMember(workspaceId: string, role: string, type: 'human' | 'agent') {
+			const actor = await insertActor(db, { type, email: `${randomUUID()}@test.com` })
+			await db.insert(workspaceMembers).values({ workspaceId, actorId: actor.id, role })
+			return actor
+		}
+
+		it('returns 404 to a non-member and leaves name and settings untouched', async () => {
+			const { ws, before } = await victimWorkspace()
+			const stranger = await insertActor(db, { email: `${randomUUID()}@test.com` })
+			const app = createApp(undefined, stranger.id)
+
+			const rename = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { name: 'Pwned' }),
+			)
+			const dropKey = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: null } },
+				}),
+			)
+			const display = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { display_names: { insight: 'Pwned' } },
+				}),
+			)
+
+			expect(rename.status).toBe(404)
+			expect(dropKey.status).toBe(404)
+			expect(display.status).toBe(404)
+			const after = await readRow(ws.id)
+			expect(after.name).toBe(before.name)
+			expect(after.settings).toEqual(before.settings)
+			expect(after.updatedAt).toEqual(before.updatedAt)
+		})
+
+		it('returns the same 404 body for a missing workspace and a workspace the caller cannot see', async () => {
+			const { ws } = await victimWorkspace()
+			const stranger = await insertActor(db, { email: `${randomUUID()}@test.com` })
+			const app = createApp(undefined, stranger.id)
+
+			const real = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { name: 'x' }),
+			)
+			const missing = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${randomUUID()}`, { name: 'x' }),
+			)
+
+			expect(real.status).toBe(404)
+			expect(await real.json()).toEqual(await missing.json())
+		})
+
+		it('returns 403 to a plain human member changing name or LLM settings, row unchanged', async () => {
+			const { ws, before } = await victimWorkspace()
+			const member = await addMember(ws.id, 'member', 'human')
+			const app = createApp(undefined, member.id)
+
+			const rename = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { name: 'Pwned' }),
+			)
+			const dropKey = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: null } },
+				}),
+			)
+			const addKey = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { openai: 'sk-oai-ATTACKER' } },
+				}),
+			)
+
+			expect(rename.status).toBe(403)
+			expect(dropKey.status).toBe(403)
+			expect(addKey.status).toBe(403)
+			const after = await readRow(ws.id)
+			expect(after.name).toBe(before.name)
+			expect(after.settings).toEqual(before.settings)
+		})
+
+		it('returns 403 to an agent member sending llm_keys, row unchanged', async () => {
+			const { ws, before } = await victimWorkspace()
+			const agent = await addMember(ws.id, 'member', 'agent')
+			const app = createApp(undefined, agent.id, 'agent')
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: null } },
+				}),
+			)
+
+			expect(res.status).toBe(403)
+			expect((await readRow(ws.id)).settings).toEqual(before.settings)
+		})
+
+		it('lets a plain member write member-level settings (pinned_files)', async () => {
+			const { ws } = await victimWorkspace()
+			const member = await addMember(ws.id, 'member', 'human')
+			const app = createApp(undefined, member.id)
+			const fileId = randomUUID()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { pinned_files: [fileId] },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const row = await readRow(ws.id)
+			expect((row.settings as { pinned_files: string[] }).pinned_files).toEqual([fileId])
+			// The deep-merged LLM key a plain member must not touch is still there.
+			expect((row.settings as { llm_keys: Record<string, string> }).llm_keys).toEqual({
+				anthropic: 'sk-ant-VICTIM',
+			})
+		})
+
+		it('lets a human admin and a human owner rename the workspace', async () => {
+			const { ownerApp, ws } = await victimWorkspace()
+			const admin = await addMember(ws.id, 'admin', 'human')
+
+			const byAdmin = await createApp(undefined, admin.id).request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { name: 'Renamed by admin' }),
+			)
+			expect(byAdmin.status).toBe(200)
+			expect((await readRow(ws.id)).name).toBe('Renamed by admin')
+
+			const byOwner = await ownerApp.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { name: 'Renamed by owner' }),
+			)
+			expect(byOwner.status).toBe(200)
+			expect((await readRow(ws.id)).name).toBe('Renamed by owner')
+		})
+
+		it('GET members returns 404 to a non-member and the list to a member', async () => {
+			const { ws } = await victimWorkspace()
+			const stranger = await insertActor(db, { email: `${randomUUID()}@test.com` })
+			const member = await addMember(ws.id, 'member', 'human')
+
+			const denied = await createApp(undefined, stranger.id).request(
+				jsonGet(`/api/workspaces/${ws.id}/members`),
+			)
+			const allowed = await createApp(undefined, member.id).request(
+				jsonGet(`/api/workspaces/${ws.id}/members`),
+			)
+
+			expect(denied.status).toBe(404)
+			expect(allowed.status).toBe(200)
+			expect((await allowed.json()).length).toBeGreaterThan(1)
 		})
 	})
 
