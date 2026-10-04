@@ -2,12 +2,13 @@ import { Composer } from '@/components/chat/chat'
 import { useConversation, useSendMessage } from '@/hooks/use-conversation'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
-import { ACTIVE_STATUSES } from '@/lib/agent-status'
 import type { MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
 import { MESSAGE_MAX_MENTIONS } from '@maskin/shared'
 import { useCallback, useMemo, useReducer, useState } from 'react'
+
+const BOOTING_STATUSES = new Set(['pending', 'starting', 'queued'])
 
 interface ThreadComposerProps {
 	workspaceId: string
@@ -32,18 +33,25 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 	const { data: conversation } = useConversation(conversationId, workspaceId)
 
 	const self = getStoredActor()
-	// Where a pasted provider secret gets vaulted: the live session of this chat and
-	// the agent running it. No live session, no vaulting (the guard still blocks).
+	// Where a pasted provider secret gets vaulted: the running session of this chat and
+	// the agent running it. No running session, no vaulting (the guard still blocks). A
+	// session still pending, starting or queued is an agent coming back from a relaunch:
+	// vaulting another secret then would race the launch that is already reading keys.
 	const { data: sessions } = useActiveSessionsForConversation(workspaceId, conversationId)
 	const secretCapture = useMemo(() => {
-		const live = sessions?.find((s) => ACTIVE_STATUSES.has(s.status))
+		const live = sessions?.find((s) => s.status === 'running')
 		if (!live) return null
 		const agent = conversation?.participants.find((p) => p.actorId === live.actorId)
 		return {
 			sessionId: live.id,
+			conversationId,
 			agent: { id: live.actorId, name: agent?.actorName ?? 'the agent' },
 		}
-	}, [sessions, conversation?.participants])
+	}, [sessions, conversation?.participants, conversationId])
+	const secretRestarting = useMemo(
+		() => !secretCapture && !!sessions?.some((s) => BOOTING_STATUSES.has(s.status)),
+		[secretCapture, sessions],
+	)
 	const participantIds = useMemo(
 		() => conversation?.participants.map((p) => p.actorId) ?? [],
 		[conversation?.participants],
@@ -139,6 +147,7 @@ export function ThreadComposer({ workspaceId, conversationId }: ThreadComposerPr
 			textareaLabel="Message this conversation"
 			draftKey={conversationId}
 			secretCapture={secretCapture}
+			secretRestarting={secretRestarting}
 		/>
 	)
 }

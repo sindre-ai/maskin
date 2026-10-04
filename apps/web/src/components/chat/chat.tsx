@@ -209,7 +209,14 @@ export interface ComposerProps {
 	 * conversation and the agent running it. Omit on a composer with no session; the
 	 * guard still blocks the send and the card offers Cancel only.
 	 */
-	secretCapture?: { sessionId: string; agent: { id: string; name: string } } | null
+	secretCapture?: {
+		sessionId: string
+		/** Lets the vault card watch the relaunched session come up. */
+		conversationId?: string
+		agent: { id: string; name: string }
+	} | null
+	/** The agent is restarting after a vault, so vaulting another secret waits for it. */
+	secretRestarting?: boolean
 }
 
 const DRAFT_PREFIX = 'composer-draft:'
@@ -267,6 +274,7 @@ export function Composer({
 	onValueChange,
 	draftKey,
 	secretCapture,
+	secretRestarting,
 }: ComposerProps) {
 	const [internalValue, setInternalValue] = useState(() =>
 		controlledValue === undefined && draftKey ? readDraft(draftKey) : '',
@@ -1135,6 +1143,7 @@ export function Composer({
 					matches={secretFlow.matches}
 					capture={secretCapture ?? null}
 					agentName={secretCapture?.agent.name ?? 'the agent'}
+					restarting={secretRestarting}
 					onSend={onSend}
 					onCancel={() => {
 						setSecretFlow(null)

@@ -473,7 +473,12 @@ export const api = {
 				{ workspaceId },
 			),
 		undo: (id: string, workspaceId: string) =>
-			request<{ id: string; status: 'undone' }>(`/integrations/${id}/undo`, {
+			request<{ id: string; status: 'undone'; sessionEnded: boolean }>(`/integrations/${id}/undo`, {
+				method: 'POST',
+				workspaceId,
+			}),
+		relaunch: (id: string, workspaceId: string) =>
+			request<{ relaunch: 'stopped' | 'failed' }>(`/integrations/${id}/relaunch`, {
 				method: 'POST',
 				workspaceId,
 			}),
@@ -1614,7 +1619,8 @@ export interface ChatCaptureResponse {
 	integrationId: string
 	undoExpiresAt: string
 	undoUrl: string
-	relaunch: 'stopped'
+	/** stopped: the old session is gone, post the marker message to respawn it. failed: it may still be running. */
+	relaunch: 'stopped' | 'failed'
 }
 
 /** A GitHub App installation the current actor can bind to this workspace,
