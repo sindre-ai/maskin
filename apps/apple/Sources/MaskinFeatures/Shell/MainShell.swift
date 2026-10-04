@@ -123,7 +123,8 @@ private struct ShellTabContent: View {
 			ChatsScreen(
 				environment: environment, requestedConversationId: $runtime.requestedConversationId)
 		case .objects: ObjectsScreen(environment: environment)
-		case .loops: LoopsScreen(environment: environment)
+		case .loops:
+			LoopsScreen(environment: environment, requestedRoutine: $runtime.requestedRoutine)
 		case .agents: AgentsScreen(environment: environment)
 		case .more: MoreScreen(environment: environment, runtime: runtime)
 		case .search:

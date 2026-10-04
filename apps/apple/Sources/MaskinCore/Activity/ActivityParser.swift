@@ -40,7 +40,8 @@ public enum ActivityParser {
 			finishedAt: ChatDates.parse(raw["finished_at"]?.stringValue),
 			status: status(raw["status"]?.stringValue),
 			containsReply: raw["contains_reply"]?.boolValue ?? false, result: result, steps: steps,
-			stepsTruncated: raw["steps_truncated"]?.boolValue ?? (rawSteps.count > maxSteps))
+			stepsTruncated: raw["steps_truncated"]?.boolValue ?? (rawSteps.count > maxSteps),
+			partial: raw["partial"]?.boolValue ?? false)
 	}
 
 	static func step(from raw: JSONValue) -> ActivityStep? {

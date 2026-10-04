@@ -109,6 +109,16 @@ public final class AppRuntime {
 	/// Set by a chat link; `ChatsScreen` takes it and resets it to nil.
 	public var requestedConversationId: String?
 
+	/// Set by a chat thread's Routines menu; `LoopsScreen` takes it and resets it to nil.
+	public var requestedRoutine: RoutineTarget?
+
+	/// Jumps to a loop or trigger in the Loops tab (from a chat thread).
+	public func openRoutine(_ target: RoutineTarget) {
+		presentation = nil
+		selectedTab = .loops
+		requestedRoutine = target
+	}
+
 	/// Agents and loops are built by talking, never by filling in a form. Screens that used to offer
 	/// a builder form call `buildInChat(_:)`; `ChatsScreen` takes the draft and opens a new chat
 	/// with it filled in, so the person picks who to build with. Reset to nil once taken.
@@ -208,6 +218,7 @@ public final class AppRuntime {
 			default: break
 			}
 			requestedConversationId = nil
+			requestedRoutine = nil
 		}
 		lastSyncedWorkspaceId = environment.workspaceId
 		notifications.activate(workspaceId: environment.workspaceId, events: environment.events)
@@ -272,6 +283,7 @@ public final class AppRuntime {
 		environment.events.disconnect()
 		presentation = nil
 		requestedConversationId = nil
+		requestedRoutine = nil
 		selectedTab = .forYou
 		FileStore.clearExports()
 	}
@@ -386,6 +398,7 @@ public final class AppRuntime {
 		router.reset()
 		presentation = nil
 		requestedConversationId = nil
+		requestedRoutine = nil
 		selectedTab = .forYou
 		// Local traces of this account: what they searched for and files they exported to share.
 		SearchRecents.clearAll()
