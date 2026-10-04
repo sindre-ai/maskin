@@ -123,10 +123,19 @@ describe('Workspaces Routes', () => {
 	})
 
 	describe('PATCH /api/workspaces/:id', () => {
-		it('returns 200 when workspace updated', async () => {
+		// Caller rows for the select queue. isWorkspaceMember reads actorId;
+		// isWorkspaceHumanAdminOrOwner reads role + actors.type.
+		const memberRow = { actorId: 'test-actor-id', role: 'member', type: 'human' }
+		const ownerRow = { actorId: 'test-actor-id', role: 'owner', type: 'human' }
+		const adminRow = { actorId: 'test-actor-id', role: 'admin', type: 'human' }
+		const agentMemberRow = { actorId: 'test-actor-id', role: 'member', type: 'agent' }
+
+		it('returns 200 when a human owner renames the workspace', async () => {
 			const ws = buildWorkspace()
 			const updated = { ...ws, name: 'Updated Workspace' }
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			// isWorkspaceMember, then isWorkspaceHumanAdminOrOwner
+			mockResults.selectQueue = [[ownerRow], [ownerRow]]
 			mockResults.update = [updated]
 
 			const res = await app.request(
@@ -136,9 +145,173 @@ describe('Workspaces Routes', () => {
 			expect(res.status).toBe(200)
 		})
 
-		it('returns 404 when workspace not found for settings merge', async () => {
-			const { app } = createTestApp(workspacesRoutes, '/api/workspaces')
+		it('returns 200 when a human admin renames the workspace', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[adminRow], [adminRow]]
+			mockResults.update = [{ ...ws, name: 'Renamed' }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { name: 'Renamed' }),
+			)
+
+			expect(res.status).toBe(200)
+		})
+
+		it('lets a human owner merge settings', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[ownerRow], // isWorkspaceMember
+				[ownerRow], // isWorkspaceHumanAdminOrOwner (llm_keys delete is admin-gated)
+				[ws], // existing workspace row for the settings merge
+			]
+			mockResults.update = [ws]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: null } },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(calls.updates).toHaveLength(1)
+		})
+
+		it('returns 404 and writes nothing when the caller is not a member', async () => {
+			const ws = buildWorkspace({ name: 'Victim', settings: { max_concurrent_sessions: 3 } })
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			// Membership lookup finds no row. Anything after it would read the
+			// workspace, so queue it to prove the handler never gets that far.
+			mockResults.selectQueue = [[], [ws]]
+			mockResults.update = [{ ...ws, name: 'Pwned' }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					name: 'Pwned',
+					settings: { llm_keys: { anthropic: null } },
+				}),
+			)
+
+			expect(res.status).toBe(404)
+			const body = await res.json()
+			expect(body.error.code).toBe('NOT_FOUND')
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('returns 404 for a non-member sending a name-only PATCH', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[]]
+			mockResults.update = [{ ...ws, name: 'Pwned' }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { name: 'Pwned' }),
+			)
+
+			expect(res.status).toBe(404)
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('checks membership before the claude_oauth and billing 400s', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[], []]
+
+			const oauth = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: {
+						claude_oauth: {
+							primary: {
+								encryptedAccessToken: 'token',
+								encryptedRefreshToken: 'refresh',
+								expiresAt: 1234567890,
+							},
+						},
+					},
+				}),
+			)
+			const billing = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { billing: { plan: 'team', status: 'active' } },
+				}),
+			)
+
+			expect(oauth.status).toBe(404)
+			expect(billing.status).toBe(404)
+		})
+
+		it('returns 403 and writes nothing when a plain member sends name', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[memberRow], [memberRow]]
+			mockResults.update = [{ ...ws, name: 'Renamed' }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { name: 'Renamed' }),
+			)
+
+			expect(res.status).toBe(403)
+			const body = await res.json()
+			expect(body.error.code).toBe('FORBIDDEN')
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it.each([
+			['llm_keys add', { llm_keys: { anthropic: 'sk-ant-new' } }],
+			['llm_keys null delete', { llm_keys: { anthropic: null } }],
+			['empty llm_keys', { llm_keys: {} }],
+			['custom_llm', { custom_llm: { base_url: 'https://llm.example.com', model: 'm' } }],
+		])('returns 403 when a plain member sends %s', async (_label, settings) => {
+			const ws = buildWorkspace()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[memberRow], [memberRow]]
+			mockResults.update = [ws]
+
+			const res = await app.request(jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { settings }))
+
+			expect(res.status).toBe(403)
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('returns 403 when an agent member sends llm_keys', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[agentMemberRow], [agentMemberRow]]
+			mockResults.update = [ws]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { llm_keys: { anthropic: 'sk-ant-new' } },
+				}),
+			)
+
+			expect(res.status).toBe(403)
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('keeps member-level settings (pinned_files) open to a plain member', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			// isWorkspaceMember, then the existing row for the settings merge. No
+			// admin lookup: pinned_files is not an admin-only field.
+			mockResults.selectQueue = [[memberRow], [ws]]
+			mockResults.update = [ws]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { pinned_files: ['11111111-1111-4111-8111-111111111111'] },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(calls.updates).toHaveLength(1)
+		})
+
+		it('returns 404 when the workspace row is missing for a member settings merge', async () => {
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			const id = '00000000-0000-0000-0000-000000000099'
+			mockResults.selectQueue = [[memberRow], []]
 
 			const res = await app.request(
 				jsonRequest('PATCH', `/api/workspaces/${id}`, {
@@ -152,6 +325,7 @@ describe('Workspaces Routes', () => {
 		it('returns 400 and does not touch the DB when settings.claude_oauth is present', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.select = [memberRow]
 			mockResults.update = [{ ...ws, name: 'should not be used' }]
 
 			const res = await app.request(
@@ -179,6 +353,7 @@ describe('Workspaces Routes', () => {
 		it('returns 400 and does not touch the DB when settings.billing is present', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.select = [memberRow]
 			mockResults.update = [{ ...ws }]
 
 			const res = await app.request(
@@ -196,6 +371,8 @@ describe('Workspaces Routes', () => {
 		it('rejects settings.billing even when smuggled alongside a legitimate key', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			// Owner so the name gate passes and the billing 400 is what stops it.
+			mockResults.select = [ownerRow]
 			mockResults.update = [{ ...ws }]
 
 			const res = await app.request(
@@ -415,7 +592,7 @@ describe('Workspaces Routes', () => {
 	})
 
 	describe('GET /api/workspaces/:id/members', () => {
-		it('returns 200 with list of members', async () => {
+		it('returns 200 with list of members when the caller is a member', async () => {
 			const wsId = randomUUID()
 			const member = {
 				actorId: randomUUID(),
@@ -425,7 +602,10 @@ describe('Workspaces Routes', () => {
 				type: 'human',
 			}
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
-			mockResults.select = [member]
+			mockResults.selectQueue = [
+				[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
+				[member], // members list
+			]
 
 			const res = await app.request(jsonGet(`/api/workspaces/${wsId}/members`))
 
@@ -433,6 +613,26 @@ describe('Workspaces Routes', () => {
 			const body = await res.json()
 			expect(body).toHaveLength(1)
 			expect(body[0].role).toBe('owner')
+		})
+
+		it('returns 404 and no member list when the caller is not a member', async () => {
+			const wsId = randomUUID()
+			const member = {
+				actorId: randomUUID(),
+				role: 'owner',
+				joinedAt: new Date(),
+				name: 'Alice',
+				type: 'human',
+			}
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			// Membership lookup is empty; the list is queued to prove it is never read.
+			mockResults.selectQueue = [[], [member]]
+
+			const res = await app.request(jsonGet(`/api/workspaces/${wsId}/members`))
+
+			expect(res.status).toBe(404)
+			const body = await res.json()
+			expect(body.error.code).toBe('NOT_FOUND')
 		})
 	})
 

@@ -321,11 +321,12 @@ const updateWorkspaceRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		403: {
-			description: 'Workspace is not entitled to BYO LLM credentials',
+			description:
+				'Caller is a member but not a human admin or owner (required to change the name or LLM settings), or the workspace is not entitled to BYO LLM credentials',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
-			description: 'Workspace not found',
+			description: 'Workspace not found, or the caller is not a member of it',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -336,6 +337,32 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const body = c.req.valid('json')
+
+	// authMiddleware only checks membership against the X-Workspace-Id header,
+	// and MCP update_workspace sends none, so by-id routes must check the caller
+	// themselves. Runs before any validation or read of the workspace row, and a
+	// non-member gets 404 so the response never confirms that the id exists.
+	if (!(await isWorkspaceMember(db, actorId, id))) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	// settings carries LLM keys and the name is workspace-wide, so those need a
+	// human admin or owner. Gated on the key being present (a null in llm_keys
+	// deletes a key), not on its value. Everything else (pinned files, object-type
+	// and property settings, extensions) stays member-level because the web app
+	// writes those as plain members.
+	const touchesAdminOnlyField =
+		body.name !== undefined ||
+		(body.settings !== undefined && ('llm_keys' in body.settings || 'custom_llm' in body.settings))
+	if (touchesAdminOnlyField && !(await isWorkspaceHumanAdminOrOwner(db, actorId, id))) {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				'Only a human workspace admin or owner can change the name or LLM settings',
+			),
+			403,
+		)
+	}
 
 	// claude_oauth has its own locked, slot-aware, audited read-modify-write
 	// routes (POST /api/claude-oauth/import, DELETE /api/claude-oauth,
@@ -781,12 +808,21 @@ const listMembersRoute = createRoute({
 			description: 'List of members',
 			content: { 'application/json': { schema: z.array(memberResponseSchema) } },
 		},
+		404: {
+			description: 'Workspace not found, or the caller is not a member of it',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
-app.openapi(listMembersRoute, async (c) => {
+app.openapi(listMembersRoute, (async (c) => {
 	const db = c.get('db')
+	const callerId = c.get('actorId')
 	const { id: workspaceId } = c.req.valid('param')
+
+	if (!(await isWorkspaceMember(db, callerId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
 
 	const members = await db
 		.select({
@@ -801,7 +837,7 @@ app.openapi(listMembersRoute, async (c) => {
 		.where(eq(workspaceMembers.workspaceId, workspaceId))
 
 	return c.json(serializeArray(members) as z.infer<typeof memberResponseSchema>[])
-})
+}) as RouteHandler<typeof listMembersRoute, Env>)
 
 // POST /api/workspaces/:id/transfer-ownership
 const transferOwnershipRoute = createRoute({
