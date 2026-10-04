@@ -207,6 +207,18 @@ export const FLAGS = {
 	 * are on for every workspace.
 	 */
 	TRIGGER_ENGINE_V2: 'trigger_engine_v2',
+	/**
+	 * Unipile webhook deliveries become `events` rows (message.new first). Read
+	 * per integration row on the dedicated linkedin-unipile webhook route, on the
+	 * integration's owner actor (actor_id, falling back to created_by), after
+	 * account resolution and before the dedupe claim. Off means a signed
+	 * delivery is acknowledged with `skipped: flag_off` and nothing is written,
+	 * so switching it on later needs no replay. A rollout gate, not a kill
+	 * switch (env + restart); the fast stop is disabling the trigger. Retire
+	 * once the Unipile webhook events bet is won. See parent bet [Unipile webhook
+	 * events as triggers](https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/756e1cbe-9933-4fe2-a3fd-d95ce6497044).
+	 */
+	LINKEDIN_UNIPILE_EVENTS: 'linkedin-unipile-events',
 } as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
