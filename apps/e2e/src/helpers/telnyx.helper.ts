@@ -41,6 +41,7 @@ export function clientState(state: {
 	contact_id: string
 	workspace_id: string
 	dial_attempt_n: number
+	transfer_of?: string
 }): string {
 	return Buffer.from(JSON.stringify(state)).toString('base64')
 }

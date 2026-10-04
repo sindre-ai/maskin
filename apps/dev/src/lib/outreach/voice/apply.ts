@@ -3,7 +3,7 @@ import { objects } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { recordEvent } from '../../events/record-event'
 import { type EffectContext, type EffectRunner, runEffects } from './effects'
-import { type VoiceEffect, type VoiceEvent, advance } from './state'
+import { type ToolTraceEntry, type VoiceEffect, type VoiceEvent, advance } from './state'
 
 export interface ApplyVoiceEventParams {
 	workspaceId: string
@@ -122,12 +122,97 @@ export async function applyVoiceEvent(
 	})
 }
 
-/** Appends a tool call to the trace the reducer reads when the call hangs up. Does not touch status. */
-export async function recordToolInvocation(
+export type ToolRecordOutcome = 'recorded' | 'duplicate' | 'stale_call' | 'not_found'
+
+export interface RecordToolSuccessParams {
+	workspaceId: string
+	contactId: string
+	callId: string
+	toolName: string
+	/** Merged into contact.metadata in the same write. null deletes the key. */
+	metadata?: Record<string, unknown>
+	/** Written as an event on the contact in the same transaction as the trace entry. */
+	audit?: { action: string; data: Record<string, unknown> }
+}
+
+/**
+ * The single writer for the trace the reducer reads when the call hangs up. The tool router
+ * calls it after a tool succeeded, never before: a tool that failed leaves no entry, so a
+ * failed confirm_meeting_slot cannot resolve the call to voice_meeting_booked.
+ *
+ * The trace belongs to one call (the reducer clears it when the call starts), so an entry for
+ * the tool name already in it means this call already recorded the tool: a replay adds no second
+ * entry and no second audit event. The metadata patch is still applied. Does not touch status.
+ */
+export async function recordToolSuccess(
 	db: VoiceDb,
-	params: { workspaceId: string; contactId: string; callId: string; toolName: string },
+	params: RecordToolSuccessParams,
+): Promise<ToolRecordOutcome> {
+	return db.transaction(async (tx) => {
+		const [row] = await tx
+			.select()
+			.from(objects)
+			.where(
+				and(
+					eq(objects.id, params.contactId),
+					eq(objects.workspaceId, params.workspaceId),
+					eq(objects.type, 'contact'),
+				),
+			)
+			.for('update')
+			.limit(1)
+		if (!row) return 'not_found'
+		const metadata = (row.metadata ?? {}) as Record<string, unknown>
+		// A trace belongs to the call it was started on.
+		if (typeof metadata.last_call_id === 'string' && metadata.last_call_id !== params.callId) {
+			return 'stale_call'
+		}
+		const trace = Array.isArray(metadata.voice_tool_trace) ? metadata.voice_tool_trace : []
+		const seen = trace.some(
+			(e) =>
+				typeof e === 'object' && e !== null && (e as ToolTraceEntry).tool_name === params.toolName,
+		)
+		const next = mergeMetadata(metadata, params.metadata ?? {})
+		if (!seen) next.voice_tool_trace = [...trace, { tool_name: params.toolName }]
+		await tx
+			.update(objects)
+			.set({ metadata: next, updatedAt: new Date() })
+			.where(eq(objects.id, row.id))
+		if (!seen && params.audit) {
+			await recordEvent(tx, {
+				workspaceId: params.workspaceId,
+				actorId: row.driver ?? row.createdBy,
+				action: params.audit.action,
+				entityType: 'object',
+				entityId: row.id,
+				data: params.audit.data,
+			})
+		}
+		return seen ? 'duplicate' : 'recorded'
+	})
+}
+
+export async function runAppliedEffects(
+	result: Extract<ApplyVoiceEventResult, { found: true }>,
+	runner: EffectRunner,
 ): Promise<void> {
-	await db.transaction(async (tx) => {
+	await runEffects(result.effects, result.effectContext, runner)
+}
+
+/**
+ * Merges a patch into the metadata of the contact's current call, without a trace entry. Used by
+ * tools that failed but still leave a hint behind (followup_action after a Calendar failure).
+ */
+export async function patchContactMetadata(
+	db: VoiceDb,
+	params: {
+		workspaceId: string
+		contactId: string
+		callId: string
+		patch: Record<string, unknown>
+	},
+): Promise<ToolRecordOutcome> {
+	return db.transaction(async (tx) => {
 		const [row] = await tx
 			.select({ id: objects.id, metadata: objects.metadata })
 			.from(objects)
@@ -140,26 +225,15 @@ export async function recordToolInvocation(
 			)
 			.for('update')
 			.limit(1)
-		if (!row) return
+		if (!row) return 'not_found'
 		const metadata = (row.metadata ?? {}) as Record<string, unknown>
-		// A trace belongs to the call it was started on.
-		if (typeof metadata.last_call_id === 'string' && metadata.last_call_id !== params.callId) return
-		const trace = Array.isArray(metadata.voice_tool_trace) ? metadata.voice_tool_trace : []
+		if (typeof metadata.last_call_id === 'string' && metadata.last_call_id !== params.callId) {
+			return 'stale_call'
+		}
 		await tx
 			.update(objects)
-			.set({
-				metadata: {
-					...metadata,
-					voice_tool_trace: [...trace, { tool_name: params.toolName }],
-				},
-			})
+			.set({ metadata: mergeMetadata(metadata, params.patch), updatedAt: new Date() })
 			.where(eq(objects.id, row.id))
+		return 'recorded'
 	})
-}
-
-export async function runAppliedEffects(
-	result: Extract<ApplyVoiceEventResult, { found: true }>,
-	runner: EffectRunner,
-): Promise<void> {
-	await runEffects(result.effects, result.effectContext, runner)
 }

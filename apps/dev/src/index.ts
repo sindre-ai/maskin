@@ -9,6 +9,7 @@ import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
 import { PurgeIdempotencyJob } from './jobs/purge-idempotency'
+import { TelnyxKnowledgeExporterJob } from './jobs/telnyx-knowledge-exporter'
 import { ViesSchedulerJob } from './jobs/vies-scheduler'
 import { VoiceDialerJob } from './jobs/voice-dialer'
 import { emitInstallCompleted } from './lib/analytics/install-telemetry'
@@ -172,6 +173,9 @@ triggerRunner
 
 const commentDispatcher = new CommentDispatcher(db, notifyBridge, sessionManager)
 commentDispatcher.start()
+
+const telnyxKnowledgeExporter = new TelnyxKnowledgeExporterJob(db, notifyBridge)
+telnyxKnowledgeExporter.start()
 
 const voiceOptOutListener = new VoiceOptOutListener(db, notifyBridge)
 voiceOptOutListener.start()
@@ -358,6 +362,7 @@ const shutdown = async (signal: string) => {
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	purgeIdempotencyJob.stop()
+	telnyxKnowledgeExporter.stop()
 	voiceDialerJob.stop()
 	notifyBridge.stop?.()
 	// A turn replay in backoff holds the human's message and nothing else does:

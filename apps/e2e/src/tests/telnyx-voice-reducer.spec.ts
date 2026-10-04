@@ -22,11 +22,30 @@ async function makeContact() {
 		postTelnyxWebhook(
 			telnyxEvent(type, { call_control_id: call, client_state: state(attempt), ...extra }),
 		)
+	// An event on a transfer's Leg B: its own call id, client_state naming Leg A (transfer_of).
+	const sendLegB = (
+		type: string,
+		call: string,
+		legA: string,
+		extra: Record<string, unknown> = {},
+	) =>
+		postTelnyxWebhook(
+			telnyxEvent(type, {
+				call_control_id: call,
+				client_state: clientState({
+					contact_id: contact.id,
+					workspace_id: workspace.id,
+					dial_attempt_n: 1,
+					transfer_of: legA,
+				}),
+				...extra,
+			}),
+		)
 	const read = async () => {
 		const o = await api.getObject(contact.id, workspace.id)
 		return { status: o.status, metadata: (o.metadata ?? {}) as Record<string, unknown> }
 	}
-	return { send, read, contactId: contact.id }
+	return { send, sendLegB, read, contactId: contact.id }
 }
 
 /** Copenhagen weekday and time-of-day of an ISO instant. */
@@ -129,13 +148,23 @@ test.describe('Voice reducer: end to end', () => {
 		expect((await read()).status).toBe('voice_failed')
 	})
 
-	test('warm transfer completed is voice_warm_transferred and terminal', async () => {
-		const { send, read } = await makeContact()
+	test('warm transfer: Leg B answered is voice_warm_transferred and terminal', async () => {
+		const { send, sendLegB, read } = await makeContact()
 		await send('call.initiated', 't1')
 		await send('call.answered', 't1')
-		await send('call.transfer.completed', 't1', { target: '+4511223344' })
+		await sendLegB('call.answered', 't1-b', 't1')
 		expect((await read()).status).toBe('voice_warm_transferred')
 		await send('call.hangup', 't1', { hangup_cause: 'normal_clearing' })
 		expect((await read()).status).toBe('voice_warm_transferred')
+	})
+
+	test('failed transfer: a Leg B hangup leaves the contact on its call', async () => {
+		const { send, sendLegB, read } = await makeContact()
+		await send('call.initiated', 't2')
+		await send('call.answered', 't2')
+		await sendLegB('call.hangup', 't2-b', 't2', { hangup_cause: 'timeout' })
+		const after = await read()
+		expect(after.status).toBe('voice_answered')
+		expect(after.metadata.last_call_id).toBe('t2')
 	})
 })

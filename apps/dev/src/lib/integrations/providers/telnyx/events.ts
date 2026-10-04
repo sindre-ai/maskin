@@ -60,9 +60,8 @@ const toolInvocationPayload = callPayload.extend({
 	tool_input: z.record(z.unknown()).default({}),
 })
 
-const transferPayload = callPayload.extend({
-	target: z.string().optional(),
-	outcome: z.string().optional(),
+const callBridgedPayload = callPayload.extend({
+	start_time: z.string().optional(),
 })
 
 const base = {
@@ -89,12 +88,7 @@ export const telnyxEventSchema = z.discriminatedUnion('event_type', [
 		event_type: z.literal('assistant.tool_invocation'),
 		payload: toolInvocationPayload,
 	}),
-	z.object({
-		...base,
-		event_type: z.literal('call.transfer.completed'),
-		payload: transferPayload,
-	}),
-	z.object({ ...base, event_type: z.literal('call.transfer.failed'), payload: transferPayload }),
+	z.object({ ...base, event_type: z.literal('call.bridged'), payload: callBridgedPayload }),
 ])
 
 export type TelnyxEvent = z.infer<typeof telnyxEventSchema>
@@ -134,6 +128,17 @@ export function parseTelnyxWebhook(body: unknown): ParsedTelnyxWebhook {
 /** contact_id / workspace_id / dial_attempt_n the dialer stamped on the call, if present. */
 export function clientStateOf(event: TelnyxEvent): CallClientState | null {
 	return decodeClientState(event.payload.client_state)
+}
+
+/**
+ * The Leg A call id when this event is on a transfer's Leg B, else null. Telnyx has no
+ * transfer-result event: the transfer command's client_state names Leg A (transfer_of), and
+ * Leg B's own call.answered / call.bridged / call.hangup carry it back. An event on Leg A
+ * itself may carry the same client_state, so the call id has to differ to count as Leg B.
+ */
+export function transferLegOf(event: TelnyxEvent): string | null {
+	const legA = clientStateOf(event)?.transfer_of
+	return legA && legA !== event.payload.call_control_id ? legA : null
 }
 
 export type HangupKind = 'normal' | 'no_answer' | 'busy' | 'machine_detected' | 'failed'

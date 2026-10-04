@@ -13,6 +13,8 @@ export interface PostCallContext {
 	durationS: number | null
 	recordingUrl: string | null
 	transcriptUrl: string | null
+	/** The hangup payload's inline transcript, when Telnyx sent one. Shape unverified. */
+	transcript?: unknown
 }
 
 export interface PostCallHook {

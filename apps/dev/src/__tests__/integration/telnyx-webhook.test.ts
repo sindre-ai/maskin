@@ -4,6 +4,8 @@ import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as recordEventModule from '../../lib/events/record-event'
 import { encodeClientState } from '../../lib/integrations/providers/telnyx/client'
+import { registerToolHandler } from '../../lib/integrations/providers/telnyx/tool-dispatch'
+import { createToolRouter } from '../../lib/integrations/providers/telnyx/tools'
 import * as applyModule from '../../lib/outreach/voice/apply'
 import type { EffectRunner } from '../../lib/outreach/voice/effects'
 import { postCallHooks } from '../../lib/outreach/voice/post-call'
@@ -202,13 +204,31 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 		deadLetter: async () => {},
 	}
 
+	// The real router, with the calendar stubbed: the trace entries the reducer reads are written by it.
+	beforeAll(() => {
+		registerToolHandler(
+			createToolRouter({
+				calendarFor: async () => ({
+					freeBusy: async () => [],
+					insertEvent: async (i) => ({
+						eventId: i.eventId,
+						meetLink: 'https://meet.google.com/abc-defg-hij',
+					}),
+				}),
+			}),
+		)
+	})
+	afterAll(() => {
+		registerToolHandler(null)
+		setEffectRunnerForTests(null)
+	})
+
 	beforeEach(() => {
 		sms.length = 0
 		hangups.length = 0
 		setEffectRunnerForTests(runner)
 		postCallHooks.length = 0
 	})
-	afterAll(() => setEffectRunnerForTests(null))
 
 	async function newContact(status = 'voice_queued', metadata: Record<string, unknown> = {}) {
 		const ws = await insertWorkspace(db, getTestActorId())
@@ -241,7 +261,28 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 					...extra,
 				}),
 			)
-		return { ws, contact, read, send }
+		// An event on a transfer's Leg B: its own call id, client_state naming Leg A (transfer_of).
+		const sendLegB = (
+			type: string,
+			legB: string,
+			legA: string,
+			extra: Record<string, unknown> = {},
+		) =>
+			post(
+				envelope(type, {
+					call_control_id: legB,
+					client_state: encodeClientState({
+						contact_id: contact.id,
+						workspace_id: ws.id,
+						dial_attempt_n: 1,
+						transfer_of: legA,
+					}),
+					to: '+4533333333',
+					from: '+4522222222',
+					...extra,
+				}),
+			)
+		return { ws, contact, read, send, sendLegB }
 	}
 
 	it('no_answer: voice_no_answer, SMS fired, next_dial_at set, then retry-cap to voice_failed', async () => {
@@ -319,12 +360,15 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 	})
 
 	it('a request_followup_email in the trace and no booking resolves to follow_up_later, and stays there', async () => {
-		const c = await newContact()
+		const c = await newContact('voice_queued', { email: 'anna@example.dk' })
 		await c.send('call.initiated', 'call-f', 1)
 		await c.send('call.answered', 'call-f', 1)
 		await c.send('assistant.tool_invocation', 'call-f', 1, {
 			tool_name: 'request_followup_email',
-			tool_input: { quote: 'just email me' },
+			tool_input: {
+				prospect_quote: 'yes, email me',
+				agent_line: 'One email from Maskin, you can opt out any time. Okay?',
+			},
 		})
 		await c.send('call.hangup', 'call-f', 1, { hangup_cause: 'normal_clearing' })
 		expect((await c.read()).status).toBe('follow_up_later')
@@ -336,20 +380,98 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 		const c = await newContact()
 		await c.send('call.initiated', 'call-b', 1)
 		await c.send('call.answered', 'call-b', 1)
+		const who = { prospect_email: 'anna@example.dk', prospect_name: 'Anna' }
+		await c.send('assistant.tool_invocation', 'call-b', 1, {
+			tool_name: 'book_meeting_slot',
+			tool_input: who,
+		})
 		await c.send('assistant.tool_invocation', 'call-b', 1, {
 			tool_name: 'confirm_meeting_slot',
-			tool_input: {},
+			tool_input: { slot_index: 1, ...who },
 		})
 		await c.send('call.hangup', 'call-b', 1, { hangup_cause: 'normal_clearing' })
 		expect((await c.read()).status).toBe('voice_meeting_booked')
 	})
 
-	it('transfer completed resolves to voice_warm_transferred and survives the hangup', async () => {
+	const salesPings = (contactId: string) =>
+		db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityId, contactId), eq(events.action, 'voice_sales_ping')))
+
+	it('a Leg B hangup with no earlier answer or bridge pings #sales at Attention 3, once', async () => {
+		const c = await newContact()
+		await c.send('call.initiated', 'call-tf', 1)
+		await c.send('call.answered', 'call-tf', 1)
+		await c.sendLegB('call.initiated', 'leg-b-tf', 'call-tf')
+		await c.sendLegB('call.hangup', 'leg-b-tf', 'call-tf', { hangup_cause: 'timeout' })
+		// Leg A is still live and falls back to booking: the contact stays on the call.
+		expect((await c.read()).status).toBe('voice_answered')
+		const pings = await salesPings(c.contact.id)
+		expect(pings).toHaveLength(1)
+		expect(pings[0]?.data).toMatchObject({
+			attention: 3,
+			channel: '#sales',
+			reason: 'transfer_failed',
+			call_id: 'call-tf',
+			transfer_leg_call_id: 'leg-b-tf',
+			hangup_cause: 'timeout',
+		})
+	})
+
+	it('a second Leg B hangup for the same call does not ping again', async () => {
+		const c = await newContact()
+		await c.send('call.initiated', 'call-tf2', 1)
+		await c.send('call.answered', 'call-tf2', 1)
+		await c.sendLegB('call.hangup', 'leg-b-1', 'call-tf2', { hangup_cause: 'timeout' })
+		await c.sendLegB('call.hangup', 'leg-b-2', 'call-tf2', { hangup_cause: 'timeout' })
+		expect(await salesPings(c.contact.id)).toHaveLength(1)
+	})
+
+	it('a Leg B hangup must not reach the reducer as the contact own call ending', async () => {
+		const hook = vi.fn()
+		postCallHooks.push({ name: 'test', run: hook })
+		const spy = vi.spyOn(applyModule, 'applyVoiceEvent')
+		const c = await newContact()
+		await c.send('call.initiated', 'call-lb', 1)
+		await c.send('call.answered', 'call-lb', 1)
+		const before = await c.read()
+		spy.mockClear()
+		// A declined, busy or unanswered target: each would be voice_declined / voice_busy / voice_no_answer
+		// (and a redial or an SMS) if it were read as the contact's own hangup.
+		for (const cause of ['normal_clearing', 'user_busy', 'no_answer']) {
+			await c.sendLegB('call.hangup', `leg-b-${cause}`, 'call-lb', { hangup_cause: cause })
+		}
+		const reducerEvents = spy.mock.calls.map(([, params]) => params.event.type)
+		expect(reducerEvents).not.toContain('call_hangup')
+		expect(reducerEvents).not.toContain('call_answered')
+		const after = await c.read()
+		expect(after.status).toBe('voice_answered')
+		expect(after.meta.next_dial_at ?? null).toBeNull()
+		expect(after.meta.last_call_id).toBe(before.meta.last_call_id)
+		expect(sms).toHaveLength(0)
+		expect(hook).not.toHaveBeenCalled()
+		spy.mockRestore()
+	})
+
+	it('Leg B answered resolves to voice_warm_transferred and its later hangup does not ping', async () => {
 		const c = await newContact()
 		await c.send('call.initiated', 'call-t', 1)
 		await c.send('call.answered', 'call-t', 1)
-		await c.send('call.transfer.completed', 'call-t', 1, { target: '+4533333333' })
+		await c.sendLegB('call.answered', 'leg-b-t', 'call-t')
+		expect((await c.read()).status).toBe('voice_warm_transferred')
+		await c.sendLegB('call.bridged', 'leg-b-t', 'call-t')
+		await c.sendLegB('call.hangup', 'leg-b-t', 'call-t', { hangup_cause: 'normal_clearing' })
 		await c.send('call.hangup', 'call-t', 1, { hangup_cause: 'normal_clearing' })
+		expect((await c.read()).status).toBe('voice_warm_transferred')
+		expect(await salesPings(c.contact.id)).toHaveLength(0)
+	})
+
+	it('Leg B bridged alone also resolves the transfer', async () => {
+		const c = await newContact()
+		await c.send('call.initiated', 'call-br', 1)
+		await c.send('call.answered', 'call-br', 1)
+		await c.sendLegB('call.bridged', 'leg-b-br', 'call-br')
 		expect((await c.read()).status).toBe('voice_warm_transferred')
 	})
 
@@ -359,7 +481,8 @@ describe('Telnyx webhook: reducer drives the contact', () => {
 		const c = await newContact()
 		await c.send('call.initiated', 'call-wt', 1)
 		await c.send('call.answered', 'call-wt', 1)
-		await c.send('call.transfer.completed', 'call-wt', 1, { target: '+4533333333' })
+		await c.sendLegB('call.answered', 'leg-b-wt', 'call-wt')
+		await c.sendLegB('call.hangup', 'leg-b-wt', 'call-wt', { hangup_cause: 'normal_clearing' })
 		await c.send('call.hangup', 'call-wt', 1, { hangup_cause: 'normal_clearing', duration_s: 90 })
 		expect((await c.read()).status).toBe('voice_warm_transferred')
 		expect(hook).toHaveBeenCalledTimes(1)

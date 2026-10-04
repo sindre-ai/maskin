@@ -45,6 +45,11 @@ export interface TelnyxRuntimeConfig {
 	publicKey: string | null
 	appId: string | null
 	assistantId: string | null
+	/**
+	 * Shared secret the assistant's webhook tools send as a Bearer header to the plain-POST tool
+	 * endpoint. A real secret, not config. Unset: that endpoint rejects every request with 401.
+	 */
+	toolWebhookSecret: string | null
 	/** Telnyx REST origin. Overridable so E2E can point the client at a stub. */
 	apiBaseUrl: string
 	callRateLimitPerMinute: number
@@ -63,6 +68,7 @@ export function readTelnyxRuntimeConfig(env: NodeJS.ProcessEnv = process.env): T
 		publicKey: str(env.TELNYX_PUBLIC_KEY),
 		appId: str(env.TELNYX_APP_ID),
 		assistantId: str(env.TELNYX_ASSISTANT_ID),
+		toolWebhookSecret: str(env.TELNYX_TOOL_WEBHOOK_SECRET),
 		apiBaseUrl: str(env.TELNYX_API_BASE_URL) ?? 'https://api.telnyx.com',
 		callRateLimitPerMinute: positiveInt(
 			env.CALL_RATE_LIMIT_PER_MINUTE,

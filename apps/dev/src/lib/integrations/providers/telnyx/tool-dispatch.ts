@@ -1,11 +1,13 @@
+import type { Database } from '@maskin/db'
 import type { CallClientState } from './client'
 
 export interface ToolInvocationContext {
+	db: Database
 	callId: string
 	toolName: string
 	toolInput: Record<string, unknown>
-	/** contact_id / workspace_id / dial_attempt_n stamped on the call. */
-	clientState: CallClientState
+	/** The contact and workspace the call belongs to: from client_state, or from the call id on the plain-POST path. */
+	clientState: Pick<CallClientState, 'contact_id' | 'workspace_id'>
 }
 
 /** Returns the JSON object Telnyx feeds back to the assistant in the 200 body. */

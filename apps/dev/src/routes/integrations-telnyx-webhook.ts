@@ -9,18 +9,15 @@ import {
 	type TelnyxEvent,
 	clientStateOf,
 	parseTelnyxWebhook,
+	transferLegOf,
 } from '../lib/integrations/providers/telnyx/events'
 import { verifyTelnyxSignature } from '../lib/integrations/providers/telnyx/signature'
 import { dispatchToolInvocation } from '../lib/integrations/providers/telnyx/tool-dispatch'
 import { logger } from '../lib/logger'
-import {
-	type VoiceDb,
-	applyVoiceEvent,
-	recordToolInvocation,
-	runAppliedEffects,
-} from '../lib/outreach/voice/apply'
+import { type VoiceDb, applyVoiceEvent, runAppliedEffects } from '../lib/outreach/voice/apply'
 import { type EffectRunner, createDefaultEffectRunner } from '../lib/outreach/voice/effects'
 import { runPostCallHooks } from '../lib/outreach/voice/post-call'
+import { pingSales } from '../lib/outreach/voice/sales-ping'
 import type { VoiceEvent } from '../lib/outreach/voice/state'
 
 type Env = {
@@ -65,10 +62,24 @@ function toVoiceEvent(event: TelnyxEvent): VoiceEvent | null {
 				result: event.payload.result,
 				...endpoints,
 			}
-		case 'call.transfer.completed':
-			return { type: 'transfer_completed', callId: event.payload.call_control_id }
-		case 'call.transfer.failed':
-			return { type: 'transfer_failed', callId: event.payload.call_control_id }
+		default:
+			return null
+	}
+}
+
+/**
+ * Telnyx has no transfer-result event. A transfer shows up as call events on Leg B, the
+ * outbound leg: answered or bridged means it went through, a hangup with neither before it
+ * means it failed. These never describe the contact's own call, so they are mapped to
+ * transfer events keyed on Leg A and never reach the reducer as call_answered / call_hangup.
+ */
+function toTransferEvent(event: TelnyxEvent, legA: string): VoiceEvent | null {
+	switch (event.event_type) {
+		case 'call.answered':
+		case 'call.bridged':
+			return { type: 'transfer_completed', callId: legA }
+		case 'call.hangup':
+			return { type: 'transfer_failed', callId: legA }
 		default:
 			return null
 	}
@@ -86,6 +97,8 @@ type AfterCommit =
 			result: Extract<Awaited<ReturnType<typeof applyVoiceEvent>>, { found: true }>
 			event: TelnyxEvent
 			clientState: CallClientState
+			/** The event was on a transfer's Leg B, not on the contact's own call. */
+			transferLeg: boolean
 	  }
 	| {
 			kind: 'tool'
@@ -106,16 +119,13 @@ async function writeState(tx: VoiceDb, event: TelnyxEvent): Promise<AfterCommit>
 	}
 
 	if (event.event_type === 'assistant.tool_invocation') {
-		await recordToolInvocation(tx, {
-			workspaceId: clientState.workspace_id,
-			contactId: clientState.contact_id,
-			callId: event.payload.call_control_id,
-			toolName: event.payload.tool_name,
-		})
+		// The trace entry is written by the tool router once the tool succeeded (recordToolSuccess),
+		// not here: a failed tool must leave no entry for the reducer to read.
 		return { kind: 'tool', event, clientState }
 	}
 
-	const voiceEvent = toVoiceEvent(event)
+	const legA = transferLegOf(event)
+	const voiceEvent = legA ? toTransferEvent(event, legA) : toVoiceEvent(event)
 	if (!voiceEvent) {
 		// transcription.final: buffered by the post-call slices, nothing for the reducer.
 		logger.debug('telnyx webhook event not routed to reducer', { eventType: event.event_type })
@@ -134,7 +144,7 @@ async function writeState(tx: VoiceDb, event: TelnyxEvent): Promise<AfterCommit>
 		})
 		return { kind: 'respond', body: { ok: true, skipped: 'contact_not_found' } }
 	}
-	return { kind: 'applied', result, event, clientState }
+	return { kind: 'applied', result, event, clientState, transferLeg: legA !== null }
 }
 
 async function afterCommit(db: Database, work: AfterCommit): Promise<unknown> {
@@ -143,6 +153,7 @@ async function afterCommit(db: Database, work: AfterCommit): Promise<unknown> {
 	if (work.kind === 'tool') {
 		// The tool's JSON result goes straight back in the 200 body.
 		return dispatchToolInvocation({
+			db,
 			callId: work.event.payload.call_control_id,
 			toolName: work.event.payload.tool_name,
 			toolInput: work.event.payload.tool_input,
@@ -150,14 +161,37 @@ async function afterCommit(db: Database, work: AfterCommit): Promise<unknown> {
 		})
 	}
 
-	const { result, event, clientState } = work
+	const { result, event, clientState, transferLeg } = work
+
+	// Leg B hung up before it answered or bridged: Leg A falls back to booking, #sales hears about
+	// it once (the reducer only applies the first failure for a call).
+	if (transferLeg && event.event_type === 'call.hangup' && result.applied) {
+		await pingSales(db, {
+			workspaceId: clientState.workspace_id,
+			contactId: clientState.contact_id,
+			actorId: result.effectContext.actorId,
+			attention: 3,
+			reason: 'transfer_failed',
+			data: {
+				call_id: clientState.transfer_of,
+				transfer_leg_call_id: event.payload.call_control_id,
+				hangup_cause: event.payload.hangup_cause ?? null,
+			},
+		}).catch((err) =>
+			logger.error('voice transfer-failed ping failed', {
+				contactId: clientState.contact_id,
+				error: err instanceof Error ? err.message : String(err),
+			}),
+		)
+	}
+
 	if (result.applied) {
 		await runAppliedEffects(result, effectRunnerOverride ?? createDefaultEffectRunner(db))
 	}
 
 	// Every hangup for this contact's current call opens the post-call seam, including one
 	// the reducer absorbed (a transferred call still has a recording to mirror).
-	if (event.event_type === 'call.hangup' && !result.staleCall) {
+	if (event.event_type === 'call.hangup' && !result.staleCall && !transferLeg) {
 		await runPostCallHooks({
 			db,
 			workspaceId: clientState.workspace_id,
@@ -168,6 +202,7 @@ async function afterCommit(db: Database, work: AfterCommit): Promise<unknown> {
 			durationS: event.payload.duration_s ?? null,
 			recordingUrl: event.payload.recording_url ?? null,
 			transcriptUrl: event.payload.transcript_url ?? null,
+			transcript: event.payload.transcript,
 		})
 	}
 
