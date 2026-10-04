@@ -392,6 +392,173 @@ describe('Workspaces Integration', () => {
 		})
 	})
 
+	// The by-ID routes are not covered by authMiddleware's header check (the MCP
+	// update_workspace tool sends no X-Workspace-Id), so the route itself has to
+	// look at the caller. The test caller is the workspace owner; each test
+	// changes that one membership row (or the caller's actor type) to become the
+	// caller under test, and asserts on the persisted workspace row.
+	describe('PATCH /api/workspaces/:id caller check', () => {
+		async function createWorkspace(name: string) {
+			const app = createApp()
+			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name }))
+			const ws = await res.json()
+			// Entitled, so a 403 in these tests can only come from the caller check.
+			expect((await grantEnterpriseAsOps(app, ws.id)).status).toBe(200)
+			return { app, ws }
+		}
+
+		async function workspaceRow(id: string) {
+			const [row] = await db
+				.select({ name: workspacesTable.name, settings: workspacesTable.settings })
+				.from(workspacesTable)
+				.where(eq(workspacesTable.id, id))
+			return row
+		}
+
+		function setCallerRole(workspaceId: string, role: string) {
+			return db
+				.update(workspaceMembers)
+				.set({ role })
+				.where(
+					and(
+						eq(workspaceMembers.workspaceId, workspaceId),
+						eq(workspaceMembers.actorId, getTestActorId()),
+					),
+				)
+		}
+
+		it('returns 404 to a non-member and leaves name and settings unchanged', async () => {
+			const { app, ws } = await createWorkspace('Not Yours')
+			const before = await workspaceRow(ws.id)
+			await db
+				.delete(workspaceMembers)
+				.where(
+					and(
+						eq(workspaceMembers.workspaceId, ws.id),
+						eq(workspaceMembers.actorId, getTestActorId()),
+					),
+				)
+
+			const rename = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { name: 'Hijacked' }),
+			)
+			const merge = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { display_names: { insight: 'Hijacked' } },
+				}),
+			)
+
+			expect(rename.status).toBe(404)
+			expect(merge.status).toBe(404)
+			expect(await workspaceRow(ws.id)).toEqual(before)
+		})
+
+		it('returns 403 to a plain member sending name, llm_keys or custom_llm, row unchanged', async () => {
+			const { app, ws } = await createWorkspace('Members Pin Only')
+			await setCallerRole(ws.id, 'member')
+			const before = await workspaceRow(ws.id)
+
+			const bodies = [
+				{ name: 'Renamed' },
+				{ settings: { llm_keys: { anthropic: 'sk-ant-AAA' } } },
+				{ settings: { llm_keys: { anthropic: null } } },
+				{ settings: { custom_llm: { base_url: 'https://llm.test' } } },
+			]
+			for (const body of bodies) {
+				const res = await app.request(jsonRequest('PATCH', `/api/workspaces/${ws.id}`, body))
+				expect(res.status).toBe(403)
+			}
+			expect(await workspaceRow(ws.id)).toEqual(before)
+		})
+
+		it('lets a plain member pin files and change other member-level settings', async () => {
+			const { app, ws } = await createWorkspace('Members Pin')
+			await setCallerRole(ws.id, 'member')
+			const pinned = randomUUID()
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { settings: { pinned_files: [pinned] } }),
+			)
+
+			expect(res.status).toBe(200)
+			expect((await workspaceRow(ws.id)).settings).toMatchObject({ pinned_files: [pinned] })
+		})
+
+		it.each(['owner', 'admin'])('lets a human %s rename and merge llm_keys', async (role) => {
+			const { app, ws } = await createWorkspace(`Renamed by ${role}`)
+			await setCallerRole(ws.id, role)
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					name: `Renamed by ${role}!`,
+					settings: { llm_keys: { openai: 'sk-oai-BBB' } },
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const row = await workspaceRow(ws.id)
+			expect(row.name).toBe(`Renamed by ${role}!`)
+			expect(row.settings).toMatchObject({ llm_keys: { openai: 'sk-oai-BBB' } })
+		})
+
+		it('returns 403 to an agent member holding the owner role, row unchanged', async () => {
+			const { app, ws } = await createWorkspace('Agents Do Not Admin')
+			const before = await workspaceRow(ws.id)
+			await db.update(actors).set({ type: 'agent' }).where(eq(actors.id, getTestActorId()))
+			try {
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+						settings: { llm_keys: { anthropic: 'sk-ant-AAA' } },
+					}),
+				)
+				expect(res.status).toBe(403)
+			} finally {
+				await db.update(actors).set({ type: 'human' }).where(eq(actors.id, getTestActorId()))
+			}
+			expect(await workspaceRow(ws.id)).toEqual(before)
+		})
+
+		it('still rejects settings.billing and settings.claude_oauth with 400 for an owner', async () => {
+			const { app, ws } = await createWorkspace('Stripe Owns Billing')
+
+			const billing = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { billing: { plan: 'team', status: 'active' } },
+				}),
+			)
+			const oauth = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { settings: { claude_oauth: {} } }),
+			)
+
+			expect(billing.status).toBe(400)
+			expect(oauth.status).toBe(400)
+		})
+	})
+
+	describe('GET /api/workspaces/:id/members caller check', () => {
+		it('returns 404 to a non-member and the list to a member', async () => {
+			const app = createApp()
+			const ws = await (
+				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Member List' }))
+			).json()
+
+			const asMember = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
+			expect(asMember.status).toBe(200)
+			expect((await asMember.json()).length).toBeGreaterThan(0)
+
+			await db
+				.delete(workspaceMembers)
+				.where(
+					and(
+						eq(workspaceMembers.workspaceId, ws.id),
+						eq(workspaceMembers.actorId, getTestActorId()),
+					),
+				)
+			const asStranger = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
+			expect(asStranger.status).toBe(404)
+		})
+	})
+
 	describe('enterprise entitlement gate', () => {
 		it('defaults new workspaces to enterprise: false', async () => {
 			const app = createApp()
