@@ -6,6 +6,7 @@ import { capturePosthogEvent } from '../../lib/analytics/posthog'
 import { encrypt } from '../../lib/crypto'
 import { encodeClientState } from '../../lib/integrations/providers/telnyx/client'
 import { logger } from '../../lib/logger'
+import { recordToolSuccess } from '../../lib/outreach/voice/apply'
 import type { EffectRunner } from '../../lib/outreach/voice/effects'
 import { VOICE_CALL_COMPLETED_KEY } from '../../lib/outreach/voice/posthog-events'
 import telnyxWebhookRoutes, {
@@ -98,6 +99,11 @@ async function connectResend(workspaceId: string) {
 	})
 }
 
+const DISCLOSED_TRANSCRIPT = [
+	{ role: 'assistant', text: 'Hej, I am an AI assistant calling on behalf of Maskin.' },
+	{ role: 'user', text: 'Okay, go on.' },
+]
+
 async function newCall(
 	opts: { resend?: boolean; metadata?: Record<string, unknown>; callId?: string } = {},
 ) {
@@ -115,6 +121,8 @@ async function newCall(
 		workspace_id: ws.id,
 		dial_attempt_n: 1,
 	})
+	// A hangup carries a transcript whose first agent turn discloses the AI, as a real call does;
+	// without one the disclosure assertion hook flags the call and the email is skipped.
 	const body = (type: string, extra: Record<string, unknown> = {}, eventId?: string) =>
 		envelope(
 			type,
@@ -123,15 +131,40 @@ async function newCall(
 				client_state: state,
 				to: '+4511111111',
 				from: '+4522222222',
+				...(type === 'call.hangup' ? { transcript: DISCLOSED_TRANSCRIPT } : {}),
 				...extra,
 			},
 			eventId,
 		)
 	const send = (type: string, extra: Record<string, unknown> = {}, eventId?: string) =>
 		post(body(type, extra, eventId))
-	const tool = (toolName: string, toolInput: Record<string, unknown> = {}) =>
-		send('assistant.tool_invocation', { tool_name: toolName, tool_input: toolInput })
-	return { contactId: contact.id, send, body, tool }
+	// The tool router is not mounted here; it writes the trace through recordToolSuccess once a tool
+	// succeeded (the webhook no longer does), so the helper records a successful tool the same way.
+	const tool = async (toolName: string) => {
+		await recordToolSuccess(db, {
+			workspaceId: ws.id,
+			contactId: contact.id,
+			callId,
+			toolName,
+		})
+	}
+	// An event on a transfer's Leg B: its own call id, client_state naming Leg A (transfer_of).
+	const sendLegB = (type: string, legB: string, extra: Record<string, unknown> = {}) =>
+		post(
+			envelope(type, {
+				call_control_id: legB,
+				client_state: encodeClientState({
+					contact_id: contact.id,
+					workspace_id: ws.id,
+					dial_attempt_n: 1,
+					transfer_of: callId,
+				}),
+				to: '+4533333333',
+				from: '+4522222222',
+				...extra,
+			}),
+		)
+	return { contactId: contact.id, send, body, tool, sendLegB }
 }
 
 const captured = () =>
@@ -147,8 +180,8 @@ describe('voice PostHog events: the spec walk', () => {
 		const c = await newCall()
 		await c.send('call.initiated')
 		await c.send('call.answered')
-		await c.tool('confirm_meeting_slot', { slot: '2026-10-08T09:00:00Z' })
-		await c.tool('request_followup_email', { prospect_quote: 'yes, send it' })
+		await c.tool('confirm_meeting_slot')
+		await c.tool('request_followup_email')
 		const res = await c.send('call.hangup', { hangup_cause: 'normal_clearing', duration_s: 187 })
 		expect(res.status).toBe(200)
 
@@ -183,7 +216,7 @@ describe('voice PostHog events: negative cases', () => {
 		await post(initiated)
 		await c.send('call.answered', {}, 'evt-ph-dup-ans')
 		await c.send('call.answered', {}, 'evt-ph-dup-ans')
-		await c.tool('request_followup_email', { prospect_quote: 'yes' })
+		await c.tool('request_followup_email')
 		const hangup = c.body(
 			'call.hangup',
 			{ hangup_cause: 'normal_clearing', duration_s: 60 },
@@ -281,7 +314,7 @@ describe('voice PostHog events: negative cases', () => {
 		const c = await newCall()
 		await c.send('call.initiated')
 		await c.send('call.answered')
-		await c.tool('request_followup_email', { prospect_quote: 'yes' })
+		await c.tool('request_followup_email')
 		await c.send('call.hangup', { hangup_cause: 'normal_clearing', duration_s: 120 })
 		expect(names()).toEqual([
 			'call_initiated',
@@ -296,7 +329,7 @@ describe('voice PostHog events: negative cases', () => {
 		const c = await newCall()
 		await c.send('call.initiated')
 		await c.send('call.answered')
-		await c.send('call.transfer.completed')
+		await c.sendLegB('call.answered', 'leg-b-ph')
 		await c.send('call.hangup', { hangup_cause: 'normal_clearing', duration_s: 95 })
 		expect(captured().at(-1)).toEqual({
 			event: 'call_completed',
@@ -304,13 +337,35 @@ describe('voice PostHog events: negative cases', () => {
 			props: { outcome: 'answered', duration_seconds: 95, channel: 'voice_agent' },
 		})
 		expect(names()).not.toContain('meeting_booked')
+		expect(names().filter((e) => e === 'call_answered')).toHaveLength(1)
+	})
+
+	it('a transfer Leg B answer, bridge and hangup fire nothing: they are not the prospect call', async () => {
+		const c = await newCall()
+		await c.send('call.initiated')
+		await c.send('call.answered')
+		capture.mockClear()
+		await c.sendLegB('call.initiated', 'leg-b-x')
+		await c.sendLegB('call.answered', 'leg-b-x')
+		await c.sendLegB('call.bridged', 'leg-b-x')
+		await c.sendLegB('call.hangup', 'leg-b-x', { hangup_cause: 'timeout', duration_s: 12 })
+		expect(captured()).toEqual([])
+		// Leg A's own hangup is still the one call_completed.
+		await c.send('call.hangup', { hangup_cause: 'normal_clearing', duration_s: 95 })
+		expect(captured()).toEqual([
+			{
+				event: 'call_completed',
+				distinctId: c.contactId,
+				props: { outcome: 'answered', duration_seconds: 95, channel: 'voice_agent' },
+			},
+		])
 	})
 
 	it('meeting_booked and call_completed fire once when a second hangup arrives under a new event_id', async () => {
 		const c = await newCall()
 		await c.send('call.initiated')
 		await c.send('call.answered')
-		await c.tool('confirm_meeting_slot', {})
+		await c.tool('confirm_meeting_slot')
 		await c.send('call.hangup', { hangup_cause: 'normal_clearing', duration_s: 80 })
 		await c.send('call.hangup', { hangup_cause: 'normal_clearing', duration_s: 80 })
 		expect(names().filter((e) => e === 'meeting_booked')).toHaveLength(1)
@@ -355,7 +410,7 @@ describe('voice PostHog events: negative cases', () => {
 		const finish = async (c: Awaited<ReturnType<typeof newCall>>) => {
 			await c.send('call.initiated')
 			await c.send('call.answered')
-			await c.tool('request_followup_email', { prospect_quote: 'yes' })
+			await c.tool('request_followup_email')
 			const res = await c.send('call.hangup', { hangup_cause: 'normal_clearing', duration_s: 70 })
 			expect(res.status).toBe(200)
 		}
@@ -401,7 +456,7 @@ describe('voice PostHog events: capture failure never reaches the webhook', () =
 		const c = await newCall()
 		expect((await c.send('call.initiated')).status).toBe(200)
 		expect((await c.send('call.answered')).status).toBe(200)
-		await c.tool('request_followup_email', { prospect_quote: 'yes' })
+		await c.tool('request_followup_email')
 		const res = await c.send('call.hangup', { hangup_cause: 'normal_clearing', duration_s: 187 })
 		expect(res.status).toBe(200)
 		expect(await res.json()).toMatchObject({ ok: true, status: 'follow_up_later', applied: true })

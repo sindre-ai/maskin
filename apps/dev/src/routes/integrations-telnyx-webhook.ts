@@ -17,8 +17,8 @@ import { logger } from '../lib/logger'
 import { type VoiceDb, applyVoiceEvent, runAppliedEffects } from '../lib/outreach/voice/apply'
 import { type EffectRunner, createDefaultEffectRunner } from '../lib/outreach/voice/effects'
 import { runPostCallHooks } from '../lib/outreach/voice/post-call'
-import { pingSales } from '../lib/outreach/voice/sales-ping'
 import { captureVoiceEvents } from '../lib/outreach/voice/posthog-events'
+import { pingSales } from '../lib/outreach/voice/sales-ping'
 import type { VoiceEvent } from '../lib/outreach/voice/state'
 
 type Env = {
@@ -191,15 +191,19 @@ async function afterCommit(db: Database, work: AfterCommit): Promise<unknown> {
 	}
 
 	// PostHog fanout. After the claim commit, so a replayed event_id never reaches it, and
-	// before the hooks so call_completed precedes post_call_email_sent. Never throws.
-	await captureVoiceEvents(db, {
-		eventType: event.event_type,
-		workspaceId: clientState.workspace_id,
-		contactId: clientState.contact_id,
-		callId: event.payload.call_control_id,
-		durationS: event.event_type === 'call.hangup' ? event.payload.duration_s : undefined,
-		result,
-	})
+	// before the hooks so call_completed precedes post_call_email_sent. Never throws. Not for
+	// a transfer's Leg B: its answer and hangup are not the prospect's call, so they must not
+	// fire call_answered or a second call_completed.
+	if (!transferLeg) {
+		await captureVoiceEvents(db, {
+			eventType: event.event_type,
+			workspaceId: clientState.workspace_id,
+			contactId: clientState.contact_id,
+			callId: event.payload.call_control_id,
+			durationS: event.event_type === 'call.hangup' ? event.payload.duration_s : undefined,
+			result,
+		})
+	}
 
 	// Every hangup for this contact's current call opens the post-call seam, including one
 	// the reducer absorbed (a transferred call still has a recording to mirror).
