@@ -58,6 +58,7 @@ export class VoiceOptOutListener {
 			to?: unknown
 			subject?: unknown
 			text?: unknown
+			html?: unknown
 		}
 		await applyOptOutReply(this.db, {
 			workspaceId: event.workspace_id,
@@ -66,6 +67,7 @@ export class VoiceOptOutListener {
 			to: Array.isArray(data.to) ? data.to.filter((a): a is string => typeof a === 'string') : [],
 			subject: typeof data.subject === 'string' ? data.subject : undefined,
 			text: typeof data.text === 'string' ? data.text : undefined,
+			html: typeof data.html === 'string' ? data.html : undefined,
 		})
 	}
 }

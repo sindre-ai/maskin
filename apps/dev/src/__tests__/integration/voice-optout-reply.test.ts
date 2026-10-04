@@ -152,6 +152,126 @@ describe('applyOptOutReply', () => {
 		)
 	})
 
+	describe('HTML-only replies', () => {
+		const htmlOnly = (workspaceId: string, html: string, over: Record<string, unknown> = {}) =>
+			reply(workspaceId, { text: undefined, html, ...over })
+
+		it('sets the matching contact to rejected on an HTML-only Danish stop reply, metadata intact', async () => {
+			const ws = await workspace()
+			const meta = {
+				consent_basis: 'gdpr_6_1_f_legitimate_interest_b2b_voice',
+				voice_first_touch_at: '2026-10-03T09:00:00.000Z',
+			}
+			const c = await contact(ws, 'pia@prospect.example', 'voice_declined', meta)
+			const other = await contact(ws, 'ole@prospect.example')
+			const result = await applyOptOutReply(
+				db,
+				htmlOnly(
+					ws,
+					'<html><head><style>p { color: red }</style></head><body><div dir="ltr">Afmeld&nbsp;mig venligst</div></body></html>',
+					{ text: '' },
+				),
+			)
+			expect(result).toEqual({
+				changed: true,
+				contactId: c.id,
+				previousStatus: 'voice_declined',
+			})
+			const after = await row(c.id)
+			expect(after.status).toBe('rejected')
+			expect(after.metadata).toEqual({
+				email: 'pia@prospect.example',
+				consent_call_id: 'call-1',
+				...meta,
+			})
+			expect((await row(other.id)).status).toBe('follow_up_later')
+		})
+
+		it('changes nothing when the HTML only quotes our own opt-out line', async () => {
+			const info = vi.spyOn(logger, 'info')
+			const ws = await workspace()
+			const c = await contact(ws, 'pia@prospect.example')
+			const quoted =
+				'<div>Tak, vi vender tilbage.</div><br>' +
+				'<div class="gmail_quote"><div>On Fri, 3 Oct 2026 at 10:00, Rune &lt;rune@maskin.io&gt; wrote:</div>' +
+				'<blockquote class="gmail_quote"><p>Svar STOP, so we will stop.</p></blockquote></div>'
+			const result = await applyOptOutReply(db, htmlOnly(ws, quoted))
+			expect(result).toEqual({ changed: false, reason: 'no_stop_word' })
+			expect((await row(c.id)).status).toBe('follow_up_later')
+			expect(info).toHaveBeenCalledWith(
+				'voice.optout.no_change',
+				expect.objectContaining({ reason: 'no_stop_word' }),
+			)
+		})
+
+		it('still catches a stop word that sits above a quoted original', async () => {
+			const ws = await workspace()
+			const c = await contact(ws, 'pia@prospect.example')
+			const result = await applyOptOutReply(
+				db,
+				htmlOnly(ws, '<p>STOP</p><blockquote><p>we will stop</p></blockquote>'),
+			)
+			expect(result).toMatchObject({ changed: true, contactId: c.id })
+			expect((await row(c.id)).status).toBe('rejected')
+		})
+
+		it('leaves a stranger sender alone on an HTML-only stop word', async () => {
+			const info = vi.spyOn(logger, 'info')
+			const ws = await workspace()
+			const c = await contact(ws, 'pia@prospect.example')
+			const result = await applyOptOutReply(
+				db,
+				htmlOnly(ws, '<p>STOP</p>', { from: 'stranger@elsewhere.example' }),
+			)
+			expect(result).toEqual({ changed: false, reason: 'no_matching_contact' })
+			expect((await row(c.id)).status).toBe('follow_up_later')
+			expect(info).toHaveBeenCalledWith(
+				'voice.optout.no_change',
+				expect.objectContaining({ reason: 'no_matching_contact' }),
+			)
+		})
+
+		it('prefers the text part when a mail has both parts', async () => {
+			const ws = await workspace()
+			const c = await contact(ws, 'pia@prospect.example')
+			const result = await applyOptOutReply(
+				db,
+				reply(ws, { text: 'Tak, vi vender tilbage.', html: '<p>STOP</p>' }),
+			)
+			expect(result).toEqual({ changed: false, reason: 'no_stop_word' })
+			expect((await row(c.id)).status).toBe('follow_up_later')
+		})
+
+		it('flips the contact from a stored event that carries only html', async () => {
+			const ws = await workspace()
+			const c = await contact(ws, 'pia@prospect.example')
+			const ev = await recordEventReturning(db, {
+				workspaceId: ws,
+				actorId: getTestActorId(),
+				action: 'received',
+				entityType: 'resend.email',
+				entityId: ws,
+				data: {
+					email_id: 'em_html',
+					from: 'Pia <pia@prospect.example>',
+					to: [VOICE_OPT_OUT_ADDRESS],
+					subject: 'Re: Tak for samtalen',
+					html: '<div>fjern mig</div>',
+				},
+			})
+			const listener = new VoiceOptOutListener(db, {} as never)
+			await listener.handleEvent({
+				workspace_id: ws,
+				actor_id: getTestActorId(),
+				action: 'received',
+				entity_type: 'resend.email',
+				entity_id: ws,
+				event_id: String(ev.id),
+			} satisfies PgEvent)
+			expect((await row(c.id)).status).toBe('rejected')
+		})
+	})
+
 	it('ignores mail that is not addressed to the opt-out address', async () => {
 		const ws = await workspace()
 		const c = await contact(ws, 'pia@prospect.example')
