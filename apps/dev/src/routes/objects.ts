@@ -51,7 +51,6 @@ import {
 	ilike,
 	inArray,
 	lt,
-	lte,
 	ne,
 	or,
 	sql,
@@ -145,9 +144,25 @@ function resolveSortColumn(sortField: string): Column | SQL | null {
  * `createdAt` (or any non-unique sort key) can re-appear across pages.
  */
 function resolveOrderBy(query: { sort: string; order: string }): SQL[] {
-	const sortExpr = resolveSortColumn(query.sort) ?? objects.createdAt
+	const resolved = resolveSortColumn(query.sort) ?? objects.createdAt
+	const sortExpr =
+		resolved === objects.createdAt || resolved === objects.updatedAt
+			? truncateToMs(resolved)
+			: resolved
 	const primary = query.order === 'desc' ? desc(sortExpr) : asc(sortExpr)
 	return [primary, asc(objects.id)]
+}
+
+/**
+ * Postgres stores timestamps to the microsecond, but the cursor round-trips
+ * through a JS Date (milliseconds). A bulk insert stamps every row with one
+ * microsecond-precision `created_at`, so seeking past the truncated value
+ * skips those tied rows under desc and replays them under asc. Ordering and
+ * seeking on the millisecond-truncated value keeps the sort key and the cursor
+ * on the same grid; `id` breaks the tie inside a millisecond.
+ */
+function truncateToMs(column: Column): SQL {
+	return sql`date_trunc('milliseconds', ${column})`
 }
 
 /**
@@ -254,20 +269,19 @@ function buildCursorConditions(
 	includeKeyset = true,
 ): SQL[] {
 	const conditions: SQL[] = []
-	const seekColumn = resolveCursorSeekColumn(query.sort) ?? objects.createdAt
+	const seekColumn = truncateToMs(resolveCursorSeekColumn(query.sort) ?? objects.createdAt)
 	if (query.snapshot_at) {
-		conditions.push(lte(seekColumn, new Date(query.snapshot_at)))
+		conditions.push(sql`${seekColumn} <= ${new Date(query.snapshot_at).toISOString()}::timestamptz`)
 	}
 	if (includeKeyset && isCursorSeekActive(query)) {
-		const lastCa = new Date(query.cursor_created_at as string)
+		const lastCa = new Date(query.cursor_created_at as string).toISOString()
 		const lastId = query.cursor_id as string
-		if (query.order === 'asc') {
-			const seek = or(gt(seekColumn, lastCa), and(eq(seekColumn, lastCa), gt(objects.id, lastId)))
-			if (seek) conditions.push(seek)
-		} else {
-			const seek = or(lt(seekColumn, lastCa), and(eq(seekColumn, lastCa), gt(objects.id, lastId)))
-			if (seek) conditions.push(seek)
-		}
+		const past = query.order === 'asc' ? sql`>` : sql`<`
+		const seek = or(
+			sql`${seekColumn} ${past} ${lastCa}::timestamptz`,
+			and(sql`${seekColumn} = ${lastCa}::timestamptz`, gt(objects.id, lastId)),
+		)
+		if (seek) conditions.push(seek)
 	}
 	return conditions
 }
@@ -744,13 +758,29 @@ app.openapi(listObjectsRoute, async (c) => {
 	// When the keyset seek is engaged, `offset` no longer makes sense — the
 	// predicate itself skips past the last-seen row. Ignoring it also keeps
 	// the walk snapshot-consistent when a caller accidentally forwards both.
-	const results = await db
-		.select()
-		.from(objects)
-		.where(and(...conditions))
-		.limit(query.limit)
-		.offset(useKeyset ? 0 : query.offset)
-		.orderBy(...orderBy)
+	// X-Total-Count is the real match count under the walk's snapshot — the filters
+	// and the `snapshot_at` freeze, but not the keyset seek, so it stays constant
+	// across every page of one walk.
+	const [results, [totalRow]] = await Promise.all([
+		db
+			.select()
+			.from(objects)
+			.where(and(...conditions))
+			.limit(query.limit)
+			.offset(useKeyset ? 0 : query.offset)
+			.orderBy(...orderBy),
+		db
+			.select({ value: count() })
+			.from(objects)
+			.where(
+				and(
+					eq(objects.workspaceId, workspaceId),
+					...filterConditions,
+					...buildCursorConditions(query, false),
+				),
+			),
+	])
+	c.header('X-Total-Count', String(totalRow?.value ?? 0))
 
 	// D2 · Working-ring predicate. Hydrate the active session's status as a
 	// scalar the client reads with `=== 'running'` — mirrors the read_state
