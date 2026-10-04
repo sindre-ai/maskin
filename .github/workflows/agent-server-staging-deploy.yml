@@ -15,8 +15,6 @@ on:
       maskin_base_url:
         description: 'Staging backend URL. Falls back to the STAGING_MASKIN_BASE_URL repo variable.'
         required: false
-  push:
-    branches: ['deploy/staging/**']
 
 concurrency:
   group: agent-server-staging-deploy
