@@ -355,9 +355,11 @@ export const integrations = pgTable(
 		uniqueIndex('integrations_ws_actor_provider_external_uniq')
 			.on(t.workspaceId, t.actorId, t.provider, t.externalId)
 			.where(sql`${t.externalId} IS NOT NULL`),
+		// One per provider for registered and OAuth connections. A bring-your-own API key
+		// is a named credential, so a workspace may hold several for one provider (0089).
 		uniqueIndex('integrations_ws_actor_provider_null_external_uniq')
 			.on(t.workspaceId, t.actorId, t.provider)
-			.where(sql`${t.externalId} IS NULL`),
+			.where(sql`${t.externalId} IS NULL AND ${t.providerMode} <> 'byo_apikey'`),
 		index('integrations_ws_provider_idx').on(t.workspaceId, t.provider),
 		index('integrations_ws_mode_idx').on(t.workspaceId, t.providerMode),
 		index('integrations_undo_sweeper_idx')

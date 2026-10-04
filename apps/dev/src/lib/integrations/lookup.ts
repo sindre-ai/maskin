@@ -120,9 +120,14 @@ async function findIntegrationRow(
 	if (requiresActor && !actorId && !options.fallbackToAnyActor) return null
 	// A Keychain read also sees a chat capture still inside its undo window
 	// (readable on purpose: the session that triggered it resumes at once).
+	// Registered providers only. A workspace can hold several bring-your-own keys under
+	// one provider name (a chat-captured github key next to the GitHub App install),
+	// and a provider name alone cannot say which one is wanted. BYO keys are read by
+	// id through getCredential.
 	const scope = and(
 		eq(integrations.workspaceId, workspaceId),
 		eq(integrations.provider, provider),
+		eq(integrations.providerMode, 'registered'),
 		options.ctx
 			? inArray(integrations.status, [INTEGRATION_STATUS_ACTIVE, 'pending_undo'])
 			: eq(integrations.status, INTEGRATION_STATUS_ACTIVE),

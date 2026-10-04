@@ -18,7 +18,11 @@ vi.mock('../../lib/analytics/posthog', () => ({ capturePosthogEvent: captureMock
 
 import { createApiError } from '../../lib/errors'
 import { verifyCredentialAccessChain } from '../../lib/integrations/credential-audit'
-import { type CredentialReadContext, getCredential } from '../../lib/integrations/lookup'
+import {
+	type CredentialReadContext,
+	getCredential,
+	getIntegrationCredential,
+} from '../../lib/integrations/lookup'
 import { setKmsProviderForTests } from '../../lib/keychain-kms'
 import { logger } from '../../lib/logger'
 import { scrubEvent } from '../../lib/sentry-scrub'
@@ -469,5 +473,55 @@ describe('POST /api/integrations/:id/undo', () => {
 		expect(statuses).toEqual([200, 409, 409, 409, 409, 409])
 		expect((await auditRows(integrationId)).map((r) => r.action)).toEqual(['create', 'undone'])
 		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({ ok: true })
+	})
+})
+
+describe('several keys for one provider', () => {
+	it('captures twice for one provider, both 201', async () => {
+		const s = await setup()
+		const app = appFor(s.human)
+		const first = await capture(app, s.ws.id, validBody(s.session.id, { displayName: 'First' }))
+		const second = await capture(app, s.ws.id, validBody(s.session.id, { displayName: 'Second' }))
+		expect(first.status).toBe(201)
+		expect(second.status).toBe(201)
+		const rows = await db.select().from(integrations).where(eq(integrations.workspaceId, s.ws.id))
+		expect(rows.map((r) => r.displayName).sort()).toEqual(['First', 'Second'])
+	})
+
+	it('captures, undoes, then captures again, 201 both times', async () => {
+		const s = await setup()
+		const app = appFor(s.human)
+		const first = await capture(app, s.ws.id, validBody(s.session.id))
+		expect(first.status).toBe(201)
+		const { integrationId } = (await first.json()) as { integrationId: string }
+		const undone = await app.request(`/api/integrations/${integrationId}/undo`, {
+			method: 'POST',
+			headers: { 'x-workspace-id': s.ws.id },
+		})
+		expect(undone.status).toBe(200)
+		const again = await capture(app, s.ws.id, validBody(s.session.id))
+		expect(again.status).toBe(201)
+	})
+
+	it('a provider-name lookup still finds the registered connection, not a captured key', async () => {
+		const s = await setup()
+		const [registered] = await db
+			.insert(integrations)
+			.values({
+				workspaceId: s.ws.id,
+				provider: 'github',
+				status: 'active',
+				credentials: 'legacy-ciphertext',
+				createdBy: s.human,
+			})
+			.returning()
+		const res = await capture(
+			appFor(s.human),
+			s.ws.id,
+			validBody(s.session.id, { detectedProvider: 'github' }),
+		)
+		expect(res.status).toBe(201)
+		const found = await getIntegrationCredential(db, s.ws.id, 'github', null)
+		expect(found?.id).toBe(registered?.id)
 	})
 })

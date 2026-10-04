@@ -24,6 +24,10 @@ async function runSqlFile(relativePath: string) {
 
 const UP = '0087_keychain_core.sql'
 const DOWN = 'down/0087_keychain_core_down.sql'
+// 0089's index has a predicate on provider_mode, so dropping that column (0087 down)
+// drops the index with it. Roll back newest first: 0089 down before 0087 down.
+const UP_0089 = '0089_integrations_null_external_uniq_skip_byo.sql'
+const DOWN_0089 = 'down/0089_integrations_null_external_uniq_skip_byo_down.sql'
 
 async function columns(table: string) {
 	const rows = await sql<
@@ -311,6 +315,7 @@ describe('credential_access_log (0087)', () => {
 
 describe('0087 up and down', () => {
 	it('reverses cleanly and re-applies, keeping pre-existing rows on their defaults', async () => {
+		await runSqlFile(DOWN_0089)
 		await runSqlFile(DOWN)
 		expect(await columns('credential_access_log')).toHaveProperty('size', 0)
 		expect(await columns('workspace_kms_aliases')).toHaveProperty('size', 0)
@@ -324,6 +329,7 @@ describe('0087 up and down', () => {
 		await sql`INSERT INTO integrations ${sql(row)}`
 
 		await runSqlFile(UP)
+		await runSqlFile(UP_0089)
 		const [out] = await sql<Record<string, unknown>[]>`
 			SELECT provider_mode, source, dek_ciphertext, scope_grants, origin_session_id, undo_expires_at
 			FROM integrations WHERE provider = 'fake-provider'
@@ -340,10 +346,12 @@ describe('0087 up and down', () => {
 
 	it('is idempotent under repeated up/down', async () => {
 		await runSqlFile(UP)
+		await runSqlFile(DOWN_0089)
 		await runSqlFile(DOWN)
 		await runSqlFile(DOWN)
 		await runSqlFile(UP)
 		await runSqlFile(UP)
+		await runSqlFile(UP_0089)
 		expect((await columns('integrations')).has('dek_ciphertext')).toBe(true)
 		expect(await indexNames('credential_access_log')).toContain('cal_action_idx')
 	})
@@ -395,5 +403,72 @@ describe('integrations.credentials nullable (0088)', () => {
 		await runSqlFile(DOWN_0088)
 		await runSqlFile(DOWN_0088)
 		await runSqlFile(UP_0088)
+	})
+})
+
+const UNIQ = 'integrations_ws_actor_provider_null_external_uniq'
+
+const byo = (row: Record<string, unknown>, name: string, extra: Record<string, unknown> = {}) => ({
+	...row,
+	provider_mode: 'byo_apikey',
+	display_name: name,
+	source: 'admin_ui',
+	...extra,
+})
+
+describe('one connection per provider, not one key (0089)', () => {
+	it('lets a workspace hold several byo_apikey keys for one provider, undone ones included', async () => {
+		const { row } = await newIntegration({ provider: 'cloudflare' })
+		await sql`INSERT INTO integrations ${sql(byo(row, 'First'))}`
+		await sql`INSERT INTO integrations ${sql(byo(row, 'Second'))}`
+		await sql`INSERT INTO integrations ${sql(byo(row, 'Undone', { status: 'undone', credentials: null }))}`
+		const [count] = await sql<{ n: number }[]>`
+			SELECT count(*)::int AS n FROM integrations WHERE workspace_id = ${row.workspace_id as string}
+		`
+		expect(count?.n).toBe(3)
+	})
+
+	it('still allows one registered connection per provider', async () => {
+		const { row } = await newIntegration({ provider: 'slack' })
+		await sql`INSERT INTO integrations ${sql(row)}`
+		await expect(sql`INSERT INTO integrations ${sql(row)}`).rejects.toThrow(new RegExp(UNIQ))
+	})
+
+	it('still allows one OAuth connection per provider', async () => {
+		const { row } = await newIntegration({ provider: 'linear' })
+		const oauth = { ...row, provider_mode: 'byo_oauth', display_name: 'Linear' }
+		await sql`INSERT INTO integrations ${sql(oauth)}`
+		await expect(sql`INSERT INTO integrations ${sql(oauth)}`).rejects.toThrow(new RegExp(UNIQ))
+	})
+
+	it('keeps the index and narrows its predicate', async () => {
+		const [idx] = await sql<{ indexdef: string }[]>`
+			SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = ${UNIQ}
+		`
+		expect(idx?.indexdef).toContain('NULLS NOT DISTINCT')
+		expect(idx?.indexdef).toMatch(/byo_apikey/)
+	})
+
+	it('reverses only once duplicate keys are gone, and re-applies', async () => {
+		const { row } = await newIntegration({ provider: 'cloudflare' })
+		await sql`INSERT INTO integrations ${sql(byo(row, 'First'))}`
+		const [second] = await sql<{ id: string }[]>`
+			INSERT INTO integrations ${sql(byo(row, 'Second'))} RETURNING id
+		`
+		// The documented precondition: down refuses while two keys share a provider.
+		await expect(runSqlFile(DOWN_0089)).rejects.toThrow()
+		// The failed down ran in one transaction, so the new index is still in place.
+		expect((await indexNames('integrations')).filter((n) => n === UNIQ)).toHaveLength(1)
+
+		await sql`DELETE FROM integrations WHERE id = ${second?.id as string}`
+		await runSqlFile(DOWN_0089)
+		await expect(sql`INSERT INTO integrations ${sql(byo(row, 'Again'))}`).rejects.toThrow(
+			new RegExp(UNIQ),
+		)
+
+		await runSqlFile(UP_0089)
+		await sql`INSERT INTO integrations ${sql(byo(row, 'Again'))}`
+		// Up on an already-applied schema must not fail either.
+		await runSqlFile(UP_0089)
 	})
 })
