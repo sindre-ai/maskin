@@ -38,6 +38,7 @@ import { SessionManager } from './services/session-manager'
 import { SessionRetryScheduler } from './services/session-retry-scheduler'
 import { SessionSelfHealJob } from './services/session-self-heal-job'
 import { CommentDispatcher, TriggerRunner } from './services/trigger-runner'
+import { VoiceOptOutListener } from './services/voice-optout-listener'
 import { WebhookDeliveriesCleaner } from './services/webhook-deliveries-cleaner'
 import { WebhookDeliveriesReconciler } from './services/webhook-deliveries-reconciler'
 
@@ -171,6 +172,9 @@ triggerRunner
 
 const commentDispatcher = new CommentDispatcher(db, notifyBridge, sessionManager)
 commentDispatcher.start()
+
+const voiceOptOutListener = new VoiceOptOutListener(db, notifyBridge)
+voiceOptOutListener.start()
 
 const gmailWatchRenewer = new GmailWatchRenewer(db)
 gmailWatchRenewer.start()
