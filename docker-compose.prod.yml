@@ -73,6 +73,9 @@ services:
     # :3000 collides with the production app when both run on the same server.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # Interim Keychain KEK (KEYCHAIN_KMS=local-file). Named volume so it survives a
+      # redeploy; a KEK lost with the container loses every wrapped credential.
+      - keychain_kek:/data/keychain
     group_add:
       - "${DOCKER_GID:-999}"
     command: ["sh", "-c", "node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-marketplace.ts && node apps/dev/dist/index.js"]
@@ -109,6 +112,13 @@ services:
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
       WEBHOOK_BASE_URL: ${WEBHOOK_BASE_URL:-}
+      # Production must name the provider explicitly: unset fails on first use.
+      # Flip to aws-kms here (or in Coolify) once the AWS substrate exists.
+      KEYCHAIN_KMS: ${KEYCHAIN_KMS:-local-file}
+      KEYCHAIN_LOCAL_KEK_FILE: /data/keychain/kek
+      # Gate: production under local-file wraps no credential until this is "true". Infra
+      # sets it in Coolify only after the off-volume KEK copy is confirmed.
+      KEYCHAIN_KEK_BACKUP_CONFIRMED: ${KEYCHAIN_KEK_BACKUP_CONFIRMED:-false}
     depends_on:
       postgres:
         condition: service_healthy
@@ -118,3 +128,4 @@ services:
 volumes:
   pgdata:
   seaweed_data:
+  keychain_kek:

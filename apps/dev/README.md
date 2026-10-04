@@ -12,6 +12,84 @@ file end-to-end when standing up a new stack. This section documents variables
 that are specific to `apps/dev` and land here first before we consider
 promoting them.
 
+### Keychain — credential encryption and audit
+
+Stored credentials use envelope encryption. Each credential gets its own random
+32-byte data key (DEK); the credential is AES-256-GCM encrypted under it and the
+DEK is wrapped by a per-workspace key (KEK) that never leaves the key store.
+Rows written before Keychain have no wrapped DEK and keep decrypting under
+`INTEGRATION_ENCRYPTION_KEY`. Every read goes through `getCredential`, which
+enforces the credential's scope grants and writes a hash-chained row to
+`credential_access_log`.
+
+| Variable | Meaning |
+|----------|---------|
+| `KEYCHAIN_KMS` | `local-file` or `aws-kms`. Read once at start; any other value stops the server. Unset means `local-file` outside production and an error on first use in production. |
+| `KEYCHAIN_LOCAL_KEK_FILE` | `local-file` only. Default `.data/keychain-kek`. Created with 600 permissions on first use. Lose it and every credential wrapped under it is unrecoverable. `.data/` is gitignored. |
+| `KEYCHAIN_KEK_BACKUP_CONFIRMED` | `local-file` in production only. Wrapping a credential is refused with `KEK_BACKUP_UNCONFIRMED` until this is `true`; unset or anything else means refused. Set it only after the off-volume copy of the KEK is confirmed. `aws-kms` and non-production are not affected. |
+| `KEYCHAIN_ENV` | `aws-kms` only. `staging` or `production`. Becomes the alias segment and the value of the `maskin-keychain` key tag. Required with `aws-kms`: the server stops at start if it is unset or anything else. |
+| `AWS_REGION` | `aws-kms` only. `eu-central-1` in production. Credentials come from the standard AWS provider chain. |
+
+Develop on `KEYCHAIN_KMS=local-file`. CI never calls AWS; the KMS tests use a mocked client.
+
+**KEK fingerprint** (`local-file`, production). At boot the server logs `Keychain KEK (local-file)` with
+`kekFileExisted` and `kekFingerprint`: the first 8 hex characters of sha256 over the key bytes (the file's hex decoded)
+followed by the ASCII label `maskin-keychain-kek-fingerprint-v1`. To check an off-volume copy against the log, run
+`node -e "const c=require('crypto');console.log(c.createHash('sha256').update(Buffer.from(require('fs').readFileSync(0,'utf8').trim(),'hex')).update('maskin-keychain-kek-fingerprint-v1').digest('hex').slice(0,8))"`,
+paste the copy, press Enter, then Ctrl-D (stdin keeps the key out of shell history). It must match `kekFingerprint`.
+
+**Least-privilege policy for the runtime identity** (`aws-kms`). The first write for
+a workspace creates its key and the alias `alias/maskin-keychain-<KEYCHAIN_ENV>-<workspaceId>`, tagged `maskin-keychain=<KEYCHAIN_ENV>`, so the
+runtime needs `CreateKey` and `TagResource` as well as `CreateAlias`. IAM authorises
+key operations against the key, not its alias, so use of the keys is limited by the
+`kms:ResourceAliases` condition. Replace `ACCOUNT_ID` and `ENVIRONMENT` (`staging` or `production`). This sample has not been run
+against a live account: Infra validates it in staging before production.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "KeychainCreateKey",
+      "Effect": "Allow",
+      "Action": ["kms:CreateKey", "kms:TagResource"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "KeychainCreateAlias",
+      "Effect": "Allow",
+      "Action": "kms:CreateAlias",
+      "Resource": [
+        "arn:aws:kms:eu-central-1:ACCOUNT_ID:alias/maskin-keychain-ENVIRONMENT-*",
+        "arn:aws:kms:eu-central-1:ACCOUNT_ID:key/*"
+      ]
+    },
+    {
+      "Sid": "KeychainUseKeys",
+      "Effect": "Allow",
+      "Action": ["kms:Encrypt", "kms:Decrypt", "kms:DescribeKey"],
+      "Resource": "arn:aws:kms:eu-central-1:ACCOUNT_ID:key/*",
+      "Condition": {
+        "ForAnyValue:StringLike": { "kms:ResourceAliases": "alias/maskin-keychain-ENVIRONMENT-*" }
+      }
+    },
+    {
+      "Sid": "KeychainNeverDestroy",
+      "Effect": "Deny",
+      "Action": ["kms:ScheduleKeyDeletion", "kms:DisableKey", "kms:PutKeyPolicy"],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+`kms:CreateKey` does not support resource scoping, hence `"Resource": "*"`. The key
+policy on each key must keep a human-held administrator principal as break-glass.
+
+**Audit log role.** Migration 0087 creates the NOLOGIN role `maskin_keychain_app`
+with INSERT and SELECT on `credential_access_log`, and `getCredential` writes the
+audit row as that role. Running the migration needs CREATEROLE or superuser.
+
 ### LinkedIn — LinkedIn Hosted Auth v2
 
 See the technical spec in the parent bet
