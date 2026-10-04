@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 import { E2E_AGENT_SERVER_SECRET } from './src/helpers/api.helper'
 import { isArgosEnabled } from './src/helpers/argos.helper'
+import { E2E_MOCK_RESEND_PORT } from './src/helpers/mock-resend.helper'
 
 // Without ARGOS_TOKEN, every upload attempt fails (quota, auth, or a
 // missing-token error) — SafeArgosReporter already keeps that from failing
@@ -44,6 +45,13 @@ export default defineConfig({
 	],
 	webServer: [
 		{
+			// In-memory Resend stand-in; see scripts/mock-resend.mjs.
+			command: 'node scripts/mock-resend.mjs',
+			port: E2E_MOCK_RESEND_PORT,
+			reuseExistingServer: !process.env.CI,
+			env: { E2E_MOCK_RESEND_PORT: String(E2E_MOCK_RESEND_PORT) },
+		},
+		{
 			command: 'pnpm --filter @maskin/dev dev',
 			port: 3000,
 			reuseExistingServer: !process.env.CI,
@@ -56,7 +64,18 @@ export default defineConfig({
 			// applies when Playwright spawns the server: with
 			// reuseExistingServer (local runs against an already-up dev stack)
 			// the server keeps whatever secret it was started with.
-			env: { AGENT_SERVER_SECRET: E2E_AGENT_SERVER_SECRET },
+			//
+			// RESEND_* point packages/email's Resend SDK at the in-memory mock
+			// above, so invite mail can be read back by specs instead of sent.
+			// APP_URL is what the accept link is built from; with a Resend key set
+			// and no APP_URL the invite route refuses to send.
+			env: {
+				AGENT_SERVER_SECRET: E2E_AGENT_SERVER_SECRET,
+				RESEND_API_KEY: 're_e2e_mock',
+				RESEND_BASE_URL: `http://localhost:${E2E_MOCK_RESEND_PORT}`,
+				EMAIL_FROM: 'notifications@e2e.invalid',
+				APP_URL: 'http://localhost:5173',
+			},
 		},
 		{
 			// CI serves the production build (`vite preview`) instead of the dev
