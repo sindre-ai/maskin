@@ -283,6 +283,28 @@ describe('getCredential: audit chain', () => {
 		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({ ok: true, rows: 3 })
 	})
 
+	it('a read with no session id stores NULL and the chain still verifies', async () => {
+		const s = await setup()
+		const row = await insertIntegration(s, { grants: [{ kind: 'workspace' }] })
+		await getCredential(db, s.ws.id, row.id, ctxFor(s.actorA.id, { sessionId: null }), { kms })
+		await getCredential(db, s.ws.id, row.id, ctxFor(s.actorA.id, { sessionId: undefined }), { kms })
+		await getCredential(db, s.ws.id, row.id, ctxFor(s.actorA.id), { kms })
+		const logs = await logRows(s.ws.id)
+		expect(logs.map((l) => l.session_id === null)).toEqual([true, true, false])
+		expect(await verifyCredentialAccessChain(db, s.ws.id)).toMatchObject({ ok: true, rows: 3 })
+	})
+
+	it('a denied read with no session id records a null session on the event and writes no log row', async () => {
+		const s = await setup()
+		const row = await insertIntegration(s)
+		await expect(
+			getCredential(db, s.ws.id, row.id, ctxFor(s.actorB.id, { sessionId: null }), { kms }),
+		).rejects.toBeInstanceOf(ScopeDeniedError)
+		expect(await logRows(s.ws.id)).toHaveLength(0)
+		const [event] = await deniedEvents(s.ws.id)
+		expect((event.data as { session_id: unknown }).session_id).toBeNull()
+	})
+
 	it('concurrent reads get distinct sequential ids and a consistent chain', async () => {
 		const s = await setup()
 		const row = await insertIntegration(s, { grants: [{ kind: 'workspace' }] })

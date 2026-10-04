@@ -162,8 +162,12 @@ async function findIntegrationRow(
 export type CredentialReadContext = {
 	requestingActorId: string
 	requestingLoopId?: string | null
-	/** For audit. */
-	sessionId: string
+	/**
+	 * For audit. Null when the caller has no session (a human REST call, a route
+	 * that never receives the session header). Never invent one: the audit column
+	 * is nullable and the hash input already folds null to an empty string.
+	 */
+	sessionId?: string | null
 	/** Host or URL being called. Audit only. */
 	outboundTarget?: string
 	/** Correlation id, for audit. */
@@ -238,7 +242,7 @@ export async function getCredential(
 				attention: 3,
 				provider: row.provider,
 				request_id: ctx.requestId,
-				session_id: ctx.sessionId,
+				session_id: ctx.sessionId ?? null,
 				loop_id: ctx.requestingLoopId ?? null,
 				outbound_target: ctx.outboundTarget ?? null,
 			},
@@ -262,7 +266,7 @@ export async function getCredential(
 			workspaceId,
 			integrationId: row.id,
 			actorId: ctx.requestingActorId,
-			sessionId: ctx.sessionId,
+			sessionId: ctx.sessionId ?? null,
 			loopId: ctx.requestingLoopId ?? null,
 			outboundTarget: ctx.outboundTarget ?? null,
 			action: 'read',
