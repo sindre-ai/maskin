@@ -45,7 +45,7 @@
       "Sid": "WormWrite",
       "Effect": "Allow",
       "Action": "s3:PutObject",
-      "Resource": "arn:aws:s3:::__WORM_BUCKET__/*"
+      "Resource": "arn:aws:s3:::__WORM_BUCKET__/snapshots/*"
     },
     {
       "Sid": "SnapshotRead",
@@ -57,7 +57,12 @@
       "Sid": "ListSameBucket",
       "Effect": "Allow",
       "Action": "s3:ListBucket",
-      "Resource": "arn:aws:s3:::__WORM_BUCKET__"
+      "Resource": "arn:aws:s3:::__WORM_BUCKET__",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": "snapshots/*"
+        }
+      }
     },
     {
       "Sid": "NoTaggingOfKeysThatAreNotAlreadyInScope",
