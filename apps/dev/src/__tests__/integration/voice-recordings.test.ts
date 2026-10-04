@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { processVoiceRetentionSweep, sweepErased } from '../../jobs/voice-retention-sweep'
 import type { CallRecording } from '../../lib/integrations/providers/telnyx/client'
 import { TelnyxHttpError } from '../../lib/integrations/providers/telnyx/http'
+import { applyVoiceEvent } from '../../lib/outreach/voice/apply'
 import { postCallHooks } from '../../lib/outreach/voice/post-call'
 import {
 	type MirrorDeps,
@@ -780,4 +781,99 @@ describe('voice mirror post-call hook', () => {
 			configureVoiceArtifactStorage(null)
 		}
 	})
+})
+
+describe('Telnyx-hosted recordings of a redialed contact whose first call was never mirrored', () => {
+	// Call 1 has no blob, no mirror event and is no longer last_call_id. Only the call_id on
+	// the contact's events can lead the sweep to its Telnyx recording.
+	type Path = 'erasure' | 'expiry'
+
+	async function redialed(path: Path) {
+		// Call 2 was mirrored; call 1 never was.
+		const s = await setup({
+			status: 'voice_queued',
+			metadata: {
+				last_call_recording_id: recordingKey('placeholder', 'call-2'),
+				last_call_transcript_id: transcriptKey('placeholder', 'call-2'),
+				...(path === 'expiry' && {
+					voice_last_touch_at: '2024-01-01T00:00:00.000Z',
+					retention_expires_at: '2026-01-01T00:00:00.000Z',
+				}),
+			},
+		})
+		const storage = fakeStorage()
+		await storage.provider.put(recordingKey(s.contactId, 'call-2'), Buffer.from('a'))
+		await storage.provider.put(transcriptKey(s.contactId, 'call-2'), Buffer.from('b'))
+		return {
+			...s,
+			storage,
+			telnyx: fakeTelnyx({ 'call-1': ['rec-1'], 'call-2': ['rec-2'] }),
+		}
+	}
+
+	async function sweepAfter(path: Path, s: Awaited<ReturnType<typeof redialed>>) {
+		if (path === 'erasure') {
+			await db
+				.update(objects)
+				.set({ status: 'deleted_by_request' })
+				.where(eq(objects.id, s.contactId))
+		}
+		await processVoiceRetentionSweep(
+			db,
+			s.storage.provider,
+			s.telnyx.factory,
+			path === 'expiry' ? new Date('2026-10-03T12:00:00.000Z') : undefined,
+		)
+	}
+
+	it.each(['erasure', 'expiry'] as const)(
+		'the webhook reducer writes the call id on both dials, so %s finds both recordings',
+		async (path) => {
+			const s = await redialed(path)
+			for (const callId of ['call-1', 'call-2']) {
+				const result = await applyVoiceEvent(db, {
+					workspaceId: s.workspaceId,
+					contactId: s.contactId,
+					event: { type: 'call_initiated', callId },
+				})
+				expect(result).toMatchObject({ found: true, applied: true })
+			}
+			// The redial moved last_call_id on; only call 2 has blobs.
+			expect((await rowOf(s.contactId)).metadata.last_call_id).toBe('call-2')
+			expect(s.storage.blobs.size).toBe(2)
+
+			await sweepAfter(path, s)
+
+			expect(s.storage.blobs.size).toBe(0)
+			expect(s.telnyx.deleteCalls.sort()).toEqual(['rec-1', 'rec-2'])
+			expect(s.telnyx.stillHosted()).toEqual([])
+		},
+	)
+
+	it.each(['erasure', 'expiry'] as const)(
+		'the dialer event written when createCall returns finds a call whose webhooks were all lost, on %s',
+		async (path) => {
+			const s = await redialed(path)
+			await applyVoiceEvent(db, {
+				workspaceId: s.workspaceId,
+				contactId: s.contactId,
+				event: { type: 'call_initiated', callId: 'call-2' },
+			})
+			// The shape the dialer records right after createCall returns (dialer.ts, bet branch).
+			await db.insert(events).values({
+				workspaceId: s.workspaceId,
+				actorId: getTestActorId(),
+				action: 'call_initiated',
+				entityType: 'object',
+				entityId: s.contactId,
+				data: { call_id: 'call-1', call_session_id: 'session-1', dial_attempt_n: 1 },
+			})
+
+			await sweepAfter(path, s)
+
+			expect(s.storage.blobs.size).toBe(0)
+			expect(s.telnyx.deleteCalls.sort()).toEqual(['rec-1', 'rec-2'])
+			expect(s.telnyx.stillHosted()).toEqual([])
+		},
+	)
 })
