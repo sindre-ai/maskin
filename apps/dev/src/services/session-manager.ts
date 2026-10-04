@@ -133,7 +133,7 @@ import {
 	type SessionUsage,
 	extractSessionUsage,
 	parseUsageFromLogChunks,
-	readSessionStdoutTail,
+	readSessionStdoutChunks,
 	resolveSessionCostUsd,
 	sumRunningSessionUsage,
 } from './usage-parser'
@@ -5375,11 +5375,16 @@ export class SessionManager extends EventEmitter {
 		// source available here. Parser/DB failures must never block the status
 		// update, so this is wrapped in its own try/catch — same pattern as the
 		// local completion path in handleCompletion().
+		// One read serves both the usage parse and (below) the failure
+		// classification: they used to issue the identical 50-row query back to
+		// back, doubling the bytes pulled from Postgres on every completion.
 		let usage: SessionUsage | null = null
+		let stdoutChunks: string[] = []
 		try {
-			usage = await extractSessionUsage(this.db, sessionId)
+			stdoutChunks = await readSessionStdoutChunks(this.db, sessionId)
+			usage = parseUsageFromLogChunks(stdoutChunks)
 		} catch (err) {
-			logger.warn('Failed to parse usage from remote session logs', {
+			logger.warn('Failed to read or parse usage from remote session logs', {
 				sessionId,
 				error: String(err),
 			})
@@ -5409,17 +5414,7 @@ export class SessionManager extends EventEmitter {
 		// known-pitfalls.md "The Remote Completion Path Skipped Classification").
 		// Tail read is best-effort: stopSession() calls this after the sandbox is
 		// already dead, so a throw would surface as a spurious "stop failed" 400.
-		let stdoutTail = ''
-		if (!stoppedByUser) {
-			try {
-				stdoutTail = await readSessionStdoutTail(this.db, sessionId)
-			} catch (err) {
-				logger.warn('Failed to read stdout tail for remote session classification', {
-					sessionId,
-					error: String(err),
-				})
-			}
-		}
+		const stdoutTail = stoppedByUser ? '' : stdoutChunks.join('')
 		const failureReason: SessionResultFailureReason | null =
 			!stoppedByUser && exitCode !== null
 				? classifyCreditExhaustion(stdoutTail, { includeAmbiguousSignals: exitCode !== 0 })
