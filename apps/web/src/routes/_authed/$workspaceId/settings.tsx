@@ -1,5 +1,6 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, Outlet, createFileRoute, useMatchRoute } from '@tanstack/react-router'
@@ -28,11 +29,24 @@ const keysNavItem = {
 	exact: false,
 }
 
+// Keychain is listed only while its flag is on. The Keychain routes read the flag
+// themselves, so a typed-in URL answers not found when it is off.
+const keychainNavItem = {
+	label: 'Keychain',
+	to: '/$workspaceId/settings/keychain' as const,
+	exact: false,
+}
+
 function SettingsLayout() {
 	useDocumentTitle('Settings')
 	const { workspace, workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
-	const navItems = workspace?.enterprise ? [...settingsNav, keysNavItem] : settingsNav
+	const keychainUi = useFeatureFlag('keychain-settings-ui')
+	const navItems = [
+		...settingsNav,
+		...(keychainUi ? [keychainNavItem] : []),
+		...(workspace?.enterprise ? [keysNavItem] : []),
+	]
 
 	return (
 		<div className="mx-auto w-full max-w-6xl">
