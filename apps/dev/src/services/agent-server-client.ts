@@ -15,6 +15,15 @@ export type AgentServerRow = {
 	secret: string
 }
 
+// Client-side budget for the stop RPC. Must stay above the agent-server's own
+// worst case for /sessions/:id/stop: listSandboxNames (10s) then `msb stop`
+// (20s) in apps/agent-server/src/services/microsandbox.ts, so a slow but
+// healthy stop is never cut short. The reaper runs its steps in series every
+// 60s, so without a bound a hung agent-server would stall the whole pass.
+// Applies to the stop call only; dispatch (startSession) can legitimately
+// take about 70s and stays unbounded.
+export const STOP_SESSION_TIMEOUT_MS = 45_000
+
 export class AgentServerAuthError extends Error {
 	readonly kind = 'unauthorized' as const
 	constructor(readonly server: { id: string; url: string }) {
@@ -119,7 +128,9 @@ export class AgentServerClient {
 	 * for both `agent-completed` and `sandbox-exit` sources.
 	 */
 	async stopSession(sessionId: string, req: StopSessionRequest): Promise<StopSessionResponse> {
-		return this.postJson<StopSessionResponse>(`/sessions/${sessionId}/stop`, req)
+		return this.postJson<StopSessionResponse>(`/sessions/${sessionId}/stop`, req, {
+			timeoutMs: STOP_SESSION_TIMEOUT_MS,
+		})
 	}
 
 	/**
@@ -139,7 +150,7 @@ export class AgentServerClient {
 
 	// Public to let lifecycle-route callers (T3 stop/snapshot/restore) reuse the
 	// bearer + content-type plumbing without re-implementing it.
-	async postJson<T>(path: string, body: unknown): Promise<T> {
+	async postJson<T>(path: string, body: unknown, opts: { timeoutMs?: number } = {}): Promise<T> {
 		const url = joinUrl(this.deps.server.url, path)
 		const res = await this.fetchImpl(url, {
 			method: 'POST',
@@ -148,6 +159,7 @@ export class AgentServerClient {
 				'Content-Type': 'application/json',
 			},
 			body: JSON.stringify(body),
+			...(opts.timeoutMs ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
 		})
 		if (res.status === 401) {
 			throw new AgentServerAuthError({ id: this.deps.server.id, url: this.deps.server.url })

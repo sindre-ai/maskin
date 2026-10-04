@@ -393,6 +393,11 @@ export class SessionDispatcher {
 			.update(sessions)
 			.set({
 				status: 'running',
+				// The reaper reads session_state, not status. Without this the row
+				// keeps its default 'queued' and is later rescued into 'starting'
+				// and failed as startup_stalled while the sandbox is alive.
+				sessionState: 'running',
+				stateEnteredAt: now,
 				agentServerId: serverId,
 				containerId: sandboxName,
 				startedAt: now,

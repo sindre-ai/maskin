@@ -1,3 +1,4 @@
+import { ACTIVE_STATUSES } from '@/lib/agent-status'
 import { trackAgentSessionStarted } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { CreateSessionInput, SessionResponse } from '@/lib/api'
@@ -5,6 +6,8 @@ import { queryKeys } from '@/lib/query-keys'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 const ACTOR_SESSIONS_PAGE_SIZE = 5
+const ACTIVE_CONVERSATION_POLL_MS = 5_000
+const IDLE_CONVERSATION_POLL_MS = 30_000
 
 export function useSession(id: string | null, workspaceId: string) {
 	return useQuery({
@@ -174,8 +177,14 @@ export function useActiveSessionsForConversation(
 		// activity only renders for sessions cached as `running`. Relying on
 		// SSE invalidation alone meant one dropped connection froze the
 		// transcript until the user reloaded. Poll as a floor so the worst
-		// case is a few seconds of lag rather than a dead UI.
-		refetchInterval: 5000,
+		// case is a few seconds of lag rather than a dead UI. Fast only while a
+		// session in this conversation is live (that is when the transcript is
+		// changing); an idle chat falls back to a slow floor. Background tabs do
+		// not poll (refetchIntervalInBackground defaults to false).
+		refetchInterval: (query) =>
+			query.state.data?.some((s) => ACTIVE_STATUSES.has(s.status))
+				? ACTIVE_CONVERSATION_POLL_MS
+				: IDLE_CONVERSATION_POLL_MS,
 	})
 }
 

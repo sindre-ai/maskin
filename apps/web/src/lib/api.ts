@@ -632,6 +632,26 @@ export const api = {
 			const qs = params ? `?${new URLSearchParams(params)}` : ''
 			return request<EventResponse[]>(`/events/history${qs}`, { workspaceId })
 		},
+		/**
+		 * Up to `maxEvents` history rows, fetched in pages of the server's maximum
+		 * page size. The endpoint rejects `limit` above 100 with a 400, so asking for
+		 * 500 in one call (as the chat's Produced pane did) never returned anything.
+		 */
+		historyUpTo: async (workspaceId: string, params: Record<string, string>, maxEvents: number) => {
+			const pageSize = 100
+			const all: EventResponse[] = []
+			for (let offset = 0; all.length < maxEvents; offset += pageSize) {
+				const qs = new URLSearchParams({
+					...params,
+					limit: String(Math.min(pageSize, maxEvents - all.length)),
+					offset: String(offset),
+				})
+				const page = await request<EventResponse[]>(`/events/history?${qs}`, { workspaceId })
+				all.push(...page)
+				if (page.length < pageSize) break
+			}
+			return all
+		},
 		create: (workspaceId: string, data: CreateCommentInput, idempotencyKey?: string) =>
 			request<EventResponse>('/events', {
 				method: 'POST',
