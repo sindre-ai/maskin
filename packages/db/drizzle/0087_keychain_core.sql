@@ -106,13 +106,14 @@ BEGIN
 	-- (apps/dev/src/lib/integrations/credential-audit.ts) uses the same one.
 	NEW.prev_row_hash := coalesce(head, encode(sha256(convert_to('maskin-credential-access-log-genesis-v1', 'UTF8')), 'hex'));
 	-- Fields joined by chr(31) (unit separator) so adjacent values cannot shift
-	-- into each other. NULL session_id and outbound_target hash as ''.
+	-- into each other. NULL session_id, loop_id and outbound_target hash as ''.
 	NEW.row_hash := encode(sha256(convert_to(concat_ws(chr(31),
 		NEW.prev_row_hash,
 		NEW.workspace_id::text,
 		NEW.integration_id::text,
 		NEW.actor_id::text,
 		coalesce(NEW.session_id::text, ''),
+		coalesce(NEW.loop_id::text, ''),
 		coalesce(NEW.outbound_target, ''),
 		NEW.action,
 		NEW.source,

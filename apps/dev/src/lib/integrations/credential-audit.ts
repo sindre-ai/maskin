@@ -28,6 +28,7 @@ export interface CredentialLogHashInput {
 	integrationId: string
 	actorId: string
 	sessionId: string | null
+	loopId: string | null
 	outboundTarget: string | null
 	action: string
 	source: string
@@ -50,6 +51,7 @@ export function computeRowHash(i: CredentialLogHashInput): string {
 				i.integrationId,
 				i.actorId,
 				i.sessionId ?? '',
+				i.loopId ?? '',
 				i.outboundTarget ?? '',
 				i.action,
 				i.source,
@@ -110,6 +112,7 @@ interface LogRow extends Record<string, unknown> {
 	integration_id: string
 	actor_id: string
 	session_id: string | null
+	loop_id: string | null
 	outbound_target: string | null
 	action: string
 	source: string
@@ -132,7 +135,8 @@ export async function verifyCredentialAccessChain(
 ): Promise<ChainVerification> {
 	const rows = (await db.execute(sql`
 		SELECT id::text AS id, workspace_id::text AS workspace_id, integration_id::text AS integration_id,
-			actor_id::text AS actor_id, session_id::text AS session_id, outbound_target, action, source,
+			actor_id::text AS actor_id, session_id::text AS session_id, loop_id::text AS loop_id,
+			outbound_target, action, source,
 			request_id, credential_access_log_ts_text(read_at) AS read_at_text, prev_row_hash, row_hash
 		FROM credential_access_log
 		WHERE workspace_id = ${workspaceId}
@@ -151,6 +155,7 @@ export async function verifyCredentialAccessChain(
 			integrationId: row.integration_id,
 			actorId: row.actor_id,
 			sessionId: row.session_id,
+			loopId: row.loop_id,
 			outboundTarget: row.outbound_target,
 			action: row.action,
 			source: row.source,
