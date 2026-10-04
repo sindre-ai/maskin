@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '../lib/api'
 import { queryKeys } from '../lib/query-keys'
@@ -172,5 +172,29 @@ export function useLinkedInIdentities(workspaceId: string) {
 		queryKey: queryKeys.integrations.linkedinIdentities(workspaceId),
 		queryFn: () => api.integrations.linkedinIdentities(workspaceId),
 		staleTime: FIVE_MINUTES,
+	})
+}
+
+/** Keychain: paste an API key. The secret goes up once and is never kept in the cache. */
+export function useCreateByoApiKey(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (input: { displayName: string; rawSecret: string }) =>
+			api.integrations.createByoApiKey(workspaceId, input),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+		},
+	})
+}
+
+/** Keychain: one credential's audit log, newest first, paged by the last row's id. */
+export function useCredentialAuditLog(workspaceId: string, integrationId: string) {
+	return useInfiniteQuery({
+		queryKey: queryKeys.integrations.auditLog(workspaceId, integrationId),
+		queryFn: ({ pageParam }) =>
+			api.integrations.auditLog(integrationId, workspaceId, pageParam || undefined),
+		initialPageParam: '',
+		getNextPageParam: (lastPage) => lastPage.nextBeforeId ?? undefined,
+		enabled: !!workspaceId && !!integrationId,
 	})
 }

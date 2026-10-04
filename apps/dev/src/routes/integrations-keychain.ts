@@ -2,9 +2,11 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { credentialAccessLog, integrations } from '@maskin/db/schema'
 import { and, desc, eq, lt, sql } from 'drizzle-orm'
+import type { Context } from 'hono'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { BYO_APIKEY_PROVIDER, createByoApiKey } from '../lib/integrations/byo-apikey'
 import {
 	CHAT_CAPTURE_PROVIDERS,
 	ChatCaptureError,
@@ -26,6 +28,34 @@ type Env = {
 // Keychain routes that sit next to /api/integrations. A separate file so the
 // 3.6k-line integrations router stays untouched; mounted on the same prefix.
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
+
+/**
+ * Reads a JSON body that carries a secret. Owns the bytes so they can be cleared:
+ * Hono caches this same ArrayBuffer, so zeroing the view clears the cached copy
+ * as well. The decoded string is a JavaScript string and cannot be cleared; it is
+ * kept as short-lived as possible and is never logged or placed on an error.
+ * On failure the message names fields only, never a value.
+ */
+async function readSecretBody<S extends z.ZodTypeAny>(
+	c: Context<Env>,
+	schema: S,
+): Promise<{ ok: true; data: z.infer<S> } | { ok: false; message: string }> {
+	const raw = Buffer.from(await c.req.arrayBuffer())
+	let parsed: z.SafeParseReturnType<unknown, z.infer<S>>
+	try {
+		parsed = schema.safeParse(JSON.parse(raw.toString('utf8')))
+	} catch {
+		raw.fill(0)
+		return { ok: false, message: 'Body must be valid JSON' }
+	}
+	raw.fill(0)
+	if (!parsed.success) {
+		// Field paths only. Zod issues for a bad rawSecret could echo the value.
+		const fields = [...new Set(parsed.error.issues.map((i) => i.path.join('.') || '(body)'))]
+		return { ok: false, message: `Invalid fields: ${fields.join(', ')}` }
+	}
+	return { ok: true, data: parsed.data }
+}
 
 // ── POST /api/integrations/chat-capture ──────────────────────────────────
 
@@ -86,24 +116,8 @@ app.openapi(chatCaptureRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Only a person can vault a key from chat'), 403)
 	}
 
-	// Own the bytes so they can be cleared. Hono caches this same ArrayBuffer, so
-	// zeroing the view clears the cached copy as well. The decoded string below is
-	// a JavaScript string and cannot be cleared; it is kept as short-lived as
-	// possible and is never logged or placed on an error.
-	const raw = Buffer.from(await c.req.arrayBuffer())
-	let parsed: z.SafeParseReturnType<unknown, z.infer<typeof chatCaptureBodySchema>>
-	try {
-		parsed = chatCaptureBodySchema.safeParse(JSON.parse(raw.toString('utf8')))
-	} catch {
-		raw.fill(0)
-		return c.json(createApiError('BAD_REQUEST', 'Body must be valid JSON'), 400)
-	}
-	raw.fill(0)
-	if (!parsed.success) {
-		// Field paths only. Zod issues for a bad rawSecret could echo the value.
-		const fields = [...new Set(parsed.error.issues.map((i) => i.path.join('.') || '(body)'))]
-		return c.json(createApiError('BAD_REQUEST', `Invalid fields: ${fields.join(', ')}`), 400)
-	}
+	const parsed = await readSecretBody(c, chatCaptureBodySchema)
+	if (!parsed.ok) return c.json(createApiError('BAD_REQUEST', parsed.message), 400)
 	const body = parsed.data
 
 	try {
@@ -147,6 +161,73 @@ app.openapi(chatCaptureRoute, (async (c) => {
 		throw err
 	}
 }) as RouteHandler<typeof chatCaptureRoute, Env>)
+
+// ── POST /api/integrations/byo-apikey ────────────────────────────────────
+
+const byoApiKeyBodySchema = z
+	.object({
+		displayName: z.string().trim().min(1).max(80),
+		rawSecret: z.string().min(1).max(4096),
+	})
+	.strict()
+
+// No `request.body`, same reason as chat-capture: the handler owns the raw bytes.
+const byoApiKeyRoute = createRoute({
+	method: 'post',
+	path: '/byo-apikey',
+	tags: ['integrations'],
+	summary: 'Vault an API key pasted in the Keychain (humans only)',
+	request: { headers: workspaceIdHeader },
+	responses: {
+		201: {
+			description: 'Stored, active, scoped to the member who pasted it',
+			content: { 'application/json': { schema: z.object({ integrationId: z.string().uuid() }) } },
+		},
+		400: { description: 'Invalid body', content: { 'application/json': { schema: errorSchema } } },
+		403: { description: 'Not a human', content: { 'application/json': { schema: errorSchema } } },
+	},
+})
+
+app.openapi(byoApiKeyRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	// Agents never vault secrets: an agent that held one has already seen it.
+	if (c.get('actorType') !== 'human') {
+		return c.json(createApiError('FORBIDDEN', 'Only a person can add a key to the Keychain'), 403)
+	}
+
+	const parsed = await readSecretBody(c, byoApiKeyBodySchema)
+	if (!parsed.ok) return c.json(createApiError('BAD_REQUEST', parsed.message), 400)
+	const body = parsed.data
+
+	try {
+		const result = await createByoApiKey(db, getKmsProvider(db), {
+			workspaceId,
+			actorId,
+			displayName: body.displayName,
+			rawSecret: body.rawSecret,
+		})
+
+		void capturePosthogEvent('keychain_credential_created', actorId, {
+			workspace_id: workspaceId,
+			integration_id: result.integrationId,
+			provider: BYO_APIKEY_PROVIDER,
+			provider_mode: 'byo_apikey',
+			source: 'admin_ui',
+		})
+
+		return c.json({ integrationId: result.integrationId }, 201)
+	} catch (err) {
+		// Error name only, never the request: a driver error can carry bound params.
+		logger.error('Keychain paste failed', {
+			workspaceId,
+			error: err instanceof Error ? err.name : 'unknown',
+		})
+		throw err
+	}
+}) as RouteHandler<typeof byoApiKeyRoute, Env>)
 
 // ── POST /api/integrations/:id/undo ──────────────────────────────────────
 
