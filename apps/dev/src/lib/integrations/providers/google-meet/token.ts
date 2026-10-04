@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { IntegrationAuthRevokedError } from '../../errors'
 import { getIntegrationCredential } from '../../lookup'
 import { TokenManager } from '../../oauth/token-manager'
+import { readContextFor } from '../../read-context'
 import { getProvider } from '../../registry'
 import { MeetError } from './errors'
 
@@ -41,8 +42,32 @@ export async function getGoogleMeetAccessToken(
 	db: Database,
 	workspaceId: string,
 	actorId: string | null,
+	requestingActorId: string,
+	outboundTarget: string,
 ): Promise<{ accessToken: string; integrationId: string }> {
-	const integration = await getIntegrationCredential(db, workspaceId, GOOGLE_MEET_PROVIDER, actorId)
+	// The Keychain read is attributed to the authenticated caller, never to the
+	// actor the ladder above resolved (input.actor_id can name anyone). No
+	// caller, no read: an empty id would not survive the audit insert anyway.
+	if (!requestingActorId) {
+		throw new MeetError({
+			code: 'PERMISSION_DENIED',
+			message: 'Google Meet credentials are only read on behalf of an authenticated actor.',
+			provider_status: 0,
+			hint: 'Call this tool through the authenticated Google Meet MCP route.',
+		})
+	}
+	// Gate and audit first (scope check, one credential_access_log row). The
+	// token itself still comes from TokenManager below, which decrypts the row
+	// and refreshes it on its own legacy path.
+	const integration = await getIntegrationCredential(
+		db,
+		workspaceId,
+		GOOGLE_MEET_PROVIDER,
+		actorId,
+		{
+			ctx: readContextFor(requestingActorId, outboundTarget),
+		},
+	)
 	if (!integration) {
 		throw new MeetError({
 			code: 'RECONSENT_REQUIRED',
