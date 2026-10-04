@@ -302,6 +302,44 @@ function claudeRuntimeFailoverReason(
 }
 
 /**
+ * Only names matching this pattern may be copied from the API process env into
+ * a session via an actor's tools.envFrom. The prefix keeps envFrom from becoming
+ * a way to read DATABASE_URL and friends; the full-match shape keeps the name
+ * safe to use as an env key (see known-pitfalls: shell injection).
+ */
+const ACTOR_SECRET_ENV_NAME_RE = /^AGENT_SECRET_[A-Za-z0-9_]+$/
+
+/**
+ * Resolves an actor's tools.envFrom into env entries for the session. Pure so
+ * the allowlist and unset handling are unit-testable. The skipped cases are
+ * returned as names only, so callers can log them without ever touching a value.
+ */
+export function resolveActorSecretEnv(
+	envFrom: unknown,
+	processEnv: NodeJS.ProcessEnv,
+): { env: Record<string, string>; ignored: string[]; unset: string[] } {
+	const result = {
+		env: {} as Record<string, string>,
+		ignored: [] as string[],
+		unset: [] as string[],
+	}
+	if (!Array.isArray(envFrom)) return result
+	for (const name of envFrom) {
+		if (typeof name !== 'string' || !ACTOR_SECRET_ENV_NAME_RE.test(name)) {
+			result.ignored.push(String(name))
+			continue
+		}
+		const value = processEnv[name]
+		if (value === undefined || value === '') {
+			result.unset.push(name)
+			continue
+		}
+		result.env[name] = value
+	}
+	return result
+}
+
+/**
  * Decides whether `buildLaunchSpec`'s resolved LLM route needs persisting on
  * `sessions.config`, and if so, returns the merged config. Returns `null`
  * when nothing changed.
@@ -2551,6 +2589,25 @@ export class SessionManager extends EventEmitter {
 					sessionId: session.id,
 				})
 			}
+		}
+
+		// Actor-level secrets: copy the AGENT_SECRET_* names listed in tools.envFrom
+		// from the API process env, so headers can use ${AGENT_SECRET_X} (expanded by
+		// envsubst in agent-run.sh). Values go into the launch env only: never into
+		// the session row or config, never into a log line.
+		const actorSecrets = resolveActorSecretEnv(agentTools?.envFrom, process.env)
+		Object.assign(envVars, actorSecrets.env)
+		if (actorSecrets.ignored.length > 0) {
+			logger.warn('Ignoring envFrom names without the AGENT_SECRET_ prefix', {
+				sessionId: session.id,
+				names: actorSecrets.ignored,
+			})
+		}
+		if (actorSecrets.unset.length > 0) {
+			logger.warn('envFrom names are unset on the API service; skipped', {
+				sessionId: session.id,
+				names: actorSecrets.unset,
+			})
 		}
 
 		// Session-level MCP config (convert array → { mcpServers: { ... } } format), merged

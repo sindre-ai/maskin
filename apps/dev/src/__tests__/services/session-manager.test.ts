@@ -1328,6 +1328,88 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('buildLaunchSpec() — actor tools.envFrom (AGENT_SECRET_ only)', () => {
+		const FAKE_SECRET = 'fake-secret-value-for-test'
+		const FAKE_DB_URL = 'postgres://fake-db-url-for-test'
+
+		function launchWith(tools: unknown) {
+			const session = buildSession({ status: 'pending', interactive: false, config: {} })
+			const agent = {
+				id: session.actorId,
+				type: 'agent' as const,
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
+			mockResults.selectQueue = [[agent], [workspace], []]
+			return manager.buildLaunchSpec(
+				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
+			)
+		}
+
+		beforeEach(() => {
+			vi.clearAllMocks()
+			vi.stubEnv('AGENT_SECRET_X', FAKE_SECRET)
+			vi.stubEnv('DATABASE_URL', FAKE_DB_URL)
+			vi.stubEnv('AGENT_SECRET_UNSET', undefined as unknown as string)
+		})
+
+		afterEach(() => {
+			vi.unstubAllEnvs()
+		})
+
+		it('copies a listed AGENT_SECRET_ name into the session env and leaves the header as a reference', async () => {
+			const spec = await launchWith({
+				envFrom: ['AGENT_SECRET_X'],
+				mcpServers: {
+					coolify: {
+						type: 'http',
+						url: 'https://example.test/mcp',
+						headers: { Authorization: 'Bearer ${AGENT_SECRET_X}' },
+					},
+				},
+			})
+
+			expect(spec.env.AGENT_SECRET_X).toBe(FAKE_SECRET)
+			// Expansion happens later, in-container (envsubst); the launch env keeps the reference.
+			expect(spec.env.AGENT_MCP_JSON).toContain('${AGENT_SECRET_X}')
+			expect(spec.env.AGENT_MCP_JSON).not.toContain(FAKE_SECRET)
+		})
+
+		it('never copies a listed name without the AGENT_SECRET_ prefix', async () => {
+			const spec = await launchWith({ envFrom: ['DATABASE_URL', 'AGENT_SECRET_X'] })
+
+			expect(spec.env).not.toHaveProperty('DATABASE_URL')
+			expect(Object.values(spec.env)).not.toContain(FAKE_DB_URL)
+			expect(spec.env.AGENT_SECRET_X).toBe(FAKE_SECRET)
+		})
+
+		it('skips an unset name with a log line naming it, never a value', async () => {
+			const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+			const spec = await launchWith({ envFrom: ['AGENT_SECRET_UNSET', 'AGENT_SECRET_X'] })
+
+			expect(spec.env).not.toHaveProperty('AGENT_SECRET_UNSET')
+			const warnCalls = warnSpy.mock.calls
+			const unsetCall = warnCalls.find(([msg]) => String(msg).includes('unset'))
+			expect(unsetCall?.[1]).toMatchObject({ names: ['AGENT_SECRET_UNSET'] })
+			expect(JSON.stringify(warnCalls)).not.toContain(FAKE_SECRET)
+			warnSpy.mockRestore()
+		})
+
+		it('adds no AGENT_SECRET_ vars for an actor without envFrom', async () => {
+			const spec = await launchWith(null)
+
+			expect(Object.keys(spec.env).filter((k) => k.startsWith('AGENT_SECRET_'))).toEqual([])
+		})
+	})
+
 	describe('buildLaunchSpec() — persists model_name + llm_route on maskin_plan dispatch', () => {
 		// Foundational task for the session-cost accounting bet: every maskin_plan
 		// session must land with `sessions.model_name` non-null (the OpenRouter
