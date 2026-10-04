@@ -1,5 +1,6 @@
 import { useActiveSessionsForConversation } from '@/hooks/use-sessions'
 import { api } from '@/lib/api'
+import { queryKeys } from '@/lib/query-keys'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
@@ -36,7 +37,7 @@ export function useRelaunchProgress(
 	const ended = !!next && ENDED_STATUSES.has(next.status)
 
 	const { data: output } = useQuery({
-		queryKey: ['relaunch-first-output', next?.id],
+		queryKey: queryKeys.sessions.firstOutput(workspaceId, next?.id ?? ''),
 		queryFn: () =>
 			api.sessions.logs(next?.id as string, workspaceId, { stream: 'stdout', limit: '1' }),
 		enabled: !!next && !ended,

@@ -1,5 +1,5 @@
 import { RESUMING_MAX_MS, useRelaunchProgress } from '@/hooks/use-relaunch-progress'
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createWorkspaceWrapper } from '../setup'
 
@@ -63,6 +63,20 @@ describe('useRelaunchProgress', () => {
 		})
 		expect(result.current).toBeNull()
 		expect(logsMock).not.toHaveBeenCalled()
+	})
+
+	it('reports output once the new session has written a stdout line', async () => {
+		vi.useRealTimers()
+		sessionsMock.data = [
+			{ id: 'sess-old', actorId: 'agent-1', status: 'user_stopped' },
+			{ id: 'sess-new', actorId: 'agent-1', status: 'running' },
+		]
+		logsMock.mockResolvedValue([{ id: 1, sessionId: 'sess-new', stream: 'stdout', content: '{}' }])
+		const { result } = renderHook(() => useRelaunchProgress('ws-test', watch), {
+			wrapper: createWorkspaceWrapper(),
+		})
+		await waitFor(() => expect(result.current).toBe('output'))
+		expect(logsMock).toHaveBeenCalledWith('sess-new', 'ws-test', { stream: 'stdout', limit: '1' })
 	})
 
 	it('reports ended when the new session ended without output', () => {
