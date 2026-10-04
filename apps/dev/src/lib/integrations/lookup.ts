@@ -132,9 +132,14 @@ export async function findIntegrationRow(
 	if (requiresActor && !actorId && !options.fallbackToAnyActor) return null
 	// A Keychain read also sees a chat capture still inside its undo window
 	// (readable on purpose: the session that triggered it resumes at once).
+	// Registered providers only. A workspace can hold several bring-your-own keys under
+	// one provider name (a chat-captured github key next to the GitHub App install),
+	// and a provider name alone cannot say which one is wanted. BYO keys are read by
+	// id through getCredential.
 	const scope = and(
 		eq(integrations.workspaceId, workspaceId),
 		eq(integrations.provider, provider),
+		eq(integrations.providerMode, 'registered'),
 		options.ctx
 			? inArray(integrations.status, [INTEGRATION_STATUS_ACTIVE, 'pending_undo'])
 			: eq(integrations.status, INTEGRATION_STATUS_ACTIVE),
@@ -267,6 +272,9 @@ export async function getCredential(
 		encrypt: (ws, dek) => getKmsProvider(db).encrypt(ws, dek),
 		decrypt: (ws, wrapped) => getKmsProvider(db).decrypt(ws, wrapped),
 	}
+	// Undone rows are refused above; a NULL on any other status is a broken row, and
+	// the migration's CHECK keeps that from existing. Refuse rather than decrypt(null).
+	if (row.credentials === null) throw new CredentialUndoneError(integrationId)
 	const value = await decryptStoredCredential(kms, {
 		workspaceId,
 		credentials: row.credentials,

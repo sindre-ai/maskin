@@ -16,6 +16,8 @@ export const ApiErrorCode = {
 	// apps/dev/src/lib/workspace-capacity.ts.
 	SEAT_CAP_EXCEEDED: 'SEAT_CAP_EXCEEDED',
 	OWNERSHIP_CAP_EXCEEDED: 'OWNERSHIP_CAP_EXCEEDED',
+	// A message body matched a high-confidence secret pattern (Keychain backstop).
+	RAW_SECRET_DETECTED: 'RAW_SECRET_DETECTED',
 } as const
 
 export type ApiErrorCode = (typeof ApiErrorCode)[keyof typeof ApiErrorCode]

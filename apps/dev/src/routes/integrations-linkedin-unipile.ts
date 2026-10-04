@@ -152,7 +152,7 @@ type StoredAuthBlob = {
  * encryption-key rotation) — in both cases the caller has no valid nonce to
  * compare against and must reject, which is the safe direction.
  */
-function readStoredAuthBlob(raw: string): StoredAuthBlob {
+function readStoredAuthBlob(raw: string | null): StoredAuthBlob {
 	if (!raw) return {}
 	try {
 		const parsed: unknown = JSON.parse(decrypt(raw))

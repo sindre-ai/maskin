@@ -313,7 +313,8 @@ export const integrations = pgTable(
 		provider: text('provider').notNull(),
 		status: text('status').$type<IntegrationStatus>().notNull(),
 		externalId: text('external_id'),
-		credentials: text('credentials').notNull(),
+		// NULL only on an undone row (Keychain undo zeroises it); see migration 0088.
+		credentials: text('credentials'),
 		config: jsonb('config').notNull().default({}),
 		// Per-row marker keys for managed-package installs; nullable everywhere.
 		metadata: jsonb('metadata'),
@@ -354,9 +355,11 @@ export const integrations = pgTable(
 		uniqueIndex('integrations_ws_actor_provider_external_uniq')
 			.on(t.workspaceId, t.actorId, t.provider, t.externalId)
 			.where(sql`${t.externalId} IS NOT NULL`),
+		// One per provider for registered and OAuth connections. A bring-your-own API key
+		// is a named credential, so a workspace may hold several for one provider (0089).
 		uniqueIndex('integrations_ws_actor_provider_null_external_uniq')
 			.on(t.workspaceId, t.actorId, t.provider)
-			.where(sql`${t.externalId} IS NULL`),
+			.where(sql`${t.externalId} IS NULL AND ${t.providerMode} <> 'byo_apikey'`),
 		index('integrations_ws_provider_idx').on(t.workspaceId, t.provider),
 		index('integrations_ws_mode_idx').on(t.workspaceId, t.providerMode),
 		index('integrations_undo_sweeper_idx')
@@ -374,6 +377,10 @@ export const integrations = pgTable(
 		check(
 			'integrations_chat_capture_has_session',
 			sql`${t.source} <> 'chat_capture' OR ${t.originSessionId} IS NOT NULL`,
+		),
+		check(
+			'integrations_credentials_null_only_when_undone',
+			sql`${t.credentials} IS NOT NULL OR ${t.status} = 'undone'`,
 		),
 		index('integrations_unipile_acc_slug_idx')
 			.on(t.unipileAccSlug)
