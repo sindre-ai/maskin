@@ -123,10 +123,16 @@ describe('Workspaces Routes', () => {
 	})
 
 	describe('PATCH /api/workspaces/:id', () => {
+		// Each queue entry is one db.select() in route order: isWorkspaceMember,
+		// then (only for name / llm_keys / custom_llm) isWorkspaceHumanAdminOrOwner.
+		const MEMBER = [{ actorId: 'caller' }]
+		const HUMAN_OWNER = [{ role: 'owner', type: 'human' }]
+
 		it('returns 200 when workspace updated', async () => {
 			const ws = buildWorkspace()
 			const updated = { ...ws, name: 'Updated Workspace' }
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [MEMBER, HUMAN_OWNER]
 			mockResults.update = [updated]
 
 			const res = await app.request(
@@ -137,7 +143,8 @@ describe('Workspaces Routes', () => {
 		})
 
 		it('returns 404 when workspace not found for settings merge', async () => {
-			const { app } = createTestApp(workspacesRoutes, '/api/workspaces')
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [MEMBER]
 			const id = '00000000-0000-0000-0000-000000000099'
 
 			const res = await app.request(
@@ -152,6 +159,7 @@ describe('Workspaces Routes', () => {
 		it('returns 400 and does not touch the DB when settings.claude_oauth is present', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [MEMBER]
 			mockResults.update = [{ ...ws, name: 'should not be used' }]
 
 			const res = await app.request(
@@ -179,6 +187,7 @@ describe('Workspaces Routes', () => {
 		it('returns 400 and does not touch the DB when settings.billing is present', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [MEMBER, HUMAN_OWNER]
 			mockResults.update = [{ ...ws }]
 
 			const res = await app.request(
@@ -196,6 +205,7 @@ describe('Workspaces Routes', () => {
 		it('rejects settings.billing even when smuggled alongside a legitimate key', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [MEMBER, HUMAN_OWNER]
 			mockResults.update = [{ ...ws }]
 
 			const res = await app.request(
@@ -210,6 +220,87 @@ describe('Workspaces Routes', () => {
 
 			expect(res.status).toBe(400)
 			expect(calls.updates).toHaveLength(0)
+		})
+
+		describe('caller check', () => {
+			it('returns 404 and writes nothing when the caller is not a member', async () => {
+				const ws = buildWorkspace()
+				const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [[]]
+				mockResults.update = [{ ...ws, name: 'Hijacked' }]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, { name: 'Hijacked' }),
+				)
+
+				expect(res.status).toBe(404)
+				expect(calls.updates).toHaveLength(0)
+			})
+
+			it('answers a non-member with 404 before the billing and claude_oauth 400s', async () => {
+				const ws = buildWorkspace()
+				const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [[]]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+						settings: { billing: { plan: 'team', status: 'active' } },
+					}),
+				)
+
+				expect(res.status).toBe(404)
+				expect(calls.updates).toHaveLength(0)
+			})
+
+			it.each([
+				['name', { name: 'Renamed' }],
+				['settings.llm_keys', { settings: { llm_keys: { anthropic: 'sk-ant-x' } } }],
+				['a null settings.llm_keys delete', { settings: { llm_keys: { anthropic: null } } }],
+				['settings.custom_llm', { settings: { custom_llm: { base_url: 'https://llm.test' } } }],
+			])('returns 403 and writes nothing when a plain member sends %s', async (_label, body) => {
+				const ws = buildWorkspace()
+				const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [MEMBER, [{ role: 'member', type: 'human' }]]
+				mockResults.update = [{ ...ws }]
+
+				const res = await app.request(jsonRequest('PATCH', `/api/workspaces/${ws.id}`, body))
+
+				expect(res.status).toBe(403)
+				expect((await res.json()).error.code).toBe('FORBIDDEN')
+				expect(calls.updates).toHaveLength(0)
+			})
+
+			it('returns 403 when an agent member sends settings.llm_keys', async () => {
+				const ws = buildWorkspace()
+				const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [MEMBER, [{ role: 'admin', type: 'agent' }]]
+				mockResults.update = [{ ...ws }]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+						settings: { llm_keys: { anthropic: 'sk-ant-x' } },
+					}),
+				)
+
+				expect(res.status).toBe(403)
+				expect(calls.updates).toHaveLength(0)
+			})
+
+			it('lets a plain member pin files (a member-level settings key)', async () => {
+				const pinnedId = randomUUID()
+				const ws = buildWorkspace()
+				const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [MEMBER, [{ ...ws, settings: {} }]]
+				mockResults.update = [{ ...ws, settings: { pinned_files: [pinnedId] } }]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+						settings: { pinned_files: [pinnedId] },
+					}),
+				)
+
+				expect(res.status).toBe(200)
+			})
 		})
 	})
 
@@ -425,6 +516,7 @@ describe('Workspaces Routes', () => {
 				type: 'human',
 			}
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[{ actorId: member.actorId }]] // isWorkspaceMember(caller)
 			mockResults.select = [member]
 
 			const res = await app.request(jsonGet(`/api/workspaces/${wsId}/members`))
@@ -433,6 +525,18 @@ describe('Workspaces Routes', () => {
 			const body = await res.json()
 			expect(body).toHaveLength(1)
 			expect(body[0].role).toBe('owner')
+		})
+
+		it('returns 404 and lists nothing when the caller is not a member', async () => {
+			const wsId = randomUUID()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[]] // isWorkspaceMember(caller) — no row
+			mockResults.select = [{ actorId: randomUUID(), role: 'owner', name: 'Alice', type: 'human' }]
+
+			const res = await app.request(jsonGet(`/api/workspaces/${wsId}/members`))
+
+			expect(res.status).toBe(404)
+			expect(await res.json()).not.toHaveProperty('0')
 		})
 	})
 
