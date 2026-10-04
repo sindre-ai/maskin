@@ -73,7 +73,7 @@ const memberResponseSchema = z.object({
 
 const addMemberBodySchema = z.object({
 	actor_id: z.string().uuid(),
-	role: z.string().optional(),
+	role: z.enum(['admin', 'member']).optional(),
 })
 
 const workspaceWithRoleSchema = workspaceResponseSchema.extend({
@@ -655,12 +655,17 @@ const addMemberRoute = createRoute({
 			description: 'Member added (or already a member — idempotent)',
 			content: { 'application/json': { schema: z.object({ added: z.boolean() }) } },
 		},
+		400: {
+			description: 'Invalid body (role must be admin or member)',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		403: {
-			description: 'Caller is not a workspace member, or the workspace has reached its seat cap',
+			description:
+				'Caller is not a human admin or owner of the workspace, or the workspace has reached its seat cap',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
-			description: 'Workspace or actor not found',
+			description: 'Workspace not found for the caller, or actor not found',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 	},
@@ -672,8 +677,16 @@ app.openapi(addMemberRoute, (async (c) => {
 	const { id: workspaceId } = c.req.valid('param')
 	const { actor_id, role } = c.req.valid('json')
 
+	// Non-members get the same 404 as a missing workspace so the response does
+	// not confirm the id exists.
 	if (!(await isWorkspaceMember(db, callerId, workspaceId))) {
-		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+	if (!(await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only a human admin or owner can add workspace members'),
+			403,
+		)
 	}
 
 	const [targetActor] = await db
