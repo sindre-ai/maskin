@@ -50,9 +50,10 @@ Two parts:
 
 ## Deploy
 
-Actions, "Deploy agent-server (staging)", Run workflow (default ref: main). Or
-push a branch named `deploy/staging/<anything>`. The workflow bootstraps
-`/opt/maskin-staging`, writes `/etc/maskin-staging/agent-server.env`, installs
+Actions, "Deploy agent-server (staging)", Run workflow (default ref: main).
+Dispatch is the only trigger. To deploy a branch, put it in the `ref` input.
+The workflow bootstraps `/opt/maskin-staging`, writes
+`/etc/maskin-staging/agent-server.env`, installs
 `maskin-agent-server-staging.service` (port 3002, metrics off), restarts only
 that unit and health-checks `:3002`.
 
