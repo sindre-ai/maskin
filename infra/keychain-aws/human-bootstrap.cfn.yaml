@@ -70,7 +70,7 @@ Resources:
           - Sid: WormWrite
             Effect: Allow
             Action: s3:PutObject
-            Resource: !Sub arn:aws:s3:::maskin-keychain-worm-${Target}-${AWS::AccountId}/*
+            Resource: !Sub arn:aws:s3:::maskin-keychain-worm-${Target}-${AWS::AccountId}/snapshots/*
           - Sid: SnapshotRead
             Effect: Allow
             Action: s3:GetObject
@@ -79,6 +79,9 @@ Resources:
             Effect: Allow
             Action: s3:ListBucket
             Resource: !Sub arn:aws:s3:::maskin-keychain-worm-${Target}-${AWS::AccountId}
+            Condition:
+              StringLike:
+                s3:prefix: snapshots/*
           - Sid: NoTaggingOfKeysThatAreNotAlreadyInScope
             Effect: Deny
             Action: [kms:TagResource, kms:UntagResource]
