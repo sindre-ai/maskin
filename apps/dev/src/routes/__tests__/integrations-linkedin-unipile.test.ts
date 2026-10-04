@@ -510,6 +510,214 @@ describe('POST /send-message — idempotency dedup', () => {
 		expect(sent).toEqual(['send', 'reply'])
 	})
 
+	// Double-send guard: the key for a reply is built by the server from the chat
+	// and the inbound message being answered, so a webhook-woken session and a
+	// sweep-woken session that answer the same message claim the same slot.
+	describe('reply — server-derived key from in_reply_to_message_id', () => {
+		const chatId = 'chat-1'
+
+		function trackingClient() {
+			const upstream: { verb: 'send' | 'reply'; body: string }[] = []
+			let releaseFirstReply: () => void = () => {}
+			const firstReplyInFlight = new Promise<void>((resolve) => {
+				releaseFirstReply = resolve
+			})
+			let replyCalls = 0
+			fakeLinkedIn({
+				send: async (payload) => {
+					upstream.push({ verb: 'send', body: (payload as { body?: string }).body ?? '' })
+					return { status: 200, body: { id: `msg-send-${upstream.length}` }, headers: {} }
+				},
+				reply: async (payload) => {
+					replyCalls++
+					const n = replyCalls
+					upstream.push({ verb: 'reply', body: (payload as { body?: string }).body ?? '' })
+					if (n === 1) await firstReplyInFlight
+					return { status: 200, body: { id: `msg-reply-${n}` }, headers: {} }
+				},
+			})
+			return { upstream, releaseFirstReply }
+		}
+
+		it('sends once when two concurrent replies with different bodies answer the same inbound message', async () => {
+			stubCredential(ACTOR_A, 'linkedin-A')
+			const { upstream, releaseFirstReply } = trackingClient()
+			const db = buildFakeDb()
+			const app = buildAppWithFakes({ actorId: ACTOR_A, db })
+
+			const webhookSession = req(app, 'POST', '/reply', {
+				thread_id: chatId,
+				body: 'draft from the webhook session',
+				in_reply_to_message_id: 'in-1',
+			})
+			await new Promise((r) => setTimeout(r, 0))
+			const sweepSession = await req(app, 'POST', '/reply', {
+				thread_id: chatId,
+				body: 'a different draft from the sweep session',
+				in_reply_to_message_id: 'in-1',
+			})
+
+			// The winner is still in flight, so the loser gets the retryable error.
+			expect(sweepSession.status).toBe(502)
+			releaseFirstReply()
+			const winnerJson = (await (await webhookSession).json()) as { replayed: boolean }
+			expect(winnerJson.replayed).toBe(false)
+			expect(upstream).toEqual([{ verb: 'reply', body: 'draft from the webhook session' }])
+			// The key stored in the ledger is the derived one.
+			expect(db.rows).toHaveLength(1)
+			expect(db.rows[0]?.key).toContain(`:inbound:${chatId}:in-1`)
+		})
+
+		it('replays the stored response when the second session arrives after the first finished', async () => {
+			stubCredential(ACTOR_A, 'linkedin-A')
+			const { upstream, releaseFirstReply } = trackingClient()
+			releaseFirstReply()
+			const db = buildFakeDb()
+			const app = buildAppWithFakes({ actorId: ACTOR_A, db })
+
+			// Webhook session answers first; the sweep tick finds the same inbound
+			// message later and drafts different words.
+			const first = await req(app, 'POST', '/reply', {
+				thread_id: chatId,
+				body: 'webhook draft',
+				in_reply_to_message_id: 'in-1',
+			})
+			const second = await req(app, 'POST', '/reply', {
+				thread_id: chatId,
+				body: 'sweep draft',
+				in_reply_to_message_id: 'in-1',
+			})
+
+			const firstJson = (await first.json()) as { message_id: string; replayed: boolean }
+			const secondJson = (await second.json()) as { message_id: string; replayed: boolean }
+			expect(firstJson.replayed).toBe(false)
+			expect(secondJson.replayed).toBe(true)
+			expect(secondJson.message_id).toBe(firstJson.message_id)
+			expect(upstream).toEqual([{ verb: 'reply', body: 'webhook draft' }])
+		})
+
+		it('sends both when the replies answer different inbound messages', async () => {
+			stubCredential(ACTOR_A, 'linkedin-A')
+			const { upstream, releaseFirstReply } = trackingClient()
+			releaseFirstReply()
+			const db = buildFakeDb()
+			const app = buildAppWithFakes({ actorId: ACTOR_A, db })
+
+			// Sequential on purpose: the fake DB tracks one current key at a time,
+			// so overlapping calls with different keys would cross its wires.
+			await req(app, 'POST', '/reply', {
+				thread_id: chatId,
+				body: 'answer to the first message',
+				in_reply_to_message_id: 'in-1',
+			})
+			const second = await req(app, 'POST', '/reply', {
+				thread_id: chatId,
+				body: 'answer to the second message',
+				in_reply_to_message_id: 'in-2',
+			})
+
+			expect(((await second.json()) as { replayed: boolean }).replayed).toBe(false)
+			expect(upstream.map((u) => u.body)).toEqual([
+				'answer to the first message',
+				'answer to the second message',
+			])
+		})
+
+		it('ignores a supplied idempotency_key when in_reply_to_message_id is present', async () => {
+			stubCredential(ACTOR_A, 'linkedin-A')
+			const { upstream, releaseFirstReply } = trackingClient()
+			releaseFirstReply()
+			const db = buildFakeDb()
+			const app = buildAppWithFakes({ actorId: ACTOR_A, db })
+
+			await req(app, 'POST', '/reply', {
+				thread_id: chatId,
+				body: 'first',
+				in_reply_to_message_id: 'in-1',
+				idempotency_key: 'prompt-made-key-a',
+			})
+			const second = await req(app, 'POST', '/reply', {
+				thread_id: chatId,
+				body: 'second',
+				in_reply_to_message_id: 'in-1',
+				idempotency_key: 'prompt-made-key-b',
+			})
+
+			expect(((await second.json()) as { replayed: boolean }).replayed).toBe(true)
+			expect(upstream).toHaveLength(1)
+		})
+
+		it('rejects an in_reply_to_message_id that would push the key past the length limit', async () => {
+			stubCredential(ACTOR_A, 'linkedin-A')
+			const { upstream } = trackingClient()
+			const app = buildAppWithFakes({ actorId: ACTOR_A, db: buildFakeDb() })
+
+			const res = await req(app, 'POST', '/reply', {
+				thread_id: chatId,
+				body: 'hi',
+				in_reply_to_message_id: 'x'.repeat(200),
+			})
+
+			expect(res.status).toBe(400)
+			expect(upstream).toHaveLength(0)
+		})
+
+		it('still accepts the legacy idempotency_key when in_reply_to_message_id is absent, and warns', async () => {
+			stubCredential(ACTOR_A, 'linkedin-A')
+			const { upstream, releaseFirstReply } = trackingClient()
+			releaseFirstReply()
+			const { logger } = await import('../../lib/logger')
+			vi.mocked(logger.warn).mockClear()
+			const app = buildAppWithFakes({ actorId: ACTOR_A, db: buildFakeDb() })
+
+			const res = await req(app, 'POST', '/reply', {
+				thread_id: chatId,
+				body: 'legacy caller',
+				idempotency_key: 'legacy-key',
+			})
+
+			expect(res.status).toBe(200)
+			expect(upstream).toHaveLength(1)
+			expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+				expect.stringContaining('without in_reply_to_message_id'),
+				expect.anything(),
+			)
+		})
+
+		it('rejects a reply with neither in_reply_to_message_id nor idempotency_key', async () => {
+			stubCredential(ACTOR_A, 'linkedin-A')
+			const app = buildAppWithFakes({ actorId: ACTOR_A, db: buildFakeDb() })
+			const res = await req(app, 'POST', '/reply', { thread_id: chatId, body: 'hi' })
+			expect(res.status).toBe(400)
+		})
+
+		// Documents a limit, not a guarantee: send-message has its own route path
+		// in the stored key, so a send and a reply to the same inbound message do
+		// not collide. The verb mismatch is caught by the prompt wording review
+		// (both prompts say "answer an existing chat with linkedin_reply"), not by code.
+		it('does not stop a send-message from answering the same chat as a reply', async () => {
+			stubCredential(ACTOR_A, 'linkedin-A')
+			const { upstream, releaseFirstReply } = trackingClient()
+			releaseFirstReply()
+			const db = buildFakeDb()
+			const app = buildAppWithFakes({ actorId: ACTOR_A, db })
+
+			await req(app, 'POST', '/reply', {
+				thread_id: chatId,
+				body: 'reply verb',
+				in_reply_to_message_id: 'in-1',
+			})
+			const viaSend = await req(app, 'POST', '/send-message', {
+				recipient_urn: 'urn:li:person:X',
+				body: 'send verb',
+				idempotency_key: `inbound:${chatId}:in-1`,
+			})
+
+			expect(((await viaSend.json()) as { replayed: boolean }).replayed).toBe(false)
+			expect(upstream.map((u) => u.verb)).toEqual(['reply', 'send'])
+		})
+	})
+
 	// A failed send must release its claim, or a transient upstream error would
 	// poison the key until the nightly purge and block every legitimate retry.
 	it('releases the claim when the send fails, so a retry can proceed', async () => {
