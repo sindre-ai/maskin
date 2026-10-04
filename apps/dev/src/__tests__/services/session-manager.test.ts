@@ -2845,12 +2845,11 @@ describe('SessionManager', () => {
 		it('logs a warning with the dropped exit code and current session state when the CAS update matches no row', async () => {
 			const session = buildSession({ status: 'completed', result: { exit_code: 0 } })
 			mockResults.update = [] // .returning() → no row: UPDATE matched nothing (already terminal)
-			// 1st select: markRemoteSessionComplete's own usage extraction (reads
-			// session_logs) — empty means "no usage found". 2nd select: the stdout
-			// tail read for credit classification (also session_logs; empty means
-			// nothing to classify). 3rd select: the best-effort lookup used only to
-			// enrich the dropped-signal log line.
-			mockResults.selectQueue = [[], [], [session]]
+			// 1st select: the single stdout read from session_logs that serves both
+			// the usage parse and the credit classification — empty means "no usage
+			// found, nothing to classify". 2nd select: the best-effort lookup used
+			// only to enrich the dropped-signal log line.
+			mockResults.selectQueue = [[], [session]]
 			const warnSpy = vi.spyOn(logger, 'warn')
 
 			await manager.markRemoteSessionComplete(session.id, 1)
@@ -2867,15 +2866,16 @@ describe('SessionManager', () => {
 			)
 		})
 
-		it('still reaches a terminal state when the stdout tail read for classification throws', async () => {
-			// The tail read added for credit classification is best-effort: it runs
-			// before the CAS update, and stopSession() calls this method after the
-			// remote sandbox is already dead. A throw escaping here would surface
-			// as a spurious "stop failed" 400 for a stop that actually succeeded.
+		it('still reaches a terminal state when the stdout read for usage and classification throws', async () => {
+			// The stdout read (shared by usage parsing and credit classification) is
+			// best-effort: it runs before the CAS update, and stopSession() calls this
+			// method after the remote sandbox is already dead. A throw escaping here
+			// would surface as a spurious "stop failed" 400 for a stop that actually
+			// succeeded.
 			const session = buildSession({ status: 'running' })
 			mockResults.updateQueue = [[session], []]
-			// 1st select: usage extraction. 2nd select: the tail read, which throws.
-			mockResults.selectErrorQueue = [undefined, new Error('connection reset')]
+			// 1st select: the stdout read, which throws.
+			mockResults.selectErrorQueue = [new Error('connection reset')]
 
 			await expect(manager.markRemoteSessionComplete(session.id, 137)).resolves.toBe(true)
 
@@ -2953,12 +2953,11 @@ describe('SessionManager', () => {
 				new Error('connection reset'),
 				new Error('connection reset'),
 			]
-			// 1st select: usage extraction (empty = no-op). 2nd select: the stdout
-			// tail read for credit classification (also a no-op here; it swallows
-			// its own errors). 3rd select: the fallback lookup itself throws — the
-			// DB is still unreachable.
+			// 1st select: the stdout read for usage and credit classification (empty
+			// = no-op). 2nd select: the fallback lookup itself throws — the DB is
+			// still unreachable.
 			mockResults.selectQueue = [[]]
-			mockResults.selectErrorQueue = [undefined, undefined, new Error('connection reset')]
+			mockResults.selectErrorQueue = [undefined, new Error('connection reset')]
 			const initialInsertCount = calls.inserts.length
 
 			await expect(manager.markRemoteSessionComplete('some-session-id', 137)).resolves.toBe(false)
