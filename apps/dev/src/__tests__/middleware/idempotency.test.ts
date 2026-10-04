@@ -19,6 +19,8 @@ function createApp(actorId = 'actor-1', dbCtx = createTestContext()) {
 		return c.json({ count: callCount })
 	})
 
+	app.post('/key', (c) => c.json({ api_key: 'ank_fake_value' }))
+
 	app.get('/test', (c) => {
 		callCount++
 		return c.json({ count: callCount })
@@ -95,6 +97,24 @@ describe('idempotency middleware', () => {
 		})
 		expect((await res2.json()).count).toBe(99)
 		expect(getCallCount()).toBe(1) // handler NOT called again
+	})
+
+	it('does not write a response containing an api_key to the ledger', async () => {
+		const dbCtx = createTestContext()
+		const { app } = createApp('actor-1', dbCtx)
+		dbCtx.mockResults.selectQueue = [[], []]
+
+		const keyed = await app.request('/key', {
+			method: 'POST',
+			headers: { 'Idempotency-Key': 'key-1' },
+		})
+		expect(keyed.status).toBe(200)
+		expect((await keyed.json()).api_key).toBe('ank_fake_value')
+		expect(dbCtx.calls.inserts).toHaveLength(0)
+
+		// Control: an ordinary response is still recorded.
+		await app.request('/test', { method: 'POST', headers: { 'Idempotency-Key': 'plain-1' } })
+		expect(dbCtx.calls.inserts).toHaveLength(1)
 	})
 
 	it('falls open when DB lookup throws (does not block writes)', async () => {
