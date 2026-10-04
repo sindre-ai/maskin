@@ -12,10 +12,13 @@ import { recordEvent } from '../lib/events/record-event'
 import { createAuthLink } from '../lib/integrations/providers/linkedin-unipile/client'
 import { deleteUnipileAccountForReconnectOrphan } from '../lib/integrations/providers/linkedin-unipile/disconnect'
 import { enumerateLinkedInIdentitiesAndRegister } from '../lib/integrations/providers/linkedin-unipile/enumeration'
+import { readUnipileEnvelope } from '../lib/integrations/providers/linkedin-unipile/envelope'
 import {
 	LinkedInIntegrationError,
 	isLinkedInIntegrationError,
 } from '../lib/integrations/providers/linkedin-unipile/errors'
+import { getEventMapRow } from '../lib/integrations/providers/linkedin-unipile/event-map'
+import { ingestUnipileEnvelope } from '../lib/integrations/providers/linkedin-unipile/ingest'
 import { selfHealLinkedInMcpCredential } from '../lib/integrations/providers/linkedin-unipile/mcp-registry-self-heal'
 import {
 	commentOnLinkedInPost,
@@ -1010,24 +1013,30 @@ app.post('/webhook', async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Invalid JSON in webhook payload'), 400)
 	}
 
-	const parsed = parseAccountReconnectPayload(payload)
-	if (!parsed) {
-		// Unknown or unhandled Unipile event type — acknowledge so Unipile
-		// does not retry. Log the shape so an unhandled event kind surfaces
-		// in the dev log rather than staying invisible. Common expected
-		// arrivals here: `account.status.*`, `message.*`, `chat.*`, etc.
-		// If we ever need to react to those, extend `RE_ENUMERATE_EVENTS`
-		// below rather than special-casing here.
-		logger.info('linkedin-unipile webhook: skipped unhandled event', {
-			presentKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
-		})
-		return c.json({ ok: true, skipped: true })
+	const envelope = readUnipileEnvelope(payload)
+
+	if (envelope.type && RE_ENUMERATE_EVENTS.has(envelope.type) && envelope.accountId) {
+		const db = c.get('db')
+		const client = buildLinkedInClientForWebhook()
+		const result = await handleUnipileAccountReconnect(db, client, envelope.accountId)
+		return c.json({ ok: true, ...result })
 	}
 
-	const db = c.get('db')
-	const client = buildLinkedInClientForWebhook()
-	const result = await handleUnipileAccountReconnect(db, client, parsed.accountId)
-	return c.json({ ok: true, ...result })
+	const mapRow = getEventMapRow(envelope.type)
+	if (!mapRow) {
+		// Unknown or unhandled Unipile event type: acknowledge so Unipile does not
+		// retry. Log the shape so an unhandled event kind surfaces in the dev log
+		// rather than staying invisible. Common expected arrivals here:
+		// `account.status.*`, `chat.*`. To react to one, add a row to event-map.ts.
+		logger.info('linkedin-unipile webhook: skipped unhandled event', {
+			type: envelope.type,
+			presentKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
+		})
+		return c.json({ ok: true, skipped: 'unknown_type' })
+	}
+
+	const outcome = await ingestUnipileEnvelope(c.get('db'), mapRow, envelope)
+	return c.json(outcome.body, outcome.status)
 })
 
 /**
@@ -1038,24 +1047,6 @@ app.post('/webhook', async (c) => {
  * https://developer.unipile.com/v2.0/reference/event-types-1.
  */
 const RE_ENUMERATE_EVENTS = new Set<string>(['account.reconnect'])
-
-const AccountReconnectPayloadSchema = z.object({
-	// Unipile v2 puts the event kind on `type` (docs example:
-	// https://developer.unipile.com/v2.0/docs/webhooks-introduction).
-	// v1 used `event`; accept both so a version drift does not silently
-	// no-op every delivery.
-	type: z.string().optional(),
-	event: z.string().optional(),
-	account_id: z.string().min(1),
-})
-
-function parseAccountReconnectPayload(payload: unknown): { accountId: string } | null {
-	const parsed = AccountReconnectPayloadSchema.safeParse(payload)
-	if (!parsed.success) return null
-	const kind = parsed.data.type ?? parsed.data.event
-	if (!kind || !RE_ENUMERATE_EVENTS.has(kind)) return null
-	return { accountId: parsed.data.account_id }
-}
 
 export default app
 

@@ -145,16 +145,17 @@ describe('POST /api/integrations/linkedin-unipile/webhook — auth', () => {
 describe('POST /api/integrations/linkedin-unipile/webhook — event handling', () => {
 	it('acknowledges (200 skipped) unhandled event kinds without re-enumerating', async () => {
 		const app = buildApp()
-		const body = '{"type":"message.new","account_id":"acc_1"}'
+		// message.new is a mapped event now (ingested, not skipped); relation.new has no map row yet.
+		const body = '{"type":"relation.new","account_id":"acc_1"}'
 		const res = await app.request(ROUTE, {
 			method: 'POST',
 			headers: { 'unipile-signature': sign(body, SECRET), 'content-type': 'application/json' },
 			body,
 		})
 		expect(res.status).toBe(200)
-		const json = (await res.json()) as { ok: boolean; skipped?: boolean }
+		const json = (await res.json()) as { ok: boolean; skipped?: string }
 		expect(json.ok).toBe(true)
-		expect(json.skipped).toBe(true)
+		expect(json.skipped).toBe('unknown_type')
 		expect(mocks.handleUnipileAccountReconnect).not.toHaveBeenCalled()
 	})
 
@@ -167,7 +168,7 @@ describe('POST /api/integrations/linkedin-unipile/webhook — event handling', (
 			body,
 		})
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ ok: true, skipped: true })
+		expect(await res.json()).toEqual({ ok: true, skipped: 'unknown_type' })
 		expect(mocks.handleUnipileAccountReconnect).not.toHaveBeenCalled()
 	})
 
@@ -182,7 +183,7 @@ describe('POST /api/integrations/linkedin-unipile/webhook — event handling', (
 			body,
 		})
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ ok: true, skipped: true })
+		expect(await res.json()).toEqual({ ok: true, skipped: 'unknown_type' })
 		expect(mocks.handleUnipileAccountReconnect).not.toHaveBeenCalled()
 	})
 
