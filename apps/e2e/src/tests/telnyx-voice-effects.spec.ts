@@ -115,6 +115,8 @@ test.describe('Voice reducer: Telnyx side effects', () => {
 		await send('call.answered', 'fx-h')
 		await send('call.machine.premium.detection.ended', 'fx-h', { result: 'human' })
 		await send('call.hangup', 'fx-h', { hangup_cause: 'normal_clearing' })
-		expect(requests).toHaveLength(0)
+		// The recordings mirror looks the call's recording up after a declined hangup; that is
+		// a read, not an effect on the prospect.
+		expect(requests.filter((r) => !r.url.startsWith('/v2/recordings'))).toHaveLength(0)
 	})
 })

@@ -200,6 +200,7 @@ async function afterCommit(db: Database, work: AfterCommit): Promise<unknown> {
 			status: result.status,
 			hangupCause: event.payload.hangup_cause ?? null,
 			durationS: event.payload.duration_s ?? null,
+			endedAt: event.payload.end_time ?? null,
 			recordingUrl: event.payload.recording_url ?? null,
 			transcriptUrl: event.payload.transcript_url ?? null,
 			transcript: event.payload.transcript,
