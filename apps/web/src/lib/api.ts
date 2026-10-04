@@ -461,6 +461,17 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		createByoApiKey: (workspaceId: string, body: { displayName: string; rawSecret: string }) =>
+			request<{ integrationId: string }>('/integrations/byo-apikey', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		auditLog: (id: string, workspaceId: string, beforeId?: string) =>
+			request<CredentialAuditLogPage>(
+				`/integrations/${id}/audit-log${beforeId ? `?before_id=${beforeId}` : ''}`,
+				{ workspaceId },
+			),
 		undo: (id: string, workspaceId: string) =>
 			request<{ id: string; status: 'undone' }>(`/integrations/${id}/undo`, {
 				method: 'POST',
@@ -1556,6 +1567,35 @@ export interface IntegrationResponse {
 	source?: string
 	/** Keychain: for source chat_capture, the session the key was pasted into. */
 	originSessionId?: string | null
+	/** Keychain: how the credential is held. Absent from a server that predates it. */
+	providerMode?: 'registered' | 'byo_apikey' | 'byo_oauth'
+	/** Keychain: the name the member gave it. Null for the registered providers. */
+	displayName?: string | null
+	/** Keychain: who may read it. Empty means nobody (fail-closed). */
+	scopeGrants?: KeychainScopeGrant[]
+}
+
+export type KeychainScopeGrant =
+	| { kind: 'actor'; actorId: string }
+	| { kind: 'loop'; loopId: string }
+	| { kind: 'workspace' }
+
+export interface CredentialAuditEntry {
+	id: string
+	actorId: string
+	sessionId: string | null
+	outboundTarget: string | null
+	action: 'read' | 'create' | 'undone' | 'rotated' | 'sweeper_activated'
+	source: string
+	readAt: string
+}
+
+export interface CredentialAuditLogPage {
+	integrationId: string
+	source: string
+	originSessionId: string | null
+	entries: CredentialAuditEntry[]
+	nextBeforeId: string | null
 }
 
 export type ChatCaptureProvider = 'cloudflare' | 'github' | 'stripe' | 'slack' | 'openai-style'
