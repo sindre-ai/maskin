@@ -3,8 +3,10 @@ import type { StorageProvider } from '@maskin/storage'
 import AdmZip from 'adm-zip'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
-import { processVoiceRetentionSweep } from '../../jobs/voice-retention-sweep'
+import { processVoiceRetentionSweep, sweepErased } from '../../jobs/voice-retention-sweep'
 import type { CallRecording } from '../../lib/integrations/providers/telnyx/client'
+import { TelnyxHttpError } from '../../lib/integrations/providers/telnyx/http'
+import { applyVoiceEvent } from '../../lib/outreach/voice/apply'
 import { postCallHooks } from '../../lib/outreach/voice/post-call'
 import {
 	type MirrorDeps,
@@ -55,6 +57,42 @@ function fakeStorage() {
 	return { blobs, provider }
 }
 
+/**
+ * In-memory Telnyx: recordings hosted per call id, deleted by recording id. Verifies our
+ * ordering and failure handling, not that Telnyx answers the way this fake does.
+ */
+function fakeTelnyx(hosted: Record<string, string[]> = {}) {
+	const byCall = new Map(Object.entries(hosted).map(([callId, ids]) => [callId, [...ids]]))
+	const failing = new Set<string>()
+	const deleteCalls: string[] = []
+	const client = {
+		async listRecordings(callId: string): Promise<CallRecording[]> {
+			return (byCall.get(callId) ?? []).map((recordingId) => ({
+				recordingId,
+				status: 'completed',
+				mp3Url: null,
+			}))
+		},
+		async deleteRecording(recordingId: string): Promise<'deleted' | 'not_found'> {
+			deleteCalls.push(recordingId)
+			if (failing.has(recordingId)) throw new TelnyxHttpError('Telnyx is down', 503, null)
+			for (const [callId, ids] of byCall) {
+				if (ids.includes(recordingId)) {
+					byCall.set(
+						callId,
+						ids.filter((id) => id !== recordingId),
+					)
+					return 'deleted'
+				}
+			}
+			return 'not_found'
+		},
+	}
+	const factory = vi.fn(() => client)
+	const stillHosted = () => [...byCall.values()].flat().sort()
+	return { client, factory, failing, deleteCalls, stillHosted }
+}
+
 const MP3_URL = 'https://files.telnyx.test/rec.mp3'
 const JSON_URL = 'https://files.telnyx.test/transcript.json'
 const TRANSCRIPT = JSON.stringify({
@@ -96,7 +134,8 @@ const fx = () => {
 		retryDelaysMs: [1, 2, 3],
 		...extra,
 	})
-	return { storage, sleep, findRecording, deps }
+	const telnyx = fakeTelnyx()
+	return { storage, sleep, findRecording, deps, telnyx }
 }
 
 const call = (callId = 'call-1', endedAt = new Date('2026-10-03T12:00:00.000Z')) => ({
@@ -305,13 +344,14 @@ describe('voice retention sweep', () => {
 			},
 		})
 		await seedConsent(s)
-		const { storage } = fx()
+		const { storage, telnyx } = fx()
 		await storage.provider.put(recordingKey(s.contactId, 'call-1'), Buffer.from('a'))
 		await storage.provider.put(transcriptKey(s.contactId, 'call-1'), Buffer.from('b'))
 
 		const result = await processVoiceRetentionSweep(
 			db,
 			storage.provider,
+			telnyx.factory,
 			new Date('2026-10-03T12:00:00.000Z'),
 		)
 
@@ -333,10 +373,15 @@ describe('voice retention sweep', () => {
 				retention_expires_at: '2028-09-01T00:00:00.000Z',
 			},
 		})
-		const { storage } = fx()
+		const { storage, telnyx } = fx()
 		await storage.provider.put(recordingKey(s.contactId, 'call-1'), Buffer.from('a'))
 
-		const result = await processVoiceRetentionSweep(db, storage.provider, new Date('2026-10-03'))
+		const result = await processVoiceRetentionSweep(
+			db,
+			storage.provider,
+			telnyx.factory,
+			new Date('2026-10-03'),
+		)
 
 		expect(result.expired).toBe(0)
 		expect(storage.blobs.size).toBe(1)
@@ -350,12 +395,22 @@ describe('voice retention sweep', () => {
 				voice_last_touch_at: '2024-09-01T00:00:00.000Z',
 			},
 		})
-		const { storage } = fx()
+		const { storage, telnyx } = fx()
 		await storage.provider.put(recordingKey(s.contactId, 'call-1'), Buffer.from('a'))
 
-		const before = await processVoiceRetentionSweep(db, storage.provider, new Date('2026-08-31'))
+		const before = await processVoiceRetentionSweep(
+			db,
+			storage.provider,
+			telnyx.factory,
+			new Date('2026-08-31'),
+		)
 		expect(before.expired).toBe(0)
-		const after = await processVoiceRetentionSweep(db, storage.provider, new Date('2026-09-02'))
+		const after = await processVoiceRetentionSweep(
+			db,
+			storage.provider,
+			telnyx.factory,
+			new Date('2026-09-02'),
+		)
 		expect(after.expired).toBe(1)
 		expect(storage.blobs.size).toBe(0)
 	})
@@ -377,13 +432,13 @@ describe('voice erasure', () => {
 			},
 		})
 		await seedConsent(s)
-		const { storage } = fx()
+		const { storage, telnyx } = fx()
 		await storage.provider.put(recordingKey(s.contactId, 'call-1'), Buffer.from('a'))
 		await storage.provider.put(transcriptKey(s.contactId, 'call-1'), Buffer.from('b'))
 		const other = await setup()
 		await storage.provider.put(recordingKey(other.contactId, 'call-9'), Buffer.from('keep'))
 
-		const result = await processVoiceRetentionSweep(db, storage.provider)
+		const result = await processVoiceRetentionSweep(db, storage.provider, telnyx.factory)
 
 		expect(result).toEqual({ expired: 0, erased: 1 })
 		expect([...storage.blobs.keys()]).toEqual([recordingKey(other.contactId, 'call-9')])
@@ -397,7 +452,7 @@ describe('voice erasure', () => {
 		expect(await consentEvents(s.contactId)).toHaveLength(1)
 
 		// A second tick finds nothing left to do.
-		expect(await processVoiceRetentionSweep(db, storage.provider)).toEqual({
+		expect(await processVoiceRetentionSweep(db, storage.provider, telnyx.factory)).toEqual({
 			expired: 0,
 			erased: 0,
 		})
@@ -405,7 +460,7 @@ describe('voice erasure', () => {
 
 	it('does not strip the row when S3 deletion fails, so the next tick retries', async () => {
 		const s = await setup({ status: 'deleted_by_request' })
-		const { storage } = fx()
+		const { storage, telnyx } = fx()
 		await storage.provider.put(recordingKey(s.contactId, 'call-1'), Buffer.from('a'))
 		const failing: StorageProvider = {
 			...storage.provider,
@@ -414,13 +469,196 @@ describe('voice erasure', () => {
 			},
 		}
 
-		const result = await processVoiceRetentionSweep(db, failing)
+		const result = await processVoiceRetentionSweep(db, failing, telnyx.factory)
 
 		expect(result.erased).toBe(0)
 		const row = await rowOf(s.contactId)
 		expect(row.content).not.toBeNull()
 		expect(row.metadata.erased_at).toBeUndefined()
-		expect((await processVoiceRetentionSweep(db, storage.provider)).erased).toBe(1)
+		expect((await processVoiceRetentionSweep(db, storage.provider, telnyx.factory)).erased).toBe(1)
+	})
+})
+
+async function twoCallContact(overrides: Record<string, unknown> = {}) {
+	const s = await setup({
+		metadata: {
+			...consentFields,
+			email: 'pia@prospect.example',
+			last_call_id: 'call-2',
+			last_call_recording_id: recordingKey('placeholder', 'call-2'),
+			last_call_transcript_id: transcriptKey('placeholder', 'call-2'),
+			voice_last_touch_at: '2024-01-01T00:00:00.000Z',
+			retention_expires_at: '2026-01-01T00:00:00.000Z',
+		},
+		...overrides,
+	})
+	const { storage } = fx()
+	for (const callId of ['call-1', 'call-2']) {
+		await storage.provider.put(recordingKey(s.contactId, callId), Buffer.from('a'))
+		await storage.provider.put(transcriptKey(s.contactId, callId), Buffer.from('b'))
+	}
+	const telnyx = fakeTelnyx({ 'call-1': ['rec-1'], 'call-2': ['rec-2'] })
+	return { ...s, storage, telnyx }
+}
+
+const erasureAuditRows = async (contactId: string) =>
+	(await db.select().from(events).where(eq(events.entityId, contactId))).filter(
+		(e) => (e.data as { reason?: string } | null)?.reason === 'erasure',
+	)
+
+describe('Telnyx-hosted recordings on erasure', () => {
+	it('deletes every recording of a contact with two calls on Telnyx as well as in S3', async () => {
+		const s = await twoCallContact({ status: 'deleted_by_request' })
+
+		const result = await processVoiceRetentionSweep(db, s.storage.provider, s.telnyx.factory)
+
+		expect(result.erased).toBe(1)
+		expect(s.telnyx.deleteCalls.sort()).toEqual(['rec-1', 'rec-2'])
+		expect(s.telnyx.stillHosted()).toEqual([])
+		expect(s.storage.blobs.size).toBe(0)
+		const row = await rowOf(s.contactId)
+		expect(row.status).toBe('deleted_by_request')
+		expect(row.metadata.erased_at).toBeDefined()
+		const [audit] = await erasureAuditRows(s.contactId)
+		expect((audit?.data as { telnyx_recordings_deleted?: number }).telnyx_recordings_deleted).toBe(
+			2,
+		)
+	})
+
+	it('finds a call whose mirror failed through its event, though no blob exists for it', async () => {
+		const s = await setup({
+			status: 'deleted_by_request',
+			metadata: { last_call_id: 'call-2' },
+		})
+		await db.insert(events).values({
+			workspaceId: s.workspaceId,
+			actorId: getTestActorId(),
+			action: 'voice_mirror_failed',
+			entityType: 'object',
+			entityId: s.contactId,
+			data: { call_id: 'call-1', attempts: 6, reason: 'recording not ready' },
+		})
+		const { storage } = fx()
+		const telnyx = fakeTelnyx({ 'call-1': ['rec-1'], 'call-2': ['rec-2'] })
+
+		await processVoiceRetentionSweep(db, storage.provider, telnyx.factory)
+
+		expect(telnyx.stillHosted()).toEqual([])
+		expect((await rowOf(s.contactId)).metadata.erased_at).toBeDefined()
+	})
+
+	it('keeps the ids and does not mark the contact erased when the Telnyx delete fails, then erases it once on a later tick', async () => {
+		const s = await twoCallContact({ status: 'deleted_by_request' })
+		s.telnyx.failing.add('rec-2')
+
+		const first = await processVoiceRetentionSweep(db, s.storage.provider, s.telnyx.factory)
+
+		expect(first.erased).toBe(0)
+		// Nothing that identifies a hosted recording was stripped, cleared or deleted.
+		const held = await rowOf(s.contactId)
+		expect(held.metadata.erased_at).toBeUndefined()
+		expect(held.metadata.last_call_id).toBe('call-2')
+		expect(held.content).not.toBeNull()
+		expect(s.storage.blobs.size).toBe(4)
+		expect(s.telnyx.stillHosted()).toEqual(['rec-2'])
+		expect(await erasureAuditRows(s.contactId)).toHaveLength(0)
+
+		// The sweep strip path runs again on the next tick and still has the ids to retry with.
+		const stillFailing = await processVoiceRetentionSweep(db, s.storage.provider, s.telnyx.factory)
+		expect(stillFailing.erased).toBe(0)
+		expect((await rowOf(s.contactId)).metadata.last_call_id).toBe('call-2')
+
+		s.telnyx.failing.clear()
+		const later = await processVoiceRetentionSweep(db, s.storage.provider, s.telnyx.factory)
+
+		expect(later.erased).toBe(1)
+		expect(s.telnyx.stillHosted()).toEqual([])
+		const done = await rowOf(s.contactId)
+		expect(done.metadata.erased_at).toBeDefined()
+		expect(done.metadata.last_call_id).toBeUndefined()
+		expect(await erasureAuditRows(s.contactId)).toHaveLength(1)
+		expect(
+			(await processVoiceRetentionSweep(db, s.storage.provider, s.telnyx.factory)).erased,
+		).toBe(0)
+	})
+
+	it('treats a recording Telnyx reports as already gone as deleted', async () => {
+		// Telnyx lists rec-1 but answers 404 on delete, as after a half-finished earlier run.
+		const s = await twoCallContact({ status: 'deleted_by_request' })
+		const racing = {
+			...s.telnyx.client,
+			deleteRecording: async (): Promise<'deleted' | 'not_found'> => 'not_found',
+		}
+
+		const result = await processVoiceRetentionSweep(db, s.storage.provider, () => racing)
+
+		expect(result.erased).toBe(1)
+		expect((await rowOf(s.contactId)).metadata.erased_at).toBeDefined()
+	})
+
+	it('leaves the contact for the next tick when the Telnyx key is not configured', async () => {
+		const s = await twoCallContact({ status: 'deleted_by_request' })
+
+		const result = await processVoiceRetentionSweep(db, s.storage.provider, () => {
+			throw new Error('TELNYX_API_KEY is not configured')
+		})
+
+		expect(result.erased).toBe(0)
+		expect((await rowOf(s.contactId)).metadata.erased_at).toBeUndefined()
+		expect(s.storage.blobs.size).toBe(4)
+	})
+
+	it('needs no Telnyx client for a contact that never had a call', async () => {
+		const s = await setup({ status: 'deleted_by_request', metadata: { email: 'x@y.example' } })
+		const { storage, telnyx } = fx()
+
+		const erased = await sweepErased(db, storage.provider, telnyx.factory)
+
+		expect(erased).toBe(1)
+		expect(telnyx.factory).not.toHaveBeenCalled()
+		expect((await rowOf(s.contactId)).metadata.erased_at).toBeDefined()
+	})
+})
+
+describe('Telnyx-hosted recordings on retention expiry', () => {
+	it('deletes every recording of a contact with two calls on Telnyx as well as in S3', async () => {
+		const s = await twoCallContact()
+
+		const result = await processVoiceRetentionSweep(
+			db,
+			s.storage.provider,
+			s.telnyx.factory,
+			new Date('2026-10-03T12:00:00.000Z'),
+		)
+
+		expect(result.expired).toBe(1)
+		expect(s.telnyx.deleteCalls.sort()).toEqual(['rec-1', 'rec-2'])
+		expect(s.telnyx.stillHosted()).toEqual([])
+		expect(s.storage.blobs.size).toBe(0)
+		const row = await rowOf(s.contactId)
+		expect(row.metadata.last_call_recording_id).toBeUndefined()
+		expect(row.metadata).toMatchObject(consentFields)
+	})
+
+	it('keeps the blob ids when the Telnyx delete fails, so the next tick retries', async () => {
+		const s = await twoCallContact()
+		s.telnyx.failing.add('rec-1')
+		const now = new Date('2026-10-03T12:00:00.000Z')
+
+		const first = await processVoiceRetentionSweep(db, s.storage.provider, s.telnyx.factory, now)
+
+		expect(first.expired).toBe(0)
+		const held = await rowOf(s.contactId)
+		expect(held.metadata.last_call_recording_id).toBeDefined()
+		expect(s.storage.blobs.size).toBe(4)
+
+		s.telnyx.failing.clear()
+		const later = await processVoiceRetentionSweep(db, s.storage.provider, s.telnyx.factory, now)
+
+		expect(later.expired).toBe(1)
+		expect(s.telnyx.stillHosted()).toEqual([])
+		expect(s.storage.blobs.size).toBe(0)
+		expect((await rowOf(s.contactId)).metadata.last_call_recording_id).toBeUndefined()
 	})
 })
 
@@ -543,4 +781,99 @@ describe('voice mirror post-call hook', () => {
 			configureVoiceArtifactStorage(null)
 		}
 	})
+})
+
+describe('Telnyx-hosted recordings of a redialed contact whose first call was never mirrored', () => {
+	// Call 1 has no blob, no mirror event and is no longer last_call_id. Only the call_id on
+	// the contact's events can lead the sweep to its Telnyx recording.
+	type Path = 'erasure' | 'expiry'
+
+	async function redialed(path: Path) {
+		// Call 2 was mirrored; call 1 never was.
+		const s = await setup({
+			status: 'voice_queued',
+			metadata: {
+				last_call_recording_id: recordingKey('placeholder', 'call-2'),
+				last_call_transcript_id: transcriptKey('placeholder', 'call-2'),
+				...(path === 'expiry' && {
+					voice_last_touch_at: '2024-01-01T00:00:00.000Z',
+					retention_expires_at: '2026-01-01T00:00:00.000Z',
+				}),
+			},
+		})
+		const storage = fakeStorage()
+		await storage.provider.put(recordingKey(s.contactId, 'call-2'), Buffer.from('a'))
+		await storage.provider.put(transcriptKey(s.contactId, 'call-2'), Buffer.from('b'))
+		return {
+			...s,
+			storage,
+			telnyx: fakeTelnyx({ 'call-1': ['rec-1'], 'call-2': ['rec-2'] }),
+		}
+	}
+
+	async function sweepAfter(path: Path, s: Awaited<ReturnType<typeof redialed>>) {
+		if (path === 'erasure') {
+			await db
+				.update(objects)
+				.set({ status: 'deleted_by_request' })
+				.where(eq(objects.id, s.contactId))
+		}
+		await processVoiceRetentionSweep(
+			db,
+			s.storage.provider,
+			s.telnyx.factory,
+			path === 'expiry' ? new Date('2026-10-03T12:00:00.000Z') : undefined,
+		)
+	}
+
+	it.each(['erasure', 'expiry'] as const)(
+		'the webhook reducer writes the call id on both dials, so %s finds both recordings',
+		async (path) => {
+			const s = await redialed(path)
+			for (const callId of ['call-1', 'call-2']) {
+				const result = await applyVoiceEvent(db, {
+					workspaceId: s.workspaceId,
+					contactId: s.contactId,
+					event: { type: 'call_initiated', callId },
+				})
+				expect(result).toMatchObject({ found: true, applied: true })
+			}
+			// The redial moved last_call_id on; only call 2 has blobs.
+			expect((await rowOf(s.contactId)).metadata.last_call_id).toBe('call-2')
+			expect(s.storage.blobs.size).toBe(2)
+
+			await sweepAfter(path, s)
+
+			expect(s.storage.blobs.size).toBe(0)
+			expect(s.telnyx.deleteCalls.sort()).toEqual(['rec-1', 'rec-2'])
+			expect(s.telnyx.stillHosted()).toEqual([])
+		},
+	)
+
+	it.each(['erasure', 'expiry'] as const)(
+		'the dialer event written when createCall returns finds a call whose webhooks were all lost, on %s',
+		async (path) => {
+			const s = await redialed(path)
+			await applyVoiceEvent(db, {
+				workspaceId: s.workspaceId,
+				contactId: s.contactId,
+				event: { type: 'call_initiated', callId: 'call-2' },
+			})
+			// The shape the dialer records right after createCall returns (dialer.ts, bet branch).
+			await db.insert(events).values({
+				workspaceId: s.workspaceId,
+				actorId: getTestActorId(),
+				action: 'call_initiated',
+				entityType: 'object',
+				entityId: s.contactId,
+				data: { call_id: 'call-1', call_session_id: 'session-1', dial_attempt_n: 1 },
+			})
+
+			await sweepAfter(path, s)
+
+			expect(s.storage.blobs.size).toBe(0)
+			expect(s.telnyx.deleteCalls.sort()).toEqual(['rec-1', 'rec-2'])
+			expect(s.telnyx.stillHosted()).toEqual([])
+		},
+	)
 })

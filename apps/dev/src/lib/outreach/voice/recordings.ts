@@ -1,10 +1,10 @@
 import type { Database } from '@maskin/db'
-import { objects } from '@maskin/db/schema'
+import { events, objects } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import AdmZip from 'adm-zip'
 import { and, eq, ne, sql } from 'drizzle-orm'
 import { recordEvent } from '../../events/record-event'
-import type { CallRecording } from '../../integrations/providers/telnyx/client'
+import type { CallRecording, TelnyxClient } from '../../integrations/providers/telnyx/client'
 import { logger } from '../../logger'
 
 /**
@@ -257,6 +257,77 @@ export async function deleteVoiceBlobs(
 	const keys = await storage.list(voiceBlobPrefix(contactId))
 	for (const key of keys) await storage.delete(key)
 	return keys.length
+}
+
+/** The slice of the Telnyx client the sweep needs to remove hosted recordings. */
+export type TelnyxRecordingClient = Pick<TelnyxClient, 'listRecordings' | 'deleteRecording'>
+
+/** Built only when a contact has a call to look up, so contacts without calls need no Telnyx key. */
+export type TelnyxRecordingClientFactory = () => TelnyxRecordingClient
+
+/**
+ * Every call id a contact has, found before any blob or metadata is removed. Three sources,
+ * because no single one is complete: the mirrored blobs (voice-outreach/<contact>/<call>.mp3|json),
+ * last_call_id (the latest call, mirrored or not), and the call_id on the contact's events
+ * (voice_mirror, voice_mirror_failed, the consent event), which covers a call whose mirror failed.
+ * The stored last_call_recording_id is one call's S3 key, so it is not a source.
+ */
+export async function collectCallIds(
+	db: Database,
+	storage: StorageProvider,
+	contact: { id: string; workspaceId: string; metadata: unknown },
+): Promise<string[]> {
+	const ids = new Set<string>()
+	const prefix = voiceBlobPrefix(contact.id)
+	for (const key of await storage.list(prefix)) {
+		const callId = key.slice(prefix.length).replace(/\.(mp3|json)$/, '')
+		if (callId) ids.add(callId)
+	}
+	const lastCallId = (contact.metadata as { last_call_id?: unknown } | null)?.last_call_id
+	if (typeof lastCallId === 'string' && lastCallId) ids.add(lastCallId)
+	const rows = await db
+		.selectDistinct({ callId: sql<string>`${events.data}->>'call_id'` })
+		.from(events)
+		.where(
+			and(
+				eq(events.workspaceId, contact.workspaceId),
+				eq(events.entityId, contact.id),
+				sql`${events.data}->>'call_id' is not null`,
+			),
+		)
+	for (const row of rows) if (row.callId) ids.add(row.callId)
+	return [...ids]
+}
+
+/**
+ * Deletes every recording Telnyx hosts for the given calls. A recording Telnyx says is gone
+ * (404) counts as deleted, so a half-finished earlier run does not loop. Every call is tried
+ * even if one fails; the failures are then thrown together, so the caller must not strip or
+ * clear anything that identifies these calls. Returns how many recordings were deleted now.
+ */
+export async function deleteTelnyxRecordings(
+	getClient: TelnyxRecordingClientFactory,
+	callIds: readonly string[],
+): Promise<number> {
+	if (callIds.length === 0) return 0
+	const client = getClient()
+	let deleted = 0
+	const failures: string[] = []
+	for (const callId of callIds) {
+		try {
+			for (const recording of await client.listRecordings(callId)) {
+				if ((await client.deleteRecording(recording.recordingId)) === 'deleted') deleted++
+			}
+		} catch (err) {
+			failures.push(`call ${callId}: ${err instanceof Error ? err.message : String(err)}`)
+		}
+	}
+	if (failures.length > 0) {
+		throw new Error(
+			`Telnyx recording delete failed for ${failures.length} call(s): ${failures.join('; ')}`,
+		)
+	}
+	return deleted
 }
 
 /**

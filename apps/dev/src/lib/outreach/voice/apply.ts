@@ -105,6 +105,9 @@ export async function applyVoiceEvent(
 			data: {
 				source: 'telnyx_webhook',
 				voice_event: params.event.type,
+				// Lets the erasure and expiry sweeps find this call's Telnyx recording after
+				// last_call_id has moved on to a redial.
+				...('callId' in params.event ? { call_id: params.event.callId } : {}),
 				fromStatus: row.status,
 				toStatus: result.status,
 			},
