@@ -16,6 +16,7 @@ import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { recordEvent } from '../lib/events/record-event'
+import { scopeGrantsOnInsert, scopeGrantsOnReconnect } from '../lib/integrations/default-grants'
 import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { detachProviderMcpServers } from '../lib/integrations/mcp-detach'
@@ -1179,6 +1180,7 @@ app.openapi(connectRoute, (async (c) => {
 			status: 'pending',
 			externalId: nonce,
 			credentials: '',
+			scopeGrants: scopeGrantsOnInsert(providerName),
 			createdBy: actorId,
 		})
 	} catch (err) {
@@ -1613,6 +1615,7 @@ app.openapi(callbackRoute, (async (c) => {
 				status: 'active',
 				credentials: encryptedCredentials,
 				config: activeConfig,
+				...scopeGrantsOnReconnect(providerName),
 				updatedAt: new Date(),
 			})
 			.where(eq(integrations.id, existingSameInstall.id))
