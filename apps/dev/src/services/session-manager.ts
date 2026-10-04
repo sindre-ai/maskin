@@ -76,6 +76,7 @@ import { isAuthRevokedError } from '../lib/integrations/errors'
 import { serverSpecReferencesEnvKey } from '../lib/integrations/mcp-server-spec-refs'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import { fetchInstallationOwnerLogin } from '../lib/integrations/providers/github/auth'
+import { GITHUB_MCP_SERVER_SPEC } from '../lib/integrations/providers/github/config'
 import {
 	type SessionGithubInstall,
 	sessionGithubLogClassifier,
@@ -146,6 +147,11 @@ import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace
  * stable group-by key from day one.
  */
 const LOCAL_RUNTIME_BUCKET = 'local-docker'
+
+/** Failure reasons for a session whose container is gone / was never assigned. */
+const CONTAINER_LOST_MESSAGE = 'Container disappeared before pause could complete'
+const NO_CONTAINER_ASSIGNED_MESSAGE =
+	'No container was ever assigned to this session — it was marked running but never started'
 
 /**
  * Guards the MCP health check's partial-line buffer against a stdout stream
@@ -1649,7 +1655,11 @@ export class SessionManager extends EventEmitter {
 	 * is dead, so the row stops blocking `sessions_conversation_actor_active_uniq`
 	 * for a fresh session.
 	 */
-	async markSessionFailedAfterContainerLoss(sessionId: string, workspaceId: string): Promise<void> {
+	async markSessionFailedAfterContainerLoss(
+		sessionId: string,
+		workspaceId: string,
+		reason = CONTAINER_LOST_MESSAGE,
+	): Promise<void> {
 		const [existing] = await this.db
 			.select({
 				startedAt: sessions.startedAt,
@@ -1675,7 +1685,7 @@ export class SessionManager extends EventEmitter {
 				kind: 'fail',
 				classification: 'sandbox_crash',
 				source: 'reaper',
-				reason: 'Container disappeared before pause could complete',
+				reason,
 				exitCode: 0,
 			},
 			this.buildSettleDeps({ skipStop: true, skipPush: true }),
@@ -1689,10 +1699,7 @@ export class SessionManager extends EventEmitter {
 			.set({ containerId: null, updatedAt: new Date() })
 			.where(eq(sessions.id, sessionId))
 
-		await this.insertSystemLog(
-			sessionId,
-			'Container disappeared before pause could complete — session marked failed',
-		).catch((err) =>
+		await this.insertSystemLog(sessionId, `${reason} — session marked failed`).catch((err) =>
 			logger.warn('Failed to insert system log for container-loss cleanup', {
 				sessionId,
 				error: String(err),
@@ -2490,11 +2497,17 @@ export class SessionManager extends EventEmitter {
 		// multi-org workspaces can target specific orgs via mcp__github-<owner>__* tools.
 		// We also set bare GITHUB_TOKEN so existing agent configs using ${GITHUB_TOKEN}
 		// continue to work after envsubst expansion.
+		// MASKIN_GITHUB_MCP is the kill-switch between the deprecated npx server and
+		// the official binary. Anything but "official" resolves to legacy.
+		const githubMcpSpec =
+			process.env.MASKIN_GITHUB_MCP === 'official'
+				? GITHUB_MCP_SERVER_SPEC
+				: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'] }
 		for (const { ownerLogin, token } of resolvedGithubInstalls) {
 			autoInjectedMcpServers[`github-${ownerLogin.toLowerCase()}`] = {
 				type: 'stdio',
-				command: 'npx',
-				args: ['-y', '@modelcontextprotocol/server-github'],
+				command: githubMcpSpec.command,
+				args: githubMcpSpec.args,
 				env: { GITHUB_PERSONAL_ACCESS_TOKEN: token },
 			}
 		}
@@ -4391,12 +4404,15 @@ export class SessionManager extends EventEmitter {
 					logger.warn('Marking session failed: running with no containerId', {
 						sessionId: session.id,
 					})
-					await this.markSessionFailedAfterContainerLoss(session.id, session.workspaceId).catch(
-						(err) =>
-							logger.error('Failed to mark session failed after container loss', {
-								sessionId: session.id,
-								error: String(err),
-							}),
+					await this.markSessionFailedAfterContainerLoss(
+						session.id,
+						session.workspaceId,
+						NO_CONTAINER_ASSIGNED_MESSAGE,
+					).catch((err) =>
+						logger.error('Failed to mark session failed after container loss', {
+							sessionId: session.id,
+							error: String(err),
+						}),
 					)
 					continue
 				}
