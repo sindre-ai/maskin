@@ -1,12 +1,25 @@
-import type { LLMAdapter, LLMMessage, LLMResponse, LLMTool } from './adapter'
+import { logger } from '../logger'
+import {
+	type LLMAdapter,
+	type LLMMessage,
+	type LLMResponse,
+	type LLMTool,
+	LlmNoEligibleHostError,
+} from './adapter'
 
 export class OpenAIAdapter implements LLMAdapter {
 	private apiKey: string
 	private baseUrl: string
+	private extraBody?: Record<string, unknown>
 
-	constructor(apiKey: string, baseUrl = 'https://api.openai.com/v1') {
+	constructor(
+		apiKey: string,
+		baseUrl = 'https://api.openai.com/v1',
+		extraBody?: Record<string, unknown>,
+	) {
 		this.apiKey = apiKey
 		this.baseUrl = baseUrl
+		this.extraBody = extraBody
 	}
 
 	async chat(options: {
@@ -17,6 +30,7 @@ export class OpenAIAdapter implements LLMAdapter {
 		max_tokens?: number
 	}): Promise<LLMResponse> {
 		const body: Record<string, unknown> = {
+			...this.extraBody,
 			model: options.model || 'gpt-4o',
 			messages: options.messages.map((m) => ({
 				role: m.role,
@@ -55,6 +69,16 @@ export class OpenAIAdapter implements LLMAdapter {
 
 		if (!response.ok) {
 			const error = await response.text()
+			if (
+				this.extraBody?.provider &&
+				response.status === 404 &&
+				/no endpoints found/i.test(error)
+			) {
+				logger.error('chat_zdr_no_eligible_host', { model: body.model, status: 404, body: error })
+				throw new LlmNoEligibleHostError(
+					`No provider host satisfies the zero-retention requirement for ${String(body.model)} (MASKIN_FALLBACK_ZDR is on): ${error}`,
+				)
+			}
 			throw new Error(`OpenAI API error: ${response.status} ${error}`)
 		}
 

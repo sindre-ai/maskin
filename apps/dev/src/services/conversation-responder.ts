@@ -596,6 +596,7 @@ async function checkRelevance(params: {
 		const adapter = createLLMAdapter(credentials.provider, {
 			api_key: credentials.apiKey,
 			base_url: credentials.baseUrl,
+			extra_body: credentials.extraBody,
 		})
 		const transcript = formatConversationTranscript(conversationHistory)
 		const response = await adapter.chat({

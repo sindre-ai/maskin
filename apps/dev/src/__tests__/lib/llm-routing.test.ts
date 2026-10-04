@@ -44,6 +44,7 @@ const FALLBACK_ENV_KEYS = [
 	'MASKIN_FALLBACK_BASE_URL',
 	'MASKIN_FALLBACK_MODEL',
 	'MASKIN_FALLBACK_SMALL_MODEL',
+	'MASKIN_FALLBACK_ZDR',
 ] as const
 
 beforeEach(() => {
@@ -118,6 +119,17 @@ describe('readFallbackConfig', () => {
 			MASKIN_FALLBACK_MODEL: 'foo/bar',
 		})
 		expect(cfg.smallModel).toBe('foo/bar')
+	})
+
+	it('leaves zdr off by default and for unrecognised values', () => {
+		expect(readFallbackConfig({}).zdr).toBe(false)
+		expect(readFallbackConfig({ MASKIN_FALLBACK_ZDR: 'false' }).zdr).toBe(false)
+		expect(readFallbackConfig({ MASKIN_FALLBACK_ZDR: '' }).zdr).toBe(false)
+	})
+
+	it('turns zdr on for true or 1', () => {
+		expect(readFallbackConfig({ MASKIN_FALLBACK_ZDR: 'true' }).zdr).toBe(true)
+		expect(readFallbackConfig({ MASKIN_FALLBACK_ZDR: '1' }).zdr).toBe(true)
 	})
 })
 
@@ -1219,5 +1231,75 @@ describe('resolveChatCredentials — system fallback entitlement', () => {
 			agent: { provider: null, apiKey: null, model: null },
 		})
 		expect(creds?.apiKey).toBe('sk-or-maskin')
+	})
+})
+
+describe('resolveChatCredentials — zero-retention request flag', () => {
+	const noAgent = { provider: null, apiKey: null, model: null }
+	const funded = { billing: { plan: 'pro' } } as WorkspaceSettings
+
+	it('sends no extraBody on the funded route when MASKIN_FALLBACK_ZDR is off', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		const creds = resolveChatCredentials({
+			wsSettings: funded,
+			workspace: NOT_ENTITLED,
+			agent: noAgent,
+		})
+		expect(creds?.extraBody).toBeUndefined()
+	})
+
+	it('sends provider.zdr on the funded route when MASKIN_FALLBACK_ZDR is on', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		process.env.MASKIN_FALLBACK_ZDR = 'true'
+		const creds = resolveChatCredentials({
+			wsSettings: funded,
+			workspace: NOT_ENTITLED,
+			agent: noAgent,
+		})
+		expect(creds?.extraBody).toEqual({ provider: { zdr: true } })
+	})
+
+	it('never sets extraBody on a custom_llm route', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		process.env.MASKIN_FALLBACK_ZDR = 'true'
+		const creds = resolveChatCredentials({
+			wsSettings: {
+				...funded,
+				custom_llm: {
+					enabled: true,
+					base_url: 'https://llm.customer.example/v1',
+					api_key: 'sk-customer',
+					model: 'customer-model',
+				},
+			} as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: noAgent,
+		})
+		expect(creds?.baseUrl).toBe('https://llm.customer.example/v1')
+		expect(creds?.extraBody).toBeUndefined()
+	})
+
+	it('never sets extraBody on an agent api-key route', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		process.env.MASKIN_FALLBACK_ZDR = 'true'
+		const creds = resolveChatCredentials({
+			wsSettings: funded,
+			workspace: NOT_ENTITLED,
+			agent: { provider: 'openai', apiKey: 'sk-agent', model: null },
+		})
+		expect(creds?.apiKey).toBe('sk-agent')
+		expect(creds?.extraBody).toBeUndefined()
+	})
+
+	it('never sets extraBody on a workspace anthropic key route', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		process.env.MASKIN_FALLBACK_ZDR = 'true'
+		const creds = resolveChatCredentials({
+			wsSettings: { ...funded, llm_keys: { anthropic: 'sk-ant-workspace' } } as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: noAgent,
+		})
+		expect(creds?.provider).toBe('anthropic')
+		expect(creds?.extraBody).toBeUndefined()
 	})
 })

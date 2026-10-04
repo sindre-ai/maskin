@@ -33,3 +33,15 @@ export interface LLMAdapter {
 		max_tokens?: number
 	}): Promise<LLMResponse>
 }
+
+/**
+ * The provider rejected a request because no host satisfies the data-policy
+ * preferences sent with it (OpenRouter provider.zdr). Distinct from a generic
+ * API error so a policy miss never reads as an outage.
+ */
+export class LlmNoEligibleHostError extends Error {
+	constructor(message: string) {
+		super(message)
+		this.name = 'LlmNoEligibleHostError'
+	}
+}

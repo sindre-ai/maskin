@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { AnthropicAdapter } from '../../../lib/llm/anthropic'
 import { createLLMAdapter } from '../../../lib/llm/index'
 import { OpenAIAdapter } from '../../../lib/llm/openai'
@@ -17,6 +17,22 @@ describe('createLLMAdapter', () => {
 	it('returns OpenAIAdapter with localhost:11434 for ollama provider', () => {
 		const adapter = createLLMAdapter('ollama', {})
 		expect(adapter).toBeInstanceOf(OpenAIAdapter)
+	})
+
+	it('passes extra_body through to the OpenAI adapter', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			json: () =>
+				Promise.resolve({ choices: [{ message: { content: 'x' }, finish_reason: 'stop' }] }),
+		})
+		vi.stubGlobal('fetch', fetchMock)
+		const adapter = createLLMAdapter('openai', {
+			api_key: 'sk-test',
+			extra_body: { provider: { zdr: true } },
+		})
+		await adapter.chat({ model: 'm', messages: [{ role: 'user', content: 'hi' }] })
+		vi.unstubAllGlobals()
+		expect(JSON.parse(fetchMock.mock.calls[0][1].body).provider).toEqual({ zdr: true })
 	})
 
 	it('throws for unknown provider', () => {

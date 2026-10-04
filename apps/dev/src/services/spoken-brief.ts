@@ -421,6 +421,7 @@ export async function generateSpokenBrief(
 				const adapter = createLLMAdapter(credentials.provider, {
 					api_key: credentials.apiKey,
 					base_url: credentials.baseUrl,
+					extra_body: credentials.extraBody,
 				})
 				const response = await adapter.chat({
 					model: credentials.model,

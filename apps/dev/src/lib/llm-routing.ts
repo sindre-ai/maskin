@@ -83,6 +83,11 @@ export interface FallbackConfig {
 	baseUrl?: string
 	model?: string
 	smallModel?: string
+	/**
+	 * Ask OpenRouter to route in-process chat calls only to zero-data-retention
+	 * hosts. Off unless MASKIN_FALLBACK_ZDR is "true" or "1".
+	 */
+	zdr?: boolean
 }
 
 export interface AgentLlmConfig {
@@ -105,6 +110,7 @@ export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): Fallba
 			env.MASKIN_FALLBACK_SMALL_MODEL?.trim() ||
 			env.MASKIN_FALLBACK_MODEL?.trim() ||
 			'deepseek/deepseek-v4.1-flash',
+		zdr: ['true', '1'].includes(env.MASKIN_FALLBACK_ZDR?.trim().toLowerCase() ?? ''),
 	}
 }
 
@@ -829,6 +835,12 @@ export interface ChatCredentials {
 	apiKey: string
 	baseUrl?: string
 	model: string
+	/**
+	 * Extra top-level fields merged into the chat request body. Set only on the
+	 * Maskin-funded OpenRouter branch, never on BYO routes (a native OpenAI
+	 * endpoint can reject unknown body fields with a 400).
+	 */
+	extraBody?: Record<string, unknown>
 }
 
 /**
@@ -926,5 +938,6 @@ export function resolveChatCredentials(params: {
 		// own Anthropic-style path, ours needs the OpenAI-style /v1 prefix.
 		baseUrl: 'https://openrouter.ai/api/v1',
 		model: fallback.smallModel ?? fallback.model ?? DEFAULT_CHAT_MODEL.openai,
+		...(fallback.zdr && { extraBody: { provider: { zdr: true } } }),
 	}
 }

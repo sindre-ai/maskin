@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { LlmNoEligibleHostError } from '../../../lib/llm/adapter'
 import { OpenAIAdapter } from '../../../lib/llm/openai'
+import { logger } from '../../../lib/logger'
 
 const mockFetch = vi.fn()
 
@@ -214,5 +216,71 @@ describe('OpenAIAdapter', () => {
 		await expect(
 			adapter.chat({ model: 'gpt-4o', messages: [{ role: 'user', content: 'hi' }] }),
 		).rejects.toThrow('OpenAI returned no choices in response')
+	})
+
+	describe('extraBody', () => {
+		const chatOptions = {
+			model: 'deepseek/x',
+			messages: [{ role: 'user' as const, content: 'hi' }],
+		}
+		const sentBody = () => JSON.parse(mockFetch.mock.calls[0][1].body as string)
+
+		it('spreads extraBody into the request body', async () => {
+			const adapter = new OpenAIAdapter('sk-or', 'https://openrouter.ai/api/v1', {
+				provider: { zdr: true },
+			})
+			mockOkResponse(makeTextResponse('hi'))
+
+			await adapter.chat(chatOptions)
+
+			expect(sentBody().provider).toEqual({ zdr: true })
+			expect(sentBody().model).toBe('deepseek/x')
+		})
+
+		it('sends no provider key when extraBody is not set', async () => {
+			const adapter = new OpenAIAdapter('sk-test')
+			mockOkResponse(makeTextResponse('hi'))
+
+			await adapter.chat(chatOptions)
+
+			expect(sentBody()).not.toHaveProperty('provider')
+		})
+
+		it('throws LlmNoEligibleHostError on a no-endpoints 404 when provider prefs are set', async () => {
+			const errorLog = vi.spyOn(logger, 'error').mockImplementation(() => {})
+			const body = '{"error":{"message":"No endpoints found matching your data policy","code":404}}'
+			const adapter = new OpenAIAdapter('sk-or', 'https://openrouter.ai/api/v1', {
+				provider: { zdr: true },
+			})
+			mockErrorResponse(404, body)
+
+			await expect(adapter.chat(chatOptions)).rejects.toBeInstanceOf(LlmNoEligibleHostError)
+			expect(errorLog).toHaveBeenCalledWith(
+				'chat_zdr_no_eligible_host',
+				expect.objectContaining({ body }),
+			)
+		})
+
+		it('keeps the generic error for a 404 when no provider prefs are set', async () => {
+			const adapter = new OpenAIAdapter('sk-or')
+			mockErrorResponse(404, 'No endpoints found matching your data policy')
+
+			const err = await adapter.chat(chatOptions).catch((e) => e)
+
+			expect(err).not.toBeInstanceOf(LlmNoEligibleHostError)
+			expect(err.message).toContain('OpenAI API error: 404')
+		})
+
+		it('keeps the generic error for other failures when provider prefs are set', async () => {
+			const adapter = new OpenAIAdapter('sk-or', 'https://openrouter.ai/api/v1', {
+				provider: { zdr: true },
+			})
+			mockErrorResponse(500, 'Internal error')
+
+			const err = await adapter.chat(chatOptions).catch((e) => e)
+
+			expect(err).not.toBeInstanceOf(LlmNoEligibleHostError)
+			expect(err.message).toContain('OpenAI API error: 500')
+		})
 	})
 })
