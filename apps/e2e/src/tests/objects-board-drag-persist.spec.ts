@@ -1,5 +1,5 @@
 import { expect, test } from '../fixtures/auth.fixture'
-import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
+import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // T3 (Board view + drag-persist) — the bet's observable success and headline
 // acceptance criterion: "a card drags to another column and the status change
@@ -13,21 +13,6 @@ test.describe('Objects board drag-persist', () => {
 			page,
 			account,
 		}) => {
-			// Quarantined on CI at the iPhone viewport only (iPad portrait and
-			// landscape still run). Shard 5 on main 0095e39 failed this variant on
-			// all 3 attempts: the card showed under "done" and then was still under
-			// "todo", or never reached "done". That is the
-			// optimistic move, not the reload. It passed ~45 local runs (dev server
-			// and CI-mode preview build, with added latency and CPU throttling), so
-			// the cause is unconfirmed and may be a real mobile board bug, not just
-			// a flaky wait. Tracked on the task:
-			// https://maskin.io/e2877e32-2c11-489e-96c8-a76200908ed4/objects/990f2ace-1198-48b5-8d53-ea8618053ed4
-			// Still runs locally. Remove this once the cause is fixed.
-			test.fixme(
-				!!process.env.CI && vp.width === VIEWPORTS.mobile.width,
-				'iPhone drop fails on CI main shard 5; cause unconfirmed',
-			)
-
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 
 			// Board is only reachable for a single type with configured statuses,
