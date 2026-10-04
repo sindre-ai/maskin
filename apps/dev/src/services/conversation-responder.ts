@@ -544,7 +544,7 @@ function isConversationSessionRaceViolation(err: unknown): boolean {
 	return false
 }
 
-async function checkRelevance(params: {
+export async function checkRelevance(params: {
 	agent: {
 		id: string
 		name: string
@@ -596,6 +596,7 @@ async function checkRelevance(params: {
 		const adapter = createLLMAdapter(credentials.provider, {
 			api_key: credentials.apiKey,
 			base_url: credentials.baseUrl,
+			extra_body: credentials.providerPrefs && { provider: credentials.providerPrefs },
 		})
 		const transcript = formatConversationTranscript(conversationHistory)
 		const response = await adapter.chat({

@@ -1328,6 +1328,88 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('buildLaunchSpec() — actor tools.envFrom (AGENT_SECRET_ only)', () => {
+		const FAKE_SECRET = 'fake-secret-value-for-test'
+		const FAKE_DB_URL = 'postgres://fake-db-url-for-test'
+
+		function launchWith(tools: unknown) {
+			const session = buildSession({ status: 'pending', interactive: false, config: {} })
+			const agent = {
+				id: session.actorId,
+				type: 'agent' as const,
+				systemPrompt: 'You are a helpful AI agent.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools,
+			}
+			const workspace = {
+				id: session.workspaceId,
+				enterpriseGranted: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
+			mockResults.selectQueue = [[agent], [workspace], []]
+			return manager.buildLaunchSpec(
+				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
+			)
+		}
+
+		beforeEach(() => {
+			vi.clearAllMocks()
+			vi.stubEnv('AGENT_SECRET_X', FAKE_SECRET)
+			vi.stubEnv('DATABASE_URL', FAKE_DB_URL)
+			vi.stubEnv('AGENT_SECRET_UNSET', undefined as unknown as string)
+		})
+
+		afterEach(() => {
+			vi.unstubAllEnvs()
+		})
+
+		it('copies a listed AGENT_SECRET_ name into the session env and leaves the header as a reference', async () => {
+			const spec = await launchWith({
+				envFrom: ['AGENT_SECRET_X'],
+				mcpServers: {
+					coolify: {
+						type: 'http',
+						url: 'https://example.test/mcp',
+						headers: { Authorization: 'Bearer ${AGENT_SECRET_X}' },
+					},
+				},
+			})
+
+			expect(spec.env.AGENT_SECRET_X).toBe(FAKE_SECRET)
+			// Expansion happens later, in-container (envsubst); the launch env keeps the reference.
+			expect(spec.env.AGENT_MCP_JSON).toContain('${AGENT_SECRET_X}')
+			expect(spec.env.AGENT_MCP_JSON).not.toContain(FAKE_SECRET)
+		})
+
+		it('never copies a listed name without the AGENT_SECRET_ prefix', async () => {
+			const spec = await launchWith({ envFrom: ['DATABASE_URL', 'AGENT_SECRET_X'] })
+
+			expect(spec.env).not.toHaveProperty('DATABASE_URL')
+			expect(Object.values(spec.env)).not.toContain(FAKE_DB_URL)
+			expect(spec.env.AGENT_SECRET_X).toBe(FAKE_SECRET)
+		})
+
+		it('skips an unset name with a log line naming it, never a value', async () => {
+			const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+			const spec = await launchWith({ envFrom: ['AGENT_SECRET_UNSET', 'AGENT_SECRET_X'] })
+
+			expect(spec.env).not.toHaveProperty('AGENT_SECRET_UNSET')
+			const warnCalls = warnSpy.mock.calls
+			const unsetCall = warnCalls.find(([msg]) => String(msg).includes('unset'))
+			expect(unsetCall?.[1]).toMatchObject({ names: ['AGENT_SECRET_UNSET'] })
+			expect(JSON.stringify(warnCalls)).not.toContain(FAKE_SECRET)
+			warnSpy.mockRestore()
+		})
+
+		it('adds no AGENT_SECRET_ vars for an actor without envFrom', async () => {
+			const spec = await launchWith(null)
+
+			expect(Object.keys(spec.env).filter((k) => k.startsWith('AGENT_SECRET_'))).toEqual([])
+		})
+	})
+
 	describe('buildLaunchSpec() — persists model_name + llm_route on maskin_plan dispatch', () => {
 		// Foundational task for the session-cost accounting bet: every maskin_plan
 		// session must land with `sessions.model_name` non-null (the OpenRouter
@@ -1669,6 +1751,81 @@ describe('SessionManager', () => {
 			expect(mcpKeys.filter((k) => k.startsWith('github-'))).toHaveLength(2)
 			expect(mcpKeys).toContain('github-sindre-ai')
 			expect(mcpKeys).toContain('github-vaerksted-ai')
+		})
+
+		describe('MASKIN_GITHUB_MCP kill-switch', () => {
+			const legacySpec = { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'] }
+			const officialSpec = {
+				command: 'github-mcp-server',
+				args: ['stdio', '--toolsets', 'context,repos,git,issues,pull_requests,actions,users'],
+			}
+
+			afterEach(() => {
+				vi.unstubAllEnvs()
+			})
+
+			async function launchGithubEntries(flag: string | undefined) {
+				vi.stubEnv('MASKIN_GITHUB_MCP', flag)
+				const wsId = randomUUID()
+				const fixtures = buildLaunchFixtures([
+					buildIntegration({
+						workspaceId: wsId,
+						provider: 'github',
+						externalId: 'install-aaa',
+						config: { owner_login: 'Sindre-AI' },
+					}),
+				])
+				fixtures.session.workspaceId = wsId
+				fixtures.workspace.id = wsId
+				vi.mocked(getProvider).mockReturnValue(githubProviderConfig as never)
+				mockGetValidToken.mockResolvedValueOnce('ghs_token_sindre_ai')
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+					mcpServers: Record<string, { type: string; command: string; args: string[] }>
+				}
+				return Object.fromEntries(
+					Object.entries(parsed.mcpServers).filter(([k]) => k.startsWith('github-')),
+				)
+			}
+
+			it('emits the legacy npx spec when the flag is unset', async () => {
+				const entries = await launchGithubEntries(undefined)
+				expect(Object.keys(entries)).toEqual(['github-sindre-ai'])
+				expect(entries['github-sindre-ai']).toMatchObject({ type: 'stdio', ...legacySpec })
+			})
+
+			it('emits the legacy npx spec when the flag is legacy', async () => {
+				const entries = await launchGithubEntries('legacy')
+				expect(entries['github-sindre-ai']).toMatchObject({ type: 'stdio', ...legacySpec })
+			})
+
+			it('emits the legacy npx spec for any unrecognised flag value', async () => {
+				const entries = await launchGithubEntries('Official ')
+				expect(entries['github-sindre-ai']).toMatchObject({ type: 'stdio', ...legacySpec })
+			})
+
+			it('emits the shared official spec when the flag is official', async () => {
+				const entries = await launchGithubEntries('official')
+				expect(entries['github-sindre-ai']).toMatchObject({ type: 'stdio', ...officialSpec })
+			})
+
+			it('keeps entry names and env identical across legacy and official', async () => {
+				const legacy = await launchGithubEntries('legacy')
+				mockContainerManager.create.mockClear()
+				const official = await launchGithubEntries('official')
+				expect(Object.keys(official)).toEqual(Object.keys(legacy))
+				expect(Object.keys(official)).toEqual(['github-sindre-ai'])
+				expect((official['github-sindre-ai'] as unknown as { env: unknown }).env).toEqual({
+					GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_sindre_ai',
+				})
+				expect((legacy['github-sindre-ai'] as unknown as { env: unknown }).env).toEqual({
+					GITHUB_PERSONAL_ACCESS_TOKEN: 'ghs_token_sindre_ai',
+				})
+			})
 		})
 
 		it('sets GITHUB_REPO alongside GITHUB_INTEGRATION_ID when a scoped bet carries metadata.repo', async () => {
@@ -2015,6 +2172,73 @@ describe('SessionManager', () => {
 					: []
 				expect(mcpKeys).not.toContain('integration-posthog')
 			})
+		})
+
+		describe('expose_to_agent_sessions switch (Resend-shaped auto-inject provider)', () => {
+			const resendProviderConfig = {
+				config: {
+					name: 'resend',
+					mcp: {
+						envKey: 'RESEND_API_KEY',
+						autoInject: true,
+						server: {
+							type: 'http' as const,
+							url: 'https://mcp.resend.com/mcp',
+							headers: { Authorization: 'Bearer ${RESEND_API_KEY}' },
+						},
+					},
+				},
+			}
+
+			const mcpKeysOf = (env: Record<string, string>) =>
+				env.MCP_SERVERS_JSON
+					? Object.keys((JSON.parse(env.MCP_SERVERS_JSON) as { mcpServers: object }).mcpServers)
+					: []
+
+			it('injects neither RESEND_API_KEY nor the Resend MCP server when the switch is false', async () => {
+				const integration = buildIntegration({
+					provider: 'resend',
+					config: { expose_to_agent_sessions: false },
+				})
+				const fixtures = buildLaunchFixtures([integration])
+
+				vi.mocked(getProvider).mockReturnValue(resendProviderConfig as never)
+				mockGetValidToken.mockResolvedValue('re_live_key')
+
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				expect(createArgs.env.RESEND_API_KEY).toBeUndefined()
+				expect(mcpKeysOf(createArgs.env)).not.toContain('integration-resend')
+				// The credential is never even read for the session
+				expect(mockGetValidToken).not.toHaveBeenCalled()
+			})
+
+			it.each([
+				['absent', {}],
+				['true', { expose_to_agent_sessions: true }],
+			])(
+				'still injects both when the switch is %s (existing behaviour)',
+				async (_label, config) => {
+					const integration = buildIntegration({ provider: 'resend', config })
+					const fixtures = buildLaunchFixtures([integration])
+
+					vi.mocked(getProvider).mockReturnValue(resendProviderConfig as never)
+					mockGetValidToken.mockResolvedValueOnce('re_live_key')
+
+					setupLaunchMocks(fixtures)
+					await manager.startSession(fixtures.session.id)
+
+					const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+						env: Record<string, string>
+					}
+					expect(createArgs.env.RESEND_API_KEY).toBe('re_live_key')
+					expect(mcpKeysOf(createArgs.env)).toContain('integration-resend')
+				},
+			)
 		})
 
 		it('passes AGENT_MCP_JSON and GITHUB_TOKEN_* together so envsubst can resolve the token reference', async () => {

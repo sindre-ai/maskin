@@ -322,6 +322,65 @@ describe('POST /api/webhooks/resend/:token (integration)', () => {
 		expect(claims).toHaveLength(1)
 	})
 
+	it('does not ack a retry that lands mid body-fetch, so a failed first fetch is not lost', async () => {
+		const actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		const systemActorId = await seedSystemActor(ws.id)
+		const secret = whsec()
+		const { token } = await seedResendIntegration({
+			workspaceId: ws.id,
+			systemActorId,
+			accessToken: 're_test_key',
+			webhookSecret: secret,
+			createdBy: actorId,
+		})
+
+		// First body-fetch stays in flight until we settle it by hand; a 404 is a
+		// terminal failure, so the first request fails without burning retries.
+		let failFirstFetch: () => void = () => {}
+		fetchMock.mockImplementationOnce(
+			() =>
+				new Promise<Response>((resolve) => {
+					failFirstFetch = () => resolve(new Response('{}', { status: 404 }))
+				}),
+		)
+		fetchMock.mockResolvedValueOnce(
+			new Response(JSON.stringify({ text: 'second try' }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			}),
+		)
+
+		const emailId = `em_${randomUUID()}`
+		const body = buildEmailReceivedBody(emailId)
+		const app = buildApp()
+
+		const firstPending = app.request(webhookRequest(token, body, svixHeaders(secret, body)))
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+
+		// Resend retries while the first fetch is still running. A 2xx here tells
+		// Resend the email was delivered; if the first fetch then fails, nothing
+		// would ever pick it up again.
+		const midFetchRes = await app.request(webhookRequest(token, body, svixHeaders(secret, body)))
+		expect(midFetchRes.status).toBeGreaterThanOrEqual(400)
+
+		failFirstFetch()
+		const firstRes = await firstPending
+		expect(firstRes.status).toBe(500)
+
+		// The claim was released on failure, so the next retry re-claims and
+		// starts exactly one session.
+		const thirdRes = await app.request(webhookRequest(token, body, svixHeaders(secret, body)))
+		expect(thirdRes.status).toBe(200)
+		expect(await thirdRes.json()).toEqual({ ok: true })
+
+		const eventRows = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.workspaceId, ws.id), eq(events.entityType, 'resend.email')))
+		expect(eventRows).toHaveLength(1)
+	})
+
 	it("isolates per-workspace secrets — B's secret cannot sign for A", async () => {
 		const actorId = getTestActorId()
 		const wsA = await insertWorkspace(db, actorId)
