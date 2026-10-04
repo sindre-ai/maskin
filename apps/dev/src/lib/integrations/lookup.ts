@@ -90,6 +90,12 @@ export async function getIntegrationCredential(
 	actorId: string | null,
 	options: IntegrationCredentialOptions & { ctx: CredentialReadContext },
 ): Promise<DecryptedCredential | null>
+/**
+ * @deprecated The no-ctx form returns the raw row with the credential sealed and
+ * writes no audit row. Pass options.ctx instead. credential-readers.guard.test.ts
+ * fails if any shipped code calls this form; it stays only for the lookup
+ * semantics tests.
+ */
 export async function getIntegrationCredential(
 	db: Database,
 	workspaceId: string,
@@ -109,7 +115,13 @@ export async function getIntegrationCredential(
 	return row ? getCredential(db, workspaceId, row.id, options.ctx) : null
 }
 
-async function findIntegrationRow(
+/**
+ * Resolves which row a (workspace, provider, actor) lookup means, without
+ * reading it: the row comes back with its credentials still sealed. A caller
+ * that needs the row first (to gate on status or whose connection it is) and
+ * then the value calls this, then getCredential. Never decrypt the row yourself.
+ */
+export async function findIntegrationRow(
 	db: Database,
 	workspaceId: string,
 	provider: string,
@@ -162,8 +174,12 @@ async function findIntegrationRow(
 export type CredentialReadContext = {
 	requestingActorId: string
 	requestingLoopId?: string | null
-	/** For audit. */
-	sessionId: string
+	/**
+	 * For audit. Null when the caller has no session (a human REST call, a route
+	 * that never receives the session header). Never invent one: the audit column
+	 * is nullable and the hash input already folds null to an empty string.
+	 */
+	sessionId?: string | null
 	/** Host or URL being called. Audit only. */
 	outboundTarget?: string
 	/** Correlation id, for audit. */
@@ -238,7 +254,7 @@ export async function getCredential(
 				attention: 3,
 				provider: row.provider,
 				request_id: ctx.requestId,
-				session_id: ctx.sessionId,
+				session_id: ctx.sessionId ?? null,
 				loop_id: ctx.requestingLoopId ?? null,
 				outbound_target: ctx.outboundTarget ?? null,
 			},
@@ -262,7 +278,7 @@ export async function getCredential(
 			workspaceId,
 			integrationId: row.id,
 			actorId: ctx.requestingActorId,
-			sessionId: ctx.sessionId,
+			sessionId: ctx.sessionId ?? null,
 			loopId: ctx.requestingLoopId ?? null,
 			outboundTarget: ctx.outboundTarget ?? null,
 			action: 'read',

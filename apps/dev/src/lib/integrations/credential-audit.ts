@@ -136,7 +136,8 @@ export async function verifyCredentialAccessChain(
 			request_id, credential_access_log_ts_text(read_at) AS read_at_text, prev_row_hash, row_hash
 		FROM credential_access_log
 		WHERE workspace_id = ${workspaceId}
-		ORDER BY id
+		-- Qualified on purpose: a bare "id" binds to the id::text output column and sorts as text.
+		ORDER BY credential_access_log.id
 	`)) as unknown as LogRow[]
 
 	let prev = CREDENTIAL_LOG_GENESIS_HASH

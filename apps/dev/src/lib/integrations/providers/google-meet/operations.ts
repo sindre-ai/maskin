@@ -96,7 +96,13 @@ export async function createSpace(
 		}
 	}
 
-	const { accessToken } = await getGoogleMeetAccessToken(ctx.db, ctx.workspaceId, actorId)
+	const { accessToken } = await getGoogleMeetAccessToken(
+		ctx.db,
+		ctx.workspaceId,
+		actorId,
+		ctx.callerActorId,
+		'meet.googleapis.com',
+	)
 	const client = ctx.client ?? createDefaultGoogleMeetClient()
 
 	const body = buildCreateSpaceBody(input)
@@ -253,7 +259,13 @@ export async function createMeetBackedEvent(
 			startDateTime: input.start.date_time,
 		})
 
-	const { accessToken } = await getGoogleMeetAccessToken(ctx.db, ctx.workspaceId, actorId)
+	const { accessToken } = await getGoogleMeetAccessToken(
+		ctx.db,
+		ctx.workspaceId,
+		actorId,
+		ctx.callerActorId,
+		'www.googleapis.com',
+	)
 	const client = ctx.client ?? createDefaultGoogleMeetClient()
 
 	// Google's calendar.events.insert with conferenceData.createRequest.requestId
