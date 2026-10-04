@@ -15,7 +15,7 @@ import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
-import { insertActor, setWorkspacePlan } from '../factories'
+import { insertActor, insertWorkspace, setWorkspacePlan } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
@@ -1323,6 +1323,148 @@ describe('Workspaces Integration', () => {
 				.where(and(eq(workspaceMembers.workspaceId, ws.id), eq(workspaceMembers.actorId, admin.id)))
 			expect(rows).toHaveLength(1)
 			expect(rows[0]?.role).toBe('admin')
+		})
+
+		describe('caller gates', () => {
+			async function memberRows(workspaceId: string) {
+				return db
+					.select({ actorId: workspaceMembers.actorId, role: workspaceMembers.role })
+					.from(workspaceMembers)
+					.where(eq(workspaceMembers.workspaceId, workspaceId))
+			}
+
+			async function ownWorkspace() {
+				const ws = await insertWorkspace(db, getTestActorId())
+				await setWorkspacePlan(db, ws.id, 'pro')
+				return ws
+			}
+
+			function add(workspaceId: string, body: Record<string, unknown>) {
+				return createApp().request(
+					jsonRequest('POST', `/api/workspaces/${workspaceId}/members`, body),
+				)
+			}
+
+			function setCallerRole(workspaceId: string, role: string) {
+				return db
+					.update(workspaceMembers)
+					.set({ role })
+					.where(
+						and(
+							eq(workspaceMembers.workspaceId, workspaceId),
+							eq(workspaceMembers.actorId, getTestActorId()),
+						),
+					)
+			}
+
+			it('rejects a plain member with 403 and writes no row', async () => {
+				const ws = await ownWorkspace()
+				await setCallerRole(ws.id, 'member')
+				const target = await insertActor(db)
+				const before = await memberRows(ws.id)
+
+				const res = await add(ws.id, { actor_id: target.id, role: 'member' })
+
+				expect(res.status).toBe(403)
+				expect(await memberRows(ws.id)).toEqual(before)
+			})
+
+			it('rejects an agent caller with 403 and writes no row', async () => {
+				const ws = await ownWorkspace()
+				await setCallerRole(ws.id, 'member')
+				const target = await insertActor(db)
+				const before = await memberRows(ws.id)
+				// The harness caller is a human; flip it to an agent for this request only.
+				await db.update(actors).set({ type: 'agent' }).where(eq(actors.id, getTestActorId()))
+				try {
+					const res = await add(ws.id, { actor_id: target.id, role: 'member' })
+					expect(res.status).toBe(403)
+				} finally {
+					await db.update(actors).set({ type: 'human' }).where(eq(actors.id, getTestActorId()))
+				}
+				expect(await memberRows(ws.id)).toEqual(before)
+			})
+
+			it('rejects an agent holding the owner role with 403 and writes no row', async () => {
+				const ws = await ownWorkspace()
+				const target = await insertActor(db)
+				const before = await memberRows(ws.id)
+				await db.update(actors).set({ type: 'agent' }).where(eq(actors.id, getTestActorId()))
+				try {
+					const res = await add(ws.id, { actor_id: target.id })
+					expect(res.status).toBe(403)
+				} finally {
+					await db.update(actors).set({ type: 'human' }).where(eq(actors.id, getTestActorId()))
+				}
+				expect(await memberRows(ws.id)).toEqual(before)
+			})
+
+			it('returns 404 for a key from workspace A adding to workspace B, and writes no row', async () => {
+				const wsA = await ownWorkspace()
+				const otherOwner = await insertActor(db)
+				const wsB = await insertWorkspace(db, otherOwner.id)
+				await setWorkspacePlan(db, wsB.id, 'pro')
+				const target = await insertActor(db)
+				const before = await memberRows(wsB.id)
+
+				const res = await add(wsB.id, { actor_id: target.id, role: 'member' })
+				const missing = await add(randomUUID(), { actor_id: target.id, role: 'member' })
+
+				expect(res.status).toBe(404)
+				// Same body as a workspace that does not exist, so the id is not confirmed.
+				expect(await res.json()).toEqual(await missing.json())
+				expect(await memberRows(wsB.id)).toEqual(before)
+				expect(await memberRows(wsA.id)).toHaveLength(1)
+			})
+
+			it.each(['admin', 'member'])('lets a human owner add an actor as %s', async (role) => {
+				const ws = await ownWorkspace()
+				const target = await insertActor(db)
+
+				const res = await add(ws.id, { actor_id: target.id, role })
+
+				expect(res.status).toBe(201)
+				expect(await res.json()).toEqual({ added: true })
+				const rows = await memberRows(ws.id)
+				expect(rows.find((r) => r.actorId === target.id)?.role).toBe(role)
+			})
+
+			it('lets a human admin add an actor as member', async () => {
+				const ws = await ownWorkspace()
+				await setCallerRole(ws.id, 'admin')
+				const target = await insertActor(db)
+
+				const res = await add(ws.id, { actor_id: target.id, role: 'member' })
+
+				expect(res.status).toBe(201)
+				expect(await res.json()).toEqual({ added: true })
+			})
+
+			it.each(['owner', 'superuser'])(
+				'rejects role %s with 400 for a human owner and writes no row',
+				async (role) => {
+					const ws = await ownWorkspace()
+					const target = await insertActor(db)
+					const before = await memberRows(ws.id)
+
+					const res = await add(ws.id, { actor_id: target.id, role })
+
+					expect(res.status).toBe(400)
+					expect(await memberRows(ws.id)).toEqual(before)
+				},
+			)
+
+			it('rejects role owner with 400 for a human admin too', async () => {
+				const ws = await ownWorkspace()
+				await setCallerRole(ws.id, 'admin')
+				const target = await insertActor(db)
+				const before = await memberRows(ws.id)
+
+				const res = await add(ws.id, { actor_id: target.id, role: 'owner' })
+
+				expect(res.status).toBe(400)
+				expect(await memberRows(ws.id)).toEqual(before)
+			})
 		})
 	})
 

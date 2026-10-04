@@ -370,12 +370,13 @@ describe('Workspaces Routes', () => {
 	})
 
 	describe('POST /api/workspaces/:id/members', () => {
-		it('adds a member and returns 201 when caller is a member', async () => {
+		it('adds a member and returns 201 when caller is a human admin or owner', async () => {
 			const wsId = randomUUID()
 			const actorId = randomUUID()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.selectQueue = [
-				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)(callerId, wsId)
+				[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
+				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
 				[{ type: 'human' }], // target actor type lookup
 				[{ id: wsId, settings: {} }], // workspace row locked FOR UPDATE (trial plan)
 				[{ n: 0 }], // countHumanMembers — 0 < trial cap 1
@@ -394,10 +395,10 @@ describe('Workspaces Routes', () => {
 			expect(body.added).toBe(true)
 		})
 
-		it('returns 403 when caller is not a member of the workspace', async () => {
+		it('returns 404 and writes nothing when caller is not a member of the workspace', async () => {
 			const wsId = randomUUID()
 			const actorId = randomUUID()
-			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 			// isWorkspaceMember → no rows
 			mockResults.select = []
 
@@ -408,10 +409,58 @@ describe('Workspaces Routes', () => {
 				}),
 			)
 
+			expect(res.status).toBe(404)
+			const body = await res.json()
+			expect(body.error.code).toBe('NOT_FOUND')
+			expect(calls.inserts).toHaveLength(0)
+		})
+
+		it.each([
+			['a plain member', { role: 'member', type: 'human' }],
+			['an agent holding admin', { role: 'admin', type: 'agent' }],
+			['an agent holding member', { role: 'member', type: 'agent' }],
+		])('returns 403 and writes nothing when caller is %s', async (_label, callerRow) => {
+			const wsId = randomUUID()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
+				[callerRow], // isWorkspaceHumanAdminOrOwner(caller)
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/workspaces/${wsId}/members`, {
+					actor_id: randomUUID(),
+					role: 'member',
+				}),
+			)
+
 			expect(res.status).toBe(403)
 			const body = await res.json()
 			expect(body.error.code).toBe('FORBIDDEN')
+			expect(calls.inserts).toHaveLength(0)
 		})
+
+		it.each(['owner', 'superuser', ''])(
+			'returns 400 and writes nothing for role %j, even from a human owner',
+			async (role) => {
+				const wsId = randomUUID()
+				const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [
+					[{ actorId: 'test-actor-id' }],
+					[{ role: 'owner', type: 'human' }],
+				]
+
+				const res = await app.request(
+					jsonRequest('POST', `/api/workspaces/${wsId}/members`, {
+						actor_id: randomUUID(),
+						role,
+					}),
+				)
+
+				expect(res.status).toBe(400)
+				expect(calls.inserts).toHaveLength(0)
+			},
+		)
 	})
 
 	describe('GET /api/workspaces/:id/members', () => {
