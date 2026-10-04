@@ -142,13 +142,26 @@ extension ChatsContainer {
 private struct ChatThreadHost: View {
 	let environment: AppEnvironment
 	let conversations: ConversationsStore
-	@State private var chat: ChatStore
-	@State private var composer: ChatComposerModel
+	let conversationID: String
+	/// The store and composer are built once, on first render. They were `@State(initialValue:)`
+	/// built in `init`, which runs on every parent re-render (each list update) and paid for a
+	/// disk-cache decode and a store each time before SwiftUI discarded the result.
+	@State private var holder = ThreadHolder()
 	@State private var showParticipants = false
 
 	init(environment: AppEnvironment, conversations: ConversationsStore, conversationID: String) {
 		self.environment = environment
 		self.conversations = conversations
+		self.conversationID = conversationID
+	}
+
+	@MainActor
+	private final class ThreadHolder {
+		var built: (chat: ChatStore, composer: ChatComposerModel)?
+	}
+
+	private func make() -> (chat: ChatStore, composer: ChatComposerModel) {
+		let conversationID = conversationID
 		let session = environment.auth.session
 		let source = APIChatsSource(client: environment.client, workspaceID: environment.workspaceId ?? "")
 		let chat = ChatStore(
@@ -172,14 +185,17 @@ private struct ChatThreadHost: View {
 				now: Date())
 			Task { await coordinator.reconcile(turns) }
 		}
-		_chat = State(initialValue: chat)
 		let composer = ChatComposerModel(uploader: source, selfActorID: session?.actorId ?? "")
 		composer.text = ChatDraftStore.text(for: conversationID)
-		_composer = State(initialValue: composer)
+		return (chat, composer)
 	}
 
 	var body: some View {
-		ChatThreadView(store: chat, composer: composer, conversations: conversations, onShowParticipants: { showParticipants = true })
+		let built = holder.built ?? make()
+		let _ = { holder.built = built }()
+		let chat = built.chat
+		let composer = built.composer
+		return ChatThreadView(store: chat, composer: composer, conversations: conversations, onShowParticipants: { showParticipants = true })
 			.onDisappear { ChatDraftStore.set(composer.text, for: chat.conversationID) }
 			.sheet(isPresented: $showParticipants) {
 				ParticipantsSheet(chat: chat, conversations: conversations)

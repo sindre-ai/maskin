@@ -91,6 +91,14 @@ final class Dictation {
 		}
 	}
 
+	/// TCC calls the completion on a background queue. Written here, in a nonisolated context, the
+	/// closure isn't inferred main-actor-isolated (which Swift 6 traps on when it runs off-main).
+	nonisolated private static func speechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
+		await withCheckedContinuation { continuation in
+			SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
+		}
+	}
+
 	func stop() {
 		generation += 1
 		if engine.isRunning {
@@ -111,9 +119,7 @@ final class Dictation {
 	}
 
 	private func requestPermissions() async -> Bool {
-		let speech = await withCheckedContinuation { (continuation: CheckedContinuation<SFSpeechRecognizerAuthorizationStatus, Never>) in
-			SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
-		}
+		let speech = await Self.speechAuthorization()
 		guard speech == .authorized else {
 			state = .unavailable("Allow Speech Recognition in Settings to dictate.")
 			return false

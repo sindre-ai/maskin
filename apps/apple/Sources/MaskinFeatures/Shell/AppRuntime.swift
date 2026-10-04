@@ -292,8 +292,8 @@ public final class AppRuntime {
 		await push?.requestAuthorization()
 	}
 
-	/// Mirror the unread count onto the app icon.
-	func updateBadge() { push?.setBadge(notifications.unreadCount) }
+	/// The app icon carries no badge: keep it cleared rather than mirroring the unread count.
+	func updateBadge() { push?.setBadge(0) }
 
 	// MARK: Deep links
 

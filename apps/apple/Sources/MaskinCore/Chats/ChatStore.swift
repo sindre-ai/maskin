@@ -314,9 +314,12 @@ public final class ChatStore {
 			phase = .loaded
 			freshness.refreshed(at: cache?.now() ?? now())
 			writeCache()
-			await markReadIfNeeded()
-			await refreshAgentStates()
-			await refreshSessions()
+			// Independent reads: run together so the working indicator and trace don't wait on
+			// the actor list or the read receipt.
+			async let read: Void = markReadIfNeeded()
+			async let states: Void = refreshAgentStates()
+			async let sessions: Void = refreshSessions()
+			_ = await (read, states, sessions)
 		} catch {
 			// Cached or loaded rows stay on screen; only an empty thread shows the error.
 			freshness.revalidateFailed()
@@ -363,6 +366,8 @@ public final class ChatStore {
 			syncQueuedFull = false
 			do {
 				let page: MessagePage
+				// The detail read doesn't depend on the page; fetch it alongside.
+				async let freshDetail = try? api.detail(conversationID: conversationID)
 				if thisPassFull || lastServerID == nil {
 					page = try await api.messages(
 						conversationID: conversationID, beforeID: nil, afterID: nil, limit: pageSize)
@@ -371,7 +376,7 @@ public final class ChatStore {
 						conversationID: conversationID, beforeID: nil, afterID: lastServerID, limit: pageSize)
 				}
 				mergeNewest(page)
-				if let detail = try? await api.detail(conversationID: conversationID) {
+				if let detail = await freshDetail {
 					self.detail = detail
 					readSent = max(readSent, detail.lastReadMessageID ?? 0)
 				}

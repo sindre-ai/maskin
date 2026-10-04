@@ -28,6 +28,12 @@ struct ConversationListView: View {
 						ConversationRow(conversation: conversation, currentActorID: currentActorID)
 							.tag(conversation.id)
 							.listRowSeparator(.hidden)
+							// The default row insets stack on the row's own padding; keep the side margins and
+							// tighten top and bottom so chats sit closer together.
+							.listRowInsets(
+								EdgeInsets(
+									top: MaskinSpace.s2, leading: MaskinSpace.s11, bottom: MaskinSpace.s2,
+									trailing: MaskinSpace.s11))
 							.contextMenu { menu(for: conversation) }
 							.swipeActions(edge: .leading, allowsFullSwipe: true) {
 								Button {

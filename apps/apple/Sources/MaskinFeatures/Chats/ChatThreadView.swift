@@ -197,11 +197,8 @@ struct ChatThreadView: View {
 						store: store, onStop: { stopTarget = $0 }, matchIDs: matchSet,
 						currentMatchID: currentMatchID)
 					Color.clear.frame(height: 1).id(Self.bottomID)
-						.onAppear {
-							isAtBottom = true
-							hasUnseen = false
-						}
-						.onDisappear { isAtBottom = false }
+						.onAppear { if !usesGeometryTracking { reachedBottom() } }
+						.onDisappear { if !usesGeometryTracking { isAtBottom = false } }
 				}
 				.padding(.horizontal, MaskinSpace.s9)
 				.padding(.top, MaskinSpace.s5)
@@ -211,6 +208,9 @@ struct ChatThreadView: View {
 				.frame(maxWidth: .infinity)
 			}
 			.defaultScrollAnchor(.bottom)
+			.trackingBottom { atBottom in
+				if atBottom { reachedBottom() } else { isAtBottom = false }
+			}
 			.refreshable { await store.refresh() }
 			.scrollDismissesKeyboard(.interactively)
 			.onChange(of: store.messages.last?.id) { _, _ in
@@ -310,6 +310,16 @@ struct ChatThreadView: View {
 		}
 	}
 
+	private var usesGeometryTracking: Bool {
+		if #available(iOS 18, macOS 15, *) { return true }
+		return false
+	}
+
+	private func reachedBottom() {
+		isAtBottom = true
+		hasUnseen = false
+	}
+
 	private func scrollToBottom(_ proxy: ScrollViewProxy) {
 		hasUnseen = false
 		withAnimation(MaskinMotion.standard) { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
@@ -338,7 +348,9 @@ struct ThreadTranscript: View {
 
 	var body: some View {
 		if lazy {
-			LazyVStack(alignment: .leading, spacing: MaskinSpace.s5) { rows }
+			// Flattened into the thread's own LazyVStack: a second lazy stack nested inside it
+			// mis-measures under `defaultScrollAnchor(.bottom)` (blank gaps, jumping content).
+			rows
 		} else {
 			VStack(alignment: .leading, spacing: MaskinSpace.s5) { rows }
 		}
@@ -414,5 +426,24 @@ struct ThreadTranscript: View {
 				FinishedTraceView(turn: turn)
 			}
 		}
+	}
+}
+
+extension View {
+	/// Reports whether a scroll view sits within a few points of its end. Lazy-stack sentinels
+	/// fire `onAppear`/`onDisappear` unreliably, so iOS 18+ reads the real geometry; iOS 17 keeps
+	/// the sentinel.
+	fileprivate func trackingBottom(_ action: @escaping (Bool) -> Void) -> some View {
+		if #available(iOS 18, macOS 15, *) {
+			return AnyView(
+				onScrollGeometryChange(for: Bool.self) { geometry in
+					// The visible rect is in content coordinates, so insets (the composer bar)
+					// can't skew it. Short threads show everything, which counts as the bottom.
+					geometry.visibleRect.maxY >= geometry.contentSize.height - 48
+				} action: { _, atBottom in
+					action(atBottom)
+				})
+		}
+		return AnyView(self)
 	}
 }
