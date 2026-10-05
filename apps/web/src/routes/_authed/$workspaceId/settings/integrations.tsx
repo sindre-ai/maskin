@@ -71,6 +71,9 @@ function IntegrationsPage() {
 	// but the connect entry point stays hidden from everyone else until the flag
 	// flips on. Per-actor behaviour gate, never a shared-state change.
 	const googleMeetVisible = useFeatureFlag('google-meet-integration-ui')
+	// Same shape for google-drive: backend registers it unconditionally, only the
+	// connect entry point is hidden until `google-drive-integration-ui` is on.
+	const googleDriveVisible = useFeatureFlag('google-drive-integration-ui')
 	// Slice 2 of bet cf2bcc85 — off by default, tester-actor-only until the
 	// second workspace has connected cleanly. Same shape as `googleMeetVisible`:
 	// backend registers the provider unconditionally so its endpoints stay
@@ -80,6 +83,7 @@ function IntegrationsPage() {
 	const resendVisible = useFeatureFlag('resend-integration-ui')
 	const visibleProviders = (providers ?? []).filter((p) => {
 		if (p.name === 'google-meet' && !googleMeetVisible) return false
+		if (p.name === 'google-drive' && !googleDriveVisible) return false
 		if (p.name === 'resend' && !resendVisible) return false
 		return true
 	})
