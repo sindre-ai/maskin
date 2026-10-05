@@ -95,6 +95,21 @@ struct ActivityParserTests {
 		#expect(turn.duration == 8.5)
 	}
 
+	@Test("the collapsed label leads with the last step, and with the failure when it failed")
+	func collapsedLabel() throws {
+		let failed = try #require(try parse(failedMidwayFixture).turns.first)
+		#expect(failed.collapsedLabel == "Failed after 4 steps")
+		var done = failed
+		done.status = .completed
+		done.result = nil
+		done.steps[3].status = .completed
+		done.steps[2].status = .completed
+		let last = try #require(done.steps.last?.label)
+		#expect(done.collapsedLabel == "\(last) · \(done.summary)")
+		done.steps = []
+		#expect(done.collapsedLabel == "No steps")
+	}
+
 	@Test("a turn with a question is still running and emphasizes the open step")
 	func questionTurn() throws {
 		let turn = try #require(try parse(questionFixture).turns.first)

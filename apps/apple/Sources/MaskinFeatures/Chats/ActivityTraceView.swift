@@ -163,15 +163,17 @@ struct ElapsedLabel: View {
 	}
 }
 
-/// A finished turn: one muted line ("3 steps · 8s") that opens to the full trace. A failed turn
+/// A finished turn: one muted line (the last thing the agent did, "· 3 steps · 8s") that opens to
+/// the full trace. A failed turn
 /// says so and names the point it reached; the line stays quiet otherwise.
 struct FinishedTraceView: View {
 	let turn: ActivityTurn
 	@State private var expanded = false
 
-	init(turn: ActivityTurn, expanded: Bool = false) {
+	/// A failed turn opens by itself so the reason is on screen; otherwise the line stays closed.
+	init(turn: ActivityTurn, expanded: Bool? = nil) {
 		self.turn = turn
-		_expanded = State(initialValue: expanded)
+		_expanded = State(initialValue: expanded ?? turn.failed)
 	}
 
 	var body: some View {
@@ -184,8 +186,9 @@ struct FinishedTraceView: View {
 						.rotationEffect(.degrees(expanded && !turn.failed ? 90 : 0))
 						.foregroundStyle(turn.failed ? MaskinColor.danger : MaskinColor.ink5)
 						.accessibilityHidden(true)
-					Text(turn.summary).maskinText(.caption)
+					Text(turn.collapsedLabel).maskinText(.caption)
 						.foregroundStyle(turn.failed ? MaskinColor.danger : MaskinColor.ink4)
+						.lineLimit(1)
 					Spacer(minLength: 0)
 				}
 				.frame(minHeight: MaskinSpace.touchMin - MaskinSpace.s8, alignment: .leading)

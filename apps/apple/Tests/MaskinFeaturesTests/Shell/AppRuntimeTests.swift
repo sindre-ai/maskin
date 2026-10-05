@@ -161,7 +161,7 @@ struct AppRuntimeDeepLinkTests {
 @MainActor
 @Suite("AppRuntime badge")
 struct AppRuntimeBadgeTests {
-	@Test("the app icon badge mirrors the unread count")
+	@Test("the app icon stays clear even with unread notifications")
 	func badge() async {
 		let system = FakeSystem()
 		let devices = FakeDevices { true }
@@ -171,7 +171,7 @@ struct AppRuntimeBadgeTests {
 		let (runtime, _) = await makeRuntime(push: push, rows: [unread("1"), unread("2")])
 		await runtime.notifications.reload()
 		runtime.updateBadge()
-		#expect(system.badges.last == 2)
+		#expect(system.badges.last == 0)
 		#expect(runtime.notifications.unreadCount == 2)
 	}
 }

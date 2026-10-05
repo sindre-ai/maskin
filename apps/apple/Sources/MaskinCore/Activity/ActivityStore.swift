@@ -23,8 +23,8 @@ public final class ActivityStore {
 	static let cacheVersion = 1
 	static let liveTurns = 1
 	static let historyTurns = 5
-	/// Only the newest few finished sessions get history; older threads stay one-line.
-	static let historySessions = 4
+	/// Only the newest finished sessions get history; older threads stay one-line.
+	static let historySessions = 8
 
 	public private(set) var turnsBySession: [String: [ActivityTurn]] = [:]
 	/// Bumped on every change to `turnsBySession`. `anchors` reads it, so a view calling `anchors`

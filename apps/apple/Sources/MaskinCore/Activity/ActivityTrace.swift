@@ -92,6 +92,16 @@ public struct ActivityTurn: Identifiable, Equatable, Sendable, Codable {
 		return noun
 	}
 
+	/// What the collapsed line says, as the web does: the last thing the agent did, then the
+	/// count and time ("Replied to the conversation · 3 steps · 8s"). A failed turn leads with the
+	/// failure, and a turn with no steps falls back to `summary`.
+	public var collapsedLabel: String {
+		guard !failed, let last = steps.last?.label.trimmingCharacters(in: .whitespacesAndNewlines),
+			!last.isEmpty
+		else { return summary }
+		return "\(last) · \(summary)"
+	}
+
 	public var duration: TimeInterval? {
 		guard let start = startedAt, let end = finishedAt else { return nil }
 		return max(end.timeIntervalSince(start), 0)
