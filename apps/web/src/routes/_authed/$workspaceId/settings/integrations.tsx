@@ -590,6 +590,7 @@ function GroupedProviderRow({
 								Add existing
 							</Button>
 						)}
+						{provider.name === 'github' && <InstallGithubOrgButton workspaceId={workspaceId} />}
 					</div>
 				</div>
 			)}
@@ -767,6 +768,37 @@ function SkjaldConnectDialog({
 	)
 }
 
+/** GitHub only lists orgs that already have the Maskin App, so an org without it
+ *  can never show up in either picker. This sends the user to the App's install
+ *  page; the callback then binds the new installation to this workspace. */
+function InstallGithubOrgButton({ workspaceId }: { workspaceId: string }) {
+	const connect = useConnectIntegration(workspaceId)
+	return (
+		<Button
+			variant="outline"
+			size="sm"
+			className="w-full md:flex-1"
+			onClick={() => connect.mutate({ provider: 'github', installNewOrg: true })}
+			disabled={connect.isPending}
+		>
+			<Plus className="h-3.5 w-3.5 mr-1" />
+			Install on another organization
+		</Button>
+	)
+}
+
+function InstallGithubOrgSection({ workspaceId }: { workspaceId: string }) {
+	return (
+		<div className="space-y-2 border-t border-border pt-3">
+			<p className="text-xs text-muted-foreground">
+				Don&apos;t see your organization? Install the Maskin GitHub App on it first. You&apos;ll
+				come back here with it connected.
+			</p>
+			<InstallGithubOrgButton workspaceId={workspaceId} />
+		</div>
+	)
+}
+
 /** Bind a GitHub App installation the actor already reaches from one of their
  *  other workspaces. GitHub refuses to re-run its install flow for an org that
  *  already has the App, so this is the only path to a second workspace. */
@@ -837,6 +869,7 @@ function SelectGithubInstallationDialog({
 						))}
 					</div>
 				)}
+				<InstallGithubOrgSection workspaceId={workspaceId} />
 				<div className="flex justify-end">
 					<Button variant="ghost" onClick={onClose}>
 						Cancel
@@ -910,6 +943,7 @@ function LinkGithubDialog({
 						))}
 					</div>
 				)}
+				<InstallGithubOrgSection workspaceId={workspaceId} />
 				<div className="flex justify-end">
 					<Button variant="ghost" onClick={onClose}>
 						Done
