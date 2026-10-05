@@ -1,9 +1,9 @@
 import MaskinDesign
 import SwiftUI
 
-#if canImport(UIKit)
+#if os(iOS)
 import UIKit
-#elseif canImport(AppKit)
+#elseif os(macOS)
 import AppKit
 #endif
 
@@ -255,9 +255,10 @@ enum MarkdownTask {
 
 enum MarkdownClipboard {
 	static func copy(_ string: String) {
-		#if canImport(UIKit)
+		// Watch and TV have no general pasteboard: Copy is a no-op there.
+		#if os(iOS)
 		UIPasteboard.general.string = string
-		#elseif canImport(AppKit)
+		#elseif os(macOS)
 		NSPasteboard.general.clearContents()
 		NSPasteboard.general.setString(string, forType: .string)
 		#endif
