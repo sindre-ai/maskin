@@ -34,6 +34,7 @@ import claudeOauthRoutes from './routes/claude-oauth'
 import conversationsRoutes from './routes/conversations'
 import eventsRoutes from './routes/events'
 import featureFlagsRoutes from './routes/feature-flags'
+import fileCommentsRoutes from './routes/file-comments'
 import filesRoutes from './routes/files'
 import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
@@ -292,6 +293,14 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		// `unipile-signature` HMAC header, verified inside the handler
 		// against `UNIPILE_WEBHOOK_SECRET`.
 		if (path === '/api/integrations/linkedin-unipile/webhook' && method === 'POST') return next()
+		// The linkedin-unipile MCP endpoints are POST-only and answer every GET with
+		// a bare 405 (routes/integrations-linkedin-unipile-mcp.ts). MCP clients
+		// probe them with GET to open a server-to-client stream and retry, ~250k
+		// times a week, and each one paid two auth round trips to be told no.
+		// Same response, answered before auth.
+		if (method === 'GET' && /^\/api\/integrations\/linkedin-unipile\/mcp(\/[^/]+)?$/.test(path)) {
+			return c.text('Method Not Allowed', 405)
+		}
 
 		return auth(c, next)
 	})
@@ -401,6 +410,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/imports', importsRoutes)
 	app.route('/api/installed-loops', installedLoopsRoutes)
 	app.route('/api/files', filesRoutes)
+	// Mounted at the same prefix — Hono composes multiple sub-apps at one
+	// prefix so the nested /:id/comments paths sit under the existing files
+	// surface without touching files.ts.
+	app.route('/api/files', fileCommentsRoutes)
 	app.route('/api/claude-oauth', claudeOauthRoutes)
 	app.route('/api/telemetry', telemetryRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)

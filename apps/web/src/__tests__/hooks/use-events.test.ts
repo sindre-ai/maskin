@@ -5,6 +5,7 @@ vi.mock('@/lib/api', () => ({
 	api: {
 		events: {
 			history: vi.fn(),
+			historyUpTo: vi.fn(),
 			create: vi.fn(),
 		},
 	},
@@ -151,7 +152,7 @@ describe('useCreateComment', () => {
 // during the session's [startedAt, completedAt] window.
 describe('useSessionAffectedObjects · Produced shape', () => {
 	it('derives producedObjects from bet/task/insight created events', async () => {
-		vi.mocked(api.events.history).mockResolvedValue([
+		vi.mocked(api.events.historyUpTo).mockResolvedValue([
 			buildEvent({ id: 1, entityType: 'bet', entityId: 'b-1', data: { title: 'Bet A' } }),
 			buildEvent({
 				id: 2,
@@ -181,7 +182,7 @@ describe('useSessionAffectedObjects · Produced shape', () => {
 	})
 
 	it('derives producedFiles from file created/updated events with mime + size hydrated from data', async () => {
-		vi.mocked(api.events.history).mockResolvedValue([
+		vi.mocked(api.events.historyUpTo).mockResolvedValue([
 			buildEvent({
 				id: 1,
 				entityType: 'file',
@@ -218,6 +219,25 @@ describe('useSessionAffectedObjects · Produced shape', () => {
 		})
 		expect(result.current.producedObjects).toEqual([])
 		expect(result.current.producedFiles).toEqual([])
+		expect(api.events.history).not.toHaveBeenCalled()
+	})
+})
+
+describe('useSessionAffectedObjects · paging', () => {
+	it('requests the session window through the paged helper, not one oversized page', async () => {
+		vi.mocked(api.events.historyUpTo).mockResolvedValue([])
+
+		const { result } = renderHook(
+			() => useSessionAffectedObjects('2026-09-22T09:00:00Z', '2026-09-22T09:05:00Z', workspaceId),
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.events.historyUpTo).toHaveBeenCalledWith(
+			workspaceId,
+			{ after: '2026-09-22T09:00:00Z', before: '2026-09-22T09:05:00Z' },
+			200,
+		)
 		expect(api.events.history).not.toHaveBeenCalled()
 	})
 })

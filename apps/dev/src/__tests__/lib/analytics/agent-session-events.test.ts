@@ -59,7 +59,25 @@ describe('trackAgentSessionStartedWithPrompt', () => {
 				agent_name: 'Bug Triage',
 				system_prompt_chars: 1200,
 				system_prompt_tokens: 300,
+				source_session_id: null,
 			},
+		)
+	})
+
+	it('carries source_session_id when the session was spawned by another session', async () => {
+		await trackAgentSessionStartedWithPrompt({
+			workspaceId: 'ws-1',
+			sessionId: 'sess-child',
+			agentId: 'agent-2',
+			agentName: 'Sentinel',
+			systemPrompt: 'ok',
+			sourceSessionId: 'sess-parent',
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(
+			'agent_session_started_with_prompt',
+			'agent-2',
+			expect.objectContaining({ source_session_id: 'sess-parent' }),
 		)
 	})
 

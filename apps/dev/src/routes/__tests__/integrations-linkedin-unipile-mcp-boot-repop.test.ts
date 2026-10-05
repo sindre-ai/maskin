@@ -215,9 +215,10 @@ describe('linkedin-unipile MCP registry — self-heal on demand (AC 3)', () => {
 	})
 
 	it('AC3b — a second request in the negative-cache window does not call Unipile again', async () => {
-		mockedEnumerate.mockRejectedValueOnce(new Error('unipile is down'))
+		mockedEnumerate.mockRejectedValue(new Error('unipile is down'))
 		await selfHealLinkedInMcpCredential(row('cred-broken'))
-		expect(mockedEnumerate).toHaveBeenCalledTimes(1)
+		// First attempt plus the single in-window retry.
+		expect(mockedEnumerate).toHaveBeenCalledTimes(2)
 		expect(getLinkedInMcpInstancesForIntegration('cred-broken')).toEqual([])
 
 		// Even with the environment restored to a working state, the second

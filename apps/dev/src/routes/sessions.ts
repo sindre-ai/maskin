@@ -110,6 +110,8 @@ app.openapi(createSessionRoute, (async (c) => {
 		initiatedFromObjectId: body.initiated_from_object_id ?? null,
 		initiatedFromObjectType: body.initiated_from_object_type ?? null,
 		await: 'none',
+		spawnedByMessageId: body.spawned_by_message_id,
+		dependsOnSessionIds: body.depends_on_session_ids,
 	})
 
 	// startSession returns a lightweight handle plus the underlying row on a
@@ -190,9 +192,11 @@ app.openapi(listSessionsRoute, (async (c) => {
 		// Conversation-triggered sessions (see conversation-responder.ts) —
 		// lets the UI show a "this agent is responding" indicator for a
 		// conversation the same way mention_object_id does for object comments.
-		conditions.push(
-			sql`${sessions.config}->'conversation'->>'conversation_id' = ${query.conversation_id}`,
-		)
+		//
+		// Filters on the denormalized `sessions.conversation_id` column (backfilled
+		// in 0053, written by createSession) so it hits sessions_conversation_actor_idx
+		// instead of scanning every row's JSONB path — an open chat polls this.
+		conditions.push(eq(sessions.conversationId, query.conversation_id))
 	}
 	// Half-open contract — Zod has already validated these as ISO-8601 strings.
 	if (query.updated_before) conditions.push(lt(sessions.updatedAt, new Date(query.updated_before)))

@@ -214,11 +214,9 @@ export const ubersuggestAuth: CustomAuthHandler = {
 		})
 
 		if (!tokenRes.ok) {
-			const body = await tokenRes.text()
 			logger.warn('Ubersuggest token refresh failed', {
 				integrationId,
 				status: tokenRes.status,
-				error: body.slice(0, 500),
 			})
 			// 400 invalid_grant / 401 invalid_client are terminal: the grant is gone or
 			// the dynamically-registered client no longer exists. Anything else (429,

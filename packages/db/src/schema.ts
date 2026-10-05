@@ -183,6 +183,11 @@ export const objects = pgTable(
 		// Range-scan path for list_objects(updated_before/updated_after) — the
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0043.
 		index('objects_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
+		// Session teardown clears objects by active_session_id. Built CONCURRENTLY
+		// in migration 0083.
+		index('objects_active_session_idx')
+			.on(t.activeSessionId)
+			.where(sql`${t.activeSessionId} IS NOT NULL`),
 	],
 )
 
@@ -243,6 +248,10 @@ export const events = pgTable(
 	(t) => [
 		index('events_ws_created_at_idx').on(t.workspaceId, t.createdAt),
 		index('events_ws_entity_id_idx').on(t.workspaceId, t.entityId, t.id),
+		// For You unread feed: comments only. Built CONCURRENTLY in migration 0084.
+		index('events_ws_entity_commented_idx')
+			.on(t.workspaceId, t.entityId, t.id)
+			.where(sql`${t.action} = 'commented'`),
 	],
 )
 
@@ -421,6 +430,17 @@ export const sessions = pgTable(
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
+		// Handed-off strip anchors: the assistant message that triggered this
+		// sub-agent spawn, and the sessions this one is blocked behind. Both
+		// nullable — pre-migration rows read NULL ("no strip"). Written from the
+		// run_agent path when the caller supplies a message id / blockers.
+		// ON DELETE SET NULL: the anchor is a pointer, not ownership — a deleted
+		// message must not delete the session, it just stops rendering a strip.
+		spawnedByMessageId: bigint('spawned_by_message_id', { mode: 'number' }).references(
+			(): AnyPgColumn => messages.id,
+			{ onDelete: 'set null' },
+		),
+		dependsOnSessionIds: uuid('depends_on_session_ids').array(),
 		startedAt: timestamp('started_at', { withTimezone: true }),
 		completedAt: timestamp('completed_at', { withTimezone: true }),
 		timeoutAt: timestamp('timeout_at', { withTimezone: true }),
@@ -484,6 +504,17 @@ export const sessions = pgTable(
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0044.
 		index('sessions_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
 		index('sessions_actor_idx').on(t.actorId),
+		// "Does this agent have another live session?" on every completion. Built
+		// CONCURRENTLY in migration 0087.
+		index('sessions_actor_status_idx').on(t.actorId, t.status),
+		// Reconciler self-heal window scan over a session's settled time. Built
+		// CONCURRENTLY in migration 0086.
+		index('sessions_settled_at_idx').on(sql`coalesce(${t.completedAt}, ${t.updatedAt})`),
+		// Period usage sum behind GET /api/billing/usage; maskin_plan sessions only.
+		// Built CONCURRENTLY in migration 0085.
+		index('sessions_ws_plan_usage_idx')
+			.on(t.workspaceId, t.createdAt)
+			.where(sql`${t.config}->>'llm_route' = 'maskin_plan'`),
 		index('sessions_actor_completed_idx')
 			.on(t.actorId, t.completedAt)
 			.where(sql`${t.completedAt} IS NOT NULL`),
@@ -1629,6 +1660,60 @@ export const awaitingVies = pgTable(
 
 export type AwaitingViesRow = typeof awaitingVies.$inferSelect
 export type NewOrphanThreadDetection = typeof orphanThreadDetections.$inferInsert
+
+// ── File Comments ───────────────────────────────────────────────────────────
+// Threaded review comments pinned to positions on a file's rendered document.
+// Replaces the viewport-fraction `files.annotations` blob so pins can (a)
+// round-trip across resize / zoom and (b) group into batched review "rounds"
+// that write ONE rollup timeline event on the attaching object (see
+// routes/file-comments.ts) instead of one event per pin. Legacy pins on the
+// old blob are ported into rows on first read (see
+// lib/file-comments-migration.ts) with `selector='legacy'` as the idempotence
+// marker.
+
+export const fileComments = pgTable(
+	'file_comments',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		fileId: uuid('file_id')
+			.notNull()
+			.references(() => files.id, { onDelete: 'cascade' }),
+		// Null when the file isn't paged (a single-page mockup / doc). Set to the
+		// 1-based page/slide index the pin was dropped on for a deck.
+		page: integer('page'),
+		// { x, y } floats in [0, 1] of the natural document dimensions — NOT
+		// viewport fractions. See spec §Coord math.
+		positionDoc: jsonb('position_doc').notNull().$type<{ x: number; y: number }>(),
+		// Kept from the pre-refactor annotation-overlay so a CSS-selector-based
+		// pin still round-trips. `'legacy'` is reserved as the migration marker.
+		selector: text('selector'),
+		authorId: uuid('author_id')
+			.notNull()
+			.references(() => actors.id),
+		body: text('body').notNull(),
+		// biome-ignore lint/suspicious/noExplicitAny: self-referential FK requires type escape
+		parentId: uuid('parent_id').references((): any => fileComments.id, { onDelete: 'cascade' }),
+		// Set on send; null while the comment is a draft. Every comment in a
+		// single sent round shares one uuid so the round endpoint's upsert makes
+		// retries idempotent.
+		roundId: uuid('round_id'),
+		resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+		resolvedBy: uuid('resolved_by').references(() => actors.id),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// Panel reads: "all comments on this file", ordered by page then time.
+		index('file_comments_file_page_created_at_idx').on(t.fileId, t.page, t.createdAt),
+		// Round-scoped re-hydration (?round=<id> deep-links from the rollup event).
+		index('file_comments_round_id_idx')
+			.on(t.roundId)
+			.where(sql`${t.roundId} IS NOT NULL`),
+	],
+)
+
+export type FileComment = typeof fileComments.$inferSelect
+export type NewFileComment = typeof fileComments.$inferInsert
 
 // ── Google Meet — create_space idempotency ─────────────────────────────────
 // Maskin-side dedup ledger for `google_meet__create_space`. Meet's spaces.create
