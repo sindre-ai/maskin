@@ -1,3 +1,5 @@
+import { ConnectWizard } from '@/components/integrations/drive/connect-wizard'
+import { FirstCallState } from '@/components/integrations/drive/first-call-state'
 import { McpTag } from '@/components/integrations/drive/mcp-tag'
 import { ScopeDriftBanner } from '@/components/integrations/drive/scope-drift-banner'
 import { ScopeChip, ScopeRow } from '@/components/integrations/drive/scope-row'
@@ -10,6 +12,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useConnectIntegration, useIntegrations } from '@/hooks/use-integrations'
 import { DRIVE_COPY } from '@/lib/drive-copy'
+import { hasDriveIngested } from '@/lib/drive-first-call'
 import {
 	DRIVE_PROVIDER,
 	DRIVE_SCOPES,
@@ -19,7 +22,7 @@ import {
 	pickDriveVariant,
 } from '@/lib/drive-humans'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { ChevronLeft } from 'lucide-react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/integrations_/google-drive')({
@@ -71,6 +74,7 @@ function DriveDetail() {
 	const { data: integrations, isLoading } = useIntegrations(workspaceId)
 	const { data: actors } = useActors(workspaceId)
 	const connect = useConnectIntegration(workspaceId)
+	const navigate = useNavigate()
 	const startConnect = () => connect.mutate({ provider: DRIVE_PROVIDER })
 
 	if (isLoading || !integrations) {
@@ -120,18 +124,24 @@ function DriveDetail() {
 				</div>
 			</div>
 
-			<p className="text-sm text-muted-foreground">{DRIVE_COPY.pageDescription}</p>
+			{variant !== 'all-disconnected' && (
+				<p className="text-sm text-muted-foreground">{DRIVE_COPY.pageDescription}</p>
+			)}
 
 			{variant === 'all-disconnected' ? (
-				<EmptyState
-					title={DRIVE_COPY.emptyTitle}
-					description={DRIVE_COPY.emptyDescription}
-					action={
-						<Button size="sm" onClick={startConnect} disabled={connect.isPending}>
-							{DRIVE_COPY.emptyCta}
-						</Button>
+				<ConnectWizard
+					state={connect.isPending ? 'loading' : connect.isError ? 'error' : 'default'}
+					onContinue={startConnect}
+					onCancel={() =>
+						navigate({
+							to: '/$workspaceId/settings/integrations',
+							params: { workspaceId },
+							search: { select_github: undefined, error: undefined },
+						})
 					}
 				/>
+			) : variant === 'connected' && !hasDriveIngested(integrations) ? (
+				<FirstCallState />
 			) : (
 				<>
 					{variant === 'scope-add' && (

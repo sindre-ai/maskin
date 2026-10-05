@@ -41,10 +41,6 @@ export const DRIVE_COPY = {
 		" When an agent needs to read a file, Maskin uses that human's Drive token — Google scopes reads to files the human can already see. Agents cannot see files a human wouldn't.",
 	idleHuman: 'No Drive reads yet',
 	recentActivityLabel: 'Recent Drive activity',
-	// No spec copy for the empty state; written for this task.
-	emptyTitle: 'Drive is not connected',
-	emptyDescription: 'Connect a Google account to give your agents access to Drive.',
-	emptyCta: 'Connect Drive',
 	flagOffTitle: 'Google Drive is not available yet',
 	flagOffDescription: 'This integration is not turned on for your account.',
 } as const
