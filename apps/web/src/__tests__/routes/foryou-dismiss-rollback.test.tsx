@@ -256,6 +256,40 @@ describe('For You — dismiss rollback', () => {
 		expect(screen.queryByTestId('foryou-feed-card')).not.toBeInTheDocument()
 	})
 
+	// The hide is for the mention the reader answered, not for the thread: when
+	// the agent answers the reply, that newer mention must show up live.
+	it('shows the card again when the thread gets a newer mention after the reply', async () => {
+		const user = userEvent.setup()
+		const view = await renderFeed()
+
+		await user.click(screen.getByRole('button', { name: 'reply' }))
+		await act(async () => {
+			await Promise.resolve()
+		})
+		expect(screen.queryByTestId('foryou-feed-card')).not.toBeInTheDocument()
+
+		// A refetch that returns the same event id (the mark-read racing the
+		// refetch) must not bring the card back.
+		view.rerender(
+			<QueryClientProvider client={new QueryClient()}>
+				<ForYouPage />
+			</QueryClientProvider>,
+		)
+		expect(screen.queryByTestId('foryou-feed-card')).not.toBeInTheDocument()
+
+		// The agent answers: the same entity comes back with a higher event id.
+		testState.__items = [
+			{ ...buildItem('thread-1', 'Renewal terms need a read'), latest_event_id: 43 },
+		]
+		view.rerender(
+			<QueryClientProvider client={new QueryClient()}>
+				<ForYouPage />
+			</QueryClientProvider>,
+		)
+
+		expect(screen.getByTestId('foryou-feed-card')).toBeInTheDocument()
+	})
+
 	// Symmetric to the bulk-dismiss rollback: if the mark-read fails after a
 	// typed reply, the card has to come back — otherwise it stays hidden
 	// forever behind an optimistic dismiss whose write never landed.
