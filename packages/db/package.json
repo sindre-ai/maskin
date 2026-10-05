@@ -32,12 +32,12 @@
 	},
 	"dependencies": {
 		"@maskin/shared": "workspace:*",
-		"drizzle-orm": "^0.45.2",
+		"drizzle-orm": "^0.45.3",
 		"postgres": "^3.4.9"
 	},
 	"devDependencies": {
-		"drizzle-kit": "^0.31.10",
-		"tsx": "^4.19.0",
+		"drizzle-kit": "^0.31.11",
+		"tsx": "^4.23.15",
 		"typescript": "^5.7.0"
 	}
 }
