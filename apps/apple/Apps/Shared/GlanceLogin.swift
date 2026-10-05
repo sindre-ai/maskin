@@ -53,6 +53,8 @@ struct GlanceLogin: View {
 		case .invalidCredentials: "Email or password is wrong."
 		case .server(let status): "Maskin is having trouble (error \(status))."
 		case .network: "Can't reach Maskin."
+		case .unreadableResponse: "Maskin answered, but the app couldn't read the reply."
+		case .couldNotSaveSession: "Signed in, but couldn't save the session."
 		}
 	}
 }

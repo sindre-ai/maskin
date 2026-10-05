@@ -35,6 +35,10 @@ extension AuthError {
 			"Maskin is having trouble right now (error \(status)). Try again in a moment."
 		case .network:
 			"Can't reach Maskin. Check your connection and try again."
+		case .unreadableResponse:
+			"Maskin answered, but this version of the app couldn't read the reply. Check for an app update and try again."
+		case .couldNotSaveSession:
+			"Signed in, but this device wouldn't let the app save your session. Restart the app and try again."
 		}
 	}
 }

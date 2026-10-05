@@ -1,4 +1,5 @@
 import Foundation
+import os
 import MaskinAPI
 import Observation
 
@@ -86,10 +87,21 @@ public enum AuthSessionError: Error, Sendable, Equatable {
 	case emptyKey
 }
 
+enum AuthLog {
+	static let logger = Logger(subsystem: "io.maskin.app", category: "auth")
+}
+
 public enum AuthError: Error, Sendable, Equatable {
 	case invalidCredentials
 	case server(status: Int)
 	case network(String)
+	/// The server answered, but the reply could not be read (an unexpected shape or content type).
+	/// Carries a short technical cause for logs; the screen shows plain copy, not this text.
+	case unreadableResponse(String)
+	/// The server accepted the sign-in but this device could not store the session (the Keychain
+	/// refused it). The person is NOT signed in, and "can't reach Maskin" would be the wrong thing
+	/// to tell them. Carries the cause for logs.
+	case couldNotSaveSession(String)
 }
 
 /// What `POST /api/actors` returned for a new human. `login` is the session to persist;
@@ -235,19 +247,29 @@ public final class AuthSession {
 		workspaceProvisioningFailed = false
 		sessionExpired = false
 		defer { isSigningIn = false }
+		let result: LoginResult
 		do {
-			let result = try await authenticator.login(email: email, password: password)
-			let stored = StoredSession(
-				apiKey: result.apiKey, actorId: result.actorId, name: result.name,
-				email: result.email, workspaceId: result.workspaceId)
-			try persist(stored)
-			signOutMarker.set(false)
-			state = .signedIn(stored)
+			result = try await authenticator.login(email: email, password: password)
 		} catch let error as AuthError {
 			lastError = error
+			return
 		} catch {
 			lastError = .network(error.localizedDescription)
+			return
 		}
+		// Saving the session is a separate failure from reaching the server: say so.
+		let stored = StoredSession(
+			apiKey: result.apiKey, actorId: result.actorId, name: result.name,
+			email: result.email, workspaceId: result.workspaceId)
+		do {
+			try persist(stored)
+		} catch {
+			AuthLog.logger.error("sign-in succeeded but the session could not be stored: \(String(describing: error).prefix(200), privacy: .public)")
+			lastError = .couldNotSaveSession(String(describing: error))
+			return
+		}
+		signOutMarker.set(false)
+		state = .signedIn(stored)
 	}
 
 	/// Create a human account and sign in with it. The session is persisted through the same path

@@ -13,13 +13,27 @@ public struct APIAuthenticator: Authenticating {
 	/// For tests: a client built over a fake transport.
 	init(client: Client) { self.client = client }
 
+	/// Tell "could not reach the server" from "the server answered but the reply could not be read".
+	/// Only the first is a connection problem; telling someone to check their connection when the
+	/// server did answer sends them in the wrong direction. The cause is logged (never the
+	/// credentials: only the error's own description), the screen shows plain copy.
+	static func classify(_ error: any Error) -> AuthError {
+		let underlying = (error as? ClientError)?.underlyingError ?? error
+		if underlying is URLError || error is URLError {
+			return .network(error.localizedDescription)
+		}
+		let cause = String(describing: underlying)
+		AuthLog.logger.error("login reply unreadable: \(cause.prefix(300), privacy: .public)")
+		return .unreadableResponse(cause)
+	}
+
 	public func login(email: String, password: String) async throws -> LoginResult {
 		let output: Operations.post_sol_api_sol_auth_sol_login.Output
 		do {
 			output = try await client.post_sol_api_sol_auth_sol_login(
 				.init(body: .json(.init(email: email, password: password))))
 		} catch {
-			throw AuthError.network(error.localizedDescription)
+			throw Self.classify(error)
 		}
 
 		switch output {

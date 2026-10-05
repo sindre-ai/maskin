@@ -25,6 +25,12 @@ struct LoginFormTests {
 		#expect(AuthError.invalidCredentials.message.contains("don't match"))
 		#expect(AuthError.server(status: 503).message.contains("503"))
 		#expect(!AuthError.network("NSURLErrorDomain -1009").message.contains("NSURL"))
+		// Only a real connection failure may tell someone to check their connection.
+		#expect(AuthError.network("x").message.contains("connection"))
+		#expect(!AuthError.unreadableResponse("keyNotFound").message.contains("connection"))
+		#expect(!AuthError.unreadableResponse("keyNotFound").message.contains("keyNotFound"))
+		#expect(!AuthError.couldNotSaveSession("-34018").message.contains("connection"))
+		#expect(!AuthError.couldNotSaveSession("-34018").message.contains("34018"))
 	}
 
 	@Test("the session-ended notice shows only until the user tries again")
