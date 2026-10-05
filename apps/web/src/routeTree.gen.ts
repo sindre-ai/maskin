@@ -49,6 +49,7 @@ import { Route as AuthedWorkspaceIdAgentsAgentIdRouteImport } from './routes/_au
 import { Route as AuthedWorkspaceIdSettingsObjectsIndexRouteImport } from './routes/_authed/$workspaceId/settings/objects/index'
 import { Route as AuthedWorkspaceIdMarketplaceLoopIdIndexRouteImport } from './routes/_authed/$workspaceId/marketplace/$loopId/index'
 import { Route as AuthedWorkspaceIdSettingsObjectsPropertyNameRouteImport } from './routes/_authed/$workspaceId/settings/objects/$propertyName'
+import { Route as AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRouteImport } from './routes/_authed/$workspaceId/settings/integrations_.google-drive'
 import { Route as AuthedWorkspaceIdMarketplaceLoopIdItemIdRouteImport } from './routes/_authed/$workspaceId/marketplace/$loopId/$itemId'
 
 const SignupRoute = SignupRouteImport.update({
@@ -279,6 +280,12 @@ const AuthedWorkspaceIdSettingsObjectsPropertyNameRoute =
     path: '/objects/$propertyName',
     getParentRoute: () => AuthedWorkspaceIdSettingsRoute,
   } as any)
+const AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRoute =
+  AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRouteImport.update({
+    id: '/integrations_/google-drive',
+    path: '/integrations/google-drive',
+    getParentRoute: () => AuthedWorkspaceIdSettingsRoute,
+  } as any)
 const AuthedWorkspaceIdMarketplaceLoopIdItemIdRoute =
   AuthedWorkspaceIdMarketplaceLoopIdItemIdRouteImport.update({
     id: '/marketplace/$loopId/$itemId',
@@ -324,6 +331,7 @@ export interface FileRoutesByFullPath {
   '/$workspaceId/settings/': typeof AuthedWorkspaceIdSettingsIndexRoute
   '/$workspaceId/triggers/': typeof AuthedWorkspaceIdTriggersIndexRoute
   '/$workspaceId/marketplace/$loopId/$itemId': typeof AuthedWorkspaceIdMarketplaceLoopIdItemIdRoute
+  '/$workspaceId/settings/integrations/google-drive': typeof AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRoute
   '/$workspaceId/settings/objects/$propertyName': typeof AuthedWorkspaceIdSettingsObjectsPropertyNameRoute
   '/$workspaceId/marketplace/$loopId/': typeof AuthedWorkspaceIdMarketplaceLoopIdIndexRoute
   '/$workspaceId/settings/objects/': typeof AuthedWorkspaceIdSettingsObjectsIndexRoute
@@ -363,6 +371,7 @@ export interface FileRoutesByTo {
   '/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsIndexRoute
   '/$workspaceId/triggers': typeof AuthedWorkspaceIdTriggersIndexRoute
   '/$workspaceId/marketplace/$loopId/$itemId': typeof AuthedWorkspaceIdMarketplaceLoopIdItemIdRoute
+  '/$workspaceId/settings/integrations/google-drive': typeof AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRoute
   '/$workspaceId/settings/objects/$propertyName': typeof AuthedWorkspaceIdSettingsObjectsPropertyNameRoute
   '/$workspaceId/marketplace/$loopId': typeof AuthedWorkspaceIdMarketplaceLoopIdIndexRoute
   '/$workspaceId/settings/objects': typeof AuthedWorkspaceIdSettingsObjectsIndexRoute
@@ -407,6 +416,7 @@ export interface FileRoutesById {
   '/_authed/$workspaceId/settings/': typeof AuthedWorkspaceIdSettingsIndexRoute
   '/_authed/$workspaceId/triggers/': typeof AuthedWorkspaceIdTriggersIndexRoute
   '/_authed/$workspaceId/marketplace/$loopId/$itemId': typeof AuthedWorkspaceIdMarketplaceLoopIdItemIdRoute
+  '/_authed/$workspaceId/settings/integrations_/google-drive': typeof AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRoute
   '/_authed/$workspaceId/settings/objects/$propertyName': typeof AuthedWorkspaceIdSettingsObjectsPropertyNameRoute
   '/_authed/$workspaceId/marketplace/$loopId/': typeof AuthedWorkspaceIdMarketplaceLoopIdIndexRoute
   '/_authed/$workspaceId/settings/objects/': typeof AuthedWorkspaceIdSettingsObjectsIndexRoute
@@ -451,6 +461,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/settings/'
     | '/$workspaceId/triggers/'
     | '/$workspaceId/marketplace/$loopId/$itemId'
+    | '/$workspaceId/settings/integrations/google-drive'
     | '/$workspaceId/settings/objects/$propertyName'
     | '/$workspaceId/marketplace/$loopId/'
     | '/$workspaceId/settings/objects/'
@@ -490,6 +501,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/settings'
     | '/$workspaceId/triggers'
     | '/$workspaceId/marketplace/$loopId/$itemId'
+    | '/$workspaceId/settings/integrations/google-drive'
     | '/$workspaceId/settings/objects/$propertyName'
     | '/$workspaceId/marketplace/$loopId'
     | '/$workspaceId/settings/objects'
@@ -533,6 +545,7 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId/settings/'
     | '/_authed/$workspaceId/triggers/'
     | '/_authed/$workspaceId/marketplace/$loopId/$itemId'
+    | '/_authed/$workspaceId/settings/integrations_/google-drive'
     | '/_authed/$workspaceId/settings/objects/$propertyName'
     | '/_authed/$workspaceId/marketplace/$loopId/'
     | '/_authed/$workspaceId/settings/objects/'
@@ -829,6 +842,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedWorkspaceIdSettingsObjectsPropertyNameRouteImport
       parentRoute: typeof AuthedWorkspaceIdSettingsRoute
     }
+    '/_authed/$workspaceId/settings/integrations_/google-drive': {
+      id: '/_authed/$workspaceId/settings/integrations_/google-drive'
+      path: '/integrations/google-drive'
+      fullPath: '/$workspaceId/settings/integrations/google-drive'
+      preLoaderRoute: typeof AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRouteImport
+      parentRoute: typeof AuthedWorkspaceIdSettingsRoute
+    }
     '/_authed/$workspaceId/marketplace/$loopId/$itemId': {
       id: '/_authed/$workspaceId/marketplace/$loopId/$itemId'
       path: '/marketplace/$loopId/$itemId'
@@ -867,6 +887,7 @@ interface AuthedWorkspaceIdSettingsRouteChildren {
   AuthedWorkspaceIdSettingsMembersRoute: typeof AuthedWorkspaceIdSettingsMembersRoute
   AuthedWorkspaceIdSettingsSkillsRoute: typeof AuthedWorkspaceIdSettingsSkillsRoute
   AuthedWorkspaceIdSettingsIndexRoute: typeof AuthedWorkspaceIdSettingsIndexRoute
+  AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRoute: typeof AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRoute
   AuthedWorkspaceIdSettingsObjectsPropertyNameRoute: typeof AuthedWorkspaceIdSettingsObjectsPropertyNameRoute
   AuthedWorkspaceIdSettingsObjectsIndexRoute: typeof AuthedWorkspaceIdSettingsObjectsIndexRoute
 }
@@ -885,6 +906,8 @@ const AuthedWorkspaceIdSettingsRouteChildren: AuthedWorkspaceIdSettingsRouteChil
       AuthedWorkspaceIdSettingsMembersRoute,
     AuthedWorkspaceIdSettingsSkillsRoute: AuthedWorkspaceIdSettingsSkillsRoute,
     AuthedWorkspaceIdSettingsIndexRoute: AuthedWorkspaceIdSettingsIndexRoute,
+    AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRoute:
+      AuthedWorkspaceIdSettingsIntegrationsGoogleDriveRoute,
     AuthedWorkspaceIdSettingsObjectsPropertyNameRoute:
       AuthedWorkspaceIdSettingsObjectsPropertyNameRoute,
     AuthedWorkspaceIdSettingsObjectsIndexRoute:
