@@ -3860,7 +3860,10 @@ export class SessionManager extends EventEmitter {
 							: undefined,
 					updatedAt: new Date(),
 				})
-				.where(eq(sessions.id, sessionId))
+				// Terminal rows are final: every caller writes before it settles the
+				// row (or, for pause, on a non-terminal 'paused' row), so a write that
+				// finds a terminal status is a late straggler and must not add cost.
+				.where(and(eq(sessions.id, sessionId), notInArray(sessions.status, [...TERMINAL_STATUSES])))
 		} catch (err) {
 			logger.error('Failed to persist accumulated session usage', { sessionId, error: String(err) })
 		}
