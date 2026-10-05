@@ -112,7 +112,9 @@ function DriveDetail() {
 						<p className="text-sm text-muted-foreground" data-testid="drive-mline">
 							{variant === 'connected'
 								? DRIVE_COPY.connectedMline(humans.length)
-								: DRIVE_COPY.scopeAddMline(humans.length, withDrive, needAdd.length)}
+								: variant === 'needs-reconnect'
+									? DRIVE_COPY.needsReconnectMline(humans.length, needReconnect.length)
+									: DRIVE_COPY.scopeAddMline(humans.length, withDrive, needAdd.length)}
 						</p>
 					)}
 				</div>

@@ -19,6 +19,9 @@ export const DRIVE_COPY = {
 		`${plural(humans, 'human', 'humans')} on Google · ${withDrive} ${withDrive === 1 ? 'has' : 'have'} Drive · ${needAdd} ${needAdd === 1 ? 'needs' : 'need'} scope add`,
 	// Counts of file reads, writes and watches have no stored source; omitted.
 	connectedMline: (humans: number) => `${plural(humans, 'human', 'humans')} connected`,
+	// No spec line for this variant; the connected line plus the reconnect count.
+	needsReconnectMline: (humans: number, needReconnect: number) =>
+		`${plural(humans, 'human', 'humans')} connected · ${needReconnect} ${needReconnect === 1 ? 'needs' : 'need'} reconnect`,
 	scopeAddBannerTitle: (n: number) =>
 		`${plural(n, 'human needs', 'humans need')} to add Drive permissions`,
 	// EDITED (reconciliations 1 and 2).

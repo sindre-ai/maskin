@@ -157,6 +157,9 @@ describe('Google Drive detail page', () => {
 
 		expect(screen.getByTestId('drive-detail')).toHaveAttribute('data-variant', 'needs-reconnect')
 		expect(screen.getByLabelText('Attention')).toBeInTheDocument()
+		expect(screen.getByTestId('drive-mline')).toHaveTextContent(
+			'2 humans connected · 1 needs reconnect',
+		)
 		const banner = screen.getByRole('status')
 		expect(
 			within(banner).getByText('Reconnect Google — your token was invalidated'),
