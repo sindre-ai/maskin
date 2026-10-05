@@ -50,10 +50,6 @@ export const DRIVE_COPY = {
 	stopWatchLabel: (folder: string) => `Stop watch for ${folder}`,
 	idleHuman: 'No Drive reads yet',
 	recentActivityLabel: 'Recent Drive activity',
-	// No spec copy for the empty state; written for this task.
-	emptyTitle: 'Drive is not connected',
-	emptyDescription: 'Connect a Google account to give your agents access to Drive.',
-	emptyCta: 'Connect Drive',
 	flagOffTitle: 'Google Drive is not available yet',
 	flagOffDescription: 'This integration is not turned on for your account.',
 } as const
