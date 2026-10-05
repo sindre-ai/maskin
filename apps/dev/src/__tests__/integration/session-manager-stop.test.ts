@@ -3,6 +3,7 @@ import type { StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../../lib/analytics/posthog'
 import { logger } from '../../lib/logger'
+import { RuntimeTelemetry, type TelemetryClient } from '../../services/runtime-telemetry'
 import { _driveToRunning, configureSessionLifecycle } from '../../services/session-lifecycle'
 import { SessionManager } from '../../services/session-manager'
 import { insertSession, insertSessionLog, insertWorkspace } from '../factories'
@@ -398,8 +399,20 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		workspaceId = ws.id
 	})
 
-	async function tickReaper(): Promise<SessionManager> {
-		const manager = new SessionManager(db, stubStorage())
+	// Telemetry that records every runtime_session_ended it is asked to send.
+	function captureSessionEnded(): { telemetry: RuntimeTelemetry; endedFor: string[] } {
+		const endedFor: string[] = []
+		const client: TelemetryClient = {
+			capture(payload) {
+				if (payload.event === 'runtime_session_ended') endedFor.push(payload.distinctId)
+			},
+			shutdown: async () => {},
+		}
+		return { telemetry: new RuntimeTelemetry({ client }), endedFor }
+	}
+
+	async function tickReaper(telemetry?: RuntimeTelemetry): Promise<SessionManager> {
+		const manager = new SessionManager(db, stubStorage(), telemetry)
 		configureSessionLifecycle({ db, sessionManager: manager })
 		// The last runWatchdog section drains every workspace with queued rows;
 		// that path invokes real container/dispatcher machinery which is far out
@@ -1042,6 +1055,72 @@ describe('SessionManager.runWatchdog — session_state-aware reaper (Integration
 		expect(row?.completedAt).toBeNull()
 		const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
 		expect(eventRows.some((e) => e.action === 'session_failed')).toBe(false)
+	})
+
+	// (g2) A failed session reports runtime_session_ended once, however many
+	// reaper passes follow. Before the terminal-row filters and the heal, a
+	// failed row kept session_state starting and every 60s pass redid it.
+	it('a boot-stalled session emits runtime_session_ended once across repeated passes', async () => {
+		const sixMinAgo = new Date(Date.now() - 6 * 60 * 1000)
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'starting',
+			sessionState: 'starting',
+			stateEnteredAt: sixMinAgo,
+			startedAt: sixMinAgo,
+			timeoutAt: null,
+		})
+		const { telemetry, endedFor } = captureSessionEnded()
+
+		for (let pass = 0; pass < 3; pass++) {
+			const manager = await tickReaper(telemetry)
+			await manager.stop()
+		}
+
+		const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(row?.status).toBe('failed')
+		expect(endedFor.filter((id) => id === session.id)).toEqual([session.id])
+	})
+
+	// (g3) The emit is tied to winning the terminal transition. The race is
+	// forced deterministically: the usage write that precedes the timeout settle
+	// also fails the row, as a concurrent writer would. The watchdog's settle
+	// then reports alreadySettled and must not emit.
+	it('a timed-out row another writer already failed does not emit runtime_session_ended', async () => {
+		const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000)
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'running',
+			sessionState: 'running',
+			stateEnteredAt: threeHoursAgo,
+			startedAt: threeHoursAgo,
+			timeoutAt: null,
+		})
+		const { telemetry, endedFor } = captureSessionEnded()
+
+		let raced = 0
+		const usageSpy = vi
+			.spyOn(
+				SessionManager.prototype as unknown as {
+					accumulateSessionUsage: (id: string) => Promise<unknown>
+				},
+				'accumulateSessionUsage',
+			)
+			.mockImplementation(async (id: string) => {
+				raced++
+				await db.update(sessions).set({ status: 'failed' }).where(eq(sessions.id, id))
+				return null
+			})
+
+		let manager: SessionManager | undefined
+		try {
+			manager = await tickReaper(telemetry)
+		} finally {
+			usageSpy.mockRestore()
+			await manager?.stop()
+		}
+
+		// The hook fired, so the row really went terminal between select and settle.
+		expect(raced).toBe(1)
+		expect(endedFor.filter((id) => id === session.id)).toEqual([])
 	})
 
 	// (h) One step throwing must not skip the steps after it. Step 1 throws on

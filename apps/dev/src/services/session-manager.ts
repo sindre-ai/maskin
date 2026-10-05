@@ -4266,7 +4266,7 @@ export class SessionManager extends EventEmitter {
 				// settleSession's stopSandbox callback only stops, doesn't remove.
 				const containerIdToRemove =
 					!session.agentServerId && session.containerId ? session.containerId : null
-				await settleSession(
+				const settled = await settleSession(
 					session.id,
 					{
 						kind: 'timeout',
@@ -4301,14 +4301,18 @@ export class SessionManager extends EventEmitter {
 						)
 				}
 
-				this.telemetry.recordSessionEnded({
-					sessionId: session.id,
-					endReason: 'irrecoverable',
-					durationMs: elapsedMs(session.startedAt, session.createdAt),
-					agentServerUrl: LOCAL_RUNTIME_BUCKET,
-					contextObjectId: session.initiatedFromObjectId,
-					contextObjectType: session.initiatedFromObjectType,
-				})
+				// Only the pass that wins the terminal transition reports the end; a
+				// row another writer already settled must not re-emit.
+				if (!settled.alreadySettled) {
+					this.telemetry.recordSessionEnded({
+						sessionId: session.id,
+						endReason: 'irrecoverable',
+						durationMs: elapsedMs(session.startedAt, session.createdAt),
+						agentServerUrl: LOCAL_RUNTIME_BUCKET,
+						contextObjectId: session.initiatedFromObjectId,
+						contextObjectType: session.initiatedFromObjectType,
+					})
+				}
 
 				// Prefix must stay 'Session timed out' — the SSE /logs/stream endpoint
 				// matches it to emit its `done` event (TERMINAL_SYSTEM_LOGS in
@@ -4707,7 +4711,7 @@ export class SessionManager extends EventEmitter {
 				// skipped-none-live), so a stall that never made a sandbox is a
 				// no-op. Live rows never get here: step 6b heals status='running'
 				// rows first and the select above excludes them.
-				await settleSession(
+				const settled = await settleSession(
 					session.id,
 					{
 						kind: 'fail',
@@ -4727,14 +4731,17 @@ export class SessionManager extends EventEmitter {
 					}),
 				)
 
-				this.telemetry.recordSessionEnded({
-					sessionId: session.id,
-					endReason: 'failed',
-					durationMs: elapsedMs(session.startedAt, session.createdAt),
-					agentServerUrl: LOCAL_RUNTIME_BUCKET,
-					contextObjectId: session.initiatedFromObjectId,
-					contextObjectType: session.initiatedFromObjectType,
-				})
+				// Same rule as the timeout step: emit only when this pass settled the row.
+				if (!settled.alreadySettled) {
+					this.telemetry.recordSessionEnded({
+						sessionId: session.id,
+						endReason: 'failed',
+						durationMs: elapsedMs(session.startedAt, session.createdAt),
+						agentServerUrl: LOCAL_RUNTIME_BUCKET,
+						contextObjectId: session.initiatedFromObjectId,
+						contextObjectType: session.initiatedFromObjectType,
+					})
+				}
 
 				await this.cleanupBrowserSidecar(session.id).catch(() => {})
 				await this.clearActiveSession(session.id)
