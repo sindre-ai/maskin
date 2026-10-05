@@ -109,6 +109,21 @@ services:
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
       WEBHOOK_BASE_URL: ${WEBHOOK_BASE_URL:-}
+      # Voice outreach (bet 5b8e). Same vars and defaults as docker-compose.staging.yml.
+      # Coolify only forwards vars the compose file references, so each one is listed
+      # here. Every reader treats an empty value as unset (readTelnyxRuntimeConfig,
+      # voice-dialer, effects), so nothing changes until a value is set.
+      # TELNYX_API_KEY is NOT here: it is the workspace telnyx integration.
+      TELNYX_PUBLIC_KEY: ${TELNYX_PUBLIC_KEY:-}
+      TELNYX_APP_ID: ${TELNYX_APP_ID:-}
+      TELNYX_ASSISTANT_ID: ${TELNYX_ASSISTANT_ID:-}
+      CALL_DAILY_CAP: ${CALL_DAILY_CAP:-200}
+      CALL_RATE_LIMIT_PER_MINUTE: ${CALL_RATE_LIMIT_PER_MINUTE:-5}
+      VOICE_SMS_MISSED_CALL_NUDGE: ${VOICE_SMS_MISSED_CALL_NUDGE:-}
+      VOICE_SMS_VOICEMAIL_FOLLOWUP: ${VOICE_SMS_VOICEMAIL_FOLLOWUP:-}
+      TELNYX_FROM_NUMBER: ${TELNYX_FROM_NUMBER:-}
+      VOICE_SALES_REP_ACTOR_ID: ${VOICE_SALES_REP_ACTOR_ID:-}
+      VOICE_FOUNDER_ACTORS: ${VOICE_FOUNDER_ACTORS:-}
     depends_on:
       postgres:
         condition: service_healthy
