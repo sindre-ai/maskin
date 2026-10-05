@@ -74,7 +74,7 @@ import {
 	slackInteractiveDeliveryId,
 } from '../lib/integrations/providers/slack/interactive'
 import { getProvider, listProviders } from '../lib/integrations/registry'
-import { integrationScopeGaps } from '../lib/integrations/scope-drift'
+import { integrationScopeGaps, parseScopes } from '../lib/integrations/scope-drift'
 import type {
 	NormalizedEvent,
 	ResolvedProvider,
@@ -145,12 +145,14 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 		// undecryptable blob (almost always an encryption-key rotation) or an
 		// inactive row must never take the whole integrations list down.
 		let missingScopes: string[] = []
+		let grantedScopes: string[] = []
 		if (rest.status === 'active' && credentials) {
 			try {
 				const provider = getProvider(rest.provider)
 				if (provider) {
 					const parsed = JSON.parse(decrypt(credentials as string)) as StoredCredentials
 					missingScopes = integrationScopeGaps(provider.config, parsed).missing
+					grantedScopes = typeof parsed.scope === 'string' ? [...parseScopes(parsed.scope)] : []
 				}
 			} catch (err) {
 				logger.warn('Could not evaluate integration scope drift', {
@@ -162,7 +164,7 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 			}
 		}
 
-		return { ...rest, missingScopes, needsReconnect: missingScopes.length > 0 }
+		return { ...rest, missingScopes, needsReconnect: missingScopes.length > 0, grantedScopes }
 	})
 
 	return c.json(serializeArray(safe) as z.infer<typeof integrationResponseSchema>[])

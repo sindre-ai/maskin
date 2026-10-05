@@ -1612,6 +1612,8 @@ export interface IntegrationResponse {
 	missingScopes?: string[]
 	/** True when `missingScopes` is non-empty — reconnecting re-consents and fixes it. */
 	needsReconnect?: boolean
+	/** Scopes the install's token response carried. Names only, never the token. */
+	grantedScopes?: string[]
 }
 
 /** A GitHub App installation the current actor can bind to this workspace,
