@@ -94,4 +94,48 @@ private extension Int { var asCGFloat: CGFloat { CGFloat(self) } }
 		#expect(!hasLink("[open](maskin://objects/1)"))
 		#expect(!hasLink("[x](facetime:a@b.co)"))
 	}
+
+	// MARK: Internal links
+
+	private func info(_ url: URL) -> MarkdownLinkInfo? {
+		url.host == "maskin.io" ? MarkdownLinkInfo(symbol: "scope", kindLabel: "Bet", title: "Launch video") : nil
+	}
+
+	private func text(_ md: String) -> String {
+		String(MarkdownInline.attributed(md, base: .body, linkInfo: info).characters)
+	}
+
+	@Test func anAddressOnlyInternalLinkIsShownByName() {
+		#expect(text("see https://maskin.io/ws/objects/abc") == "see Launch video")
+		#expect(text("[https://maskin.io/ws/objects/abc](https://maskin.io/ws/objects/abc) done") == "Launch video done")
+	}
+
+	@Test func aTitledInternalLinkKeepsItsOwnWords() {
+		#expect(text("open [the plan](https://maskin.io/ws/objects/abc) now") == "open the plan now")
+	}
+
+	@Test func anInternalLinkIsAChipNotAnUnderlinedAddress() {
+		let attr = MarkdownInline.attributed("[the plan](https://maskin.io/ws/objects/abc)", base: .body, linkInfo: info)
+		let run = attr.runs.first!
+		#expect(run.link != nil)
+		#expect(run.underlineStyle == nil)
+		#expect(run.backgroundColor != nil)
+	}
+
+	@Test func anOutsideLinkIsUntouched() {
+		let attr = MarkdownInline.attributed("[x](https://example.com)", base: .body, linkInfo: info)
+		let run = attr.runs.first!
+		#expect(run.underlineStyle == .single)
+		#expect(run.backgroundColor == nil)
+	}
+
+	@Test func standaloneLinkDetection() {
+		let url = URL(string: "https://maskin.io/ws/objects/abc")!
+		#expect(MarkdownStandaloneLink.match("[Launch plan](https://maskin.io/ws/objects/abc)") == .init(url: url, title: "Launch plan"))
+		#expect(MarkdownStandaloneLink.match("  https://maskin.io/ws/objects/abc \n") == .init(url: url, title: nil))
+		#expect(MarkdownStandaloneLink.match("[https://maskin.io/ws/objects/abc](https://maskin.io/ws/objects/abc)") == .init(url: url, title: nil))
+		#expect(MarkdownStandaloneLink.match("see https://maskin.io/ws/objects/abc") == nil)
+		#expect(MarkdownStandaloneLink.match("[a](https://x.io) and [b](https://y.io)") == nil)
+		#expect(MarkdownStandaloneLink.match("maskin://ws/objects/abc")?.url.scheme == "maskin")
+	}
 }

@@ -161,6 +161,24 @@ public struct ChatMessage: Identifiable, Equatable, Sendable {
 		metadata?["final_output"]?["is_error"]?.boolValue == true
 	}
 
+	/// One to three emoji and nothing else: shown large, without a bubble, as chat apps do.
+	public var isEmojiOnly: Bool {
+		let text = content.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !text.isEmpty, text.count <= 3 else { return false }
+		return text.allSatisfy { character in
+			// Past U+238C skips digits, #, * and © ® ™, which Unicode also marks as emoji.
+			guard let first = character.unicodeScalars.first else { return false }
+			return first.properties.isEmoji && first.value > 0x238C
+		}
+	}
+
+	/// A person can fix their own sent words. Agent turns are session artifacts, and a message
+	/// the server hasn't accepted yet has no id to edit.
+	public func canEdit(by actorID: String?) -> Bool {
+		serverID != nil && kind == "message" && author == .human && actorID != nil && self.actorID == actorID
+			&& !isFailed
+	}
+
 	public var isFailed: Bool {
 		if case .failed = status { return true }
 		return false

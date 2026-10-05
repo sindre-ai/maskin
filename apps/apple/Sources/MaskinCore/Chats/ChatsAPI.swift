@@ -25,6 +25,13 @@ extension ConversationsAPI {
 }
 
 /// Thread endpoints for one workspace.
+extension ChatAPI {
+	/// Sources that cannot edit (test doubles, read-only mirrors) fail with a plain message.
+	public func edit(conversationID: String, messageID: Int, content: String) async throws -> ChatMessage {
+		throw ChatsError("Editing isn't available here.")
+	}
+}
+
 public protocol ChatAPI: Sendable {
 	func detail(conversationID: String) async throws -> ConversationSummary
 	/// Newest page first server-side; returned oldest-first here. `beforeID` pages into the past,
@@ -38,6 +45,8 @@ public protocol ChatAPI: Sendable {
 	/// Ask the agents to answer again (`POST …/messages/{id}/retry`).
 	func retry(conversationID: String, messageID: Int, agentID: String?) async throws
 	func markRead(conversationID: String, lastMessageID: Int) async throws
+	/// Replace the text of a message you wrote (`PATCH …/messages/{id}`); returns the stored row.
+	func edit(conversationID: String, messageID: Int, content: String) async throws -> ChatMessage
 	func addParticipants(conversationID: String, actorIDs: [String]) async throws
 	func removeParticipant(conversationID: String, actorID: String) async throws
 	func rename(conversationID: String, title: String) async throws

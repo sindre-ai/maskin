@@ -9,17 +9,26 @@ public indirect enum MarkdownBlock: Equatable, Hashable, Sendable {
 	case orderedList(start: Int, items: [[MarkdownBlock]])
 	case blockquote([MarkdownBlock])
 	case codeBlock(language: String?, code: String)
+	/// A GitHub-style pipe table. Every row has exactly `header.count` cells.
+	case table(header: [String], alignments: [MarkdownColumnAlignment], rows: [[String]])
 	case thematicBreak
 }
 
+public enum MarkdownColumnAlignment: Equatable, Hashable, Sendable {
+	case leading, center, trailing
+}
+
 /// Small CommonMark-subset block parser: ATX headings, paragraphs, bullet / numbered
-/// lists (nested), blockquotes, fenced code, thematic breaks. Anything else is a paragraph,
+/// lists (nested), blockquotes, fenced code, pipe tables, thematic breaks. Anything else is a paragraph,
 /// so unknown syntax degrades to readable text instead of being dropped.
 public enum MarkdownParser {
-	public static func parse(_ source: String) -> [MarkdownBlock] {
+	/// - Parameter hardBreaks: keep every line break inside a paragraph. CommonMark joins soft
+	///   breaks with a space, which suits wrapped prose but collapses what a person typed into
+	///   several lines of a chat message.
+	public static func parse(_ source: String, hardBreaks: Bool = false) -> [MarkdownBlock] {
 		let lines = source.replacingOccurrences(of: "\r\n", with: "\n")
 			.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-		return blocks(lines)
+		return blocks(lines, hardBreaks: hardBreaks)
 	}
 
 	// MARK: Line classification
@@ -102,6 +111,60 @@ public enum MarkdownParser {
 		return nil
 	}
 
+	// MARK: Tables
+
+	/// Splits a table row into trimmed cells, honouring `\|` escapes and optional outer pipes.
+	private static func cells(_ line: String) -> [String] {
+		var t = trimmed(line)
+		if t.hasPrefix("|") { t.removeFirst() }
+		var result: [String] = []
+		var current = ""
+		var escaped = false
+		for c in t {
+			if escaped {
+				current.append(c == "|" ? "|" : "\\\(c)")
+				escaped = false
+			} else if c == "\\" {
+				escaped = true
+			} else if c == "|" {
+				result.append(trimmed(current))
+				current = ""
+			} else {
+				current.append(c)
+			}
+		}
+		if escaped { current.append("\\") }
+		// A trailing pipe closes the last cell; it does not open an empty one.
+		if !trimmed(current).isEmpty || !t.hasSuffix("|") { result.append(trimmed(current)) }
+		return result
+	}
+
+	/// The column alignments when `line` is a table's delimiter row (`| :-- | :-: | --: |`).
+	private static func delimiter(_ line: String) -> [MarkdownColumnAlignment]? {
+		guard line.contains("|") else { return nil }
+		let parts = cells(line)
+		guard !parts.isEmpty else { return nil }
+		var alignments: [MarkdownColumnAlignment] = []
+		for part in parts {
+			let core = part.drop(while: { $0 == ":" }).reversed().drop(while: { $0 == ":" })
+			guard !core.isEmpty, core.allSatisfy({ $0 == "-" }) else { return nil }
+			switch (part.hasPrefix(":"), part.hasSuffix(":")) {
+			case (true, true): alignments.append(.center)
+			case (false, true): alignments.append(.trailing)
+			default: alignments.append(.leading)
+			}
+		}
+		return alignments
+	}
+
+	/// A header row followed by a delimiter row with the same number of columns.
+	private static func isTableStart(_ lines: [String], _ i: Int) -> Bool {
+		guard i + 1 < lines.count, lines[i].contains("|"), let alignments = delimiter(lines[i + 1]) else {
+			return false
+		}
+		return cells(lines[i]).count == alignments.count
+	}
+
 	private static func startsBlock(_ line: String) -> Bool {
 		fence(line) != nil || heading(line) != nil || isThematicBreak(line)
 			|| trimmed(line).hasPrefix(">") || listMarker(line) != nil
@@ -119,7 +182,7 @@ public enum MarkdownParser {
 
 	// MARK: Block assembly
 
-	private static func blocks(_ lines: [String]) -> [MarkdownBlock] {
+	private static func blocks(_ lines: [String], hardBreaks: Bool) -> [MarkdownBlock] {
 		var out: [MarkdownBlock] = []
 		var i = 0
 		while i < lines.count {
@@ -157,6 +220,20 @@ public enum MarkdownParser {
 				continue
 			}
 
+			if isTableStart(lines, i), let alignments = delimiter(lines[i + 1]) {
+				let header = cells(line)
+				var rows: [[String]] = []
+				i += 2
+				while i < lines.count, !isBlank(lines[i]), lines[i].contains("|"), !startsBlock(lines[i]) {
+					var row = Array(cells(lines[i]).prefix(header.count))
+					while row.count < header.count { row.append("") }
+					rows.append(row)
+					i += 1
+				}
+				out.append(.table(header: header, alignments: alignments, rows: rows))
+				continue
+			}
+
 			if trimmed(line).hasPrefix(">") {
 				var inner: [String] = []
 				while i < lines.count, trimmed(lines[i]).hasPrefix(">") {
@@ -165,7 +242,7 @@ public enum MarkdownParser {
 					inner.append(String(t))
 					i += 1
 				}
-				out.append(.blockquote(blocks(inner)))
+				out.append(.blockquote(blocks(inner, hardBreaks: hardBreaks)))
 				continue
 			}
 
@@ -199,7 +276,7 @@ public enum MarkdownParser {
 							break
 						}
 					}
-					items.append(blocks(body))
+					items.append(blocks(body, hardBreaks: hardBreaks))
 					while i < lines.count, isBlank(lines[i]), i + 1 < lines.count, let m = listMarker(lines[i + 1]),
 						m.ordered == first.ordered, m.indent < first.contentIndent
 					{
@@ -212,19 +289,21 @@ public enum MarkdownParser {
 
 			// Paragraph: soft breaks join with a space, hard breaks (two spaces / backslash) keep a newline.
 			var para: [String] = []
-			while i < lines.count, !isBlank(lines[i]), para.isEmpty || !startsBlock(lines[i]) {
+			while i < lines.count, !isBlank(lines[i]),
+				para.isEmpty || (!startsBlock(lines[i]) && !isTableStart(lines, i))
+			{
 				para.append(lines[i])
 				i += 1
 			}
-			out.append(.paragraph(joinParagraph(para)))
+			out.append(.paragraph(joinParagraph(para, hardBreaks: hardBreaks)))
 		}
 		return out
 	}
 
-	private static func joinParagraph(_ lines: [String]) -> String {
+	private static func joinParagraph(_ lines: [String], hardBreaks: Bool) -> String {
 		var result = ""
 		for (n, raw) in lines.enumerated() {
-			let hardBreak = raw.hasSuffix("  ") || raw.hasSuffix("\\")
+			let hardBreak = hardBreaks || raw.hasSuffix("  ") || raw.hasSuffix("\\")
 			var line = trimmed(raw)
 			if raw.hasSuffix("\\") { line = String(line.dropLast()) }
 			result += line

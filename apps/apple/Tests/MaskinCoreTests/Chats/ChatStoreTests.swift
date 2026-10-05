@@ -476,6 +476,58 @@ struct ChatStoreTests {
 		#expect(meta??.questionAnswer == ChatQuestionAnswer(questionMessageID: 7, answers: [.init(header: "Env", selected: ["Prod"])]))
 	}
 
+	// MARK: Editing and the unread cursor
+
+	@Test("editing your own message shows the new text at once and keeps what the server returns")
+	func editOwnMessage() async {
+		let h = ChatHarness(server: [chatMsg(1, by: "me", "teh plan"), chatMsg(2, by: "relay", agent: true, "ok")])
+		await h.store.start()
+		let id = h.store.messages.first { $0.serverID == 1 }!.id
+		await h.store.edit(id, to: "  the plan  ")
+		let edited = h.store.messages.first { $0.serverID == 1 }!
+		#expect(edited.content == "the plan")
+		#expect(edited.editedAt != nil)
+		#expect(await h.api.edits.map(\.1) == ["the plan"])
+		#expect(h.store.messages.first { $0.serverID == 1 }?.id == id)
+	}
+
+	@Test("a refused edit puts the old text back with a notice")
+	func editRollsBack() async {
+		let h = ChatHarness(server: [chatMsg(1, by: "me", "teh plan")])
+		await h.store.start()
+		await h.api.setFailMutations(true)
+		let id = h.store.messages[0].id
+		await h.store.edit(id, to: "the plan")
+		#expect(h.store.messages[0].content == "teh plan")
+		#expect(h.store.messages[0].editedAt == nil)
+		#expect(h.store.notice != nil)
+	}
+
+	@Test("nothing is sent for someone else's message, an agent's, an empty edit or an unchanged one")
+	func editGuards() async {
+		let h = ChatHarness(server: [
+			chatMsg(1, by: "sam", name: "Sam", "theirs"), chatMsg(2, by: "relay", agent: true, "agent"),
+			chatMsg(3, by: "me", "mine"),
+		])
+		await h.store.start()
+		let ids = Dictionary(uniqueKeysWithValues: h.store.messages.map { ($0.serverID!, $0.id) })
+		await h.store.edit(ids[1]!, to: "changed")
+		await h.store.edit(ids[2]!, to: "changed")
+		await h.store.edit(ids[3]!, to: "   ")
+		await h.store.edit(ids[3]!, to: "mine")
+		#expect(await h.api.edits.isEmpty)
+	}
+
+	@Test("the read cursor at open is remembered, even after the thread marks itself read")
+	func openedCursor() async {
+		let h = ChatHarness(
+			server: [chatMsg(1, by: "relay", agent: true, "a"), chatMsg(2, by: "relay", agent: true, "b")],
+			detail: chatConvo("c1", unread: 1, lastRead: 1))
+		await h.store.start()
+		#expect(h.store.openedReadCursor == 1)
+		#expect(await h.api.readCalls.contains(2))
+	}
+
 	// MARK: Thread management
 
 	@Test("rename is optimistic and rolls back if the server refuses")

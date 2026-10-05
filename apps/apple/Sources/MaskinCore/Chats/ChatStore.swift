@@ -42,6 +42,9 @@ public final class ChatStore {
 	/// Set right after a send until a reply lands or the spawn grace runs out.
 	public private(set) var awaitingReplySince: Date?
 	public var notice: String?
+	/// Where the reader's read cursor stood when the thread opened. Fixed for the visit, so the
+	/// "new" divider stays put after the thread marks itself read.
+	public private(set) var openedReadCursor: Int?
 	/// True while the thread is on screen AND the app is active; read state only advances then.
 	public var isActive = true {
 		didSet {
@@ -320,6 +323,7 @@ public final class ChatStore {
 				conversationID: conversationID, beforeID: nil, afterID: nil, limit: pageSize)
 			let (loadedDetail, page) = try await (detailTask, pageTask)
 			detail = loadedDetail
+			if openedReadCursor == nil { openedReadCursor = loadedDetail.lastReadMessageID }
 			readSent = max(readSent, loadedDetail.lastReadMessageID ?? 0)
 			mergeNewest(page)
 			phase = .loaded
@@ -545,6 +549,27 @@ public final class ChatStore {
 	}
 
 	/// Optimistic rename; rolled back if the server refuses.
+	/// Replace the text of one of your own messages. The new text shows at once; if the server
+	/// refuses it the old text comes back with a notice.
+	public func edit(_ id: String, to text: String) async {
+		let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !trimmed.isEmpty, trimmed.count <= ChatLimits.maxMessageLength,
+			let index = confirmed.firstIndex(where: { $0.id == id }),
+			confirmed[index].canEdit(by: currentActorID), let serverID = confirmed[index].serverID,
+			trimmed != confirmed[index].content
+		else { return }
+		let before = confirmed[index]
+		confirmed[index].content = trimmed
+		confirmed[index].editedAt = now()
+		do {
+			let saved = try await api.edit(conversationID: conversationID, messageID: serverID, content: trimmed)
+			merge([saved])
+		} catch {
+			if let current = confirmed.firstIndex(where: { $0.id == id }) { confirmed[current] = before }
+			notice = Self.message(error)
+		}
+	}
+
 	public func rename(to title: String) async {
 		let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !trimmed.isEmpty, trimmed != detail?.title else { return }

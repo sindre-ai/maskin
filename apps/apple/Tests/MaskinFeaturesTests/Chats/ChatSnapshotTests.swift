@@ -30,9 +30,14 @@ private func message(
 
 private actor FixtureAPI: ChatAPI {
 	let rows: [ChatMessage]
-	init(_ rows: [ChatMessage]) { self.rows = rows }
+	let lastRead: Int?
+	init(_ rows: [ChatMessage], lastRead: Int? = nil) {
+		self.rows = rows
+		self.lastRead = lastRead
+	}
 	func detail(conversationID: String) async throws -> ConversationSummary {
-		ConversationSummary(id: "c1", title: "Q4 pipeline review", participants: [me, relay, sam])
+		ConversationSummary(
+			id: "c1", title: "Q4 pipeline review", participants: [me, relay, sam], lastReadMessageID: lastRead)
 	}
 	func messages(conversationID: String, beforeID: Int?, afterID: Int?, limit: Int) async throws -> MessagePage {
 		MessagePage(messages: rows, hasMore: false)
@@ -57,10 +62,64 @@ private let reply = """
 	Want me to draft the follow-ups?
 	"""
 
+// No table here: `ImageRenderer` draws no scroll views, and a table is one. Tables are covered by
+// the parser tests, and checked rendered through `NSHostingView` (which does draw them).
+private let richReply = """
+	## Pipeline status
+
+	Three things moved since Friday. **Forge** shipped the importer fix and `pnpm test` is green.
+
+	### Next steps
+	- [x] Merge the importer fix
+	- [ ] Ask legal about the data processing addendum
+	- [ ] Draft the customer note
+
+	```swift
+	let risky = bets.high
+	print(risky.count)
+	```
+
+	See [the report](https://maskin.io/report) for detail.
+	"""
+
+@MainActor
+private func richStore() async -> ChatStore {
+	var edited4 = message(4, me, "Send it to legal too: https://maskin.io/report", minutesAgo: 6)
+	edited4.editedAt = base
+	var edited6 = message(6, sam, "line one\nline two\nline three", minutesAgo: 4)
+	edited6.editedAt = base
+	let rows = [
+		message(1, sam, "Can you give me the status?", minutesAgo: 20),
+		message(2, relay, richReply, minutesAgo: 18),
+		message(3, me, "Thanks, that's clear.", minutesAgo: 6),
+		edited4,
+		message(5, me, "And ping Sam", minutesAgo: 5),
+		edited6,
+		message(7, me, "👍", minutesAgo: 3),
+		message(8, relay, "[Launch video campaign](https://maskin.io/ws1/objects/obj1)", minutesAgo: 2),
+		message(
+			9, relay,
+			"Blocked by https://maskin.io/ws1/objects/obj2 and tracked in [the launch plan](https://maskin.io/ws1/objects/obj1), see [the docs](https://example.com).",
+			minutesAgo: 2),
+		message(10, me, "https://maskin.io/ws1/objects/obj1", minutesAgo: 1),
+	]
+	// Read up to Relay's reply: Sam's later message is "new".
+	let api = FixtureAPI(rows, lastRead: 2)
+	let outbox = Outbox(
+		fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("snap-\(UUID().uuidString).json"),
+		executor: ChatSendExecutor(api: api, onDelivered: { _, _ in }), network: ManualNetworkMonitor(isOnline: false),
+		workspaceId: { "w1" })
+	let store = ChatStore(
+		conversationID: "c1", currentActorID: "me", currentActorName: me.name, api: api,
+		queue: ChatSendQueue(outbox: outbox), events: nil, pollInterval: nil)
+	await store.load()
+	return store
+}
+
 @MainActor
 private func threadStore(streaming: Bool) async -> ChatStore {
 	let failed = message(
-		6, relay, "I couldn't finish that turn. The model API timed out.", minutesAgo: 1,
+		9, relay, "I couldn't finish that turn. The model API timed out.", minutesAgo: 1,
 		metadata: .object(["final_output": .object(["is_error": .bool(true)])]))
 	let rows = [
 		message(1, sam, "Can someone pull together where the pipeline stands before Thursday?", minutesAgo: 60 * 26),
@@ -68,6 +127,8 @@ private func threadStore(streaming: Bool) async -> ChatStore {
 		message(3, relay, reply, minutesAgo: 60 * 26 - 3),
 		message(4, me, "Yes please, and flag anything risky.", minutesAgo: 8),
 		message(5, sam, "I'll check legal.", minutesAgo: 7),
+		message(7, sam, "Heads up: legal usually needs two working days for anything touching the data processing addendum, so if the importer change counts we should tell the customer today.", minutesAgo: 6),
+		message(8, me, "Understood. Let's tell them today and keep the launch date, but only if Relay confirms the importer change is contained to the staging tenant and nothing touches production data.", minutesAgo: 5),
 	] + (streaming ? [] : [failed])
 	let api = FixtureAPI(rows)
 	let outbox = Outbox(
@@ -135,6 +196,26 @@ struct ChatSnapshotTests {
 			_ = try render(ThreadTranscript(store: store, lazy: false).padding(MaskinSpace.s9), width: width, dark: dark, name: "thread-failed")
 		}
 		#expect(store.messages.last?.isErrorReply == true)
+	}
+
+	@Test("rich agent reply and own message runs render", arguments: [false, true])
+	func rich(dark: Bool) async throws {
+		let store = await richStore()
+		for width in Self.widths {
+			// Ample height: `ImageRenderer` sizes a tall transcript before its text wraps and then squeezes
+						// paragraphs to one line. The app lays this out in a scroll view with no height limit.
+						let content = ThreadTranscript(store: store, lazy: false).padding(MaskinSpace.s9)
+							.environment(\.markdownInternalLinkInfo, { url in
+								guard let link = DeepLink(url: url), case .object(_, let id) = link else { return nil }
+								// obj1 has been looked up; obj2 has not, so it shows its kind only.
+								return id == "obj1"
+									? MarkdownLinkInfo(symbol: "scope", kindLabel: "Bet", title: "Launch video campaign")
+									: MarkdownLinkInfo(symbol: "checkmark.square", kindLabel: "Task")
+							})
+							.frame(height: 1700, alignment: .top)
+						_ = try render(content, width: width, dark: dark, name: "thread-rich")
+		}
+		#expect(store.messages.count == 10)
 	}
 
 	@Test("conversation list rows render grouped", arguments: [false, true])

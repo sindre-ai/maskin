@@ -12,10 +12,12 @@ import AppKit
 /// A day separator or system divider line.
 struct ThreadDivider: View {
 	let label: String
+	/// Colours the label and rules (the "new messages" marker); nil keeps the quiet default.
+	var tint: Color?
 	var body: some View {
 		HStack(spacing: MaskinSpace.s5) {
 			line
-			Text(label).maskinText(.caption).foregroundStyle(MaskinColor.ink4).lineLimit(1)
+			Text(label).maskinText(.caption).foregroundStyle(tint ?? MaskinColor.ink4).lineLimit(1)
 			line
 		}
 		.padding(.vertical, MaskinSpace.s4)
@@ -24,7 +26,7 @@ struct ThreadDivider: View {
 	}
 
 	private var line: some View {
-		Rectangle().fill(MaskinSurface.line).frame(height: 1)
+		Rectangle().fill(tint?.opacity(0.35) ?? MaskinSurface.line).frame(height: 1)
 	}
 }
 
@@ -87,19 +89,28 @@ struct MessageRow: View {
 	let message: ChatMessage
 	let isOwn: Bool
 	let showsAuthor: Bool
+	/// Nothing from the same author follows directly: this bubble carries the tail and the time.
+	var endsRun = true
 	var mentionNames: [String] = []
 	/// What the human picked, once this question has been answered.
 	var questionAnswers: [ChatQuestionAnswer.Answer]?
 	let onRetrySend: () -> Void
 	let onDiscard: () -> Void
 	let onRetryAgent: () -> Void
+	/// Present only for a message the reader may edit.
+	var onEdit: (() -> Void)?
 	var onAnswer: ([Int: [String]]) -> Void = { _ in }
+	@State private var selectingText = false
+	@Environment(\.markdownInternalLinkInfo) private var linkInfo
+	@Environment(\.markdownInternalLinkHandler) private var internalLinkHandler
 
 	var body: some View {
 		Group {
 			if isOwn { own } else { other }
 		}
+		.sheet(isPresented: $selectingText) { SelectTextSheet(text: message.content) }
 		.accessibilityActions {
+			if let onEdit { Button("Edit message", action: onEdit) }
 			if !message.content.isEmpty {
 				Button("Copy message") { Clipboard.copy(message.content) }
 			}
@@ -130,8 +141,17 @@ struct MessageRow: View {
 
 	@ViewBuilder
 	private var actions: some View {
+		if let onEdit {
+			Button(action: onEdit) { Label("Edit", systemImage: "pencil") }
+		}
 		if !message.content.isEmpty {
-			Button { Clipboard.copy(message.content) } label: { Label("Copy", systemImage: "doc.on.doc") }
+			Button {
+				Clipboard.copy(message.content)
+				MaskinHaptics.play(.selection)
+			} label: {
+				Label("Copy", systemImage: "doc.on.doc")
+			}
+			Button { selectingText = true } label: { Label("Select text", systemImage: "selection.pin.in.out") }
 			ShareLink(item: message.content) { Label("Share", systemImage: "square.and.arrow.up") }
 			if canReadAloud {
 				Button(action: toggleReadAloud) {
@@ -152,46 +172,75 @@ struct MessageRow: View {
 
 	private var own: some View {
 		VStack(alignment: .trailing, spacing: MaskinSpace.s2) {
-			Text(message.content)
-				.maskinText(.body)
-				.foregroundStyle(MaskinSurface.onInverse)
-				.multilineTextAlignment(.leading)
-				.padding(.horizontal, MaskinSpace.s8)
-				.padding(.vertical, MaskinSpace.s6)
-				.background(
-					MaskinSurface.inverse,
-					in: UnevenRoundedRectangle(
-						topLeadingRadius: MaskinRadius.hero, bottomLeadingRadius: MaskinRadius.hero,
-						bottomTrailingRadius: MaskinRadius.tag2, topTrailingRadius: MaskinRadius.hero,
-						style: .continuous)
-				)
-				.opacity(message.isPending && !message.isFailed ? 0.6 : 1)
-				.overlay(alignment: .topLeading) {
-					if message.isFailed {
-						UnevenRoundedRectangle(
-							topLeadingRadius: MaskinRadius.hero, bottomLeadingRadius: MaskinRadius.hero,
-							bottomTrailingRadius: MaskinRadius.tag2, topTrailingRadius: MaskinRadius.hero,
-							style: .continuous
-						)
-						.strokeBorder(MaskinColor.danger, lineWidth: 1.5)
-					}
-				}
-				.textSelection(.enabled)
+			ownContent
 			MessageAttachments(attachments: message.attachments, alignment: .trailing)
 			MentionLine(names: mentionNames, isOwn: true)
 			statusLine
 		}
 		.frame(maxWidth: .infinity, alignment: .trailing)
-		.padding(.leading, MaskinSpace.s14 * 2)
+		// A long message can run nearly edge to edge; a short one still hugs its text.
+		.padding(.leading, MaskinSpace.s9)
 		.accessibilityElement(children: .contain)
 		.accessibilityLabel("You: \(message.content)")
+	}
+
+	/// Your words: a dark plate whose corner squares off only on the last bubble of a run (the
+	/// "tail"), links tappable, and a lone emoji or two shown large with no plate.
+	@ViewBuilder
+	private var ownContent: some View {
+		if message.isEmojiOnly {
+			Text(message.content)
+				.font(.system(size: Self.emojiSize))
+				.opacity(message.isPending && !message.isFailed ? 0.6 : 1)
+				.contextMenu { actions }
+		} else if let link = MarkdownStandaloneLink.match(message.content), linkInfo?(link.url) != nil {
+			// Your message is just a link into Maskin: show what it opens, not the address.
+			MarkdownLinkCard(url: link.url, title: link.title)
+				.frame(maxWidth: 360)
+				.opacity(message.isPending && !message.isFailed ? 0.6 : 1)
+				.contextMenu { actions }
+		} else {
+			Text(ChatLinks.attributed(message.content, color: MaskinSurface.onInverse))
+				// Links into Maskin open in the app, not the browser.
+				.environment(\.openURL, OpenURLAction { url in
+					internalLinkHandler?(url) == true ? .handled : .systemAction
+				})
+				.maskinText(.body)
+				.foregroundStyle(MaskinSurface.onInverse)
+				.multilineTextAlignment(.leading)
+				.padding(.horizontal, MaskinSpace.s8)
+				.padding(.vertical, MaskinSpace.s6)
+				.background(MaskinSurface.inverse, in: ownShape)
+				.opacity(message.isPending && !message.isFailed ? 0.6 : 1)
+				.overlay(alignment: .topLeading) {
+					if message.isFailed { ownShape.strokeBorder(MaskinColor.danger, lineWidth: 1.5) }
+				}
+				// A long-press opens the message menu; "Select text" there covers picking words.
+				.contextMenu { actions }
+		}
+	}
+
+	private static let emojiSize: CGFloat = 44
+
+	private var ownShape: UnevenRoundedRectangle {
+		UnevenRoundedRectangle(
+			topLeadingRadius: MaskinRadius.hero, bottomLeadingRadius: MaskinRadius.hero,
+			bottomTrailingRadius: endsRun ? MaskinRadius.tag2 : MaskinRadius.hero,
+			topTrailingRadius: MaskinRadius.hero, style: .continuous)
 	}
 
 	@ViewBuilder
 	private var statusLine: some View {
 		switch message.status {
 		case .sent:
-			EmptyView()
+			if endsRun || message.editedAt != nil {
+				HStack(spacing: MaskinSpace.s2) {
+					if message.editedAt != nil { Text("Edited") }
+					if message.editedAt != nil, endsRun { Text("\u{00B7}").accessibilityHidden(true) }
+					if endsRun { RelativeTime(message.createdAt, style: .clock) }
+				}
+				.maskinText(.caption).foregroundStyle(MaskinColor.ink5)
+			}
 		case .sending:
 			Text("Sending…").maskinText(.caption).foregroundStyle(MaskinColor.ink4)
 		case .waiting(let reason):
@@ -229,7 +278,12 @@ struct MessageRow: View {
 		HStack(alignment: .top, spacing: MaskinSpace.s6) {
 			VStack(alignment: .leading, spacing: MaskinSpace.s2) {
 				if showsAuthor {
-					HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
+					HStack(alignment: .center, spacing: MaskinSpace.s3) {
+						// Inline, not in a gutter: the text below keeps the whole row.
+						ActorAvatar(
+							name: message.actorName, kind: message.author == .agent ? .agent : .human,
+							size: MaskinSpace.s11, seed: message.actorID)
+							.accessibilityHidden(true)
 						Text(message.actorName).maskinText(.subhead).fontWeight(.semibold)
 							.foregroundStyle(MaskinColor.ink)
 						if message.author == .agent {
@@ -262,18 +316,47 @@ struct MessageRow: View {
 					.padding(.top, MaskinSpace.s2)
 				}
 			}
-			Spacer(minLength: MaskinSpace.s9)
+			// Fill the row: nothing is reserved on the trailing side.
+			.frame(maxWidth: .infinity, alignment: .leading)
 		}
 		.accessibilityElement(children: .contain)
 	}
 
+	/// Everyone else's words go through the markdown renderer, as on the web. A person's line
+	/// breaks are kept (they pressed Return); an agent's soft breaks are wrapped prose.
 	@ViewBuilder
 	private var content: some View {
-		if message.author == .agent {
-			MarkdownContent(message.content).textSelection(.enabled)
+		if message.isEmojiOnly {
+			Text(message.content).font(.system(size: Self.emojiSize)).contextMenu { actions }
 		} else {
-			Text(message.content).maskinText(.body).foregroundStyle(MaskinColor.ink2).textSelection(.enabled)
+			MarkdownContent(message.content, style: .chat, hardBreaks: message.author == .human)
+				.contextMenu { actions }
 		}
+		if message.editedAt != nil {
+			Text("edited").maskinText(.caption).foregroundStyle(MaskinColor.ink5)
+		}
+	}
+}
+
+/// Makes the web addresses and email addresses in your own message tappable. Your text is
+/// otherwise shown as typed, with no markdown.
+enum ChatLinks {
+	private static let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
+	static func attributed(_ text: String, color: Color) -> AttributedString {
+		var result = AttributedString(text)
+		guard let detector else { return result }
+		let whole = NSRange(text.startIndex..., in: text)
+		for match in detector.matches(in: text, options: [], range: whole) {
+			guard let url = match.url, ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? ""),
+				let stringRange = Range(match.range, in: text),
+				let range = Range(stringRange, in: result)
+			else { continue }
+			result[range].link = url
+			result[range].underlineStyle = .single
+			result[range].foregroundColor = color
+		}
+		return result
 	}
 }
 

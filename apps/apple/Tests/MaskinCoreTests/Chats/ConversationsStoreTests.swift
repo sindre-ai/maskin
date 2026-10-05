@@ -94,7 +94,8 @@ struct ThreadLayoutTests {
 			switch item {
 			case .daySeparator: kinds.append("day")
 			case .system: kinds.append("sys")
-			case .message(let m, let author): kinds.append("\(m.serverID!)\(author ? "+" : "-")")
+			case .unreadDivider: kinds.append("new")
+case .message(let m, let author): kinds.append("\(m.serverID!)\(author ? "+" : "-")")
 			}
 		}
 		#expect(kinds == ["day", "1+", "2-", "3+", "4+", "day", "5+"])

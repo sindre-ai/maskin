@@ -15,6 +15,7 @@ final class FakeObjectsRemote: ObjectsRemote, @unchecked Sendable {
 	private var _commentFiles: [[String]] = []
 	private var _updateKeys: [String] = []
 	private var _commentCalls = 0
+	private var _graphCalls = 0
 	private var _nextEventId = 900
 	private var _offline = false
 	var delay: Duration = .zero
@@ -62,7 +63,10 @@ final class FakeObjectsRemote: ObjectsRemote, @unchecked Sendable {
 		return Array(result.dropFirst(query.offset).prefix(query.limit))
 	}
 
+	var graphCalls: Int { lock.withLock { _graphCalls } }
+
 	func graph(objectId: String) async throws -> ObjectGraph {
+		lock.withLock { _graphCalls += 1 }
 		try check("graph")
 		guard let graph = lock.withLock({ _graphs[objectId] }) else {
 			throw ObjectsError(ObjectsRemoteMessages.notFound)

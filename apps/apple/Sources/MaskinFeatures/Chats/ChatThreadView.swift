@@ -14,7 +14,9 @@ struct ChatThreadView: View {
 	@Environment(\.scenePhase) private var scenePhase
 	@Environment(\.horizontalSizeClass) private var sizeClass
 	@State private var isAtBottom = true
-	@State private var hasUnseen = false
+	/// Messages that arrived while the reader was scrolled up; the jump pill says how many.
+	@State private var unseenCount = 0
+	@State private var editing: ChatMessage?
 	/// True from opening the chat until the reader first scrolls it. While true the thread pins to
 	/// the newest message: a cached page that is topped up by a fresh one, or rows that settle
 	/// their height late, must not leave the reader somewhere above what the agent just said.
@@ -32,6 +34,7 @@ struct ChatThreadView: View {
 	@State private var matchIDs: [String] = []
 	@State private var matchSet: Set<String> = []
 	@State private var handsFreeTracker = HandsFreeTracker()
+	private var failedCount: Int { store.messages.filter(\.isFailed).count }
 	private var currentMatchID: String? {
 		guard searching, let matchIndex, matchIDs.indices.contains(matchIndex) else { return nil }
 		return matchIDs[matchIndex]
@@ -102,7 +105,7 @@ struct ChatThreadView: View {
 				store.stop()
 			}
 			.onChange(of: scenePhase) { _, phase in store.isActive = phase == .active }
-			.alert(
+.alert(
 				"Something went wrong",
 				isPresented: Binding(get: { store.notice != nil }, set: { if !$0 { store.notice = nil } })
 			) {
@@ -166,6 +169,15 @@ struct ChatThreadView: View {
 			.onChange(of: handsFree) { _, on in if !on { SpeechReader.shared.stop() } }
 			// Typing means the reader is done listening.
 			.onChange(of: composer.text) { _, text in if !text.isEmpty { SpeechReader.shared.stop() } }
+			// A message that could not be sent is worth a buzz: it is easy to miss otherwise.
+			.onChange(of: failedCount) { old, new in
+				if new > old { MaskinHaptics.play(.error) }
+			}
+			.sheet(item: $editing) { message in
+				EditMessageSheet(original: message.content) { text in
+					Task { await store.edit(message.id, to: text) }
+				}
+			}
 	}
 
 	@ViewBuilder
@@ -198,7 +210,7 @@ struct ChatThreadView: View {
 							.onAppear { loadEarlier(proxy) }
 					}
 					ThreadTranscript(
-						store: store, onStop: { stopTarget = $0 }, matchIDs: matchSet,
+						store: store, onStop: { stopTarget = $0 }, onEdit: { editing = $0 }, matchIDs: matchSet,
 						currentMatchID: currentMatchID)
 					Color.clear.frame(height: 1).id(Self.bottomID)
 						.onAppear { if !usesGeometryTracking { reachedBottom() } }
@@ -227,7 +239,7 @@ struct ChatThreadView: View {
 				} else if isAtBottom || store.messages.last?.actorID == store.currentActorID {
 					scrollToBottom(proxy)
 				} else {
-					hasUnseen = true
+					unseenCount += 1
 				}
 			}
 			.overlay(alignment: .bottom) {
@@ -235,7 +247,7 @@ struct ChatThreadView: View {
 					Button {
 						scrollToBottom(proxy)
 					} label: {
-						Label(hasUnseen ? "New messages" : "Latest", systemImage: "arrow.down")
+						Label(Self.pillTitle(unseen: unseenCount), systemImage: "arrow.down")
 							.maskinText(.subhead)
 							.padding(.horizontal, MaskinSpace.s8)
 							.padding(.vertical, MaskinSpace.s4)
@@ -315,6 +327,8 @@ struct ChatThreadView: View {
 		if store.send(text, metadata: metadata) == nil {
 			// Nothing was queued: give the words back rather than lose them.
 			composer.text = text
+		} else {
+			MaskinHaptics.play(.light)
 		}
 	}
 
@@ -325,12 +339,20 @@ struct ChatThreadView: View {
 
 	private func reachedBottom() {
 		isAtBottom = true
-		hasUnseen = false
+		unseenCount = 0
+	}
+
+	static func pillTitle(unseen: Int) -> String {
+		switch unseen {
+		case 0: "Latest"
+		case 1: "1 new message"
+		default: "\(unseen) new messages"
+		}
 	}
 
 	/// Pin to the newest message without animating, then once more after the rows have measured.
 	private func jumpToBottom(_ proxy: ScrollViewProxy) {
-		hasUnseen = false
+		unseenCount = 0
 		proxy.scrollTo(Self.bottomID, anchor: .bottom)
 		Task {
 			try? await Task.sleep(for: .milliseconds(200))
@@ -339,7 +361,7 @@ struct ChatThreadView: View {
 	}
 
 	private func scrollToBottom(_ proxy: ScrollViewProxy) {
-		hasUnseen = false
+		unseenCount = 0
 		withAnimation(MaskinMotion.standard) { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
 	}
 
@@ -361,6 +383,7 @@ struct ThreadTranscript: View {
 	var lazy = true
 	var now = Date()
 	var onStop: (ChatAgentSession) -> Void = { _ in }
+	var onEdit: (ChatMessage) -> Void = { _ in }
 	var matchIDs: Set<String> = []
 	var currentMatchID: String?
 
@@ -380,12 +403,30 @@ struct ThreadTranscript: View {
 		let messages = store.messages
 		let anchors =
 			store.trace?.anchors(messages: messages, sessions: store.agentSessions) ?? ActivityAnchors()
-		ForEach(ThreadLayout.items(for: messages)) { item in
-			row(item, answers: answers, anchors: anchors)
+		let items = ThreadLayout.items(
+			for: messages, unreadAfter: store.openedReadCursor, currentActorID: store.currentActorID)
+		let runs = ThreadLayout.runs(in: items)
+		let byID = Dictionary(messages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+		ForEach(items) { item in
+			row(item, answers: answers, anchors: anchors, runs: runs, byID: byID)
 		}
 		TimelineView(.periodic(from: now, by: 15)) { context in
 			activity(at: context.date)
 		}
+	}
+
+	/// Extra space above a message. A new author's run gets a little air; a message that
+	/// continues its run is pulled closer than the stack's normal gap, unless an activity trace
+	/// sits between the two (then it keeps the stack's spacing around the trace).
+	private static func topPadding(
+		for message: ChatMessage, showsAuthor: Bool, run: ThreadLayout.Run, anchors: ActivityAnchors,
+		byID: [String: ChatMessage]
+	) -> CGFloat {
+		if showsAuthor { return MaskinSpace.s4 }
+		guard let previous = run.previousID.flatMap({ byID[$0] }) else { return 0 }
+		let traceAbove = message.serverID.flatMap { anchors.aboveReply[$0] } != nil
+		let traceBetween = previous.serverID.flatMap { anchors.afterTrigger[$0] } != nil
+		return traceAbove || traceBetween ? 0 : -(MaskinSpace.s5 - MaskinSpace.s2)
 	}
 
 	@ViewBuilder
@@ -415,27 +456,34 @@ struct ThreadTranscript: View {
 
 	@ViewBuilder
 	private func row(
-		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors
+		_ item: ThreadItem, answers: [Int: [ChatQuestionAnswer.Answer]], anchors: ActivityAnchors,
+		runs: [String: ThreadLayout.Run], byID: [String: ChatMessage]
 	) -> some View {
 		switch item {
 		case .daySeparator(let day):
 			ThreadDivider(label: ThreadLayout.dayLabel(day, now: now))
 		case .system(let message):
 			ThreadDivider(label: message.content)
+		case .unreadDivider(let count):
+			ThreadDivider(
+				label: count == 1 ? "1 new message" : "\(count) new messages", tint: MaskinColor.accentStrong)
 		case .message(let message, let showsAuthor):
+			let run = runs[message.id] ?? ThreadLayout.Run()
 			if let id = message.serverID, let turn = anchors.aboveReply[id] {
 				FinishedTraceView(turn: turn)
 			}
 			MessageRow(
 				message: message, isOwn: message.actorID == store.currentActorID, showsAuthor: showsAuthor,
+				endsRun: run.endsRun,
 				mentionNames: message.mentionIDs.compactMap { store.displayName(for: $0) },
 				questionAnswers: message.serverID.flatMap { answers[$0] },
 				onRetrySend: { store.retrySend(message.id) },
 				onDiscard: { store.discard(message.id) },
 				onRetryAgent: { Task { await store.retryAgent(for: message) } },
+				onEdit: message.canEdit(by: store.currentActorID) ? { onEdit(message) } : nil,
 				onAnswer: { picks in _ = store.answer(question: message, picks: picks) }
 			)
-			.padding(.top, showsAuthor ? MaskinSpace.s4 : 0)
+			.padding(.top, Self.topPadding(for: message, showsAuthor: showsAuthor, run: run, anchors: anchors, byID: byID))
 			.background(
 				matchIDs.contains(message.id)
 					? (message.id == currentMatchID ? MaskinColor.accentTint : MaskinColor.accentTint2) : Color.clear,

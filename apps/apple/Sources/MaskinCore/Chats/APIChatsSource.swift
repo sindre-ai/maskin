@@ -203,6 +203,30 @@ public struct APIChatsSource: ConversationsAPI, ChatAPI {
 		guard case .accepted = output else { throw ChatsError("Couldn't ask the agents to try again.") }
 	}
 
+	public func edit(conversationID: String, messageID: Int, content: String) async throws -> ChatMessage {
+		let output = try await client
+			.patch_sol_api_sol_conversations_sol__lcub_id_rcub__sol_messages_sol__lcub_messageId_rcub_(
+				.init(
+					path: .init(id: conversationID, messageId: messageID),
+					headers: .init(x_hyphen_workspace_hyphen_id: workspaceID),
+					body: .json(.init(content: content))))
+		switch output {
+		case .ok(let ok):
+			let row = try ok.body.json
+			return ChatMessage.confirmed(
+				serverID: Int(row.id), conversationID: row.conversationId, actorID: row.actorId,
+				actorName: row.actorName, author: row.actorType == "agent" ? .agent : .human,
+				kind: row.kind, content: row.content, createdAt: ChatDates.parse(row.createdAt),
+				editedAt: ChatDates.parse(row.editedAt), metadata: Self.json(row.metadata))
+		case .forbidden:
+			throw ChatsHTTPError(status: 403, message: "Only the author can edit a message.")
+		case .undocumented(let status, _):
+			throw ChatsHTTPError(status: status, message: "Couldn't save the edit.")
+		default:
+			throw ChatsHTTPError(status: 404, message: "That message no longer exists.")
+		}
+	}
+
 	public func markRead(conversationID: String, lastMessageID: Int) async throws {
 		try await updateState(
 			conversationID: conversationID, pinned: nil, archived: nil, lastReadMessageID: lastMessageID,

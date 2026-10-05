@@ -72,4 +72,64 @@ import Testing
 	@Test func inlineSyntaxStaysInText() {
 		#expect(MarkdownParser.parse("**bold** and `code`") == [.paragraph("**bold** and `code`")])
 	}
+	// MARK: Tables
+
+	@Test func pipeTableWithAlignments() {
+		let md = "| Name | Qty | Note |\n| :-- | --: | :-: |\n| Bolt | 4 | ok |\n| Nut | 12 | low |"
+		#expect(MarkdownParser.parse(md) == [
+			.table(
+				header: ["Name", "Qty", "Note"], alignments: [.leading, .trailing, .center],
+				rows: [["Bolt", "4", "ok"], ["Nut", "12", "low"]])
+		])
+	}
+
+	@Test func tableWithoutOuterPipes() {
+		let md = "a | b\n--- | ---\n1 | 2"
+		#expect(MarkdownParser.parse(md) == [
+			.table(header: ["a", "b"], alignments: [.leading, .leading], rows: [["1", "2"]])
+		])
+	}
+
+	@Test func shortAndLongRowsAreNormalisedToTheHeader() {
+		let md = "| a | b |\n|---|---|\n| 1 |\n| 1 | 2 | 3 |"
+		#expect(MarkdownParser.parse(md) == [
+			.table(header: ["a", "b"], alignments: [.leading, .leading], rows: [["1", ""], ["1", "2"]])
+		])
+	}
+
+	@Test func escapedPipeStaysInsideItsCell() {
+		let md = "| a | b |\n|---|---|\n| x \\| y | z |"
+		#expect(MarkdownParser.parse(md) == [
+			.table(header: ["a", "b"], alignments: [.leading, .leading], rows: [["x | y", "z"]])
+		])
+	}
+
+	@Test func tableEndsAtABlankLineAndTextAroundItSurvives() {
+		let md = "Before\n| a | b |\n|---|---|\n| 1 | 2 |\n\nAfter"
+		#expect(MarkdownParser.parse(md) == [
+			.paragraph("Before"),
+			.table(header: ["a", "b"], alignments: [.leading, .leading], rows: [["1", "2"]]),
+			.paragraph("After"),
+		])
+	}
+
+	@Test func aPipeBeforeAThematicBreakIsNotATable() {
+		#expect(MarkdownParser.parse("a | b\n---") == [.paragraph("a | b"), .thematicBreak])
+	}
+
+	@Test func mismatchedColumnCountIsNotATable() {
+		let md = "| a | b |\n|---|\n| 1 | 2 |"
+		#expect(!MarkdownParser.parse(md).contains { if case .table = $0 { true } else { false } })
+	}
+
+	// MARK: Hard breaks
+
+	@Test func hardBreaksKeepEveryLine() {
+		#expect(MarkdownParser.parse("one\ntwo\nthree", hardBreaks: true) == [.paragraph("one\ntwo\nthree")])
+		#expect(MarkdownParser.parse("one\ntwo") == [.paragraph("one two")])
+	}
+
+	@Test func hardBreaksReachNestedBlocks() {
+		#expect(MarkdownParser.parse("- a\n  b", hardBreaks: true) == [.bulletList([[.paragraph("a\nb")]])])
+	}
 }

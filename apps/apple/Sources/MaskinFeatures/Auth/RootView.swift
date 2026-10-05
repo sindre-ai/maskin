@@ -9,7 +9,9 @@ public struct RootView: View {
 	private let environment: AppEnvironment
 	@Environment(\.scenePhase) private var scenePhase
 	@State private var runtime: AppRuntime
-	private let onRuntimeReady: (AppRuntime) -> Void
+	/// Names and kinds for the in-app links that appear in markdown (chat messages, comments).
+	@State private var links: InternalLinkDirectory
+private let onRuntimeReady: (AppRuntime) -> Void
 	/// Resolves the seeded Chief of Staff conversation's id for the signed-in workspace, if one
 	/// exists. The first-use screen offers "Open the welcome chat" only when this returns an id.
 	/// `nil` (the default) means For You is the only landing; the shell wires this when it can.
@@ -32,6 +34,9 @@ public struct RootView: View {
 		self.welcomeConversationId = welcomeConversationId
 		self.onRuntimeReady = onRuntimeReady
 		_runtime = State(initialValue: AppRuntime(environment: environment, push: push))
+		_links = State(
+			initialValue: InternalLinkDirectory(
+				remote: APIObjectsRemote(client: environment.client, credentials: environment.auth.credentialsProvider)))
 	}
 
 	public var body: some View {
@@ -56,6 +61,7 @@ public struct RootView: View {
 		}
 		.handlesDeepLinks(runtime.router) { runtime.present($0) }
 		.environment(\.markdownInternalLinkHandler, { @MainActor [runtime] url in runtime.open(url) })
+		.environment(\.markdownInternalLinkInfo, { @MainActor [links] url in links.info(for: url) })
 		.task { onRuntimeReady(runtime) }
 		.task(id: auth.session?.apiKey) { await environment.workspaces.refresh() }
 		.task(id: auth.credentials) { environment.syncEvents() }

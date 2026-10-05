@@ -41,6 +41,7 @@ actor FakeChatAPI: ChatAPI {
 	var resumed: [String] = []
 	var removed: [String] = []
 	var renamed: [String] = []
+	var edits: [(Int, String)] = []
 	var detailCalls = 0
 	var failMutations = false
 	var failMessages = false
@@ -123,6 +124,17 @@ actor FakeChatAPI: ChatAPI {
 
 	func retry(conversationID: String, messageID: Int, agentID: String?) async throws {
 		retried.append((messageID, agentID))
+	}
+
+	func edit(conversationID: String, messageID: Int, content: String) async throws -> ChatMessage {
+		if failMutations { throw ChatsError("Only the author can edit a message.") }
+		edits.append((messageID, content))
+		guard let index = server.firstIndex(where: { $0.serverID == messageID }) else {
+			throw ChatsError("That message no longer exists.")
+		}
+		server[index].content = content
+		server[index].editedAt = chatT0.addingTimeInterval(500)
+		return server[index]
 	}
 
 	func markRead(conversationID: String, lastMessageID: Int) async throws {
