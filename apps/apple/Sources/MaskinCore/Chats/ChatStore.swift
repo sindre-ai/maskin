@@ -42,6 +42,9 @@ public final class ChatStore {
 	/// Set right after a send until a reply lands or the spawn grace runs out.
 	public private(set) var awaitingReplySince: Date?
 	public var notice: String?
+	/// Why the newest messages could not be fetched while older ones (a cached page) are on
+	/// screen. Without it a failed refresh looks like a thread that simply has nothing newer.
+	public private(set) var syncProblem: String?
 	/// Where the reader's read cursor stood when the thread opened. Fixed for the visit, so the
 	/// "new" divider stays put after the thread marks itself read.
 	public private(set) var openedReadCursor: Int?
@@ -72,7 +75,9 @@ public final class ChatStore {
 	@ObservationIgnored private let spawnGrace: TimeInterval
 	@ObservationIgnored private let staleSessionAfter: TimeInterval
 	@ObservationIgnored private let pollInterval: Duration?
-	@ObservationIgnored private var listener: Task<Void, Never>?
+	@ObservationIgnored private let retryDelays: [Duration]
+	@ObservationIgnored private var retryTask: Task<Void, Never>?
+@ObservationIgnored private var listener: Task<Void, Never>?
 	@ObservationIgnored private var queueListener: Task<Void, Never>?
 	@ObservationIgnored private var deliveryObserver: UUID?
 	@ObservationIgnored private var poller: Task<Void, Never>?
@@ -90,6 +95,7 @@ public final class ChatStore {
 		api: any ChatAPI, queue: ChatSendQueue, events: EventHub?, pageSize: Int = 50,
 		spawnGrace: TimeInterval = 20, staleSessionAfter: TimeInterval = 20 * 60,
 		pollInterval: Duration? = .seconds(5), cache: SnapshotCache? = nil,
+		retryDelays: [Duration] = [.seconds(2), .seconds(5), .seconds(15)],
 		now: @escaping @Sendable () -> Date = { Date() }
 	) {
 		self.conversationID = conversationID
@@ -102,6 +108,7 @@ public final class ChatStore {
 		self.spawnGrace = spawnGrace
 		self.staleSessionAfter = staleSessionAfter
 		self.pollInterval = pollInterval
+		self.retryDelays = retryDelays
 		self.cache = cache
 		self.now = now
 		hydrateIfNeeded()
@@ -282,6 +289,8 @@ public final class ChatStore {
 		deliveryObserver = nil
 		poller?.cancel()
 		poller = nil
+		retryTask?.cancel()
+		retryTask = nil
 		trace?.stop()
 	}
 
@@ -315,6 +324,40 @@ public final class ChatStore {
 	}
 
 	public func load() async {
+		if await attemptLoad() { return }
+		scheduleRetry()
+	}
+
+	/// Try again a few times after a failed load: a thread opened on a bad moment (a dropped
+	/// connection, a request cancelled by a re-render) must not stay on its cached page.
+	private func scheduleRetry() {
+		guard retryTask == nil, !retryDelays.isEmpty else { return }
+		let delays = retryDelays
+		retryTask = Task { [weak self] in
+			for delay in delays {
+				try? await Task.sleep(for: delay)
+				guard let self, !Task.isCancelled else { return }
+				if await self.attemptLoad() { break }
+			}
+			self?.retryTask = nil
+		}
+	}
+
+	/// How far behind the conversation's latest message the thread may be before it re-reads.
+	private static let gapTolerance: TimeInterval = 5
+
+	/// The conversation says something newer exists than the newest message held: read the
+	/// newest page once more rather than leave the reader on an older view of the thread.
+	private func closeGapIfBehind() async {
+		func isBehind() -> Bool {
+			guard let latest = detail?.lastMessageAt, let newest = confirmed.last?.createdAt else { return false }
+			return latest.timeIntervalSince(newest) > Self.gapTolerance
+		}
+		if isBehind() { await sync(full: true) }
+	}
+
+	@discardableResult
+	private func attemptLoad() async -> Bool {
 		hydrateIfNeeded()
 		if confirmed.isEmpty { phase = .loading }
 		do {
@@ -322,6 +365,7 @@ public final class ChatStore {
 			async let pageTask = api.messages(
 				conversationID: conversationID, beforeID: nil, afterID: nil, limit: pageSize)
 			let (loadedDetail, page) = try await (detailTask, pageTask)
+			syncProblem = nil
 			detail = loadedDetail
 			if openedReadCursor == nil { openedReadCursor = loadedDetail.lastReadMessageID }
 			readSent = max(readSent, loadedDetail.lastReadMessageID ?? 0)
@@ -335,10 +379,19 @@ public final class ChatStore {
 			async let states: Void = refreshAgentStates()
 			async let sessions: Void = refreshSessions()
 			_ = await (read, states, sessions)
+			await closeGapIfBehind()
+			return true
 		} catch {
-			// Cached or loaded rows stay on screen; only an empty thread shows the error.
+			// A cancelled request is the view going away, not the server failing.
+			if error is CancellationError || Task.isCancelled { return false }
 			freshness.revalidateFailed()
-			if confirmed.isEmpty { phase = .failed(Self.message(error)) }
+			if confirmed.isEmpty {
+				phase = .failed(Self.message(error))
+			} else {
+				// Cached rows stay on screen, but say they may be out of date.
+				syncProblem = Self.message(error)
+			}
+			return false
 		}
 	}
 
@@ -395,11 +448,15 @@ public final class ChatStore {
 					self.detail = detail
 					readSent = max(readSent, detail.lastReadMessageID ?? 0)
 				}
+				syncProblem = nil
 				freshness.refreshed(at: cache?.now() ?? now())
 				writeCache()
 				await markReadIfNeeded()
 			} catch {
 				freshness.revalidateFailed()
+				if !(error is CancellationError), !Task.isCancelled, !confirmed.isEmpty {
+					syncProblem = Self.message(error)
+				}
 			}
 			wantFull = false
 		} while syncQueued

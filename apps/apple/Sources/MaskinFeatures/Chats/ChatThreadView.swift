@@ -195,7 +195,15 @@ struct ChatThreadView: View {
 					symbol: "bubble.left.and.text.bubble.right", title: "Say hello",
 					message: "Messages here reach everyone in the conversation, including agents.")
 			} else {
-				thread
+				VStack(spacing: 0) {
+					if let problem = store.syncProblem {
+						StaleThreadBanner(problem: problem) { Task { await store.refresh() } }
+							.padding(.horizontal, MaskinSpace.s9)
+							.padding(.top, MaskinSpace.s3)
+					}
+					thread
+				}
+				.animation(MaskinMotion.standard, value: store.syncProblem)
 			}
 		}
 	}
@@ -511,5 +519,38 @@ extension View {
 				})
 		}
 		return AnyView(self)
+	}
+}
+
+/// The newest messages could not be loaded, so the thread may be missing the latest ones. Says
+/// why, and offers a retry, instead of leaving an older view looking complete.
+struct StaleThreadBanner: View {
+	let problem: String
+	let onRetry: () -> Void
+
+	var body: some View {
+		HStack(alignment: .center, spacing: MaskinSpace.s5) {
+			Image(systemName: "arrow.triangle.2.circlepath").accessibilityHidden(true)
+			VStack(alignment: .leading, spacing: 0) {
+				Text("Latest messages didn't load").maskinText(.subhead).fontWeight(.semibold)
+				Text(problem).maskinText(.caption).lineLimit(2)
+			}
+			Spacer(minLength: 0)
+			Button(action: onRetry) {
+				Text("Retry").maskinText(.subhead).fontWeight(.semibold)
+					.padding(.horizontal, MaskinSpace.s5)
+					.frame(minHeight: MaskinSpace.touchMin)
+					.contentShape(Rectangle())
+			}
+			.buttonStyle(.plain)
+		}
+		.foregroundStyle(MaskinSurface.amberForeground)
+		.padding(.leading, MaskinSpace.s8)
+		.padding(.trailing, MaskinSpace.s3)
+		.background(MaskinSurface.amberBackground, in: RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous))
+		.overlay(
+			RoundedRectangle(cornerRadius: MaskinRadius.cardXl, style: .continuous)
+				.strokeBorder(MaskinSurface.amberBorder, lineWidth: 1))
+		.accessibilityElement(children: .contain)
 	}
 }

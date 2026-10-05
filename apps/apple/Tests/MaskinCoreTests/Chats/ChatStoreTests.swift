@@ -528,6 +528,55 @@ struct ChatStoreTests {
 		#expect(await h.api.readCalls.contains(2))
 	}
 
+	// MARK: A failed refresh must not look like a complete thread
+
+	@Test("a failed refresh keeps the rows but says the newest messages didn't load")
+	func failedRefreshIsVisible() async {
+		let h = ChatHarness(server: [chatMsg(1, by: "relay", agent: true, "old")])
+		await h.store.start()
+		#expect(h.store.syncProblem == nil)
+		await h.api.append(chatMsg(2, by: "relay", agent: true, "new"))
+		await h.api.setFailMessages(true)
+		await h.store.refresh()
+		#expect(h.store.messages.map(\.serverID) == [1])
+		#expect(h.store.syncProblem != nil)
+		await h.api.setFailMessages(false)
+		await h.store.refresh()
+		#expect(h.store.syncProblem == nil)
+		#expect(h.store.messages.map(\.serverID) == [1, 2])
+	}
+
+	@Test("a load that fails over cached rows retries by itself until the newest messages arrive")
+	func loadRetriesByItself() async {
+		let h = ChatHarness(server: [chatMsg(1, by: "relay", agent: true, "old")], retryDelays: [.milliseconds(30), .milliseconds(30)])
+		await h.store.start()
+		await h.api.append(chatMsg(2, by: "relay", agent: true, "new"))
+		await h.api.setFailMessages(true)
+		await h.store.load()
+		#expect(h.store.syncProblem != nil)
+		await h.api.setFailMessages(false)
+		#expect(await eventually { h.store.messages.map(\.serverID) == [1, 2] })
+		#expect(h.store.syncProblem == nil)
+	}
+
+	@Test("a thread whose newest message is older than the conversation's reads the newest page again")
+	func closesAGap() async {
+		let h = ChatHarness(
+			server: [chatMsg(1, by: "relay", agent: true, "old")],
+			detail: chatConvo("c1", last: chatT0.addingTimeInterval(500)))
+		await h.store.start()
+		let pageReads = await h.api.messageCalls.count
+		// One load, plus the extra pass that checks the thread caught up.
+		#expect(pageReads >= 2)
+	}
+
+	@Test("a thread that is up to date does not re-read")
+	func noGap() async {
+		let h = ChatHarness(server: [chatMsg(1, by: "relay", agent: true, "a")], detail: chatConvo("c1", last: chatT0))
+		await h.store.start()
+		#expect(await h.api.messageCalls.count == 1)
+	}
+
 	// MARK: Thread management
 
 	@Test("rename is optimistic and rolls back if the server refuses")
