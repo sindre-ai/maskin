@@ -71,6 +71,7 @@ public final class ChatSendQueue {
 	@ObservationIgnored private let fileManager: FileManager
 	@ObservationIgnored private let now: @Sendable () -> Date
 	@ObservationIgnored private var subscribers: [UUID: AsyncStream<ChatSendEvent>.Continuation] = [:]
+	@ObservationIgnored private var deliveryObservers: [UUID: @MainActor (String, ChatMessage) -> Void] = [:]
 	@ObservationIgnored private var listener: Task<Void, Never>?
 
 	public init(
@@ -183,8 +184,20 @@ public final class ChatSendQueue {
 		return stream
 	}
 
+	/// Runs inline, in `recordDelivery`, before the outbox drops its entry. A store that learns of a
+	/// delivery only through `events()` hears about it a turn later, and for that turn the message
+	/// is in neither the queue nor the confirmed list, so the bubble blinks out.
+	func observeDeliveries(_ handler: @escaping @MainActor (String, ChatMessage) -> Void) -> UUID {
+		let id = UUID()
+		deliveryObservers[id] = handler
+		return id
+	}
+
+	func stopObservingDeliveries(_ id: UUID) { deliveryObservers[id] = nil }
+
 	/// Called by the executor the moment the server confirms a send.
 	func recordDelivery(clientID: String, message: ChatMessage) {
+		for handler in deliveryObservers.values { handler(clientID, message) }
 		for continuation in subscribers.values {
 			continuation.yield(.delivered(clientID: clientID, message: message))
 		}

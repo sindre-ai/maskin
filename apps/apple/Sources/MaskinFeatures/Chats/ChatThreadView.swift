@@ -15,6 +15,10 @@ struct ChatThreadView: View {
 	@Environment(\.horizontalSizeClass) private var sizeClass
 	@State private var isAtBottom = true
 	@State private var hasUnseen = false
+	/// True from opening the chat until the reader first scrolls it. While true the thread pins to
+	/// the newest message: a cached page that is topped up by a fresh one, or rows that settle
+	/// their height late, must not leave the reader somewhere above what the agent just said.
+	@State private var followingOpen = true
 	@State private var stopTarget: ChatAgentSession?
 	@State private var renaming = false
 	@State private var newTitle = ""
@@ -208,6 +212,8 @@ struct ChatThreadView: View {
 				.frame(maxWidth: .infinity)
 			}
 			.defaultScrollAnchor(.bottom)
+			.onAppear { jumpToBottom(proxy) }
+			.simultaneousGesture(DragGesture(minimumDistance: MaskinSpace.s4).onChanged { _ in followingOpen = false })
 			.trackingBottom { atBottom in
 				if atBottom { reachedBottom() } else { isAtBottom = false }
 			}
@@ -216,7 +222,9 @@ struct ChatThreadView: View {
 			.onChange(of: store.messages.last?.id) { _, _ in
 				// Follow new messages only while the reader is at the bottom (or just sent one);
 				// otherwise leave them where they are and offer a jump.
-				if isAtBottom || store.messages.last?.actorID == store.currentActorID {
+				if followingOpen {
+					jumpToBottom(proxy)
+				} else if isAtBottom || store.messages.last?.actorID == store.currentActorID {
 					scrollToBottom(proxy)
 				} else {
 					hasUnseen = true
@@ -318,6 +326,16 @@ struct ChatThreadView: View {
 	private func reachedBottom() {
 		isAtBottom = true
 		hasUnseen = false
+	}
+
+	/// Pin to the newest message without animating, then once more after the rows have measured.
+	private func jumpToBottom(_ proxy: ScrollViewProxy) {
+		hasUnseen = false
+		proxy.scrollTo(Self.bottomID, anchor: .bottom)
+		Task {
+			try? await Task.sleep(for: .milliseconds(200))
+			if followingOpen { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+		}
 	}
 
 	private func scrollToBottom(_ proxy: ScrollViewProxy) {

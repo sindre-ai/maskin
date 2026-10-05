@@ -211,6 +211,21 @@ struct ChatStoreTests {
 		#expect(h.store.messages.count == 2)
 	}
 
+	@Test("my message never drops out between the server confirming it and the thread hearing of it")
+	func deliveryHasNoGap() async {
+		let h = ChatHarness(online: false)
+		await h.store.start()
+		let rowID = h.store.send("hello")!
+		let clientID = String(rowID.dropFirst("local-".count))
+		#expect(h.store.messages.count == 1)
+		// The queue confirms the send and the outbox drops its entry in the same turn, before the
+		// store's event stream has been read. The message must be visible throughout.
+		h.queue.recordDelivery(clientID: clientID, message: chatMsg(5, by: "me", "hello"))
+		_ = h.queue.discard(clientID)
+		#expect(h.store.messages.compactMap(\.serverID) == [5])
+		#expect(h.store.messages.first?.id == rowID)
+	}
+
 	@Test("messages stay ordered by id however they arrive")
 	func outOfOrder() {
 		let h = ChatHarness()

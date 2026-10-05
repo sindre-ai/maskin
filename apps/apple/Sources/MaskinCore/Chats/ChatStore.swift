@@ -71,6 +71,7 @@ public final class ChatStore {
 	@ObservationIgnored private let pollInterval: Duration?
 	@ObservationIgnored private var listener: Task<Void, Never>?
 	@ObservationIgnored private var queueListener: Task<Void, Never>?
+	@ObservationIgnored private var deliveryObserver: UUID?
 	@ObservationIgnored private var poller: Task<Void, Never>?
 	@ObservationIgnored private var syncing = false
 	@ObservationIgnored private var syncQueued = false
@@ -108,6 +109,7 @@ public final class ChatStore {
 			listener?.cancel()
 			queueListener?.cancel()
 			poller?.cancel()
+			if let deliveryObserver { queue.stopObservingDeliveries(deliveryObserver) }
 		}
 	}
 
@@ -240,6 +242,13 @@ public final class ChatStore {
 				}
 			}
 		}
+		if deliveryObserver == nil {
+			// Take the server's copy in the same step the queue confirms the send, before the
+			// outbox drops its entry; the stream below then finds it already applied.
+			deliveryObserver = queue.observeDeliveries { [weak self] clientID, message in
+				self?.apply(.delivered(clientID: clientID, message: message))
+			}
+		}
 		if queueListener == nil {
 			let stream = queue.events()
 			queueListener = Task { [weak self] in
@@ -266,6 +275,8 @@ public final class ChatStore {
 		listener = nil
 		queueListener?.cancel()
 		queueListener = nil
+		if let deliveryObserver { queue.stopObservingDeliveries(deliveryObserver) }
+		deliveryObserver = nil
 		poller?.cancel()
 		poller = nil
 		trace?.stop()
@@ -453,7 +464,8 @@ public final class ChatStore {
 		switch event {
 		case .delivered(let clientID, let message):
 			guard message.conversationID == conversationID, let serverID = message.serverID else { return }
-			deliveredClientIDs.insert(clientID)
+			// Already applied inline by the delivery observer; the stream repeats it.
+			guard deliveredClientIDs.insert(clientID).inserted else { return }
 			aliases[serverID] = "local-\(clientID)"
 			merge([message])
 			awaitingReplySince = now()

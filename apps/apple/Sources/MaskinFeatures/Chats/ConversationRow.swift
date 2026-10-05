@@ -4,13 +4,19 @@ import MaskinUI
 import SwiftUI
 
 /// One conversation in the list: the agent's icon, the agent's name over the conversation
-/// title, the time and unread state. No message preview.
+/// title and a two-line preview of the latest message, the time and unread state. An unread
+/// conversation reads louder at a glance: a leading dot, a bold title, a darker preview and a
+/// count pill, so it can't be mistaken for one that is already read.
 struct ConversationRow: View {
 	let conversation: ConversationSummary
 	let currentActorID: String?
 
 	var body: some View {
-		HStack(alignment: .center, spacing: MaskinSpace.s7) {
+		HStack(alignment: .center, spacing: MaskinSpace.s5) {
+			Circle()
+				.fill(conversation.isUnread ? MaskinColor.accent : Color.clear)
+				.frame(width: MaskinSpace.s5, height: MaskinSpace.s5)
+				.accessibilityHidden(true)
 			ConversationAvatar(participants: others)
 			VStack(alignment: .leading, spacing: MaskinSpace.s1) {
 				HStack(alignment: .firstTextBaseline, spacing: MaskinSpace.s3) {
@@ -30,11 +36,18 @@ struct ConversationRow: View {
 						.maskinText(.caption)
 						.foregroundStyle(conversation.isUnread ? MaskinColor.accent : MaskinColor.ink4)
 				}
-				HStack(alignment: .center, spacing: MaskinSpace.s4) {
-					Text(conversation.title)
-						.maskinText(.subhead)
-						.foregroundStyle(conversation.isUnread ? MaskinColor.ink2 : MaskinColor.ink4)
-						.lineLimit(1)
+				Text(conversation.title)
+					.maskinText(.subhead)
+					.fontWeight(conversation.isUnread ? .semibold : .regular)
+					.foregroundStyle(conversation.isUnread ? MaskinColor.ink : MaskinColor.ink3)
+					.lineLimit(1)
+				HStack(alignment: .top, spacing: MaskinSpace.s4) {
+					if let preview {
+						Text(preview)
+							.maskinText(.subhead)
+							.foregroundStyle(conversation.isUnread ? MaskinColor.ink2 : MaskinColor.ink4)
+							.lineLimit(2)
+					}
 					Spacer(minLength: 0)
 					if conversation.isUnread {
 						UnreadBadge(count: conversation.unreadCount)
@@ -60,8 +73,19 @@ struct ConversationRow: View {
 		return names.isEmpty ? conversation.title : names.joined(separator: ", ")
 	}
 
+	/// The latest message, led by who wrote it ("Relay: Done, the PR is up"). Nil when the server
+	/// sent no snippet, in which case the row shows only the title.
+	private var preview: String? {
+		guard let text = conversation.snippet?.trimmingCharacters(in: .whitespacesAndNewlines),
+			!text.isEmpty
+		else { return nil }
+		guard let who = conversation.snippetActorName, !who.isEmpty else { return text }
+		return "\(who): \(text)"
+	}
+
 	private var accessibilityLabel: String {
 		var parts = [headline, conversation.title]
+		if let preview { parts.append(preview) }
 		if conversation.isUnread { parts.append("\(conversation.unreadCount) unread") }
 		if conversation.pinned { parts.append("pinned") }
 		return parts.joined(separator: ", ")
