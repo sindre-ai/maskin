@@ -248,6 +248,60 @@ describe('Integrations Routes', () => {
 			}
 		})
 
+		// "Install on another organization": the authorize URL only lists orgs that
+		// already have the App, so this mode must return the App's install page
+		// instead — with a signed state, and the binding cookie, like a normal connect.
+		it('returns the App install URL with a signed state when github is asked to install on another org', async () => {
+			const previousSlug = process.env.GITHUB_APP_SLUG
+			process.env.GITHUB_APP_SLUG = 'sindre-maskin'
+			try {
+				const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+				const res = await app.request(
+					jsonRequest(
+						'POST',
+						'/api/integrations/github/connect',
+						{ install_new_org: true },
+						{ 'x-workspace-id': wsId },
+					),
+				)
+
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				const url = new URL(body.install_url)
+				expect(`${url.origin}${url.pathname}`).toBe(
+					'https://github.com/apps/sindre-maskin/installations/new',
+				)
+				const state = url.searchParams.get('state')
+				expect(state).toBeTruthy()
+				expect(res.headers.get('set-cookie')).toContain('oauth_nonce')
+			} finally {
+				process.env.GITHUB_APP_SLUG = previousSlug
+			}
+		})
+
+		it('ignores install_new_org for providers other than github', async () => {
+			vi.mocked(getProvider).mockReturnValueOnce({
+				config: { name: 'custom-provider', displayName: 'Custom', auth: { type: 'oauth2_custom' } },
+				customAuth: {
+					getInstallUrl: (_state: string) => 'https://custom.example/authorize',
+				},
+			} as unknown as ReturnType<typeof getProvider>)
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/integrations/custom-provider/connect',
+					{ install_new_org: true },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(200)
+			expect((await res.json()).install_url).toBe('https://custom.example/authorize')
+		})
+
 		it('returns 500 when the GitHub App OAuth client id is not configured', async () => {
 			const previousClientId = process.env.GITHUB_CLIENT_ID
 			process.env.GITHUB_CLIENT_ID = undefined

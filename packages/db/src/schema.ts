@@ -504,6 +504,9 @@ export const sessions = pgTable(
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0044.
 		index('sessions_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
 		index('sessions_actor_idx').on(t.actorId),
+		// "Does this agent have another live session?" on every completion. Built
+		// CONCURRENTLY in migration 0087.
+		index('sessions_actor_status_idx').on(t.actorId, t.status),
 		// Reconciler self-heal window scan over a session's settled time. Built
 		// CONCURRENTLY in migration 0086.
 		index('sessions_settled_at_idx').on(sql`coalesce(${t.completedAt}, ${t.updatedAt})`),
