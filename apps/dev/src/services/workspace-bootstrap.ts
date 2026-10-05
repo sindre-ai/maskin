@@ -715,6 +715,16 @@ export async function bootstrapDefaultAgents(
 	}
 }
 
+/** Lowercased part after the last "@", or undefined if there is no usable domain. */
+function emailDomain(email: string | null | undefined): string | undefined {
+	if (!email?.includes('@')) return undefined
+	const domain = email
+		.slice(email.lastIndexOf('@') + 1)
+		.trim()
+		.toLowerCase()
+	return domain || undefined
+}
+
 /**
  * The single, canonical "make a fully-provisioned workspace" path.
  *
@@ -831,11 +841,32 @@ export async function provisionWorkspace(params: {
 
 	if (!workspace) return null
 
+	// The workspace is already committed, so a failed owner lookup must never
+	// fail provisioning — the event just goes out without owner_email_domain.
+	// Read here, once, rather than reusing the welcome-session read below: that
+	// one is gated on sessionManager and may not run.
+	let ownerEmailDomain: string | undefined
+	try {
+		const [ownerRow] = await db
+			.select({ email: actors.email })
+			.from(actors)
+			.where(eq(actors.id, ownerActorId))
+			.limit(1)
+		ownerEmailDomain = emailDomain(ownerRow?.email)
+	} catch (err) {
+		logger.warn(
+			'provisionWorkspace: owner email lookup failed — sending workspace_created without owner_email_domain',
+			{ workspaceId: workspace.id, err },
+		)
+	}
+
 	// Fire-and-forget by design — the analytics client never throws (see posthog.ts).
+	// Only the domain is sent; the full address is PII and stays out of PostHog.
 	void capturePosthogEvent('workspace_created', workspace.id, {
 		workspace_id: workspace.id,
 		workspace_name: workspace.name,
 		created_by: ownerActorId,
+		...(ownerEmailDomain ? { owner_email_domain: ownerEmailDomain } : {}),
 	})
 
 	// The actor + member rows are already committed above, so this call is a
