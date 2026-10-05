@@ -25,12 +25,17 @@ export function useConnectIntegration(workspaceId: string) {
 			// Resend two-call handshake: both fields travel with the first POST so
 			// the backend can hit Resend's `POST /domains` in the same round-trip.
 			receiveSubdomain?: string
+			// GitHub only: send the user to the App's install page for an org that
+			// does not have the App yet, instead of the authorize step that only
+			// lists orgs that already do.
+			installNewOrg?: boolean
 		}) => {
 			const body =
-				input.apiKey || input.receiveSubdomain
+				input.apiKey || input.receiveSubdomain || input.installNewOrg
 					? {
 							...(input.apiKey ? { api_key: input.apiKey } : {}),
 							...(input.receiveSubdomain ? { receive_subdomain: input.receiveSubdomain } : {}),
+							...(input.installNewOrg ? { install_new_org: true } : {}),
 						}
 					: undefined
 			return api.integrations.connect(workspaceId, input.provider, body)

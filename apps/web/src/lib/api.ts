@@ -486,7 +486,7 @@ export const api = {
 		connect: (
 			workspaceId: string,
 			provider: string,
-			body?: { api_key?: string; receive_subdomain?: string },
+			body?: { api_key?: string; receive_subdomain?: string; install_new_org?: boolean },
 		) =>
 			request<{
 				install_url?: string
