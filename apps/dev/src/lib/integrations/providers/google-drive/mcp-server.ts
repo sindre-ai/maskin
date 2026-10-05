@@ -1,12 +1,16 @@
 import type { Database } from '@maskin/db'
+import { integrations } from '@maskin/db/schema'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import {
 	type McpSessionSource,
 	argKeys,
 	captureMcpToolCall,
 } from '../../../analytics/mcp-tool-calls'
+import { recordEvent } from '../../../events/record-event'
 import { logger } from '../../../logger'
+import { config as driveConfig } from './config'
 import { isDriveError } from './errors'
 import type { DriveToolContext } from './operations'
 import {
@@ -164,5 +168,54 @@ async function runTool(
 		transport: 'http',
 		agentActorId: ctx.actorId,
 	})
+	if (errorClass === null) void stampFirstToolCall(ctx)
 	return result
+}
+
+/**
+ * Record the first successful Drive tool call on the integration row as
+ * config.first_tool_call_at (ISO timestamp). The customer UI derives its
+ * has-ingested state from this key and nothing else. The WHERE clause makes the
+ * write set-only-if-unset, so a second successful call never moves it, and the
+ * caller only invokes this for errorClass null. Drive is one row per workspace
+ * at v1 (workspace-scoped, actor_id NULL), so the workspace id picks the row;
+ * revisit the key if per-human Drive rows ever ship.
+ *
+ * Fire and forget: a failure is logged and never fails the tool call.
+ */
+async function stampFirstToolCall(ctx: DriveMcpContext): Promise<void> {
+	try {
+		const stampedAt = new Date().toISOString()
+		const rows = await ctx.db
+			.update(integrations)
+			.set({
+				config: sql`jsonb_set(COALESCE(${integrations.config}, '{}'::jsonb), '{first_tool_call_at}', to_jsonb(${stampedAt}::text), true)`,
+				updatedAt: new Date(),
+			})
+			.where(
+				and(
+					eq(integrations.workspaceId, ctx.workspaceId),
+					eq(integrations.provider, driveConfig.name),
+					eq(integrations.status, 'active'),
+					isNull(integrations.actorId),
+					sql`NOT (COALESCE(${integrations.config}, '{}'::jsonb) ? 'first_tool_call_at')`,
+				),
+			)
+			.returning({ id: integrations.id })
+		const row = rows[0]
+		if (!row) return
+		await recordEvent(ctx.db, {
+			workspaceId: ctx.workspaceId,
+			actorId: ctx.actorId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: row.id,
+			data: { provider: driveConfig.name, first_tool_call_at: stampedAt },
+		})
+	} catch (err) {
+		logger.warn('Google Drive first_tool_call_at stamp failed', {
+			workspaceId: ctx.workspaceId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+	}
 }

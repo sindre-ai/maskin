@@ -1631,6 +1631,13 @@ app.openapi(callbackRoute, (async (c) => {
 		.limit(1)
 
 	if (existingSameInstall) {
+		// A reconnect rewrites config from scratch, which would drop the Drive
+		// first-use stamp (config.first_tool_call_at) and send the customer UI back
+		// to the first-call state. Carry just that key over from the prior row.
+		const priorFirstToolCallAt = (existingSameInstall.config as IntegrationConfig | null)
+			?.first_tool_call_at
+		if (priorFirstToolCallAt) activeConfig.first_tool_call_at = priorFirstToolCallAt
+
 		await db
 			.update(integrations)
 			.set({
