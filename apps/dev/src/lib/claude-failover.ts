@@ -17,9 +17,7 @@ import {
 	type ClaudeOAuthTokens,
 	type EncryptedOAuthData,
 	decryptOAuthData,
-	encryptOAuthTokens,
-	persistRefreshedSlot,
-	refreshClaudeTokenIfNeeded,
+	refreshSlotSingleFlight,
 } from './claude-oauth'
 import { attemptPrimaryRecovery, shouldAttemptPrimaryRecovery } from './claude-oauth-recovery'
 import {
@@ -158,7 +156,7 @@ export interface FailoverParams {
 	now?: () => number
 	/** Overrides `process.env` (used by tests). */
 	env?: NodeJS.ProcessEnv
-	/** Passed through to `refreshClaudeTokenIfNeeded`. */
+	/** Passed through to `refreshSlotSingleFlight`. */
 	bufferMs?: number
 	/**
 	 * Invoked when a CONFIGURED slot yields no usable token, reporting whether
@@ -423,10 +421,7 @@ async function loadAndRefreshSlot(
 ): Promise<{ tokens: ClaudeOAuthTokens; refreshFailure: ClassifierInput | null }> {
 	const stored = decryptOAuthData(encrypted)
 	try {
-		const result = await refreshClaudeTokenIfNeeded(stored, bufferMs ?? 10 * 60 * 1000)
-		if (result.refreshed) {
-			await persistRefreshedSlot(db, workspaceId, slot, encryptOAuthTokens(result.tokens))
-		}
+		const result = await refreshSlotSingleFlight(db, workspaceId, slot, encrypted, bufferMs)
 		return { tokens: result.tokens, refreshFailure: null }
 	} catch (err) {
 		logger.warn('Failed to refresh Claude OAuth slot', {
@@ -458,27 +453,25 @@ async function attemptChainHeadRecovery(params: {
 }): Promise<ClaudeCredentials | null> {
 	const { db, workspaceId, actorId, probe, bufferMs, now } = params
 	let recoveredTokens: ClaudeOAuthTokens | null = null
-	let recoveredNeedsPersist = false
 
 	const recovery = await attemptPrimaryRecovery({
 		db,
 		workspaceId,
 		actorId,
 		now,
-		healthCheck: async (head) => {
-			const decrypted = decryptOAuthData(head)
+		healthCheck: async (head, headSlot) => {
 			try {
-				const { tokens, refreshed } = await refreshClaudeTokenIfNeeded(
-					decrypted,
-					bufferMs ?? 10 * 60 * 1000,
-				)
+				// Refresh and persist go through the shared single-flight path.
+				// healthCheck runs before attemptPrimaryRecovery opens its row-lock
+				// transaction, so persisting here never nests a transaction on the
+				// workspaces row, and the lock is released before the probe runs.
+				const { tokens } = await refreshSlotSingleFlight(db, workspaceId, headSlot, head, bufferMs)
 				const probeResult = await runProbe(probe, tokens)
 				if (probeResult) {
 					const decision = classifyClaudeFailureWithReset(probeResult)
 					return { healthy: false, reason: decision.reason }
 				}
 				recoveredTokens = tokens
-				recoveredNeedsPersist = refreshed
 				return { healthy: true }
 			} catch (err) {
 				const decision = classifyClaudeFailureWithReset(classifierInputFromError(err))
@@ -488,14 +481,6 @@ async function attemptChainHeadRecovery(params: {
 	})
 
 	if (!recovery.recovered || !recoveredTokens) return null
-
-	if (recoveredNeedsPersist) {
-		// Persist AFTER attemptPrimaryRecovery's transaction has released its
-		// row lock — persisting from inside `healthCheck` (which runs under
-		// that lock) would open a second transaction competing for the same
-		// lock and deadlock against itself.
-		await persistRefreshedSlot(db, workspaceId, recovery.slot, encryptOAuthTokens(recoveredTokens))
-	}
 	return { slot: recovery.slot, tokens: recoveredTokens }
 }
 
